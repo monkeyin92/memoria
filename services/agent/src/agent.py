@@ -594,14 +594,15 @@ async def entrypoint(ctx: Any) -> None:
         accept_threshold=runtime_settings.speaker_accept_threshold,
         min_verify_speech_ms=runtime_settings.speaker_min_verify_speech_ms,
     )
+    cue_playback = runtime_settings.listener_cue_playback
+    cues_on = runtime_settings.listener_cues_enabled
+    if cues_on and cue_playback == "background" and not runtime_settings.listener_cue_aec_validated:
+        cue_playback = "main_track"
     runtime = DuplexRuntime.create(
         session_id=runtime_session_id,
         tts=tts_plugin,
         input_guard_enabled=profile == "cn_self_hosted",
-        listener_cues_enabled=(
-            runtime_settings.listener_cues_enabled
-            and runtime_settings.listener_cue_aec_validated
-        ),
+        listener_cues_enabled=cues_on,
         use_paralinguistic_tags=runtime_settings.cosyvoice_paralinguistic_tags,
         speaker_verifier=speaker_verifier,
     )
@@ -609,7 +610,10 @@ async def entrypoint(ctx: Any) -> None:
     runtime.cue_scheduler.pause_ms = runtime_settings.listener_cue_pause_ms
     runtime.cue_scheduler.cooldown_ms = runtime_settings.listener_cue_cooldown_ms
     runtime.cue_scheduler.max_per_turn = runtime_settings.listener_cue_max_per_turn
-    runtime.set_listener_cue_aec_healthy(runtime_settings.listener_cue_aec_validated)
+    # Main-track cues do not need dual-track AEC; background mode still gates on it.
+    runtime.set_listener_cue_aec_healthy(
+        cue_playback == "main_track" or runtime_settings.listener_cue_aec_validated
+    )
     if hasattr(tts_plugin, "set_trace_callback"):
         tts_plugin.set_trace_callback(
             lambda name, status, detail: runtime.mark_audio_event(
@@ -827,14 +831,17 @@ async def entrypoint(ctx: Any) -> None:
     runtime.mark_audio_event("audio_output_attached")
 
     cue_background: Any | None = None
-    # PCM cache only until enroll finishes — starting BackgroundAudioPlayer
-    # publishes a second room audio track that H5 attaches on top of main TTS
-    # (dual-voice blip during the enroll prompt).
+    # P0-1: default main_track uses session.say (same audio track as TTS, no chat).
+    # background mode keeps optional BackgroundAudioPlayer + PCM cache (AEC gated).
     _listener_cue_cache: dict[str, bytes] = {}
     _listener_cue_cache_ready = asyncio.Event()
 
     async def _prepare_listener_cues() -> None:
-        if not runtime.cue_scheduler.enabled or runtime.cue_scheduler.max_per_turn == 0:
+        if (
+            not runtime.cue_scheduler.enabled
+            or runtime.cue_scheduler.max_per_turn == 0
+            or cue_playback != "background"
+        ):
             _listener_cue_cache_ready.set()
             return
 
@@ -858,7 +865,7 @@ async def entrypoint(ctx: Any) -> None:
                 "listener_cues_ready",
                 detail={
                     "cue_count": len(_listener_cue_cache),
-                    "player": "deferred",
+                    "player": "background",
                 },
             )
         except asyncio.CancelledError:
@@ -874,8 +881,31 @@ async def entrypoint(ctx: Any) -> None:
                     await close()
 
     async def _start_listener_cue_player() -> None:
-        """Publish cue track only after enroll/welcome so main TTS is alone."""
+        """Attach cue player after enroll/welcome so it never stacks on first TTS."""
         nonlocal cue_background
+        if not runtime.cue_scheduler.enabled:
+            return
+        if cue_playback == "main_track":
+            # Same CosyVoice path as interrupt yield — no second room track.
+            def _play_main_track_cue(text: str) -> Any:
+                if hasattr(tts_plugin, "apply_speech_plan"):
+                    tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
+                return session.say(
+                    text,
+                    allow_interruptions=True,
+                    add_to_chat_ctx=False,
+                )
+
+            runtime.set_listener_cue_player(_play_main_track_cue)
+            runtime.mark_audio_event(
+                "listener_cue_player_started",
+                detail={
+                    "mode": "main_track",
+                    "cue_phrases": list(runtime.cue_scheduler.cues),
+                },
+            )
+            return
+
         if cue_background is not None:
             return
         await _listener_cue_cache_ready.wait()
@@ -908,10 +938,13 @@ async def entrypoint(ctx: Any) -> None:
         runtime.set_listener_cue_player(_play_listener_cue)
         runtime.mark_audio_event(
             "listener_cue_player_started",
-            detail={"cue_count": len(_listener_cue_cache)},
+            detail={"mode": "background", "cue_count": len(_listener_cue_cache)},
         )
 
-    runtime._spawn(_prepare_listener_cues(), name="listener-cue-prepare")
+    if cues_on and cue_playback == "background":
+        runtime._spawn(_prepare_listener_cues(), name="listener-cue-prepare")
+    else:
+        _listener_cue_cache_ready.set()
 
     async def _shutdown_runtime() -> None:
         ctx.room.off("data_received", _on_control_packet)

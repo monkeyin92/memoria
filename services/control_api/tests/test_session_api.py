@@ -145,26 +145,32 @@ async def test_create_omni_session_requires_only_dashscope_api_key(
 
     assert response.status_code == 200
     data = response.json()
-    assert data == {
-        "session_id": data["session_id"],
-        "voice_backend": "qwen_omni",
-        "sdp_exchange_path": f"/v1/sessions/{data['session_id']}/omni/sdp",
-        "config": {
-            "model": "qwen3.5-omni-flash-realtime",
-            "voice": "Tina",
-            "turn_detection": {
-                "type": "semantic_vad",
-                "threshold": 0.5,
-                "prefix_padding_ms": 500,
-                "silence_duration_ms": 800,
-            },
-        },
+    flash_td = {
+        "type": "semantic_vad",
+        "threshold": 0.5,
+        "prefix_padding_ms": 500,
+        "silence_duration_ms": 800,
     }
+    assert data["voice_backend"] == "qwen_omni"
+    assert data["sdp_exchange_path"] == f"/v1/sessions/{data['session_id']}/omni/sdp"
+    assert data["config"]["model"] == "qwen3.5-omni-flash-realtime"
+    assert data["config"]["voice"] == "Tina"
+    assert data["config"]["turn_detection"] == flash_td
+    assert data["config"]["ab_profile"] == "qwen_omni:silence=800:th=0.5:pad=500"
+    assert data["config"]["ab_scan"]["backends"] == ["qwen_omni", "qwen_omni_plus"]
+    assert data["config"]["ab_scan"]["active"]["silence_duration_ms"] == 800
     assert plus.status_code == 200
     plus_data = plus.json()
     assert plus_data["voice_backend"] == "qwen_omni_plus"
     assert plus_data["config"]["model"] == "qwen3.5-omni-plus-realtime"
-    assert plus_data["config"]["turn_detection"] == data["config"]["turn_detection"]
+    # P0-3: Plus defaults snappier than Flash for A/B (env-overridable).
+    assert plus_data["config"]["turn_detection"] == {
+        "type": "semantic_vad",
+        "threshold": 0.45,
+        "prefix_padding_ms": 500,
+        "silence_duration_ms": 650,
+    }
+    assert plus_data["config"]["ab_profile"] == "qwen_omni_plus:silence=650:th=0.45:pad=500"
 
 
 @pytest.mark.asyncio

@@ -69,3 +69,46 @@ def test_interaction_phase_covers_p0_observable_states() -> None:
         "user_speaking",
         "listening",
     } <= values
+
+
+def test_interaction_phase_transitions_emit_metrics() -> None:
+    """P0-4: BACKCHANNEL / THINKING_SILENT / SPEAKING must be metric-visible."""
+    from services.agent.src.duplex_runtime import DuplexRuntime
+    from services.agent.src.orchestration.state_machine import InteractionPhase
+
+    runtime = DuplexRuntime.create(session_id="phase-obs")
+    runtime.set_interaction_phase(InteractionPhase.USER_SPEAKING, cause="vad_start")
+    runtime.set_interaction_phase(
+        InteractionPhase.BACKCHANNEL,
+        cause="listener_cue:嗯",
+    )
+    runtime.set_interaction_phase(
+        InteractionPhase.THINKING_SILENT,
+        cause="turn_committed",
+    )
+    runtime.set_interaction_phase(InteractionPhase.SPEAKING, cause="playback_started")
+
+    metrics = runtime.orchestrator.metrics
+    assert (
+        metrics.get(
+            "interaction_phase_total",
+            {
+                "from": "user_speaking",
+                "to": "backchannel",
+                "cause": "listener_cue:嗯",
+            },
+        )
+        >= 1.0
+    )
+    assert (
+        metrics.get(
+            "interaction_phase_total",
+            {
+                "from": "thinking_silent",
+                "to": "speaking",
+                "cause": "playback_started",
+            },
+        )
+        >= 1.0
+    )
+    assert runtime.interaction_phase is InteractionPhase.SPEAKING

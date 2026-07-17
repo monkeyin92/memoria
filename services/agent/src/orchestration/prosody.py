@@ -20,10 +20,11 @@ DeliveryMode = Literal["direct", "deliberative", "light_laughter", "supportive"]
 
 _LAUGHTER_MARKERS = ("哈哈", "呵呵", "嘿嘿")
 _MARKUP_TAG = re.compile(
-    r"\[(?:laughter|breath|cough|sigh)\]|"
-    r"</?(?:laughter|strong)>",
+    r"\[(?:laughter|breath|cough|sigh|inhale)\]|"
+    r"</?(?:laughter|strong|emphasis)>",
     re.IGNORECASE,
 )
+_HAS_DIGIT = re.compile(r"\d")
 _LEADING_LAUGH_TEXT = re.compile(r"^(?:哈{2,}|呵{2,}|嘿{2,}|[（(]笑[)）])[，,、\s]*")
 _SOFT_LAUGH_PREFIXES = ("呵，", "呵,", "呵呵，", "呵呵,", "[laughter]")
 _SERIOUS_CONTEXT_MARKERS = (
@@ -94,6 +95,11 @@ def soft_laugh_prefix(*, use_markup_tags: bool) -> str:
     return "[laughter]" if use_markup_tags else "呵，"
 
 
+def breath_prefix(*, use_markup_tags: bool) -> str:
+    """Short inhale before deliberative speech when markup is enabled."""
+    return "[breath]" if use_markup_tags else ""
+
+
 def strip_paralinguistic_markup(text: str) -> str:
     cleaned = _MARKUP_TAG.sub("", text)
     cleaned = _LEADING_LAUGH_TEXT.sub("", cleaned)
@@ -162,31 +168,62 @@ def speech_plan_for_turn(
             "neutral",
             1.0,
             "supportive",
-            "本轮语境严肃。直接、温和地承接用户，绝对不要笑、咳嗽或使用轻佻的思考填充词。",
+            "本轮语境严肃。直接、温和地承接用户，绝对不要笑、咳嗽、吸气戏或使用轻佻的思考填充词。"
+            "禁止输出 [laughter]/[breath]/[inhale]/<strong> 等副语言/强调标签。",
             strip_paralinguistic=True,
         )
     acoustic_laughter = "acoustic:qwen3-asr:laughter" in evidence
     if has_laughter and (provider_label == "happy" or acoustic_laughter):
+        laugh_hint = (
+            "开头只轻笑一次：优先输出 TTS 标签 [laughter]，紧接正文；"
+            if use_markup_tags
+            else "开头只轻笑一次：优先输出可被 TTS 自然读出的短笑音“呵，”或“呵呵，”，"
+        )
         return SpeechPlan(
             "happy",
             1.0,
             "light_laughter",
             "本轮是轻松且声学上明确的笑声。"
-            "开头只轻笑一次：优先输出可被 TTS 自然读出的短笑音“呵，”或“呵呵，”，"
-            "紧接正文；禁止连续多个“哈”，不要写旁白式“（笑）”，不要反复笑。",
+            f"{laugh_hint}"
+            "禁止连续多个“哈”，不要写旁白式“（笑）”，不要反复笑。",
             tts_prefix=soft_laugh_prefix(use_markup_tags=use_markup_tags),
         )
     if any(marker in text for marker in _DELIBERATIVE_MARKERS):
-        deliberative_prefix = "[breath]" if use_markup_tags else ""
+        deliberative_prefix = breath_prefix(use_markup_tags=use_markup_tags)
+        emphasis_hint = ""
+        if use_markup_tags and _HAS_DIGIT.search(text):
+            emphasis_hint = (
+                "若出现关键数字或时间点，可用一次 <strong>…</strong> 做轻强调，勿滥用。"
+            )
+        breath_hint = (
+            "衔接前允许一次 [breath] 短吸气（系统也可能已注入），"
+            if use_markup_tags
+            else ""
+        )
         return SpeechPlan(
             base.voice_emotion,
             1.0,
             "deliberative",
             "本轮需要安排或组织内容。"
+            f"{breath_hint}"
             "先用四到十二个字的自然短衔接（可含一个“嗯”“好”或“可以”），"
             "该小段以逗号结束，再继续同一段正文；整轮只生成一次，"
-            "不要拆成两段回答，不要披露推理或照抄固定模板。",
+            f"不要拆成两段回答，不要披露推理或照抄固定模板。{emphasis_hint}",
             tts_prefix=deliberative_prefix,
+        )
+    # Non-serious short happy turns may lightly emphasize digits once.
+    if (
+        use_markup_tags
+        and base.voice_emotion == "happy"
+        and _HAS_DIGIT.search(text)
+        and not has_laughter
+    ):
+        return SpeechPlan(
+            "happy",
+            1.0,
+            "direct",
+            "语气轻松。若有关键数字可用一次 <strong>…</strong> 强调；"
+            "不要笑、不要吸气戏、不要旁白。",
         )
     return base
 

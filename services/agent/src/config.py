@@ -57,16 +57,20 @@ class AgentSettings(BaseSettings):
     # When true, inject CosyVoice markup like [laughter]/[breath] on delivery.
     # Keep false for longanyang PlainText unless the deployed model is verified.
     cosyvoice_paralinguistic_tags: bool = Field(
-        default=False,
+        # P0-2: laugh/breath/emphasis markup via DeliveryPlan; serious scenes strip.
+        default=True,
         alias="COSYVOICE_PARALINGUISTIC_TAGS",
     )
 
     vad_min_silence_duration_s: float = Field(default=0.30, alias="VAD_MIN_SILENCE_DURATION_S")
     preemptive_tts: bool = Field(default=False, alias="PREEMPTIVE_TTS")
-    # GPT-Live-style short listener cues ("嗯/我在听") publish a second room
-    # audio track via BackgroundAudioPlayer; H5 attaches both → dual-voice blip.
-    # Default off until cues mix into the main track.
-    listener_cues_enabled: bool = Field(default=False, alias="LISTENER_CUES_ENABLED")
+    # P0-1: short listener cues on the *main* TTS track (session.say, no chat).
+    # BackgroundAudioPlayer second-track mode needs LISTENER_CUE_AEC_VALIDATED.
+    listener_cues_enabled: bool = Field(default=True, alias="LISTENER_CUES_ENABLED")
+    listener_cue_playback: str = Field(
+        default="main_track",
+        alias="LISTENER_CUE_PLAYBACK",
+    )
     listener_cue_aec_validated: bool = Field(
         default=False,
         alias="LISTENER_CUE_AEC_VALIDATED",
@@ -190,6 +194,17 @@ class AgentSettings(BaseSettings):
             raise ValueError("livekit_cloud requires LIVEKIT_ADAPTIVE_INTERRUPTION=true")
         if self.deployment_profile == "cn_self_hosted":
             object.__setattr__(self, "livekit_turn_detector_version", "v1-mini")
+        playback = (self.listener_cue_playback or "main_track").strip().lower()
+        if playback not in {"main_track", "background"}:
+            raise ValueError("LISTENER_CUE_PLAYBACK must be main_track or background")
+        object.__setattr__(self, "listener_cue_playback", playback)
+        # Second-track cues need AEC validation; otherwise force main_track safety.
+        if (
+            self.listener_cues_enabled
+            and playback == "background"
+            and not self.listener_cue_aec_validated
+        ):
+            object.__setattr__(self, "listener_cue_playback", "main_track")
         if self.environment == "production":
             if self.livekit_url.startswith("ws://") or self.livekit_url.startswith("http://"):
                 raise ValueError("production forbids plaintext media/control URLs")

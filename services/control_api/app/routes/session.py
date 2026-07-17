@@ -167,6 +167,21 @@ async def create_session(
             voice_backend=body.voice_backend,
             created_at=created_at,
         )
+        turn_detection = _omni_turn_detection(
+            settings,
+            voice_backend=body.voice_backend,
+        )
+        ab_profile = (
+            f"{body.voice_backend}:silence={turn_detection['silence_duration_ms']}"
+            f":th={turn_detection['threshold']}"
+            f":pad={turn_detection['prefix_padding_ms']}"
+        )
+        logger.info(
+            "omni_session_ab_profile session_id=%s profile=%s model=%s",
+            session_id,
+            ab_profile,
+            model,
+        )
         return CreateOmniSessionResponse(
             session_id=session_id,
             voice_backend=body.voice_backend,  # type: ignore[arg-type]
@@ -174,10 +189,18 @@ async def create_session(
             config={
                 "model": model,
                 "voice": settings.qwen_omni_voice.strip() or "Tina",
-                "turn_detection": _omni_turn_detection(
-                    settings,
-                    voice_backend=body.voice_backend,
-                ),
+                "turn_detection": turn_detection,
+                # P0-3: flash vs plus A/B identity for client telemetry / greps.
+                "ab_profile": ab_profile,
+                "ab_scan": {
+                    "backends": ["qwen_omni", "qwen_omni_plus"],
+                    "silence_duration_ms_candidates": [500, 650, 800, 1000],
+                    "threshold_candidates": [0.35, 0.45, 0.5, 0.55, 0.65],
+                    "active": {
+                        "voice_backend": body.voice_backend,
+                        **turn_detection,
+                    },
+                },
             },
         )
 

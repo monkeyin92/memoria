@@ -405,14 +405,29 @@ class DuplexRuntime:
             return None
         previous = self.interaction_phase
         self.interaction_phase = phase
+        cause_s = cause or "unspecified"
         logger.info(
             "interaction_phase from=%s to=%s cause=%s session_id=%s turn_id=%s generation_id=%s",
             previous.value,
             phase.value,
-            cause or "unspecified",
+            cause_s,
             self.session_id,
             self.fence.turn_id,
             self.fence.generation_id,
+        )
+        self.orchestrator.metrics.inc_interaction_phase(
+            previous.value,
+            phase.value,
+            cause_s,
+        )
+        # Audio-trace seam so production logs can grep phase without UI events.
+        self.mark_audio_event(
+            "interaction_phase",
+            detail={
+                "from": previous.value,
+                "to": phase.value,
+                "cause": cause_s[:80],
+            },
         )
         if not publish:
             return None

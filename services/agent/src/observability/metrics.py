@@ -59,6 +59,17 @@ class MetricsRegistry:
             {"from": from_state, "to": to_state, "event": event},
         )
 
+    def inc_interaction_phase(self, from_phase: str, to_phase: str, cause: str) -> None:
+        """P0-4: observable BACKCHANNEL / THINKING_SILENT / SPEAKING transitions."""
+        self._inc(
+            "interaction_phase_total",
+            {
+                "from": from_phase,
+                "to": to_phase,
+                "cause": (cause or "unspecified")[:48],
+            },
+        )
+
     def inc_interruptions_confirmed(self) -> None:
         self._inc("interruptions_confirmed_total")
 

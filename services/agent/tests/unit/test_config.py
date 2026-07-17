@@ -18,8 +18,10 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     s = AgentSettings()
     assert s.funasr_sample_rate == 16000
     assert s.cosyvoice_sample_rate == 24000
-    assert s.listener_cues_enabled is False
+    assert s.listener_cues_enabled is True
+    assert s.listener_cue_playback == "main_track"
     assert s.listener_cue_aec_validated is False
+    assert s.cosyvoice_paralinguistic_tags is True
 
 
 def test_cn_self_hosted_forces_v1_mini(monkeypatch: pytest.MonkeyPatch) -> None:

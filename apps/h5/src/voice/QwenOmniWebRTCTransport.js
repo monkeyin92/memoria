@@ -315,6 +315,19 @@ export class QwenOmniWebRTCTransport {
     if (event.type === "session.created") {
       this.commandChannel = channel;
       this.onDiagnostic("omni_session_created");
+      // P0-3: surface applied silence/threshold for Flash vs Plus A/B greps.
+      const cfg = this.session?.config || {};
+      const td =
+        typeof cfg.turn_detection === "object" && cfg.turn_detection
+          ? cfg.turn_detection
+          : {};
+      this.onDiagnostic("omni_ab_profile", "ok", {
+        ab_profile: cfg.ab_profile || null,
+        model: cfg.model || null,
+        threshold: td.threshold ?? null,
+        silence_duration_ms: td.silence_duration_ms ?? null,
+        prefix_padding_ms: td.prefix_padding_ms ?? null,
+      });
       if (channel.readyState === "open") {
         channel.send(JSON.stringify(sessionUpdate(this.session?.config)));
       }

@@ -54,15 +54,16 @@ class ControlSettings(BaseSettings):
         le=2500,
         alias="QWEN_OMNI_SILENCE_DURATION_MS",
     )
-    # Optional Plus-only override; empty/unset reuses the shared silence window.
+    # Plus A/B defaults (P0-3): slightly snappier end-of-turn vs Flash 800/0.5.
+    # Set env empty string is not supported — use shared knobs by matching Flash.
     qwen_omni_plus_silence_duration_ms: int | None = Field(
-        default=None,
+        default=650,
         ge=200,
         le=2500,
         alias="QWEN_OMNI_PLUS_SILENCE_DURATION_MS",
     )
     qwen_omni_plus_vad_threshold: float | None = Field(
-        default=None,
+        default=0.45,
         ge=0.0,
         le=1.0,
         alias="QWEN_OMNI_PLUS_VAD_THRESHOLD",
