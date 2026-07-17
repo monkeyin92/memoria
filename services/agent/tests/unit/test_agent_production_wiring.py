@@ -456,7 +456,15 @@ def test_agent_helpers_prewarm_and_turn_handling_fallback(
     monkeypatch.setenv("LIVEKIT_ADAPTIVE_INTERRUPTION", "false")
     options = agent_mod.build_turn_handling_options("livekit_cloud")
     assert options["interruption"]["mode"] == "vad"
-    assert agent_mod.build_turn_handling_options("cn_self_hosted")["interruption"]["mode"] == "vad"
+    monkeypatch.delenv("LIVEKIT_ADAPTIVE_INTERRUPTION", raising=False)
+    # P1-5: self-hosted defaults to adaptive (Turn Detector v1-mini).
+    assert (
+        agent_mod.build_turn_handling_options("cn_self_hosted")["interruption"]["mode"]
+        == "adaptive"
+    )
+    assert agent_mod.build_turn_handling_config("cn_self_hosted")[
+        "stream_speak_while_think"
+    ] is True
 
     def fail_options(_profile: str) -> Any:
         raise ValueError("bad api")

@@ -5,8 +5,35 @@ const ICE_GATHERING_TIMEOUT_MS = 10_000;
 const RTC_STATS_INTERVAL_MS = 5_000;
 const OMNI_JITTER_BUFFER_TARGET_MS = 120;
 const WELCOME_QUIET_WINDOW_MS = 400;
-const POST_RESPONSE_FEEDBACK_GUARD_MS = 500;
+// P1-7: dynamic post-response feedback guard (replaces fixed 500ms).
+const FEEDBACK_GUARD_MIN_MS = 150;
+const FEEDBACK_GUARD_MAX_MS = 800;
+const FEEDBACK_GUARD_DEFAULT_MS = 280;
 const FEEDBACK_RESPONSE_TIMEOUT_MS = 2_000;
+
+/** Compute mute window after assistant audio from recent RTP quality. */
+export function computeFeedbackGuardMs(metrics = {}) {
+  const concealment = Number(
+    metrics.non_silent_concealment_ratio ?? metrics.concealment_ratio ?? 0,
+  );
+  const jitterMs = Number(metrics.average_jitter_buffer_delay_ms ?? 0);
+  const packetsDiscarded = Number(metrics.packets_discarded ?? 0);
+  const packetsReceived = Number(metrics.packets_received ?? 0);
+  const discardRatio =
+    packetsReceived > 0 ? packetsDiscarded / packetsReceived : 0;
+
+  let ms = FEEDBACK_GUARD_DEFAULT_MS;
+  // Dirty path (echo / concealment / jitter) → longer mic mute.
+  if (concealment >= 0.02 || jitterMs >= 100 || discardRatio >= 0.15) {
+    ms = 650;
+  } else if (concealment >= 0.005 || jitterMs >= 50 || discardRatio >= 0.08) {
+    ms = 420;
+  } else if (concealment <= 0.001 && jitterMs > 0 && jitterMs < 35) {
+    // Clean path → shorter so 0–300ms barge-in is not swallowed.
+    ms = 180;
+  }
+  return Math.min(FEEDBACK_GUARD_MAX_MS, Math.max(FEEDBACK_GUARD_MIN_MS, ms));
+}
 const WELCOME_INSTRUCTIONS =
   "请主动用一句自然、温暖的中文向用户打招呼并邀请用户直接开口，不要解释规则，也不要用固定填充词起音。";
 
@@ -94,6 +121,7 @@ export class QwenOmniWebRTCTransport {
     this.onTranscript = onTranscript;
     this.onRemoteStream = onRemoteStream;
     this.onDiagnostic = onDiagnostic;
+    this.lastInboundMetrics = null;
     this.onError = onError;
     this.onDisconnected = onDisconnected;
     this.speakerVerifyEnabled = speakerVerifyEnabled;
@@ -646,14 +674,24 @@ export class QwenOmniWebRTCTransport {
     if (this.feedbackGuardTimer !== null) {
       window.clearTimeout(this.feedbackGuardTimer);
     }
+    const guardMs = computeFeedbackGuardMs(this.lastInboundMetrics || {});
     this.feedbackGuardActive = true;
     this.#syncMicrophoneTracks();
-    this.onDiagnostic("omni_feedback_guard_started");
+    this.onDiagnostic("omni_feedback_guard_started", "ok", {
+      guard_ms: guardMs,
+      dynamic: true,
+      concealment_ratio:
+        this.lastInboundMetrics?.non_silent_concealment_ratio ??
+        this.lastInboundMetrics?.concealment_ratio ??
+        null,
+      average_jitter_buffer_delay_ms:
+        this.lastInboundMetrics?.average_jitter_buffer_delay_ms ?? null,
+    });
     this.feedbackGuardTimer = window.setTimeout(() => {
       this.feedbackGuardTimer = null;
       this.feedbackGuardActive = false;
       this.#syncMicrophoneTracks();
-    }, POST_RESPONSE_FEEDBACK_GUARD_MS);
+    }, guardMs);
   }
 
   #expectFeedbackResponse() {
@@ -706,6 +744,7 @@ export class QwenOmniWebRTCTransport {
     try {
       const metrics = extractInboundAudioStats(await pc.getStats());
       if (!this.closed && metrics) {
+        this.lastInboundMetrics = metrics;
         this.onDiagnostic("webrtc_inbound_audio", "ok", metrics);
       }
     } catch {

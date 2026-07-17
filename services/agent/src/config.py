@@ -29,7 +29,10 @@ class AgentSettings(BaseSettings):
     livekit_api_secret: str = Field(default="", alias="LIVEKIT_API_SECRET")
     livekit_agent_name: str = Field(default="duplex-zh-agent", alias="LIVEKIT_AGENT_NAME")
     livekit_turn_detector_version: str = Field(default="v1", alias="LIVEKIT_TURN_DETECTOR_VERSION")
+    # P1-5: adaptive interruption + Turn Detector (v1-mini on cn_self_hosted).
     livekit_adaptive_interruption: bool = Field(default=True, alias="LIVEKIT_ADAPTIVE_INTERRUPTION")
+    # LiveKit preemptive LLM before EOU — default off; stream phrase TTS is the safe path.
+    preemptive_generation: bool = Field(default=False, alias="PREEMPTIVE_GENERATION")
 
     dashscope_api_key: str = Field(default="", alias="DASHSCOPE_API_KEY")
     dashscope_ws_url: str = Field(default="", alias="DASHSCOPE_WS_URL")

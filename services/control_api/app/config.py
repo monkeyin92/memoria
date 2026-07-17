@@ -28,7 +28,15 @@ class ControlSettings(BaseSettings):
     llm_provider: Literal["qwen", "deepseek"] = Field(default="qwen", alias="LLM_PROVIDER")
     dashscope_api_key: SecretStr = Field(default=SecretStr(""), alias="DASHSCOPE_API_KEY")
     dashscope_workspace_id: str = Field(default="", alias="DASHSCOPE_WORKSPACE_ID")
-    qwen_omni_voice: str = Field(default="Tina", alias="QWEN_OMNI_VOICE")
+    # P1-8: fixed Memoria persona voice on Omni (DashScope preset; not free-form clone).
+    # Cherry is a warmer zh/en-friendly realtime preset; override via env.
+    qwen_omni_voice: str = Field(default="Cherry", alias="QWEN_OMNI_VOICE")
+    # Optional custom/cloned voice id from DashScope voice-clone product; wins over preset.
+    qwen_omni_voice_clone_id: str = Field(default="", alias="QWEN_OMNI_VOICE_CLONE_ID")
+    qwen_omni_persona_label: str = Field(
+        default="Memoria 人设声",
+        alias="QWEN_OMNI_PERSONA_LABEL",
+    )
     qwen_omni_sdp_timeout_s: float = Field(
         default=10.0,
         ge=1.0,

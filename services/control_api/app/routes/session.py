@@ -176,11 +176,19 @@ async def create_session(
             f":th={turn_detection['threshold']}"
             f":pad={turn_detection['prefix_padding_ms']}"
         )
+        # P1-8: fixed persona voice; optional clone id from DashScope voice product.
+        clone_id = (getattr(settings, "qwen_omni_voice_clone_id", None) or "").strip()
+        persona_voice = clone_id or (settings.qwen_omni_voice.strip() or "Cherry")
+        persona_label = (
+            getattr(settings, "qwen_omni_persona_label", None) or "Memoria 人设声"
+        ).strip() or "Memoria 人设声"
         logger.info(
-            "omni_session_ab_profile session_id=%s profile=%s model=%s",
+            "omni_session_ab_profile session_id=%s profile=%s model=%s voice=%s clone=%s",
             session_id,
             ab_profile,
             model,
+            persona_voice,
+            bool(clone_id),
         )
         return CreateOmniSessionResponse(
             session_id=session_id,
@@ -188,7 +196,12 @@ async def create_session(
             sdp_exchange_path=f"/v1/sessions/{session_id}/omni/sdp",
             config={
                 "model": model,
-                "voice": settings.qwen_omni_voice.strip() or "Tina",
+                "voice": persona_voice,
+                "persona": {
+                    "label": persona_label,
+                    "voice": persona_voice,
+                    "cloned": bool(clone_id),
+                },
                 "turn_detection": turn_detection,
                 # P0-3: flash vs plus A/B identity for client telemetry / greps.
                 "ab_profile": ab_profile,

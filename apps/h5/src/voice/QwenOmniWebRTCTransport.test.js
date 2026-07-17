@@ -385,6 +385,26 @@ describe("QwenOmniWebRTCTransport", () => {
     expect(events.onRemoteStream).toHaveBeenCalledWith(remoteStream);
   });
 
+  it("computes a shorter feedback guard on clean RTP and longer on dirty path", async () => {
+    const { computeFeedbackGuardMs } = await import("./QwenOmniWebRTCTransport.js");
+    expect(
+      computeFeedbackGuardMs({
+        non_silent_concealment_ratio: 0,
+        average_jitter_buffer_delay_ms: 20,
+        packets_discarded: 0,
+        packets_received: 1000,
+      }),
+    ).toBeLessThanOrEqual(250);
+    expect(
+      computeFeedbackGuardMs({
+        non_silent_concealment_ratio: 0.03,
+        average_jitter_buffer_delay_ms: 120,
+        packets_discarded: 200,
+        packets_received: 1000,
+      }),
+    ).toBeGreaterThanOrEqual(500);
+  });
+
   it("sets a small receiver jitter buffer target when the browser supports it", async () => {
     const track = { kind: "audio", enabled: true, stop: vi.fn() };
     const localStream = {

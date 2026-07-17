@@ -331,7 +331,14 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                         if accepted_segment is None:
                             break
                         if not first_phrase_marked:
-                            self._runtime.mark_audio_event("first_phrase_ready")
+                            # P1-6: first audible phrase while LLM stream still open.
+                            self._runtime.mark_audio_event(
+                                "first_phrase_ready",
+                                detail={
+                                    "stream_speak_while_think": True,
+                                    "generation_id": fence.generation_id,
+                                },
+                            )
                             first_phrase_marked = True
                         yield accepted_segment
                     if reply_budget_exhausted:
@@ -356,7 +363,13 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     if accepted_segment is None:
                         break
                     if not first_phrase_marked:
-                        self._runtime.mark_audio_event("first_phrase_ready")
+                        self._runtime.mark_audio_event(
+                            "first_phrase_ready",
+                            detail={
+                                "stream_speak_while_think": True,
+                                "generation_id": fence.generation_id,
+                            },
+                        )
                         first_phrase_marked = True
                     yield accepted_segment
         finally:
@@ -1050,15 +1063,21 @@ def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]
     env_version = os.getenv("LIVEKIT_TURN_DETECTOR_VERSION")
     if not self_hosted and env_version in ("v1", "v1-mini"):
         turn_version = env_version
+    # P1-5: adaptive interruption works with Turn Detector (v1-mini on self-hosted).
+    # Default on for both profiles; still overridable via LIVEKIT_ADAPTIVE_INTERRUPTION.
+    adaptive_default = "true"
     interruption_mode = (
-        "vad"
-        if self_hosted
-        else (
-            "adaptive"
-            if os.getenv("LIVEKIT_ADAPTIVE_INTERRUPTION", "true").lower() == "true"
-            else "vad"
-        )
+        "adaptive"
+        if os.getenv("LIVEKIT_ADAPTIVE_INTERRUPTION", adaptive_default).lower() == "true"
+        else "vad"
     )
+    # P1-6: LiveKit preemptive starts LLM before EOU — keep default off on self-hosted
+    # (historically caused stuck thinking). Streaming phrase→TTS is the safe path.
+    preemptive_default = "false" if self_hosted else "false"
+    preemptive_enabled = (
+        os.getenv("PREEMPTIVE_GENERATION", preemptive_default).lower() == "true"
+    )
+    preemptive_tts = os.getenv("PREEMPTIVE_TTS", "false").lower() == "true"
     return {
         "turn_detection": {"version": turn_version},
         "endpointing": {
@@ -1089,11 +1108,15 @@ def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]
             "backchannel_boundary": (0.50, 1.80),
         },
         "preemptive_generation": {
-            "enabled": False,
-            "preemptive_tts": False,
-            "max_speech_duration": 10.0,
-            "max_retries": 2,
+            "enabled": preemptive_enabled,
+            "preemptive_tts": preemptive_tts and preemptive_enabled,
+            "max_speech_duration": float(
+                os.getenv("PREEMPTIVE_MAX_SPEECH_DURATION_S", "10.0")
+            ),
+            "max_retries": int(os.getenv("PREEMPTIVE_MAX_RETRIES", "2")),
         },
+        # Product flag: fence-gated stream first phrase while LLM continues (not LiveKit preemptive).
+        "stream_speak_while_think": True,
     }
 
 

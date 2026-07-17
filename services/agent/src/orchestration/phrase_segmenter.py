@@ -16,8 +16,9 @@ FIRST_TARGET_MIN = 6
 WEAK_SUBMIT_MIN = 12
 WEAK_SUBMIT_MAX = 28
 FIRST_WEAK_MIN = 6  # first segment may cut earlier for lower TTFB
-FIRST_WAIT_MS = 180
-FIRST_HARD_WAIT_MS = 320
+# P1-6: snappier first audible phrase while LLM is still streaming (边想边说).
+FIRST_WAIT_MS = 120
+FIRST_HARD_WAIT_MS = 260
 
 _MD_STRIP = re.compile(
     r"(```[\s\S]*?```)|(^#{1,6}\s+)|(^[\*\-\+]\s+)|(\[([^\]]+)\]\([^)]+\))|(`+)",

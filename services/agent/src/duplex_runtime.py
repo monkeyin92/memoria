@@ -1426,7 +1426,18 @@ class DuplexRuntime:
                     return
                 spoken = spoken_result_summarizer(accepted)
                 if self._result_speaker is not None and "error" not in accepted:
+                    # P1-6: tool spoken result stays on the same generation fence.
+                    if self.tts is not None:
+                        self.tts.bind_fence(fence)
                     self.update_pending_assistant_text(spoken)
+                    self.mark_audio_event(
+                        "tool_result_same_generation",
+                        detail={
+                            "turn_id": fence.turn_id,
+                            "generation_id": fence.generation_id,
+                            "tool_epoch": fence.tool_epoch,
+                        },
+                    )
                     self._result_speaker(spoken)
                     self.publish_assistant_state("thinking")
             finally:
