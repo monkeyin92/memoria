@@ -28,6 +28,7 @@ from services.agent.src.orchestration.interruption_guard import (
     PlaybackInputGuard,
     interrupt_ack_phrase,
     is_explicit_interrupt,
+    is_interrupt_command_only,
 )
 from services.agent.src.orchestration.orchestrator import CosyPoolHandle, Orchestrator
 from services.agent.src.orchestration.phrase_segmenter import PhraseSegmenter
@@ -855,6 +856,26 @@ class DuplexRuntime:
                 self.session_id,
             )
             return False, "speaker_enrolling"
+        # 「等等」「停一下」「别说了」are control phrases, not chat questions.
+        # If we let them through, the LLM answers「怎么了？」and covers the yield ack.
+        if is_interrupt_command_only(text):
+            self.input_guard.candidate_text = text
+            self.orchestrator.metrics.inc_guarded_user_input("interrupt_command_only")
+            logger.info(
+                "user_turn_ignored reason=interrupt_command_only text=%s session_id=%s",
+                text[:40],
+                self.session_id,
+            )
+            self.mark_audio_event(
+                "interrupt_command_turn_suppressed",
+                detail={"text": text[:40]},
+            )
+            # Ensure semantic ack (cooldown skips if interrupt path already said it).
+            self._spawn(
+                self._maybe_say_interrupt_yield(cause="interrupt_command_turn"),
+                name="interrupt-cmd-yield",
+            )
+            return False, "interrupt_command_only"
         if self.input_guard.enabled and speech_anchored is not None:
             if not speech_anchored or not self._fresh_user_speech:
                 self._fresh_user_speech = False

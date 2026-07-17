@@ -159,6 +159,37 @@ def interrupt_ack_phrase(text: str) -> str:
     return "嗯，你说。"
 
 
+_INTERRUPT_FILLERS = (
+    "嗯",
+    "啊",
+    "呃",
+    "那个",
+    "那个啥",
+    "就是",
+    "我",
+    "你",
+)
+
+
+def is_interrupt_command_only(text: str) -> bool:
+    """True when the utterance is only stop/wait commands (no real question).
+
+    e.g. 「等等」「嗯，等等，等等。」「等一下」→ True
+         「等一下我想问下周三」→ False (has content beyond the command)
+    """
+    t = normalize_short(text)
+    if not t or not is_explicit_interrupt(t):
+        return False
+    remainder = t
+    for p in sorted(INTERRUPT_PREFIXES, key=len, reverse=True):
+        remainder = remainder.replace(p, "")
+    for filler in _INTERRUPT_FILLERS:
+        remainder = remainder.replace(filler, "")
+    remainder = normalize_short(remainder)
+    # Allow at most one leftover char (noise from ASR)
+    return len(remainder) <= 1
+
+
 def count_cjk_chars(text: str) -> int:
     return sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
 

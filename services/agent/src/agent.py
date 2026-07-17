@@ -174,6 +174,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                             "assistant_echo",
                             "non_target_language",
                             "speaker_mismatch",
+                            "interrupt_command_only",
                         }
                         else "user_turn_ignored"
                     ),

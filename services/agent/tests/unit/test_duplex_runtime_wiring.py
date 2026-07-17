@@ -193,6 +193,21 @@ async def test_enrolled_barge_in_rejects_nearby_talker() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pure_wait_phrase_does_not_commit_chat_turn() -> None:
+    """「等等」must not become LLM turn that answers 怎么了."""
+    runtime = DuplexRuntime.create(session_id="no-zenmele")
+    await runtime.orchestrator.ready()
+    accepted, reason = runtime.accept_user_turn("嗯，等等，等等。", speech_anchored=None)
+    assert accepted is False
+    assert reason == "interrupt_command_only"
+    accepted2, reason2 = runtime.accept_user_turn("等一下我想问个事", speech_anchored=None)
+    # Has real content beyond command → normal turn
+    assert accepted2 is True
+    assert reason2 != "interrupt_command_only"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_pending_enrollment_blocks_chat_turns() -> None:
     """Regression: enroll speech must not become generate_reply / skip-enroll race."""
     verifier = SpeakerVerifier(enabled=True, enroll_speech_ms=5000, enroll_timeout_ms=15000)

@@ -24,7 +24,10 @@ def test_explicit_interrupt_prefixes() -> None:
 
 
 def test_interrupt_ack_phrase_by_semantics() -> None:
-    from services.agent.src.orchestration.interruption_guard import interrupt_ack_phrase
+    from services.agent.src.orchestration.interruption_guard import (
+        interrupt_ack_phrase,
+        is_interrupt_command_only,
+    )
 
     assert interrupt_ack_phrase("停一下") == "嗯，你说。"
     assert interrupt_ack_phrase("等等") == "嗯，你说。"
@@ -35,6 +38,13 @@ def test_interrupt_ack_phrase_by_semantics() -> None:
     assert interrupt_ack_phrase("停下") == "好的。"
     assert interrupt_ack_phrase("不要说了") == "好的。"
     assert interrupt_ack_phrase("") == "嗯，你说。"
+
+    assert is_interrupt_command_only("等等") is True
+    assert is_interrupt_command_only("嗯，等等，等等。") is True
+    assert is_interrupt_command_only("等一下") is True
+    assert is_interrupt_command_only("别说了") is True
+    assert is_interrupt_command_only("等一下我想问下周三") is False
+    assert is_interrupt_command_only("今天天气怎么样") is False
 
 
 def test_guard_decisions() -> None:
