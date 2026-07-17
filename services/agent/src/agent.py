@@ -19,8 +19,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_VOICE_REPLY_SENTENCES = 3
-MAX_VOICE_REPLY_CHARS = 96
+# Voice replies stay shorter than chat, but 96/3 cut creative answers mid-stream.
+MAX_VOICE_REPLY_SENTENCES = 8
+MAX_VOICE_REPLY_CHARS = 320
+# Longer budget when user asks for writing / plans / multi-step content.
+MAX_VOICE_REPLY_CHARS_LONGFORM = 560
+MAX_VOICE_REPLY_SENTENCES_LONGFORM = 12
+_LONGFORM_HINTS = (
+    "创作",
+    "写一",
+    "写个",
+    "写段",
+    "故事",
+    "小说",
+    "文案",
+    "诗",
+    "歌词",
+    "详细",
+    "完整",
+    "长一点",
+    "继续写",
+    "大纲",
+    "方案",
+    "计划",
+    "步骤",
+)
 _SENTENCE_ENDINGS = frozenset("。！？；!?")
 TELEMETRY_TOPIC = "voice-agent.telemetry"
 CASCADE_OPUS_MAX_BITRATE = 64_000
@@ -225,11 +248,23 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         reply_budget_exhausted = False
         first_content_marked = False
         first_phrase_marked = False
+        last_user = ""
+        for turn in reversed(self._runtime.orchestrator.context.turns):
+            if turn.role == "user" and turn.content:
+                last_user = turn.content
+                break
+        longform = any(hint in last_user for hint in _LONGFORM_HINTS) or (
+            self._runtime.speech_plan.delivery_mode in {"deliberative", "supportive"}
+        )
+        max_chars = MAX_VOICE_REPLY_CHARS_LONGFORM if longform else MAX_VOICE_REPLY_CHARS
+        max_sentences = (
+            MAX_VOICE_REPLY_SENTENCES_LONGFORM if longform else MAX_VOICE_REPLY_SENTENCES
+        )
 
         def _accept_segment(text: str) -> str | None:
             nonlocal reply_chars, reply_sentences, reply_budget_exhausted
-            remaining_chars = MAX_VOICE_REPLY_CHARS - reply_chars
-            remaining_sentences = MAX_VOICE_REPLY_SENTENCES - reply_sentences
+            remaining_chars = max_chars - reply_chars
+            remaining_sentences = max_sentences - reply_sentences
             if remaining_chars <= 0 or remaining_sentences <= 0:
                 reply_budget_exhausted = True
                 return None
@@ -257,9 +292,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             reply_sentences += sum(ch in _SENTENCE_ENDINGS for ch in fitted)
             if (
                 fitted != text
-                or
-                reply_chars >= MAX_VOICE_REPLY_CHARS
-                or reply_sentences >= MAX_VOICE_REPLY_SENTENCES
+                or reply_chars >= max_chars
+                or reply_sentences >= max_sentences
             ):
                 reply_budget_exhausted = True
             return fitted
@@ -951,8 +985,10 @@ def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]
         "interruption": {
             "enabled": True,
             "mode": interruption_mode,
+            # Slightly longer on self-hosted: short noise/echo was cancelling
+            # mid-reply creative TTS (user hears "突然不说了").
             "min_duration": float(
-                os.getenv("INTERRUPTION_MIN_DURATION_S", "0.40" if self_hosted else "0.25")
+                os.getenv("INTERRUPTION_MIN_DURATION_S", "0.55" if self_hosted else "0.25")
             ),
             "min_words": 0,
             "discard_audio_if_uninterruptible": True,

@@ -329,14 +329,33 @@ async def test_reply_budget_stops_after_three_spoken_sentences(
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
 
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
-        for sentence in ("第一句。", "第二句。", "第三句。", "第四句。", "第五句。"):
+        for sentence in (
+            "第一句。",
+            "第二句。",
+            "第三句。",
+            "第四句。",
+            "第五句。",
+            "第六句。",
+            "第七句。",
+            "第八句。",
+            "第九句。",
+        ):
             yield sentence
 
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 
     output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
 
-    assert output == ["第一句。", "第二句。", "第三句。"]
+    assert output == [
+        "第一句。",
+        "第二句。",
+        "第三句。",
+        "第四句。",
+        "第五句。",
+        "第六句。",
+        "第七句。",
+        "第八句。",
+    ]
 
 
 @pytest.mark.asyncio
@@ -494,7 +513,7 @@ def test_self_hosted_turn_handling_filters_short_echoes_and_reads_timing_env(
     }
     # Keep endpoint above ~1.2s so late FunASR FINAL fragments stay one epoch.
     assert options["endpointing"]["min_delay"] >= 1.20
-    assert options["interruption"]["min_duration"] == 0.40
+    assert options["interruption"]["min_duration"] == 0.55
     assert options["interruption"]["min_words"] == 0
     assert options["interruption"]["false_interruption_timeout"] == 1.50
     assert (
