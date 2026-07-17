@@ -1,0 +1,16 @@
+.git
+.venv
+.coverage
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.DS_Store
+.env
+.env.*
+**/__pycache__
+**/*.py[cod]
+**/node_modules
+**/.npm-cache
+**/dist
+apps/ios
+apps/h5/qa

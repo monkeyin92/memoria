@@ -1,0 +1,1066 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Room, RoomEvent } from "livekit-client";
+
+import {
+  createSession,
+  exchangeOmniSdp,
+  publishOmniTelemetry,
+  notifyRtcRecovered,
+  stopResponse,
+} from "../api.js";
+import { QwenOmniWebRTCTransport } from "../voice/QwenOmniWebRTCTransport.js";
+import { extractInboundAudioStats } from "../voice/webrtcStats.js";
+
+const UI_TOPIC = "voice-agent.ui";
+const TELEMETRY_TOPIC = "voice-agent.telemetry";
+const AGENT_READY_TIMEOUT_MS = 45_000;
+
+const stateLabels = {
+  idle: "轻触我，开始聊聊",
+  connecting: "正在靠近你…",
+  ready: "我在这里",
+  listening: "我在认真听",
+  thinking: "让我想一想",
+  speaking: "正在回应你",
+  interrupted: "好，我先停一下",
+  reconnecting: "正在重新连接",
+  closed: "今天先聊到这里",
+};
+
+function mapServerState(state) {
+  if (state === "ready") return "ready";
+  if (["listening", "user_speaking", "eot_pending"].includes(state)) {
+    return "listening";
+  }
+  if (["thinking", "tool_waiting"].includes(state)) return "thinking";
+  if (state === "speaking") return "speaking";
+  if (["interrupted", "interruption_pending"].includes(state)) {
+    return "interrupted";
+  }
+  if (state === "recovering") return "reconnecting";
+  if (state === "closed") return "closed";
+  return null;
+}
+
+function parseEvent(payload) {
+  try {
+    const event = JSON.parse(new TextDecoder().decode(payload));
+    if (!event || typeof event.type !== "string") return null;
+    if (event.type === "assistant_state") {
+      if (
+        typeof event.session_id !== "string" ||
+        typeof event.state !== "string" ||
+        !Number.isInteger(event.turn_id) ||
+        !Number.isInteger(event.generation_id)
+      ) {
+        return null;
+      }
+      return event;
+    }
+    if (event.type === "transcript_delta") {
+      if (
+        !["user", "assistant"].includes(event.speaker) ||
+        typeof event.text !== "string" ||
+        typeof event.final !== "boolean" ||
+        !Number.isInteger(event.turn_id) ||
+        !Number.isInteger(event.generation_id)
+      ) {
+        return null;
+      }
+      return event;
+    }
+    if (event.type === "audio_trace") {
+      if (
+        typeof event.session_id !== "string" ||
+        typeof event.name !== "string" ||
+        typeof event.status !== "string" ||
+        !Number.isInteger(event.turn_id) ||
+        !Number.isInteger(event.generation_id)
+      ) {
+        return null;
+      }
+      return event;
+    }
+    if (event.type === "assistant_audio") {
+      if (
+        typeof event.session_id !== "string" ||
+        !["duck", "restore"].includes(event.action) ||
+        typeof event.gain !== "number" ||
+        event.gain < 0 ||
+        event.gain > 1 ||
+        !Number.isInteger(event.turn_id) ||
+        !Number.isInteger(event.generation_id)
+      ) {
+        return null;
+      }
+      return event;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function useVoiceSession({
+  userId,
+  onFinalTranscript,
+  voiceReplyEnabled = true,
+  voiceBackend = "cascade",
+}) {
+  const [session, setSession] = useState(null);
+  const [uiState, setUiState] = useState("idle");
+  const [micEnabled, setMicEnabledState] = useState(true);
+  const [transcripts, setTranscripts] = useState([]);
+  const [error, setError] = useState("");
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const [audioDiagnostics, setAudioDiagnostics] = useState([]);
+  const roomRef = useRef(null);
+  const omniTransportRef = useRef(null);
+  const roomHandlersRef = useRef(null);
+  const audioContainerRef = useRef(null);
+  const sessionRef = useRef(null);
+  const attemptRef = useRef(0);
+  const initialReadyRef = useRef(false);
+  const recoveryInFlightRef = useRef(false);
+  const recoveryEpochRef = useRef(0);
+  const roomConnectedRef = useRef(false);
+  const generationRef = useRef(0);
+  const turnRef = useRef(0);
+  const micEnabledRef = useRef(true);
+  const voiceReplyEnabledRef = useRef(voiceReplyEnabled);
+  const reconnectTimerRef = useRef(null);
+  const agentReadyTimerRef = useRef(null);
+  const intentionalEndRef = useRef(false);
+  const persistedRef = useRef(new Set());
+  const finalTranscriptRef = useRef(onFinalTranscript);
+  const audioDiagnosticsRef = useRef([]);
+  const traceStartedAtRef = useRef(0);
+  const firstPlaybackRef = useRef(false);
+  const audioGainRef = useRef(1);
+  const omniAudioElementRef = useRef(null);
+  const statsTrackRef = useRef(null);
+  const statsTimerRef = useRef(null);
+
+  useEffect(() => {
+    finalTranscriptRef.current = onFinalTranscript;
+  }, [onFinalTranscript]);
+
+  useEffect(() => {
+    voiceReplyEnabledRef.current = voiceReplyEnabled;
+    const elements = audioContainerRef.current?.querySelectorAll("audio") || [];
+    elements.forEach((element) => {
+      element.muted = !voiceReplyEnabled;
+    });
+    if (!voiceReplyEnabled) setAudioBlocked(false);
+  }, [voiceReplyEnabled]);
+
+  const applyTranscript = useCallback((line, { authoritative = true } = {}) => {
+    if (line.generation_id < generationRef.current) return;
+    generationRef.current = Math.max(
+      generationRef.current,
+      line.generation_id,
+    );
+    turnRef.current = line.turn_id;
+
+    setTranscripts((current) => {
+      const key = `${line.speaker}:${line.turn_id}:${line.generation_id}`;
+      const index = current.findIndex((item) => item.key === key);
+      if (index >= 0 && !authoritative && current[index].authoritative) {
+        return current;
+      }
+      const next = {
+        key,
+        speaker: line.speaker,
+        text: line.text,
+        final: line.final,
+        heard: line.heard,
+        turnId: line.turn_id,
+        generationId: line.generation_id,
+        authoritative,
+      };
+      if (index < 0) return [...current.slice(-11), next];
+      const copy = [...current];
+      copy[index] = next;
+      return copy;
+    });
+
+    const shouldPersist =
+      authoritative &&
+      line.final &&
+      line.text.trim() &&
+      (line.speaker === "user" || line.heard === true);
+    const persistKey = `${line.speaker}:${line.turn_id}:${line.generation_id}`;
+    if (shouldPersist && !persistedRef.current.has(persistKey)) {
+      persistedRef.current.add(persistKey);
+      finalTranscriptRef.current?.({
+        speaker: line.speaker,
+        text: line.text.trim(),
+        turn_id: line.turn_id,
+        generation_id: line.generation_id,
+      });
+    }
+  }, []);
+
+  const publishAudioDiagnostic = useCallback((room, event) => {
+    if (
+      !roomConnectedRef.current ||
+      !event.session_id ||
+      typeof room?.localParticipant?.publishData !== "function"
+    ) {
+      return;
+    }
+    const payload = new TextEncoder().encode(JSON.stringify(event));
+    void room.localParticipant
+      .publishData(payload, { reliable: true, topic: TELEMETRY_TOPIC })
+      .catch(() => undefined);
+  }, []);
+
+  const recordAudioDiagnostic = useCallback(
+    (name, status = "ok", detail = undefined) => {
+      const sessionId = sessionRef.current?.session_id || "";
+      const event = {
+        type: "audio_trace",
+        source: "client",
+        session_id: sessionId,
+        name,
+        status,
+        turn_id: turnRef.current,
+        generation_id: generationRef.current,
+        elapsed_ms: Math.max(
+          0,
+          Math.round(performance.now() - traceStartedAtRef.current),
+        ),
+        ...(detail ? { detail } : {}),
+      };
+      audioDiagnosticsRef.current = [
+        ...audioDiagnosticsRef.current.slice(-49),
+        event,
+      ];
+      setAudioDiagnostics(audioDiagnosticsRef.current);
+      publishAudioDiagnostic(roomRef.current, event);
+      if (sessionRef.current?.voice_backend === "qwen_omni") {
+        const payload = {
+          name,
+          elapsed_ms: event.elapsed_ms,
+          turn_id: event.turn_id,
+          generation_id: event.generation_id,
+          ...(name === "webrtc_inbound_audio" && detail
+            ? { metrics: detail }
+            : {}),
+        };
+        void publishOmniTelemetry(sessionId, payload).catch(() => undefined);
+      }
+    },
+    [publishAudioDiagnostic],
+  );
+
+  const activateAudioElement = useCallback(
+    (element, isCurrent = () => true) => {
+      if (!isCurrent() || !audioContainerRef.current) return;
+      element.autoplay = true;
+      element.playsInline = true;
+      element.muted = !voiceReplyEnabledRef.current;
+      element.volume = audioGainRef.current;
+      audioContainerRef.current.append(element);
+      recordAudioDiagnostic("audio_attached", "ok", {
+        muted: element.muted,
+      });
+
+      element.addEventListener(
+        "playing",
+        () => {
+          if (isCurrent()) recordAudioDiagnostic("playing");
+        },
+        { once: true },
+      );
+      const onTimeUpdate = () => {
+        if (
+          !isCurrent() ||
+          firstPlaybackRef.current ||
+          element.currentTime <= 0
+        ) {
+          return;
+        }
+        firstPlaybackRef.current = true;
+        element.removeEventListener("timeupdate", onTimeUpdate);
+        recordAudioDiagnostic("first_playback", "ok", {
+          current_time_s: Number(element.currentTime.toFixed(3)),
+        });
+      };
+      element.addEventListener("timeupdate", onTimeUpdate);
+      element.addEventListener(
+        "error",
+        () => {
+          if (isCurrent()) recordAudioDiagnostic("media_error", "error");
+        },
+        { once: true },
+      );
+
+      if (!element.muted) {
+        try {
+          const playback = element.play();
+          playback
+            ?.then(() => {
+              if (!isCurrent()) return;
+              setAudioBlocked(false);
+              recordAudioDiagnostic("play_resolved");
+            })
+            .catch((caught) => {
+              if (!isCurrent()) return;
+              setAudioBlocked(true);
+              recordAudioDiagnostic("play_rejected", "error", {
+                error: caught?.name || "unknown",
+              });
+            });
+        } catch (caught) {
+          if (isCurrent()) {
+            setAudioBlocked(true);
+            recordAudioDiagnostic("play_rejected", "error", {
+              error: caught?.name || "unknown",
+            });
+          }
+        }
+      }
+    },
+    [recordAudioDiagnostic],
+  );
+
+  const attachAudio = useCallback(
+    (track, isCurrent = () => true) => {
+      if (!isCurrent() || track.kind !== "audio") return;
+      activateAudioElement(track.attach(), isCurrent);
+    },
+    [activateAudioElement],
+  );
+
+  const attachOmniAudio = useCallback(
+    (stream, isCurrent = () => true) => {
+      if (!isCurrent()) return;
+      const existing = omniAudioElementRef.current;
+      if (existing) {
+        if (existing.srcObject !== stream) existing.srcObject = stream;
+        return;
+      }
+      const element = document.createElement("audio");
+      element.srcObject = stream;
+      omniAudioElementRef.current = element;
+      activateAudioElement(element, isCurrent);
+    },
+    [activateAudioElement],
+  );
+
+  const stopStatsSampling = useCallback(() => {
+    if (statsTimerRef.current !== null) {
+      window.clearInterval(statsTimerRef.current);
+      statsTimerRef.current = null;
+    }
+    statsTrackRef.current = null;
+  }, []);
+
+  const startStatsSampling = useCallback(
+    (track, isCurrent) => {
+      stopStatsSampling();
+      if (typeof track?.getRTCStatsReport !== "function") return;
+      statsTrackRef.current = track;
+      const sample = async () => {
+        if (!isCurrent() || statsTrackRef.current !== track) return;
+        try {
+          const metrics = extractInboundAudioStats(
+            await track.getRTCStatsReport(),
+          );
+          if (isCurrent() && statsTrackRef.current === track && metrics) {
+            recordAudioDiagnostic("webrtc_inbound_audio", "ok", metrics);
+          }
+        } catch {
+          // Stats are diagnostic-only and must never disturb playback.
+        }
+      };
+      void sample();
+      statsTimerRef.current = window.setInterval(() => void sample(), 5_000);
+    },
+    [recordAudioDiagnostic, stopStatsSampling],
+  );
+
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  const clearAgentReadyTimer = useCallback(() => {
+    if (agentReadyTimerRef.current !== null) {
+      window.clearTimeout(agentReadyTimerRef.current);
+      agentReadyTimerRef.current = null;
+    }
+  }, []);
+
+  const disconnectRoom = useCallback(async (room) => {
+    if (!room) {
+      clearReconnectTimer();
+      clearAgentReadyTimer();
+      setAudioBlocked(false);
+      return;
+    }
+    const isCurrent = roomRef.current === room;
+    const handlers = roomHandlersRef.current;
+    if (handlers?.room === room) {
+      handlers.cleanup();
+      roomHandlersRef.current = null;
+    }
+    if (isCurrent) {
+      clearReconnectTimer();
+      clearAgentReadyTimer();
+      roomRef.current = null;
+      initialReadyRef.current = false;
+      recoveryInFlightRef.current = false;
+      recoveryEpochRef.current += 1;
+      roomConnectedRef.current = false;
+      stopStatsSampling();
+      audioContainerRef.current?.replaceChildren();
+      setAudioBlocked(false);
+    }
+    try {
+      await room.disconnect();
+    } catch {
+      // The local refs are already cleared, so the user can always retry.
+    }
+  }, [clearAgentReadyTimer, clearReconnectTimer, stopStatsSampling]);
+
+  const disconnectOmni = useCallback((transport) => {
+    if (!transport) return;
+    const isCurrent = omniTransportRef.current === transport;
+    if (isCurrent) {
+      clearReconnectTimer();
+      clearAgentReadyTimer();
+      omniTransportRef.current = null;
+      const audioElement = omniAudioElementRef.current;
+      if (audioElement) {
+        audioElement.pause();
+        audioElement.srcObject = null;
+        audioElement.remove();
+        omniAudioElementRef.current = null;
+      }
+      audioContainerRef.current?.replaceChildren();
+      setAudioBlocked(false);
+    }
+    transport.close();
+  }, [clearAgentReadyTimer, clearReconnectTimer]);
+
+  const failReconnect = useCallback(
+    async (room, message) => {
+      if (roomRef.current !== room) return;
+      attemptRef.current += 1;
+      intentionalEndRef.current = true;
+      setError(message);
+      const disconnecting = disconnectRoom(room);
+      sessionRef.current = null;
+      setSession(null);
+      setUiState("closed");
+      await disconnecting;
+    },
+    [disconnectRoom],
+  );
+
+  const failOmni = useCallback(
+    (transport, message) => {
+      if (omniTransportRef.current !== transport) return;
+      attemptRef.current += 1;
+      intentionalEndRef.current = true;
+      setError(message);
+      disconnectOmni(transport);
+      sessionRef.current = null;
+      setSession(null);
+      setUiState("closed");
+    },
+    [disconnectOmni],
+  );
+
+  const resumeAudio = useCallback((enabled = voiceReplyEnabledRef.current) => {
+    voiceReplyEnabledRef.current = enabled;
+    const room = roomRef.current;
+    const omniTransport = omniTransportRef.current;
+    const isCurrent = () =>
+      room
+        ? roomRef.current === room
+        : omniTransportRef.current === omniTransport;
+    let unlockPromise = Promise.resolve();
+    if (enabled && room) {
+      try {
+        unlockPromise = room.startAudio();
+      } catch {
+        unlockPromise = Promise.reject(new Error("audio unlock failed"));
+      }
+    }
+    setAudioBlocked(false);
+    return (async () => {
+      try {
+        await unlockPromise;
+        if (!isCurrent()) return false;
+        recordAudioDiagnostic("audio_unlock", "ok", {
+          can_playback_audio: room?.canPlaybackAudio ?? null,
+        });
+        const activeEnabled = voiceReplyEnabledRef.current;
+        const elements = audioContainerRef.current?.querySelectorAll("audio") || [];
+        await Promise.all(
+          [...elements].map((element) => {
+            element.muted = !activeEnabled;
+            return element.muted ? Promise.resolve() : element.play();
+          }),
+        );
+        return true;
+      } catch {
+        if (isCurrent()) {
+          setAudioBlocked(true);
+          recordAudioDiagnostic("audio_unlock", "error");
+        }
+        return false;
+      }
+    })();
+  }, [recordAudioDiagnostic]);
+
+  const start = useCallback(() => {
+    if (roomRef.current || omniTransportRef.current) return;
+    if (!userId) {
+      setError("匿名身份尚未就绪，请稍后再试");
+      return;
+    }
+    const attempt = attemptRef.current + 1;
+    attemptRef.current = attempt;
+    intentionalEndRef.current = false;
+    initialReadyRef.current = false;
+    recoveryInFlightRef.current = false;
+    recoveryEpochRef.current += 1;
+    roomConnectedRef.current = false;
+    setError("");
+    setAudioBlocked(false);
+    setUiState("connecting");
+    setTranscripts([]);
+    generationRef.current = 0;
+    turnRef.current = 0;
+    micEnabledRef.current = true;
+    setMicEnabledState(true);
+    persistedRef.current.clear();
+    traceStartedAtRef.current = performance.now();
+    firstPlaybackRef.current = false;
+    audioGainRef.current = 1;
+    audioDiagnosticsRef.current = [];
+    setAudioDiagnostics([]);
+
+    const selectedBackend =
+      voiceBackend === "qwen_omni" ? "qwen_omni" : "cascade";
+    if (selectedBackend === "qwen_omni") {
+      let transport;
+      const isCurrent = () =>
+        attemptRef.current === attempt &&
+        omniTransportRef.current === transport;
+      transport = new QwenOmniWebRTCTransport({
+        exchangeSdp: exchangeOmniSdp,
+        onState: (state) => {
+          if (!isCurrent()) return;
+          if (state === "ready") {
+            initialReadyRef.current = true;
+            clearAgentReadyTimer();
+          }
+          setUiState(state);
+        },
+        onTranscript: (line) => {
+          if (!isCurrent() || (line.speaker === "user" && !line.final)) return;
+          applyTranscript(line, { authoritative: true });
+        },
+        onRemoteStream: (stream) => attachOmniAudio(stream, isCurrent),
+        onDiagnostic: (name, status = "ok", detail = undefined) => {
+          if (!isCurrent()) return;
+          const element = omniAudioElementRef.current;
+          if (
+            element &&
+            ["omni_speech_started", "omni_response_cancelled"].includes(name)
+          ) {
+            element.muted = true;
+          } else if (element && name === "omni_response_created") {
+            element.muted = !voiceReplyEnabledRef.current;
+          }
+          recordAudioDiagnostic(name, status, detail);
+        },
+        onError: (message) => {
+          if (isCurrent()) setError(message);
+        },
+        onDisconnected: () => {
+          if (!isCurrent()) return;
+          attemptRef.current += 1;
+          const wasIntentional = intentionalEndRef.current;
+          disconnectOmni(transport);
+          sessionRef.current = null;
+          setSession(null);
+          setUiState("closed");
+          if (!wasIntentional) {
+            setError("连接已经断开，轻触吉祥物可以重新开始");
+          }
+        },
+      });
+      omniTransportRef.current = transport;
+      let preparation;
+      try {
+        preparation = transport.prepare();
+      } catch (caught) {
+        preparation = Promise.reject(caught);
+      }
+      const creation = createSession(userId, selectedBackend);
+      const prepared = preparation.then(
+        () => ({ ok: true }),
+        (caught) => ({ ok: false, caught }),
+      );
+      return (async () => {
+        try {
+          const created = await creation;
+          const preparationResult = await prepared;
+          if (!preparationResult.ok) throw preparationResult.caught;
+          if (!isCurrent()) {
+            disconnectOmni(transport);
+            return;
+          }
+          if (
+            created.voice_backend &&
+            created.voice_backend !== selectedBackend
+          ) {
+            throw new Error("服务端返回了不匹配的语音模式");
+          }
+          sessionRef.current = created;
+          setSession(created);
+          recordAudioDiagnostic("session_created");
+          await transport.connect(created);
+          if (!isCurrent()) return;
+          if (!initialReadyRef.current) {
+            agentReadyTimerRef.current = window.setTimeout(() => {
+              failOmni(transport, "连接超时，请轻触吉祥物再试");
+            }, AGENT_READY_TIMEOUT_MS);
+          }
+        } catch (caught) {
+          if (isCurrent()) {
+            const denied =
+              caught instanceof DOMException && caught.name === "NotAllowedError";
+            failOmni(
+              transport,
+              denied
+                ? "需要麦克风权限，才能听见你说话"
+                : caught instanceof Error
+                  ? caught.message
+                  : "暂时无法开始 Qwen3.5-Omni 对话",
+            );
+          } else {
+            disconnectOmni(transport);
+          }
+        }
+      })();
+    }
+
+    const room = new Room({
+      adaptiveStream: true,
+      dynacast: true,
+      audioCaptureDefaults: {
+        autoGainControl: true,
+        echoCancellation: true,
+        noiseSuppression: true,
+        channelCount: 1,
+      },
+    });
+    roomRef.current = room;
+    const isCurrent = () =>
+      attemptRef.current === attempt && roomRef.current === room;
+    let liveKitUnlockPromise = Promise.resolve();
+    if (voiceReplyEnabledRef.current) {
+      try {
+        liveKitUnlockPromise = room
+          .startAudio()
+          .then(() => {
+            if (isCurrent()) {
+              recordAudioDiagnostic("audio_unlock", "ok", {
+                can_playback_audio: room.canPlaybackAudio ?? null,
+              });
+            }
+          })
+          .catch((caught) => {
+            if (isCurrent()) {
+              setAudioBlocked(true);
+              recordAudioDiagnostic("audio_unlock", "error", {
+                error: caught?.name || "unknown",
+              });
+            }
+          });
+      } catch {
+        setAudioBlocked(true);
+      }
+    }
+    return (async () => {
+      try {
+        const created = await createSession(userId, selectedBackend);
+        if (!isCurrent()) {
+          await disconnectRoom(room);
+          return;
+        }
+        sessionRef.current = created;
+        setSession(created);
+        recordAudioDiagnostic("session_created");
+
+        const onTrackSubscribed = (track) => {
+          if (!isCurrent()) return;
+          if (track.kind === "audio") {
+            recordAudioDiagnostic("track_subscribed");
+          }
+          attachAudio(track, isCurrent);
+          if (track.kind === "audio") startStatsSampling(track, isCurrent);
+        };
+        const onTrackUnsubscribed = (track) => {
+          if (!isCurrent()) return;
+          track.detach().forEach((element) => element.remove());
+          if (statsTrackRef.current === track) stopStatsSampling();
+        };
+        const onDataReceived = (payload, participant, _kind, topic) => {
+          if (!isCurrent()) return;
+          if (!participant?.isAgent || topic !== UI_TOPIC) return;
+          const event = parseEvent(payload);
+          if (!event) return;
+          if (event.type === "audio_trace") {
+            if (event.session_id !== sessionRef.current?.session_id) return;
+            audioDiagnosticsRef.current = [
+              ...audioDiagnosticsRef.current.slice(-49),
+              { ...event, source: event.source || "agent" },
+            ];
+            setAudioDiagnostics(audioDiagnosticsRef.current);
+            return;
+          }
+          if (event.type === "assistant_audio") {
+            if (event.session_id !== sessionRef.current?.session_id) return;
+            if (event.generation_id < generationRef.current) return;
+            audioGainRef.current = Math.min(1, Math.max(0, event.gain));
+            const elements =
+              audioContainerRef.current?.querySelectorAll("audio") || [];
+            elements.forEach((element) => {
+              element.volume = audioGainRef.current;
+            });
+            recordAudioDiagnostic(
+              event.action === "duck" ? "playback_ducked" : "playback_restored",
+              "ok",
+              { gain: audioGainRef.current },
+            );
+            return;
+          }
+          if (event.type === "assistant_state") {
+            if (event.session_id !== sessionRef.current?.session_id) return;
+            if (event.generation_id < generationRef.current) return;
+            const mappedState = mapServerState(event.state);
+            if (!mappedState) return;
+            if (!initialReadyRef.current) {
+              if (event.state !== "ready") return;
+              initialReadyRef.current = true;
+              recordAudioDiagnostic("agent_ready");
+            }
+            clearAgentReadyTimer();
+            clearReconnectTimer();
+            generationRef.current = event.generation_id;
+            turnRef.current = event.turn_id;
+            setUiState(mappedState);
+            return;
+          }
+          if (!initialReadyRef.current) return;
+          if (event.speaker === "user" && !event.final) return;
+          applyTranscript(event, { authoritative: true });
+        };
+        const onTranscriptionReceived = (segments, participant) => {
+          if (!isCurrent() || !initialReadyRef.current) return;
+          if (!participant?.isAgent || !segments.length) return;
+          const text = segments.map((segment) => segment.text).join("");
+          if (!text) return;
+          applyTranscript(
+            {
+              speaker: "assistant",
+              text,
+              final: segments.every((segment) => segment.final),
+              heard: true,
+              turn_id: turnRef.current,
+              generation_id: generationRef.current,
+            },
+            { authoritative: false },
+          );
+        };
+        const onReconnecting = () => {
+          if (!isCurrent()) return;
+          recoveryEpochRef.current += 1;
+          recoveryInFlightRef.current = false;
+          roomConnectedRef.current = false;
+          if (!initialReadyRef.current) {
+            setUiState("connecting");
+            return;
+          }
+          setUiState("reconnecting");
+          clearReconnectTimer();
+          reconnectTimerRef.current = window.setTimeout(() => {
+            void failReconnect(room, "重新连接超时，请轻触吉祥物再试");
+          }, 10_000);
+        };
+        const onReconnected = () => {
+          if (!isCurrent()) return;
+          roomConnectedRef.current = true;
+          if (!initialReadyRef.current) return;
+          if (recoveryInFlightRef.current) return;
+          recoveryInFlightRef.current = true;
+          const recoveryEpoch = recoveryEpochRef.current;
+          const isRecoveryCurrent = () =>
+            isCurrent() && recoveryEpochRef.current === recoveryEpoch;
+          reconnectTimerRef.current ||= window.setTimeout(() => {
+            void failReconnect(room, "重新连接超时，请轻触吉祥物再试");
+          }, 10_000);
+          generationRef.current += 1;
+          void (async () => {
+            try {
+              await notifyRtcRecovered(created.session_id);
+              if (!isRecoveryCurrent()) return;
+              let appliedMicState = micEnabledRef.current;
+              await room.localParticipant.setMicrophoneEnabled(appliedMicState);
+              if (!isRecoveryCurrent()) return;
+              if (appliedMicState !== micEnabledRef.current) {
+                appliedMicState = micEnabledRef.current;
+                await room.localParticipant.setMicrophoneEnabled(
+                  appliedMicState,
+                );
+                if (!isRecoveryCurrent()) return;
+              }
+              if (voiceReplyEnabledRef.current) {
+                try {
+                  await room.startAudio();
+                  if (!isRecoveryCurrent()) return;
+                } catch {
+                  if (isRecoveryCurrent()) setAudioBlocked(true);
+                }
+              }
+            } catch {
+              if (isRecoveryCurrent()) {
+                await failReconnect(room, "重新连接失败，请轻触吉祥物再试");
+              }
+            }
+          })();
+        };
+        const onDisconnected = () => {
+          if (!isCurrent()) return;
+          attemptRef.current += 1;
+          const wasIntentional = intentionalEndRef.current;
+          void disconnectRoom(room);
+          if (!wasIntentional) {
+            setError("连接已经断开，轻触吉祥物可以重新开始");
+          }
+          setSession(null);
+          sessionRef.current = null;
+          setUiState("closed");
+        };
+        const handlers = [
+          [RoomEvent.TrackSubscribed, onTrackSubscribed],
+          [RoomEvent.TrackUnsubscribed, onTrackUnsubscribed],
+          [RoomEvent.DataReceived, onDataReceived],
+          [RoomEvent.TranscriptionReceived, onTranscriptionReceived],
+          [RoomEvent.Reconnecting, onReconnecting],
+          [RoomEvent.Reconnected, onReconnected],
+          [RoomEvent.Disconnected, onDisconnected],
+        ];
+        handlers.forEach(([event, handler]) => room.on(event, handler));
+        roomHandlersRef.current = {
+          room,
+          cleanup: () => {
+            handlers.forEach(([event, handler]) => room.off(event, handler));
+          },
+        };
+
+        const devices = await Room.getLocalDevices("audioinput", true);
+        if (!isCurrent()) {
+          await disconnectRoom(room);
+          return;
+        }
+        if (!devices.length) throw new Error("没有找到可用的麦克风");
+        await room.connect(created.livekit_url, created.participant_token);
+        if (!isCurrent()) {
+          await disconnectRoom(room);
+          return;
+        }
+        roomConnectedRef.current = true;
+        for (const diagnostic of audioDiagnosticsRef.current) {
+          publishAudioDiagnostic(room, {
+            ...diagnostic,
+            session_id: created.session_id,
+          });
+        }
+        recordAudioDiagnostic("room_connected");
+        if (!initialReadyRef.current) {
+          clearAgentReadyTimer();
+          agentReadyTimerRef.current = window.setTimeout(() => {
+            void failReconnect(room, "连接超时，请轻触吉祥物再试");
+          }, AGENT_READY_TIMEOUT_MS);
+        }
+        let appliedMicState = micEnabledRef.current;
+        await room.localParticipant.setMicrophoneEnabled(appliedMicState);
+        if (!isCurrent()) {
+          await disconnectRoom(room);
+          return;
+        }
+        if (appliedMicState !== micEnabledRef.current) {
+          appliedMicState = micEnabledRef.current;
+          await room.localParticipant.setMicrophoneEnabled(appliedMicState);
+          if (!isCurrent()) {
+            await disconnectRoom(room);
+            return;
+          }
+        }
+        await liveKitUnlockPromise;
+        if (!isCurrent()) {
+          await disconnectRoom(room);
+          return;
+        }
+        if (voiceReplyEnabledRef.current) {
+          try {
+            await room.startAudio();
+            if (isCurrent()) {
+              setAudioBlocked(false);
+              recordAudioDiagnostic("audio_unlock", "ok", {
+                can_playback_audio: room.canPlaybackAudio ?? null,
+              });
+            }
+          } catch (caught) {
+            if (isCurrent()) {
+              setAudioBlocked(true);
+              recordAudioDiagnostic("audio_unlock", "error", {
+                error: caught?.name || "unknown",
+              });
+            }
+          }
+        }
+      } catch (caught) {
+        const current = isCurrent();
+        if (current) {
+          attemptRef.current += 1;
+          sessionRef.current = null;
+          setSession(null);
+          const denied =
+            caught instanceof DOMException && caught.name === "NotAllowedError";
+          setError(
+            denied
+              ? "需要麦克风权限，才能听见你说话"
+              : caught instanceof Error
+                ? caught.message
+                : "暂时无法开始对话",
+          );
+          setUiState("closed");
+        }
+        await disconnectRoom(room);
+      }
+    })();
+  }, [
+    applyTranscript,
+    attachAudio,
+    attachOmniAudio,
+    clearAgentReadyTimer,
+    clearReconnectTimer,
+    disconnectOmni,
+    disconnectRoom,
+    failOmni,
+    failReconnect,
+    publishAudioDiagnostic,
+    recordAudioDiagnostic,
+    startStatsSampling,
+    stopStatsSampling,
+    userId,
+    voiceBackend,
+  ]);
+
+  const toggleMic = useCallback(async () => {
+    const room = roomRef.current;
+    const omniTransport = omniTransportRef.current;
+    if (!room && !omniTransport) return;
+    const next = !micEnabledRef.current;
+    micEnabledRef.current = next;
+    setMicEnabledState(next);
+    if (omniTransport) {
+      try {
+        await omniTransport.setMicrophoneEnabled(next);
+      } catch {
+        if (omniTransportRef.current === omniTransport) {
+          micEnabledRef.current = !next;
+          setMicEnabledState(!next);
+          setError("麦克风切换失败");
+        }
+      }
+      return;
+    }
+    if (!roomConnectedRef.current) return;
+    try {
+      await room.localParticipant.setMicrophoneEnabled(next);
+    } catch {
+      if (roomRef.current === room) {
+        micEnabledRef.current = !next;
+        setMicEnabledState(!next);
+        setError("麦克风切换失败");
+      }
+    }
+  }, []);
+
+  const stopAssistant = useCallback(async () => {
+    const room = roomRef.current;
+    const omniTransport = omniTransportRef.current;
+    const sessionId = sessionRef.current?.session_id;
+    if ((!room && !omniTransport) || !sessionId) return;
+    try {
+      if (omniTransport) {
+        omniTransport.cancelResponse();
+        return;
+      }
+      await stopResponse(sessionId);
+    } catch {
+      if (
+        (omniTransport
+          ? omniTransportRef.current === omniTransport
+          : roomRef.current === room) &&
+        sessionRef.current?.session_id === sessionId
+      ) {
+        setError("暂时无法停止回答");
+      }
+    }
+  }, []);
+
+  const end = useCallback(async () => {
+    attemptRef.current += 1;
+    intentionalEndRef.current = true;
+    const room = roomRef.current;
+    const omniTransport = omniTransportRef.current;
+    sessionRef.current = null;
+    setSession(null);
+    setAudioBlocked(false);
+    setUiState("closed");
+    disconnectOmni(omniTransport);
+    await disconnectRoom(room);
+  }, [disconnectOmni, disconnectRoom]);
+
+  useEffect(
+    () => () => {
+      attemptRef.current += 1;
+      intentionalEndRef.current = true;
+      disconnectOmni(omniTransportRef.current);
+      void disconnectRoom(roomRef.current);
+    },
+    [disconnectOmni, disconnectRoom],
+  );
+
+  return {
+    session,
+    uiState,
+    statusLabel: stateLabels[uiState] || stateLabels.ready,
+    micEnabled,
+    transcripts,
+    latestTranscript: transcripts.at(-1) || null,
+    error,
+    audioBlocked,
+    audioDiagnostics,
+    audioContainerRef,
+    start,
+    resumeAudio,
+    toggleMic,
+    stopAssistant,
+    end,
+  };
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://voice-agent.local/schemas/events.schema.json",
+  "title": "VoiceAgentUIEvents",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["type", "session_id", "state", "turn_id", "generation_id", "at"],
+      "properties": {
+        "type": { "const": "assistant_state" },
+        "session_id": { "type": "string" },
+        "state": { "type": "string" },
+        "turn_id": { "type": "integer" },
+        "generation_id": { "type": "integer" },
+        "at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "speaker", "text", "final", "turn_id", "generation_id"],
+      "properties": {
+        "type": { "const": "transcript_delta" },
+        "speaker": { "enum": ["user", "assistant"] },
+        "text": { "type": "string" },
+        "final": { "type": "boolean" },
+        "heard": { "type": "boolean" },
+        "turn_id": { "type": "integer" },
+        "generation_id": { "type": "integer" }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

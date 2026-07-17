@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+from services.agent.src.providers.funasr_protocol import (
+    build_continue_task_context,
+    build_finish_task,
+    build_run_task,
+    conversation_item_to_funasr_context,
+    parse_server_message,
+    timestamps_monotonic,
+    words_to_seconds,
+)
+
+
+def test_run_task_shape() -> None:
+    msg = build_run_task(task_id="t1")
+    assert msg["header"]["action"] == "run-task"
+    assert msg["payload"]["model"] == "fun-asr-realtime"
+    assert msg["payload"]["parameters"]["sample_rate"] == 16000
+    assert msg["payload"]["parameters"]["semantic_punctuation_enabled"] is False
+    assert msg["payload"]["input"] == {}
+
+
+def test_parse_result_generated() -> None:
+    raw = {
+        "header": {"event": "result-generated", "task_id": "t1"},
+        "payload": {
+            "output": {
+                "sentence": {
+                    "begin_time": 170,
+                    "end_time": 920,
+                    "text": "好的，我明白了。",
+                    "heartbeat": False,
+                    "sentence_end": True,
+                    "sentence_id": 1,
+                    "words": [
+                        {"begin_time": 170, "end_time": 295, "text": "好", "punctuation": ""}
+                    ],
+                }
+            }
+        },
+    }
+    ev = parse_server_message(raw)
+    assert ev.event == "result-generated"
+    assert ev.sentence is not None
+    assert ev.sentence.sentence_end is True
+    assert timestamps_monotonic(ev.sentence.words)
+    secs = words_to_seconds(ev.sentence.words)
+    assert abs(secs[0][1] - 0.17) < 1e-9
+
+
+def test_context_redaction() -> None:
+    item = conversation_item_to_funasr_context(
+        {"role": "user", "text": "我的手机是13812345678，住北京市朝阳区建国路88号"}
+    )
+    assert item is not None
+    assert "13812345678" not in str(item)
+    assert item["role"] == "user"
+    assert item["content"] == [{"type": "input_text", "text": "我的手机是[手机号]，[地址]"}]
+
+
+def test_control_messages_and_server_event_branches() -> None:
+    finish = build_finish_task("t")
+    assert finish["header"]["action"] == "finish-task"
+    assert finish["payload"]["input"] == {}
+    assert build_continue_task_context("t", [{"role": "user", "text": "x"}])[
+        "payload"
+    ]["input"]["context"]
+    for event in ("task-started", "task-finished", "task-failed", "future-event"):
+        parsed = parse_server_message(
+            {
+                "header": {"event": event, "task_id": "t"},
+                "payload": {"error": "bad"},
+            }
+        )
+        assert parsed.event == (event if event != "future-event" else "unknown")
+        if event == "task-failed":
+            assert parsed.error_message == "bad"
+    parsed_bytes = parse_server_message(
+        b'{"header":{"event":"task-started","task_id":"t"}}'
+    )
+    assert parsed_bytes.event == "task-started"
+
+
+def test_missing_sentence_invalid_words_and_non_monotonic_timestamps() -> None:
+    missing = parse_server_message(
+        {"header": {"event": "result-generated", "task_id": "t"}, "payload": {}}
+    )
+    assert missing.sentence is None
+    parsed = parse_server_message(
+        {
+            "header": {"event": "result-generated", "task_id": "t"},
+            "payload": {
+                "sentence": {
+                    "text": "乱序",
+                    "words": [
+                        None,
+                        {"begin_ms": 100, "end_ms": 120, "text": "乱"},
+                        {"begin_ms": 50, "end_ms": 40, "text": "序"},
+                    ],
+                }
+            },
+        }
+    )
+    assert parsed.sentence is not None
+    assert not timestamps_monotonic(parsed.sentence.words)
+
+
+def test_context_filters_invalid_role_and_redacts_id_card() -> None:
+    assert conversation_item_to_funasr_context({"role": "system", "text": "x"}) is None
+    item = conversation_item_to_funasr_context(
+        {"role": "assistant", "content": "身份证11010119900101001X"}
+    )
+    assert item is not None
+    assert "11010119900101001X" not in str(item)
+    assert item["content"] == [{"type": "text", "text": "身份证[身份证]"}]
+
+
+def test_task_failed_reads_header_error_message() -> None:
+    parsed = parse_server_message(
+        {
+            "header": {
+                "event": "task-failed",
+                "task_id": "t",
+                "error_code": "InvalidParameter",
+                "error_message": "Missing required parameter payload.input",
+            },
+            "payload": {},
+        }
+    )
+
+    assert parsed.error_message == "Missing required parameter payload.input"

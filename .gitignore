@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+*.egg
+
+# Env / secrets
+.env
+.env.*
+.env.local
+.env.*.local
+!.env.example
+*.pem
+*.key
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+
+# Node
+node_modules/
+apps/web/dist/
+apps/web/coverage/
+*.tsbuildinfo
+
+# Xcode
+apps/ios/.derivedData/
+apps/ios/build/
+apps/ios/**/.derivedData/
+apps/ios/**/build/
+**/xcuserdata/
+*.xcuserstate
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs / local
+*.log
+.cache/
+.npm-cache/
+tmp/
+scratch/
+
+# Docker volumes
+postgres-data/
+redis-data/
+
+# Audio dumps (privacy)
+*.wav
+!services/agent/tests/fixtures/audio/**
+!tests/e2e/fixtures/**

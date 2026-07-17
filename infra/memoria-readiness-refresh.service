@@ -1,0 +1,14 @@
+[Unit]
+Description=Refresh Memoria production readiness evidence
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/memoria/current
+ExecStart=/opt/memoria/current/scripts/refresh_readiness.sh
+Restart=on-failure
+RestartSec=5min

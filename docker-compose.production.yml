@@ -1,0 +1,83 @@
+name: memoria
+
+services:
+  control-api:
+    image: "memoria-control-api:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.control-api
+      args:
+        UV_DEFAULT_INDEX: "${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}"
+    env_file:
+      - /etc/memoria.env
+    environment:
+      ENVIRONMENT: production
+      MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
+      MEMORIA_DB_PATH: /data/memoria.sqlite3
+    command:
+      - /app/.venv/bin/uvicorn
+      - services.control_api.app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "1"
+    ports:
+      - "127.0.0.1:8791:8000"
+    volumes:
+      - type: bind
+        source: /var/lib/memoria
+        target: /data
+    healthcheck:
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3).close()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+
+  agent:
+    image: "memoria-agent:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.agent
+      args:
+        UV_DEFAULT_INDEX: "${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}"
+    env_file:
+      - /etc/memoria.env
+    environment:
+      ENVIRONMENT: production
+      MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
+    depends_on:
+      control-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m

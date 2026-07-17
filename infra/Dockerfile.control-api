@@ -1,0 +1,31 @@
+FROM ghcr.io/astral-sh/uv:0.11.2 AS uv
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    MEMORIA_DB_PATH=/data/memoria.sqlite3
+
+WORKDIR /app
+
+COPY --from=uv /uv /uvx /bin/
+COPY pyproject.toml uv.lock ./
+ARG UV_DEFAULT_INDEX=https://pypi.org/simple
+RUN uv export --frozen --no-dev --no-emit-project --no-header --no-annotate \
+        --output-file /tmp/requirements.production.txt --quiet \
+    && uv venv --python /usr/local/bin/python --no-python-downloads \
+    && uv pip install --python /app/.venv/bin/python \
+        --requirements /tmp/requirements.production.txt \
+        --require-hashes \
+        --default-index "$UV_DEFAULT_INDEX" \
+    && rm /tmp/requirements.production.txt
+
+COPY README.md ./
+COPY services ./services
+COPY packages ./packages
+RUN mkdir -p /data \
+    && chown 65532:65532 /data
+
+EXPOSE 8000
+USER 65532:65532
+CMD ["/app/.venv/bin/uvicorn", "services.control_api.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

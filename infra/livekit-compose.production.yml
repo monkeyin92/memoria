@@ -1,0 +1,33 @@
+name: memoria-livekit
+
+services:
+  livekit:
+    image: livekit/livekit-server:v1.13.3
+    command: ["--config", "/etc/livekit.yaml"]
+    ports:
+      - "127.0.0.1:7880:7880/tcp"
+      - "7882:7882/udp"
+      - "127.0.0.1:8444:8443/tcp"
+    volumes:
+      - /opt/livekit/livekit.yaml:/etc/livekit.yaml:ro
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "3"
+    stop_grace_period: 30s
+    networks:
+      - memoria
+
+networks:
+  memoria:
+    external: true
+    name: memoria_default

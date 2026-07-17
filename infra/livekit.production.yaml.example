@@ -1,0 +1,14 @@
+# Production template. Install as /opt/livekit/livekit.yaml with mode 0600,
+# then replace the placeholder key pair with independently generated values.
+port: 7880
+rtc:
+  tcp_port: 8443
+  udp_port: 7882
+  use_external_ip: true
+  skip_external_ip_validation: true
+  advertise_internal_ip: true
+  tcp_fallback_rtt_threshold: 0
+keys:
+  REPLACE_WITH_API_KEY: REPLACE_WITH_API_SECRET
+logging:
+  level: warn

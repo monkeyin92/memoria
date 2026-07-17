@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Memoria provider smokes every 12 hours
+
+[Timer]
+OnActiveSec=12h
+OnUnitActiveSec=12h
+RandomizedDelaySec=5min
+Persistent=true
+Unit=memoria-readiness-refresh.service
+
+[Install]
+WantedBy=timers.target

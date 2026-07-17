@@ -1,0 +1,78 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv sync --frozen --all-extras
+      - name: Ruff
+        run: uv run ruff check .
+      - name: Mypy
+        run: uv run mypy services --strict
+      - name: Pytest
+        run: uv run pytest --cov=services --cov-report=term-missing
+      - name: Coverage gates
+        run: |
+          uv run coverage report --fail-under=85
+          uv run coverage report --include='services/agent/src/orchestration/*' --fail-under=90
+          uv run coverage report --include='services/agent/src/providers/*_protocol.py' --fail-under=90
+      - name: Offline E2E
+        run: uv run python scripts/run_e2e.py --profile offline
+      - name: Provider smoke (skip without keys)
+        run: uv run python scripts/provider_smoke_test.py
+        env:
+          OFFLINE_MOCK: "true"
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - name: Install
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        working-directory: apps/web
+        run: pnpm exec eslint src --max-warnings 0
+      - name: Test
+        working-directory: apps/web
+        run: pnpm exec vitest run
+      - name: Build
+        working-directory: apps/web
+        run: pnpm exec tsc -b && pnpm exec vite build
+
+  h5:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/h5/package-lock.json
+      - name: Install
+        working-directory: apps/h5
+        run: npm ci
+      - name: Test
+        working-directory: apps/h5
+        run: npm test
+      - name: Build
+        working-directory: apps/h5
+        run: npm run build
