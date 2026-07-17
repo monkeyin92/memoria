@@ -237,6 +237,41 @@ async def test_enrolled_barge_in_rejects_nearby_talker() -> None:
 
 
 @pytest.mark.asyncio
+async def test_turn_commit_rejects_far_field_tablet_audio() -> None:
+    """Quiet far-field media must not become a chat turn even if mel score is mid-band."""
+    from services.agent.tests.unit.test_speaker_verify import _signal_pcm
+    import numpy as np
+
+    verifier = SpeakerVerifier(
+        enabled=True,
+        enroll_speech_ms=1200,
+        enroll_timeout_ms=5000,
+        accept_threshold=0.50,
+        min_verify_speech_ms=400,
+        far_field_rms_ratio=0.32,
+    )
+    verifier.begin_enrollment()
+    verifier.feed_pcm(_signal_pcm(kind="owner", seconds=2.0, seed=61))
+    assert verifier.try_finalize_enrollment() is not None
+    runtime = DuplexRuntime.create(
+        session_id="far-field",
+        speaker_verifier=verifier,
+        input_guard_enabled=True,
+    )
+    await runtime.orchestrator.ready()
+    # Quiet bystander-like audio (tablet across room).
+    far = _signal_pcm(kind="bystander", seconds=1.5, seed=62)
+    samples = np.frombuffer(far, dtype="<i2").astype(np.float32) * 0.10
+    quiet = np.clip(samples, -32767, 32767).astype(np.int16).tobytes()
+    runtime.speaker_verifier.mark_utterance_start()
+    runtime.feed_speaker_pcm(quiet)
+    runtime.speaker_verifier.mark_utterance_end()
+    allowed = runtime._speaker_allows_user_input(context="turn_commit")
+    assert allowed is False
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_pure_wait_phrase_does_not_commit_chat_turn() -> None:
     """「等等」must not become LLM turn that answers 怎么了."""
     runtime = DuplexRuntime.create(session_id="no-zenmele")

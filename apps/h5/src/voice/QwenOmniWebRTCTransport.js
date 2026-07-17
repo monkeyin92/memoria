@@ -37,6 +37,92 @@ export function computeFeedbackGuardMs(metrics = {}) {
 const WELCOME_INSTRUCTIONS =
   "请主动用一句自然、温暖的中文向用户打招呼并邀请用户直接开口，不要解释规则，也不要用固定填充词起音。";
 
+const ENROLL_PROMPT_INSTRUCTIONS =
+  "用一句简短自然的中文请用户用正常音量连续说大约三四秒来登记声纹。" +
+  "可以说：请说——我是主人，请记住我的声音。不要解释技术细节，不要开始闲聊。";
+
+const POST_ENROLL_WELCOME_INSTRUCTIONS =
+  "用一句自然中文确认已经记住用户的声音，并邀请用户直接说需求。不要重复登记流程。";
+
+/**
+ * Intent-style control classification (not exact-phrase equality).
+ * residual length after stripping wait intent ≈ pure stop command.
+ *
+ * @returns {{ kind: "empty"|"chat"|"interrupt_only"|"interrupt_then_chat", ack: string|null }}
+ */
+/**
+ * Prod ASR often mangles「等一下」into English-ish garbage on Omni Plus, e.g.
+ * "Uh, need egg." Treat known mishears + English wait phrases as pure stop.
+ */
+export function isOmniWaitMishear(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return false;
+  if (/need\s*egg|needegg|and\s*egg|an\s*egg/i.test(raw)) return true;
+  if (/^(uh+|um+|er+|ah+)?[,.\s]*(wait|hold(\s*on)?|one\s*sec(ond)?|hang\s*on)\.?$/i.test(raw)) {
+    return true;
+  }
+  if (/^(wait|hold on|one sec|hang on)\b/i.test(raw) && raw.length <= 16) {
+    return true;
+  }
+  return false;
+}
+
+export function classifyOmniControlUtterance(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return { kind: "empty", ack: null };
+
+  // English / garbled wait (Plus ASR of「等一下」).
+  if (isOmniWaitMishear(raw)) {
+    return { kind: "interrupt_only", ack: "嗯，你说。" };
+  }
+
+  const compact = raw.replace(/[。.!！?？,，、\s「」""''…·~～]/g, "");
+
+  // Broad wait/stop intent cues (semantic family, not one fixed sentence).
+  // Also allow truncated ASR like「哎，等。」「嗯停」when the whole utterance is short.
+  const waitCue =
+    /等一下|等下|等等|稍等|等我|你等|停一下|停下|先停|别说了|先别说|暂停|不要说了|别讲了|打住|让我说|听我说|先别讲|你先别|等一等|等会儿|等会/;
+  const shortTruncatedWait =
+    compact.length <= 6 &&
+    /[等停]/.test(compact) &&
+    !/[吗呢么嘛]/.test(compact);
+
+  if (!waitCue.test(compact) && !waitCue.test(raw) && !shortTruncatedWait) {
+    return { kind: "chat", ack: null };
+  }
+
+  let residual = compact
+    .replace(/^(嗯+|啊+|呃+|哦+|额+|哎+|喂+|那个+|就是+|唉+|欸+)+/g, "")
+    .replace(
+      /等一下|等下|等等|稍等一下|稍等|等我一下|等我说完|等我说|等我|停一下|停下|先停一下|先停|别说了|先别说|暂停一下|暂停|你等一下|你等等|你等|让我说|听我说|你先别说|先别说|不要说了|别讲了|打住|先等等|等一等|等会儿|等会|先别讲/g,
+      "",
+    )
+    // Lone truncated 等/停 left after fillers (prod:「哎，等。」).
+    .replace(/^[等停]{1,3}$/g, "")
+    .replace(/[的了呢吧呀啊哦嗯哈哟唉欸]+/g, "");
+
+  // Almost only wait intent left → pure control ack (cascade interrupt_command).
+  if (residual.length <= 4) {
+    const hardStop = /别说了|暂停|不要说|别讲|先别说|打住|先别讲/.test(compact);
+    return {
+      kind: "interrupt_only",
+      ack: hardStop ? "好的。" : "嗯，你说。",
+    };
+  }
+  // Wait + real content (等一下我想问…) — cancel is enough; model may answer content.
+  return { kind: "interrupt_then_chat", ack: null };
+}
+
+/** @deprecated use classifyOmniControlUtterance */
+export function isOmniInterruptCommandOnly(text) {
+  return classifyOmniControlUtterance(text).kind === "interrupt_only";
+}
+
+export function omniInterruptAckPhrase(text) {
+  const c = classifyOmniControlUtterance(text);
+  return c.ack || "嗯，你说。";
+}
+
 const DEFAULT_INSTRUCTIONS = [
   "你是 Memoria，一个温暖、自然的中文语音陪伴助手。",
   "默认只说一到两句、先回应核心；只有用户明确要求详细时再展开。",
@@ -51,6 +137,8 @@ const DEFAULT_INSTRUCTIONS = [
   "听见用户自然笑出声，且话题轻松时，可以先短促、真诚地轻笑一次再回答，但不要机械模仿每次笑声。能自然发出笑声时，不要把“哈哈”逐字念出来；如果不能自然发笑，就直接温暖回应。用户难过、生气、害怕、求助或涉及严肃风险时绝对不要笑，也不要咳嗽。",
   "同一用户问题只生成一轮完整回答，不要在说完后立刻再开第二句新开场。",
   "用户只是“嗯、对、好的”这类附和时继续当前话题，不要误当成新指令。",
+  // Semantic floor for yield (client also hard-forces a short ack when residual is tiny).
+  "若用户明确要你暂停、等等、等一下、停一下、先别说、别说了，你只简短回应“嗯，你说。”或“好的。”，不要继续长篇原话题。",
 ].join("");
 
 function waitForIceGathering(pc) {
@@ -84,7 +172,7 @@ function sessionUpdate(config = {}) {
     type: "session.update",
     session: {
       modalities: ["text", "audio"],
-      voice: config.voice || "Tina",
+      voice: config.voice || "Liora Mira",
       input_audio_format: "pcm",
       output_audio_format: "pcm",
       input_audio_transcription: {
@@ -156,12 +244,24 @@ export class QwenOmniWebRTCTransport {
     this.responsePending = false;
     this.responseSuperseded = false;
     this.cancelledResponseIds = new Set();
+    // Server-side truth: true from response.created until response.done.
+    // Local cancel must NOT clear this early — otherwise response.create races.
+    this.serverResponseBusy = false;
+    /** @type {{kind: string, instructions: string, diagnosticName: string}|null} */
+    this.pendingControlledCreate = null;
+    this.cancelSettleTimer = null;
     this.statsTimer = null;
     this.feedbackGuardTimer = null;
     this.feedbackResponseTimer = null;
     this.feedbackGuardActive = false;
     this.feedbackResponsePending = false;
     this.suppressedUserItemIds = new Set();
+    // "enroll_prompt" | "interrupt_ack" | "post_enroll_welcome" | ""
+    this.controlledResponseKind = "";
+    this.activeResponseStartedMs = 0;
+    this.pendingBargeControl = false;
+    this.lastUserPartialText = "";
+    this.bargeAckTimer = null;
   }
 
   prepare() {
@@ -297,6 +397,10 @@ export class QwenOmniWebRTCTransport {
     this.#stopStatsSampling();
     this.#clearFeedbackTimers();
     this.#clearWelcomeTimer();
+    this.#clearBargeAckTimer();
+    this.#clearCancelSettleTimeout();
+    this.pendingControlledCreate = null;
+    this.serverResponseBusy = false;
     this.commandChannel?.close();
     if (this.clientChannel !== this.commandChannel) this.clientChannel?.close();
     this.speakerGate?.close?.();
@@ -366,7 +470,9 @@ export class QwenOmniWebRTCTransport {
       this.setMicrophoneEnabled(this.micEnabled);
       this.onDiagnostic("agent_ready");
       if (this.speakerGate?.state?.() === "pending") {
+        // Cascade: agent speaks enroll prompt first, then user speaks.
         this.onState("speaker_enroll");
+        this.#requestEnrollPrompt(channel);
         this.#waitSpeakerEnrollThenWelcome(channel);
       } else {
         this.onState("ready");
@@ -383,14 +489,19 @@ export class QwenOmniWebRTCTransport {
       ) {
         return;
       }
-      if (this.feedbackGuardActive) {
+      // Always track user item so 等一下 ASR can still force yield ack.
+      // Feedback window only suppresses auto-reply echo, not control phrases.
+      const underFeedback = this.feedbackGuardActive;
+      if (underFeedback) {
         this.suppressedUserItemIds.add(itemId);
         this.#expectFeedbackResponse();
         this.onDiagnostic("omni_feedback_suppressed");
-        return;
+      } else {
+        this.#clearExpectedFeedbackResponse();
       }
-      this.#clearExpectedFeedbackResponse();
-      this.#suppressWelcome();
+      const enrolling = this.speakerGate?.state?.() === "pending";
+      // Enroll speech must not permanently kill the post-enroll welcome.
+      if (!enrolling) this.#suppressWelcome();
       this.turnId += 1;
       this.userTranscriptIds.set(itemId, {
         turn_id: this.turnId,
@@ -398,18 +509,30 @@ export class QwenOmniWebRTCTransport {
       });
       this.activeUserItemId = itemId;
       this.userSpeaking = true;
+      // Stop any playing audio when user speaks (including enroll prompt).
       if (this.responseActive) {
         this.#cancelActiveResponse();
-      } else if (this.responsePending) {
+        this.controlledResponseKind = "";
+        // Barge-in: arm yield path (Flash/Plus). ASR may mangle「等一下」.
+        if (!enrolling) this.#armBargeControl();
+      } else if (this.responsePending && !this.controlledResponseKind) {
+        // Free-form pending create → supersede; keep controlled creates alive.
         this.responseSuperseded = true;
+        if (!enrolling) this.#armBargeControl();
+      } else if (!enrolling && underFeedback) {
+        // Prod: user says「等一下」right as AI ends → speech lands in feedback
+        // guard. Auto-reply is cancelled as echo, but we still must yield-ack
+        // or the user hears ~5s of dead air (session 01f6e06f ~31–37s).
+        this.#armBargeControl();
       }
       this.onDiagnostic("omni_speech_started");
-      this.onState("listening");
+      this.onState(enrolling ? "speaker_enroll" : "listening");
       return;
     }
     if (event.type === "input_audio_buffer.speech_stopped") {
       const itemId = this.#itemId(event);
-      if (this.suppressedUserItemIds.delete(itemId)) return;
+      // Keep tracking for control even if item was feedback-suppressed.
+      this.suppressedUserItemIds.delete(itemId);
       if (
         itemId !== this.activeUserItemId ||
         !this.userTranscriptIds.has(itemId)
@@ -419,15 +542,36 @@ export class QwenOmniWebRTCTransport {
       this.userSpeaking = false;
       this.onDiagnostic("omni_speech_stopped");
       this.onState("thinking");
+      // If barge-in and we already have a wait-like partial, yield immediately.
+      if (this.pendingBargeControl && this.lastUserPartialText) {
+        const control = classifyOmniControlUtterance(this.lastUserPartialText);
+        if (control.kind === "interrupt_only" && control.ack) {
+          this.#requestInterruptAck(control.ack);
+        }
+      }
+      // Fallback: ASR late/garbled — still say 嗯你说 after short wait.
+      this.#scheduleBargeAckFallback();
       return;
     }
     if (
       event.type === "conversation.item.input_audio_transcription.delta"
     ) {
-      const ids = this.userTranscriptIds.get(this.#itemId(event));
-      if (!ids) return;
+      const itemId = this.#itemId(event);
+      const ids = this.userTranscriptIds.get(itemId);
       const text = `${event.text || ""}${event.stash || ""}` || event.delta;
-      if (text) this.#emitTranscript("user", text, false, false, ids);
+      if (text) this.lastUserPartialText = text;
+      if (ids && text) this.#emitTranscript("user", text, false, false, ids);
+      // Early yield when ASR already looks like pure wait (Flash/Plus same path).
+      if (
+        text &&
+        this.speakerGate?.state?.() !== "pending" &&
+        !this.controlledResponseKind
+      ) {
+        const control = classifyOmniControlUtterance(text);
+        if (control.kind === "interrupt_only" && control.ack) {
+          this.#requestInterruptAck(control.ack);
+        }
+      }
       return;
     }
     if (
@@ -435,39 +579,103 @@ export class QwenOmniWebRTCTransport {
     ) {
       const itemId = this.#itemId(event);
       const ids = this.userTranscriptIds.get(itemId);
-      if (!ids) return;
       if (itemId === this.activeUserItemId) {
         this.userSpeaking = false;
         this.activeUserItemId = "";
       }
-      const text = event.transcript || event.text;
-      if (text) this.#emitTranscript("user", text, true, false, ids);
+      const text = event.transcript || event.text || this.lastUserPartialText;
+      this.lastUserPartialText = "";
+      this.suppressedUserItemIds.delete(itemId);
+      if (ids && text) this.#emitTranscript("user", text, true, false, ids);
       this.userTranscriptIds.delete(itemId);
+      // Intent residual: pure wait → forced short ack.
+      // Flash and Plus share this path — do not require prior tracking ids.
+      if (text && this.speakerGate?.state?.() !== "pending") {
+        const control = classifyOmniControlUtterance(text);
+        if (control.kind === "interrupt_only" && control.ack) {
+          this.#requestInterruptAck(control.ack);
+        } else if (
+          this.pendingBargeControl &&
+          control.kind === "interrupt_then_chat"
+        ) {
+          // Wait + content after barge: cancel already done; no forced ack.
+          this.pendingBargeControl = false;
+        } else {
+          this.pendingBargeControl = false;
+        }
+      }
       return;
     }
     if (event.type === "response.created") {
-      // During enrollment, ignore model replies triggered by registration speech.
-      if (this.speakerGate?.state?.() === "pending") {
-        this.#sendResponseCancel();
-        return;
-      }
       const responseId = this.#responseId(event);
       if (!responseId || this.cancelledResponseIds.has(responseId)) return;
+
+      // Server has an active response until response.done (even if we cancel).
+      this.serverResponseBusy = true;
+
+      // Controlled one-shots (enroll prompt / yield ack / post-enroll) always pass.
+      const controlled = this.controlledResponseKind;
+      if (controlled) {
+        this.controlledResponseKind = "";
+        this.responsePending = false;
+        this.responseSuperseded = false;
+        this.pendingControlledCreate = null;
+        this.generationId += 1;
+        this.responseActive = true;
+        this.activeResponseId = responseId;
+        this.activeResponseStartedMs = performance.now();
+        this.activeItemId = "";
+        this.assistantText = "";
+        this.assistantTextSource = "";
+        this.onDiagnostic("omni_response_created", "ok", { controlled });
+        void this.#sampleStats();
+        this.onState("thinking");
+        return;
+      }
+
+      // Auto VAD / free-form create while we still want a controlled one-shot:
+      // cancel and wait for settle, then flush the queued create.
+      if (this.pendingControlledCreate) {
+        this.#cancelResponseId(responseId);
+        this.#armCancelSettleTimeout();
+        this.onDiagnostic("omni_auto_response_deferred", "ok", {
+          pending: this.pendingControlledCreate.kind,
+        });
+        return;
+      }
+
+      // During enrollment, ignore free-form model replies to registration speech.
+      if (this.speakerGate?.state?.() === "pending") {
+        this.#cancelResponseId(responseId);
+        this.#armCancelSettleTimeout();
+        return;
+      }
       this.responsePending = false;
       if (this.feedbackResponsePending) {
         this.#clearExpectedFeedbackResponse();
         this.#cancelResponseId(responseId);
+        this.#armCancelSettleTimeout();
+        // Echo auto-reply cancelled — if user was trying to yield (等一下),
+        // still queue short ack after server settles (avoid silent hang).
+        if (this.pendingBargeControl) {
+          this.#scheduleBargeAckFallback();
+        }
         this.onState("ready");
         return;
       }
       if (this.userSpeaking || this.responseSuperseded) {
         this.responseSuperseded = false;
         this.#cancelResponseId(responseId);
+        this.#armCancelSettleTimeout();
+        if (this.pendingBargeControl) {
+          this.#scheduleBargeAckFallback();
+        }
         return;
       }
       this.generationId += 1;
       this.responseActive = true;
       this.activeResponseId = responseId;
+      this.activeResponseStartedMs = performance.now();
       this.activeItemId = "";
       this.assistantText = "";
       this.assistantTextSource = "";
@@ -510,18 +718,101 @@ export class QwenOmniWebRTCTransport {
       const responseId = this.#responseId(event);
       if (this.cancelledResponseIds.delete(responseId)) {
         this.onDiagnostic("omni_cancelled_response_done");
+        this.#markServerResponseIdle();
+        this.#tryFlushPendingControlledCreate();
         return;
       }
-      if (!this.#matchesActiveResponse(event)) return;
+      if (!this.#matchesActiveResponse(event)) {
+        // Stale done for a previous id: only release busy if nothing is active.
+        if (!this.responseActive && this.serverResponseBusy) {
+          this.#markServerResponseIdle();
+          this.#tryFlushPendingControlledCreate();
+        }
+        return;
+      }
+      const elapsedMs = this.activeResponseStartedMs
+        ? Math.max(0, performance.now() - this.activeResponseStartedMs)
+        : 0;
+      const textLen = (this.assistantText || "").trim().length;
+      // Prod: ghost free-form responses finish in ~50ms with no text, then user
+      // speaks and we cancel — skip feedback mute to avoid mic flash/race.
+      const ghost =
+        elapsedMs > 0 &&
+        elapsedMs < 280 &&
+        textLen < 2;
       this.#clearActiveResponse();
-      this.#startPostResponseFeedbackGuard();
+      this.#markServerResponseIdle();
+      if (ghost) {
+        this.onDiagnostic("omni_ghost_response_skipped", "ok", {
+          elapsed_ms: Math.round(elapsedMs),
+        });
+      } else {
+        this.#startPostResponseFeedbackGuard();
+      }
       this.onDiagnostic("omni_response_done");
       void this.#sampleStats();
       this.onState("ready");
+      this.#tryFlushPendingControlledCreate();
       return;
     }
     if (event.type === "error") {
-      this.onError("Qwen3.5-Omni 服务暂时不可用，请稍后再试");
+      // Official shape: { type:"error", error:{ type, code, message, param } }
+      // https://help.aliyun.com/zh/model-studio/server-events
+      const err = event.error && typeof event.error === "object" ? event.error : {};
+      const errorType = String(err.type || event.error_type || "").slice(0, 80);
+      const code = String(err.code || event.code || "").slice(0, 80);
+      const message = String(err.message || event.message || "").slice(0, 240);
+      const param = String(err.param || event.param || "").slice(0, 80);
+      // Always log full upstream error for browser DevTools diagnosis.
+      console.error("[omni] upstream error event", {
+        event_id: event.event_id,
+        type: errorType,
+        code,
+        message,
+        param,
+        raw: event,
+      });
+      // Recoverable race: cancel+create before server settled. Re-queue + cancel.
+      if (/already has an active response/i.test(message)) {
+        this.onDiagnostic("omni_active_response_conflict", "error", {
+          type: errorType,
+          code,
+          message,
+          param,
+        });
+        this.responsePending = false;
+        this.controlledResponseKind = "";
+        this.serverResponseBusy = true;
+        this.#sendResponseCancel();
+        this.#armCancelSettleTimeout();
+        // Keep pendingControlledCreate so flush retries after settle.
+        return;
+      }
+      this.onDiagnostic("omni_upstream_error", "error", {
+        type: errorType,
+        code,
+        message,
+        param,
+      });
+      const bits = [code, message].filter(Boolean).join(": ");
+      this.onError(
+        bits
+          ? `Qwen3.5-Omni 上游错误：${bits}`
+          : "Qwen3.5-Omni 服务暂时不可用，请稍后再试",
+      );
+      return;
+    }
+    if (event.type === "conversation.item.input_audio_transcription.failed") {
+      const err = event.error && typeof event.error === "object" ? event.error : {};
+      const code = String(err.code || "").slice(0, 80);
+      const message = String(err.message || "").slice(0, 240);
+      console.error("[omni] transcription failed", { code, message, raw: event });
+      this.onDiagnostic("omni_transcription_failed", "error", {
+        type: "transcription_failed",
+        code,
+        message,
+        param: String(err.param || "").slice(0, 80),
+      });
     }
   }
 
@@ -563,13 +854,46 @@ export class QwenOmniWebRTCTransport {
     this.responseActive = false;
     this.activeResponseId = "";
     this.activeItemId = "";
+    this.activeResponseStartedMs = 0;
+  }
+
+  #markServerResponseIdle() {
+    this.serverResponseBusy = false;
+    this.#clearCancelSettleTimeout();
+  }
+
+  #clearCancelSettleTimeout() {
+    if (this.cancelSettleTimer === null) return;
+    window.clearTimeout(this.cancelSettleTimer);
+    this.cancelSettleTimer = null;
+  }
+
+  /**
+   * If response.done never arrives after cancel, force-release so queued
+   * controlled creates (interrupt ack / welcome) are not stuck forever.
+   */
+  #armCancelSettleTimeout() {
+    this.#clearCancelSettleTimeout();
+    this.cancelSettleTimer = window.setTimeout(() => {
+      this.cancelSettleTimer = null;
+      if (this.closed) return;
+      if (!this.serverResponseBusy && !this.pendingControlledCreate) return;
+      this.onDiagnostic("omni_cancel_settle_timeout");
+      this.serverResponseBusy = false;
+      this.responsePending = false;
+      // Drop local active bookkeeping — server is assumed idle after timeout.
+      if (this.responseActive) this.#clearActiveResponse();
+      this.#tryFlushPendingControlledCreate();
+    }, 900);
   }
 
   #cancelActiveResponse() {
     const responseId = this.activeResponseId;
     if (!this.responseActive || !responseId) return;
     this.#cancelResponseId(responseId);
+    // Keep serverResponseBusy=true until response.done — do not race create.
     this.#clearActiveResponse();
+    this.#armCancelSettleTimeout();
   }
 
   #cancelResponseId(responseId) {
@@ -582,6 +906,147 @@ export class QwenOmniWebRTCTransport {
     if (!this.commandChannel || this.commandChannel.readyState !== "open") return;
     this.commandChannel.send(JSON.stringify({ type: "response.cancel" }));
     this.onDiagnostic("omni_response_cancelled");
+  }
+
+  /**
+   * Queue a controlled one-shot (enroll / interrupt ack / welcome).
+   * Never response.create while the server still has an active response.
+   */
+  #requestControlledResponse(kind, instructions, diagnosticName) {
+    const channel = this.commandChannel;
+    if (!channel || channel.readyState !== "open" || this.closed) return false;
+    // Latest controlled create wins (e.g. delta then completed for same wait).
+    this.pendingControlledCreate = { kind, instructions, diagnosticName };
+    if (this.responseActive) {
+      this.#cancelActiveResponse();
+      this.onDiagnostic("omni_controlled_create_queued", "ok", {
+        kind,
+        reason: "cancel_active",
+      });
+      return true;
+    }
+    if (this.serverResponseBusy) {
+      // Already cancelled locally or mid-flight — wait for settle, nudge cancel.
+      this.#sendResponseCancel();
+      this.#armCancelSettleTimeout();
+      this.onDiagnostic("omni_controlled_create_queued", "ok", {
+        kind,
+        reason: "server_busy",
+      });
+      return true;
+    }
+    if (this.responsePending && !this.controlledResponseKind) {
+      // Free-form create in flight without id yet — supersede when it arrives.
+      this.responseSuperseded = true;
+      this.onDiagnostic("omni_controlled_create_queued", "ok", {
+        kind,
+        reason: "supersede_pending",
+      });
+      return true;
+    }
+    return this.#tryFlushPendingControlledCreate();
+  }
+
+  #tryFlushPendingControlledCreate() {
+    const pending = this.pendingControlledCreate;
+    const channel = this.commandChannel;
+    if (!pending || this.closed) return false;
+    if (!channel || channel.readyState !== "open") return false;
+    if (this.serverResponseBusy || this.responseActive) return false;
+    // Already sent a controlled create and waiting for response.created.
+    if (this.responsePending && this.controlledResponseKind) return false;
+
+    this.responseSuperseded = false;
+    this.userSpeaking = false;
+    this.controlledResponseKind = pending.kind;
+    this.responsePending = true;
+    // Keep pendingControlledCreate until response.created for conflict retry.
+    channel.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          modalities: ["text", "audio"],
+          instructions: pending.instructions,
+        },
+      }),
+    );
+    this.onDiagnostic(pending.diagnosticName, "ok", { kind: pending.kind });
+    this.onState(
+      pending.kind === "enroll_prompt" ? "speaker_enroll" : "thinking",
+    );
+    return true;
+  }
+
+  /** Cascade-like: agent speaks enroll prompt first. */
+  #requestEnrollPrompt(_channel) {
+    this.#requestControlledResponse(
+      "enroll_prompt",
+      ENROLL_PROMPT_INSTRUCTIONS,
+      "omni_enroll_prompt_requested",
+    );
+  }
+
+  /**
+   * Yield after pure wait intent (等等 / 停一下 family), matching cascade.
+   */
+  #clearBargeAckTimer() {
+    if (this.bargeAckTimer === null) return;
+    window.clearTimeout(this.bargeAckTimer);
+    this.bargeAckTimer = null;
+  }
+
+  #armBargeControl() {
+    this.pendingBargeControl = true;
+    this.#clearBargeAckTimer();
+  }
+
+  /**
+   * After barge-in, if final ASR never looks like wait (or is English garbage),
+   * still force a short yield so silence does not feel like a hang.
+   * Only when residual is short / wait-like — not for full questions.
+   */
+  #scheduleBargeAckFallback() {
+    if (!this.pendingBargeControl) return;
+    this.#clearBargeAckTimer();
+    this.bargeAckTimer = window.setTimeout(() => {
+      this.bargeAckTimer = null;
+      if (!this.pendingBargeControl || this.closed) return;
+      if (this.controlledResponseKind === "interrupt_ack") return;
+      const text = this.lastUserPartialText || "";
+      const control = classifyOmniControlUtterance(text);
+      if (control.kind === "interrupt_only" && control.ack) {
+        this.#requestInterruptAck(control.ack);
+        return;
+      }
+      // Empty / ultra-short after barge while AI was talking → treat as stop.
+      const compact = text.replace(/[。.!！?？,，、\s「」""'']/g, "");
+      if (!text || compact.length <= 4 || isOmniWaitMishear(text)) {
+        this.#requestInterruptAck("嗯，你说。");
+      } else {
+        this.pendingBargeControl = false;
+      }
+    }, 700);
+  }
+
+  #requestInterruptAck(phrase) {
+    // Avoid double-firing from delta + completed for the same wait phrase.
+    if (this.controlledResponseKind === "interrupt_ack") return;
+    if (this.pendingControlledCreate?.kind === "interrupt_ack") return;
+    if (
+      this.responseActive &&
+      this.assistantText &&
+      /嗯，?你说|好的/.test(this.assistantText)
+    ) {
+      return;
+    }
+    this.pendingBargeControl = false;
+    this.#clearBargeAckTimer();
+    const ack = (phrase || "").trim() || "嗯，你说。";
+    this.#requestControlledResponse(
+      "interrupt_ack",
+      `用户只是让你暂停、把说话权还给他。你必须只说这句短确认，一个字都不要多：${ack}`,
+      "omni_interrupt_ack_requested",
+    );
   }
 
   #waitSpeakerEnrollThenWelcome(channel) {
@@ -598,13 +1063,16 @@ export class QwenOmniWebRTCTransport {
         this.speakerGate?.forceOpen?.();
         this.onSpeakerEnrolled({ reason: "enroll_timeout", speechMs: 0 });
       }
+      // Enroll speech must not permanently kill post-enroll welcome.
+      this.welcomeSuppressed = false;
+      this.welcomeRequested = false;
       this.onState("ready");
-      this.#armWelcome(channel);
+      this.#armWelcome(channel, { forcePostEnroll: true });
     };
     tick();
   }
 
-  #armWelcome(channel) {
+  #armWelcome(channel, { forcePostEnroll = false } = {}) {
     if (
       this.welcomeRequested ||
       this.welcomeSuppressed ||
@@ -614,10 +1082,12 @@ export class QwenOmniWebRTCTransport {
       return;
     }
     this.onDiagnostic("omni_welcome_armed");
-    const enrolled = this.speakerGate?.state?.() === "enrolled";
+    const enrolled =
+      forcePostEnroll || this.speakerGate?.state?.() === "enrolled";
     const welcomeInstructions = enrolled
-      ? "请用一句自然中文确认声纹登记成功，并邀请用户直接开口说需求。"
+      ? POST_ENROLL_WELCOME_INSTRUCTIONS
       : WELCOME_INSTRUCTIONS;
+    const quietMs = enrolled ? 250 : WELCOME_QUIET_WINDOW_MS;
     this.welcomeTimer = window.setTimeout(() => {
       this.welcomeTimer = null;
       if (
@@ -629,19 +1099,13 @@ export class QwenOmniWebRTCTransport {
         return;
       }
       this.welcomeRequested = true;
-      this.responsePending = true;
-      channel.send(
-        JSON.stringify({
-          type: "response.create",
-          response: {
-            modalities: ["text", "audio"],
-            instructions: welcomeInstructions,
-          },
-        }),
+      this.#requestControlledResponse(
+        enrolled ? "post_enroll_welcome" : "welcome",
+        welcomeInstructions,
+        "omni_welcome_requested",
       );
-      this.onDiagnostic("omni_welcome_requested");
       void this.#sampleStats();
-    }, WELCOME_QUIET_WINDOW_MS);
+    }, quietMs);
   }
 
   #suppressWelcome() {

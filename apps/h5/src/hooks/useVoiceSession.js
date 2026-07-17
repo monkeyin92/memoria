@@ -264,6 +264,27 @@ export function useVoiceSession({
           ...(name === "webrtc_inbound_audio" && detail
             ? { metrics: detail }
             : {}),
+          // Surface DashScope realtime error fields for server-side diagnosis.
+          ...(name === "omni_upstream_error" ||
+          name === "omni_transcription_failed"
+            ? {
+                error_type: String(detail?.type || detail?.error_type || "").slice(
+                  0,
+                  80,
+                ) || null,
+                error_code: String(detail?.code || detail?.error_code || "").slice(
+                  0,
+                  80,
+                ) || null,
+                error_message: String(
+                  detail?.message || detail?.error_message || "",
+                ).slice(0, 240) || null,
+                error_param: String(detail?.param || detail?.error_param || "").slice(
+                  0,
+                  80,
+                ) || null,
+              }
+            : {}),
         };
         void publishOmniTelemetry(sessionId, payload).catch(() => undefined);
       }

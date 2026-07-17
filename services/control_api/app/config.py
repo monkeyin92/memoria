@@ -29,8 +29,9 @@ class ControlSettings(BaseSettings):
     dashscope_api_key: SecretStr = Field(default=SecretStr(""), alias="DASHSCOPE_API_KEY")
     dashscope_workspace_id: str = Field(default="", alias="DASHSCOPE_WORKSPACE_ID")
     # P1-8: fixed Memoria persona voice on Omni (DashScope preset; not free-form clone).
-    # Cherry is a warmer zh/en-friendly realtime preset; override via env.
-    qwen_omni_voice: str = Field(default="Cherry", alias="QWEN_OMNI_VOICE")
+    # Qwen3.5-Omni Realtime voice (not Qwen-TTS names like Cherry).
+    # Liora Mira = 清欢，温柔女声（官方 Omni 音色表）.
+    qwen_omni_voice: str = Field(default="Liora Mira", alias="QWEN_OMNI_VOICE")
     # Optional custom/cloned voice id from DashScope voice-clone product; wins over preset.
     qwen_omni_voice_clone_id: str = Field(default="", alias="QWEN_OMNI_VOICE_CLONE_ID")
     qwen_omni_persona_label: str = Field(

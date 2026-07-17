@@ -7,6 +7,7 @@ import struct
 
 import numpy as np
 from services.agent.src.orchestration.speaker_verify import (
+    SpeakerScore,
     SpeakerVerifier,
     cosine_similarity,
     embed_pcm,
@@ -101,6 +102,104 @@ def test_quiet_pcm_has_low_speech_ms() -> None:
     quiet = struct.pack("<" + "h" * 16000, *([0] * 16000))
     assert speech_ms_from_pcm(quiet) < 200
     assert embed_pcm(quiet) is None
+
+
+def test_far_field_rms_rejects_quiet_tablet_like_audio() -> None:
+    """Enrollment is close-mic; quieter continuous audio must look far-field."""
+    verifier = SpeakerVerifier(
+        enabled=True,
+        enroll_speech_ms=1200,
+        enroll_timeout_ms=5000,
+        accept_threshold=0.55,
+        min_verify_speech_ms=400,
+        far_field_rms_ratio=0.28,
+    )
+    verifier.begin_enrollment()
+    # Loud near-field owner enroll.
+    owner = _signal_pcm(kind="owner", seconds=2.0, seed=41)
+    # Boost amplitude ~owner loudness already 0.22; ensure high RMS.
+    verifier.feed_pcm(owner)
+    assert verifier.try_finalize_enrollment() is not None
+    assert verifier.owner_ref_rms > 0.05
+
+    # Quiet far-field-ish signal (scale down heavily) + force low match score.
+    far = _signal_pcm(kind="bystander", seconds=1.5, seed=42)
+    samples = np.frombuffer(far, dtype="<i2").astype(np.float32) * 0.12
+    far_quiet = np.clip(samples, -32767, 32767).astype(np.int16).tobytes()
+    verifier.mark_utterance_start()
+    verifier.feed_pcm(far_quiet)
+    verifier.mark_utterance_end()
+    score = verifier.score_latest_utterance()
+    # If embed still scores high by chance, construct a low-score quiet blip.
+    if score.score >= 0.50:
+        score = SpeakerScore(
+            0.30,
+            False,
+            "mismatch",
+            score.speech_ms,
+            rms=score.rms,
+            duty=score.duty,
+            near_ms=score.near_ms,
+            far_ms=score.far_ms,
+        )
+    assert verifier.is_far_field(score) is True
+
+
+def test_far_field_does_not_reject_strong_owner_match_when_softer() -> None:
+    """Prod regression: post-enroll first turn score~0.70 rms~0.4×ref must pass."""
+    verifier = SpeakerVerifier(
+        enabled=True,
+        accept_threshold=0.58,
+        far_field_rms_ratio=0.28,
+    )
+    verifier.owner_ref_rms = 0.15
+    soft_owner = SpeakerScore(
+        0.70,
+        True,
+        "match",
+        500,
+        rms=0.06,
+        duty=0.5,
+        near_ms=220,
+        far_ms=280,
+    )
+    assert verifier.is_far_field(soft_owner) is False
+
+
+def test_continuous_media_detector_on_long_high_duty() -> None:
+    verifier = SpeakerVerifier(enabled=True)
+    # Force high duty/speech_ms regardless of exact energy path.
+    score = SpeakerScore(0.5, False, "mismatch", 3000, rms=0.1, duty=0.85)
+    assert verifier.looks_like_continuous_media(score) is True
+    short = SpeakerScore(0.5, False, "mismatch", 800, rms=0.1, duty=0.5)
+    assert verifier.looks_like_continuous_media(short) is False
+
+
+def test_media_polluted_when_far_field_dominates_near() -> None:
+    """Prod: tablet video (far) + short owner「等一下」(near) must not chat-commit."""
+    verifier = SpeakerVerifier(enabled=True, owner_ref_rms=0.16)
+    polluted = SpeakerScore(
+        0.70,
+        True,
+        "match",
+        8000,
+        rms=0.05,
+        duty=0.8,
+        near_ms=600,
+        far_ms=7000,
+    )
+    assert verifier.is_media_polluted(polluted) is True
+    clean = SpeakerScore(
+        0.70,
+        True,
+        "match",
+        1200,
+        rms=0.14,
+        duty=0.5,
+        near_ms=1000,
+        far_ms=200,
+    )
+    assert verifier.is_media_polluted(clean) is False
 
 
 def test_zero_pcm_enroll_times_out_with_wall_clock_or_force() -> None:

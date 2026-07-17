@@ -340,45 +340,114 @@ class DuplexRuntime:
                     return False
                 return True
 
-        thr = float(self.speaker_verifier.accept_threshold)
-        # Dual-window consensus: tablet/TV often scores mid-band on one window only.
-        # Owner speech usually scores high on both utterance and rolling PCM.
-        best = max(utt.score, roll.score) if utt.reason != "too_short" else score.score
-        worst = (
-            min(utt.score, roll.score)
-            if utt.reason not in {"too_short", "embed_failed"}
-            and roll.reason not in {"too_short", "embed_failed"}
-            else score.score
-        )
-        hard_ok = score.accepted or (
-            utt.reason not in {"too_short", "embed_failed"}
-            and roll.reason not in {"too_short", "embed_failed"}
-            and worst >= thr
-        )
-        # Soft margin only for full turns, and only when *both* windows are near thr.
-        # Previous thr-0.15 (~0.37 floor) let nearby video audio in.
-        soft_floor = max(0.48, thr - 0.06)
-        soft_ok = (
-            context == "turn_commit"
-            and not hard_ok
-            and score.reason == "mismatch"
-            and score.speech_ms >= max(600, int(self.speaker_verifier.min_verify_speech_ms))
-            and best >= thr - 0.03
-            and worst >= soft_floor
-        )
-        if hard_ok or soft_ok:
-            if soft_ok:
+        # Near-field / media-pollution gates (turn_commit): tablet/TV often rides
+        # under a short owner phrase (「等一下」) and used to pass dual-window.
+        if context == "turn_commit":
+            reject_reason: str | None = None
+            if self.speaker_verifier.is_far_field(score):
+                reject_reason = "far_field"
+            elif self.speaker_verifier.is_media_polluted(score):
+                reject_reason = "media_polluted"
+            elif score.reason == "far_field":
+                reject_reason = "far_field"
+            if reject_reason is not None:
+                self.orchestrator.metrics.inc_guarded_user_input(f"speaker_{reject_reason}")
                 logger.info(
-                    "speaker_soft_accept context=%s utt=%.3f roll=%.3f thr=%.3f "
-                    "soft_floor=%.3f speech_ms=%s session_id=%s",
+                    "speaker_reject context=%s reason=%s utt=%.3f roll=%.3f "
+                    "rms=%.4f ref_rms=%.4f near_ms=%s far_ms=%s speech_ms=%s "
+                    "session_id=%s",
                     context,
+                    reject_reason,
                     utt.score,
                     roll.score,
-                    thr,
-                    soft_floor,
+                    score.rms,
+                    self.speaker_verifier.owner_ref_rms,
+                    score.near_ms,
+                    score.far_ms,
                     score.speech_ms,
                     self.session_id,
                 )
+                self.mark_audio_event(
+                    "speaker_rejected",
+                    status="ignored",
+                    detail={
+                        "context": context,
+                        "reason": reject_reason,
+                        "utt": round(utt.score, 4),
+                        "roll": round(roll.score, 4),
+                        "rms": round(score.rms, 5),
+                        "ref_rms": round(self.speaker_verifier.owner_ref_rms, 5),
+                        "near_ms": score.near_ms,
+                        "far_ms": score.far_ms,
+                        "speech_ms": score.speech_ms,
+                    },
+                )
+                self._publish(
+                    {
+                        "type": "speaker_reject",
+                        "session_id": self.session_id,
+                        "context": context,
+                        "reason": reject_reason,
+                        "score": round(score.score, 4),
+                        "utt": round(utt.score, 4),
+                        "roll": round(roll.score, 4),
+                        "speech_ms": score.speech_ms,
+                        "at": datetime.now(UTC).isoformat(),
+                    }
+                )
+                return False
+
+        thr = float(self.speaker_verifier.accept_threshold)
+        # Continuous tablet/TV: long high-duty audio needs a higher match bar.
+        media_like = self.speaker_verifier.looks_like_continuous_media(
+            roll if roll.speech_ms >= utt.speech_ms else score
+        )
+        if media_like:
+            thr = min(0.92, thr + 0.10)
+
+        dual_ok = (
+            utt.reason not in {"too_short", "embed_failed"}
+            and roll.reason not in {"too_short", "embed_failed"}
+        )
+        # Dual-window consensus: never accept on a single mid-band window.
+        # Owner usually scores high on both utterance and rolling PCM.
+        best = max(utt.score, roll.score) if dual_ok else score.score
+        worst = min(utt.score, roll.score) if dual_ok else score.score
+        if context == "turn_commit":
+            # Chat turns: both windows must clear thr (tablet video was getting in
+            # via single-window score.accepted).
+            hard_ok = dual_ok and worst >= thr
+        else:
+            # Barge-in / interrupt: slightly more lenient so owner can stop TTS.
+            hard_ok = score.accepted or (dual_ok and worst >= thr)
+
+        # Soft margin only for short owner turns near thr — not for continuous media.
+        soft_floor = thr - 0.02
+        soft_ok = (
+            context == "turn_commit"
+            and not hard_ok
+            and dual_ok
+            and not media_like
+            and score.reason == "mismatch"
+            and score.speech_ms >= max(700, int(self.speaker_verifier.min_verify_speech_ms))
+            and best >= thr
+            and worst >= soft_floor
+        )
+        if hard_ok or soft_ok:
+            logger.info(
+                "speaker_accept context=%s soft=%s utt=%.3f roll=%.3f thr=%.3f "
+                "near_ms=%s far_ms=%s speech_ms=%s session_id=%s",
+                context,
+                soft_ok,
+                utt.score,
+                roll.score,
+                thr,
+                score.near_ms,
+                score.far_ms,
+                score.speech_ms,
+                self.session_id,
+            )
+            if soft_ok:
                 self.mark_audio_event(
                     "speaker_soft_accept",
                     detail={
@@ -388,6 +457,8 @@ class DuplexRuntime:
                         "threshold": thr,
                         "soft_floor": soft_floor,
                         "speech_ms": score.speech_ms,
+                        "near_ms": score.near_ms,
+                        "far_ms": score.far_ms,
                     },
                 )
             return True
@@ -395,12 +466,14 @@ class DuplexRuntime:
         self.orchestrator.metrics.inc_guarded_user_input(f"speaker_{score.reason}")
         logger.info(
             "speaker_reject context=%s reason=%s utt=%.3f roll=%.3f "
-            "speech_ms=%s session_id=%s",
+            "speech_ms=%s thr=%.3f media_like=%s session_id=%s",
             context,
             score.reason,
             utt.score,
             roll.score,
             score.speech_ms,
+            thr,
+            media_like,
             self.session_id,
         )
         self.mark_audio_event(
@@ -412,6 +485,8 @@ class DuplexRuntime:
                 "utt": round(utt.score, 4),
                 "roll": round(roll.score, 4),
                 "speech_ms": score.speech_ms,
+                "threshold": thr,
+                "media_like": media_like,
             },
         )
         self._publish(

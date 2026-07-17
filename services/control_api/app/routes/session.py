@@ -121,9 +121,17 @@ class OmniTelemetryBody(BaseModel):
         "first_playback",
         "media_error",
         "omni_session_created",
+        "omni_ab_profile",
         "omni_welcome_armed",
         "omni_welcome_requested",
         "omni_welcome_suppressed",
+        "omni_enroll_prompt_requested",
+        "omni_interrupt_ack_requested",
+        "omni_controlled_create_queued",
+        "omni_auto_response_deferred",
+        "omni_active_response_conflict",
+        "omni_cancel_settle_timeout",
+        "omni_ghost_response_skipped",
         "omni_playout_buffer_configured",
         "omni_feedback_guard_started",
         "omni_feedback_suppressed",
@@ -133,12 +141,19 @@ class OmniTelemetryBody(BaseModel):
         "omni_response_cancelled",
         "omni_cancelled_response_done",
         "omni_response_done",
+        "omni_upstream_error",
+        "omni_transcription_failed",
         "webrtc_inbound_audio",
     ]
     elapsed_ms: int = Field(ge=0, le=24 * 60 * 60 * 1000)
     turn_id: int = Field(ge=0)
     generation_id: int = Field(ge=0)
     metrics: WebRTCMetrics | None = None
+    # Optional DashScope realtime error fields (short, no audio/credentials).
+    error_type: str | None = Field(default=None, max_length=80)
+    error_code: str | None = Field(default=None, max_length=80)
+    error_message: str | None = Field(default=None, max_length=240)
+    error_param: str | None = Field(default=None, max_length=80)
 
 
 @router.post("", response_model=CreateSessionResponse | CreateOmniSessionResponse)
@@ -178,7 +193,7 @@ async def create_session(
         )
         # P1-8: fixed persona voice; optional clone id from DashScope voice product.
         clone_id = (getattr(settings, "qwen_omni_voice_clone_id", None) or "").strip()
-        persona_voice = clone_id or (settings.qwen_omni_voice.strip() or "Cherry")
+        persona_voice = clone_id or (settings.qwen_omni_voice.strip() or "Liora Mira")
         persona_label = (
             getattr(settings, "qwen_omni_persona_label", None) or "Memoria 人设声"
         ).strip() or "Memoria 人设声"
@@ -309,13 +324,18 @@ async def publish_omni_telemetry(
         raise HTTPException(status_code=409, detail="session does not use Qwen Omni")
     telemetry_logger.info(
         "omni_realtime_telemetry session_id=%s name=%s elapsed_ms=%s "
-        "turn_id=%s generation_id=%s metrics=%s",
+        "turn_id=%s generation_id=%s metrics=%s "
+        "error_type=%s error_code=%s error_message=%s error_param=%s",
         session_id,
         body.name,
         body.elapsed_ms,
         body.turn_id,
         body.generation_id,
         body.metrics.model_dump(exclude_none=True) if body.metrics else {},
+        body.error_type,
+        body.error_code,
+        body.error_message,
+        body.error_param,
     )
     return Response(status_code=204)
 
@@ -380,15 +400,31 @@ async def _exchange_omni_sdp(
         raise HTTPException(status_code=502, detail="Qwen3.5-Omni 建连失败") from exc
 
     if response.status_code == 429:
+        body_head = (response.text or "")[:300]
+        logger.warning(
+            "Qwen Omni SDP exchange rate-limited status=%s body=%s",
+            response.status_code,
+            body_head,
+        )
         raise HTTPException(status_code=503, detail="Qwen3.5-Omni 暂时繁忙")
     if response.status_code < 200 or response.status_code >= 300:
-        logger.warning("Qwen Omni SDP exchange failed with status %s", response.status_code)
+        body_head = (response.text or "")[:400]
+        logger.warning(
+            "Qwen Omni SDP exchange failed status=%s body=%s",
+            response.status_code,
+            body_head,
+        )
         raise HTTPException(status_code=502, detail="Qwen3.5-Omni 建连失败")
     answer_sdp = response.content
     if (
         not answer_sdp.lstrip().startswith(b"v=0")
         or len(answer_sdp) > OMNI_MAX_SDP_BYTES
     ):
+        logger.warning(
+            "Qwen Omni SDP answer invalid status=%s body_head=%s",
+            response.status_code,
+            (answer_sdp[:120] if answer_sdp else b"").decode("utf-8", errors="replace"),
+        )
         raise HTTPException(status_code=502, detail="Qwen3.5-Omni 返回了无效连接响应")
     return answer_sdp
 

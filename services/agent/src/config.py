@@ -127,9 +127,9 @@ class AgentSettings(BaseSettings):
         alias="SPEAKER_ENROLL_TIMEOUT_MS",
     )
     speaker_accept_threshold: float = Field(
-        # Balance: owner often ~0.55–0.85; tablet/TV mid-band. Dual-window +
-        # narrow soft margin reject nearby media without killing owner turns.
-        default=0.55,
+        # Balance: owner near-field often ~0.60–0.90; tablet/TV mid-band + quieter.
+        # Dual-window consensus + far-field RMS + continuous-media thr boost.
+        default=0.58,
         ge=0.35,
         le=0.95,
         alias="SPEAKER_ACCEPT_THRESHOLD",

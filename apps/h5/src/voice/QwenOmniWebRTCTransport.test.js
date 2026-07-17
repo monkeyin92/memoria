@@ -99,6 +99,7 @@ function callbacks() {
     onTranscript: vi.fn(),
     onRemoteStream: vi.fn(),
     onDiagnostic: vi.fn(),
+    onError: vi.fn(),
     onDisconnected: vi.fn(),
   };
 }
@@ -297,6 +298,260 @@ describe("QwenOmniWebRTCTransport", () => {
     }
   });
 
+  it("requests short yield ack for wait intent variants (not exact enum)", async () => {
+    const track = { kind: "audio", enabled: true, stop: vi.fn() };
+    const stream = { getAudioTracks: () => [track], getTracks: () => [track] };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    });
+    const events = callbacks();
+    const transport = new QwenOmniWebRTCTransport(events);
+    try {
+      await transport.prepare();
+      // Disable client speaker gate so we do not sit in enroll pending.
+      transport.speakerGate = {
+        state: () => "open",
+        close: () => undefined,
+        forceOpen: () => undefined,
+      };
+      await transport.connect({
+        session_id: "omni-session",
+        config: { voice: "Liora Mira" },
+      });
+      const txt = new FakeDataChannel("txt");
+      peerConnections[0].emitDataChannel(txt);
+      txt.emit({ type: "session.created" });
+      txt.emit({ type: "session.updated" });
+      // Truncated prod ASR must still force yield ack.
+      txt.emit({
+        type: "input_audio_buffer.speech_started",
+        item_id: "wait-0",
+      });
+      txt.emit({
+        type: "conversation.item.input_audio_transcription.completed",
+        item_id: "wait-0",
+        transcript: "哎，等。",
+      });
+      expect(
+        txt.sent.filter(({ type }) => type === "response.create").at(-1)
+          ?.response?.instructions,
+      ).toContain("嗯，你说");
+      // Plus often mangles「等一下」to English garbage.
+      txt.emit({ type: "response.created", response: { id: "ans-1" } });
+      const createsAfterFirst = txt.sent.filter(
+        ({ type }) => type === "response.create",
+      ).length;
+      txt.emit({
+        type: "input_audio_buffer.speech_started",
+        item_id: "wait-egg",
+      });
+      // Barge cancels ans-1; controlled create must wait for response.done.
+      txt.emit({
+        type: "conversation.item.input_audio_transcription.completed",
+        item_id: "wait-egg",
+        transcript: "Uh, need egg.",
+      });
+      expect(
+        txt.sent.filter(({ type }) => type === "response.create"),
+      ).toHaveLength(createsAfterFirst);
+      expect(events.onDiagnostic).toHaveBeenCalledWith(
+        "omni_controlled_create_queued",
+        "ok",
+        expect.objectContaining({ kind: "interrupt_ack" }),
+      );
+      txt.emit({ type: "response.done", response: { id: "ans-1" } });
+      expect(
+        txt.sent.filter(({ type }) => type === "response.create").at(-1)
+          ?.response?.instructions,
+      ).toContain("嗯，你说");
+      txt.emit({ type: "response.created", response: { id: "ans-egg" } });
+      txt.emit({ type: "response.done", response: { id: "ans-egg" } });
+      txt.emit({
+        type: "input_audio_buffer.speech_started",
+        item_id: "wait-1",
+      });
+      txt.emit({
+        type: "conversation.item.input_audio_transcription.completed",
+        item_id: "wait-1",
+        transcript: "你等一下啊",
+      });
+      const creates = txt.sent.filter(({ type }) => type === "response.create");
+      expect(creates.length).toBeGreaterThanOrEqual(1);
+      const ack = creates.at(-1);
+      expect(ack.response.instructions).toContain("嗯，你说");
+      expect(events.onDiagnostic).toHaveBeenCalledWith(
+        "omni_interrupt_ack_requested",
+        "ok",
+        expect.objectContaining({ kind: "interrupt_ack" }),
+      );
+    } finally {
+      transport.close();
+    }
+  });
+
+  it("serializes interrupt_ack create after cancel settles (no active-response race)", async () => {
+    const track = { kind: "audio", enabled: true, stop: vi.fn() };
+    const stream = { getAudioTracks: () => [track], getTracks: () => [track] };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    });
+    const events = callbacks();
+    const transport = new QwenOmniWebRTCTransport(events);
+    try {
+      await transport.prepare();
+      transport.speakerGate = {
+        state: () => "open",
+        close: () => undefined,
+        forceOpen: () => undefined,
+      };
+      await transport.connect({
+        session_id: "omni-session",
+        config: { voice: "Liora Mira" },
+      });
+      const txt = new FakeDataChannel("txt");
+      peerConnections[0].emitDataChannel(txt);
+      txt.emit({ type: "session.created" });
+      txt.emit({ type: "session.updated" });
+
+      // AI is speaking.
+      txt.emit({ type: "response.created", response: { id: "ai-talk" } });
+      txt.emit({
+        type: "response.audio_transcript.delta",
+        response_id: "ai-talk",
+        item_id: "ai-item",
+        delta: "我继续说很长一段",
+      });
+
+      // User barges with wait intent.
+      txt.emit({
+        type: "input_audio_buffer.speech_started",
+        item_id: "barge-wait",
+      });
+      expect(txt.sent.some(({ type }) => type === "response.cancel")).toBe(true);
+      const createsBeforeAck = txt.sent.filter(
+        ({ type }) => type === "response.create",
+      ).length;
+
+      txt.emit({
+        type: "conversation.item.input_audio_transcription.completed",
+        item_id: "barge-wait",
+        transcript: "等一下",
+      });
+      // Must NOT create while server still has active response.
+      expect(
+        txt.sent.filter(({ type }) => type === "response.create"),
+      ).toHaveLength(createsBeforeAck);
+      expect(events.onError).not.toHaveBeenCalled();
+
+      // Simulate the race error if a create had been sent early — soft recover.
+      txt.emit({
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          code: "invalid_request_error",
+          message: "Conversation already has an active response",
+        },
+      });
+      expect(events.onError).not.toHaveBeenCalled();
+      expect(events.onDiagnostic).toHaveBeenCalledWith(
+        "omni_active_response_conflict",
+        "error",
+        expect.objectContaining({
+          message: expect.stringContaining("active response"),
+        }),
+      );
+
+      // Server settles → flush interrupt ack create.
+      txt.emit({ type: "response.done", response: { id: "ai-talk" } });
+      const ackCreate = txt.sent
+        .filter(({ type }) => type === "response.create")
+        .at(-1);
+      expect(ackCreate?.response?.instructions).toContain("嗯，你说");
+      expect(events.onDiagnostic).toHaveBeenCalledWith(
+        "omni_interrupt_ack_requested",
+        "ok",
+        expect.objectContaining({ kind: "interrupt_ack" }),
+      );
+    } finally {
+      transport.close();
+    }
+  });
+
+  it("yields short ack when wait lands in post-response feedback guard", async () => {
+    vi.useFakeTimers();
+    const track = { kind: "audio", enabled: true, stop: vi.fn() };
+    const stream = { getAudioTracks: () => [track], getTracks: () => [track] };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    });
+    const events = callbacks();
+    const transport = new QwenOmniWebRTCTransport(events);
+    try {
+      await transport.prepare();
+      transport.speakerGate = {
+        state: () => "open",
+        close: () => undefined,
+        forceOpen: () => undefined,
+      };
+      await transport.connect({
+        session_id: "omni-session",
+        config: { voice: "Liora Mira" },
+      });
+      const txt = new FakeDataChannel("txt");
+      peerConnections[0].emitDataChannel(txt);
+      txt.emit({ type: "session.created" });
+      txt.emit({ type: "session.updated" });
+
+      // AI finishes a free-form turn → feedback guard arms.
+      txt.emit({ type: "response.created", response: { id: "ai-end" } });
+      txt.emit({
+        type: "response.audio_transcript.delta",
+        response_id: "ai-end",
+        item_id: "ai-item",
+        delta: "好的我继续讲",
+      });
+      txt.emit({ type: "response.done", response: { id: "ai-end" } });
+      expect(events.onDiagnostic).toHaveBeenCalledWith(
+        "omni_feedback_guard_started",
+        "ok",
+        expect.anything(),
+      );
+
+      // User says 等一下 during the feedback mute window.
+      txt.emit({
+        type: "input_audio_buffer.speech_started",
+        item_id: "wait-in-feedback",
+      });
+      expect(events.onDiagnostic).toHaveBeenCalledWith("omni_feedback_suppressed");
+      txt.emit({
+        type: "input_audio_buffer.speech_stopped",
+        item_id: "wait-in-feedback",
+      });
+      // Auto VAD reply is cancelled as echo; must not leave dead air.
+      txt.emit({ type: "response.created", response: { id: "echo-reply" } });
+      expect(txt.sent.some(({ type }) => type === "response.cancel")).toBe(true);
+      txt.emit({ type: "response.done", response: { id: "echo-reply" } });
+
+      // 700ms barge fallback forces 嗯你说 even if ASR empty/garbled.
+      await vi.advanceTimersByTimeAsync(750);
+      const ack = txt.sent
+        .filter(({ type }) => type === "response.create")
+        .at(-1);
+      expect(ack?.response?.instructions).toContain("嗯，你说");
+      expect(events.onDiagnostic).toHaveBeenCalledWith(
+        "omni_interrupt_ack_requested",
+        "ok",
+        expect.objectContaining({ kind: "interrupt_ack" }),
+      );
+    } finally {
+      transport.close();
+      vi.useRealTimers();
+    }
+  });
+
   it("suppresses welcome without cancelling an unknown response when user speaks first", async () => {
     vi.useFakeTimers();
     const track = { kind: "audio", enabled: true, stop: vi.fn() };
@@ -464,7 +719,8 @@ describe("QwenOmniWebRTCTransport", () => {
       expect(events.onDiagnostic).toHaveBeenCalledWith(
         "omni_feedback_suppressed",
       );
-      expect(events.onState).not.toHaveBeenCalledWith("listening");
+      // Still track speech for control phrases (等一下) during feedback window.
+      expect(events.onState).toHaveBeenCalledWith("listening");
 
       await vi.advanceTimersByTimeAsync(800);
       expect(track.enabled).toBe(true);

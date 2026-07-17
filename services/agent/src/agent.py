@@ -191,10 +191,11 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             )
             self._llm_text_buf = ""
             logger.info(
-                "turn_committed turn_id=%s generation_id=%s tool_epoch=%s",
+                "turn_committed turn_id=%s generation_id=%s tool_epoch=%s text=%s",
                 fence.turn_id,
                 fence.generation_id,
                 fence.tool_epoch,
+                text.strip()[:80],
             )
         parent = getattr(Agent, "on_user_turn_completed", None) if _HAS_LIVEKIT else None
         if parent is not None:
@@ -1031,11 +1032,15 @@ def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]
         "turn_detection": {"version": turn_version},
         "endpointing": {
             "mode": "dynamic",
-            # After clean enroll/turn samples, shave 200ms off the 1.50s floor.
+            # Prod sample (20260717): end_of_turn_delay stuck ~2.0s (= max_delay).
+            # Floor 0.90 keeps false-EOU risk low while shaving ~0.4–1.1s off the
+            # user-stop → first-audio gap vs the previous 1.30/2.00 defaults.
             "min_delay": float(
-                os.getenv("ENDPOINTING_MIN_DELAY_S", "1.30" if self_hosted else "0.30")
+                os.getenv("ENDPOINTING_MIN_DELAY_S", "0.90" if self_hosted else "0.30")
             ),
-            "max_delay": float(os.getenv("ENDPOINTING_MAX_DELAY_S", "2.00")),
+            "max_delay": float(
+                os.getenv("ENDPOINTING_MAX_DELAY_S", "1.50" if self_hosted else "2.00")
+            ),
             "alpha": float(os.getenv("ENDPOINTING_ALPHA", "0.85")),
         },
         "interruption": {

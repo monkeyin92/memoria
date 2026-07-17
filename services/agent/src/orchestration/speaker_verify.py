@@ -29,6 +29,13 @@ class SpeakerScore:
     accepted: bool
     reason: str
     speech_ms: int
+    # Mean RMS of voiced frames (near-field owner is louder than tablet/TV bleed).
+    rms: float = 0.0
+    # Fraction of frames above energy floor in [0, 1] (media often near-continuous).
+    duty: float = 0.0
+    # Voiced ms above near-field threshold vs quieter ambient/media ms.
+    near_ms: int = 0
+    far_ms: int = 0
 
 
 def _pcm16le_to_float(pcm: bytes) -> np.ndarray:
@@ -84,17 +91,71 @@ def speech_ms_from_pcm(
     frame_ms: int = 20,
 ) -> int:
     """Count milliseconds of frames above a simple energy floor."""
+    stats = voiced_stats_from_pcm(
+        pcm,
+        sample_rate=sample_rate,
+        energy_threshold=energy_threshold,
+        frame_ms=frame_ms,
+    )
+    return int(stats["speech_ms"])
+
+
+def voiced_stats_from_pcm(
+    pcm: bytes,
+    *,
+    sample_rate: int = 16000,
+    energy_threshold: float = 0.012,
+    frame_ms: int = 20,
+    near_rms_threshold: float | None = None,
+) -> dict[str, float]:
+    """Voiced-frame speech_ms, mean RMS, duty, and near/far split for media pollution."""
     x = _pcm16le_to_float(pcm)
     if x.size == 0:
-        return 0
+        return {
+            "speech_ms": 0.0,
+            "rms": 0.0,
+            "duty": 0.0,
+            "near_ms": 0.0,
+            "far_ms": 0.0,
+        }
     frame = max(1, int(sample_rate * frame_ms / 1000))
     hop = frame
+    near_thr = (
+        float(near_rms_threshold)
+        if near_rms_threshold is not None and near_rms_threshold > 0
+        else max(energy_threshold * 3.0, 0.04)
+    )
     voiced = 0
+    near = 0
+    far = 0
+    rms_sum = 0.0
+    total = 0
     for start in range(0, x.size - frame + 1, hop):
         chunk = x[start : start + frame]
-        if float(np.sqrt(np.mean(chunk * chunk) + _EPS)) >= energy_threshold:
-            voiced += frame_ms
-    return voiced
+        rms = float(np.sqrt(np.mean(chunk * chunk) + _EPS))
+        total += 1
+        if rms >= energy_threshold:
+            voiced += 1
+            rms_sum += rms
+            if rms >= near_thr:
+                near += 1
+            else:
+                far += 1
+    if total == 0:
+        return {
+            "speech_ms": 0.0,
+            "rms": 0.0,
+            "duty": 0.0,
+            "near_ms": 0.0,
+            "far_ms": 0.0,
+        }
+    return {
+        "speech_ms": float(voiced * frame_ms),
+        "rms": (rms_sum / voiced) if voiced else 0.0,
+        "duty": float(voiced) / float(total),
+        "near_ms": float(near * frame_ms),
+        "far_ms": float(far * frame_ms),
+    }
 
 
 def embed_pcm(
@@ -106,8 +167,13 @@ def embed_pcm(
     hop_ms: int = 10,
     win_ms: int = 25,
     min_speech_ms: int = 600,
+    energy_threshold: float = 0.012,
 ) -> np.ndarray | None:
-    """Build an L2-normalized log-mel mean+std embedding, or None if too short/quiet."""
+    """Build an L2-normalized log-mel mean+std embedding, or None if too short/quiet.
+
+    Only energy-gated (voiced) frames contribute, so quiet tablet bleed mixed into
+    a pause does not pull the embedding toward ambient media.
+    """
     speech_ms = speech_ms_from_pcm(pcm, sample_rate=sample_rate)
     if speech_ms < min_speech_ms:
         return None
@@ -120,7 +186,11 @@ def embed_pcm(
     fb = _mel_filterbank(n_fft=n_fft, n_mels=n_mels, sample_rate=sample_rate)
     frames: list[np.ndarray] = []
     for start in range(0, x.size - win + 1, hop):
-        frame = x[start : start + win] * window
+        raw = x[start : start + win]
+        rms = float(np.sqrt(np.mean(raw * raw) + _EPS))
+        if rms < energy_threshold:
+            continue
+        frame = raw * window
         # real FFT power spectrum
         spec = np.fft.rfft(frame, n=n_fft)
         power = (spec.real * spec.real + spec.imag * spec.imag).astype(np.float32)
@@ -131,7 +201,10 @@ def embed_pcm(
     mat = np.stack(frames, axis=0)
     mean = mat.mean(axis=0)
     std = mat.std(axis=0)
-    vec = np.concatenate([mean, std]).astype(np.float32)
+    # Light delta (first half vs second) adds discrimination vs steady media.
+    mid = mat.shape[0] // 2
+    delta = mat[mid:].mean(axis=0) - mat[:mid].mean(axis=0)
+    vec = np.concatenate([mean, std, delta]).astype(np.float32)
     norm = float(np.linalg.norm(vec) + _EPS)
     return vec / norm
 
@@ -151,11 +224,17 @@ class SpeakerVerifier:
     enroll_speech_ms: int = 3500
     enroll_timeout_ms: int = 15000
     min_verify_speech_ms: int = 450
-    # Dual-window + soft margin in duplex_runtime; base thr ~0.55.
-    accept_threshold: float = 0.55
+    # Dual-window + soft margin in duplex_runtime; base thr ~0.58.
+    accept_threshold: float = 0.58
+    # Reject when utterance voiced RMS is far below enroll near-field level.
+    # 0.28: soft owner after loud enroll stays in; quiet tablet (~0.2×) still out.
+    far_field_rms_ratio: float = 0.28
+    # Quiet frames relative to enroll RMS count as far-field media pollution.
+    near_field_rms_ratio: float = 0.45
     rolling_ms: int = 4000
     state: SpeakerGateState = SpeakerGateState.DISABLED
     owner_embedding: np.ndarray | None = None
+    owner_ref_rms: float = 0.0
     _enroll_pcm: bytearray = field(default_factory=bytearray)
     _enroll_speech_ms: int = 0
     _enroll_elapsed_ms: int = 0
@@ -183,6 +262,7 @@ class SpeakerVerifier:
             return
         self.state = SpeakerGateState.PENDING
         self.owner_embedding = None
+        self.owner_ref_rms = 0.0
         self._enroll_pcm.clear()
         self._enroll_speech_ms = 0
         self._enroll_elapsed_ms = 0
@@ -247,6 +327,10 @@ class SpeakerVerifier:
                     return self._fail_open("enroll_embedding_failed")
                 return None
             self.owner_embedding = emb
+            enroll_stats = voiced_stats_from_pcm(
+                bytes(self._enroll_pcm), sample_rate=self.sample_rate
+            )
+            self.owner_ref_rms = float(enroll_stats["rms"])
             self.state = SpeakerGateState.ENROLLED
             self._enroll_pcm.clear()
             return SpeakerScore(
@@ -254,6 +338,8 @@ class SpeakerVerifier:
                 accepted=True,
                 reason="enrolled",
                 speech_ms=self._enroll_speech_ms,
+                rms=self.owner_ref_rms,
+                duty=float(enroll_stats["duty"]),
             )
         if force or effective_elapsed >= self.enroll_timeout_ms:
             return self._fail_open("enroll_timeout")
@@ -262,6 +348,7 @@ class SpeakerVerifier:
     def _fail_open(self, reason: str) -> SpeakerScore:
         self.state = SpeakerGateState.OPEN
         self.owner_embedding = None
+        self.owner_ref_rms = 0.0
         speech_ms = self._enroll_speech_ms
         self._enroll_pcm.clear()
         return SpeakerScore(score=0.0, accepted=True, reason=reason, speech_ms=speech_ms)
@@ -272,6 +359,41 @@ class SpeakerVerifier:
 
     def mark_utterance_end(self) -> None:
         self._collecting_utterance = False
+
+    def _near_rms_threshold(self) -> float:
+        if self.owner_ref_rms > 0.0:
+            return max(0.02, self.owner_ref_rms * self.near_field_rms_ratio)
+        return 0.04
+
+    def is_far_field(self, score: SpeakerScore) -> bool:
+        """True when audio is much quieter than enrollment (tablet/TV across room).
+
+        Never far-field-reject a strong voiceprint match: owner often speaks softer
+        after a loud enroll phrase (prod: score 0.70 rejected as far_field right
+        after enroll, first real turn silent).
+        """
+        if self.owner_ref_rms <= 0.0 or score.rms <= 0.0:
+            return False
+        # High cosine match ⇒ near-mic owner even if quieter than enroll peak.
+        if score.score >= max(0.55, self.accept_threshold - 0.05):
+            return False
+        return score.rms < self.owner_ref_rms * self.far_field_rms_ratio
+
+    def looks_like_continuous_media(self, score: SpeakerScore) -> bool:
+        """High duty + long voiced span ≈ steady tablet/TV rather than turn-taking speech."""
+        return score.speech_ms >= 2800 and score.duty >= 0.78
+
+    def is_media_polluted(self, score: SpeakerScore) -> bool:
+        """Long quiet media plus a short near-field blip (e.g. video + 「等一下」).
+
+        Prod smoking gun: ASR committed「悟空…欢迎来到我的世界…等一下」because the
+        short owner phrase pulled the mean score above thr while most ms was tablet.
+        """
+        far_ms = int(score.far_ms)
+        near_ms = int(score.near_ms)
+        if far_ms < 1500:
+            return False
+        return far_ms >= max(1200, int(near_ms * 1.5))
 
     def score_pcm(self, pcm: bytes | None = None) -> SpeakerScore:
         if self.state is SpeakerGateState.DISABLED:
@@ -284,17 +406,46 @@ class SpeakerVerifier:
         if self.owner_embedding is None:
             return SpeakerScore(1.0, True, "missing_owner", 0)
         payload = pcm if pcm is not None else bytes(self._utterance or self._rolling)
-        speech_ms = speech_ms_from_pcm(payload, sample_rate=self.sample_rate)
+        stats = voiced_stats_from_pcm(
+            payload,
+            sample_rate=self.sample_rate,
+            near_rms_threshold=self._near_rms_threshold(),
+        )
+        speech_ms = int(stats["speech_ms"])
+        rms = float(stats["rms"])
+        duty = float(stats["duty"])
+        near_ms = int(stats["near_ms"])
+        far_ms = int(stats["far_ms"])
         if speech_ms < self.min_verify_speech_ms:
             # Too short to score: fail closed only for long barge-ins later.
-            return SpeakerScore(0.0, False, "too_short", speech_ms)
+            return SpeakerScore(
+                0.0,
+                False,
+                "too_short",
+                speech_ms,
+                rms=rms,
+                duty=duty,
+                near_ms=near_ms,
+                far_ms=far_ms,
+            )
         emb = embed_pcm(
             payload,
             sample_rate=self.sample_rate,
             min_speech_ms=self.min_verify_speech_ms,
+            energy_threshold=self._near_rms_threshold(),
         )
         if emb is None:
-            return SpeakerScore(0.0, False, "embed_failed", speech_ms)
+            # No near-field content long enough → treat as far-field ambient.
+            return SpeakerScore(
+                0.0,
+                False,
+                "far_field",
+                speech_ms,
+                rms=rms,
+                duty=duty,
+                near_ms=near_ms,
+                far_ms=far_ms,
+            )
         score = cosine_similarity(self.owner_embedding, emb)
         accepted = score >= self.accept_threshold
         return SpeakerScore(
@@ -302,6 +453,10 @@ class SpeakerVerifier:
             accepted=accepted,
             reason="match" if accepted else "mismatch",
             speech_ms=speech_ms,
+            rms=rms,
+            duty=duty,
+            near_ms=near_ms,
+            far_ms=far_ms,
         )
 
     def score_latest_utterance(self) -> SpeakerScore:

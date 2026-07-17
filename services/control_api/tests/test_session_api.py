@@ -154,7 +154,7 @@ async def test_create_omni_session_requires_only_dashscope_api_key(
     assert data["voice_backend"] == "qwen_omni"
     assert data["sdp_exchange_path"] == f"/v1/sessions/{data['session_id']}/omni/sdp"
     assert data["config"]["model"] == "qwen3.5-omni-flash-realtime"
-    assert data["config"]["voice"] == "Cherry"
+    assert data["config"]["voice"] == "Liora Mira"
     assert data["config"]["persona"]["label"] == "Memoria 人设声"
     assert data["config"]["persona"]["cloned"] is False
     assert data["config"]["turn_detection"] == flash_td
