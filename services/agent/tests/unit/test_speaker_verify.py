@@ -101,3 +101,26 @@ def test_quiet_pcm_has_low_speech_ms() -> None:
     quiet = struct.pack("<" + "h" * 16000, *([0] * 16000))
     assert speech_ms_from_pcm(quiet) < 200
     assert embed_pcm(quiet) is None
+
+
+def test_zero_pcm_enroll_times_out_with_wall_clock_or_force() -> None:
+    """Regression: no feed_pcm used to leave PENDING forever (chat blocked)."""
+    verifier = SpeakerVerifier(
+        enabled=True,
+        enroll_speech_ms=3500,
+        enroll_timeout_ms=2000,
+    )
+    verifier.begin_enrollment()
+    assert verifier.try_finalize_enrollment() is None
+    # Wall elapsed alone must fail-open even with zero PCM.
+    timed = verifier.try_finalize_enrollment(wall_elapsed_ms=2500)
+    assert timed is not None
+    assert timed.reason == "enroll_timeout"
+    assert verifier.state.value == "open"
+
+    verifier2 = SpeakerVerifier(enabled=True, enroll_speech_ms=3500, enroll_timeout_ms=60_000)
+    verifier2.begin_enrollment()
+    forced = verifier2.try_finalize_enrollment(force=True)
+    assert forced is not None
+    assert forced.reason == "enroll_timeout"
+    assert verifier2.state.value == "open"

@@ -864,6 +864,8 @@ async def entrypoint(ctx: Any) -> None:
                 if not runtime._was_speaking:
                     break
                 await asyncio.sleep(0.1)
+        # Fixed say may not clear speaking via conversation_item path.
+        runtime._was_speaking = False
         await asyncio.sleep(0.2)
 
     if runtime.speaker_verifier.enabled:
@@ -886,7 +888,12 @@ async def entrypoint(ctx: Any) -> None:
                 break
             await asyncio.sleep(0.25)
         else:
-            runtime.poll_speaker_enrollment()
+            # Wall-clock end: force fail-open even if zero PCM was observed
+            # (elapsed_ms only advances when feed_pcm runs).
+            runtime.poll_speaker_enrollment(force=True)
+        # Hard safety: never leave PENDING or all chat turns stay blocked.
+        if runtime.speaker_verifier.state.value == "pending":
+            runtime.poll_speaker_enrollment(force=True)
         runtime.publish_assistant_state("listening")
         runtime.mark_audio_event("welcome_generation_started")
         if runtime.speaker_verifier.state.value == "enrolled":

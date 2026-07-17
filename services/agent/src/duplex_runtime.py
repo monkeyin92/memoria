@@ -204,20 +204,35 @@ class DuplexRuntime:
 
     def feed_speaker_pcm(self, pcm: bytes) -> None:
         # Never enroll assistant TTS that leaks into the mic during playback.
+        # After begin_speaker_enrollment we force _was_speaking=False so user
+        # enroll speech is always collected.
         if (
             self.speaker_verifier.state is SpeakerGateState.PENDING
             and self._was_speaking
+            and not getattr(self, "_enroll_collecting", False)
         ):
             return
         self.speaker_verifier.feed_pcm(pcm)
 
     def begin_speaker_enrollment(self) -> None:
+        # Fixed session.say may leave _was_speaking stuck True (playback_finished
+        # non-interrupt path used to not clear it). Clear so enroll PCM is fed.
+        self._was_speaking = False
+        self._enroll_collecting = True
+        self._enroll_started_mono = time.monotonic()
         self.speaker_verifier.begin_enrollment()
         self.publish_assistant_state("speaker_enroll")
         self.mark_audio_event("speaker_enroll_started")
 
-    def poll_speaker_enrollment(self) -> dict[str, object] | None:
-        result = self.speaker_verifier.try_finalize_enrollment()
+    def poll_speaker_enrollment(self, *, force: bool = False) -> dict[str, object] | None:
+        wall_ms: int | None = None
+        started = getattr(self, "_enroll_started_mono", None)
+        if started is not None:
+            wall_ms = int((time.monotonic() - started) * 1000)
+        result = self.speaker_verifier.try_finalize_enrollment(
+            force=force,
+            wall_elapsed_ms=wall_ms,
+        )
         if result is None:
             # Avoid spamming LiveKit data channel every poll tick.
             progress = self.speaker_verifier.enrollment_progress()
@@ -248,6 +263,7 @@ class DuplexRuntime:
             "at": datetime.now(UTC).isoformat(),
         }
         self._publish(payload)
+        self._enroll_collecting = False
         self.mark_audio_event(
             "speaker_enrolled" if result.reason == "enrolled" else "speaker_enroll_open",
             detail={"reason": result.reason, "speech_ms": result.speech_ms},
@@ -967,6 +983,11 @@ class DuplexRuntime:
                 self._played_assistant_text,
                 synchronized_transcript,
             )
+            # Always clear speaking flag. Fixed session.say(add_to_chat_ctx=False)
+            # may never emit conversation_item_added → on_assistant_reply_completed,
+            # which used to leave _was_speaking stuck and block enroll PCM forever.
+            self._was_speaking = False
+            self._last_playback_completed_ns = time.monotonic_ns()
             if self._played_assistant_text:
                 self.publish_transcript(
                     speaker="assistant",

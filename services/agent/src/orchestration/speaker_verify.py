@@ -218,10 +218,23 @@ class SpeakerVerifier:
             "timeout_ms": self.enroll_timeout_ms,
         }
 
-    def try_finalize_enrollment(self) -> SpeakerScore | None:
-        """Return a score result when enrollment succeeds, fails-open, or still pending."""
+    def try_finalize_enrollment(
+        self,
+        *,
+        force: bool = False,
+        wall_elapsed_ms: int | None = None,
+    ) -> SpeakerScore | None:
+        """Return a score when enrollment succeeds, fails-open, or still pending.
+
+        ``force=True`` always leaves PENDING (used after wall-clock deadline).
+        ``wall_elapsed_ms`` counts real time even if no PCM was observed — without
+        it, zero-PCM enroll never advances ``_enroll_elapsed_ms`` and never times out.
+        """
         if self.state is not SpeakerGateState.PENDING:
             return None
+        effective_elapsed = self._enroll_elapsed_ms
+        if wall_elapsed_ms is not None:
+            effective_elapsed = max(effective_elapsed, wall_elapsed_ms)
         if self._enroll_speech_ms >= self.enroll_speech_ms:
             emb = embed_pcm(
                 bytes(self._enroll_pcm),
@@ -229,7 +242,7 @@ class SpeakerVerifier:
                 min_speech_ms=max(800, self.enroll_speech_ms // 2),
             )
             if emb is None:
-                if self._enroll_elapsed_ms >= self.enroll_timeout_ms:
+                if force or effective_elapsed >= self.enroll_timeout_ms:
                     return self._fail_open("enroll_embedding_failed")
                 return None
             self.owner_embedding = emb
@@ -241,15 +254,16 @@ class SpeakerVerifier:
                 reason="enrolled",
                 speech_ms=self._enroll_speech_ms,
             )
-        if self._enroll_elapsed_ms >= self.enroll_timeout_ms:
+        if force or effective_elapsed >= self.enroll_timeout_ms:
             return self._fail_open("enroll_timeout")
         return None
 
     def _fail_open(self, reason: str) -> SpeakerScore:
         self.state = SpeakerGateState.OPEN
         self.owner_embedding = None
+        speech_ms = self._enroll_speech_ms
         self._enroll_pcm.clear()
-        return SpeakerScore(score=0.0, accepted=True, reason=reason, speech_ms=self._enroll_speech_ms)
+        return SpeakerScore(score=0.0, accepted=True, reason=reason, speech_ms=speech_ms)
 
     def mark_utterance_start(self) -> None:
         self._collecting_utterance = True

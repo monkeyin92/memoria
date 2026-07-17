@@ -37,6 +37,35 @@ async def test_pending_enrollment_blocks_chat_turns() -> None:
     await runtime.close()
 
 
+@pytest.mark.asyncio
+async def test_enroll_collects_pcm_even_if_was_speaking_stuck() -> None:
+    """session.say can leave _was_speaking True; enroll must still capture mic PCM."""
+    import math
+    import struct
+
+    verifier = SpeakerVerifier(enabled=True, enroll_speech_ms=800, enroll_timeout_ms=5000)
+    runtime = DuplexRuntime.create(session_id="enroll-pcm", speaker_verifier=verifier)
+    await runtime.orchestrator.ready()
+    runtime._was_speaking = True
+    runtime.begin_speaker_enrollment()
+    assert runtime._was_speaking is False
+    assert runtime._enroll_collecting is True
+    # 1s of voiced-like tone @16k
+    n = 16000
+    samples = [
+        int(12000 * math.sin(2 * math.pi * 180 * i / 16000)) for i in range(n)
+    ]
+    pcm = struct.pack("<" + "h" * n, *samples)
+    runtime.feed_speaker_pcm(pcm)
+    result = runtime.poll_speaker_enrollment()
+    assert result is not None
+    assert result["reason"] == "enrolled"
+    accepted, reason = runtime.accept_user_turn("你好", speech_anchored=None)
+    assert accepted is True
+    assert reason is None or reason == "ok" or accepted
+    await runtime.close()
+
+
 def test_build_session_kwargs_includes_stt_tts() -> None:
     stt = FunASRSTT(FunASRConfig(api_key="t", ws_url="ws://x"))
     tts = CosyVoiceTTS(CosyVoiceConfig(api_key="t", ws_url="ws://x", pool_size=1))
