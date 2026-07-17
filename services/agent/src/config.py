@@ -63,11 +63,12 @@ class AgentSettings(BaseSettings):
 
     vad_min_silence_duration_s: float = Field(default=0.30, alias="VAD_MIN_SILENCE_DURATION_S")
     preemptive_tts: bool = Field(default=False, alias="PREEMPTIVE_TTS")
-    # Enabled for GPT-Live-style short listener cues ("嗯/我在听").
-    # Disable either flag if device AEC/echo regression appears.
-    listener_cues_enabled: bool = Field(default=True, alias="LISTENER_CUES_ENABLED")
+    # GPT-Live-style short listener cues ("嗯/我在听") publish a second room
+    # audio track via BackgroundAudioPlayer; H5 attaches both → dual-voice blip.
+    # Default off until cues mix into the main track.
+    listener_cues_enabled: bool = Field(default=False, alias="LISTENER_CUES_ENABLED")
     listener_cue_aec_validated: bool = Field(
-        default=True,
+        default=False,
         alias="LISTENER_CUE_AEC_VALIDATED",
     )
     listener_cue_pause_ms: int = Field(

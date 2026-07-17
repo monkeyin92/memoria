@@ -786,7 +786,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     assert any(
         event[0].get("type") == "assistant_audio"
         and event[0].get("action") == "duck"
-        and event[0].get("gain") == 0.25
+        and event[0].get("gain") == 0.55
         for event in room.local_participant.published
     )
     assert any(

@@ -789,6 +789,17 @@ class DuplexRuntime:
         speech_anchored: bool | None = None,
     ) -> tuple[bool, str | None]:
         self.speaker_verifier.mark_utterance_end()
+        # Enrollment speech must never become a chat turn. Previously we only
+        # gated when state==ENROLLED (active), so PENDING enroll was accepted
+        # as a normal turn → LLM answered, then fail-open said「跳过声纹登记」.
+        if self.speaker_verifier.state is SpeakerGateState.PENDING:
+            self.orchestrator.metrics.inc_guarded_user_input("speaker_enrolling")
+            logger.info(
+                "user_turn_ignored reason=speaker_enrolling text_len=%s session_id=%s",
+                len(text),
+                self.session_id,
+            )
+            return False, "speaker_enrolling"
         if self.input_guard.enabled and speech_anchored is not None:
             if not speech_anchored or not self._fresh_user_speech:
                 self._fresh_user_speech = False
@@ -1152,7 +1163,8 @@ class DuplexRuntime:
                 if decision is PlaybackInputDecision.WAIT:
                     _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
                     self.mark_audio_event("barge_in_detected")
-                    self.publish_assistant_audio("duck", gain=0.25)
+                    # Mild duck only: 0.25 sounded like random loud/soft swings.
+                    self.publish_assistant_audio("duck", gain=0.55)
                 else:
                     _set_min_words(base_min_words)
                 return

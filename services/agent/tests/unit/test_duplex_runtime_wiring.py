@@ -15,9 +15,26 @@ from services.agent.src.agent import (
     create_runtime_for_tests,
 )
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.orchestration.speaker_verify import SpeakerGateState, SpeakerVerifier
 from services.agent.src.orchestration.state_machine import ConversationState
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSTT
+
+
+@pytest.mark.asyncio
+async def test_pending_enrollment_blocks_chat_turns() -> None:
+    """Regression: enroll speech must not become generate_reply / skip-enroll race."""
+    verifier = SpeakerVerifier(enabled=True, enroll_speech_ms=5000, enroll_timeout_ms=15000)
+    assert verifier.state is SpeakerGateState.PENDING
+    runtime = DuplexRuntime.create(session_id="enroll-gate", speaker_verifier=verifier)
+    await runtime.orchestrator.ready()
+    accepted, reason = runtime.accept_user_turn(
+        "我是主人，请记住我的声音",
+        speech_anchored=None,
+    )
+    assert accepted is False
+    assert reason == "speaker_enrolling"
+    await runtime.close()
 
 
 def test_build_session_kwargs_includes_stt_tts() -> None:

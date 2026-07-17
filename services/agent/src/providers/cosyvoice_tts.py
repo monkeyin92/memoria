@@ -24,6 +24,7 @@ from services.agent.src.providers.cosyvoice_protocol import (
     build_continue_text,
     build_finish_task,
     build_run_task,
+    normalize_pcm16_peak,
     parse_server_message,
     pcm_duration_ms,
     scale_word_timestamps,
@@ -360,8 +361,11 @@ class CosyVoiceSynthesizeStream(tts.SynthesizeStream):
                                 detail={"pcm_bytes": len(msg)},
                             )
                         got_audio = True
-                        output_emitter.push(msg)
-                        sentence_pcm.setdefault(current_index, bytearray()).extend(msg)
+                        # Peak-normalize each chunk so successive CosyVoice
+                        # utterances do not swing between soft and loud.
+                        pcm = normalize_pcm16_peak(msg)
+                        output_emitter.push(pcm)
+                        sentence_pcm.setdefault(current_index, bytearray()).extend(pcm)
                         continue
                     ev = parse_server_message(msg)
                     if ev.event == "sentence-begin" and ev.sentence_index is not None:

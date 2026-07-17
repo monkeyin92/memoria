@@ -895,8 +895,10 @@ async def entrypoint(ctx: Any) -> None:
                 interruptible=False,
             )
         else:
+            # Fail-open: do not announce "跳过声纹" — it felt like a random extra
+            # sentence after the model had already answered enroll speech.
             await _say_fixed(
-                "这次先跳过声纹登记，我们直接聊。想说什么都可以。",
+                "好的，想聊什么都可以直接说。",
                 interruptible=False,
             )
     else:

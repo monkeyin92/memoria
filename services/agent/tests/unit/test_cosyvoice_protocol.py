@@ -8,6 +8,7 @@ from services.agent.src.providers.cosyvoice_protocol import (
     build_continue_text,
     build_finish_task,
     build_run_task,
+    normalize_pcm16_peak,
     parse_server_message,
     pcm_duration_ms,
     scale_word_timestamps,
@@ -130,3 +131,14 @@ def test_pcm_channels_and_degraded_timestamp_edges() -> None:
     assert scale_word_timestamps((), pcm_duration_ms_value=100) == ((), "degraded")
     zero = (TimedWord(text="你", begin_ms=0, end_ms=0),)
     assert scale_word_timestamps(zero, pcm_duration_ms_value=100) == ((), "degraded")
+
+
+def test_normalize_pcm16_peak_boosts_soft_leaves_mid() -> None:
+    import struct
+
+    soft = struct.pack("<" + "h" * 200, *([1200] * 200))
+    mid = struct.pack("<" + "h" * 200, *([16000] * 200))
+    boosted = normalize_pcm16_peak(soft)
+    assert boosted != soft
+    assert max(abs(struct.unpack("<h", boosted[i : i + 2])[0]) for i in range(0, 20, 2)) > 1200
+    assert normalize_pcm16_peak(mid) == mid
