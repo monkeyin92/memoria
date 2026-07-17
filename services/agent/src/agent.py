@@ -709,13 +709,17 @@ async def entrypoint(ctx: Any) -> None:
     )
 
     async def _interrupt_yield_say(phrase: str) -> None:
-        """Semantic interrupt ack:「嗯，你说。」vs「好的。」from user wording."""
+        """Semantic interrupt ack:「嗯，你说。」vs「好的。」from user wording.
+
+        Must not allow interruptions: residual barge-in energy after「停一下」
+        was cancelling this say and wait_for_playout returned in ~6ms (silent).
+        """
         text = (phrase or "").strip() or "嗯，你说。"
         if hasattr(tts_plugin, "apply_speech_plan"):
             tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
         handle = session.say(
             text,
-            allow_interruptions=True,
+            allow_interruptions=False,
             add_to_chat_ctx=False,
         )
         wait = getattr(handle, "wait_for_playout", None)

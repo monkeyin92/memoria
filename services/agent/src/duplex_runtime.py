@@ -129,6 +129,7 @@ class DuplexRuntime:
     _playback_fence: GenerationFence | None = None
     _last_playback_completed_ns: int | None = None
     _set_interruption_min_words: Callable[[int], None] | None = None
+    _base_interruption_min_words: int = 0
     _event_publisher: Callable[[dict[str, Any]], Awaitable[None]] | None = None
     _result_speaker: Callable[[str], Any] | None = None
     _interrupt_yield: Callable[[str], Awaitable[None]] | None = None
@@ -902,6 +903,9 @@ class DuplexRuntime:
                     "ack": route.ack_phrase,
                 },
             )
+            # Hand floor back: unlock LiveKit min_words so the next real utterance
+            # can commit (prod: after 停一下, min_words stuck at 1000 + orphan FINAL).
+            self._restore_listen_after_control(cause="interrupt_command_turn")
             # Ensure semantic ack (cooldown skips if interrupt path already said it).
             self._spawn(
                 self._maybe_say_interrupt_yield(cause="interrupt_command_turn"),
@@ -1003,6 +1007,38 @@ class DuplexRuntime:
         age_ms = (time.monotonic_ns() - self._playback_started_ns) // 1_000_000
         return age_ms < 8_000
 
+    def _restore_listen_after_control(self, *, cause: str) -> None:
+        """After stop/wait, unlock turn commit and publish listening.
+
+        Production logs (2026-07-17): after「停一下」yield finished in ~6ms and
+        subsequent user speech was dropped as missing_speech_epoch while
+        min_words stayed at PLAYBACK_INPUT_BLOCK_MIN_WORDS (1000).
+        """
+        if self._set_interruption_min_words is not None:
+            self._set_interruption_min_words(self._base_interruption_min_words)
+        self._was_speaking = False
+        self._playback_fence = None
+        # Allow the next physical utterance to pass speech-epoch gate.
+        # (on_user_voice_started will also set True; this covers late FINALs
+        # that arrive without a fresh VAD edge after barge-in.)
+        if self.interaction_phase in {
+            InteractionPhase.INTERRUPTED,
+            InteractionPhase.SPEAKING,
+            InteractionPhase.THINKING_SILENT,
+            InteractionPhase.BACKCHANNEL,
+        }:
+            self.set_interaction_phase(
+                InteractionPhase.LISTENING,
+                cause=f"restore_listen:{cause}",
+            )
+        self.mark_audio_event(
+            "listen_restored_after_control",
+            detail={
+                "cause": cause,
+                "min_words": self._base_interruption_min_words,
+            },
+        )
+
     async def _maybe_say_interrupt_yield(self, *, cause: str) -> None:
         """Short ack after mid-reply stop so users know we yielded, not crashed."""
         if self._interrupt_yield is None:
@@ -1015,6 +1051,8 @@ class DuplexRuntime:
             and (now - self._last_interrupt_yield_ns) // 1_000_000
             < self.INTERRUPT_YIELD_COOLDOWN_MS
         ):
+            # Still unlock listening if barge-in yield already fired.
+            self._restore_listen_after_control(cause=f"yield_cooldown:{cause}")
             return
         self._last_interrupt_yield_ns = now
         candidate = self._interrupt_candidate_text()
@@ -1038,6 +1076,8 @@ class DuplexRuntime:
         except Exception:
             logger.warning("interrupt yield failed cause=%s", cause, exc_info=True)
             self.mark_audio_event("interrupt_yield_done", status="error")
+        finally:
+            self._restore_listen_after_control(cause=f"yield_done:{cause}")
 
     async def _maybe_recover_false_interrupt(self, *, cause: str) -> None:
         """Resume after nearby noise stopped playout but speaker gate rejected it."""
@@ -1145,6 +1185,9 @@ class DuplexRuntime:
         self._was_speaking = False
         self._last_playback_completed_ns = None
         self._pending_assistant_text = ""
+        # Unlock commit gate immediately; yield will keep listening after playout.
+        if self._set_interruption_min_words is not None:
+            self._set_interruption_min_words(self._base_interruption_min_words)
         if self.tts is not None:
             self.tts.bind_fence(new_fence)
         if not new_fence.matches(old_fence):
@@ -1168,6 +1211,8 @@ class DuplexRuntime:
                     self._maybe_say_interrupt_yield(cause=cause),
                     name="interrupt-yield",
                 )
+            else:
+                self._restore_listen_after_control(cause=f"interrupt_no_yield:{cause}")
         return new_fence
 
     async def on_playback_started(self) -> None:
@@ -1408,6 +1453,7 @@ class DuplexRuntime:
                 interruption["min_words"] = value
 
         self._set_interruption_min_words = _set_min_words
+        self._base_interruption_min_words = base_min_words
 
         def _restore_audio() -> None:
             self.publish_assistant_audio("restore", gain=1.0)
@@ -1518,7 +1564,16 @@ class DuplexRuntime:
             item = getattr(ev, "item", None)
             role = getattr(item, "role", None) if item is not None else None
             if str(role) == "user":
-                _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
+                # Only raise min_words while assistant is mid-reply. Always
+                # locking to 1000 after every user item left the session deaf
+                # after「停一下」(orphan FINAL + blocked next turn).
+                if self._was_speaking or self.interaction_phase in {
+                    InteractionPhase.SPEAKING,
+                    InteractionPhase.THINKING_SILENT,
+                }:
+                    _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
+                else:
+                    _set_min_words(base_min_words)
                 return
             if str(role) != "assistant":
                 return

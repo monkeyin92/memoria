@@ -84,8 +84,33 @@ async def test_explicit_stop_phrase_yields_not_continue() -> None:
     await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
     await asyncio.sleep(0.05)
     assert said == ["嗯，你说。"]
+    # After yield, must hand floor back so next user speech is not blackholed.
+    assert runtime.interaction_phase.value == "listening"
     await runtime.close()
 
+
+@pytest.mark.asyncio
+async def test_interrupt_command_restores_listen_and_unlocks_min_words() -> None:
+    """Regression: after「停一下」commit, do not leave min_words=1000 + interrupted."""
+    min_words: list[int] = []
+
+    runtime = DuplexRuntime.create(session_id="unlock-after-stop", input_guard_enabled=True)
+    runtime._base_interruption_min_words = 0
+    runtime._set_interruption_min_words = min_words.append  # type: ignore[method-assign]
+    await runtime.orchestrator.ready()
+    runtime.set_interaction_phase(
+        __import__(
+            "services.agent.src.orchestration.state_machine", fromlist=["InteractionPhase"]
+        ).InteractionPhase.INTERRUPTED,
+        cause="test",
+        publish=False,
+    )
+    accepted, reason = runtime.accept_user_turn("啊，停一下，停一下！", speech_anchored=True)
+    assert accepted is False
+    assert reason == "interrupt_command_only"
+    assert runtime.interaction_phase.value == "listening"
+    assert 0 in min_words
+    await runtime.close()
 
 @pytest.mark.asyncio
 async def test_stop_talking_phrase_acks_quietly() -> None:
