@@ -809,10 +809,26 @@ class DuplexRuntime:
         # gated when state==ENROLLED (active), so PENDING enroll was accepted
         # as a normal turn → LLM answered, then fail-open said「跳过声纹登记」.
         if self.speaker_verifier.state is SpeakerGateState.PENDING:
+            # User finished an enroll utterance — try finalize immediately so
+            # we do not wait the full wall timeout after they already spoke.
+            progress = self.speaker_verifier.enrollment_progress()
+            speech_ms = int(progress.get("speech_ms") or 0)
+            target_ms = int(progress.get("target_ms") or 2500)
+            if speech_ms >= max(1500, int(target_ms * 0.85)):
+                early = self.poll_speaker_enrollment()
+                if early is not None and early.get("reason") == "enrolled":
+                    logger.info(
+                        "speaker_enroll early_finalize_on_endpoint speech_ms=%s "
+                        "session_id=%s",
+                        speech_ms,
+                        self.session_id,
+                    )
             self.orchestrator.metrics.inc_guarded_user_input("speaker_enrolling")
             logger.info(
-                "user_turn_ignored reason=speaker_enrolling text_len=%s session_id=%s",
+                "user_turn_ignored reason=speaker_enrolling text_len=%s "
+                "speech_ms=%s session_id=%s",
                 len(text),
+                speech_ms,
                 self.session_id,
             )
             return False, "speaker_enrolling"
@@ -1175,8 +1191,10 @@ class DuplexRuntime:
                 false_resume_task.cancel()
                 false_resume_task = None
 
+        ducked = False
+
         def _on_user_state(ev: Any) -> None:
-            nonlocal false_resume_task
+            nonlocal false_resume_task, ducked
             state = str(getattr(ev, "new_state", ""))
             if state == "speaking":
                 _cancel_false_resume()
@@ -1186,32 +1204,38 @@ class DuplexRuntime:
                     self.mark_audio_event("barge_in_detected")
                     # Mild duck only: 0.25 sounded like random loud/soft swings.
                     self.publish_assistant_audio("duck", gain=0.55)
+                    ducked = True
                 else:
                     _set_min_words(base_min_words)
                 return
-            if (
-                state == "listening"
-                and self.input_guard.candidate_active
-                and self.input_guard.candidate_during_playback
-                and self.input_guard.candidate_decision is PlaybackInputDecision.WAIT
-            ):
-                candidate_started = self.input_guard.candidate_started_ns
+            if state == "listening":
+                # Always restore ducked gain when user stops (P1 duck-first).
+                if ducked:
+                    _restore_audio()
+                    ducked = False
+                if (
+                    self.input_guard.candidate_active
+                    and self.input_guard.candidate_during_playback
+                    and self.input_guard.candidate_decision is PlaybackInputDecision.WAIT
+                ):
+                    candidate_started = self.input_guard.candidate_started_ns
 
-                async def _resume_false_interruption() -> None:
-                    await asyncio.sleep(false_timeout)
-                    if (
-                        self.input_guard.candidate_active
-                        and self.input_guard.candidate_started_ns == candidate_started
-                        and self.input_guard.candidate_decision is PlaybackInputDecision.WAIT
-                    ):
-                        _restore_audio()
-                        _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
-                        self.orchestrator.metrics.inc_false_interruptions()
+                    async def _resume_false_interruption() -> None:
+                        await asyncio.sleep(false_timeout)
+                        if (
+                            self.input_guard.candidate_active
+                            and self.input_guard.candidate_started_ns == candidate_started
+                            and self.input_guard.candidate_decision
+                            is PlaybackInputDecision.WAIT
+                        ):
+                            _restore_audio()
+                            _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
+                            self.orchestrator.metrics.inc_false_interruptions()
 
-                false_resume_task = self._spawn(
-                    _resume_false_interruption(),
-                    name="duplex-false-interruption-resume",
-                )
+                    false_resume_task = self._spawn(
+                        _resume_false_interruption(),
+                        name="duplex-false-interruption-resume",
+                    )
 
         def _on_agent_state(ev: Any) -> None:
             state = getattr(ev, "new_state", None) or getattr(ev, "state", None)

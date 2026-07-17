@@ -488,16 +488,15 @@ def test_self_hosted_turn_handling_filters_short_echoes_and_reads_timing_env(
     options = agent_mod.build_turn_handling_options("cn_self_hosted")
     assert options["endpointing"] == {
         "mode": "dynamic",
-        "min_delay": 1.50,
-        "max_delay": 2.20,
+        "min_delay": 1.30,
+        "max_delay": 2.00,
         "alpha": 0.85,
     }
-    # Production emitted a second FINAL about 0.5 s after the first EOU. Keep
-    # both fragments inside one physical speech epoch instead of generating twice.
-    assert options["endpointing"]["min_delay"] >= 0.90 + 0.50
-    assert options["interruption"]["min_duration"] == 0.45
+    # Keep endpoint above ~1.2s so late FunASR FINAL fragments stay one epoch.
+    assert options["endpointing"]["min_delay"] >= 1.20
+    assert options["interruption"]["min_duration"] == 0.40
     assert options["interruption"]["min_words"] == 0
-    assert options["interruption"]["false_interruption_timeout"] == 1.70
+    assert options["interruption"]["false_interruption_timeout"] == 1.50
     assert (
         options["interruption"]["false_interruption_timeout"]
         >= options["endpointing"]["min_delay"]

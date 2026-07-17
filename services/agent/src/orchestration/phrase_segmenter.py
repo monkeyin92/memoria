@@ -12,12 +12,12 @@ from services.agent.src.contracts.ids import GenerationFence
 STRONG_BOUNDARY = set("。！？；\n")
 WEAK_BOUNDARY = set("，、：")
 HARD_LIMIT = 42
-FIRST_TARGET_MIN = 8
+FIRST_TARGET_MIN = 6
 WEAK_SUBMIT_MIN = 12
 WEAK_SUBMIT_MAX = 28
-FIRST_WEAK_MIN = 8  # first segment may cut earlier (8–18 target)
-FIRST_WAIT_MS = 280
-FIRST_HARD_WAIT_MS = 450
+FIRST_WEAK_MIN = 6  # first segment may cut earlier for lower TTFB
+FIRST_WAIT_MS = 180
+FIRST_HARD_WAIT_MS = 320
 
 _MD_STRIP = re.compile(
     r"(```[\s\S]*?```)|(^#{1,6}\s+)|(^[\*\-\+]\s+)|(\[([^\]]+)\]\([^)]+\))|(`+)",

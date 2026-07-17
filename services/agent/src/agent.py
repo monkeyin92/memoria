@@ -886,7 +886,10 @@ async def entrypoint(ctx: Any) -> None:
             result = runtime.poll_speaker_enrollment()
             if result is not None:
                 break
-            await asyncio.sleep(0.25)
+            # Faster poll once speech is flowing so welcome starts sooner.
+            progress = runtime.speaker_verifier.enrollment_progress()
+            speech_ms = int(progress.get("speech_ms") or 0)
+            await asyncio.sleep(0.1 if speech_ms > 400 else 0.2)
         else:
             # Wall-clock end: force fail-open even if zero PCM was observed
             # (elapsed_ms only advances when feed_pcm runs).
@@ -938,23 +941,24 @@ def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]
         "turn_detection": {"version": turn_version},
         "endpointing": {
             "mode": "dynamic",
+            # After clean enroll/turn samples, shave 200ms off the 1.50s floor.
             "min_delay": float(
-                os.getenv("ENDPOINTING_MIN_DELAY_S", "1.50" if self_hosted else "0.30")
+                os.getenv("ENDPOINTING_MIN_DELAY_S", "1.30" if self_hosted else "0.30")
             ),
-            "max_delay": float(os.getenv("ENDPOINTING_MAX_DELAY_S", "2.20")),
+            "max_delay": float(os.getenv("ENDPOINTING_MAX_DELAY_S", "2.00")),
             "alpha": float(os.getenv("ENDPOINTING_ALPHA", "0.85")),
         },
         "interruption": {
             "enabled": True,
             "mode": interruption_mode,
             "min_duration": float(
-                os.getenv("INTERRUPTION_MIN_DURATION_S", "0.45" if self_hosted else "0.25")
+                os.getenv("INTERRUPTION_MIN_DURATION_S", "0.40" if self_hosted else "0.25")
             ),
             "min_words": 0,
             "discard_audio_if_uninterruptible": True,
             "false_interruption_timeout": float(
                 os.getenv(
-                    "FALSE_INTERRUPTION_TIMEOUT_S", "1.70" if self_hosted else "1.20"
+                    "FALSE_INTERRUPTION_TIMEOUT_S", "1.50" if self_hosted else "1.20"
                 )
             ),
             "resume_false_interruption": True,

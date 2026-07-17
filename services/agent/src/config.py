@@ -106,13 +106,15 @@ class AgentSettings(BaseSettings):
     # Session-scoped target speaker enrollment (reject nearby talkers).
     speaker_verify_enabled: bool = Field(default=True, alias="SPEAKER_VERIFY_ENABLED")
     speaker_enroll_speech_ms: int = Field(
-        default=3500,
+        # ~2.5s voiced audio is enough for lightweight mel embedding; 3.5s
+        # caused fail-open when users stopped just under the bar.
+        default=2500,
         ge=1500,
         le=10000,
         alias="SPEAKER_ENROLL_SPEECH_MS",
     )
     speaker_enroll_timeout_ms: int = Field(
-        default=15000,
+        default=12000,
         ge=5000,
         le=60000,
         alias="SPEAKER_ENROLL_TIMEOUT_MS",
