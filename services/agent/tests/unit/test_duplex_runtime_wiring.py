@@ -45,6 +45,47 @@ async def test_interrupt_says_friendly_yield_when_was_speaking() -> None:
 
 
 @pytest.mark.asyncio
+async def test_speaker_blocked_interrupt_recovers_instead_of_silence() -> None:
+    """LiveKit may stop audio before speaker gate; recover with continue path."""
+    recovered: list[str] = []
+
+    async def _recover() -> None:
+        recovered.append("我继续。")
+
+    from services.agent.tests.unit.test_speaker_verify import _signal_pcm
+
+    verifier = SpeakerVerifier(
+        enabled=True,
+        enroll_speech_ms=1200,
+        enroll_timeout_ms=5000,
+        accept_threshold=0.70,
+        min_verify_speech_ms=400,
+    )
+    verifier.begin_enrollment()
+    verifier.feed_pcm(_signal_pcm(kind="owner", seconds=2.0, seed=31))
+    assert verifier.try_finalize_enrollment() is not None
+    runtime = DuplexRuntime.create(
+        session_id="recover-session",
+        speaker_verifier=verifier,
+        input_guard_enabled=True,
+    )
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("你叫什么名字")
+    await runtime.on_assistant_speaking("我叫记忆助手")
+    runtime._was_speaking = True
+    runtime._playback_started_ns = __import__("time").monotonic_ns()
+    runtime.set_false_interrupt_recover(_recover)
+    # Nearby talker audio in rolling window → speaker reject
+    runtime.feed_speaker_pcm(_signal_pcm(kind="bystander", seconds=4.0, seed=32))
+    fence_before = runtime.fence
+    new_fence = await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+    assert new_fence.matches(fence_before)
+    await asyncio.sleep(0.05)
+    assert recovered == ["我继续。"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_enrolled_barge_in_rejects_nearby_talker() -> None:
     from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
     from services.agent.tests.unit.test_speaker_verify import _signal_pcm

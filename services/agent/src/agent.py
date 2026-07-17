@@ -704,7 +704,7 @@ async def entrypoint(ctx: Any) -> None:
     )
 
     async def _interrupt_yield_say() -> None:
-        """Friendly mid-reply handoff when barge-in cancels assistant speech."""
+        """Friendly mid-reply handoff when owner barge-in cancels assistant speech."""
         if hasattr(tts_plugin, "apply_speech_plan"):
             tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
         handle = session.say(
@@ -718,6 +718,36 @@ async def entrypoint(ctx: Any) -> None:
                 await wait()
 
     runtime.set_interrupt_yield(_interrupt_yield_say)
+
+    async def _false_interrupt_recover() -> None:
+        """Nearby noise stopped LiveKit playout; speaker gate rejected — continue."""
+        if hasattr(tts_plugin, "apply_speech_plan"):
+            tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
+        handle = session.say(
+            "我继续。",
+            allow_interruptions=True,
+            add_to_chat_ctx=False,
+        )
+        wait = getattr(handle, "wait_for_playout", None)
+        if callable(wait):
+            with contextlib.suppress(Exception):
+                await wait()
+        last_user = ""
+        for turn in reversed(runtime.orchestrator.context.turns):
+            if turn.role == "user" and turn.content:
+                last_user = turn.content.strip()
+                break
+        if last_user:
+            with contextlib.suppress(Exception):
+                await session.generate_reply(
+                    instructions=(
+                        f"用户刚才的问题是：{last_user}。"
+                        "刚才回答被旁边杂声打断了。不要提打断或杂声，"
+                        "用一两句完整自然的中文把答案说完。"
+                    ),
+                )
+
+    runtime.set_false_interrupt_recover(_false_interrupt_recover)
 
     def _on_control_packet(packet: Any) -> None:
         topic = getattr(packet, "topic", None)

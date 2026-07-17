@@ -126,11 +126,15 @@ class DuplexRuntime:
     _event_publisher: Callable[[dict[str, Any]], Awaitable[None]] | None = None
     _result_speaker: Callable[[str], Any] | None = None
     _interrupt_yield: Callable[[], Awaitable[None]] | None = None
+    _false_interrupt_recover: Callable[[], Awaitable[None]] | None = None
     _last_interrupt_yield_ns: int | None = None
+    _last_false_recover_ns: int | None = None
+    _playback_started_ns: int | None = None
     _deep_client: Any | None = None
     _background_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     # Friendly yield when we stop mid-reply so silence does not feel like a crash.
     INTERRUPT_YIELD_COOLDOWN_MS: int = 4_000
+    FALSE_INTERRUPT_RECOVER_COOLDOWN_MS: int = 3_000
     _pending_tool_results: int = 0
     _listener_cue_player: Callable[[str], Any] | None = None
     _active_listener_cue: ListenerCue | None = None
@@ -914,6 +918,22 @@ class DuplexRuntime:
     def set_interrupt_yield(self, speaker: Callable[[], Awaitable[None]] | None) -> None:
         self._interrupt_yield = speaker
 
+    def set_false_interrupt_recover(
+        self, recover: Callable[[], Awaitable[None]] | None
+    ) -> None:
+        """Called when LiveKit already stopped audio but speaker gate rejected barge-in."""
+        self._false_interrupt_recover = recover
+
+    def _assistant_was_mid_reply(self, *, was_speaking: bool) -> bool:
+        if was_speaking or self._playback_fence is not None:
+            return True
+        if self._playback_started_ns is None:
+            return False
+        # Cover the gap after LiveKit flips agent to listening but before our
+        # interrupt handler runs (logs showed ~1s gap and silent death).
+        age_ms = (time.monotonic_ns() - self._playback_started_ns) // 1_000_000
+        return age_ms < 8_000
+
     async def _maybe_say_interrupt_yield(self, *, cause: str) -> None:
         """Short ack after mid-reply stop so users know we yielded, not crashed."""
         if self._interrupt_yield is None:
@@ -936,6 +956,38 @@ class DuplexRuntime:
             logger.warning("interrupt yield failed cause=%s", cause, exc_info=True)
             self.mark_audio_event("interrupt_yield_done", status="error")
 
+    async def _maybe_recover_false_interrupt(self, *, cause: str) -> None:
+        """Resume after nearby noise stopped playout but speaker gate rejected it."""
+        if self._false_interrupt_recover is None:
+            return
+        now = time.monotonic_ns()
+        if (
+            self._last_false_recover_ns is not None
+            and (now - self._last_false_recover_ns) // 1_000_000
+            < self.FALSE_INTERRUPT_RECOVER_COOLDOWN_MS
+        ):
+            return
+        self._last_false_recover_ns = now
+        self.mark_audio_event(
+            "false_interrupt_recover_started",
+            detail={"cause": cause},
+        )
+        try:
+            await self._false_interrupt_recover()
+            self.mark_audio_event(
+                "false_interrupt_recover_done",
+                detail={"cause": cause},
+            )
+        except Exception:
+            logger.warning(
+                "false interrupt recover failed cause=%s", cause, exc_info=True
+            )
+            self.mark_audio_event(
+                "false_interrupt_recover_done",
+                status="error",
+                detail={"cause": cause},
+            )
+
     async def on_real_interrupt(
         self,
         cause: str = "livekit_interruption",
@@ -947,12 +999,14 @@ class DuplexRuntime:
     ) -> GenerationFence:
         self.cancel_listener_cue()
         was_speaking = self._was_speaking
+        mid_reply = self._assistant_was_mid_reply(was_speaking=was_speaking)
         if (
             create_user_turn
             and self.speaker_verifier.active
             and not self._speaker_allows_user_input(context="interrupt")
         ):
-            # Nearby talker: do not cancel assistant generation / bump fence.
+            # Nearby talker: do not bump fence — but LiveKit may already have
+            # stopped audio, so recover instead of dead silence.
             self.speaker_verifier.mark_utterance_end()
             await self.orchestrator.dismiss_pending_interruption(
                 cause="speaker_reject_interrupt"
@@ -960,8 +1014,13 @@ class DuplexRuntime:
             self.mark_audio_event(
                 "interrupt_blocked_by_speaker",
                 status="ignored",
-                detail={"cause": cause},
+                detail={"cause": cause, "mid_reply": mid_reply},
             )
+            if mid_reply:
+                self._spawn(
+                    self._maybe_recover_false_interrupt(cause=cause),
+                    name="false-interrupt-recover",
+                )
             return self.fence
         old_fence = self.fence
         new_fence = await self.orchestrator.confirm_interruption(
@@ -983,10 +1042,10 @@ class DuplexRuntime:
                 InteractionPhase.INTERRUPTED,
                 cause=f"interrupt:{cause}",
             )
-            # User-facing yield only when we actually stopped mid-reply.
+            # User-facing yield when we actually stop mid-reply for the owner.
             if (
                 create_user_turn
-                and was_speaking
+                and mid_reply
                 and cause
                 not in {
                     "user_button",
@@ -1004,6 +1063,7 @@ class DuplexRuntime:
         if self._set_interruption_min_words is not None:
             self._set_interruption_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
         self._last_playback_completed_ns = None
+        self._playback_started_ns = time.monotonic_ns()
         if self._playback_fence is None or not self._playback_fence.matches(self.fence):
             self._playback_fence = self.fence
             self._played_assistant_text = ""
