@@ -130,16 +130,17 @@ def prepare_tts_text(
 
 
 def speech_plan_for_emotion(label: str) -> SpeechPlan:
-    """Map input observation to the deliberately smaller safe output subset."""
+    """Map input observation to the deliberately smaller safe output subset.
+
+    Rate is fixed at 1.0: CosyVoice rate + emotion swings were perceived as
+    random loudness / "awkward vs standard Mandarin" quality jumps.
+    Non-happy emotions use neutral instruct — sad/surprised instruct often
+    muddies longanyang and lowers volume inconsistently.
+    """
     if label == "happy":
-        return SpeechPlan("happy", 0.98)
-    if label == "sad":
-        return SpeechPlan("sad", 0.94)
-    if label == "surprised":
-        return SpeechPlan("surprised", 1.0)
-    if label in {"angry", "fearful", "disgusted"}:
-        return SpeechPlan("neutral", 0.94)
-    return SpeechPlan("neutral", 0.98)
+        return SpeechPlan("happy", 1.0)
+    # sad / surprised / angry / … → neutral voice + fixed rate
+    return SpeechPlan("neutral", 1.0)
 
 
 def speech_plan_for_turn(
@@ -158,8 +159,8 @@ def speech_plan_for_turn(
     )
     if serious:
         return SpeechPlan(
-            base.voice_emotion,
-            min(base.rate, 0.94),
+            "neutral",
+            1.0,
             "supportive",
             "本轮语境严肃。直接、温和地承接用户，绝对不要笑、咳嗽或使用轻佻的思考填充词。",
             strip_paralinguistic=True,
@@ -168,7 +169,7 @@ def speech_plan_for_turn(
     if has_laughter and (provider_label == "happy" or acoustic_laughter):
         return SpeechPlan(
             "happy",
-            0.98,
+            1.0,
             "light_laughter",
             "本轮是轻松且声学上明确的笑声。"
             "开头只轻笑一次：优先输出可被 TTS 自然读出的短笑音“呵，”或“呵呵，”，"
@@ -179,7 +180,7 @@ def speech_plan_for_turn(
         deliberative_prefix = "[breath]" if use_markup_tags else ""
         return SpeechPlan(
             base.voice_emotion,
-            min(base.rate, 0.95),
+            1.0,
             "deliberative",
             "本轮需要安排或组织内容。"
             "先用四到十二个字的自然短衔接（可含一个“嗯”“好”或“可以”），"

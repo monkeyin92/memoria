@@ -235,11 +235,12 @@ async def test_runtime_applies_ephemeral_emotion_to_the_next_cosyvoice_generatio
 
     assert first.label == "neutral"
     assert second.label == "sad"
-    assert tts.current_instruction == "你正在进行闲聊互动，你说话的情感是sad。"
-    assert tts.current_rate == 0.94
+    # Acoustic sad still observed, but TTS stays neutral @ rate 1.0 for stability.
+    assert tts.current_instruction == "你正在进行闲聊互动，你说话的情感是neutral。"
+    assert tts.current_rate == 1.0
     assert all(turn.role != "emotion" for turn in runtime.orchestrator.context.turns)
     assert "emotion_observation label=sad provider_label=sad" in caplog.text
-    assert "speech_plan_selected emotion=sad rate=0.94" in caplog.text
+    assert "speech_plan_selected emotion=neutral rate=1.00" in caplog.text
     assert "最近有点累" not in caplog.text
     await runtime.close()
 

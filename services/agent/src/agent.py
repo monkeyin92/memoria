@@ -745,19 +745,21 @@ async def entrypoint(ctx: Any) -> None:
     runtime.mark_audio_event("audio_output_attached")
 
     cue_background: Any | None = None
+    # PCM cache only until enroll finishes — starting BackgroundAudioPlayer
+    # publishes a second room audio track that H5 attaches on top of main TTS
+    # (dual-voice blip during the enroll prompt).
+    _listener_cue_cache: dict[str, bytes] = {}
+    _listener_cue_cache_ready = asyncio.Event()
 
     async def _prepare_listener_cues() -> None:
-        nonlocal cue_background
         if not runtime.cue_scheduler.enabled or runtime.cue_scheduler.max_per_turn == 0:
+            _listener_cue_cache_ready.set()
             return
-        from livekit.agents import AudioConfig, BackgroundAudioPlayer
-
-        from services.agent.src.orchestration.cue_audio import pcm_frame_source
 
         cue_tts = CosyVoiceTTS.from_env()
         if not hasattr(cue_tts, "synthesize_stream_text"):
+            _listener_cue_cache_ready.set()
             return
-        cache: dict[str, bytes] = {}
         try:
             await cue_tts.pool.warm(size=1)
             for text in runtime.cue_scheduler.cues:
@@ -766,31 +768,16 @@ async def entrypoint(ctx: Any) -> None:
                     fence=runtime.fence,
                 )
                 if result.pcm and not result.discarded:
-                    cache[text] = result.pcm
-            if not cache:
+                    _listener_cue_cache[text] = result.pcm
+            if not _listener_cue_cache:
                 raise RuntimeError("CosyVoice returned no listener cue audio")
-            player = BackgroundAudioPlayer()
-            await player.start(room=ctx.room)
-            cue_background = player
-            runtime.cue_scheduler.cues = tuple(cache)
-
-            def _play_listener_cue(text: str) -> Any:
-                return player.play(
-                    AudioConfig(
-                        source=pcm_frame_source(
-                            cache[text],
-                            sample_rate=runtime_settings.cosyvoice_sample_rate,
-                        ),
-                        volume=runtime_settings.listener_cue_volume,
-                        fade_in=0.02,
-                        fade_out=0.05,
-                    )
-                )
-
-            runtime.set_listener_cue_player(_play_listener_cue)
+            runtime.cue_scheduler.cues = tuple(_listener_cue_cache)
             runtime.mark_audio_event(
                 "listener_cues_ready",
-                detail={"cue_count": len(cache)},
+                detail={
+                    "cue_count": len(_listener_cue_cache),
+                    "player": "deferred",
+                },
             )
         except asyncio.CancelledError:
             raise
@@ -798,10 +785,49 @@ async def entrypoint(ctx: Any) -> None:
             logger.warning("listener cue preparation failed", exc_info=True)
             runtime.mark_audio_event("listener_cues_ready", status="error")
         finally:
+            _listener_cue_cache_ready.set()
             close = getattr(cue_tts, "aclose", None)
             if callable(close):
                 with contextlib.suppress(Exception):
                     await close()
+
+    async def _start_listener_cue_player() -> None:
+        """Publish cue track only after enroll/welcome so main TTS is alone."""
+        nonlocal cue_background
+        if cue_background is not None:
+            return
+        await _listener_cue_cache_ready.wait()
+        if not _listener_cue_cache:
+            return
+        from livekit.agents import AudioConfig, BackgroundAudioPlayer
+
+        from services.agent.src.orchestration.cue_audio import pcm_frame_source
+
+        player = BackgroundAudioPlayer()
+        await player.start(room=ctx.room)
+        cue_background = player
+
+        def _play_listener_cue(text: str) -> Any:
+            pcm = _listener_cue_cache.get(text)
+            if not pcm:
+                return None
+            return player.play(
+                AudioConfig(
+                    source=pcm_frame_source(
+                        pcm,
+                        sample_rate=runtime_settings.cosyvoice_sample_rate,
+                    ),
+                    volume=runtime_settings.listener_cue_volume,
+                    fade_in=0.02,
+                    fade_out=0.05,
+                )
+            )
+
+        runtime.set_listener_cue_player(_play_listener_cue)
+        runtime.mark_audio_event(
+            "listener_cue_player_started",
+            detail={"cue_count": len(_listener_cue_cache)},
+        )
 
     runtime._spawn(_prepare_listener_cues(), name="listener-cue-prepare")
 
@@ -878,6 +904,9 @@ async def entrypoint(ctx: Any) -> None:
         await session.generate_reply(
             instructions="用一句自然中文打招呼，并邀请用户直接说需求。",
         )
+
+    # Cue track after enroll/welcome playout so it cannot stack on main TTS.
+    await _start_listener_cue_player()
 
 
 def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]:

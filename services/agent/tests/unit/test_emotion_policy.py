@@ -131,11 +131,12 @@ def test_speech_plan_only_uses_cosyvoice_supported_safe_output_emotions() -> Non
     happy = speech_plan_for_emotion("happy")
     angry = speech_plan_for_emotion("angry")
 
-    assert (sad.voice_emotion, sad.rate) == ("sad", 0.94)
-    assert (happy.voice_emotion, happy.rate) == ("happy", 0.98)
+    # Non-happy emotions lock to neutral instruct + rate 1.0 for stable timbre/loudness.
+    assert (sad.voice_emotion, sad.rate) == ("neutral", 1.0)
+    assert (happy.voice_emotion, happy.rate) == ("happy", 1.0)
     assert angry.voice_emotion == "neutral"
-    assert angry.rate == 0.94
-    assert sad.instruction == "你正在进行闲聊互动，你说话的情感是sad。"
+    assert angry.rate == 1.0
+    assert sad.instruction == "你正在进行闲聊互动，你说话的情感是neutral。"
 
 
 def test_multi_step_request_gets_deliberative_delivery_without_affecting_direct_answer() -> None:
@@ -151,7 +152,8 @@ def test_multi_step_request_gets_deliberative_delivery_without_affecting_direct_
     )
 
     assert deliberative.delivery_mode == "deliberative"
-    assert deliberative.rate < direct.rate
+    # Rate is fixed at 1.0 for consistent CosyVoice loudness; style differs via LLM only.
+    assert deliberative.rate == direct.rate == 1.0
     assert "四到十二个字" in deliberative.llm_instruction
     assert "以逗号结束" in deliberative.llm_instruction
     assert deliberative.tts_prefix == ""

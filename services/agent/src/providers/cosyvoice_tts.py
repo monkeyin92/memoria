@@ -45,7 +45,9 @@ class CosyVoiceConfig:
     sample_rate: int = 24000
     rate: float = 1.0
     pitch: float = 1.0
-    volume: int = 50
+    # 50 is CosyVoice default but often reads soft/uneven on mobile WebRTC;
+    # 70 keeps headroom without clipping on longanyang.
+    volume: int = 70
     word_timestamps: bool = True
     pool_size: int = 4
     connect_timeout_s: float = 5.0
@@ -73,7 +75,7 @@ class CosyVoiceConfig:
             sample_rate=int(e.get("COSYVOICE_SAMPLE_RATE", "24000")),
             rate=float(e.get("COSYVOICE_RATE", "1.0")),
             pitch=float(e.get("COSYVOICE_PITCH", "1.0")),
-            volume=int(e.get("COSYVOICE_VOLUME", "50")),
+            volume=int(e.get("COSYVOICE_VOLUME", "70")),
             word_timestamps=e.get("COSYVOICE_WORD_TIMESTAMPS", "true").lower() == "true",
             pool_size=int(e.get("COSYVOICE_POOL_SIZE", "4")),
             connect_timeout_s=float(e.get("COSYVOICE_CONNECT_TIMEOUT_S", "5")),
@@ -477,7 +479,11 @@ class CosyVoiceTTS(tts.TTS[Any]):
         if emotion not in COSYVOICE_EMOTIONS:
             emotion = "neutral"
         self._config.instruction = cosyvoice_instruction(emotion)
-        self._config.rate = min(1.10, max(0.90, rate))
+        # Prefer 1.0; still clamp defensive ranges if a caller passes outliers.
+        self._config.rate = min(1.05, max(0.95, rate))
+        # Keep volume pinned so emotion switches do not change loudness.
+        if self._config.volume < 60:
+            self._config.volume = 70
 
     @property
     def current_instruction(self) -> str | None:
