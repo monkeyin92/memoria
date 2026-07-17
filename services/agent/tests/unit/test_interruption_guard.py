@@ -20,6 +20,21 @@ def test_explicit_interrupt_prefixes() -> None:
     assert is_explicit_interrupt("等等，不是这个意思")
     assert is_explicit_interrupt("停一下")
     assert is_explicit_interrupt("我问的是下周三")
+    assert is_explicit_interrupt("别说了")
+
+
+def test_interrupt_ack_phrase_by_semantics() -> None:
+    from services.agent.src.orchestration.interruption_guard import interrupt_ack_phrase
+
+    assert interrupt_ack_phrase("停一下") == "嗯，你说。"
+    assert interrupt_ack_phrase("等等") == "嗯，你说。"
+    assert interrupt_ack_phrase("等一下我问你") == "嗯，你说。"
+    assert interrupt_ack_phrase("听我说") == "嗯，你说。"
+    assert interrupt_ack_phrase("别说了") == "好的。"
+    assert interrupt_ack_phrase("暂停") == "好的。"
+    assert interrupt_ack_phrase("停下") == "好的。"
+    assert interrupt_ack_phrase("不要说了") == "好的。"
+    assert interrupt_ack_phrase("") == "嗯，你说。"
 
 
 def test_guard_decisions() -> None:

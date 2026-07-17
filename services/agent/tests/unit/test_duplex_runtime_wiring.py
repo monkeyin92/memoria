@@ -26,14 +26,15 @@ async def test_interrupt_says_friendly_yield_when_was_speaking() -> None:
     """Mid-reply cancel should not leave dead silence."""
     said: list[str] = []
 
-    async def _yield() -> None:
-        said.append("嗯，你说。")
+    async def _yield(phrase: str) -> None:
+        said.append(phrase)
 
     runtime = DuplexRuntime.create(session_id="yield-session")
     await runtime.orchestrator.ready()
     await runtime.on_turn_committed("讲个故事")
     await runtime.on_assistant_speaking("很长的故事内容")
     runtime._was_speaking = True
+    runtime.input_guard.candidate_text = "停一下"
     runtime.set_interrupt_yield(_yield)
     fence_before = runtime.fence
     new_fence = await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
@@ -49,8 +50,8 @@ async def test_explicit_stop_phrase_yields_not_continue() -> None:
     """「停一下」must say 嗯你说, not 我继续 (owner cmd overrides short speaker score)."""
     said: list[str] = []
 
-    async def _yield() -> None:
-        said.append("嗯，你说。")
+    async def _yield(phrase: str) -> None:
+        said.append(phrase)
 
     async def _recover() -> None:
         said.append("我继续。")
@@ -83,6 +84,38 @@ async def test_explicit_stop_phrase_yields_not_continue() -> None:
     await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
     await asyncio.sleep(0.05)
     assert said == ["嗯，你说。"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_stop_talking_phrase_acks_quietly() -> None:
+    """「别说了 / 暂停」must ack「好的。」not invite「嗯，你说。」"""
+    said: list[str] = []
+
+    async def _yield(phrase: str) -> None:
+        said.append(phrase)
+
+    runtime = DuplexRuntime.create(session_id="quiet-ack")
+    await runtime.orchestrator.ready()
+    runtime.set_interrupt_yield(_yield)
+
+    await runtime.on_turn_committed("讲故事")
+    await runtime.on_assistant_speaking("故事开始")
+    runtime._was_speaking = True
+    runtime.input_guard.candidate_text = "别说了"
+    await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+    await asyncio.sleep(0.1)
+    assert said == ["好的。"]
+
+    said.clear()
+    runtime._last_interrupt_yield_ns = None
+    await runtime.on_turn_committed("再讲讲")
+    await runtime.on_assistant_speaking("第二段故事")
+    runtime._was_speaking = True
+    runtime.input_guard.candidate_text = "暂停"
+    await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+    await asyncio.sleep(0.1)
+    assert said == ["好的。"]
     await runtime.close()
 
 

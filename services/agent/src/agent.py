@@ -703,12 +703,13 @@ async def entrypoint(ctx: Any) -> None:
         lambda text: session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
     )
 
-    async def _interrupt_yield_say() -> None:
-        """Friendly mid-reply handoff when owner barge-in cancels assistant speech."""
+    async def _interrupt_yield_say(phrase: str) -> None:
+        """Semantic interrupt ack:「嗯，你说。」vs「好的。」from user wording."""
+        text = (phrase or "").strip() or "嗯，你说。"
         if hasattr(tts_plugin, "apply_speech_plan"):
             tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
         handle = session.say(
-            "嗯，你说。",
+            text,
             allow_interruptions=True,
             add_to_chat_ctx=False,
         )

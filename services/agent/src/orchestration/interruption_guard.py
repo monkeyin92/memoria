@@ -43,6 +43,7 @@ BACKCHANNEL_WHITELIST = frozenset(
     }
 )
 
+# Explicit interrupt phrases (any of these → treat as real owner interrupt).
 INTERRUPT_PREFIXES = (
     "等等",
     "等一下",
@@ -52,6 +53,11 @@ INTERRUPT_PREFIXES = (
     "暂停",
     "先停",
     "别说了",
+    "不要说了",
+    "别讲了",
+    "先别说",
+    "闭嘴",
+    "安静",
     "你先停",
     "听我说",
     "不是",
@@ -61,6 +67,35 @@ INTERRUPT_PREFIXES = (
     "我的意思是",
     "我问的是",
     "换一个",
+)
+
+# Semantic ack after interrupt (order: longer / stop-intent first).
+# stop_talking → AI should just acknowledge and stay quiet ("好的。")
+# yield_floor → AI hands the floor to the user ("嗯，你说。")
+_STOP_TALKING_PHRASES = (
+    "别说了",
+    "不要说了",
+    "别讲了",
+    "先别说",
+    "闭嘴",
+    "安静",
+    "暂停",
+    "停下",
+    "先停",
+    "你先停",
+)
+_YIELD_FLOOR_PHRASES = (
+    "停一下",
+    "等一下",
+    "等等",
+    "你听我说",
+    "听我说",
+    "我的意思是",
+    "我问的是",
+    "换一个",
+    "不是",
+    "不对",
+    "先别",
 )
 
 _NON_TARGET_SCRIPT = re.compile(r"[\u3040-\u30ff\uac00-\ud7af]")
@@ -100,6 +135,28 @@ def is_explicit_interrupt(text: str) -> bool:
     if not t:
         return False
     return any(t.startswith(p) or p in t for p in INTERRUPT_PREFIXES)
+
+
+def interrupt_ack_phrase(text: str) -> str:
+    """Pick a natural interrupt ack from user wording.
+
+    - yield floor (停一下 / 等等 / 听我说…):「嗯，你说。」
+    - stop talking (别说了 / 暂停 / 停下…):「好的。」
+    - unknown / empty: default yield-floor style.
+    """
+    t = normalize_short(text)
+    if not t:
+        return "嗯，你说。"
+    for p in _STOP_TALKING_PHRASES:
+        if t.startswith(p) or p in t:
+            return "好的。"
+    for p in _YIELD_FLOOR_PHRASES:
+        if t.startswith(p) or p in t:
+            return "嗯，你说。"
+    # Bare「停」without「一下」is ambiguous; prefer quiet ack.
+    if t == "停" or t.startswith("停") and "一下" not in t:
+        return "好的。"
+    return "嗯，你说。"
 
 
 def count_cjk_chars(text: str) -> int:

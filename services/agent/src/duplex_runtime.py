@@ -26,6 +26,7 @@ from services.agent.src.orchestration.heard_text_tracker import HeardTextTracker
 from services.agent.src.orchestration.interruption_guard import (
     PlaybackInputDecision,
     PlaybackInputGuard,
+    interrupt_ack_phrase,
     is_explicit_interrupt,
 )
 from services.agent.src.orchestration.orchestrator import CosyPoolHandle, Orchestrator
@@ -126,7 +127,7 @@ class DuplexRuntime:
     _set_interruption_min_words: Callable[[int], None] | None = None
     _event_publisher: Callable[[dict[str, Any]], Awaitable[None]] | None = None
     _result_speaker: Callable[[str], Any] | None = None
-    _interrupt_yield: Callable[[], Awaitable[None]] | None = None
+    _interrupt_yield: Callable[[str], Awaitable[None]] | None = None
     _false_interrupt_recover: Callable[[], Awaitable[None]] | None = None
     _last_interrupt_yield_ns: int | None = None
     _last_false_recover_ns: int | None = None
@@ -927,7 +928,10 @@ class DuplexRuntime:
             await self.orchestrator.begin_speaking([], self._pending_assistant_text)
             await self.orchestrator.finish_speaking(tools_active=tools_active)
 
-    def set_interrupt_yield(self, speaker: Callable[[], Awaitable[None]] | None) -> None:
+    def set_interrupt_yield(
+        self, speaker: Callable[[str], Awaitable[None]] | None
+    ) -> None:
+        """speaker(phrase) — phrase is chosen from interrupt semantics."""
         self._interrupt_yield = speaker
 
     def set_false_interrupt_recover(
@@ -960,10 +964,18 @@ class DuplexRuntime:
         ):
             return
         self._last_interrupt_yield_ns = now
-        self.mark_audio_event("interrupt_yield_started", detail={"cause": cause})
+        candidate = self._interrupt_candidate_text()
+        phrase = interrupt_ack_phrase(candidate)
+        self.mark_audio_event(
+            "interrupt_yield_started",
+            detail={"cause": cause, "phrase": phrase, "candidate": candidate[:40]},
+        )
         try:
-            await self._interrupt_yield()
-            self.mark_audio_event("interrupt_yield_done", detail={"cause": cause})
+            await self._interrupt_yield(phrase)
+            self.mark_audio_event(
+                "interrupt_yield_done",
+                detail={"cause": cause, "phrase": phrase},
+            )
         except Exception:
             logger.warning("interrupt yield failed cause=%s", cause, exc_info=True)
             self.mark_audio_event("interrupt_yield_done", status="error")
