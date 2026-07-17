@@ -643,6 +643,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
 
     fake_tts = _FakeTTS()
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "cn_self_hosted")
+    monkeypatch.setenv("SPEAKER_VERIFY_ENABLED", "false")
 
     class FakeCosy:
         @classmethod

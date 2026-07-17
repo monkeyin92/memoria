@@ -553,7 +553,7 @@ async def entrypoint(ctx: Any) -> None:
     from services.agent.src.orchestration.speaker_verify import SpeakerVerifier
 
     speaker_verifier = SpeakerVerifier(
-        enabled=runtime_settings.speaker_verify_enabled,
+        enabled=runtime_settings.speaker_verify_enabled and not offline,
         enroll_speech_ms=runtime_settings.speaker_enroll_speech_ms,
         enroll_timeout_ms=runtime_settings.speaker_enroll_timeout_ms,
         accept_threshold=runtime_settings.speaker_accept_threshold,
@@ -821,24 +821,35 @@ async def entrypoint(ctx: Any) -> None:
         raise RuntimeError("Agent UI publisher was not configured")
     await ready_publish
 
+    async def _say_fixed(text: str, *, interruptible: bool = False) -> None:
+        """One CosyVoice stream of fixed text — avoids multi-phrase LLM TTS glitches."""
+        if hasattr(tts_plugin, "apply_speech_plan"):
+            tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
+        handle = session.say(
+            text,
+            allow_interruptions=interruptible,
+            add_to_chat_ctx=False,
+        )
+        wait = getattr(handle, "wait_for_playout", None)
+        if callable(wait):
+            await wait()
+        else:
+            for _ in range(150):
+                if not runtime._was_speaking:
+                    break
+                await asyncio.sleep(0.1)
+        await asyncio.sleep(0.2)
+
     if runtime.speaker_verifier.enabled:
-        # Tell the UI first; only start PCM enrollment AFTER the instruction
-        # finishes playing so CosyVoice echo is not enrolled as the owner.
+        # Fixed single-stream prompt (not generate_reply) so CosyVoice does not
+        # split into multiple phrases that sound like a second voice / speed-up.
         runtime.publish_assistant_state("speaker_enroll")
         runtime.mark_audio_event("speaker_enroll_prompt_started")
-        await session.generate_reply(
-            instructions=(
-                "用一句简短中文请用户完成声纹登记：让用户用正常音量连续说大约四秒钟，"
-                "可以念“我是主人，请记住我的声音”，或随便说几句日常的话。"
-                "不要展开闲聊，说完这句后等待用户。"
-            ),
+        await _say_fixed(
+            "请用正常音量连续说大约四秒，可以说：我是主人，请记住我的声音。",
+            interruptible=False,
         )
-        # Wait for enroll prompt playout (or up to 12s).
-        for _ in range(120):
-            if not runtime._was_speaking:
-                break
-            await asyncio.sleep(0.1)
-        await asyncio.sleep(0.35)
+        # Only start PCM enrollment after the prompt has fully finished playing.
         runtime.begin_speaker_enrollment()
         enroll_deadline = asyncio.get_running_loop().time() + (
             runtime_settings.speaker_enroll_timeout_ms / 1000.0
@@ -847,23 +858,20 @@ async def entrypoint(ctx: Any) -> None:
             result = runtime.poll_speaker_enrollment()
             if result is not None:
                 break
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.25)
         else:
             runtime.poll_speaker_enrollment()
         runtime.publish_assistant_state("listening")
         runtime.mark_audio_event("welcome_generation_started")
         if runtime.speaker_verifier.state.value == "enrolled":
-            await session.generate_reply(
-                instructions=(
-                    "用一句自然中文确认声纹登记成功，并邀请用户直接说需求。"
-                ),
+            await _say_fixed(
+                "好的，已经记住你的声音了。想聊什么都可以直接说。",
+                interruptible=False,
             )
         else:
-            await session.generate_reply(
-                instructions=(
-                    "用一句自然中文说明暂时跳过声纹登记、仍可正常对话，"
-                    "并邀请用户直接说需求。"
-                ),
+            await _say_fixed(
+                "这次先跳过声纹登记，我们直接聊。想说什么都可以。",
+                interruptible=False,
             )
     else:
         runtime.mark_audio_event("welcome_generation_started")

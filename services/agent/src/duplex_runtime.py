@@ -219,18 +219,23 @@ class DuplexRuntime:
     def poll_speaker_enrollment(self) -> dict[str, object] | None:
         result = self.speaker_verifier.try_finalize_enrollment()
         if result is None:
+            # Avoid spamming LiveKit data channel every poll tick.
             progress = self.speaker_verifier.enrollment_progress()
-            self._publish(
-                {
-                    "type": "speaker_enroll_progress",
-                    "session_id": self.session_id,
-                    "state": progress["state"],
-                    "speech_ms": progress["speech_ms"],
-                    "target_ms": progress["target_ms"],
-                    "elapsed_ms": progress["elapsed_ms"],
-                    "at": datetime.now(UTC).isoformat(),
-                }
-            )
+            speech_ms = int(progress["speech_ms"])
+            last = getattr(self, "_last_enroll_progress_speech_ms", -1)
+            if speech_ms - last >= 500 or speech_ms == 0 and last < 0:
+                self._last_enroll_progress_speech_ms = speech_ms
+                self._publish(
+                    {
+                        "type": "speaker_enroll_progress",
+                        "session_id": self.session_id,
+                        "state": progress["state"],
+                        "speech_ms": progress["speech_ms"],
+                        "target_ms": progress["target_ms"],
+                        "elapsed_ms": progress["elapsed_ms"],
+                        "at": datetime.now(UTC).isoformat(),
+                    }
+                )
             return None
         payload = {
             "type": "speaker_enroll_result",
