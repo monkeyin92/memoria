@@ -6,10 +6,10 @@
 
 ## 当前状态
 
-- 正式 runtime release 与 H5 release 均为 `20260717-123551`。
+- 正式 runtime release 与 H5 release 均为 `20260717-175400`（UtteranceRouter；H5 静态同 `165200`）。
 - 当前公网 H5：`https://aginice.cn:8443/`；Control API：`https://aginice.cn:8443/memoria-api/`。兼容入口 `https://aginice.cn:8443/memoria-h5/` 与公网 IP 路径继续可用。
-- `/opt/memoria/current` 指向 `releases/20260717-123551`；Control API 与 Agent 两个 Linux/AMD64 容器均为 healthy。
-- `/var/www/memoria-h5` 指向 `memoria-releases/20260717-123551`；H5 已在 runtime、Provider 与 readiness 门禁通过后最后原子切换。
+- `/opt/memoria/current` 指向 `releases/20260717-175400`；Control API 与 Agent 两个 Linux/AMD64 容器均为 healthy。
+- `/var/www/memoria-h5` 指向 `memoria-releases/20260717-175400`；H5 已在 runtime、Provider 与 readiness 门禁通过后最后原子切换。
 - 生产默认链路为自建 LiveKit Server `1.13.3`、FunASR Realtime、百炼 Qwen 和 CosyVoice Realtime；每日回顾 `source=qwen`。
 - H5 三页、四种动态情绪、实时会话、停止回答、声音解锁、静音保持、重连恢复、每日回顾和个人资料均已完成。
 - H5 使用服务端签发的匿名 Bearer 身份。已保存身份先通过 `/v1/auth/me` 校验；只有 401/403 才换发，网络故障不清除现有身份。
