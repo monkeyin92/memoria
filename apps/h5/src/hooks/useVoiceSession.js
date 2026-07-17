@@ -24,6 +24,7 @@ const stateLabels = {
   idle: "轻触我，开始聊聊",
   connecting: "正在靠近你…",
   ready: "我在这里",
+  speaker_enroll: "请说几句话，登记你的声音",
   listening: "我在认真听",
   thinking: "让我想一想",
   speaking: "正在回应你",
@@ -34,6 +35,7 @@ const stateLabels = {
 
 function mapServerState(state) {
   if (state === "ready") return "ready";
+  if (state === "speaker_enroll") return "speaker_enroll";
   // backchannel: short "嗯/我在听" while the user still holds the floor.
   if (
     [
@@ -572,9 +574,10 @@ export function useVoiceSession({
         omniTransportRef.current === transport;
       transport = new QwenOmniWebRTCTransport({
         exchangeSdp: exchangeOmniSdp,
+        speakerVerifyEnabled: true,
         onState: (state) => {
           if (!isCurrent()) return;
-          if (state === "ready") {
+          if (state === "ready" || state === "speaker_enroll") {
             initialReadyRef.current = true;
             clearAgentReadyTimer();
           }
@@ -597,6 +600,17 @@ export function useVoiceSession({
             element.muted = !voiceReplyEnabledRef.current;
           }
           recordAudioDiagnostic(name, status, detail);
+        },
+        onSpeakerProgress: () => {
+          if (isCurrent()) setUiState("speaker_enroll");
+        },
+        onSpeakerEnrolled: (result) => {
+          if (!isCurrent()) return;
+          recordAudioDiagnostic("speaker_enrolled", "ok", result);
+        },
+        onSpeakerReject: (detail) => {
+          if (!isCurrent()) return;
+          recordAudioDiagnostic("speaker_rejected", "ignored", detail);
         },
         onError: (message) => {
           if (isCurrent()) setError(message);
@@ -769,7 +783,14 @@ export function useVoiceSession({
             const mappedState = mapServerState(event.state);
             if (!mappedState) return;
             if (!initialReadyRef.current) {
-              if (event.state !== "ready") return;
+              // ready starts the session; speaker_enroll may be the first
+              // post-connect interactive state for voiceprint registration.
+              if (
+                event.state !== "ready" &&
+                event.state !== "speaker_enroll"
+              ) {
+                return;
+              }
               initialReadyRef.current = true;
               recordAudioDiagnostic("agent_ready");
             }

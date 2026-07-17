@@ -102,6 +102,33 @@ class AgentSettings(BaseSettings):
     )
     qwen_emotion_enabled: bool = Field(default=True, alias="QWEN_EMOTION_ENABLED")
 
+    # Session-scoped target speaker enrollment (reject nearby talkers).
+    speaker_verify_enabled: bool = Field(default=True, alias="SPEAKER_VERIFY_ENABLED")
+    speaker_enroll_speech_ms: int = Field(
+        default=3500,
+        ge=1500,
+        le=10000,
+        alias="SPEAKER_ENROLL_SPEECH_MS",
+    )
+    speaker_enroll_timeout_ms: int = Field(
+        default=15000,
+        ge=5000,
+        le=60000,
+        alias="SPEAKER_ENROLL_TIMEOUT_MS",
+    )
+    speaker_accept_threshold: float = Field(
+        default=0.62,
+        ge=0.35,
+        le=0.95,
+        alias="SPEAKER_ACCEPT_THRESHOLD",
+    )
+    speaker_min_verify_speech_ms: int = Field(
+        default=450,
+        ge=200,
+        le=3000,
+        alias="SPEAKER_MIN_VERIFY_SPEECH_MS",
+    )
+
     offline_mock: bool = Field(default=False, alias="OFFLINE_MOCK")
 
     @property

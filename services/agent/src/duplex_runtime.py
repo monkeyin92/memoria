@@ -34,6 +34,7 @@ from services.agent.src.orchestration.prosody import (
     speech_plan_for_emotion,
     speech_plan_for_turn,
 )
+from services.agent.src.orchestration.speaker_verify import SpeakerGateState, SpeakerVerifier
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
 from services.agent.src.orchestration.task_manager import ToolSpec, spoken_result_summarizer
 from services.agent.src.providers.cosyvoice_tts import CosyVoicePool, CosyVoiceTTS
@@ -113,6 +114,7 @@ class DuplexRuntime:
     speech_plan: SpeechPlan = field(default_factory=lambda: speech_plan_for_emotion("neutral"))
     interaction_phase: InteractionPhase = InteractionPhase.CONNECTING
     use_paralinguistic_tags: bool = False
+    speaker_verifier: SpeakerVerifier = field(default_factory=SpeakerVerifier)
     _unsubscribers: list[Callable[[], None]] = field(default_factory=list)
     _was_speaking: bool = False
     _pending_assistant_text: str = ""
@@ -143,6 +145,7 @@ class DuplexRuntime:
         input_guard_enabled: bool = False,
         listener_cues_enabled: bool = False,
         use_paralinguistic_tags: bool = False,
+        speaker_verifier: SpeakerVerifier | None = None,
     ) -> DuplexRuntime:
         sid = session_id or new_session_id()
         orch = Orchestrator(session_id=sid)
@@ -155,6 +158,9 @@ class DuplexRuntime:
             input_guard=PlaybackInputGuard(enabled=input_guard_enabled),
             cue_scheduler=CueScheduler(enabled=listener_cues_enabled),
             use_paralinguistic_tags=use_paralinguistic_tags,
+            speaker_verifier=speaker_verifier
+            if speaker_verifier is not None
+            else SpeakerVerifier(enabled=False),
         )
 
     @property
@@ -195,6 +201,110 @@ class DuplexRuntime:
 
     def set_emotion_turn_observer(self, observer: Callable[[int], None]) -> None:
         self._emotion_turn_observer = observer
+
+    def feed_speaker_pcm(self, pcm: bytes) -> None:
+        self.speaker_verifier.feed_pcm(pcm)
+
+    def begin_speaker_enrollment(self) -> None:
+        self.speaker_verifier.begin_enrollment()
+        self.publish_assistant_state("speaker_enroll")
+        self.mark_audio_event("speaker_enroll_started")
+
+    def poll_speaker_enrollment(self) -> dict[str, object] | None:
+        result = self.speaker_verifier.try_finalize_enrollment()
+        if result is None:
+            progress = self.speaker_verifier.enrollment_progress()
+            self._publish(
+                {
+                    "type": "speaker_enroll_progress",
+                    "session_id": self.session_id,
+                    "state": progress["state"],
+                    "speech_ms": progress["speech_ms"],
+                    "target_ms": progress["target_ms"],
+                    "elapsed_ms": progress["elapsed_ms"],
+                    "at": datetime.now(UTC).isoformat(),
+                }
+            )
+            return None
+        payload = {
+            "type": "speaker_enroll_result",
+            "session_id": self.session_id,
+            "accepted": result.accepted,
+            "reason": result.reason,
+            "score": round(result.score, 4),
+            "speech_ms": result.speech_ms,
+            "state": self.speaker_verifier.state.value,
+            "at": datetime.now(UTC).isoformat(),
+        }
+        self._publish(payload)
+        self.mark_audio_event(
+            "speaker_enrolled" if result.reason == "enrolled" else "speaker_enroll_open",
+            detail={"reason": result.reason, "speech_ms": result.speech_ms},
+        )
+        logger.info(
+            "speaker_enroll result=%s state=%s speech_ms=%s session_id=%s",
+            result.reason,
+            self.speaker_verifier.state.value,
+            result.speech_ms,
+            self.session_id,
+        )
+        return payload
+
+    def _speaker_allows_user_input(self, *, context: str) -> bool:
+        if not self.speaker_verifier.enabled:
+            return True
+        if self.speaker_verifier.state in {
+            SpeakerGateState.DISABLED,
+            SpeakerGateState.OPEN,
+        }:
+            return True
+        # Enrollment speech must not become a normal user turn / interrupt.
+        if self.speaker_verifier.state is SpeakerGateState.PENDING:
+            if context in {"turn_commit", "interrupt", "barge_in_start"}:
+                return False
+            return True
+        score = self.speaker_verifier.score_latest_utterance()
+        if score.reason == "too_short":
+            # Not enough audio yet (e.g. barge-in onset): do not reject the owner.
+            if context == "barge_in_start":
+                return True
+            # Fall back to the rolling window for turn commit / interrupt.
+            score = self.speaker_verifier.score_pcm()
+            if score.reason == "too_short":
+                return context != "interrupt"
+        if not score.accepted:
+            self.orchestrator.metrics.inc_guarded_user_input(f"speaker_{score.reason}")
+            logger.info(
+                "speaker_reject context=%s reason=%s score=%.3f speech_ms=%s session_id=%s",
+                context,
+                score.reason,
+                score.score,
+                score.speech_ms,
+                self.session_id,
+            )
+            self.mark_audio_event(
+                "speaker_rejected",
+                status="ignored",
+                detail={
+                    "context": context,
+                    "reason": score.reason,
+                    "score": round(score.score, 4),
+                    "speech_ms": score.speech_ms,
+                },
+            )
+            self._publish(
+                {
+                    "type": "speaker_reject",
+                    "session_id": self.session_id,
+                    "context": context,
+                    "reason": score.reason,
+                    "score": round(score.score, 4),
+                    "speech_ms": score.speech_ms,
+                    "at": datetime.now(UTC).isoformat(),
+                }
+            )
+            return False
+        return True
 
     def _spawn(self, awaitable: Awaitable[Any], *, name: str) -> asyncio.Task[Any]:
         async def _run() -> Any:
@@ -285,6 +395,7 @@ class DuplexRuntime:
         mapping = {
             "connecting": InteractionPhase.CONNECTING,
             "ready": InteractionPhase.LISTENING,
+            "speaker_enroll": InteractionPhase.LISTENING,
             "listening": InteractionPhase.LISTENING,
             "user_speaking": InteractionPhase.USER_SPEAKING,
             "backchannel": InteractionPhase.BACKCHANNEL,
@@ -602,6 +713,7 @@ class DuplexRuntime:
 
     def on_user_voice_started(self, *, now_ns: int | None = None) -> PlaybackInputDecision:
         self._fresh_user_speech = True
+        self.speaker_verifier.mark_utterance_start()
         if not self._was_speaking:
             self.set_interaction_phase(
                 InteractionPhase.USER_SPEAKING,
@@ -617,6 +729,13 @@ class DuplexRuntime:
                 now_ns=now_ns,
             )
         if self.input_guard.candidate_during_playback:
+            # Nearby talker often starts with short energy; require speaker match
+            # before treating this as a real barge-in candidate.
+            if self.speaker_verifier.active and not self._speaker_allows_user_input(
+                context="barge_in_start"
+            ):
+                self.speaker_verifier.mark_utterance_end()
+                return PlaybackInputDecision.IGNORE
             self.orchestrator.metrics.inc_interruption_candidate()
             return PlaybackInputDecision.WAIT
         return PlaybackInputDecision.ACCEPT
@@ -650,12 +769,17 @@ class DuplexRuntime:
         *,
         speech_anchored: bool | None = None,
     ) -> tuple[bool, str | None]:
+        self.speaker_verifier.mark_utterance_end()
         if self.input_guard.enabled and speech_anchored is not None:
             if not speech_anchored or not self._fresh_user_speech:
                 self._fresh_user_speech = False
                 self.orchestrator.metrics.inc_guarded_user_input("missing_speech_epoch")
                 return False, "missing_speech_epoch"
             self._fresh_user_speech = False
+        if self.speaker_verifier.active and not self._speaker_allows_user_input(
+            context="turn_commit"
+        ):
+            return False, "speaker_mismatch"
         post_playback_reason = self.post_playback_guard_reason(text)
         if post_playback_reason is not None:
             self.orchestrator.metrics.inc_guarded_user_input(post_playback_reason)
@@ -729,6 +853,14 @@ class DuplexRuntime:
         force_generation_bump: bool = False,
     ) -> GenerationFence:
         self.cancel_listener_cue()
+        if (
+            create_user_turn
+            and self.speaker_verifier.active
+            and not self._speaker_allows_user_input(context="interrupt")
+        ):
+            # Nearby talker: do not cancel assistant generation / bump fence.
+            self.speaker_verifier.mark_utterance_end()
+            return self.fence
         old_fence = self.fence
         new_fence = await self.orchestrator.confirm_interruption(
             cause=cause,

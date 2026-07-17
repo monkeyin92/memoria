@@ -1,3 +1,4 @@
+import { createSpeakerGatedStream } from "./speakerGate.js";
 import { extractInboundAudioStats } from "./webrtcStats.js";
 
 const ICE_GATHERING_TIMEOUT_MS = 10_000;
@@ -83,6 +84,10 @@ export class QwenOmniWebRTCTransport {
     onDiagnostic = () => undefined,
     onError = () => undefined,
     onDisconnected = () => undefined,
+    speakerVerifyEnabled = true,
+    onSpeakerProgress = () => undefined,
+    onSpeakerEnrolled = () => undefined,
+    onSpeakerReject = () => undefined,
   }) {
     this.exchangeSdp = exchangeSdp;
     this.onState = onState;
@@ -91,8 +96,14 @@ export class QwenOmniWebRTCTransport {
     this.onDiagnostic = onDiagnostic;
     this.onError = onError;
     this.onDisconnected = onDisconnected;
+    this.speakerVerifyEnabled = speakerVerifyEnabled;
+    this.onSpeakerProgress = onSpeakerProgress;
+    this.onSpeakerEnrolled = onSpeakerEnrolled;
+    this.onSpeakerReject = onSpeakerReject;
     this.pc = null;
     this.stream = null;
+    this.rawStream = null;
+    this.speakerGate = null;
     this.commandChannel = null;
     this.clientChannel = null;
     this.preparePromise = null;
@@ -169,11 +180,35 @@ export class QwenOmniWebRTCTransport {
       },
     });
     this.preparePromise = (async () => {
-      const stream = await mediaPromise;
+      const rawStream = await mediaPromise;
       if (this.closed) {
-        stream.getTracks().forEach((track) => track.stop());
+        rawStream.getTracks().forEach((track) => track.stop());
         throw new Error("语音会话已结束");
       }
+      this.rawStream = rawStream;
+      this.speakerGate = createSpeakerGatedStream(rawStream, {
+        enabled: this.speakerVerifyEnabled,
+        onProgress: (progress) => {
+          this.onSpeakerProgress(progress);
+          if (progress.state === "pending") {
+            this.onState("speaker_enroll");
+          }
+        },
+        onEnrolled: (result) => {
+          this.onSpeakerEnrolled(result);
+          this.onDiagnostic("speaker_enrolled", "ok", result);
+          if (result.reason === "enrolled") {
+            this.onState("ready");
+          } else {
+            this.onState("ready");
+          }
+        },
+        onReject: (detail) => {
+          this.onSpeakerReject(detail);
+          this.onDiagnostic("speaker_rejected", "ignored", detail);
+        },
+      });
+      const stream = this.speakerGate.stream;
       this.stream = stream;
       for (const track of stream.getAudioTracks()) {
         track.enabled = false;
@@ -236,7 +271,11 @@ export class QwenOmniWebRTCTransport {
     this.#clearWelcomeTimer();
     this.commandChannel?.close();
     if (this.clientChannel !== this.commandChannel) this.clientChannel?.close();
-    this.stream?.getTracks().forEach((track) => track.stop());
+    this.speakerGate?.close?.();
+    this.speakerGate = null;
+    // Stop the original mic tracks; the gated destination dies with AudioContext.
+    const micTracks = this.rawStream?.getTracks?.() || this.stream?.getTracks?.() || [];
+    micTracks.forEach((track) => track.stop());
     if (this.pc) {
       this.pc.ontrack = null;
       this.pc.ondatachannel = null;
@@ -245,6 +284,7 @@ export class QwenOmniWebRTCTransport {
     }
     this.pc = null;
     this.stream = null;
+    this.rawStream = null;
     this.commandChannel = null;
     this.clientChannel = null;
     this.userSpeaking = false;
@@ -284,8 +324,13 @@ export class QwenOmniWebRTCTransport {
       this.sessionUpdated = true;
       this.setMicrophoneEnabled(this.micEnabled);
       this.onDiagnostic("agent_ready");
-      this.onState("ready");
-      this.#armWelcome(channel);
+      if (this.speakerGate?.state?.() === "pending") {
+        this.onState("speaker_enroll");
+        this.#waitSpeakerEnrollThenWelcome(channel);
+      } else {
+        this.onState("ready");
+        this.#armWelcome(channel);
+      }
       return;
     }
     if (event.type === "input_audio_buffer.speech_started") {
@@ -360,6 +405,11 @@ export class QwenOmniWebRTCTransport {
       return;
     }
     if (event.type === "response.created") {
+      // During enrollment, ignore model replies triggered by registration speech.
+      if (this.speakerGate?.state?.() === "pending") {
+        this.#sendResponseCancel();
+        return;
+      }
       const responseId = this.#responseId(event);
       if (!responseId || this.cancelledResponseIds.has(responseId)) return;
       this.responsePending = false;
@@ -493,6 +543,26 @@ export class QwenOmniWebRTCTransport {
     this.onDiagnostic("omni_response_cancelled");
   }
 
+  #waitSpeakerEnrollThenWelcome(channel) {
+    const started = performance.now();
+    const tick = () => {
+      if (this.closed) return;
+      const gateState = this.speakerGate?.state?.() || "open";
+      if (gateState === "pending" && performance.now() - started < 16000) {
+        this.welcomeTimer = window.setTimeout(tick, 200);
+        return;
+      }
+      this.welcomeTimer = null;
+      if (gateState === "pending") {
+        this.speakerGate?.forceOpen?.();
+        this.onSpeakerEnrolled({ reason: "enroll_timeout", speechMs: 0 });
+      }
+      this.onState("ready");
+      this.#armWelcome(channel);
+    };
+    tick();
+  }
+
   #armWelcome(channel) {
     if (
       this.welcomeRequested ||
@@ -503,6 +573,10 @@ export class QwenOmniWebRTCTransport {
       return;
     }
     this.onDiagnostic("omni_welcome_armed");
+    const enrolled = this.speakerGate?.state?.() === "enrolled";
+    const welcomeInstructions = enrolled
+      ? "请用一句自然中文确认声纹登记成功，并邀请用户直接开口说需求。"
+      : WELCOME_INSTRUCTIONS;
     this.welcomeTimer = window.setTimeout(() => {
       this.welcomeTimer = null;
       if (
@@ -520,7 +594,7 @@ export class QwenOmniWebRTCTransport {
           type: "response.create",
           response: {
             modalities: ["text", "audio"],
-            instructions: WELCOME_INSTRUCTIONS,
+            instructions: welcomeInstructions,
           },
         }),
       );

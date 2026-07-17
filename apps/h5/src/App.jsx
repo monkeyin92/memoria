@@ -405,11 +405,19 @@ export function App() {
                 </div>
               ) : (
                 <div className="welcome-copy">
-                  <h2>{voice.session ? "想说什么都可以" : "今天想聊点什么？"}</h2>
+                  <h2>
+                    {voice.uiState === "speaker_enroll"
+                      ? "先登记你的声音"
+                      : voice.session
+                        ? "想说什么都可以"
+                        : "今天想聊点什么？"}
+                  </h2>
                   <p>
-                    {voice.session
-                      ? "不用按住按钮，我会听完再回应。"
-                      : "轻触吉祥物，开始一次实时语音对话。"}
+                    {voice.uiState === "speaker_enroll"
+                      ? "请用正常音量连续说大约四秒，例如“我是主人，请记住我的声音”。登记后会优先听你，减少旁边人插话。"
+                      : voice.session
+                        ? "不用按住按钮，我会听完再回应。"
+                        : "轻触吉祥物，开始一次实时语音对话。"}
                   </p>
                 </div>
               )}

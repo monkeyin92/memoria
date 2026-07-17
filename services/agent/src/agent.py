@@ -145,7 +145,13 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     "%s reason=%s",
                     (
                         "post_playback_input_ignored"
-                        if reason in {"backchannel", "assistant_echo", "non_target_language"}
+                        if reason
+                        in {
+                            "backchannel",
+                            "assistant_echo",
+                            "non_target_language",
+                            "speaker_mismatch",
+                        }
                         else "user_turn_ignored"
                     ),
                     reason,
@@ -544,6 +550,15 @@ async def entrypoint(ctx: Any) -> None:
     runtime_session_id = (
         room_name.removeprefix("voice-") if room_name.startswith("voice-") else room_name
     )
+    from services.agent.src.orchestration.speaker_verify import SpeakerVerifier
+
+    speaker_verifier = SpeakerVerifier(
+        enabled=runtime_settings.speaker_verify_enabled,
+        enroll_speech_ms=runtime_settings.speaker_enroll_speech_ms,
+        enroll_timeout_ms=runtime_settings.speaker_enroll_timeout_ms,
+        accept_threshold=runtime_settings.speaker_accept_threshold,
+        min_verify_speech_ms=runtime_settings.speaker_min_verify_speech_ms,
+    )
     runtime = DuplexRuntime.create(
         session_id=runtime_session_id,
         tts=tts_plugin,
@@ -553,6 +568,7 @@ async def entrypoint(ctx: Any) -> None:
             and runtime_settings.listener_cue_aec_validated
         ),
         use_paralinguistic_tags=runtime_settings.cosyvoice_paralinguistic_tags,
+        speaker_verifier=speaker_verifier,
     )
     runtime.cue_scheduler.min_speech_ms = runtime_settings.listener_cue_min_speech_ms
     runtime.cue_scheduler.pause_ms = runtime_settings.listener_cue_pause_ms
@@ -569,6 +585,7 @@ async def entrypoint(ctx: Any) -> None:
         )
     runtime.mark_audio_event("agent_runtime_created")
     emotion_sidecar: QwenEmotionSidecar | None = None
+    pcm_observers: list[Any] = [runtime.feed_speaker_pcm]
     if runtime_settings.qwen_emotion_enabled and hasattr(
         stt_plugin, "set_pcm_observer"
     ):
@@ -582,11 +599,19 @@ async def entrypoint(ctx: Any) -> None:
         )
         runtime.set_emotion_turn_observer(emotion_sidecar.start_turn)
         if emotion_sidecar.start():
-            stt_plugin.set_pcm_observer(emotion_sidecar.feed_pcm)
+            pcm_observers.append(emotion_sidecar.feed_pcm)
             runtime.mark_audio_event("emotion_sidecar_ready")
         else:
             emotion_sidecar = None
             runtime.mark_audio_event("emotion_sidecar_ready", status="error")
+    if hasattr(stt_plugin, "set_pcm_observer"):
+
+        def _fanout_pcm(pcm: bytes) -> None:
+            for observer in pcm_observers:
+                with contextlib.suppress(Exception):
+                    observer(pcm)
+
+        stt_plugin.set_pcm_observer(_fanout_pcm)
     deep_client = DeepSeekClient(
         DeepSeekConfig(
             api_key=runtime_settings.llm_api_key,
@@ -796,10 +821,47 @@ async def entrypoint(ctx: Any) -> None:
         raise RuntimeError("Agent UI publisher was not configured")
     await ready_publish
 
-    runtime.mark_audio_event("welcome_generation_started")
-    await session.generate_reply(
-        instructions="用一句自然中文打招呼，并邀请用户直接说需求。",
-    )
+    if runtime.speaker_verifier.enabled:
+        runtime.begin_speaker_enrollment()
+        await session.generate_reply(
+            instructions=(
+                "用一句简短中文请用户完成声纹登记：让用户用正常音量连续说大约四秒钟，"
+                "可以念“我是主人，请记住我的声音”，或随便说几句日常的话。"
+                "不要展开闲聊，说完这句后等待用户。"
+            ),
+        )
+        enroll_deadline = asyncio.get_running_loop().time() + (
+            runtime_settings.speaker_enroll_timeout_ms / 1000.0 + 2.0
+        )
+        while asyncio.get_running_loop().time() < enroll_deadline:
+            result = runtime.poll_speaker_enrollment()
+            if result is not None:
+                break
+            await asyncio.sleep(0.2)
+        else:
+            runtime.poll_speaker_enrollment()
+        if runtime.speaker_verifier.state.value == "enrolled":
+            runtime.publish_assistant_state("listening")
+            await session.generate_reply(
+                instructions=(
+                    "用一句自然中文确认声纹登记成功，并邀请用户直接说需求。"
+                ),
+            )
+        else:
+            runtime.publish_assistant_state("listening")
+            await session.generate_reply(
+                instructions=(
+                    "用一句自然中文说明暂时跳过声纹登记、仍可正常对话，"
+                    "并邀请用户直接说需求。"
+                ),
+            )
+    else:
+        runtime.mark_audio_event("welcome_generation_started")
+        await session.generate_reply(
+            instructions="用一句自然中文打招呼，并邀请用户直接说需求。",
+        )
+    if runtime.speaker_verifier.enabled:
+        runtime.mark_audio_event("welcome_generation_started")
 
 
 def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]:
