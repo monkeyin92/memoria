@@ -191,3 +191,4 @@
 4. 当前 runtime/H5 直接回滚点为 `20260717-113441`；环境备份为 `/var/backups/memoria/memoria.env-pre-20260717-123551`，本轮未修改 LiveKit 配置。
 5. Omni 已内置模型页给出的空间主机前缀；生产仅在服务端 secret 文件配置 `DASHSCOPE_API_KEY`。`DASHSCOPE_WORKSPACE_ID` 只用于可选覆盖，二者都不得写入 H5 构建参数或浏览器存储。
 6. 用户使用真实设备重点复测级联滋滋声、Omni 首词与反馈第二句，并覆盖 AI 结束后 0–700 ms 立即接话、打断、附和、回声、静音、停止、结束和情绪；结果写入下一次调优依据。
+7. **控制面**：规则版 `UtteranceRouter` 已落地（`orchestration/utterance_router.py`），`accept_user_turn` 与 `on_real_interrupt` 共用路由；播放期 noise/echo 仍在 `PlaybackInputGuard`。修打断类优先改 Router 规则表 + 单测。工作习惯见 `AGENTS.md`。

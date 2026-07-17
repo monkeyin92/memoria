@@ -27,8 +27,6 @@ from services.agent.src.orchestration.interruption_guard import (
     PlaybackInputDecision,
     PlaybackInputGuard,
     interrupt_ack_phrase,
-    is_explicit_interrupt,
-    is_interrupt_command_only,
 )
 from services.agent.src.orchestration.orchestrator import CosyPoolHandle, Orchestrator
 from services.agent.src.orchestration.phrase_segmenter import PhraseSegmenter
@@ -40,6 +38,11 @@ from services.agent.src.orchestration.prosody import (
 from services.agent.src.orchestration.speaker_verify import SpeakerGateState, SpeakerVerifier
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
 from services.agent.src.orchestration.task_manager import ToolSpec, spoken_result_summarizer
+from services.agent.src.orchestration.utterance_router import (
+    UtteranceIntent,
+    UtteranceRoute,
+    route_utterance,
+)
 from services.agent.src.providers.cosyvoice_tts import CosyVoicePool, CosyVoiceTTS
 
 logger = logging.getLogger(__name__)
@@ -291,9 +294,16 @@ class DuplexRuntime:
     def _interrupt_candidate_text(self) -> str:
         return (getattr(self.input_guard, "candidate_text", None) or "").strip()
 
+    def _route_candidate(self, text: str | None = None) -> UtteranceRoute:
+        """Classify utterance via the shared control-plane router."""
+        return route_utterance(
+            text if text is not None else self._interrupt_candidate_text(),
+            speaker_state=self.speaker_verifier.state,
+        )
+
     def _is_explicit_owner_interrupt_cmd(self) -> bool:
         """True when ASR heard stop/yield phrases like「停一下」「等等」."""
-        return is_explicit_interrupt(self._interrupt_candidate_text())
+        return self._route_candidate().speaker_gate_override
 
     def _speaker_allows_user_input(self, *, context: str) -> bool:
         if not self.speaker_verifier.enabled:
@@ -829,10 +839,11 @@ class DuplexRuntime:
         speech_anchored: bool | None = None,
     ) -> tuple[bool, str | None]:
         self.speaker_verifier.mark_utterance_end()
-        # Enrollment speech must never become a chat turn. Previously we only
-        # gated when state==ENROLLED (active), so PENDING enroll was accepted
-        # as a normal turn → LLM answered, then fail-open said「跳过声纹登记」.
-        if self.speaker_verifier.state is SpeakerGateState.PENDING:
+        # Single control-plane decision: enroll / pure interrupt / chat.
+        # Side effects (early enroll finalize, yield ack) stay here; intent is
+        # owned by utterance_router so barge-in and turn-commit cannot diverge.
+        route = self._route_candidate(text)
+        if route.intent is UtteranceIntent.ENROLL:
             # User finished an enroll utterance — try finalize immediately so
             # we do not wait the full wall timeout after they already spoke.
             progress = self.speaker_verifier.enrollment_progress()
@@ -855,27 +866,33 @@ class DuplexRuntime:
                 speech_ms,
                 self.session_id,
             )
-            return False, "speaker_enrolling"
-        # 「等等」「停一下」「别说了」are control phrases, not chat questions.
-        # If we let them through, the LLM answers「怎么了？」and covers the yield ack.
-        if is_interrupt_command_only(text):
+            return False, route.reason
+        if route.intent is UtteranceIntent.INTERRUPT_COMMAND:
+            # 「等等」「停一下」「别说了」are control phrases, not chat questions.
+            # If we let them through, the LLM answers「怎么了？」and covers the yield ack.
             self.input_guard.candidate_text = text
-            self.orchestrator.metrics.inc_guarded_user_input("interrupt_command_only")
+            self.orchestrator.metrics.inc_guarded_user_input(route.reason)
             logger.info(
-                "user_turn_ignored reason=interrupt_command_only text=%s session_id=%s",
+                "user_turn_ignored reason=%s intent=%s text=%s session_id=%s",
+                route.reason,
+                route.intent,
                 text[:40],
                 self.session_id,
             )
             self.mark_audio_event(
                 "interrupt_command_turn_suppressed",
-                detail={"text": text[:40]},
+                detail={
+                    "text": text[:40],
+                    "intent": route.intent,
+                    "ack": route.ack_phrase,
+                },
             )
             # Ensure semantic ack (cooldown skips if interrupt path already said it).
             self._spawn(
                 self._maybe_say_interrupt_yield(cause="interrupt_command_turn"),
                 name="interrupt-cmd-yield",
             )
-            return False, "interrupt_command_only"
+            return False, route.reason
         if self.input_guard.enabled and speech_anchored is not None:
             if not speech_anchored or not self._fresh_user_speech:
                 self._fresh_user_speech = False
@@ -986,10 +1003,16 @@ class DuplexRuntime:
             return
         self._last_interrupt_yield_ns = now
         candidate = self._interrupt_candidate_text()
-        phrase = interrupt_ack_phrase(candidate)
+        route = self._route_candidate(candidate)
+        phrase = route.ack_phrase or interrupt_ack_phrase(candidate)
         self.mark_audio_event(
             "interrupt_yield_started",
-            detail={"cause": cause, "phrase": phrase, "candidate": candidate[:40]},
+            detail={
+                "cause": cause,
+                "phrase": phrase,
+                "candidate": candidate[:40],
+                "intent": route.intent,
+            },
         )
         try:
             await self._interrupt_yield(phrase)
@@ -1045,8 +1068,11 @@ class DuplexRuntime:
         self.cancel_listener_cue()
         was_speaking = self._was_speaking
         mid_reply = self._assistant_was_mid_reply(was_speaking=was_speaking)
-        owner_cmd = self._is_explicit_owner_interrupt_cmd()
         candidate = self._interrupt_candidate_text()
+        # Barge-in uses the same router as turn-commit so speaker-reject recover
+        # cannot fire on pure「停一下」while accept_user_turn treats it as control.
+        barge_route = self._route_candidate(candidate)
+        owner_cmd = barge_route.speaker_gate_override
         if (
             create_user_turn
             and self.speaker_verifier.active
@@ -1067,6 +1093,7 @@ class DuplexRuntime:
                     "cause": cause,
                     "mid_reply": mid_reply,
                     "candidate": candidate[:40],
+                    "intent": barge_route.intent,
                 },
             )
             if mid_reply:
@@ -1077,14 +1104,19 @@ class DuplexRuntime:
             return self.fence
         if owner_cmd and create_user_turn:
             logger.info(
-                "explicit_interrupt_cmd text=%s cause=%s session_id=%s",
+                "explicit_interrupt_cmd text=%s intent=%s cause=%s session_id=%s",
                 candidate[:40],
+                barge_route.intent,
                 cause,
                 self.session_id,
             )
             self.mark_audio_event(
                 "explicit_interrupt_cmd",
-                detail={"text": candidate[:40], "cause": cause},
+                detail={
+                    "text": candidate[:40],
+                    "cause": cause,
+                    "intent": barge_route.intent,
+                },
             )
         old_fence = self.fence
         new_fence = await self.orchestrator.confirm_interruption(
