@@ -67,9 +67,9 @@ class AgentSettings(BaseSettings):
 
     vad_min_silence_duration_s: float = Field(default=0.30, alias="VAD_MIN_SILENCE_DURATION_S")
     preemptive_tts: bool = Field(default=False, alias="PREEMPTIVE_TTS")
-    # P0-1: short listener cues on the *main* TTS track (session.say, no chat).
-    # BackgroundAudioPlayer second-track mode needs LISTENER_CUE_AEC_VALIDATED.
-    listener_cues_enabled: bool = Field(default=True, alias="LISTENER_CUES_ENABLED")
+    # Listener cues: default OFF. BackgroundAudioPlayer is a second room track
+    # (prod dual-voice). Keep off until mixed into the main CosyVoice path.
+    listener_cues_enabled: bool = Field(default=False, alias="LISTENER_CUES_ENABLED")
     listener_cue_playback: str = Field(
         default="main_track",
         alias="LISTENER_CUE_PLAYBACK",

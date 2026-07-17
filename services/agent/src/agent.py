@@ -721,78 +721,54 @@ async def entrypoint(ctx: Any) -> None:
         lambda text: session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
     )
 
-    # Filled after welcome: short fixed PCM for control acks (yield/recover/cues).
-    # session.say after barge-in returns wait_for_playout almost immediately with
-    # no playback_started (prod 20260717-190300: 5ms after first_pcm → silent).
-    _control_pcm: dict[str, bytes] = {}
-    _control_player: Any | None = None
+    async def _say_control_ack(text: str) -> None:
+        """Short fixed ack on the *main* CosyVoice track only (no second room track).
 
-    async def _play_control_pcm(text: str, *, volume: float = 0.85) -> None:
-        """Play pre-rendered PCM; wait wall-clock duration so user can hear it."""
-        pcm = _control_pcm.get(text) or _control_pcm.get(text.strip("。.!！"))
-        if not pcm or _control_player is None:
-            # Last resort: session.say (may be silent right after interrupt).
-            if hasattr(tts_plugin, "apply_speech_plan"):
-                tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
-            handle = session.say(
-                text,
-                allow_interruptions=False,
-                add_to_chat_ctx=False,
-            )
-            wait = getattr(handle, "wait_for_playout", None)
-            if callable(wait):
-                with contextlib.suppress(Exception):
-                    await wait()
-            # Hard minimum so even a broken handle leaves a gap for ear.
-            await asyncio.sleep(0.45)
-            return
-
-        from livekit.agents import AudioConfig
-
-        from services.agent.src.orchestration.cue_audio import pcm_frame_source
-
-        sample_rate = int(runtime_settings.cosyvoice_sample_rate or 24000)
-        duration_s = max(0.35, len(pcm) / (sample_rate * 2))
-        handle = _control_player.play(
-            AudioConfig(
-                source=pcm_frame_source(pcm, sample_rate=sample_rate),
-                volume=volume,
-                fade_in=0.02,
-                fade_out=0.04,
-            )
+        Prod 20260717-194500: BackgroundAudioPlayer published a second track
+        (client track_subscribed) → dual voice; separate CosyVoice prep also
+        raced the first chat turn (cosyvoice_task_started without first_pcm).
+        """
+        phrase = (text or "").strip() or "嗯，你说。"
+        # Let LiveKit finish interrupt teardown before opening a new say.
+        await asyncio.sleep(0.28)
+        if hasattr(tts_plugin, "apply_speech_plan"):
+            tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
+        # Re-bind fence so post-interrupt generation is valid.
+        if hasattr(tts_plugin, "bind_fence"):
+            tts_plugin.bind_fence(runtime.fence)
+        handle = session.say(
+            phrase,
+            allow_interruptions=False,
+            add_to_chat_ctx=False,
         )
         wait = getattr(handle, "wait_for_playout", None)
+        started = asyncio.get_running_loop().time()
         if callable(wait):
             with contextlib.suppress(Exception):
-                await asyncio.wait_for(wait(), timeout=duration_s + 1.5)
-        else:
-            await asyncio.sleep(duration_s)
-        # Wall-clock floor: BackgroundAudioPlayer may also return early.
-        await asyncio.sleep(min(0.15, duration_s * 0.1))
+                await asyncio.wait_for(wait(), timeout=3.0)
+        # Floor so a broken wait still leaves audible window.
+        elapsed = asyncio.get_running_loop().time() - started
+        if elapsed < 0.55:
+            await asyncio.sleep(0.55 - elapsed)
         runtime.mark_audio_event(
-            "control_pcm_played",
-            detail={
-                "text": text[:20],
-                "duration_ms": int(duration_s * 1000),
-                "pcm_bytes": len(pcm),
-            },
+            "control_ack_played",
+            detail={"text": phrase[:20], "elapsed_ms": int(elapsed * 1000)},
         )
 
     async def _interrupt_yield_say(phrase: str) -> None:
-        """Semantic interrupt ack:「嗯，你说。」vs「好的。」— PCM path after barge-in."""
+        """Semantic interrupt ack:「嗯，你说。」vs「好的。」"""
         text = (phrase or "").strip() or "嗯，你说。"
-        # Normalize to cached keys.
         if text in {"嗯，你说", "嗯你说"}:
             text = "嗯，你说。"
         elif text in {"好的", "好"}:
             text = "好的。"
-        await _play_control_pcm(text, volume=0.9)
+        await _say_control_ack(text)
 
     runtime.set_interrupt_yield(_interrupt_yield_say)
 
     async def _false_interrupt_recover() -> None:
         """Nearby noise stopped LiveKit playout; speaker gate rejected — continue."""
-        await _play_control_pcm("我继续。", volume=0.9)
+        await _say_control_ack("我继续。")
         last_user = ""
         for turn in reversed(runtime.orchestrator.context.turns):
             if turn.role == "user" and turn.content:
@@ -885,95 +861,12 @@ async def entrypoint(ctx: Any) -> None:
     runtime.attach_playback_events(session.output.audio)
     runtime.mark_audio_event("audio_output_attached")
 
-    cue_background: Any | None = None
-    # Control PCM: yield / recover / listener cues — not session.say (silent after barge-in).
-    _control_pcm_ready = asyncio.Event()
-
-    async def _prepare_control_pcm() -> None:
-        """Pre-render fixed control phrases once per session."""
-        nonlocal _control_player, cue_background
-        phrases = {
-            "嗯，你说。",
-            "好的。",
-            "我继续。",
-        }
-        if runtime.cue_scheduler.enabled and runtime.cue_scheduler.max_per_turn > 0:
-            phrases.update(runtime.cue_scheduler.cues)
-        cue_tts = CosyVoiceTTS.from_env()
-        if not hasattr(cue_tts, "synthesize_stream_text"):
-            _control_pcm_ready.set()
-            return
-        try:
-            await cue_tts.pool.warm(size=1)
-            for text in sorted(phrases, key=len, reverse=True):
-                result = await cue_tts.synthesize_stream_text(
-                    [text],
-                    fence=runtime.fence,
-                )
-                if result.pcm and not result.discarded:
-                    _control_pcm[text] = result.pcm
-            if not _control_pcm:
-                raise RuntimeError("CosyVoice returned no control PCM")
-            runtime.mark_audio_event(
-                "control_pcm_ready",
-                detail={"phrases": list(_control_pcm.keys())},
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning("control PCM preparation failed", exc_info=True)
-            runtime.mark_audio_event("control_pcm_ready", status="error")
-        finally:
-            _control_pcm_ready.set()
-            close = getattr(cue_tts, "aclose", None)
-            if callable(close):
-                with contextlib.suppress(Exception):
-                    await close()
-
-    async def _start_listener_cue_player() -> None:
-        """Start BackgroundAudioPlayer for control PCM after enroll/welcome."""
-        nonlocal cue_background, _control_player
-        await _control_pcm_ready.wait()
-        if not _control_pcm:
-            return
-        from livekit.agents import BackgroundAudioPlayer
-
-        if cue_background is None:
-            player = BackgroundAudioPlayer()
-            await player.start(room=ctx.room)
-            cue_background = player
-            _control_player = player
-
-        async def _play_listener_cue_awaited(text: str) -> None:
-            if text not in _control_pcm:
-                return
-            await _play_control_pcm(
-                text,
-                volume=float(runtime_settings.listener_cue_volume),
-            )
-
-        # Awaited PCM so BACKCHANNEL phase lasts real duration (session.say was 0ms).
-        if runtime.cue_scheduler.enabled:
-            runtime.set_listener_cue_player(_play_listener_cue_awaited)
-        runtime.mark_audio_event(
-            "listener_cue_player_started",
-            detail={
-                "mode": "control_pcm",
-                "phrases": list(_control_pcm.keys()),
-                "cues_enabled": runtime.cue_scheduler.enabled,
-            },
-        )
-
-    runtime._spawn(_prepare_control_pcm(), name="control-pcm-prepare")
-
     async def _shutdown_runtime() -> None:
         ctx.room.off("data_received", _on_control_packet)
         if emotion_sidecar is not None:
             stt_plugin.set_pcm_observer(None)
             await emotion_sidecar.aclose()
         await runtime.close()
-        if cue_background is not None:
-            await cue_background.aclose()
 
     ctx.add_shutdown_callback(_shutdown_runtime)
 
@@ -1052,10 +945,6 @@ async def entrypoint(ctx: Any) -> None:
             instructions="用一句自然中文打招呼，并邀请用户直接说需求。",
         )
 
-    # Cue track after enroll/welcome playout so it cannot stack on main TTS.
-    await _start_listener_cue_player()
-
-
 def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]:
     """Pure config dict for tests without LiveKit types."""
     self_hosted = profile == "cn_self_hosted"
@@ -1063,9 +952,10 @@ def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]
     env_version = os.getenv("LIVEKIT_TURN_DETECTOR_VERSION")
     if not self_hosted and env_version in ("v1", "v1-mini"):
         turn_version = env_version
-    # P1-5: adaptive interruption works with Turn Detector (v1-mini on self-hosted).
-    # Default on for both profiles; still overridable via LIVEKIT_ADAPTIVE_INTERRUPTION.
-    adaptive_default = "true"
+    # P1-5: Adaptive Interruption needs LiveKit Cloud agent-gateway. Self-hosted
+    # fails with "failed to connect to LiveKit Adaptive Interruption" and falls
+    # back to VAD after noisy retries — default VAD on cn_self_hosted.
+    adaptive_default = "false" if self_hosted else "true"
     interruption_mode = (
         "adaptive"
         if os.getenv("LIVEKIT_ADAPTIVE_INTERRUPTION", adaptive_default).lower() == "true"
