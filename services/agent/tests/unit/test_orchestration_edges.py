@@ -317,6 +317,21 @@ async def test_orchestrator_interruption_decision_routes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_commit_turn_recovers_from_interruption_pending() -> None:
+    """Regression: barge-in left INTERRUPTION_PENDING and blackholed replies."""
+    orch = Orchestrator()
+    await orch.ready()
+    await orch.on_vad_start()
+    await orch.commit_turn("问题")
+    await orch.begin_speaking([], "回答")
+    await orch.on_vad_start()
+    assert orch.state is ConversationState.INTERRUPTION_PENDING
+    fence = await orch.commit_turn("旁边人说的或主人继续说的内容")
+    assert fence.turn_id == 2
+    assert orch.state is ConversationState.THINKING
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_background_result_and_actual_playback_edges() -> None:
     orch = Orchestrator()
     await orch.ready()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -27,6 +28,8 @@ from services.agent.src.orchestration.state_machine import (
 )
 from services.agent.src.orchestration.task_manager import TaskManager
 from services.agent.src.prompts import VOICE_SYSTEM_PROMPT
+
+logger = logging.getLogger(__name__)
 
 
 async def cancel_and_wait(task: asyncio.Task[Any] | None) -> None:
@@ -149,8 +152,44 @@ class Orchestrator:
         assert self.fence_gate is not None
         assert self.segmenter is not None
         async with self._state_lock:
+            # Normalize barge-in / interrupt paths into EOT_PENDING before TURN_END.
+            # LiveKit may complete a user turn while we are still in
+            # INTERRUPTION_PENDING (energy seen, not yet REAL_INTERRUPT).
+            if self.state is ConversationState.INTERRUPTION_PENDING:
+                if self.state_machine.can_transition(TransitionEvent.REAL_INTERRUPT):
+                    self.state_machine.apply(
+                        TransitionEvent.REAL_INTERRUPT,
+                        cause="commit_turn_from_interruption_pending",
+                    )
+            elif self.state is ConversationState.SPEAKING:
+                if self.state_machine.can_transition(TransitionEvent.USER_VOICE_WHILE_SPEAKING):
+                    self.state_machine.apply(TransitionEvent.USER_VOICE_WHILE_SPEAKING)
+                if self.state_machine.can_transition(TransitionEvent.REAL_INTERRUPT):
+                    self.state_machine.apply(
+                        TransitionEvent.REAL_INTERRUPT,
+                        cause="commit_turn_from_speaking",
+                    )
+            elif self.state is ConversationState.THINKING:
+                if self.state_machine.can_transition(TransitionEvent.USER_SPEAKS_DURING_THINK):
+                    self.state_machine.apply(
+                        TransitionEvent.USER_SPEAKS_DURING_THINK,
+                        cause="commit_turn_from_thinking",
+                    )
+            elif self.state is ConversationState.LISTENING:
+                if self.state_machine.can_transition(TransitionEvent.VAD_START):
+                    self.state_machine.apply(TransitionEvent.VAD_START)
+
             if self.state is ConversationState.USER_SPEAKING:
                 self.state_machine.apply(TransitionEvent.VAD_PAUSE_INCOMPLETE)
+
+            if not self.state_machine.can_transition(TransitionEvent.TURN_END):
+                # Last-resort recovery so a stuck session never blackholes replies.
+                logger.warning(
+                    "commit_turn forcing EOT_PENDING from state=%s",
+                    self.state.value,
+                )
+                self.state_machine.state = ConversationState.EOT_PENDING
+
             new_fence = self.fence.bump_turn()
             self.state_machine.apply(TransitionEvent.TURN_END, new_fence=new_fence)
             self.fence_gate.update(new_fence)
@@ -159,6 +198,20 @@ class Orchestrator:
             self.context.add_user(user_text)
             self._tts_cancel = asyncio.Event()
             return new_fence
+
+    async def dismiss_pending_interruption(self, *, cause: str = "false_barge") -> bool:
+        """Return INTERRUPTION_PENDING → SPEAKING when barge-in is not the owner."""
+        assert self.state_machine is not None
+        async with self._state_lock:
+            if self.state is not ConversationState.INTERRUPTION_PENDING:
+                return False
+            if self.state_machine.can_transition(TransitionEvent.BACKCHANNEL_OR_NOISE):
+                self.state_machine.apply(
+                    TransitionEvent.BACKCHANNEL_OR_NOISE,
+                    cause=cause,
+                )
+                return True
+            return False
 
     def gate_llm_token(self, fence: GenerationFence, token: str) -> str | None:
         assert self.fence_gate is not None

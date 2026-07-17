@@ -822,7 +822,10 @@ async def entrypoint(ctx: Any) -> None:
     await ready_publish
 
     if runtime.speaker_verifier.enabled:
-        runtime.begin_speaker_enrollment()
+        # Tell the UI first; only start PCM enrollment AFTER the instruction
+        # finishes playing so CosyVoice echo is not enrolled as the owner.
+        runtime.publish_assistant_state("speaker_enroll")
+        runtime.mark_audio_event("speaker_enroll_prompt_started")
         await session.generate_reply(
             instructions=(
                 "用一句简短中文请用户完成声纹登记：让用户用正常音量连续说大约四秒钟，"
@@ -830,8 +833,15 @@ async def entrypoint(ctx: Any) -> None:
                 "不要展开闲聊，说完这句后等待用户。"
             ),
         )
+        # Wait for enroll prompt playout (or up to 12s).
+        for _ in range(120):
+            if not runtime._was_speaking:
+                break
+            await asyncio.sleep(0.1)
+        await asyncio.sleep(0.35)
+        runtime.begin_speaker_enrollment()
         enroll_deadline = asyncio.get_running_loop().time() + (
-            runtime_settings.speaker_enroll_timeout_ms / 1000.0 + 2.0
+            runtime_settings.speaker_enroll_timeout_ms / 1000.0
         )
         while asyncio.get_running_loop().time() < enroll_deadline:
             result = runtime.poll_speaker_enrollment()
@@ -840,15 +850,15 @@ async def entrypoint(ctx: Any) -> None:
             await asyncio.sleep(0.2)
         else:
             runtime.poll_speaker_enrollment()
+        runtime.publish_assistant_state("listening")
+        runtime.mark_audio_event("welcome_generation_started")
         if runtime.speaker_verifier.state.value == "enrolled":
-            runtime.publish_assistant_state("listening")
             await session.generate_reply(
                 instructions=(
                     "用一句自然中文确认声纹登记成功，并邀请用户直接说需求。"
                 ),
             )
         else:
-            runtime.publish_assistant_state("listening")
             await session.generate_reply(
                 instructions=(
                     "用一句自然中文说明暂时跳过声纹登记、仍可正常对话，"
@@ -860,8 +870,6 @@ async def entrypoint(ctx: Any) -> None:
         await session.generate_reply(
             instructions="用一句自然中文打招呼，并邀请用户直接说需求。",
         )
-    if runtime.speaker_verifier.enabled:
-        runtime.mark_audio_event("welcome_generation_started")
 
 
 def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]:

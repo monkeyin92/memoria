@@ -203,6 +203,12 @@ class DuplexRuntime:
         self._emotion_turn_observer = observer
 
     def feed_speaker_pcm(self, pcm: bytes) -> None:
+        # Never enroll assistant TTS that leaks into the mic during playback.
+        if (
+            self.speaker_verifier.state is SpeakerGateState.PENDING
+            and self._was_speaking
+        ):
+            return
         self.speaker_verifier.feed_pcm(pcm)
 
     def begin_speaker_enrollment(self) -> None:
@@ -735,6 +741,14 @@ class DuplexRuntime:
                 context="barge_in_start"
             ):
                 self.speaker_verifier.mark_utterance_end()
+                # VAD may already have moved SPEAKING → INTERRUPTION_PENDING;
+                # dismiss so later commit_turn is not stuck.
+                self._spawn(
+                    self.orchestrator.dismiss_pending_interruption(
+                        cause="speaker_reject_barge_in"
+                    ),
+                    name="dismiss-false-barge",
+                )
                 return PlaybackInputDecision.IGNORE
             self.orchestrator.metrics.inc_interruption_candidate()
             return PlaybackInputDecision.WAIT
@@ -860,6 +874,9 @@ class DuplexRuntime:
         ):
             # Nearby talker: do not cancel assistant generation / bump fence.
             self.speaker_verifier.mark_utterance_end()
+            await self.orchestrator.dismiss_pending_interruption(
+                cause="speaker_reject_interrupt"
+            )
             return self.fence
         old_fence = self.fence
         new_fence = await self.orchestrator.confirm_interruption(
