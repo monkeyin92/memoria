@@ -151,7 +151,9 @@ class SpeakerVerifier:
     enroll_speech_ms: int = 3500
     enroll_timeout_ms: int = 15000
     min_verify_speech_ms: int = 450
-    accept_threshold: float = 0.62
+    # Lightweight log-mel embedding is noisy; 0.62 rejected real owner turns
+    # at ~0.57–0.58 (prod 2026-07-17). Prefer ~0.52 + soft margin on commit.
+    accept_threshold: float = 0.52
     rolling_ms: int = 4000
     state: SpeakerGateState = SpeakerGateState.DISABLED
     owner_embedding: np.ndarray | None = None

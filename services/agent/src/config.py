@@ -127,7 +127,8 @@ class AgentSettings(BaseSettings):
         alias="SPEAKER_ENROLL_TIMEOUT_MS",
     )
     speaker_accept_threshold: float = Field(
-        default=0.62,
+        # Lightweight mel embedding: 0.62 rejected real owner speech (~0.57).
+        default=0.52,
         ge=0.35,
         le=0.95,
         alias="SPEAKER_ACCEPT_THRESHOLD",

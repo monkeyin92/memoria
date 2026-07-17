@@ -338,6 +338,39 @@ class DuplexRuntime:
                     return False
                 return context != "interrupt"
         if not score.accepted:
+            # Soft accept for full turn commits: lightweight log-mel embedding is
+            # noisy. Prod 20260717-200500: owner「介绍南京」scored 0.57–0.58 vs
+            # threshold 0.62 → permanent silence with no LLM turn.
+            thr = float(self.speaker_verifier.accept_threshold)
+            soft_floor = max(0.45, thr - 0.15)
+            soft_ok = (
+                context == "turn_commit"
+                and score.reason == "mismatch"
+                and score.speech_ms >= int(self.speaker_verifier.min_verify_speech_ms)
+                and score.score >= soft_floor
+            )
+            if soft_ok:
+                logger.info(
+                    "speaker_soft_accept context=%s score=%.3f thr=%.3f "
+                    "soft_floor=%.3f speech_ms=%s session_id=%s",
+                    context,
+                    score.score,
+                    thr,
+                    soft_floor,
+                    score.speech_ms,
+                    self.session_id,
+                )
+                self.mark_audio_event(
+                    "speaker_soft_accept",
+                    detail={
+                        "context": context,
+                        "score": round(score.score, 4),
+                        "threshold": thr,
+                        "soft_floor": soft_floor,
+                        "speech_ms": score.speech_ms,
+                    },
+                )
+                return True
             self.orchestrator.metrics.inc_guarded_user_input(f"speaker_{score.reason}")
             logger.info(
                 "speaker_reject context=%s reason=%s score=%.3f speech_ms=%s session_id=%s",
