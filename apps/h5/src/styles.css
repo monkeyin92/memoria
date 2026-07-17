@@ -123,6 +123,9 @@ body {
 
 .voice-backend-selector {
   display: inline-flex;
+  flex-wrap: wrap;
+  max-width: min(100%, 22rem);
+  gap: 2px;
   padding: 3px;
   border: 1px solid rgba(99, 117, 147, 0.14);
   border-radius: 999px;
@@ -133,11 +136,12 @@ body {
   min-height: 25px;
   border: 0;
   border-radius: 999px;
-  padding: 4px 9px;
+  padding: 4px 8px;
   background: transparent;
   color: #6c7890;
   font-size: 10px;
   font-weight: 650;
+  white-space: nowrap;
   cursor: pointer;
 }
 

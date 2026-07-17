@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal
@@ -18,6 +19,13 @@ CosyVoiceEmotion = Literal[
 DeliveryMode = Literal["direct", "deliberative", "light_laughter", "supportive"]
 
 _LAUGHTER_MARKERS = ("哈哈", "呵呵", "嘿嘿")
+_MARKUP_TAG = re.compile(
+    r"\[(?:laughter|breath|cough|sigh)\]|"
+    r"</?(?:laughter|strong)>",
+    re.IGNORECASE,
+)
+_LEADING_LAUGH_TEXT = re.compile(r"^(?:哈{2,}|呵{2,}|嘿{2,}|[（(]笑[)）])[，,、\s]*")
+_SOFT_LAUGH_PREFIXES = ("呵，", "呵,", "呵呵，", "呵呵,", "[laughter]")
 _SERIOUS_CONTEXT_MARKERS = (
     "车祸",
     "事故",
@@ -67,6 +75,9 @@ class SpeechPlan:
     rate: float
     delivery_mode: DeliveryMode = "direct"
     llm_instruction: str = ""
+    # Injected once at the head of the first TTS segment (not into chat history).
+    tts_prefix: str = ""
+    strip_paralinguistic: bool = False
 
     @property
     def instruction(self) -> str:
@@ -76,6 +87,46 @@ class SpeechPlan:
 def cosyvoice_instruction(emotion: str) -> str:
     # longanyang is a system voice: Alibaba requires this exact Instruct format.
     return f"你正在进行闲聊互动，你说话的情感是{emotion}。"
+
+
+def soft_laugh_prefix(*, use_markup_tags: bool) -> str:
+    """Prefer CosyVoice markup when enabled; otherwise a natural short laugh."""
+    return "[laughter]" if use_markup_tags else "呵，"
+
+
+def strip_paralinguistic_markup(text: str) -> str:
+    cleaned = _MARKUP_TAG.sub("", text)
+    cleaned = _LEADING_LAUGH_TEXT.sub("", cleaned)
+    return cleaned
+
+
+def prepare_tts_text(
+    text: str,
+    plan: SpeechPlan,
+    *,
+    is_first_segment: bool,
+    use_markup_tags: bool = False,
+) -> str:
+    """Apply delivery-mode TTS rewrites without changing chat history text."""
+    body = text if text else ""
+    if plan.strip_paralinguistic or plan.delivery_mode == "supportive":
+        body = strip_paralinguistic_markup(body)
+    if not is_first_segment or not body.strip():
+        return body
+
+    prefix = plan.tts_prefix
+    if not prefix and plan.delivery_mode == "light_laughter":
+        prefix = soft_laugh_prefix(use_markup_tags=use_markup_tags)
+    if not prefix:
+        return body
+
+    stripped = body.lstrip()
+    if any(stripped.startswith(existing) for existing in _SOFT_LAUGH_PREFIXES):
+        return body
+    # Keep a single soft onset; LLM may already have written a longer laugh.
+    if stripped.startswith(("哈哈", "呵呵", "嘿嘿")):
+        return body
+    return f"{prefix}{body}"
 
 
 def speech_plan_for_emotion(label: str) -> SpeechPlan:
@@ -97,6 +148,7 @@ def speech_plan_for_turn(
     provider_label: str,
     text: str,
     evidence: tuple[str, ...] = (),
+    use_markup_tags: bool = False,
 ) -> SpeechPlan:
     """Choose one conservative delivery style for the current spoken turn."""
     base = speech_plan_for_emotion(label)
@@ -110,6 +162,7 @@ def speech_plan_for_turn(
             min(base.rate, 0.94),
             "supportive",
             "本轮语境严肃。直接、温和地承接用户，绝对不要笑、咳嗽或使用轻佻的思考填充词。",
+            strip_paralinguistic=True,
         )
     acoustic_laughter = "acoustic:qwen3-asr:laughter" in evidence
     if has_laughter and (provider_label == "happy" or acoustic_laughter):
@@ -117,14 +170,22 @@ def speech_plan_for_turn(
             "happy",
             0.98,
             "light_laughter",
-            "本轮是轻松且声学上明确的笑声。开头只笑一次，用很短的“呵”或“呵呵”自然带过，紧接逗号再回答；禁止连续多个“哈”，不要反复笑。",
+            "本轮是轻松且声学上明确的笑声。"
+            "开头只轻笑一次：优先输出可被 TTS 自然读出的短笑音“呵，”或“呵呵，”，"
+            "紧接正文；禁止连续多个“哈”，不要写旁白式“（笑）”，不要反复笑。",
+            tts_prefix=soft_laugh_prefix(use_markup_tags=use_markup_tags),
         )
     if any(marker in text for marker in _DELIBERATIVE_MARKERS):
+        deliberative_prefix = "[breath]" if use_markup_tags else ""
         return SpeechPlan(
             base.voice_emotion,
             min(base.rate, 0.95),
             "deliberative",
-            "本轮需要安排或组织内容。先用八到十四个字的自然短衔接，可含一个“嗯”“好”或“可以”，让这一小段以逗号结束，再继续正文；只用一次，不要披露推理或照抄固定模板。",
+            "本轮需要安排或组织内容。"
+            "先用四到十二个字的自然短衔接（可含一个“嗯”“好”或“可以”），"
+            "该小段以逗号结束，再继续同一段正文；整轮只生成一次，"
+            "不要拆成两段回答，不要披露推理或照抄固定模板。",
+            tts_prefix=deliberative_prefix,
         )
     return base
 

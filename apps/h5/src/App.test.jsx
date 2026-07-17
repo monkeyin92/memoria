@@ -187,7 +187,7 @@ describe("App identity and profile preferences", () => {
     expect(mocks.resumeAudio).toHaveBeenCalledWith(true);
   });
 
-  it("defaults to cascade and persists the selected Qwen3.5-Omni backend", async () => {
+  it("defaults to cascade and persists Omni Flash / Plus backends", async () => {
     mocks.bootstrapIdentity.mockResolvedValue({
       user_id: "anonymous-user",
       access_token: "token",
@@ -195,15 +195,15 @@ describe("App identity and profile preferences", () => {
     const first = render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 
-    const cascade = screen.getByRole("radio", { name: "现有级联" });
-    const omni = screen.getByRole("radio", {
-      name: "Qwen3.5-Omni-Flash",
-    });
+    const cascade = screen.getByRole("radio", { name: "级联" });
+    const omniFlash = screen.getByRole("radio", { name: "Omni Flash" });
+    const omniPlus = screen.getByRole("radio", { name: "Omni Plus" });
     expect(cascade).toHaveAttribute("aria-checked", "true");
-    expect(omni).toHaveAttribute("aria-checked", "false");
+    expect(omniFlash).toHaveAttribute("aria-checked", "false");
+    expect(omniPlus).toHaveAttribute("aria-checked", "false");
 
-    fireEvent.click(omni);
-    expect(omni).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(omniFlash);
+    expect(omniFlash).toHaveAttribute("aria-checked", "true");
     expect(window.localStorage.getItem("memoria:voice-backend")).toBe(
       "qwen_omni",
     );
@@ -211,11 +211,22 @@ describe("App identity and profile preferences", () => {
       expect.objectContaining({ voiceBackend: "qwen_omni" }),
     );
 
+    fireEvent.click(omniPlus);
+    expect(omniPlus).toHaveAttribute("aria-checked", "true");
+    expect(window.localStorage.getItem("memoria:voice-backend")).toBe(
+      "qwen_omni_plus",
+    );
+    expect(mocks.useVoiceSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({ voiceBackend: "qwen_omni_plus" }),
+    );
+
     first.unmount();
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
-    expect(screen.getByRole("radio", { name: "Qwen3.5-Omni-Flash" }))
-      .toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "Omni Plus" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
   it("locks the backend selector while a voice session is active", async () => {
@@ -232,9 +243,9 @@ describe("App identity and profile preferences", () => {
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 
-    expect(screen.getByRole("radio", { name: "现有级联" })).toBeDisabled();
-    expect(screen.getByRole("radio", { name: "Qwen3.5-Omni-Flash" }))
-      .toBeDisabled();
+    expect(screen.getByRole("radio", { name: "级联" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Omni Flash" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Omni Plus" })).toBeDisabled();
   });
 
   it("labels both Qwen-backed daily summaries as LLM output", async () => {

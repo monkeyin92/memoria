@@ -174,11 +174,21 @@ async def test_listener_cue_uses_an_isolated_cancel_domain_and_never_enters_hist
     assert len(handles) == 1
     assert runtime.orchestrator.context.turns == []
     assert any(event.get("type") == "listener_cue" for event in published)
+    assert any(
+        event.get("type") == "assistant_state" and event.get("state") == "backchannel"
+        for event in published
+    )
 
     await runtime.on_turn_committed("我讲完了")
     await asyncio.sleep(0)
     assert handles[0].stopped is True  # type: ignore[attr-defined]
     assert [turn.role for turn in runtime.orchestrator.context.turns] == ["user"]
+    assert runtime.interaction_phase.value == "thinking_silent"
+    assert any(
+        event.get("type") == "assistant_state"
+        and event.get("state") == "thinking_silent"
+        for event in published
+    )
     await runtime.close()
 
 

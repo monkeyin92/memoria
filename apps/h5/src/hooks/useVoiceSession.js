@@ -14,6 +14,11 @@ import { extractInboundAudioStats } from "../voice/webrtcStats.js";
 const UI_TOPIC = "voice-agent.ui";
 const TELEMETRY_TOPIC = "voice-agent.telemetry";
 const AGENT_READY_TIMEOUT_MS = 45_000;
+const OMNI_BACKENDS = new Set(["qwen_omni", "qwen_omni_plus"]);
+
+function isOmniBackend(backend) {
+  return OMNI_BACKENDS.has(backend);
+}
 
 const stateLabels = {
   idle: "轻触我，开始聊聊",
@@ -29,10 +34,20 @@ const stateLabels = {
 
 function mapServerState(state) {
   if (state === "ready") return "ready";
-  if (["listening", "user_speaking", "eot_pending"].includes(state)) {
+  // backchannel: short "嗯/我在听" while the user still holds the floor.
+  if (
+    [
+      "listening",
+      "user_speaking",
+      "eot_pending",
+      "backchannel",
+    ].includes(state)
+  ) {
     return "listening";
   }
-  if (["thinking", "tool_waiting"].includes(state)) return "thinking";
+  if (["thinking", "thinking_silent", "tool_waiting"].includes(state)) {
+    return "thinking";
+  }
   if (state === "speaking") return "speaking";
   if (["interrupted", "interruption_pending"].includes(state)) {
     return "interrupted";
@@ -238,7 +253,7 @@ export function useVoiceSession({
       ];
       setAudioDiagnostics(audioDiagnosticsRef.current);
       publishAudioDiagnostic(roomRef.current, event);
-      if (sessionRef.current?.voice_backend === "qwen_omni") {
+      if (isOmniBackend(sessionRef.current?.voice_backend)) {
         const payload = {
           name,
           elapsed_ms: event.elapsed_ms,
@@ -547,9 +562,10 @@ export function useVoiceSession({
     audioDiagnosticsRef.current = [];
     setAudioDiagnostics([]);
 
-    const selectedBackend =
-      voiceBackend === "qwen_omni" ? "qwen_omni" : "cascade";
-    if (selectedBackend === "qwen_omni") {
+    const selectedBackend = isOmniBackend(voiceBackend)
+      ? voiceBackend
+      : "cascade";
+    if (isOmniBackend(selectedBackend)) {
       let transport;
       const isCurrent = () =>
         attemptRef.current === attempt &&
@@ -645,7 +661,9 @@ export function useVoiceSession({
                 ? "需要麦克风权限，才能听见你说话"
                 : caught instanceof Error
                   ? caught.message
-                  : "暂时无法开始 Qwen3.5-Omni 对话",
+                  : selectedBackend === "qwen_omni_plus"
+                  ? "暂时无法开始 Qwen3.5-Omni-Plus 对话"
+                  : "暂时无法开始 Qwen3.5-Omni-Flash 对话",
             );
           } else {
             disconnectOmni(transport);

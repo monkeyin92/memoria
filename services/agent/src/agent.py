@@ -343,6 +343,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             return
             yield  # pragma: no cover
 
+        from services.agent.src.orchestration.prosody import prepare_tts_text
+
         fence = self._runtime.fence
         if self._runtime.tts is not None:
             self._runtime.tts.bind_fence(fence)
@@ -353,10 +355,20 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         first_audio_marked = False
 
         async def _track_text() -> AsyncGenerator[str, None]:
+            first_segment = True
             async for part in text:
-                spoken_parts.append(part)
+                rewritten = prepare_tts_text(
+                    part,
+                    self._runtime.speech_plan,
+                    is_first_segment=first_segment,
+                    use_markup_tags=self._runtime.use_paralinguistic_tags,
+                )
+                first_segment = False
+                if not rewritten:
+                    continue
+                spoken_parts.append(rewritten)
                 self._runtime.update_pending_assistant_text("".join(spoken_parts))
-                yield part
+                yield rewritten
 
         try:
             self._runtime.mark_audio_event("tts_task_started")
@@ -540,6 +552,7 @@ async def entrypoint(ctx: Any) -> None:
             runtime_settings.listener_cues_enabled
             and runtime_settings.listener_cue_aec_validated
         ),
+        use_paralinguistic_tags=runtime_settings.cosyvoice_paralinguistic_tags,
     )
     runtime.cue_scheduler.min_speech_ms = runtime_settings.listener_cue_min_speech_ms
     runtime.cue_scheduler.pause_ms = runtime_settings.listener_cue_pause_ms

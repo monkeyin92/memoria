@@ -50,15 +50,34 @@ const defaultProfile = {
 
 const today = () => localDateKey();
 const voiceBackendStorageKey = "memoria:voice-backend";
+const voiceBackendOptions = [
+  {
+    id: "cascade",
+    label: "级联",
+    title: "现有级联：LiveKit + FunASR + Qwen + CosyVoice",
+  },
+  {
+    id: "qwen_omni",
+    label: "Omni Flash",
+    title: "Qwen3.5-Omni-Flash-Realtime 端到端语音",
+  },
+  {
+    id: "qwen_omni_plus",
+    label: "Omni Plus",
+    title: "Qwen3.5-Omni-Plus-Realtime 端到端语音（更高质量）",
+  },
+];
 
 function initialVoiceBackend() {
   try {
-    return window.localStorage.getItem(voiceBackendStorageKey) === "qwen_omni"
-      ? "qwen_omni"
-      : "cascade";
+    const stored = window.localStorage.getItem(voiceBackendStorageKey);
+    if (voiceBackendOptions.some((option) => option.id === stored)) {
+      return stored;
+    }
   } catch {
-    return "cascade";
+    // fall through
   }
+  return "cascade";
 }
 
 function formatDay(dateString) {
@@ -340,24 +359,20 @@ export function App() {
                 role="radiogroup"
                 aria-label="语音模型"
               >
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={voiceBackend === "cascade"}
-                  disabled={voiceBackendLocked}
-                  onClick={() => selectVoiceBackend("cascade")}
-                >
-                  现有级联
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={voiceBackend === "qwen_omni"}
-                  disabled={voiceBackendLocked}
-                  onClick={() => selectVoiceBackend("qwen_omni")}
-                >
-                  Qwen3.5-Omni-Flash
-                </button>
+                {voiceBackendOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="radio"
+                    title={option.title}
+                    aria-label={option.label}
+                    aria-checked={voiceBackend === option.id}
+                    disabled={voiceBackendLocked}
+                    onClick={() => selectVoiceBackend(option.id)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
               </div>
               <div className="status-pill" data-state={voice.uiState}>
                 <span className="status-dot" />

@@ -152,8 +152,15 @@ def test_multi_step_request_gets_deliberative_delivery_without_affecting_direct_
 
     assert deliberative.delivery_mode == "deliberative"
     assert deliberative.rate < direct.rate
-    assert "八到十四个字" in deliberative.llm_instruction
+    assert "四到十二个字" in deliberative.llm_instruction
     assert "以逗号结束" in deliberative.llm_instruction
+    assert deliberative.tts_prefix == ""
+    assert speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text="帮我安排一个十五分钟的英语口语训练",
+        use_markup_tags=True,
+    ).tts_prefix == "[breath]"
     assert direct.delivery_mode == "direct"
     assert direct.llm_instruction == ""
 
@@ -164,6 +171,12 @@ def test_safe_acoustic_laughter_gets_one_warm_laugh_but_serious_context_never_do
         provider_label="happy",
         text="哈哈，我刚才把单词读错得太离谱了",
     )
+    light_markup = speech_plan_for_turn(
+        label="neutral",
+        provider_label="happy",
+        text="哈哈，我刚才把单词读错得太离谱了",
+        use_markup_tags=True,
+    )
     serious = speech_plan_for_turn(
         label="neutral",
         provider_label="happy",
@@ -172,9 +185,12 @@ def test_safe_acoustic_laughter_gets_one_warm_laugh_but_serious_context_never_do
 
     assert light.delivery_mode == "light_laughter"
     assert light.voice_emotion == "happy"
-    assert "只笑一次" in light.llm_instruction
+    assert light.tts_prefix == "呵，"
+    assert light_markup.tts_prefix == "[laughter]"
+    assert "只轻笑一次" in light.llm_instruction
     assert serious.delivery_mode == "supportive"
     assert serious.voice_emotion == "neutral"
+    assert serious.strip_paralinguistic is True
     assert "不要笑" in serious.llm_instruction
 
     serious_plan = speech_plan_for_turn(

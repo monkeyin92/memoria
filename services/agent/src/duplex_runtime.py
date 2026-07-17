@@ -34,7 +34,7 @@ from services.agent.src.orchestration.prosody import (
     speech_plan_for_emotion,
     speech_plan_for_turn,
 )
-from services.agent.src.orchestration.state_machine import ConversationState
+from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
 from services.agent.src.orchestration.task_manager import ToolSpec, spoken_result_summarizer
 from services.agent.src.providers.cosyvoice_tts import CosyVoicePool, CosyVoiceTTS
 
@@ -111,6 +111,8 @@ class DuplexRuntime:
     cue_scheduler: CueScheduler = field(default_factory=CueScheduler)
     emotion_smoother: EmotionSmoother = field(default_factory=EmotionSmoother)
     speech_plan: SpeechPlan = field(default_factory=lambda: speech_plan_for_emotion("neutral"))
+    interaction_phase: InteractionPhase = InteractionPhase.CONNECTING
+    use_paralinguistic_tags: bool = False
     _unsubscribers: list[Callable[[], None]] = field(default_factory=list)
     _was_speaking: bool = False
     _pending_assistant_text: str = ""
@@ -140,6 +142,7 @@ class DuplexRuntime:
         tts: CosyVoiceTTS | None = None,
         input_guard_enabled: bool = False,
         listener_cues_enabled: bool = False,
+        use_paralinguistic_tags: bool = False,
     ) -> DuplexRuntime:
         sid = session_id or new_session_id()
         orch = Orchestrator(session_id=sid)
@@ -151,6 +154,7 @@ class DuplexRuntime:
             session_id=sid,
             input_guard=PlaybackInputGuard(enabled=input_guard_enabled),
             cue_scheduler=CueScheduler(enabled=listener_cues_enabled),
+            use_paralinguistic_tags=use_paralinguistic_tags,
         )
 
     @property
@@ -219,18 +223,80 @@ class DuplexRuntime:
             )
         return None
 
-    def publish_assistant_state(self, state: str) -> asyncio.Task[Any] | None:
+    def set_interaction_phase(
+        self,
+        phase: InteractionPhase,
+        *,
+        cause: str = "",
+        publish: bool = True,
+    ) -> asyncio.Task[Any] | None:
+        if phase is self.interaction_phase:
+            return None
+        previous = self.interaction_phase
+        self.interaction_phase = phase
+        logger.info(
+            "interaction_phase from=%s to=%s cause=%s session_id=%s turn_id=%s generation_id=%s",
+            previous.value,
+            phase.value,
+            cause or "unspecified",
+            self.session_id,
+            self.fence.turn_id,
+            self.fence.generation_id,
+        )
+        if not publish:
+            return None
+        return self.publish_assistant_state(phase.value, phase=phase)
+
+    def publish_assistant_state(
+        self,
+        state: str,
+        *,
+        phase: InteractionPhase | None = None,
+    ) -> asyncio.Task[Any] | None:
         fence = self.fence
+        mapped_phase = phase or self._phase_for_published_state(state)
+        if mapped_phase is not None and mapped_phase is not self.interaction_phase:
+            previous = self.interaction_phase
+            self.interaction_phase = mapped_phase
+            logger.info(
+                "interaction_phase from=%s to=%s cause=publish:%s session_id=%s "
+                "turn_id=%s generation_id=%s",
+                previous.value,
+                mapped_phase.value,
+                state,
+                self.session_id,
+                fence.turn_id,
+                fence.generation_id,
+            )
         return self._publish(
             {
                 "type": "assistant_state",
                 "session_id": self.session_id,
                 "state": state,
+                "phase": self.interaction_phase.value,
                 "turn_id": fence.turn_id,
                 "generation_id": fence.generation_id,
                 "at": datetime.now(UTC).isoformat(),
             }
         )
+
+    @staticmethod
+    def _phase_for_published_state(state: str) -> InteractionPhase | None:
+        mapping = {
+            "connecting": InteractionPhase.CONNECTING,
+            "ready": InteractionPhase.LISTENING,
+            "listening": InteractionPhase.LISTENING,
+            "user_speaking": InteractionPhase.USER_SPEAKING,
+            "backchannel": InteractionPhase.BACKCHANNEL,
+            "thinking": InteractionPhase.THINKING_SILENT,
+            "thinking_silent": InteractionPhase.THINKING_SILENT,
+            "speaking": InteractionPhase.SPEAKING,
+            "interrupted": InteractionPhase.INTERRUPTED,
+            "tool_waiting": InteractionPhase.TOOL_WAITING,
+            "recovering": InteractionPhase.RECOVERING,
+            "closed": InteractionPhase.CLOSED,
+        }
+        return mapping.get(state)
 
     def publish_assistant_audio(
         self,
@@ -404,6 +470,7 @@ class DuplexRuntime:
             provider_label=observation.provider_label,
             text=user_text,
             evidence=observation.evidence,
+            use_markup_tags=self.use_paralinguistic_tags,
         )
         apply_plan = getattr(self.tts, "apply_speech_plan", None)
         if callable(apply_plan):
@@ -412,10 +479,13 @@ class DuplexRuntime:
                 rate=self.speech_plan.rate,
             )
         logger.info(
-            "speech_plan_selected emotion=%s rate=%.2f delivery=%s turn_id=%s",
+            "speech_plan_selected emotion=%s rate=%.2f delivery=%s "
+            "tts_prefix=%s strip=%s turn_id=%s",
             self.speech_plan.voice_emotion,
             self.speech_plan.rate,
             self.speech_plan.delivery_mode,
+            self.speech_plan.tts_prefix or "-",
+            self.speech_plan.strip_paralinguistic,
             turn_id,
         )
         return self.speech_plan
@@ -429,6 +499,7 @@ class DuplexRuntime:
                 "cue_epoch": cue.cue_epoch,
                 "user_turn_id": cue.user_turn_id,
                 "state": state,
+                "phase": self.interaction_phase.value,
                 "at": datetime.now(UTC).isoformat(),
             }
         )
@@ -446,6 +517,10 @@ class DuplexRuntime:
             return
         self._active_listener_cue = cue
         self._active_listener_cue_handle = handle
+        self.set_interaction_phase(
+            InteractionPhase.BACKCHANNEL,
+            cause=f"listener_cue:{cue.text}",
+        )
         self._publish_listener_cue(cue, "started")
         try:
             wait_for_playout = getattr(handle, "wait_for_playout", None)
@@ -459,6 +534,11 @@ class DuplexRuntime:
             if self._active_listener_cue is cue:
                 self._active_listener_cue = None
                 self._active_listener_cue_handle = None
+            if self.interaction_phase is InteractionPhase.BACKCHANNEL:
+                self.set_interaction_phase(
+                    InteractionPhase.USER_SPEAKING,
+                    cause="listener_cue_finished",
+                )
 
     def cancel_listener_cue(self) -> None:
         self._cancel_listener_cue_candidate()
@@ -472,6 +552,12 @@ class DuplexRuntime:
         self._active_listener_cue_handle = None
         if cue is not None:
             self._publish_listener_cue(cue, "cancelled")
+        if self.interaction_phase is InteractionPhase.BACKCHANNEL:
+            self.set_interaction_phase(
+                InteractionPhase.USER_SPEAKING,
+                cause="listener_cue_cancelled",
+                publish=False,
+            )
 
     def _cancel_listener_cue_candidate(self) -> None:
         task = self._listener_cue_candidate_task
@@ -516,6 +602,11 @@ class DuplexRuntime:
 
     def on_user_voice_started(self, *, now_ns: int | None = None) -> PlaybackInputDecision:
         self._fresh_user_speech = True
+        if not self._was_speaking:
+            self.set_interaction_phase(
+                InteractionPhase.USER_SPEAKING,
+                cause="vad_start",
+            )
         self.input_guard.start(during_playback=self._was_speaking, now_ns=now_ns)
         pending_turn_id = self.fence.turn_id + 1
         if self._emotion_turn_observer is not None:
@@ -584,6 +675,10 @@ class DuplexRuntime:
             await self.orchestrator.bump_tool_epoch_on_condition_change()
         await self.orchestrator.on_vad_start()
         fence = await self.orchestrator.commit_turn(user_text)
+        self.set_interaction_phase(
+            InteractionPhase.THINKING_SILENT,
+            cause="turn_committed",
+        )
         self.mark_audio_event("turn_committed")
         self._pending_assistant_text = ""
         self._played_assistant_text = ""
@@ -661,7 +756,7 @@ class DuplexRuntime:
             self._played_assistant_text = ""
         await self.on_assistant_speaking(self._pending_assistant_text)
         self.mark_audio_event("playback_started")
-        self.publish_assistant_state("speaking")
+        self.set_interaction_phase(InteractionPhase.SPEAKING, cause="playback_started")
 
     async def on_playback_finished(
         self,
@@ -943,10 +1038,17 @@ class DuplexRuntime:
                 "initializing": "connecting",
                 "idle": "listening",
                 "listening": "listening",
-                "thinking": "thinking",
+                # Quiet planning before first audio: explicit thinking_silent phase.
+                "thinking": "thinking_silent",
                 "speaking": "speaking",
             }.get(state_s)
             if mapped is not None:
+                # Do not clobber an active listener backchannel with idle/listening.
+                if (
+                    mapped == "listening"
+                    and self.interaction_phase is InteractionPhase.BACKCHANNEL
+                ):
+                    return
                 self.publish_assistant_state(mapped)
 
         def _on_user_transcript(ev: Any) -> None:

@@ -18,9 +18,30 @@ class ConversationState(StrEnum):
     LISTENING = "listening"
     USER_SPEAKING = "user_speaking"
     EOT_PENDING = "eot_pending"
+    # Quiet planning after turn commit, before first audible TTS frame.
     THINKING = "thinking"
     SPEAKING = "speaking"
     INTERRUPTION_PENDING = "interruption_pending"
+    TOOL_WAITING = "tool_waiting"
+    RECOVERING = "recovering"
+    CLOSED = "closed"
+
+
+class InteractionPhase(StrEnum):
+    """Observable duplex phase for UI/logs (P0 naturalness).
+
+    This is a publish/log overlay on top of ConversationState. BACKCHANNEL is
+    only for short listener cues and never enters chat history. THINKING_SILENT
+    is the quiet window after turn commit until first playback audio.
+    """
+
+    CONNECTING = "connecting"
+    LISTENING = "listening"
+    USER_SPEAKING = "user_speaking"
+    BACKCHANNEL = "backchannel"
+    THINKING_SILENT = "thinking_silent"
+    SPEAKING = "speaking"
+    INTERRUPTED = "interrupted"
     TOOL_WAITING = "tool_waiting"
     RECOVERING = "recovering"
     CLOSED = "closed"

@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS voice_sessions (
     user_id TEXT NOT NULL,
     room_name TEXT NOT NULL UNIQUE,
     voice_backend TEXT NOT NULL DEFAULT 'cascade'
-        CHECK (voice_backend IN ('cascade', 'qwen_omni')),
+        CHECK (voice_backend IN ('cascade', 'qwen_omni', 'qwen_omni_plus')),
     omni_sdp_exchanges INTEGER NOT NULL DEFAULT 0
         CHECK (omni_sdp_exchanges >= 0),
     created_at TEXT NOT NULL,
@@ -151,6 +151,47 @@ class MemoryStore:
                         "ALTER TABLE voice_sessions ADD COLUMN "
                         "omni_sdp_exchanges INTEGER NOT NULL DEFAULT 0 "
                         "CHECK (omni_sdp_exchanges >= 0)"
+                    )
+                voice_session_sql = connection.execute(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'voice_sessions'"
+                ).fetchone()
+                if voice_session_sql and "qwen_omni_plus" not in str(voice_session_sql[0]):
+                    connection.executescript(
+                        """
+                        ALTER TABLE voice_sessions RENAME TO voice_sessions_legacy;
+                        CREATE TABLE voice_sessions (
+                            session_id TEXT PRIMARY KEY,
+                            user_id TEXT NOT NULL,
+                            room_name TEXT NOT NULL UNIQUE,
+                            voice_backend TEXT NOT NULL DEFAULT 'cascade'
+                                CHECK (
+                                    voice_backend IN (
+                                        'cascade', 'qwen_omni', 'qwen_omni_plus'
+                                    )
+                                ),
+                            omni_sdp_exchanges INTEGER NOT NULL DEFAULT 0
+                                CHECK (omni_sdp_exchanges >= 0),
+                            created_at TEXT NOT NULL,
+                            FOREIGN KEY (user_id) REFERENCES profiles(user_id)
+                                ON DELETE CASCADE
+                        );
+                        INSERT INTO voice_sessions (
+                            session_id, user_id, room_name, voice_backend,
+                            omni_sdp_exchanges, created_at
+                        )
+                        SELECT
+                            session_id,
+                            user_id,
+                            room_name,
+                            voice_backend,
+                            COALESCE(omni_sdp_exchanges, 0),
+                            created_at
+                        FROM voice_sessions_legacy;
+                        DROP TABLE voice_sessions_legacy;
+                        CREATE INDEX IF NOT EXISTS idx_voice_sessions_user
+                        ON voice_sessions(user_id, created_at);
+                        """
                     )
             self._initialized = True
 
@@ -266,7 +307,7 @@ class MemoryStore:
                 SET omni_sdp_exchanges = omni_sdp_exchanges + 1
                 WHERE session_id = ?
                   AND user_id = ?
-                  AND voice_backend = 'qwen_omni'
+                  AND voice_backend IN ('qwen_omni', 'qwen_omni_plus')
                   AND omni_sdp_exchanges < ?
                 """,
                 (session_id, user_id, max_exchanges),

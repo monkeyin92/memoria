@@ -54,12 +54,20 @@ class AgentSettings(BaseSettings):
     cosyvoice_sample_rate: int = Field(default=24000, alias="COSYVOICE_SAMPLE_RATE")
     cosyvoice_word_timestamps: bool = Field(default=True, alias="COSYVOICE_WORD_TIMESTAMPS")
     cosyvoice_pool_size: int = Field(default=4, alias="COSYVOICE_POOL_SIZE")
+    # When true, inject CosyVoice markup like [laughter]/[breath] on delivery.
+    # Keep false for longanyang PlainText unless the deployed model is verified.
+    cosyvoice_paralinguistic_tags: bool = Field(
+        default=False,
+        alias="COSYVOICE_PARALINGUISTIC_TAGS",
+    )
 
     vad_min_silence_duration_s: float = Field(default=0.30, alias="VAD_MIN_SILENCE_DURATION_S")
     preemptive_tts: bool = Field(default=False, alias="PREEMPTIVE_TTS")
-    listener_cues_enabled: bool = Field(default=False, alias="LISTENER_CUES_ENABLED")
+    # Enabled for GPT-Live-style short listener cues ("嗯/我在听").
+    # Disable either flag if device AEC/echo regression appears.
+    listener_cues_enabled: bool = Field(default=True, alias="LISTENER_CUES_ENABLED")
     listener_cue_aec_validated: bool = Field(
-        default=False,
+        default=True,
         alias="LISTENER_CUE_AEC_VALIDATED",
     )
     listener_cue_pause_ms: int = Field(

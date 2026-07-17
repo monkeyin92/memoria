@@ -137,6 +137,11 @@ async def test_create_omni_session_requires_only_dashscope_api_key(
             headers=headers,
             json={"user_id": user_id, "voice_backend": "qwen_omni"},
         )
+        plus = await client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={"user_id": user_id, "voice_backend": "qwen_omni_plus"},
+        )
 
     assert response.status_code == 200
     data = response.json()
@@ -155,6 +160,55 @@ async def test_create_omni_session_requires_only_dashscope_api_key(
             },
         },
     }
+    assert plus.status_code == 200
+    plus_data = plus.json()
+    assert plus_data["voice_backend"] == "qwen_omni_plus"
+    assert plus_data["config"]["model"] == "qwen3.5-omni-plus-realtime"
+    assert plus_data["config"]["turn_detection"] == data["config"]["turn_detection"]
+
+
+@pytest.mark.asyncio
+async def test_omni_turn_detection_env_overrides_support_flash_plus_sweeps(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path, offline=False)
+    monkeypatch.setenv("QWEN_OMNI_VAD_THRESHOLD", "0.4")
+    monkeypatch.setenv("QWEN_OMNI_SILENCE_DURATION_MS", "900")
+    monkeypatch.setenv("QWEN_OMNI_PREFIX_PADDING_MS", "400")
+    monkeypatch.setenv("QWEN_OMNI_PLUS_SILENCE_DURATION_MS", "650")
+    monkeypatch.setenv("QWEN_OMNI_PLUS_VAD_THRESHOLD", "0.55")
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, headers = await _anonymous_identity(client)
+        flash = (
+            await client.post(
+                "/v1/sessions",
+                headers=headers,
+                json={"user_id": user_id, "voice_backend": "qwen_omni"},
+            )
+        ).json()
+        plus = (
+            await client.post(
+                "/v1/sessions",
+                headers=headers,
+                json={"user_id": user_id, "voice_backend": "qwen_omni_plus"},
+            )
+        ).json()
+
+    assert flash["config"]["turn_detection"] == {
+        "type": "semantic_vad",
+        "threshold": 0.4,
+        "prefix_padding_ms": 400,
+        "silence_duration_ms": 900,
+    }
+    assert plus["config"]["turn_detection"] == {
+        "type": "semantic_vad",
+        "threshold": 0.55,
+        "prefix_padding_ms": 400,
+        "silence_duration_ms": 650,
+    }
 
 
 @pytest.mark.asyncio
@@ -166,9 +220,15 @@ async def test_omni_owner_can_exchange_sdp_without_receiving_provider_credential
     monkeypatch.setenv("DASHSCOPE_WORKSPACE_ID", "llm-test-workspace")
     exchanged: dict[str, object] = {}
 
-    async def fake_exchange(settings: object, offer_sdp: bytes) -> bytes:
+    async def fake_exchange(
+        settings: object,
+        offer_sdp: bytes,
+        *,
+        model: str = "qwen3.5-omni-flash-realtime",
+    ) -> bytes:
         exchanged["settings"] = settings
         exchanged["offer_sdp"] = offer_sdp
+        exchanged["model"] = model
         return b"v=0\r\no=qwen-answer\r\n"
 
     monkeypatch.setattr(session_routes, "_exchange_omni_sdp", fake_exchange, raising=False)
@@ -342,8 +402,13 @@ async def test_omni_sdp_exchange_is_limited_per_session(
     _configure(monkeypatch, tmp_path, offline=False)
     monkeypatch.setenv("DASHSCOPE_WORKSPACE_ID", "llm-test-workspace")
 
-    async def fake_exchange(settings: object, offer_sdp: bytes) -> bytes:
-        _ = settings, offer_sdp
+    async def fake_exchange(
+        settings: object,
+        offer_sdp: bytes,
+        *,
+        model: str = "qwen3.5-omni-flash-realtime",
+    ) -> bytes:
+        _ = settings, offer_sdp, model
         return b"v=0\r\no=qwen-answer\r\n"
 
     monkeypatch.setattr(session_routes, "_exchange_omni_sdp", fake_exchange)
@@ -385,7 +450,7 @@ async def test_omni_upstream_uses_fixed_url_without_redirects_or_client_secret(
 ) -> None:
     _configure(monkeypatch, tmp_path, offline=False)
     monkeypatch.setenv("DASHSCOPE_WORKSPACE_ID", "")
-    captured: dict[str, Any] = {}
+    captured: dict[str, Any] = {"urls": []}
 
     class FakeAsyncClient:
         def __init__(self, **kwargs: Any) -> None:
@@ -398,7 +463,8 @@ async def test_omni_upstream_uses_fixed_url_without_redirects_or_client_secret(
             return None
 
         async def post(self, url: str, **kwargs: Any) -> object:
-            captured.update(url=url, request=kwargs)
+            captured["urls"].append(url)
+            captured["request"] = kwargs
             return session_routes.httpx.Response(200, content=b"v=0\r\no=qwen-answer\r\n")
 
     monkeypatch.setattr(session_routes.httpx, "AsyncClient", FakeAsyncClient)
@@ -406,12 +472,24 @@ async def test_omni_upstream_uses_fixed_url_without_redirects_or_client_secret(
         ControlSettings(),
         b"v=0\r\no=browser-offer\r\n",
     )
+    plus_answer = await session_routes._exchange_omni_sdp(
+        ControlSettings(),
+        b"v=0\r\no=browser-offer\r\n",
+        model="qwen3.5-omni-plus-realtime",
+    )
 
     assert answer.startswith(b"v=0")
-    assert captured["url"] == (
-        "https://llm-qp8mf178biax7m6c.cn-beijing.maas.aliyuncs.com"
-        "/api/v1/webrtc/realtime?model=qwen3.5-omni-flash-realtime"
-    )
+    assert plus_answer.startswith(b"v=0")
+    assert captured["urls"] == [
+        (
+            "https://llm-qp8mf178biax7m6c.cn-beijing.maas.aliyuncs.com"
+            "/api/v1/webrtc/realtime?model=qwen3.5-omni-flash-realtime"
+        ),
+        (
+            "https://llm-qp8mf178biax7m6c.cn-beijing.maas.aliyuncs.com"
+            "/api/v1/webrtc/realtime?model=qwen3.5-omni-plus-realtime"
+        ),
+    ]
     assert captured["client"] == {
         "timeout": 10.0,
         "follow_redirects": False,

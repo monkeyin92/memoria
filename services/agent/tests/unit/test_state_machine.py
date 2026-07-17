@@ -8,6 +8,7 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.state_machine import (
     ConversationState,
     DuplexStateMachine,
+    InteractionPhase,
     TransitionEvent,
     all_legal_transitions,
 )
@@ -57,3 +58,14 @@ def test_interrupt_path() -> None:
     sm.apply(TransitionEvent.USER_VOICE_WHILE_SPEAKING)
     sm.apply(TransitionEvent.REAL_INTERRUPT, new_fence=sm.fence.bump_generation())
     assert sm.state is ConversationState.USER_SPEAKING
+
+
+def test_interaction_phase_covers_p0_observable_states() -> None:
+    values = {phase.value for phase in InteractionPhase}
+    assert {
+        "backchannel",
+        "thinking_silent",
+        "speaking",
+        "user_speaking",
+        "listening",
+    } <= values

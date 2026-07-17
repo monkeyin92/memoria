@@ -26,8 +26,16 @@ router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
 logger = logging.getLogger(__name__)
 telemetry_logger = logging.getLogger("uvicorn.error")
 CONTROL_TOPIC = "voice-agent.control"
-QWEN_OMNI_MODEL = "qwen3.5-omni-flash-realtime"
+QWEN_OMNI_FLASH_MODEL = "qwen3.5-omni-flash-realtime"
+QWEN_OMNI_PLUS_MODEL = "qwen3.5-omni-plus-realtime"
+# Backward-compatible alias used by older tests and docs.
+QWEN_OMNI_MODEL = QWEN_OMNI_FLASH_MODEL
 QWEN_OMNI_WORKSPACE_ID = "llm-qp8mf178biax7m6c"
+OMNI_BACKENDS = frozenset({"qwen_omni", "qwen_omni_plus"})
+OMNI_MODELS: dict[str, str] = {
+    "qwen_omni": QWEN_OMNI_FLASH_MODEL,
+    "qwen_omni_plus": QWEN_OMNI_PLUS_MODEL,
+}
 OMNI_MAX_SDP_BYTES = 64 * 1024
 OMNI_MAX_SDP_EXCHANGES = 2
 _WORKSPACE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
@@ -44,7 +52,7 @@ class CreateSessionRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     user_id: str | None = Field(default=None, min_length=1, max_length=128)
-    voice_backend: Literal["cascade", "qwen_omni"] = "cascade"
+    voice_backend: Literal["cascade", "qwen_omni", "qwen_omni_plus"] = "cascade"
     locale: str = "zh-CN"
     client: ClientInfo = Field(default_factory=ClientInfo)
 
@@ -62,7 +70,7 @@ class CreateSessionResponse(BaseModel):
 
 class CreateOmniSessionResponse(BaseModel):
     session_id: str
-    voice_backend: Literal["qwen_omni"] = "qwen_omni"
+    voice_backend: Literal["qwen_omni", "qwen_omni_plus"] = "qwen_omni"
     sdp_exchange_path: str
     config: dict[str, Any]
 
@@ -147,10 +155,11 @@ async def create_session(
     identity = f"user-{user_id}-{session_id[:8]}"
     store = cast(MemoryStore, request.app.state.memory_store)
     created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    if body.voice_backend == "qwen_omni":
+    if body.voice_backend in OMNI_BACKENDS:
         if not settings.dashscope_api_key.get_secret_value():
             raise HTTPException(status_code=503, detail="Qwen3.5-Omni 服务端尚未配置")
-        _omni_signaling_url(settings)
+        model = OMNI_MODELS[body.voice_backend]
+        _omni_signaling_url(settings, model=model)
         store.add_voice_session(
             session_id=session_id,
             user_id=user_id,
@@ -160,16 +169,15 @@ async def create_session(
         )
         return CreateOmniSessionResponse(
             session_id=session_id,
+            voice_backend=body.voice_backend,  # type: ignore[arg-type]
             sdp_exchange_path=f"/v1/sessions/{session_id}/omni/sdp",
             config={
-                "model": QWEN_OMNI_MODEL,
+                "model": model,
                 "voice": settings.qwen_omni_voice.strip() or "Tina",
-                "turn_detection": {
-                    "type": "semantic_vad",
-                    "threshold": 0.5,
-                    "prefix_padding_ms": 500,
-                    "silence_duration_ms": 800,
-                },
+                "turn_detection": _omni_turn_detection(
+                    settings,
+                    voice_backend=body.voice_backend,
+                ),
             },
         )
 
@@ -211,7 +219,8 @@ async def exchange_omni_sdp(
     rec = store.get_voice_session(session_id=session_id, user_id=user.user_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="session not found")
-    if rec["voice_backend"] != "qwen_omni":
+    backend = str(rec["voice_backend"])
+    if backend not in OMNI_BACKENDS:
         raise HTTPException(status_code=409, detail="session does not use Qwen Omni")
 
     content_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
@@ -236,7 +245,11 @@ async def exchange_omni_sdp(
         max_exchanges=OMNI_MAX_SDP_EXCHANGES,
     ):
         raise HTTPException(status_code=429, detail="SDP exchange limit reached")
-    answer_sdp = await _exchange_omni_sdp(request.app.state.settings, offer_sdp)
+    answer_sdp = await _exchange_omni_sdp(
+        request.app.state.settings,
+        offer_sdp,
+        model=OMNI_MODELS[backend],
+    )
     return Response(
         content=answer_sdp,
         media_type="application/sdp",
@@ -256,7 +269,7 @@ async def publish_omni_telemetry(
     rec = store.get_voice_session(session_id=session_id, user_id=user.user_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="session not found")
-    if rec["voice_backend"] != "qwen_omni":
+    if str(rec["voice_backend"]) not in OMNI_BACKENDS:
         raise HTTPException(status_code=409, detail="session does not use Qwen Omni")
     telemetry_logger.info(
         "omni_realtime_telemetry session_id=%s name=%s elapsed_ms=%s "
@@ -271,17 +284,43 @@ async def publish_omni_telemetry(
     return Response(status_code=204)
 
 
-def _omni_signaling_url(settings: Any) -> str:
+def _omni_turn_detection(settings: Any, *, voice_backend: str) -> dict[str, Any]:
+    """Build semantic_vad config; Plus may override silence/threshold for sweeps."""
+    threshold = float(settings.qwen_omni_vad_threshold)
+    silence_ms = int(settings.qwen_omni_silence_duration_ms)
+    if voice_backend == "qwen_omni_plus":
+        plus_threshold = getattr(settings, "qwen_omni_plus_vad_threshold", None)
+        plus_silence = getattr(settings, "qwen_omni_plus_silence_duration_ms", None)
+        if plus_threshold is not None:
+            threshold = float(plus_threshold)
+        if plus_silence is not None:
+            silence_ms = int(plus_silence)
+    return {
+        "type": "semantic_vad",
+        "threshold": threshold,
+        "prefix_padding_ms": int(settings.qwen_omni_prefix_padding_ms),
+        "silence_duration_ms": silence_ms,
+    }
+
+
+def _omni_signaling_url(settings: Any, *, model: str = QWEN_OMNI_FLASH_MODEL) -> str:
     workspace_id = settings.dashscope_workspace_id.strip() or QWEN_OMNI_WORKSPACE_ID
     if not _WORKSPACE_ID_PATTERN.fullmatch(workspace_id):
         raise HTTPException(status_code=503, detail="Qwen3.5-Omni 服务端尚未配置")
+    if model not in OMNI_MODELS.values():
+        raise HTTPException(status_code=503, detail="Qwen3.5-Omni 服务端尚未配置")
     return (
         f"https://{workspace_id}.cn-beijing.maas.aliyuncs.com"
-        f"/api/v1/webrtc/realtime?model={QWEN_OMNI_MODEL}"
+        f"/api/v1/webrtc/realtime?model={model}"
     )
 
 
-async def _exchange_omni_sdp(settings: Any, offer_sdp: bytes) -> bytes:
+async def _exchange_omni_sdp(
+    settings: Any,
+    offer_sdp: bytes,
+    *,
+    model: str = QWEN_OMNI_FLASH_MODEL,
+) -> bytes:
     api_key = settings.dashscope_api_key.get_secret_value()
     if not api_key:
         raise HTTPException(status_code=503, detail="Qwen3.5-Omni 服务端尚未配置")
@@ -292,7 +331,7 @@ async def _exchange_omni_sdp(settings: Any, offer_sdp: bytes) -> bytes:
             trust_env=False,
         ) as client:
             response = await client.post(
-                _omni_signaling_url(settings),
+                _omni_signaling_url(settings, model=model),
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/sdp",

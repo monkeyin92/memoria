@@ -35,6 +35,38 @@ class ControlSettings(BaseSettings):
         le=30.0,
         alias="QWEN_OMNI_SDP_TIMEOUT_S",
     )
+    # Shared semantic_vad knobs for Omni Flash/Plus A/B sweeps.
+    qwen_omni_vad_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        alias="QWEN_OMNI_VAD_THRESHOLD",
+    )
+    qwen_omni_prefix_padding_ms: int = Field(
+        default=500,
+        ge=0,
+        le=2000,
+        alias="QWEN_OMNI_PREFIX_PADDING_MS",
+    )
+    qwen_omni_silence_duration_ms: int = Field(
+        default=800,
+        ge=200,
+        le=2500,
+        alias="QWEN_OMNI_SILENCE_DURATION_MS",
+    )
+    # Optional Plus-only override; empty/unset reuses the shared silence window.
+    qwen_omni_plus_silence_duration_ms: int | None = Field(
+        default=None,
+        ge=200,
+        le=2500,
+        alias="QWEN_OMNI_PLUS_SILENCE_DURATION_MS",
+    )
+    qwen_omni_plus_vad_threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        alias="QWEN_OMNI_PLUS_VAD_THRESHOLD",
+    )
     dashscope_base_url: str = Field(
         default="https://dashscope.aliyuncs.com/compatible-mode/v1",
         alias="DASHSCOPE_BASE_URL",
