@@ -26,6 +26,7 @@ from services.agent.src.orchestration.heard_text_tracker import HeardTextTracker
 from services.agent.src.orchestration.interruption_guard import (
     PlaybackInputDecision,
     PlaybackInputGuard,
+    is_explicit_interrupt,
 )
 from services.agent.src.orchestration.orchestrator import CosyPoolHandle, Orchestrator
 from services.agent.src.orchestration.phrase_segmenter import PhraseSegmenter
@@ -285,6 +286,13 @@ class DuplexRuntime:
         )
         return payload
 
+    def _interrupt_candidate_text(self) -> str:
+        return (getattr(self.input_guard, "candidate_text", None) or "").strip()
+
+    def _is_explicit_owner_interrupt_cmd(self) -> bool:
+        """True when ASR heard stop/yield phrases like「停一下」「等等」."""
+        return is_explicit_interrupt(self._interrupt_candidate_text())
+
     def _speaker_allows_user_input(self, *, context: str) -> bool:
         if not self.speaker_verifier.enabled:
             return True
@@ -297,6 +305,10 @@ class DuplexRuntime:
         if self.speaker_verifier.state is SpeakerGateState.PENDING:
             if context in {"turn_commit", "interrupt", "barge_in_start"}:
                 return False
+            return True
+        # Explicit stop phrases from the mic: always treat as real interrupt.
+        # Short「停一下」often scores too_short and used to wrongly trigger「我继续」.
+        if context in {"interrupt", "barge_in_start"} and self._is_explicit_owner_interrupt_cmd():
             return True
         score = self.speaker_verifier.score_latest_utterance()
         if score.reason == "too_short":
@@ -1000,13 +1012,17 @@ class DuplexRuntime:
         self.cancel_listener_cue()
         was_speaking = self._was_speaking
         mid_reply = self._assistant_was_mid_reply(was_speaking=was_speaking)
+        owner_cmd = self._is_explicit_owner_interrupt_cmd()
+        candidate = self._interrupt_candidate_text()
         if (
             create_user_turn
             and self.speaker_verifier.active
             and not self._speaker_allows_user_input(context="interrupt")
+            and not owner_cmd
         ):
             # Nearby talker: do not bump fence — but LiveKit may already have
             # stopped audio, so recover instead of dead silence.
+            # Never recover when user said「停一下」etc. — that is a real yield.
             self.speaker_verifier.mark_utterance_end()
             await self.orchestrator.dismiss_pending_interruption(
                 cause="speaker_reject_interrupt"
@@ -1014,7 +1030,11 @@ class DuplexRuntime:
             self.mark_audio_event(
                 "interrupt_blocked_by_speaker",
                 status="ignored",
-                detail={"cause": cause, "mid_reply": mid_reply},
+                detail={
+                    "cause": cause,
+                    "mid_reply": mid_reply,
+                    "candidate": candidate[:40],
+                },
             )
             if mid_reply:
                 self._spawn(
@@ -1022,6 +1042,17 @@ class DuplexRuntime:
                     name="false-interrupt-recover",
                 )
             return self.fence
+        if owner_cmd and create_user_turn:
+            logger.info(
+                "explicit_interrupt_cmd text=%s cause=%s session_id=%s",
+                candidate[:40],
+                cause,
+                self.session_id,
+            )
+            self.mark_audio_event(
+                "explicit_interrupt_cmd",
+                detail={"text": candidate[:40], "cause": cause},
+            )
         old_fence = self.fence
         new_fence = await self.orchestrator.confirm_interruption(
             cause=cause,

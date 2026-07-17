@@ -45,6 +45,48 @@ async def test_interrupt_says_friendly_yield_when_was_speaking() -> None:
 
 
 @pytest.mark.asyncio
+async def test_explicit_stop_phrase_yields_not_continue() -> None:
+    """「停一下」must say 嗯你说, not 我继续 (owner cmd overrides short speaker score)."""
+    said: list[str] = []
+
+    async def _yield() -> None:
+        said.append("嗯，你说。")
+
+    async def _recover() -> None:
+        said.append("我继续。")
+
+    from services.agent.tests.unit.test_speaker_verify import _signal_pcm
+
+    verifier = SpeakerVerifier(
+        enabled=True,
+        enroll_speech_ms=1200,
+        enroll_timeout_ms=5000,
+        accept_threshold=0.70,
+        min_verify_speech_ms=400,
+    )
+    verifier.begin_enrollment()
+    verifier.feed_pcm(_signal_pcm(kind="owner", seconds=2.0, seed=41))
+    assert verifier.try_finalize_enrollment() is not None
+    runtime = DuplexRuntime.create(
+        session_id="stop-cmd",
+        speaker_verifier=verifier,
+        input_guard_enabled=True,
+    )
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("讲个故事")
+    await runtime.on_assistant_speaking("很长的故事")
+    runtime._was_speaking = True
+    runtime._playback_started_ns = __import__("time").monotonic_ns()
+    runtime.input_guard.candidate_text = "停一下"
+    runtime.set_interrupt_yield(_yield)
+    runtime.set_false_interrupt_recover(_recover)
+    await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+    await asyncio.sleep(0.05)
+    assert said == ["嗯，你说。"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_speaker_blocked_interrupt_recovers_instead_of_silence() -> None:
     """LiveKit may stop audio before speaker gate; recover with continue path."""
     recovered: list[str] = []
