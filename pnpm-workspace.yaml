@@ -1,2 +1,5 @@
-allowBuilds:
-  esbuild: set this to true or false
+# Root is not the install target for apps/web (that package has its own
+# lockfile + workspace). Keep a valid packages field so tools that run
+# `pnpm store path` from the repo root (e.g. actions/setup-node cache) work.
+packages:
+  - "."

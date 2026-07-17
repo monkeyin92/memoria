@@ -46,6 +46,7 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
       - name: Install
         working-directory: apps/web
+        # apps/web is a self-contained pnpm workspace with its own lockfile.
         run: pnpm install --frozen-lockfile
       - name: Lint
         working-directory: apps/web
