@@ -703,6 +703,22 @@ async def entrypoint(ctx: Any) -> None:
         lambda text: session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
     )
 
+    async def _interrupt_yield_say() -> None:
+        """Friendly mid-reply handoff when barge-in cancels assistant speech."""
+        if hasattr(tts_plugin, "apply_speech_plan"):
+            tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
+        handle = session.say(
+            "嗯，你说。",
+            allow_interruptions=True,
+            add_to_chat_ctx=False,
+        )
+        wait = getattr(handle, "wait_for_playout", None)
+        if callable(wait):
+            with contextlib.suppress(Exception):
+                await wait()
+
+    runtime.set_interrupt_yield(_interrupt_yield_say)
+
     def _on_control_packet(packet: Any) -> None:
         topic = getattr(packet, "topic", None)
         if topic == TELEMETRY_TOPIC:

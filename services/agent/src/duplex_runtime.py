@@ -125,8 +125,12 @@ class DuplexRuntime:
     _set_interruption_min_words: Callable[[int], None] | None = None
     _event_publisher: Callable[[dict[str, Any]], Awaitable[None]] | None = None
     _result_speaker: Callable[[str], Any] | None = None
+    _interrupt_yield: Callable[[], Awaitable[None]] | None = None
+    _last_interrupt_yield_ns: int | None = None
     _deep_client: Any | None = None
     _background_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
+    # Friendly yield when we stop mid-reply so silence does not feel like a crash.
+    INTERRUPT_YIELD_COOLDOWN_MS: int = 4_000
     _pending_tool_results: int = 0
     _listener_cue_player: Callable[[str], Any] | None = None
     _active_listener_cue: ListenerCue | None = None
@@ -292,12 +296,14 @@ class DuplexRuntime:
             return True
         score = self.speaker_verifier.score_latest_utterance()
         if score.reason == "too_short":
-            # Not enough audio yet (e.g. barge-in onset): do not reject the owner.
-            if context == "barge_in_start":
-                return True
-            # Fall back to the rolling window for turn commit / interrupt.
+            # Prefer rolling window over "allow any short blip" — nearby noise was
+            # cancelling TTS while owner was enrolled.
             score = self.speaker_verifier.score_pcm()
             if score.reason == "too_short":
+                # barge_in_start / interrupt: need enough speech before cancel.
+                # turn_commit: fail open only after a full utterance window.
+                if context in {"barge_in_start", "interrupt"}:
+                    return False
                 return context != "interrupt"
         if not score.accepted:
             self.orchestrator.metrics.inc_guarded_user_input(f"speaker_{score.reason}")
@@ -905,6 +911,31 @@ class DuplexRuntime:
             await self.orchestrator.begin_speaking([], self._pending_assistant_text)
             await self.orchestrator.finish_speaking(tools_active=tools_active)
 
+    def set_interrupt_yield(self, speaker: Callable[[], Awaitable[None]] | None) -> None:
+        self._interrupt_yield = speaker
+
+    async def _maybe_say_interrupt_yield(self, *, cause: str) -> None:
+        """Short ack after mid-reply stop so users know we yielded, not crashed."""
+        if self._interrupt_yield is None:
+            return
+        if cause in {"user_button", "stop_response", "rtc_recovered"}:
+            return
+        now = time.monotonic_ns()
+        if (
+            self._last_interrupt_yield_ns is not None
+            and (now - self._last_interrupt_yield_ns) // 1_000_000
+            < self.INTERRUPT_YIELD_COOLDOWN_MS
+        ):
+            return
+        self._last_interrupt_yield_ns = now
+        self.mark_audio_event("interrupt_yield_started", detail={"cause": cause})
+        try:
+            await self._interrupt_yield()
+            self.mark_audio_event("interrupt_yield_done", detail={"cause": cause})
+        except Exception:
+            logger.warning("interrupt yield failed cause=%s", cause, exc_info=True)
+            self.mark_audio_event("interrupt_yield_done", status="error")
+
     async def on_real_interrupt(
         self,
         cause: str = "livekit_interruption",
@@ -915,6 +946,7 @@ class DuplexRuntime:
         force_generation_bump: bool = False,
     ) -> GenerationFence:
         self.cancel_listener_cue()
+        was_speaking = self._was_speaking
         if (
             create_user_turn
             and self.speaker_verifier.active
@@ -924,6 +956,11 @@ class DuplexRuntime:
             self.speaker_verifier.mark_utterance_end()
             await self.orchestrator.dismiss_pending_interruption(
                 cause="speaker_reject_interrupt"
+            )
+            self.mark_audio_event(
+                "interrupt_blocked_by_speaker",
+                status="ignored",
+                detail={"cause": cause},
             )
             return self.fence
         old_fence = self.fence
@@ -942,6 +979,25 @@ class DuplexRuntime:
             self.tts.bind_fence(new_fence)
         if not new_fence.matches(old_fence):
             self.publish_assistant_state("interrupted")
+            self.set_interaction_phase(
+                InteractionPhase.INTERRUPTED,
+                cause=f"interrupt:{cause}",
+            )
+            # User-facing yield only when we actually stopped mid-reply.
+            if (
+                create_user_turn
+                and was_speaking
+                and cause
+                not in {
+                    "user_button",
+                    "stop_response",
+                    "rtc_recovered",
+                }
+            ):
+                self._spawn(
+                    self._maybe_say_interrupt_yield(cause=cause),
+                    name="interrupt-yield",
+                )
         return new_fence
 
     async def on_playback_started(self) -> None:

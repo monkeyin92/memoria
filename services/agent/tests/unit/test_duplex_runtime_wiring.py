@@ -22,6 +22,61 @@ from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSTT
 
 
 @pytest.mark.asyncio
+async def test_interrupt_says_friendly_yield_when_was_speaking() -> None:
+    """Mid-reply cancel should not leave dead silence."""
+    said: list[str] = []
+
+    async def _yield() -> None:
+        said.append("嗯，你说。")
+
+    runtime = DuplexRuntime.create(session_id="yield-session")
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("讲个故事")
+    await runtime.on_assistant_speaking("很长的故事内容")
+    runtime._was_speaking = True
+    runtime.set_interrupt_yield(_yield)
+    fence_before = runtime.fence
+    new_fence = await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+    assert not new_fence.matches(fence_before)
+    # yield is spawned; allow it to run
+    await asyncio.sleep(0.05)
+    assert said == ["嗯，你说。"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_enrolled_barge_in_rejects_nearby_talker() -> None:
+    from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
+    from services.agent.tests.unit.test_speaker_verify import _signal_pcm
+
+    verifier = SpeakerVerifier(
+        enabled=True,
+        enroll_speech_ms=1200,
+        enroll_timeout_ms=5000,
+        accept_threshold=0.70,
+        min_verify_speech_ms=400,
+    )
+    verifier.begin_enrollment()
+    verifier.feed_pcm(_signal_pcm(kind="owner", seconds=2.0, seed=21))
+    assert verifier.try_finalize_enrollment() is not None
+    runtime = DuplexRuntime.create(
+        session_id="barge-noise",
+        speaker_verifier=verifier,
+        input_guard_enabled=True,
+    )
+    await runtime.orchestrator.ready()
+    runtime._was_speaking = True
+    # Overwrite rolling window with nearby talker only (4s rolling).
+    other = _signal_pcm(kind="bystander", seconds=4.0, seed=22)
+    runtime.feed_speaker_pcm(other)
+    score = verifier.score_pcm()
+    assert score.accepted is False
+    decision = runtime.on_user_voice_started()
+    assert decision is PlaybackInputDecision.IGNORE
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_pending_enrollment_blocks_chat_turns() -> None:
     """Regression: enroll speech must not become generate_reply / skip-enroll race."""
     verifier = SpeakerVerifier(enabled=True, enroll_speech_ms=5000, enroll_timeout_ms=15000)
