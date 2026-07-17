@@ -326,35 +326,54 @@ class DuplexRuntime:
         # Short「停一下」often scores too_short and used to wrongly trigger「我继续」.
         if context in {"interrupt", "barge_in_start"} and self._is_explicit_owner_interrupt_cmd():
             return True
-        score = self.speaker_verifier.score_latest_utterance()
-        if score.reason == "too_short":
+        utt = self.speaker_verifier.score_latest_utterance()
+        roll = self.speaker_verifier.score_pcm()  # rolling ~4s window
+        score = utt
+        if utt.reason == "too_short":
             # Prefer rolling window over "allow any short blip" — nearby noise was
             # cancelling TTS while owner was enrolled.
-            score = self.speaker_verifier.score_pcm()
+            score = roll
             if score.reason == "too_short":
-                # barge_in_start / interrupt: need enough speech before cancel.
-                # turn_commit: fail open only after a full utterance window.
-                if context in {"barge_in_start", "interrupt"}:
+                # barge-in / interrupt: never cancel on micro-blips.
+                # turn_commit: fail-closed so tablet/TV fragments cannot enter chat.
+                if context in {"barge_in_start", "interrupt", "turn_commit"}:
                     return False
-                return context != "interrupt"
-        if not score.accepted:
-            # Soft accept for full turn commits: lightweight log-mel embedding is
-            # noisy. Prod 20260717-200500: owner「介绍南京」scored 0.57–0.58 vs
-            # threshold 0.62 → permanent silence with no LLM turn.
-            thr = float(self.speaker_verifier.accept_threshold)
-            soft_floor = max(0.45, thr - 0.15)
-            soft_ok = (
-                context == "turn_commit"
-                and score.reason == "mismatch"
-                and score.speech_ms >= int(self.speaker_verifier.min_verify_speech_ms)
-                and score.score >= soft_floor
-            )
+                return True
+
+        thr = float(self.speaker_verifier.accept_threshold)
+        # Dual-window consensus: tablet/TV often scores mid-band on one window only.
+        # Owner speech usually scores high on both utterance and rolling PCM.
+        best = max(utt.score, roll.score) if utt.reason != "too_short" else score.score
+        worst = (
+            min(utt.score, roll.score)
+            if utt.reason not in {"too_short", "embed_failed"}
+            and roll.reason not in {"too_short", "embed_failed"}
+            else score.score
+        )
+        hard_ok = score.accepted or (
+            utt.reason not in {"too_short", "embed_failed"}
+            and roll.reason not in {"too_short", "embed_failed"}
+            and worst >= thr
+        )
+        # Soft margin only for full turns, and only when *both* windows are near thr.
+        # Previous thr-0.15 (~0.37 floor) let nearby video audio in.
+        soft_floor = max(0.48, thr - 0.06)
+        soft_ok = (
+            context == "turn_commit"
+            and not hard_ok
+            and score.reason == "mismatch"
+            and score.speech_ms >= max(600, int(self.speaker_verifier.min_verify_speech_ms))
+            and best >= thr - 0.03
+            and worst >= soft_floor
+        )
+        if hard_ok or soft_ok:
             if soft_ok:
                 logger.info(
-                    "speaker_soft_accept context=%s score=%.3f thr=%.3f "
+                    "speaker_soft_accept context=%s utt=%.3f roll=%.3f thr=%.3f "
                     "soft_floor=%.3f speech_ms=%s session_id=%s",
                     context,
-                    score.score,
+                    utt.score,
+                    roll.score,
                     thr,
                     soft_floor,
                     score.speech_ms,
@@ -364,45 +383,51 @@ class DuplexRuntime:
                     "speaker_soft_accept",
                     detail={
                         "context": context,
-                        "score": round(score.score, 4),
+                        "utt": round(utt.score, 4),
+                        "roll": round(roll.score, 4),
                         "threshold": thr,
                         "soft_floor": soft_floor,
                         "speech_ms": score.speech_ms,
                     },
                 )
-                return True
-            self.orchestrator.metrics.inc_guarded_user_input(f"speaker_{score.reason}")
-            logger.info(
-                "speaker_reject context=%s reason=%s score=%.3f speech_ms=%s session_id=%s",
-                context,
-                score.reason,
-                score.score,
-                score.speech_ms,
-                self.session_id,
-            )
-            self.mark_audio_event(
-                "speaker_rejected",
-                status="ignored",
-                detail={
-                    "context": context,
-                    "reason": score.reason,
-                    "score": round(score.score, 4),
-                    "speech_ms": score.speech_ms,
-                },
-            )
-            self._publish(
-                {
-                    "type": "speaker_reject",
-                    "session_id": self.session_id,
-                    "context": context,
-                    "reason": score.reason,
-                    "score": round(score.score, 4),
-                    "speech_ms": score.speech_ms,
-                    "at": datetime.now(UTC).isoformat(),
-                }
-            )
-            return False
-        return True
+            return True
+
+        self.orchestrator.metrics.inc_guarded_user_input(f"speaker_{score.reason}")
+        logger.info(
+            "speaker_reject context=%s reason=%s utt=%.3f roll=%.3f "
+            "speech_ms=%s session_id=%s",
+            context,
+            score.reason,
+            utt.score,
+            roll.score,
+            score.speech_ms,
+            self.session_id,
+        )
+        self.mark_audio_event(
+            "speaker_rejected",
+            status="ignored",
+            detail={
+                "context": context,
+                "reason": score.reason,
+                "utt": round(utt.score, 4),
+                "roll": round(roll.score, 4),
+                "speech_ms": score.speech_ms,
+            },
+        )
+        self._publish(
+            {
+                "type": "speaker_reject",
+                "session_id": self.session_id,
+                "context": context,
+                "reason": score.reason,
+                "score": round(score.score, 4),
+                "utt": round(utt.score, 4),
+                "roll": round(roll.score, 4),
+                "speech_ms": score.speech_ms,
+                "at": datetime.now(UTC).isoformat(),
+            }
+        )
+        return False
 
     def _spawn(self, awaitable: Awaitable[Any], *, name: str) -> asyncio.Task[Any]:
         async def _run() -> Any:

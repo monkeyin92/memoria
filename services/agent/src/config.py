@@ -127,8 +127,9 @@ class AgentSettings(BaseSettings):
         alias="SPEAKER_ENROLL_TIMEOUT_MS",
     )
     speaker_accept_threshold: float = Field(
-        # Lightweight mel embedding: 0.62 rejected real owner speech (~0.57).
-        default=0.52,
+        # Balance: owner often ~0.55–0.85; tablet/TV mid-band. Dual-window +
+        # narrow soft margin reject nearby media without killing owner turns.
+        default=0.55,
         ge=0.35,
         le=0.95,
         alias="SPEAKER_ACCEPT_THRESHOLD",
