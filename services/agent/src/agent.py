@@ -721,38 +721,97 @@ async def entrypoint(ctx: Any) -> None:
         lambda text: session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
     )
 
-    async def _say_control_ack(text: str) -> None:
-        """Short fixed ack on the *main* CosyVoice track only (no second room track).
+    async def _play_pcm_via_room_track(pcm: bytes, *, sample_rate: int) -> None:
+        """Push PCM through a temporary LocalAudioTrack (main session.say is mute post-barge-in).
 
-        Prod 20260717-194500: BackgroundAudioPlayer published a second track
-        (client track_subscribed) → dual voice; separate CosyVoice prep also
-        raced the first chat turn (cosyvoice_task_started without first_pcm).
+        Only used while assistant playout is already stopped — unpublish when done.
+        """
+        from livekit import rtc
+
+        if not pcm or len(pcm) < 4:
+            return
+        source = rtc.AudioSource(sample_rate, 1)
+        track = rtc.LocalAudioTrack.create_audio_track("memoria-ack", source)
+        pub = await ctx.room.local_participant.publish_track(track)
+        try:
+            frame_ms = 20
+            samples = sample_rate * frame_ms // 1000
+            bytes_per = samples * 2
+            # Pad to whole frames
+            if len(pcm) % 2:
+                pcm = pcm[:-1]
+            pad = (-len(pcm)) % bytes_per
+            if pad:
+                pcm = pcm + b"\x00" * pad
+            for offset in range(0, len(pcm), bytes_per):
+                chunk = pcm[offset : offset + bytes_per]
+                frame = rtc.AudioFrame(
+                    data=chunk,
+                    sample_rate=sample_rate,
+                    num_channels=1,
+                    samples_per_channel=samples,
+                )
+                await source.capture_frame(frame)
+                await asyncio.sleep(frame_ms / 1000)
+            await asyncio.sleep(0.05)
+        finally:
+            with contextlib.suppress(Exception):
+                await ctx.room.local_participant.unpublish_track(pub.sid)
+
+    async def _say_control_ack(text: str) -> None:
+        """Short fixed ack after interrupt — prefer RTC PCM path (session.say is silent).
+
+        Prod 20260717-195800: session.say after barge-in got first_pcm but never
+        playback_started; wait_for_playout returned in ~200ms with no audible audio.
         """
         phrase = (text or "").strip() or "嗯，你说。"
-        # Let LiveKit finish interrupt teardown before opening a new say.
-        await asyncio.sleep(0.28)
+        await asyncio.sleep(0.12)
+        sample_rate = int(runtime_settings.cosyvoice_sample_rate or 24000)
+        played = False
+        if hasattr(tts_plugin, "synthesize_stream_text"):
+            try:
+                if hasattr(tts_plugin, "apply_speech_plan"):
+                    tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
+                if hasattr(tts_plugin, "bind_fence"):
+                    tts_plugin.bind_fence(runtime.fence)
+                result = await tts_plugin.synthesize_stream_text(
+                    [phrase],
+                    fence=runtime.fence,
+                )
+                if result.pcm and not result.discarded:
+                    await _play_pcm_via_room_track(
+                        result.pcm,
+                        sample_rate=sample_rate,
+                    )
+                    played = True
+                    runtime.mark_audio_event(
+                        "control_ack_played",
+                        detail={
+                            "text": phrase[:20],
+                            "path": "room_track_pcm",
+                            "pcm_bytes": len(result.pcm),
+                        },
+                    )
+            except Exception:
+                logger.warning("control ack PCM path failed", exc_info=True)
+        if played:
+            return
+        # Last resort: session.say (often silent after barge-in).
         if hasattr(tts_plugin, "apply_speech_plan"):
             tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
-        # Re-bind fence so post-interrupt generation is valid.
-        if hasattr(tts_plugin, "bind_fence"):
-            tts_plugin.bind_fence(runtime.fence)
         handle = session.say(
             phrase,
             allow_interruptions=False,
             add_to_chat_ctx=False,
         )
         wait = getattr(handle, "wait_for_playout", None)
-        started = asyncio.get_running_loop().time()
         if callable(wait):
             with contextlib.suppress(Exception):
-                await asyncio.wait_for(wait(), timeout=3.0)
-        # Floor so a broken wait still leaves audible window.
-        elapsed = asyncio.get_running_loop().time() - started
-        if elapsed < 0.55:
-            await asyncio.sleep(0.55 - elapsed)
+                await asyncio.wait_for(wait(), timeout=2.5)
+        await asyncio.sleep(0.45)
         runtime.mark_audio_event(
             "control_ack_played",
-            detail={"text": phrase[:20], "elapsed_ms": int(elapsed * 1000)},
+            detail={"text": phrase[:20], "path": "session_say_fallback"},
         )
 
     async def _interrupt_yield_say(phrase: str) -> None:

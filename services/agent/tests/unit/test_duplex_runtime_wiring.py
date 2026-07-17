@@ -112,6 +112,25 @@ async def test_interrupt_command_restores_listen_and_unlocks_min_words() -> None
     assert 0 in min_words
     await runtime.close()
 
+
+@pytest.mark.asyncio
+async def test_after_control_chat_fail_opens_missing_speech_epoch() -> None:
+    """After 停一下, next real question without LiveKit anchors must still answer."""
+    runtime = DuplexRuntime.create(
+        session_id="epoch-fail-open",
+        input_guard_enabled=True,
+    )
+    await runtime.orchestrator.ready()
+    runtime._restore_listen_after_control(cause="test_yield")
+    # Orphan FINAL: metrics present but empty anchors, fresh speech cleared.
+    runtime._fresh_user_speech = False
+    accepted, reason = runtime.accept_user_turn(
+        "你叫什么名字",
+        speech_anchored=False,
+    )
+    assert accepted is True
+    assert reason is None or reason != "missing_speech_epoch"
+    await runtime.close()
 @pytest.mark.asyncio
 async def test_stop_talking_phrase_acks_quietly() -> None:
     """「别说了 / 暂停」must ack「好的。」not invite「嗯，你说。」"""

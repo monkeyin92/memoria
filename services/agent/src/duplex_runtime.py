@@ -136,7 +136,10 @@ class DuplexRuntime:
     _false_interrupt_recover: Callable[[], Awaitable[None]] | None = None
     _last_interrupt_yield_ns: int | None = None
     _last_false_recover_ns: int | None = None
+    _last_listen_restore_ns: int | None = None
     _playback_started_ns: int | None = None
+    # After control yield, accept chat turns even if LiveKit omits speech anchors.
+    CONTROL_RESTORE_SPEECH_EPOCH_GRACE_MS: int = 20_000
     _deep_client: Any | None = None
     _background_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     # Friendly yield when we stop mid-reply so silence does not feel like a crash.
@@ -913,11 +916,35 @@ class DuplexRuntime:
             )
             return False, route.reason
         if self.input_guard.enabled and speech_anchored is not None:
-            if not speech_anchored or not self._fresh_user_speech:
+            missing_anchor = not speech_anchored or not self._fresh_user_speech
+            if missing_anchor:
+                # Prod: after「停一下」LiveKit often emits orphan FINAL without
+                # started/stopped speaking metrics → session goes permanently silent.
+                if (
+                    route.enter_chat
+                    and route.intent is UtteranceIntent.CHAT
+                    and self._within_control_restore_grace()
+                    and len(route.normalized_text) >= 2
+                ):
+                    logger.info(
+                        "speech_epoch_fail_open after_control text_len=%s "
+                        "anchored=%s fresh=%s session_id=%s",
+                        len(route.normalized_text),
+                        speech_anchored,
+                        self._fresh_user_speech,
+                        self.session_id,
+                    )
+                    self.mark_audio_event(
+                        "speech_epoch_fail_open",
+                        detail={"reason": "after_control_grace"},
+                    )
+                    self._fresh_user_speech = False
+                else:
+                    self._fresh_user_speech = False
+                    self.orchestrator.metrics.inc_guarded_user_input("missing_speech_epoch")
+                    return False, "missing_speech_epoch"
+            else:
                 self._fresh_user_speech = False
-                self.orchestrator.metrics.inc_guarded_user_input("missing_speech_epoch")
-                return False, "missing_speech_epoch"
-            self._fresh_user_speech = False
         if self.speaker_verifier.active and not self._speaker_allows_user_input(
             context="turn_commit"
         ):
@@ -1007,6 +1034,12 @@ class DuplexRuntime:
         age_ms = (time.monotonic_ns() - self._playback_started_ns) // 1_000_000
         return age_ms < 8_000
 
+    def _within_control_restore_grace(self) -> bool:
+        if self._last_listen_restore_ns is None:
+            return False
+        age_ms = (time.monotonic_ns() - self._last_listen_restore_ns) // 1_000_000
+        return age_ms <= self.CONTROL_RESTORE_SPEECH_EPOCH_GRACE_MS
+
     def _restore_listen_after_control(self, *, cause: str) -> None:
         """After stop/wait, unlock turn commit and publish listening.
 
@@ -1018,15 +1051,10 @@ class DuplexRuntime:
             self._set_interruption_min_words(self._base_interruption_min_words)
         self._was_speaking = False
         self._playback_fence = None
-        # Allow the next physical utterance to pass speech-epoch gate.
-        # (on_user_voice_started will also set True; this covers late FINALs
-        # that arrive without a fresh VAD edge after barge-in.)
-        if self.interaction_phase in {
-            InteractionPhase.INTERRUPTED,
-            InteractionPhase.SPEAKING,
-            InteractionPhase.THINKING_SILENT,
-            InteractionPhase.BACKCHANNEL,
-        }:
+        self._fresh_user_speech = True
+        self._last_listen_restore_ns = time.monotonic_ns()
+        # Always force listening after control so UI/logs match.
+        if self.interaction_phase is not InteractionPhase.LISTENING:
             self.set_interaction_phase(
                 InteractionPhase.LISTENING,
                 cause=f"restore_listen:{cause}",
