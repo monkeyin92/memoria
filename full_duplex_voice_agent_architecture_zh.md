@@ -1,11 +1,14 @@
 # 中文全双工级联语音 Agent：可实施架构与工程设计规范
 
-> **版本**：1.0.1  
-> **基准日期**：2026-07-15  
-> **目标技术栈**：FunASR Realtime API + DeepSeek API + CosyVoice Realtime API + LiveKit Agents  
-> **部署前提**：无 GPU；只使用第三方模型 API；允许使用普通 CPU 云主机或托管 Agent 运行时  
-> **目标语言**：普通话为主，兼容少量中英混说  
+> **版本**：1.1.0
+> **基准日期**：2026-07-19
+> **目标技术栈**：FunASR Realtime API + 百炼 Qwen LLM + CosyVoice 3.5 Realtime API + LiveKit Agents
+> **部署前提**：无 GPU；只使用第三方模型 API；允许使用普通 CPU 云主机或托管 Agent 运行时
+> **目标语言**：普通话为主，兼容少量中英混说
+> **唯一客户端**：`apps/h5`；原生 iOS 与 legacy `apps/web` 只保留历史源码，不进入实现、CI、部署或验收
 > **文档性质**：规范性设计文档。文中的 **MUST / MUST NOT / SHOULD / MAY** 分别表示必须、禁止、建议、可选。
+
+当前默认 LLM provider 是 `qwen`；仓库保留的 DeepSeek 适配器和测试只用于显式兼容覆盖，不得隐式替换 Qwen，也不属于本架构默认选型。终身记忆、人格复刻和声纹扩展见 [`docs/memory-persona-architecture-v1.md`](./docs/memory-persona-architecture-v1.md)。
 
 ---
 
@@ -18,7 +21,7 @@
 - 用户说“嗯嗯、对、好的”时通常不误打断；
 - 用户句中思考停顿时不轻易抢话；
 - 用户说完后较快开始播出第一段自然语音；
-- DeepSeek、搜索或业务工具在后台运行时，前台仍能进行简短互动；
+- Qwen、搜索或业务工具在后台运行时，前台仍能进行简短互动；
 - 被打断后不再播出旧回答、旧工具结果或用户未听到的内容；
 - 对话历史只记录用户实际听到的助手文本。
 
@@ -26,7 +29,7 @@
 
 1. 用户设备的回声消除和麦克风质量；
 2. 用户到 RTC 节点、RTC 节点到模型 API 的网络 RTT；
-3. FunASR、DeepSeek、CosyVoice 的当时负载和限流；
+3. FunASR、Qwen、CosyVoice 的当时负载和限流；
 4. 业务提示词、工具耗时和回答长度；
 5. 中文打断与附和测试数据是否覆盖真实用户。
 
@@ -40,20 +43,20 @@
 
 | 层 | 固定选择 | 原因 |
 |---|---|---|
-| Web/移动 Web 媒体传输 | LiveKit WebRTC | 双向低延迟音频、重连、设备管理、服务端 Agent 接入成熟 |
+| H5 媒体传输 | LiveKit WebRTC | 双向低延迟音频、重连、设备管理、服务端 Agent 接入成熟 |
 | 语音 Agent 编排 | `livekit-agents==1.6.5`，Python 3.12 | 提供话轮、打断、流式 STT/LLM/TTS 插件接口、播放截断和指标 |
 | VAD | Silero VAD，CPU | 无 GPU 依赖；只负责“有没有人声”，不单独决定话轮 |
 | 语义/声学话轮 | LiveKit Audio Turn Detector | 结合语义与音高、语调、节奏；中文可用 |
 | 自适应打断 | LiveKit Cloud Adaptive Interruption | 区分真正 barge-in 与附和/背景声；要求带时间戳的 STT |
 | ASR | 阿里云百炼 `fun-asr-realtime` WebSocket | 流式中间结果、最终结果、中文、字词级时间戳 |
-| 快速回答 LLM | `deepseek-v4-flash`，关闭 thinking | 低延迟口语回答、工具意图判定 |
-| 深度任务 LLM | `deepseek-v4-pro`，开启 thinking | 复杂分析、RAG、工具编排；不阻塞前台交互 |
-| TTS | `cosyvoice-v3-flash` + `longanyang` | 中文系统音色，支持流式输出、Instruct 和字级时间戳 |
+| 快速回答 LLM | 百炼 `qwen-turbo`，流式输出 | 低延迟口语回答、工具意图判定 |
+| 深度任务 LLM | 百炼 `qwen-plus` | 复杂分析、RAG、工具编排；不阻塞前台交互 |
+| TTS | `cosyvoice-v3.5-flash` + 声音设计音色（默认 `warm_companion`） | freeform Instruct + 字级时间戳；见 `infra/voices/` |
 | 控制 API | FastAPI + Pydantic v2 | 签发 LiveKit Token、会话配置、健康检查 |
 | 短期状态 | 进程内内存；多实例时 Redis | 实时关键路径不得等待数据库 |
 | 长期存储 | PostgreSQL，异步写入 | 对话、指标、业务事件和审计 |
 | 可观测性 | OpenTelemetry + Prometheus/Grafana + Sentry | 跟踪分段延迟、失败与异常 |
-| 前端 | React 19 + TypeScript + Vite + LiveKit React Components | 浏览器端 WebRTC、设备选择、字幕和状态 UI |
+| 唯一客户端 | `apps/h5`：React 19 + Vite + LiveKit Client | 移动浏览器 WebRTC、字幕、记忆与数字心智管理；不交付原生 iOS 或 legacy Web |
 
 ### 1.2 两种部署档案
 
@@ -68,7 +71,7 @@
                        │
           ┌────────────┼────────────┐
           ▼            ▼            ▼
-       FunASR       DeepSeek     CosyVoice
+       FunASR       Qwen LLM     CosyVoice 3.5
 ```
 
 特点：
@@ -77,7 +80,7 @@
 - 使用 Adaptive Interruption；
 - Agent 运行时不需要 GPU；
 - 上手最快，最接近本文预期体验；
-- 必须实测目标用户所在地的 RTC 与阿里云/DeepSeek API RTT。
+- 必须实测目标用户所在地的 RTC 与阿里云百炼 API RTT。
 
 #### 档案 B：`cn_self_hosted`，中国大陆低 RTT 备选
 
@@ -88,7 +91,7 @@
                        │
           ┌────────────┼────────────┐
           ▼            ▼            ▼
-       FunASR       DeepSeek     CosyVoice
+       FunASR       Qwen LLM     CosyVoice 3.5
 ```
 
 特点：
@@ -111,7 +114,7 @@
 - 流式字幕；
 - 随时打断；
 - 用户附和过滤；
-- DeepSeek function calling；
+- Qwen function calling；
 - 可取消的后台工具任务；
 - 实际已播放文本追踪；
 - 断线重连与模型 API 降级；
@@ -144,9 +147,9 @@ flowchart LR
     TD --> ORCH
     ASR --> ORCH
 
-    ORCH --> FAST[DeepSeek v4 Flash\n非思考流式]
+    ORCH --> FAST[Qwen Turbo\n低延迟流式]
     ORCH --> TASK[后台任务管理器]
-    TASK --> DEEP[DeepSeek v4 Pro\n思考/工具/RAG]
+    TASK --> DEEP[Qwen Plus\n复杂任务/工具/RAG]
     TASK --> BIZ[业务 API / 搜索 / 数据库]
 
     FAST --> SEG[中文口语分段器]
@@ -190,23 +193,19 @@ voice-agent/
 ├── pyproject.toml
 ├── uv.lock
 ├── package.json
-├── pnpm-lock.yaml
 ├── Makefile
 ├── apps/
-│   └── web/
+│   └── h5/
 │       ├── package.json
-│       ├── vite.config.ts
-│       ├── src/
-│       │   ├── main.tsx
-│       │   ├── App.tsx
-│       │   ├── api/controlApi.ts
-│       │   ├── components/VoiceRoom.tsx
-│       │   ├── components/TranscriptPanel.tsx
-│       │   ├── components/ConnectionBanner.tsx
-│       │   ├── hooks/useVoiceSession.ts
-│       │   ├── state/sessionStore.ts
-│       │   └── types/events.ts
-│       └── tests/
+│       ├── package-lock.json
+│       ├── vite.config.mjs
+│       └── src/
+│           ├── main.jsx
+│           ├── App.jsx
+│           ├── api.js
+│           ├── components/
+│           ├── hooks/useVoiceSession.js
+│           └── *.test.{js,jsx}
 ├── services/
 │   ├── control_api/
 │   │   ├── app/main.py
@@ -224,7 +223,7 @@ voice-agent/
 │       │   ├── funasr_protocol.py
 │       │   ├── cosyvoice_tts.py
 │       │   ├── cosyvoice_protocol.py
-│       │   └── deepseek.py
+│       │   └── deepseek.py       # 历史文件名：Qwen/DeepSeek 共用兼容客户端
 │       ├── src/orchestration/
 │       │   ├── state_machine.py
 │       │   ├── generation_fence.py
@@ -258,7 +257,7 @@ voice-agent/
 ├── infra/
 │   ├── Dockerfile.agent
 │   ├── Dockerfile.control-api
-│   ├── Dockerfile.web
+│   ├── nginx-memoria-https.conf
 │   ├── livekit.yaml
 │   ├── prometheus.yml
 │   └── grafana/
@@ -272,12 +271,12 @@ voice-agent/
 ### 4.1 代码质量硬约束
 
 - Python MUST 开启 `ruff`, `mypy --strict`, `pytest`；
-- TypeScript MUST 开启 `strict: true`, ESLint, Vitest；
+- H5 MUST 运行 Vitest 与 Vite production build；当前没有 lint script，不得虚构 H5 lint 门禁；
 - 所有网络调用 MUST 使用异步 API；
 - 实时路径中 MUST NOT 使用 `time.sleep`、同步 `requests`、同步数据库驱动；
 - 所有后台 `asyncio.Task` MUST 被任务管理器持有并能取消；
 - 关键路径不得留下 `TODO`、`pass`、伪实现或“后续补充”；
-- 提供 `uv.lock` 与 `pnpm-lock.yaml`；
+- 提供 `uv.lock` 与 `apps/h5/package-lock.json`；
 - CI MUST 执行 lint、type-check、unit、integration 和离线 E2E。
 
 ---
@@ -338,19 +337,17 @@ assert major == 2 and minor >= 36, "openai must be >=2.36,<3"
 ```
 
 
-### 5.2 前端
+### 5.2 H5
 
-首次创建项目时使用：
+H5 已位于 `apps/h5`，依赖由 `apps/h5/package-lock.json` 固定。开发、测试与部署 MUST 使用同一锁文件：
 
 ```bash
-pnpm create vite apps/web --template react-ts
-pnpm --dir apps/web add react@19.2.7 react-dom@19.2.7 \
-  livekit-client @livekit/components-react zustand zod
-pnpm --dir apps/web add -D vitest @testing-library/react \
-  @testing-library/jest-dom eslint prettier typescript
+npm --prefix apps/h5 ci
+npm --prefix apps/h5 test
+npm --prefix apps/h5 run build
 ```
 
-LiveKit 前端包版本由生成时的 `pnpm-lock.yaml` 固定。后续部署 MUST 使用 `pnpm install --frozen-lockfile`。
+原生 iOS 与 `apps/web` 仅保留为历史源码，不进入当前交付、CI 或 Definition of Done。
 
 ---
 
@@ -378,7 +375,10 @@ LIVEKIT_ADAPTIVE_INTERRUPTION=true
 DASHSCOPE_API_KEY=
 DASHSCOPE_WORKSPACE_ID=
 DASHSCOPE_REGION=cn-beijing
-DASHSCOPE_WS_URL=wss://YOUR_WORKSPACE_ID.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference
+DASHSCOPE_WS_URL=wss://dashscope.aliyuncs.com/api-ws/v1/inference
+DASHSCOPE_COMPATIBLE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_FAST_MODEL=qwen-turbo
+QWEN_DEEP_MODEL=qwen-plus
 
 # FunASR
 FUNASR_MODEL=fun-asr-realtime
@@ -392,20 +392,10 @@ FUNASR_RECONNECT_AUDIO_MS=1500
 FUNASR_CONNECT_TIMEOUT_S=5
 FUNASR_RESULT_TIMEOUT_S=8
 
-# DeepSeek
-DEEPSEEK_API_KEY=
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_FAST_MODEL=deepseek-v4-flash
-DEEPSEEK_DEEP_MODEL=deepseek-v4-pro
-DEEPSEEK_FAST_FIRST_TOKEN_TIMEOUT_S=3.0
-DEEPSEEK_FAST_TOTAL_TIMEOUT_S=12.0
-DEEPSEEK_FAST_MAX_TOKENS=240
-DEEPSEEK_FAST_TEMPERATURE=0.45
-DEEPSEEK_DEEP_TOTAL_TIMEOUT_S=90
-
 # CosyVoice
-COSYVOICE_MODEL=cosyvoice-v3-flash
-COSYVOICE_VOICE=longanyang
+COSYVOICE_MODEL=cosyvoice-v3.5-flash
+COSYVOICE_VOICE_PROFILE=warm_companion
+COSYVOICE_INSTRUCT_STYLE=auto
 COSYVOICE_SAMPLE_RATE=24000
 COSYVOICE_FORMAT=pcm
 COSYVOICE_LANGUAGE=zh
@@ -452,14 +442,14 @@ PII_REDACTION_ENABLED=true
 
 `scripts/verify_env.py` MUST 在启动前验证：
 
-- 所有必需密钥非空；
+- 所有已启用 Provider 的必需密钥非空；默认 `LLM_PROVIDER=qwen` 只使用服务端 `DASHSCOPE_API_KEY`；
 - `FUNASR_SAMPLE_RATE == 16000`；
 - `COSYVOICE_SAMPLE_RATE` 是 24000；
 - `VAD_MIN_SILENCE_DURATION_S >= 0.25`；
 - `COSYVOICE_WORD_TIMESTAMPS=true`；
 - `livekit_cloud` 档案下 `LIVEKIT_ADAPTIVE_INTERRUPTION=true`；
 - `cn_self_hosted` 档案下自动将 `LIVEKIT_TURN_DETECTOR_VERSION=v1-mini`；
-- DeepSeek 模型名不得使用即将弃用的 `deepseek-chat` 或 `deepseek-reasoner`；
+- `QWEN_FAST_MODEL / QWEN_DEEP_MODEL` 非空；只有显式选择可选 `LLM_PROVIDER=deepseek` 时才校验 DeepSeek 模型与密钥；
 - 生产环境不得允许 `*` CORS；
 - 生产环境不得启用明文 `ws://` 或 `http://` 媒体/控制地址。
 
@@ -649,7 +639,7 @@ class ToolResultEvent(BasePipelineEvent):
 - 队列满时，音频帧不得静默丢弃；应记录过载、取消当前会话并向客户端提示重连；
 - 指标和审计事件可异步批量写入，不得反向阻塞实时路径；
 - 前端只接收脱敏后的 UI 事件：状态、字幕、错误码、工具进度；
-- 前端不得收到 DeepSeek `reasoning_content`、供应商原始密钥或内部堆栈。
+- 前端不得收到 Qwen `reasoning_content`、供应商原始密钥或内部堆栈。
 
 ---
 
@@ -680,7 +670,7 @@ class ConversationState(StrEnum):
 | USER_SPEAKING | VAD 暂停但 Turn Detector 判断未结束 | 保持 ASR；不提交 LLM | EOT_PENDING |
 | EOT_PENDING | 用户恢复说话 | 取消待提交定时器 | USER_SPEAKING |
 | EOT_PENDING | Turn Detector 判断结束或达到 max delay | 固化 ASR final；`turn_id += 1`；建立新 fence | THINKING |
-| THINKING | DeepSeek 首个可说短语完成 | 启动 TTS | SPEAKING |
+| THINKING | Qwen 首个可说短语完成 | 启动 TTS | SPEAKING |
 | THINKING | 用户再次开口 | 取消当前生成；新用户语音继续识别 | USER_SPEAKING |
 | SPEAKING | 检测到用户声音 | 暂时 duck；提交 Adaptive Interruption | INTERRUPTION_PENDING |
 | INTERRUPTION_PENDING | 判为附和/噪声 | 恢复播放；不新建用户话轮 | SPEAKING |
@@ -763,20 +753,21 @@ async def entrypoint(ctx: JobContext) -> None:
 
     stt = FunASRSTT.from_env()
     tts = CosyVoiceTTS.from_env()
+    settings = AgentSettings()
 
-    # DeepSeek 的兼容接口使用 max_tokens，而不是 OpenAI 新接口的
-    # max_completion_tokens；因此通过 extra_body 透传，避免产生不兼容字段。
+    # Qwen 默认走百炼 OpenAI-compatible endpoint；provider、模型和密钥
+    # 全部由服务端配置解析，任何可选 DeepSeek 变量都不能隐式覆盖 Qwen。
     llm = openai.LLM(
-        model=os.environ["DEEPSEEK_FAST_MODEL"],
-        api_key=os.environ["DEEPSEEK_API_KEY"],
-        base_url=os.environ["DEEPSEEK_BASE_URL"],
-        temperature=float(os.getenv("DEEPSEEK_FAST_TEMPERATURE", "0.45")),
+        model=settings.llm_fast_model,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        temperature=0.45,
         tool_choice="auto",
         max_retries=0,
         timeout=httpx.Timeout(connect=3.0, read=12.0, write=5.0, pool=3.0),
         extra_body={
             "thinking": {"type": "disabled"},
-            "max_tokens": int(os.getenv("DEEPSEEK_FAST_MAX_TOKENS", "240")),
+            "max_tokens": 240,
         },
     )
 
@@ -848,7 +839,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
 ### 11.3 预生成策略
 
-- `preemptive_generation=true`：可以基于稳定前缀提前启动 DeepSeek；
+- `preemptive_generation=true`：可以基于稳定前缀提前启动 Qwen；
 - `preemptive_tts=false`：第一版禁止在话轮正式提交前播放，以免用户还没说完就开口；
 - 第 3 阶段通过验收后，才允许 A/B 测试 `preemptive_tts=true`；
 - 任何预生成均绑定当时的 `generation_id`；用户继续说话时立刻作废；
@@ -1116,7 +1107,7 @@ class FunASRRecognizeStream(stt.RecognizeStream):
 
 ---
 
-## 13. DeepSeek 适配与快慢双路径
+## 13. Qwen 适配与快慢双路径
 
 ### 13.1 快速语音路径
 
@@ -1124,25 +1115,24 @@ class FunASRRecognizeStream(stt.RecognizeStream):
 
 ```json
 {
-  "model": "deepseek-v4-flash",
-  "thinking": {"type": "disabled"},
+  "model": "qwen-turbo",
   "stream": true,
   "temperature": 0.45,
   "max_tokens": 240
 }
 ```
 
-LiveKit OpenAI 插件的构造参数名是 `max_completion_tokens`，但 DeepSeek 此接口的正式字段是 `max_tokens`。实现 MUST 像第 11.2 节那样把 `max_tokens` 放进 `extra_body`，并且不得同时发送 `max_completion_tokens`，否则 Provider Smoke Test 视为失败。
+Qwen 通过百炼 OpenAI-compatible endpoint 接入；`LLM_PROVIDER=qwen` 是默认值，只有显式配置时才允许切到兼容 provider。模型名、base URL 和 API key 必须由同一个 provider 选择器生成，禁止不同供应商配置交叉组合。
 
 规则：
 
 - 只把流式 `content` 送入中文分段器；
-- 禁止把 `reasoning_content` 送给 TTS、前端或日志；
+- 禁止把任何 provider-specific thinking/reasoning 字段送给 TTS、前端或日志；
 - 首 token 超时 3 秒；整次快速回答超时 12 秒；
 - 默认最多 240 token，系统提示要求 1–3 个口语短句；
 - 快速路径不得执行耗时超过 800 ms 的同步工具；
 - 工具参数生成使用 strict JSON schema；
-- DeepSeek 当前 Chat Completion 参数表未公开 `parallel_tool_calls`，因此请求中不得发送该字段；
+- 当前前台路径不发送 `parallel_tool_calls`；
 - 如果响应包含多个 `tool_calls`，`ToolExecutor` MUST 按返回顺序串行校验，并且同一 `GenerationFence` 同时最多只运行一个前台工具；其余工具进入队列或被策略拒绝。
 
 ### 13.2 深度任务路径
@@ -1158,9 +1148,7 @@ LiveKit OpenAI 插件的构造参数名是 `max_completion_tokens`，但 DeepSee
 
 ```json
 {
-  "model": "deepseek-v4-pro",
-  "thinking": {"type": "enabled"},
-  "reasoning_effort": "high",
+  "model": "qwen-plus",
   "stream": true
 }
 ```
@@ -1170,7 +1158,7 @@ LiveKit OpenAI 插件的构造参数名是 `max_completion_tokens`，但 DeepSee
 ```text
 用户提交复杂任务
   ├─ 快速路径立即说一句桥接语：“可以，我先帮你核对关键条件。”
-  ├─ 后台 TaskManager 启动 DeepSeek Pro + 工具
+  ├─ 后台 TaskManager 启动 Qwen Plus + 工具
   ├─ 用户仍可继续说话、增加或修改条件
   ├─ 修改条件 => tool_epoch + 1，旧任务结果自动失效
   └─ 有效结果回来 => 快速模型压缩成 1–3 句口语，再交给 TTS
@@ -1180,7 +1168,7 @@ LiveKit OpenAI 插件的构造参数名是 `max_completion_tokens`，但 DeepSee
 
 ### 13.3 上下文管理
 
-DeepSeek API 是无状态的，`ContextManager` 每次请求显式发送：
+Qwen API 是无状态的，`ContextManager` 每次请求显式发送：
 
 ```text
 1. system prompt
@@ -1194,7 +1182,7 @@ DeepSeek API 是无状态的，`ContextManager` 每次请求显式发送：
 
 - 助手历史使用 `HeardTextTracker` 的实际已听文本；
 - 被打断且只听到“明天下午可能有雨”时，历史不得保存后面的“建议带伞”；
-- 超过 8 轮的历史由 DeepSeek Pro 异步摘要；
+- 超过 8 轮的历史由 Qwen Plus 异步摘要；
 - 摘要失败时，退化为最近 8 轮，不阻塞对话；
 - 绝不把原始音频、API Key、内部异常堆栈放入 LLM 上下文。
 
@@ -1270,7 +1258,7 @@ LLM token 不得逐 token 送 TTS；也不得等待完整回答。`PhraseSegment
 - Markdown 符号；
 - JSON、工具参数和内部动作名；
 - “正在调用工具”“function_call”之类机器文本；
-- DeepSeek 推理过程；
+- Qwen 推理过程；
 - 未经转换的长 URL；
 - 超过 3 句的默认回答。
 
@@ -1308,7 +1296,7 @@ capabilities = tts.TTSCapabilities(
 )
 ```
 
-`longanyang` 在 `cosyvoice-v3-flash` 下支持中文、Instruct 和时间戳。若改换音色，启动时必须执行 smoke test 验证字级时间戳非空；否则 Adaptive Interruption 和实际已听文本追踪不通过，服务不得进入 ready。
+当前默认使用 `cosyvoice-v3.5-flash`，由 `COSYVOICE_VOICE_PROFILE=warm_companion` 在服务端 registry 解析经批准的设计音色。任何 profile、复刻音色或可选系统音色都必须通过 smoke test 验证字级时间戳非空；否则 Adaptive Interruption 和实际已听文本追踪不通过，服务不得进入 ready。`longanyang` 只保留为显式 v3 fallback，不是默认音色。
 
 ### 15.2 WebSocket 连接池
 
@@ -1334,10 +1322,10 @@ capabilities = tts.TTSCapabilities(
     "task_group": "audio",
     "task": "tts",
     "function": "SpeechSynthesizer",
-    "model": "cosyvoice-v3-flash",
+    "model": "cosyvoice-v3.5-flash",
     "parameters": {
       "text_type": "PlainText",
-      "voice": "longanyang",
+      "voice": "<server-resolved-designed-voice-id>",
       "format": "pcm",
       "sample_rate": 24000,
       "volume": 50,
@@ -1346,7 +1334,7 @@ capabilities = tts.TTSCapabilities(
       "enable_ssml": false,
       "word_timestamp_enabled": true,
       "language_hints": ["zh"],
-      "instruction": "你正在进行闲聊互动，你说话的情感是 neutral。"
+      "instruction": "自然、温暖地闲聊，语气中性，停顿从容。"
     },
     "input": {}
   }
@@ -1558,7 +1546,7 @@ T0  记录 barge_in_detected
 1. 立即提升 generation_id，使所有旧输出失效
 2. 请求 LiveKit 停止当前 speech_handle / 清空待播放队列
 3. 客户端收到事件后停止当前音轨播放并记录 playback_stopped
-4. 取消 DeepSeek 流式生成 task
+4. 取消 Qwen 流式生成 task
 5. 取消 PhraseSegmenter 与 TTS sender/receiver task
 6. 关闭并丢弃当前 CosyVoice WebSocket
 7. 对 cancellable 工具发送取消；不可取消工具只作 fence 隔离
@@ -1669,7 +1657,7 @@ heard_audio_ms = max(
 - AEC/NS/AGC；
 - 助手说话时麦克风和 FunASR 持续工作；
 - FunASR interim/final/时间戳适配；
-- DeepSeek 非思考流式回答；
+- Qwen 非思考流式回答；
 - CosyVoice 流式 PCM；
 - 打断时同时停止播放、LLM、TTS；
 - `GenerationFence`；
@@ -1709,7 +1697,7 @@ heard_audio_ms = max(
 #### 必做项
 
 - `PREFLIGHT_TRANSCRIPT` 稳定前缀；
-- DeepSeek 预生成；
+- Qwen 预生成；
 - 中文流式口语分段器；
 - 首段短句策略；
 - 快速模型和深度任务模型分离；
@@ -1756,10 +1744,10 @@ class SpeakingStyle(StrEnum):
 - 三轮指数平滑，禁止一帧抖动导致风格突变；
 - 语速只在 0.90–1.10 范围内调整；
 - 音高首版保持 1.0；
-- CosyVoice `longanyang` 的 instruction 使用其规定格式，例如：
+- CosyVoice 3.5 的 instruction 使用服务端 `DeliveryPlan` 生成的简短自然语言，例如：
 
 ```text
-你正在进行闲聊互动，你说话的情感是 neutral。
+自然、温暖地闲聊，语气中性，停顿从容。
 ```
 
 #### 阶段 4 验收
@@ -1840,7 +1828,7 @@ Token 只能连接指定 room，TTL 300 秒。永久 LiveKit API Secret 仅在�
 
 - LiveKit 可连接；
 - FunASR smoke task 成功；
-- DeepSeek 轻量请求成功；
+- Qwen 轻量请求成功；
 - CosyVoice 连接池至少有一条 ready；
 - 所选 CosyVoice 音色返回有效时间戳；
 - 配置校验通过。
@@ -1991,7 +1979,7 @@ state_transition_total{from,to,event}
 }
 ```
 
-不得记录：完整 API Key、Authorization header、未经脱敏的身份证/银行卡、DeepSeek 推理内容、默认原始音频。
+不得记录：完整 API Key、Authorization header、未经脱敏的身份证/银行卡、Qwen 推理内容、默认原始音频。
 
 ---
 
@@ -2007,7 +1995,7 @@ state_transition_total{from,to,event}
 | task-failed | 关闭连接，禁止复用 |
 | 时间戳缺失 | 当前句仍显示文字，但禁用精确打断对齐；连续发生则 unready |
 
-### 22.2 DeepSeek
+### 22.2 Qwen
 
 | 故障 | 动作 |
 |---|---|
@@ -2114,7 +2102,7 @@ services/agent/src/providers/protocol parsing >= 90%
 - task-failed；
 - 用户取消时连接被关闭且不回池。
 
-#### DeepSeek
+#### Qwen
 
 - 流式 content；
 - thinking 字段存在但不进入 TTS；
@@ -2176,7 +2164,7 @@ services/agent/src/providers/protocol parsing >= 90%
 随机注入：
 
 - FunASR 连接每 30–120 秒断开；
-- DeepSeek 首 token 延迟 5 秒；
+- Qwen 首 token 延迟 5 秒；
 - CosyVoice 在第二句 task-failed；
 - RTC 丢包 5%、10%；
 - 工具延迟 20 秒后返回旧结果；
@@ -2198,8 +2186,8 @@ services/agent/src/providers/protocol parsing >= 90%
 - [ ] `uv run ruff check .` 通过；
 - [ ] `uv run mypy services --strict` 通过；
 - [ ] `uv run pytest` 通过；
-- [ ] `pnpm --dir apps/web lint` 通过；
-- [ ] `pnpm --dir apps/web test` 通过；
+- [ ] `npm --prefix apps/h5 test` 通过；
+- [ ] `npm --prefix apps/h5 run build` 通过；
 - [ ] provider smoke test 通过；
 - [ ] 200 条中文 E2E 全部运行；
 - [ ] 第 21 章所有 SLO 达标；
@@ -2224,7 +2212,7 @@ services/agent/src/providers/protocol parsing >= 90%
 用户 -> LiveKit RTC 节点
 Agent -> FunASR WebSocket
 Agent -> CosyVoice WebSocket
-Agent -> DeepSeek HTTPS
+Agent -> Qwen HTTPS
 ```
 
 原则：
@@ -2387,7 +2375,7 @@ pool_size = ceil(峰值同机并发 TTS × 1.5)
 
 ### 25.1 密钥
 
-- FunASR、CosyVoice、DeepSeek、LiveKit Secret 只存在服务端；
+- FunASR、CosyVoice、Qwen、LiveKit Secret 只存在服务端；
 - 前端只收到短期 LiveKit participant token；
 - 密钥通过云 Secrets 注入，不写进镜像、仓库或日志；
 - 不同环境使用不同密钥和 Workspace；
@@ -2461,7 +2449,7 @@ AUDIO_RETENTION_ENABLED=false
 python --version   # 必须为 3.12.x
 uv --version
 node --version
-pnpm --version
+npm --version
 lk --version
 ```
 
@@ -2473,7 +2461,7 @@ cd voice-agent
 cp .env.example .env
 
 uv sync --frozen
-pnpm install --frozen-lockfile
+npm --prefix apps/h5 ci
 
 docker compose up -d postgres redis
 uv run python scripts/verify_env.py
@@ -2498,7 +2486,7 @@ uv run python -m services.agent.src.main dev
 终端 3：
 
 ```bash
-pnpm --dir apps/web dev --host 0.0.0.0
+npm --prefix apps/h5 run dev -- --host 0.0.0.0
 ```
 
 ### 26.4 测试
@@ -2507,8 +2495,8 @@ pnpm --dir apps/web dev --host 0.0.0.0
 uv run ruff check .
 uv run mypy services --strict
 uv run pytest -q
-pnpm --dir apps/web lint
-pnpm --dir apps/web test --run
+npm --prefix apps/h5 test
+npm --prefix apps/h5 run build
 uv run python scripts/run_e2e.py --profile offline
 uv run python scripts/run_e2e.py --profile provider-smoke
 ```
@@ -2516,11 +2504,11 @@ uv run python scripts/run_e2e.py --profile provider-smoke
 ### 26.5 Makefile 目标
 
 ```makefile
-.PHONY: install verify dev-api dev-agent dev-web test e2e smoke
+.PHONY: install verify dev-api dev-agent dev-h5 test e2e smoke
 
 install:
 	uv sync --frozen
-	pnpm install --frozen-lockfile
+	npm --prefix apps/h5 ci
 
 verify:
 	uv run python scripts/verify_env.py
@@ -2534,15 +2522,15 @@ dev-api:
 dev-agent:
 	uv run python -m services.agent.src.main dev
 
-dev-web:
-	pnpm --dir apps/web dev
+dev-h5:
+	npm --prefix apps/h5 run dev
 
 test:
 	uv run ruff check .
 	uv run mypy services --strict
 	uv run pytest
-	pnpm --dir apps/web lint
-	pnpm --dir apps/web test --run
+	npm --prefix apps/h5 test
+	npm --prefix apps/h5 run build
 
 e2e:
 	uv run python scripts/run_e2e.py --profile provider-smoke
@@ -2571,7 +2559,7 @@ e2e:
 - words 非空且时间单调；
 - 正常 task-finished。
 
-### 27.2 DeepSeek
+### 27.2 Qwen
 
 发送：
 
@@ -2581,12 +2569,11 @@ e2e:
 
 通过条件：
 
-- 使用 `deepseek-v4-flash`；
-- thinking disabled；
+- 使用 `qwen-turbo`；
 - stream=true；
 - 3 秒内收到 content；
 - 输出含“连接正常”；
-- 没有把 reasoning_content 当 content。
+- 没有把 provider-specific thinking/reasoning 字段当 content。
 
 ### 27.3 CosyVoice
 
@@ -2598,7 +2585,7 @@ e2e:
 
 通过条件：
 
-- `cosyvoice-v3-flash` + `longanyang`；
+- `cosyvoice-v3.5-flash` + 经 registry 批准的设计音色（默认 profile `warm_companion`）；
 - 24 kHz raw PCM；
 - 收到二进制音频；
 - 收到 sentence-end；
@@ -2677,7 +2664,7 @@ ASR reconnects > 3% sessions
 endpointing -> LLM TTFT -> phrase wait -> TTS TTFB -> RTC playback
 ```
 
-不得直接假设 DeepSeek 慢。
+不得直接假设 Qwen 慢。
 
 #### “总抢话”
 
@@ -2742,9 +2729,9 @@ endpointing -> LLM TTFT -> phrase wait -> TTS TTFB -> RTC playback
 - 取消丢连接；
 - mock server 和测试。
 
-### PR 4：DeepSeek 与基本语音链路
+### PR 4：Qwen 与基本语音链路
 
-- DeepSeek 非思考流；
+- Qwen 非思考流；
 - 系统提示；
 - 中文分段器；
 - ASR -> LLM -> TTS；
@@ -2768,7 +2755,7 @@ endpointing -> LLM TTFT -> phrase wait -> TTS TTFB -> RTC playback
 
 ### PR 7：快慢路径和工具
 
-- DeepSeek Pro；
+- Qwen Plus；
 - TaskManager；
 - bridge phrase；
 - 工具取消和过期；
@@ -2804,7 +2791,7 @@ endpointing -> LLM TTFT -> phrase wait -> TTS TTFB -> RTC playback
 
 最高优先级规则：
 1. 规范中的 MUST、MUST NOT、状态机、不变量、接口和验收测试不可改写。
-2. 固定使用 FunASR Realtime、DeepSeek、CosyVoice 和 LiveKit Agents；
+2. 固定使用 FunASR Realtime、Qwen、CosyVoice 和 LiveKit Agents；
    不得擅自替换模型供应商或改成传统“等整句后再处理”的实现。
 3. Python 固定 3.12；`livekit-agents`、`livekit-plugins-openai`、`livekit-plugins-silero` 固定 1.6.5；`openai` 固定在 `>=2.36,<3`。
 4. 不得在关键路径留下 TODO、pass、mock-only、伪代码或未实现异常。
@@ -2815,7 +2802,7 @@ endpointing -> LLM TTFT -> phrase wait -> TTS TTFB -> RTC playback
 9. 用户打断必须同时取消播放、LLM、TTS 和可取消工具；被取消的
    CosyVoice WebSocket 必须关闭并从池中剔除。
 10. 必须实现本地协议 mock server，使单元/集成测试不依赖真实 API。
-11. 必须生成 uv.lock、pnpm-lock.yaml、Dockerfile、Makefile、README、CI。
+11. 必须生成 uv.lock、apps/h5/package-lock.json、Dockerfile、Makefile、README、CI。
 12. 必须运行并修复 lint、type check、unit、integration 和离线 E2E。
 13. 不得通过降低测试断言、延长规范中的 SLO 或删除用例来让测试通过。
 14. 第三方公开 API 若与记忆冲突，以固定版本的官方文档和安装包源码为准；
@@ -2832,8 +2819,8 @@ D. 最终运行：
    uv run ruff check .
    uv run mypy services --strict
    uv run pytest
-   pnpm --dir apps/web lint
-   pnpm --dir apps/web test --run
+   npm --prefix apps/h5 test
+   npm --prefix apps/h5 run build
    uv run python scripts/run_e2e.py --profile offline
 E. 输出最终目录树、启动命令、测试结果、尚未运行的真实 provider 测试及原因。
 F. 不要只输出代码片段；要创建全部文件。
@@ -2848,7 +2835,7 @@ G. 不要重新询问规范已经给出的选择。只有密钥、域名和业�
 - 连续 100 次工具条件修改没有旧 tool epoch 输出；
 - README 能让新开发者从空环境启动；
 - 真实密钥存在时，provider_smoke_test 能验证 FunASR final/时间戳、
-  DeepSeek 流式 content、CosyVoice PCM/字级时间戳。
+  Qwen 流式 content、CosyVoice PCM/字级时间戳。
 ```
 
 ### 30.1 编码 Agent 必须生成的追踪矩阵
@@ -2943,7 +2930,7 @@ ASR 分句与对话话权不是同一问题。用户可能在一个短暂停顿�
 
 生成完成不等于用户听到。被打断后保存完整回答会污染上下文，导致下一轮助手引用用户从未听过的信息。
 
-### ADR-006：为什么 DeepSeek 分快慢两路
+### ADR-006：为什么 Qwen 分快慢两路
 
 语音交互需要迅速反馈，复杂任务需要深度推理。让同一请求同时承担两者会造成长时间沉默或低质量回答。
 
@@ -2979,12 +2966,10 @@ ASR 分句与对话话权不是同一问题。用户可能在一个短暂停顿�
 - CosyVoice WebSocket API：<https://help.aliyun.com/zh/model-studio/cosyvoice-websocket-api>
 - CosyVoice 音色列表：<https://help.aliyun.com/zh/model-studio/cosyvoice-voice-list>
 
-### DeepSeek
+### Qwen
 
-- API Quick Start：<https://api-docs.deepseek.com/>
-- Chat Completion：<https://api-docs.deepseek.com/api/create-chat-completion/>
-- Thinking Mode：<https://api-docs.deepseek.com/guides/thinking_mode>
-- Tool Calls：<https://api-docs.deepseek.com/guides/tool_calls>
+- 本仓库官方资料核验：[`docs/research/20260719_official_voice_stack_verification_zh.md`](./docs/research/20260719_official_voice_stack_verification_zh.md)
+- 百炼 OpenAI-compatible 接入以 `DASHSCOPE_COMPATIBLE_BASE_URL` 和模型页当前参数为准；上线前由 Provider Smoke 验证实际流式 content 与工具契约。
 
 ---
 
@@ -3003,7 +2988,7 @@ ASR 分句与对话话权不是同一问题。用户可能在一个短暂停顿�
 
 ## Provider Smoke
 - FunASR final + timestamps: PASS/FAIL
-- DeepSeek stream content: PASS/FAIL
+- Qwen stream content: PASS/FAIL
 - CosyVoice PCM + timestamps: PASS/FAIL
 
 ## Latency

@@ -4,14 +4,23 @@ from __future__ import annotations
 
 import os
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from services.agent.src.contracts.errors import ConfigValidationError
 
 DeploymentProfile = Literal["livekit_cloud", "cn_self_hosted"]
 LLMProvider = Literal["qwen", "deepseek"]
+
+
+def _secure_internal_url(value: str) -> bool:
+    parsed = urlsplit(value)
+    return parsed.scheme == "https" or (
+        parsed.scheme == "http"
+        and parsed.hostname in {"control-api", "localhost", "127.0.0.1", "::1"}
+    )
 
 
 class AgentSettings(BaseSettings):
@@ -52,13 +61,19 @@ class AgentSettings(BaseSettings):
     deepseek_fast_model: str = Field(default="deepseek-v4-flash", alias="DEEPSEEK_FAST_MODEL")
     deepseek_deep_model: str = Field(default="deepseek-v4-pro", alias="DEEPSEEK_DEEP_MODEL")
 
-    cosyvoice_model: str = Field(default="cosyvoice-v3-flash", alias="COSYVOICE_MODEL")
-    cosyvoice_voice: str = Field(default="longanyang", alias="COSYVOICE_VOICE")
+    cosyvoice_model: str = Field(default="cosyvoice-v3.5-flash", alias="COSYVOICE_MODEL")
+    # Designed voice_id (v3.5) or system longanyang (v3-flash). Profile → registry.
+    cosyvoice_voice: str = Field(default="", alias="COSYVOICE_VOICE")
+    cosyvoice_voice_profile: str = Field(
+        default="warm_companion",
+        alias="COSYVOICE_VOICE_PROFILE",
+    )
+    cosyvoice_instruct_style: str = Field(default="auto", alias="COSYVOICE_INSTRUCT_STYLE")
     cosyvoice_sample_rate: int = Field(default=24000, alias="COSYVOICE_SAMPLE_RATE")
     cosyvoice_word_timestamps: bool = Field(default=True, alias="COSYVOICE_WORD_TIMESTAMPS")
     cosyvoice_pool_size: int = Field(default=4, alias="COSYVOICE_POOL_SIZE")
     # When true, inject CosyVoice markup like [laughter]/[breath] on delivery.
-    # Keep false for longanyang PlainText unless the deployed model is verified.
+    # Keep false for PlainText system voices unless the deployed model is verified.
     cosyvoice_paralinguistic_tags: bool = Field(
         # P0-2: laugh/breath/emphasis markup via DeliveryPlan; serious scenes strip.
         default=True,
@@ -110,8 +125,8 @@ class AgentSettings(BaseSettings):
     )
     qwen_emotion_enabled: bool = Field(default=True, alias="QWEN_EMOTION_ENABLED")
 
-    # Session-scoped target speaker enrollment (reject nearby talkers).
-    speaker_verify_enabled: bool = Field(default=True, alias="SPEAKER_VERIFY_ENABLED")
+    # Legacy session log-mel is only a playback/noise guard; it is not identity authority.
+    speaker_verify_enabled: bool = Field(default=False, alias="SPEAKER_VERIFY_ENABLED")
     speaker_enroll_speech_ms: int = Field(
         # ~2.5s voiced audio is enough for lightweight mel embedding; 3.5s
         # caused fail-open when users stopped just under the bar.
@@ -140,6 +155,121 @@ class AgentSettings(BaseSettings):
         le=3000,
         alias="SPEAKER_MIN_VERIFY_SPEECH_MS",
     )
+    speaker_authority_enabled: bool = Field(
+        default=False,
+        alias="MEMORIA_SPEAKER_AUTHORITY_ENABLED",
+    )
+    speaker_authority_url: str = Field(
+        default="http://control-api:8000/v1/speakers/classify",
+        alias="MEMORIA_SPEAKER_AUTHORITY_URL",
+    )
+    speaker_internal_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_SPEAKER_INTERNAL_TOKEN",
+    )
+    speaker_authority_timeout_s: float = Field(
+        default=0.4,
+        ge=0.1,
+        le=1.5,
+        alias="MEMORIA_SPEAKER_AUTHORITY_TIMEOUT_S",
+    )
+
+    archive_sink_enabled: bool = Field(default=True, alias="MEMORIA_ARCHIVE_SINK_ENABLED")
+    archive_session_events_url: str = Field(
+        default="http://control-api:8000/v1/archive/session-events",
+        alias="MEMORIA_ARCHIVE_SESSION_EVENTS_URL",
+    )
+    archive_internal_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_ARCHIVE_INTERNAL_TOKEN",
+    )
+    archive_write_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_ARCHIVE_WRITE_TOKEN",
+    )
+    memory_read_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_MEMORY_READ_TOKEN",
+    )
+    persona_read_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_PERSONA_READ_TOKEN",
+    )
+    voice_resolution_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_VOICE_RESOLUTION_TOKEN",
+    )
+    archive_spool_key: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_ARCHIVE_SPOOL_KEY",
+    )
+    archive_spool_path: str = Field(
+        default="data/archive-events.spool",
+        alias="MEMORIA_ARCHIVE_SPOOL_PATH",
+    )
+    archive_spool_max_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        ge=4096,
+        le=1024 * 1024 * 1024,
+        alias="MEMORIA_ARCHIVE_SPOOL_MAX_BYTES",
+    )
+    persona_enabled: bool = Field(default=False, alias="MEMORIA_PERSONA_ENABLED")
+    persona_capsule_url: str = Field(
+        default="http://control-api:8000/v1/persona/session-capsule",
+        alias="MEMORIA_PERSONA_CAPSULE_URL",
+    )
+    persona_timeout_s: float = Field(
+        default=0.3,
+        ge=0.05,
+        le=2.0,
+        alias="MEMORIA_PERSONA_TIMEOUT_S",
+    )
+    persona_cache_ttl_s: float = Field(
+        default=60.0,
+        ge=1.0,
+        le=300.0,
+        alias="MEMORIA_PERSONA_CACHE_TTL_S",
+    )
+    memory_context_enabled: bool = Field(
+        default=False,
+        alias="MEMORIA_MEMORY_CONTEXT_ENABLED",
+    )
+    memory_context_url: str = Field(
+        default="http://control-api:8000/v1/archive/session-context",
+        alias="MEMORIA_MEMORY_CONTEXT_URL",
+    )
+    memory_context_timeout_s: float = Field(
+        default=0.3,
+        ge=0.05,
+        le=2.0,
+        alias="MEMORIA_MEMORY_CONTEXT_TIMEOUT_S",
+    )
+    memory_context_cache_ttl_s: float = Field(
+        default=60.0,
+        ge=1.0,
+        le=300.0,
+        alias="MEMORIA_MEMORY_CONTEXT_CACHE_TTL_S",
+    )
+    memory_context_limit: int = Field(
+        default=8,
+        ge=1,
+        le=20,
+        alias="MEMORIA_MEMORY_CONTEXT_LIMIT",
+    )
+    voice_profile_enabled: bool = Field(
+        default=False,
+        alias="MEMORIA_VOICE_PROFILE_ENABLED",
+    )
+    voice_profile_url: str = Field(
+        default="http://control-api:8000/v1/voices/session-resolution",
+        alias="MEMORIA_VOICE_PROFILE_URL",
+    )
+    voice_profile_timeout_s: float = Field(
+        default=0.3,
+        ge=0.05,
+        le=2.0,
+        alias="MEMORIA_VOICE_PROFILE_TIMEOUT_S",
+    )
 
     offline_mock: bool = Field(default=False, alias="OFFLINE_MOCK")
 
@@ -162,6 +292,20 @@ class AgentSettings(BaseSettings):
     @property
     def llm_deep_model(self) -> str:
         return self.deepseek_deep_model if self.llm_provider == "deepseek" else self.qwen_deep_model
+
+    def internal_token(
+        self,
+        capability: Literal["archive_write", "memory_read", "persona_read", "voice_resolution"],
+    ) -> str:
+        configured = {
+            "archive_write": self.archive_write_token,
+            "memory_read": self.memory_read_token,
+            "persona_read": self.persona_read_token,
+            "voice_resolution": self.voice_resolution_token,
+        }[capability].get_secret_value()
+        if configured or self.environment == "production":
+            return configured
+        return self.archive_internal_token.get_secret_value()
 
     @field_validator("funasr_sample_rate")
     @classmethod
@@ -213,6 +357,54 @@ class AgentSettings(BaseSettings):
         if self.environment == "production":
             if self.livekit_url.startswith("ws://") or self.livekit_url.startswith("http://"):
                 raise ValueError("production forbids plaintext media/control URLs")
+            capability_tokens: list[str] = []
+            if self.archive_sink_enabled:
+                token = self.internal_token("archive_write")
+                spool_key = self.archive_spool_key.get_secret_value()
+                if len(token) < 32:
+                    raise ValueError("production archive requires a scoped write token")
+                if not _secure_internal_url(self.archive_session_events_url):
+                    raise ValueError("production archive URL requires HTTPS or local Docker DNS")
+                capability_tokens.append(token)
+                try:
+                    from cryptography.fernet import Fernet
+
+                    Fernet(spool_key.encode("ascii"))
+                except (ValueError, UnicodeEncodeError) as exc:
+                    raise ValueError(
+                        "production archive requires a valid Fernet spool key"
+                    ) from exc
+            if self.persona_enabled:
+                persona_token = self.internal_token("persona_read")
+                if len(persona_token) < 32:
+                    raise ValueError("production persona requires a scoped read token")
+                if not _secure_internal_url(self.persona_capsule_url):
+                    raise ValueError("production persona URL requires HTTPS or local Docker DNS")
+                capability_tokens.append(persona_token)
+            if self.memory_context_enabled:
+                memory_token = self.internal_token("memory_read")
+                if len(memory_token) < 32:
+                    raise ValueError("production memory context requires a scoped read token")
+                if not _secure_internal_url(self.memory_context_url):
+                    raise ValueError("production memory URL requires HTTPS or local Docker DNS")
+                capability_tokens.append(memory_token)
+            if self.voice_profile_enabled:
+                voice_token = self.internal_token("voice_resolution")
+                if len(voice_token) < 32:
+                    raise ValueError("production voice profile requires a scoped resolution token")
+                if not _secure_internal_url(self.voice_profile_url):
+                    raise ValueError("production voice URL requires HTTPS or local Docker DNS")
+                capability_tokens.append(voice_token)
+            if len(capability_tokens) != len(set(capability_tokens)):
+                raise ValueError("production internal capability tokens must be independent")
+            if self.speaker_authority_enabled:
+                speaker_token = self.speaker_internal_token.get_secret_value()
+                if len(speaker_token) < 32 or speaker_token in capability_tokens:
+                    raise ValueError(
+                        "production speaker authority requires an independent internal token"
+                    )
+                if not _secure_internal_url(self.speaker_authority_url):
+                    raise ValueError("production speaker URL requires HTTPS or local Docker DNS")
         return self
 
 

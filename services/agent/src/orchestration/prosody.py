@@ -82,12 +82,31 @@ class SpeechPlan:
 
     @property
     def instruction(self) -> str:
-        return cosyvoice_instruction(self.voice_emotion)
+        # Fixed system-voice format (longanyang). TTS may re-map for freeform.
+        return cosyvoice_instruction(self.voice_emotion, freeform=False)
 
 
-def cosyvoice_instruction(emotion: str) -> str:
-    # longanyang is a system voice: Alibaba requires this exact Instruct format.
-    return f"你正在进行闲聊互动，你说话的情感是{emotion}。"
+def cosyvoice_instruction(emotion: str, *, freeform: bool = False) -> str:
+    """Build CosyVoice `instruction` for the given emotion label.
+
+    - freeform=False: Alibaba fixed template for system voices like longanyang.
+    - freeform=True: natural-language control for v3.5 designed / cloned voices
+      (keep short: CosyVoice instruction length limit is tight).
+    """
+    if not freeform:
+        return f"你正在进行闲聊互动，你说话的情感是{emotion}。"
+
+    # Freeform: concrete, multi-dim, ≤ ~40 Chinese chars (count as 2 each).
+    freeform_by_emotion: dict[str, str] = {
+        "neutral": "一对一陪伴闲聊，语气平和自然，语速中等，吐字清晰。",
+        "happy": "一对一陪伴闲聊，语气轻松愉快，带一点笑意，吐字清晰。",
+        "sad": "一对一陪伴闲聊，语气温柔共情，语速略慢，吐字清晰。",
+        "surprised": "一对一陪伴闲聊，语气轻快略惊讶，吐字清晰，不要夸张。",
+        "angry": "一对一陪伴闲聊，语气认真坚定，语速中等，吐字清晰。",
+        "fearful": "一对一陪伴闲聊，语气温和安抚，语速略慢，吐字清晰。",
+        "disgusted": "一对一陪伴闲聊，语气平静克制，语速中等，吐字清晰。",
+    }
+    return freeform_by_emotion.get(emotion, freeform_by_emotion["neutral"])
 
 
 def soft_laugh_prefix(*, use_markup_tags: bool) -> str:

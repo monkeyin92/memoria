@@ -198,43 +198,6 @@ describe("useVoiceSession production edges", () => {
     });
   });
 
-  it("routes Qwen Omni Plus through its WebRTC transport without calling LiveKit", async () => {
-    api.createSession.mockResolvedValueOnce({
-      session_id: "omni-plus-session",
-      voice_backend: "qwen_omni_plus",
-      config: {
-        model: "qwen3.5-omni-plus-realtime",
-        voice: "Tina",
-      },
-    });
-    const { result } = renderHook(() =>
-      useVoiceSession({
-        userId: "anonymous-user",
-        onFinalTranscript: vi.fn(),
-        voiceReplyEnabled: true,
-        voiceBackend: "qwen_omni_plus",
-      }),
-    );
-    result.current.audioContainerRef.current = document.createElement("div");
-
-    await act(async () => {
-      await result.current.start();
-    });
-
-    expect(liveKit.instances).toHaveLength(0);
-    expect(api.createSession).toHaveBeenCalledWith(
-      "anonymous-user",
-      "qwen_omni_plus",
-    );
-    expect(omni.instances[0].connect).toHaveBeenCalledWith(
-      expect.objectContaining({
-        session_id: "omni-plus-session",
-        voice_backend: "qwen_omni_plus",
-      }),
-    );
-    expect(result.current.uiState).toBe("ready");
-  });
-
   it("routes Qwen Omni through its WebRTC transport without calling LiveKit control APIs", async () => {
     api.createSession.mockResolvedValueOnce({
       session_id: "omni-session",

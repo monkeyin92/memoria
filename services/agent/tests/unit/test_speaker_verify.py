@@ -202,8 +202,8 @@ def test_media_polluted_when_far_field_dominates_near() -> None:
     assert verifier.is_media_polluted(clean) is False
 
 
-def test_zero_pcm_enroll_times_out_with_wall_clock_or_force() -> None:
-    """Regression: no feed_pcm used to leave PENDING forever (chat blocked)."""
+def test_zero_pcm_enroll_times_out_as_uncertain_with_wall_clock_or_force() -> None:
+    """No PCM leaves identity unavailable rather than silently granting owner."""
     verifier = SpeakerVerifier(
         enabled=True,
         enroll_speech_ms=3500,
@@ -211,15 +211,17 @@ def test_zero_pcm_enroll_times_out_with_wall_clock_or_force() -> None:
     )
     verifier.begin_enrollment()
     assert verifier.try_finalize_enrollment() is None
-    # Wall elapsed alone must fail-open even with zero PCM.
+    # Wall elapsed alone must leave PENDING even with zero PCM.
     timed = verifier.try_finalize_enrollment(wall_elapsed_ms=2500)
     assert timed is not None
     assert timed.reason == "enroll_timeout"
-    assert verifier.state.value == "open"
+    assert timed.accepted is False
+    assert verifier.state.value == "unavailable"
 
     verifier2 = SpeakerVerifier(enabled=True, enroll_speech_ms=3500, enroll_timeout_ms=60_000)
     verifier2.begin_enrollment()
     forced = verifier2.try_finalize_enrollment(force=True)
     assert forced is not None
     assert forced.reason == "enroll_timeout"
-    assert verifier2.state.value == "open"
+    assert forced.accepted is False
+    assert verifier2.state.value == "unavailable"

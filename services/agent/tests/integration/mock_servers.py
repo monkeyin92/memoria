@@ -12,12 +12,16 @@ import websockets
 from aiohttp import web
 from websockets.asyncio.server import ServerConnection
 
+_LOOPBACK_CLIENT_HOST = "localhost"  # Keep mock traffic out of system proxies.
+
 
 @dataclass
 class MockFunASRServer:
     host: str = "127.0.0.1"
     port: int = 0
-    scenario: str = "happy"  # happy|interim_rewrite|duplicate_final|heartbeat|missing_ts|fail|disconnect_once
+    scenario: str = (
+        "happy"  # happy|interim_rewrite|duplicate_final|heartbeat|missing_ts|fail|disconnect_once
+    )
     connections_closed: int = 0
     tasks_started: list[str] = field(default_factory=list)
     pcm_by_connection: list[int] = field(default_factory=list)
@@ -28,7 +32,7 @@ class MockFunASRServer:
 
     @property
     def ws_url(self) -> str:
-        return f"ws://{self.host}:{self.port}"
+        return f"ws://{_LOOPBACK_CLIENT_HOST}:{self.port}"
 
     def start(self) -> None:
         ready = threading.Event()
@@ -83,9 +87,7 @@ class MockFunASRServer:
                 await ws.wait_closed()
                 return
             await ws.send(
-                json.dumps(
-                    {"header": {"event": "task-started", "task_id": task_id}, "payload": {}}
-                )
+                json.dumps({"header": {"event": "task-started", "task_id": task_id}, "payload": {}})
             )
             if self.scenario == "fail":
                 # Still emit task-started first so clients complete handshake,
@@ -133,8 +135,12 @@ class MockFunASRServer:
                 await ws.send(_result(task_id, "", sentence_end=False, heartbeat=True, words=[]))
 
             if self.scenario == "interim_rewrite":
-                await ws.send(_result(task_id, "我想定", sentence_end=False, words=_chars("我想定")))
-                await ws.send(_result(task_id, "我想订下", sentence_end=False, words=_chars("我想订下")))
+                await ws.send(
+                    _result(task_id, "我想定", sentence_end=False, words=_chars("我想定"))
+                )
+                await ws.send(
+                    _result(task_id, "我想订下", sentence_end=False, words=_chars("我想订下"))
+                )
                 await ws.send(
                     _result(
                         task_id,
@@ -153,12 +159,8 @@ class MockFunASRServer:
                 )
             elif self.scenario == "duplicate_final":
                 text = "重复结果只提交一次。"
-                await ws.send(
-                    _result(task_id, text, sentence_end=True, words=_chars(text))
-                )
-                await ws.send(
-                    _result(task_id, text, sentence_end=True, words=_chars(text))
-                )
+                await ws.send(_result(task_id, text, sentence_end=True, words=_chars(text)))
+                await ws.send(_result(task_id, text, sentence_end=True, words=_chars(text)))
             elif self.scenario == "missing_ts":
                 await ws.send(
                     json.dumps(
@@ -198,7 +200,9 @@ class MockFunASRServer:
                 pass
 
             await ws.send(
-                json.dumps({"header": {"event": "task-finished", "task_id": task_id}, "payload": {}})
+                json.dumps(
+                    {"header": {"event": "task-finished", "task_id": task_id}, "payload": {}}
+                )
             )
         finally:
             self.connections_closed += 1
@@ -252,13 +256,14 @@ class MockCosyVoiceServer:
     closed_without_reuse: int = 0
     active: int = 0
     connections: int = 0
+    run_requests: list[dict[str, Any]] = field(default_factory=list)
     _server: Any = None
     _thread: threading.Thread | None = None
     _loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def ws_url(self) -> str:
-        return f"ws://{self.host}:{self.port}"
+        return f"ws://{_LOOPBACK_CLIENT_HOST}:{self.port}"
 
     def start(self) -> None:
         ready = threading.Event()
@@ -308,8 +313,9 @@ class MockCosyVoiceServer:
         try:
             raw = await ws.recv()
             msg = json.loads(raw if isinstance(raw, str) else raw.decode())
+            self.run_requests.append(msg)
             task_id = str(msg["header"]["task_id"])
-            if self.scenario == "fail":
+            if self.scenario == "fail" or (self.scenario == "fail_once" and connection_index == 0):
                 await ws.send(
                     json.dumps(
                         {
@@ -336,9 +342,7 @@ class MockCosyVoiceServer:
                     break
 
             full = "".join(texts) or "你好，这是语音合成测试。"
-            if self.scenario == "slow" or (
-                self.scenario == "slow_once" and connection_index == 0
-            ):
+            if self.scenario == "slow" or (self.scenario == "slow_once" and connection_index == 0):
                 await asyncio.sleep(0.3)
             # sentence-begin
             await ws.send(
@@ -377,9 +381,7 @@ class MockCosyVoiceServer:
             words = []
             t = 0
             for ch in full:
-                words.append(
-                    {"begin_time": t, "end_time": t + 80, "text": ch, "punctuation": ""}
-                )
+                words.append({"begin_time": t, "end_time": t + 80, "text": ch, "punctuation": ""})
                 t += 80
 
             if self.scenario == "empty_ts" or (
@@ -492,9 +494,7 @@ class MockDeepSeekServer:
         if self.scenario == "500" or (self.scenario == "500_once" and request_index == 0):
             return web.Response(status=503, text="unavailable")
 
-        if self.scenario == "timeout" or (
-            self.scenario == "timeout_once" and request_index == 0
-        ):
+        if self.scenario == "timeout" or (self.scenario == "timeout_once" and request_index == 0):
             await asyncio.sleep(5)
 
         resp = web.StreamResponse(

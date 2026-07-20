@@ -1,6 +1,43 @@
 name: memoria
 
 services:
+  speaker-model:
+    image: "memoria-speaker-model:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.speaker-model
+    env_file:
+      - /etc/memoria-speaker-model.env
+    environment:
+      MEMORIA_SPEAKER_MODEL_PATH: /models/campplus_cn_common.onnx
+      MEMORIA_SPEAKER_MODEL_VERSION: campplus-cn-common@v1.0.0+ckpt.3388cf5f+onnx.7a39d2e5e566+fbank.v1
+      MEMORIA_SPEAKER_MODEL_SHA256_PATH: /models/campplus_cn_common.onnx.sha256
+      MEMORIA_SPEAKER_MODEL_MAX_CONCURRENCY: "1"
+    expose:
+      - "8001"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8001/health/ready', timeout=3).close()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    mem_limit: 1g
+    cpus: 2.0
+
   control-api:
     image: "memoria-control-api:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
     build:
@@ -9,11 +46,13 @@ services:
       args:
         UV_DEFAULT_INDEX: "${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}"
     env_file:
-      - /etc/memoria.env
+      - /etc/memoria-control-api.env
     environment:
       ENVIRONMENT: production
       MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
       MEMORIA_DB_PATH: /data/memoria.sqlite3
+      MEMORIA_SPEAKER_EMBEDDING_URL: http://speaker-model:8001/v1/embeddings/speaker
+      MEMORIA_SPEAKER_EMBEDDING_MODEL: campplus-cn-common@v1.0.0+ckpt.3388cf5f+onnx.7a39d2e5e566+fbank.v1
     command:
       - /app/.venv/bin/uvicorn
       - services.control_api.app.main:app
@@ -29,6 +68,9 @@ services:
       - type: bind
         source: /var/lib/memoria
         target: /data
+    depends_on:
+      speaker-model:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -58,7 +100,7 @@ services:
       args:
         UV_DEFAULT_INDEX: "${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}"
     env_file:
-      - /etc/memoria.env
+      - /etc/memoria-agent.env
     environment:
       ENVIRONMENT: production
       MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
@@ -79,5 +121,9 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    volumes:
+      - type: bind
+        source: /var/lib/memoria-agent
+        target: /data
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=256m

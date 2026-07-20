@@ -1,0 +1,108 @@
+name: memoria-data
+
+services:
+  postgres:
+    image: "pgvector/pgvector:0.8.1-pg17-bookworm"
+    pull_policy: never
+    env_file:
+      - ${MEMORIA_POSTGRES_ENV_FILE:-/etc/memoria-postgres.env}
+    environment:
+      POSTGRES_USER: memoria_admin
+      POSTGRES_DB: postgres
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=50
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_timeout=300s
+      - -c
+      - archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - postgres_wal_archive:/wal-archive
+      - ./postgres/init-memoria.sh:/docker-entrypoint-initdb.d/001-init-memoria.sh:ro
+    networks:
+      memoria:
+        aliases:
+          - memoria-postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memoria_admin -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    cpus: 1.5
+
+  minio:
+    image: "minio/minio:RELEASE.2025-04-22T22-12-26Z"
+    pull_policy: never
+    env_file:
+      - ${MEMORIA_MINIO_ENV_FILE:-/etc/memoria-minio.env}
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - minio_data:/data
+    networks:
+      memoria:
+        aliases:
+          - memoria-minio
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    mem_limit: 768m
+    cpus: 1.0
+
+  minio-provision:
+    image: "minio/mc:RELEASE.2025-04-16T18-13-26Z"
+    pull_policy: never
+    env_file:
+      - ${MEMORIA_MINIO_ENV_FILE:-/etc/memoria-minio.env}
+    environment:
+      MC_CONFIG_DIR: /tmp/.mc
+    entrypoint: ["/bin/sh", "/provision.sh"]
+    volumes:
+      - ./minio/provision.sh:/provision.sh:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - memoria
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    mem_limit: 128m
+    cpus: 0.5
+
+networks:
+  memoria:
+    external: true
+    name: memoria_default
+
+volumes:
+  postgres_data:
+  postgres_wal_archive:
+  minio_data:

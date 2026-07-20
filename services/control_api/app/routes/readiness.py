@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import hmac
+from asyncio import to_thread
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Annotated, Literal, cast
 
+import httpx
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from services.archive.domain import ContextQuery, LifeArchivePort
+from services.archive.memory_domain import MemoryCatalogPort
+from services.archive.object_store import ObjectStore
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
+from services.persona.domain import PersonaEnginePort
+from services.speaker.domain import SpeakerAuthorityPort
+from services.voice_profile.domain import VoiceProfilePort
 
 router = APIRouter(tags=["health"])
 
@@ -25,10 +34,19 @@ class SmokeChecks(BaseModel):
     llm_provider: Literal["qwen", "deepseek"]
     release_tag: str = Field(min_length=1, max_length=200)
     cosyvoice: bool
+    cosyvoice_timestamps: bool
 
     @model_validator(mode="after")
     def require_all_passed(self) -> SmokeChecks:
-        if not all((self.livekit, self.funasr, self.llm, self.cosyvoice)):
+        if not all(
+            (
+                self.livekit,
+                self.funasr,
+                self.llm,
+                self.cosyvoice,
+                self.cosyvoice_timestamps,
+            )
+        ):
             raise ValueError("all readiness smokes must pass")
         return self
 
@@ -54,11 +72,22 @@ def _missing_config(settings: ControlSettings) -> list[str]:
     return missing
 
 
+def _valid_configuration(settings: ControlSettings) -> bool:
+    try:
+        settings.validate_production()
+    except ValueError:
+        return False
+    return True
+
+
 def _smoke_state(request: Request, settings: ControlSettings) -> str:
-    evidence = _store(request).get_readiness(
-        release_tag=settings.memoria_release_tag,
-        llm_provider=settings.llm_provider,
-    )
+    try:
+        evidence = _store(request).get_readiness(
+            release_tag=settings.memoria_release_tag,
+            llm_provider=settings.llm_provider,
+        )
+    except Exception:
+        return "unavailable"
     if evidence is None:
         return "not_run"
     try:
@@ -73,6 +102,143 @@ def _smoke_state(request: Request, settings: ControlSettings) -> str:
     if age_s > settings.readiness_gate_ttl_s:
         return "expired"
     return "passed"
+
+
+def _component(request: Request, name: str) -> object:
+    component = getattr(request.app.state, name, None)
+    if component is None:
+        raise RuntimeError(f"readiness component is missing: {name}")
+    return component
+
+
+async def _probe_object_store(store: ObjectStore) -> object:
+    # ponytail: use the existing public seam; add a cached native health probe if polling gets hot.
+    payload = b"memoria-readiness"
+    reference = await store.put(
+        account_id="memoria-readiness-probe",
+        purpose="readiness",
+        data=payload,
+        media_type="application/octet-stream",
+    )
+    try:
+        if await store.get(reference) != payload:
+            raise RuntimeError("object store readiness payload mismatch")
+    finally:
+        await store.delete(reference)
+    return None
+
+
+async def _probe_speaker_model(
+    settings: ControlSettings,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> str:
+    endpoint = settings.speaker_embedding_url.strip()
+    if not endpoint:
+        return "skipped" if settings.environment != "production" else "unavailable"
+    expected_model = settings.speaker_embedding_model.strip()
+    if not expected_model:
+        return "unavailable"
+    try:
+        health_url = httpx.URL(endpoint).copy_with(
+            path="/health/ready",
+            query=None,
+            fragment=None,
+        )
+    except (TypeError, ValueError):
+        return "unavailable"
+
+    owned_client = client is None
+    runtime_client = client or httpx.AsyncClient(timeout=settings.speaker_embedding_timeout_s)
+    try:
+        response = await runtime_client.get(
+            health_url,
+            timeout=settings.speaker_embedding_timeout_s,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, TypeError, ValueError):
+        return "unavailable"
+    finally:
+        if owned_client:
+            await runtime_client.aclose()
+    if (
+        not isinstance(payload, dict)
+        or payload.get("status") != "ready"
+        or payload.get("model_version") != expected_model
+    ):
+        return "unavailable"
+    return "ready"
+
+
+async def _core_checks(
+    request: Request,
+    settings: ControlSettings,
+) -> dict[str, str]:
+    async def control_database() -> object:
+        return await to_thread(
+            _store(request).get_readiness,
+            release_tag=settings.memoria_release_tag,
+            llm_provider=settings.llm_provider,
+        )
+
+    async def memory_archive() -> object:
+        archive = cast(LifeArchivePort, _component(request, "life_archive"))
+        return await archive.context(
+            ContextQuery(
+                account_id="memoria-readiness-probe",
+                speaker_class="guest",
+                limit=1,
+            )
+        )
+
+    async def memory_catalog() -> object:
+        catalog = cast(MemoryCatalogPort, _component(request, "memory_catalog"))
+        return await catalog.timeline(account_id="memoria-readiness-probe", limit=1)
+
+    async def persona() -> object:
+        engine = cast(PersonaEnginePort, _component(request, "persona_engine"))
+        return await engine.traits(account_id="memoria-readiness-probe")
+
+    async def speaker_authority() -> object:
+        authority = cast(SpeakerAuthorityPort, _component(request, "speaker_authority"))
+        return await authority.profiles("memoria-readiness-probe")
+
+    async def voice_profile() -> object:
+        profiles = cast(VoiceProfilePort, _component(request, "voice_profile_manager"))
+        return await profiles.profiles(account_id="memoria-readiness-probe")
+
+    async def archive_object_store() -> object:
+        store = cast(ObjectStore, _component(request, "archive_object_store"))
+        return await _probe_object_store(store)
+
+    async def voice_object_store() -> object:
+        store = cast(ObjectStore, _component(request, "voice_object_store"))
+        return await _probe_object_store(store)
+
+    probes: tuple[tuple[str, Callable[[], Awaitable[object]]], ...] = (
+        ("control_database", control_database),
+        ("memory_archive", memory_archive),
+        ("memory_catalog", memory_catalog),
+        ("persona", persona),
+        ("speaker_authority", speaker_authority),
+        ("voice_profile", voice_profile),
+        ("archive_object_store", archive_object_store),
+        ("voice_object_store", voice_object_store),
+    )
+    checks: dict[str, str] = {}
+    for name, probe in probes:
+        try:
+            await probe()
+        except Exception:
+            checks[name] = "unavailable"
+        else:
+            checks[name] = "ready"
+    try:
+        checks["speaker_model"] = await _probe_speaker_model(settings)
+    except Exception:
+        checks["speaker_model"] = "unavailable"
+    return checks
 
 
 def _require_internal_secret(
@@ -99,6 +265,8 @@ def mark_smokes_passed(
         raise HTTPException(status_code=409, detail="smoke LLM provider does not match config")
     if body.release_tag != settings.memoria_release_tag:
         raise HTTPException(status_code=409, detail="smoke release tag does not match config")
+    if not _valid_configuration(settings):
+        raise HTTPException(status_code=503, detail="invalid production configuration")
     missing = _missing_config(settings)
     if missing:
         raise HTTPException(status_code=503, detail={"missing": missing})
@@ -116,15 +284,20 @@ def mark_smokes_passed(
 
 
 @router.get("/health/ready")
-def health_ready(request: Request) -> JSONResponse:
+async def health_ready(request: Request) -> JSONResponse:
     settings = _settings(request)
+    config_ready = _valid_configuration(settings)
+    core_checks = await _core_checks(request, settings)
+    core_ready = all(status in {"ready", "skipped"} for status in core_checks.values())
     if settings.offline_mock:
         return JSONResponse(
-            {
-                "status": "ready",
+            status_code=200 if config_ready and core_ready else 503,
+            content={
+                "status": "ready" if config_ready and core_ready else "not_ready",
                 "mode": "offline_mock",
                 "checks": {
-                    "config": True,
+                    "config": config_ready,
+                    "core": core_checks,
                     "livekit": "skipped",
                     "funasr": "skipped",
                     "llm": {"provider": settings.llm_provider, "status": "skipped"},
@@ -135,7 +308,7 @@ def health_ready(request: Request) -> JSONResponse:
 
     missing = _missing_config(settings)
     smoke_state = _smoke_state(request, settings)
-    if missing or smoke_state != "passed":
+    if not config_ready or missing or smoke_state != "passed" or not core_ready:
         return JSONResponse(
             status_code=503,
             content={
@@ -144,6 +317,10 @@ def health_ready(request: Request) -> JSONResponse:
                 "smokes": smoke_state,
                 "release_tag": settings.memoria_release_tag,
                 "llm_provider": settings.llm_provider,
+                "checks": {
+                    "config": config_ready and not missing,
+                    "core": core_checks,
+                },
             },
         )
     return JSONResponse(
@@ -152,10 +329,14 @@ def health_ready(request: Request) -> JSONResponse:
             "release_tag": settings.memoria_release_tag,
             "checks": {
                 "config": True,
+                "core": core_checks,
                 "livekit": True,
                 "funasr": True,
                 "llm": {"provider": settings.llm_provider, "passed": True},
-                "cosyvoice": True,
+                "cosyvoice": {
+                    "audio": True,
+                    "word_timestamps": True,
+                },
             },
         }
     )

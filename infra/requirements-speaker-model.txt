@@ -1,0 +1,5 @@
+fastapi==0.139.0
+kaldi-native-fbank==1.22.3
+numpy==2.4.3
+onnxruntime==1.27.0
+uvicorn==0.51.0

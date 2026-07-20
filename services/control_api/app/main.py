@@ -2,19 +2,334 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 from asyncio import to_thread
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from services.archive.compiler_worker import MemoryCompilerWorker
+from services.archive.domain import LifeArchivePort
+from services.archive.life_archive import LifeArchive
+from services.archive.memory_catalog import MemoryCatalog
+from services.archive.memory_domain import (
+    AccountWriteGuard,
+    AccountWriteRejectedError,
+    MemoryCatalogPort,
+    MemoryEmbedder,
+    MemoryExtractor,
+)
+from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.archive.object_store import (
+    EncryptedLocalObjectStore,
+    EncryptedS3ObjectStore,
+    ObjectStore,
+)
+from services.archive.postgres_archive import PostgresLifeArchive
+from services.archive.postgres_memory_catalog import PostgresMemoryCatalog, QwenMemoryEmbedder
+from services.archive.qwen_memory_extractor import FallbackMemoryExtractor, QwenMemoryExtractor
+from services.control_api.app.account_gate import AccountDeletingError, AccountOperationGate
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import auth as auth_routes
 from services.control_api.app.routes import memory as memory_routes
+from services.control_api.app.routes import persona as persona_routes
 from services.control_api.app.routes import readiness as readiness_routes
 from services.control_api.app.routes import session as session_routes
+from services.control_api.app.routes import speaker as speaker_routes
+from services.control_api.app.routes import voice as voice_routes
+from services.control_api.app.session_termination import (
+    AccountSessionTerminator,
+    LiveKitRoomCloser,
+    RealtimeConnectionRegistry,
+)
+from services.governance.account_data import (
+    AccountDataGovernance,
+    AccountDeletionWorker,
+    PostgresAccountRepository,
+    SqliteAccountRepository,
+)
+from services.persona.domain import PersonaEnginePort
+from services.persona.engine import PersonaEngine
+from services.persona.postgres_engine import PostgresPersonaEngine
+from services.persona.qwen_extractor import FallbackPersonaExtractor, QwenPersonaExtractor
+from services.persona.rules import PersonaExtractor, RuleBasedPersonaExtractor
+from services.speaker.authority import SpeakerAuthority
+from services.speaker.campplus_http import (
+    CampPlusHTTPEmbeddingAdapter,
+    UnavailableSpeakerEmbeddingAdapter,
+)
+from services.speaker.domain import SpeakerAuthorityPort, SpeakerEmbeddingAdapter
+from services.speaker.postgres_authority import PostgresSpeakerAuthority
+from services.voice_profile.cosyvoice_enrollment import (
+    CosyVoiceEnrollmentClient,
+    CosyVoiceEnrollmentConfig,
+    UnavailableVoiceEnrollmentProvider,
+)
+from services.voice_profile.cosyvoice_preview import (
+    CosyVoicePreviewRenderer,
+    UnavailableVoicePreviewRenderer,
+)
+from services.voice_profile.domain import (
+    VoiceEnrollmentProvider,
+    VoicePreviewRenderer,
+    VoiceProfilePort,
+)
+from services.voice_profile.manager import VoiceProfileManager
+from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
+from services.voice_profile.sample_url import VoiceSampleURLSigner
+
+
+def _memory_account_guard(
+    gate: AccountOperationGate,
+    store: MemoryStore,
+) -> AccountWriteGuard:
+    @asynccontextmanager
+    async def guard(account_id: str) -> AsyncIterator[None]:
+        try:
+            async with gate.write(account_id):
+                if store.is_account_unavailable(user_id=account_id):
+                    raise AccountWriteRejectedError("account deletion is in progress")
+                yield
+        except AccountDeletingError as exc:
+            raise AccountWriteRejectedError(str(exc)) from exc
+
+    return guard
+
+
+def _memory_embedder(settings: ControlSettings) -> MemoryEmbedder | None:
+    api_key = settings.memory_embedding_api_key.get_secret_value()
+    if not settings.memory_embedding_url or not api_key or not settings.memory_embedding_model:
+        return None
+    return QwenMemoryEmbedder(
+        endpoint=settings.memory_embedding_url,
+        api_key=api_key,
+        model=settings.memory_embedding_model,
+        timeout_s=settings.memory_embedding_timeout_s,
+    )
+
+
+def _speaker_authority(settings: ControlSettings) -> SpeakerAuthorityPort:
+    configured_key = settings.speaker_template_key.get_secret_value()
+    template_key = configured_key or base64.urlsafe_b64encode(
+        hashlib.sha256(b"memoria-development-speaker-template-key").digest()
+    ).decode("ascii")
+    embedding_token = settings.speaker_embedding_token.get_secret_value()
+    if settings.speaker_embedding_url and embedding_token:
+        adapter: SpeakerEmbeddingAdapter = CampPlusHTTPEmbeddingAdapter(
+            endpoint=settings.speaker_embedding_url,
+            token=embedding_token,
+            model_version=settings.speaker_embedding_model,
+            timeout_s=settings.speaker_embedding_timeout_s,
+        )
+    else:
+        adapter = UnavailableSpeakerEmbeddingAdapter(settings.speaker_embedding_model)
+    speaker_database_url = (
+        settings.speaker_database_url.get_secret_value()
+        or settings.archive_database_url.get_secret_value()
+    )
+    if speaker_database_url:
+        return PostgresSpeakerAuthority(
+            speaker_database_url,
+            template_key=template_key,
+            adapter=adapter,
+            owner_threshold=settings.speaker_owner_threshold,
+            guest_threshold=settings.speaker_guest_threshold,
+            classify_timeout_s=settings.speaker_embedding_timeout_s,
+        )
+    return SpeakerAuthority.sqlite(
+        settings.speaker_database_path,
+        template_key=template_key,
+        adapter=adapter,
+        owner_threshold=settings.speaker_owner_threshold,
+        guest_threshold=settings.speaker_guest_threshold,
+        classify_timeout_s=settings.speaker_embedding_timeout_s,
+    )
+
+
+def _memory_extractor(settings: ControlSettings) -> MemoryExtractor:
+    fallback = RuleBasedMemoryExtractor()
+    api_key = settings.dashscope_api_key.get_secret_value()
+    if settings.offline_mock or not api_key:
+        return fallback
+    return FallbackMemoryExtractor(
+        QwenMemoryExtractor(
+            api_key=api_key,
+            base_url=settings.dashscope_base_url,
+            model=settings.memory_extraction_model,
+            timeout_s=settings.memory_extraction_timeout_s,
+            workspace_id=settings.dashscope_workspace_id,
+        ),
+        fallback,
+    )
+
+
+def _persona_extractor(settings: ControlSettings) -> PersonaExtractor:
+    fallback = RuleBasedPersonaExtractor()
+    api_key = settings.dashscope_api_key.get_secret_value()
+    if settings.offline_mock or not api_key:
+        return fallback
+    return FallbackPersonaExtractor(
+        QwenPersonaExtractor(
+            api_key=api_key,
+            base_url=settings.dashscope_base_url,
+            model=settings.memory_extraction_model,
+            timeout_s=settings.memory_extraction_timeout_s,
+            workspace_id=settings.dashscope_workspace_id,
+        ),
+        fallback,
+    )
+
+
+def _voice_profile_services(
+    settings: ControlSettings,
+) -> tuple[VoiceProfilePort, VoiceSampleURLSigner, ObjectStore]:
+    configured_key = settings.voice_sample_encryption_key.get_secret_value()
+    object_key = configured_key or base64.urlsafe_b64encode(
+        hashlib.sha256(b"memoria-development-voice-sample-key").digest()
+    ).decode("ascii")
+    object_store: ObjectStore
+    if settings.voice_object_bucket:
+        object_store = EncryptedS3ObjectStore.from_boto3(
+            bucket=settings.voice_object_bucket,
+            key=object_key,
+            key_version=settings.voice_sample_key_version,
+            endpoint_url=settings.voice_object_endpoint or None,
+            region_name=settings.voice_object_region or None,
+            access_key_id=(
+                settings.voice_object_access_key.get_secret_value().strip() or None
+            ),
+            secret_access_key=(
+                settings.voice_object_secret_key.get_secret_value().strip() or None
+            ),
+            prefix=settings.voice_object_prefix,
+        )
+    else:
+        object_store = EncryptedLocalObjectStore(
+            root=Path(settings.voice_sample_store_path),
+            key=object_key,
+            key_version=settings.voice_sample_key_version,
+        )
+    configured_signer = settings.voice_sample_url_secret.get_secret_value()
+    signer_secret = (
+        configured_signer or hashlib.sha256(b"memoria-development-voice-sample-url").hexdigest()
+    )
+    signer = VoiceSampleURLSigner(
+        secret=signer_secret,
+        public_base_url=settings.public_base_url,
+        ttl_s=settings.voice_sample_url_ttl_s,
+    )
+    api_key = settings.dashscope_api_key.get_secret_value()
+    provider: VoiceEnrollmentProvider
+    if settings.offline_mock or not api_key:
+        provider = UnavailableVoiceEnrollmentProvider()
+    else:
+        provider = CosyVoiceEnrollmentClient(
+            CosyVoiceEnrollmentConfig(
+                endpoint=settings.voice_enrollment_url,
+                api_key=api_key,
+                timeout_s=settings.voice_enrollment_timeout_s,
+            )
+        )
+    archive_url = settings.archive_database_url.get_secret_value()
+    manager: VoiceProfilePort
+    if archive_url:
+        manager = PostgresVoiceProfileManager(
+            archive_url,
+            object_store=object_store,
+            provider=provider,
+            sample_url_factory=signer.url,
+            provider_region=settings.voice_provider_region,
+            target_model=settings.voice_target_model,
+        )
+    else:
+        manager = VoiceProfileManager.sqlite(
+            settings.memoria_db_path,
+            object_store=object_store,
+            provider=provider,
+            sample_url_factory=signer.url,
+            provider_region=settings.voice_provider_region,
+            target_model=settings.voice_target_model,
+        )
+    return manager, signer, object_store
+
+
+def _archive_object_store(settings: ControlSettings) -> ObjectStore:
+    configured_key = settings.archive_object_encryption_key.get_secret_value()
+    object_key = configured_key or base64.urlsafe_b64encode(
+        hashlib.sha256(b"memoria-development-archive-object-key").digest()
+    ).decode("ascii")
+    if settings.archive_object_bucket:
+        return EncryptedS3ObjectStore.from_boto3(
+            bucket=settings.archive_object_bucket,
+            key=object_key,
+            key_version=settings.archive_object_key_version,
+            endpoint_url=settings.archive_object_endpoint or None,
+            region_name=settings.archive_object_region or None,
+            access_key_id=(
+                settings.archive_object_access_key.get_secret_value().strip() or None
+            ),
+            secret_access_key=(
+                settings.archive_object_secret_key.get_secret_value().strip() or None
+            ),
+            prefix=settings.archive_object_prefix,
+        )
+    return EncryptedLocalObjectStore(
+        root=Path(settings.archive_object_store_path),
+        key=object_key,
+        key_version=settings.archive_object_key_version,
+    )
+
+
+def _voice_preview_renderer(settings: ControlSettings) -> VoicePreviewRenderer:
+    if (
+        settings.offline_mock
+        or not settings.dashscope_api_key.get_secret_value()
+        or not settings.dashscope_ws_url
+    ):
+        return UnavailableVoicePreviewRenderer()
+    return CosyVoicePreviewRenderer()
+
+
+def _account_data_governance(
+    settings: ControlSettings,
+    *,
+    store: MemoryStore,
+    voice_profiles: VoiceProfilePort,
+    archive_object_store: ObjectStore,
+    realtime_connections: RealtimeConnectionRegistry,
+    account_operations: AccountOperationGate,
+) -> AccountDataGovernance:
+    archive_url = settings.archive_database_url.get_secret_value()
+    archive_repository = (
+        PostgresAccountRepository.archive(archive_url)
+        if archive_url
+        else SqliteAccountRepository.archive(settings.memoria_db_path)
+    )
+    speaker_url = settings.speaker_database_url.get_secret_value() or archive_url
+    speaker_repository = (
+        PostgresAccountRepository.speaker(speaker_url)
+        if speaker_url
+        else SqliteAccountRepository.speaker(settings.speaker_database_path)
+    )
+    return AccountDataGovernance(
+        memory_store=store,
+        archive_repository=archive_repository,
+        speaker_repository=speaker_repository,
+        voice_profiles=voice_profiles,
+        archive_object_store=archive_object_store,
+        session_terminator=AccountSessionTerminator(
+            store=store,
+            connections=realtime_connections,
+            close_room=LiveKitRoomCloser(settings),
+        ),
+        operation_blocker=account_operations,
+    )
 
 
 @asynccontextmanager
@@ -30,7 +345,121 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     store = MemoryStore(settings.memoria_db_path)
     await to_thread(store.initialize)
     app.state.memory_store = store
-    yield
+    archive_url = settings.archive_database_url.get_secret_value()
+    compiler_url = settings.archive_compiler_database_url.get_secret_value()
+    postgres_archive: PostgresLifeArchive | None = None
+    postgres_catalog: PostgresMemoryCatalog | None = None
+    postgres_persona: PostgresPersonaEngine | None = None
+    archive: LifeArchivePort
+    memory_catalog: MemoryCatalogPort
+    persona_engine: PersonaEnginePort
+    extractor = _memory_extractor(settings)
+    persona_extractor = _persona_extractor(settings)
+    embedder = _memory_embedder(settings)
+    account_guard = _memory_account_guard(app.state.account_operations, store)
+    if archive_url:
+        postgres_archive = PostgresLifeArchive(archive_url)
+        await postgres_archive.initialize()
+        archive = postgres_archive
+        postgres_catalog = PostgresMemoryCatalog(
+            archive_url,
+            extractor=extractor,
+            compiler_dsn=compiler_url or None,
+            compiler_role=settings.archive_compiler_role or None,
+            account_guard=account_guard,
+            embedder=embedder,
+            require_vector=settings.environment == "production",
+        )
+        await postgres_catalog.initialize()
+        memory_catalog = postgres_catalog
+        postgres_persona = PostgresPersonaEngine(
+            archive_url,
+            extractor=persona_extractor,
+        )
+        await postgres_persona.initialize()
+        persona_engine = postgres_persona
+    else:
+        sqlite_archive = LifeArchive.sqlite(settings.memoria_db_path)
+        await to_thread(sqlite_archive.initialize)
+        archive = sqlite_archive
+        sqlite_catalog = MemoryCatalog.sqlite(
+            settings.memoria_db_path,
+            extractor=extractor,
+            account_guard=account_guard,
+        )
+        await to_thread(sqlite_catalog.initialize)
+        memory_catalog = sqlite_catalog
+        sqlite_persona = PersonaEngine.sqlite(
+            settings.memoria_db_path,
+            extractor=persona_extractor,
+        )
+        await to_thread(sqlite_persona.initialize)
+        persona_engine = sqlite_persona
+    app.state.life_archive = archive
+    app.state.memory_catalog = memory_catalog
+    app.state.persona_engine = persona_engine
+    voice_profile_manager, voice_sample_signer, voice_object_store = _voice_profile_services(
+        settings
+    )
+    postgres_voice = (
+        voice_profile_manager
+        if isinstance(voice_profile_manager, PostgresVoiceProfileManager)
+        else None
+    )
+    if postgres_voice is not None:
+        await postgres_voice.initialize()
+    else:
+        assert isinstance(voice_profile_manager, VoiceProfileManager)
+        await to_thread(voice_profile_manager.initialize)
+    app.state.voice_profile_manager = voice_profile_manager
+    app.state.voice_sample_signer = voice_sample_signer
+    app.state.voice_object_store = voice_object_store
+    app.state.voice_preview_renderer = _voice_preview_renderer(settings)
+    compiler_worker = MemoryCompilerWorker(
+        memory_catalog,
+        interval_s=settings.archive_compile_interval_s,
+        batch_size=settings.archive_compile_batch_size,
+    )
+    compiler_worker.start()
+    app.state.memory_compiler_worker = compiler_worker
+    speaker_authority = _speaker_authority(settings)
+    postgres_speaker = (
+        speaker_authority if isinstance(speaker_authority, PostgresSpeakerAuthority) else None
+    )
+    if postgres_speaker is not None:
+        await postgres_speaker.initialize()
+    else:
+        assert isinstance(speaker_authority, SpeakerAuthority)
+        await to_thread(speaker_authority.initialize)
+    app.state.speaker_authority = speaker_authority
+    archive_object_store = _archive_object_store(settings)
+    app.state.archive_object_store = archive_object_store
+    app.state.account_data_governance = _account_data_governance(
+        settings,
+        store=store,
+        voice_profiles=voice_profile_manager,
+        archive_object_store=archive_object_store,
+        realtime_connections=app.state.realtime_connections,
+        account_operations=app.state.account_operations,
+    )
+    deletion_worker = AccountDeletionWorker(app.state.account_data_governance)
+    deletion_worker.start()
+    app.state.account_deletion_worker = deletion_worker
+    try:
+        yield
+    finally:
+        await deletion_worker.stop()
+        await compiler_worker.stop()
+        if postgres_persona is not None:
+            await postgres_persona.close()
+        if postgres_catalog is not None:
+            await postgres_catalog.close()
+        if postgres_archive is not None:
+            await postgres_archive.close()
+        if postgres_speaker is not None:
+            await postgres_speaker.close()
+        if postgres_voice is not None:
+            await postgres_voice.close()
 
 
 def create_app() -> FastAPI:
@@ -46,8 +475,41 @@ def create_app() -> FastAPI:
     )
     # Eager defaults so tests without lifespan still work.
     app.state.settings = settings
+    app.state.account_operations = AccountOperationGate()
+    app.state.realtime_connections = RealtimeConnectionRegistry()
     # The store initializes lazily for ASGI test clients that do not run lifespan.
     app.state.memory_store = MemoryStore(settings.memoria_db_path)
+    app.state.life_archive = LifeArchive.sqlite(settings.memoria_db_path)
+    app.state.memory_catalog = MemoryCatalog.sqlite(
+        settings.memoria_db_path,
+        extractor=_memory_extractor(settings),
+        account_guard=_memory_account_guard(
+            app.state.account_operations,
+            app.state.memory_store,
+        ),
+    )
+    app.state.persona_engine = PersonaEngine.sqlite(
+        settings.memoria_db_path,
+        extractor=_persona_extractor(settings),
+    )
+    app.state.speaker_authority = _speaker_authority(settings)
+    voice_profile_manager, voice_sample_signer, voice_object_store = _voice_profile_services(
+        settings
+    )
+    app.state.voice_profile_manager = voice_profile_manager
+    app.state.voice_sample_signer = voice_sample_signer
+    app.state.voice_object_store = voice_object_store
+    app.state.voice_preview_renderer = _voice_preview_renderer(settings)
+    archive_object_store = _archive_object_store(settings)
+    app.state.archive_object_store = archive_object_store
+    app.state.account_data_governance = _account_data_governance(
+        settings,
+        store=app.state.memory_store,
+        voice_profiles=voice_profile_manager,
+        archive_object_store=archive_object_store,
+        realtime_connections=app.state.realtime_connections,
+        account_operations=app.state.account_operations,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.origins_list(),
@@ -56,8 +518,12 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(auth_routes.router)
+    app.include_router(archive_routes.router)
     app.include_router(session_routes.router)
+    app.include_router(speaker_routes.router)
     app.include_router(memory_routes.router)
+    app.include_router(persona_routes.router)
+    app.include_router(voice_routes.router)
     app.include_router(readiness_routes.router)
 
     @app.get("/health/live")

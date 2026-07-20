@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
+import warnings
 
 import pytest
 from livekit.agents import llm
@@ -114,6 +116,70 @@ async def test_interrupt_command_restores_listen_and_unlocks_min_words() -> None
 
 
 @pytest.mark.asyncio
+async def test_interrupt_diagnostics_never_expose_transcript_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    published: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime = DuplexRuntime.create(session_id="private-interrupt")
+    runtime.set_event_publisher(publish)
+    await runtime.orchestrator.ready()
+    private_text = "啊，停一下，停一下！"
+    caplog.set_level(logging.INFO, logger="services.agent.src.duplex_runtime")
+
+    accepted, reason = runtime.accept_user_turn(private_text, speech_anchored=True)
+    await asyncio.sleep(0)
+
+    assert accepted is False
+    assert reason == "interrupt_command_only"
+    assert private_text not in "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "services.agent.src.duplex_runtime"
+    )
+    traces = [event for event in published if event.get("type") == "audio_trace"]
+    assert traces
+    for trace in traces:
+        detail = trace.get("detail")
+        if isinstance(detail, dict):
+            assert "text" not in detail
+            assert "candidate" not in detail
+    assert any(
+        isinstance(trace.get("detail"), dict)
+        and trace["detail"].get("text_len") == len(private_text)  # type: ignore[index,union-attr]
+        for trace in traces
+    )
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_immediate_close_after_control_turn_does_not_leak_coroutine() -> None:
+    runtime = DuplexRuntime.create(session_id="immediate-close")
+    await runtime.orchestrator.ready()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert runtime.accept_user_turn("等等", speech_anchored=None) == (
+            False,
+            "interrupt_command_only",
+        )
+        await runtime.close()
+        await asyncio.sleep(0)
+        gc.collect()
+        await asyncio.sleep(0)
+
+    assert [
+        warning
+        for warning in caught
+        if issubclass(warning.category, RuntimeWarning)
+        and "was never awaited" in str(warning.message)
+    ] == []
+
+
+@pytest.mark.asyncio
 async def test_after_control_chat_fail_opens_missing_speech_epoch() -> None:
     """After 停一下, next real question without LiveKit anchors must still answer."""
     runtime = DuplexRuntime.create(
@@ -164,8 +230,8 @@ async def test_stop_talking_phrase_acks_quietly() -> None:
 
 
 @pytest.mark.asyncio
-async def test_speaker_blocked_interrupt_recovers_instead_of_silence() -> None:
-    """LiveKit may stop audio before speaker gate; recover with continue path."""
+async def test_guest_interrupt_is_not_muted_by_legacy_voice_mismatch() -> None:
+    """A real guest may interrupt; log-mel mismatch is not identity authority."""
     recovered: list[str] = []
 
     async def _recover() -> None:
@@ -194,18 +260,18 @@ async def test_speaker_blocked_interrupt_recovers_instead_of_silence() -> None:
     runtime._was_speaking = True
     runtime._playback_started_ns = __import__("time").monotonic_ns()
     runtime.set_false_interrupt_recover(_recover)
-    # Nearby talker audio in rolling window → speaker reject
+    # Nearby talker audio in rolling window → guest interruption, not silence.
     runtime.feed_speaker_pcm(_signal_pcm(kind="bystander", seconds=4.0, seed=32))
     fence_before = runtime.fence
     new_fence = await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
-    assert new_fence.matches(fence_before)
+    assert not new_fence.matches(fence_before)
     await asyncio.sleep(0.05)
-    assert recovered == ["我继续。"]
+    assert recovered == []
     await runtime.close()
 
 
 @pytest.mark.asyncio
-async def test_enrolled_barge_in_rejects_nearby_talker() -> None:
+async def test_enrolled_barge_in_allows_a_real_guest_to_take_the_floor() -> None:
     from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
     from services.agent.tests.unit.test_speaker_verify import _signal_pcm
 
@@ -232,15 +298,15 @@ async def test_enrolled_barge_in_rejects_nearby_talker() -> None:
     score = verifier.score_pcm()
     assert score.accepted is False
     decision = runtime.on_user_voice_started()
-    assert decision is PlaybackInputDecision.IGNORE
+    assert decision is PlaybackInputDecision.WAIT
     await runtime.close()
 
 
 @pytest.mark.asyncio
 async def test_turn_commit_rejects_far_field_tablet_audio() -> None:
     """Quiet far-field media must not become a chat turn even if mel score is mid-band."""
-    from services.agent.tests.unit.test_speaker_verify import _signal_pcm
     import numpy as np
+    from services.agent.tests.unit.test_speaker_verify import _signal_pcm
 
     verifier = SpeakerVerifier(
         enabled=True,

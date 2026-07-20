@@ -50,15 +50,25 @@ def _validate_cosyvoice_result(
 
 
 async def smoke_cosyvoice() -> bytes:
-    cfg = CosyVoiceConfig(
-        api_key=os.environ["DASHSCOPE_API_KEY"],
-        ws_url=_dashscope_ws_url(),
-        model=os.getenv("COSYVOICE_MODEL", "cosyvoice-v3-flash"),
-        voice=os.getenv("COSYVOICE_VOICE", "longanyang"),
-        pool_size=1,
-    )
-    if cfg.model != "cosyvoice-v3-flash" or cfg.voice != "longanyang":
-        raise AssertionError("CosyVoice smoke requires cosyvoice-v3-flash + longanyang")
+    # Resolve designed profiles (v3.5) or system longanyang (v3-flash).
+    env = {
+        **os.environ,
+        "DASHSCOPE_API_KEY": os.environ["DASHSCOPE_API_KEY"],
+        "DASHSCOPE_WS_URL": _dashscope_ws_url(),
+        "COSYVOICE_POOL_SIZE": "1",
+    }
+    cfg = CosyVoiceConfig.from_env(env)
+    if "v3.5" in cfg.model:
+        if cfg.voice == "longanyang" or not cfg.voice:
+            raise AssertionError(
+                "v3.5 smoke requires a designed voice_id "
+                "(run scripts/design_cosyvoice_voices.py)"
+            )
+    elif cfg.model != "cosyvoice-v3-flash" or cfg.voice != "longanyang":
+        raise AssertionError(
+            "v3 smoke requires cosyvoice-v3-flash + longanyang, "
+            f"got model={cfg.model} voice={cfg.voice}"
+        )
     tts = CosyVoiceTTS(cfg)
     try:
         await tts.pool.warm(1)
@@ -75,7 +85,11 @@ async def smoke_cosyvoice() -> bytes:
         _validate_cosyvoice_result(asr_audio.pcm, asr_audio.words, cfg.sample_rate)
     finally:
         await tts.aclose()
-    print("CosyVoice smoke: PASS (supported Instruct + 24 kHz PCM + timestamps)")
+    mode = "freeform" if cfg.uses_freeform_instruct else "fixed"
+    print(
+        f"CosyVoice smoke: PASS (model={cfg.model} voice={cfg.voice} "
+        f"instruct={mode} + timestamps)"
+    )
     return audioop.ratecv(asr_audio.pcm, 2, 1, cfg.sample_rate, 16000, None)[0]
 
 
@@ -147,16 +161,19 @@ async def smoke_llm() -> str:
 
 
 async def main() -> int:
+    required = os.getenv("MEMORIA_PROVIDER_SMOKE_REQUIRED", "false").lower() == "true"
     if os.getenv("OFFLINE_MOCK", "false").lower() == "true":
-        print("provider_smoke_test SKIP: OFFLINE_MOCK=true")
-        return 0
+        message = "provider_smoke_test SKIP: OFFLINE_MOCK=true"
+        print(message)
+        return 1 if required else 0
     settings = AgentSettings()
     missing = [name for name in ("DASHSCOPE_API_KEY",) if not os.getenv(name)]
     if settings.llm_provider == "deepseek" and not os.getenv("DEEPSEEK_API_KEY"):
         missing.append("DEEPSEEK_API_KEY")
     if missing:
-        print("provider_smoke_test SKIP: missing " + ", ".join(missing))
-        return 0
+        message = "provider_smoke_test SKIP: missing " + ", ".join(missing)
+        print(message)
+        return 1 if required else 0
     try:
         pcm_16k = await smoke_cosyvoice()
         await smoke_funasr(pcm_16k)

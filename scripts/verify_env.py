@@ -11,77 +11,37 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from services.common.security_constants import DEV_AUTH_SECRET
+from pydantic import ValidationError
+from services.agent.src.config import load_settings
+from services.agent.src.contracts.errors import ConfigValidationError
 
 
 def _truthy(value: str) -> bool:
     return value.lower() in ("1", "true", "yes")
 
 
+def _validation_messages(error: ValidationError) -> list[str]:
+    messages: list[str] = []
+    for issue in error.errors():
+        cause = issue.get("ctx", {}).get("error")
+        message = str(cause) if cause is not None else str(issue["msg"])
+        if message.startswith("Value error, "):
+            message = message.removeprefix("Value error, ")
+        if message not in messages:
+            messages.append(message)
+    return messages
+
+
 def _validate_environment() -> tuple[list[str], bool, str]:
-    errors: list[str] = []
-
-    def req(name: str) -> str:
-        return os.getenv(name, "")
-
-    offline = _truthy(req("OFFLINE_MOCK") or "false")
-
-    if req("FUNASR_SAMPLE_RATE") not in ("", "16000"):
-        errors.append("FUNASR_SAMPLE_RATE must be 16000")
-    if req("COSYVOICE_SAMPLE_RATE") not in ("", "24000"):
-        errors.append("COSYVOICE_SAMPLE_RATE must be 24000")
-
+    offline = _truthy(os.getenv("OFFLINE_MOCK", "false"))
+    profile = os.getenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     try:
-        vad = float(req("VAD_MIN_SILENCE_DURATION_S") or "0.30")
-    except ValueError:
-        errors.append("VAD_MIN_SILENCE_DURATION_S must be a number")
-    else:
-        if vad < 0.25:
-            errors.append("VAD_MIN_SILENCE_DURATION_S must be >= 0.25")
-
-    if not _truthy(req("COSYVOICE_WORD_TIMESTAMPS") or "true"):
-        errors.append("COSYVOICE_WORD_TIMESTAMPS must be true")
-
-    profile = req("DEPLOYMENT_PROFILE") or "livekit_cloud"
-    if profile == "livekit_cloud" and not _truthy(
-        req("LIVEKIT_ADAPTIVE_INTERRUPTION") or "true"
-    ):
-        errors.append("livekit_cloud requires LIVEKIT_ADAPTIVE_INTERRUPTION=true")
-
-    for model_key in ("DEEPSEEK_FAST_MODEL", "DEEPSEEK_DEEP_MODEL"):
-        model = req(model_key)
-        if model in ("deepseek-chat", "deepseek-reasoner"):
-            errors.append(f"{model_key} uses deprecated model {model}")
-
-    environment = req("ENVIRONMENT") or "development"
-    if environment == "production":
-        if "*" in req("ALLOWED_ORIGINS"):
-            errors.append("production must not allow * CORS")
-        for key in ("PUBLIC_BASE_URL", "LIVEKIT_URL"):
-            value = req(key)
-            if value.startswith(("http://", "ws://")):
-                errors.append(f"production forbids plaintext {key}")
-        auth_secret = req("MEMORIA_AUTH_SECRET")
-        if auth_secret == DEV_AUTH_SECRET or len(auth_secret) < 32:
-            errors.append("production requires independent MEMORIA_AUTH_SECRET (>=32 chars)")
-        if auth_secret and auth_secret == req("LIVEKIT_API_SECRET"):
-            errors.append("MEMORIA_AUTH_SECRET must differ from LIVEKIT_API_SECRET")
-        release_tag = req("MEMORIA_RELEASE_TAG").strip().lower()
-        if release_tag in ("", "latest", "development"):
-            errors.append("production requires an immutable MEMORIA_RELEASE_TAG")
-
-    llm_provider = req("LLM_PROVIDER") or "qwen"
-    if llm_provider not in ("qwen", "deepseek"):
-        errors.append("LLM_PROVIDER must be qwen or deepseek")
-
-    if not offline:
-        for key in ("LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "DASHSCOPE_API_KEY"):
-            if not req(key):
-                errors.append(f"missing required env: {key} (set OFFLINE_MOCK=true to skip)")
-        if llm_provider == "deepseek" and not req("DEEPSEEK_API_KEY"):
-            errors.append("missing required env: DEEPSEEK_API_KEY for LLM_PROVIDER=deepseek")
-
-    return errors, offline, profile
+        settings = load_settings(require_keys=not offline)
+    except ValidationError as exc:
+        return _validation_messages(exc), offline, profile
+    except ConfigValidationError as exc:
+        return [str(exc)], offline, profile
+    return [], settings.offline_mock, settings.deployment_profile
 
 
 def _request_json(
@@ -131,6 +91,7 @@ def _mark_smokes_passed(base_url: str) -> bool:
             "llm_provider": os.getenv("LLM_PROVIDER", "qwen"),
             "release_tag": os.getenv("MEMORIA_RELEASE_TAG", "development"),
             "cosyvoice": True,
+            "cosyvoice_timestamps": True,
         },
     )
     if status != 200 or body.get("status") != "marked":

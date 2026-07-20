@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import inspect
 import logging
 import math
 import time
-from collections.abc import Awaitable, Callable
+import uuid
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -35,15 +37,26 @@ from services.agent.src.orchestration.prosody import (
     speech_plan_for_emotion,
     speech_plan_for_turn,
 )
-from services.agent.src.orchestration.speaker_verify import SpeakerGateState, SpeakerVerifier
+from services.agent.src.orchestration.speaker_verify import (
+    SpeakerGateState,
+    SpeakerVerifier,
+    voiced_stats_from_pcm,
+)
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
 from services.agent.src.orchestration.task_manager import ToolSpec, spoken_result_summarizer
 from services.agent.src.orchestration.utterance_router import (
     UtteranceIntent,
     UtteranceRoute,
+    route_speaker_gate,
     route_utterance,
 )
 from services.agent.src.providers.cosyvoice_tts import CosyVoicePool, CosyVoiceTTS
+from services.common.redaction import redact_pii
+from services.speaker.domain import (
+    SpeakerDecision,
+    SpeakerPermissions,
+    permissions_for_speaker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +143,20 @@ class DuplexRuntime:
     _last_playback_completed_ns: int | None = None
     _set_interruption_min_words: Callable[[int], None] | None = None
     _base_interruption_min_words: int = 0
-    _event_publisher: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+    _event_publisher: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None
+    _evidence_publisher: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None
+    _owner_turn_publisher: (
+        Callable[[dict[str, Any], bytes, int], Coroutine[Any, Any, None]] | None
+    ) = None
+    _speaker_class: str = "uncertain"
+    _speaker_decision: SpeakerDecision | None = None
+    _speaker_classifier: Callable[[bytes, int], Awaitable[SpeakerDecision]] | None = None
+    _speaker_sample_rate: int = 16000
+    _speaker_classify_timeout_s: float = 0.4
+    _speaker_epoch: int = 0
+    _speaker_pcm: bytearray = field(default_factory=bytearray)
+    _speaker_collecting: bool = False
+    _speaker_classification_task: asyncio.Task[Any] | None = None
     _result_speaker: Callable[[str], Any] | None = None
     _interrupt_yield: Callable[[str], Awaitable[None]] | None = None
     _false_interrupt_recover: Callable[[], Awaitable[None]] | None = None
@@ -142,6 +168,9 @@ class DuplexRuntime:
     CONTROL_RESTORE_SPEECH_EPOCH_GRACE_MS: int = 20_000
     _deep_client: Any | None = None
     _background_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
+    _durable_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
+    _durable_task_errors: list[BaseException] = field(default_factory=list)
+    _evidence_drain_timeout_s: float = 3.0
     # Friendly yield when we stop mid-reply so silence does not feel like a crash.
     INTERRUPT_YIELD_COOLDOWN_MS: int = 4_000
     FALSE_INTERRUPT_RECOVER_COOLDOWN_MS: int = 3_000
@@ -153,6 +182,8 @@ class DuplexRuntime:
     _listener_cue_aec_healthy: bool = False
     _emotion_turn_observer: Callable[[int], None] | None = None
     _emotion_by_turn: dict[int, EmotionObservation] = field(default_factory=dict)
+    _voice_profile_refresher: Callable[[], Coroutine[Any, Any, Any]] | None = None
+    _memory_context_refresher: Callable[[], Coroutine[Any, Any, Any]] | None = None
 
     @classmethod
     def create(
@@ -204,9 +235,44 @@ class DuplexRuntime:
 
     def set_event_publisher(
         self,
-        publisher: Callable[[dict[str, Any]], Awaitable[None]],
+        publisher: Callable[[dict[str, Any]], Coroutine[Any, Any, None]],
     ) -> None:
         self._event_publisher = publisher
+
+    def set_evidence_publisher(
+        self,
+        publisher: Callable[[dict[str, Any]], Coroutine[Any, Any, None]],
+    ) -> None:
+        self._evidence_publisher = publisher
+
+    def set_owner_turn_publisher(
+        self,
+        publisher: Callable[
+            [dict[str, Any], bytes, int],
+            Coroutine[Any, Any, None],
+        ],
+    ) -> None:
+        self._owner_turn_publisher = publisher
+
+    def set_speaker_classifier(
+        self,
+        classifier: Callable[[bytes, int], Awaitable[SpeakerDecision]],
+        *,
+        sample_rate: int,
+        timeout_s: float = 0.4,
+    ) -> None:
+        if sample_rate < 8000 or timeout_s <= 0:
+            raise ValueError("speaker classifier requires supported sample rate and timeout")
+        self._speaker_classifier = classifier
+        self._speaker_sample_rate = sample_rate
+        self._speaker_classify_timeout_s = timeout_s
+
+    @property
+    def speaker_permissions(self) -> SpeakerPermissions:
+        if self._speaker_decision is not None:
+            return self._speaker_decision.permissions
+        classification = self._speaker_class if self._speaker_class == "owner" else "uncertain"
+        return permissions_for_speaker(classification)  # type: ignore[arg-type]
 
     def set_result_speaker(self, speaker: Callable[[str], Any]) -> None:
         self._result_speaker = speaker
@@ -220,7 +286,42 @@ class DuplexRuntime:
     def set_emotion_turn_observer(self, observer: Callable[[int], None]) -> None:
         self._emotion_turn_observer = observer
 
+    def set_voice_profile_refresher(
+        self,
+        refresher: Callable[[], Coroutine[Any, Any, Any]],
+    ) -> None:
+        self._voice_profile_refresher = refresher
+
+    def refresh_voice_profile(self) -> asyncio.Task[Any] | None:
+        if self._voice_profile_refresher is None:
+            return None
+        baseline = getattr(self.tts, "use_baseline_voice", None)
+        if callable(baseline):
+            baseline()
+        return self._spawn(
+            self._voice_profile_refresher(),
+            name="voice-profile-refresh",
+        )
+
+    def set_memory_context_refresher(
+        self,
+        refresher: Callable[[], Coroutine[Any, Any, Any]],
+    ) -> None:
+        self._memory_context_refresher = refresher
+
+    def refresh_memory_context(self) -> asyncio.Task[Any] | None:
+        if self._memory_context_refresher is None:
+            return None
+        return self._spawn(
+            self._memory_context_refresher(),
+            name="memory-context-refresh",
+        )
+
     def feed_speaker_pcm(self, pcm: bytes) -> None:
+        if self._speaker_collecting and pcm:
+            self._speaker_pcm.extend(pcm)
+            if len(self._speaker_pcm) > 4 * 1024 * 1024:
+                del self._speaker_pcm[: len(self._speaker_pcm) - 4 * 1024 * 1024]
         # Never enroll assistant TTS that leaks into the mic during playback.
         # After begin_speaker_enrollment we force _was_speaking=False so user
         # enroll speech is always collected.
@@ -231,6 +332,108 @@ class DuplexRuntime:
         ):
             return
         self.speaker_verifier.feed_pcm(pcm)
+
+    def on_user_voice_stopped(self) -> None:
+        if self._speaker_collecting:
+            self.mark_audio_event("last_user_audio")
+        self._speaker_collecting = False
+        self.speaker_verifier.mark_utterance_end()
+        self._start_speaker_classification()
+
+    def _start_speaker_classification(self) -> None:
+        if (
+            self._speaker_classifier is None
+            or not self._speaker_pcm
+            or (
+                self._speaker_classification_task is not None
+                and not self._speaker_classification_task.done()
+            )
+        ):
+            return
+        epoch = self._speaker_epoch
+        pcm = bytes(self._speaker_pcm)
+        self._speaker_classification_task = self._spawn(
+            self._classify_speaker(epoch, pcm),
+            name=f"speaker-authority-{epoch}",
+        )
+
+    async def _classify_speaker(self, epoch: int, pcm: bytes) -> SpeakerDecision:
+        assert self._speaker_classifier is not None
+        try:
+            decision = await asyncio.wait_for(
+                self._speaker_classifier(pcm, self._speaker_sample_rate),
+                timeout=self._speaker_classify_timeout_s,
+            )
+        except TimeoutError:
+            decision = self._uncertain_speaker_decision("authority_timeout")
+        except Exception:
+            logger.warning("speaker authority unavailable", exc_info=True)
+            decision = self._uncertain_speaker_decision("authority_unavailable")
+        if epoch != self._speaker_epoch:
+            return decision
+        self._speaker_decision = decision
+        self._speaker_class = decision.classification
+        self._publish_speaker_decision(epoch, decision)
+        return decision
+
+    def _uncertain_speaker_decision(self, reason: str) -> SpeakerDecision:
+        return SpeakerDecision(
+            classification="uncertain",
+            score=None,
+            quality_score=0.0,
+            reason_code=reason,
+            model_version="unavailable",
+            template_version=None,
+            profile_id=None,
+            permissions=permissions_for_speaker("uncertain"),
+        )
+
+    def _publish_speaker_decision(self, epoch: int, decision: SpeakerDecision) -> None:
+        if self._evidence_publisher is None:
+            return
+        event = {
+            "event_id": str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"memoria:speaker-classification:{self.session_id}:{epoch}",
+                )
+            ),
+            "session_id": self.session_id,
+            "event_type": "speaker.classified",
+            "occurred_at": datetime.now(UTC).isoformat(),
+            "speaker_class": decision.classification,
+            "source": "speaker_authority.formal_embedding",
+            "turn_id": self.fence.turn_id + 1,
+            "generation_id": self.fence.generation_id,
+            "payload": {
+                "score": decision.score,
+                "quality_score": decision.quality_score,
+                "reason_code": decision.reason_code,
+                "model_version": decision.model_version,
+                "template_version": decision.template_version,
+                "profile_id": decision.profile_id,
+            },
+        }
+        self._spawn(
+            self._evidence_publisher(event),
+            name="duplex-evidence-speaker-classified",
+            durable=True,
+        )
+
+    async def await_speaker_classification(self) -> SpeakerDecision:
+        self._start_speaker_classification()
+        task = self._speaker_classification_task
+        if task is None:
+            decision = self._uncertain_speaker_decision(
+                "authority_unconfigured" if self._speaker_classifier is None else "no_audio"
+            )
+            self._speaker_decision = decision
+            self._speaker_class = "uncertain"
+            return decision
+        result = await task
+        if not isinstance(result, SpeakerDecision):  # pragma: no cover - task contract guard
+            return self._uncertain_speaker_decision("authority_invalid")
+        return result
 
     def begin_speaker_enrollment(self) -> None:
         # Fixed session.say may leave _was_speaking stuck True (playback_finished
@@ -314,8 +517,9 @@ class DuplexRuntime:
             return True
         if self.speaker_verifier.state in {
             SpeakerGateState.DISABLED,
-            SpeakerGateState.OPEN,
+            SpeakerGateState.UNAVAILABLE,
         }:
+            # Conversation stays open, but formal SpeakerAuthority remains uncertain.
             return True
         # Enrollment speech must not become a normal user turn / interrupt.
         if self.speaker_verifier.state is SpeakerGateState.PENDING:
@@ -336,7 +540,7 @@ class DuplexRuntime:
             if score.reason == "too_short":
                 # barge-in / interrupt: never cancel on micro-blips.
                 # turn_commit: fail-closed so tablet/TV fragments cannot enter chat.
-                if context in {"barge_in_start", "interrupt", "turn_commit"}:
+                if context in {"barge_in_start", "interrupt"}:
                     return False
                 return True
 
@@ -405,10 +609,10 @@ class DuplexRuntime:
         if media_like:
             thr = min(0.92, thr + 0.10)
 
-        dual_ok = (
-            utt.reason not in {"too_short", "embed_failed"}
-            and roll.reason not in {"too_short", "embed_failed"}
-        )
+        dual_ok = utt.reason not in {"too_short", "embed_failed"} and roll.reason not in {
+            "too_short",
+            "embed_failed",
+        }
         # Dual-window consensus: never accept on a single mid-band window.
         # Owner usually scores high on both utterance and rolling PCM.
         best = max(utt.score, roll.score) if dual_ok else score.score
@@ -463,6 +667,20 @@ class DuplexRuntime:
                 )
             return True
 
+        # A clear human voice mismatch is a guest, not noise. The shared router
+        # keeps this conversational path separate from private-memory authority.
+        gate_route = route_speaker_gate(score_reason=score.reason)
+        if gate_route.allow_input:
+            logger.info(
+                "speaker_gate_allow reason=%s context=%s utt=%.3f roll=%.3f session_id=%s",
+                gate_route.reason,
+                context,
+                utt.score,
+                roll.score,
+                self.session_id,
+            )
+            return True
+
         self.orchestrator.metrics.inc_guarded_user_input(f"speaker_{score.reason}")
         logger.info(
             "speaker_reject context=%s reason=%s utt=%.3f roll=%.3f "
@@ -504,16 +722,22 @@ class DuplexRuntime:
         )
         return False
 
-    def _spawn(self, awaitable: Awaitable[Any], *, name: str) -> asyncio.Task[Any]:
-        async def _run() -> Any:
-            return await awaitable
-
-        task: asyncio.Task[Any] = asyncio.create_task(_run(), name=name)
-        self._background_tasks.add(task)
+    def _spawn(
+        self,
+        coroutine: Coroutine[Any, Any, Any],
+        *,
+        name: str,
+        durable: bool = False,
+    ) -> asyncio.Task[Any]:
+        task: asyncio.Task[Any] = asyncio.create_task(coroutine, name=name)
+        tasks = self._durable_tasks if durable else self._background_tasks
+        tasks.add(task)
 
         def _done(completed: asyncio.Task[Any]) -> None:
-            self._background_tasks.discard(completed)
+            tasks.discard(completed)
             if not completed.cancelled() and (error := completed.exception()) is not None:
+                if durable:
+                    self._durable_task_errors.append(error)
                 logger.error(
                     "duplex background task failed: %s: %s",
                     completed.get_name(),
@@ -738,6 +962,91 @@ class DuplexRuntime:
         if heard is not None:
             event["heard"] = heard
         self._publish(event)
+        if not final or not text.strip():
+            return
+        archive_text = redact_pii(text.strip())
+        if speaker == "user":
+            event_type = "speech.utterance_finalized"
+            speaker_class = self._speaker_class
+            payload: dict[str, Any] = {"text": archive_text}
+            payload.update(self._owner_acoustic_evidence())
+        elif speaker == "assistant" and heard is True:
+            event_type = "assistant.playout_stopped"
+            speaker_class = "assistant"
+            payload = {"text": archive_text, "actual_heard": True}
+        else:
+            return
+        fingerprint = hashlib.sha256(
+            (
+                f"{self.session_id}\0{event_type}\0{speaker}\0"
+                f"{fence.turn_id}\0{fence.generation_id}\0{archive_text}"
+            ).encode()
+        ).hexdigest()
+        evidence = {
+            "event_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"memoria:evidence:{fingerprint}")),
+            "session_id": self.session_id,
+            "event_type": event_type,
+            "occurred_at": datetime.now(UTC).isoformat(),
+            "speaker_class": speaker_class,
+            "source": (
+                "generation_fence.actual_heard"
+                if speaker == "assistant"
+                else "funasr.authoritative_final"
+            ),
+            "turn_id": fence.turn_id,
+            "generation_id": fence.generation_id,
+            "payload": payload,
+        }
+        if speaker_class == "owner" and self._owner_turn_publisher is not None:
+            self._spawn(
+                self._owner_turn_publisher(
+                    evidence,
+                    bytes(self._speaker_pcm),
+                    self._speaker_sample_rate,
+                ),
+                name="duplex-evidence-owner-turn",
+                durable=True,
+            )
+        elif self._evidence_publisher is not None:
+            self._spawn(
+                self._evidence_publisher(evidence),
+                name=f"duplex-evidence-{event_type.replace('.', '-')}",
+                durable=True,
+            )
+
+    def _owner_acoustic_evidence(self) -> dict[str, int | float]:
+        decision = self._speaker_decision
+        if (
+            self._speaker_class != "owner"
+            or decision is None
+            or decision.classification != "owner"
+            or not decision.profile_id
+            or decision.template_version is None
+            or decision.template_version < 1
+            or not self._speaker_pcm
+        ):
+            return {}
+        stats = voiced_stats_from_pcm(
+            bytes(self._speaker_pcm),
+            sample_rate=self._speaker_sample_rate,
+        )
+        speech_ms = int(stats["speech_ms"])
+        duty = float(stats["duty"])
+        quality_score = float(decision.quality_score)
+        if (
+            speech_ms <= 0
+            or speech_ms > 600_000
+            or not math.isfinite(duty)
+            or not 0 <= duty <= 1
+            or not math.isfinite(quality_score)
+            or not 0 <= quality_score <= 1
+        ):
+            return {}
+        return {
+            "speech_ms": speech_ms,
+            "pause_ratio": min(1.0, max(0.0, 1.0 - duty)),
+            "quality_score": quality_score,
+        }
 
     def observe_acoustic_emotion(
         self,
@@ -925,6 +1234,17 @@ class DuplexRuntime:
         self.orchestrator.heard_tracker.set_full_text(text)
 
     def on_user_voice_started(self, *, now_ns: int | None = None) -> PlaybackInputDecision:
+        self.refresh_voice_profile()
+        self.refresh_memory_context()
+        self._speaker_epoch += 1
+        self._speaker_class = "uncertain"
+        self._speaker_decision = self._uncertain_speaker_decision("classification_pending")
+        self._speaker_pcm.clear()
+        self._speaker_collecting = True
+        previous_classification = self._speaker_classification_task
+        if previous_classification is not None and not previous_classification.done():
+            previous_classification.cancel()
+        self._speaker_classification_task = None
         self._fresh_user_speech = True
         self.speaker_verifier.mark_utterance_start()
         if not self._was_speaking:
@@ -951,9 +1271,7 @@ class DuplexRuntime:
                 # VAD may already have moved SPEAKING → INTERRUPTION_PENDING;
                 # dismiss so later commit_turn is not stuck.
                 self._spawn(
-                    self.orchestrator.dismiss_pending_interruption(
-                        cause="speaker_reject_barge_in"
-                    ),
+                    self.orchestrator.dismiss_pending_interruption(cause="speaker_reject_barge_in"),
                     name="dismiss-false-barge",
                 )
                 return PlaybackInputDecision.IGNORE
@@ -1005,15 +1323,13 @@ class DuplexRuntime:
                 early = self.poll_speaker_enrollment()
                 if early is not None and early.get("reason") == "enrolled":
                     logger.info(
-                        "speaker_enroll early_finalize_on_endpoint speech_ms=%s "
-                        "session_id=%s",
+                        "speaker_enroll early_finalize_on_endpoint speech_ms=%s session_id=%s",
                         speech_ms,
                         self.session_id,
                     )
             self.orchestrator.metrics.inc_guarded_user_input("speaker_enrolling")
             logger.info(
-                "user_turn_ignored reason=speaker_enrolling text_len=%s "
-                "speech_ms=%s session_id=%s",
+                "user_turn_ignored reason=speaker_enrolling text_len=%s speech_ms=%s session_id=%s",
                 len(text),
                 speech_ms,
                 self.session_id,
@@ -1025,18 +1341,18 @@ class DuplexRuntime:
             self.input_guard.candidate_text = text
             self.orchestrator.metrics.inc_guarded_user_input(route.reason)
             logger.info(
-                "user_turn_ignored reason=%s intent=%s text=%s session_id=%s",
+                "user_turn_ignored reason=%s intent=%s text_len=%s session_id=%s",
                 route.reason,
                 route.intent,
-                text[:40],
+                len(text),
                 self.session_id,
             )
             self.mark_audio_event(
                 "interrupt_command_turn_suppressed",
                 detail={
-                    "text": text[:40],
+                    "text_len": len(text),
                     "intent": route.intent,
-                    "ack": route.ack_phrase,
+                    "ack_len": len(route.ack_phrase or ""),
                 },
             )
             # Hand floor back: unlock LiveKit min_words so the next real utterance
@@ -1145,15 +1461,11 @@ class DuplexRuntime:
             await self.orchestrator.begin_speaking([], self._pending_assistant_text)
             await self.orchestrator.finish_speaking(tools_active=tools_active)
 
-    def set_interrupt_yield(
-        self, speaker: Callable[[str], Awaitable[None]] | None
-    ) -> None:
+    def set_interrupt_yield(self, speaker: Callable[[str], Awaitable[None]] | None) -> None:
         """speaker(phrase) — phrase is chosen from interrupt semantics."""
         self._interrupt_yield = speaker
 
-    def set_false_interrupt_recover(
-        self, recover: Callable[[], Awaitable[None]] | None
-    ) -> None:
+    def set_false_interrupt_recover(self, recover: Callable[[], Awaitable[None]] | None) -> None:
         """Called when LiveKit already stopped audio but speaker gate rejected barge-in."""
         self._false_interrupt_recover = recover
 
@@ -1223,8 +1535,8 @@ class DuplexRuntime:
             "interrupt_yield_started",
             detail={
                 "cause": cause,
-                "phrase": phrase,
-                "candidate": candidate[:40],
+                "ack_len": len(phrase),
+                "candidate_len": len(candidate),
                 "intent": route.intent,
             },
         )
@@ -1232,7 +1544,7 @@ class DuplexRuntime:
             await self._interrupt_yield(phrase)
             self.mark_audio_event(
                 "interrupt_yield_done",
-                detail={"cause": cause, "phrase": phrase},
+                detail={"cause": cause, "ack_len": len(phrase)},
             )
         except Exception:
             logger.warning("interrupt yield failed cause=%s", cause, exc_info=True)
@@ -1263,9 +1575,7 @@ class DuplexRuntime:
                 detail={"cause": cause},
             )
         except Exception:
-            logger.warning(
-                "false interrupt recover failed cause=%s", cause, exc_info=True
-            )
+            logger.warning("false interrupt recover failed cause=%s", cause, exc_info=True)
             self.mark_audio_event(
                 "false_interrupt_recover_done",
                 status="error",
@@ -1299,16 +1609,14 @@ class DuplexRuntime:
             # stopped audio, so recover instead of dead silence.
             # Never recover when user said「停一下」etc. — that is a real yield.
             self.speaker_verifier.mark_utterance_end()
-            await self.orchestrator.dismiss_pending_interruption(
-                cause="speaker_reject_interrupt"
-            )
+            await self.orchestrator.dismiss_pending_interruption(cause="speaker_reject_interrupt")
             self.mark_audio_event(
                 "interrupt_blocked_by_speaker",
                 status="ignored",
                 detail={
                     "cause": cause,
                     "mid_reply": mid_reply,
-                    "candidate": candidate[:40],
+                    "candidate_len": len(candidate),
                     "intent": barge_route.intent,
                 },
             )
@@ -1320,8 +1628,8 @@ class DuplexRuntime:
             return self.fence
         if owner_cmd and create_user_turn:
             logger.info(
-                "explicit_interrupt_cmd text=%s intent=%s cause=%s session_id=%s",
-                candidate[:40],
+                "explicit_interrupt_cmd text_len=%s intent=%s cause=%s session_id=%s",
+                len(candidate),
                 barge_route.intent,
                 cause,
                 self.session_id,
@@ -1329,7 +1637,7 @@ class DuplexRuntime:
             self.mark_audio_event(
                 "explicit_interrupt_cmd",
                 detail={
-                    "text": candidate[:40],
+                    "text_len": len(candidate),
                     "cause": cause,
                     "intent": barge_route.intent,
                 },
@@ -1654,6 +1962,7 @@ class DuplexRuntime:
                     _set_min_words(base_min_words)
                 return
             if state == "listening":
+                self.on_user_voice_stopped()
                 # Always restore ducked gain when user stops (P1 duck-first).
                 if ducked:
                     _restore_audio()
@@ -1670,8 +1979,7 @@ class DuplexRuntime:
                         if (
                             self.input_guard.candidate_active
                             and self.input_guard.candidate_started_ns == candidate_started
-                            and self.input_guard.candidate_decision
-                            is PlaybackInputDecision.WAIT
+                            and self.input_guard.candidate_decision is PlaybackInputDecision.WAIT
                         ):
                             _restore_audio()
                             _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
@@ -1700,10 +2008,7 @@ class DuplexRuntime:
             }.get(state_s)
             if mapped is not None:
                 # Do not clobber an active listener backchannel with idle/listening.
-                if (
-                    mapped == "listening"
-                    and self.interaction_phase is InteractionPhase.BACKCHANNEL
-                ):
+                if mapped == "listening" and self.interaction_phase is InteractionPhase.BACKCHANNEL:
                     return
                 self.publish_assistant_state(mapped)
 
@@ -1816,6 +2121,29 @@ class DuplexRuntime:
         for unsub in self._unsubscribers:
             with contextlib.suppress(Exception):
                 unsub()
+        # A classification already in flight can still emit the final
+        # speaker.classified evidence. Give its own bounded provider timeout a
+        # chance to finish before closing the evidence admission gate.
+        speaker_task = self._speaker_classification_task
+        if speaker_task is not None and not speaker_task.done():
+            await asyncio.wait(
+                {speaker_task},
+                timeout=self._speaker_classify_timeout_s + 0.1,
+            )
+        # Stop admitting new evidence, then give already-created durable tasks
+        # a bounded drain window. ArchiveSink persists a task before a timeout
+        # cancellation can propagate.
+        self._evidence_publisher = None
+        durable_tasks = tuple(self._durable_tasks)
+        if durable_tasks:
+            _, pending = await asyncio.wait(
+                durable_tasks,
+                timeout=self._evidence_drain_timeout_s,
+            )
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
         for task in tuple(self._background_tasks):
             task.cancel()
         if self._background_tasks:
@@ -1823,6 +2151,10 @@ class DuplexRuntime:
         await self.orchestrator.close()
         if self._deep_client is not None:
             await self._deep_client.aclose()
+        if self._durable_task_errors:
+            raise RuntimeError("one or more durable evidence tasks failed") from (
+                self._durable_task_errors[0]
+            )
 
 
 def _needs_deep_path(text: str) -> bool:

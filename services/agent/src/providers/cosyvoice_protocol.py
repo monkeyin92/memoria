@@ -277,26 +277,20 @@ def scale_word_timestamps(
             for w in words
         )
         return scaled, "ok"
-    if err <= 300:
-        factor = pcm_duration_ms_value / last_end
-        scaled = tuple(
-            TimedWord(
-                text=w.text,
-                begin_ms=int(w.begin_ms * factor) + offset_ms,
-                end_ms=int(w.end_ms * factor) + offset_ms,
-                punctuation=w.punctuation,
-            )
-            for w in words
-        )
-        return scaled, "scaled"
-    # degraded: still apply offset, mark for caller
+    # Always linear-stretch to PCM when off by more than 120ms so Adaptive
+    # Interruption / HeardTextTracker stay aligned with real playback. Designed
+    # v3.5 voices often trail ~0.5s; still usable after scale.
+    factor = pcm_duration_ms_value / last_end
     scaled = tuple(
         TimedWord(
             text=w.text,
-            begin_ms=w.begin_ms + offset_ms,
-            end_ms=w.end_ms + offset_ms,
+            begin_ms=int(w.begin_ms * factor) + offset_ms,
+            end_ms=int(w.end_ms * factor) + offset_ms,
             punctuation=w.punctuation,
         )
         for w in words
     )
+    if err <= 300:
+        return scaled, "scaled"
+    # Large mismatch: timestamps were scaled to PCM but quality is degraded.
     return scaled, "degraded"

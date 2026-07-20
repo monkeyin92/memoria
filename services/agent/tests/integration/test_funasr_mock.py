@@ -127,15 +127,16 @@ async def test_funasr_runtime_disconnect_reconnects_and_replays_ring() -> None:
 
 
 @pytest.mark.asyncio
-async def test_funasr_handshake_timeout_closes_socket_and_has_no_recv_task() -> None:
+async def test_funasr_task_start_timeout_closes_socket_and_has_no_recv_task() -> None:
     srv = MockFunASRServer(scenario="handshake_timeout")
     srv.start()
     try:
         session = FunASRSession(
-            FunASRConfig(api_key="test", ws_url=srv.ws_url, connect_timeout_s=0.02)
+            FunASRConfig(api_key="test", ws_url=srv.ws_url, connect_timeout_s=0.2)
         )
         with pytest.raises(TimeoutError):
             await session._open_once()
+        assert len(srv.tasks_started) == 1
         assert await asyncio.to_thread(srv.connection_closed.wait, 1.0)
 
         assert session._recv_task is None

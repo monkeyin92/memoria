@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
@@ -29,6 +30,7 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
     await runtime.on_turn_committed("当前问题")
     runtime.orchestrator.context.commit_assistant_heard("实际听到的旧回复")
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._current_speaker_class = "owner"
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="旧问题")
     chat_ctx.add_message(role="assistant", content="未听到的完整旧回复")
@@ -147,6 +149,31 @@ async def test_non_preemptive_turn_commits_fence_before_first_llm_token(
     assert "你好，有什么可以帮你的吗？" in output
     assert runtime.orchestrator.fence_gate is not None
     assert runtime.orchestrator.fence_gate.dropped_count == 0
+
+
+@pytest.mark.asyncio
+async def test_committed_private_transcript_never_enters_agent_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runtime = DuplexRuntime.create()
+    await runtime.orchestrator.ready()
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    private_text = "我的私人保险资料只应进入加密档案"
+
+    class Message:
+        def text_content(self) -> str:
+            return private_text
+
+    caplog.set_level(logging.INFO, logger="services.agent.src.agent")
+    await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "services.agent.src.agent"
+    ]
+    assert private_text not in "\n".join(messages)
+    assert any(f"text_len={len(private_text)}" in message for message in messages)
 
 
 @pytest.mark.asyncio
@@ -413,6 +440,9 @@ async def test_agent_tts_and_transcription_nodes_gate_and_track(
         staticmethod(fake_transcription_node),
     )
     frames = [frame async for frame in agent.tts_node(_text_source("回答。"), None)]
+    assert runtime.heard_tracker.observe_alignment(
+        runtime.fence, "current-task", "started"
+    ) is True
     transcript = [delta async for delta in agent.transcription_node(_text_source("ignored"), None)]
 
     assert len(frames) == 2
@@ -421,6 +451,36 @@ async def test_agent_tts_and_transcription_nodes_gate_and_track(
     assert [word.text for word in runtime.heard_tracker.words] == ["你"]
     assert len(transcript) == 3
     assert runtime.orchestrator.active_tts_task is None
+
+
+@pytest.mark.asyncio
+async def test_agent_omits_degraded_timed_suffix_from_livekit_heard_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create()
+    await runtime.on_turn_committed("问题")
+    runtime.heard_tracker.expect_utterance(runtime.fence)
+    runtime.heard_tracker.observe_alignment(runtime.fence, "task", "started")
+    runtime.heard_tracker.observe_alignment(runtime.fence, "task", "degraded")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+
+    async def fake_transcription_node(
+        _agent: Any,
+        _text: AsyncIterator[Any],
+        _settings: Any,
+    ) -> AsyncIterator[Any]:
+        yield TimedString("伪精确后缀", start_time=0.0, end_time=0.4)
+
+    monkeypatch.setattr(
+        agent_mod.Agent.default,
+        "transcription_node",
+        staticmethod(fake_transcription_node),
+    )
+
+    transcript = [delta async for delta in agent.transcription_node(_text_source("ignored"), None)]
+
+    assert transcript == []
+    assert [word.text for word in runtime.heard_tracker.words] == ["伪精确后缀"]
 
 
 def test_agent_helpers_prewarm_and_turn_handling_fallback(
@@ -520,12 +580,10 @@ def test_self_hosted_turn_handling_filters_short_echoes_and_reads_timing_env(
     options = agent_mod.build_turn_handling_options("cn_self_hosted")
     assert options["endpointing"] == {
         "mode": "dynamic",
-        "min_delay": 1.30,
-        "max_delay": 2.00,
+        "min_delay": 0.90,
+        "max_delay": 1.50,
         "alpha": 0.85,
     }
-    # Keep endpoint above ~1.2s so late FunASR FINAL fragments stay one epoch.
-    assert options["endpointing"]["min_delay"] >= 1.20
     assert options["interruption"]["min_duration"] == 0.55
     assert options["interruption"]["min_words"] == 0
     assert options["interruption"]["false_interruption_timeout"] == 1.50
@@ -604,9 +662,30 @@ class _FakeTTS:
     def __init__(self) -> None:
         self.pool = _FakePool()
         self.bound: list[Any] = []
+        self.alignment_callback: Any | None = None
 
     def bind_fence(self, fence: Any) -> None:
         self.bound.append(fence)
+
+    def set_alignment_callback(self, callback: Any) -> None:
+        self.alignment_callback = callback
+
+
+@pytest.mark.asyncio
+async def test_agent_alignment_callback_rejects_a_stale_runtime_fence() -> None:
+    fake_tts = _FakeTTS()
+    runtime = DuplexRuntime.create(tts=fake_tts)  # type: ignore[arg-type]
+    DuplexVoiceAgent(instructions="test", runtime=runtime)
+    callback = fake_tts.alignment_callback
+    assert callback is not None
+
+    stale = runtime.fence
+    runtime.heard_tracker.expect_utterance(stale)
+    callback(stale, "old-task", "started")
+    await runtime.orchestrator.bump_tool_epoch_on_condition_change()
+    callback(stale, "old-task", "degraded")
+
+    assert runtime.heard_tracker.alignment_degraded is False
 
 
 class _FakeAudio(_Emitter):

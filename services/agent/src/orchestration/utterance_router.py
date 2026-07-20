@@ -37,6 +37,27 @@ class UtteranceIntent(StrEnum):
 
 
 @dataclass(frozen=True)
+class SpeakerGateRoute:
+    """Control-plane outcome for the legacy acoustic guard.
+
+    The acoustic verifier can distinguish human speech from likely media/noise,
+    but it is not identity authority. A clear mismatch therefore stays a
+    conversational guest path instead of becoming a muted turn.
+    """
+
+    allow_input: bool
+    reason: str
+
+
+def route_speaker_gate(*, score_reason: str) -> SpeakerGateRoute:
+    """Map an acoustic score outcome to the single user-input policy table."""
+
+    if score_reason == "mismatch":
+        return SpeakerGateRoute(allow_input=True, reason="guest_mismatch")
+    return SpeakerGateRoute(allow_input=False, reason=score_reason)
+
+
+@dataclass(frozen=True)
 class UtteranceRoute:
     intent: UtteranceIntent
     reason: str
@@ -55,7 +76,6 @@ class UtteranceRoute:
     """Fixed TTS ack when suppressing or yielding (semantic 嗯你说 / 好的)."""
 
     normalized_text: str
-
 
 def _as_speaker_state(
     speaker_state: SpeakerGateState | str | None,
@@ -86,7 +106,6 @@ def route_utterance(
     """
     normalized = normalize_short(text)
     state = _as_speaker_state(speaker_state)
-
     # 1) Enrollment speech is never chat — even if ASR looked like「停一下」.
     if state is SpeakerGateState.PENDING:
         return UtteranceRoute(

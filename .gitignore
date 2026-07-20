@@ -57,11 +57,19 @@ apps/ios/**/build/
 tmp/
 scratch/
 
+# Local mascot cutout backups (opaque masters)
+apps/h5/public/assets/_opaque_backup/
+apps/h5/qa/mascot-cutout-*.png
+
 # Docker volumes
 postgres-data/
 redis-data/
+data/
 
 # Audio dumps (privacy)
 *.wav
 !services/agent/tests/fixtures/audio/**
 !tests/e2e/fixtures/**
+
+# CosyVoice design previews (binary); registry JSON is committed for deploy
+infra/voices/previews/

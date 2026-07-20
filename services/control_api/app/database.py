@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
+import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -22,6 +24,16 @@ CREATE TABLE IF NOT EXISTS profiles (
     gentle_reminders INTEGER NOT NULL DEFAULT 0 CHECK (gentle_reminders IN (0, 1)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS accounts (
+    user_id TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    username_normalized TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES profiles(user_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -54,7 +66,7 @@ CREATE TABLE IF NOT EXISTS voice_sessions (
     user_id TEXT NOT NULL,
     room_name TEXT NOT NULL UNIQUE,
     voice_backend TEXT NOT NULL DEFAULT 'cascade'
-        CHECK (voice_backend IN ('cascade', 'qwen_omni', 'qwen_omni_plus')),
+        CHECK (voice_backend IN ('cascade', 'qwen_omni')),
     omni_sdp_exchanges INTEGER NOT NULL DEFAULT 0
         CHECK (omni_sdp_exchanges >= 0),
     created_at TEXT NOT NULL,
@@ -64,11 +76,34 @@ CREATE TABLE IF NOT EXISTS voice_sessions (
 CREATE INDEX IF NOT EXISTS idx_voice_sessions_user
 ON voice_sessions(user_id, created_at);
 
+CREATE TABLE IF NOT EXISTS voice_session_tombstones (
+    session_id TEXT PRIMARY KEY,
+    user_id_hash TEXT NOT NULL,
+    deleted_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_voice_session_tombstones_user
+ON voice_session_tombstones(user_id_hash, deleted_at);
+
 CREATE TABLE IF NOT EXISTS readiness_evidence (
     release_tag TEXT NOT NULL,
     llm_provider TEXT NOT NULL CHECK (llm_provider IN ('qwen', 'deepseek')),
     marked_at TEXT NOT NULL,
     PRIMARY KEY (release_tag, llm_provider)
+);
+
+CREATE TABLE IF NOT EXISTS account_deletions (
+    user_id_hash TEXT PRIMARY KEY,
+    user_id TEXT UNIQUE,
+    request_id TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK (status IN ('deleting', 'completed')),
+    step TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    progress_json TEXT NOT NULL DEFAULT '{}',
+    last_error TEXT,
+    deleted_counts_json TEXT NOT NULL DEFAULT '{}'
 );
 """
 
@@ -153,10 +188,10 @@ class MemoryStore:
                         "CHECK (omni_sdp_exchanges >= 0)"
                     )
                 voice_session_sql = connection.execute(
-                    "SELECT sql FROM sqlite_master "
-                    "WHERE type = 'table' AND name = 'voice_sessions'"
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'voice_sessions'"
                 ).fetchone()
-                if voice_session_sql and "qwen_omni_plus" not in str(voice_session_sql[0]):
+                voice_session_definition = str(voice_session_sql[0]) if voice_session_sql else ""
+                if "qwen_audio" in voice_session_definition or "qwen_omni_plus" in voice_session_definition:
                     connection.executescript(
                         """
                         ALTER TABLE voice_sessions RENAME TO voice_sessions_legacy;
@@ -165,11 +200,7 @@ class MemoryStore:
                             user_id TEXT NOT NULL,
                             room_name TEXT NOT NULL UNIQUE,
                             voice_backend TEXT NOT NULL DEFAULT 'cascade'
-                                CHECK (
-                                    voice_backend IN (
-                                        'cascade', 'qwen_omni', 'qwen_omni_plus'
-                                    )
-                                ),
+                                CHECK (voice_backend IN ('cascade', 'qwen_omni')),
                             omni_sdp_exchanges INTEGER NOT NULL DEFAULT 0
                                 CHECK (omni_sdp_exchanges >= 0),
                             created_at TEXT NOT NULL,
@@ -184,13 +215,51 @@ class MemoryStore:
                             session_id,
                             user_id,
                             room_name,
-                            voice_backend,
+                            CASE
+                                WHEN voice_backend = 'qwen_omni_plus' THEN 'qwen_omni'
+                                WHEN voice_backend = 'qwen_audio' THEN 'cascade'
+                                ELSE voice_backend
+                            END,
                             COALESCE(omni_sdp_exchanges, 0),
                             created_at
                         FROM voice_sessions_legacy;
                         DROP TABLE voice_sessions_legacy;
                         CREATE INDEX IF NOT EXISTS idx_voice_sessions_user
                         ON voice_sessions(user_id, created_at);
+                        """
+                    )
+                deletion_columns = {
+                    str(row[1])
+                    for row in connection.execute("PRAGMA table_info(account_deletions)")
+                }
+                if "status" not in deletion_columns:
+                    connection.executescript(
+                        """
+                        ALTER TABLE account_deletions RENAME TO account_deletions_legacy;
+                        CREATE TABLE account_deletions (
+                            user_id_hash TEXT PRIMARY KEY,
+                            user_id TEXT UNIQUE,
+                            request_id TEXT NOT NULL UNIQUE,
+                            status TEXT NOT NULL
+                                CHECK (status IN ('deleting', 'completed')),
+                            step TEXT NOT NULL,
+                            started_at TEXT NOT NULL,
+                            updated_at TEXT NOT NULL,
+                            completed_at TEXT,
+                            progress_json TEXT NOT NULL DEFAULT '{}',
+                            last_error TEXT,
+                            deleted_counts_json TEXT NOT NULL DEFAULT '{}'
+                        );
+                        INSERT INTO account_deletions (
+                            user_id_hash, request_id, status, step, started_at,
+                            updated_at, completed_at, deleted_counts_json
+                        )
+                        SELECT
+                            user_id_hash, request_id, 'completed', 'completed',
+                            completed_at, completed_at, completed_at,
+                            deleted_counts_json
+                        FROM account_deletions_legacy;
+                        DROP TABLE account_deletions_legacy;
                         """
                     )
             self._initialized = True
@@ -251,6 +320,294 @@ class MemoryStore:
             raise RuntimeError("message insert failed")
         return dict(row)
 
+    def register_account(
+        self,
+        *,
+        user_id: str,
+        username: str,
+        username_normalized: str,
+        password_hash: str,
+        now: str,
+    ) -> dict[str, Any]:
+        with self._connection() as connection:
+            self._ensure_profile(connection, user_id, now)
+            connection.execute(
+                """
+                INSERT INTO accounts (
+                    user_id, username, username_normalized, password_hash,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, username, username_normalized, password_hash, now, now),
+            )
+            row = connection.execute(
+                """
+                SELECT user_id, username, username_normalized, password_hash,
+                       created_at, updated_at
+                FROM accounts WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        if row is None:  # pragma: no cover - inserted in the same transaction
+            raise RuntimeError("account insert failed")
+        return dict(row)
+
+    def get_account_by_username(self, *, username_normalized: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT user_id, username, username_normalized, password_hash,
+                       created_at, updated_at
+                FROM accounts WHERE username_normalized = ?
+                """,
+                (username_normalized,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_account(self, *, user_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT user_id, username, username_normalized, password_hash,
+                       created_at, updated_at
+                FROM accounts WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    @staticmethod
+    def _user_id_hash(user_id: str) -> str:
+        return hashlib.sha256(user_id.encode("utf-8")).hexdigest()
+
+    def is_account_deleted(self, *, user_id: str) -> bool:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM account_deletions
+                WHERE user_id_hash = ? AND status = 'completed'
+                """,
+                (self._user_id_hash(user_id),),
+            ).fetchone()
+        return row is not None
+
+    def is_account_unavailable(self, *, user_id: str) -> bool:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM account_deletions WHERE user_id_hash = ?",
+                (self._user_id_hash(user_id),),
+            ).fetchone()
+        return row is not None
+
+    def get_account_deletion(self, *, user_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT request_id, status, step, started_at, updated_at,
+                       completed_at, progress_json, last_error,
+                       deleted_counts_json
+                FROM account_deletions WHERE user_id_hash = ?
+                """,
+                (self._user_id_hash(user_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["progress"] = json.loads(str(result.pop("progress_json")))
+        result["deleted_counts"] = json.loads(str(result.pop("deleted_counts_json")))
+        return result
+
+    def begin_account_deletion(self, *, user_id: str, started_at: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT request_id FROM account_deletions WHERE user_id_hash = ?",
+                (self._user_id_hash(user_id),),
+            ).fetchone()
+            if existing is None:
+                connection.execute(
+                    """
+                    INSERT INTO account_deletions (
+                        user_id_hash, user_id, request_id, status, step,
+                        started_at, updated_at
+                    ) VALUES (?, ?, ?, 'deleting', 'started', ?, ?)
+                    """,
+                    (
+                        self._user_id_hash(user_id),
+                        user_id,
+                        str(uuid.uuid4()),
+                        started_at,
+                        started_at,
+                    ),
+                )
+        deletion = self.get_account_deletion(user_id=user_id)
+        if deletion is None:  # pragma: no cover - inserted/read in one local store
+            raise RuntimeError("account deletion initialization failed")
+        return deletion
+
+    def update_account_deletion(
+        self,
+        *,
+        user_id: str,
+        request_id: str,
+        step: str,
+        updated_at: str,
+        progress: Mapping[str, int] | None = None,
+        last_error: str | None = None,
+    ) -> dict[str, Any]:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE account_deletions
+                SET step = ?, updated_at = ?, progress_json = ?, last_error = ?
+                WHERE user_id_hash = ? AND request_id = ? AND status = 'deleting'
+                """,
+                (
+                    step,
+                    updated_at,
+                    json.dumps(progress or {}, sort_keys=True, separators=(",", ":")),
+                    last_error,
+                    self._user_id_hash(user_id),
+                    request_id,
+                ),
+            )
+        if cursor.rowcount != 1:
+            raise RuntimeError("account deletion request is not active")
+        deletion = self.get_account_deletion(user_id=user_id)
+        if deletion is None:  # pragma: no cover - updated/read in one local store
+            raise RuntimeError("account deletion update failed")
+        return deletion
+
+    def pending_account_deletions(self, *, limit: int = 100) -> tuple[str, ...]:
+        if not 1 <= limit <= 1000:
+            raise ValueError("pending deletion limit must be between 1 and 1000")
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT user_id FROM account_deletions
+                WHERE status = 'deleting' AND user_id IS NOT NULL
+                ORDER BY started_at LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return tuple(str(row["user_id"]) for row in rows)
+
+    def export_account_data(self, *, user_id: str) -> dict[str, Any]:
+        with self._connection() as connection:
+            profile = connection.execute(
+                """
+                SELECT user_id, display_name, bio, avatar_url, timezone,
+                       auto_summary, voice_reply, gentle_reminders,
+                       created_at, updated_at
+                FROM profiles WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            account = connection.execute(
+                """
+                SELECT user_id, username, created_at, updated_at
+                FROM accounts WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            messages = connection.execute(
+                """
+                SELECT id, role, text, emotion, local_date, created_at
+                FROM messages WHERE user_id = ? ORDER BY id
+                """,
+                (user_id,),
+            ).fetchall()
+            summaries = connection.execute(
+                """
+                SELECT summary_date, content_json, source, message_count, generated_at
+                FROM daily_summaries WHERE user_id = ? ORDER BY summary_date
+                """,
+                (user_id,),
+            ).fetchall()
+            sessions = connection.execute(
+                """
+                SELECT session_id, voice_backend, created_at
+                FROM voice_sessions WHERE user_id = ? ORDER BY created_at, session_id
+                """,
+                (user_id,),
+            ).fetchall()
+        profile_data = dict(profile) if profile is not None else None
+        if profile_data is not None:
+            for key in ("auto_summary", "voice_reply", "gentle_reminders"):
+                profile_data[key] = bool(profile_data[key])
+        summary_data = []
+        for row in summaries:
+            item = dict(row)
+            item["content"] = json.loads(str(item.pop("content_json")))
+            summary_data.append(item)
+        return {
+            "profile": profile_data,
+            "account": dict(account) if account is not None else None,
+            "messages": [dict(row) for row in messages],
+            "daily_summaries": summary_data,
+            "voice_sessions": [dict(row) for row in sessions],
+        }
+
+    def finalize_account_deletion(
+        self,
+        *,
+        user_id: str,
+        request_id: str,
+        completed_at: str,
+        deleted_counts: Mapping[str, int],
+    ) -> dict[str, int]:
+        with self._connection() as connection:
+            deletion = connection.execute(
+                """
+                SELECT request_id, status, deleted_counts_json
+                FROM account_deletions WHERE user_id_hash = ?
+                """,
+                (self._user_id_hash(user_id),),
+            ).fetchone()
+            if deletion is None or str(deletion["request_id"]) != request_id:
+                raise RuntimeError("account deletion request is not active")
+            if str(deletion["status"]) == "completed":
+                return {
+                    str(key): int(value)
+                    for key, value in json.loads(str(deletion["deleted_counts_json"])).items()
+                }
+            counts = {
+                "messages": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM messages WHERE user_id = ?", (user_id,)
+                    ).fetchone()[0]
+                ),
+                "daily_summaries": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM daily_summaries WHERE user_id = ?", (user_id,)
+                    ).fetchone()[0]
+                ),
+                "voice_sessions": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM voice_sessions WHERE user_id = ?", (user_id,)
+                    ).fetchone()[0]
+                ),
+            }
+            connection.execute("DELETE FROM profiles WHERE user_id = ?", (user_id,))
+            combined = {**deleted_counts, **counts}
+            connection.execute(
+                """
+                UPDATE account_deletions
+                SET user_id = NULL, status = 'completed', step = 'completed',
+                    updated_at = ?, completed_at = ?, progress_json = '{}',
+                    last_error = NULL, deleted_counts_json = ?
+                WHERE user_id_hash = ? AND request_id = ? AND status = 'deleting'
+                """,
+                (
+                    completed_at,
+                    completed_at,
+                    json.dumps(combined, sort_keys=True, separators=(",", ":")),
+                    self._user_id_hash(user_id),
+                    request_id,
+                ),
+            )
+        return combined
+
     def add_voice_session(
         self,
         *,
@@ -293,6 +650,58 @@ class MemoryStore:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def get_voice_session_by_id(self, *, session_id: str) -> dict[str, Any] | None:
+        """Resolve archive ownership server-side; never accept account_id from an Agent."""
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT session_id, user_id, room_name, voice_backend, created_at
+                FROM voice_sessions WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_voice_sessions(self, *, user_id: str) -> tuple[dict[str, Any], ...]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT session_id, user_id, room_name, voice_backend, created_at
+                FROM voice_sessions WHERE user_id = ? ORDER BY created_at, session_id
+                """,
+                (user_id,),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
+    def mark_voice_sessions_deleting(self, *, user_id: str, deleted_at: str) -> int:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO voice_session_tombstones (
+                    session_id, user_id_hash, deleted_at
+                )
+                SELECT session_id, ?, ? FROM voice_sessions WHERE user_id = ?
+                """,
+                (self._user_id_hash(user_id), deleted_at, user_id),
+            )
+        return max(0, cursor.rowcount)
+
+    def is_voice_session_tombstoned(self, *, session_id: str) -> bool:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM voice_session_tombstones WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return row is not None
+
+    def delete_voice_sessions(self, *, user_id: str) -> int:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                "DELETE FROM voice_sessions WHERE user_id = ?",
+                (user_id,),
+            )
+        return max(0, cursor.rowcount)
+
     def reserve_omni_sdp_exchange(
         self,
         *,
@@ -307,7 +716,7 @@ class MemoryStore:
                 SET omni_sdp_exchanges = omni_sdp_exchanges + 1
                 WHERE session_id = ?
                   AND user_id = ?
-                  AND voice_backend IN ('qwen_omni', 'qwen_omni_plus')
+                  AND voice_backend IN ('qwen_omni')
                   AND omni_sdp_exchanges < ?
                 """,
                 (session_id, user_id, max_exchanges),

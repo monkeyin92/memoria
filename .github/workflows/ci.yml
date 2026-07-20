@@ -33,31 +33,6 @@ jobs:
         env:
           OFFLINE_MOCK: "true"
 
-  web:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # Use root package.json packageManager (pnpm@9.15.0); do not also set version.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
-          cache-dependency-path: apps/web/pnpm-lock.yaml
-      - name: Install
-        working-directory: apps/web
-        # apps/web is a self-contained pnpm workspace with its own lockfile.
-        run: pnpm install --frozen-lockfile
-      - name: Lint
-        working-directory: apps/web
-        run: pnpm exec eslint src --max-warnings 0
-      - name: Test
-        working-directory: apps/web
-        run: pnpm exec vitest run
-      - name: Build
-        working-directory: apps/web
-        run: pnpm exec tsc -b && pnpm exec vite build
-
   h5:
     runs-on: ubuntu-latest
     steps:

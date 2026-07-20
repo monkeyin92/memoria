@@ -28,7 +28,8 @@ def test_scale_when_error_mid() -> None:
     assert scaled[-1].end_ms == 400
 
 
-def test_degraded_large_error() -> None:
+def test_degraded_large_error_still_scales_to_pcm() -> None:
     words = (TimedWord(text="你", begin_ms=0, end_ms=100),)
-    _, status = scale_word_timestamps(words, pcm_duration_ms_value=1000)
+    scaled, status = scale_word_timestamps(words, pcm_duration_ms_value=1000)
     assert status == "degraded"
+    assert scaled[-1].end_ms == 1000

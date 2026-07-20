@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,10 +24,192 @@ class ControlSettings(BaseSettings):
     livekit_agent_name: str = Field(default="duplex-zh-agent", alias="LIVEKIT_AGENT_NAME")
 
     memoria_db_path: str = Field(default="data/memoria.sqlite3", alias="MEMORIA_DB_PATH")
+    archive_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_ARCHIVE_DATABASE_URL",
+    )
+    archive_compiler_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_ARCHIVE_COMPILER_DATABASE_URL",
+    )
+    archive_compiler_role: str = Field(default="", alias="MEMORIA_ARCHIVE_COMPILER_ROLE")
     memoria_timezone: str = Field(default="Asia/Shanghai", alias="MEMORIA_TIMEZONE")
+    memoria_archive_internal_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_ARCHIVE_INTERNAL_TOKEN",
+    )
+    memoria_archive_write_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_ARCHIVE_WRITE_TOKEN",
+    )
+    memoria_memory_read_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_MEMORY_READ_TOKEN",
+    )
+    memoria_persona_read_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_PERSONA_READ_TOKEN",
+    )
+    memoria_voice_resolution_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_VOICE_RESOLUTION_TOKEN",
+    )
+    archive_object_store_path: str = Field(
+        default="data/archive-objects",
+        alias="MEMORIA_ARCHIVE_OBJECT_STORE_PATH",
+    )
+    archive_object_encryption_key: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY",
+    )
+    archive_object_key_version: str = Field(
+        default="archive-object-v1",
+        alias="MEMORIA_ARCHIVE_OBJECT_KEY_VERSION",
+    )
+    archive_object_bucket: str = Field(default="", alias="MEMORIA_ARCHIVE_OBJECT_BUCKET")
+    archive_object_endpoint: str = Field(default="", alias="MEMORIA_ARCHIVE_OBJECT_ENDPOINT")
+    archive_object_access_key: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY",
+    )
+    archive_object_secret_key: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_ARCHIVE_OBJECT_SECRET_KEY",
+    )
+    archive_object_region: str = Field(
+        default="cn-beijing",
+        alias="MEMORIA_ARCHIVE_OBJECT_REGION",
+    )
+    archive_object_prefix: str = Field(
+        default="archive",
+        alias="MEMORIA_ARCHIVE_OBJECT_PREFIX",
+    )
+    archive_compile_interval_s: float = Field(
+        default=1.0,
+        ge=0.1,
+        le=300,
+        alias="MEMORIA_ARCHIVE_COMPILE_INTERVAL_S",
+    )
+    archive_compile_batch_size: int = Field(
+        default=100,
+        ge=1,
+        le=1000,
+        alias="MEMORIA_ARCHIVE_COMPILE_BATCH_SIZE",
+    )
+    memory_embedding_url: str = Field(default="", alias="MEMORIA_MEMORY_EMBEDDING_URL")
+    memory_embedding_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_MEMORY_EMBEDDING_API_KEY",
+    )
+    memory_embedding_model: str = Field(default="", alias="MEMORIA_MEMORY_EMBEDDING_MODEL")
+    memory_embedding_timeout_s: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=30.0,
+        alias="MEMORIA_MEMORY_EMBEDDING_TIMEOUT_S",
+    )
+    speaker_database_path: str = Field(
+        default="data/speakers.sqlite3",
+        alias="MEMORIA_SPEAKER_DB_PATH",
+    )
+    speaker_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_SPEAKER_DATABASE_URL",
+    )
+    speaker_template_key: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_SPEAKER_TEMPLATE_KEY",
+    )
+    speaker_internal_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_SPEAKER_INTERNAL_TOKEN",
+    )
+    speaker_embedding_url: str = Field(
+        default="",
+        alias="MEMORIA_SPEAKER_EMBEDDING_URL",
+    )
+    speaker_embedding_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_SPEAKER_EMBEDDING_TOKEN",
+    )
+    speaker_embedding_model: str = Field(
+        default="campplus-unconfigured",
+        alias="MEMORIA_SPEAKER_EMBEDDING_MODEL",
+    )
+    speaker_embedding_timeout_s: float = Field(
+        default=1.0,
+        ge=0.1,
+        le=5.0,
+        alias="MEMORIA_SPEAKER_EMBEDDING_TIMEOUT_S",
+    )
+    speaker_owner_threshold: float = Field(
+        default=0.78,
+        ge=0.5,
+        le=0.99,
+        alias="MEMORIA_SPEAKER_OWNER_THRESHOLD",
+    )
+    speaker_guest_threshold: float = Field(
+        default=0.45,
+        ge=0.0,
+        le=0.8,
+        alias="MEMORIA_SPEAKER_GUEST_THRESHOLD",
+    )
+    voice_sample_store_path: str = Field(
+        default="data/voice-samples",
+        alias="MEMORIA_VOICE_SAMPLE_STORE_PATH",
+    )
+    voice_sample_encryption_key: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY",
+    )
+    voice_sample_key_version: str = Field(
+        default="voice-sample-v1",
+        alias="MEMORIA_VOICE_SAMPLE_KEY_VERSION",
+    )
+    voice_object_bucket: str = Field(default="", alias="MEMORIA_VOICE_OBJECT_BUCKET")
+    voice_object_endpoint: str = Field(default="", alias="MEMORIA_VOICE_OBJECT_ENDPOINT")
+    voice_object_access_key: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_VOICE_OBJECT_ACCESS_KEY",
+    )
+    voice_object_secret_key: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_VOICE_OBJECT_SECRET_KEY",
+    )
+    voice_object_region: str = Field(default="cn-beijing", alias="MEMORIA_VOICE_OBJECT_REGION")
+    voice_object_prefix: str = Field(default="voice-clone", alias="MEMORIA_VOICE_OBJECT_PREFIX")
+    voice_sample_url_secret: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_VOICE_SAMPLE_URL_SECRET",
+    )
+    voice_sample_url_ttl_s: int = Field(
+        default=300,
+        ge=30,
+        le=1800,
+        alias="MEMORIA_VOICE_SAMPLE_URL_TTL_S",
+    )
+    voice_provider_region: str = Field(
+        default="cn-beijing",
+        alias="MEMORIA_VOICE_PROVIDER_REGION",
+    )
+    voice_enrollment_url: str = Field(
+        default="https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization",
+        alias="MEMORIA_VOICE_ENROLLMENT_URL",
+    )
+    voice_enrollment_timeout_s: float = Field(
+        default=120.0,
+        ge=5.0,
+        le=180.0,
+        alias="MEMORIA_VOICE_ENROLLMENT_TIMEOUT_S",
+    )
+    voice_target_model: str = Field(
+        default="cosyvoice-v3.5-flash",
+        alias="MEMORIA_VOICE_TARGET_MODEL",
+    )
 
     llm_provider: Literal["qwen", "deepseek"] = Field(default="qwen", alias="LLM_PROVIDER")
     dashscope_api_key: SecretStr = Field(default=SecretStr(""), alias="DASHSCOPE_API_KEY")
+    dashscope_ws_url: str = Field(default="", alias="DASHSCOPE_WS_URL")
     dashscope_workspace_id: str = Field(default="", alias="DASHSCOPE_WORKSPACE_ID")
     # P1-8: fixed Memoria persona voice on Omni (DashScope preset; not free-form clone).
     # Qwen3.5-Omni Realtime voice (not Qwen-TTS names like Cherry).
@@ -44,7 +227,7 @@ class ControlSettings(BaseSettings):
         le=30.0,
         alias="QWEN_OMNI_SDP_TIMEOUT_S",
     )
-    # Shared semantic_vad knobs for Omni Flash/Plus A/B sweeps.
+    # Shared semantic_vad knobs for Omni Flash A/B sweeps.
     qwen_omni_vad_threshold: float = Field(
         default=0.5,
         ge=0.0,
@@ -63,20 +246,6 @@ class ControlSettings(BaseSettings):
         le=2500,
         alias="QWEN_OMNI_SILENCE_DURATION_MS",
     )
-    # Plus A/B defaults (P0-3): slightly snappier end-of-turn vs Flash 800/0.5.
-    # Set env empty string is not supported — use shared knobs by matching Flash.
-    qwen_omni_plus_silence_duration_ms: int | None = Field(
-        default=650,
-        ge=200,
-        le=2500,
-        alias="QWEN_OMNI_PLUS_SILENCE_DURATION_MS",
-    )
-    qwen_omni_plus_vad_threshold: float | None = Field(
-        default=0.45,
-        ge=0.0,
-        le=1.0,
-        alias="QWEN_OMNI_PLUS_VAD_THRESHOLD",
-    )
     dashscope_base_url: str = Field(
         default="https://dashscope.aliyuncs.com/compatible-mode/v1",
         alias="DASHSCOPE_BASE_URL",
@@ -87,6 +256,16 @@ class ControlSettings(BaseSettings):
         ge=1.0,
         le=120.0,
         alias="DASHSCOPE_SUMMARY_TIMEOUT_S",
+    )
+    memory_extraction_model: str = Field(
+        default="qwen-plus",
+        alias="MEMORIA_MEMORY_EXTRACTION_MODEL",
+    )
+    memory_extraction_timeout_s: float = Field(
+        default=20.0,
+        ge=1.0,
+        le=120.0,
+        alias="MEMORIA_MEMORY_EXTRACTION_TIMEOUT_S",
     )
 
     deepseek_api_key: SecretStr = Field(default=SecretStr(""), alias="DEEPSEEK_API_KEY")
@@ -138,6 +317,20 @@ class ControlSettings(BaseSettings):
     def origins_list(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
+    def internal_token(
+        self,
+        capability: Literal["archive_write", "memory_read", "persona_read", "voice_resolution"],
+    ) -> str:
+        configured = {
+            "archive_write": self.memoria_archive_write_token,
+            "memory_read": self.memoria_memory_read_token,
+            "persona_read": self.memoria_persona_read_token,
+            "voice_resolution": self.memoria_voice_resolution_token,
+        }[capability].get_secret_value()
+        if configured or self.environment == "production":
+            return configured
+        return self.memoria_archive_internal_token.get_secret_value()
+
     def validate_production(self) -> None:
         if self.environment != "production":
             return
@@ -154,6 +347,131 @@ class ControlSettings(BaseSettings):
             raise ValueError("production requires an independent MEMORIA_AUTH_SECRET (>=32 chars)")
         if auth_secret == self.livekit_api_secret:
             raise ValueError("MEMORIA_AUTH_SECRET must differ from LIVEKIT_API_SECRET")
+        capability_tokens = {
+            "MEMORIA_ARCHIVE_WRITE_TOKEN": self.internal_token("archive_write"),
+            "MEMORIA_MEMORY_READ_TOKEN": self.internal_token("memory_read"),
+            "MEMORIA_PERSONA_READ_TOKEN": self.internal_token("persona_read"),
+            "MEMORIA_VOICE_RESOLUTION_TOKEN": self.internal_token("voice_resolution"),
+        }
+        if any(len(token) < 32 for token in capability_tokens.values()):
+            raise ValueError("production requires four capability-scoped internal tokens")
+        if len(set(capability_tokens.values())) != len(capability_tokens) or any(
+            token in {auth_secret, self.livekit_api_secret} for token in capability_tokens.values()
+        ):
+            raise ValueError("production internal capability tokens must be independent")
+        archive_url = self.archive_database_url.get_secret_value()
+        if not archive_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError("production requires MEMORIA_ARCHIVE_DATABASE_URL for PostgreSQL")
+        speaker_token = self.speaker_internal_token.get_secret_value()
+        embedding_token = self.speaker_embedding_token.get_secret_value()
+        template_key = self.speaker_template_key.get_secret_value()
+        if len(speaker_token) < 32 or speaker_token in {
+            auth_secret,
+            self.livekit_api_secret,
+            *capability_tokens.values(),
+        }:
+            raise ValueError("production requires an independent speaker internal token")
+        if len(embedding_token) < 32 or embedding_token in {
+            auth_secret,
+            self.livekit_api_secret,
+            *capability_tokens.values(),
+            speaker_token,
+        }:
+            raise ValueError("production requires an independent speaker model token")
+        try:
+            from cryptography.fernet import Fernet
+
+            Fernet(template_key.encode("ascii"))
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise ValueError("production requires a valid speaker template key") from exc
+        if not self.speaker_embedding_url.startswith(("http://", "https://")):
+            raise ValueError("production requires a speaker embedding service URL")
+        if self.speaker_guest_threshold >= self.speaker_owner_threshold:
+            raise ValueError("speaker thresholds must satisfy guest < owner")
+        speaker_database_url = self.speaker_database_url.get_secret_value() or archive_url
+        if not speaker_database_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError("production requires PostgreSQL for speaker profiles")
+        voice_key = self.voice_sample_encryption_key.get_secret_value()
+        voice_url_secret = self.voice_sample_url_secret.get_secret_value()
+        if not voice_key or not self.voice_sample_key_version.strip():
+            raise ValueError("production requires encrypted voice sample storage")
+        try:
+            from cryptography.fernet import Fernet
+
+            Fernet(voice_key.encode("ascii"))
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise ValueError("production requires a valid voice sample Fernet key") from exc
+        if voice_key == template_key:
+            raise ValueError(
+                "production requires independent voice sample and speaker template keys"
+            )
+        if len(voice_url_secret) < 32 or voice_url_secret in {
+            auth_secret,
+            self.livekit_api_secret,
+            *capability_tokens.values(),
+            speaker_token,
+            embedding_token,
+            template_key,
+            voice_key,
+        }:
+            raise ValueError("production requires an independent voice sample URL secret")
+        if not self.voice_object_bucket.strip():
+            raise ValueError("production requires an S3-compatible voice object bucket")
+        voice_access_key = self.voice_object_access_key.get_secret_value().strip()
+        voice_secret_key = self.voice_object_secret_key.get_secret_value().strip()
+        if bool(voice_access_key) != bool(voice_secret_key) or (
+            self.voice_object_endpoint.strip() and not voice_access_key
+        ):
+            raise ValueError("production requires a complete voice object credential pair")
+        if not self.voice_target_model.startswith("cosyvoice-v3.5-"):
+            raise ValueError("production voice cloning requires CosyVoice v3.5")
+        archive_object_key = self.archive_object_encryption_key.get_secret_value()
+        if not archive_object_key or not self.archive_object_key_version.strip():
+            raise ValueError("production requires encrypted archive object storage")
+        try:
+            from cryptography.fernet import Fernet
+
+            Fernet(archive_object_key.encode("ascii"))
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise ValueError("production requires a valid archive object Fernet key") from exc
+        if archive_object_key in {voice_key, template_key}:
+            raise ValueError("production requires an independent archive object key")
+        if not self.archive_object_bucket.strip():
+            raise ValueError("production requires an S3-compatible archive object bucket")
+        archive_access_key = self.archive_object_access_key.get_secret_value().strip()
+        archive_secret_key = self.archive_object_secret_key.get_secret_value().strip()
+        if bool(archive_access_key) != bool(archive_secret_key) or (
+            self.archive_object_endpoint.strip() and not archive_access_key
+        ):
+            raise ValueError("production requires a complete archive object credential pair")
+        if self.archive_object_bucket.strip() == self.voice_object_bucket.strip():
+            raise ValueError(
+                "production requires independent archive and voice object buckets"
+            )
         release_tag = self.memoria_release_tag.strip().lower()
         if release_tag in ("", "latest", "development"):
             raise ValueError("production requires an immutable MEMORIA_RELEASE_TAG")
+        compiler_url = self.archive_compiler_database_url.get_secret_value()
+        if not compiler_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError(
+                "production requires MEMORIA_ARCHIVE_COMPILER_DATABASE_URL for PostgreSQL"
+            )
+        compiler_role = self.archive_compiler_role.strip()
+        compiler_user = urlsplit(compiler_url).username or ""
+        archive_user = urlsplit(archive_url).username or ""
+        if (
+            compiler_url == archive_url
+            or not compiler_role
+            or compiler_role != compiler_user
+            or compiler_role == archive_user
+        ):
+            raise ValueError("production requires an independent archive compiler database role")
+        if (
+            not self.memory_embedding_url.startswith(("http://", "https://"))
+            or not self.memory_embedding_api_key.get_secret_value()
+            or not self.memory_embedding_model.strip()
+        ):
+            raise ValueError(
+                "production requires MEMORIA_MEMORY_EMBEDDING_URL, "
+                "MEMORIA_MEMORY_EMBEDDING_API_KEY and MEMORIA_MEMORY_EMBEDDING_MODEL"
+            )

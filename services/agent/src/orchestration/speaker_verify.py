@@ -1,8 +1,8 @@
-"""Session-scoped target-speaker enrollment and verification (numpy-only).
+"""Session-scoped spectral audio guard (numpy-only, not identity authority).
 
 This is a lightweight spectral embedding (log-mel mean/std), not a commercial
-voiceprint product. It is good enough to reject a clearly different nearby
-talker on the same device while remaining dependency-free for production.
+voiceprint product. It may reject far-field media and micro-blips, but it must
+never grant owner permissions or mute a real guest solely because voices differ.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ class SpeakerGateState(StrEnum):
     DISABLED = "disabled"
     PENDING = "pending"
     ENROLLED = "enrolled"
-    OPEN = "open"  # fail-open after timeout/failure
+    UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -305,7 +305,7 @@ class SpeakerVerifier:
         force: bool = False,
         wall_elapsed_ms: int | None = None,
     ) -> SpeakerScore | None:
-        """Return a score when enrollment succeeds, fails-open, or still pending.
+        """Return a score when enrollment succeeds, becomes unavailable, or stays pending.
 
         ``force=True`` always leaves PENDING (used after wall-clock deadline).
         ``wall_elapsed_ms`` counts real time even if no PCM was observed — without
@@ -324,7 +324,7 @@ class SpeakerVerifier:
             )
             if emb is None:
                 if force or effective_elapsed >= self.enroll_timeout_ms:
-                    return self._fail_open("enroll_embedding_failed")
+                    return self._fail_uncertain("enroll_embedding_failed")
                 return None
             self.owner_embedding = emb
             enroll_stats = voiced_stats_from_pcm(
@@ -342,16 +342,16 @@ class SpeakerVerifier:
                 duty=float(enroll_stats["duty"]),
             )
         if force or effective_elapsed >= self.enroll_timeout_ms:
-            return self._fail_open("enroll_timeout")
+            return self._fail_uncertain("enroll_timeout")
         return None
 
-    def _fail_open(self, reason: str) -> SpeakerScore:
-        self.state = SpeakerGateState.OPEN
+    def _fail_uncertain(self, reason: str) -> SpeakerScore:
+        self.state = SpeakerGateState.UNAVAILABLE
         self.owner_embedding = None
         self.owner_ref_rms = 0.0
         speech_ms = self._enroll_speech_ms
         self._enroll_pcm.clear()
-        return SpeakerScore(score=0.0, accepted=True, reason=reason, speech_ms=speech_ms)
+        return SpeakerScore(score=0.0, accepted=False, reason=reason, speech_ms=speech_ms)
 
     def mark_utterance_start(self) -> None:
         self._collecting_utterance = True
@@ -398,8 +398,8 @@ class SpeakerVerifier:
     def score_pcm(self, pcm: bytes | None = None) -> SpeakerScore:
         if self.state is SpeakerGateState.DISABLED:
             return SpeakerScore(1.0, True, "disabled", 0)
-        if self.state is SpeakerGateState.OPEN:
-            return SpeakerScore(1.0, True, "open", 0)
+        if self.state is SpeakerGateState.UNAVAILABLE:
+            return SpeakerScore(0.0, False, "unavailable", 0)
         if self.state is SpeakerGateState.PENDING:
             # During enrollment, never reject the owner's registration speech.
             return SpeakerScore(1.0, True, "pending_enroll", 0)

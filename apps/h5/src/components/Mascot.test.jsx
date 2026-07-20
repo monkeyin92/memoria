@@ -34,7 +34,7 @@ describe("Mascot", () => {
       .toHaveClass("is-visible");
   });
 
-  it("animates speaking by alternating mouth and eye artwork", () => {
+  it("keeps one face while speaking instead of alternating assets", () => {
     vi.useFakeTimers();
     const { container } = render(
       <Mascot
@@ -47,9 +47,45 @@ describe("Mascot", () => {
     expect(container.querySelector('img[src*="mascot-upset.webp"]'))
       .toHaveClass("is-visible");
 
-    act(() => vi.advanceTimersByTime(470));
+    act(() => vi.advanceTimersByTime(900));
+    expect(container.querySelector('img[src*="mascot-upset.webp"]'))
+      .toHaveClass("is-visible");
+    expect(container.querySelector('img[src*="mascot-neutral.webp"]'))
+      .not.toHaveClass("is-visible");
+    vi.useRealTimers();
+  });
+
+  it("crossfades between expressions without hard-cutting the previous frame", () => {
+    vi.useFakeTimers();
+    const { container, rerender } = render(
+      <Mascot
+        emotion="neutral"
+        uiState="listening"
+        onActivate={() => undefined}
+        disabled={false}
+      />,
+    );
     expect(container.querySelector('img[src*="mascot-neutral.webp"]'))
       .toHaveClass("is-visible");
+
+    rerender(
+      <Mascot
+        emotion="happy"
+        uiState="listening"
+        onActivate={() => undefined}
+        disabled={false}
+      />,
+    );
+
+    expect(container.querySelector('img[src*="mascot-happy.webp"]'))
+      .toHaveClass("is-visible");
+    // Previous frame held under the dissolve so eyes do not pop.
+    expect(container.querySelector('img[src*="mascot-neutral.webp"]'))
+      .toHaveClass("is-fading-out");
+
+    act(() => vi.advanceTimersByTime(560));
+    expect(container.querySelector('img[src*="mascot-neutral.webp"]'))
+      .not.toHaveClass("is-fading-out");
     vi.useRealTimers();
   });
 });

@@ -29,6 +29,13 @@ from services.agent.src.providers.cosyvoice_protocol import (
     pcm_duration_ms,
     scale_word_timestamps,
 )
+from services.agent.src.providers.cosyvoice_voice_catalog import (
+    DEFAULT_VOICE_PROFILE,
+    catalog_by_id,
+    resolve_approved_designed_voice,
+    resolve_voice_id,
+    uses_freeform_instruct,
+)
 from services.agent.src.providers.reliability import CircuitBreaker
 
 logger = logging.getLogger(__name__)
@@ -47,7 +54,7 @@ class CosyVoiceConfig:
     rate: float = 1.0
     pitch: float = 1.0
     # 50 is CosyVoice default but often reads soft/uneven on mobile WebRTC;
-    # 70 keeps headroom without clipping on longanyang.
+    # 70 keeps headroom without clipping on companion voices.
     volume: int = 70
     word_timestamps: bool = True
     pool_size: int = 4
@@ -55,24 +62,93 @@ class CosyVoiceConfig:
     first_audio_timeout_s: float = 1.5
     total_timeout_s: float = 20.0
     instruction: str | None = None
+    # auto | fixed | freeform — auto picks freeform for v3.5 / designed voices.
+    instruct_style: str = "auto"
+    voice_profile: str = DEFAULT_VOICE_PROFILE
 
     def __post_init__(self) -> None:
-        if self.voice != "longanyang" or self.instruction is None:
+        if self.instruction is None:
             return
-        allowed = {cosyvoice_instruction(emotion) for emotion in COSYVOICE_EMOTIONS}
+        if self.uses_freeform_instruct:
+            # Freeform: only length-ish sanity; Alibaba limit is model-side.
+            if len(self.instruction) > 200:
+                raise ValueError("CosyVoice freeform instruction is too long")
+            return
+        if self.voice != "longanyang":
+            return
+        allowed = {cosyvoice_instruction(emotion, freeform=False) for emotion in COSYVOICE_EMOTIONS}
         if self.instruction not in allowed:
             raise ValueError("longanyang requires Alibaba's fixed Instruct format")
+
+    @property
+    def uses_freeform_instruct(self) -> bool:
+        style = (
+            self.instruct_style if self.instruct_style in {"auto", "fixed", "freeform"} else "auto"
+        )
+        return uses_freeform_instruct(
+            model=self.model,
+            voice=self.voice,
+            instruct_style=style,  # type: ignore[arg-type]
+        )
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> CosyVoiceConfig:
         import os
 
         e = env or dict(os.environ)
+        from pathlib import Path
+
+        model = e.get("COSYVOICE_MODEL", "cosyvoice-v3.5-flash")
+        profile = e.get("COSYVOICE_VOICE_PROFILE", DEFAULT_VOICE_PROFILE)
+        explicit = e.get("COSYVOICE_VOICE") or None
+        registry_raw = e.get("COSYVOICE_VOICE_REGISTRY")
+        registry_path = Path(registry_raw) if registry_raw else None
+        production = e.get("ENVIRONMENT", "development").lower() == "production"
+        resolved: str | None
+        if production and "v3.5" in model:
+            approved = resolve_approved_designed_voice(
+                profile_id=profile,
+                model=model,
+                registry_path=registry_path,
+            )
+            if approved is None or (explicit is not None and explicit not in {profile, approved}):
+                raise ValueError(
+                    "production CosyVoice requires an approved designed baseline voice"
+                )
+            resolved = approved
+        elif production and model == "cosyvoice-v3-flash":
+            if explicit not in {None, "longanyang"}:
+                raise ValueError(
+                    "production CosyVoice requires an approved designed baseline voice"
+                )
+            resolved = "longanyang"
+        else:
+            # Prefer explicit voice id; else resolve designed profile registry;
+            # else keep longanyang for v3 system-voice mainline.
+            resolved = resolve_voice_id(
+                profile_id=profile,
+                explicit_voice=explicit,
+                registry_path=registry_path,
+            )
+        profile_names = catalog_by_id()
+        if resolved:
+            voice = resolved
+        elif explicit and explicit not in profile_names:
+            # Real vendor voice_id (system or designed), not a catalog key.
+            voice = explicit
+        elif "v3.5" in model:
+            raise ValueError(
+                "cosyvoice-v3.5 requires a designed voice_id. "
+                "Run scripts/design_cosyvoice_voices.py then set "
+                "COSYVOICE_VOICE or COSYVOICE_VOICE_PROFILE + registry."
+            )
+        else:
+            voice = "longanyang"
         return cls(
             api_key=e.get("DASHSCOPE_API_KEY", ""),
             ws_url=e.get("COSYVOICE_MOCK_WS_URL") or e.get("DASHSCOPE_WS_URL", ""),
-            model=e.get("COSYVOICE_MODEL", "cosyvoice-v3-flash"),
-            voice=e.get("COSYVOICE_VOICE", "longanyang"),
+            model=model,
+            voice=voice,
             sample_rate=int(e.get("COSYVOICE_SAMPLE_RATE", "24000")),
             rate=float(e.get("COSYVOICE_RATE", "1.0")),
             pitch=float(e.get("COSYVOICE_PITCH", "1.0")),
@@ -83,6 +159,8 @@ class CosyVoiceConfig:
             first_audio_timeout_s=float(e.get("COSYVOICE_FIRST_AUDIO_TIMEOUT_S", "1.5")),
             total_timeout_s=float(e.get("COSYVOICE_TOTAL_TIMEOUT_S", "20")),
             instruction=e.get("COSYVOICE_INSTRUCTION") or None,
+            instruct_style=e.get("COSYVOICE_INSTRUCT_STYLE", "auto"),
+            voice_profile=profile,
         )
 
 
@@ -106,6 +184,10 @@ class SynthesizeResult:
 
 class CosyVoiceFirstAudioTimeoutError(TimeoutError):
     """Raised when a task produces no PCM within the first-audio deadline."""
+
+
+class CosyVoiceBeforeAudioError(RuntimeError):
+    """Raised when a task fails before any PCM can reach the caller."""
 
 
 class CosyVoiceTimestampError(RuntimeError):
@@ -221,10 +303,7 @@ class CosyVoicePool:
 
     @staticmethod
     def _fence_key(fence: GenerationFence) -> str:
-        return (
-            f"{fence.session_id}:{fence.turn_id}:"
-            f"{fence.generation_id}:{fence.tool_epoch}"
-        )
+        return f"{fence.session_id}:{fence.turn_id}:{fence.generation_id}:{fence.tool_epoch}"
 
     def _unbind_connection(self, conn: PooledConnection) -> None:
         for key, active in tuple(self.active_by_fence.items()):
@@ -259,6 +338,7 @@ class CosyVoiceSynthesizeStream(tts.SynthesizeStream):
         *,
         tts_instance: CosyVoiceTTS,
         config: CosyVoiceConfig,
+        fallback_config: CosyVoiceConfig,
         pool: CosyVoicePool,
         conn_options: APIConnectOptions,
         fence: GenerationFence | None = None,
@@ -266,6 +346,8 @@ class CosyVoiceSynthesizeStream(tts.SynthesizeStream):
         super().__init__(tts=tts_instance, conn_options=conn_options)
         self._tts_instance = tts_instance
         self._config = config
+        self._fallback_config = fallback_config
+        self._baseline_attempted = False
         self._pool = pool
         self._fence = fence
         self._conn: PooledConnection | None = None
@@ -277,6 +359,7 @@ class CosyVoiceSynthesizeStream(tts.SynthesizeStream):
         if self._fence is not None:
             self._pool.bind_active(self._fence, conn)
         task_id = str(uuid.uuid4())
+        self._tts_instance._report_alignment(self._fence, task_id, "started")
         offset_ms = 0
         sentence_pcm: dict[int, bytearray] = {}
         current_index = 0
@@ -341,8 +424,8 @@ class CosyVoiceSynthesizeStream(tts.SynthesizeStream):
             total_deadline = loop.time() + self._config.total_timeout_s
             try:
                 while True:
-                    deadline = total_deadline if got_audio else min(
-                        total_deadline, first_audio_deadline
+                    deadline = (
+                        total_deadline if got_audio else min(total_deadline, first_audio_deadline)
                     )
                     try:
                         msg = await asyncio.wait_for(
@@ -375,9 +458,10 @@ class CosyVoiceSynthesizeStream(tts.SynthesizeStream):
                         idx = ev.sentence_index or 0
                         raw_pcm = bytes(sentence_pcm.get(idx, b""))
                         dur = pcm_duration_ms(raw_pcm, sample_rate=self._config.sample_rate)
-                        scaled, _status = scale_word_timestamps(
+                        scaled, status = scale_word_timestamps(
                             ev.words, pcm_duration_ms_value=dur, offset_ms=offset_ms
                         )
+                        self._tts_instance._report_alignment(self._fence, task_id, status)
                         timed = [
                             TimedString(
                                 w.text + (w.punctuation or ""),
@@ -426,10 +510,25 @@ class CosyVoiceSynthesizeStream(tts.SynthesizeStream):
                 await self._pool.discard(self._conn, reason="cancel")
                 self._conn = None
             raise
-        except Exception:
+        except Exception as exc:
             if self._conn is not None:
                 await self._pool.discard(self._conn, reason="error")
                 self._conn = None
+            active_voice = (self._config.model, self._config.voice)
+            fallback_voice = (self._fallback_config.model, self._fallback_config.voice)
+            if not got_audio and not self._baseline_attempted and active_voice != fallback_voice:
+                self._config = replace(self._fallback_config)
+                self._baseline_attempted = True
+                self._tts_instance.trace(
+                    "cosyvoice_clone_fallback",
+                    status="degraded",
+                    detail={"reason": type(exc).__name__},
+                )
+                raise APIConnectionError(
+                    "clone failed before audio; retrying approved baseline"
+                ) from exc
+            if self._baseline_attempted:
+                raise APIConnectionError(str(exc), retryable=False) from exc
             raise
 
 
@@ -446,11 +545,12 @@ class CosyVoiceTTS(tts.TTS[Any]):
             num_channels=1,
         )
         self._config = config
+        self._baseline_model = config.model
+        self._baseline_voice = config.voice
         self._pool = pool or CosyVoicePool(config)
         self._active_fence: GenerationFence | None = None
-        self._trace_callback: (
-            Callable[[str, str, dict[str, Any] | None], None] | None
-        ) = None
+        self._trace_callback: Callable[[str, str, dict[str, Any] | None], None] | None = None
+        self._alignment_callback: Callable[[GenerationFence, str, str], None] | None = None
 
     @classmethod
     def from_env(cls) -> CosyVoiceTTS:
@@ -479,15 +579,56 @@ class CosyVoiceTTS(tts.TTS[Any]):
     ) -> None:
         self._trace_callback = callback
 
+    def set_alignment_callback(
+        self,
+        callback: Callable[[GenerationFence, str, str], None],
+    ) -> None:
+        """Observe LiveKit stream alignment without losing its generation/task identity."""
+        self._alignment_callback = callback
+
+    def _report_alignment(
+        self,
+        fence: GenerationFence | None,
+        utterance_id: str,
+        status: str,
+    ) -> None:
+        if fence is None or self._alignment_callback is None:
+            return
+        try:
+            self._alignment_callback(fence, utterance_id, status)
+        except Exception:
+            logger.warning("CosyVoice alignment callback failed", exc_info=True)
+
     def apply_speech_plan(self, *, emotion: str, rate: float) -> None:
         if emotion not in COSYVOICE_EMOTIONS:
             emotion = "neutral"
-        self._config.instruction = cosyvoice_instruction(emotion)
+        self._config.instruction = cosyvoice_instruction(
+            emotion,
+            freeform=self._config.uses_freeform_instruct,
+        )
         # Prefer 1.0; still clamp defensive ranges if a caller passes outliers.
         self._config.rate = min(1.05, max(0.95, rate))
         # Keep volume pinned so emotion switches do not change loudness.
         if self._config.volume < 60:
             self._config.volume = 70
+
+    def apply_voice_profile(self, *, model: str, voice: str) -> None:
+        if not model.startswith("cosyvoice-v3.5-") or not voice.strip():
+            raise ValueError("active voice profile must use CosyVoice v3.5")
+        self._config.model = model
+        self._config.voice = voice
+
+    def use_baseline_voice(self) -> None:
+        self._config.model = self._baseline_model
+        self._config.voice = self._baseline_voice
+
+    @property
+    def current_model(self) -> str:
+        return self._config.model
+
+    @property
+    def current_voice(self) -> str:
+        return self._config.voice
 
     @property
     def current_instruction(self) -> str | None:
@@ -514,9 +655,15 @@ class CosyVoiceTTS(tts.TTS[Any]):
     def stream(
         self, *, conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS
     ) -> CosyVoiceSynthesizeStream:
+        config = replace(self._config)
         return CosyVoiceSynthesizeStream(
             tts_instance=self,
-            config=replace(self._config),
+            config=config,
+            fallback_config=replace(
+                config,
+                model=self._baseline_model,
+                voice=self._baseline_voice,
+            ),
             pool=self._pool,
             conn_options=conn_options,
             fence=self._active_fence,
@@ -530,16 +677,34 @@ class CosyVoiceTTS(tts.TTS[Any]):
         cancel_event: asyncio.Event | None = None,
     ) -> SynthesizeResult:
         """Synthesize with one fresh-connection retry for first-audio/timestamp failures."""
+        config = replace(self._config)
+        baseline = replace(
+            config,
+            model=self._baseline_model,
+            voice=self._baseline_voice,
+        )
         for attempt in range(2):
             try:
                 return await self._synthesize_once(
                     texts,
                     fence=fence,
                     cancel_event=cancel_event,
+                    config=config,
                 )
-            except (CosyVoiceFirstAudioTimeoutError, CosyVoiceTimestampError):
+            except (
+                CosyVoiceBeforeAudioError,
+                CosyVoiceFirstAudioTimeoutError,
+                CosyVoiceTimestampError,
+            ) as exc:
                 if attempt == 1:
                     raise
+                if (config.model, config.voice) != (baseline.model, baseline.voice):
+                    config = baseline
+                    self.trace(
+                        "cosyvoice_clone_fallback",
+                        status="degraded",
+                        detail={"reason": type(exc).__name__},
+                    )
         raise AssertionError("unreachable")
 
     async def _synthesize_once(
@@ -548,6 +713,7 @@ class CosyVoiceTTS(tts.TTS[Any]):
         *,
         fence: GenerationFence,
         cancel_event: asyncio.Event | None = None,
+        config: CosyVoiceConfig,
     ) -> SynthesizeResult:
         """Run one task; cancelled/failed connections are never returned to the pool."""
         conn = await self._pool.acquire()
@@ -573,14 +739,14 @@ class CosyVoiceTTS(tts.TTS[Any]):
         try:
             run = build_run_task(
                 task_id=task_id,
-                model=self._config.model,
-                voice=self._config.voice,
-                sample_rate=self._config.sample_rate,
-                rate=self._config.rate,
-                pitch=self._config.pitch,
-                volume=self._config.volume,
-                word_timestamp_enabled=self._config.word_timestamps,
-                instruction=self._config.instruction,
+                model=config.model,
+                voice=config.voice,
+                sample_rate=config.sample_rate,
+                rate=config.rate,
+                pitch=config.pitch,
+                volume=config.volume,
+                word_timestamp_enabled=config.word_timestamps,
+                instruction=config.instruction,
             )
             await conn.ws.send(json.dumps(run, ensure_ascii=False))
 
@@ -591,7 +757,7 @@ class CosyVoiceTTS(tts.TTS[Any]):
                     discarded = True
                     await self._pool.discard(conn, reason="cancel")
                     return SynthesizeResult(b"", (), task_id, "degraded", discarded=True)
-                msg = await asyncio.wait_for(conn.ws.recv(), timeout=self._config.connect_timeout_s)
+                msg = await asyncio.wait_for(conn.ws.recv(), timeout=config.connect_timeout_s)
                 if isinstance(msg, bytes):
                     continue
                 ev = parse_server_message(msg)
@@ -605,13 +771,15 @@ class CosyVoiceTTS(tts.TTS[Any]):
                         detail={"phase": "start"},
                     )
                     await self._pool.discard(conn, reason="task-failed")
-                    raise RuntimeError(ev.error_message or "task-failed")
+                    raise CosyVoiceBeforeAudioError(ev.error_message or "task-failed")
 
             for text in texts:
                 if cancel_event is not None and cancel_event.is_set():
                     discarded = True
                     await self._pool.discard(conn, reason="cancel")
-                    return SynthesizeResult(bytes(pcm_buf), tuple(all_words), task_id, alignment_status, True)
+                    return SynthesizeResult(
+                        bytes(pcm_buf), tuple(all_words), task_id, alignment_status, True
+                    )
                 await conn.ws.send(
                     json.dumps(build_continue_text(task_id, text), ensure_ascii=False)
                 )
@@ -619,13 +787,15 @@ class CosyVoiceTTS(tts.TTS[Any]):
             await conn.ws.send(json.dumps(build_finish_task(task_id), ensure_ascii=False))
 
             loop = asyncio.get_running_loop()
-            first_audio_deadline = loop.time() + self._config.first_audio_timeout_s
-            total_deadline = loop.time() + self._config.total_timeout_s
+            first_audio_deadline = loop.time() + config.first_audio_timeout_s
+            total_deadline = loop.time() + config.total_timeout_s
             while True:
                 if cancel_event is not None and cancel_event.is_set():
                     discarded = True
                     await self._pool.discard(conn, reason="cancel")
-                    return SynthesizeResult(bytes(pcm_buf), tuple(all_words), task_id, alignment_status, True)
+                    return SynthesizeResult(
+                        bytes(pcm_buf), tuple(all_words), task_id, alignment_status, True
+                    )
                 deadline = total_deadline
                 if not pcm_buf:
                     deadline = min(deadline, first_audio_deadline)
@@ -654,7 +824,7 @@ class CosyVoiceTTS(tts.TTS[Any]):
                 elif ev.event == "sentence-end":
                     idx = ev.sentence_index or 0
                     raw_pcm = bytes(sentence_pcm.get(idx, b""))
-                    dur = pcm_duration_ms(raw_pcm, sample_rate=self._config.sample_rate)
+                    dur = pcm_duration_ms(raw_pcm, sample_rate=config.sample_rate)
                     scaled, status = scale_word_timestamps(
                         ev.words, pcm_duration_ms_value=dur, offset_ms=offset_ms
                     )
@@ -687,17 +857,24 @@ class CosyVoiceTTS(tts.TTS[Any]):
                 raise CosyVoiceTimestampError("CosyVoice returned no word timestamps")
             if not discarded:
                 await self._pool.release(conn)
-            return SynthesizeResult(bytes(pcm_buf), tuple(all_words), task_id, alignment_status, discarded)
+            return SynthesizeResult(
+                bytes(pcm_buf), tuple(all_words), task_id, alignment_status, discarded
+            )
         except asyncio.CancelledError:
             await self._pool.discard(conn, reason="cancel")
             raise
-        except Exception:
+        except Exception as exc:
             if cancel_event is not None and cancel_event.is_set():
                 await self._pool.discard(conn, reason="cancel")
                 return SynthesizeResult(
                     bytes(pcm_buf), tuple(all_words), task_id, alignment_status, True
                 )
             await self._pool.discard(conn, reason="error")
+            if not pcm_buf and not isinstance(
+                exc,
+                (CosyVoiceBeforeAudioError, CosyVoiceFirstAudioTimeoutError),
+            ):
+                raise CosyVoiceBeforeAudioError(str(exc)) from exc
             raise
         finally:
             if cancel_watcher is not None:

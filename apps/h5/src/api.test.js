@@ -9,6 +9,15 @@ function jsonResponse(body, status = 200) {
   };
 }
 
+function blobResponse(body, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    blob: vi.fn().mockResolvedValue(body),
+    text: vi.fn().mockResolvedValue(""),
+  };
+}
+
 describe("authenticated Control API client", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -16,44 +25,59 @@ describe("authenticated Control API client", () => {
     window.localStorage.clear();
   });
 
-  it("bootstraps an anonymous identity before adding Bearer auth", async () => {
+  it("registers an account before adding Bearer auth", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        jsonResponse({ user_id: "anonymous-user", access_token: "short-token" }),
+        jsonResponse({
+          user_id: "registered-user",
+          username: "memorykeeper",
+          account_type: "registered",
+          access_token: "short-token",
+        }, 201),
       )
       .mockResolvedValueOnce(
         jsonResponse({
-          user_id: "anonymous-user",
+          user_id: "registered-user",
           display_name: "新朋友",
           bio: "",
         }),
       );
     vi.stubGlobal("fetch", fetchMock);
-    const { bootstrapIdentity, getProfile } = await import("./api.js");
+    const { bootstrapIdentity, getProfile, registerAccount } = await import("./api.js");
 
-    await bootstrapIdentity();
-    await getProfile("anonymous-user");
+    await expect(bootstrapIdentity()).resolves.toBeNull();
+    await registerAccount("memorykeeper", "safe-passphrase");
+    await getProfile("registered-user");
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/memoria-api/v1/auth/anonymous",
+      "/memoria-api/v1/auth/register",
       expect.objectContaining({
         method: "POST",
+        body: JSON.stringify({
+          username: "memorykeeper",
+          password: "safe-passphrase",
+        }),
         headers: expect.not.objectContaining({ Authorization: expect.anything() }),
       }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "/memoria-api/v1/memory/profile/anonymous-user",
+      "/memoria-api/v1/memory/profile/registered-user",
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer short-token",
         }),
       }),
     );
-    expect(JSON.parse(window.localStorage.getItem("memoria:anonymous-identity")))
-      .toEqual({ user_id: "anonymous-user", access_token: "short-token" });
+    expect(JSON.parse(window.localStorage.getItem("memoria:identity")))
+      .toEqual({
+        user_id: "registered-user",
+        username: "memorykeeper",
+        account_type: "registered",
+        access_token: "short-token",
+      });
   });
 
   it("refuses protected requests until identity bootstrap completes", async () => {
@@ -62,9 +86,294 @@ describe("authenticated Control API client", () => {
     const { getMemoryDays } = await import("./api.js");
 
     await expect(getMemoryDays("anonymous-user")).rejects.toThrow(
-      "匿名身份尚未就绪",
+      "账号身份尚未就绪",
     );
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("uses authenticated persona, speaker and voice-profile lifecycle endpoints", async () => {
+    const preview = new Blob(["RIFF-preview"], { type: "audio/wav" });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          user_id: "registered-user",
+          username: "memorykeeper",
+          account_type: "registered",
+          access_token: "lifecycle-token",
+        }, 201),
+      )
+      .mockResolvedValueOnce(jsonResponse({ learning_allowed: false }))
+      .mockResolvedValueOnce(jsonResponse({ policy_version: "persona-learning-v1" }, 201))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ consent: null, items: [] }))
+      .mockResolvedValueOnce(
+        jsonResponse({ trial_id: "trial-001", slots: ["A", "B"] }, 201),
+      )
+      .mockResolvedValueOnce(blobResponse(preview))
+      .mockResolvedValueOnce(jsonResponse({ status: "passed" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      createVoiceBlindTrial,
+      evaluateVoiceProfile,
+      getPersonaStatus,
+      getSpeakerProfiles,
+      getVoiceProfiles,
+      grantPersonaConsent,
+      previewVoiceBlindTrial,
+      registerAccount,
+    } = await import("./api.js");
+
+    await registerAccount("memorykeeper", "safe-passphrase");
+    await getPersonaStatus();
+    await grantPersonaConsent();
+    await getSpeakerProfiles();
+    await getVoiceProfiles();
+    await expect(createVoiceBlindTrial("voice-001")).resolves.toEqual({
+      trial_id: "trial-001",
+      slots: ["A", "B"],
+    });
+    await expect(
+      previewVoiceBlindTrial("trial-001", "A", "同一句试听文本"),
+    ).resolves.toBe(preview);
+    const evaluation = {
+      trial_id: "trial-001",
+      preferred_slot: "A",
+      similarity: 4,
+      naturalness: 4,
+      accent_similarity: 4,
+      emotion_adherence: 4,
+      instruction_adherence: 4,
+      uncanny: 2,
+      notes: "",
+    };
+    await expect(evaluateVoiceProfile("voice-001", evaluation)).resolves.toEqual({
+      status: "passed",
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/memoria-api/v1/persona/status",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer lifecycle-token" }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/memoria-api/v1/persona/consent",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          accepted: true,
+          policy_version: "persona-learning-v1",
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      6,
+      "/memoria-api/v1/voices/profiles/voice-001/blind-trials",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      7,
+      "/memoria-api/v1/voices/blind-trials/trial-001/preview",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ slot: "A", text: "同一句试听文本" }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      8,
+      "/memoria-api/v1/voices/profiles/voice-001/evaluations",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(evaluation),
+      }),
+    );
+  });
+
+  it("loads and reviews the structured life archive with the account token", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          user_id: "registered-user",
+          username: "memorykeeper",
+          account_type: "registered",
+          access_token: "archive-token",
+        }, 201),
+      )
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+      .mockResolvedValueOnce(jsonResponse({ claim_id: "claim-1", status: "confirmed" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      getLifeTimeline,
+      getMemoryReviewQueue,
+      registerAccount,
+      reviewMemoryClaim,
+      searchLifeArchive,
+    } = await import("./api.js");
+
+    await registerAccount("memorykeeper", "safe-passphrase");
+    await getLifeTimeline();
+    await searchLifeArchive("家风 家训");
+    await getMemoryReviewQueue();
+    await reviewMemoryClaim("claim-1", "confirm");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/memoria-api/v1/archive/life-timeline?limit=30",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer archive-token" }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/memoria-api/v1/archive/search?q=%E5%AE%B6%E9%A3%8E%20%E5%AE%B6%E8%AE%AD&include_candidates=true&limit=30",
+      expect.anything(),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "/memoria-api/v1/archive/review-queue",
+      expect.anything(),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      "/memoria-api/v1/archive/memories/claim-1/review",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ action: "confirm" }),
+      }),
+    );
+  });
+
+  it("manages raw voice archive consent independently", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          user_id: "registered-user",
+          username: "memorykeeper",
+          account_type: "registered",
+          access_token: "archive-token",
+        }, 201),
+      )
+      .mockResolvedValueOnce(jsonResponse({ consent: null }))
+      .mockResolvedValueOnce(jsonResponse({
+        consent_grant_id: "raw-consent-1",
+        policy_version: "raw-voice-archive-v1",
+        retention_policy: "account_lifetime",
+      }, 201))
+      .mockResolvedValueOnce(jsonResponse({
+        consent_grant_id: "raw-consent-1",
+        revoked_at: "2026-07-19T12:00:00Z",
+        deleted_blob_count: 2,
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      getRawVoiceConsent,
+      grantRawVoiceConsent,
+      registerAccount,
+      revokeRawVoiceConsent,
+    } = await import("./api.js");
+
+    await registerAccount("memorykeeper", "safe-passphrase");
+    await getRawVoiceConsent();
+    await grantRawVoiceConsent();
+    await revokeRawVoiceConsent();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/memoria-api/v1/archive/raw-voice-consent",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer archive-token" }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/memoria-api/v1/archive/raw-voice-consent",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          policy_version: "raw-voice-archive-v1",
+          retention_policy: "account_lifetime",
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "/memoria-api/v1/archive/raw-voice-consent",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("includes an optional counterexample when reviewing a persona trait", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          user_id: "registered-user",
+          username: "memorykeeper",
+          account_type: "registered",
+          access_token: "persona-token",
+        }, 201),
+      )
+      .mockResolvedValueOnce(jsonResponse({ trait_id: "trait-1", status: "confirmed" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { registerAccount, reviewPersonaTrait } = await import("./api.js");
+
+    await registerAccount("memorykeeper", "safe-passphrase");
+    await reviewPersonaTrait("trait-1", "confirm", {
+      counterexample: "紧急安全风险出现时会立即行动。",
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/memoria-api/v1/persona/traits/trait-1/review",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          action: "confirm",
+          counterexample: "紧急安全风险出现时会立即行动。",
+        }),
+      }),
+    );
+  });
+
+  it("logs in without sending a stale Bearer and persists the returned account", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      user_id: "returning-user",
+      username: "memorykeeper",
+      account_type: "registered",
+      access_token: "returning-token",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { loginAccount } = await import("./api.js");
+
+    await expect(
+      loginAccount("memorykeeper", "safe-passphrase"),
+    ).resolves.toEqual({
+      user_id: "returning-user",
+      username: "memorykeeper",
+      account_type: "registered",
+      access_token: "returning-token",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/memoria-api/v1/auth/login",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          username: "memorykeeper",
+          password: "safe-passphrase",
+        }),
+        headers: expect.not.objectContaining({ Authorization: expect.anything() }),
+      }),
+    );
+    expect(JSON.parse(window.localStorage.getItem("memoria:identity")))
+      .toEqual(expect.objectContaining({ user_id: "returning-user" }));
   });
 
   it("sends every profile preference to the authenticated server profile", async () => {
@@ -111,7 +420,7 @@ describe("authenticated Control API client", () => {
   });
 
   it.each([401, 403])(
-    "replaces a stored identity when /v1/auth/me returns %i",
+    "returns to the account gate when /v1/auth/me returns %i",
     async (status) => {
       window.localStorage.setItem(
         "memoria:anonymous-identity",
@@ -119,17 +428,11 @@ describe("authenticated Control API client", () => {
       );
       const fetchMock = vi
         .fn()
-        .mockResolvedValueOnce(jsonResponse({ detail: "invalid token" }, status))
-        .mockResolvedValueOnce(
-          jsonResponse({ user_id: "new-user", access_token: "new-token" }),
-        );
+        .mockResolvedValueOnce(jsonResponse({ detail: "invalid token" }, status));
       vi.stubGlobal("fetch", fetchMock);
       const { bootstrapIdentity } = await import("./api.js");
 
-      await expect(bootstrapIdentity()).resolves.toEqual({
-        user_id: "new-user",
-        access_token: "new-token",
-      });
+      await expect(bootstrapIdentity()).resolves.toBeNull();
 
       expect(fetchMock).toHaveBeenNthCalledWith(
         1,
@@ -140,38 +443,37 @@ describe("authenticated Control API client", () => {
           }),
         }),
       );
-      expect(fetchMock).toHaveBeenNthCalledWith(
-        2,
-        "/memoria-api/v1/auth/anonymous",
-        expect.objectContaining({
-          method: "POST",
-          headers: expect.not.objectContaining({
-            Authorization: expect.anything(),
-          }),
-        }),
-      );
-      expect(
-        JSON.parse(window.localStorage.getItem("memoria:anonymous-identity")),
-      ).toEqual({ user_id: "new-user", access_token: "new-token" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(window.localStorage.getItem("memoria:identity")).toBeNull();
+      expect(window.localStorage.getItem("memoria:anonymous-identity")).toBeNull();
     },
   );
 
   it("keeps a stored identity when /v1/auth/me has a network failure", async () => {
-    const stored = { user_id: "anonymous-user", access_token: "saved-token" };
+    const stored = {
+      user_id: "registered-user",
+      username: "memorykeeper",
+      account_type: "registered",
+      access_token: "saved-token",
+    };
     window.localStorage.setItem(
-      "memoria:anonymous-identity",
+      "memoria:identity",
       JSON.stringify(stored),
     );
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new TypeError("network unavailable"))
-      .mockResolvedValueOnce(jsonResponse({ user_id: "anonymous-user" }));
+      .mockResolvedValueOnce(jsonResponse({
+        user_id: "registered-user",
+        username: "memorykeeper",
+        account_type: "registered",
+      }));
     vi.stubGlobal("fetch", fetchMock);
     const { bootstrapIdentity } = await import("./api.js");
 
     await expect(bootstrapIdentity()).rejects.toThrow("network unavailable");
     expect(
-      JSON.parse(window.localStorage.getItem("memoria:anonymous-identity")),
+      JSON.parse(window.localStorage.getItem("memoria:identity")),
     ).toEqual(stored);
 
     await expect(bootstrapIdentity()).resolves.toEqual(stored);
@@ -179,6 +481,118 @@ describe("authenticated Control API client", () => {
     expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe(
       "Bearer saved-token",
     );
+  });
+
+  it("never flushes another account's locally queued messages", async () => {
+    window.localStorage.setItem(
+      "memoria:identity",
+      JSON.stringify({
+        user_id: "account-b",
+        username: "account-b",
+        account_type: "registered",
+        access_token: "saved-token",
+      }),
+    );
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      user_id: "account-b",
+      username: "account-b",
+      account_type: "registered",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      bootstrapIdentity,
+      cachePendingMessage,
+      flushPendingMessages,
+    } = await import("./api.js");
+
+    await bootstrapIdentity();
+    cachePendingMessage({
+      user_id: "account-a",
+      role: "user",
+      text: "只属于账号 A",
+    });
+    await flushPendingMessages();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(
+        window.localStorage.getItem("memoria:pending-messages:account-a"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("exports the current account and clears only its local data after server deletion", async () => {
+    window.localStorage.setItem(
+      "memoria:identity",
+      JSON.stringify({
+        user_id: "account-a",
+        username: "account-a",
+        account_type: "registered",
+        access_token: "account-token",
+      }),
+    );
+    window.localStorage.setItem("memoria:profile:account-a", JSON.stringify({ bio: "private" }));
+    window.localStorage.setItem(
+      "memoria:pending-messages:account-a",
+      JSON.stringify([{ user_id: "account-a", text: "pending" }]),
+    );
+    window.localStorage.setItem(
+      "memoria:pending-messages",
+      JSON.stringify([
+        { user_id: "account-a", text: "legacy-a" },
+        { user_id: "account-b", text: "legacy-b" },
+      ]),
+    );
+    const archive = { format_version: 1, sections: { conversations: [] } };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        user_id: "account-a",
+        username: "account-a",
+        account_type: "registered",
+      }))
+      .mockResolvedValueOnce(jsonResponse(archive))
+      .mockResolvedValueOnce(jsonResponse({ status: "completed" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      bootstrapIdentity,
+      deleteAccountData,
+      exportAccountArchive,
+      getAccessToken,
+    } = await import("./api.js");
+    await bootstrapIdentity();
+
+    await expect(exportAccountArchive("safe-passphrase")).resolves.toEqual(archive);
+    await expect(
+      deleteAccountData("safe-passphrase", "永久删除我的全部数据"),
+    ).resolves.toEqual({ status: "completed" });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/memoria-api/v1/archive/exports",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ password: "safe-passphrase" }),
+        headers: expect.objectContaining({ Authorization: "Bearer account-token" }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/memoria-api/v1/archive/deletion-requests",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          password: "safe-passphrase",
+          confirmation: "永久删除我的全部数据",
+        }),
+      }),
+    );
+    expect(getAccessToken()).toBeNull();
+    expect(window.localStorage.getItem("memoria:identity")).toBeNull();
+    expect(window.localStorage.getItem("memoria:profile:account-a")).toBeNull();
+    expect(window.localStorage.getItem("memoria:pending-messages:account-a")).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem("memoria:pending-messages")))
+      .toEqual([{ user_id: "account-b", text: "legacy-b" }]);
   });
 
   it("creates the selected voice backend and exchanges Omni SDP through the first-party API", async () => {

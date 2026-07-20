@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from services.agent.src.contracts.events import TimedWord
+from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.heard_text_tracker import HeardTextTracker
 
 
@@ -37,3 +38,36 @@ def test_prefer_under_count_when_degraded() -> None:
     tr.mark_playback_stopped(start + 400_000_000)  # 400ms
     heard = tr.snapshot()
     assert "建议" not in heard or heard.endswith("，") or len(heard) < len(tr.full_text)
+
+
+def test_alignment_status_is_fenced_to_current_generation_and_utterance() -> None:
+    tracker = HeardTextTracker()
+    current = GenerationFence("s", 2, 3, 0)
+    stale = GenerationFence("s", 1, 2, 0)
+
+    tracker.expect_utterance(current)
+    assert tracker.observe_alignment(stale, "old-task", "started") is False
+    assert tracker.observe_alignment(stale, "old-task", "degraded") is False
+    assert tracker.alignment_degraded is False
+
+    assert tracker.observe_alignment(current, "first-task", "started") is True
+    assert tracker.observe_alignment(current, "retry-task", "started") is True
+    assert tracker.observe_alignment(current, "first-task", "degraded") is False
+    assert tracker.alignment_degraded is False
+
+    assert tracker.observe_alignment(current, "retry-task", "degraded") is True
+    assert tracker.alignment_degraded is True
+
+    tracker.expect_utterance(current.bump_turn())
+    assert tracker.alignment_degraded is False
+    assert tracker.observe_alignment(current, "retry-task", "degraded") is False
+
+
+def test_degraded_alignment_never_invents_a_precise_unpunctuated_suffix() -> None:
+    tracker = HeardTextTracker(alignment_degraded=True)
+    tracker.set_full_text("没有自然标点的回答")
+    tracker.add_words([TimedWord(text="回答", begin_ms=800, end_ms=1000)])
+    tracker.mark_playback_started(1_000_000_000)
+    tracker.mark_playback_stopped(1_480_000_000)
+
+    assert tracker.snapshot() == ""

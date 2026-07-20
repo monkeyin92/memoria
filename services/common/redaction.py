@@ -8,7 +8,13 @@ _PII_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"), "[手机号]"),
     (re.compile(r"(?<!\d)\d{17}[\dXx](?![\dXx])"), "[身份证]"),
     (re.compile(r"(?<!\d)\d{16,19}(?!\d)"), "[银行卡]"),
-    (re.compile(r"[\w.+-]+@[\w.-]+\.\w+"), "[邮箱]"),
+    (
+        re.compile(
+            r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+            r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?\.[A-Za-z]{2,63}"
+        ),
+        "[邮箱]",
+    ),
     (
         re.compile(
             r"(?i)(?<![A-Za-z0-9])(?:sk|pk|api)[_-][A-Za-z0-9_-]{12,}(?![A-Za-z0-9])"
@@ -39,4 +45,3 @@ def redact_pii(text: str) -> str:
     for pattern, replacement in _PII_PATTERNS:
         redacted = pattern.sub(replacement, redacted)
     return redacted
-

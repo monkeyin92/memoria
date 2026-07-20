@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import {
   Bell,
   Brain,
@@ -6,6 +6,7 @@ import {
   CaretRight,
   ChatTeardropDots,
   Check,
+  Fingerprint,
   HandPalm,
   House,
   Microphone,
@@ -25,10 +26,14 @@ import {
   flushPendingMessages,
   getMemoryDays,
   getProfile,
+  loginAccount,
+  registerAccount,
   saveMessage,
   summarizeDay,
   updateProfile,
 } from "./api.js";
+import { AuthScreen } from "./components/AuthScreen.jsx";
+import { LifeArchivePanel } from "./components/LifeArchivePanel.jsx";
 import { Mascot } from "./components/Mascot.jsx";
 import { useVoiceSession } from "./hooks/useVoiceSession.js";
 import { localDateKey } from "./lib/date.js";
@@ -49,36 +54,19 @@ const defaultProfile = {
 };
 
 const today = () => localDateKey();
-const voiceBackendStorageKey = "memoria:voice-backend";
-const voiceBackendOptions = [
-  {
-    id: "cascade",
-    label: "级联",
-    title: "现有级联：LiveKit + FunASR + Qwen + CosyVoice",
-  },
-  {
-    id: "qwen_omni",
-    label: "Omni Flash",
-    title: "Qwen3.5-Omni-Flash-Realtime 端到端语音",
-  },
-  {
-    id: "qwen_omni_plus",
-    label: "Omni Plus",
-    title: "Qwen3.5-Omni-Plus-Realtime 端到端语音（更高质量）",
-  },
-];
-
-function initialVoiceBackend() {
-  try {
-    const stored = window.localStorage.getItem(voiceBackendStorageKey);
-    if (voiceBackendOptions.some((option) => option.id === stored)) {
-      return stored;
-    }
-  } catch {
-    // fall through
-  }
-  return "cascade";
-}
+const profileStorageKey = (userId) => `memoria:profile:${userId}`;
+const DigitalSelfPanel = lazy(() =>
+  import("./components/DigitalSelfPanel.jsx").then((module) => ({
+    default: module.DigitalSelfPanel,
+  })),
+);
+const PrivacyDataPanel = lazy(() =>
+  import("./components/PrivacyDataPanel.jsx").then((module) => ({
+    default: module.PrivacyDataPanel,
+  })),
+);
+// Cascade only for now. Omni / Audio Flash E2E backends are temporarily off.
+const VOICE_BACKEND = "cascade";
 
 function formatDay(dateString) {
   const date = new Date(`${dateString}T12:00:00`);
@@ -121,6 +109,7 @@ function normalizeMemoryDay(item) {
 
 export function App() {
   const [identity, setIdentity] = useState(null);
+  const [identityReady, setIdentityReady] = useState(false);
   const [identityError, setIdentityError] = useState("");
   const [activeTab, setActiveTab] = useState("home");
   const [emotion, setEmotion] = useState("neutral");
@@ -128,12 +117,13 @@ export function App() {
   const [profileReady, setProfileReady] = useState(false);
   const [draftProfile, setDraftProfile] = useState(defaultProfile);
   const [editingProfile, setEditingProfile] = useState(false);
+  const [digitalSelfOpen, setDigitalSelfOpen] = useState(false);
+  const [privacyDataOpen, setPrivacyDataOpen] = useState(false);
   const [memoryDays, setMemoryDays] = useState([]);
   const [selectedDay, setSelectedDay] = useState(today());
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryError, setMemoryError] = useState("");
   const [summaryRunning, setSummaryRunning] = useState(false);
-  const [voiceBackend, setVoiceBackend] = useState(initialVoiceBackend);
   const userId = identity?.user_id || "";
 
   const loadIdentity = useCallback(async () => {
@@ -142,6 +132,8 @@ export function App() {
       setIdentity(await bootstrapIdentity());
     } catch {
       setIdentityError("暂时无法建立安全身份，请检查网络后重试。");
+    } finally {
+      setIdentityReady(true);
     }
   }, []);
 
@@ -173,16 +165,8 @@ export function App() {
     userId,
     onFinalTranscript: handleFinalTranscript,
     voiceReplyEnabled: profile.voice_reply,
-    voiceBackend,
+    voiceBackend: VOICE_BACKEND,
   });
-
-  const voiceBackendLocked =
-    Boolean(voice.session) || voice.uiState === "connecting";
-  const selectVoiceBackend = (nextBackend) => {
-    if (voiceBackendLocked) return;
-    setVoiceBackend(nextBackend);
-    window.localStorage.setItem(voiceBackendStorageKey, nextBackend);
-  };
 
   const loadMemories = useCallback(async () => {
     if (!userId) return;
@@ -209,10 +193,14 @@ export function App() {
   useEffect(() => {
     if (!userId) return;
     setProfileReady(false);
+    setProfile(defaultProfile);
+    setDraftProfile(defaultProfile);
     void (async () => {
       let local = null;
       try {
-        local = JSON.parse(window.localStorage.getItem("memoria:profile") || "null");
+        local = JSON.parse(
+          window.localStorage.getItem(profileStorageKey(userId)) || "null",
+        );
       } catch {
         local = null;
       }
@@ -284,7 +272,10 @@ export function App() {
     };
     setProfile(next);
     setDraftProfile(next);
-    window.localStorage.setItem("memoria:profile", JSON.stringify(next));
+    window.localStorage.setItem(
+      profileStorageKey(userId),
+      JSON.stringify(next),
+    );
     setEditingProfile(false);
     try {
       await updateProfile(userId, next);
@@ -300,11 +291,33 @@ export function App() {
     }
     setProfile(next);
     setDraftProfile(next);
-    window.localStorage.setItem("memoria:profile", JSON.stringify(next));
+    window.localStorage.setItem(
+      profileStorageKey(userId),
+      JSON.stringify(next),
+    );
     void updateProfile(userId, next).catch(() => undefined);
   };
 
-  if (!identity || !profileReady) {
+  const handleAccountDeleted = async () => {
+    await voice.end().catch(() => undefined);
+    setIdentity(null);
+    setIdentityError("");
+    setProfile(defaultProfile);
+    setDraftProfile(defaultProfile);
+    setProfileReady(false);
+    setMemoryDays([]);
+    setSelectedDay(today());
+    setMemoryLoading(false);
+    setMemoryError("");
+    setSummaryRunning(false);
+    setEmotion("neutral");
+    setEditingProfile(false);
+    setDigitalSelfOpen(false);
+    setPrivacyDataOpen(false);
+    setActiveTab("profile");
+  };
+
+  if (!identityReady || identityError || (identity && !profileReady)) {
     return (
       <main className="mobile-prototype" data-page="bootstrap">
         <div className="app-surface">
@@ -313,10 +326,7 @@ export function App() {
               {!identityError && <span className="loading-orbit" />}
               <h2>{identityError ? "还差一点连接" : "正在准备你的陪伴空间"}</h2>
               <p>
-                {identityError ||
-                  (identity
-                    ? "正在同步你的陪伴偏好。"
-                    : "正在建立专属匿名身份，不会把永久密钥放进浏览器。")}
+                {identityError || "正在同步你的账号和陪伴偏好。"}
               </p>
               {identityError && (
                 <button type="button" onClick={() => void loadIdentity()}>
@@ -330,8 +340,35 @@ export function App() {
     );
   }
 
+  if (!identity || identity.account_type === "anonymous") {
+    return (
+      <AuthScreen
+        preservesExistingData={identity?.account_type === "anonymous"}
+        onLogin={async (username, password) => {
+          const account = await loginAccount(username, password);
+          setProfileReady((ready) => ready && account.user_id === userId);
+          setIdentity(account);
+        }}
+        onRegister={async (username, password) => {
+          const account = await registerAccount(username, password);
+          setProfileReady((ready) => ready && account.user_id === userId);
+          setIdentity(account);
+        }}
+      />
+    );
+  }
+
   return (
-    <main className="mobile-prototype" data-page={activeTab}>
+    <main
+      className="mobile-prototype"
+      data-page={
+        privacyDataOpen
+          ? "privacy-data"
+          : digitalSelfOpen
+            ? "digital-self"
+            : activeTab
+      }
+    >
       <div className="app-surface">
         {activeTab === "home" && (
           <section className="screen home-screen" aria-label="实时陪伴">
@@ -354,26 +391,6 @@ export function App() {
             </header>
 
             <div className="voice-status-row">
-              <div
-                className="voice-backend-selector"
-                role="radiogroup"
-                aria-label="语音模型"
-              >
-                {voiceBackendOptions.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    role="radio"
-                    title={option.title}
-                    aria-label={option.label}
-                    aria-checked={voiceBackend === option.id}
-                    disabled={voiceBackendLocked}
-                    onClick={() => selectVoiceBackend(option.id)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
               <div className="status-pill" data-state={voice.uiState}>
                 <span className="status-dot" />
                 {voice.statusLabel}
@@ -482,7 +499,40 @@ export function App() {
           />
         )}
 
-        {activeTab === "profile" && (
+        {activeTab === "profile" && digitalSelfOpen && (
+          <Suspense
+            fallback={
+              <section className="screen digital-self-screen" aria-label="正在加载数字心智与声音">
+                <div className="digital-loading" role="status">
+                  <span className="loading-orbit" />
+                  正在打开数字心智与声音…
+                </div>
+              </section>
+            }
+          >
+            <DigitalSelfPanel
+              onBack={() => setDigitalSelfOpen(false)}
+              onAccountDeleted={handleAccountDeleted}
+            />
+          </Suspense>
+        )}
+
+        {activeTab === "profile" && privacyDataOpen && (
+          <Suspense
+            fallback={
+              <section className="screen digital-self-screen" aria-label="正在加载隐私与数据">
+                <div className="digital-loading" role="status">
+                  <span className="loading-orbit" />
+                  正在打开隐私与数据…
+                </div>
+              </section>
+            }
+          >
+            <PrivacyDataPanel onBack={() => setPrivacyDataOpen(false)} />
+          </Suspense>
+        )}
+
+        {activeTab === "profile" && !digitalSelfOpen && !privacyDataOpen && (
           <ProfileScreen
             profile={profile}
             draftProfile={draftProfile}
@@ -492,19 +542,25 @@ export function App() {
             setEditing={setEditingProfile}
             onSave={saveProfile}
             onToggle={togglePreference}
+            onOpenDigitalSelf={() => setDigitalSelfOpen(true)}
+            onOpenPrivacyData={() => setPrivacyDataOpen(true)}
           />
         )}
 
         <div ref={voice.audioContainerRef} hidden aria-hidden="true" />
 
-        <nav className="bottom-nav" aria-label="主导航">
+        {!digitalSelfOpen && !privacyDataOpen && <nav className="bottom-nav" aria-label="主导航">
           {tabs.map(({ id, label, Icon }) => (
             <button
               type="button"
               key={id}
               className={activeTab === id ? "active" : ""}
               aria-current={activeTab === id ? "page" : undefined}
-              onClick={() => setActiveTab(id)}
+              onClick={() => {
+                setDigitalSelfOpen(false);
+                setPrivacyDataOpen(false);
+                setActiveTab(id);
+              }}
             >
               <span>
                 <Icon size={23} weight={activeTab === id ? "fill" : "regular"} />
@@ -512,7 +568,7 @@ export function App() {
               {label}
             </button>
           ))}
-        </nav>
+        </nav>}
       </div>
     </main>
   );
@@ -641,6 +697,7 @@ function MemoryScreen({
             <button type="button" onClick={onStartChat}>去聊聊</button>
           </div>
         )}
+        <LifeArchivePanel />
         {error && <p className="memory-error">{error}</p>}
       </div>
     </section>
@@ -656,6 +713,8 @@ function ProfileScreen({
   setEditing,
   onSave,
   onToggle,
+  onOpenDigitalSelf,
+  onOpenPrivacyData,
 }) {
   const momentCount = memoryDays.reduce(
     (total, day) => total + day.message_count,
@@ -726,7 +785,17 @@ function ProfileScreen({
           />
         </section>
 
-        <button type="button" className="privacy-card">
+        <button
+          type="button"
+          className="privacy-card digital-self-entry"
+          onClick={onOpenDigitalSelf}
+        >
+          <span className="privacy-icon"><Fingerprint size={22} weight="fill" /></span>
+          <span><strong>数字心智与声音</strong><small>人格学习、声纹识别与声音复刻</small></span>
+          <CaretRight size={19} weight="bold" />
+        </button>
+
+        <button type="button" className="privacy-card" onClick={onOpenPrivacyData}>
           <span className="privacy-icon"><ShieldCheck size={22} weight="fill" /></span>
           <span><strong>隐私与数据</strong><small>专属凭证保护你的对话</small></span>
           <CaretRight size={19} weight="bold" />

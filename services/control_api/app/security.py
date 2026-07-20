@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import hmac
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import jwt
 from fastapi import Header, HTTPException, Request
 
 from services.control_api.app.config import ControlSettings
+from services.control_api.app.database import MemoryStore
 
 
 def create_room_name() -> str:
@@ -24,6 +30,56 @@ def create_session_id() -> str:
 
 def create_anonymous_user_id() -> str:
     return f"anon-{uuid.uuid4()}"
+
+
+def create_account_user_id() -> str:
+    return f"account-{uuid.uuid4()}"
+
+
+_SCRYPT_N = 2**14
+_SCRYPT_R = 8
+_SCRYPT_P = 1
+_SCRYPT_DKLEN = 32
+
+
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    digest = hashlib.scrypt(
+        password.encode("utf-8"),
+        salt=salt,
+        n=_SCRYPT_N,
+        r=_SCRYPT_R,
+        p=_SCRYPT_P,
+        dklen=_SCRYPT_DKLEN,
+    )
+    salt_text = base64.urlsafe_b64encode(salt).decode("ascii")
+    digest_text = base64.urlsafe_b64encode(digest).decode("ascii")
+    return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${salt_text}${digest_text}"
+
+
+def verify_password(password: str, encoded: str) -> bool:
+    try:
+        algorithm, n, r, p, salt_text, expected_text = encoded.split("$", 5)
+        if algorithm != "scrypt":
+            return False
+        parameters = (int(n), int(r), int(p))
+        if parameters != (_SCRYPT_N, _SCRYPT_R, _SCRYPT_P):
+            return False
+        salt = base64.urlsafe_b64decode(salt_text.encode("ascii"))
+        expected = base64.urlsafe_b64decode(expected_text.encode("ascii"))
+        if len(salt) < 16 or len(expected) != _SCRYPT_DKLEN:
+            return False
+        actual = hashlib.scrypt(
+            password.encode("utf-8"),
+            salt=salt,
+            n=parameters[0],
+            r=parameters[1],
+            p=parameters[2],
+            dklen=len(expected),
+        )
+    except (binascii.Error, ValueError, TypeError):
+        return False
+    return hmac.compare_digest(actual, expected)
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,13 +153,42 @@ def require_authenticated_user(
             detail="invalid access token claims",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    store = getattr(request.app.state, "memory_store", None)
+    if store is not None and store.is_account_unavailable(user_id=user_id):
+        raise HTTPException(
+            status_code=401,
+            detail="account is unavailable",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return AuthenticatedUser(user_id=user_id)
+
+
+def optional_authenticated_user(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> AuthenticatedUser | None:
+    if authorization is None:
+        return None
+    return require_authenticated_user(request, authorization)
 
 
 def require_matching_user(requested_user_id: str, user: AuthenticatedUser) -> str:
     if requested_user_id != user.user_id:
         raise HTTPException(status_code=403, detail="user identity does not match access token")
     return user.user_id
+
+
+def require_active_voice_session(request: Request, session_id: str) -> dict[str, Any]:
+    """Resolve session ownership without reviving data after deletion starts."""
+    store = cast(MemoryStore, request.app.state.memory_store)
+    if store.is_voice_session_tombstoned(session_id=session_id):
+        raise HTTPException(status_code=410, detail="voice session was deleted")
+    session = store.get_voice_session_by_id(session_id=session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="voice session not found")
+    if store.is_account_unavailable(user_id=str(session["user_id"])):
+        raise HTTPException(status_code=410, detail="voice session was deleted")
+    return session
 
 
 def mint_participant_token(

@@ -9,9 +9,11 @@ from scripts import verify_env
 def _online_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OFFLINE_MOCK", "false")
     monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("LIVEKIT_URL", "wss://example.livekit.cloud")
     monkeypatch.setenv("LIVEKIT_API_KEY", "test-key")
     monkeypatch.setenv("LIVEKIT_API_SECRET", "test-livekit-material")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
+    monkeypatch.setenv("DASHSCOPE_WS_URL", "wss://dashscope.example.com/realtime")
     monkeypatch.setenv("LLM_PROVIDER", "qwen")
     monkeypatch.setenv("MEMORIA_RELEASE_TAG", "release-test-a")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
@@ -29,18 +31,16 @@ def test_deepseek_provider_requires_explicit_key(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
     monkeypatch.setenv("MEMORIA_RELEASE_TAG", "release-test-a")
     errors, _, _ = verify_env._validate_environment()
-    assert errors == ["missing required env: DEEPSEEK_API_KEY for LLM_PROVIDER=deepseek"]
+    assert errors == ["missing required env: DEEPSEEK_API_KEY"]
 
 
-def test_production_requires_independent_auth_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_environment_reuses_agent_settings_invariants(monkeypatch: pytest.MonkeyPatch) -> None:
     _online_env(monkeypatch)
-    monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.com")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://example.livekit.cloud")
-    monkeypatch.setenv("ALLOWED_ORIGINS", "https://example.com")
-    monkeypatch.setenv("MEMORIA_AUTH_SECRET", "short")
+    monkeypatch.setenv("LISTENER_CUE_PLAYBACK", "side-track")
+
     errors, _, _ = verify_env._validate_environment()
-    assert "production requires independent MEMORIA_AUTH_SECRET (>=32 chars)" in errors
+
+    assert "LISTENER_CUE_PLAYBACK must be main_track or background" in errors
 
 
 def test_mark_uses_selected_llm_provider_without_exposing_secret(

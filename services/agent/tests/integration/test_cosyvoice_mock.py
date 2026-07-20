@@ -103,6 +103,111 @@ async def test_cosyvoice_retries_once_with_fresh_connection(scenario: str) -> No
 
 
 @pytest.mark.asyncio
+async def test_clone_failure_before_audio_falls_back_to_designed_baseline_once() -> None:
+    srv = MockCosyVoiceServer(scenario="slow_once")
+    srv.start()
+    try:
+        cfg = CosyVoiceConfig(
+            api_key="test",
+            ws_url=srv.ws_url,
+            model="cosyvoice-v3.5-flash",
+            voice="cosyvoice-v3.5-flash-vd-warmboy-baseline",
+            pool_size=1,
+            first_audio_timeout_s=0.05,
+        )
+        tts = CosyVoiceTTS(cfg)
+        tts.apply_voice_profile(
+            model="cosyvoice-v3.5-flash",
+            voice="cosyvoice-v3.5-flash-clone-owner001",
+        )
+
+        result = await tts.synthesize_stream_text(
+            ["复刻音色失败后继续回答。"],
+            fence=GenerationFence("clone-fallback", 1, 1, 0),
+        )
+
+        assert result.pcm
+        assert [request["payload"]["parameters"]["voice"] for request in srv.run_requests] == [
+            "cosyvoice-v3.5-flash-clone-owner001",
+            "cosyvoice-v3.5-flash-vd-warmboy-baseline",
+        ]
+        await tts.aclose()
+    finally:
+        srv.stop()
+
+
+@pytest.mark.asyncio
+async def test_clone_task_failure_before_audio_also_falls_back_to_baseline() -> None:
+    srv = MockCosyVoiceServer(scenario="fail_once")
+    srv.start()
+    try:
+        cfg = CosyVoiceConfig(
+            api_key="test",
+            ws_url=srv.ws_url,
+            model="cosyvoice-v3.5-flash",
+            voice="cosyvoice-v3.5-flash-vd-warmboy-baseline",
+            pool_size=1,
+        )
+        tts = CosyVoiceTTS(cfg)
+        tts.apply_voice_profile(
+            model="cosyvoice-v3.5-flash",
+            voice="cosyvoice-v3.5-flash-clone-owner001",
+        )
+
+        result = await tts.synthesize_stream_text(
+            ["任务启动失败也要降级。"],
+            fence=GenerationFence("clone-task-fallback", 1, 1, 0),
+        )
+
+        assert result.pcm
+        assert [request["payload"]["parameters"]["voice"] for request in srv.run_requests] == [
+            "cosyvoice-v3.5-flash-clone-owner001",
+            "cosyvoice-v3.5-flash-vd-warmboy-baseline",
+        ]
+        await tts.aclose()
+    finally:
+        srv.stop()
+
+
+@pytest.mark.asyncio
+async def test_direct_synthesis_keeps_the_voice_selected_before_pool_wait() -> None:
+    srv = MockCosyVoiceServer(scenario="happy")
+    srv.start()
+    try:
+        cfg = CosyVoiceConfig(
+            api_key="test",
+            ws_url=srv.ws_url,
+            model="cosyvoice-v3.5-flash",
+            voice="clone-before-wait",
+            pool_size=1,
+        )
+        pool = CosyVoicePool(cfg)
+        tts = CosyVoiceTTS(cfg, pool)
+        await pool.warm(1)
+        held = await pool.acquire()
+        synthesis = asyncio.create_task(
+            tts.synthesize_stream_text(
+                ["音色快照"],
+                fence=GenerationFence("voice-snapshot", 1, 1, 0),
+            )
+        )
+        await asyncio.sleep(0)
+        tts.apply_voice_profile(
+            model="cosyvoice-v3.5-flash",
+            voice="clone-after-wait",
+        )
+        await pool.release(held)
+
+        result = await synthesis
+
+        assert result.pcm
+        assert srv.run_requests[-1]["payload"]["parameters"]["voice"] == "clone-before-wait"
+        await tts.aclose()
+    finally:
+        srv.stop()
+
+
+@pytest.mark.asyncio
 async def test_pool_shutdown_does_not_refill_and_clears_active_binding() -> None:
     srv = MockCosyVoiceServer()
     srv.start()

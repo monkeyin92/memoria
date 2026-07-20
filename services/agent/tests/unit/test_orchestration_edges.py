@@ -91,7 +91,7 @@ def test_heard_tracker_edge_fallbacks() -> None:
     tracker.full_text = "没有标点"
     tracker.words.clear()
     tracker.mark_playback_stopped(2_240_000_000)
-    assert tracker.snapshot() == "没有"
+    assert tracker.snapshot() == ""
 
 
 @pytest.mark.parametrize(

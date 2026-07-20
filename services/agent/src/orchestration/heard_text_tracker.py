@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from services.agent.src.contracts.events import TimedWord
+from services.agent.src.contracts.ids import GenerationFence
 
 DEFAULT_OUTPUT_SAFETY_MARGIN_MS = 80
 
@@ -19,6 +20,8 @@ class HeardTextTracker:
     safety_margin_ms: int = DEFAULT_OUTPUT_SAFETY_MARGIN_MS
     alignment_degraded: bool = False
     full_text: str = ""
+    _expected_fence: GenerationFence | None = field(default=None, init=False, repr=False)
+    _utterance_id: str | None = field(default=None, init=False, repr=False)
 
     def reset(self) -> None:
         self.words.clear()
@@ -26,6 +29,33 @@ class HeardTextTracker:
         self.playback_stopped_mono_ns = None
         self.alignment_degraded = False
         self.full_text = ""
+        self._expected_fence = None
+        self._utterance_id = None
+
+    def expect_utterance(self, fence: GenerationFence) -> None:
+        """Fence the next TTS task before provider callbacks can arrive."""
+        self._expected_fence = fence
+        self._utterance_id = None
+        self.alignment_degraded = False
+
+    def observe_alignment(
+        self,
+        fence: GenerationFence,
+        utterance_id: str,
+        status: str,
+    ) -> bool:
+        """Accept alignment only for the expected generation and active TTS task."""
+        if self._expected_fence is None or not self._expected_fence.matches(fence):
+            return False
+        if status == "started":
+            self._utterance_id = utterance_id
+            self.alignment_degraded = False
+            return True
+        if status not in {"ok", "scaled", "degraded"} or utterance_id != self._utterance_id:
+            return False
+        if status == "degraded":
+            self.alignment_degraded = True
+        return True
 
     def set_full_text(self, text: str) -> None:
         self.full_text = text
@@ -80,4 +110,4 @@ class HeardTextTracker:
         for i in range(len(text) - 1, -1, -1):
             if text[i] in "，。！？；、,:;!?\n":
                 return text[: i + 1]
-        return text
+        return ""

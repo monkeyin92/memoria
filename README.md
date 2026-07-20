@@ -8,11 +8,15 @@
 
 - H5：<https://aginice.cn:8443/>
 - Control API：<https://aginice.cn:8443/memoria-api/>
-- 当前正式 release：`20260716-085218`
+- 当前正式 release：`20260719-215553`
 - 当前基础设施发布记录：`docs/releases/20260716-120146.md`
-- TLS：`aginice.cn` 使用 TrustAsia 域名证书（有效至 2026-09-04）；当前公网入口为 8443。443 的 Memoria 路由已就绪，但域名 SNI 在到达 Nginx 前被上游关闭，待备案放行后可直接使用无端口 URL。公网 IP 兼容入口仍使用 Let's Encrypt 短期证书（有效至 2026-07-22）。任何 Nginx reload 前都必须先通过 `nginx -t`。
+- TLS：`aginice.cn` 使用 TrustAsia 域名证书（有效至 2026-09-04）；当前公网入口为 8443。443 的 Memoria 路由已就绪，但域名 SNI 在到达 Nginx 前被上游关闭，待备案放行后可直接使用无端口 URL。公网 IP 兼容入口仍使用 Let's Encrypt 短期证书（有效至 2026-07-25）。任何 Nginx reload 前都必须先通过 `nginx -t`。
 
-H5 使用服务端签发的匿名 Bearer 身份和短期 LiveKit participant token。消息、个人资料、偏好、会话控制和 readiness evidence 存入 SQLite，并按用户隔离；PII 在持久化或发送 Provider 上下文前统一脱敏。浏览器 bundle 不包含永久凭据。
+当前线上 H5 使用用户名/密码稳定账号和短期 LiveKit participant token；旧匿名身份仍可在注册时原地升级。消息、个人资料、偏好、会话控制和 readiness evidence 按用户隔离；PII 在持久化或发送 Provider 上下文前统一脱敏。浏览器 bundle 不包含永久凭据。
+
+> 生产状态边界：P0.5、P1-P6 工程能力已随 `20260719-215553` 部署；正式声纹仍为 shadow-only，复刻声音尚未通过授权真人盲测。同机 PostgreSQL/MinIO 没有异地副本/KMS/PITR，不能宣传为已完成规模化声纹验收或“永不丢失”。
+
+P0.5～P6 工程切片已完成并部署；声纹模型使用独立 `speaker-model` 容器承载固定 CAM++ ONNX 版本，Control API readiness 会校验模型健康与版本。CAM++ 不提供 anti-spoof，因此当前只允许 shadow/`uncertain` 结果，不能把模型冒烟当作生产主人识别。
 
 ## 快速开始
 
@@ -20,8 +24,7 @@ H5 使用服务端签发的匿名 Bearer 身份和短期 LiveKit participant tok
 
 - Python **3.12.x**
 - [uv](https://github.com/astral-sh/uv)
-- Node 20+ / pnpm 9+
-- Xcode 16.3+（iOS 客户端；部署目标 iOS 17）
+- Node 20+ / npm
 - （可选）LiveKit CLI、Docker
 
 ### 安装
@@ -32,7 +35,7 @@ cp .env.example .env
 echo 'OFFLINE_MOCK=true' >> .env
 
 uv sync --all-extras
-pnpm --dir apps/web install
+npm --prefix apps/h5 ci
 ```
 
 ### 开发（三终端）
@@ -44,19 +47,11 @@ uv run uvicorn services.control_api.app.main:app --host 0.0.0.0 --port 8000 --re
 # 2. Agent worker（需要 LiveKit 密钥）
 uv run python -m services.agent.src.main dev
 
-# 3. 前端
-pnpm --dir apps/web dev --host 0.0.0.0
+# 3. H5
+npm --prefix apps/h5 run dev -- --host 0.0.0.0
 ```
 
-或使用 `make dev-api` / `make dev-agent` / `make dev-web`。
-
-### iOS
-
-打开 `apps/ios/MemoriaVoice.xcodeproj`，选择 `MemoriaVoice` scheme 后运行。App 默认访问模拟器宿主机的 `http://127.0.0.1:8000`，也可在首屏修改控制 API 地址。真机应使用可访问的 HTTPS 地址。
-
-若使用 macOS 27 测试版，需要匹配的 Xcode 27 工具链；Xcode 26.x 虽可做目标级编译，但可能无法解析 scheme 的 iOS Simulator destination。
-
-iOS App 只从控制 API 获取短期 participant token；不得在 App、Info.plist 或构建配置中写入 LLM、DashScope 或 LiveKit API secret。
+或使用 `make dev-api` / `make dev-agent` / `make dev-h5`。当前唯一客户端交付端是 H5；仓库中的 legacy Web/iOS 代码不参与当前开发、CI 或验收门禁。
 
 ### H5
 
@@ -69,9 +64,9 @@ npm --prefix apps/h5 test
 npm --prefix apps/h5 run build
 ```
 
-本地默认使用 `/memoria-h5/` base path；生产 Control API 通过同源 `/memoria-api` 访问，永久密钥不会进入浏览器 bundle。H5 会缓存匿名身份，并通过 `/v1/auth/me` 验证：只有服务端返回 401/403 才换发身份，临时网络故障不会导致用户数据被切换到新身份。
+本地默认使用 `/memoria-h5/` base path；生产 Control API 通过同源 `/memoria-api` 访问，永久密钥不会进入浏览器 bundle。H5 通过 `/v1/auth/me` 恢复稳定账号身份；只有服务端返回 401/403 才清理失效身份，临时网络故障不会切换用户数据归属。
 
-当前交付已通过 H5 38 项测试、production build 和 390×720 浏览器回归；其中 `useVoiceSession` 生产边界测试为 18/18。
+当前本地交付已通过 H5 100 项测试、production build 和 390×844 浏览器回归；匿名注册原地升级、跨账号 Profile 隔离、隐私授权断网 fail-closed、重试、撤销确认焦点、删除失败可见性、无横向溢出和 console 0 warning/error 均已验收。
 
 会话只有收到当前 Agent 在 `voice-agent.ui` topic 发布的显式 `assistant_state: ready` 后才进入可用态；LiveKit transport 已连接但 45 秒内未收到该事件时，H5 会断开并恢复为可重试状态。Agent 在音频输出与 UI publisher 就绪后先发布并等待 `ready`，随后才生成首次欢迎语，避免欢迎语先于客户端可用态。
 
@@ -81,19 +76,24 @@ npm --prefix apps/h5 run build
 uv run ruff check .
 uv run mypy services --strict
 uv run pytest
-pnpm --dir apps/web lint
-pnpm --dir apps/web test --run
+npm --prefix apps/h5 test
+npm --prefix apps/h5 run build
 uv run python scripts/run_e2e.py --profile offline
 uv run python scripts/provider_smoke_test.py   # 缺密钥时 SKIP 并打印变量名
 ```
 
-### Docker
+### 本地 Docker 开发
 
 ```bash
 docker compose up -d postgres redis
-# 构建镜像前需已有 uv.lock / pnpm-lock.yaml
-docker compose build
+# 仅在本地开发机执行；当前 Compose 只构建后端，不构建历史 apps/web
+docker compose build control-api agent
+# H5 使用唯一锁文件单独生成静态产物
+npm --prefix apps/h5 ci
+npm --prefix apps/h5 run build
 ```
+
+生产服务器约 3.6 GiB 内存，不在服务器构建镜像。正式发布必须在本机生成并校验 `linux/amd64` 镜像和 H5 静态产物，上传后由服务器执行 `docker load` 与 `docker compose up --no-build`；完整步骤见 `docs/production-deployment.md`。
 
 本地自建 LiveKit：
 
@@ -111,7 +111,7 @@ LiveKit Server 是开源的，但任何客户端加入房间都必须提交服�
 - **LiveKit Cloud**：在 Cloud 控制台创建 Project，Project Settings / Keys 中生成；
 - **自建 LiveKit**：不需要向 LiveKit 申请，直接在部署配置的 `keys:` 中自行定义，或用 LiveKit 配置生成器生成。
 
-API secret 永远只放控制 API 与 Agent 服务端；Web/iOS 只接收短期 participant token。
+API secret 永远只放控制 API 与 Agent 服务端；H5 只接收短期 participant token。
 
 ## 仓库结构
 
@@ -121,10 +121,9 @@ API secret 永远只放控制 API 与 Agent 服务端；Web/iOS 只接收短期 
 |---|---|
 | `services/agent/src/orchestration/` | 状态机、Fence、HeardText、分段、打断 |
 | `services/agent/src/providers/` | FunASR / CosyVoice / OpenAI-compatible LLM 协议与适配 |
-| `services/control_api/` | Session token / stop-response / health |
-| `apps/web/` | React 19 + LiveKit 客户端 |
+| `services/control_api/` | 账号、会话、档案、人格、声纹、声音、导出/删除与 health |
 | `apps/h5/` | 面向移动浏览器的 Memoria 三页产品 |
-| `apps/ios/` | SwiftUI + LiveKit Swift SDK 原生客户端 |
+| `apps/web/`、`apps/ios/` | 历史客户端源码；不属于当前 H5-only 交付与门禁 |
 | `docs/requirements_traceability_matrix.md` | MUST → 代码 → 测试 |
 
 ## 部署档案
@@ -132,7 +131,7 @@ API secret 永远只放控制 API 与 Agent 服务端；Web/iOS 只接收短期 
 - `DEPLOYMENT_PROFILE=livekit_cloud`：Adaptive Interruption + Turn Detector `v1`
 - `DEPLOYMENT_PROFILE=cn_self_hosted`：Turn Detector `v1-mini` + `ChineseInterruptionGuard`
 
-H5 的生产 Compose、自建 LiveKit、域名与公网 IP TLS、Nginx 路由、Provider 门禁、SQLite 备份和回滚步骤见 `docs/production-deployment.md`。`https://aginice.cn:8443/` 直接交付 H5；同一端口还通过 Nginx stream 复用为 LiveKit RTC/TCP 回退。静态资源与 API 继续使用 `/memoria-h5/`、`/memoria-api/` 独立路径。应用发布证据见 `docs/releases/20260716-085218.md`，自建 LiveKit 切换证据见 `docs/releases/20260716-120146.md`。
+H5 的生产 Compose、自建 LiveKit、域名与公网 IP TLS、Nginx 路由、Provider 门禁、备份和回滚步骤见 `docs/production-deployment.md`。`https://aginice.cn:8443/` 直接交付 H5；同一端口还通过 Nginx stream 复用为 LiveKit RTC/TCP 回退。静态资源与 API 继续使用 `/memoria-h5/`、`/memoria-api/` 独立路径。当前线上发布证据见 `docs/releases/20260719-215553.md`；P0.5～P6 的本地工程基线记录见 `docs/releases/20260719-local-memory-persona.md`。
 
 ## 实现偏差
 
@@ -152,6 +151,6 @@ H5 的生产 Compose、自建 LiveKit、域名与公网 IP TLS、Nginx 路由、
 
 ## 验收
 
-当前后端质量门为 Ruff、mypy strict 和 204 项 pytest；H5 质量门为 38 项测试（含 hook 18/18）与 production build。完整追踪矩阵见 `docs/requirements_traceability_matrix.md`。
+当前本地工程质量门为 Ruff、mypy strict、全量 pytest、离线 E2E、Control API/Agent 镜像构建；H5 质量门为 98 项测试、production build 与移动浏览器验收。完整追踪矩阵见 `docs/requirements_traceability_matrix.md`，终身记忆架构与阶段状态见 `docs/memory-persona-architecture-v1.md` 和 `docs/memory-persona-implementation-plan.md`。
 
 只要出现 **旧 generation 误播** 或 **旧 tool epoch 误播**，发布结论必须是 **REJECT**。

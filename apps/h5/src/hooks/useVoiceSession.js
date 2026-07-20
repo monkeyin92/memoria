@@ -14,10 +14,11 @@ import { extractInboundAudioStats } from "../voice/webrtcStats.js";
 const UI_TOPIC = "voice-agent.ui";
 const TELEMETRY_TOPIC = "voice-agent.telemetry";
 const AGENT_READY_TIMEOUT_MS = 45_000;
-const OMNI_BACKENDS = new Set(["qwen_omni", "qwen_omni_plus"]);
+/** End-to-end realtime backends (not LiveKit cascade). */
+const REALTIME_BACKENDS = new Set(["qwen_omni"]);
 
-function isOmniBackend(backend) {
-  return OMNI_BACKENDS.has(backend);
+function isRealtimeBackend(backend) {
+  return REALTIME_BACKENDS.has(backend);
 }
 
 const stateLabels = {
@@ -255,7 +256,7 @@ export function useVoiceSession({
       ];
       setAudioDiagnostics(audioDiagnosticsRef.current);
       publishAudioDiagnostic(roomRef.current, event);
-      if (isOmniBackend(sessionRef.current?.voice_backend)) {
+      if (isRealtimeBackend(sessionRef.current?.voice_backend)) {
         const payload = {
           name,
           elapsed_ms: event.elapsed_ms,
@@ -264,7 +265,7 @@ export function useVoiceSession({
           ...(name === "webrtc_inbound_audio" && detail
             ? { metrics: detail }
             : {}),
-          // Surface DashScope realtime error fields for server-side diagnosis.
+          // Send only bounded classifications; provider message bodies may contain text.
           ...(name === "omni_upstream_error" ||
           name === "omni_transcription_failed"
             ? {
@@ -276,9 +277,6 @@ export function useVoiceSession({
                   0,
                   80,
                 ) || null,
-                error_message: String(
-                  detail?.message || detail?.error_message || "",
-                ).slice(0, 240) || null,
                 error_param: String(detail?.param || detail?.error_param || "").slice(
                   0,
                   80,
@@ -585,16 +583,15 @@ export function useVoiceSession({
     audioDiagnosticsRef.current = [];
     setAudioDiagnostics([]);
 
-    const selectedBackend = isOmniBackend(voiceBackend)
+    const selectedBackend = isRealtimeBackend(voiceBackend)
       ? voiceBackend
       : "cascade";
-    if (isOmniBackend(selectedBackend)) {
+    if (isRealtimeBackend(selectedBackend)) {
       let transport;
       const isCurrent = () =>
         attemptRef.current === attempt &&
         omniTransportRef.current === transport;
-      transport = new QwenOmniWebRTCTransport({
-        exchangeSdp: exchangeOmniSdp,
+      const transportOptions = {
         speakerVerifyEnabled: true,
         onState: (state) => {
           if (!isCurrent()) return;
@@ -648,6 +645,10 @@ export function useVoiceSession({
             setError("连接已经断开，轻触吉祥物可以重新开始");
           }
         },
+      };
+      transport = new QwenOmniWebRTCTransport({
+        exchangeSdp: exchangeOmniSdp,
+        ...transportOptions,
       });
       omniTransportRef.current = transport;
       let preparation;
@@ -696,8 +697,6 @@ export function useVoiceSession({
                 ? "需要麦克风权限，才能听见你说话"
                 : caught instanceof Error
                   ? caught.message
-                  : selectedBackend === "qwen_omni_plus"
-                  ? "暂时无法开始 Qwen3.5-Omni-Plus 对话"
                   : "暂时无法开始 Qwen3.5-Omni-Flash 对话",
             );
           } else {

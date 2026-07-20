@@ -6,6 +6,7 @@ import pytest
 from services.agent.src.orchestration.speaker_verify import SpeakerGateState
 from services.agent.src.orchestration.utterance_router import (
     UtteranceIntent,
+    route_speaker_gate,
     route_utterance,
 )
 
@@ -66,7 +67,7 @@ from services.agent.src.orchestration.utterance_router import (
         ),
         (
             "停一下",
-            SpeakerGateState.OPEN,
+            SpeakerGateState.UNAVAILABLE,
             UtteranceIntent.INTERRUPT_COMMAND,
             False,
             True,
@@ -131,7 +132,7 @@ from services.agent.src.orchestration.utterance_router import (
         ),
         (
             "你好",
-            SpeakerGateState.OPEN,
+            SpeakerGateState.UNAVAILABLE,
             UtteranceIntent.CHAT,
             True,
             False,
@@ -182,3 +183,28 @@ def test_enrolled_chat_not_blocked_as_enroll() -> None:
     route = route_utterance("我是主人", speaker_state=SpeakerGateState.ENROLLED)
     assert route.intent is UtteranceIntent.CHAT
     assert route.enter_chat is True
+
+
+def test_route_has_no_duplicate_speaker_authority_policy() -> None:
+    route = route_utterance("打开我的人生故事")
+
+    assert not hasattr(route, "permissions")
+
+
+@pytest.mark.parametrize(
+    ("score_reason", "allowed", "reason"),
+    [
+        ("mismatch", True, "guest_mismatch"),
+        ("too_short", False, "too_short"),
+        ("embed_failed", False, "embed_failed"),
+    ],
+)
+def test_legacy_speaker_gate_routes_human_mismatch_as_guest(
+    score_reason: str,
+    allowed: bool,
+    reason: str,
+) -> None:
+    route = route_speaker_gate(score_reason=score_reason)
+
+    assert route.allow_input is allowed
+    assert route.reason == reason

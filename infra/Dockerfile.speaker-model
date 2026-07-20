@@ -1,0 +1,57 @@
+FROM python:3.12.13-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b AS model-builder
+
+ARG THREE_D_SPEAKER_COMMIT=065629c313eaf1a01c65c640c46d77e61e9607b4
+ARG CAMPLUS_MODEL_REVISION=v1.0.0
+ARG CAMPLUS_CHECKPOINT_SHA256=3388cf5fd3493c9ac9c69851d8e7a8badcfb4f3dc631020c4961371646d5ada8
+ARG CAMPLUS_ONNX_SHA256=7a39d2e5e5664be9b365d5a9cb76732566fca0539899382a1962b1ded3263ca9
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl git \
+    && rm -rf /var/lib/apt/lists/*
+RUN python -m pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cpu \
+        torch==2.10.0+cpu \
+    && python -m pip install --no-cache-dir \
+        onnx==1.20.1 onnxruntime==1.27.0
+RUN git init /tmp/3D-Speaker \
+    && git -C /tmp/3D-Speaker remote add origin https://github.com/modelscope/3D-Speaker.git \
+    && git -C /tmp/3D-Speaker fetch --depth 1 origin "${THREE_D_SPEAKER_COMMIT}" \
+    && git -C /tmp/3D-Speaker checkout --detach FETCH_HEAD
+COPY infra/patches/3d-speaker-campplus-average-pool.patch /tmp/campplus-average-pool.patch
+RUN git -C /tmp/3D-Speaker apply --check /tmp/campplus-average-pool.patch \
+    && git -C /tmp/3D-Speaker apply /tmp/campplus-average-pool.patch
+RUN curl --fail --location --retry 5 --retry-all-errors \
+        "https://www.modelscope.cn/models/iic/speech_campplus_sv_zh-cn_16k-common/resolve/${CAMPLUS_MODEL_REVISION}/campplus_cn_common.bin" \
+        --output /tmp/campplus_cn_common.bin \
+    && echo "${CAMPLUS_CHECKPOINT_SHA256}  /tmp/campplus_cn_common.bin" | sha256sum -c -
+COPY scripts/export_campplus_onnx.py /tmp/export_campplus_onnx.py
+RUN python /tmp/export_campplus_onnx.py \
+        --speakerlab-root /tmp/3D-Speaker \
+        --checkpoint /tmp/campplus_cn_common.bin \
+        --output /tmp/campplus_cn_common.onnx \
+        --manifest /tmp/campplus_model_manifest.json \
+        --expected-onnx-sha256 "${CAMPLUS_ONNX_SHA256}"
+
+FROM python:3.12.13-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    MEMORIA_SPEAKER_MODEL_PATH=/models/campplus_cn_common.onnx \
+    MEMORIA_SPEAKER_MODEL_VERSION=campplus-cn-common@v1.0.0+ckpt.3388cf5f+onnx.7a39d2e5e566+fbank.v1 \
+    MEMORIA_SPEAKER_MODEL_SHA256_PATH=/models/campplus_cn_common.onnx.sha256
+WORKDIR /app
+
+COPY infra/requirements-speaker-model.txt /tmp/requirements-speaker-model.txt
+RUN python -m pip install --no-cache-dir -r /tmp/requirements-speaker-model.txt \
+    && rm /tmp/requirements-speaker-model.txt
+COPY services/speaker_model /app/services/speaker_model
+COPY --from=model-builder /tmp/campplus_cn_common.onnx /models/campplus_cn_common.onnx
+COPY --from=model-builder /tmp/campplus_cn_common.onnx.sha256 /models/campplus_cn_common.onnx.sha256
+COPY --from=model-builder /tmp/campplus_model_manifest.json /models/campplus_model_manifest.json
+
+USER 65532:65532
+EXPOSE 8001
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/ready', timeout=3).close()"]
+CMD ["python", "-m", "uvicorn", "services.speaker_model.app:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1", "--no-access-log"]

@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import jwt
 import pytest
+from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from services.control_api.app.config import ControlSettings
@@ -75,7 +76,11 @@ async def test_anonymous_token_uses_server_generated_subject(
         user_id, headers = await _anonymous_identity(client)
         current = await client.get("/v1/auth/me", headers=headers)
     assert current.status_code == 200
-    assert current.json() == {"user_id": user_id}
+    assert current.json() == {
+        "user_id": user_id,
+        "username": None,
+        "account_type": "anonymous",
+    }
 
 
 @pytest.mark.asyncio
@@ -137,11 +142,6 @@ async def test_create_omni_session_requires_only_dashscope_api_key(
             headers=headers,
             json={"user_id": user_id, "voice_backend": "qwen_omni"},
         )
-        plus = await client.post(
-            "/v1/sessions",
-            headers=headers,
-            json={"user_id": user_id, "voice_backend": "qwen_omni_plus"},
-        )
 
     assert response.status_code == 200
     data = response.json()
@@ -159,24 +159,12 @@ async def test_create_omni_session_requires_only_dashscope_api_key(
     assert data["config"]["persona"]["cloned"] is False
     assert data["config"]["turn_detection"] == flash_td
     assert data["config"]["ab_profile"] == "qwen_omni:silence=800:th=0.5:pad=500"
-    assert data["config"]["ab_scan"]["backends"] == ["qwen_omni", "qwen_omni_plus"]
+    assert data["config"]["ab_scan"]["backends"] == ["qwen_omni"]
     assert data["config"]["ab_scan"]["active"]["silence_duration_ms"] == 800
-    assert plus.status_code == 200
-    plus_data = plus.json()
-    assert plus_data["voice_backend"] == "qwen_omni_plus"
-    assert plus_data["config"]["model"] == "qwen3.5-omni-plus-realtime"
-    # P0-3: Plus defaults snappier than Flash for A/B (env-overridable).
-    assert plus_data["config"]["turn_detection"] == {
-        "type": "semantic_vad",
-        "threshold": 0.45,
-        "prefix_padding_ms": 500,
-        "silence_duration_ms": 650,
-    }
-    assert plus_data["config"]["ab_profile"] == "qwen_omni_plus:silence=650:th=0.45:pad=500"
 
 
 @pytest.mark.asyncio
-async def test_omni_turn_detection_env_overrides_support_flash_plus_sweeps(
+async def test_omni_turn_detection_env_overrides(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -184,8 +172,6 @@ async def test_omni_turn_detection_env_overrides_support_flash_plus_sweeps(
     monkeypatch.setenv("QWEN_OMNI_VAD_THRESHOLD", "0.4")
     monkeypatch.setenv("QWEN_OMNI_SILENCE_DURATION_MS", "900")
     monkeypatch.setenv("QWEN_OMNI_PREFIX_PADDING_MS", "400")
-    monkeypatch.setenv("QWEN_OMNI_PLUS_SILENCE_DURATION_MS", "650")
-    monkeypatch.setenv("QWEN_OMNI_PLUS_VAD_THRESHOLD", "0.55")
     app = create_app()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -197,25 +183,12 @@ async def test_omni_turn_detection_env_overrides_support_flash_plus_sweeps(
                 json={"user_id": user_id, "voice_backend": "qwen_omni"},
             )
         ).json()
-        plus = (
-            await client.post(
-                "/v1/sessions",
-                headers=headers,
-                json={"user_id": user_id, "voice_backend": "qwen_omni_plus"},
-            )
-        ).json()
 
     assert flash["config"]["turn_detection"] == {
         "type": "semantic_vad",
         "threshold": 0.4,
         "prefix_padding_ms": 400,
         "silence_duration_ms": 900,
-    }
-    assert plus["config"]["turn_detection"] == {
-        "type": "semantic_vad",
-        "threshold": 0.55,
-        "prefix_padding_ms": 400,
-        "silence_duration_ms": 650,
     }
 
 
@@ -321,10 +294,24 @@ async def test_omni_owner_can_publish_only_allowlisted_numeric_telemetry(
                 "metrics": {"transcript": "不得上传文本"},
             },
         )
+        rejected_message = await client.post(
+            f"/v1/sessions/{created['session_id']}/telemetry",
+            headers=headers,
+            json={
+                "name": "omni_upstream_error",
+                "elapsed_ms": 5002,
+                "turn_id": 1,
+                "generation_id": 1,
+                "error_code": "provider_error",
+                "error_message": "不得写入日志的上游正文",
+            },
+        )
 
     assert accepted.status_code == 204
     assert rejected.status_code == 422
+    assert rejected_message.status_code == 422
     assert "不得上传文本" not in caplog.text
+    assert "不得写入日志的上游正文" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -480,22 +467,12 @@ async def test_omni_upstream_uses_fixed_url_without_redirects_or_client_secret(
         ControlSettings(),
         b"v=0\r\no=browser-offer\r\n",
     )
-    plus_answer = await session_routes._exchange_omni_sdp(
-        ControlSettings(),
-        b"v=0\r\no=browser-offer\r\n",
-        model="qwen3.5-omni-plus-realtime",
-    )
 
     assert answer.startswith(b"v=0")
-    assert plus_answer.startswith(b"v=0")
     assert captured["urls"] == [
         (
             "https://llm-qp8mf178biax7m6c.cn-beijing.maas.aliyuncs.com"
             "/api/v1/webrtc/realtime?model=qwen3.5-omni-flash-realtime"
-        ),
-        (
-            "https://llm-qp8mf178biax7m6c.cn-beijing.maas.aliyuncs.com"
-            "/api/v1/webrtc/realtime?model=qwen3.5-omni-plus-realtime"
         ),
     ]
     assert captured["client"] == {
@@ -515,6 +492,7 @@ async def test_omni_upstream_uses_fixed_url_without_redirects_or_client_secret(
 async def test_omni_upstream_error_body_is_not_exposed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _configure(monkeypatch, tmp_path, offline=False)
     monkeypatch.setenv("DASHSCOPE_WORKSPACE_ID", "llm-test-workspace")
@@ -537,6 +515,7 @@ async def test_omni_upstream_error_body_is_not_exposed(
             )
 
     monkeypatch.setattr(session_routes.httpx, "AsyncClient", FailedAsyncClient)
+    caplog.set_level("WARNING", logger="services.control_api.app.routes.session")
     with pytest.raises(HTTPException) as caught:
         await session_routes._exchange_omni_sdp(
             ControlSettings(),
@@ -546,6 +525,27 @@ async def test_omni_upstream_error_body_is_not_exposed(
     assert caught.value.status_code == 502
     assert caught.value.detail == "Qwen3.5-Omni 建连失败"
     assert "provider-internal-secret-detail" not in str(caught.value.detail)
+    assert "provider-internal-secret-detail" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_production_accepts_only_the_auditable_cascade_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path, offline=False)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, headers = await _anonymous_identity(client)
+        response = await client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={"user_id": user_id, "voice_backend": "qwen_omni"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "端到端实时模型仅限隔离 A/B 环境"
 
 
 @pytest.mark.asyncio
@@ -700,6 +700,7 @@ async def test_readiness_requires_fresh_authenticated_smokes(
         "llm_provider": "qwen",
         "release_tag": "release-test-a",
         "cosyvoice": True,
+        "cosyvoice_timestamps": True,
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         before = await client.get("/health/ready")
@@ -713,6 +714,16 @@ async def test_readiness_requires_fresh_authenticated_smokes(
             headers={"Authorization": "Bearer test-auth-material-that-is-long-enough"},
             json={**mark_body, "release_tag": "release-test-b"},
         )
+        missing_timestamps = await client.post(
+            "/internal/readiness/smokes",
+            headers={"Authorization": "Bearer test-auth-material-that-is-long-enough"},
+            json={key: value for key, value in mark_body.items() if key != "cosyvoice_timestamps"},
+        )
+        failed_timestamps = await client.post(
+            "/internal/readiness/smokes",
+            headers={"Authorization": "Bearer test-auth-material-that-is-long-enough"},
+            json={**mark_body, "cosyvoice_timestamps": False},
+        )
         marked = await client.post(
             "/internal/readiness/smokes",
             headers={"Authorization": "Bearer test-auth-material-that-is-long-enough"},
@@ -724,9 +735,15 @@ async def test_readiness_requires_fresh_authenticated_smokes(
     assert before.json()["smokes"] == "not_run"
     assert rejected.status_code == 401
     assert wrong_release.status_code == 409
+    assert missing_timestamps.status_code == 422
+    assert failed_timestamps.status_code == 422
     assert marked.status_code == 200
     assert ready.status_code == 200
     assert ready.json()["checks"]["llm"] == {"provider": "qwen", "passed": True}
+    assert ready.json()["checks"]["cosyvoice"] == {
+        "audio": True,
+        "word_timestamps": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -742,6 +759,7 @@ async def test_readiness_evidence_survives_restart_and_is_release_bound(
         "llm_provider": "qwen",
         "release_tag": "release-test-a",
         "cosyvoice": True,
+        "cosyvoice_timestamps": True,
     }
     first_app = create_app()
     async with AsyncClient(
@@ -840,9 +858,227 @@ def test_production_config_requires_immutable_release_tag() -> None:
         LIVEKIT_API_KEY="key",
         LIVEKIT_API_SECRET="test-livekit-material-long-enough",
         MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
+        MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-long-enough",
+        MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
+        MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
+        MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
+        MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
+        MEMORIA_SPEAKER_INTERNAL_TOKEN="test-speaker-material-that-is-long-enough",
+        MEMORIA_SPEAKER_EMBEDDING_TOKEN="test-embedding-material-that-is-long-enough",
+        MEMORIA_SPEAKER_TEMPLATE_KEY=Fernet.generate_key().decode("ascii"),
+        MEMORIA_SPEAKER_EMBEDDING_URL="http://speaker-model:8001/v1/embeddings/speaker",
+        MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"),
+        MEMORIA_VOICE_SAMPLE_URL_SECRET="test-voice-url-material-that-is-long-enough",
+        MEMORIA_VOICE_OBJECT_BUCKET="test-voice-samples",
+        MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"),
+        MEMORIA_ARCHIVE_OBJECT_BUCKET="test-archive-objects",
         MEMORIA_RELEASE_TAG="latest",
     )
     with pytest.raises(ValueError, match="immutable MEMORIA_RELEASE_TAG"):
+        settings.validate_production()
+
+
+def _valid_archive_pipeline_settings(**overrides: str) -> ControlSettings:
+    values = {
+        "ENVIRONMENT": "production",
+        "PUBLIC_BASE_URL": "https://voice.example.com",
+        "ALLOWED_ORIGINS": "https://voice.example.com",
+        "LIVEKIT_URL": "wss://livekit.example.com",
+        "LIVEKIT_API_KEY": "key",
+        "LIVEKIT_API_SECRET": "test-livekit-material-long-enough",
+        "MEMORIA_AUTH_SECRET": "test-auth-material-that-is-long-enough",
+        "MEMORIA_ARCHIVE_WRITE_TOKEN": "test-archive-write-material-long-enough",
+        "MEMORIA_MEMORY_READ_TOKEN": "test-memory-read-material-long-enough",
+        "MEMORIA_PERSONA_READ_TOKEN": "test-persona-read-material-long-enough",
+        "MEMORIA_VOICE_RESOLUTION_TOKEN": "test-voice-resolve-material-long-enough",
+        "MEMORIA_ARCHIVE_DATABASE_URL": "postgresql://archive:test@db/memoria",
+        "MEMORIA_SPEAKER_INTERNAL_TOKEN": "test-speaker-material-that-is-long-enough",
+        "MEMORIA_SPEAKER_EMBEDDING_TOKEN": "test-embedding-material-that-is-long-enough",
+        "MEMORIA_SPEAKER_TEMPLATE_KEY": Fernet.generate_key().decode("ascii"),
+        "MEMORIA_SPEAKER_EMBEDDING_URL": "http://speaker-model:8001/v1/embeddings/speaker",
+        "MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY": Fernet.generate_key().decode("ascii"),
+        "MEMORIA_VOICE_SAMPLE_URL_SECRET": "test-voice-url-material-that-is-long-enough",
+        "MEMORIA_VOICE_OBJECT_BUCKET": "test-voice-samples",
+        "MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY": Fernet.generate_key().decode("ascii"),
+        "MEMORIA_ARCHIVE_OBJECT_BUCKET": "test-archive-objects",
+        "MEMORIA_RELEASE_TAG": "release-archive-pipeline-test",
+    }
+    values.update(overrides)
+    return ControlSettings(_env_file=None, **values)
+
+
+def test_production_requires_an_independent_archive_compiler_database_role() -> None:
+    missing = _valid_archive_pipeline_settings()
+    with pytest.raises(ValueError, match="MEMORIA_ARCHIVE_COMPILER_DATABASE_URL"):
+        missing.validate_production()
+
+    reused = _valid_archive_pipeline_settings(
+        MEMORIA_ARCHIVE_COMPILER_DATABASE_URL="postgresql://archive:test@db/memoria",
+        MEMORIA_ARCHIVE_COMPILER_ROLE="archive",
+    )
+    with pytest.raises(ValueError, match="independent archive compiler"):
+        reused.validate_production()
+
+
+def test_production_s3_endpoints_require_complete_explicit_credentials() -> None:
+    missing_voice = _valid_archive_pipeline_settings(
+        MEMORIA_VOICE_OBJECT_ENDPOINT="http://minio:9000",
+    )
+    with pytest.raises(ValueError, match="complete voice object credential pair"):
+        missing_voice.validate_production()
+
+    missing_archive = _valid_archive_pipeline_settings(
+        MEMORIA_VOICE_OBJECT_ENDPOINT="http://minio:9000",
+        MEMORIA_VOICE_OBJECT_ACCESS_KEY="voice-access",
+        MEMORIA_VOICE_OBJECT_SECRET_KEY="voice-secret",
+        MEMORIA_ARCHIVE_OBJECT_ENDPOINT="http://minio:9000",
+        MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY="archive-access",
+    )
+    with pytest.raises(ValueError, match="complete archive object credential pair"):
+        missing_archive.validate_production()
+
+
+def test_production_requires_memory_embeddings_for_pgvector_search() -> None:
+    settings = _valid_archive_pipeline_settings(
+        MEMORIA_ARCHIVE_COMPILER_DATABASE_URL=(
+            "postgresql://memoria-compiler:test@db/memoria"
+        ),
+        MEMORIA_ARCHIVE_COMPILER_ROLE="memoria-compiler",
+    )
+
+    with pytest.raises(ValueError, match="MEMORIA_MEMORY_EMBEDDING"):
+        settings.validate_production()
+
+
+def test_production_rejects_reused_internal_capability_tokens() -> None:
+    shared = "shared-capability-material-that-is-long-enough"
+    settings = ControlSettings(
+        ENVIRONMENT="production",
+        PUBLIC_BASE_URL="https://voice.example.com",
+        ALLOWED_ORIGINS="https://voice.example.com",
+        LIVEKIT_URL="wss://livekit.example.com",
+        LIVEKIT_API_KEY="key",
+        LIVEKIT_API_SECRET="test-livekit-material-long-enough",
+        MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
+        MEMORIA_ARCHIVE_WRITE_TOKEN=shared,
+        MEMORIA_MEMORY_READ_TOKEN=shared,
+        MEMORIA_PERSONA_READ_TOKEN=shared,
+        MEMORIA_VOICE_RESOLUTION_TOKEN=shared,
+    )
+
+    with pytest.raises(ValueError, match="capability tokens must be independent"):
+        settings.validate_production()
+
+
+def test_production_config_requires_an_independent_archive_object_key() -> None:
+    shared_object_key = Fernet.generate_key().decode("ascii")
+    settings = ControlSettings(
+        ENVIRONMENT="production",
+        PUBLIC_BASE_URL="https://voice.example.com",
+        ALLOWED_ORIGINS="https://voice.example.com",
+        LIVEKIT_URL="wss://livekit.example.com",
+        LIVEKIT_API_KEY="key",
+        LIVEKIT_API_SECRET="test-livekit-material-long-enough",
+        MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
+        MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-long-enough",
+        MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
+        MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
+        MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
+        MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
+        MEMORIA_SPEAKER_INTERNAL_TOKEN="test-speaker-material-that-is-long-enough",
+        MEMORIA_SPEAKER_EMBEDDING_TOKEN="test-embedding-material-that-is-long-enough",
+        MEMORIA_SPEAKER_TEMPLATE_KEY=Fernet.generate_key().decode("ascii"),
+        MEMORIA_SPEAKER_EMBEDDING_URL="http://speaker-model:8001/v1/embeddings/speaker",
+        MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY=shared_object_key,
+        MEMORIA_VOICE_SAMPLE_URL_SECRET="test-voice-url-material-that-is-long-enough",
+        MEMORIA_VOICE_OBJECT_BUCKET="test-voice-samples",
+        MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY=shared_object_key,
+        MEMORIA_ARCHIVE_OBJECT_BUCKET="test-archive-objects",
+        MEMORIA_RELEASE_TAG="release-governance-test",
+    )
+    with pytest.raises(ValueError, match="independent archive object key"):
+        settings.validate_production()
+
+
+def test_production_rejects_reused_voice_sample_and_speaker_template_key() -> None:
+    shared_biometric_key = Fernet.generate_key().decode("ascii")
+    settings = ControlSettings(
+        ENVIRONMENT="production",
+        PUBLIC_BASE_URL="https://voice.example.com",
+        ALLOWED_ORIGINS="https://voice.example.com",
+        LIVEKIT_URL="wss://livekit.example.com",
+        LIVEKIT_API_KEY="key",
+        LIVEKIT_API_SECRET="test-livekit-material-long-enough",
+        MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
+        MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-long-enough",
+        MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
+        MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
+        MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
+        MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
+        MEMORIA_SPEAKER_INTERNAL_TOKEN="test-speaker-material-that-is-long-enough",
+        MEMORIA_SPEAKER_EMBEDDING_TOKEN="test-embedding-material-that-is-long-enough",
+        MEMORIA_SPEAKER_TEMPLATE_KEY=shared_biometric_key,
+        MEMORIA_SPEAKER_EMBEDDING_URL="http://speaker-model:8001/v1/embeddings/speaker",
+        MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY=shared_biometric_key,
+        MEMORIA_VOICE_SAMPLE_URL_SECRET="test-voice-url-material-that-is-long-enough",
+        MEMORIA_VOICE_OBJECT_BUCKET="test-voice-samples",
+        MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"),
+        MEMORIA_ARCHIVE_OBJECT_BUCKET="test-archive-objects",
+        MEMORIA_RELEASE_TAG="release-governance-test",
+    )
+
+    with pytest.raises(ValueError, match="voice sample and speaker template keys"):
+        settings.validate_production()
+
+
+def test_production_rejects_a_shared_archive_and_voice_object_bucket() -> None:
+    shared_bucket = "test-shared-sensitive-objects"
+    settings = ControlSettings(
+        ENVIRONMENT="production",
+        PUBLIC_BASE_URL="https://voice.example.com",
+        ALLOWED_ORIGINS="https://voice.example.com",
+        LIVEKIT_URL="wss://livekit.example.com",
+        LIVEKIT_API_KEY="key",
+        LIVEKIT_API_SECRET="test-livekit-material-long-enough",
+        MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
+        MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-long-enough",
+        MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
+        MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
+        MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
+        MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
+        MEMORIA_SPEAKER_INTERNAL_TOKEN="test-speaker-material-that-is-long-enough",
+        MEMORIA_SPEAKER_EMBEDDING_TOKEN="test-embedding-material-that-is-long-enough",
+        MEMORIA_SPEAKER_TEMPLATE_KEY=Fernet.generate_key().decode("ascii"),
+        MEMORIA_SPEAKER_EMBEDDING_URL="http://speaker-model:8001/v1/embeddings/speaker",
+        MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"),
+        MEMORIA_VOICE_SAMPLE_URL_SECRET="test-voice-url-material-that-is-long-enough",
+        MEMORIA_VOICE_OBJECT_BUCKET=shared_bucket,
+        MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"),
+        MEMORIA_ARCHIVE_OBJECT_BUCKET=shared_bucket,
+        MEMORIA_RELEASE_TAG="release-governance-test",
+    )
+
+    with pytest.raises(ValueError, match="independent archive and voice object buckets"):
+        settings.validate_production()
+
+
+def test_production_config_requires_formal_speaker_secrets_and_model() -> None:
+    settings = ControlSettings(
+        ENVIRONMENT="production",
+        PUBLIC_BASE_URL="https://voice.example.com",
+        ALLOWED_ORIGINS="https://voice.example.com",
+        LIVEKIT_URL="wss://livekit.example.com",
+        LIVEKIT_API_KEY="key",
+        LIVEKIT_API_SECRET="test-livekit-material-long-enough",
+        MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
+        MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-long-enough",
+        MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
+        MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
+        MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
+        MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
+        MEMORIA_RELEASE_TAG="release-speaker-test",
+    )
+    with pytest.raises(ValueError, match="speaker"):
         settings.validate_production()
 
 

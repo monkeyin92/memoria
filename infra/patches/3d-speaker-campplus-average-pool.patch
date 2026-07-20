@@ -1,0 +1,19 @@
+diff --git a/speakerlab/models/campplus/layers.py b/speakerlab/models/campplus/layers.py
+index 810914e..8cd0704 100644
+--- a/speakerlab/models/campplus/layers.py
++++ b/speakerlab/models/campplus/layers.py
+@@ -95,7 +95,13 @@ class CAMLayer(nn.Module):
+ 
+     def seg_pooling(self, x, seg_len=100, stype='avg'):
+         if stype == 'avg':
+-            seg = F.avg_pool1d(x, kernel_size=seg_len, stride=seg_len, ceil_mode=True)
++            seg = F.avg_pool1d(
++                x,
++                kernel_size=seg_len,
++                stride=seg_len,
++                ceil_mode=True,
++                count_include_pad=False,
++            )
+         elif stype == 'max':
+             seg = F.max_pool1d(x, kernel_size=seg_len, stride=seg_len, ceil_mode=True)
+         else:

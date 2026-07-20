@@ -23,6 +23,7 @@ RUN uv export --frozen --no-dev --no-emit-project --no-header --no-annotate \
 COPY README.md ./
 COPY services ./services
 COPY packages ./packages
+COPY scripts/mark_readiness.py ./scripts/mark_readiness.py
 RUN mkdir -p /data \
     && chown 65532:65532 /data
 

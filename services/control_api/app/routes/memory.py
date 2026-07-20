@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from services.common.redaction import redact_pii
+from services.control_api.app.account_gate import require_writable_account
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.security import (
@@ -302,7 +303,7 @@ async def _deepseek_summary(
 def create_message(
     body: MessageCreate,
     request: Request,
-    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
     user_id = require_matching_user(body.user_id, user)
     settings = _settings(request)
@@ -346,7 +347,7 @@ async def generate_daily_summary(
     summary_date: date,
     body: GenerateSummaryRequest,
     request: Request,
-    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
     user_id = require_matching_user(body.user_id, user)
     store = _store(request)
@@ -401,7 +402,7 @@ def update_profile(
     user_id: str,
     body: ProfileUpdate,
     request: Request,
-    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
     try:
         clean_user_id = _clean_user_id(user_id)

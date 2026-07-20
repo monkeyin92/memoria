@@ -8,11 +8,20 @@ import json
 import logging
 import os
 from collections.abc import AsyncGenerator, AsyncIterable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from services.agent.src.context_assembler import (
+    ContextAssembler,
+    heard_only_chat_context,
+)
 from services.agent.src.contracts.events import TimedWord
+from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.memory_context_client import MemoryContextClient
+from services.agent.src.persona_client import PersonaClient
 from services.agent.src.prompts import VOICE_SYSTEM_PROMPT
+from services.agent.src.voice_profile_client import VoiceProfileClient
 
 if TYPE_CHECKING:
     pass
@@ -102,40 +111,60 @@ def _message_text(message: Any) -> str:
     return str(raw or "")
 
 
+def _apply_cached_voice_profile(
+    *,
+    tts_plugin: Any,
+    client: VoiceProfileClient,
+    session_id: str,
+) -> None:
+    profile = client.cached(session_id=session_id)
+    if profile is None:
+        baseline = getattr(tts_plugin, "use_baseline_voice", None)
+        if callable(baseline):
+            baseline()
+        return
+    apply_profile = getattr(tts_plugin, "apply_voice_profile", None)
+    if callable(apply_profile):
+        apply_profile(model=profile.model, voice=profile.voice_id)
+
+
 def _heard_only_chat_context(chat_ctx: Any, heard_assistant: list[str]) -> Any:
-    """Replace LiveKit's generated assistant history with actually-heard text."""
-    safe = chat_ctx.copy()
-    assistant_items = [
-        item
-        for item in list(safe.items)
-        if str(getattr(item, "role", "")) == "assistant"
-    ]
-    if len(assistant_items) != len(heard_assistant):
-        logger.info(
-            "heard_history_alignment generated_count=%s heard_count=%s strategy=latest",
-            len(assistant_items),
-            len(heard_assistant),
-        )
-    unmatched = max(0, len(assistant_items) - len(heard_assistant))
-    for item in assistant_items[:unmatched]:
-        safe.remove(item)
-    for item, text in zip(
-        reversed(assistant_items[unmatched:]),
-        reversed(heard_assistant),
-        strict=False,
-    ):
-        item.content = [text]
-    return safe
+    return heard_only_chat_context(chat_ctx, heard_assistant)
 
 
 class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
     """Agent that gates LLM/TTS through GenerationFence and tracks active tasks."""
 
-    def __init__(self, *, instructions: str, runtime: DuplexRuntime) -> None:
+    def __init__(
+        self,
+        *,
+        instructions: str,
+        runtime: DuplexRuntime,
+        persona_client: PersonaClient | None = None,
+        memory_context_client: MemoryContextClient | None = None,
+        voice_profile_client: VoiceProfileClient | None = None,
+    ) -> None:
         if _HAS_LIVEKIT:
             super().__init__(instructions=instructions)
         self._runtime = runtime
+        self._persona_client = persona_client
+        self._memory_context_client = memory_context_client
+        self._voice_profile_client = voice_profile_client
+        self._context_assembler = ContextAssembler()
+        self._current_speaker_class: Literal["owner", "guest", "uncertain"] = "uncertain"
         self._llm_text_buf = ""
+        alignment_setter = getattr(runtime.tts, "set_alignment_callback", None)
+        if callable(alignment_setter):
+            alignment_setter(self._observe_tts_alignment)
+
+    def _observe_tts_alignment(
+        self,
+        fence: GenerationFence,
+        utterance_id: str,
+        status: str,
+    ) -> None:
+        if self._runtime.fence.matches(fence):
+            self._runtime.heard_tracker.observe_alignment(fence, utterance_id, status)
 
     async def on_user_turn_completed(self, turn_ctx: Any, new_message: Any) -> None:
         text = _message_text(new_message) if new_message is not None else ""
@@ -181,7 +210,23 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     reason,
                 )
                 raise StopResponse()
-            self._runtime.mark_audio_event("last_user_audio")
+            speaker = await self._runtime.await_speaker_classification()
+            logger.info(
+                "speaker_authority classification=%s reason=%s model=%s "
+                "template_version=%s session_id=%s",
+                speaker.classification,
+                speaker.reason_code,
+                speaker.model_version,
+                speaker.template_version,
+                self._runtime.session_id,
+            )
+            self._current_speaker_class = speaker.classification
+            if self._voice_profile_client is not None and self._runtime.tts is not None:
+                _apply_cached_voice_profile(
+                    tts_plugin=self._runtime.tts,
+                    client=self._voice_profile_client,
+                    session_id=self._runtime.session_id,
+                )
             fence = await self._runtime.on_turn_committed(text.strip())
             self._runtime.publish_transcript(
                 speaker="user",
@@ -190,12 +235,30 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 fence=fence,
             )
             self._llm_text_buf = ""
+            if self._persona_client is not None:
+                self._runtime._spawn(
+                    self._persona_client.refresh(
+                        session_id=self._runtime.session_id,
+                        speaker_class=speaker.classification,
+                        topic=text.strip(),
+                    ),
+                    name=f"persona-prefetch-{fence.turn_id}",
+                )
+            if self._memory_context_client is not None:
+                self._runtime._spawn(
+                    self._memory_context_client.refresh(
+                        session_id=self._runtime.session_id,
+                        speaker_class=speaker.classification,
+                        topic=text.strip(),
+                    ),
+                    name=f"memory-context-prefetch-{fence.turn_id}",
+                )
             logger.info(
-                "turn_committed turn_id=%s generation_id=%s tool_epoch=%s text=%s",
+                "turn_committed turn_id=%s generation_id=%s tool_epoch=%s text_len=%s",
                 fence.turn_id,
                 fence.generation_id,
                 fence.tool_epoch,
-                text.strip()[:80],
+                len(text.strip()),
             )
         parent = getattr(Agent, "on_user_turn_completed", None) if _HAS_LIVEKIT else None
         if parent is not None:
@@ -235,7 +298,39 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             for turn in self._runtime.orchestrator.context.turns
             if turn.role == "assistant"
         ]
-        safe_chat_ctx = _heard_only_chat_context(chat_ctx, heard_assistant)
+        persona_fragment = ""
+        memory_snapshot = None
+        if self._persona_client is not None and self._current_speaker_class == "owner":
+            capsule = self._persona_client.cached(
+                session_id=self._runtime.session_id,
+                speaker_class="owner",
+            )
+            if capsule is not None:
+                persona_fragment = capsule.prompt_fragment
+                logger.info(
+                    "persona_capsule_applied version_id=%s version_number=%s session_id=%s",
+                    capsule.version_id,
+                    capsule.version_number,
+                    self._runtime.session_id,
+                )
+        if self._memory_context_client is not None and self._current_speaker_class == "owner":
+            memory_snapshot = self._memory_context_client.cached(
+                session_id=self._runtime.session_id,
+                speaker_class="owner",
+            )
+            if memory_snapshot is not None:
+                logger.info(
+                    "memory_context_applied sources=%s session_id=%s",
+                    len(memory_snapshot.items),
+                    self._runtime.session_id,
+                )
+        safe_chat_ctx = self._context_assembler.assemble(
+            chat_ctx=chat_ctx,
+            heard_assistant=heard_assistant,
+            speaker_class=self._current_speaker_class,
+            persona_fragment=persona_fragment,
+            memory=memory_snapshot,
+        )
         if self._runtime.speech_plan.llm_instruction:
             safe_chat_ctx.add_message(
                 role="system",
@@ -292,18 +387,15 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             chars = sum(1 for ch in fitted if ch.isalnum())
             reply_chars += chars
             reply_sentences += sum(ch in _SENTENCE_ENDINGS for ch in fitted)
-            if (
-                fitted != text
-                or reply_chars >= max_chars
-                or reply_sentences >= max_sentences
-            ):
+            if fitted != text or reply_chars >= max_chars or reply_sentences >= max_sentences:
                 reply_budget_exhausted = True
             return fitted
 
         stream: Any = None
         try:
             self._runtime.mark_audio_event("llm_request_started")
-            stream = Agent.default.llm_node(self, safe_chat_ctx, tools, model_settings)
+            safe_tools = tools if self._current_speaker_class == "owner" else []
+            stream = Agent.default.llm_node(self, safe_chat_ctx, safe_tools, model_settings)
             # default may return async gen or coroutine of async gen
             if asyncio.iscoroutine(stream):
                 stream = await stream
@@ -401,6 +493,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         from services.agent.src.orchestration.prosody import prepare_tts_text
 
         fence = self._runtime.fence
+        self._runtime.heard_tracker.expect_utterance(fence)
         if self._runtime.tts is not None:
             self._runtime.tts.bind_fence(fence)
 
@@ -489,7 +582,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     )
                 except Exception:
                     pass
-            yield delta
+            if not self._runtime.heard_tracker.alignment_degraded:
+                yield delta
         if words:
             self._runtime.orchestrator.heard_tracker.add_words(words)
 
@@ -510,9 +604,7 @@ def build_turn_handling_options(profile: str) -> Any:
     from livekit.agents import TurnHandlingOptions, inference
 
     config = build_turn_handling_config(profile)
-    turn_detector_version = cast(
-        Literal["v1", "v1-mini"], config["turn_detection"]["version"]
-    )
+    turn_detector_version = cast(Literal["v1", "v1-mini"], config["turn_detection"]["version"])
     return TurnHandlingOptions(
         turn_detection=inference.TurnDetector(version=turn_detector_version),
         endpointing=config["endpointing"],
@@ -620,6 +712,145 @@ async def entrypoint(ctx: Any) -> None:
         use_paralinguistic_tags=runtime_settings.cosyvoice_paralinguistic_tags,
         speaker_verifier=speaker_verifier,
     )
+    if runtime_settings.speaker_authority_enabled and not offline:
+        from services.agent.src.speaker_authority_client import (
+            SpeakerAuthorityClient,
+            SpeakerAuthorityClientConfig,
+        )
+
+        speaker_authority = SpeakerAuthorityClient(
+            SpeakerAuthorityClientConfig(
+                endpoint=runtime_settings.speaker_authority_url,
+                internal_token=runtime_settings.speaker_internal_token.get_secret_value(),
+                timeout_s=runtime_settings.speaker_authority_timeout_s,
+            )
+        )
+
+        async def _classify_speaker(pcm: bytes, sample_rate: int) -> Any:
+            return await speaker_authority.classify(
+                session_id=runtime_session_id,
+                pcm=pcm,
+                sample_rate=sample_rate,
+            )
+
+        runtime.set_speaker_classifier(
+            _classify_speaker,
+            sample_rate=runtime_settings.funasr_sample_rate,
+            timeout_s=runtime_settings.speaker_authority_timeout_s,
+        )
+    archive_sink = None
+    archive_token = runtime_settings.internal_token("archive_write")
+    archive_spool_key = runtime_settings.archive_spool_key.get_secret_value()
+    if runtime_settings.archive_sink_enabled and archive_token and archive_spool_key:
+        from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
+
+        archive_sink = ArchiveSink(
+            ArchiveSinkConfig(
+                endpoint=runtime_settings.archive_session_events_url,
+                internal_token=archive_token,
+                spool_path=Path(runtime_settings.archive_spool_path),
+                spool_key=archive_spool_key,
+                spool_max_bytes=runtime_settings.archive_spool_max_bytes,
+            )
+        )
+
+        async def _publish_evidence(event: dict[str, Any]) -> None:
+            delivered = await archive_sink.publish(event)
+            if not delivered:
+                logger.warning(
+                    "archive event queued in encrypted spool event_id=%s", event["event_id"]
+                )
+
+        async def _publish_owner_turn(
+            event: dict[str, Any],
+            pcm: bytes,
+            sample_rate: int,
+        ) -> None:
+            delivered = await archive_sink.publish_owner_turn(
+                event,
+                pcm=pcm,
+                sample_rate=sample_rate,
+            )
+            if not delivered:
+                logger.warning(
+                    "owner archive turn queued in shared encrypted spool event_id=%s",
+                    event["event_id"],
+                )
+
+        async def _replay_archive_spool() -> None:
+            try:
+                replayed = await archive_sink.replay()
+                if replayed:
+                    logger.info("archive spool replayed events=%s", replayed)
+            except Exception:
+                logger.error("archive spool replay failed", exc_info=True)
+
+        runtime.set_evidence_publisher(_publish_evidence)
+        runtime.set_owner_turn_publisher(_publish_owner_turn)
+        runtime._spawn(_replay_archive_spool(), name="archive-spool-replay")
+    elif runtime_settings.archive_sink_enabled:
+        logger.warning("archive sink is disabled because token or spool key is not configured")
+    persona_client = None
+    persona_token = runtime_settings.internal_token("persona_read")
+    if runtime_settings.persona_enabled and persona_token and not offline:
+        from services.agent.src.persona_client import PersonaClientConfig
+
+        persona_client = PersonaClient(
+            PersonaClientConfig(
+                endpoint=runtime_settings.persona_capsule_url,
+                internal_token=persona_token,
+                timeout_s=runtime_settings.persona_timeout_s,
+                cache_ttl_s=runtime_settings.persona_cache_ttl_s,
+            )
+        )
+    elif runtime_settings.persona_enabled and not offline:
+        logger.warning("persona is disabled because the internal token is not configured")
+    memory_context_client = None
+    memory_token = runtime_settings.internal_token("memory_read")
+    if runtime_settings.memory_context_enabled and memory_token and not offline:
+        from services.agent.src.memory_context_client import MemoryContextClientConfig
+
+        memory_context_client = MemoryContextClient(
+            MemoryContextClientConfig(
+                endpoint=runtime_settings.memory_context_url,
+                internal_token=memory_token,
+                timeout_s=runtime_settings.memory_context_timeout_s,
+                cache_ttl_s=runtime_settings.memory_context_cache_ttl_s,
+                limit=runtime_settings.memory_context_limit,
+            )
+        )
+        runtime.set_memory_context_refresher(
+            lambda: memory_context_client.refresh(
+                session_id=runtime_session_id,
+                speaker_class="owner",
+                topic="",
+            )
+        )
+    elif runtime_settings.memory_context_enabled and not offline:
+        logger.warning("memory context is disabled because the internal token is not configured")
+    voice_profile_client = None
+    voice_token = runtime_settings.internal_token("voice_resolution")
+    if runtime_settings.voice_profile_enabled and voice_token and not offline:
+        from services.agent.src.voice_profile_client import VoiceProfileClientConfig
+
+        voice_profile_client = VoiceProfileClient(
+            VoiceProfileClientConfig(
+                endpoint=runtime_settings.voice_profile_url,
+                internal_token=voice_token,
+                timeout_s=runtime_settings.voice_profile_timeout_s,
+            )
+        )
+        runtime.set_voice_profile_refresher(
+            lambda: voice_profile_client.refresh(session_id=runtime_session_id)
+        )
+        await voice_profile_client.refresh(session_id=runtime_session_id)
+        _apply_cached_voice_profile(
+            tts_plugin=tts_plugin,
+            client=voice_profile_client,
+            session_id=runtime_session_id,
+        )
+    elif runtime_settings.voice_profile_enabled and not offline:
+        logger.warning("voice profile is disabled because the internal token is not configured")
     runtime.cue_scheduler.min_speech_ms = runtime_settings.listener_cue_min_speech_ms
     runtime.cue_scheduler.pause_ms = runtime_settings.listener_cue_pause_ms
     runtime.cue_scheduler.cooldown_ms = runtime_settings.listener_cue_cooldown_ms
@@ -639,9 +870,7 @@ async def entrypoint(ctx: Any) -> None:
     runtime.mark_audio_event("agent_runtime_created")
     emotion_sidecar: QwenEmotionSidecar | None = None
     pcm_observers: list[Any] = [runtime.feed_speaker_pcm]
-    if runtime_settings.qwen_emotion_enabled and hasattr(
-        stt_plugin, "set_pcm_observer"
-    ):
+    if runtime_settings.qwen_emotion_enabled and hasattr(stt_plugin, "set_pcm_observer"):
         emotion_sidecar = QwenEmotionSidecar(
             QwenEmotionConfig.from_env(),
             on_observation=lambda result: runtime.observe_acoustic_emotion(
@@ -788,7 +1017,7 @@ async def entrypoint(ctx: Any) -> None:
                     runtime.mark_audio_event(
                         "control_ack_played",
                         detail={
-                            "text": phrase[:20],
+                            "ack_len": len(phrase),
                             "path": "room_track_pcm",
                             "pcm_bytes": len(result.pcm),
                         },
@@ -812,7 +1041,7 @@ async def entrypoint(ctx: Any) -> None:
         await asyncio.sleep(0.45)
         runtime.mark_audio_event(
             "control_ack_played",
-            detail={"text": phrase[:20], "path": "session_say_fallback"},
+            detail={"ack_len": len(phrase), "path": "session_say_fallback"},
         )
 
     async def _interrupt_yield_say(phrase: str) -> None:
@@ -868,9 +1097,10 @@ async def entrypoint(ctx: Any) -> None:
         except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
             return
         event_type = event.get("type")
-        if event_type not in {"stop_response", "rtc_recovered"} or event.get(
-            "session_id"
-        ) != runtime.session_id:
+        if (
+            event_type not in {"stop_response", "rtc_recovered"}
+            or event.get("session_id") != runtime.session_id
+        ):
             return
 
         async def _apply_control() -> None:
@@ -896,7 +1126,13 @@ async def entrypoint(ctx: Any) -> None:
 
     ctx.room.on("data_received", _on_control_packet)
 
-    agent = DuplexVoiceAgent(instructions=VOICE_SYSTEM_PROMPT, runtime=runtime)
+    agent = DuplexVoiceAgent(
+        instructions=VOICE_SYSTEM_PROMPT,
+        runtime=runtime,
+        persona_client=persona_client,
+        memory_context_client=memory_context_client,
+        voice_profile_client=voice_profile_client,
+    )
 
     await session.start(
         room=ctx.room,
@@ -923,10 +1159,29 @@ async def entrypoint(ctx: Any) -> None:
 
     async def _shutdown_runtime() -> None:
         ctx.room.off("data_received", _on_control_packet)
+        shutdown_errors: list[Exception] = []
+
+        async def _close_component(label: str, operation: Any) -> None:
+            try:
+                await operation
+            except Exception as exc:
+                logger.error("shutdown component failed component=%s", label, exc_info=True)
+                shutdown_errors.append(exc)
+
         if emotion_sidecar is not None:
             stt_plugin.set_pcm_observer(None)
-            await emotion_sidecar.aclose()
-        await runtime.close()
+            await _close_component("emotion_sidecar", emotion_sidecar.aclose())
+        await _close_component("runtime", runtime.close())
+        if persona_client is not None:
+            await _close_component("persona_client", persona_client.close())
+        if memory_context_client is not None:
+            await _close_component("memory_context_client", memory_context_client.close())
+        if voice_profile_client is not None:
+            await _close_component("voice_profile_client", voice_profile_client.close())
+        if archive_sink is not None:
+            await _close_component("archive_sink", archive_sink.close())
+        if shutdown_errors:
+            raise RuntimeError("one or more Agent shutdown components failed") from shutdown_errors[0]
 
     ctx.add_shutdown_callback(_shutdown_runtime)
 
@@ -979,7 +1234,7 @@ async def entrypoint(ctx: Any) -> None:
             speech_ms = int(progress.get("speech_ms") or 0)
             await asyncio.sleep(0.1 if speech_ms > 400 else 0.2)
         else:
-            # Wall-clock end: force fail-open even if zero PCM was observed
+            # Wall-clock end: leave legacy spectral guard unavailable, never owner.
             # (elapsed_ms only advances when feed_pcm runs).
             runtime.poll_speaker_enrollment(force=True)
         # Hard safety: never leave PENDING or all chat turns stay blocked.
@@ -1005,6 +1260,7 @@ async def entrypoint(ctx: Any) -> None:
             instructions="用一句自然中文打招呼，并邀请用户直接说需求。",
         )
 
+
 def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]:
     """Pure config dict for tests without LiveKit types."""
     self_hosted = profile == "cn_self_hosted"
@@ -1024,9 +1280,7 @@ def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]
     # P1-6: LiveKit preemptive starts LLM before EOU — keep default off on self-hosted
     # (historically caused stuck thinking). Streaming phrase→TTS is the safe path.
     preemptive_default = "false" if self_hosted else "false"
-    preemptive_enabled = (
-        os.getenv("PREEMPTIVE_GENERATION", preemptive_default).lower() == "true"
-    )
+    preemptive_enabled = os.getenv("PREEMPTIVE_GENERATION", preemptive_default).lower() == "true"
     preemptive_tts = os.getenv("PREEMPTIVE_TTS", "false").lower() == "true"
     return {
         "turn_detection": {"version": turn_version},
@@ -1054,9 +1308,7 @@ def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]
             "min_words": 0,
             "discard_audio_if_uninterruptible": True,
             "false_interruption_timeout": float(
-                os.getenv(
-                    "FALSE_INTERRUPTION_TIMEOUT_S", "1.50" if self_hosted else "1.20"
-                )
+                os.getenv("FALSE_INTERRUPTION_TIMEOUT_S", "1.50" if self_hosted else "1.20")
             ),
             "resume_false_interruption": True,
             "backchannel_boundary": (0.50, 1.80),
@@ -1064,9 +1316,7 @@ def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]
         "preemptive_generation": {
             "enabled": preemptive_enabled,
             "preemptive_tts": preemptive_tts and preemptive_enabled,
-            "max_speech_duration": float(
-                os.getenv("PREEMPTIVE_MAX_SPEECH_DURATION_S", "10.0")
-            ),
+            "max_speech_duration": float(os.getenv("PREEMPTIVE_MAX_SPEECH_DURATION_S", "10.0")),
             "max_retries": int(os.getenv("PREEMPTIVE_MAX_RETRIES", "2")),
         },
         # Product flag: fence-gated stream first phrase while LLM continues (not LiveKit preemptive).

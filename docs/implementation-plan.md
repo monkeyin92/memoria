@@ -1,5 +1,7 @@
 # 全双工语音 Agent、情绪与 Omni A/B 实施计划
 
+> **历史计划（已被替代）**：本文记录 2026-07-17 以前包含 Web/iOS/Omni A/B 的历史实施过程。自 2026-07-19 起，唯一交付客户端为 `apps/h5`，主链固定为 FunASR Realtime + Qwen + CosyVoice 3.5；当前范围、状态与门禁以 [`memory-persona-implementation-plan.md`](./memory-persona-implementation-plan.md) 和根目录 [`HANDOFF.md`](../HANDOFF.md) 为准。原生 iOS 与 legacy `apps/web` 不再进入实现、CI、部署或验收。
+
 ## 成功标准
 
 1. `GenerationFence` 对 LLM、TTS、工具结果做完整字段校验，旧音频与旧工具结果为 0。

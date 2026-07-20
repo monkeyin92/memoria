@@ -11,12 +11,42 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   bootstrapIdentity: vi.fn(),
   cachePendingMessage: vi.fn(),
+  deleteAccountData: vi.fn(),
+  endVoice: vi.fn().mockResolvedValue(undefined),
+  exportAccountArchive: vi.fn(),
   flushPendingMessages: vi.fn().mockResolvedValue(undefined),
   getMemoryDays: vi.fn().mockResolvedValue({ items: [] }),
+  getLifeTimeline: vi.fn().mockResolvedValue({ items: [] }),
+  getMemoryReviewQueue: vi.fn().mockResolvedValue({ items: [] }),
+  getRawVoiceConsent: vi.fn().mockResolvedValue({ consent: null }),
   getProfile: vi.fn(),
+  loginAccount: vi.fn(),
+  registerAccount: vi.fn(),
+  reviewMemoryClaim: vi.fn(),
   saveMessage: vi.fn().mockResolvedValue(undefined),
+  searchLifeArchive: vi.fn().mockResolvedValue({ items: [] }),
   summarizeDay: vi.fn().mockResolvedValue(undefined),
   updateProfile: vi.fn().mockResolvedValue(undefined),
+  getPersonaStatus: vi.fn().mockResolvedValue({ learning_allowed: false }),
+  getPersonaTraits: vi.fn().mockResolvedValue({ items: [] }),
+  getPersonaVersions: vi.fn().mockResolvedValue({ items: [] }),
+  getSpeakerProfiles: vi.fn().mockResolvedValue({ items: [] }),
+  getVoiceProfiles: vi.fn().mockResolvedValue({ consent: null, items: [] }),
+  grantPersonaConsent: vi.fn(),
+  grantRawVoiceConsent: vi.fn(),
+  revokePersonaConsent: vi.fn(),
+  revokeRawVoiceConsent: vi.fn(),
+  reviewPersonaTrait: vi.fn(),
+  rollbackPersonaVersion: vi.fn(),
+  enrollSpeakerProfiles: vi.fn(),
+  revokeSpeakerProfile: vi.fn(),
+  grantVoiceConsent: vi.fn(),
+  revokeVoiceConsent: vi.fn(),
+  enrollVoiceProfile: vi.fn(),
+  previewVoiceProfile: vi.fn(),
+  evaluateVoiceProfile: vi.fn(),
+  activateVoiceProfile: vi.fn(),
+  revokeVoiceProfile: vi.fn(),
   useVoiceSession: vi.fn(),
   resumeAudio: vi.fn().mockResolvedValue(true),
 }));
@@ -24,12 +54,41 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./api.js", () => ({
   bootstrapIdentity: mocks.bootstrapIdentity,
   cachePendingMessage: mocks.cachePendingMessage,
+  deleteAccountData: mocks.deleteAccountData,
+  exportAccountArchive: mocks.exportAccountArchive,
   flushPendingMessages: mocks.flushPendingMessages,
   getMemoryDays: mocks.getMemoryDays,
+  getLifeTimeline: mocks.getLifeTimeline,
+  getMemoryReviewQueue: mocks.getMemoryReviewQueue,
+  getRawVoiceConsent: mocks.getRawVoiceConsent,
   getProfile: mocks.getProfile,
+  loginAccount: mocks.loginAccount,
+  registerAccount: mocks.registerAccount,
+  reviewMemoryClaim: mocks.reviewMemoryClaim,
   saveMessage: mocks.saveMessage,
+  searchLifeArchive: mocks.searchLifeArchive,
   summarizeDay: mocks.summarizeDay,
   updateProfile: mocks.updateProfile,
+  getPersonaStatus: mocks.getPersonaStatus,
+  getPersonaTraits: mocks.getPersonaTraits,
+  getPersonaVersions: mocks.getPersonaVersions,
+  getSpeakerProfiles: mocks.getSpeakerProfiles,
+  getVoiceProfiles: mocks.getVoiceProfiles,
+  grantPersonaConsent: mocks.grantPersonaConsent,
+  grantRawVoiceConsent: mocks.grantRawVoiceConsent,
+  revokePersonaConsent: mocks.revokePersonaConsent,
+  revokeRawVoiceConsent: mocks.revokeRawVoiceConsent,
+  reviewPersonaTrait: mocks.reviewPersonaTrait,
+  rollbackPersonaVersion: mocks.rollbackPersonaVersion,
+  enrollSpeakerProfiles: mocks.enrollSpeakerProfiles,
+  revokeSpeakerProfile: mocks.revokeSpeakerProfile,
+  grantVoiceConsent: mocks.grantVoiceConsent,
+  revokeVoiceConsent: mocks.revokeVoiceConsent,
+  enrollVoiceProfile: mocks.enrollVoiceProfile,
+  previewVoiceProfile: mocks.previewVoiceProfile,
+  evaluateVoiceProfile: mocks.evaluateVoiceProfile,
+  activateVoiceProfile: mocks.activateVoiceProfile,
+  revokeVoiceProfile: mocks.revokeVoiceProfile,
 }));
 
 vi.mock("./hooks/useVoiceSession.js", () => ({
@@ -62,7 +121,7 @@ function voiceState() {
     resumeAudio: mocks.resumeAudio,
     toggleMic: vi.fn(),
     stopAssistant: vi.fn(),
-    end: vi.fn().mockResolvedValue(undefined),
+    end: mocks.endVoice,
   };
 }
 
@@ -71,6 +130,9 @@ describe("App identity and profile preferences", () => {
     vi.clearAllMocks();
     window.localStorage.clear();
     mocks.flushPendingMessages.mockResolvedValue(undefined);
+    mocks.deleteAccountData.mockResolvedValue({ status: "completed" });
+    mocks.endVoice.mockResolvedValue(undefined);
+    mocks.exportAccountArchive.mockResolvedValue({ sections: {} });
     mocks.getMemoryDays.mockResolvedValue({ items: [] });
     mocks.updateProfile.mockResolvedValue(undefined);
     mocks.resumeAudio.mockResolvedValue(true);
@@ -114,6 +176,236 @@ describe("App identity and profile preferences", () => {
     expect(await screen.findByRole("heading", { name: /小忆/ })).toBeInTheDocument();
   });
 
+  it("creates an account before exposing the personal memory space", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue(null);
+    mocks.registerAccount.mockResolvedValue({
+      user_id: "registered-user",
+      username: "memorykeeper",
+      account_type: "registered",
+      access_token: "registered-token",
+    });
+    mocks.getProfile.mockResolvedValue({
+      user_id: "registered-user",
+      display_name: "小忆",
+      bio: "慢慢说",
+      auto_summary: true,
+      voice_reply: true,
+      gentle_reminders: false,
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "创建你的 Memoria 账号" }),
+    ).toBeInTheDocument();
+    expect(mocks.getProfile).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "memorykeeper" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
+
+    await waitFor(() => {
+      expect(mocks.registerAccount).toHaveBeenCalledWith(
+        "memorykeeper",
+        "safe-passphrase",
+      );
+    });
+    expect(
+      await screen.findByRole("heading", { name: /小忆/ }),
+    ).toBeInTheDocument();
+    expect(mocks.getProfile).toHaveBeenCalledWith("registered-user");
+  });
+
+  it("keeps the loaded profile when an anonymous identity is upgraded in place", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      account_type: "anonymous",
+      access_token: "anonymous-token",
+    });
+    mocks.registerAccount.mockResolvedValue({
+      user_id: "anonymous-user",
+      username: "memorykeeper",
+      account_type: "registered",
+      access_token: "registered-token",
+    });
+    mocks.getProfile.mockResolvedValueOnce({
+      user_id: "anonymous-user",
+      display_name: "新朋友",
+      bio: "慢慢说",
+      auto_summary: true,
+      voice_reply: true,
+      gentle_reminders: false,
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "创建你的 Memoria 账号" });
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "memorykeeper" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
+
+    expect(
+      await screen.findByRole("heading", { name: /新朋友/ }),
+    ).toBeInTheDocument();
+    expect(mocks.getProfile).toHaveBeenCalledOnce();
+  });
+
+  it("hides the previous profile while logging into a different account", async () => {
+    const returningProfile = deferred();
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      account_type: "anonymous",
+      access_token: "anonymous-token",
+    });
+    mocks.loginAccount.mockResolvedValue({
+      user_id: "returning-user",
+      username: "memorykeeper",
+      account_type: "registered",
+      access_token: "returning-token",
+    });
+    mocks.getProfile
+      .mockResolvedValueOnce({
+        user_id: "anonymous-user",
+        display_name: "匿名资料",
+        bio: "只属于匿名身份",
+        auto_summary: true,
+        voice_reply: true,
+        gentle_reminders: false,
+      })
+      .mockReturnValueOnce(returningProfile.promise);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "创建你的 Memoria 账号" });
+    fireEvent.click(screen.getByRole("button", { name: "登录已有账号" }));
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "memorykeeper" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "正在准备你的陪伴空间" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("只属于匿名身份")).not.toBeInTheDocument();
+
+    await act(async () => {
+      returningProfile.resolve({
+        user_id: "returning-user",
+        display_name: "老朋友",
+        bio: "又见面了",
+        auto_summary: true,
+        voice_reply: true,
+        gentle_reminders: false,
+      });
+      await returningProfile.promise;
+    });
+    expect(
+      await screen.findByRole("heading", { name: /老朋友/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("logs a returning user back into the same personal memory space", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue(null);
+    mocks.loginAccount.mockResolvedValue({
+      user_id: "returning-user",
+      username: "memorykeeper",
+      account_type: "registered",
+      access_token: "returning-token",
+    });
+    mocks.getProfile.mockResolvedValue({
+      user_id: "returning-user",
+      display_name: "老朋友",
+      bio: "又见面了",
+      auto_summary: true,
+      voice_reply: true,
+      gentle_reminders: false,
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "创建你的 Memoria 账号" });
+    fireEvent.click(screen.getByRole("button", { name: "登录已有账号" }));
+
+    expect(
+      screen.getByRole("heading", { name: "欢迎回到 Memoria" }),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "memorykeeper" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+
+    await waitFor(() => {
+      expect(mocks.loginAccount).toHaveBeenCalledWith(
+        "memorykeeper",
+        "safe-passphrase",
+      );
+    });
+    expect(
+      await screen.findByRole("heading", { name: /老朋友/ }),
+    ).toBeInTheDocument();
+    expect(mocks.getProfile).toHaveBeenCalledWith("returning-user");
+  });
+
+  it("does not show another account's legacy local profile when the server is offline", async () => {
+    window.localStorage.setItem(
+      "memoria:profile",
+      JSON.stringify({
+        display_name: "账号 A 的名字",
+        bio: "只属于账号 A",
+        auto_summary: true,
+        voice_reply: true,
+        gentle_reminders: false,
+      }),
+    );
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "account-b",
+      username: "account-b",
+      account_type: "registered",
+      access_token: "account-b-token",
+    });
+    mocks.getProfile.mockRejectedValue(new TypeError("network unavailable"));
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: /新朋友/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("只属于账号 A")).not.toBeInTheDocument();
+  });
+
+  it("shows the username conflict next to the registration form", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue(null);
+    mocks.registerAccount.mockRejectedValue(
+      new Error("用户名已存在，请换一个"),
+    );
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "创建你的 Memoria 账号" });
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "memorykeeper" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
+
+    expect(
+      await screen.findByRole("alert"),
+    ).toHaveTextContent("用户名已存在，请换一个");
+    expect(screen.getByRole("button", { name: "创建账号" })).toBeEnabled();
+  });
+
   it("uses server preferences, wires voice reply, and disables unavailable reminders", async () => {
     mocks.bootstrapIdentity.mockResolvedValue({
       user_id: "anonymous-user",
@@ -145,6 +437,87 @@ describe("App identity and profile preferences", () => {
 
     fireEvent.click(screen.getByRole("switch", { name: /语音回应/ }));
     expect(mocks.resumeAudio).toHaveBeenCalledWith(true);
+  });
+
+  it("opens digital-self controls from My as a full-screen detail and returns predictably", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      account_type: "registered",
+      access_token: "token",
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /数字心智与声音/ }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "数字心智与声音" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "返回我的" }));
+    expect(await screen.findByRole("heading", { name: "我的" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
+  });
+
+  it("opens raw voice consent from My through Privacy and Data", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "registered-user",
+      account_type: "registered",
+      access_token: "token",
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    fireEvent.click(await screen.findByRole("button", { name: /隐私与数据/ }));
+
+    expect(await screen.findByRole("heading", { name: "隐私与数据" }))
+      .toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "原始语音归档" }))
+      .toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "主导航" }))
+      .not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "返回我的" }));
+    expect(await screen.findByRole("heading", { name: "我的" })).toBeInTheDocument();
+  });
+
+  it("ends realtime voice and returns to the account gate after permanent deletion", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "registered-user",
+      username: "memorykeeper",
+      account_type: "registered",
+      access_token: "token",
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /数字心智与声音/ }),
+    );
+    await screen.findByRole("heading", { name: "数据与账户" });
+    fireEvent.change(screen.getByLabelText("删除验证密码"), {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.change(screen.getByLabelText("输入“永久删除我的全部数据”"), {
+      target: { value: "永久删除我的全部数据" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "永久删除全部数据" }));
+
+    await waitFor(() => {
+      expect(mocks.deleteAccountData).toHaveBeenCalledWith(
+        "safe-passphrase",
+        "永久删除我的全部数据",
+      );
+      expect(mocks.endVoice).toHaveBeenCalledOnce();
+    });
+    expect(
+      await screen.findByRole("heading", { name: "创建你的 Memoria 账号" }),
+    ).toBeInTheDocument();
   });
 
   it("preserves the server reminder preference while the control is unavailable", async () => {
@@ -187,65 +560,20 @@ describe("App identity and profile preferences", () => {
     expect(mocks.resumeAudio).toHaveBeenCalledWith(true);
   });
 
-  it("defaults to cascade and persists Omni Flash / Plus backends", async () => {
+  it("uses cascade only (E2E Omni/Audio backends temporarily disabled)", async () => {
     mocks.bootstrapIdentity.mockResolvedValue({
       user_id: "anonymous-user",
       access_token: "token",
     });
-    const first = render(<App />);
-    await screen.findByRole("heading", { name: /小忆/ });
-
-    const cascade = screen.getByRole("radio", { name: "级联" });
-    const omniFlash = screen.getByRole("radio", { name: "Omni Flash" });
-    const omniPlus = screen.getByRole("radio", { name: "Omni Plus" });
-    expect(cascade).toHaveAttribute("aria-checked", "true");
-    expect(omniFlash).toHaveAttribute("aria-checked", "false");
-    expect(omniPlus).toHaveAttribute("aria-checked", "false");
-
-    fireEvent.click(omniFlash);
-    expect(omniFlash).toHaveAttribute("aria-checked", "true");
-    expect(window.localStorage.getItem("memoria:voice-backend")).toBe(
-      "qwen_omni",
-    );
-    expect(mocks.useVoiceSession).toHaveBeenLastCalledWith(
-      expect.objectContaining({ voiceBackend: "qwen_omni" }),
-    );
-
-    fireEvent.click(omniPlus);
-    expect(omniPlus).toHaveAttribute("aria-checked", "true");
-    expect(window.localStorage.getItem("memoria:voice-backend")).toBe(
-      "qwen_omni_plus",
-    );
-    expect(mocks.useVoiceSession).toHaveBeenLastCalledWith(
-      expect.objectContaining({ voiceBackend: "qwen_omni_plus" }),
-    );
-
-    first.unmount();
-    render(<App />);
-    await screen.findByRole("heading", { name: /小忆/ });
-    expect(screen.getByRole("radio", { name: "Omni Plus" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-  });
-
-  it("locks the backend selector while a voice session is active", async () => {
-    mocks.bootstrapIdentity.mockResolvedValue({
-      user_id: "anonymous-user",
-      access_token: "token",
-    });
-    mocks.useVoiceSession.mockImplementation(() => ({
-      ...voiceState(),
-      session: { session_id: "active-session" },
-      uiState: "ready",
-      statusLabel: "我在这里",
-    }));
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 
-    expect(screen.getByRole("radio", { name: "级联" })).toBeDisabled();
-    expect(screen.getByRole("radio", { name: "Omni Flash" })).toBeDisabled();
-    expect(screen.getByRole("radio", { name: "Omni Plus" })).toBeDisabled();
+    expect(screen.queryByRole("radio", { name: "级联" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "Omni Flash" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "Audio Flash" })).toBeNull();
+    expect(mocks.useVoiceSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({ voiceBackend: "cascade" }),
+    );
   });
 
   it("labels both Qwen-backed daily summaries as LLM output", async () => {
