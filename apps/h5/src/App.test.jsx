@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   cachePendingMessage: vi.fn(),
   deleteAccountData: vi.fn(),
   endVoice: vi.fn().mockResolvedValue(undefined),
+  resetVoice: vi.fn().mockResolvedValue(undefined),
   exportAccountArchive: vi.fn(),
   flushPendingMessages: vi.fn().mockResolvedValue(undefined),
   getMemoryDays: vi.fn().mockResolvedValue({ items: [] }),
@@ -114,6 +115,7 @@ function voiceState() {
     statusLabel: "轻触我，开始聊聊",
     micEnabled: true,
     latestTranscript: null,
+    emotionHint: null,
     error: "",
     audioBlocked: false,
     audioContainerRef: { current: null },
@@ -122,6 +124,7 @@ function voiceState() {
     toggleMic: vi.fn(),
     stopAssistant: vi.fn(),
     end: mocks.endVoice,
+    reset: mocks.resetVoice,
   };
 }
 
@@ -132,6 +135,7 @@ describe("App identity and profile preferences", () => {
     mocks.flushPendingMessages.mockResolvedValue(undefined);
     mocks.deleteAccountData.mockResolvedValue({ status: "completed" });
     mocks.endVoice.mockResolvedValue(undefined);
+    mocks.resetVoice.mockResolvedValue(undefined);
     mocks.exportAccountArchive.mockResolvedValue({ sections: {} });
     mocks.getMemoryDays.mockResolvedValue({ items: [] });
     mocks.updateProfile.mockResolvedValue(undefined);
@@ -176,7 +180,7 @@ describe("App identity and profile preferences", () => {
     expect(await screen.findByRole("heading", { name: /小忆/ })).toBeInTheDocument();
   });
 
-  it("creates an account before exposing the personal memory space", async () => {
+  it("sends a newly registered account into companion onboarding", async () => {
     mocks.bootstrapIdentity.mockResolvedValue(null);
     mocks.registerAccount.mockResolvedValue({
       user_id: "registered-user",
@@ -191,6 +195,7 @@ describe("App identity and profile preferences", () => {
       auto_summary: true,
       voice_reply: true,
       gentle_reminders: false,
+      companion_id: null,
     });
 
     render(<App />);
@@ -215,7 +220,7 @@ describe("App identity and profile preferences", () => {
       );
     });
     expect(
-      await screen.findByRole("heading", { name: /小忆/ }),
+      await screen.findByRole("heading", { name: "选一个最合拍的伙伴" }),
     ).toBeInTheDocument();
     expect(mocks.getProfile).toHaveBeenCalledWith("registered-user");
   });
@@ -496,28 +501,149 @@ describe("App identity and profile preferences", () => {
     await screen.findByRole("heading", { name: /小忆/ });
 
     fireEvent.click(screen.getByRole("button", { name: "我的" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: /数字心智与声音/ }),
-    );
-    await screen.findByRole("heading", { name: "数据与账户" });
+    fireEvent.click(await screen.findByRole("button", { name: /注销账号/ }));
+    expect(
+      screen.getByRole("dialog", { name: "注销账号" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "主导航" }))
+      .not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("删除验证密码"), {
       target: { value: "safe-passphrase" },
     });
     fireEvent.change(screen.getByLabelText("输入“永久删除我的全部数据”"), {
       target: { value: "永久删除我的全部数据" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "永久删除全部数据" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "注销账号并删除全部数据" }),
+    );
 
     await waitFor(() => {
       expect(mocks.deleteAccountData).toHaveBeenCalledWith(
         "safe-passphrase",
         "永久删除我的全部数据",
       );
-      expect(mocks.endVoice).toHaveBeenCalledOnce();
+      expect(mocks.resetVoice).toHaveBeenCalledOnce();
     });
     expect(
       await screen.findByRole("heading", { name: "创建你的 Memoria 账号" }),
     ).toBeInTheDocument();
+  });
+
+  it("does not cache a transcript that fails after its account was deleted", async () => {
+    const lateSave = deferred();
+    let oldAccountTranscript;
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "registered-user",
+      username: "memorykeeper",
+      account_type: "registered",
+      access_token: "token",
+    });
+    mocks.saveMessage.mockReturnValue(lateSave.promise);
+    mocks.useVoiceSession.mockImplementation((options) => {
+      if (options.userId === "registered-user") {
+        oldAccountTranscript = options.onFinalTranscript;
+      }
+      return voiceState();
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    let saving;
+    await act(async () => {
+      saving = oldAccountTranscript({ speaker: "user", text: "不要带到新账号" });
+      await Promise.resolve();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    fireEvent.click(await screen.findByRole("button", { name: /注销账号/ }));
+    fireEvent.change(screen.getByLabelText("删除验证密码"), {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.change(screen.getByLabelText("输入“永久删除我的全部数据”"), {
+      target: { value: "永久删除我的全部数据" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "注销账号并删除全部数据" }),
+    );
+    await screen.findByRole("heading", { name: "创建你的 Memoria 账号" });
+
+    await act(async () => {
+      lateSave.reject(new Error("late write rejected"));
+      await saving;
+    });
+    expect(mocks.cachePendingMessage).not.toHaveBeenCalled();
+  });
+
+  it("ignores memories returned after their account was deleted", async () => {
+    const oldMemories = deferred();
+    const newMemories = deferred();
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "old-account",
+      username: "memorykeeper",
+      account_type: "registered",
+      access_token: "old-token",
+    });
+    mocks.registerAccount.mockResolvedValue({
+      user_id: "new-account",
+      username: "memorykeeper",
+      account_type: "registered",
+      access_token: "new-token",
+    });
+    mocks.getProfile
+      .mockResolvedValueOnce({
+        user_id: "old-account",
+        display_name: "旧账号",
+        bio: "旧资料",
+        companion_id: "starlight",
+      })
+      .mockResolvedValueOnce({
+        user_id: "new-account",
+        display_name: "全新账号",
+        bio: "空白开始",
+        companion_id: "starlight",
+      });
+    mocks.getMemoryDays
+      .mockReturnValueOnce(oldMemories.promise)
+      .mockReturnValueOnce(newMemories.promise);
+    render(<App />);
+    await screen.findByRole("heading", { name: /旧账号/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    await waitFor(() => expect(mocks.getMemoryDays).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: /注销账号/ }));
+    fireEvent.change(screen.getByLabelText("删除验证密码"), {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.change(screen.getByLabelText("输入“永久删除我的全部数据”"), {
+      target: { value: "永久删除我的全部数据" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "注销账号并删除全部数据" }),
+    );
+    await screen.findByRole("heading", { name: "创建你的 Memoria 账号" });
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "memorykeeper" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
+    await screen.findByRole("heading", { name: /全新账号/ });
+
+    await act(async () => {
+      oldMemories.resolve({
+        items: [{ day: "2026-07-19", message_count: 99, title: "旧回顾" }],
+      });
+      await oldMemories.promise;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    await waitFor(() => expect(mocks.getMemoryDays).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("99")).not.toBeInTheDocument();
+    expect(screen.queryByText("旧回顾")).not.toBeInTheDocument();
+
+    await act(async () => {
+      newMemories.resolve({ items: [] });
+      await newMemories.promise;
+    });
   });
 
   it("preserves the server reminder preference while the control is unavailable", async () => {

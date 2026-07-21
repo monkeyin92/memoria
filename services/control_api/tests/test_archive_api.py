@@ -869,6 +869,68 @@ async def test_agent_records_session_event_without_trusting_an_account_id(
 
 
 @pytest.mark.asyncio
+async def test_session_event_retry_ignores_delivery_timestamp_but_rejects_semantic_conflicts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    occurred_at = datetime(2026, 7, 20, 11, 0, tzinfo=UTC)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = (await client.post("/v1/auth/anonymous")).json()
+        owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=owner_headers, json={})).json()
+        other_session = (
+            await client.post("/v1/sessions", headers=owner_headers, json={})
+        ).json()
+        other_owner = (await client.post("/v1/auth/anonymous")).json()
+        other_owner_headers = {"Authorization": f"Bearer {other_owner['access_token']}"}
+        other_owner_session = (
+            await client.post("/v1/sessions", headers=other_owner_headers, json={})
+        ).json()
+        event = {
+            "event_id": "session-event-retry-001",
+            "session_id": session["session_id"],
+            "event_type": "speech.utterance_finalized",
+            "occurred_at": occurred_at.isoformat(),
+            "speaker_class": "owner",
+            "source": "funasr.authoritative_final",
+            "turn_id": 1,
+            "generation_id": 0,
+            "payload": {"text": "这是一段稳定的权威转写。"},
+        }
+        first = await client.post("/v1/archive/session-events", headers=internal, json=event)
+        retry = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={**event, "occurred_at": (occurred_at.replace(minute=1)).isoformat()},
+        )
+        changed_payload = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={**event, "payload": {"text": "内容已被替换。"}},
+        )
+        changed_session = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={**event, "session_id": other_session["session_id"]},
+        )
+        changed_owner = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={**event, "session_id": other_owner_session["session_id"]},
+        )
+
+    assert first.status_code == 201
+    assert retry.status_code == 200
+    assert retry.json()["duplicate"] is True
+    assert changed_payload.status_code == 409
+    assert changed_session.status_code == 409
+    assert changed_owner.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_account_can_search_review_and_trace_compiled_life_memory(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1284,6 +1346,23 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
             "/v1/auth/login",
             json={"username": "delete-owner", "password": "safe-passphrase"},
         )
+        replacement = await client.post(
+            "/v1/auth/register",
+            json={"username": "delete-owner", "password": "safe-passphrase"},
+        )
+        replacement_body = replacement.json()
+        replacement_headers = {
+            "Authorization": f"Bearer {replacement_body['access_token']}"
+        }
+        replacement_profile = await client.get(
+            f"/v1/memory/profile/{replacement_body['user_id']}",
+            headers=replacement_headers,
+        )
+        replacement_days = await client.get(
+            "/v1/memory/days",
+            headers=replacement_headers,
+            params={"user_id": replacement_body["user_id"]},
+        )
         deleted_session = await client.post(
             "/v1/archive/session-context",
             headers=internal_headers,
@@ -1315,6 +1394,12 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
     assert deleted.json()["terminate_sessions"] is True
     assert old_token.status_code == 401
     assert old_login.status_code == 401
+    assert replacement.status_code == 201
+    assert replacement_body["user_id"] != owner["user_id"]
+    assert replacement_profile.status_code == 200
+    assert replacement_profile.json()["companion_id"] is None
+    assert replacement_days.status_code == 200
+    assert replacement_days.json()["items"] == []
     assert deleted_session.status_code == 410
     assert deleted_session_event.status_code == 410
     assert other_still_exists.status_code == 200

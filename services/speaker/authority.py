@@ -353,17 +353,6 @@ class SpeakerAuthority:
             return self._uncertain("model_timeout", row=row)
         except Exception:
             return self._uncertain("model_unavailable", row=row)
-        quality_reason = embedding_quality_reason(result)
-        if quality_reason is not None:
-            return self._uncertain(quality_reason, row=row, quality=result.quality_score)
-        if row["status"] == "active":
-            risk_reason = classification_quality_reason(result)
-            if risk_reason is not None:
-                return self._uncertain(
-                    risk_reason,
-                    row=row,
-                    quality=result.quality_score,
-                )
         ciphertext = row["template_ciphertext"]
         if ciphertext is None:
             return self._uncertain("profile_revoked", row=row, quality=result.quality_score)
@@ -381,6 +370,9 @@ class SpeakerAuthority:
             tuple(result.vector), tuple(float(value) for value in template)
         )
         if row["status"] == "shadow":
+            # Shadow output never changes authority. Keep its candidate score even
+            # when the short conversational sample fails authority-quality gates,
+            # so the realtime target-speaker focus can reject a clear bystander.
             if score >= float(row["owner_threshold"]):
                 reason = "shadow_owner_candidate"
             elif score <= float(row["guest_threshold"]):
@@ -392,6 +384,16 @@ class SpeakerAuthority:
                 row=row,
                 quality=result.quality_score,
                 score=score,
+            )
+        quality_reason = embedding_quality_reason(result)
+        if quality_reason is not None:
+            return self._uncertain(quality_reason, row=row, quality=result.quality_score)
+        risk_reason = classification_quality_reason(result)
+        if risk_reason is not None:
+            return self._uncertain(
+                risk_reason,
+                row=row,
+                quality=result.quality_score,
             )
         if score >= float(row["owner_threshold"]):
             classification = "owner"

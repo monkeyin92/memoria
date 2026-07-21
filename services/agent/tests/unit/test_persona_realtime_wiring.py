@@ -331,15 +331,85 @@ async def test_voice_profile_refresh_runs_in_background_on_vad_start() -> None:
     runtime.refresh_voice_profile()
     await started.wait()
     assert not release.is_set()
-    assert baseline_calls == 1
+    assert baseline_calls == 0
 
     release.set()
-    await asyncio.sleep(0)
+    await runtime.wait_for_voice_profile_refresh()
     started.clear()
     runtime.on_user_voice_started()
     await started.wait()
-    assert baseline_calls == 2
+    assert baseline_calls == 0
 
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_first_turn_waits_for_voice_profile_refresh_before_applying_voice() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    applied: list[str] = []
+
+    class TTSStub:
+        pool = object()
+
+        def set_alignment_callback(self, _callback: object) -> None:
+            return None
+
+        def bind_fence(self, _fence: object) -> None:
+            return None
+
+        def use_baseline_voice(self) -> None:
+            applied.append("baseline")
+
+        def apply_voice_profile(self, *, model: str, voice: str) -> None:
+            applied.append(f"{model}:{voice}")
+
+    class VoiceStub:
+        ready = False
+
+        def cached(self, *, session_id: str) -> VoiceRuntimeProfile | None:
+            assert session_id == "session-voice-first-turn"
+            if not self.ready:
+                return None
+            return VoiceRuntimeProfile(
+                profile_id="profile-first-turn",
+                model="cosyvoice-v3.5-flash",
+                voice_id="cosyvoice-v3.5-flash-vd-brightpeer-approved",
+            )
+
+    voice = VoiceStub()
+
+    async def refresh() -> None:
+        started.set()
+        await release.wait()
+        voice.ready = True
+
+    runtime = DuplexRuntime.create(
+        session_id="session-voice-first-turn",
+        tts=TTSStub(),  # type: ignore[arg-type]
+    )
+    runtime.set_voice_profile_refresher(refresh)
+    await runtime.orchestrator.ready()
+    runtime.on_user_voice_started()
+    await started.wait()
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        voice_profile_client=voice,  # type: ignore[arg-type]
+    )
+
+    turn = asyncio.create_task(
+        agent.on_user_turn_completed(llm.ChatContext.empty(), Message("你好"))
+    )
+    await asyncio.sleep(0)
+    assert not turn.done()
+    assert applied == []
+
+    release.set()
+    await turn
+    assert applied[-1] == (
+        "cosyvoice-v3.5-flash:cosyvoice-v3.5-flash-vd-brightpeer-approved"
+    )
     await runtime.close()
 
 

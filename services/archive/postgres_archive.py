@@ -427,14 +427,17 @@ class PostgresLifeArchive:
 
         existing = await connection.fetchrow(
             """
-            SELECT e.content_sha256, e.recorded_at, o.outbox_id
+            SELECT e.*, o.outbox_id
             FROM archive_evidence_events e
             JOIN archive_processing_outbox o ON o.event_id = e.event_id
             WHERE e.event_id = $1
             """,
             event.event_id,
         )
-        if existing is None or str(existing["content_sha256"]) != event.content_sha256:
+        if existing is None or (
+            str(existing["content_sha256"]) != event.content_sha256
+            and self._event_from_row(existing).idempotency_sha256 != event.idempotency_sha256
+        ):
             raise IdempotencyConflictError(
                 f"event_id {event.event_id!r} already has different content"
             )

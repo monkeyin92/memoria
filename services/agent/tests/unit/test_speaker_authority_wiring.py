@@ -21,26 +21,28 @@ def _decision(classification: str) -> SpeakerDecision:
 
 
 @pytest.mark.asyncio
-async def test_guest_classification_allows_chat_but_closes_private_permissions() -> None:
+async def test_guest_classification_is_rejected_by_target_focus_but_closes_private_permissions() -> None:
     observed: dict[str, object] = {}
+    focus_pcm = b"\x00\x01" * 12_800
 
     async def classify(pcm: bytes, sample_rate: int) -> SpeakerDecision:
         observed.update(pcm=pcm, sample_rate=sample_rate)
         return _decision("guest")
 
     runtime = DuplexRuntime.create()
+    runtime.set_target_speaker_focus(True)
     runtime.set_speaker_classifier(classify, sample_rate=16000)
     runtime.on_user_voice_started()
-    runtime.feed_speaker_pcm(b"\x00\x01\x02\x03")
+    runtime.feed_speaker_pcm(focus_pcm)
     runtime.on_user_voice_stopped()
 
     decision = await runtime.await_speaker_classification()
     accepted, reason = runtime.accept_user_turn("你好，我是他的朋友")
 
-    assert observed == {"pcm": b"\x00\x01\x02\x03", "sample_rate": 16000}
+    assert observed == {"pcm": focus_pcm, "sample_rate": 16000}
     assert decision.classification == "guest"
-    assert accepted is True
-    assert reason is None
+    assert accepted is False
+    assert reason == "target_non_owner"
     assert runtime.speaker_permissions.normal_conversation is True
     assert runtime.speaker_permissions.read_private_memory is False
     assert runtime.speaker_permissions.write_long_term_memory is False

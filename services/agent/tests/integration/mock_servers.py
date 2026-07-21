@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import struct
 import threading
 from dataclasses import dataclass, field
 from typing import Any
@@ -252,7 +253,7 @@ def _result(
 class MockCosyVoiceServer:
     host: str = "127.0.0.1"
     port: int = 0
-    scenario: str = "happy"  # happy|late_ts|fail|slow
+    scenario: str = "happy"  # happy|late_ts|fail|slow|split_pcm
     closed_without_reuse: int = 0
     active: int = 0
     connections: int = 0
@@ -373,10 +374,15 @@ class MockCosyVoiceServer:
                     }
                 )
             )
-            # 20ms of 24kHz mono 16-bit silence * N
-            samples = max(480, len(full) * 240)  # rough
-            pcm = b"\x00\x00" * samples
-            await ws.send(pcm)
+            if self.scenario == "split_pcm":
+                # Two transport chunks from one continuous stream. Their different
+                # amplitudes make any per-chunk gain adjustment observable.
+                for level in (1200, 16000):
+                    await ws.send(struct.pack("<480h", *([level] * 480)))
+            else:
+                # 20ms of 24kHz mono 16-bit silence * N
+                samples = max(480, len(full) * 240)  # rough
+                await ws.send(b"\x00\x00" * samples)
 
             words = []
             t = 0

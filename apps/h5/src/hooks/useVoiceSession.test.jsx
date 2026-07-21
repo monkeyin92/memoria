@@ -226,6 +226,7 @@ describe("useVoiceSession production edges", () => {
       "qwen_omni",
     );
     expect(transport.prepare).toHaveBeenCalledTimes(1);
+    expect(transport.callbacks.speakerVerifyEnabled).toBe(false);
     expect(transport.connect).toHaveBeenCalledWith(
       expect.objectContaining({ session_id: "omni-session" }),
     );
@@ -749,6 +750,149 @@ describe("useVoiceSession production edges", () => {
     expect(onFinalTranscript).toHaveBeenCalledTimes(1);
   });
 
+  it("clears account-scoped voice state when the session is reset", async () => {
+    const { result, room } = await renderStartedHook();
+    act(() => {
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "transcript_delta",
+          speaker: "assistant",
+          text: "旧账号最后一句",
+          final: true,
+          heard: true,
+          turn_id: 1,
+          generation_id: 1,
+        }),
+        { isAgent: true },
+        null,
+        "voice-agent.ui",
+      );
+    });
+    expect(result.current.latestTranscript.text).toBe("旧账号最后一句");
+
+    await act(async () => {
+      await result.current.reset();
+    });
+
+    expect(result.current.transcripts).toEqual([]);
+    expect(result.current.latestTranscript).toBeNull();
+    expect(result.current.audioDiagnostics).toEqual([]);
+    expect(result.current.error).toBe("");
+    expect(result.current.micEnabled).toBe(true);
+    expect(result.current.uiState).toBe("idle");
+  });
+
+  it("activates a short-lived voice emotion only after the user turn is accepted", async () => {
+    const { result, room } = await renderStartedHook();
+    const agent = { isAgent: true };
+    vi.useFakeTimers();
+
+    act(() => {
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "emotion_observation",
+          session_id: "session-1",
+          label: "happy",
+          persist: false,
+          turn_id: 1,
+          generation_id: 0,
+          expires_after_ms: 500,
+        }),
+        agent,
+        null,
+        "voice-agent.ui",
+      );
+    });
+    expect(result.current.emotionHint).toBeNull();
+
+    act(() => {
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "transcript_delta",
+          speaker: "user",
+          text: "我今天真的很开心",
+          final: true,
+          turn_id: 1,
+          generation_id: 1,
+        }),
+        agent,
+        null,
+        "voice-agent.ui",
+      );
+    });
+    expect(result.current.emotionHint).toEqual({
+      label: "happy",
+      turnId: 1,
+      generationId: 0,
+    });
+
+    act(() => vi.advanceTimersByTime(500));
+    expect(result.current.emotionHint).toBeNull();
+  });
+
+  it("clears the prior emotion on a new accepted turn and ignores late old observations", async () => {
+    const { result, room } = await renderStartedHook();
+    const agent = { isAgent: true };
+    const emit = (event) =>
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent(event),
+        agent,
+        null,
+        "voice-agent.ui",
+      );
+
+    act(() => {
+      emit({
+        type: "emotion_observation",
+        session_id: "session-1",
+        label: "sad",
+        persist: false,
+        turn_id: 1,
+        generation_id: 0,
+        expires_after_ms: 30_000,
+      });
+      emit({
+        type: "transcript_delta",
+        speaker: "user",
+        text: "最近有点累",
+        final: true,
+        turn_id: 1,
+        generation_id: 1,
+      });
+    });
+    expect(result.current.emotionHint?.label).toBe("sad");
+
+    act(() => {
+      emit({
+        type: "transcript_delta",
+        speaker: "user",
+        text: "我们聊点别的",
+        final: true,
+        turn_id: 2,
+        generation_id: 2,
+      });
+      emit({
+        type: "emotion_observation",
+        session_id: "session-1",
+        label: "angry",
+        persist: false,
+        turn_id: 1,
+        generation_id: 1,
+        expires_after_ms: 30_000,
+      });
+    });
+    expect(result.current.emotionHint).toBeNull();
+
+    await act(async () => {
+      await result.current.end();
+    });
+    expect(result.current.emotionHint).toBeNull();
+  });
+
   it("does not show unstable user interim transcripts", async () => {
     const { result, room, onFinalTranscript } = await renderStartedHook();
     const agent = { isAgent: true };
@@ -818,6 +962,84 @@ describe("useVoiceSession production edges", () => {
     });
     expect(element.muted).toBe(false);
     expect(room.startAudio).toHaveBeenCalled();
+  });
+
+  it("deduplicates cascade audio tracks and reattaches after unsubscribe", async () => {
+    const { result, room } = await renderStartedHook();
+    const container = result.current.audioContainerRef.current;
+    const first = document.createElement("audio");
+    const second = document.createElement("audio");
+    Object.defineProperty(first, "play", {
+      configurable: true,
+      value: vi.fn().mockResolvedValue(undefined),
+    });
+    Object.defineProperty(second, "play", {
+      configurable: true,
+      value: vi.fn().mockResolvedValue(undefined),
+    });
+    const track = {
+      kind: "audio",
+      sid: "agent-audio-1",
+      attach: vi.fn()
+        .mockReturnValueOnce(first)
+        .mockReturnValueOnce(second),
+      detach: vi.fn(() => [first]),
+    };
+    const repeatedTrack = {
+      kind: "audio",
+      sid: "agent-audio-1",
+      attach: vi.fn(),
+      detach: vi.fn(() => [first]),
+    };
+
+    act(() => {
+      room.emit(liveKit.RoomEvent.TrackSubscribed, track);
+      room.emit(liveKit.RoomEvent.TrackSubscribed, repeatedTrack);
+    });
+    expect(track.attach).toHaveBeenCalledTimes(1);
+    expect(repeatedTrack.attach).not.toHaveBeenCalled();
+    expect(container.querySelectorAll("audio")).toHaveLength(1);
+
+    act(() => room.emit(liveKit.RoomEvent.TrackUnsubscribed, repeatedTrack));
+    expect(repeatedTrack.detach).toHaveBeenCalledTimes(1);
+    expect(container.querySelectorAll("audio")).toHaveLength(0);
+
+    act(() => room.emit(liveKit.RoomEvent.TrackSubscribed, track));
+    expect(track.attach).toHaveBeenCalledTimes(2);
+    expect(container.querySelectorAll("audio")).toHaveLength(1);
+  });
+
+  it("clears cascade audio ownership when a session ends", async () => {
+    const { result, room } = await renderStartedHook();
+    const container = result.current.audioContainerRef.current;
+    const first = document.createElement("audio");
+    const second = document.createElement("audio");
+    Object.defineProperty(first, "play", {
+      configurable: true,
+      value: vi.fn().mockResolvedValue(undefined),
+    });
+    Object.defineProperty(second, "play", {
+      configurable: true,
+      value: vi.fn().mockResolvedValue(undefined),
+    });
+    const track = {
+      kind: "audio",
+      sid: "agent-audio-1",
+      attach: vi.fn()
+        .mockReturnValueOnce(first)
+        .mockReturnValueOnce(second),
+    };
+
+    act(() => room.emit(liveKit.RoomEvent.TrackSubscribed, track));
+    await act(async () => {
+      await result.current.end();
+      await result.current.start();
+    });
+    const retryRoom = liveKit.instances.at(-1);
+    act(() => retryRoom.emit(liveKit.RoomEvent.TrackSubscribed, track));
+
+    expect(track.attach).toHaveBeenCalledTimes(2);
+    expect(container.querySelectorAll("audio")).toHaveLength(1);
   });
 
   it("records the complete first-audio path through actual media progress", async () => {

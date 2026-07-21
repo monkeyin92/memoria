@@ -1,10 +1,12 @@
-import { act, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Mascot } from "./Mascot.jsx";
 
+afterEach(cleanup);
+
 describe("Mascot", () => {
-  it("shows the semantic expression selected from the conversation", () => {
+  it("loads one front-facing body and shows the selected SVG expression", () => {
     const { container } = render(
       <Mascot
         emotion="happy"
@@ -14,78 +16,79 @@ describe("Mascot", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "轻触吉祥物开始实时对话" }))
-      .toBeEnabled();
-    expect(container.querySelector('img[src*="mascot-happy.webp"]'))
-      .toHaveClass("is-visible");
+    expect(container.querySelectorAll(".mascot-body")).toHaveLength(1);
+    expect(container.querySelector(".mascot-body")).toHaveAttribute(
+      "src",
+      expect.stringContaining("companions/starlight.webp"),
+    );
+    expect(screen.getByRole("button")).toHaveAttribute(
+      "data-expression",
+      "happy",
+    );
+    expect(container.querySelectorAll(".face-expression.is-visible")).toHaveLength(1);
   });
 
-  it("uses the curious face while the assistant is thinking", () => {
-    const { container } = render(
+  it("keeps the voice expression independent from the thinking activity", () => {
+    render(
       <Mascot
-        emotion="upset"
+        emotion="caring"
         uiState="thinking"
         onActivate={() => undefined}
         disabled={false}
       />,
     );
 
-    expect(container.querySelector('img[src*="mascot-curious.webp"]'))
-      .toHaveClass("is-visible");
+    expect(screen.getByRole("button")).toHaveClass("mascot-thinking");
+    expect(screen.getByRole("button")).toHaveAttribute(
+      "data-expression",
+      "caring",
+    );
   });
 
-  it("keeps one face while speaking instead of alternating assets", () => {
-    vi.useFakeTimers();
-    const { container } = render(
+  it("preserves the semantic expression while speaking", () => {
+    render(
       <Mascot
-        emotion="upset"
+        emotion="caring"
         uiState="speaking"
         onActivate={() => undefined}
         disabled={false}
       />,
     );
-    expect(container.querySelector('img[src*="mascot-upset.webp"]'))
-      .toHaveClass("is-visible");
 
-    act(() => vi.advanceTimersByTime(900));
-    expect(container.querySelector('img[src*="mascot-upset.webp"]'))
-      .toHaveClass("is-visible");
-    expect(container.querySelector('img[src*="mascot-neutral.webp"]'))
-      .not.toHaveClass("is-visible");
-    vi.useRealTimers();
+    expect(screen.getByRole("button")).toHaveClass("mascot-speaking");
+    expect(screen.getByRole("button")).toHaveAttribute(
+      "data-expression",
+      "caring",
+    );
   });
 
-  it("crossfades between expressions without hard-cutting the previous frame", () => {
-    vi.useFakeTimers();
-    const { container, rerender } = render(
+  it("is actionable only before a conversation starts", () => {
+    const onActivate = vi.fn();
+    const { rerender } = render(
       <Mascot
         emotion="neutral"
-        uiState="listening"
-        onActivate={() => undefined}
+        uiState="idle"
+        onActivate={onActivate}
         disabled={false}
       />,
     );
-    expect(container.querySelector('img[src*="mascot-neutral.webp"]'))
-      .toHaveClass("is-visible");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "轻触星澜开始实时对话" }),
+    );
+    expect(onActivate).toHaveBeenCalledOnce();
 
     rerender(
       <Mascot
         emotion="happy"
         uiState="listening"
-        onActivate={() => undefined}
+        onActivate={onActivate}
         disabled={false}
+        active
       />,
     );
-
-    expect(container.querySelector('img[src*="mascot-happy.webp"]'))
-      .toHaveClass("is-visible");
-    // Previous frame held under the dissolve so eyes do not pop.
-    expect(container.querySelector('img[src*="mascot-neutral.webp"]'))
-      .toHaveClass("is-fading-out");
-
-    act(() => vi.advanceTimersByTime(560));
-    expect(container.querySelector('img[src*="mascot-neutral.webp"]'))
-      .not.toHaveClass("is-fading-out");
-    vi.useRealTimers();
+    expect(
+      screen.getByRole("button", { name: "星澜正在陪伴" }),
+    ).toBeDisabled();
   });
 });

@@ -48,6 +48,31 @@ async def test_interrupt_says_friendly_yield_when_was_speaking() -> None:
 
 
 @pytest.mark.asyncio
+async def test_interrupt_with_content_does_not_play_a_control_ack() -> None:
+    """「等一下我想问…」interrupts, then leaves the actual question to chat."""
+    said: list[str] = []
+
+    async def _yield(phrase: str) -> None:
+        said.append(phrase)
+
+    runtime = DuplexRuntime.create(session_id="interrupt-then-chat")
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("讲个故事")
+    await runtime.on_assistant_speaking("很长的故事内容")
+    runtime._was_speaking = True
+    runtime.input_guard.candidate_text = "等一下我想问个事"
+    runtime.set_interrupt_yield(_yield)
+    before = runtime.fence
+
+    returned = await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+    await asyncio.sleep(0.05)
+
+    assert not returned.matches(before)
+    assert said == []
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_explicit_stop_phrase_yields_not_continue() -> None:
     """「停一下」must say 嗯你说, not 我继续 (owner cmd overrides short speaker score)."""
     said: list[str] = []

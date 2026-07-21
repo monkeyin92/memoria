@@ -63,12 +63,19 @@ def test_cosyvoice_config_from_env_prefers_mock_url() -> None:
 
 
 def test_cosyvoice_applies_a_valid_generation_speech_plan() -> None:
-    tts = CosyVoiceTTS(CosyVoiceConfig(api_key="key", ws_url="wss://example", pool_size=0))
+    config = CosyVoiceConfig(
+        api_key="key",
+        ws_url="wss://example",
+        volume=45,
+        pool_size=0,
+    )
+    tts = CosyVoiceTTS(config)
 
     tts.apply_speech_plan(emotion="sad", rate=0.95)
 
     assert tts.current_instruction == "你正在进行闲聊互动，你说话的情感是sad。"
     assert tts.current_rate == 0.95
+    assert config.volume == 45
 
 
 def test_longanyang_rejects_free_form_instruction() -> None:

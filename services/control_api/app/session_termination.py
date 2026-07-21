@@ -102,4 +102,10 @@ class LiveKitRoomCloser:
             self._settings.livekit_api_key,
             self._settings.livekit_api_secret,
         ) as livekit:
-            await livekit.room.delete_room(api.DeleteRoomRequest(room=room_name))
+            try:
+                await livekit.room.delete_room(api.DeleteRoomRequest(room=room_name))
+            except api.ServerError as exc:
+                # LiveKit expires idle rooms independently; deletion is idempotent.
+                if exc.code == api.ServerErrorCode.NOT_FOUND and exc.status == 404:
+                    return
+                raise

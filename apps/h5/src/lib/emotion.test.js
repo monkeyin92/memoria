@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyEmotion } from "./emotion.js";
+import { classifyEmotion, emotionFromVoice } from "./emotion.js";
 
 describe("classifyEmotion", () => {
   it.each([
@@ -14,5 +14,18 @@ describe("classifyEmotion", () => {
 
   it("keeps priority deterministic when several cues appear", () => {
     expect(classifyEmotion("虽然有点疑惑，但我真的很开心")).toBe("happy");
+  });
+
+  it.each([
+    ["happy", "happy"],
+    ["surprised", "curious"],
+    ["sad", "caring"],
+    ["angry", "caring"],
+    ["fearful", "caring"],
+    ["disgusted", "caring"],
+    ["neutral", "neutral"],
+    ["unknown", "neutral"],
+  ])("maps conservative voice label %s to %s", (label, expected) => {
+    expect(emotionFromVoice(label)).toBe(expected);
   });
 });

@@ -54,7 +54,6 @@ packages = ["services"]
 target-version = "py312"
 line-length = 100
 src = ["services", "scripts", "tests"]
-extend-exclude = ["apps/ios/.derivedData"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

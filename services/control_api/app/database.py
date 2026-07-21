@@ -18,6 +18,11 @@ CREATE TABLE IF NOT EXISTS profiles (
     display_name TEXT NOT NULL DEFAULT '朋友',
     bio TEXT NOT NULL DEFAULT '',
     avatar_url TEXT NOT NULL DEFAULT '',
+    companion_id TEXT CHECK (
+        companion_id IS NULL OR companion_id IN (
+            'starlight', 'taoxi', 'mianmian', 'axu', 'xuanmo'
+        )
+    ),
     timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
     auto_summary INTEGER NOT NULL DEFAULT 1 CHECK (auto_summary IN (0, 1)),
     voice_reply INTEGER NOT NULL DEFAULT 1 CHECK (voice_reply IN (0, 1)),
@@ -173,6 +178,16 @@ class MemoryStore:
                 for name, definition in _PROFILE_BOOLEAN_COLUMNS.items():
                     if name not in existing_columns:
                         connection.execute(f"ALTER TABLE profiles ADD COLUMN {name} {definition}")
+                if "companion_id" not in existing_columns:
+                    connection.execute("ALTER TABLE profiles ADD COLUMN companion_id TEXT")
+                    # Preserve the existing experience for accounts created before
+                    # companion selection existed. New registrations remain unset.
+                    connection.execute(
+                        """
+                        UPDATE profiles SET companion_id = 'starlight'
+                        WHERE user_id IN (SELECT user_id FROM accounts)
+                        """
+                    )
                 voice_session_columns = {
                     str(row[1]) for row in connection.execute("PRAGMA table_info(voice_sessions)")
                 }
@@ -496,7 +511,7 @@ class MemoryStore:
         with self._connection() as connection:
             profile = connection.execute(
                 """
-                SELECT user_id, display_name, bio, avatar_url, timezone,
+                SELECT user_id, display_name, bio, avatar_url, companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
@@ -861,7 +876,7 @@ class MemoryStore:
             self._ensure_profile(connection, user_id, now)
             row = connection.execute(
                 """
-                SELECT user_id, display_name, bio, avatar_url, timezone,
+                SELECT user_id, display_name, bio, avatar_url, companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
@@ -883,7 +898,7 @@ class MemoryStore:
             self._ensure_profile(connection, user_id, now)
             current = connection.execute(
                 """
-                SELECT display_name, bio, avatar_url, timezone,
+                SELECT display_name, bio, avatar_url, companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders
                 FROM profiles WHERE user_id = ?
                 """,
@@ -895,7 +910,7 @@ class MemoryStore:
             connection.execute(
                 """
                 UPDATE profiles
-                SET display_name = ?, bio = ?, avatar_url = ?, timezone = ?,
+                SET display_name = ?, bio = ?, avatar_url = ?, companion_id = ?, timezone = ?,
                     auto_summary = ?, voice_reply = ?, gentle_reminders = ?, updated_at = ?
                 WHERE user_id = ?
                 """,
@@ -903,6 +918,7 @@ class MemoryStore:
                     merged["display_name"],
                     merged["bio"],
                     merged["avatar_url"],
+                    merged["companion_id"],
                     merged["timezone"],
                     int(bool(merged["auto_summary"])),
                     int(bool(merged["voice_reply"])),
@@ -913,7 +929,7 @@ class MemoryStore:
             )
             row = connection.execute(
                 """
-                SELECT user_id, display_name, bio, avatar_url, timezone,
+                SELECT user_id, display_name, bio, avatar_url, companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?

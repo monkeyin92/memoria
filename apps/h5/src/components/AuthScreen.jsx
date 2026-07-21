@@ -31,7 +31,7 @@ export function AuthScreen({ onLogin, onRegister, preservesExistingData = false 
         >
           <div className="auth-brand" aria-hidden="true">
             <img
-              src={`${import.meta.env.BASE_URL}assets/mascot-neutral.webp`}
+              src={`${import.meta.env.BASE_URL}assets/mascot-v2-neutral.webp`}
               alt=""
             />
           </div>

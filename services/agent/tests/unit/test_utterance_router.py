@@ -7,6 +7,7 @@ from services.agent.src.orchestration.speaker_verify import SpeakerGateState
 from services.agent.src.orchestration.utterance_router import (
     UtteranceIntent,
     route_speaker_gate,
+    route_target_speaker,
     route_utterance,
 )
 
@@ -208,3 +209,116 @@ def test_legacy_speaker_gate_routes_human_mismatch_as_guest(
 
     assert route.allow_input is allowed
     assert route.reason == reason
+
+
+@pytest.mark.parametrize(
+    (
+        "classification",
+        "reason_code",
+        "profile_id",
+        "pcm_duration_ms",
+        "context",
+        "allowed",
+        "reason",
+    ),
+    [
+        (
+            "uncertain",
+            "shadow_owner_candidate",
+            "shadow-1",
+            800,
+            "conversation",
+            True,
+            "target_owner",
+        ),
+        ("guest", "owner_mismatch", "active-1", 800, "conversation", False, "target_non_owner"),
+        (
+            "uncertain",
+            "shadow_guest_candidate",
+            "shadow-1",
+            800,
+            "conversation",
+            True,
+            "target_unconfirmed",
+        ),
+        (
+            "uncertain",
+            "shadow_owner_candidate",
+            "shadow-1",
+            500,
+            "interrupt",
+            False,
+            "target_insufficient_speech",
+        ),
+        (
+            "uncertain",
+            "shadow_guest_candidate",
+            "shadow-1",
+            800,
+            "interrupt",
+            False,
+            "target_non_owner",
+        ),
+        (
+            "uncertain",
+            "model_unavailable",
+            "shadow-1",
+            800,
+            "interrupt",
+            True,
+            "target_unavailable",
+        ),
+        (
+            "uncertain",
+            "no_active_profile",
+            None,
+            800,
+            "interrupt",
+            True,
+            "target_profile_absent",
+        ),
+    ],
+)
+def test_target_speaker_focus_is_separate_from_authority_permissions(
+    classification: str,
+    reason_code: str,
+    profile_id: str | None,
+    pcm_duration_ms: int,
+    context: str,
+    allowed: bool,
+    reason: str,
+) -> None:
+    route = route_target_speaker(
+        classification=classification,
+        reason_code=reason_code,
+        profile_id=profile_id,
+        pcm_duration_ms=pcm_duration_ms,
+        context=context,  # type: ignore[arg-type]
+    )
+
+    assert route.allow_input is allowed
+    assert route.reason == reason
+
+
+def test_explicit_wait_can_yield_on_uncalibrated_shadow_but_not_formal_guest() -> None:
+    shadow_command = route_target_speaker(
+        classification="uncertain",
+        reason_code="shadow_guest_candidate",
+        profile_id="shadow-1",
+        pcm_duration_ms=320,
+        context="interrupt",
+        explicit_interrupt=True,
+    )
+    formal_guest_command = route_target_speaker(
+        classification="guest",
+        reason_code="owner_mismatch",
+        profile_id="formal-guest-1",
+        pcm_duration_ms=1200,
+        context="interrupt",
+        explicit_interrupt=True,
+    )
+
+    assert shadow_command.allow_input is True
+    assert shadow_command.reason == "target_explicit_control"
+    assert formal_guest_command.allow_input is False
+    assert formal_guest_command.reason == "target_non_owner"

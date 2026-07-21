@@ -87,6 +87,7 @@ async def test_messages_summary_and_profile_persist(
                 "auto_summary": False,
                 "voice_reply": False,
                 "gentle_reminders": True,
+                "companion_id": "mianmian",
             },
         )
         assert updated.status_code == 200
@@ -109,6 +110,7 @@ async def test_messages_summary_and_profile_persist(
     assert profile.json()["auto_summary"] is False
     assert profile.json()["voice_reply"] is False
     assert profile.json()["gentle_reminders"] is True
+    assert profile.json()["companion_id"] == "mianmian"
 
 
 @pytest.mark.asyncio
@@ -209,10 +211,57 @@ async def test_memory_api_validates_user_and_text_lengths(
             headers=headers,
             json={"timezone": "Mars/Olympus"},
         )
+        invalid_companion = await client.put(
+            f"/v1/memory/profile/{user_id}",
+            headers=headers,
+            json={"companion_id": "unknown-robot"},
+        )
     assert blank_user.status_code == 422
     assert blank_text.status_code == 422
     assert long_text.status_code == 422
     assert invalid_timezone.status_code == 422
+    assert invalid_companion.status_code == 422
+
+
+def test_existing_registered_profiles_migrate_to_starlight(tmp_path: Path) -> None:
+    path = tmp_path / "legacy-companion.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE profiles (
+                user_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL DEFAULT '朋友',
+                bio TEXT NOT NULL DEFAULT '',
+                avatar_url TEXT NOT NULL DEFAULT '',
+                timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE accounts (
+                user_id TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                username_normalized TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT INTO profiles (user_id, created_at, updated_at)
+            VALUES ('legacy-owner', '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z');
+            INSERT INTO accounts (
+                user_id, username, username_normalized, password_hash,
+                created_at, updated_at
+            ) VALUES (
+                'legacy-owner', 'owner', 'owner', 'hash',
+                '2026-07-19T00:00:00Z', '2026-07-19T00:00:00Z'
+            );
+            """
+        )
+
+    store = MemoryStore(str(path))
+    store.initialize()
+
+    profile = store.get_profile(user_id="legacy-owner", now="2026-07-20T00:00:00Z")
+    assert profile["companion_id"] == "starlight"
 
 
 @pytest.mark.asyncio

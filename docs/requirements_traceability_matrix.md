@@ -38,8 +38,9 @@
 | RTC 恢复两端原子前移 generation | `rtc-recovered` route, `agent.py`, `apps/h5/src/hooks/useVoiceSession.js` | Python/H5 recovery tests | PASS |
 | legacy Web session store / generation 丢弃 | `apps/web/src/state/sessionStore.ts` | 历史 Web tests | HISTORICAL-NOT-IN-SCOPE |
 | legacy Web 远端音频、字幕、设备与重连 | `apps/web/` | 历史 Web tests | HISTORICAL-NOT-IN-SCOPE |
-| 原生 iOS 会话与同步播放 | `apps/ios/` | 历史构建记录 | HISTORICAL-NOT-IN-SCOPE |
-| H5 首页动态吉祥物与四种情绪 | `apps/h5/src/components/Mascot.jsx`, `apps/h5/public/assets/mascot-*` | `apps/h5/src/components/Mascot.test.jsx`, `apps/h5/design-qa.md` | PASS |
+| 原生 iOS 会话与同步播放 | 已从仓库移除 | 历史构建记录 | REMOVED |
+| H5 五伙伴正面机身、四种 SVG 表情与权威语音情绪驱动 | `apps/h5/src/components/Mascot.jsx`, `apps/h5/src/lib/companions.js`, `apps/h5/public/assets/companions/` | `apps/h5/src/components/Mascot.test.jsx`, `apps/h5/src/hooks/useVoiceSession.test.jsx`, 浏览器交互 QA | PASS-LOCAL |
+| 注册后滑卡选角、性格/表情/设计音色试听与三段 shadow 声纹登记 | `CompanionOnboarding.jsx`, `companions.js`, `routes/memory.py`, `routes/speaker.py`, `routes/voice.py` | `CompanionOnboarding.test.jsx`, `App.test.jsx`, `test_memory_api.py`, `test_voice_profile_api.py` | PASS-LOCAL |
 | H5 实时语音、停止回答、声音解锁、静音保持与 10 秒重连恢复 | `apps/h5/src/hooks/useVoiceSession.js`, `apps/h5/src/App.jsx` | `apps/h5/src/hooks/useVoiceSession.test.jsx`, 浏览器交互 QA | PASS |
 | 首声全链路 trace 与 CosyVoice 首包超时恢复 | `duplex_runtime.py`, `agent.py`, `cosyvoice_tts.py`, `apps/h5/src/hooks/useVoiceSession.js` | `test_duplex_runtime_wiring.py`, `test_cosyvoice_livekit_stream.py`, H5 hook tests | PASS-LOCAL |
 | 候选打断 duck-first，确认后停止或平滑恢复 | `duplex_runtime.py`, `interruption_guard.py`, `apps/h5/src/hooks/useVoiceSession.js` | `test_agent_production_wiring.py`, H5 hook tests | PASS-LOCAL |
@@ -59,10 +60,10 @@
 | CosyVoice 3.5 声音授权、登记 saga、盲测、质量门禁与撤销；profile/orphan 外部清理未完成返回 503，H5 可见并幂等重试 | `services/voice_profile/*`, `routes/voice.py`, `DigitalSelfPanel.jsx` | voice profile/control/agent/H5 tests + SQLite/PostgreSQL Provider/orphan contract | PASS-LOCAL |
 | 原始主人语音独立授权、同一加密 spool 分流；撤销事务先冻结授权并快照对象，删除成功后按精确键清 manifest；临时失败音频保留重试但不阻塞后续/新转写 | `archive_sink.py`, `routes/archive.py`, `services/archive/*`, `PrivacyDataPanel.jsx` | archive/control/agent/H5 tests + SQLite/PostgreSQL 并发及 HTTP contract | PASS-LOCAL |
 | 账户导出、删除 fence、tombstone、外部资产清理与联合恢复 | `services/governance/*`, `session_termination.py`, restore scripts/runbook | governance/control/restore tests | PASS-LOCAL |
-| H5 视觉、可访问性与移动端溢出 | `apps/h5/src/styles.css`, `apps/h5/design-qa.md` | 390×844 浏览器 QA、console 检查 | PASS |
+| H5 视觉、可访问性与移动端溢出 | `apps/h5/src/styles.css`, `apps/h5/AGENTS.md` | 390×844、375×667、667×375 浏览器 QA、reduced-motion、console 检查 | PASS-LOCAL |
 | 本地 mock servers | `tests/integration/mock_servers.py` | integration tests | PASS |
 | 离线 ASR→LLM→TTS | `scripts/run_e2e.py`, `OfflinePipeline` | `test_offline_pipeline.py` | PASS |
-| 当前生产基线 Provider smoke（`20260719-000731`） | `scripts/livekit_smoke_test.py`, `scripts/provider_smoke_test.py`, `docs/releases/20260719-000731.md` | LiveKit、FunASR、Qwen、CosyVoice 实网证据 | PASS-PROD-BASELINE |
+| 当前生产基线 Provider smoke（`20260720-182535`） | `scripts/livekit_smoke_test.py`, `scripts/provider_smoke_test.py`, `docs/releases/20260720-182535.md` | LiveKit、FunASR、Qwen、CosyVoice 实网证据 | PASS-PROD-BASELINE |
 | 当前本地候选 Provider smoke/readiness | 同上；候选尚未部署且未注入真实 Provider 凭据 | 未执行 | NOT-RUN-LOCAL |
 | 韵律自适应（阶段4） | `orchestration/prosody.py` | `test_prosody.py` | PASS |
 | 双部署档案 | `config.py`, `agent.build_turn_handling_config` | `test_config.py` | PASS |
@@ -73,12 +74,12 @@
 | 生产发布、备份与回滚 runbook | `docs/production-deployment.md`, `HANDOFF.md` | 首次发布清单与回滚步骤 | PASS-DOC |
 | 可观测性 registry/结构化日志/追踪；输入守卫按原因计数；生产未启动或对外暴露 Prometheus endpoint | `observability/*`, `duplex_runtime.py` | `test_metrics_exporter.py`, `test_duplex_runtime_wiring.py` | PASS-INTERNAL |
 | Python 质量门 | `pyproject.toml`, `.github/workflows/ci.yml` | Ruff、mypy strict、全量 pytest | PASS-LOCAL |
-| H5 质量门 | `apps/h5/package.json`, `apps/h5/src/**/*.test.*` | 98 项测试、production build、390×844 浏览器与 console 回归 | PASS-LOCAL |
-| legacy Web/iOS 质量门 | 历史源码 | 不进入当前 CI/DoD | HISTORICAL-NOT-IN-SCOPE |
+| H5 质量门 | `apps/h5/package.json`, `apps/h5/src/**/*.test.*` | 121 项测试、production build、移动端浏览器与 console 回归 | PASS-LOCAL |
+| legacy Web/iOS 质量门 | Web 保留历史源码；原生 iOS 已移除 | Web 不进入当前 CI/DoD；iOS 无构建门 | HISTORICAL-NOT-IN-SCOPE / REMOVED |
 | 200 条真实中文录音、AEC 设备矩阵、第 21 章 SLO | 需外部测试数据与设备 | 尚未执行 | NOT-VALIDATED |
 
 ## 当前发布结论
 
-当前已发布生产基线为 runtime/H5 `20260719-000731`，默认 provider 为 `qwen`，H5 只暴露 FunASR + Qwen + CosyVoice 3.5 级联。本文新增的稳定账号、终身记忆、Persona、正式声纹、声音档案治理与原始语音授权为 **本地工程完成、未生产发布**；所有 `PASS-LOCAL` 都不得解读为线上已具备。
+当前已发布生产基线为 runtime/H5 `20260720-182535`，默认 provider 为 `qwen`，H5 只暴露 FunASR + Qwen + CosyVoice 3.5 级联。稳定账号、终身记忆、Persona、shadow 声纹、声音档案治理与原始语音授权底座已部署；标为 `PASS-LOCAL` 的单项仍只代表本地自动化或浏览器验收，不能替代真实设备、真人样本和规模化生产验收。
 
-200 条明确授权真人录音、完整 AEC/噪声/重叠/回放设备矩阵、真人 Persona/声音盲测、生产 PostgreSQL/S3/KMS 联合恢复与真实手机 H5 验收仍为 **NOT-VALIDATED**。原生 iOS 与 legacy Web 不属于当前产品范围。
+200 条明确授权真人录音、完整 AEC/噪声/重叠/回放设备矩阵、真人 Persona/声音盲测、生产 PostgreSQL/S3/KMS 联合恢复与真实手机 H5 验收仍为 **NOT-VALIDATED**。原生 iOS 已从仓库移除，legacy Web 不属于当前产品范围。

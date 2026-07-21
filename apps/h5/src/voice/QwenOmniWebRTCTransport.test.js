@@ -224,6 +224,7 @@ describe("QwenOmniWebRTCTransport", () => {
       expect.objectContaining({ audio: expect.any(Object) }),
     );
     await preparing;
+    expect(transport.speakerGate.state()).toBe("disabled");
     await transport.connect({
       session_id: "omni-session",
       config: { voice: "Cherry" },

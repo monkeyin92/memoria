@@ -198,6 +198,16 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
             headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
             json={"session_id": session["session_id"]},
         )
+        selected = await client.put(
+            f"/v1/memory/profile/{identity['user_id']}",
+            headers=headers,
+            json={"companion_id": "xuanmo"},
+        )
+        designed = await client.post(
+            "/v1/voices/session-resolution",
+            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
+            json={"session_id": session["session_id"]},
+        )
         unavailable_sample = await client.get(sample_path)
 
     assert consent.status_code == 201
@@ -233,6 +243,13 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
         "mode": "fallback",
         "profile_id": None,
         "model": None,
+        "voice_id": None,
+    }
+    assert selected.status_code == 200
+    assert designed.json() == {
+        "mode": "designed",
+        "profile_id": "low_magnetic",
+        "model": "cosyvoice-v3.5-flash",
         "voice_id": None,
     }
     assert unavailable_sample.status_code == 404

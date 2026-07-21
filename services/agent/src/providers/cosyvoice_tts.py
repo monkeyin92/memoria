@@ -24,7 +24,6 @@ from services.agent.src.providers.cosyvoice_protocol import (
     build_continue_text,
     build_finish_task,
     build_run_task,
-    normalize_pcm16_peak,
     parse_server_message,
     pcm_duration_ms,
     scale_word_timestamps,
@@ -53,9 +52,9 @@ class CosyVoiceConfig:
     sample_rate: int = 24000
     rate: float = 1.0
     pitch: float = 1.0
-    # 50 is CosyVoice default but often reads soft/uneven on mobile WebRTC;
-    # 70 keeps headroom without clipping on companion voices.
-    volume: int = 70
+    # Leave true-peak headroom before Opus encoding. The designed v3.5 voices
+    # clipped at 55+ in production probes; 45 measured at about -1 dBFS.
+    volume: int = 45
     word_timestamps: bool = True
     pool_size: int = 4
     connect_timeout_s: float = 5.0
@@ -152,7 +151,7 @@ class CosyVoiceConfig:
             sample_rate=int(e.get("COSYVOICE_SAMPLE_RATE", "24000")),
             rate=float(e.get("COSYVOICE_RATE", "1.0")),
             pitch=float(e.get("COSYVOICE_PITCH", "1.0")),
-            volume=int(e.get("COSYVOICE_VOLUME", "70")),
+            volume=int(e.get("COSYVOICE_VOLUME", "45")),
             word_timestamps=e.get("COSYVOICE_WORD_TIMESTAMPS", "true").lower() == "true",
             pool_size=int(e.get("COSYVOICE_POOL_SIZE", "4")),
             connect_timeout_s=float(e.get("COSYVOICE_CONNECT_TIMEOUT_S", "5")),
@@ -444,11 +443,10 @@ class CosyVoiceSynthesizeStream(tts.SynthesizeStream):
                                 detail={"pcm_bytes": len(msg)},
                             )
                         got_audio = True
-                        # Peak-normalize each chunk so successive CosyVoice
-                        # utterances do not swing between soft and loud.
-                        pcm = normalize_pcm16_peak(msg)
-                        output_emitter.push(pcm)
-                        sentence_pcm.setdefault(current_index, bytearray()).extend(pcm)
+                        # WebSocket chunks are transport boundaries, not audio
+                        # boundaries. Per-chunk gain changes create audible clicks.
+                        output_emitter.push(msg)
+                        sentence_pcm.setdefault(current_index, bytearray()).extend(msg)
                         continue
                     ev = parse_server_message(msg)
                     if ev.event == "sentence-begin" and ev.sentence_index is not None:
@@ -608,9 +606,6 @@ class CosyVoiceTTS(tts.TTS[Any]):
         )
         # Prefer 1.0; still clamp defensive ranges if a caller passes outliers.
         self._config.rate = min(1.05, max(0.95, rate))
-        # Keep volume pinned so emotion switches do not change loudness.
-        if self._config.volume < 60:
-            self._config.volume = 70
 
     def apply_voice_profile(self, *, model: str, voice: str) -> None:
         if not model.startswith("cosyvoice-v3.5-") or not voice.strip():

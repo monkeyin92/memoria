@@ -253,17 +253,6 @@ class PostgresSpeakerAuthority:
             return self._uncertain("model_timeout", row=row)
         except Exception:
             return self._uncertain("model_unavailable", row=row)
-        reason = embedding_quality_reason(result)
-        if reason is not None:
-            return self._uncertain(reason, row=row, quality=result.quality_score)
-        if row["status"] == "active":
-            risk_reason = classification_quality_reason(result)
-            if risk_reason is not None:
-                return self._uncertain(
-                    risk_reason,
-                    row=row,
-                    quality=result.quality_score,
-                )
         ciphertext = row["template_ciphertext"]
         if ciphertext is None:
             return self._uncertain("profile_revoked", row=row, quality=result.quality_score)
@@ -282,6 +271,9 @@ class PostgresSpeakerAuthority:
             tuple(float(value) for value in template),
         )
         if row["status"] == "shadow":
+            # Shadow output never changes authority. Keep its candidate score even
+            # when the short conversational sample fails authority-quality gates,
+            # so the realtime target-speaker focus can reject a clear bystander.
             if score >= float(row["owner_threshold"]):
                 reason_code = "shadow_owner_candidate"
             elif score <= float(row["guest_threshold"]):
@@ -293,6 +285,16 @@ class PostgresSpeakerAuthority:
                 row=row,
                 quality=result.quality_score,
                 score=score,
+            )
+        reason = embedding_quality_reason(result)
+        if reason is not None:
+            return self._uncertain(reason, row=row, quality=result.quality_score)
+        risk_reason = classification_quality_reason(result)
+        if risk_reason is not None:
+            return self._uncertain(
+                risk_reason,
+                row=row,
+                quality=result.quality_score,
             )
         if score >= float(row["owner_threshold"]):
             classification = "owner"

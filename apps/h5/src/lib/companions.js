@@ -1,0 +1,120 @@
+const asset = (path) => `${import.meta.env.BASE_URL}assets/${path}`;
+
+export const companions = Object.freeze([
+  {
+    id: "starlight",
+    name: "星澜",
+    tagline: "阳光 · 积极 · 可靠",
+    description: "会认真听，也会陪你把想法变成下一步。适合日常陪伴和一起行动。",
+    voiceName: "暖阳青年",
+    voiceDescription: "圆润、自然，像可靠的同龄朋友",
+    image: asset("companions/starlight.webp"),
+    voicePreview: asset("voices/warm_companion.wav"),
+    face: {
+      left: "30.3%",
+      top: "34.2%",
+      width: "39.4%",
+      height: "25.4%",
+      ink: "#162b4b",
+      eyeTop: "#111f3d",
+      eyeBottom: "#5bb6ef",
+      glow: "rgba(101, 196, 246, 0.7)",
+      tone: "light",
+    },
+    chest: { top: "73.7%" },
+  },
+  {
+    id: "taoxi",
+    name: "桃喜",
+    tagline: "元气 · 乐观 · 灵动",
+    description: "擅长接住小情绪，用轻快的方式给你鼓励，让普通日子多一点亮色。",
+    voiceName: "元气搭子",
+    voiceDescription: "清脆、轻快，回应里带一点自然上扬",
+    image: asset("companions/taoxi.webp"),
+    voicePreview: asset("voices/bright_peer.wav"),
+    face: {
+      left: "30.2%",
+      top: "39.1%",
+      width: "39.6%",
+      height: "28.2%",
+      ink: "#6a3551",
+      eyeTop: "#6a3551",
+      eyeBottom: "#d46d9e",
+      glow: "rgba(255, 220, 239, 0.82)",
+      tone: "pink",
+    },
+  },
+  {
+    id: "mianmian",
+    name: "绵绵",
+    tagline: "温柔 · 细腻 · 治愈",
+    description: "不催着你变好，适合慢慢说和深夜谈心，也会留意那些没说出口的感受。",
+    voiceName: "温柔知己",
+    voiceDescription: "温暖、舒缓，像愿意耐心听完的人",
+    image: asset("companions/mianmian.webp"),
+    voicePreview: asset("voices/soft_confidante.wav"),
+    face: {
+      left: "30.1%",
+      top: "35.5%",
+      width: "39.8%",
+      height: "24.8%",
+      ink: "#51354b",
+      eyeTop: "#4d3048",
+      eyeBottom: "#d583a6",
+      glow: "rgba(245, 170, 199, 0.62)",
+      tone: "light",
+    },
+  },
+  {
+    id: "axu",
+    name: "阿序",
+    tagline: "冷静 · 有条理 · 上进",
+    description: "喜欢把复杂的事理清楚，陪你拆解计划、稳稳推进，也记得适时停下来。",
+    voiceName: "沉稳向导",
+    voiceDescription: "清晰、利落，冷静但不会显得生硬",
+    image: asset("companions/axu.webp"),
+    voicePreview: asset("voices/calm_guide.wav"),
+    face: {
+      left: "27.2%",
+      top: "35.2%",
+      width: "45.6%",
+      height: "32.2%",
+      ink: "#bdf5ff",
+      eyeTop: "#d9fbff",
+      eyeBottom: "#20b9f2",
+      glow: "rgba(63, 214, 255, 0.78)",
+      tone: "dark",
+    },
+  },
+  {
+    id: "xuanmo",
+    name: "玄墨",
+    tagline: "笃定 · 沉稳 · 包容",
+    description: "话不多但让人安心，适合认真对话和情绪托底，在混乱的时候陪你站稳。",
+    voiceName: "低音笃定",
+    voiceDescription: "厚实、克制，有让人放松的安全感",
+    image: asset("companions/xuanmo.webp"),
+    voicePreview: asset("voices/low_magnetic.wav"),
+    face: {
+      left: "30.1%",
+      top: "34.5%",
+      width: "39.8%",
+      height: "25.8%",
+      ink: "#baf5ff",
+      eyeTop: "#d8fbff",
+      eyeBottom: "#20b7f2",
+      glow: "rgba(38, 207, 255, 0.82)",
+      tone: "dark",
+    },
+    chest: { top: "71.8%" },
+  },
+]);
+
+export const defaultCompanionId = "starlight";
+
+export function companionById(companionId) {
+  return (
+    companions.find((companion) => companion.id === companionId) ||
+    companions[0]
+  );
+}

@@ -90,6 +90,35 @@ async def test_fallback_or_failure_clears_clone_before_next_tts() -> None:
 
 
 @pytest.mark.asyncio
+async def test_designed_companion_voice_resolves_from_approved_local_registry() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "mode": "designed",
+                "profile_id": "bright_peer",
+                "model": "cosyvoice-v3.5-flash",
+                "voice_id": None,
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = VoiceProfileClient(
+            VoiceProfileClientConfig(
+                endpoint="https://control.test/v1/voices/session-resolution",
+                internal_token="voice-internal-token",
+            ),
+            client=http_client,
+        )
+        assert await client.refresh(session_id="session-002")
+        profile = client.cached(session_id="session-002")
+
+    assert profile is not None
+    assert profile.profile_id == "bright_peer"
+    assert profile.voice_id.startswith("cosyvoice-v3.5-flash-vd-brightpeer-")
+
+
+@pytest.mark.asyncio
 async def test_tts_switches_to_approved_clone_and_restores_exact_baseline() -> None:
     config = CosyVoiceConfig(
         api_key="test",

@@ -14,11 +14,24 @@ import { extractInboundAudioStats } from "../voice/webrtcStats.js";
 const UI_TOPIC = "voice-agent.ui";
 const TELEMETRY_TOPIC = "voice-agent.telemetry";
 const AGENT_READY_TIMEOUT_MS = 45_000;
+const VOICE_EMOTION_LABELS = new Set([
+  "neutral",
+  "happy",
+  "sad",
+  "angry",
+  "fearful",
+  "disgusted",
+  "surprised",
+]);
 /** End-to-end realtime backends (not LiveKit cascade). */
 const REALTIME_BACKENDS = new Set(["qwen_omni"]);
 
 function isRealtimeBackend(backend) {
   return REALTIME_BACKENDS.has(backend);
+}
+
+function cascadeAudioTrackKey(track) {
+  return track.sid || track.mediaStreamTrack?.id || track;
 }
 
 const stateLabels = {
@@ -113,6 +126,21 @@ function parseEvent(payload) {
       }
       return event;
     }
+    if (event.type === "emotion_observation") {
+      if (
+        typeof event.session_id !== "string" ||
+        !VOICE_EMOTION_LABELS.has(event.label) ||
+        event.persist !== false ||
+        !Number.isInteger(event.turn_id) ||
+        !Number.isInteger(event.generation_id) ||
+        !Number.isInteger(event.expires_after_ms) ||
+        event.expires_after_ms <= 0 ||
+        event.expires_after_ms > 60_000
+      ) {
+        return null;
+      }
+      return event;
+    }
   } catch {
     return null;
   }
@@ -132,6 +160,7 @@ export function useVoiceSession({
   const [error, setError] = useState("");
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [audioDiagnostics, setAudioDiagnostics] = useState([]);
+  const [emotionHint, setEmotionHint] = useState(null);
   const roomRef = useRef(null);
   const omniTransportRef = useRef(null);
   const roomHandlersRef = useRef(null);
@@ -155,9 +184,13 @@ export function useVoiceSession({
   const traceStartedAtRef = useRef(0);
   const firstPlaybackRef = useRef(false);
   const audioGainRef = useRef(1);
+  const cascadeAudioElementsRef = useRef(new Map());
   const omniAudioElementRef = useRef(null);
   const statsTrackRef = useRef(null);
   const statsTimerRef = useRef(null);
+  const pendingEmotionRef = useRef(new Map());
+  const latestAcceptedUserTurnRef = useRef(0);
+  const emotionTimerRef = useRef(null);
 
   useEffect(() => {
     finalTranscriptRef.current = onFinalTranscript;
@@ -172,6 +205,35 @@ export function useVoiceSession({
     if (!voiceReplyEnabled) setAudioBlocked(false);
   }, [voiceReplyEnabled]);
 
+  const clearEmotionHint = useCallback(() => {
+    if (emotionTimerRef.current !== null) {
+      window.clearTimeout(emotionTimerRef.current);
+      emotionTimerRef.current = null;
+    }
+    setEmotionHint(null);
+  }, []);
+
+  const resetEmotionState = useCallback(() => {
+    clearEmotionHint();
+    pendingEmotionRef.current.clear();
+    latestAcceptedUserTurnRef.current = 0;
+  }, [clearEmotionHint]);
+
+  const activateEmotionHint = useCallback((event) => {
+    if (emotionTimerRef.current !== null) {
+      window.clearTimeout(emotionTimerRef.current);
+    }
+    setEmotionHint({
+      label: event.label,
+      turnId: event.turn_id,
+      generationId: event.generation_id,
+    });
+    emotionTimerRef.current = window.setTimeout(() => {
+      emotionTimerRef.current = null;
+      setEmotionHint(null);
+    }, event.expires_after_ms);
+  }, []);
+
   const applyTranscript = useCallback((line, { authoritative = true } = {}) => {
     if (line.generation_id < generationRef.current) return;
     generationRef.current = Math.max(
@@ -179,6 +241,24 @@ export function useVoiceSession({
       line.generation_id,
     );
     turnRef.current = line.turn_id;
+
+    if (
+      authoritative &&
+      line.speaker === "user" &&
+      line.final &&
+      line.text.trim()
+    ) {
+      clearEmotionHint();
+      latestAcceptedUserTurnRef.current = line.turn_id;
+      const pendingEmotion = pendingEmotionRef.current.get(line.turn_id);
+      pendingEmotionRef.current.clear();
+      if (
+        pendingEmotion &&
+        pendingEmotion.generation_id + 1 >= line.generation_id
+      ) {
+        activateEmotionHint(pendingEmotion);
+      }
+    }
 
     setTranscripts((current) => {
       const key = `${line.speaker}:${line.turn_id}:${line.generation_id}`;
@@ -217,7 +297,7 @@ export function useVoiceSession({
         generation_id: line.generation_id,
       });
     }
-  }, []);
+  }, [activateEmotionHint, clearEmotionHint]);
 
   const publishAudioDiagnostic = useCallback((room, event) => {
     if (
@@ -364,7 +444,11 @@ export function useVoiceSession({
   const attachAudio = useCallback(
     (track, isCurrent = () => true) => {
       if (!isCurrent() || track.kind !== "audio") return;
-      activateAudioElement(track.attach(), isCurrent);
+      const key = cascadeAudioTrackKey(track);
+      if (cascadeAudioElementsRef.current.has(key)) return;
+      const element = track.attach();
+      cascadeAudioElementsRef.current.set(key, element);
+      activateAudioElement(element, isCurrent);
     },
     [activateAudioElement],
   );
@@ -453,6 +537,7 @@ export function useVoiceSession({
       recoveryEpochRef.current += 1;
       roomConnectedRef.current = false;
       stopStatsSampling();
+      cascadeAudioElementsRef.current.clear();
       audioContainerRef.current?.replaceChildren();
       setAudioBlocked(false);
     }
@@ -489,13 +574,14 @@ export function useVoiceSession({
       attemptRef.current += 1;
       intentionalEndRef.current = true;
       setError(message);
+      resetEmotionState();
       const disconnecting = disconnectRoom(room);
       sessionRef.current = null;
       setSession(null);
       setUiState("closed");
       await disconnecting;
     },
-    [disconnectRoom],
+    [disconnectRoom, resetEmotionState],
   );
 
   const failOmni = useCallback(
@@ -504,12 +590,13 @@ export function useVoiceSession({
       attemptRef.current += 1;
       intentionalEndRef.current = true;
       setError(message);
+      resetEmotionState();
       disconnectOmni(transport);
       sessionRef.current = null;
       setSession(null);
       setUiState("closed");
     },
-    [disconnectOmni],
+    [disconnectOmni, resetEmotionState],
   );
 
   const resumeAudio = useCallback((enabled = voiceReplyEnabledRef.current) => {
@@ -568,6 +655,7 @@ export function useVoiceSession({
     recoveryInFlightRef.current = false;
     recoveryEpochRef.current += 1;
     roomConnectedRef.current = false;
+    resetEmotionState();
     setError("");
     setAudioBlocked(false);
     setUiState("connecting");
@@ -592,7 +680,9 @@ export function useVoiceSession({
         attemptRef.current === attempt &&
         omniTransportRef.current === transport;
       const transportOptions = {
-        speakerVerifyEnabled: true,
+        // Registration onboarding + formal SpeakerAuthority own voiceprints.
+        // A browser-local gate would ask the user to enroll again per session.
+        speakerVerifyEnabled: false,
         onState: (state) => {
           if (!isCurrent()) return;
           if (state === "ready" || state === "speaker_enroll") {
@@ -639,6 +729,7 @@ export function useVoiceSession({
           const wasIntentional = intentionalEndRef.current;
           disconnectOmni(transport);
           sessionRef.current = null;
+          resetEmotionState();
           setSession(null);
           setUiState("closed");
           if (!wasIntentional) {
@@ -764,7 +855,11 @@ export function useVoiceSession({
         };
         const onTrackUnsubscribed = (track) => {
           if (!isCurrent()) return;
+          const key = cascadeAudioTrackKey(track);
+          const element = cascadeAudioElementsRef.current.get(key);
+          cascadeAudioElementsRef.current.delete(key);
           track.detach().forEach((element) => element.remove());
+          element?.remove();
           if (statsTrackRef.current === track) stopStatsSampling();
         };
         const onDataReceived = (payload, participant, _kind, topic) => {
@@ -795,6 +890,21 @@ export function useVoiceSession({
               "ok",
               { gain: audioGainRef.current },
             );
+            return;
+          }
+          if (event.type === "emotion_observation") {
+            if (!initialReadyRef.current) return;
+            if (event.session_id !== sessionRef.current?.session_id) return;
+            if (event.generation_id + 1 < generationRef.current) return;
+            const acceptedTurn = latestAcceptedUserTurnRef.current;
+            if (event.turn_id < acceptedTurn || event.turn_id > acceptedTurn + 1) {
+              return;
+            }
+            if (event.turn_id === acceptedTurn && acceptedTurn > 0) {
+              activateEmotionHint(event);
+            } else {
+              pendingEmotionRef.current.set(event.turn_id, event);
+            }
             return;
           }
           if (event.type === "assistant_state") {
@@ -904,6 +1014,7 @@ export function useVoiceSession({
           attemptRef.current += 1;
           const wasIntentional = intentionalEndRef.current;
           void disconnectRoom(room);
+          resetEmotionState();
           if (!wasIntentional) {
             setError("连接已经断开，轻触吉祥物可以重新开始");
           }
@@ -995,6 +1106,7 @@ export function useVoiceSession({
         if (current) {
           attemptRef.current += 1;
           sessionRef.current = null;
+          resetEmotionState();
           setSession(null);
           const denied =
             caught instanceof DOMException && caught.name === "NotAllowedError";
@@ -1012,6 +1124,7 @@ export function useVoiceSession({
     })();
   }, [
     applyTranscript,
+    activateEmotionHint,
     attachAudio,
     attachOmniAudio,
     clearAgentReadyTimer,
@@ -1022,6 +1135,7 @@ export function useVoiceSession({
     failReconnect,
     publishAudioDiagnostic,
     recordAudioDiagnostic,
+    resetEmotionState,
     startStatsSampling,
     stopStatsSampling,
     userId,
@@ -1088,17 +1202,44 @@ export function useVoiceSession({
     const room = roomRef.current;
     const omniTransport = omniTransportRef.current;
     sessionRef.current = null;
+    resetEmotionState();
     setSession(null);
     setAudioBlocked(false);
     setUiState("closed");
     disconnectOmni(omniTransport);
     await disconnectRoom(room);
-  }, [disconnectOmni, disconnectRoom]);
+  }, [disconnectOmni, disconnectRoom, resetEmotionState]);
+
+  const reset = useCallback(async () => {
+    attemptRef.current += 1;
+    intentionalEndRef.current = true;
+    const room = roomRef.current;
+    const omniTransport = omniTransportRef.current;
+    sessionRef.current = null;
+    resetEmotionState();
+    generationRef.current = 0;
+    turnRef.current = 0;
+    micEnabledRef.current = true;
+    persistedRef.current.clear();
+    audioDiagnosticsRef.current = [];
+    setSession(null);
+    setUiState("idle");
+    setMicEnabledState(true);
+    setTranscripts([]);
+    setError("");
+    setAudioBlocked(false);
+    setAudioDiagnostics([]);
+    disconnectOmni(omniTransport);
+    await disconnectRoom(room);
+  }, [disconnectOmni, disconnectRoom, resetEmotionState]);
 
   useEffect(
     () => () => {
       attemptRef.current += 1;
       intentionalEndRef.current = true;
+      if (emotionTimerRef.current !== null) {
+        window.clearTimeout(emotionTimerRef.current);
+      }
       disconnectOmni(omniTransportRef.current);
       void disconnectRoom(roomRef.current);
     },
@@ -1115,11 +1256,13 @@ export function useVoiceSession({
     error,
     audioBlocked,
     audioDiagnostics,
+    emotionHint,
     audioContainerRef,
     start,
     resumeAudio,
     toggleMic,
     stopAssistant,
     end,
+    reset,
   };
 }

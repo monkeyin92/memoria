@@ -17,7 +17,6 @@ import {
 import {
   activateVoiceProfile,
   createVoiceBlindTrial,
-  deleteAccountData,
   enrollSpeakerProfiles,
   enrollVoiceProfile,
   evaluateVoiceProfile,
@@ -41,6 +40,7 @@ import {
   prepareSpeakerEnrollment,
   prepareVoiceCloneSample,
 } from "../lib/audioEnrollment.js";
+import { AccountDeletionForm } from "./AccountDeletionForm.jsx";
 
 const traitLabels = {
   verbal_tic: "口头表达",
@@ -79,8 +79,6 @@ const initialEvaluation = {
   uncanny: 2,
   notes: "",
 };
-
-const accountDeletionPhrase = "永久删除我的全部数据";
 
 function itemsOf(result) {
   return Array.isArray(result) ? result : result?.items || [];
@@ -142,8 +140,6 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
   const previewUrlRef = useRef({});
   const [evaluation, setEvaluation] = useState(initialEvaluation);
   const [exportPassword, setExportPassword] = useState("");
-  const [deletePassword, setDeletePassword] = useState("");
-  const [deleteConfirmation, setDeleteConfirmation] = useState("");
 
   const reload = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -312,20 +308,6 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
     } catch (actionError) {
       setError(errorMessage(actionError, "档案导出没有完成，请检查密码后重试。"));
     } finally {
-      setBusy("");
-    }
-  };
-
-  const deleteAccount = async () => {
-    if (deleteConfirmation !== accountDeletionPhrase) return;
-    setBusy("account-delete");
-    setError("");
-    setNotice("");
-    try {
-      await deleteAccountData(deletePassword, deleteConfirmation);
-      await onAccountDeleted?.();
-    } catch (actionError) {
-      setError(errorMessage(actionError, "账户删除没有完成，请检查密码后重试。"));
       setBusy("");
     }
   };
@@ -993,49 +975,7 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
                 </button>
               </form>
 
-              <form
-                className="account-data-form account-danger-zone"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void deleteAccount();
-                }}
-              >
-                <strong>永久删除账户</strong>
-                <p>
-                  此操作不可撤销。为防止误触，请再次输入密码，并逐字输入确认短语。
-                </p>
-                <label htmlFor="account-delete-password">删除验证密码</label>
-                <input
-                  id="account-delete-password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={deletePassword}
-                  onChange={(event) => setDeletePassword(event.target.value)}
-                />
-                <label htmlFor="account-delete-confirmation">
-                  输入“{accountDeletionPhrase}”
-                </label>
-                <input
-                  id="account-delete-confirmation"
-                  type="text"
-                  autoComplete="off"
-                  spellCheck="false"
-                  value={deleteConfirmation}
-                  onChange={(event) => setDeleteConfirmation(event.target.value)}
-                />
-                <button
-                  type="submit"
-                  className="button-danger full-width"
-                  disabled={
-                    !deletePassword ||
-                    deleteConfirmation !== accountDeletionPhrase ||
-                    Boolean(busy)
-                  }
-                >
-                  <Trash size={18} aria-hidden="true" />
-                  {busy === "account-delete" ? "正在永久删除…" : "永久删除全部数据"}
-                </button>
-              </form>
+              <AccountDeletionForm onDeleted={onAccountDeleted} />
             </section>
           </>
         )}

@@ -44,6 +44,7 @@ class EvidenceEvent:
     schema_version: int = 1
     supersedes_event_id: str | None = None
     content_sha256: str = field(init=False)
+    idempotency_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
         for name in ("event_id", "account_id", "event_type", "source"):
@@ -55,27 +56,35 @@ class EvidenceEvent:
         payload_json = canonical_payload(self.payload)
         object.__setattr__(self, "occurred_at", occurred_at)
         object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+        idempotency_content = {
+            "account_id": self.account_id,
+            "consent_grant_id": self.consent_grant_id,
+            "event_type": self.event_type,
+            "generation_id": self.generation_id,
+            "payload": json.loads(payload_json),
+            "schema_version": self.schema_version,
+            "session_id": self.session_id,
+            "source": self.source,
+            "speaker_class": self.speaker_class,
+            "speaker_identity_id": self.speaker_identity_id,
+            "supersedes_event_id": self.supersedes_event_id,
+            "turn_id": self.turn_id,
+        }
         fingerprint = canonical_payload(
-            {
-                "account_id": self.account_id,
-                "consent_grant_id": self.consent_grant_id,
-                "event_type": self.event_type,
-                "generation_id": self.generation_id,
-                "occurred_at": occurred_at.isoformat(),
-                "payload": json.loads(payload_json),
-                "schema_version": self.schema_version,
-                "session_id": self.session_id,
-                "source": self.source,
-                "speaker_class": self.speaker_class,
-                "speaker_identity_id": self.speaker_identity_id,
-                "supersedes_event_id": self.supersedes_event_id,
-                "turn_id": self.turn_id,
-            }
+            {"occurred_at": occurred_at.isoformat(), **idempotency_content}
         )
         object.__setattr__(
             self,
             "content_sha256",
             hashlib.sha256(fingerprint.encode("utf-8")).hexdigest(),
+        )
+        # The deterministic event_id identifies a logical event. A retry can be
+        # rebuilt after its source clock has advanced, but it must never change
+        # the event's owner, session, or immutable payload.
+        object.__setattr__(
+            self,
+            "idempotency_sha256",
+            hashlib.sha256(canonical_payload(idempotency_content).encode("utf-8")).hexdigest(),
         )
 
 

@@ -6,15 +6,16 @@
 
 ## 生产交付
 
-- H5：<https://aginice.cn:8443/>
-- Control API：<https://aginice.cn:8443/memoria-api/>
-- 当前正式 release：`20260719-215553`
-- 当前基础设施发布记录：`docs/releases/20260716-120146.md`
-- TLS：`aginice.cn` 使用 TrustAsia 域名证书（有效至 2026-09-04）；当前公网入口为 8443。443 的 Memoria 路由已就绪，但域名 SNI 在到达 Nginx 前被上游关闭，待备案放行后可直接使用无端口 URL。公网 IP 兼容入口仍使用 Let's Encrypt 短期证书（有效至 2026-07-25）。任何 Nginx reload 前都必须先通过 `nginx -t`。
+- H5：<https://122.51.108.140:8443/>
+- Control API：<https://122.51.108.140:8443/memoria-api/>
+- 当前 runtime release：`20260720-182535`
+- 当前 H5 release：`20260720-182535`
+- 发布记录：`docs/releases/20260720-140053.md`、`docs/releases/20260720-145953.md`、`docs/releases/20260720-162553.md`、`docs/releases/20260720-164942.md`、`docs/releases/20260720-174545.md`、`docs/releases/20260720-182535.md`
+- TLS：公网 IP `122.51.108.140` 使用 Let's Encrypt 短期证书；当前公网入口为 8443，443 继续由既有 WMS 使用。任何 Nginx reload 前都必须先通过 `nginx -t`。
 
 当前线上 H5 使用用户名/密码稳定账号和短期 LiveKit participant token；旧匿名身份仍可在注册时原地升级。消息、个人资料、偏好、会话控制和 readiness evidence 按用户隔离；PII 在持久化或发送 Provider 上下文前统一脱敏。浏览器 bundle 不包含永久凭据。
 
-> 生产状态边界：P0.5、P1-P6 工程能力已随 `20260719-215553` 部署；正式声纹仍为 shadow-only，复刻声音尚未通过授权真人盲测。同机 PostgreSQL/MinIO 没有异地副本/KMS/PITR，不能宣传为已完成规模化声纹验收或“永不丢失”。
+> 生产状态边界：P0.5、P1-P6 工程能力底座随 `20260720-140053` 部署，当前 runtime/H5 为 `20260720-182535`；正式声纹仍为 shadow-only，复刻声音尚未通过授权真人盲测。同机 PostgreSQL/MinIO 没有异地副本/KMS/PITR，不能宣传为已完成规模化声纹验收或“永不丢失”。
 
 P0.5～P6 工程切片已完成并部署；声纹模型使用独立 `speaker-model` 容器承载固定 CAM++ ONNX 版本，Control API readiness 会校验模型健康与版本。CAM++ 不提供 anti-spoof，因此当前只允许 shadow/`uncertain` 结果，不能把模型冒烟当作生产主人识别。
 
@@ -51,11 +52,11 @@ uv run python -m services.agent.src.main dev
 npm --prefix apps/h5 run dev -- --host 0.0.0.0
 ```
 
-或使用 `make dev-api` / `make dev-agent` / `make dev-h5`。当前唯一客户端交付端是 H5；仓库中的 legacy Web/iOS 代码不参与当前开发、CI 或验收门禁。
+或使用 `make dev-api` / `make dev-agent` / `make dev-h5`。当前唯一客户端交付端是 H5；legacy Web 不参与当前开发、CI 或验收门禁，原生 iOS 客户端源码已移除。
 
 ### H5
 
-新的移动 Web 客户端位于 `apps/h5`，包含动态情绪吉祥物、实时语音、每日回顾和个人资料：
+新的移动 Web 客户端位于 `apps/h5`，包含五个可选陪伴伙伴、动态情绪表情、实时语音、每日回顾和个人资料：
 
 ```bash
 npm --prefix apps/h5 ci
@@ -66,7 +67,7 @@ npm --prefix apps/h5 run build
 
 本地默认使用 `/memoria-h5/` base path；生产 Control API 通过同源 `/memoria-api` 访问，永久密钥不会进入浏览器 bundle。H5 通过 `/v1/auth/me` 恢复稳定账号身份；只有服务端返回 401/403 才清理失效身份，临时网络故障不会切换用户数据归属。
 
-当前本地交付已通过 H5 100 项测试、production build 和 390×844 浏览器回归；匿名注册原地升级、跨账号 Profile 隔离、隐私授权断网 fail-closed、重试、撤销确认焦点、删除失败可见性、无横向溢出和 console 0 warning/error 均已验收。
+当前本地交付已通过 H5 121 项测试、production build 和移动端浏览器回归；注册后选角、表情与设计音色试听、三段声纹登记、匿名注册原地升级、跨账号 Profile 隔离、隐私授权断网 fail-closed、无横向溢出和 console 0 warning/error 均已验收。声纹登记仍为 shadow-only，不代表已启用生产主人识别。
 
 会话只有收到当前 Agent 在 `voice-agent.ui` topic 发布的显式 `assistant_state: ready` 后才进入可用态；LiveKit transport 已连接但 45 秒内未收到该事件时，H5 会断开并恢复为可重试状态。Agent 在音频输出与 UI publisher 就绪后先发布并等待 `ready`，随后才生成首次欢迎语，避免欢迎语先于客户端可用态。
 
@@ -123,7 +124,7 @@ API secret 永远只放控制 API 与 Agent 服务端；H5 只接收短期 parti
 | `services/agent/src/providers/` | FunASR / CosyVoice / OpenAI-compatible LLM 协议与适配 |
 | `services/control_api/` | 账号、会话、档案、人格、声纹、声音、导出/删除与 health |
 | `apps/h5/` | 面向移动浏览器的 Memoria 三页产品 |
-| `apps/web/`、`apps/ios/` | 历史客户端源码；不属于当前 H5-only 交付与门禁 |
+| `apps/web/` | 历史 Web 客户端源码；不属于当前 H5-only 交付与门禁 |
 | `docs/requirements_traceability_matrix.md` | MUST → 代码 → 测试 |
 
 ## 部署档案
@@ -131,7 +132,7 @@ API secret 永远只放控制 API 与 Agent 服务端；H5 只接收短期 parti
 - `DEPLOYMENT_PROFILE=livekit_cloud`：Adaptive Interruption + Turn Detector `v1`
 - `DEPLOYMENT_PROFILE=cn_self_hosted`：Turn Detector `v1-mini` + `ChineseInterruptionGuard`
 
-H5 的生产 Compose、自建 LiveKit、域名与公网 IP TLS、Nginx 路由、Provider 门禁、备份和回滚步骤见 `docs/production-deployment.md`。`https://aginice.cn:8443/` 直接交付 H5；同一端口还通过 Nginx stream 复用为 LiveKit RTC/TCP 回退。静态资源与 API 继续使用 `/memoria-h5/`、`/memoria-api/` 独立路径。当前线上发布证据见 `docs/releases/20260719-215553.md`；P0.5～P6 的本地工程基线记录见 `docs/releases/20260719-local-memory-persona.md`。
+H5 的生产 Compose、自建 LiveKit、IP TLS、Nginx 路由、Provider 门禁、备份和回滚步骤见 `docs/production-deployment.md`。`https://122.51.108.140:8443/` 直接交付 H5；同一端口还通过 Nginx stream 复用为 LiveKit RTC/TCP 回退，`/wms/` 保留给既有 WMS。静态资源与 API 继续使用 `/memoria-h5/`、`/memoria-api/` 独立路径。当前迁移、H5 注销 UI、runtime 删除热修、PCM 声纹录音及重复登记/音色跳变修复证据分别见 `docs/releases/20260720-140053.md`、`docs/releases/20260720-162553.md`、`docs/releases/20260720-164942.md`、`docs/releases/20260720-174545.md`、`docs/releases/20260720-182535.md`；P0.5～P6 的本地工程基线记录见 `docs/releases/20260719-local-memory-persona.md`。
 
 ## 实现偏差
 
@@ -151,6 +152,6 @@ H5 的生产 Compose、自建 LiveKit、域名与公网 IP TLS、Nginx 路由、
 
 ## 验收
 
-当前本地工程质量门为 Ruff、mypy strict、全量 pytest、离线 E2E、Control API/Agent 镜像构建；H5 质量门为 98 项测试、production build 与移动浏览器验收。完整追踪矩阵见 `docs/requirements_traceability_matrix.md`，终身记忆架构与阶段状态见 `docs/memory-persona-architecture-v1.md` 和 `docs/memory-persona-implementation-plan.md`。
+当前本地工程质量门为 Ruff、mypy strict、全量 pytest、离线 E2E、Control API/Agent 镜像构建；H5 质量门为 121 项测试、production build 与移动浏览器验收。完整追踪矩阵见 `docs/requirements_traceability_matrix.md`，终身记忆架构与阶段状态见 `docs/memory-persona-architecture-v1.md` 和 `docs/memory-persona-implementation-plan.md`。
 
 只要出现 **旧 generation 误播** 或 **旧 tool epoch 误播**，发布结论必须是 **REJECT**。

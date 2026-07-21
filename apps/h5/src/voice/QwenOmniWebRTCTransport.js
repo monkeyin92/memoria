@@ -199,7 +199,7 @@ export class QwenOmniWebRTCTransport {
     onDiagnostic = () => undefined,
     onError = () => undefined,
     onDisconnected = () => undefined,
-    speakerVerifyEnabled = true,
+    speakerVerifyEnabled = false,
     onSpeakerProgress = () => undefined,
     onSpeakerEnrolled = () => undefined,
     onSpeakerReject = () => undefined,

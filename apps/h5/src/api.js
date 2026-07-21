@@ -259,17 +259,18 @@ export function getProfile(userId) {
 }
 
 export function updateProfile(userId, profile) {
-  const payload = {
-    display_name: profile.display_name,
-    bio: profile.bio,
-    auto_summary: profile.auto_summary,
-    voice_reply: profile.voice_reply,
-    gentle_reminders: profile.gentle_reminders,
-    timezone:
-      profile.timezone ||
-      Intl.DateTimeFormat().resolvedOptions().timeZone ||
-      "Asia/Shanghai",
-  };
+  const payload = {};
+  for (const field of [
+    "display_name",
+    "bio",
+    "auto_summary",
+    "voice_reply",
+    "gentle_reminders",
+    "companion_id",
+  ]) {
+    if (profile[field] !== undefined) payload[field] = profile[field];
+  }
+  if (profile.timezone !== undefined) payload.timezone = profile.timezone;
   return request(`/v1/memory/profile/${encodeURIComponent(userId)}`, {
     method: "PUT",
     body: JSON.stringify(payload),
@@ -461,8 +462,10 @@ export function cachePendingMessage(message) {
 }
 
 export async function flushPendingMessages() {
-  const userId = activeIdentity?.user_id;
+  const identity = activeIdentity;
+  const userId = identity?.user_id;
   if (!userId) return;
+  const isCurrentIdentity = () => activeIdentity === identity;
   const key = pendingMessagesKey(userId);
   const legacyKey = "memoria:pending-messages";
   const legacy = readPendingMessages(legacyKey);
@@ -479,11 +482,14 @@ export async function flushPendingMessages() {
   if (!pending.length) return;
   const failed = [];
   for (const message of pending) {
+    if (!isCurrentIdentity()) return;
     try {
       await saveMessage(message);
     } catch {
+      if (!isCurrentIdentity()) return;
       failed.push(message);
     }
   }
+  if (!isCurrentIdentity()) return;
   window.localStorage.setItem(key, JSON.stringify(failed));
 }

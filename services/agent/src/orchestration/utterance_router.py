@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Literal
 
 from services.agent.src.orchestration.interruption_guard import (
     interrupt_ack_phrase,
@@ -58,6 +59,70 @@ def route_speaker_gate(*, score_reason: str) -> SpeakerGateRoute:
 
 
 @dataclass(frozen=True)
+class TargetSpeakerRoute:
+    """Input-focus outcome, separate from SpeakerAuthority permissions."""
+
+    allow_input: bool
+    reason: str
+
+
+def route_target_speaker(
+    *,
+    classification: str,
+    reason_code: str,
+    profile_id: str | None,
+    pcm_duration_ms: int,
+    context: Literal["conversation", "interrupt"] = "conversation",
+    explicit_interrupt: bool = False,
+) -> TargetSpeakerRoute:
+    """Decide whether the current voice may control this account's conversation.
+
+    Shadow CAM++ candidates remain ``uncertain`` for authority. They may protect
+    an active reply from a likely nearby talker, but they must not mute ordinary
+    conversation: the shadow model has not passed production identity metrics.
+    Formal ``guest``/mismatch results remain blocked in both contexts. An
+    explicit pause command may stop playout on an uncalibrated shadow result:
+    it never enters chat or grants private authority, while ordinary nearby
+    speech remains unable to interrupt.
+    """
+
+    if reason_code in {"no_active_profile", "authority_unconfigured"}:
+        return TargetSpeakerRoute(allow_input=True, reason="target_profile_absent")
+    if classification == "guest" or reason_code == "owner_mismatch":
+        return TargetSpeakerRoute(allow_input=False, reason="target_non_owner")
+    if context == "conversation":
+        # Shadow decisions are useful for permissions, not identity gating.
+        if classification == "owner" or reason_code == "shadow_owner_candidate":
+            return TargetSpeakerRoute(allow_input=True, reason="target_owner")
+        return TargetSpeakerRoute(allow_input=True, reason="target_unconfirmed")
+    if explicit_interrupt:
+        # A short command such as「等一下」cannot reliably produce a calibrated
+        # CAM++ match. Its intent has already passed the single utterance router;
+        # let it yield the floor, but do not treat it as a conversational turn.
+        return TargetSpeakerRoute(allow_input=True, reason="target_explicit_control")
+    if pcm_duration_ms < 600:
+        return TargetSpeakerRoute(allow_input=False, reason="target_insufficient_speech")
+    if classification == "owner" or reason_code == "shadow_owner_candidate":
+        return TargetSpeakerRoute(allow_input=True, reason="target_owner")
+    if reason_code in {
+        "shadow_guest_candidate",
+        "shadow_ambiguous_candidate",
+        "ambiguous_score",
+    }:
+        return TargetSpeakerRoute(allow_input=False, reason="target_non_owner")
+    if reason_code in {
+        "model_timeout",
+        "model_unavailable",
+        "authority_timeout",
+        "authority_unavailable",
+        "template_unavailable",
+        "profile_revoked",
+    }:
+        return TargetSpeakerRoute(allow_input=True, reason="target_unavailable")
+    return TargetSpeakerRoute(allow_input=False, reason="target_unconfirmed")
+
+
+@dataclass(frozen=True)
 class UtteranceRoute:
     intent: UtteranceIntent
     reason: str
@@ -76,6 +141,7 @@ class UtteranceRoute:
     """Fixed TTS ack when suppressing or yielding (semantic 嗯你说 / 好的)."""
 
     normalized_text: str
+
 
 def _as_speaker_state(
     speaker_state: SpeakerGateState | str | None,

@@ -12,7 +12,10 @@ import pytest
 from livekit.agents import FlushSentinel, StopResponse, llm
 from livekit.agents.types import TimedString
 from services.agent.src import agent as agent_mod
-from services.agent.src.agent import DuplexVoiceAgent
+from services.agent.src.agent import (
+    DuplexVoiceAgent,
+    should_enable_legacy_speaker_verifier,
+)
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.state_machine import ConversationState
 
@@ -20,6 +23,23 @@ from services.agent.src.orchestration.state_machine import ConversationState
 async def _text_source(*parts: str) -> AsyncIterator[str]:
     for part in parts:
         yield part
+
+
+def test_formal_speaker_authority_disables_legacy_session_enrollment() -> None:
+    settings = SimpleNamespace(
+        speaker_verify_enabled=True,
+        speaker_authority_enabled=True,
+    )
+
+    assert not should_enable_legacy_speaker_verifier(settings, offline=False)
+    assert should_enable_legacy_speaker_verifier(
+        SimpleNamespace(
+            speaker_verify_enabled=True,
+            speaker_authority_enabled=False,
+        ),
+        offline=False,
+    )
+    assert not should_enable_legacy_speaker_verifier(settings, offline=True)
 
 
 @pytest.mark.asyncio
@@ -192,9 +212,7 @@ async def test_one_physical_speech_epoch_cannot_commit_more_than_once() -> None:
         def __init__(self, text: str, *, anchored: bool) -> None:
             self._text = text
             self.metrics: dict[str, object] = (
-                {"started_speaking_at": 1.0, "stopped_speaking_at": 2.0}
-                if anchored
-                else {}
+                {"started_speaking_at": 1.0, "stopped_speaking_at": 2.0} if anchored else {}
             )
 
         def text_content(self) -> str:
@@ -251,9 +269,9 @@ async def test_post_playback_backchannel_is_ignored_as_echo_tail() -> None:
         await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
 
     assert runtime.fence.matches(fence)
-    assert runtime.orchestrator.metrics.get(
-        "guarded_user_input_total", {"reason": "backchannel"}
-    ) == 1
+    assert (
+        runtime.orchestrator.metrics.get("guarded_user_input_total", {"reason": "backchannel"}) == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -277,9 +295,10 @@ async def test_post_playback_english_assistant_echo_is_ignored() -> None:
         await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
 
     assert runtime.fence.matches(fence)
-    assert runtime.orchestrator.metrics.get(
-        "guarded_user_input_total", {"reason": "assistant_echo"}
-    ) == 1
+    assert (
+        runtime.orchestrator.metrics.get("guarded_user_input_total", {"reason": "assistant_echo"})
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -308,18 +327,20 @@ async def test_production_echo_trace_is_quarantined_while_assistant_is_speaking(
             await agent.on_user_turn_completed(llm.ChatContext.empty(), Message(text))
 
     assert runtime.fence.matches(fence)
-    assert [turn.content for turn in runtime.orchestrator.context.turns] == [
-        "你充当我的英语培训师"
-    ]
-    assert runtime.orchestrator.metrics.get(
-        "guarded_user_input_total", {"reason": "non_target_language"}
-    ) == 2
-    assert runtime.orchestrator.metrics.get(
-        "guarded_user_input_total", {"reason": "backchannel"}
-    ) == 1
-    assert runtime.orchestrator.metrics.get(
-        "guarded_user_input_total", {"reason": "assistant_echo"}
-    ) == 1
+    assert [turn.content for turn in runtime.orchestrator.context.turns] == ["你充当我的英语培训师"]
+    assert (
+        runtime.orchestrator.metrics.get(
+            "guarded_user_input_total", {"reason": "non_target_language"}
+        )
+        == 2
+    )
+    assert (
+        runtime.orchestrator.metrics.get("guarded_user_input_total", {"reason": "backchannel"}) == 1
+    )
+    assert (
+        runtime.orchestrator.metrics.get("guarded_user_input_total", {"reason": "assistant_echo"})
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -440,9 +461,7 @@ async def test_agent_tts_and_transcription_nodes_gate_and_track(
         staticmethod(fake_transcription_node),
     )
     frames = [frame async for frame in agent.tts_node(_text_source("回答。"), None)]
-    assert runtime.heard_tracker.observe_alignment(
-        runtime.fence, "current-task", "started"
-    ) is True
+    assert runtime.heard_tracker.observe_alignment(runtime.fence, "current-task", "started") is True
     transcript = [delta async for delta in agent.transcription_node(_text_source("ignored"), None)]
 
     assert len(frames) == 2
@@ -508,9 +527,7 @@ def test_agent_helpers_prewarm_and_turn_handling_fallback(
     assert options["interruption"]["mode"] == "adaptive"
     assert options["preemptive_generation"]["enabled"] is False
     assert (
-        agent_mod.build_turn_handling_config("livekit_cloud")[
-            "preemptive_generation"
-        ]["enabled"]
+        agent_mod.build_turn_handling_config("livekit_cloud")["preemptive_generation"]["enabled"]
         is False
     )
     monkeypatch.setenv("LIVEKIT_ADAPTIVE_INTERRUPTION", "false")
@@ -518,17 +535,13 @@ def test_agent_helpers_prewarm_and_turn_handling_fallback(
     assert options["interruption"]["mode"] == "vad"
     monkeypatch.delenv("LIVEKIT_ADAPTIVE_INTERRUPTION", raising=False)
     # Self-hosted: adaptive needs LiveKit Cloud gateway — default VAD.
+    assert agent_mod.build_turn_handling_options("cn_self_hosted")["interruption"]["mode"] == "vad"
     assert (
-        agent_mod.build_turn_handling_options("cn_self_hosted")["interruption"]["mode"]
-        == "vad"
+        agent_mod.build_turn_handling_config("cn_self_hosted")["stream_speak_while_think"] is True
     )
-    assert agent_mod.build_turn_handling_config("cn_self_hosted")[
-        "stream_speak_while_think"
-    ] is True
     monkeypatch.setenv("LIVEKIT_ADAPTIVE_INTERRUPTION", "true")
     assert (
-        agent_mod.build_turn_handling_config("cn_self_hosted")["interruption"]["mode"]
-        == "adaptive"
+        agent_mod.build_turn_handling_config("cn_self_hosted")["interruption"]["mode"] == "adaptive"
     )
 
     def fail_options(_profile: str) -> Any:
@@ -588,12 +601,12 @@ def test_self_hosted_turn_handling_filters_short_echoes_and_reads_timing_env(
     assert options["interruption"]["min_words"] == 0
     assert options["interruption"]["false_interruption_timeout"] == 1.50
     assert (
-        options["interruption"]["false_interruption_timeout"]
-        >= options["endpointing"]["min_delay"]
+        options["interruption"]["false_interruption_timeout"] >= options["endpointing"]["min_delay"]
     )
-    assert agent_mod.build_turn_handling_config("cn_self_hosted")["interruption"] == options[
-        "interruption"
-    ]
+    assert (
+        agent_mod.build_turn_handling_config("cn_self_hosted")["interruption"]
+        == options["interruption"]
+    )
 
     cloud = agent_mod.build_turn_handling_config("livekit_cloud")
     assert cloud["endpointing"]["min_delay"] == 0.30
@@ -799,11 +812,12 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     )
     await agent_mod.entrypoint(ctx)
     session = _FakeSession.last
-    assert session is not None and session.started is not None and session.generated
+    assert session is not None and session.started is not None
+    assert session.generated == []
+    assert session.said == ["嗨，我在呢。想聊什么就直接说吧。"]
     assert any(event[0].get("state") == "ready" for event in room.local_participant.published)
     assert any(
-        event[0].get("type") == "audio_trace"
-        and event[0].get("name") == "audio_output_attached"
+        event[0].get("type") == "audio_trace" and event[0].get("name") == "audio_output_attached"
         for event in room.local_participant.published
     )
     await asyncio.sleep(0)
@@ -867,9 +881,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
         SimpleNamespace(
             topic="voice-agent.control",
             participant=None,
-            data=json.dumps(
-                {"type": "rtc_recovered", "session_id": "public-session"}
-            ).encode(),
+            data=json.dumps({"type": "rtc_recovered", "session_id": "public-session"}).encode(),
         ),
     )
     await asyncio.sleep(0.02)
@@ -893,16 +905,12 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     await asyncio.sleep(0)
     assert session.output.audio.pause_count == 0
     assert session.output.audio.resume_count == 0
-    assert any(
-        event[0].get("type") == "assistant_audio"
-        and event[0].get("action") == "duck"
-        and event[0].get("gain") == 0.55
+    assert not any(
+        event[0].get("type") == "assistant_audio" and event[0].get("action") == "duck"
         for event in room.local_participant.published
     )
-    assert any(
-        event[0].get("type") == "assistant_audio"
-        and event[0].get("action") == "restore"
-        and event[0].get("gain") == 1.0
+    assert not any(
+        event[0].get("type") == "assistant_audio" and event[0].get("action") == "restore"
         for event in room.local_participant.published
     )
     assert 1000 in session.options.interruption.history

@@ -5,7 +5,7 @@
 > **目标技术栈**：FunASR Realtime API + 百炼 Qwen LLM + CosyVoice 3.5 Realtime API + LiveKit Agents
 > **部署前提**：无 GPU；只使用第三方模型 API；允许使用普通 CPU 云主机或托管 Agent 运行时
 > **目标语言**：普通话为主，兼容少量中英混说
-> **唯一客户端**：`apps/h5`；原生 iOS 与 legacy `apps/web` 只保留历史源码，不进入实现、CI、部署或验收
+> **唯一客户端**：`apps/h5`；原生 iOS 已从仓库移除，legacy `apps/web` 只保留历史源码，不进入实现、CI、部署或验收
 > **文档性质**：规范性设计文档。文中的 **MUST / MUST NOT / SHOULD / MAY** 分别表示必须、禁止、建议、可选。
 
 当前默认 LLM provider 是 `qwen`；仓库保留的 DeepSeek 适配器和测试只用于显式兼容覆盖，不得隐式替换 Qwen，也不属于本架构默认选型。终身记忆、人格复刻和声纹扩展见 [`docs/memory-persona-architecture-v1.md`](./docs/memory-persona-architecture-v1.md)。
@@ -56,7 +56,7 @@
 | 短期状态 | 进程内内存；多实例时 Redis | 实时关键路径不得等待数据库 |
 | 长期存储 | PostgreSQL，异步写入 | 对话、指标、业务事件和审计 |
 | 可观测性 | OpenTelemetry + Prometheus/Grafana + Sentry | 跟踪分段延迟、失败与异常 |
-| 唯一客户端 | `apps/h5`：React 19 + Vite + LiveKit Client | 移动浏览器 WebRTC、字幕、记忆与数字心智管理；不交付原生 iOS 或 legacy Web |
+| 唯一客户端 | `apps/h5`：React 19 + Vite + LiveKit Client | 移动浏览器 WebRTC、字幕、记忆与数字心智管理；原生 iOS 已移除，不交付 legacy Web |
 
 ### 1.2 两种部署档案
 
@@ -347,7 +347,7 @@ npm --prefix apps/h5 test
 npm --prefix apps/h5 run build
 ```
 
-原生 iOS 与 `apps/web` 仅保留为历史源码，不进入当前交付、CI 或 Definition of Done。
+原生 iOS 已从仓库移除；`apps/web` 仅保留为历史源码，不进入当前交付、CI 或 Definition of Done。
 
 ---
 
@@ -1296,7 +1296,7 @@ capabilities = tts.TTSCapabilities(
 )
 ```
 
-当前默认使用 `cosyvoice-v3.5-flash`，由 `COSYVOICE_VOICE_PROFILE=warm_companion` 在服务端 registry 解析经批准的设计音色。任何 profile、复刻音色或可选系统音色都必须通过 smoke test 验证字级时间戳非空；否则 Adaptive Interruption 和实际已听文本追踪不通过，服务不得进入 ready。`longanyang` 只保留为显式 v3 fallback，不是默认音色。
+当前默认使用 `cosyvoice-v3.5-flash`。运行时音色优先级固定为：已激活且仍在授权期内的克隆音色、用户所选陪伴伙伴的设计音色、`COSYVOICE_VOICE_PROFILE=warm_companion` 全局默认音色。Control API 只返回稳定的设计音色目录键和模型名，不返回真实供应商 `voice_id`；Agent 必须从本地批准 registry 解析并校验前缀。任何 profile、复刻音色或可选系统音色都必须通过 smoke test 验证字级时间戳非空；否则 Adaptive Interruption 和实际已听文本追踪不通过，服务不得进入 ready。`longanyang` 只保留为显式 v3 fallback，不是默认音色。
 
 ### 15.2 WebSocket 连接池
 
@@ -2435,6 +2435,7 @@ AUDIO_RETENTION_ENABLED=false
 ### 25.6 音色使用
 
 - 使用系统音色或已获得授权的复刻音色；
+- 陪伴伙伴只持久化稳定目录键；真实供应商 `voice_id` 不进入浏览器、Profile API 或导出包；
 - 不复刻未经同意的真实人物声音；
 - 产品 UI 明确说明为 AI 语音；
 - 按所在地法规决定是否开启 AIGC 标识参数。

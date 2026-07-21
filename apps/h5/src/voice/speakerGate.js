@@ -19,7 +19,7 @@ const MIN_VERIFY_SPEECH_MS = 450;
 export function createSpeakerGatedStream(
   sourceStream,
   {
-    enabled = true,
+    enabled = false,
     acceptThreshold = DEFAULT_THRESHOLD,
     enrollSpeechMs = ENROLL_SPEECH_MS,
     enrollTimeoutMs = ENROLL_TIMEOUT_MS,

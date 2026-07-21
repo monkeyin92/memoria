@@ -27,7 +27,12 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - postgres_wal_archive:/wal-archive
-      - ./postgres/init-memoria.sh:/docker-entrypoint-initdb.d/001-init-memoria.sh:ro
+      - type: bind
+        source: ./postgres/init-memoria.sh
+        target: /docker-entrypoint-initdb.d/001-init-memoria.sh
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       memoria:
         aliases:
@@ -80,7 +85,12 @@ services:
       MC_CONFIG_DIR: /tmp/.mc
     entrypoint: ["/bin/sh", "/provision.sh"]
     volumes:
-      - ./minio/provision.sh:/provision.sh:ro
+      - type: bind
+        source: ./minio/provision.sh
+        target: /provision.sh
+        read_only: true
+        bind:
+          create_host_path: false
     depends_on:
       minio:
         condition: service_healthy

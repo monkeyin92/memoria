@@ -200,11 +200,15 @@ class LifeArchive:
         recorded_at: datetime,
     ) -> RecordResult:
         existing = connection.execute(
-                "SELECT content_sha256, recorded_at FROM evidence_events WHERE event_id = ?",
+                "SELECT * FROM evidence_events WHERE event_id = ?",
                 (event.event_id,),
             ).fetchone()
         if existing is not None:
-            if str(existing["content_sha256"]) != event.content_sha256:
+            if (
+                str(existing["content_sha256"]) != event.content_sha256
+                and self._event_from_row(existing).idempotency_sha256
+                != event.idempotency_sha256
+            ):
                 raise IdempotencyConflictError(
                     f"event_id {event.event_id!r} already has different content"
                 )

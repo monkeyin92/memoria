@@ -46,6 +46,18 @@ def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> No
     assert "mc version enable local/memoria-voice" in minio_init
     assert "s3:DeleteObjectVersion" in minio_init
     assert "MC_CONFIG_DIR: /tmp/.mc" in compose
+    assert compose.count("create_host_path: false") == 2
+
+
+def test_production_runbook_pins_data_compose_path_and_network_bootstrap_order() -> None:
+    runbook = (ROOT / "docs" / "production-deployment.md").read_text(encoding="utf-8")
+
+    assert "DATA_COMPOSE_DIR=/opt/memoria/current/infra" in runbook
+    network_create = "docker compose -f docker-compose.production.yml create --no-build"
+    data_start = 'docker compose --project-directory "$DATA_COMPOSE_DIR"'
+    assert network_create in runbook
+    assert data_start in runbook
+    assert runbook.index(network_create) < runbook.index(data_start)
 
 
 def test_production_stack_contains_pinned_authenticated_campplus_model() -> None:
@@ -104,14 +116,14 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
     assert "mark_readiness.py" not in agent_dockerfile
 
 
-def test_production_image_context_excludes_runtime_data_and_legacy_clients() -> None:
+def test_production_image_context_excludes_runtime_data_and_legacy_web_client() -> None:
     ignored = {
         line.strip().rstrip("/")
         for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     }
 
-    assert {"data", "apps/web", "apps/ios"} <= ignored
+    assert {"data", "apps/web"} <= ignored
 
 
 def test_current_compose_never_builds_the_legacy_web_client() -> None:

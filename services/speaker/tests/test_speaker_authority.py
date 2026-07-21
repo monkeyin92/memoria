@@ -165,6 +165,29 @@ async def test_shadow_profile_never_grants_owner_and_activation_is_versioned(
 
 
 @pytest.mark.asyncio
+async def test_shadow_short_sample_keeps_candidate_without_granting_authority(
+    tmp_path: Path,
+) -> None:
+    authority = SpeakerAuthority.sqlite(
+        tmp_path / "speakers.sqlite3",
+        template_key=Fernet.generate_key().decode("ascii"),
+        adapter=FakeEmbeddingAdapter(),
+    )
+    await authority.enroll(_request())
+
+    short = await authority.classify(
+        SpeakerSample(account_id="account-001", pcm=b"short", sample_rate=16000)
+    )
+
+    assert (short.classification, short.reason_code) == (
+        "uncertain",
+        "shadow_owner_candidate",
+    )
+    assert short.score == pytest.approx(1.0, abs=0.01)
+    assert short.permissions.read_private_memory is False
+
+
+@pytest.mark.asyncio
 async def test_unavailable_anti_spoof_stays_shadow_and_cannot_activate(tmp_path: Path) -> None:
     class EmbeddingOnlyAdapter(FakeEmbeddingAdapter):
         async def embed(self, pcm: bytes, *, sample_rate: int) -> EmbeddingResult:

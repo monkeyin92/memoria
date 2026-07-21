@@ -32,9 +32,23 @@ export function classifyEmotion(text = "") {
   return "neutral";
 }
 
+const voiceEmotionMap = {
+  happy: "happy",
+  surprised: "curious",
+  sad: "caring",
+  angry: "caring",
+  fearful: "caring",
+  disgusted: "caring",
+};
+
+export function emotionFromVoice(label = "neutral") {
+  return voiceEmotionMap[label] || "neutral";
+}
+
 export const emotionMeta = {
   neutral: { label: "平静", color: "#6c82a8" },
   happy: { label: "开心", color: "#4b86db" },
   curious: { label: "好奇", color: "#8570c8" },
-  upset: { label: "有点生气", color: "#c58555" },
+  caring: { label: "关切", color: "#8b7292" },
+  upset: { label: "关切", color: "#8b7292" },
 };

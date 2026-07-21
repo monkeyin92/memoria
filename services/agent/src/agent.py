@@ -128,6 +128,17 @@ def _apply_cached_voice_profile(
         apply_profile(model=profile.model, voice=profile.voice_id)
 
 
+def should_enable_legacy_speaker_verifier(settings: Any, *, offline: bool) -> bool:
+    """Keep the old per-session enrollment separate from formal authority."""
+    enabled = bool(getattr(settings, "speaker_verify_enabled", False))
+    authority_enabled = bool(getattr(settings, "speaker_authority_enabled", False))
+    if enabled and authority_enabled:
+        logger.warning(
+            "legacy speaker enrollment disabled because formal speaker authority is enabled"
+        )
+    return enabled and not authority_enabled and not offline
+
+
 def _heard_only_chat_context(chat_ctx: Any, heard_assistant: list[str]) -> Any:
     return heard_only_chat_context(chat_ctx, heard_assistant)
 
@@ -188,6 +199,16 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 metrics.get("transcription_delay"),
                 metrics.get("end_of_turn_delay"),
             )
+            speaker = await self._runtime.await_speaker_classification()
+            logger.info(
+                "speaker_authority classification=%s reason=%s model=%s "
+                "template_version=%s session_id=%s",
+                speaker.classification,
+                speaker.reason_code,
+                speaker.model_version,
+                speaker.template_version,
+                self._runtime.session_id,
+            )
             accepted, reason = self._runtime.accept_user_turn(
                 text.strip(),
                 speech_anchored=speech_anchored,
@@ -204,24 +225,18 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                             "non_target_language",
                             "speaker_mismatch",
                             "interrupt_command_only",
+                            "target_non_owner",
+                            "target_insufficient_speech",
+                            "target_unconfirmed",
                         }
                         else "user_turn_ignored"
                     ),
                     reason,
                 )
                 raise StopResponse()
-            speaker = await self._runtime.await_speaker_classification()
-            logger.info(
-                "speaker_authority classification=%s reason=%s model=%s "
-                "template_version=%s session_id=%s",
-                speaker.classification,
-                speaker.reason_code,
-                speaker.model_version,
-                speaker.template_version,
-                self._runtime.session_id,
-            )
             self._current_speaker_class = speaker.classification
             if self._voice_profile_client is not None and self._runtime.tts is not None:
+                await self._runtime.wait_for_voice_profile_refresh()
                 _apply_cached_voice_profile(
                     tts_plugin=self._runtime.tts,
                     client=self._voice_profile_client,
@@ -694,7 +709,7 @@ async def entrypoint(ctx: Any) -> None:
     from services.agent.src.orchestration.speaker_verify import SpeakerVerifier
 
     speaker_verifier = SpeakerVerifier(
-        enabled=runtime_settings.speaker_verify_enabled and not offline,
+        enabled=should_enable_legacy_speaker_verifier(runtime_settings, offline=offline),
         enroll_speech_ms=runtime_settings.speaker_enroll_speech_ms,
         enroll_timeout_ms=runtime_settings.speaker_enroll_timeout_ms,
         accept_threshold=runtime_settings.speaker_accept_threshold,
@@ -738,6 +753,7 @@ async def entrypoint(ctx: Any) -> None:
             sample_rate=runtime_settings.funasr_sample_rate,
             timeout_s=runtime_settings.speaker_authority_timeout_s,
         )
+        runtime.set_target_speaker_focus(True)
     archive_sink = None
     archive_token = runtime_settings.internal_token("archive_write")
     archive_spool_key = runtime_settings.archive_spool_key.get_secret_value()
@@ -947,6 +963,18 @@ async def entrypoint(ctx: Any) -> None:
         )
 
     session.interrupt = _interrupt_wrapped  # type: ignore[method-assign]
+
+    async def _target_speaker_interrupt() -> None:
+        async def _stop_livekit() -> str | None:
+            await original_interrupt()
+            return None
+
+        await runtime.on_real_interrupt(
+            cause="target_speaker_confirmed",
+            stop_playback=_stop_livekit,
+        )
+
+    runtime.set_target_speaker_interrupt(_target_speaker_interrupt)
     runtime.set_result_speaker(
         lambda text: session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
     )
@@ -1181,7 +1209,9 @@ async def entrypoint(ctx: Any) -> None:
         if archive_sink is not None:
             await _close_component("archive_sink", archive_sink.close())
         if shutdown_errors:
-            raise RuntimeError("one or more Agent shutdown components failed") from shutdown_errors[0]
+            raise RuntimeError("one or more Agent shutdown components failed") from shutdown_errors[
+                0
+            ]
 
     ctx.add_shutdown_callback(_shutdown_runtime)
 
@@ -1256,8 +1286,9 @@ async def entrypoint(ctx: Any) -> None:
             )
     else:
         runtime.mark_audio_event("welcome_generation_started")
-        await session.generate_reply(
-            instructions="用一句自然中文打招呼，并邀请用户直接说需求。",
+        await _say_fixed(
+            "嗨，我在呢。想聊什么就直接说吧。",
+            interruptible=True,
         )
 
 

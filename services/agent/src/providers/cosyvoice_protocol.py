@@ -205,51 +205,6 @@ def pcm_duration_ms(pcm_bytes: bytes, *, sample_rate: int = 24000, num_channels:
     return int(samples * 1000 / sample_rate)
 
 
-def normalize_pcm16_peak(
-    pcm_bytes: bytes,
-    *,
-    soft_peak: float = 0.35,
-    soft_target: float = 0.58,
-    loud_peak: float = 0.93,
-    loud_target: float = 0.85,
-    max_gain: float = 2.2,
-    min_peak: float = 0.02,
-) -> bytes:
-    """Gentle loudness guard for int16 LE PCM (boost soft / limit hot CosyVoice chunks).
-
-    Avoids hard peak-normalize-to-target on every frame (that pumps consonants).
-    Only adjusts clearly soft or clearly hot chunks.
-    """
-    if not pcm_bytes or len(pcm_bytes) < 2:
-        return pcm_bytes
-    if len(pcm_bytes) % 2:
-        pcm_bytes = pcm_bytes[:-1]
-    import array
-
-    samples = array.array("h")
-    samples.frombytes(pcm_bytes)
-    if not samples:
-        return pcm_bytes
-    peak = max(abs(s) for s in samples)
-    if peak < int(min_peak * 32767):
-        return pcm_bytes
-    peak_f = peak / 32767.0
-    if peak_f < soft_peak:
-        gain = min(max_gain, soft_target / peak_f)
-    elif peak_f > loud_peak:
-        gain = loud_target / peak_f
-    else:
-        return pcm_bytes
-    for i, s in enumerate(samples):
-        v = int(s * gain)
-        if v > 32767:
-            v = 32767
-        elif v < -32768:
-            v = -32768
-        samples[i] = v
-    return samples.tobytes()
-
-
 def scale_word_timestamps(
     words: tuple[TimedWord, ...],
     *,

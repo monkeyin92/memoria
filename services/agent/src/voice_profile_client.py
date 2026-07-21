@@ -7,6 +7,10 @@ from typing import Any
 
 import httpx
 
+from services.agent.src.providers.cosyvoice_voice_catalog import (
+    resolve_approved_designed_voice,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class VoiceProfileClientConfig:
@@ -81,6 +85,24 @@ class VoiceProfileClient:
             if any(payload.get(name) is not None for name in ("profile_id", "model", "voice_id")):
                 raise ValueError("invalid fallback voice response")
             return None
+        if mode == "designed":
+            profile_id = payload.get("profile_id")
+            model = payload.get("model")
+            if payload.get("voice_id") is not None:
+                raise ValueError("invalid designed voice response")
+            if not all(isinstance(value, str) and value for value in (profile_id, model)):
+                raise ValueError("invalid designed voice response")
+            voice_id = resolve_approved_designed_voice(
+                profile_id=str(profile_id),
+                model=str(model),
+            )
+            if voice_id is None:
+                raise ValueError("designed voice is not approved")
+            return VoiceRuntimeProfile(
+                profile_id=str(profile_id),
+                model=str(model),
+                voice_id=voice_id,
+            )
         if mode != "active":
             raise ValueError("invalid voice profile response")
         profile_id = payload.get("profile_id")

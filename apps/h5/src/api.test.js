@@ -18,6 +18,14 @@ function blobResponse(body, status = 200) {
   };
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe("authenticated Control API client", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -519,6 +527,40 @@ describe("authenticated Control API client", () => {
         window.localStorage.getItem("memoria:pending-messages:account-a"),
       ),
     ).toHaveLength(1);
+  });
+
+  it("does not recreate a deleted account's pending cache after a late flush", async () => {
+    const identity = {
+      user_id: "account-a",
+      username: "account-a",
+      account_type: "registered",
+      access_token: "account-token",
+    };
+    window.localStorage.setItem("memoria:identity", JSON.stringify(identity));
+    window.localStorage.setItem(
+      "memoria:pending-messages:account-a",
+      JSON.stringify([{ user_id: "account-a", role: "user", text: "旧消息" }]),
+    );
+    const lateSave = deferred();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(identity))
+      .mockReturnValueOnce(lateSave.promise)
+      .mockResolvedValueOnce(jsonResponse({ status: "completed" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { bootstrapIdentity, deleteAccountData, flushPendingMessages } =
+      await import("./api.js");
+    await bootstrapIdentity();
+
+    const flushing = flushPendingMessages();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await deleteAccountData("safe-passphrase", "永久删除我的全部数据");
+    lateSave.resolve(jsonResponse({ detail: "account deleted" }, 409));
+    await flushing;
+
+    expect(
+      window.localStorage.getItem("memoria:pending-messages:account-a"),
+    ).toBeNull();
   });
 
   it("exports the current account and clears only its local data after server deletion", async () => {

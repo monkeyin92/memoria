@@ -13,6 +13,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from services.common.companions import COMPANION_IDS
 from services.common.redaction import redact_pii
 from services.control_api.app.account_gate import require_writable_account
 from services.control_api.app.config import ControlSettings
@@ -109,6 +110,7 @@ class ProfileRecord(BaseModel):
     display_name: str
     bio: str
     avatar_url: str
+    companion_id: str | None
     timezone: str
     auto_summary: bool
     voice_reply: bool
@@ -123,6 +125,7 @@ class ProfileUpdate(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=64)
     bio: str | None = Field(default=None, max_length=500)
     avatar_url: str | None = Field(default=None, max_length=2048)
+    companion_id: str | None = Field(default=None, min_length=1, max_length=32)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     auto_summary: bool | None = None
     voice_reply: bool | None = None
@@ -137,6 +140,13 @@ class ProfileUpdate(BaseModel):
         query_names = {name.lower() for name, _ in parse_qsl(urlsplit(value).query)}
         if query_names & sensitive_names or redact_pii(value) != value:
             raise ValueError("avatar_url must not contain credentials or personal data")
+        return value
+
+    @field_validator("companion_id")
+    @classmethod
+    def validate_companion_id(cls, value: str | None) -> str | None:
+        if value is not None and value not in COMPANION_IDS:
+            raise ValueError("companion_id is not supported")
         return value
 
     @model_validator(mode="after")

@@ -28,6 +28,10 @@ _避免使用_：非主人、陌生人、未授权用户
 对当前话轮给出的 `owner / guest / uncertain` 概率性结论，而不是法律身份认证。
 _避免使用_：登录、实名认证、绝对声纹认证
 
+**目标说话人聚焦（Target Speaker Focus）**：
+正式 SpeakerAuthority 会话中的交互门禁：决定当前声音能否提交话轮或打断播放。它可使用 shadow 的候选结果过滤明确的旁人声音，但不改变 `Speaker Classification` 的权限、记忆或敏感动作结论。
+_避免使用_：主人认证、声纹权限升级、私人记忆解锁
+
 ## 证据与记忆
 
 **证据事件（Evidence Event）**：

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -12,6 +13,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.archive.domain import EvidenceNotFoundError
+from services.common.companions import DESIGNED_VOICE_MODEL, designed_voice_profile
 from services.control_api.app.account_gate import require_writable_account
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
@@ -448,7 +450,21 @@ async def session_resolution(
     _: Annotated[None, Depends(_require_internal_token)],
 ) -> dict[str, Any]:
     session = require_active_voice_session(request, body.session_id)
-    resolution = await _manager(request).resolve(account_id=str(session["user_id"]))
+    account_id = str(session["user_id"])
+    resolution = await _manager(request).resolve(account_id=account_id)
+    if resolution.mode == "fallback":
+        profile = _store(request).get_profile(
+            user_id=account_id,
+            now=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )
+        designed_profile = designed_voice_profile(profile.get("companion_id"))
+        if designed_profile is not None:
+            return {
+                "mode": "designed",
+                "profile_id": designed_profile,
+                "model": DESIGNED_VOICE_MODEL,
+                "voice_id": None,
+            }
     return {
         "mode": resolution.mode,
         "profile_id": resolution.profile_id,

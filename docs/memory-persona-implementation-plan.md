@@ -22,7 +22,7 @@
 - [ ] 使用至少 200 条明确授权的真人录音覆盖主人、访客、未知人、噪声、重叠、远场和回放攻击。
 - [ ] 完成 FAR、FRR、EER、unknown rejection、ASR/人物抽取和检索命中率报告。
 - [ ] 完成 CosyVoice 3.5 复刻音色的授权登记与真人盲测。
-- [ ] 在真实手机 H5 浏览器、耳机和扬声器完成全双工、权限与记忆污染验收；不交付原生 iOS 应用。
+- [ ] 在真实手机 H5 浏览器、耳机和扬声器完成全双工、权限与记忆污染验收；原生 iOS 客户端已从仓库移除。
 - [ ] 完成独立环境数据库、对象、密钥和投影全量恢复演练。
 
 已完成同机生产 PostgreSQL/pgvector、MinIO 部署、376 条事件迁移与联合恢复演练；由于数据库、对象、WAL archive 和备份仍在同一台服务器，不能替代上述独立环境/异地恢复门槛。
@@ -355,7 +355,7 @@
 **状态：COMPLETED（2026-07-19，本地工程）**
 
 - [x] Python 全量 pytest、Ruff、strict mypy。
-- [x] H5 全量测试、production build 与 390×844 真实浏览器验收；原生 iOS/Web 客户端不在交付范围。
+- [x] H5 全量测试、production build 与 390×844 真实浏览器验收；原生 iOS 已移除，legacy Web 不在交付范围。
 - [x] Control API 与 Agent 最终镜像构建、源码 secret 模式扫描、构建上下文隐私合同和 `git diff --check`；正式镜像扫描留到部署流水线。
 - [x] 原始主人语音使用独立、可撤销授权；H5 可管理授权，Agent 仅上传 owner WAV，Control API 复核 grant，撤销删除音频但保留转写与结构化记忆。
 - [x] 转写与原始音频复用同一个加密 `ArchiveSink` spool，以 `target=event|raw_audio` 分流；满盘时转写可驱逐旧音频，音频永久或临时失败都不能阻塞后续/新转写。

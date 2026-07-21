@@ -1,3 +1,5 @@
+import { downsampleTo16k, float32ToPcm16le } from "../voice/speakerEmbed.js";
+
 const cloneMediaTypes = new Set([
   "audio/wav",
   "audio/x-wav",
@@ -12,6 +14,103 @@ function defaultAudioContextFactory() {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
   if (!AudioContext) throw new Error("当前浏览器无法读取录音，请换用较新的浏览器");
   return new AudioContext();
+}
+
+/**
+ * Capture the microphone as PCM so enrollment never depends on decoding a
+ * browser-specific MediaRecorder container (notably fragmented MP4 on Safari).
+ */
+export function createSpeakerPcmRecorder(
+  stream,
+  { audioContextFactory = defaultAudioContextFactory, bufferSize = 4096 } = {},
+) {
+  if (!stream) throw new Error("没有找到可用的麦克风");
+  const context = audioContextFactory();
+  if (
+    typeof context.createMediaStreamSource !== "function" ||
+    typeof context.createScriptProcessor !== "function"
+  ) {
+    void context.close?.();
+    throw new Error("当前浏览器不支持现场录音，请换用较新的 Safari 或 Chrome");
+  }
+
+  const source = context.createMediaStreamSource(stream);
+  const processor = context.createScriptProcessor(bufferSize, 1, 1);
+  const sink = context.createGain?.();
+  if (sink) sink.gain.value = 0;
+  const chunks = [];
+  let started = false;
+  let closed = false;
+  let stopPromise = null;
+
+  processor.onaudioprocess = (event) => {
+    if (!started || closed) return;
+    const input = event.inputBuffer?.getChannelData?.(0);
+    if (input?.length) chunks.push(new Float32Array(input));
+    event.outputBuffer?.getChannelData?.(0)?.fill(0);
+  };
+
+  const disconnect = () => {
+    try {
+      processor.disconnect();
+      source.disconnect();
+      sink?.disconnect();
+    } catch {
+      // Browser audio nodes can already be disconnected during teardown.
+    }
+  };
+
+  const closeContext = async () => {
+    if (closed) return;
+    closed = true;
+    disconnect();
+    await context.close?.();
+  };
+
+  const start = async () => {
+    if (closed) throw new Error("录音已结束，请重新开始");
+    if (started) return;
+    await context.resume?.();
+    started = true;
+    source.connect(processor);
+    processor.connect(sink || context.destination);
+    sink?.connect(context.destination);
+  };
+
+  const stop = async () => {
+    if (stopPromise) return stopPromise;
+    stopPromise = (async () => {
+      if (!started) {
+        await closeContext();
+        return null;
+      }
+      started = false;
+      await closeContext();
+      const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
+      if (!length) throw new Error("没有采集到有效录音，请重试");
+      const merged = new Float32Array(length);
+      let offset = 0;
+      for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      }
+      const sampleRate = Number(context.sampleRate) || 48_000;
+      const pcm = float32ToPcm16le(downsampleTo16k(merged, sampleRate));
+      const durationMs = Math.round((pcm.byteLength * 1000) / (2 * 16_000));
+      if (durationMs < 1_500 || durationMs > 15_000) {
+        throw new Error("每段声纹录音请保持在 1.5–15 秒");
+      }
+      return {
+        audio_base64: bytesToBase64(pcm.buffer),
+        sample_rate: 16_000,
+        device: "h5-web-audio",
+        scene: "owner-enrollment",
+      };
+    })();
+    return stopPromise;
+  };
+
+  return { start, stop, cancel: closeContext };
 }
 
 function mediaTypeFor(file) {

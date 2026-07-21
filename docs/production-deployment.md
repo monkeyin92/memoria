@@ -2,15 +2,15 @@
 
 ## 当前生产拓扑
 
-- H5：`https://aginice.cn:8443/`
-- H5 兼容路径：`https://aginice.cn:8443/memoria-h5/`
-- Control API：`https://aginice.cn:8443/memoria-api/`
-- 当前正式 runtime release：`20260719-215553`
-- 当前 H5 release：`20260720-095939`
+- H5：`https://122.51.108.140:8443/`
+- H5 兼容路径：`https://122.51.108.140:8443/memoria-h5/`
+- Control API：`https://122.51.108.140:8443/memoria-api/`
+- 当前正式 runtime release：`20260720-182535`
+- 当前 H5 release：`20260720-182535`
 - Control API 上游：`127.0.0.1:8791`
 - LiveKit：自建 `livekit/livekit-server:v1.13.3`，位于 `/opt/livekit`，Compose project 为 `memoria-livekit`
-- LiveKit 信令：`wss://aginice.cn:8443`，经 Nginx `/rtc`、`/agent` 转发到 `127.0.0.1:7880`
-- LiveKit Twirp API：`https://aginice.cn:8443/twirp/`，转发到 `127.0.0.1:7880`
+- LiveKit 信令：`wss://122.51.108.140:8443`，经 Nginx `/rtc`、`/agent` 转发到 `127.0.0.1:7880`
+- LiveKit Twirp API：`https://122.51.108.140:8443/twirp/`，转发到 `127.0.0.1:7880`
 - LiveKit 媒体：服务器保留 `7882/UDP` 监听，但当前未开放对应云安全组；公网统一回退到与 HTTPS 复用的 `8443/TCP`，Agent 通过 `memoria_default` 内部网络走 UDP
 - SQLite：`/var/lib/memoria/memoria.sqlite3`
 - 终身档案：独立同机 PostgreSQL 17 + pgvector 0.8.1，Compose project 为 `memoria-data`
@@ -18,15 +18,15 @@
 - Runtime：版本目录位于 `/opt/memoria/releases/`，`/opt/memoria/current` 原子软链指向当前 release
 - H5：版本目录位于 `/var/www/memoria-releases/`，`/var/www/memoria-h5` 原子软链指向当前 release
 
-Memoria 使用独立静态资源/API 路径、回环端口、Compose project 和限流 zone。443 直接交付 HTTPS；8443 由 Nginx stream 预读协议，TLS 流量转到 `127.0.0.1:9443` 的同一 HTTPS server，原生 ICE/TCP 转到 `127.0.0.1:8444` 后进入 LiveKit 容器的 8443。当前公网正式入口是 8443；443 的域名 SNI 仍被上游关闭。公网 `/memoria-api/internal/` 固定返回 404。EchoLife API 路由保留；PocketSparks、Goods Invoice、WMS 与 MySQL 均已保留数据地停用。当前 H5 热修证据见 `docs/releases/20260720-095939.md`，runtime 发布证据见 `docs/releases/20260719-215553.md`，上一完整 A/B 发布证据见 `docs/releases/20260717-003211.md` 与 `docs/releases/20260717-001826.md`，自建 LiveKit 切换证据见 `docs/releases/20260716-120146.md`。
+Memoria 使用独立静态资源/API 路径、回环端口、Compose project 和限流 zone。新服务器的 443 继续由既有 WMS 虚拟主机占用；8443 由 Nginx stream 预读协议，TLS 流量转到 `127.0.0.1:9443` 的 Memoria HTTPS server，原生 ICE/TCP 转到 `127.0.0.1:8444` 后进入 LiveKit 容器的 8443。当前公网正式入口是 8443。公网 `/memoria-api/internal/` 固定返回 404；WMS 的 `/wms/` 路由与既有数据保留且服务保持 active。当前迁移证据见 `docs/releases/20260720-140053.md`，onboarding 热修见 `docs/releases/20260720-145953.md`，账号注销 UI 热修见 `docs/releases/20260720-162553.md`，runtime 删除幂等热修见 `docs/releases/20260720-164942.md`，PCM 声纹录音修复见 `docs/releases/20260720-174545.md`，重复登记与音色跳变修复见 `docs/releases/20260720-182535.md`。
 
 终身档案迁移到 PostgreSQL + 对象存储后的备份、PITR、对象清单与联合恢复门禁见 [`archive-backup-restore-runbook.md`](./archive-backup-restore-runbook.md)。现有 SQLite 发布快照只覆盖旧主库，不得被描述为终身档案生产恢复方案。
 
-> P0.5、P1-P6 的稳定账号、终身记忆、Persona、SpeakerAuthority、VoiceProfile 与账户治理已随 `20260719-215553` 部署。CAM++ 仍为 shadow-only，正式声纹/复刻声音不得在真人授权与盲测前激活。当前 PostgreSQL、WAL archive、MinIO 和备份均同机，没有异地副本/KMS/PITR，不能承诺“永不丢失”。
+> P0.5、P1-P6 的稳定账号、终身记忆、Persona、SpeakerAuthority、VoiceProfile 与账户治理底座随 `20260720-140053` 部署，当前 runtime 为 `20260720-182535`（关闭遗留逐会话声纹登记并保持伙伴音色）。CAM++ 仍为 shadow-only，正式声纹/复刻声音不得在真人授权与盲测前激活。当前 PostgreSQL、WAL archive、MinIO 和备份均同机，没有异地副本/KMS/PITR，不能承诺“永不丢失”。
 
 ## TLS 与自动续期
 
-正式域名使用 TrustAsia 证书：SAN 为 `aginice.cn`、`www.aginice.cn`，有效期为 2026-06-07 00:00:00 UTC 至 2026-09-04 23:59:59 UTC。公网 IPv4 兼容入口另用 Let's Encrypt 短期证书：SAN 为 `110.42.235.198`，有效期为 2026-07-19 02:09:24 UTC 至 2026-07-25 18:09:23 UTC。snap Certbot renewal timer 为 enabled/active；deploy hook 安装于 `/etc/letsencrypt/renewal-hooks/deploy/50-memoria-reload-nginx`，先运行 `nginx -t`，只有成功才 reload Nginx。
+新服务器公网 IPv4 入口使用 Let's Encrypt 短期证书：SAN 为 `122.51.108.140`，当前证书有效至 2026-07-26 21:15:49 UTC。`aigcnice.com` 与 `www.aigcnice.com` 使用同机 TrustAsia 域名证书，当前有效至 2026-10-18 03:59:59 UTC；`127.0.0.1:9443` 的两个证书虚拟主机复用 `/etc/nginx/snippets/memoria-site-common.conf`，IP/无 SNI 默认选择 IP 证书，域名 SNI 选择域名证书。`snap.certbot.renew.timer` 为 enabled/active；deploy hook 安装于 `/etc/letsencrypt/renewal-hooks/deploy/50-memoria-reload-nginx`，先运行 `nginx -t`，只有成功才 reload Nginx。
 
 运维检查：
 
@@ -70,10 +70,10 @@ MEMORIA_AUTH_SECRET
 ENVIRONMENT=production
 LLM_PROVIDER=qwen
 DEPLOYMENT_PROFILE=cn_self_hosted
-PUBLIC_BASE_URL=https://aginice.cn:8443/memoria-api
-ALLOWED_ORIGINS=https://aginice.cn,https://www.aginice.cn,https://aginice.cn:8443,https://www.aginice.cn:8443
+PUBLIC_BASE_URL=https://122.51.108.140:8443/memoria-api
+ALLOWED_ORIGINS=https://122.51.108.140:8443
 OFFLINE_MOCK=false
-LIVEKIT_URL=wss://aginice.cn:8443
+LIVEKIT_URL=wss://122.51.108.140:8443
 LIVEKIT_AGENT_NAME=duplex-zh-agent
 LIVEKIT_TURN_DETECTOR_VERSION=v1-mini
 LIVEKIT_ADAPTIVE_INTERRUPTION=false
@@ -121,20 +121,20 @@ P0～P6 发布后，Control API `/health/ready` 还必须同时返回以下 9 �
 
 ## P0.5、P1～P6 上线状态与后续门槛
 
-1. `20260719-215553` 已部署 pgvector、FORCE RLS、MinIO 版本控制、四类 capability token、独立 SpeakerAuthority token、迁移/联合恢复、core readiness 和真实 Provider smoke。
+1. `20260720-140053` 已在新服务器部署 pgvector、FORCE RLS、MinIO 版本控制、四类 capability token、独立 SpeakerAuthority token、迁移/联合恢复、core readiness 和真实 Provider smoke；当前 runtime/H5 为 `20260720-182535`。
 2. 当前低成本底座为同机 PostgreSQL、WAL archive、MinIO 和备份；PITR、异地副本与 KMS 仍是下一阶段可靠性门槛，不能把同机恢复演练描述为异地容灾。
 3. 使用授权样本完成 SpeakerAuthority 指标报告和 CosyVoice 真人盲测前，不得激活正式声纹模板或复刻声音。
 4. 账户删除 worker、LiveKit 房间删除权限、对象全版本删除权限和供应商声音删除权限必须同时具备；缺任一权限时删除只能保持 `deleting`，不得伪报完成。
-5. 每个后续候选仍必须通过完整 PostgreSQL 合同、联合恢复、core readiness、Provider smoke、镜像 secret 扫描和真实 H5 浏览器检查，再按“runtime 先、H5 最后”顺序切流；原生 iOS 应用不在交付范围。
+5. 每个后续候选仍必须通过完整 PostgreSQL 合同、联合恢复、core readiness、Provider smoke、镜像 secret 扫描和真实 H5 浏览器检查，再按“runtime 先、H5 最后”顺序切流；原生 iOS 客户端已从仓库移除。
 
 ## 发布原则
 
 H5 必须最后激活。标准顺序是：本机构建并校验工件 → 暂存 release 与 H5 → 创建并验证数据快照 → 服务器导入镜像 → 原子切 runtime → 容器/Provider/readiness 门禁 → Nginx 与证书检查 → 最后原子切 H5 → 公网验收。这样既避免小内存服务器构建卡死，也避免新 H5 连接尚未 ready 的 runtime。
 
-下面命令以已部署 release `20260719-215553` 为完整示例。后续发布只修改第一行 `RELEASE_TAG`，且 tag 必须非空、唯一、不可复用。
+下面命令以已部署基线 release `20260720-140053` 为完整示例；当前线上 runtime/H5 release 为 `20260720-182535`。后续发布只修改第一行 `RELEASE_TAG`，且 tag 必须非空、唯一、不可复用。
 
 ```bash
-RELEASE_TAG=20260719-215553
+RELEASE_TAG=20260720-140053
 RELEASE_DIR=/opt/memoria/releases/$RELEASE_TAG
 H5_DIR=/var/www/memoria-releases/$RELEASE_TAG
 BACKUP=/var/lib/memoria/memoria-pre-$RELEASE_TAG.sqlite3
@@ -229,6 +229,54 @@ sudo chown -R root:root "$RELEASE_DIR" "$H5_DIR"
 sudo find "$RELEASE_DIR" "$H5_DIR" -type d -exec chmod 0755 {} +
 ```
 
+#### H5 immutable 资源兼容门禁
+
+`/memoria-h5/index.html` 是 `no-cache`，但 `/memoria-h5/assets/` 是一年期 `public, immutable`。旧标签页即使已经重新指向新软链，仍会运行缓存中的旧主脚本，并按旧哈希继续请求懒加载分片；只保留新 release 的 `assets/` 会让这些请求变成 404。`index.html` 的不缓存策略不能修复这个问题。
+
+因此每个候选 H5 的 `assets/` 都是追加式的 immutable URL 命名空间：候选构建自己的文件优先，历史 release 只补入不存在的文件，绝不覆盖候选文件。切换 `/var/www/memoria-h5` 前执行以下命令。它先拒绝同一路径但字节不同的资源（这违反 immutable URL 约定），再无覆盖合并历史 `assets/`；不能用 `cp -f`、`rsync --delete` 或清空候选 `assets/` 替代。
+
+```bash
+sudo bash -ceu '
+release_root=/var/www/memoria-releases
+candidate=$1
+candidate_assets=$candidate/assets
+install -d -o root -g root -m 0755 "$candidate_assets"
+
+declare -a historical_assets=()
+for source in "$release_root"/*/assets; do
+  [ -d "$source" ] || continue
+  [ "$(readlink -f "$source/..")" = "$(readlink -f "$candidate")" ] && continue
+  historical_assets+=("$source")
+done
+
+# First detect every immutable-path collision; do not leave a partial union on failure.
+for source in "${historical_assets[@]}"; do
+  while IFS= read -r -d "" old_asset; do
+    relative=${old_asset#"$source"/}
+    destination="$candidate_assets/$relative"
+    if [ -e "$destination" ] && ! cmp -s -- "$old_asset" "$destination"; then
+      printf "immutable asset collision: %s\n" "$relative" >&2
+      exit 1
+    fi
+  done < <(find "$source" -type f -print0)
+done
+
+# GNU cp on the Ubuntu release host: existing candidate files always win.
+for source in "${historical_assets[@]}"; do
+  cp -a --no-dereference --update=none -- "$source/." "$candidate_assets/"
+done
+
+for source in "${historical_assets[@]}"; do
+  while IFS= read -r -d "" old_asset; do
+    relative=${old_asset#"$source"/}
+    test -f "$candidate_assets/$relative"
+  done < <(find "$source" -type f -print0)
+done
+' bash "$H5_DIR"
+```
+
+若碰到 collision，必须把变更后的资源改为内容哈希文件名，或保持该 URL 字节完全不变后再发布；不能为了发布而覆盖它。清理旧 H5 release 时也不得删除当前候选 union 中的资源；在 `/assets/` 仍为一年 immutable 缓存期间，H5 资源集合按追加式保留。
+
 ### 3. 创建发布前 SQLite 快照
 
 SQLite 使用 WAL，禁止只复制主文件。使用 SQLite backup API 创建一致快照并立即做只读完整性检查：
@@ -294,11 +342,32 @@ sudo test "$(stat -c '%U:%G:%a' /etc/memoria-agent.env)" = "root:root:600"
 sudo ln -s "releases/$RELEASE_TAG" "/opt/memoria/.current.$RELEASE_TAG"
 sudo mv -Tf "/opt/memoria/.current.$RELEASE_TAG" /opt/memoria/current
 
-cd "$RELEASE_DIR"
+RUNTIME_COMPOSE_DIR=/opt/memoria/current
+DATA_COMPOSE_DIR=/opt/memoria/current/infra
+
+# 首次部署时让 runtime Compose 创建带有正确 Compose label 的共享网络。
+# 不要手工执行 `docker network create memoria_default`。
+if ! sudo docker network inspect memoria_default >/dev/null 2>&1; then
+  cd "$RUNTIME_COMPOSE_DIR"
+  MEMORIA_RELEASE_TAG="$RELEASE_TAG" \
+  sudo -E docker compose -f docker-compose.production.yml create --no-build
+fi
+
+# data compose 的项目目录必须是 infra；否则相对 bind mount 可能被创建为目录。
+sudo docker compose --project-directory "$DATA_COMPOSE_DIR" \
+  -f "$DATA_COMPOSE_DIR/memoria-data.production.yml" config --quiet
+sudo docker compose --project-directory "$DATA_COMPOSE_DIR" \
+  -f "$DATA_COMPOSE_DIR/memoria-data.production.yml" up -d --no-build
+sudo docker compose --project-directory /opt/livekit \
+  -f /opt/livekit/compose.yml up -d
+
+cd "$RUNTIME_COMPOSE_DIR"
 MEMORIA_RELEASE_TAG="$RELEASE_TAG" \
 sudo -E docker compose -f docker-compose.production.yml up -d --no-build
 sudo docker ps --filter name=memoria
 ```
+
+`memoria-data.production.yml` 的脚本 bind mount 已设置 `create_host_path: false`；路径或项目目录错误时应立即失败，不得让 Docker 静默创建同名目录。后续发布若共享网络已存在，跳过 `create` 分支即可，但仍必须保留 `DATA_COMPOSE_DIR=/opt/memoria/current/infra`。
 
 此时 `/var/www/memoria-h5` 仍必须指向旧 H5。
 
@@ -309,12 +378,12 @@ sudo /opt/memoria/current/scripts/refresh_readiness.sh
 curl -fsS http://127.0.0.1:8791/health/ready
 ```
 
-当前生产 `20260719-215553` 的精确成功文本为：
+当前生产 `20260720-140053` 的精确成功文本为：
 
 ```text
 livekit_smoke_test PASS: authenticated room-service access
 provider_smoke_test PASS: FunASR, Qwen, CosyVoice
-readiness refresh PASS: 20260719-215553 (qwen)
+readiness refresh PASS: 20260720-140053 (qwen)
 ```
 
 `SKIP`、只验证变量存在或单独 HTTP 200 均不算通过。readiness evidence 写入 SQLite，绑定 release、provider 与 UTC 时间；同 release 重启保持，新 release 必须重跑，24 小时后过期。刷新 timer 每 12 小时执行：
@@ -360,13 +429,14 @@ sudo docker logs --since 5m memoria-livekit-livekit-1 2>&1 | wc -l
 - `/etc/nginx/snippets/memoria-http.conf`
 - `/etc/nginx/snippets/memoria-https.conf`
 - `/etc/nginx/snippets/memoria-livekit.conf`
-- `/etc/nginx/sites-enabled/echolife`（仓库对应 `infra/nginx-aginice-server.conf`）
-- `/etc/nginx/sites-enabled/memoria-ip`
+- `/etc/nginx/snippets/memoria-site-common.conf`
+- `/etc/nginx/sites-enabled/memoria`
+- `/etc/nginx/sites-enabled/wms`
 - `/etc/nginx/stream-conf.d/memoria-rtc.conf`（仓库对应 `infra/nginx-memoria-stream.conf`）
 - `/etc/nginx/modules-enabled/50-mod-stream.conf`（由 `libnginx-mod-stream` 提供）
 - `/etc/letsencrypt/renewal-hooks/deploy/50-memoria-reload-nginx`
 
-`echolife` 与 `memoria-ip` 都是 sites-enabled 下的 root-owned 0644 常规文件，不是软链。8443 的 stream mux 依赖 `libnginx-mod-stream`；`echolife` 中必须保留 `127.0.0.1:9443 ssl`，LiveKit Compose 必须把容器 8443 只映射到主机 `127.0.0.1:8444`。`/rtc`、`/agent` 与 `/twirp/` 必须关闭 access log，避免短期 participant JWT 进入 query-string 日志。若本次配置有变化，先备份到不会被 Nginx include 的 root-only 目录，安装新文件后执行：
+`memoria` 与 `wms` 都是 sites-enabled 下的 root-owned 0644 常规文件，不是软链。8443 的 stream mux 依赖 `libnginx-mod-stream`；`memoria` 中必须保留 `127.0.0.1:9443 ssl` 的 IP 默认虚拟主机和域名 SNI 虚拟主机，LiveKit Compose 必须把容器 8443 只映射到主机 `127.0.0.1:8444`。`/rtc`、`/agent` 与 `/twirp/` 必须关闭 access log，避免短期 participant JWT 进入 query-string 日志。若本次配置有变化，先备份到不会被 Nginx include 的 root-only 目录，安装新文件后执行：
 
 注册和登录必须分别命中精确 location：`/memoria-api/v1/auth/register`、`/memoria-api/v1/auth/login`，两者均使用 `client_max_body_size 4k` 与 `limit_req zone=memoria_session burst=3 nodelay`。`20260716-225754` 未安装仓库中新增的 `/memoria-api/v1/sessions/` 专用限流块；线上既有通用 `/memoria-api/` 代理已通过真实 Omni SDP 验证，应用层同时执行 64 KiB、所有权和每会话两次交换限制。后续安装新块仍须按本节先备份、`nginx -t`，成功后才 reload。
 
@@ -376,28 +446,30 @@ sudo systemctl reload nginx
 sudo openssl x509 \
   -in /etc/letsencrypt/live/memoria-ip/fullchain.pem \
   -noout -issuer -dates -fingerprint -sha256 -ext subjectAltName
+openssl s_client -connect 122.51.108.140:8443 \
+  -servername 122.51.108.140 </dev/null 2>/dev/null \
+  | openssl x509 -noout -dates -ext subjectAltName
+openssl s_client -connect 122.51.108.140:8443 \
+  -servername aigcnice.com </dev/null 2>/dev/null \
+  | openssl x509 -noout -dates -ext subjectAltName
 ```
 
 只有 `nginx -t` 成功才允许 reload。此阶段仍不切 H5 公网软链。
 
-### 已停用的旧项目
+### 既有服务边界
 
-2026-07-16 已保留数据地停用 PocketSparks、Goods Invoice、WMS 与 MySQL：PocketSparks 的 4 个常驻容器 restart policy 为 `no` 且均 stopped；`goods-invoice.service`、`wms.service` 与 `mysql.service` 均为 inactive/disabled。Nginx 的域名与公网 IP server 不再 include PocketSparks/Goods Invoice snippet。不得执行 `docker compose down -v`，不得删除既有命名卷、`/opt/goods-invoice`、`/opt/wms` 或 `/var/lib/mysql`。
+新服务器保留既有 WMS：`wms.service` 为 active/enabled，`/wms/` 与 `/wms/api/` 路由继续由原服务提供。PocketSparks、Goods Invoice 与 MySQL 未作为 Memoria 依赖启动；若旧目录或容器存在，只能保留数据，禁止顺手删除。Nginx 的 Memoria server 不得覆盖 WMS 路由。不得执行 `docker compose down -v`，不得删除 `/opt/wms` 或任何既有数据目录。
 
 只读状态检查：
 
 ```bash
 sudo docker ps --filter label=com.docker.compose.project=pocketsparks
-sudo docker inspect --format '{{.Name}} {{.HostConfig.RestartPolicy.Name}}' \
-  pocketsparks-app-1 pocketsparks-postgres-1 pocketsparks-redis-1 pocketsparks-minio-1
-sudo systemctl is-active goods-invoice.service
-sudo systemctl is-enabled goods-invoice.service
-sudo systemctl is-active wms.service mysql.service
-sudo systemctl is-enabled wms.service mysql.service
+sudo systemctl is-active wms.service
+sudo systemctl is-enabled wms.service
 sudo ss -ltnp | grep -E ':(8788|18080|19000|15432)\b' || true
 ```
 
-只有在明确决定恢复旧项目后，才重新加入其精确 Nginx snippet 并先通过 `nginx -t`；随后分别执行原 Compose `up -d` 与 `systemctl enable --now goods-invoice.service`。根域名 Memoria 与 EchoLife 路由不得被覆盖。
+只有在明确决定恢复旧项目后，才重新加入其精确 Nginx snippet 并先通过 `nginx -t`；恢复操作不得覆盖 Memoria 或 WMS 的根路径与 `/wms/` 路由。
 
 ### 7. 最后原子激活 H5
 
@@ -415,25 +487,48 @@ sudo readlink -f /var/www/memoria-h5
 
 `mv -T` 在同一文件系统内完成原子替换；不得用覆盖目录内容的方式激活。
 
+紧接着验证历史 release 的每个静态资源均可经新软链返回。`/memoria-h5/assets/` 的 Nginx location 对缺失文件明确返回 404，不会落到 SPA fallback；该检查因此覆盖旧主脚本未在 `index.html` 中直接列出的所有动态 import。任一请求失败时立即按“回滚”章节切回上一个 H5 release，先保留失败候选目录供排查。
+
+```bash
+sudo bash -ceu '
+release_root=/var/www/memoria-releases
+candidate=$1
+base=https://122.51.108.140:8443
+
+for source in "$release_root"/*/assets; do
+  [ -d "$source" ] || continue
+  [ "$(readlink -f "$source/..")" = "$(readlink -f "$candidate")" ] && continue
+  while IFS= read -r -d "" old_asset; do
+    relative=${old_asset#"$source"/}
+    test -f "$candidate/assets/$relative"
+    curl -fsSI --connect-timeout 5 --max-time 15 \
+      --resolve 122.51.108.140:8443:127.0.0.1 \
+      "$base/memoria-h5/assets/$relative" >/dev/null
+  done < <(find "$source" -type f -print0)
+done
+' bash "$H5_DIR"
+```
+
 ## 公网上线验收
 
 ### HTTPS、SPA 与健康检查
 
 ```bash
-curl -fsS https://110.42.235.198/memoria-h5/
-curl -fsS https://aginice.cn:8443/
-curl -fsS https://aginice.cn:8443/memoria-h5/arbitrary-spa-route
-curl -fsS https://aginice.cn:8443/memoria-api/health/live
-curl -fsS https://aginice.cn:8443/memoria-api/health/ready
+curl -fsS https://122.51.108.140:8443/
+curl -fsS https://122.51.108.140:8443/memoria-h5/
+curl -fsS https://122.51.108.140:8443/memoria-h5/arbitrary-spa-route
+curl -fsS https://122.51.108.140:8443/memoria-api/health/live
+curl -fsS https://122.51.108.140:8443/memoria-api/health/ready
 curl -sS -o /dev/null -w '%{http_code}\n' \
-  https://aginice.cn:8443/memoria-api/internal/
+  https://122.51.108.140:8443/memoria-api/internal/
 curl -sS -o /dev/null -w '%{http_code}\n' \
-  https://aginice.cn:8443/pocketsparks/
+  https://122.51.108.140:8443/pocketsparks/
 curl -sS -o /dev/null -w '%{http_code}\n' \
-  https://aginice.cn:8443/goods-invoice/
+  https://122.51.108.140:8443/goods-invoice/
+curl -fsS https://122.51.108.140:8443/wms/
 ```
 
-验收标准：公网 8443 的根 H5、兼容 H5、SPA、live、ready 和 EchoLife health 均为 200；ready 的 release 必须等于本次唯一 `RELEASE_TAG`、provider 为 `qwen`；internal、PocketSparks 与 Goods Invoice 原路径为 404；8443 域名证书与公网 IP 兼容证书均校验成功。`/rtc`、`/agent`、`/twirp/` 必须命中自建 LiveKit，真实浏览器 participant 必须为 `active` 且 `connectionType=tcp` 或 `udp`，不能是 `unknown`。服务器本机用 SNI/loopback 额外确认 443 根路径为 200。另需确认 PocketSparks 无运行容器且 restart policy 为 `no`，Goods Invoice、WMS 与 MySQL 均为 inactive/disabled。
+验收标准：公网 8443 的根 H5、兼容 H5、SPA、live、ready 和 WMS 均为 200；ready 的 release 必须等于本次唯一 `RELEASE_TAG`、provider 为 `qwen`；internal、PocketSparks 与 Goods Invoice 原路径为 404；IP 证书 SAN 必须精确包含 `122.51.108.140`，域名 SNI 必须返回包含 `aigcnice.com` 与 `www.aigcnice.com` 的域名证书。`/rtc`、`/agent`、`/twirp/` 必须命中自建 LiveKit，真实浏览器 participant 必须为 `active` 且 `connectionType=tcp` 或 `udp`，不能是 `unknown`。服务器本机用 SNI/loopback 额外确认 443 根路径仍由 WMS 提供。另需确认 `wms.service` 为 active/enabled，Memoria 不得改动其目录或数据。
 
 ### 身份、隔离与持久化
 
@@ -472,16 +567,16 @@ curl -sS -o /dev/null -w '%{http_code}\n' \
 
 ## 回滚
 
-当前 H5 可直接回滚到 `20260719-215553`，无需切换或重启 runtime：
+当前 H5 可直接回滚到 `20260720-174545`，无需切换或重启 runtime：
 
 ```bash
-H5_ROLLBACK_TAG=20260719-215553
+H5_ROLLBACK_TAG=20260720-174545
 sudo test -d "/var/www/memoria-releases/$H5_ROLLBACK_TAG"
 sudo ln -s "memoria-releases/$H5_ROLLBACK_TAG" "/var/www/.memoria-h5.$H5_ROLLBACK_TAG"
 sudo mv -Tf "/var/www/.memoria-h5.$H5_ROLLBACK_TAG" /var/www/memoria-h5
 ```
 
-完整 runtime/H5 回滚点仍为 `20260719-000731`。该版本使用保留的旧 `/etc/memoria.env`；完整回滚时不要用当前拆分后的 Control/Agent env 覆盖旧配置：
+当前 runtime 直接回滚点为 `20260720-164942`（H5 配套回滚点为 `20260720-174545`）；更早的完整 runtime/H5 联合回滚点为 `20260719-000731`。后者使用保留的旧 `/etc/memoria.env`；完整回滚时不要用当前拆分后的 Control/Agent env 覆盖旧配置：
 
 ```bash
 RUNTIME_ROLLBACK_TAG=20260719-000731
@@ -507,7 +602,7 @@ sudo -E docker compose -f docker-compose.production.yml up -d --no-build
 ## 日常运维
 
 - 每日监控 API live/ready、`memoria-readiness-refresh.timer` 和 `snap.certbot.renew.timer`。
-- 每日确认 PocketSparks 仍无运行容器，Goods Invoice、WMS 与 MySQL 仍为 inactive/disabled，避免旧服务意外恢复占用资源。
+- 每日确认 WMS 仍为 active/enabled，Memoria 只使用 8443；确认旧项目没有被意外启动并占用 Memoria 端口。
 - 证书续期后验证 SAN、有效期、deploy hook 和 Nginx reload 日志。
 - 每次发布记录 release tag、镜像 ID、H5/Nginx SHA-256、证书指纹、两份 SQLite 快照 SHA-256、两份 env 备份 SHA-256、完整性与 foreign-key 检查、激活时间和回滚点；不得记录 secret。
 - 200 条真实中文录音、AEC 设备矩阵和第 21 章 SLO 是规模化上线门禁，不阻塞当前 H5 成品交付。

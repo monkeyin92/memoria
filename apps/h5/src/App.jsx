@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell,
   Brain,
@@ -16,8 +16,10 @@ import {
   PhoneDisconnect,
   ShieldCheck,
   Sparkle,
+  Trash,
   UserCircle,
   Waveform,
+  X,
 } from "@phosphor-icons/react";
 
 import {
@@ -33,11 +35,18 @@ import {
   updateProfile,
 } from "./api.js";
 import { AuthScreen } from "./components/AuthScreen.jsx";
+import { AccountDeletionForm } from "./components/AccountDeletionForm.jsx";
+import { CompanionOnboarding } from "./components/CompanionOnboarding.jsx";
 import { LifeArchivePanel } from "./components/LifeArchivePanel.jsx";
-import { Mascot } from "./components/Mascot.jsx";
+import { Mascot, MascotVisual } from "./components/Mascot.jsx";
 import { useVoiceSession } from "./hooks/useVoiceSession.js";
 import { localDateKey } from "./lib/date.js";
-import { classifyEmotion, emotionMeta } from "./lib/emotion.js";
+import {
+  classifyEmotion,
+  emotionFromVoice,
+  emotionMeta,
+} from "./lib/emotion.js";
+import { companionById } from "./lib/companions.js";
 
 const tabs = [
   { id: "home", label: "陪伴", Icon: House },
@@ -51,6 +60,7 @@ const defaultProfile = {
   auto_summary: true,
   voice_reply: true,
   gentle_reminders: false,
+  companion_id: null,
 };
 
 const today = () => localDateKey();
@@ -112,30 +122,36 @@ export function App() {
   const [identityReady, setIdentityReady] = useState(false);
   const [identityError, setIdentityError] = useState("");
   const [activeTab, setActiveTab] = useState("home");
-  const [emotion, setEmotion] = useState("neutral");
   const [profile, setProfile] = useState(defaultProfile);
   const [profileReady, setProfileReady] = useState(false);
   const [draftProfile, setDraftProfile] = useState(defaultProfile);
   const [editingProfile, setEditingProfile] = useState(false);
   const [digitalSelfOpen, setDigitalSelfOpen] = useState(false);
   const [privacyDataOpen, setPrivacyDataOpen] = useState(false);
+  const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
   const [memoryDays, setMemoryDays] = useState([]);
   const [selectedDay, setSelectedDay] = useState(today());
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryError, setMemoryError] = useState("");
   const [summaryRunning, setSummaryRunning] = useState(false);
+  const activeUserIdRef = useRef("");
   const userId = identity?.user_id || "";
+
+  const setCurrentIdentity = useCallback((nextIdentity) => {
+    activeUserIdRef.current = nextIdentity?.user_id || "";
+    setIdentity(nextIdentity);
+  }, []);
 
   const loadIdentity = useCallback(async () => {
     setIdentityError("");
     try {
-      setIdentity(await bootstrapIdentity());
+      setCurrentIdentity(await bootstrapIdentity());
     } catch {
       setIdentityError("暂时无法建立安全身份，请检查网络后重试。");
     } finally {
       setIdentityReady(true);
     }
-  }, []);
+  }, [setCurrentIdentity]);
 
   useEffect(() => {
     void loadIdentity();
@@ -143,9 +159,8 @@ export function App() {
 
   const handleFinalTranscript = useCallback(
     async (line) => {
-      if (!userId) return;
+      if (!userId || activeUserIdRef.current !== userId) return;
       const nextEmotion = classifyEmotion(line.text);
-      setEmotion(nextEmotion);
       const message = {
         user_id: userId,
         role: line.speaker,
@@ -155,7 +170,7 @@ export function App() {
       try {
         await saveMessage(message);
       } catch {
-        cachePendingMessage(message);
+        if (activeUserIdRef.current === userId) cachePendingMessage(message);
       }
     },
     [userId],
@@ -170,11 +185,14 @@ export function App() {
 
   const loadMemories = useCallback(async () => {
     if (!userId) return;
+    const requestedUserId = userId;
     setMemoryLoading(true);
     setMemoryError("");
     try {
       await flushPendingMessages();
-      const result = await getMemoryDays(userId);
+      if (activeUserIdRef.current !== requestedUserId) return;
+      const result = await getMemoryDays(requestedUserId);
+      if (activeUserIdRef.current !== requestedUserId) return;
       const rawDays = Array.isArray(result) ? result : result.items || [];
       const days = rawDays.map(normalizeMemoryDay);
       setMemoryDays(days);
@@ -184,14 +202,17 @@ export function App() {
           : current,
       );
     } catch {
-      setMemoryError("暂时没有连上回顾服务，对话内容会先安全保存在本机。");
+      if (activeUserIdRef.current === requestedUserId) {
+        setMemoryError("暂时没有连上回顾服务，对话内容会先安全保存在本机。");
+      }
     } finally {
-      setMemoryLoading(false);
+      if (activeUserIdRef.current === requestedUserId) setMemoryLoading(false);
     }
   }, [userId]);
 
   useEffect(() => {
     if (!userId) return;
+    const requestedUserId = userId;
     setProfileReady(false);
     setProfile(defaultProfile);
     setDraftProfile(defaultProfile);
@@ -205,23 +226,36 @@ export function App() {
         local = null;
       }
       try {
-        const result = await getProfile(userId);
+        const result = await getProfile(requestedUserId);
+        if (activeUserIdRef.current !== requestedUserId) return;
+        const hasCompanionSelection = Object.prototype.hasOwnProperty.call(
+          result,
+          "companion_id",
+        );
         const next = {
           ...defaultProfile,
           ...(local || {}),
           ...result,
           bio: result.bio || defaultProfile.bio,
+          companion_id: hasCompanionSelection
+            ? result.companion_id
+            : "starlight",
         };
         setProfile(next);
         setDraftProfile(next);
       } catch {
+        if (activeUserIdRef.current !== requestedUserId) return;
         if (local) {
           const next = { ...defaultProfile, ...local };
           setProfile(next);
           setDraftProfile(next);
+        } else if (identity?.account_type === "registered") {
+          const next = { ...defaultProfile, companion_id: "starlight" };
+          setProfile(next);
+          setDraftProfile(next);
         }
       } finally {
-        setProfileReady(true);
+        if (activeUserIdRef.current === requestedUserId) setProfileReady(true);
       }
     })();
   }, [userId]);
@@ -230,14 +264,9 @@ export function App() {
     if (activeTab !== "home") void loadMemories();
   }, [activeTab, loadMemories]);
 
-  useEffect(() => {
-    if (voice.latestTranscript?.text) {
-      setEmotion(classifyEmotion(voice.latestTranscript.text));
-    }
-  }, [voice.latestTranscript]);
-
   const activeMemory =
     memoryDays.find((day) => day.date === selectedDay) || memoryDays[0] || null;
+  const activeCompanion = companionById(profile.companion_id);
 
   const runSummary = async () => {
     setSummaryRunning(true);
@@ -299,8 +328,9 @@ export function App() {
   };
 
   const handleAccountDeleted = async () => {
-    await voice.end().catch(() => undefined);
-    setIdentity(null);
+    activeUserIdRef.current = "";
+    const voiceReset = voice.reset ? voice.reset() : voice.end();
+    setCurrentIdentity(null);
     setIdentityError("");
     setProfile(defaultProfile);
     setDraftProfile(defaultProfile);
@@ -310,11 +340,12 @@ export function App() {
     setMemoryLoading(false);
     setMemoryError("");
     setSummaryRunning(false);
-    setEmotion("neutral");
     setEditingProfile(false);
     setDigitalSelfOpen(false);
     setPrivacyDataOpen(false);
-    setActiveTab("profile");
+    setAccountDeletionOpen(false);
+    setActiveTab("home");
+    await voiceReset.catch(() => undefined);
   };
 
   if (!identityReady || identityError || (identity && !profileReady)) {
@@ -347,14 +378,35 @@ export function App() {
         onLogin={async (username, password) => {
           const account = await loginAccount(username, password);
           setProfileReady((ready) => ready && account.user_id === userId);
-          setIdentity(account);
+          setCurrentIdentity(account);
         }}
         onRegister={async (username, password) => {
           const account = await registerAccount(username, password);
           setProfileReady((ready) => ready && account.user_id === userId);
-          setIdentity(account);
+          setCurrentIdentity(account);
         }}
       />
+    );
+  }
+
+  if (!profile.companion_id) {
+    return (
+      <main className="mobile-prototype" data-page="companion-onboarding">
+        <div className="app-surface">
+          <CompanionOnboarding
+            userId={userId}
+            onComplete={(savedProfile) => {
+              const next = { ...profile, ...savedProfile };
+              setProfile(next);
+              setDraftProfile(next);
+              window.localStorage.setItem(
+                profileStorageKey(userId),
+                JSON.stringify(next),
+              );
+            }}
+          />
+        </div>
+      </main>
     );
   }
 
@@ -383,15 +435,16 @@ export function App() {
                 aria-label="打开个人信息"
                 onClick={() => setActiveTab("profile")}
               >
-                <img
-                  src={`${import.meta.env.BASE_URL}assets/mascot-neutral.webp`}
-                  alt=""
+                <MascotVisual
+                  companionId={activeCompanion.id}
+                  emotion="neutral"
+                  className="avatar-mascot"
                 />
               </button>
             </header>
 
             <div className="voice-status-row">
-              <div className="status-pill" data-state={voice.uiState}>
+              <div className="status-pill" data-state={voice.uiState} role="status">
                 <span className="status-dot" />
                 {voice.statusLabel}
               </div>
@@ -399,8 +452,10 @@ export function App() {
 
             <div className="mascot-wrap">
               <Mascot
-                emotion={emotion}
+                emotion={emotionFromVoice(voice.emotionHint?.label)}
                 uiState={voice.uiState}
+                companionId={activeCompanion.id}
+                active={Boolean(voice.session)}
                 disabled={voice.uiState === "connecting"}
                 onActivate={() => {
                   if (!voice.session) void voice.start();
@@ -415,7 +470,7 @@ export function App() {
                 >
                   <span>
                     {voice.latestTranscript.speaker === "assistant"
-                      ? "Memoria"
+                      ? activeCompanion.name
                       : "你"}
                   </span>
                   <p>{voice.latestTranscript.text}</p>
@@ -544,12 +599,15 @@ export function App() {
             onToggle={togglePreference}
             onOpenDigitalSelf={() => setDigitalSelfOpen(true)}
             onOpenPrivacyData={() => setPrivacyDataOpen(true)}
+            onAccountDeleted={handleAccountDeleted}
+            accountDeletionOpen={accountDeletionOpen}
+            setAccountDeletionOpen={setAccountDeletionOpen}
           />
         )}
 
         <div ref={voice.audioContainerRef} hidden aria-hidden="true" />
 
-        {!digitalSelfOpen && !privacyDataOpen && <nav className="bottom-nav" aria-label="主导航">
+        {!digitalSelfOpen && !privacyDataOpen && !accountDeletionOpen && <nav className="bottom-nav" aria-label="主导航">
           {tabs.map(({ id, label, Icon }) => (
             <button
               type="button"
@@ -715,17 +773,26 @@ function ProfileScreen({
   onToggle,
   onOpenDigitalSelf,
   onOpenPrivacyData,
+  onAccountDeleted,
+  accountDeletionOpen,
+  setAccountDeletionOpen,
 }) {
+  const [accountDeletionBusy, setAccountDeletionBusy] = useState(false);
+  const companion = companionById(profile.companion_id);
   const momentCount = memoryDays.reduce(
     (total, day) => total + day.message_count,
     0,
   );
   return (
     <section
-      className={`screen profile-screen ${editing ? "sheet-open" : ""}`}
+      className={`screen profile-screen ${editing || accountDeletionOpen ? "sheet-open" : ""}`}
       aria-label="个人信息"
     >
-      <header className="topbar page-topbar">
+      <header
+        className="topbar page-topbar"
+        inert={accountDeletionOpen ? true : undefined}
+        aria-hidden={accountDeletionOpen || undefined}
+      >
         <div>
           <p className="eyebrow">你的陪伴空间</p>
           <h1>我的</h1>
@@ -740,12 +807,18 @@ function ProfileScreen({
         </button>
       </header>
 
-      <div className="profile-scroll">
+      <div
+        className="profile-scroll"
+        inert={accountDeletionOpen ? true : undefined}
+        aria-hidden={accountDeletionOpen || undefined}
+      >
         <section className="profile-hero">
           <div className="profile-avatar">
-            <img
-              src={`${import.meta.env.BASE_URL}assets/mascot-happy.webp`}
-              alt="Memoria 吉祥物"
+            <MascotVisual
+              companionId={companion.id}
+              emotion="happy"
+              className="profile-mascot"
+              ariaLabel={`${companion.name}陪伴机器人`}
             />
           </div>
           <div>
@@ -799,6 +872,18 @@ function ProfileScreen({
           <span className="privacy-icon"><ShieldCheck size={22} weight="fill" /></span>
           <span><strong>隐私与数据</strong><small>专属凭证保护你的对话</small></span>
           <CaretRight size={19} weight="bold" />
+        </button>
+
+        <button
+          type="button"
+          className="account-delete-entry"
+          onClick={() => setAccountDeletionOpen(true)}
+        >
+          <Trash size={19} weight="bold" aria-hidden="true" />
+          <span>
+            <strong>注销账号</strong>
+            <small>永久删除账号及全部数据</small>
+          </span>
         </button>
       </div>
 
@@ -854,6 +939,43 @@ function ProfileScreen({
               取消
             </button>
           </form>
+        </div>
+      )}
+
+      {accountDeletionOpen && (
+        <div className="sheet-backdrop account-delete-backdrop" role="presentation">
+          <section
+            className="account-delete-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="account-delete-title"
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !accountDeletionBusy) {
+                setAccountDeletionOpen(false);
+              }
+            }}
+          >
+            <div className="account-delete-sheet-header">
+              <div>
+                <span>危险操作</span>
+                <h2 id="account-delete-title">注销账号</h2>
+              </div>
+              <button
+                type="button"
+                aria-label="关闭注销账号确认"
+                disabled={accountDeletionBusy}
+                onClick={() => setAccountDeletionOpen(false)}
+              >
+                <X size={21} weight="bold" aria-hidden="true" />
+              </button>
+            </div>
+            <AccountDeletionForm
+              autoFocus
+              onBusyChange={setAccountDeletionBusy}
+              onDeleted={onAccountDeleted}
+              submitLabel="注销账号并删除全部数据"
+            />
+          </section>
         </div>
       )}
     </section>
