@@ -30,6 +30,7 @@ from services.digital_self.domain import (
     VersionNotFoundError,
     VersionStatus,
 )
+from services.persona.domain import LEGACY_COGNITIVE_TRAIT_CATEGORIES
 
 _TRANSITIONS: dict[str, tuple[VersionStatus, VersionStatus]] = {
     "begin_testing": ("draft", "testing"),
@@ -407,6 +408,8 @@ class PostgresDigitalSelfRegistry:
                 raise SourceSnapshotConflictError(
                     "active persona trait conflicts with its snapshot"
                 )
+            if str(trait["category"]) in LEGACY_COGNITIVE_TRAIT_CATEGORIES:
+                continue
             entry = persona_entry(item, persona_version_id=persona_version_id)
             if not entry.source_event_ids:
                 continue

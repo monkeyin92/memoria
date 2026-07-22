@@ -32,6 +32,7 @@ from services.digital_self.domain import (
     VersionNotFoundError,
     VersionStatus,
 )
+from services.persona.domain import LEGACY_COGNITIVE_TRAIT_CATEGORIES
 from services.persona.engine import PersonaEngine
 
 _SCHEMA = """
@@ -447,6 +448,8 @@ class DigitalSelfRegistry:
                 raise SourceSnapshotConflictError(
                     "active persona trait conflicts with its snapshot"
                 )
+            if str(trait["category"]) in LEGACY_COGNITIVE_TRAIT_CATEGORIES:
+                continue
             entry = persona_entry(item, persona_version_id=persona_version_id)
             if not entry.source_event_ids:
                 continue

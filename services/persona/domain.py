@@ -21,6 +21,9 @@ PersonaTraitCategory = Literal[
     "value_priority",
 ]
 PersonaTraitStatus = Literal["candidate", "confirmed", "disabled"]
+LEGACY_COGNITIVE_TRAIT_CATEGORIES: frozenset[PersonaTraitCategory] = frozenset(
+    {"decision_habit", "value_priority"}
+)
 
 
 class PersonaCounterexampleRequiredError(ValueError):
@@ -35,7 +38,7 @@ def require_persona_counterexample(
 ) -> None:
     if (
         action != "disable"
-        and category in {"decision_habit", "value_priority"}
+        and category in LEGACY_COGNITIVE_TRAIT_CATEGORIES
         and not counterexample.strip()
     ):
         raise PersonaCounterexampleRequiredError(

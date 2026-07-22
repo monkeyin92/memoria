@@ -21,6 +21,7 @@ from services.growth.policy import (
     version_target_ids,
 )
 from services.growth.tasks import TaskEventAction, apply_task_event
+from services.persona.domain import LEGACY_COGNITIVE_TRAIT_CATEGORIES
 
 
 class GrowthReader:
@@ -313,7 +314,9 @@ class GrowthReader:
             elif not contribution.accepted:
                 rejected["relationship_models"][contribution.reason] += 1
             else:
-                adopted["relationship_models"].append(self._source("relationship", str(row["relationship_id"]), event, str(row["relationship_type"]), contribution.weight))
+                rejected["relationship_models"][
+                    "relationship_profile_pending_owner_approval"
+                ] += 1
         with self._connect() as connection:
             for trait in traits:
                 evidence = connection.execute(
@@ -322,7 +325,10 @@ class GrowthReader:
                 ).fetchall()
                 events = [self._event_from_row(row, account_id) for row in evidence]
                 category = str(trait["category"])
-                dimension: GrowthDimension = "decision_cases" if category in {"decision_habit", "value_priority"} else "expression"
+                if category in LEGACY_COGNITIVE_TRAIT_CATEGORIES:
+                    rejected["decision_cases"]["legacy_persona_candidate"] += 1
+                    continue
+                dimension: GrowthDimension = "expression"
                 if not events or not all(
                     confirmed_projection_contribution_for(event).accepted
                     for event in events

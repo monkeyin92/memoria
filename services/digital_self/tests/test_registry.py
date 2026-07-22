@@ -136,6 +136,30 @@ async def _seed_sources(path: Path, *, account_id: str = "owner-account") -> Non
                     "source_event_ids": [f"{account_id}-{speaker_class}-source"],
                 }
             )
+        legacy_trait_id = "10000000-0000-0000-0000-000000000099"
+        connection.execute(
+            """
+            INSERT INTO persona_traits (
+                trait_id, account_id, category, normalized_key, description,
+                context, counterexample, confidence, status, observation_count,
+                created_at, updated_at
+            ) VALUES (?, ?, 'decision_habit', 'legacy-decision',
+                      'legacy decision candidate', 'conversation',
+                      '有时会先照顾家人', 0.9, 'confirmed', 3, ?, ?)
+            """,
+            (legacy_trait_id, account_id, now, now),
+        )
+        snapshot.append(
+            {
+                "trait_id": legacy_trait_id,
+                "category": "decision_habit",
+                "description": "legacy decision candidate",
+                "context": "conversation",
+                "counterexample": "有时会先照顾家人",
+                "confidence": 0.9,
+                "source_event_ids": [f"{account_id}-owner-source"],
+            }
+        )
         connection.execute(
             """
             INSERT INTO persona_versions (
@@ -188,6 +212,7 @@ async def test_build_is_deterministic_and_only_compiles_confirmed_owner_sources(
         for entry in first.manifest.entries
         if isinstance(entry, PersonaTraitManifestEntry)
     ] == ["owner trait"]
+    assert "legacy decision candidate" not in str(first.manifest)
     assert first.manifest.source_summary.memory_claim_count == 1
     assert first.manifest.source_summary.persona_trait_count == 1
     assert (

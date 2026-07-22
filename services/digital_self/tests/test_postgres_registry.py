@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from datetime import UTC, datetime
@@ -144,6 +145,57 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
                         event_id,
                         datetime(2026, 7, 22, 8, 0, tzinfo=UTC),
                     )
+                    legacy_trait_id = uuid.uuid4()
+                    legacy_persona_version_id = uuid.uuid4()
+                    await connection.execute(
+                        """
+                        INSERT INTO persona_traits (
+                            trait_id, account_id, category, normalized_key,
+                            description, context, counterexample, confidence,
+                            status, observation_count
+                        ) VALUES ($1, $2, 'value_priority', 'legacy-value',
+                                  'legacy value candidate', 'conversation',
+                                  '也会例外', 0.9, 'confirmed', 3)
+                        """,
+                        legacy_trait_id,
+                        account_id,
+                    )
+                    await connection.execute(
+                        """
+                        INSERT INTO persona_evidence (
+                            trait_id, account_id, source_event_id, scene,
+                            weight, occurred_at
+                        ) VALUES ($1, $2, $3, 'conversation', 1.0, $4)
+                        """,
+                        legacy_trait_id,
+                        account_id,
+                        event_id,
+                        datetime(2026, 7, 22, 8, 0, tzinfo=UTC),
+                    )
+                    await connection.execute(
+                        """
+                        INSERT INTO persona_versions (
+                            version_id, account_id, version_number, status,
+                            reason, snapshot
+                        ) VALUES ($1, $2, 1, 'active', 'test', $3::jsonb)
+                        """,
+                        legacy_persona_version_id,
+                        account_id,
+                        json.dumps(
+                            [
+                                {
+                                    "trait_id": str(legacy_trait_id),
+                                    "category": "value_priority",
+                                    "description": "legacy value candidate",
+                                    "context": "conversation",
+                                    "counterexample": "也会例外",
+                                    "confidence": 0.9,
+                                    "source_event_ids": [event_id],
+                                }
+                            ],
+                            ensure_ascii=False,
+                        ),
+                    )
 
             assert await connection.fetchval("SELECT count(*) FROM memory_claims") == 0
             assert await connection.fetchval("SELECT count(*) FROM digital_self_versions") == 0
@@ -152,6 +204,8 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
 
         version_a = await registry.build(account_id=account_a)
         version_b = await registry.build(account_id=account_b)
+        assert "legacy value candidate" not in str(version_a.manifest)
+        assert "legacy value candidate" not in str(version_b.manifest)
         claim_a_id = next(
             entry.claim_id
             for entry in version_a.manifest.entries

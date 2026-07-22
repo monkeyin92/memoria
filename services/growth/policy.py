@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
+from services.persona.domain import LEGACY_COGNITIVE_TRAIT_CATEGORIES
+
 GrowthDimension = Literal[
     "life_chapters",
     "important_people",
@@ -28,11 +30,6 @@ DIMENSIONS: tuple[GrowthDimension, ...] = (
 DEPENDENCY_PENDING = frozenset(
     {"important_people", "decision_cases", "relationship_models", "voice", "legacy"}
 )
-
-_LEGACY_COGNITIVE_PERSONA_CATEGORIES = frozenset(
-    {"decision_habit", "value_priority"}
-)
-
 
 def version_target_ids(
     dimension: GrowthDimension,
@@ -59,7 +56,7 @@ def version_target_ids(
             for entry in entries
             if isinstance(entry, dict)
             and entry.get("type") == "persona_trait"
-            and entry.get("category") not in _LEGACY_COGNITIVE_PERSONA_CATEGORIES
+            and entry.get("category") not in LEGACY_COGNITIVE_TRAIT_CATEGORIES
             and "trait_id" in entry
         }
         return set(current_target_ids), frozen

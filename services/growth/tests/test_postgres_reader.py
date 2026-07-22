@@ -90,6 +90,43 @@ async def test_postgres_reader_matches_sqlite_semantics_and_respects_force_rls()
                        VALUES ($1, $2, $3, 'friend', 'confirmed', 'growth-ineligible', $4)""",
                     uuid.uuid4(), account_a, person_id, datetime(2026, 7, 22, tzinfo=UTC),
                 )
+                eligible_person_id = uuid.uuid4()
+                await connection.execute(
+                    """INSERT INTO person_entities (person_id, account_id, canonical_key, display_name, relationship_to_owner, status, source_event_id, created_at)
+                       VALUES ($1, $2, 'friend:阿青', '阿青', 'friend', 'confirmed', 'growth-source', $3)""",
+                    eligible_person_id,
+                    account_a,
+                    datetime(2026, 7, 22, tzinfo=UTC),
+                )
+                await connection.execute(
+                    """INSERT INTO relationships (relationship_id, account_id, person_id, relationship_type, status, source_event_id, valid_at)
+                       VALUES ($1, $2, $3, 'friend', 'confirmed', 'growth-source', $4)""",
+                    uuid.uuid4(),
+                    account_a,
+                    eligible_person_id,
+                    datetime(2026, 7, 22, tzinfo=UTC),
+                )
+                legacy_trait_id = uuid.uuid4()
+                await connection.execute(
+                    """INSERT INTO persona_traits (
+                           trait_id, account_id, category, normalized_key,
+                           description, context, counterexample, confidence,
+                           status, observation_count
+                       ) VALUES ($1, $2, 'decision_habit', 'legacy-decision',
+                                 '旧 Persona 决策标签', 'conversation',
+                                 '也会例外', .9, 'confirmed', 3)""",
+                    legacy_trait_id,
+                    account_a,
+                )
+                await connection.execute(
+                    """INSERT INTO persona_evidence (
+                           trait_id, account_id, source_event_id, scene,
+                           weight, occurred_at
+                       ) VALUES ($1, $2, 'growth-source', 'conversation', 1.0, $3)""",
+                    legacy_trait_id,
+                    account_a,
+                    datetime(2026, 7, 22, tzinfo=UTC),
+                )
                 await connection.execute(
                     """INSERT INTO life_episodes (episode_id, account_id, title, category, status, event_start, source_event_id)
                        VALUES ($1, $2, '一段经历', 'life_story', 'confirmed', $3, 'growth-ineligible')""",
@@ -133,8 +170,17 @@ async def test_postgres_reader_matches_sqlite_semantics_and_respects_force_rls()
             if item["key"] == "relationship_models"
         )
         assert relationship_a["rejected_reason_counts"] == {
-            "owner_projection_ineligible": 1
+            "owner_projection_ineligible": 1,
+            "relationship_profile_pending_owner_approval": 1,
         }
+        assert relationship_a["adopted_sources"] == []
+        decision_a = next(
+            item for item in overview_a["dimensions"] if item["key"] == "decision_cases"
+        )
+        assert decision_a["rejected_reason_counts"] == {
+            "legacy_persona_candidate": 1
+        }
+        assert decision_a["adopted_sources"] == []
         assert life_b["status"] == "empty"
 
         await archive.record(

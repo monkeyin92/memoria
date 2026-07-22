@@ -24,6 +24,8 @@ async def test_reader_deduplicates_sources_and_counts_ineligible_confirmed_rows(
     archive.initialize()
     catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
     catalog.initialize()
+    registry = DigitalSelfRegistry.sqlite(path)
+    registry.initialize()
     for event_id, eligible in (
         ("shared-claim-source", True),
         ("ineligible-projection-source", False),
@@ -99,8 +101,48 @@ async def test_reader_deduplicates_sources_and_counts_ineligible_confirmed_rows(
             """,
             (account_id, now.isoformat()),
         )
+        connection.execute(
+            """
+            INSERT INTO person_entities (
+                person_id, account_id, canonical_key, display_name,
+                relationship_to_owner, status, source_event_id, created_at
+            ) VALUES ('person-eligible', ?, 'friend:阿青', '阿青', 'friend',
+                      'confirmed', 'shared-claim-source', ?)
+            """,
+            (account_id, now.isoformat()),
+        )
+        connection.execute(
+            """
+            INSERT INTO relationships (
+                relationship_id, account_id, person_id, relationship_type,
+                status, source_event_id, valid_at
+            ) VALUES ('relationship-eligible', ?, 'person-eligible',
+                      'friend', 'confirmed', 'shared-claim-source', ?)
+            """,
+            (account_id, now.isoformat()),
+        )
+        connection.execute(
+            """
+            INSERT INTO persona_traits (
+                trait_id, account_id, category, normalized_key, description,
+                context, counterexample, confidence, status, observation_count,
+                created_at, updated_at
+            ) VALUES ('legacy-decision-trait', ?, 'decision_habit',
+                      'legacy-decision', '旧 Persona 决策标签',
+                      'conversation', '也会例外', .9, 'confirmed', 3, ?, ?)
+            """,
+            (account_id, now.isoformat(), now.isoformat()),
+        )
+        connection.execute(
+            """
+            INSERT INTO persona_evidence (
+                account_id, trait_id, source_event_id, scene, weight, occurred_at
+            ) VALUES (?, 'legacy-decision-trait', 'shared-claim-source',
+                      'conversation', 1.0, ?)
+            """,
+            (account_id, now.isoformat()),
+        )
 
-    registry = DigitalSelfRegistry.sqlite(path)
     draft = await registry.build(account_id=account_id)
     testing = await registry.begin_testing(
         account_id=account_id,
@@ -125,8 +167,14 @@ async def test_reader_deduplicates_sources_and_counts_ineligible_confirmed_rows(
         "owner_projection_ineligible": 1
     }
     assert dimensions["relationship_models"]["rejected_reason_counts"] == {
-        "owner_projection_ineligible": 1
+        "owner_projection_ineligible": 1,
+        "relationship_profile_pending_owner_approval": 1,
     }
+    assert dimensions["relationship_models"]["adopted_sources"] == []
+    assert dimensions["decision_cases"]["rejected_reason_counts"] == {
+        "legacy_persona_candidate": 1
+    }
+    assert dimensions["decision_cases"]["adopted_sources"] == []
 
     await archive.record(
         EvidenceEvent(
