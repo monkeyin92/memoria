@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -60,6 +61,7 @@ class CreateSessionRequest(BaseModel):
     digital_self_version_id: str | None = Field(default=None, min_length=1, max_length=128)
     relationship_profile_id: str | None = Field(default=None, min_length=1, max_length=128)
     legacy_grant_id: str | None = Field(default=None, min_length=1, max_length=128)
+    learning_task_id: str | None = Field(default=None, min_length=1, max_length=128)
     locale: str = "zh-CN"
     client: ClientInfo = Field(default_factory=ClientInfo)
 
@@ -87,6 +89,7 @@ class CreateSessionResponse(BaseModel):
     voice_backend: Literal["cascade"] = "cascade"
     config: dict[str, Any]
     interaction: dict[str, Any]
+    learning_task_id: str | None = None
 
 
 class CreateOmniSessionResponse(BaseModel):
@@ -95,6 +98,7 @@ class CreateOmniSessionResponse(BaseModel):
     sdp_exchange_path: str
     config: dict[str, Any]
     interaction: dict[str, Any]
+    learning_task_id: str | None = None
 
 
 class StopResponseBody(BaseModel):
@@ -220,11 +224,43 @@ async def create_session(
     if companion is None:  # Stored profile data must not silently broaden the policy.
         raise HTTPException(status_code=409, detail="companion profile is unavailable")
     frozen = ModePolicy.freeze_companion(companion)
-    if body.voice_backend in OMNI_BACKENDS:
-        if not settings.dashscope_api_key.get_secret_value():
-            raise HTTPException(status_code=503, detail="Qwen3.5-Omni 服务端尚未配置")
-        model = OMNI_MODELS[body.voice_backend]
-        _omni_signaling_url(settings, model=model)
+
+    async def persist_voice_session() -> str | None:
+        learning_task_id: str | None = None
+        lock = cast(asyncio.Lock, request.app.state.growth_task_lock)
+        if body.learning_task_id is not None:
+            async with lock:
+                task = await request.app.state.growth_reader.task(
+                    account_id=user_id,
+                    task_id=body.learning_task_id,
+                )
+                if (
+                    body.interaction_mode != "companion"
+                    or task is None
+                    or task.kind != "natural_chat"
+                    or task.status != "active"
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "learning_task_not_active"},
+                    )
+                learning_task_id = task.task_id
+                store.add_voice_session(
+                    session_id=session_id,
+                    user_id=user_id,
+                    room_name=room_name,
+                    voice_backend=body.voice_backend,
+                    created_at=created_at,
+                    interaction_mode=frozen.interaction_mode,
+                    mode_policy_version=frozen.mode_policy_version,
+                    digital_self_version_id=frozen.digital_self_version_id,
+                    relationship_profile_id=frozen.relationship_profile_id,
+                    legacy_grant_id=frozen.legacy_grant_id,
+                    companion_style_id=frozen.companion_style_id,
+                    companion_style_version=frozen.companion_style_version,
+                    learning_task_id=learning_task_id,
+                )
+                return learning_task_id
         store.add_voice_session(
             session_id=session_id,
             user_id=user_id,
@@ -238,7 +274,16 @@ async def create_session(
             legacy_grant_id=frozen.legacy_grant_id,
             companion_style_id=frozen.companion_style_id,
             companion_style_version=frozen.companion_style_version,
+            learning_task_id=None,
         )
+        return None
+
+    if body.voice_backend in OMNI_BACKENDS:
+        if not settings.dashscope_api_key.get_secret_value():
+            raise HTTPException(status_code=503, detail="Qwen3.5-Omni 服务端尚未配置")
+        model = OMNI_MODELS[body.voice_backend]
+        _omni_signaling_url(settings, model=model)
+        learning_task_id = await persist_voice_session()
         turn_detection = _omni_turn_detection(settings)
         ab_profile = (
             f"{body.voice_backend}:silence={turn_detection['silence_duration_ms']}"
@@ -285,6 +330,7 @@ async def create_session(
                 },
             },
             interaction=_frozen_values(frozen),
+            learning_task_id=learning_task_id,
         )
 
     token, ttl = mint_participant_token(
@@ -293,20 +339,7 @@ async def create_session(
         identity=identity,
         agent_name=settings.livekit_agent_name,
     )
-    store.add_voice_session(
-        session_id=session_id,
-        user_id=user_id,
-        room_name=room_name,
-        voice_backend=body.voice_backend,
-        created_at=created_at,
-        interaction_mode=frozen.interaction_mode,
-        mode_policy_version=frozen.mode_policy_version,
-        digital_self_version_id=frozen.digital_self_version_id,
-        relationship_profile_id=frozen.relationship_profile_id,
-        legacy_grant_id=frozen.legacy_grant_id,
-        companion_style_id=frozen.companion_style_id,
-        companion_style_version=frozen.companion_style_version,
-    )
+    learning_task_id = await persist_voice_session()
     return CreateSessionResponse(
         session_id=session_id,
         livekit_url=settings.livekit_url,
@@ -319,6 +352,7 @@ async def create_session(
             "allow_text_fallback": True,
         },
         interaction=_frozen_values(frozen),
+        learning_task_id=learning_task_id,
     )
 
 

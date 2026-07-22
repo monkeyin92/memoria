@@ -70,6 +70,13 @@ SESSION_BOUND_EVENT_TYPES = frozenset(
         "assistant.playout_stopped",
     }
 )
+SERVER_OWNED_EVENT_TYPES = frozenset(
+    {
+        "owner.action_recorded",
+        "learning.task_created",
+        "learning.task_transitioned",
+    }
+)
 SERVER_INTERACTION_PAYLOAD_KEYS = frozenset(
     {
         "interaction",
@@ -78,6 +85,9 @@ SERVER_INTERACTION_PAYLOAD_KEYS = frozenset(
         "simulated_output",
         "history_eligible",
         "owner_projection_eligible",
+        "prompt_kind",
+        "learning_task_id",
+        "learning_task_kind",
     }
 )
 
@@ -464,6 +474,11 @@ async def append_event(
                 "event_type": body.event_type,
             },
         )
+    if body.event_type in SERVER_OWNED_EVENT_TYPES:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "server_owned_event_required", "event_type": body.event_type},
+        )
     event = EvidenceEvent(**body.model_dump())
     try:
         async with _account_write(request, body.account_id):
@@ -564,6 +579,9 @@ async def append_session_event(
             parent_eligibility[1] if parent_eligibility is not None else None
         ),
     )
+    prompt_kind = payload.get("prompt_kind")
+    if prompt_kind not in {"spontaneous", "open", "structured", "leading"}:
+        prompt_kind = "spontaneous"
     for key in SERVER_INTERACTION_PAYLOAD_KEYS:
         payload.pop(key, None)
     payload.update(
@@ -576,15 +594,41 @@ async def append_session_event(
                 "owner_projection_eligible"
             ],
             "interaction": trusted_interaction,
+            "prompt_kind": prompt_kind,
         }
     )
-    values["payload"] = payload
-    event = EvidenceEvent(**values)
-    try:
-        async with _account_write(request, event.account_id):
-            result = await archive.record(event)
-    except IdempotencyConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    learning_task_id = session.get("learning_task_id")
+    async def record_event() -> tuple[EvidenceEvent, Any]:
+        values["payload"] = payload
+        event = EvidenceEvent(**values)
+        try:
+            async with _account_write(request, event.account_id):
+                result = await archive.record(event)
+        except IdempotencyConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return event, result
+
+    if isinstance(learning_task_id, str) and learning_task_id:
+        lock = cast(asyncio.Lock, request.app.state.growth_task_lock)
+        async with lock:
+            task = await request.app.state.growth_reader.task(
+                account_id=account_id,
+                task_id=learning_task_id,
+            )
+            if (
+                task is not None
+                and task.kind == "natural_chat"
+                and task.status == "active"
+            ):
+                payload.update(
+                    {
+                        "learning_task_id": learning_task_id,
+                        "learning_task_kind": "natural_chat",
+                    }
+                )
+            event, result = await record_event()
+    else:
+        event, result = await record_event()
     _wake_compiler(request)
     if trusted_interaction["capabilities"]["learning"] or (
         body.speaker_class == "uncertain"

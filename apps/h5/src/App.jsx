@@ -27,6 +27,7 @@ import {
   bootstrapIdentity,
   cachePendingMessage,
   flushPendingMessages,
+  getGrowthTasks,
   getMemoryDays,
   getProfile,
   loginAccount,
@@ -35,6 +36,7 @@ import {
   registerAccount,
   saveMessage,
   summarizeDay,
+  transitionGrowthTask,
   updateProfile,
 } from "./api.js";
 import { AuthScreen } from "./components/AuthScreen.jsx";
@@ -70,6 +72,9 @@ const defaultProfile = {
 
 const today = () => localDateKey();
 const profileStorageKey = (userId) => `memoria:profile:${userId}`;
+const growthEventId = () =>
+  globalThis.crypto?.randomUUID?.()
+  || `growth-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const DigitalSelfPanel = lazy(() =>
   import("./components/DigitalSelfPanel.jsx").then((module) => ({
     default: module.DigitalSelfPanel,
@@ -142,7 +147,9 @@ export function App() {
   const [summaryRunning, setSummaryRunning] = useState(false);
   const [preferenceSaving, setPreferenceSaving] = useState(false);
   const [preferenceError, setPreferenceError] = useState("");
+  const [activeGrowthTask, setActiveGrowthTask] = useState(null);
   const activeUserIdRef = useRef("");
+  const growthCompletionIdsRef = useRef({});
   const userId = identity?.user_id || "";
 
   const setCurrentIdentity = useCallback((nextIdentity) => {
@@ -196,6 +203,7 @@ export function App() {
     onFinalTranscript: handleFinalTranscript,
     voiceReplyEnabled: profile.voice_reply,
     voiceBackend: VOICE_BACKEND,
+    learningTaskId: activeGrowthTask?.task_id || null,
   });
 
   const loadMemories = useCallback(async () => {
@@ -303,7 +311,48 @@ export function App() {
   };
 
   const finishConversation = async () => {
+    const endingSession = voice.session;
     await voice.end();
+    if (
+      activeGrowthTask?.kind === "natural_chat" &&
+      activeGrowthTask.status === "active" &&
+      endingSession?.learning_task_id === activeGrowthTask.task_id
+    ) {
+      const completionId = (
+        growthCompletionIdsRef.current[activeGrowthTask.task_id]
+        ||= growthEventId()
+      );
+      try {
+        const completed = await transitionGrowthTask(
+          activeGrowthTask.task_id,
+          completionId,
+          "completed",
+          activeGrowthTask.revision,
+        );
+        setActiveGrowthTask(null);
+        delete growthCompletionIdsRef.current[completed.task_id];
+      } catch {
+        try {
+          const tasks = await getGrowthTasks();
+          const current = (tasks?.items || []).find(
+            (task) => task.task_id === activeGrowthTask.task_id,
+          );
+          if (current?.status === "active") {
+            await transitionGrowthTask(
+              current.task_id,
+              completionId,
+              "completed",
+              current.revision,
+            );
+          }
+        } catch {
+          // The server remains authoritative; the task can be resumed from its map.
+        } finally {
+          setActiveGrowthTask(null);
+          delete growthCompletionIdsRef.current[activeGrowthTask.task_id];
+        }
+      }
+    }
     if (profile.auto_summary) {
       try {
         await summarizeDay(userId, today());
@@ -376,6 +425,8 @@ export function App() {
     setSummaryRunning(false);
     setPreferenceSaving(false);
     setPreferenceError("");
+    setActiveGrowthTask(null);
+    growthCompletionIdsRef.current = {};
     setEditingProfile(false);
     setDigitalSelfOpen(false);
     setCompanionSwitchOpen(false);
@@ -611,6 +662,14 @@ export function App() {
           >
             <DigitalSelfPanel
               onBack={() => setDigitalSelfOpen(false)}
+              voiceSessionActive={Boolean(voice.session)}
+              onStartChat={(task) => {
+                if (task?.kind === "natural_chat" && task.status === "active") {
+                  setActiveGrowthTask(task);
+                }
+                setDigitalSelfOpen(false);
+                setActiveTab("home");
+              }}
               onAccountDeleted={handleAccountDeleted}
               onOpenArchive={() => {
                 setDigitalSelfOpen(false);

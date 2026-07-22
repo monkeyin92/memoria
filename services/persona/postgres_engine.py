@@ -13,6 +13,7 @@ from typing import Any, cast
 import asyncpg
 
 from services.archive.domain import EvidenceEvent, EvidenceNotFoundError
+from services.common.evidence_policy import contribution_for, prompt_weight_for
 from services.persona.domain import (
     ObservationResult,
     PersonaCapsule,
@@ -173,6 +174,24 @@ class PostgresPersonaEngine:
                 return ObservationResult(False, "empty_evidence")
             if payload.get("persona_eligible") is not True:
                 return ObservationResult(False, "persona_ineligible_turn")
+            if speaker_class == "owner":
+                contribution = contribution_for(
+                    EvidenceEvent(
+                        event_id=str(row["event_id"]),
+                        account_id=evidence.account_id,
+                        event_type=str(row["event_type"]),
+                        occurred_at=cast(datetime, row["occurred_at"]),
+                        speaker_class="owner",
+                        source=str(row["source"]),
+                        payload=payload,
+                    )
+                )
+                if not contribution.accepted:
+                    return ObservationResult(False, contribution.reason)
+                prompt_weight = contribution.weight
+                prompt_factor = contribution.factor
+            else:
+                prompt_weight, prompt_factor = prompt_weight_for(payload)
             uncertain_provenance = (
                 trusted_uncertain_profile(payload) if speaker_class == "uncertain" else None
             )
@@ -189,10 +208,13 @@ class PostgresPersonaEngine:
                 evidence,
                 speech_duration_ms=None,
                 pause_ratio=None,
-                quality_score=uncertain_provenance[1],
+                quality_score=uncertain_provenance[1] * prompt_factor,
             )
         else:
-            extraction_evidence = evidence
+            extraction_evidence = replace(
+                evidence,
+                quality_score=(evidence.quality_score or 1.0) * prompt_factor,
+            )
         candidates = await self._extractor.extract(text, extraction_evidence)
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, evidence.account_id)
@@ -204,7 +226,7 @@ class PostgresPersonaEngine:
                 return duplicate
             trait_ids: list[str] = []
             version_changed = False
-            if speaker_class == "owner":
+            if speaker_class == "owner" and prompt_weight == "strong":
                 tic_counts = {tic: text.count(tic) for tic in TICS if tic in text}
                 await self._update_style_stats(connection, evidence, text, tic_counts)
             for candidate in candidates:
@@ -280,8 +302,11 @@ class PostgresPersonaEngine:
                         """
                         SELECT
                             COUNT(*) AS total_count,
-                            COUNT(*) FILTER (WHERE ae.speaker_class = 'owner') AS owner_count,
-                            COUNT(*) FILTER (
+                            SUM(pe.weight) AS total_weight,
+                            SUM(pe.weight) FILTER (
+                                WHERE ae.speaker_class = 'owner'
+                            ) AS owner_weight,
+                            SUM(pe.weight) FILTER (
                                 WHERE ae.speaker_class = 'uncertain'
                                   AND ae.payload @> '{
                                       "persona_eligible": true,
@@ -289,7 +314,7 @@ class PostgresPersonaEngine:
                                   }'::jsonb
                                   AND COALESCE(ae.payload->>'speaker_profile_id', '') = $2
                             )
-                                AS uncertain_count,
+                                AS uncertain_weight,
                             COUNT(DISTINCT ae.session_id)
                                 FILTER (
                                     WHERE ae.speaker_class = 'uncertain'
@@ -323,8 +348,9 @@ class PostgresPersonaEngine:
                     )
                     assert counts is not None
                     count = int(counts["total_count"])
-                    owner_count = int(counts["owner_count"])
-                    uncertain_count = int(counts["uncertain_count"])
+                    total_weight = float(counts["total_weight"] or 0)
+                    owner_weight = float(counts["owner_weight"] or 0)
+                    uncertain_weight = float(counts["uncertain_weight"] or 0)
                     uncertain_session_count = int(counts["uncertain_session_count"])
                     uncertain_profile_count = int(counts["uncertain_profile_count"])
                     current = await connection.fetchrow(
@@ -336,8 +362,8 @@ class PostgresPersonaEngine:
                         if should_auto_promote(
                             category=candidate.category,
                             status=status,
-                            owner_count=owner_count,
-                            uncertain_count=uncertain_count,
+                            owner_weight=owner_weight,
+                            uncertain_weight=uncertain_weight,
                             uncertain_session_count=uncertain_session_count,
                             uncertain_profile_count=uncertain_profile_count,
                         ):
@@ -355,7 +381,7 @@ class PostgresPersonaEngine:
                         WHERE trait_id = $4
                         """,
                         count,
-                        min(0.95, 0.45 + 0.13 * count),
+                        min(0.95, 0.45 + 0.13 * total_weight),
                         status,
                         trait_uuid,
                     )
@@ -410,7 +436,7 @@ class PostgresPersonaEngine:
             """
             SELECT
                 pt.trait_id, pt.status, pt.review_event_id, pt.updated_at,
-                ae.speaker_class, ae.session_id, ae.payload
+                ae.speaker_class, ae.session_id, ae.payload, pe.weight
             FROM persona_traits AS pt
             LEFT JOIN persona_evidence AS pe
               ON pe.trait_id = pt.trait_id
@@ -443,6 +469,7 @@ class PostgresPersonaEngine:
                     ),
                     session_id=(str(row["session_id"]) if row["session_id"] is not None else None),
                     payload=payload or {},
+                    weight=float(row["weight"] or 0),
                 )
             )
         target = exclusive_auto_promote_target(
@@ -646,7 +673,7 @@ class PostgresPersonaEngine:
         for row in ordered:
             evidence = await connection.fetch(
                 """
-                SELECT pe.source_event_id, pe.scene, ae.speaker_class
+                SELECT pe.source_event_id, pe.scene, pe.weight, ae.speaker_class
                 FROM persona_evidence AS pe
                 JOIN archive_evidence_events AS ae
                   ON ae.event_id = pe.source_event_id
@@ -658,6 +685,7 @@ class PostgresPersonaEngine:
             )
             owner_evidence = [item for item in evidence if item["speaker_class"] == "owner"]
             selected_evidence = owner_evidence or evidence
+            selected_weight = sum(float(item["weight"]) for item in selected_evidence)
             snapshot.append(
                 {
                     "trait_id": str(row["trait_id"]),
@@ -670,7 +698,7 @@ class PostgresPersonaEngine:
                     ),
                     "counterexample": str(row["counterexample"]),
                     "confidence": (
-                        min(0.95, 0.45 + 0.13 * len(selected_evidence))
+                        min(0.95, 0.45 + 0.13 * selected_weight)
                         if owner_evidence
                         else float(row["confidence"])
                     ),

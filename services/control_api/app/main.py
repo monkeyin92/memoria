@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from asyncio import to_thread
+from asyncio import Lock, to_thread
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -38,6 +38,7 @@ from services.control_api.app.database import MemoryStore
 from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import auth as auth_routes
 from services.control_api.app.routes import digital_self as digital_self_routes
+from services.control_api.app.routes import growth as growth_routes
 from services.control_api.app.routes import interaction as interaction_routes
 from services.control_api.app.routes import memory as memory_routes
 from services.control_api.app.routes import persona as persona_routes
@@ -59,6 +60,8 @@ from services.governance.account_data import (
     PostgresAccountRepository,
     SqliteAccountRepository,
 )
+from services.growth.postgres_reader import PostgresGrowthReader
+from services.growth.reader import GrowthReader
 from services.persona.domain import PersonaEnginePort
 from services.persona.engine import PersonaEngine
 from services.persona.postgres_engine import PostgresPersonaEngine
@@ -360,6 +363,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     postgres_catalog: PostgresMemoryCatalog | None = None
     postgres_persona: PostgresPersonaEngine | None = None
     postgres_digital_self: PostgresDigitalSelfRegistry | None = None
+    postgres_growth: PostgresGrowthReader | None = None
     archive: LifeArchivePort
     memory_catalog: MemoryCatalogPort
     persona_engine: PersonaEnginePort
@@ -418,6 +422,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await to_thread(sqlite_digital_self.initialize)
         digital_self_registry = sqlite_digital_self
     app.state.digital_self_registry = digital_self_registry
+    # S4 is intentionally read-only over the same ledger; no coverage cache exists.
+    if archive_url:
+        postgres_growth = PostgresGrowthReader(archive_url)
+        await postgres_growth.initialize()
+        app.state.growth_reader = postgres_growth
+    else:
+        app.state.growth_reader = GrowthReader.sqlite(settings.memoria_db_path)
     voice_profile_manager, voice_sample_signer, voice_object_store = _voice_profile_services(
         settings
     )
@@ -474,6 +485,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await postgres_persona.close()
         if postgres_digital_self is not None:
             await postgres_digital_self.close()
+        if postgres_growth is not None:
+            await postgres_growth.close()
         if postgres_catalog is not None:
             await postgres_catalog.close()
         if postgres_archive is not None:
@@ -498,6 +511,9 @@ def create_app() -> FastAPI:
     # Eager defaults so tests without lifespan still work.
     app.state.settings = settings
     app.state.account_operations = AccountOperationGate()
+    # Single-process CAS fence. A distributed deployment must replace this
+    # with an account/task advisory lock or revision projection.
+    app.state.growth_task_lock = Lock()
     app.state.realtime_connections = RealtimeConnectionRegistry()
     # The store initializes lazily for ASGI test clients that do not run lifespan.
     app.state.memory_store = MemoryStore(settings.memoria_db_path)
@@ -515,6 +531,7 @@ def create_app() -> FastAPI:
         extractor=_persona_extractor(settings),
     )
     app.state.digital_self_registry = DigitalSelfRegistry.sqlite(settings.memoria_db_path)
+    app.state.growth_reader = GrowthReader.sqlite(settings.memoria_db_path)
     app.state.speaker_authority = _speaker_authority(settings)
     voice_profile_manager, voice_sample_signer, voice_object_store = _voice_profile_services(
         settings
@@ -548,6 +565,7 @@ def create_app() -> FastAPI:
     app.include_router(memory_routes.router)
     app.include_router(persona_routes.router)
     app.include_router(digital_self_routes.router)
+    app.include_router(growth_routes.router)
     app.include_router(voice_routes.router)
     app.include_router(readiness_routes.router)
 

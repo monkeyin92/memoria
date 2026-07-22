@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -30,6 +31,8 @@ async def _record(
     session_id: str | None = "persona-session",
     profile_id: str = "persona-shadow-profile",
     persona_eligible: bool | None = True,
+    owner_projection_eligible: bool | None = True,
+    prompt_kind: str = "spontaneous",
 ) -> None:
     await archive.record(
         EvidenceEvent(
@@ -48,6 +51,13 @@ async def _record(
                     if persona_eligible is not None
                     else {}
                 ),
+                **(
+                    {"owner_projection_eligible": owner_projection_eligible}
+                    if owner_projection_eligible is not None
+                    else {}
+                ),
+                "interaction_mode": "companion",
+                "prompt_kind": prompt_kind,
                 **({"actual_heard": True} if speaker_class == "assistant" else {}),
                 **(
                     {
@@ -175,6 +185,95 @@ async def test_persona_learning_fails_closed_without_explicit_turn_eligibility(
     assert (
         await engine.capsule(PersonaRequest(account_id="persona-account", speaker_class="owner"))
     ).entries == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("prompt_kind", "expected_status"),
+    (
+        pytest.param("leading", "candidate", id="leading-remains-candidate"),
+        pytest.param("spontaneous", "confirmed", id="spontaneous-can-confirm"),
+    ),
+)
+async def test_prompt_kind_weights_owner_persona_promotion(
+    tmp_path: Path,
+    prompt_kind: str,
+    expected_status: str,
+) -> None:
+    path = tmp_path / f"prompt-weight-{prompt_kind}.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    engine = PersonaEngine.sqlite(path)
+    await engine.grant_consent(
+        account_id="persona-account",
+        policy_version="persona-learning-v1",
+    )
+
+    for index in range(3):
+        event_id = f"{prompt_kind}-{index}"
+        await _record(
+            archive,
+            event_id=event_id,
+            text="我觉得先确认事实，再做决定。",
+            minute=index,
+            prompt_kind=prompt_kind,
+        )
+        await engine.observe(
+            PersonaEvidence(
+                account_id="persona-account",
+                source_event_id=event_id,
+                learning_allowed=True,
+            )
+        )
+
+    verbal_tic = next(
+        trait
+        for trait in await engine.traits(account_id="persona-account")
+        if trait.category == "verbal_tic"
+    )
+    assert verbal_tic.status == expected_status
+
+
+@pytest.mark.asyncio
+async def test_guided_prompts_do_not_pollute_spontaneous_style_stats(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "prompt-style-stats.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    engine = PersonaEngine.sqlite(path)
+    await engine.grant_consent(
+        account_id="persona-account",
+        policy_version="persona-learning-v1",
+    )
+
+    for index, prompt_kind in enumerate(("leading", "open", "spontaneous")):
+        event_id = f"style-stat-{prompt_kind}"
+        await _record(
+            archive,
+            event_id=event_id,
+            text="我觉得这件事要慢慢说。",
+            minute=index,
+            prompt_kind=prompt_kind,
+        )
+        await engine.observe(
+            PersonaEvidence(
+                account_id="persona-account",
+                source_event_id=event_id,
+                learning_allowed=True,
+            )
+        )
+
+    with sqlite3.connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT utterance_count, char_count
+            FROM speech_style_stats
+            WHERE account_id = ? AND scene = ?
+            """,
+            ("persona-account", "conversation"),
+        ).fetchone()
+    assert row is not None
+    assert row[0] == 1
+    assert row[1] == len("我觉得这件事要慢慢说。")
 
 
 @pytest.mark.asyncio

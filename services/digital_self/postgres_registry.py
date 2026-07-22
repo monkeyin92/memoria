@@ -12,6 +12,8 @@ from typing import cast
 
 import asyncpg
 
+from services.archive.domain import EvidenceEvent, SpeakerClass
+from services.common.evidence_policy import confirmed_projection_contribution_for
 from services.digital_self.compiler import (
     DEFAULT_COMPILER_VERSION,
     DEFAULT_POLICY_VERSION,
@@ -316,9 +318,13 @@ class PostgresDigitalSelfRegistry:
         connection: asyncpg.Connection,
         account_id: str,
     ) -> tuple[builtins.list[ManifestEntry], str | None]:
+        negative_targets = await self._negative_targets(connection, account_id)
         memory_rows = await connection.fetch(
             """
-            SELECT claim.*
+            SELECT claim.*, source.event_type AS source_type,
+                   source.speaker_class AS source_speaker_class,
+                   source.source AS source_origin, source.occurred_at AS source_occurred_at,
+                   source.payload AS source_payload
             FROM memory_claims AS claim
             JOIN archive_evidence_events AS source
               ON source.event_id = claim.source_event_id
@@ -326,12 +332,30 @@ class PostgresDigitalSelfRegistry:
             WHERE claim.account_id = $1
               AND claim.status = 'confirmed'
               AND source.speaker_class = 'owner'
-              AND source.event_type = 'speech.utterance_finalized'
             ORDER BY claim.claim_id
             """,
             account_id,
         )
-        entries: builtins.list[ManifestEntry] = [memory_entry(dict(row)) for row in memory_rows]
+        entries: builtins.list[ManifestEntry] = []
+        for row in memory_rows:
+            source_event_id = str(row["source_event_id"])
+            if (
+                ("memory_claim", str(row["claim_id"])) in negative_targets
+                or ("source_event", source_event_id) in negative_targets
+            ):
+                continue
+            if confirmed_projection_contribution_for(
+                EvidenceEvent(
+                    event_id=source_event_id,
+                    account_id=account_id,
+                    event_type=str(row["source_type"]),
+                    occurred_at=cast(datetime, row["source_occurred_at"]),
+                    speaker_class=cast(SpeakerClass, row["source_speaker_class"]),
+                    source=str(row["source_origin"]),
+                    payload=_payload(row["source_payload"]),
+                )
+            ).accepted:
+                entries.append(memory_entry(dict(row)))
         persona_row = await connection.fetchrow(
             """
             SELECT version_id, snapshot
@@ -386,22 +410,59 @@ class PostgresDigitalSelfRegistry:
             entry = persona_entry(item, persona_version_id=persona_version_id)
             if not entry.source_event_ids:
                 continue
+            if (
+                ("persona_trait", entry.trait_id) in negative_targets
+                or any(
+                    ("source_event", source_event_id) in negative_targets
+                    for source_event_id in entry.source_event_ids
+                )
+            ):
+                continue
             evidence = await connection.fetch(
                 """
-                SELECT event_id, speaker_class, event_type FROM archive_evidence_events
+                SELECT event_id, speaker_class, event_type, source, occurred_at, payload
+                FROM archive_evidence_events
                 WHERE account_id = $1 AND event_id = ANY($2::text[])
                 """,
                 account_id,
                 list(entry.source_event_ids),
             )
             if len(evidence) != len(entry.source_event_ids) or any(
-                row["speaker_class"] != "owner"
-                or row["event_type"] != "speech.utterance_finalized"
-                for row in evidence
+                not confirmed_projection_contribution_for(
+                    EvidenceEvent(
+                        event_id=str(row["event_id"]), account_id=account_id,
+                        event_type=str(row["event_type"]), occurred_at=cast(datetime, row["occurred_at"]),
+                        speaker_class=cast(SpeakerClass, row["speaker_class"]), source=str(row["source"]),
+                        payload=_payload(row["payload"]),
+                    )
+                ).accepted for row in evidence
             ):
                 continue
             entries.append(entry)
         return entries, persona_version_id
+
+    @staticmethod
+    async def _negative_targets(
+        connection: asyncpg.Connection,
+        account_id: str,
+    ) -> set[tuple[str, str]]:
+        rows = await connection.fetch(
+            """
+            SELECT payload FROM archive_evidence_events
+            WHERE account_id = $1 AND event_type = 'owner.action_recorded'
+            """,
+            account_id,
+        )
+        targets: set[tuple[str, str]] = set()
+        for row in rows:
+            payload = _payload(row["payload"])
+            if payload.get("action_type") not in {"not_me", "would_not_say"}:
+                continue
+            target_kind = str(payload.get("target_kind") or "")
+            target_id = str(payload.get("target_id") or "")
+            if target_kind and target_id:
+                targets.add((target_kind, target_id))
+        return targets
 
     async def _parent_row(
         self,
@@ -582,3 +643,12 @@ class PostgresDigitalSelfRegistry:
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
+
+
+def _payload(value: object) -> dict[str, object]:
+    if isinstance(value, str):
+        decoded = json.loads(value)
+        if not isinstance(decoded, dict):
+            raise SourceSnapshotConflictError("evidence payload is invalid")
+        return cast(dict[str, object], decoded)
+    return cast(dict[str, object], value)

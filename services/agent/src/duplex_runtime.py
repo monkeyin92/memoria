@@ -54,6 +54,7 @@ from services.agent.src.orchestration.utterance_router import (
     route_target_speaker,
     route_utterance,
 )
+from services.common.evidence_policy import classify_prompt_kind
 from services.common.redaction import redact_pii
 from services.speaker.domain import (
     SpeakerDecision,
@@ -187,6 +188,7 @@ class DuplexRuntime:
     _was_speaking: bool = False
     _pending_assistant_text: str = ""
     _played_assistant_text: str = ""
+    _next_user_prompt_kind: str = "spontaneous"
     _fresh_user_speech: bool = False
     _accepted_user_finals: list[str] = field(default_factory=list)
     _user_transcript_contaminated: bool = False
@@ -1250,13 +1252,16 @@ class DuplexRuntime:
             payload: dict[str, Any] = {
                 "text": archive_text,
                 "persona_eligible": self._persona_evidence_eligible,
+                "prompt_kind": self._next_user_prompt_kind,
             }
+            self._next_user_prompt_kind = "spontaneous"
             payload.update(self._speaker_persona_provenance())
             payload.update(self._owner_acoustic_evidence())
         elif speaker == "assistant" and heard is True:
             event_type = "assistant.playout_stopped"
             speaker_class = "assistant"
             payload = {"text": archive_text, "actual_heard": True}
+            self._next_user_prompt_kind = classify_prompt_kind(archive_text)
         else:
             return
         payload.update(

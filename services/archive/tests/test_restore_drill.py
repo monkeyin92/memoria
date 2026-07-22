@@ -117,7 +117,12 @@ async def test_postgres_restore_drill_rebuilds_reviewed_projection_and_rls(
                     occurred_at=datetime(2026, 7, 19, 12, 0, tzinfo=UTC),
                     speaker_class="owner",
                     source="restore-test",
-                    payload={"text": text},
+                    payload={
+                        "text": text,
+                        "interaction_mode": "companion",
+                        "prompt_kind": "spontaneous",
+                        "owner_projection_eligible": True,
+                    },
                 )
             )
         await catalog.compile_pending(limit=100)

@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS voice_sessions (
     legacy_grant_id TEXT,
     companion_style_id TEXT,
     companion_style_version TEXT,
+    learning_task_id TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES profiles(user_id) ON DELETE CASCADE
 );
@@ -291,6 +292,7 @@ class MemoryStore:
                     "legacy_grant_id": "TEXT",
                     "companion_style_id": "TEXT",
                     "companion_style_version": "TEXT",
+                    "learning_task_id": "TEXT",
                 }
                 for name, definition in frozen_columns.items():
                     if name not in voice_session_columns:
@@ -324,6 +326,7 @@ class MemoryStore:
                             legacy_grant_id TEXT,
                             companion_style_id TEXT,
                             companion_style_version TEXT,
+                            learning_task_id TEXT,
                             created_at TEXT NOT NULL,
                             FOREIGN KEY (user_id) REFERENCES profiles(user_id)
                                 ON DELETE CASCADE
@@ -332,7 +335,7 @@ class MemoryStore:
                             session_id, user_id, room_name, voice_backend,
                             omni_sdp_exchanges, interaction_mode, mode_policy_version,
                             digital_self_version_id, relationship_profile_id, legacy_grant_id,
-                            companion_style_id, companion_style_version, created_at
+                            companion_style_id, companion_style_version, learning_task_id, created_at
                         )
                         SELECT
                             session_id,
@@ -345,6 +348,7 @@ class MemoryStore:
                             END,
                             COALESCE(omni_sdp_exchanges, 0),
                             'companion', 's2-v1', NULL, NULL, NULL, 'starlight', 'companion-v1',
+                            NULL,
                             created_at
                         FROM voice_sessions_legacy;
                         DROP TABLE voice_sessions_legacy;
@@ -885,7 +889,7 @@ class MemoryStore:
             ).fetchall()
             sessions = connection.execute(
                 """
-                SELECT session_id, voice_backend, created_at
+                SELECT session_id, voice_backend, learning_task_id, created_at
                 FROM voice_sessions WHERE user_id = ? ORDER BY created_at, session_id
                 """,
                 (user_id,),
@@ -992,6 +996,7 @@ class MemoryStore:
         legacy_grant_id: str | None,
         companion_style_id: str | None,
         companion_style_version: str | None,
+        learning_task_id: str | None = None,
     ) -> dict[str, Any]:
         with self._connection() as connection:
             self._ensure_profile(connection, user_id, created_at)
@@ -1000,20 +1005,23 @@ class MemoryStore:
                 INSERT INTO voice_sessions (
                     session_id, user_id, room_name, voice_backend, interaction_mode,
                     mode_policy_version, digital_self_version_id, relationship_profile_id,
-                    legacy_grant_id, companion_style_id, companion_style_version, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    legacy_grant_id, companion_style_id, companion_style_version,
+                    learning_task_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id, user_id, room_name, voice_backend, interaction_mode,
                     mode_policy_version, digital_self_version_id, relationship_profile_id,
-                    legacy_grant_id, companion_style_id, companion_style_version, created_at,
+                    legacy_grant_id, companion_style_id, companion_style_version,
+                    learning_task_id, created_at,
                 ),
             )
             row = connection.execute(
                 """
                 SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
                        mode_policy_version, digital_self_version_id, relationship_profile_id,
-                       legacy_grant_id, companion_style_id, companion_style_version, created_at
+                       legacy_grant_id, companion_style_id, companion_style_version,
+                       learning_task_id, created_at
                 FROM voice_sessions WHERE session_id = ?
                 """,
                 (session_id,),
@@ -1028,7 +1036,8 @@ class MemoryStore:
                 """
                 SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
                        mode_policy_version, digital_self_version_id, relationship_profile_id,
-                       legacy_grant_id, companion_style_id, companion_style_version, created_at
+                       legacy_grant_id, companion_style_id, companion_style_version,
+                       learning_task_id, created_at
                 FROM voice_sessions
                 WHERE session_id = ? AND user_id = ?
                 """,
@@ -1043,7 +1052,8 @@ class MemoryStore:
                 """
                 SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
                        mode_policy_version, digital_self_version_id, relationship_profile_id,
-                       legacy_grant_id, companion_style_id, companion_style_version, created_at
+                       legacy_grant_id, companion_style_id, companion_style_version,
+                       learning_task_id, created_at
                 FROM voice_sessions WHERE session_id = ?
                 """,
                 (session_id,),
@@ -1056,7 +1066,8 @@ class MemoryStore:
                 """
                 SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
                        mode_policy_version, digital_self_version_id, relationship_profile_id,
-                       legacy_grant_id, companion_style_id, companion_style_version, created_at
+                       legacy_grant_id, companion_style_id, companion_style_version,
+                       learning_task_id, created_at
                 FROM voice_sessions WHERE user_id = ? ORDER BY created_at, session_id
                 """,
                 (user_id,),

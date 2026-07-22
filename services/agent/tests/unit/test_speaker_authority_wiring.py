@@ -267,6 +267,7 @@ async def test_classification_and_user_final_use_the_same_speaker_class() -> Non
     assert evidence[1]["payload"] == {
         "text": "这是我的经历",
         "persona_eligible": False,
+        "prompt_kind": "spontaneous",
         "speaker_reason_code": "owner_match",
         "speaker_profile_id": "profile-001",
         "speaker_quality_score": 0.9,

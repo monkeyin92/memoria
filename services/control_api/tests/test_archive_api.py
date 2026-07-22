@@ -225,6 +225,56 @@ async def test_account_can_append_and_read_an_idempotent_evidence_event(
 
 
 @pytest.mark.asyncio
+async def test_session_prompt_kind_accepts_valid_internal_value_and_defaults_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (await client.post("/v1/auth/anonymous")).json()
+        bearer = {"Authorization": f"Bearer {identity['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=bearer, json={})).json()
+        base = {
+            "session_id": session["session_id"],
+            "event_type": "speech.utterance_finalized",
+            "occurred_at": datetime.now(UTC).isoformat(),
+            "speaker_class": "owner",
+            "source": "test",
+        }
+        await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                **base,
+                "event_id": "prompt-leading",
+                "turn_id": 1,
+                "generation_id": 1,
+                "payload": {"text": "是的", "prompt_kind": "leading"},
+            },
+        )
+        await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                **base,
+                "event_id": "prompt-invalid",
+                "turn_id": 2,
+                "generation_id": 2,
+                "payload": {"text": "另外", "prompt_kind": "client-strong"},
+            },
+        )
+        timeline = await client.get("/v1/archive/timeline", headers=bearer)
+
+    kinds = {
+        item["event_id"]: item["payload"]["prompt_kind"]
+        for item in timeline.json()["items"]
+    }
+    assert kinds == {"prompt-invalid": "spontaneous", "prompt-leading": "leading"}
+
+
+@pytest.mark.asyncio
 async def test_generic_speech_event_requires_a_session_and_cannot_trigger_persona(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -269,6 +319,41 @@ async def test_generic_speech_event_requires_a_session_and_cannot_trigger_person
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "session_bound_event_required"
     assert traits.json() == {"items": []}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event_type",
+    ["owner.action_recorded", "learning.task_created", "learning.task_transitioned"],
+)
+async def test_generic_archive_rejects_server_owned_growth_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    event_type: str,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/archive/events",
+            headers=internal,
+            json={
+                "event_id": f"forged-{event_type}",
+                "account_id": "account-forged",
+                "event_type": event_type,
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "owner",
+                "source": "forged",
+                "payload": {},
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "server_owned_event_required",
+        "event_type": event_type,
+    }
 
 
 @pytest.mark.asyncio
@@ -1633,6 +1718,23 @@ async def test_registered_account_exports_only_its_portable_archive(
             )
             assert recorded.status_code == 201
 
+        growth_task = await client.post(
+            "/v1/growth/tasks",
+            headers=owner_headers,
+            json={"event_id": "export-growth-task", "kind": "natural_chat"},
+        )
+        growth_feedback = await client.post(
+            "/v1/growth/owner-actions",
+            headers=owner_headers,
+            json={
+                "event_id": "export-growth-feedback",
+                "action": "not_me",
+                "target_kind": "source_event",
+                "target_id": f"export-{owner['user_id']}",
+            },
+        )
+        assert (growth_task.status_code, growth_feedback.status_code) == (201, 201)
+
         wrong_password = await client.post(
             "/v1/archive/exports",
             headers=owner_headers,
@@ -1656,6 +1758,8 @@ async def test_registered_account_exports_only_its_portable_archive(
     assert "另一账户的私密内容。" not in serialized
     assert "password_hash" not in serialized
     assert "template_ciphertext" not in serialized
+    assert "export-growth-task" in serialized
+    assert "export-growth-feedback" in serialized
 
 
 @pytest.mark.asyncio
@@ -1702,6 +1806,22 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
             },
         )
         assert recorded.status_code == 201
+        task = await client.post(
+            "/v1/growth/tasks",
+            headers=owner_headers,
+            json={"event_id": "delete-growth-task", "kind": "natural_chat"},
+        )
+        feedback = await client.post(
+            "/v1/growth/owner-actions",
+            headers=owner_headers,
+            json={
+                "event_id": "delete-growth-feedback",
+                "action": "not_me",
+                "target_kind": "source_event",
+                "target_id": "delete-owner-evidence",
+            },
+        )
+        assert (task.status_code, feedback.status_code) == (201, 201)
 
         wrong_confirmation = await client.post(
             "/v1/archive/deletion-requests",
@@ -1759,6 +1879,9 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
             },
         )
         other_still_exists = await client.get("/v1/auth/me", headers=other_headers)
+        remaining_growth_events = await app.state.life_archive.context(
+            ContextQuery(account_id=owner["user_id"], speaker_class="owner", limit=100)
+        )
 
     assert wrong_confirmation.status_code == 422
     assert deleted.status_code == 200
@@ -1775,3 +1898,4 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
     assert deleted_session.status_code == 410
     assert deleted_session_event.status_code == 410
     assert other_still_exists.status_code == 200
+    assert remaining_growth_events.evidence == ()

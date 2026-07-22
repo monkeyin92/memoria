@@ -97,7 +97,12 @@ async def _record(
             occurred_at=datetime(2026, 7, 19, 10, minute, tzinfo=UTC),
             speaker_class=speaker_class,  # type: ignore[arg-type]
             source="test",
-            payload={"text": text},
+            payload={
+                "text": text,
+                "interaction_mode": "companion",
+                "prompt_kind": "spontaneous",
+                "owner_projection_eligible": speaker_class == "owner",
+            },
         )
     )
 

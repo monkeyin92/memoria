@@ -34,6 +34,7 @@ from services.archive.memory_domain import (
     ReviewQueueItem,
     TimelineItem,
 )
+from services.common.evidence_policy import contribution_for
 
 _SINGLE_VALUE_PREDICATES = frozenset({"age", "birth_date", "birth_place"})
 _REVIEW_STATUS: dict[str, MemoryStatus] = {
@@ -300,7 +301,8 @@ class PostgresMemoryCatalog:
             except Exception as exc:
                 await self._fail_outbox(account_id, outbox_id, type(exc).__name__)
                 return "failed"
-        if event.event_type != "speech.utterance_finalized" or event.speaker_class != "owner":
+        contribution = contribution_for(event)
+        if not contribution.accepted:
             async with pool.acquire() as connection, connection.transaction():
                 await self._scope(connection, account_id)
                 await self._record_receipt(connection, event, outcome="ignored")
@@ -421,7 +423,7 @@ class PostgresMemoryCatalog:
                 claim.subject_key,
                 claim.predicate,
                 claim.value,
-                claim.confidence,
+                    min(1.0, claim.confidence * contribution_for(event).factor),
                 claim.sensitive_domain,
                 extraction.extractor_version or self._extractor.version,
                 event.event_id,

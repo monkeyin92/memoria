@@ -38,7 +38,12 @@ async def _seed_sources(path: Path, *, account_id: str = "owner-account") -> Non
                 occurred_at=_OCCURRED_AT,
                 speaker_class=speaker_class,  # type: ignore[arg-type]
                 source="registry-test",
-                payload={"text": f"{speaker_class} material"},
+                payload={
+                    "text": f"{speaker_class} material",
+                    "interaction_mode": "companion",
+                    "prompt_kind": "spontaneous",
+                    "owner_projection_eligible": speaker_class == "owner",
+                },
             )
         )
     await archive.record(
@@ -49,7 +54,12 @@ async def _seed_sources(path: Path, *, account_id: str = "owner-account") -> Non
             occurred_at=_OCCURRED_AT,
             speaker_class="owner",
             source="companion-runtime",
-            payload={"text": "companion output misclassified as owner"},
+            payload={
+                "text": "companion output misclassified as owner",
+                "interaction_mode": "companion",
+                "prompt_kind": "spontaneous",
+                "owner_projection_eligible": False,
+            },
         )
     )
 
@@ -230,6 +240,41 @@ async def test_source_correction_creates_a_new_version_without_mutating_old_mani
             """,
             (first.version_id,),
         )
+
+
+@pytest.mark.asyncio
+async def test_negative_owner_evidence_excludes_target_from_the_next_manifest(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "memoria.sqlite3"
+    registry = DigitalSelfRegistry.sqlite(path)
+    registry.initialize()
+    await _seed_sources(path)
+    first = await registry.build(account_id="owner-account")
+    archive = LifeArchive.sqlite(path)
+    await archive.record(
+        EvidenceEvent(
+            event_id="owner-memory-not-me",
+            account_id="owner-account",
+            event_type="owner.action_recorded",
+            occurred_at=_OCCURRED_AT,
+            speaker_class="owner",
+            source="user.growth_feedback",
+            payload={
+                "action_type": "not_me",
+                "target_kind": "memory_claim",
+                "target_id": "00000000-0000-0000-0000-000000000000",
+                "owner_projection_eligible": True,
+            },
+        )
+    )
+
+    second = await registry.build(account_id="owner-account")
+
+    assert first.manifest.source_summary.memory_claim_count == 1
+    assert second.manifest.source_summary.memory_claim_count == 0
+    assert second.manifest.source_summary.persona_trait_count == 1
+    assert "owner memory" not in str(second.manifest)
 
 
 @pytest.mark.asyncio

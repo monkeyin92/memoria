@@ -60,6 +60,7 @@ export function InteractionModePanel({
   capabilities,
   activeVersion,
   learnedTraitCount = 0,
+  digitalSourceCount = 0,
   onOpenArchive,
   onChangeCompanion,
 }) {
@@ -140,8 +141,8 @@ export function InteractionModePanel({
             <span>数字分身怎样成长</span>
             <strong>
               {activeVersion
-                ? `已积累人格材料 v${activeVersion.version_number}`
-                : `已积累 ${learnedTraitCount} 条确认材料`}
+                ? `人格材料 v${activeVersion.version_number}，已采用 ${digitalSourceCount} 条本人来源`
+                : `已采用 ${digitalSourceCount} 条本人来源，确认 ${learnedTraitCount} 项表达特征`}
             </strong>
             <p>这些仍是学习材料，不是已批准的数字分身版本，也不会冒充你。</p>
           </article>

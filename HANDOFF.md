@@ -19,8 +19,12 @@
 - S3 已完成：不可变 `DigitalSelfVersion`、canonical manifest、digest CAS、完整状态机、
   rollback、同事务生命周期审计、SQLite/PostgreSQL 双实现、FORCE RLS、账户导出/删除和
   H5 管理面均已落地。
-- 当前开发阶段为 S4：从现有 Evidence、Memory、Persona 与 manifest 派生成长地图和
-  培育任务，不建立第二份人物事实或伪精确人格百分比。
+- S4 已完成：从现有 Evidence、Memory、Persona 与 manifest 派生七维成长地图、四类
+  培育任务、来源权重、冲突、版本就绪度和高权重负面证据；不建立第二份人物事实或
+  伪精确人格百分比。
+- 当前开发阶段为 S5：建立 `CognitiveClaim / DecisionCase / RelationshipProfile`。
+  旧 `decision_habit/value_priority` 和原始关系事实只允许作为待审核候选，不能直接成为
+  生效认知策略、关系画像或 Digital Self manifest 条目。
 - 后续严格按不可变 DigitalSelfVersion、成长地图、认知/决策/关系、回答来源、
   Self Preview、本人声音、Legacy、全量验收与部署顺序推进。
 - 本轮不建设分布式、多区域、KMS、异地副本或 PITR；保留为正式商用前待办。遗嘱、
@@ -65,6 +69,25 @@
   都不能进入。
 - Self Preview 即使已有 approved version 仍由 `self_preview_runtime` 缺项阻断；
   Legacy 继续要求 frozen version、approved relationship profile 和 grant。
+
+## 硅基生命路线 S4 验证
+
+- 正式临时 PostgreSQL 17 + pgvector 环境全量通过，仅 2 个既有真实模型用例跳过；
+  总覆盖率 89.09%，85% 正式门槛通过。
+- H5 全量 14 files / 180 tests，production build、Ruff、strict mypy 和
+  `git diff --check` 通过。
+- 成长地图只从现有权威证据派生七个定性维度，展示采用来源、拒绝原因、冲突、最近变化
+  和 Digital Self 版本就绪度；没有新建第二份人物事实或人格完成百分比。
+- 自然聊天、人生访谈、情境选择和决策复盘使用事件溯源任务；自然聊天任务与语音会话
+  冻结绑定，结束响应丢失时可通过任务状态幂等收敛。
+- 新证据显式 fail closed；已确认且早于新资格字段落地的历史主人语音，只在已有确认投影
+  时按普通权重兼容读取。显式 false、访客、不确定、伙伴输出和模拟输出仍不能进入。
+- in-app browser 实测 approved 版本下来源显示“版本已就绪”；提交“不像我”后同步变为
+  “存在冲突 / 版本待更新”，下一次构建明确拒绝空来源，没有生成空 manifest。
+- 667×375 横屏无水平溢出；全新 reload 后 console error/warn 为空。
+- S5 的首个硬门禁：在新领域模型生效前，旧 Persona
+  `decision_habit/value_priority` 与原始 relationship 只能显示为 legacy candidate，
+  不得进入 adopted/effective 状态或 manifest。
 
 ## 当前生产
 

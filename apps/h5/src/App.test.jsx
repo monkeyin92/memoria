@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   approveDigitalSelfVersion: vi.fn(),
   beginDigitalSelfTesting: vi.fn(),
   buildDigitalSelfVersion: vi.fn(),
+  createGrowthTask: vi.fn(),
   bootstrapIdentity: vi.fn(),
   cachePendingMessage: vi.fn(),
   deleteAccountData: vi.fn(),
@@ -33,6 +34,8 @@ const mocks = vi.hoisted(() => ({
     },
   }),
   getDigitalSelfVersions: vi.fn().mockResolvedValue({ items: [] }),
+  getGrowthOverview: vi.fn().mockResolvedValue({ dimensions: [] }),
+  getGrowthTasks: vi.fn().mockResolvedValue({ items: [] }),
   getRawVoiceConsent: vi.fn().mockResolvedValue({ consent: null }),
   getProfile: vi.fn(),
   loginAccount: vi.fn(),
@@ -59,6 +62,8 @@ const mocks = vi.hoisted(() => ({
   enrollSpeakerProfiles: vi.fn(),
   revokeSpeakerProfile: vi.fn(),
   grantVoiceConsent: vi.fn(),
+  respondGrowthTask: vi.fn(),
+  reviewGrowthOwnerAction: vi.fn(),
   revokeVoiceConsent: vi.fn(),
   enrollVoiceProfile: vi.fn(),
   previewVoiceProfile: vi.fn(),
@@ -66,6 +71,7 @@ const mocks = vi.hoisted(() => ({
   activateVoiceProfile: vi.fn(),
   revokeVoiceProfile: vi.fn(),
   rollbackDigitalSelfVersion: vi.fn(),
+  transitionGrowthTask: vi.fn(),
   useVoiceSession: vi.fn(),
   resumeAudio: vi.fn().mockResolvedValue(true),
 }));
@@ -74,6 +80,7 @@ vi.mock("./api.js", () => ({
   approveDigitalSelfVersion: mocks.approveDigitalSelfVersion,
   beginDigitalSelfTesting: mocks.beginDigitalSelfTesting,
   buildDigitalSelfVersion: mocks.buildDigitalSelfVersion,
+  createGrowthTask: mocks.createGrowthTask,
   bootstrapIdentity: mocks.bootstrapIdentity,
   cachePendingMessage: mocks.cachePendingMessage,
   deleteAccountData: mocks.deleteAccountData,
@@ -85,6 +92,8 @@ vi.mock("./api.js", () => ({
   getMemoryReviewQueue: mocks.getMemoryReviewQueue,
   getInteractionCapabilities: mocks.getInteractionCapabilities,
   getDigitalSelfVersions: mocks.getDigitalSelfVersions,
+  getGrowthOverview: mocks.getGrowthOverview,
+  getGrowthTasks: mocks.getGrowthTasks,
   getRawVoiceConsent: mocks.getRawVoiceConsent,
   getProfile: mocks.getProfile,
   loginAccount: mocks.loginAccount,
@@ -111,6 +120,8 @@ vi.mock("./api.js", () => ({
   enrollSpeakerProfiles: mocks.enrollSpeakerProfiles,
   revokeSpeakerProfile: mocks.revokeSpeakerProfile,
   grantVoiceConsent: mocks.grantVoiceConsent,
+  respondGrowthTask: mocks.respondGrowthTask,
+  reviewGrowthOwnerAction: mocks.reviewGrowthOwnerAction,
   revokeVoiceConsent: mocks.revokeVoiceConsent,
   enrollVoiceProfile: mocks.enrollVoiceProfile,
   previewVoiceProfile: mocks.previewVoiceProfile,
@@ -118,6 +129,7 @@ vi.mock("./api.js", () => ({
   activateVoiceProfile: mocks.activateVoiceProfile,
   revokeVoiceProfile: mocks.revokeVoiceProfile,
   rollbackDigitalSelfVersion: mocks.rollbackDigitalSelfVersion,
+  transitionGrowthTask: mocks.transitionGrowthTask,
 }));
 
 vi.mock("./hooks/useVoiceSession.js", () => ({
@@ -168,6 +180,7 @@ describe("App identity and profile preferences", () => {
     mocks.resetVoice.mockResolvedValue(undefined);
     mocks.exportAccountArchive.mockResolvedValue({ sections: {} });
     mocks.getMemoryDays.mockResolvedValue({ items: [] });
+    mocks.getGrowthTasks.mockResolvedValue({ items: [] });
     mocks.updateProfile.mockResolvedValue(undefined);
     mocks.resumeAudio.mockResolvedValue(true);
     mocks.useVoiceSession.mockImplementation(() => voiceState());
@@ -618,6 +631,162 @@ describe("App identity and profile preferences", () => {
     fireEvent.click(screen.getByRole("button", { name: "返回我的" }));
     expect(await screen.findByRole("heading", { name: "我的" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
+  });
+
+  it("binds a natural-chat growth task to voice and completes it when the chat ends", async () => {
+    const naturalTask = {
+      task_id: "natural-task",
+      kind: "natural_chat",
+      status: "draft",
+      revision: 0,
+      prompt_id: "natural-chat-v1",
+      prompt: "聊聊今天发生的事。",
+      created_at: "2026-07-22T00:00:00Z",
+      updated_at: "2026-07-22T00:00:00Z",
+    };
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "registered-user",
+      account_type: "registered",
+      access_token: "token",
+    });
+    mocks.createGrowthTask.mockResolvedValue(naturalTask);
+    mocks.transitionGrowthTask.mockImplementation(
+      (_taskId, _eventId, toStatus, revision) => Promise.resolve({
+        ...naturalTask,
+        status: toStatus,
+        revision: revision + 1,
+      }),
+    );
+    mocks.useVoiceSession.mockImplementation((options) => ({
+      ...voiceState(),
+      session: options.learningTaskId ? {
+        session_id: "voice-natural",
+        learning_task_id: options.learningTaskId,
+      } : null,
+    }));
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    fireEvent.click(await screen.findByRole("button", { name: /数字心智与声音/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "开始自然聊天" }));
+
+    await waitFor(() => expect(mocks.useVoiceSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({ learningTaskId: "natural-task" }),
+    ));
+    fireEvent.click(await screen.findByRole("button", { name: "结束对话" }));
+
+    await waitFor(() => expect(mocks.transitionGrowthTask).toHaveBeenLastCalledWith(
+      "natural-task",
+      expect.any(String),
+      "completed",
+      1,
+    ));
+    expect(mocks.endVoice).toHaveBeenCalledOnce();
+  });
+
+  it("reconciles a lost natural-chat completion response without keeping a stale binding", async () => {
+    const naturalTask = {
+      task_id: "natural-retry",
+      kind: "natural_chat",
+      status: "draft",
+      revision: 0,
+      prompt_id: "natural-chat-v1",
+      prompt: "聊聊今天发生的事。",
+      created_at: "2026-07-22T00:00:00Z",
+      updated_at: "2026-07-22T00:00:00Z",
+    };
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "registered-user",
+      account_type: "registered",
+      access_token: "token",
+    });
+    mocks.createGrowthTask.mockResolvedValue(naturalTask);
+    let completionAttempts = 0;
+    mocks.transitionGrowthTask.mockImplementation(
+      (_taskId, _eventId, toStatus, revision) => {
+        if (toStatus === "completed" && completionAttempts++ === 0) {
+          return Promise.reject(new Error("response lost"));
+        }
+        return Promise.resolve({
+          ...naturalTask,
+          status: toStatus,
+          revision: revision + 1,
+        });
+      },
+    );
+    mocks.getGrowthTasks
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValue({
+        items: [{ ...naturalTask, status: "active", revision: 1 }],
+      });
+    mocks.useVoiceSession.mockImplementation((options) => ({
+      ...voiceState(),
+      session: options.learningTaskId ? {
+        session_id: "voice-natural-retry",
+        learning_task_id: options.learningTaskId,
+      } : null,
+    }));
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    fireEvent.click(await screen.findByRole("button", { name: /数字心智与声音/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "开始自然聊天" }));
+    fireEvent.click(await screen.findByRole("button", { name: "结束对话" }));
+
+    await waitFor(() => {
+      const completionCalls = mocks.transitionGrowthTask.mock.calls.filter(
+        (call) => call[2] === "completed",
+      );
+      expect(completionCalls).toHaveLength(2);
+      expect(completionCalls[0][1]).toBe(completionCalls[1][1]);
+    });
+  });
+
+  it("does not complete a natural-chat task from an unbound voice session", async () => {
+    const naturalTask = {
+      task_id: "natural-unbound",
+      kind: "natural_chat",
+      status: "draft",
+      revision: 0,
+      prompt_id: "natural-chat-v1",
+      prompt: "聊聊今天发生的事。",
+      created_at: "2026-07-22T00:00:00Z",
+      updated_at: "2026-07-22T00:00:00Z",
+    };
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "registered-user",
+      account_type: "registered",
+      access_token: "token",
+    });
+    mocks.createGrowthTask.mockResolvedValue(naturalTask);
+    mocks.transitionGrowthTask.mockImplementation(
+      (_taskId, _eventId, toStatus, revision) => Promise.resolve({
+        ...naturalTask,
+        status: toStatus,
+        revision: revision + 1,
+      }),
+    );
+    mocks.useVoiceSession.mockImplementation((options) => ({
+      ...voiceState(),
+      session: options.learningTaskId ? {
+        session_id: "voice-other",
+        learning_task_id: "another-task",
+      } : null,
+    }));
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    fireEvent.click(await screen.findByRole("button", { name: /数字心智与声音/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "开始自然聊天" }));
+    fireEvent.click(await screen.findByRole("button", { name: "结束对话" }));
+
+    await waitFor(() => expect(mocks.endVoice).toHaveBeenCalledOnce());
+    expect(
+      mocks.transitionGrowthTask.mock.calls.filter((call) => call[2] === "completed"),
+    ).toHaveLength(0);
   });
 
   it("opens companion switching from interaction mode and saves only the next-session style", async () => {

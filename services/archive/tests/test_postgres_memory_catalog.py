@@ -153,7 +153,12 @@ async def test_compiler_role_claims_outbox_without_bypassing_account_rls() -> No
                     occurred_at=datetime.now(UTC),
                     speaker_class="owner",
                     source="compiler-rls-test",
-                    payload={"text": "我在杭州读过书。"},
+                    payload={
+                        "text": "我在杭州读过书。",
+                        "interaction_mode": "companion",
+                        "prompt_kind": "spontaneous",
+                        "owner_projection_eligible": True,
+                    },
                 )
             )
 
@@ -229,7 +234,12 @@ async def test_pgvector_projection_and_hybrid_search_are_rebuildable() -> None:
                     occurred_at=datetime.now(UTC),
                     speaker_class="owner",
                     source="vector-contract-test",
-                    payload={"text": text},
+                    payload={
+                        "text": text,
+                        "interaction_mode": "companion",
+                        "prompt_kind": "spontaneous",
+                        "owner_projection_eligible": True,
+                    },
                 )
             )
 
@@ -292,7 +302,12 @@ async def test_embedding_outage_keeps_fulltext_projection_and_search_available()
                 occurred_at=datetime.now(UTC),
                 speaker_class="owner",
                 source="embedding-fallback-test",
-                payload={"text": "我们家的家训是答应别人的事一定做到。"},
+                payload={
+                    "text": "我们家的家训是答应别人的事一定做到。",
+                    "interaction_mode": "companion",
+                    "prompt_kind": "spontaneous",
+                    "owner_projection_eligible": True,
+                },
             )
         )
 
@@ -356,7 +371,12 @@ async def test_hybrid_search_ignores_stale_vectors_from_an_older_model() -> None
                 occurred_at=datetime.now(UTC),
                 speaker_class="owner",
                 source="embedding-upgrade-test",
-                payload={"text": "我们家的家训是答应别人的事一定做到。"},
+                payload={
+                    "text": "我们家的家训是答应别人的事一定做到。",
+                    "interaction_mode": "companion",
+                    "prompt_kind": "spontaneous",
+                    "owner_projection_eligible": True,
+                },
             )
         )
         await old_catalog.compile_pending(limit=1000)
@@ -415,7 +435,12 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
                 occurred_at=datetime(2026, 7, 19, 11, index, tzinfo=UTC),
                 speaker_class=speaker_class,  # type: ignore[arg-type]
                 source="contract-test",
-                payload={"text": text},
+                payload={
+                    "text": text,
+                    "interaction_mode": "companion",
+                    "prompt_kind": "spontaneous",
+                    "owner_projection_eligible": speaker_class == "owner",
+                },
             )
         )
 

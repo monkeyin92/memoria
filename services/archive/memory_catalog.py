@@ -29,6 +29,7 @@ from services.archive.memory_domain import (
     ReviewQueueItem,
     TimelineItem,
 )
+from services.common.evidence_policy import contribution_for
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS memory_compile_receipts (
@@ -350,7 +351,8 @@ class MemoryCatalog:
             except Exception as exc:
                 self._mark_outbox_failed(outbox_id, type(exc).__name__)
                 return "failed"
-        if event.event_type != "speech.utterance_finalized" or event.speaker_class != "owner":
+        contribution = contribution_for(event)
+        if not contribution.accepted:
             with self._connect() as connection:
                 self._record_receipt(connection, event, outcome="ignored")
                 self._complete_outbox(connection, outbox_id)
@@ -465,7 +467,7 @@ class MemoryCatalog:
                     claim.subject_key,
                     claim.predicate,
                     claim.value,
-                    claim.confidence,
+                    min(1.0, claim.confidence * contribution_for(event).factor),
                     claim.sensitive_domain,
                     extraction.extractor_version or self._extractor.version,
                     event.event_id,

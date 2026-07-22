@@ -224,6 +224,7 @@ describe("useVoiceSession production edges", () => {
     expect(api.createSession).toHaveBeenCalledWith(
       "anonymous-user",
       "qwen_omni",
+      null,
     );
     expect(transport.prepare).toHaveBeenCalledTimes(1);
     expect(transport.callbacks.speakerVerifyEnabled).toBe(false);

@@ -9,10 +9,16 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import asyncpg
 import pytest
+from services.archive.domain import EvidenceEvent
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
-from services.digital_self.domain import SourceSnapshotConflictError, VersionNotFoundError
+from services.digital_self.domain import (
+    EmptyDigitalSelfSourceError,
+    MemoryClaimManifestEntry,
+    SourceSnapshotConflictError,
+    VersionNotFoundError,
+)
 from services.digital_self.postgres_registry import PostgresDigitalSelfRegistry
 from services.governance.account_data import PostgresAccountRepository
 from services.persona.postgres_engine import PostgresPersonaEngine
@@ -120,7 +126,7 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
                         event_id,
                         account_id,
                         datetime(2026, 7, 22, 8, 0, tzinfo=UTC),
-                        '{"text":"confirmed owner source"}',
+                        '{"text":"confirmed owner source","interaction_mode":"companion","prompt_kind":"spontaneous","owner_projection_eligible":true}',
                         "a" * 64,
                     )
                     await connection.execute(
@@ -146,6 +152,29 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
 
         version_a = await registry.build(account_id=account_a)
         version_b = await registry.build(account_id=account_b)
+        claim_a_id = next(
+            entry.claim_id
+            for entry in version_a.manifest.entries
+            if isinstance(entry, MemoryClaimManifestEntry)
+        )
+        await archive.record(
+            EvidenceEvent(
+                event_id=f"negative-{account_a}",
+                account_id=account_a,
+                event_type="owner.action_recorded",
+                occurred_at=datetime(2026, 7, 22, 9, 0, tzinfo=UTC),
+                speaker_class="owner",
+                source="user.growth_feedback",
+                payload={
+                    "action_type": "not_me",
+                    "target_kind": "memory_claim",
+                    "target_id": claim_a_id,
+                    "owner_projection_eligible": True,
+                },
+            )
+        )
+        with pytest.raises(EmptyDigitalSelfSourceError):
+            await registry.build(account_id=account_a)
         with pytest.raises(VersionNotFoundError):
             await registry.get(account_id=account_b, version_id=version_a.version_id)
         with pytest.raises(SourceSnapshotConflictError):

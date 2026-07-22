@@ -49,6 +49,7 @@ import {
 } from "../lib/audioEnrollment.js";
 import { AccountDeletionForm } from "./AccountDeletionForm.jsx";
 import { DigitalSelfVersions } from "./DigitalSelfVersions.jsx";
+import { GrowthMapPanel } from "./GrowthMapPanel.jsx";
 import { InteractionModePanel } from "./InteractionModePanel.jsx";
 
 const traitLabels = {
@@ -130,6 +131,8 @@ export function DigitalSelfPanel({
   onAccountDeleted,
   onOpenArchive,
   onChangeCompanion,
+  onStartChat,
+  voiceSessionActive = false,
 }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
@@ -137,6 +140,7 @@ export function DigitalSelfPanel({
   const [notice, setNotice] = useState("");
   const [confirmation, setConfirmation] = useState(null);
   const [interactionCapabilities, setInteractionCapabilities] = useState(null);
+  const [growthSourceCount, setGrowthSourceCount] = useState(0);
   const [personaAllowed, setPersonaAllowed] = useState(false);
   const [personaConsent, setPersonaConsent] = useState(false);
   const [traits, setTraits] = useState([]);
@@ -202,6 +206,15 @@ export function DigitalSelfPanel({
       anyFailed,
       digitalSelfFailed: digitalSelfVersionsResult.status === "rejected",
     };
+  }, []);
+
+  const handleGrowthOverview = useCallback((overview) => {
+    const sourceIds = new Set(
+      (overview?.dimensions || []).flatMap((dimension) =>
+        (dimension.adopted_sources || []).map((source) => source.event_id),
+      ),
+    );
+    setGrowthSourceCount(sourceIds.size);
   }, []);
 
   useEffect(() => {
@@ -484,8 +497,17 @@ export function DigitalSelfPanel({
               capabilities={interactionCapabilities}
               activeVersion={activeVersion}
               learnedTraitCount={learnedTraits.length}
+              digitalSourceCount={growthSourceCount}
               onOpenArchive={onOpenArchive}
               onChangeCompanion={onChangeCompanion}
+            />
+            <GrowthMapPanel
+              onStartChat={onStartChat}
+              onOverview={handleGrowthOverview}
+              voiceSessionActive={voiceSessionActive}
+              refreshToken={digitalSelfVersions
+                .map((version) => `${version.version_id}:${version.status}`)
+                .join("|")}
             />
             <DigitalSelfVersions
               versions={digitalSelfVersions}

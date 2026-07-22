@@ -14,6 +14,7 @@ from typing import Any, cast
 
 from services.archive.domain import EvidenceEvent, EvidenceNotFoundError, canonical_payload
 from services.archive.life_archive import LifeArchive
+from services.common.evidence_policy import contribution_for, prompt_weight_for
 from services.persona.domain import (
     ObservationResult,
     PersonaCapsule,
@@ -241,6 +242,23 @@ class PersonaEngine:
                 return ObservationResult(False, "empty_evidence")
             if payload.get("persona_eligible") is not True:
                 return ObservationResult(False, "persona_ineligible_turn")
+            if speaker_class == "owner":
+                contribution = contribution_for(
+                    EvidenceEvent(
+                        event_id=str(row["event_id"]),
+                        account_id=evidence.account_id,
+                        event_type=str(row["event_type"]),
+                        occurred_at=datetime.fromisoformat(str(row["occurred_at"])),
+                        speaker_class="owner",
+                        source=str(row["source"]),
+                        payload=payload,
+                    )
+                )
+                if not contribution.accepted:
+                    return ObservationResult(False, contribution.reason)
+                prompt_factor = contribution.factor
+            else:
+                prompt_factor = prompt_weight_for(payload)[1]
             uncertain_provenance = (
                 trusted_uncertain_profile(payload) if speaker_class == "uncertain" else None
             )
@@ -257,10 +275,13 @@ class PersonaEngine:
                 evidence,
                 speech_duration_ms=None,
                 pause_ratio=None,
-                quality_score=uncertain_provenance[1],
+                quality_score=uncertain_provenance[1] * prompt_factor,
             )
         else:
-            extraction_evidence = evidence
+            extraction_evidence = replace(
+                evidence,
+                quality_score=(evidence.quality_score or 1.0) * prompt_factor,
+            )
         candidates = await self._extractor.extract(text, extraction_evidence)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -272,7 +293,7 @@ class PersonaEngine:
             now = datetime.now(UTC).isoformat()
             trait_ids: list[str] = []
             version_changed = False
-            if speaker_class == "owner":
+            if speaker_class == "owner" and prompt_weight_for(payload)[0] == "strong":
                 tic_counts = {tic: text.count(tic) for tic in TICS if tic in text}
                 self._update_style_stats(connection, evidence, text, tic_counts, now)
             for candidate in candidates:
@@ -351,8 +372,13 @@ class PersonaEngine:
                         """
                         SELECT
                             COUNT(*) AS total_count,
+                            SUM(pe.weight) AS total_weight,
                             SUM(CASE WHEN ee.speaker_class = 'owner' THEN 1 ELSE 0 END)
                                 AS owner_count,
+                            SUM(CASE
+                                WHEN ee.speaker_class = 'owner'
+                                THEN pe.weight ELSE 0
+                            END) AS owner_weight,
                             SUM(CASE
                                 WHEN ee.speaker_class = 'uncertain'
                                  AND json_extract(ee.payload_json, '$.persona_eligible') = 1
@@ -365,6 +391,17 @@ class PersonaEngine:
                                 THEN 1 ELSE 0
                             END)
                                 AS uncertain_count,
+                            SUM(CASE
+                                WHEN ee.speaker_class = 'uncertain'
+                                 AND json_extract(ee.payload_json, '$.persona_eligible') = 1
+                                 AND json_extract(
+                                     ee.payload_json, '$.speaker_reason_code'
+                                 ) = 'shadow_owner_candidate'
+                                 AND COALESCE(json_extract(
+                                     ee.payload_json, '$.speaker_profile_id'
+                                 ), '') = ?
+                                THEN pe.weight ELSE 0
+                            END) AS uncertain_weight,
                             COUNT(DISTINCT CASE
                                 WHEN ee.speaker_class = 'uncertain'
                                  AND json_extract(ee.payload_json, '$.persona_eligible') = 1
@@ -405,16 +442,20 @@ class PersonaEngine:
                             uncertain_provenance[0]
                             if uncertain_provenance is not None
                             else "",
+                            uncertain_provenance[0]
+                            if uncertain_provenance is not None
+                            else "",
                             trait_id,
                         ),
                     ).fetchone()
                     assert counts is not None
                     count = int(counts["total_count"])
-                    owner_count = int(counts["owner_count"])
-                    uncertain_count = int(counts["uncertain_count"])
+                    total_weight = float(counts["total_weight"] or 0)
+                    owner_weight = float(counts["owner_weight"] or 0)
+                    uncertain_weight = float(counts["uncertain_weight"] or 0)
                     uncertain_session_count = int(counts["uncertain_session_count"])
                     uncertain_profile_count = int(counts["uncertain_profile_count"])
-                    confidence = min(0.95, 0.45 + 0.13 * count)
+                    confidence = min(0.95, 0.45 + 0.13 * total_weight)
                     previous = connection.execute(
                         "SELECT status FROM persona_traits WHERE trait_id = ?",
                         (trait_id,),
@@ -424,8 +465,8 @@ class PersonaEngine:
                         if should_auto_promote(
                             category=candidate.category,
                             status=status,
-                            owner_count=owner_count,
-                            uncertain_count=uncertain_count,
+                            owner_weight=owner_weight,
+                            uncertain_weight=uncertain_weight,
                             uncertain_session_count=uncertain_session_count,
                             uncertain_profile_count=uncertain_profile_count,
                         ):
@@ -495,7 +536,7 @@ class PersonaEngine:
             """
             SELECT
                 pt.trait_id, pt.status, pt.review_event_id, pt.updated_at,
-                ee.speaker_class, ee.session_id, ee.payload_json
+                ee.speaker_class, ee.session_id, ee.payload_json, pe.weight
             FROM persona_traits AS pt
             LEFT JOIN persona_evidence AS pe
               ON pe.trait_id = pt.trait_id
@@ -524,6 +565,7 @@ class PersonaEngine:
                 payload=(
                     json.loads(str(row["payload_json"])) if row["payload_json"] is not None else {}
                 ),
+                weight=float(row["weight"] or 0),
             )
             for row in rows
         )
@@ -720,7 +762,7 @@ class PersonaEngine:
         for row in ordered:
             evidence = connection.execute(
                 """
-                SELECT pe.source_event_id, pe.scene, ee.speaker_class
+                SELECT pe.source_event_id, pe.scene, pe.weight, ee.speaker_class
                 FROM persona_evidence AS pe
                 JOIN evidence_events AS ee
                   ON ee.event_id = pe.source_event_id
@@ -732,6 +774,7 @@ class PersonaEngine:
             ).fetchall()
             owner_evidence = [item for item in evidence if item["speaker_class"] == "owner"]
             selected_evidence = owner_evidence or evidence
+            selected_weight = sum(float(item["weight"]) for item in selected_evidence)
             snapshot.append(
                 {
                     "trait_id": str(row["trait_id"]),
@@ -744,7 +787,7 @@ class PersonaEngine:
                     ),
                     "counterexample": str(row["counterexample"]),
                     "confidence": (
-                        min(0.95, 0.45 + 0.13 * len(selected_evidence))
+                        min(0.95, 0.45 + 0.13 * selected_weight)
                         if owner_evidence
                         else float(row["confidence"])
                     ),

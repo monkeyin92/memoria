@@ -76,6 +76,7 @@ async def test_only_final_user_and_actual_heard_assistant_text_become_evidence()
     assert published[0]["payload"] == {
         "text": "我在杭州读过书。",
         "persona_eligible": False,
+        "prompt_kind": "spontaneous",
         **_provenance(),
     }
     assert published[1]["payload"] == {
@@ -85,6 +86,37 @@ async def test_only_final_user_and_actual_heard_assistant_text_become_evidence()
     }
     assert published[0]["session_id"] == "session-001"
     assert published[0]["event_id"] != published[1]["event_id"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_actual_heard_assistant_prompt_kind_is_consumed_by_next_user_turn() -> None:
+    runtime = DuplexRuntime.create(session_id="session-prompt-kind")
+    published: list[dict[str, object]] = []
+
+    async def capture(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime.set_evidence_publisher(capture)
+    runtime.publish_transcript(
+        speaker="assistant",
+        text="你是不是更喜欢安静？",
+        final=True,
+        heard=True,
+    )
+    runtime.publish_transcript(speaker="user", text="是的。", final=True)
+    runtime.publish_transcript(speaker="user", text="另外一件事。", final=True)
+    await asyncio.sleep(0)
+
+    user_payloads = [
+        event["payload"]
+        for event in published
+        if event["event_type"] == "speech.utterance_finalized"
+    ]
+    assert [payload["prompt_kind"] for payload in user_payloads] == [
+        "leading",
+        "spontaneous",
+    ]
     await runtime.close()
 
 
@@ -160,6 +192,7 @@ async def test_archived_transcripts_are_redacted_before_fingerprinting_and_deliv
         {
             "text": "我的手机号是[手机号]，邮箱是[邮箱]。",
             "persona_eligible": False,
+            "prompt_kind": "spontaneous",
             **_provenance(),
         },
         {"text": "我记下了[手机号]。", "actual_heard": True, **_provenance()},
@@ -191,7 +224,12 @@ async def test_runtime_close_drains_durable_evidence_instead_of_canceling_it() -
     release.set()
     await close_task
     assert [event["payload"] for event in published] == [
-        {"text": "关机前也要保存。", "persona_eligible": False, **_provenance()}
+        {
+            "text": "关机前也要保存。",
+            "persona_eligible": False,
+            "prompt_kind": "spontaneous",
+            **_provenance(),
+        }
     ]
 
 
@@ -235,6 +273,11 @@ async def test_runtime_close_timeout_spools_inflight_evidence(tmp_path: Path) ->
     ]
     assert [envelope["target"] for envelope in persisted] == ["event"]
     assert [envelope["body"]["payload"] for envelope in persisted] == [
-        {"text": "超时也必须落盘。", "persona_eligible": False, **_provenance()}
+        {
+            "text": "超时也必须落盘。",
+            "persona_eligible": False,
+            "prompt_kind": "spontaneous",
+            **_provenance(),
+        }
     ]
     await client.aclose()

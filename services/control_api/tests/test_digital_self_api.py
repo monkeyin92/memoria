@@ -46,7 +46,12 @@ async def _seed_confirmed_owner_memory(
             occurred_at=occurred_at,
             speaker_class="owner",
             source="digital-self-api-test",
-            payload={"text": value},
+            payload={
+                "text": value,
+                "interaction_mode": "companion",
+                "prompt_kind": "spontaneous",
+                "owner_projection_eligible": True,
+            },
         )
     )
     registry = app.state.digital_self_registry

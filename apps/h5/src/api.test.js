@@ -1303,7 +1303,7 @@ describe("authenticated Control API client", () => {
     } = await import("./api.js");
     await bootstrapIdentity();
 
-    await createSession("anonymous-user", "qwen_omni");
+    await createSession("anonymous-user", "qwen_omni", "natural-chat-task");
     await expect(
       exchangeOmniSdp("omni-session", "offer-sdp"),
     ).resolves.toBe("answer-sdp");
@@ -1320,6 +1320,7 @@ describe("authenticated Control API client", () => {
         user_id: "anonymous-user",
         voice_backend: "qwen_omni",
         interaction_mode: "companion",
+        learning_task_id: "natural-chat-task",
       }),
     );
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).not.toHaveProperty(
@@ -1402,5 +1403,126 @@ describe("authenticated Control API client", () => {
     expect(fetchMock.mock.calls[1][0]).toBe(
       "/memoria-api/v1/interaction/capabilities",
     );
+  });
+
+  it("uses strict growth-map endpoints without percentage fields", async () => {
+    const task = {
+      task_id: "task-1",
+      kind: "life_interview",
+      status: "active",
+      revision: 1,
+      prompt_id: null,
+      prompt: "哪段经历最影响你？",
+      created_at: "2026-07-22T00:00:00Z",
+      updated_at: "2026-07-22T00:00:00Z",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        user_id: "owner",
+        account_type: "registered",
+        access_token: "growth-token",
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        dimensions: [{
+          key: "expression",
+          status: "supported",
+          adopted_sources: [{
+            event_id: "source-1",
+            kind: "owner_statement",
+            event_type: "owner.action_recorded",
+            target_kind: "memory_claim",
+            target_id: "claim-1",
+            label: "我会先确认事实",
+            weight: "strong",
+            occurred_at: "2026-07-21T00:00:00Z",
+          }],
+          rejected_reason_counts: {},
+          conflicts: [],
+          recent_changes: [],
+          dependency_blockers: [],
+          version_readiness: { status: "not_built" },
+        }],
+      }))
+      .mockResolvedValueOnce(jsonResponse({ items: [task] }))
+      .mockResolvedValueOnce(jsonResponse(task, 201))
+      .mockResolvedValueOnce(jsonResponse({ ...task, revision: 2, status: "active" }))
+      .mockResolvedValueOnce(jsonResponse({ ...task, revision: 3, status: "completed" }))
+      .mockResolvedValueOnce(jsonResponse({ status: "recorded" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      createGrowthTask,
+      getGrowthOverview,
+      getGrowthTasks,
+      registerAccount,
+      respondGrowthTask,
+      reviewGrowthOwnerAction,
+      transitionGrowthTask,
+    } = await import("./api.js");
+
+    await registerAccount("growth-owner", "safe-passphrase");
+    await expect(getGrowthOverview()).resolves.toEqual(expect.objectContaining({
+      dimensions: [expect.objectContaining({
+        key: "expression",
+        status: "supported",
+        adopted_sources: [expect.objectContaining({
+          event_type: "owner.action_recorded",
+          target_kind: "memory_claim",
+        })],
+      })],
+    }));
+    await expect(getGrowthTasks()).resolves.toEqual({ items: [task] });
+    await createGrowthTask("event-1", "life_interview");
+    await respondGrowthTask("task-1", "event-1", 1, "我的回答");
+    await transitionGrowthTask("task-1", "event-1", "completed", 2);
+    await reviewGrowthOwnerAction("event-1", "not_me", "memory_claim", "trait-1");
+
+    expect(fetchMock.mock.calls[2][0]).toBe("/memoria-api/v1/growth/tasks");
+    expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual({
+      event_id: "event-1",
+      kind: "life_interview",
+    });
+    expect(JSON.parse(fetchMock.mock.calls[4][1].body)).toEqual({
+      event_id: "event-1",
+      expected_revision: 1,
+      answer: "我的回答",
+    });
+    expect(JSON.parse(fetchMock.mock.calls[5][1].body)).toEqual({
+      event_id: "event-1",
+      to_status: "completed",
+      expected_revision: 2,
+    });
+    expect(JSON.parse(fetchMock.mock.calls[6][1].body)).toEqual({
+      event_id: "event-1",
+      action: "not_me",
+      target_kind: "memory_claim",
+      target_id: "trait-1",
+    });
+  });
+
+  it("rejects malformed growth-map status values", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        user_id: "owner",
+        account_type: "registered",
+        access_token: "growth-token",
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        dimensions: [{
+          key: "expression",
+          status: "unsupported",
+          adopted_sources: [],
+          rejected_reason_counts: {},
+          conflicts: [],
+          recent_changes: [],
+          dependency_blockers: [],
+          version_readiness: { status: "not_built" },
+        }],
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { getGrowthOverview, registerAccount } = await import("./api.js");
+    await registerAccount("growth-owner", "safe-passphrase");
+    await expect(getGrowthOverview()).rejects.toThrow("成长地图响应无效");
   });
 });

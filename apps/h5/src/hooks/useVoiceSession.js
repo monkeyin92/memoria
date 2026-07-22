@@ -160,6 +160,7 @@ export function useVoiceSession({
   onFinalTranscript,
   voiceReplyEnabled = true,
   voiceBackend = "cascade",
+  learningTaskId = null,
 }) {
   const [session, setSession] = useState(null);
   const [uiState, setUiState] = useState("idle");
@@ -768,7 +769,7 @@ export function useVoiceSession({
       } catch (caught) {
         preparation = Promise.reject(caught);
       }
-      const creation = createSession(userId, selectedBackend);
+      const creation = createSession(userId, selectedBackend, learningTaskId);
       const prepared = preparation.then(
         () => ({ ok: true }),
         (caught) => ({ ok: false, caught }),
@@ -856,7 +857,7 @@ export function useVoiceSession({
     }
     return (async () => {
       try {
-        const created = await createSession(userId, selectedBackend);
+        const created = await createSession(userId, selectedBackend, learningTaskId);
         if (!isCurrent()) {
           await disconnectRoom(room);
           return;
@@ -1160,6 +1161,7 @@ export function useVoiceSession({
     disconnectRoom,
     failOmni,
     failReconnect,
+    learningTaskId,
     publishAudioDiagnostic,
     recordAudioDiagnostic,
     resetEmotionState,

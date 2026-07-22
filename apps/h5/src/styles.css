@@ -1556,6 +1556,189 @@ body {
   color: #7a8596;
   font-size: 0.64rem;
 }
+.growth-map-boundary {
+  margin: 11px 0 0;
+  border-left: 3px solid #6d8fba;
+  padding: 8px 10px;
+  background: #f4f7fb;
+  color: #405575;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.55;
+}
+.growth-map-feedback {
+  min-height: 28px;
+  margin-top: 9px;
+  color: #667287;
+  font-size: 0.72rem;
+}
+.growth-map-feedback > span {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.growth-map-feedback [role="alert"] { color: #9a4545; }
+.growth-map-feedback .button-quiet {
+  min-height: 28px;
+  margin-left: 4px;
+  padding: 4px 8px;
+}
+.growth-dimension-grid,
+.growth-task-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.growth-dimension-card,
+.growth-task-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 13px;
+  background: #f8fafc;
+}
+.growth-dimension-card[data-status="conflicted"] { border-color: #e3b7aa; background: #fff8f5; }
+.growth-dimension-card[data-status="supported"] { background: #f6fbf8; }
+.growth-card-heading,
+.growth-task-title,
+.growth-readiness {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.growth-card-kicker {
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 0.63rem;
+}
+.growth-card-heading h3,
+.growth-task-title h4 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+.growth-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: #eef0f3;
+  color: #536075;
+  font-size: 0.62rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.growth-status[data-status="supported"] { background: #e5f3e9; color: #3c7651; }
+.growth-status[data-status="emerging"] { background: #fff3d9; color: #8d6a2d; }
+.growth-status[data-status="conflicted"] { background: #fde7e1; color: #a04c3e; }
+.growth-source-count {
+  margin: 8px 0 0;
+  color: #304765;
+  font-size: 0.73rem;
+  font-weight: 750;
+}
+.growth-source-list,
+.growth-detail-block ul {
+  display: grid;
+  gap: 7px;
+  margin: 9px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.growth-source-list li {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid rgba(99, 119, 146, 0.15);
+  padding-top: 7px;
+}
+.growth-source-list strong {
+  display: block;
+  color: #344963;
+  font-size: 0.7rem;
+}
+.growth-source-list small,
+.growth-readiness small {
+  display: block;
+  margin-top: 2px;
+  color: #7a8596;
+  font-size: 0.62rem;
+}
+.growth-source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.growth-source-actions .button-quiet {
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 0.66rem;
+}
+.growth-detail-block {
+  margin-top: 10px;
+  color: #5f6d81;
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+.growth-detail-block strong {
+  color: #43546c;
+  font-size: 0.66rem;
+}
+.growth-detail-block p { margin: 3px 0 0; }
+.growth-detail-block li { padding-left: 9px; border-left: 2px solid #d5deea; }
+.growth-blocker { color: #955947; }
+.growth-blocker li { border-left-color: #e0b3a6; }
+.growth-readiness {
+  align-items: center;
+  margin-top: 11px;
+  border-top: 1px solid rgba(99, 119, 146, 0.15);
+  padding-top: 8px;
+  color: #6c7788;
+  font-size: 0.66rem;
+}
+.growth-readiness strong { color: #3c5576; font-size: 0.68rem; }
+.growth-subheading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 18px;
+}
+.growth-subheading h3 { margin: 0; color: var(--ink); font-size: 0.92rem; }
+.growth-subheading span { color: var(--muted); font-size: 0.66rem; }
+.growth-task-card > p {
+  margin: 9px 0 0;
+  color: #657084;
+  font-size: 0.72rem;
+  line-height: 1.55;
+}
+.growth-task-card .button-primary,
+.growth-task-card .button-quiet { width: 100%; margin-top: 11px; }
+.growth-task-card form { display: grid; gap: 7px; margin-top: 10px; }
+.growth-task-card label { color: #53647c; font-size: 0.68rem; font-weight: 700; }
+.growth-task-card textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 9px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+.growth-task-complete {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #3e7a52 !important;
+  font-weight: 700;
+}
 .digital-status {
   display: inline-flex;
   align-items: center;

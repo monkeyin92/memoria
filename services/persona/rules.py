@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -16,8 +16,8 @@ TICS = ("我觉得", "其实", "说实话", "怎么说呢", "坦白说", "总的
 AUTO_PROMOTE = frozenset(
     {"verbal_tic", "sentence_length", "speech_rate", "pause_style", "discourse_style"}
 )
-OWNER_AUTO_PROMOTE_OBSERVATIONS = 3
-UNCERTAIN_AUTO_PROMOTE_OBSERVATIONS = 6
+OWNER_AUTO_PROMOTE_WEIGHT = 2.7
+UNCERTAIN_AUTO_PROMOTE_WEIGHT = 5.4
 UNCERTAIN_AUTO_PROMOTE_SESSIONS = 3
 EXCLUSIVE_STYLE_CATEGORIES = frozenset({"sentence_length", "speech_rate", "pause_style"})
 EXCLUSIVE_BUCKET_DOMINANCE_RATIO = 2
@@ -68,6 +68,7 @@ class ExclusiveBucketObservation:
     speaker_class: str | None
     session_id: str | None
     payload: Mapping[str, Any]
+    weight: float
 
 
 class PersonaExtractor(Protocol):
@@ -197,8 +198,8 @@ def should_auto_promote(
     *,
     category: PersonaTraitCategory,
     status: str,
-    owner_count: int,
-    uncertain_count: int,
+    owner_weight: float,
+    uncertain_weight: float,
     uncertain_session_count: int,
     uncertain_profile_count: int,
 ) -> bool:
@@ -208,17 +209,17 @@ def should_auto_promote(
         or category in EXCLUSIVE_STYLE_CATEGORIES
     ):
         return False
-    owner_ready = owner_count >= OWNER_AUTO_PROMOTE_OBSERVATIONS
+    owner_ready = owner_weight >= OWNER_AUTO_PROMOTE_WEIGHT
     uncertain_ready = (
-        owner_count == 0
-        and uncertain_count >= UNCERTAIN_AUTO_PROMOTE_OBSERVATIONS
+        owner_weight == 0
+        and uncertain_weight + 1e-9 >= UNCERTAIN_AUTO_PROMOTE_WEIGHT
         and uncertain_session_count >= UNCERTAIN_AUTO_PROMOTE_SESSIONS
         and uncertain_profile_count == 1
     )
     return owner_ready or uncertain_ready
 
 
-def _dominant_bucket(counts: Mapping[str, int], minimum: int) -> str | None:
+def _dominant_bucket(counts: Mapping[str, float], minimum: float) -> str | None:
     ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     if not ranked or ranked[0][1] < minimum:
         return None
@@ -239,8 +240,10 @@ def exclusive_auto_promote_target(
     if category not in EXCLUSIVE_STYLE_CATEGORIES:
         return None
     states: dict[str, tuple[str, str | None, str]] = {}
-    owner_counts: Counter[str] = Counter()
-    uncertain_counts: dict[str, Counter[str]] = defaultdict(Counter)
+    owner_counts: dict[str, float] = defaultdict(float)
+    uncertain_counts: dict[str, dict[str, float]] = defaultdict(
+        lambda: defaultdict(float)
+    )
     uncertain_sessions: dict[tuple[str, str], set[str]] = defaultdict(set)
     profiles: set[str] = set()
     for observation in observations:
@@ -252,7 +255,7 @@ def exclusive_auto_promote_target(
             observation.updated_at,
         )
         if observation.speaker_class == "owner":
-            owner_counts[observation.trait_id] += 1
+            owner_counts[observation.trait_id] += observation.weight
             continue
         if observation.speaker_class != "uncertain":
             continue
@@ -261,7 +264,7 @@ def exclusive_auto_promote_target(
             continue
         profile_id, _quality = provenance
         profiles.add(profile_id)
-        uncertain_counts[profile_id][observation.trait_id] += 1
+        uncertain_counts[profile_id][observation.trait_id] += observation.weight
         if observation.session_id:
             uncertain_sessions[(profile_id, observation.trait_id)].add(observation.session_id)
 
@@ -273,7 +276,7 @@ def exclusive_auto_promote_target(
     if manually_confirmed:
         return max(manually_confirmed)[1]
     if owner_counts:
-        return _dominant_bucket(owner_counts, OWNER_AUTO_PROMOTE_OBSERVATIONS)
+        return _dominant_bucket(owner_counts, OWNER_AUTO_PROMOTE_WEIGHT)
     if uncertain_profile_id is not None:
         profiles = {uncertain_profile_id} if uncertain_profile_id in profiles else set()
     if len(profiles) != 1:
@@ -281,7 +284,7 @@ def exclusive_auto_promote_target(
     profile_id = next(iter(profiles))
     target = _dominant_bucket(
         uncertain_counts[profile_id],
-        UNCERTAIN_AUTO_PROMOTE_OBSERVATIONS,
+        UNCERTAIN_AUTO_PROMOTE_WEIGHT,
     )
     if target is None:
         return None

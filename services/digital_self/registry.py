@@ -12,8 +12,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from services.archive.domain import EvidenceEvent, SpeakerClass
 from services.archive.memory_catalog import MemoryCatalog
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
+from services.common.evidence_policy import confirmed_projection_contribution_for
 from services.digital_self.compiler import (
     DEFAULT_COMPILER_VERSION,
     DEFAULT_POLICY_VERSION,
@@ -362,9 +364,13 @@ class DigitalSelfRegistry:
         connection: sqlite3.Connection,
         account_id: str,
     ) -> tuple[builtins.list[ManifestEntry], str | None]:
+        negative_targets = self._negative_targets(connection, account_id)
         memory_rows = connection.execute(
             """
-            SELECT claim.*
+            SELECT claim.*, source.event_type AS source_type,
+                   source.speaker_class AS source_speaker_class,
+                   source.source AS source_origin, source.occurred_at AS source_occurred_at,
+                   source.payload_json AS source_payload_json
             FROM memory_claims AS claim
             JOIN evidence_events AS source
               ON source.event_id = claim.source_event_id
@@ -372,12 +378,30 @@ class DigitalSelfRegistry:
             WHERE claim.account_id = ?
               AND claim.status = 'confirmed'
               AND source.speaker_class = 'owner'
-              AND source.event_type = 'speech.utterance_finalized'
             ORDER BY claim.claim_id
             """,
             (account_id,),
         ).fetchall()
-        entries: builtins.list[ManifestEntry] = [memory_entry(dict(row)) for row in memory_rows]
+        entries: builtins.list[ManifestEntry] = []
+        for row in memory_rows:
+            source_event_id = str(row["source_event_id"])
+            if (
+                ("memory_claim", str(row["claim_id"])) in negative_targets
+                or ("source_event", source_event_id) in negative_targets
+            ):
+                continue
+            if confirmed_projection_contribution_for(
+                EvidenceEvent(
+                    event_id=source_event_id,
+                    account_id=account_id,
+                    event_type=str(row["source_type"]),
+                    occurred_at=datetime.fromisoformat(str(row["source_occurred_at"])),
+                    speaker_class=cast(SpeakerClass, row["source_speaker_class"]),
+                    source=str(row["source_origin"]),
+                    payload=json.loads(str(row["source_payload_json"])),
+                )
+            ).accepted:
+                entries.append(memory_entry(dict(row)))
 
         persona_row = connection.execute(
             """
@@ -426,22 +450,60 @@ class DigitalSelfRegistry:
             entry = persona_entry(item, persona_version_id=persona_version_id)
             if not entry.source_event_ids:
                 continue
+            if (
+                ("persona_trait", entry.trait_id) in negative_targets
+                or any(
+                    ("source_event", source_event_id) in negative_targets
+                    for source_event_id in entry.source_event_ids
+                )
+            ):
+                continue
             placeholders = ",".join("?" for _ in entry.source_event_ids)
             evidence = connection.execute(
                 f"""
-                SELECT event_id, speaker_class, event_type FROM evidence_events
+                SELECT event_id, speaker_class, event_type, source, occurred_at, payload_json
+                FROM evidence_events
                 WHERE account_id = ? AND event_id IN ({placeholders})
                 """,
                 (account_id, *entry.source_event_ids),
             ).fetchall()
             if len(evidence) != len(entry.source_event_ids) or any(
-                row["speaker_class"] != "owner"
-                or row["event_type"] != "speech.utterance_finalized"
-                for row in evidence
+                not confirmed_projection_contribution_for(
+                    EvidenceEvent(
+                        event_id=str(row["event_id"]), account_id=account_id,
+                        event_type=str(row["event_type"]),
+                        occurred_at=datetime.fromisoformat(str(row["occurred_at"])),
+                        speaker_class=cast(SpeakerClass, row["speaker_class"]), source=str(row["source"]),
+                        payload=json.loads(str(row["payload_json"])),
+                    )
+                ).accepted for row in evidence
             ):
                 continue
             entries.append(entry)
         return entries, persona_version_id
+
+    @staticmethod
+    def _negative_targets(
+        connection: sqlite3.Connection,
+        account_id: str,
+    ) -> set[tuple[str, str]]:
+        rows = connection.execute(
+            """
+            SELECT payload_json FROM evidence_events
+            WHERE account_id = ? AND event_type = 'owner.action_recorded'
+            """,
+            (account_id,),
+        ).fetchall()
+        targets: set[tuple[str, str]] = set()
+        for row in rows:
+            payload = json.loads(str(row["payload_json"]))
+            if payload.get("action_type") not in {"not_me", "would_not_say"}:
+                continue
+            target_kind = str(payload.get("target_kind") or "")
+            target_id = str(payload.get("target_id") or "")
+            if target_kind and target_id:
+                targets.add((target_kind, target_id))
+        return targets
 
     def _parent_row(
         self,
