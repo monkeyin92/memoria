@@ -16,8 +16,11 @@
   冻结会话模式与轻量 Companion Style；Self Preview 与 Legacy 在依赖未满足时由服务端
   明确 blocked。实时语音统一走 session-bound archive contract，shadow owner 只保留
   history/低敏学习，不获得 private/tools/owner projection。
-- 当前开发阶段为 S3：实现不可变 `DigitalSelfVersion` 与 manifest，并保持 S2 的模式、
-  说话人、generation fence 和伙伴污染边界。
+- S3 已完成：不可变 `DigitalSelfVersion`、canonical manifest、digest CAS、完整状态机、
+  rollback、同事务生命周期审计、SQLite/PostgreSQL 双实现、FORCE RLS、账户导出/删除和
+  H5 管理面均已落地。
+- 当前开发阶段为 S4：从现有 Evidence、Memory、Persona 与 manifest 派生成长地图和
+  培育任务，不建立第二份人物事实或伪精确人格百分比。
 - 后续严格按不可变 DigitalSelfVersion、成长地图、认知/决策/关系、回答来源、
   Self Preview、本人声音、Legacy、全量验收与部署顺序推进。
 - 本轮不建设分布式、多区域、KMS、异地副本或 PITR；保留为正式商用前待办。遗嘱、
@@ -45,6 +48,23 @@
 - canonical 用户话轮是后续 assistant 已听证据和原始音频的父事件；派生证据只继承
   同 session/turn/generation 的服务端资格。Persona 仅消费显式
   `persona_eligible=true` 的 owner 或可信 shadow-owner 话轮。
+
+## 硅基生命路线 S3 验证
+
+- 正式临时 PostgreSQL 17 + pgvector 环境：861 collected，859 passed、2 skipped、
+  0 failed；总覆盖率 89.35%，85% 正式门槛通过。
+- PostgreSQL 集成以 NOBYPASSRLS 角色验证跨账户隔离、digest CAS、不可变版本、
+  rollback、生命周期审计、账户导出与删除；SQLite 与 PostgreSQL 共享同一领域合同。
+- H5 全量 165/165，production build、Ruff、strict mypy、Compose 合同和
+  `git diff --check` 通过。
+- In-app browser：390×844 和 667×375 均无水平溢出，console error/warn 为空；
+  实测空来源拒绝、草稿 → 测试 → 批准、密码 modal 初始聚焦、Tab/Shift+Tab 圈定和
+  操作后焦点恢复。
+- manifest 只采用主人 canonical user speech 支撑的 confirmed Memory 与当前
+  PersonaVersion confirmed trait；guest、uncertain、assistant、companion 输出和候选
+  都不能进入。
+- Self Preview 即使已有 approved version 仍由 `self_preview_runtime` 缺项阻断；
+  Legacy 继续要求 frozen version、approved relationship profile 和 grant。
 
 ## 当前生产
 

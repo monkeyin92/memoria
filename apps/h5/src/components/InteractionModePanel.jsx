@@ -37,9 +37,23 @@ const modeCopy = {
 
 const orderedModes = ["companion", "archive", "self_preview", "legacy"];
 
+const missingCopy = {
+  approved_digital_self_version: "需要先建立并批准数字分身版本",
+  self_preview_runtime: "数字自我预览运行时将在后续阶段开放",
+  frozen_digital_self_version: "需要先冻结数字分身版本",
+  relationship_profile: "需要已批准的关系档案",
+  legacy_grant: "需要传承授权",
+};
+
 function availabilityOf(capabilities, mode) {
   const value = capabilities?.modes?.[mode];
   return value?.status === "available" ? "available" : "blocked";
+}
+
+function blockedReason(capabilities, mode, fallback) {
+  const missing = capabilities?.modes?.[mode]?.missing;
+  if (!Array.isArray(missing) || !missing.length) return fallback;
+  return missing.map((item) => missingCopy[item] || item).join("；");
 }
 
 export function InteractionModePanel({
@@ -93,7 +107,13 @@ export function InteractionModePanel({
                     {copy.action}
                   </button>
                 ) : (
-                  <p className="interaction-mode-blocked">{copy.blocked || "服务端状态暂不可用"}</p>
+                  <p className="interaction-mode-blocked">
+                    {blockedReason(
+                      capabilities,
+                      mode,
+                      copy.blocked || "服务端状态暂不可用",
+                    )}
+                  </p>
                 )}
               </article>
             );

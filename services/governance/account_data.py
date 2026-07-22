@@ -55,6 +55,8 @@ _ARCHIVE_EXPORT_TABLES = (
     TableSpec("speech_style_stats", json_columns=frozenset({"tic_counts_json"})),
     TableSpec("persona_learning_consents"),
     TableSpec("persona_versions", json_columns=frozenset({"snapshot_json"})),
+    TableSpec("digital_self_versions", json_columns=frozenset({"manifest_json"})),
+    TableSpec("digital_self_lifecycle_audit_events"),
     TableSpec("voice_clone_consents"),
     TableSpec(
         "voice_samples",
@@ -83,6 +85,8 @@ _ARCHIVE_DELETE_ORDER = (
     "persona_evidence",
     "persona_observation_receipts",
     "speech_style_stats",
+    "digital_self_lifecycle_audit_events",
+    "digital_self_versions",
     "persona_versions",
     "persona_traits",
     "persona_learning_consents",
@@ -138,6 +142,8 @@ _POSTGRES_ARCHIVE_EXPORT_TABLES = (
     TableSpec("speech_style_stats", json_columns=frozenset({"tic_counts"})),
     TableSpec("persona_learning_consents"),
     TableSpec("persona_versions", json_columns=frozenset({"snapshot"})),
+    TableSpec("digital_self_versions", json_columns=frozenset({"manifest_json"})),
+    TableSpec("digital_self_lifecycle_audit_events"),
     TableSpec("voice_clone_consents"),
     TableSpec(
         "voice_samples",
@@ -485,7 +491,7 @@ class PostgresAccountRepository:
                         f"SELECT {selected} FROM {self._quoted(spec.name)} WHERE account_id = $1",
                         account_id,
                     )
-                    values = [self._portable_record(row) for row in rows]
+                    values = [self._portable_record(row, spec.json_columns) for row in rows]
                     values.sort(key=SqliteAccountRepository._canonical)
                     result[spec.name] = values
                 return result
@@ -604,8 +610,23 @@ class PostgresAccountRepository:
         return SqliteAccountRepository._quoted(identifier)
 
     @classmethod
-    def _portable_record(cls, row: asyncpg.Record) -> dict[str, Any]:
-        return {key: cls._portable_value(value) for key, value in row.items()}
+    def _portable_record(
+        cls,
+        row: asyncpg.Record,
+        json_columns: frozenset[str] = frozenset(),
+    ) -> dict[str, Any]:
+        result = {key: cls._portable_value(value) for key, value in row.items()}
+        for column in json_columns:
+            if not column.endswith("_json"):
+                continue
+            value = result.get(column)
+            if isinstance(value, str):
+                try:
+                    result[column.removesuffix("_json")] = json.loads(value)
+                    del result[column]
+                except json.JSONDecodeError:
+                    pass
+        return result
 
     @classmethod
     def _portable_value(cls, value: Any) -> Any:

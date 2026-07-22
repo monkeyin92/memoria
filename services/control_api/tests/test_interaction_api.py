@@ -45,6 +45,7 @@ async def test_capabilities_expose_explicit_s2_blocks(
     assert modes["companion"]["status"] == "available"
     assert modes["archive"] == {"status": "available", "conversational": False}
     assert modes["self_preview"]["status"] == "blocked"
+    assert modes["self_preview"]["missing"] == ["self_preview_runtime"]
     assert modes["legacy"]["status"] == "blocked"
 
 

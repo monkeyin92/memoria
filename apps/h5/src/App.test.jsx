@@ -9,12 +9,16 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  approveDigitalSelfVersion: vi.fn(),
+  beginDigitalSelfTesting: vi.fn(),
+  buildDigitalSelfVersion: vi.fn(),
   bootstrapIdentity: vi.fn(),
   cachePendingMessage: vi.fn(),
   deleteAccountData: vi.fn(),
   endVoice: vi.fn().mockResolvedValue(undefined),
   resetVoice: vi.fn().mockResolvedValue(undefined),
   exportAccountArchive: vi.fn(),
+  freezeDigitalSelfVersion: vi.fn(),
   flushPendingMessages: vi.fn().mockResolvedValue(undefined),
   getMemoryDays: vi.fn().mockResolvedValue({ items: [] }),
   getLifeTimeline: vi.fn().mockResolvedValue({ items: [] }),
@@ -28,6 +32,7 @@ const mocks = vi.hoisted(() => ({
       legacy: { status: "blocked", conversational: true },
     },
   }),
+  getDigitalSelfVersions: vi.fn().mockResolvedValue({ items: [] }),
   getRawVoiceConsent: vi.fn().mockResolvedValue({ consent: null }),
   getProfile: vi.fn(),
   loginAccount: vi.fn(),
@@ -47,6 +52,7 @@ const mocks = vi.hoisted(() => ({
   grantPersonaConsent: vi.fn(),
   grantRawVoiceConsent: vi.fn(),
   revokePersonaConsent: vi.fn(),
+  revokeDigitalSelfVersion: vi.fn(),
   revokeRawVoiceConsent: vi.fn(),
   reviewPersonaTrait: vi.fn(),
   rollbackPersonaVersion: vi.fn(),
@@ -59,20 +65,26 @@ const mocks = vi.hoisted(() => ({
   evaluateVoiceProfile: vi.fn(),
   activateVoiceProfile: vi.fn(),
   revokeVoiceProfile: vi.fn(),
+  rollbackDigitalSelfVersion: vi.fn(),
   useVoiceSession: vi.fn(),
   resumeAudio: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("./api.js", () => ({
+  approveDigitalSelfVersion: mocks.approveDigitalSelfVersion,
+  beginDigitalSelfTesting: mocks.beginDigitalSelfTesting,
+  buildDigitalSelfVersion: mocks.buildDigitalSelfVersion,
   bootstrapIdentity: mocks.bootstrapIdentity,
   cachePendingMessage: mocks.cachePendingMessage,
   deleteAccountData: mocks.deleteAccountData,
   exportAccountArchive: mocks.exportAccountArchive,
+  freezeDigitalSelfVersion: mocks.freezeDigitalSelfVersion,
   flushPendingMessages: mocks.flushPendingMessages,
   getMemoryDays: mocks.getMemoryDays,
   getLifeTimeline: mocks.getLifeTimeline,
   getMemoryReviewQueue: mocks.getMemoryReviewQueue,
   getInteractionCapabilities: mocks.getInteractionCapabilities,
+  getDigitalSelfVersions: mocks.getDigitalSelfVersions,
   getRawVoiceConsent: mocks.getRawVoiceConsent,
   getProfile: mocks.getProfile,
   loginAccount: mocks.loginAccount,
@@ -92,6 +104,7 @@ vi.mock("./api.js", () => ({
   grantPersonaConsent: mocks.grantPersonaConsent,
   grantRawVoiceConsent: mocks.grantRawVoiceConsent,
   revokePersonaConsent: mocks.revokePersonaConsent,
+  revokeDigitalSelfVersion: mocks.revokeDigitalSelfVersion,
   revokeRawVoiceConsent: mocks.revokeRawVoiceConsent,
   reviewPersonaTrait: mocks.reviewPersonaTrait,
   rollbackPersonaVersion: mocks.rollbackPersonaVersion,
@@ -104,6 +117,7 @@ vi.mock("./api.js", () => ({
   evaluateVoiceProfile: mocks.evaluateVoiceProfile,
   activateVoiceProfile: mocks.activateVoiceProfile,
   revokeVoiceProfile: mocks.revokeVoiceProfile,
+  rollbackDigitalSelfVersion: mocks.rollbackDigitalSelfVersion,
 }));
 
 vi.mock("./hooks/useVoiceSession.js", () => ({

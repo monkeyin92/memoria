@@ -37,6 +37,7 @@ from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import auth as auth_routes
+from services.control_api.app.routes import digital_self as digital_self_routes
 from services.control_api.app.routes import interaction as interaction_routes
 from services.control_api.app.routes import memory as memory_routes
 from services.control_api.app.routes import persona as persona_routes
@@ -49,6 +50,9 @@ from services.control_api.app.session_termination import (
     LiveKitRoomCloser,
     RealtimeConnectionRegistry,
 )
+from services.digital_self.domain import RegistryPort
+from services.digital_self.postgres_registry import PostgresDigitalSelfRegistry
+from services.digital_self.registry import DigitalSelfRegistry
 from services.governance.account_data import (
     AccountDataGovernance,
     AccountDeletionWorker,
@@ -355,6 +359,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     postgres_archive: PostgresLifeArchive | None = None
     postgres_catalog: PostgresMemoryCatalog | None = None
     postgres_persona: PostgresPersonaEngine | None = None
+    postgres_digital_self: PostgresDigitalSelfRegistry | None = None
     archive: LifeArchivePort
     memory_catalog: MemoryCatalogPort
     persona_engine: PersonaEnginePort
@@ -403,6 +408,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.life_archive = archive
     app.state.memory_catalog = memory_catalog
     app.state.persona_engine = persona_engine
+    digital_self_registry: RegistryPort
+    if archive_url:
+        postgres_digital_self = PostgresDigitalSelfRegistry(archive_url)
+        await postgres_digital_self.initialize()
+        digital_self_registry = postgres_digital_self
+    else:
+        sqlite_digital_self = DigitalSelfRegistry.sqlite(settings.memoria_db_path)
+        await to_thread(sqlite_digital_self.initialize)
+        digital_self_registry = sqlite_digital_self
+    app.state.digital_self_registry = digital_self_registry
     voice_profile_manager, voice_sample_signer, voice_object_store = _voice_profile_services(
         settings
     )
@@ -457,6 +472,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await compiler_worker.stop()
         if postgres_persona is not None:
             await postgres_persona.close()
+        if postgres_digital_self is not None:
+            await postgres_digital_self.close()
         if postgres_catalog is not None:
             await postgres_catalog.close()
         if postgres_archive is not None:
@@ -497,6 +514,7 @@ def create_app() -> FastAPI:
         settings.memoria_db_path,
         extractor=_persona_extractor(settings),
     )
+    app.state.digital_self_registry = DigitalSelfRegistry.sqlite(settings.memoria_db_path)
     app.state.speaker_authority = _speaker_authority(settings)
     voice_profile_manager, voice_sample_signer, voice_object_store = _voice_profile_services(
         settings
@@ -529,6 +547,7 @@ def create_app() -> FastAPI:
     app.include_router(speaker_routes.router)
     app.include_router(memory_routes.router)
     app.include_router(persona_routes.router)
+    app.include_router(digital_self_routes.router)
     app.include_router(voice_routes.router)
     app.include_router(readiness_routes.router)
 

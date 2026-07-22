@@ -15,11 +15,16 @@ import {
 } from "@phosphor-icons/react";
 
 import {
+  approveDigitalSelfVersion,
+  beginDigitalSelfTesting,
+  buildDigitalSelfVersion,
   createVoiceBlindTrial,
   enrollSpeakerProfiles,
   enrollVoiceProfile,
   evaluateVoiceProfile,
   exportAccountArchive,
+  freezeDigitalSelfVersion,
+  getDigitalSelfVersions,
   getInteractionCapabilities,
   getPersonaStatus,
   getPersonaTraits,
@@ -31,9 +36,11 @@ import {
   previewVoiceBlindTrial,
   reviewPersonaTrait,
   revokePersonaConsent,
+  revokeDigitalSelfVersion,
   revokeSpeakerProfile,
   revokeVoiceConsent,
   revokeVoiceProfile,
+  rollbackDigitalSelfVersion,
   rollbackPersonaVersion,
 } from "../api.js";
 import {
@@ -41,6 +48,7 @@ import {
   prepareVoiceCloneSample,
 } from "../lib/audioEnrollment.js";
 import { AccountDeletionForm } from "./AccountDeletionForm.jsx";
+import { DigitalSelfVersions } from "./DigitalSelfVersions.jsx";
 import { InteractionModePanel } from "./InteractionModePanel.jsx";
 
 const traitLabels = {
@@ -133,6 +141,7 @@ export function DigitalSelfPanel({
   const [personaConsent, setPersonaConsent] = useState(false);
   const [traits, setTraits] = useState([]);
   const [versions, setVersions] = useState([]);
+  const [digitalSelfVersions, setDigitalSelfVersions] = useState([]);
   const [speakerConsent, setSpeakerConsent] = useState(false);
   const [speakerFiles, setSpeakerFiles] = useState([]);
   const [speakerProfiles, setSpeakerProfiles] = useState([]);
@@ -155,6 +164,7 @@ export function DigitalSelfPanel({
       getInteractionCapabilities(),
       getPersonaTraits(),
       getPersonaVersions(),
+      getDigitalSelfVersions(),
       getSpeakerProfiles(),
       getVoiceProfiles(),
     ]);
@@ -163,6 +173,7 @@ export function DigitalSelfPanel({
       interactionResult,
       traitsResult,
       versionsResult,
+      digitalSelfVersionsResult,
       speakersResult,
       voicesResult,
     ] = results;
@@ -174,15 +185,23 @@ export function DigitalSelfPanel({
     }
     if (traitsResult.status === "fulfilled") setTraits(itemsOf(traitsResult.value));
     if (versionsResult.status === "fulfilled") setVersions(itemsOf(versionsResult.value));
+    if (digitalSelfVersionsResult.status === "fulfilled") {
+      setDigitalSelfVersions(itemsOf(digitalSelfVersionsResult.value));
+    }
     if (speakersResult.status === "fulfilled") setSpeakerProfiles(itemsOf(speakersResult.value));
     if (voicesResult.status === "fulfilled") {
       setVoiceConsent(voicesResult.value?.consent || null);
       setVoiceProfiles(itemsOf(voicesResult.value));
     }
-    if (results.some((result) => result.status === "rejected")) {
+    const anyFailed = results.some((result) => result.status === "rejected");
+    if (anyFailed) {
       setError("部分状态暂时无法同步，你仍可查看已经加载的内容并稍后重试。");
     }
     if (!silent) setLoading(false);
+    return {
+      anyFailed,
+      digitalSelfFailed: digitalSelfVersionsResult.status === "rejected",
+    };
   }, []);
 
   useEffect(() => {
@@ -203,6 +222,38 @@ export function DigitalSelfPanel({
     try {
       await action();
       await reload({ silent: true });
+      setNotice(success);
+      return true;
+    } catch (actionError) {
+      await reload({ silent: true });
+      setError(errorMessage(actionError, "操作没有完成，请稍后重试。"));
+      return false;
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const applyDigitalSelfVersion = (version) => {
+    if (!version?.version_id) return;
+    setDigitalSelfVersions((current) =>
+      [...current.filter((item) => item.version_id !== version.version_id), version]
+        .sort((left, right) => right.version_number - left.version_number),
+    );
+  };
+
+  const runDigitalSelfMutation = async (key, action, success) => {
+    setBusy(key);
+    setError("");
+    setNotice("");
+    try {
+      const version = await action();
+      const sync = await reload({ silent: true });
+      if (sync.digitalSelfFailed) {
+        applyDigitalSelfVersion(version);
+        setError(
+          "版本操作已完成，但最新版本列表暂时无法同步。当前显示保留了服务器返回的结果，请稍后重试。",
+        );
+      }
       setNotice(success);
       return true;
     } catch (actionError) {
@@ -239,6 +290,50 @@ export function DigitalSelfPanel({
     } finally {
       setBusy("");
     }
+  };
+
+  const buildDigitalSelf = () =>
+    runDigitalSelfMutation(
+      "digital-self-build",
+      buildDigitalSelfVersion,
+      "数字分身草稿已根据当前确认材料生成。",
+    );
+
+  const transitionDigitalSelf = (action, version, password) => {
+    const digest = version.manifest_sha256;
+    const actions = {
+      testing: {
+        execute: () => beginDigitalSelfTesting(version.version_id, digest),
+        success: `数字分身版本 ${version.version_number} 已进入测试。`,
+      },
+      approve: {
+        execute: () =>
+          approveDigitalSelfVersion(version.version_id, password, digest),
+        success: `数字分身版本 ${version.version_number} 已批准。`,
+      },
+      freeze: {
+        execute: () =>
+          freezeDigitalSelfVersion(version.version_id, password, digest),
+        success: `数字分身版本 ${version.version_number} 已冻结。`,
+      },
+      revoke: {
+        execute: () =>
+          revokeDigitalSelfVersion(version.version_id, password, digest),
+        success: `数字分身版本 ${version.version_number} 已撤销。`,
+      },
+      rollback: {
+        execute: () =>
+          rollbackDigitalSelfVersion(version.version_id, password, digest),
+        success: `已基于版本 ${version.version_number} 创建新的回滚草稿。`,
+      },
+    };
+    const selected = actions[action];
+    if (!selected) return Promise.resolve(false);
+    return runDigitalSelfMutation(
+      `digital-self-${action}-${version.version_id}`,
+      selected.execute,
+      selected.success,
+    );
   };
 
   const enrollVoice = async () => {
@@ -391,6 +486,12 @@ export function DigitalSelfPanel({
               learnedTraitCount={learnedTraits.length}
               onOpenArchive={onOpenArchive}
               onChangeCompanion={onChangeCompanion}
+            />
+            <DigitalSelfVersions
+              versions={digitalSelfVersions}
+              busy={busy}
+              onBuild={buildDigitalSelf}
+              onTransition={transitionDigitalSelf}
             />
             <section className="digital-section" aria-labelledby="persona-title">
               <div className="digital-section-heading">

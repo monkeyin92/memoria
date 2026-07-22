@@ -2,12 +2,17 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  approveDigitalSelfVersion: vi.fn(),
+  beginDigitalSelfTesting: vi.fn(),
+  buildDigitalSelfVersion: vi.fn(),
   activateVoiceProfile: vi.fn(),
   createVoiceBlindTrial: vi.fn(),
   enrollSpeakerProfiles: vi.fn(),
   enrollVoiceProfile: vi.fn(),
   evaluateVoiceProfile: vi.fn(),
   exportAccountArchive: vi.fn(),
+  freezeDigitalSelfVersion: vi.fn(),
+  getDigitalSelfVersions: vi.fn(),
   getInteractionCapabilities: vi.fn(),
   getPersonaStatus: vi.fn(),
   getPersonaTraits: vi.fn(),
@@ -19,9 +24,11 @@ const mocks = vi.hoisted(() => ({
   previewVoiceBlindTrial: vi.fn(),
   reviewPersonaTrait: vi.fn(),
   revokePersonaConsent: vi.fn(),
+  revokeDigitalSelfVersion: vi.fn(),
   revokeSpeakerProfile: vi.fn(),
   revokeVoiceConsent: vi.fn(),
   revokeVoiceProfile: vi.fn(),
+  rollbackDigitalSelfVersion: vi.fn(),
   rollbackPersonaVersion: vi.fn(),
   deleteAccountData: vi.fn(),
   prepareSpeakerEnrollment: vi.fn(),
@@ -29,12 +36,17 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../api.js", () => ({
+  approveDigitalSelfVersion: mocks.approveDigitalSelfVersion,
+  beginDigitalSelfTesting: mocks.beginDigitalSelfTesting,
+  buildDigitalSelfVersion: mocks.buildDigitalSelfVersion,
   activateVoiceProfile: mocks.activateVoiceProfile,
   createVoiceBlindTrial: mocks.createVoiceBlindTrial,
   enrollSpeakerProfiles: mocks.enrollSpeakerProfiles,
   enrollVoiceProfile: mocks.enrollVoiceProfile,
   evaluateVoiceProfile: mocks.evaluateVoiceProfile,
   exportAccountArchive: mocks.exportAccountArchive,
+  freezeDigitalSelfVersion: mocks.freezeDigitalSelfVersion,
+  getDigitalSelfVersions: mocks.getDigitalSelfVersions,
   getInteractionCapabilities: mocks.getInteractionCapabilities,
   getPersonaStatus: mocks.getPersonaStatus,
   getPersonaTraits: mocks.getPersonaTraits,
@@ -46,9 +58,11 @@ vi.mock("../api.js", () => ({
   previewVoiceBlindTrial: mocks.previewVoiceBlindTrial,
   reviewPersonaTrait: mocks.reviewPersonaTrait,
   revokePersonaConsent: mocks.revokePersonaConsent,
+  revokeDigitalSelfVersion: mocks.revokeDigitalSelfVersion,
   revokeSpeakerProfile: mocks.revokeSpeakerProfile,
   revokeVoiceConsent: mocks.revokeVoiceConsent,
   revokeVoiceProfile: mocks.revokeVoiceProfile,
+  rollbackDigitalSelfVersion: mocks.rollbackDigitalSelfVersion,
   rollbackPersonaVersion: mocks.rollbackPersonaVersion,
   deleteAccountData: mocks.deleteAccountData,
 }));
@@ -63,6 +77,7 @@ import { DigitalSelfPanel } from "./DigitalSelfPanel.jsx";
 let personaAllowed;
 let personaTraits;
 let personaVersions;
+let digitalSelfVersions;
 let speakerProfiles;
 let voiceConsent;
 let voiceProfiles;
@@ -81,12 +96,35 @@ function candidateVoice(overrides = {}) {
   };
 }
 
+function digitalSelfVersion(overrides = {}) {
+  return {
+    version_id: "digital-self-1",
+    version_number: 1,
+    status: "draft",
+    manifest_sha256: "a".repeat(64),
+    manifest: {
+      schema_version: "digital-self-manifest-v1",
+      entries: [],
+    },
+    source_summary: {
+      memory_claim_count: 2,
+      persona_trait_count: 1,
+      persona_version_id: "persona-1",
+      source_summary_sha256: "b".repeat(64),
+    },
+    parent_version_id: null,
+    created_at: "2026-07-22T00:00:00Z",
+    ...overrides,
+  };
+}
+
 describe("DigitalSelfPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     personaAllowed = false;
     personaTraits = [];
     personaVersions = [];
+    digitalSelfVersions = [];
     speakerProfiles = [];
     voiceConsent = null;
     voiceProfiles = [];
@@ -101,7 +139,7 @@ describe("DigitalSelfPanel", () => {
         self_preview: {
           status: "blocked",
           conversational: true,
-          missing: ["approved_digital_self_version"],
+          missing: ["self_preview_runtime"],
         },
         legacy: {
           status: "blocked",
@@ -116,6 +154,7 @@ describe("DigitalSelfPanel", () => {
     });
     mocks.getPersonaTraits.mockImplementation(async () => ({ items: personaTraits }));
     mocks.getPersonaVersions.mockImplementation(async () => ({ items: personaVersions }));
+    mocks.getDigitalSelfVersions.mockImplementation(async () => ({ items: digitalSelfVersions }));
     mocks.getSpeakerProfiles.mockImplementation(async () => ({ items: speakerProfiles }));
     mocks.getVoiceProfiles.mockImplementation(async () => ({
       consent: voiceConsent,
@@ -172,6 +211,144 @@ describe("DigitalSelfPanel", () => {
     expect(screen.getByText(/不能单独授权删除、导出或其他敏感操作/)).toBeInTheDocument();
   });
 
+  it("builds an immutable digital-self draft and requires a digest plus step-up for transitions", async () => {
+    digitalSelfVersions = [digitalSelfVersion()];
+    mocks.buildDigitalSelfVersion.mockResolvedValue(digitalSelfVersion());
+    mocks.beginDigitalSelfTesting.mockImplementation(async () => {
+      const testing = digitalSelfVersion({ status: "testing" });
+      digitalSelfVersions = [testing];
+      return testing;
+    });
+    mocks.approveDigitalSelfVersion.mockImplementation(async () => {
+      const approved = digitalSelfVersion({ status: "approved" });
+      digitalSelfVersions = [approved];
+      return approved;
+    });
+
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    expect(await screen.findByRole("heading", { name: "数字分身版本" }))
+      .toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "根据当前确认材料构建草稿" }),
+    );
+    await waitFor(() => {
+      expect(mocks.buildDigitalSelfVersion).toHaveBeenCalledOnce();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "进入测试" }));
+    await waitFor(() => {
+      expect(mocks.beginDigitalSelfTesting).toHaveBeenCalledWith(
+        "digital-self-1",
+        "a".repeat(64),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "批准此版本" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "批准此版本" }));
+    const dialog = screen.getByRole("alertdialog", { name: "批准此版本" });
+    const passwordInput = screen.getByLabelText("账号密码");
+    expect(passwordInput).toHaveFocus();
+    fireEvent.change(passwordInput, {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.submit(dialog);
+    await waitFor(() => {
+      expect(mocks.approveDigitalSelfVersion).toHaveBeenCalledWith(
+        "digital-self-1",
+        "safe-passphrase",
+        "a".repeat(64),
+      );
+    });
+    await waitFor(() => {
+      expect(dialog).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "冻结此版本" })).toHaveFocus();
+    });
+  });
+
+  it("keeps the mutation response visible when the version-list refresh fails", async () => {
+    digitalSelfVersions = [digitalSelfVersion({ status: "testing" })];
+    mocks.approveDigitalSelfVersion.mockResolvedValue(
+      digitalSelfVersion({ status: "approved" }),
+    );
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    const approve = await screen.findByRole("button", { name: "批准此版本" });
+    mocks.getDigitalSelfVersions.mockRejectedValueOnce(new Error("sync offline"));
+    fireEvent.click(approve);
+    fireEvent.change(screen.getByLabelText("账号密码"), {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.submit(screen.getByRole("alertdialog", { name: "批准此版本" }));
+
+    expect(await screen.findByText("已批准")).toBeInTheDocument();
+    expect(
+      screen.getByText(/版本操作已完成，但最新版本列表暂时无法同步/),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the refreshed version authoritative when mutation response differs", async () => {
+    digitalSelfVersions = [digitalSelfVersion({ status: "testing" })];
+    mocks.approveDigitalSelfVersion.mockResolvedValue(
+      digitalSelfVersion({ status: "approved" }),
+    );
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    const approve = await screen.findByRole("button", { name: "批准此版本" });
+    fireEvent.click(approve);
+    fireEvent.change(screen.getByLabelText("账号密码"), {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.submit(screen.getByRole("alertdialog", { name: "批准此版本" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("测试中")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("已批准")).not.toBeInTheDocument();
+  });
+
+  it("keeps Tab focus inside the sensitive version dialog", async () => {
+    digitalSelfVersions = [digitalSelfVersion({ status: "testing" })];
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "批准此版本" }));
+    const passwordInput = screen.getByLabelText("账号密码");
+    const cancel = screen.getByRole("button", { name: "取消" });
+    const confirm = screen.getByRole("button", { name: "确认" });
+    expect(passwordInput).toHaveFocus();
+    fireEvent.change(passwordInput, {
+      target: { value: "safe-passphrase" },
+    });
+
+    fireEvent.keyDown(passwordInput, { key: "Tab" });
+    expect(cancel).toHaveFocus();
+    fireEvent.keyDown(cancel, { key: "Tab", shiftKey: true });
+    expect(passwordInput).toHaveFocus();
+    fireEvent.keyDown(passwordInput, { key: "Tab", shiftKey: true });
+    expect(confirm).toHaveFocus();
+    fireEvent.keyDown(confirm, { key: "Tab" });
+    expect(passwordInput).toHaveFocus();
+  });
+
+  it("closes a sensitive version dialog with Escape and restores its trigger focus", async () => {
+    digitalSelfVersions = [digitalSelfVersion({ status: "testing" })];
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    const approve = await screen.findByRole("button", { name: "批准此版本" });
+    fireEvent.click(approve);
+    const dialog = screen.getByRole("alertdialog", { name: "批准此版本" });
+    expect(screen.getByLabelText("账号密码")).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+
+    expect(screen.queryByRole("alertdialog", { name: "批准此版本" }))
+      .not.toBeInTheDocument();
+    expect(approve).toHaveFocus();
+  });
+
   it("separates the light companion from the evidence-grown digital self and exposes only ready modes", async () => {
     const onOpenArchive = vi.fn();
     const onChangeCompanion = vi.fn();
@@ -188,8 +365,14 @@ describe("DigitalSelfPanel", () => {
     expect(screen.getByRole("heading", { name: "档案模式" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "数字自我预览" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "传承模式" })).toBeInTheDocument();
-    expect(screen.getByText("需要先建立并批准数字分身版本")).toBeInTheDocument();
-    expect(screen.getByText("需要冻结版本、关系档案和传承授权")).toBeInTheDocument();
+    expect(
+      screen.getByText("数字自我预览运行时将在后续阶段开放"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "需要先冻结数字分身版本；需要已批准的关系档案；需要传承授权",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText(/伙伴说的话不会成为你的性格证据/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "更换陪伴方式" }));

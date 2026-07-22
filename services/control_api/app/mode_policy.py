@@ -88,7 +88,7 @@ class ModePolicy:
         if mode == "archive":
             return ModeAvailability("available", False)
         if mode == "self_preview":
-            return ModeAvailability("blocked", True, ("approved_digital_self_version",))
+            return ModeAvailability("blocked", True, ("self_preview_runtime",))
         return ModeAvailability(
             "blocked",
             True,

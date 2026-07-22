@@ -147,7 +147,7 @@ guest/uncertain 不得进入 owner 私有能力；shadow owner 只保留历史�
 
 ### S3：DigitalSelfVersion 与不可变 manifest
 
-状态：PENDING
+状态：COMPLETED（2026-07-22）
 
 状态机：`draft -> testing -> approved -> frozen -> revoked`。
 
@@ -155,7 +155,33 @@ guest/uncertain 不得进入 owner 私有能力；shadow owner 只保留历史�
 
 公开 seam：`DigitalSelfRegistry.build/get/list/approve/freeze/revoke/rollback` 与账户隔离 REST API。
 
-验收：同样输入产生同 digest；来源修正只生成新版本；跨账户读取为 404/403；未批准版本不能进入 Self Preview，未冻结版本不能进入 Legacy。
+实现：
+
+- 新增 SQLite/PostgreSQL 双实现，状态转换与 rollback 都使用 manifest digest 做
+  compare-and-set；账户级 advisory lock、FORCE RLS 和不可变触发器共同收口并发与越权；
+- manifest 只编译来源为主人 canonical user speech 的 confirmed Memory，以及当前
+  PersonaVersion 中全部来源均为主人的 confirmed trait；guest、uncertain、assistant、
+  companion 输出和未确认候选全部排除；
+- 生命周期审计与版本写入同事务完成，覆盖 build/testing/approve/freeze/revoke/rollback，
+  记录 actor、状态、digest、目标版本和新版本；账户导出、删除传播和生命周期目录已纳入；
+- H5 提供版本构建、测试、批准、冻结、撤销和 rollback，敏感转换要求当前密码；
+  modal 支持 Enter、Escape、焦点恢复和 Tab/Shift+Tab 焦点圈定；
+- Self Preview 在已批准版本存在后仍因 `self_preview_runtime` 未实现而 fail closed，
+  不把“已批准版本”误报成完整运行时已经可用。
+
+验收证据：
+
+- 正式临时 PostgreSQL 17 + pgvector 环境：861 collected，859 passed、2 skipped、
+  0 failed；总覆盖率 89.35%，`coverage report --fail-under=85` 通过；
+- PostgreSQL 集成覆盖 NOBYPASSRLS 跨账户隔离、CAS 冲突、不可变性、rollback、
+  lifecycle audit、账户导出与删除；
+- H5 全量 165/165、production build、Ruff、strict mypy、Compose 合同和
+  `git diff --check` 通过；
+- in-app browser 在 390×844 与 667×375 无水平溢出，console error/warn 为空；
+  实测空来源拒绝，以及 draft → testing → approved，密码 modal 的焦点圈定和关闭后
+  焦点恢复；
+- 同样输入产生同 digest；来源修正只生成新版本；跨账户读取 fail closed；未批准版本
+  不能进入 Self Preview，未冻结版本不能进入 Legacy。
 
 ### S4：成长地图与学习采集
 

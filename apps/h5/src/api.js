@@ -9,6 +9,18 @@ let activeIdentity = null;
 let identityPromise = null;
 let refreshPromise = null;
 
+const apiErrorMessages = {
+  account_deletion_in_progress: "账号正在删除，当前操作已停止。",
+  account_not_registered: "请先完成账号注册后再管理数字分身版本。",
+  empty_source: "还没有已确认的记忆或人格材料，暂时无法构建数字分身草稿。",
+  invalid_transition: "版本状态已经变化，请刷新后再操作。",
+  manifest_conflict: "版本摘要或内容校验失败，请刷新后重试。",
+  manifest_integrity: "版本内容完整性校验失败，请刷新后重试。",
+  source_snapshot_conflict: "确认材料在构建期间发生变化，请重新生成草稿。",
+  step_up_failed: "账号密码不正确，操作没有执行。",
+  version_not_found: "数字分身版本不存在或不属于当前账号。",
+};
+
 function identitySnapshot(identity) {
   if (!identity || typeof identity.user_id !== "string" || !identity.user_id) {
     return null;
@@ -97,14 +109,20 @@ async function performRequest(
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     let message = detail;
+    let errorCode = null;
     try {
       const parsed = JSON.parse(detail);
       if (typeof parsed?.detail === "string") message = parsed.detail;
+      if (typeof parsed?.detail?.code === "string") {
+        errorCode = parsed.detail.code;
+        message = apiErrorMessages[errorCode] || "请求未完成，请刷新后重试。";
+      }
     } catch {
       // Non-JSON upstream failures keep their safe response text.
     }
     const error = new Error(message || `请求失败（${response.status}）`);
     error.status = response.status;
+    error.code = errorCode;
     error.retryAfter = response.headers?.get?.("Retry-After") || null;
     throw error;
   }
@@ -498,6 +516,233 @@ export function reviewPersonaTrait(traitId, action, payload = {}) {
 
 export function getPersonaVersions() {
   return request("/v1/persona/versions");
+}
+
+const digitalSelfStatuses = new Set([
+  "draft",
+  "testing",
+  "approved",
+  "frozen",
+  "revoked",
+]);
+
+function requireDigitalSelfVersionId(versionId) {
+  if (typeof versionId !== "string" || !versionId.trim()) {
+    throw new Error("数字分身版本标识无效");
+  }
+  return versionId.trim();
+}
+
+function requireDigitalSelfDigest(digest) {
+  if (
+    typeof digest !== "string" ||
+    !/^[a-f0-9]{64}$/i.test(digest.trim())
+  ) {
+    throw new Error("数字分身版本摘要无效，请刷新后重试");
+  }
+  return digest.trim().toLowerCase();
+}
+
+function invalidDigitalSelfResponse() {
+  throw new Error("数字分身版本响应无效");
+}
+
+function isJsonObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseNullableDigitalSelfId(value) {
+  if (value === null) return null;
+  if (typeof value !== "string" || !value.trim()) invalidDigitalSelfResponse();
+  return value.trim();
+}
+
+function parseDigitalSelfSourceSummary(value) {
+  if (
+    !isJsonObject(value) ||
+    !Number.isInteger(value.memory_claim_count) ||
+    value.memory_claim_count < 0 ||
+    !Number.isInteger(value.persona_trait_count) ||
+    value.persona_trait_count < 0 ||
+    (value.persona_version_id !== null &&
+      (typeof value.persona_version_id !== "string" ||
+        !value.persona_version_id.trim())) ||
+    typeof value.source_summary_sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/i.test(value.source_summary_sha256)
+  ) {
+    invalidDigitalSelfResponse();
+  }
+  return {
+    ...value,
+    persona_version_id: value.persona_version_id?.trim() || null,
+    source_summary_sha256: value.source_summary_sha256.toLowerCase(),
+  };
+}
+
+function sameDigitalSelfSourceSummary(left, right) {
+  return (
+    left.memory_claim_count === right.memory_claim_count &&
+    left.persona_trait_count === right.persona_trait_count &&
+    left.persona_version_id === right.persona_version_id &&
+    left.source_summary_sha256 === right.source_summary_sha256
+  );
+}
+
+function parseDigitalSelfVersion(value) {
+  if (
+    !isJsonObject(value) ||
+    typeof value.version_id !== "string" ||
+    !value.version_id ||
+    !Number.isInteger(value.version_number) ||
+    value.version_number < 1 ||
+    !digitalSelfStatuses.has(value.status) ||
+    typeof value.manifest_sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/i.test(value.manifest_sha256) ||
+    !isJsonObject(value.manifest) ||
+    typeof value.manifest.schema_version !== "string" ||
+    !value.manifest.schema_version ||
+    typeof value.manifest.compiler_version !== "string" ||
+    !value.manifest.compiler_version ||
+    typeof value.manifest.policy_version !== "string" ||
+    !value.manifest.policy_version ||
+    !Array.isArray(value.manifest.entries) ||
+    typeof value.created_at !== "string" ||
+    !value.created_at ||
+    Number.isNaN(new Date(value.created_at).getTime())
+  ) {
+    invalidDigitalSelfResponse();
+  }
+  const parentVersionId = parseNullableDigitalSelfId(value.parent_version_id);
+  const rollbackTargetVersionId = parseNullableDigitalSelfId(
+    value.rollback_target_version_id,
+  );
+  const manifestParentVersionId = parseNullableDigitalSelfId(
+    value.manifest.parent_version_id,
+  );
+  const manifestRollbackTargetVersionId = parseNullableDigitalSelfId(
+    value.manifest.rollback_target_version_id,
+  );
+  const sourceSummary = parseDigitalSelfSourceSummary(value.source_summary);
+  const manifestSourceSummary = parseDigitalSelfSourceSummary(
+    value.manifest.source_summary,
+  );
+  if (
+    parentVersionId !== manifestParentVersionId ||
+    rollbackTargetVersionId !== manifestRollbackTargetVersionId ||
+    !sameDigitalSelfSourceSummary(sourceSummary, manifestSourceSummary)
+  ) {
+    invalidDigitalSelfResponse();
+  }
+  return {
+    ...value,
+    manifest_sha256: value.manifest_sha256.toLowerCase(),
+    manifest: {
+      ...value.manifest,
+      parent_version_id: manifestParentVersionId,
+      rollback_target_version_id: manifestRollbackTargetVersionId,
+      source_summary: manifestSourceSummary,
+    },
+    source_summary: sourceSummary,
+    parent_version_id: parentVersionId,
+    rollback_target_version_id: rollbackTargetVersionId,
+  };
+}
+
+function parseDigitalSelfVersionList(value) {
+  if (!isJsonObject(value) || !Array.isArray(value.items)) {
+    throw new Error("数字分身版本列表响应无效");
+  }
+  return {
+    ...value,
+    items: value.items.map(parseDigitalSelfVersion),
+  };
+}
+
+export function getDigitalSelfVersions() {
+  return request("/v1/digital-self/versions").then(parseDigitalSelfVersionList);
+}
+
+export function getDigitalSelfVersion(versionId) {
+  const id = requireDigitalSelfVersionId(versionId);
+  return request(`/v1/digital-self/versions/${encodeURIComponent(id)}`).then(
+    parseDigitalSelfVersion,
+  );
+}
+
+export function buildDigitalSelfVersion() {
+  return request("/v1/digital-self/versions", {
+    method: "POST",
+  }).then(parseDigitalSelfVersion);
+}
+
+function transitionDigitalSelfVersion(
+  versionId,
+  action,
+  { password = null, expectedManifestSha256 },
+) {
+  const id = requireDigitalSelfVersionId(versionId);
+  const digest = requireDigitalSelfDigest(expectedManifestSha256);
+  const body = { expected_manifest_sha256: digest };
+  if (password !== null) {
+    if (typeof password !== "string" || !password) {
+      throw new Error("请输入当前账号密码确认");
+    }
+    body.password = password;
+  }
+  return request(`/v1/digital-self/versions/${encodeURIComponent(id)}/${action}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  }).then(parseDigitalSelfVersion);
+}
+
+export function beginDigitalSelfTesting(versionId, expectedManifestSha256) {
+  return transitionDigitalSelfVersion(versionId, "testing", {
+    expectedManifestSha256,
+  });
+}
+
+export function approveDigitalSelfVersion(
+  versionId,
+  password,
+  expectedManifestSha256,
+) {
+  return transitionDigitalSelfVersion(versionId, "approve", {
+    password,
+    expectedManifestSha256,
+  });
+}
+
+export function freezeDigitalSelfVersion(
+  versionId,
+  password,
+  expectedManifestSha256,
+) {
+  return transitionDigitalSelfVersion(versionId, "freeze", {
+    password,
+    expectedManifestSha256,
+  });
+}
+
+export function revokeDigitalSelfVersion(
+  versionId,
+  password,
+  expectedManifestSha256,
+) {
+  return transitionDigitalSelfVersion(versionId, "revoke", {
+    password,
+    expectedManifestSha256,
+  });
+}
+
+export function rollbackDigitalSelfVersion(
+  versionId,
+  password,
+  expectedManifestSha256,
+) {
+  return transitionDigitalSelfVersion(versionId, "rollback", {
+    password,
+    expectedManifestSha256,
+  });
 }
 
 export function rollbackPersonaVersion(versionId) {

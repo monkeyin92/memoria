@@ -21,6 +21,7 @@ def test_lifecycle_catalog_covers_every_account_scoped_postgres_table() -> None:
         root / "services/archive/postgres_schema.sql",
         root / "services/archive/postgres_memory_schema.sql",
         root / "services/persona/postgres_schema.sql",
+        root / "services/digital_self/postgres_schema.sql",
         root / "services/speaker/postgres_schema.sql",
         root / "services/voice_profile/postgres_schema.sql",
     )

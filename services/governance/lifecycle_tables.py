@@ -14,6 +14,8 @@ POSTGRES_AUTHORITATIVE_ACCOUNT_TABLES = (
     "speech_style_stats",
     "persona_learning_consents",
     "persona_versions",
+    "digital_self_versions",
+    "digital_self_lifecycle_audit_events",
     "speaker_identities",
     "speaker_profiles",
     "speaker_enrollment_samples",

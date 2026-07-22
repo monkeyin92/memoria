@@ -207,6 +207,176 @@ describe("authenticated Control API client", () => {
     );
   });
 
+  it("validates and sends the immutable digital-self lifecycle contract", async () => {
+    const digest = "a".repeat(64);
+    const version = (status, versionNumber = 1) => ({
+      version_id: versionNumber === 1 ? "digital-self-1" : "digital-self-2",
+      version_number: versionNumber,
+      status,
+      manifest_sha256: digest,
+      manifest: {
+        schema_version: "digital-self-manifest-v1",
+        compiler_version: "digital-self-compiler-v1",
+        policy_version: "digital-self-policy-v1",
+        parent_version_id: null,
+        rollback_target_version_id: null,
+        entries: [],
+        source_summary: {
+          memory_claim_count: 2,
+          persona_trait_count: 1,
+          persona_version_id: "persona-1",
+          source_summary_sha256: "b".repeat(64),
+        },
+      },
+      source_summary: {
+        memory_claim_count: 2,
+        persona_trait_count: 1,
+        persona_version_id: "persona-1",
+        source_summary_sha256: "b".repeat(64),
+      },
+      parent_version_id: null,
+      rollback_target_version_id: null,
+      created_at: "2026-07-22T00:00:00+00:00",
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          user_id: "registered-user",
+          username: "memorykeeper",
+          account_type: "registered",
+          access_token: "digital-self-token",
+        }, 201),
+      )
+      .mockResolvedValueOnce(jsonResponse({ items: [version("draft")] }))
+      .mockResolvedValueOnce(jsonResponse(version("draft"), 201))
+      .mockResolvedValueOnce(jsonResponse(version("draft")))
+      .mockResolvedValueOnce(jsonResponse(version("testing")))
+      .mockResolvedValueOnce(jsonResponse(version("approved")))
+      .mockResolvedValueOnce(jsonResponse(version("frozen")))
+      .mockResolvedValueOnce(jsonResponse(version("revoked")))
+      .mockResolvedValueOnce(jsonResponse(version("draft", 2), 201));
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      approveDigitalSelfVersion,
+      beginDigitalSelfTesting,
+      buildDigitalSelfVersion,
+      freezeDigitalSelfVersion,
+      getDigitalSelfVersion,
+      getDigitalSelfVersions,
+      registerAccount,
+      revokeDigitalSelfVersion,
+      rollbackDigitalSelfVersion,
+    } = await import("./api.js");
+
+    await registerAccount("memorykeeper", "safe-passphrase");
+    await expect(getDigitalSelfVersions()).resolves.toEqual({
+      items: [version("draft")],
+    });
+    await expect(buildDigitalSelfVersion()).resolves.toEqual(version("draft"));
+    await expect(getDigitalSelfVersion("digital-self-1")).resolves.toEqual(
+      version("draft"),
+    );
+    await beginDigitalSelfTesting("digital-self-1", digest);
+    await approveDigitalSelfVersion("digital-self-1", "safe-passphrase", digest);
+    await freezeDigitalSelfVersion("digital-self-1", "safe-passphrase", digest);
+    await revokeDigitalSelfVersion("digital-self-1", "safe-passphrase", digest);
+    await rollbackDigitalSelfVersion("digital-self-1", "safe-passphrase", digest);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      "/memoria-api/v1/digital-self/versions/digital-self-1/testing",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ expected_manifest_sha256: digest }),
+      }),
+    );
+    for (const [call, action] of [
+      [6, "approve"],
+      [7, "freeze"],
+      [8, "revoke"],
+      [9, "rollback"],
+    ]) {
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        call,
+        `/memoria-api/v1/digital-self/versions/digital-self-1/${action}`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            expected_manifest_sha256: digest,
+            password: "safe-passphrase",
+          }),
+        }),
+      );
+    }
+  });
+
+  it("rejects malformed digital-self responses before the UI can trust them", async () => {
+    const sourceSummary = {
+      memory_claim_count: 2,
+      persona_trait_count: 1,
+      persona_version_id: "persona-1",
+      source_summary_sha256: "b".repeat(64),
+    };
+    const valid = {
+      version_id: "digital-self-1",
+      version_number: 1,
+      status: "approved",
+      manifest_sha256: "a".repeat(64),
+      manifest: {
+        schema_version: "digital-self-manifest-v1",
+        compiler_version: "digital-self-compiler-v1",
+        policy_version: "digital-self-policy-v1",
+        parent_version_id: null,
+        rollback_target_version_id: null,
+        entries: [],
+        source_summary: sourceSummary,
+      },
+      source_summary: sourceSummary,
+      parent_version_id: null,
+      rollback_target_version_id: null,
+      created_at: "2026-07-22T00:00:00+00:00",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          user_id: "registered-user",
+          username: "memorykeeper",
+          account_type: "registered",
+          access_token: "digital-self-token",
+        }, 201),
+      )
+      .mockResolvedValueOnce(jsonResponse({
+        items: [{ ...valid, parent_version_id: 1 }],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        items: [{
+          ...valid,
+          manifest: { ...valid.manifest, source_summary: [] },
+        }],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        items: [{
+          ...valid,
+          source_summary: { ...sourceSummary, memory_claim_count: 3 },
+        }],
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { getDigitalSelfVersions, registerAccount } = await import("./api.js");
+
+    await registerAccount("memorykeeper", "safe-passphrase");
+    await expect(getDigitalSelfVersions()).rejects.toThrow(
+      "数字分身版本响应无效",
+    );
+    await expect(getDigitalSelfVersions()).rejects.toThrow(
+      "数字分身版本响应无效",
+    );
+    await expect(getDigitalSelfVersions()).rejects.toThrow(
+      "数字分身版本响应无效",
+    );
+  });
+
   it("loads and reviews the structured life archive with the account token", async () => {
     const fetchMock = vi
       .fn()
@@ -1207,7 +1377,7 @@ describe("authenticated Control API client", () => {
           self_preview: {
             status: "blocked",
             conversational: true,
-            missing: ["approved_digital_self_version"],
+            missing: ["self_preview_runtime"],
           },
         },
       }))
