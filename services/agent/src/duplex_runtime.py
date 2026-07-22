@@ -14,10 +14,11 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from services.agent.src.contracts.events import UI_EVENT_TYPES, TimedWord
 from services.agent.src.contracts.ids import GenerationFence, new_session_id
+from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.observability.tracing import LatencyTrace
 from services.agent.src.orchestration.cue_scheduler import CueScheduler, ListenerCue
 from services.agent.src.orchestration.emotion import (
@@ -214,6 +215,11 @@ class DuplexRuntime:
     _speaker_collecting: bool = False
     _speaker_classification_task: asyncio.Task[Any] | None = None
     _history_eligible_by_fence: dict[tuple[int, int], bool] = field(default_factory=dict)
+    _owner_projection_eligible_by_fence: dict[tuple[int, int], bool] = field(
+        default_factory=dict
+    )
+    _mode_policy: ModePolicy = field(default_factory=lambda: ModePolicy.unavailable("not_fetched"))
+    _mode_policy_by_fence: dict[tuple[int, int], ModePolicy] = field(default_factory=dict)
     _target_speaker_focus_enabled: bool = False
     _reject_non_owner_voice: bool = True
     _target_focus_epoch: int | None = None
@@ -355,6 +361,35 @@ class DuplexRuntime:
     def set_reject_non_owner_voice(self, reject: bool) -> None:
         self._reject_non_owner_voice = reject
 
+    def set_mode_policy(self, policy: ModePolicy) -> None:
+        """Install the sole Control-issued policy before this session starts."""
+
+        if self.fence.turn_id or self.fence.generation_id:
+            raise RuntimeError("interaction policy must be frozen before the first turn")
+        self._mode_policy = policy
+        self._bind_mode_policy(self.fence, policy)
+
+    @property
+    def mode_policy(self) -> ModePolicy:
+        return self._mode_policy
+
+    @property
+    def mode_policy_enforced(self) -> bool:
+        """False only during construction before an entrypoint freezes policy."""
+
+        return self._mode_policy.unavailable_reason != "not_fetched"
+
+    def mode_policy_for_fence(self, fence: GenerationFence) -> ModePolicy:
+        return self._mode_policy_by_fence.get(
+            (fence.turn_id, fence.generation_id),
+            ModePolicy.unavailable("policy_not_bound_to_fence"),
+        )
+
+    def _bind_mode_policy(self, fence: GenerationFence, policy: ModePolicy | None = None) -> None:
+        self._mode_policy_by_fence[(fence.turn_id, fence.generation_id)] = policy or self._mode_policy
+        while len(self._mode_policy_by_fence) > HISTORY_ELIGIBILITY_MAX_FENCES:
+            self._mode_policy_by_fence.pop(next(iter(self._mode_policy_by_fence)))
+
     @property
     def speaker_permissions(self) -> SpeakerPermissions:
         if self._speaker_decision is not None:
@@ -364,8 +399,22 @@ class DuplexRuntime:
 
     def _current_history_eligible(self) -> bool:
         decision = self._speaker_decision
-        return decision is not None and (
-            decision.classification == "owner" or decision.reason_code == "shadow_owner_candidate"
+        return decision is not None and self._mode_policy.history_eligible(
+            decision.classification,
+            reason_code=decision.reason_code,
+        )
+
+    def _current_owner_projection_eligible(self) -> bool:
+        decision = self._speaker_decision
+        return decision is not None and self._mode_policy.owner_projection_eligible(
+            decision.classification
+        )
+
+    def is_shadow_speaker(self) -> bool:
+        return (
+            self._speaker_decision is not None
+            and self._speaker_decision.classification == "uncertain"
+            and self._speaker_decision.reason_code == "shadow_owner_candidate"
         )
 
     def _bind_history_eligibility(self, fence: GenerationFence, eligible: bool) -> None:
@@ -375,6 +424,24 @@ class DuplexRuntime:
 
     def _history_eligible(self, fence: GenerationFence) -> bool:
         return self._history_eligible_by_fence.get((fence.turn_id, fence.generation_id), False)
+
+    def _bind_owner_projection_eligibility(
+        self,
+        fence: GenerationFence,
+        eligible: bool,
+    ) -> None:
+        key = (fence.turn_id, fence.generation_id)
+        self._owner_projection_eligible_by_fence[key] = eligible
+        while len(self._owner_projection_eligible_by_fence) > HISTORY_ELIGIBILITY_MAX_FENCES:
+            self._owner_projection_eligible_by_fence.pop(
+                next(iter(self._owner_projection_eligible_by_fence))
+            )
+
+    def _owner_projection_eligible(self, fence: GenerationFence) -> bool:
+        return self._owner_projection_eligible_by_fence.get(
+            (fence.turn_id, fence.generation_id),
+            False,
+        )
 
     def set_result_speaker(self, speaker: Callable[[str], Any]) -> None:
         self._result_speaker = speaker
@@ -581,7 +648,7 @@ class DuplexRuntime:
     def _publish_speaker_decision(self, epoch: int, decision: SpeakerDecision) -> None:
         if self._evidence_publisher is None:
             return
-        event = {
+        event: dict[str, Any] = {
             "event_id": str(
                 uuid.uuid5(
                     uuid.NAMESPACE_URL,
@@ -604,6 +671,13 @@ class DuplexRuntime:
                 "profile_id": decision.profile_id,
             },
         }
+        event["payload"].update(
+            self._mode_policy_provenance(
+                self.fence,
+                decision.classification,
+                reason_code=decision.reason_code,
+            )
+        )
         self._spawn(
             self._evidence_publisher(event),
             name="duplex-evidence-speaker-classified",
@@ -1151,8 +1225,10 @@ class DuplexRuntime:
         final: bool,
         heard: bool | None = None,
         fence: GenerationFence | None = None,
+        archive_fence: GenerationFence | None = None,
     ) -> None:
         fence = fence or self.fence
+        archive_fence = archive_fence or fence
         event: dict[str, Any] = {
             "type": "transcript_delta",
             "speaker": speaker,
@@ -1183,10 +1259,18 @@ class DuplexRuntime:
             payload = {"text": archive_text, "actual_heard": True}
         else:
             return
+        payload.update(
+            self._mode_policy_provenance(
+                archive_fence,
+                speaker_class,
+                history_eligible=self._history_eligible(archive_fence),
+                owner_projection_eligible=self._owner_projection_eligible(archive_fence),
+            )
+        )
         fingerprint = hashlib.sha256(
             (
                 f"{self.session_id}\0{event_type}\0{speaker}\0"
-                f"{fence.turn_id}\0{fence.generation_id}\0{archive_text}"
+                f"{archive_fence.turn_id}\0{archive_fence.generation_id}\0{archive_text}"
             ).encode()
         ).hexdigest()
         evidence = {
@@ -1200,11 +1284,15 @@ class DuplexRuntime:
                 if speaker == "assistant"
                 else "funasr.authoritative_final"
             ),
-            "turn_id": fence.turn_id,
-            "generation_id": fence.generation_id,
+            "turn_id": archive_fence.turn_id,
+            "generation_id": archive_fence.generation_id,
             "payload": payload,
         }
-        if speaker_class == "owner" and self._owner_turn_publisher is not None:
+        if (
+            speaker_class == "owner"
+            and payload["owner_projection_eligible"] is True
+            and self._owner_turn_publisher is not None
+        ):
             self._spawn(
                 self._owner_turn_publisher(
                     evidence,
@@ -1235,11 +1323,45 @@ class DuplexRuntime:
             "speaker_template_version": decision.template_version,
         }
 
+    def _mode_policy_provenance(
+        self,
+        fence: GenerationFence,
+        speaker_class: str,
+        *,
+        history_eligible: bool | None = None,
+        owner_projection_eligible: bool | None = None,
+        reason_code: str | None = None,
+    ) -> dict[str, Any]:
+        policy = self.mode_policy_for_fence(fence)
+        supported_speaker = cast(
+            Literal["owner", "guest", "uncertain"],
+            speaker_class if speaker_class in {"owner", "guest", "uncertain"} else "uncertain",
+        )
+        return {
+            "interaction_mode": policy.mode or "unavailable",
+            "mode_policy_version": policy.policy_version or "unavailable",
+            "simulated_output": policy.mode in {"self_preview", "legacy"},
+            "history_eligible": (
+                history_eligible
+                if history_eligible is not None
+                else policy.history_eligible(
+                    supported_speaker,
+                    reason_code=reason_code,
+                )
+            ),
+            "owner_projection_eligible": (
+                owner_projection_eligible
+                if owner_projection_eligible is not None
+                else policy.owner_projection_eligible(supported_speaker)
+            ),
+        }
+
     def _owner_acoustic_evidence(self) -> dict[str, int | float]:
         decision = self._speaker_decision
         if (
             self._speaker_class != "owner"
             or decision is None
+            or not self._mode_policy.owner_projection_eligible("owner")
             or decision.classification != "owner"
             or not decision.profile_id
             or decision.template_version is None
@@ -1673,6 +1795,9 @@ class DuplexRuntime:
     ) -> tuple[bool, str | None]:
         self.speaker_verifier.mark_utterance_end()
         self._persona_evidence_eligible = False
+        if self.mode_policy_enforced and not self._mode_policy.allows_conversation():
+            self.orchestrator.metrics.inc_guarded_user_input("interaction_mode_blocked")
+            return False, "interaction_mode_blocked"
         # Single control-plane decision: enroll / pure interrupt / chat.
         # Side effects (early enroll finalize, yield ack) stay here; intent is
         # owned by utterance_router so barge-in and turn-commit cannot diverge.
@@ -1785,7 +1910,16 @@ class DuplexRuntime:
         else:
             lexical_chars = sum(char.isalnum() for char in route.normalized_text)
             self._persona_evidence_eligible = (
-                route.intent is UtteranceIntent.CHAT and lexical_chars >= 8
+                route.intent is UtteranceIntent.CHAT
+                and lexical_chars >= 8
+                and self._mode_policy.allows_learning(
+                    self._speaker_class,  # type: ignore[arg-type]
+                    reason_code=(
+                        self._speaker_decision.reason_code
+                        if self._speaker_decision is not None
+                        else None
+                    ),
+                )
             )
             self._resume_pending = route.intent is UtteranceIntent.RESUME
             if route.enter_chat:
@@ -1795,6 +1929,7 @@ class DuplexRuntime:
 
     async def on_turn_committed(self, user_text: str) -> GenerationFence:
         history_eligible = self._current_history_eligible()
+        owner_projection_eligible = self._current_owner_projection_eligible()
         self.cancel_listener_cue()
         self._apply_speech_plan(user_text, turn_id=self.fence.turn_id + 1)
         self._last_playback_completed_ns = None
@@ -1804,7 +1939,12 @@ class DuplexRuntime:
             await self.orchestrator.bump_tool_epoch_on_condition_change()
         await self.orchestrator.on_vad_start()
         fence = await self.orchestrator.commit_turn(user_text)
+        self._bind_mode_policy(fence)
         self._bind_history_eligibility(fence, history_eligible)
+        self._bind_owner_projection_eligibility(
+            fence,
+            owner_projection_eligible,
+        )
         self._reply_speaker_binding = self._current_resume_speaker_binding()
         self._resume_fence = fence if self._resume_pending else None
         self._resume_pending = False
@@ -1821,6 +1961,7 @@ class DuplexRuntime:
         if (
             self._deep_client is not None
             and self.speaker_permissions.read_private_memory
+            and self.mode_policy_for_fence(fence).allows_tools("owner")
             and _needs_deep_path(user_text)
         ):
             await self._start_deep_task(fence)
@@ -2164,6 +2305,7 @@ class DuplexRuntime:
             synchronized_transcript=synchronized_transcript,
             force_generation_bump=force_generation_bump,
         )
+        self._bind_mode_policy(new_fence)
         if create_user_turn and barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND:
             self._clear_control_user_turn(cause=f"interrupt:{cause}")
         self._was_speaking = False
@@ -2252,6 +2394,10 @@ class DuplexRuntime:
                 event_fence,
                 self._history_eligible(interrupted_from),
             )
+            self._bind_owner_projection_eligibility(
+                event_fence,
+                self._owner_projection_eligible(interrupted_from),
+            )
             self._was_speaking = False
             self._pending_assistant_text = ""
             self._played_assistant_text = heard
@@ -2263,6 +2409,7 @@ class DuplexRuntime:
                     final=True,
                     heard=True,
                     fence=event_fence,
+                    archive_fence=interrupted_from,
                 )
         else:
             _ = playback_position_s

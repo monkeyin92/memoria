@@ -79,8 +79,14 @@ describe("CompanionOnboarding", () => {
       <CompanionOnboarding userId="owner-1" onComplete={() => undefined} />,
     );
 
-    expect(screen.getAllByRole("button", { name: /^选择/ })).toHaveLength(6);
-    fireEvent.click(screen.getByRole("button", { name: "下一个机器人" }));
+    expect(screen.getAllByRole("button", { name: /^选择/ })).toHaveLength(5);
+    expect(screen.getByRole("heading", { name: "选择喜欢的陪伴方式" }))
+      .toBeInTheDocument();
+    expect(screen.getByLabelText("陪伴方式与数字分身的边界"))
+      .toHaveTextContent("陪伴方式决定助手怎样回应，不代表你的性格。");
+    expect(screen.getByLabelText("陪伴方式与数字分身的边界"))
+      .toHaveTextContent("伙伴说的话不会成为你的证据。");
+    fireEvent.click(screen.getByRole("button", { name: "下一个伙伴" }));
     expect(screen.getByRole("heading", { name: "桃喜" })).toBeInTheDocument();
     expect(screen.getByText("甜美桃子 2.0")).toBeInTheDocument();
     expect(screen.getByText("清甜、灵动，回应里带一点自然上扬")).toBeInTheDocument();
@@ -103,7 +109,7 @@ describe("CompanionOnboarding", () => {
     );
     render(<CompanionOnboarding userId="owner-1" onComplete={() => undefined} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "选择 星澜" }));
+    fireEvent.click(screen.getByRole("button", { name: "让 星澜 陪我" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /声纹模板/ }));
     fireEvent.click(screen.getByRole("button", { name: "录制第 1 段" }));
 
@@ -112,10 +118,10 @@ describe("CompanionOnboarding", () => {
 
   it("resets the onboarding scroll position when changing steps", async () => {
     render(<CompanionOnboarding userId="owner-1" onComplete={() => undefined} />);
-    const chooseStep = screen.getByRole("region", { name: "选择陪伴机器人" });
+    const chooseStep = screen.getByRole("region", { name: "选择陪伴方式" });
     chooseStep.scrollTop = 160;
 
-    fireEvent.click(screen.getByRole("button", { name: "选择 星澜" }));
+    fireEvent.click(screen.getByRole("button", { name: "让 星澜 陪我" }));
 
     const enrollmentStep = screen.getByRole("region", { name: "录制声纹" });
     await waitFor(() => expect(enrollmentStep.scrollTop).toBe(0));
@@ -123,7 +129,7 @@ describe("CompanionOnboarding", () => {
     fireEvent.click(screen.getByRole("button", { name: "重新选择" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("region", { name: "选择陪伴机器人" }).scrollTop)
+      expect(screen.getByRole("region", { name: "选择陪伴方式" }).scrollTop)
         .toBe(0);
     });
   });
@@ -132,9 +138,9 @@ describe("CompanionOnboarding", () => {
     render(<CompanionOnboarding userId="owner-1" onComplete={() => undefined} />);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "选择玄墨，笃定、沉稳、包容" }),
+      screen.getByRole("button", { name: "选择玄墨，克制回应、很少追问、1–2 句" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "选择 玄墨" }));
+    fireEvent.click(screen.getByRole("button", { name: "让 玄墨 陪我" }));
     HTMLElement.prototype.scrollIntoView.mockClear();
 
     fireEvent.click(screen.getByRole("button", { name: "重新选择" }));
@@ -145,7 +151,7 @@ describe("CompanionOnboarding", () => {
       block: "nearest",
     });
     expect(HTMLElement.prototype.scrollIntoView.mock.instances[0]).toHaveAccessibleName(
-      "选择玄墨，笃定、沉稳、包容",
+      "选择玄墨，克制回应、很少追问、1–2 句",
     );
   });
 
@@ -154,9 +160,9 @@ describe("CompanionOnboarding", () => {
     render(<CompanionOnboarding userId="owner-1" onComplete={onComplete} />);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "选择玄墨，笃定、沉稳、包容" }),
+      screen.getByRole("button", { name: "选择玄墨，克制回应、很少追问、1–2 句" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "选择 玄墨" }));
+    fireEvent.click(screen.getByRole("button", { name: "让 玄墨 陪我" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /声纹模板/ }));
 
     for (let index = 1; index <= 3; index += 1) {

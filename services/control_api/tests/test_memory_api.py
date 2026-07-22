@@ -212,7 +212,9 @@ async def test_message_idempotency_survives_auth_secret_rotation(
     tmp_path: Path,
 ) -> None:
     _configure_database(monkeypatch, tmp_path)
-    monkeypatch.setenv("MEMORIA_MESSAGE_IDEMPOTENCY_SECRET", "message-idempotency-secret-that-is-independent")
+    monkeypatch.setenv(
+        "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET", "message-idempotency-secret-that-is-independent"
+    )
     app = create_app()
     client_message_id = "ac3e9c24-3d4e-41a1-ae66-705dbd54aabe"
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -224,8 +226,12 @@ async def test_message_idempotency_survives_auth_secret_rotation(
             "text": "认证轮换不应改变消息幂等性",
         }
         created = await client.post("/v1/memory/messages", headers=headers, json=payload)
-        claims = jwt.decode(headers["Authorization"].removeprefix("Bearer "), options={"verify_signature": False})
-        app.state.settings.memoria_auth_secret = SecretStr("rotated-auth-secret-that-is-long-enough")
+        claims = jwt.decode(
+            headers["Authorization"].removeprefix("Bearer "), options={"verify_signature": False}
+        )
+        app.state.settings.memoria_auth_secret = SecretStr(
+            "rotated-auth-secret-that-is-long-enough"
+        )
         rotated_access, _ = mint_memoria_access_token(
             app.state.settings,
             user_id=user_id,
@@ -304,7 +310,12 @@ async def test_memory_routes_require_bearer_and_enforce_user_identity(
         cross_user = await client.post(
             "/v1/memory/messages",
             headers=first_headers,
-            json={"user_id": second_user, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b02", "role": "user", "text": "hello"},
+            json={
+                "user_id": second_user,
+                "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b02",
+                "role": "user",
+                "text": "hello",
+            },
         )
         own = await client.get(
             f"/v1/memory/profile/{first_user}",
@@ -332,7 +343,12 @@ async def test_messages_and_profile_are_redacted_before_persistence(
         message = await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": user_id, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b03", "role": "user", "text": sensitive_text},
+            json={
+                "user_id": user_id,
+                "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b03",
+                "role": "user",
+                "text": sensitive_text,
+            },
         )
         profile = await client.put(
             f"/v1/memory/profile/{user_id}",
@@ -371,17 +387,32 @@ async def test_memory_api_validates_user_and_text_lengths(
         blank_user = await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": "   ", "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b04", "role": "user", "text": "hello"},
+            json={
+                "user_id": "   ",
+                "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b04",
+                "role": "user",
+                "text": "hello",
+            },
         )
         blank_text = await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": user_id, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b05", "role": "user", "text": "   "},
+            json={
+                "user_id": user_id,
+                "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b05",
+                "role": "user",
+                "text": "   ",
+            },
         )
         long_text = await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": user_id, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b06", "role": "user", "text": "x" * 8001},
+            json={
+                "user_id": user_id,
+                "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b06",
+                "role": "user",
+                "text": "x" * 8001,
+            },
         )
         missing_client_message_id = await client.post(
             "/v1/memory/messages",
@@ -391,7 +422,12 @@ async def test_memory_api_validates_user_and_text_lengths(
         malformed_client_message_id = await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": user_id, "client_message_id": "not-a-uuid", "role": "user", "text": "hello"},
+            json={
+                "user_id": user_id,
+                "client_message_id": "not-a-uuid",
+                "role": "user",
+                "text": "hello",
+            },
         )
         invalid_timezone = await client.put(
             f"/v1/memory/profile/{user_id}",
@@ -523,7 +559,12 @@ async def test_qwen_summary_is_used_by_default(
         await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": user_id, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b07", "role": "user", "text": "完成了产品原型"},
+            json={
+                "user_id": user_id,
+                "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b07",
+                "role": "user",
+                "text": "完成了产品原型",
+            },
         )
         response = await client.post(
             f"/v1/memory/days/{_today()}/summary",
@@ -567,7 +608,12 @@ async def test_deepseek_is_only_used_when_explicitly_selected(
         await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": user_id, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b08", "role": "user", "text": "测试显式选择"},
+            json={
+                "user_id": user_id,
+                "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b08",
+                "role": "user",
+                "text": "测试显式选择",
+            },
         )
         response = await client.post(
             f"/v1/memory/days/{_today()}/summary",
@@ -597,7 +643,12 @@ async def test_qwen_failure_uses_explicit_fallback(
         await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": user_id, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b09", "role": "user", "text": "记录一条消息"},
+            json={
+                "user_id": user_id,
+                "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b09",
+                "role": "user",
+                "text": "记录一条消息",
+            },
         )
         response = await client.post(
             f"/v1/memory/days/{_today()}/summary",
@@ -687,6 +738,13 @@ def test_old_voice_sessions_default_to_cascade_backend(tmp_path: Path) -> None:
     )
     assert stored is not None
     assert stored["voice_backend"] == "cascade"
+    assert stored["interaction_mode"] == "companion"
+    assert stored["mode_policy_version"] == "s2-v1"
+    assert stored["digital_self_version_id"] is None
+    assert stored["relationship_profile_id"] is None
+    assert stored["legacy_grant_id"] is None
+    assert stored["companion_style_id"] == "starlight"
+    assert stored["companion_style_version"] == "companion-v1"
     with sqlite3.connect(path) as connection:
         row = connection.execute(
             "SELECT omni_sdp_exchanges FROM voice_sessions WHERE session_id = ?",

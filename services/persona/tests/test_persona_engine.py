@@ -29,6 +29,7 @@ async def _record(
     minute: int = 0,
     session_id: str | None = "persona-session",
     profile_id: str = "persona-shadow-profile",
+    persona_eligible: bool | None = True,
 ) -> None:
     await archive.record(
         EvidenceEvent(
@@ -42,10 +43,14 @@ async def _record(
             source="test",
             payload={
                 "text": text,
+                **(
+                    {"persona_eligible": persona_eligible}
+                    if persona_eligible is not None
+                    else {}
+                ),
                 **({"actual_heard": True} if speaker_class == "assistant" else {}),
                 **(
                     {
-                        "persona_eligible": True,
                         "speaker_reason_code": "shadow_owner_candidate",
                         "speaker_profile_id": profile_id,
                         "speaker_quality_score": 0.9,
@@ -125,6 +130,51 @@ async def _observe_bucket(
             learning_allowed=True,
         )
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("speaker_class", "persona_eligible"),
+    (
+        pytest.param("owner", None, id="owner-missing"),
+        pytest.param("owner", False, id="owner-false"),
+        pytest.param("uncertain", None, id="uncertain-missing"),
+        pytest.param("uncertain", False, id="uncertain-false"),
+    ),
+)
+async def test_persona_learning_fails_closed_without_explicit_turn_eligibility(
+    tmp_path: Path,
+    speaker_class: str,
+    persona_eligible: bool | None,
+) -> None:
+    path = tmp_path / "persona.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    engine = PersonaEngine.sqlite(path)
+    await engine.grant_consent(
+        account_id="persona-account",
+        policy_version="persona-learning-v1",
+    )
+    await _record(
+        archive,
+        event_id="ineligible-persona-turn",
+        text="我觉得先把事实弄清楚。",
+        speaker_class=speaker_class,
+        persona_eligible=persona_eligible,
+    )
+
+    observed = await engine.observe(
+        PersonaEvidence(
+            account_id="persona-account",
+            source_event_id="ineligible-persona-turn",
+            learning_allowed=True,
+        )
+    )
+
+    assert observed.accepted is False
+    assert observed.reason == "persona_ineligible_turn"
+    assert (
+        await engine.capsule(PersonaRequest(account_id="persona-account", speaker_class="owner"))
+    ).entries == ()
 
 
 @pytest.mark.asyncio

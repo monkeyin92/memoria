@@ -17,6 +17,7 @@ from services.agent.src.agent import (
     create_runtime_for_tests,
 )
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.speaker_verify import SpeakerGateState, SpeakerVerifier
 from services.agent.src.orchestration.state_machine import ConversationState
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
@@ -69,12 +70,23 @@ async def test_uncertain_user_evidence_carries_shadow_owner_provenance() -> None
         evidence.append(event)
 
     runtime = DuplexRuntime.create(session_id="shadow-persona-session")
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=True,
+            shadow_low_sensitivity_persona=True,
+        )
+    )
     runtime.set_evidence_publisher(_publish)
     await _classify_speaker(runtime, _shadow_speaker_decision(profile_id="shadow-profile-1"))
 
     text = "我觉得先听完对方，再认真回答这个问题。"
     assert runtime.accept_user_turn(text) == (True, None)
-    runtime.publish_transcript(speaker="user", text=text, final=True)
+    fence = await runtime.on_turn_committed(text)
+    runtime.publish_transcript(speaker="user", text=text, final=True, fence=fence)
     await asyncio.sleep(0)
 
     utterance = next(
@@ -89,6 +101,11 @@ async def test_uncertain_user_evidence_carries_shadow_owner_provenance() -> None
         "speaker_quality_score": 0.9,
         "speaker_model_version": "campplus-test",
         "speaker_template_version": 1,
+        "interaction_mode": "companion",
+        "mode_policy_version": "test-policy",
+        "simulated_output": False,
+        "history_eligible": True,
+        "owner_projection_eligible": False,
     }
     await runtime.close()
 

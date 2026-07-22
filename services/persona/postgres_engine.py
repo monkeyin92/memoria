@@ -171,11 +171,7 @@ class PostgresPersonaEngine:
             text = str(payload.get("text") or "").strip()
             if not text:
                 return ObservationResult(False, "empty_evidence")
-            if (
-                speaker_class == "owner"
-                and str(row["source"]) == "funasr.authoritative_final"
-                and payload.get("persona_eligible") is not True
-            ):
+            if payload.get("persona_eligible") is not True:
                 return ObservationResult(False, "persona_ineligible_turn")
             uncertain_provenance = (
                 trusted_uncertain_profile(payload) if speaker_class == "uncertain" else None

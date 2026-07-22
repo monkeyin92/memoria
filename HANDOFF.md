@@ -12,8 +12,12 @@
 - S1 内测可信底座已完成：Agent 新鲜 heartbeat、短 access/旋转 refresh、最长 24 小时且
   可跨重载恢复的旧匿名身份迁移、消息幂等独立密钥、对象 keyring、严格 generation fence、
   事件合同/浏览器日志/CSP/签名 URL 日志，以及 commit-bound source/image/H5 发布门禁。
-- 当前阶段为 S2：建立 `companion / self_preview / legacy / archive` 的服务端 ModePolicy，
-  冻结会话模式与轻量 Companion Style；S3/S9 前 Self Preview 与 Legacy 必须明确 blocked。
+- S2 已完成：建立 `companion / self_preview / legacy / archive` 的服务端 ModePolicy，
+  冻结会话模式与轻量 Companion Style；Self Preview 与 Legacy 在依赖未满足时由服务端
+  明确 blocked。实时语音统一走 session-bound archive contract，shadow owner 只保留
+  history/低敏学习，不获得 private/tools/owner projection。
+- 当前开发阶段为 S3：实现不可变 `DigitalSelfVersion` 与 manifest，并保持 S2 的模式、
+  说话人、generation fence 和伙伴污染边界。
 - 后续严格按不可变 DigitalSelfVersion、成长地图、认知/决策/关系、回答来源、
   Self Preview、本人声音、Legacy、全量验收与部署顺序推进。
 - 本轮不建设分布式、多区域、KMS、异地副本或 PITR；保留为正式商用前待办。遗嘱、
@@ -27,6 +31,20 @@
   `git diff --check` 通过。
 - Standards 与 Spec 最终复审均无 P0/P1。容灾、KMS、异地备份/PITR 与历史第三方凭据
   轮换证明仍按用户边界列为正式商用前待办，不能借本阶段验收宣称已完成。
+
+## 硅基生命路线 S2 验证
+
+- 正式临时 pgvector 环境：842 passed、2 skipped、0 failed；总覆盖率 89.40%。
+- 父事件、中断 generation 与 425 spool 定向再验收：55 passed、1 skipped。
+- H5 全量：158/158；production build、Ruff、strict mypy、Compose 合同、
+  `git diff --check` 通过。
+- In-app browser：390×844 和 667×375 均无水平溢出，console error/warn 为空。
+- S3 开始前的硬边界：没有 approved DigitalSelfVersion 时 Self Preview 不可用，
+  没有 frozen version/relationship/grant 时 Legacy 不可用；伙伴的说话内容不进入主人
+  Evidence、Persona 或 Digital Self manifest。
+- canonical 用户话轮是后续 assistant 已听证据和原始音频的父事件；派生证据只继承
+  同 session/turn/generation 的服务端资格。Persona 仅消费显式
+  `persona_eligible=true` 的 owner 或可信 shadow-owner 话轮。
 
 ## 当前生产
 

@@ -40,6 +40,7 @@ import {
 import { AuthScreen } from "./components/AuthScreen.jsx";
 import { AccountDeletionForm } from "./components/AccountDeletionForm.jsx";
 import { CompanionOnboarding } from "./components/CompanionOnboarding.jsx";
+import { CompanionSwitcher } from "./components/CompanionSwitcher.jsx";
 import { LifeArchivePanel } from "./components/LifeArchivePanel.jsx";
 import { Mascot, MascotVisual } from "./components/Mascot.jsx";
 import { useVoiceSession } from "./hooks/useVoiceSession.js";
@@ -131,6 +132,7 @@ export function App() {
   const [draftProfile, setDraftProfile] = useState(defaultProfile);
   const [editingProfile, setEditingProfile] = useState(false);
   const [digitalSelfOpen, setDigitalSelfOpen] = useState(false);
+  const [companionSwitchOpen, setCompanionSwitchOpen] = useState(false);
   const [privacyDataOpen, setPrivacyDataOpen] = useState(false);
   const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
   const [memoryDays, setMemoryDays] = useState([]);
@@ -282,6 +284,9 @@ export function App() {
   const activeMemory =
     memoryDays.find((day) => day.date === selectedDay) || memoryDays[0] || null;
   const activeCompanion = companionById(profile.companion_id);
+  const sessionCompanion = companionById(
+    voice.session?.interaction?.companion_style_id || profile.companion_id,
+  );
 
   const runSummary = async () => {
     setSummaryRunning(true);
@@ -373,6 +378,7 @@ export function App() {
     setPreferenceError("");
     setEditingProfile(false);
     setDigitalSelfOpen(false);
+    setCompanionSwitchOpen(false);
     setPrivacyDataOpen(false);
     setAccountDeletionOpen(false);
     setActiveTab("home");
@@ -452,6 +458,8 @@ export function App() {
       data-page={
         privacyDataOpen
           ? "privacy-data"
+          : companionSwitchOpen
+            ? "companion-switch"
           : digitalSelfOpen
             ? "digital-self"
             : activeTab
@@ -472,7 +480,7 @@ export function App() {
                 onClick={() => setActiveTab("profile")}
               >
                 <MascotVisual
-                  companionId={activeCompanion.id}
+                  companionId={sessionCompanion.id}
                   emotion="neutral"
                   className="avatar-mascot"
                 />
@@ -490,7 +498,7 @@ export function App() {
               <Mascot
                 emotion={emotionFromVoice(voice.emotionHint?.label)}
                 uiState={voice.uiState}
-                companionId={activeCompanion.id}
+                companionId={sessionCompanion.id}
                 active={Boolean(voice.session)}
                 disabled={voice.uiState === "connecting"}
                 onActivate={() => {
@@ -506,7 +514,7 @@ export function App() {
                 >
                   <span>
                     {voice.latestTranscript.speaker === "assistant"
-                      ? activeCompanion.name
+                      ? sessionCompanion.name
                       : "你"}
                   </span>
                   <p>{voice.latestTranscript.text}</p>
@@ -604,8 +612,35 @@ export function App() {
             <DigitalSelfPanel
               onBack={() => setDigitalSelfOpen(false)}
               onAccountDeleted={handleAccountDeleted}
+              onOpenArchive={() => {
+                setDigitalSelfOpen(false);
+                setActiveTab("memory");
+              }}
+              onChangeCompanion={() => {
+                setDigitalSelfOpen(false);
+                setCompanionSwitchOpen(true);
+              }}
             />
           </Suspense>
+        )}
+
+        {activeTab === "profile" && companionSwitchOpen && (
+          <CompanionSwitcher
+            userId={userId}
+            currentCompanionId={profile.companion_id}
+            onBack={() => {
+              setCompanionSwitchOpen(false);
+              setDigitalSelfOpen(true);
+            }}
+            onComplete={(savedProfile) => {
+              const next = { ...profile, ...savedProfile };
+              setProfile(next);
+              setDraftProfile(next);
+              window.localStorage.setItem(profileStorageKey(userId), JSON.stringify(next));
+              setCompanionSwitchOpen(false);
+              setDigitalSelfOpen(true);
+            }}
+          />
         )}
 
         {activeTab === "profile" && privacyDataOpen && (
@@ -623,7 +658,7 @@ export function App() {
           </Suspense>
         )}
 
-        {activeTab === "profile" && !digitalSelfOpen && !privacyDataOpen && (
+        {activeTab === "profile" && !digitalSelfOpen && !companionSwitchOpen && !privacyDataOpen && (
           <ProfileScreen
             profile={profile}
             draftProfile={draftProfile}
@@ -647,7 +682,7 @@ export function App() {
 
         <div ref={voice.audioContainerRef} hidden aria-hidden="true" />
 
-        {!digitalSelfOpen && !privacyDataOpen && !accountDeletionOpen && <nav className="bottom-nav" aria-label="主导航">
+        {!digitalSelfOpen && !companionSwitchOpen && !privacyDataOpen && !accountDeletionOpen && <nav className="bottom-nav" aria-label="主导航">
           {tabs.map(({ id, label, Icon }) => (
             <button
               type="button"
@@ -656,6 +691,7 @@ export function App() {
               aria-current={activeTab === id ? "page" : undefined}
               onClick={() => {
                 setDigitalSelfOpen(false);
+                setCompanionSwitchOpen(false);
                 setPrivacyDataOpen(false);
                 setActiveTab(id);
               }}

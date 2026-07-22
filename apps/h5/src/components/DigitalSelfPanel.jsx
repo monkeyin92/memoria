@@ -20,6 +20,7 @@ import {
   enrollVoiceProfile,
   evaluateVoiceProfile,
   exportAccountArchive,
+  getInteractionCapabilities,
   getPersonaStatus,
   getPersonaTraits,
   getPersonaVersions,
@@ -40,6 +41,7 @@ import {
   prepareVoiceCloneSample,
 } from "../lib/audioEnrollment.js";
 import { AccountDeletionForm } from "./AccountDeletionForm.jsx";
+import { InteractionModePanel } from "./InteractionModePanel.jsx";
 
 const traitLabels = {
   verbal_tic: "口头表达",
@@ -115,12 +117,18 @@ function ConfirmAction({ title, body, confirmLabel, busy, onCancel, onConfirm })
   );
 }
 
-export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
+export function DigitalSelfPanel({
+  onBack,
+  onAccountDeleted,
+  onOpenArchive,
+  onChangeCompanion,
+}) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [confirmation, setConfirmation] = useState(null);
+  const [interactionCapabilities, setInteractionCapabilities] = useState(null);
   const [personaAllowed, setPersonaAllowed] = useState(false);
   const [personaConsent, setPersonaConsent] = useState(false);
   const [traits, setTraits] = useState([]);
@@ -144,14 +152,25 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
     setError("");
     const results = await Promise.allSettled([
       getPersonaStatus(),
+      getInteractionCapabilities(),
       getPersonaTraits(),
       getPersonaVersions(),
       getSpeakerProfiles(),
       getVoiceProfiles(),
     ]);
-    const [statusResult, traitsResult, versionsResult, speakersResult, voicesResult] = results;
+    const [
+      statusResult,
+      interactionResult,
+      traitsResult,
+      versionsResult,
+      speakersResult,
+      voicesResult,
+    ] = results;
     if (statusResult.status === "fulfilled") {
       setPersonaAllowed(Boolean(statusResult.value?.learning_allowed));
+    }
+    if (interactionResult.status === "fulfilled") {
+      setInteractionCapabilities(interactionResult.value);
     }
     if (traitsResult.status === "fulfilled") setTraits(itemsOf(traitsResult.value));
     if (versionsResult.status === "fulfilled") setVersions(itemsOf(versionsResult.value));
@@ -355,7 +374,7 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
           <LockKey size={24} weight="fill" aria-hidden="true" />
           <div>
             <strong>你始终拥有控制权</strong>
-            <p>人格、声纹和复刻声音互不替代；撤销后实时对话会回到安全基线。</p>
+            <p>陪伴方式、数字分身、声纹和复刻声音相互独立；撤销后实时对话会回到安全基线。</p>
           </div>
         </article>
 
@@ -366,6 +385,13 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
           </div>
         ) : (
           <>
+            <InteractionModePanel
+              capabilities={interactionCapabilities}
+              activeVersion={activeVersion}
+              learnedTraitCount={learnedTraits.length}
+              onOpenArchive={onOpenArchive}
+              onChangeCompanion={onChangeCompanion}
+            />
             <section className="digital-section" aria-labelledby="persona-title">
               <div className="digital-section-heading">
                 <span className="digital-section-icon"><Brain size={22} weight="fill" /></span>

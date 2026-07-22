@@ -97,6 +97,7 @@ def prepare(
             "MEMORIA_MEMORY_READ_TOKEN": _token(),
             "MEMORIA_PERSONA_READ_TOKEN": _token(),
             "MEMORIA_VOICE_RESOLUTION_TOKEN": _token(),
+            "MEMORIA_INTERACTION_POLICY_TOKEN": _token(),
             "MEMORIA_SPEAKER_INTERNAL_TOKEN": _token(),
             "MEMORIA_SPEAKER_EMBEDDING_TOKEN": _token(),
             "MEMORIA_SPEAKER_TEMPLATE_KEY": _keep_or_create(

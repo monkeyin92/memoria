@@ -193,6 +193,50 @@ class LifeArchive:
         with self._connect() as connection:
             return self._record_with_connection(connection, event, recorded_at)
 
+    async def event(
+        self,
+        *,
+        account_id: str,
+        event_id: str,
+    ) -> EvidenceEvent | None:
+        if not account_id.strip() or not event_id.strip():
+            raise ValueError("event lookup requires account_id and event_id")
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM evidence_events
+                WHERE account_id = ? AND event_id = ?
+                """,
+                (account_id, event_id),
+            ).fetchone()
+        return self._event_from_row(row) if row is not None else None
+
+    async def turn_event(
+        self,
+        *,
+        account_id: str,
+        session_id: str,
+        turn_id: int,
+        generation_id: int,
+        event_type: str,
+    ) -> EvidenceEvent | None:
+        if not account_id.strip() or not session_id.strip() or not event_type.strip():
+            raise ValueError("turn event lookup requires account, session and event type")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM evidence_events
+                WHERE account_id = ? AND session_id = ?
+                  AND turn_id = ? AND generation_id = ? AND event_type = ?
+                ORDER BY recorded_at DESC, event_id DESC
+                LIMIT 2
+                """,
+                (account_id, session_id, turn_id, generation_id, event_type),
+            ).fetchall()
+        if len(rows) > 1:
+            raise IdempotencyConflictError("turn has multiple canonical evidence events")
+        return self._event_from_row(rows[0]) if rows else None
+
     def _record_with_connection(
         self,
         connection: sqlite3.Connection,

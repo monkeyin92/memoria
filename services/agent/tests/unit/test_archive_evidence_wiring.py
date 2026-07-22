@@ -9,6 +9,7 @@ import pytest
 from cryptography.fernet import Fernet
 from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.mode_policy_client import ModePolicy
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -22,6 +23,29 @@ def _owner_decision() -> SpeakerDecision:
         template_version=1,
         profile_id="owner-profile",
         permissions=permissions_for_speaker("owner"),
+    )
+
+
+def _provenance(*, owner_projection_eligible: bool = False) -> dict[str, object]:
+    return {
+        "interaction_mode": "companion" if owner_projection_eligible else "unavailable",
+        "mode_policy_version": "test-policy" if owner_projection_eligible else "unavailable",
+        "simulated_output": False,
+        "history_eligible": owner_projection_eligible,
+        "owner_projection_eligible": owner_projection_eligible,
+    }
+
+
+def _enable_owner_projection(runtime: DuplexRuntime) -> None:
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=True,
+            shadow_low_sensitivity_persona=True,
+        )
     )
 
 
@@ -52,10 +76,12 @@ async def test_only_final_user_and_actual_heard_assistant_text_become_evidence()
     assert published[0]["payload"] == {
         "text": "我在杭州读过书。",
         "persona_eligible": False,
+        **_provenance(),
     }
     assert published[1]["payload"] == {
         "text": "原来你在杭州读过书。",
         "actual_heard": True,
+        **_provenance(),
     }
     assert published[0]["session_id"] == "session-001"
     assert published[0]["event_id"] != published[1]["event_id"]
@@ -65,6 +91,7 @@ async def test_only_final_user_and_actual_heard_assistant_text_become_evidence()
 @pytest.mark.asyncio
 async def test_verified_owner_turn_snapshots_pcm_for_the_shared_archive_sink() -> None:
     runtime = DuplexRuntime.create(session_id="session-owner-audio")
+    _enable_owner_projection(runtime)
     ordinary: list[dict[str, object]] = []
     owner_turns: list[tuple[dict[str, object], bytes, int]] = []
 
@@ -89,7 +116,13 @@ async def test_verified_owner_turn_snapshots_pcm_for_the_shared_archive_sink() -
     runtime.feed_speaker_pcm(pcm)
     runtime.on_user_voice_stopped()
     await runtime.await_speaker_classification()
-    runtime.publish_transcript(speaker="user", text="这是主人说的话。", final=True)
+    fence = await runtime.on_turn_committed("这是主人说的话。")
+    runtime.publish_transcript(
+        speaker="user",
+        text="这是主人说的话。",
+        final=True,
+        fence=fence,
+    )
     await asyncio.sleep(0)
 
     assert [event["event_type"] for event in ordinary] == ["speaker.classified"]
@@ -127,8 +160,9 @@ async def test_archived_transcripts_are_redacted_before_fingerprinting_and_deliv
         {
             "text": "我的手机号是[手机号]，邮箱是[邮箱]。",
             "persona_eligible": False,
+            **_provenance(),
         },
-        {"text": "我记下了[手机号]。", "actual_heard": True},
+        {"text": "我记下了[手机号]。", "actual_heard": True, **_provenance()},
     ]
     assert "13800138000" not in json.dumps(published, ensure_ascii=False)
     await runtime.close()
@@ -157,7 +191,7 @@ async def test_runtime_close_drains_durable_evidence_instead_of_canceling_it() -
     release.set()
     await close_task
     assert [event["payload"] for event in published] == [
-        {"text": "关机前也要保存。", "persona_eligible": False}
+        {"text": "关机前也要保存。", "persona_eligible": False, **_provenance()}
     ]
 
 
@@ -201,6 +235,6 @@ async def test_runtime_close_timeout_spools_inflight_evidence(tmp_path: Path) ->
     ]
     assert [envelope["target"] for envelope in persisted] == ["event"]
     assert [envelope["body"]["payload"] for envelope in persisted] == [
-        {"text": "超时也必须落盘。", "persona_eligible": False}
+        {"text": "超时也必须落盘。", "persona_eligible": False, **_provenance()}
     ]
     await client.aclose()

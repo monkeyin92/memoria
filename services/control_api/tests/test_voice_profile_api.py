@@ -334,15 +334,15 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
     assert revoked.json()["status"] == "revoked"
     assert revoked.json()["deletion_status"] == "completed"
     assert fallback.json() == {
-        "mode": "fallback",
-        "profile_id": None,
-        "model": None,
+        "mode": "designed",
+        "profile_id": "warm_companion",
+        "model": "seed-tts-2.0",
         "voice_id": None,
     }
     assert selected.status_code == 200
     assert designed.json() == {
         "mode": "designed",
-        "profile_id": "low_magnetic",
+        "profile_id": "warm_companion",
         "model": "seed-tts-2.0",
         "voice_id": None,
     }

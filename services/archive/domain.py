@@ -181,6 +181,23 @@ class EvidenceNotFoundError(LookupError):
 class LifeArchivePort(Protocol):
     async def record(self, event: EvidenceEvent) -> RecordResult: ...
 
+    async def event(
+        self,
+        *,
+        account_id: str,
+        event_id: str,
+    ) -> EvidenceEvent | None: ...
+
+    async def turn_event(
+        self,
+        *,
+        account_id: str,
+        session_id: str,
+        turn_id: int,
+        generation_id: int,
+        event_type: str,
+    ) -> EvidenceEvent | None: ...
+
     async def context(self, query: ContextQuery) -> ContextBundle: ...
 
     async def review(self, command: MemoryReview) -> ReviewedMemory: ...

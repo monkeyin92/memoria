@@ -33,6 +33,52 @@ def _shadow_persona_payload(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("persona_eligible", (None, False))
+async def test_owner_persona_learning_requires_explicit_turn_eligibility(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    persona_eligible: bool | None,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": f"persona-ineligible-{persona_eligible}", "password": "safe-password"},
+            )
+        ).json()
+        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        await client.post(
+            "/v1/persona/consent",
+            headers=headers,
+            json={"accepted": True, "policy_version": "persona-learning-v1"},
+        )
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        payload: dict[str, object] = {"text": "我觉得先把事实弄清楚。"}
+        if persona_eligible is not None:
+            payload["persona_eligible"] = persona_eligible
+        recorded = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": f"persona-ineligible-{persona_eligible}",
+                "session_id": session["session_id"],
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "owner",
+                "source": "test",
+                "payload": payload,
+            },
+        )
+        traits = await client.get("/v1/persona/traits?include_candidates=true", headers=headers)
+
+    assert recorded.status_code == 201
+    assert traits.json() == {"items": []}
+
+
+@pytest.mark.asyncio
 async def test_consent_drives_non_blocking_owner_learning_and_session_scoped_capsule(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -79,7 +125,7 @@ async def test_consent_drives_non_blocking_owner_learning_and_session_scoped_cap
                     "occurred_at": datetime(2026, 7, 19, 15, index, tzinfo=UTC).isoformat(),
                     "speaker_class": "owner",
                     "source": "test",
-                    "payload": {"text": text},
+                    "payload": {"text": text, "persona_eligible": True},
                     "turn_id": index + 1,
                 },
             )
@@ -170,7 +216,7 @@ async def test_revoked_owner_can_manage_confirmed_traits_and_version_history(
                     "occurred_at": datetime(2026, 7, 21, 10, index, tzinfo=UTC).isoformat(),
                     "speaker_class": "owner",
                     "source": "test",
-                    "payload": {"text": "我觉得先把事实弄清楚。"},
+                    "payload": {"text": "我觉得先把事实弄清楚。", "persona_eligible": True},
                     "turn_id": index + 1,
                 },
             )
@@ -290,6 +336,7 @@ async def test_single_uncertain_candidate_is_hidden_but_owner_review_api_remains
             json={
                 "session_id": session["session_id"],
                 "speaker_class": "uncertain",
+                "speaker_reason_code": "shadow_owner_candidate",
                 "topic": "表达看法",
                 "max_chars": 500,
             },
@@ -318,6 +365,14 @@ async def test_single_uncertain_candidate_is_hidden_but_owner_review_api_remains
     assert reviewed.status_code == 200
     assert reviewed.json()["status"] == "confirmed"
     assert versions_after_review.json()["items"][0]["version_number"] == 1
+    interaction = uncertain_capsule.json()["interaction"]
+    assert interaction["history_eligible"] is True
+    assert interaction["owner_projection_eligible"] is False
+    assert interaction["capabilities"]["private_memory"] is False
+    assert interaction["capabilities"]["persona"] is False
+    assert interaction["capabilities"]["persona_low_sensitivity"] is True
+    assert interaction["capabilities"]["tools"] is False
+    assert interaction["capabilities"]["learning"] is True
     assert "已确认表达风格 v1" in uncertain_capsule.json()["prompt_fragment"]
     assert [item["category"] for item in uncertain_capsule.json()["entries"]] == ["verbal_tic"]
     assert revoked_uncertain_capsule.json()["entries"] == []
@@ -379,6 +434,7 @@ async def test_consented_uncertain_cross_session_evidence_auto_publishes_persona
             json={
                 "session_id": sessions[-1]["session_id"],
                 "speaker_class": "uncertain",
+                "speaker_reason_code": "shadow_owner_candidate",
                 "topic": "表达看法",
                 "max_chars": 500,
             },
@@ -464,12 +520,13 @@ async def test_anonymous_or_direct_uncertain_turns_cannot_create_persona_candida
 
     assert anonymous_event.status_code == 201
     assert anonymous_traits.json() == {"items": []}
-    assert direct_event.status_code == 201
+    assert direct_event.status_code == 409
+    assert direct_event.json()["detail"]["code"] == "session_bound_event_required"
     assert direct_traits.json() == {"items": []}
 
 
 @pytest.mark.asyncio
-async def test_guest_and_low_quality_uncertain_turns_do_not_create_persona_candidates(
+async def test_guest_ambiguous_and_low_quality_turns_do_not_create_persona_candidates(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -513,21 +570,26 @@ async def test_guest_and_low_quality_uncertain_turns_do_not_create_persona_candi
             headers=headers,
             json={"accepted": True, "policy_version": "persona-learning-v1"},
         )
-        for event_id, speaker_class, quality_score in (
-            ("guest-persona-evidence", "guest", 0.95),
-            ("low-quality-uncertain-persona", "uncertain", 0.49),
+        for event_id, speaker_class, reason_code, quality_score in (
+            ("guest-persona-evidence", "guest", "shadow_owner_candidate", 0.95),
+            (
+                "ambiguous-uncertain-persona",
+                "uncertain",
+                "shadow_ambiguous_candidate",
+                0.95,
+            ),
+            (
+                "low-quality-uncertain-persona",
+                "uncertain",
+                "shadow_owner_candidate",
+                0.49,
+            ),
         ):
-            payload = (
-                _shadow_persona_payload(
-                    "我觉得这条证据不能用于人格学习。",
-                    quality_score=quality_score,
-                )
-                if speaker_class == "uncertain"
-                else {
-                    "text": "我觉得这条证据不能用于人格学习。",
-                    "quality_score": quality_score,
-                }
+            payload = _shadow_persona_payload(
+                "我觉得这条证据不能用于人格学习。",
+                quality_score=quality_score,
             )
+            payload["speaker_reason_code"] = reason_code
             response = await client.post(
                 "/v1/archive/session-events",
                 headers=internal,
@@ -543,7 +605,10 @@ async def test_guest_and_low_quality_uncertain_turns_do_not_create_persona_candi
                 },
             )
             assert response.status_code == 201
-        traits = await client.get("/v1/persona/traits", headers=headers)
+        traits = await client.get(
+            "/v1/persona/traits?include_candidates=true",
+            headers=headers,
+        )
 
     assert traits.json() == {"items": []}
 
@@ -586,7 +651,10 @@ async def test_value_or_decision_trait_requires_authenticated_review(
                 "occurred_at": datetime.now(UTC).isoformat(),
                 "speaker_class": "owner",
                 "source": "test",
-                "payload": {"text": "做重大决定时，我习惯先列事实，再睡一晚。"},
+                "payload": {
+                    "text": "做重大决定时，我习惯先列事实，再睡一晚。",
+                    "persona_eligible": True,
+                },
                 "turn_id": 1,
             },
         )

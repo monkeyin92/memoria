@@ -964,11 +964,17 @@ class _FakeSession(_Emitter):
 async def test_entrypoint_routes_control_playback_and_ui_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from services.agent.src import mode_policy_client
+    from services.agent.src.mode_policy_client import ModePolicy
     from services.agent.src.providers import deepseek, doubao_tts, funasr_stt
 
     fake_tts = _FakeTTS()
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "cn_self_hosted")
     monkeypatch.setenv("SPEAKER_VERIFY_ENABLED", "false")
+    monkeypatch.setenv(
+        "MEMORIA_INTERACTION_POLICY_TOKEN",
+        "interaction-policy-material-that-is-long-enough",
+    )
 
     class FakeDoubao:
         @classmethod
@@ -992,10 +998,29 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
         async def aclose(self) -> None:
             self.closed = True
 
+    class FakeModePolicyClient:
+        def __init__(self, _config: Any) -> None:
+            self.closed = False
+
+        async def fetch(self, *, session_id: str) -> ModePolicy:
+            assert session_id == "public-session"
+            return ModePolicy.companion_for_test(
+                policy_version="s2-v1",
+                private_context=True,
+                owner_evidence=True,
+                tools=True,
+                voice_profile=True,
+                shadow_low_sensitivity_persona=True,
+            )
+
+        async def aclose(self) -> None:
+            self.closed = True
+
     monkeypatch.setattr(doubao_tts, "DoubaoTTS", FakeDoubao)
     monkeypatch.setattr(funasr_stt, "FunASRSTT", FakeFun)
     monkeypatch.setattr(deepseek, "DeepSeekConfig", FakeDeepConfig)
     monkeypatch.setattr(deepseek, "DeepSeekClient", FakeDeepClient)
+    monkeypatch.setattr(mode_policy_client, "ModePolicyClient", FakeModePolicyClient)
     monkeypatch.setattr(agent_mod.openai, "LLM", lambda **kwargs: SimpleNamespace(**kwargs))
     monkeypatch.setattr(agent_mod, "AgentSession", _FakeSession)
     monkeypatch.setattr(

@@ -82,6 +82,10 @@ class ControlSettings(BaseSettings):
         default=SecretStr(""),
         alias="MEMORIA_VOICE_RESOLUTION_TOKEN",
     )
+    memoria_interaction_policy_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_INTERACTION_POLICY_TOKEN",
+    )
     archive_object_store_path: str = Field(
         default="data/archive-objects",
         alias="MEMORIA_ARCHIVE_OBJECT_STORE_PATH",
@@ -425,6 +429,7 @@ class ControlSettings(BaseSettings):
             "memory_read",
             "persona_read",
             "voice_resolution",
+            "interaction_policy",
         ],
     ) -> str:
         configured = {
@@ -433,6 +438,7 @@ class ControlSettings(BaseSettings):
             "memory_read": self.memoria_memory_read_token,
             "persona_read": self.memoria_persona_read_token,
             "voice_resolution": self.memoria_voice_resolution_token,
+            "interaction_policy": self.memoria_interaction_policy_token,
         }[capability].get_secret_value()
         if configured or self.environment == "production":
             return configured
@@ -460,9 +466,10 @@ class ControlSettings(BaseSettings):
             "MEMORIA_MEMORY_READ_TOKEN": self.internal_token("memory_read"),
             "MEMORIA_PERSONA_READ_TOKEN": self.internal_token("persona_read"),
             "MEMORIA_VOICE_RESOLUTION_TOKEN": self.internal_token("voice_resolution"),
+            "MEMORIA_INTERACTION_POLICY_TOKEN": self.internal_token("interaction_policy"),
         }
         if any(len(token) < 32 for token in capability_tokens.values()):
-            raise ValueError("production requires five capability-scoped internal tokens")
+            raise ValueError("production requires six capability-scoped internal tokens")
         if len(set(capability_tokens.values())) != len(capability_tokens) or any(
             token in {auth_secret, self.livekit_api_secret} for token in capability_tokens.values()
         ):

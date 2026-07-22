@@ -19,6 +19,7 @@ from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.memory_context_client import MemoryContextClient
+from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.persona_client import PersonaClient
 from services.agent.src.prompts import VOICE_SYSTEM_PROMPT
 from services.agent.src.voice_profile_client import VoiceProfileClient
@@ -247,7 +248,12 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 )
                 raise StopResponse()
             self._current_speaker_class = speaker.classification
-            if self._voice_profile_client is not None and self._runtime.tts is not None:
+            policy = self._runtime.mode_policy
+            if (
+                self._voice_profile_client is not None
+                and self._runtime.tts is not None
+                and policy.allows_voice_profile()
+            ):
                 await self._runtime.wait_for_voice_profile_refresh()
                 _apply_cached_voice_profile(
                     tts_plugin=self._runtime.tts,
@@ -262,11 +268,16 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 fence=fence,
             )
             self._llm_text_buf = ""
-            if self._persona_client is not None:
+            is_shadow = self._runtime.is_shadow_speaker()
+            if self._persona_client is not None and (
+                policy.allows_private_persona(speaker.classification)
+                or policy.allows_low_sensitivity_persona(is_shadow=is_shadow)
+            ):
                 try:
                     await self._persona_client.refresh(
                         session_id=self._runtime.session_id,
                         speaker_class=speaker.classification,
+                        speaker_reason_code=speaker.reason_code,
                         topic=text.strip(),
                     )
                 except Exception:
@@ -275,7 +286,10 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                         self._runtime.session_id,
                         exc_info=True,
                     )
-            if self._memory_context_client is not None:
+            if (
+                self._memory_context_client is not None
+                and policy.allows_private_context(speaker.classification)
+            ):
                 self._runtime._spawn(
                     self._memory_context_client.refresh(
                         session_id=self._runtime.session_id,
@@ -318,6 +332,16 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             yield  # pragma: no cover  # make this an async generator
 
         fence = self._runtime.fence
+        policy = self._runtime.mode_policy_for_fence(fence)
+        if self._runtime.mode_policy_enforced and not policy.allows_conversation():
+            logger.error(
+                "llm request blocked by frozen interaction policy session_id=%s "
+                "turn_id=%s generation_id=%s",
+                self._runtime.session_id,
+                fence.turn_id,
+                fence.generation_id,
+            )
+            return
         resume_interrupted_reply = self._runtime.is_resume_generation(fence)
         if self._runtime.tts is not None:
             self._runtime.tts.bind_fence(fence)
@@ -332,10 +356,12 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         ]
         persona_fragment = ""
         memory_snapshot = None
-        if self._persona_client is not None and self._current_speaker_class in {
-            "owner",
-            "uncertain",
-        }:
+        if self._persona_client is not None and (
+            policy.allows_private_persona(self._current_speaker_class)
+            or policy.allows_low_sensitivity_persona(
+                is_shadow=self._runtime.is_shadow_speaker()
+            )
+        ):
             capsule = self._persona_client.cached(
                 session_id=self._runtime.session_id,
                 speaker_class=self._current_speaker_class,
@@ -348,7 +374,10 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     capsule.version_number,
                     self._runtime.session_id,
                 )
-        if self._memory_context_client is not None and self._current_speaker_class == "owner":
+        if (
+            self._memory_context_client is not None
+            and policy.allows_private_context(self._current_speaker_class)
+        ):
             memory_snapshot = self._memory_context_client.cached(
                 session_id=self._runtime.session_id,
                 speaker_class="owner",
@@ -369,6 +398,9 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         )
         if self._current_speaker_class != "owner":
             safe_chat_ctx.add_message(role="system", content=NON_OWNER_CONTEXT_PROMPT)
+        companion_style_prompt = policy.companion_style_prompt
+        if companion_style_prompt is not None:
+            safe_chat_ctx.add_message(role="system", content=companion_style_prompt)
         if resume_interrupted_reply:
             resume_basis = (
                 "保留的原问题和用户实际听到的回答前缀"
@@ -454,7 +486,9 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         stream: Any = None
         try:
             self._runtime.mark_audio_event("llm_request_started")
-            safe_tools = tools if self._current_speaker_class == "owner" else []
+            safe_tools = (
+                tools if policy.allows_tools(self._current_speaker_class) else []
+            )
             stream = Agent.default.llm_node(self, safe_chat_ctx, safe_tools, model_settings)
             # default may return async gen or coroutine of async gen
             if asyncio.iscoroutine(stream):
@@ -772,6 +806,45 @@ async def entrypoint(ctx: Any) -> None:
         use_paralinguistic_tags=False,
         speaker_verifier=speaker_verifier,
     )
+    mode_policy_client = None
+    interaction_policy_token = runtime_settings.internal_token("interaction_policy")
+    if interaction_policy_token and not offline:
+        from services.agent.src.mode_policy_client import (
+            ModePolicyClient,
+            ModePolicyClientConfig,
+        )
+
+        mode_policy_client = ModePolicyClient(
+            ModePolicyClientConfig(
+                endpoint=runtime_settings.interaction_policy_url,
+                internal_token=interaction_policy_token,
+                timeout_s=runtime_settings.interaction_policy_timeout_s,
+            )
+        )
+        policy = await mode_policy_client.fetch(session_id=runtime_session_id)
+        runtime.set_mode_policy(policy)
+        if not policy.available:
+            logger.error(
+                "interaction policy unavailable; session is fail-closed session_id=%s reason=%s",
+                runtime_session_id,
+                policy.unavailable_reason,
+            )
+    else:
+        runtime.set_mode_policy(
+            ModePolicy.unavailable(
+                "missing_interaction_policy_token" if not interaction_policy_token else "offline_mock"
+            )
+        )
+        logger.error(
+            "interaction policy unavailable; session is fail-closed session_id=%s",
+            runtime_session_id,
+        )
+    if not runtime.mode_policy.allows_conversation():
+        if mode_policy_client is not None:
+            await mode_policy_client.aclose()
+        raise RuntimeError(
+            "interaction policy does not authorize a companion conversation; refusing session start"
+        )
     if runtime_settings.speaker_authority_enabled and not offline:
         from services.agent.src.speaker_authority_client import (
             SpeakerAuthorityClient,
@@ -856,7 +929,15 @@ async def entrypoint(ctx: Any) -> None:
         logger.warning("archive sink is disabled because token or spool key is not configured")
     persona_client = None
     persona_token = runtime_settings.internal_token("persona_read")
-    if runtime_settings.persona_enabled and persona_token and not offline:
+    if (
+        runtime_settings.persona_enabled
+        and persona_token
+        and (
+            runtime.mode_policy.capability("persona")
+            or runtime.mode_policy.capability("persona_low_sensitivity")
+        )
+        and not offline
+    ):
         from services.agent.src.persona_client import PersonaClientConfig
 
         persona_client = PersonaClient(
@@ -868,10 +949,15 @@ async def entrypoint(ctx: Any) -> None:
             )
         )
     elif runtime_settings.persona_enabled and not offline:
-        logger.warning("persona is disabled because the internal token is not configured")
+        logger.warning("persona is disabled because policy authority or token is unavailable")
     memory_context_client = None
     memory_token = runtime_settings.internal_token("memory_read")
-    if runtime_settings.memory_context_enabled and memory_token and not offline:
+    if (
+        runtime_settings.memory_context_enabled
+        and memory_token
+        and runtime.mode_policy.capability("private_memory")
+        and not offline
+    ):
         from services.agent.src.memory_context_client import MemoryContextClientConfig
 
         memory_context_client = MemoryContextClient(
@@ -891,10 +977,15 @@ async def entrypoint(ctx: Any) -> None:
             )
         )
     elif runtime_settings.memory_context_enabled and not offline:
-        logger.warning("memory context is disabled because the internal token is not configured")
+        logger.warning("memory context is disabled because policy authority or token is unavailable")
     voice_profile_client = None
     voice_token = runtime_settings.internal_token("voice_resolution")
-    if runtime_settings.voice_profile_enabled and voice_token and not offline:
+    if (
+        runtime_settings.voice_profile_enabled
+        and voice_token
+        and runtime.mode_policy.allows_voice_profile()
+        and not offline
+    ):
         from services.agent.src.voice_profile_client import VoiceProfileClientConfig
 
         voice_profile_client = VoiceProfileClient(
@@ -914,7 +1005,7 @@ async def entrypoint(ctx: Any) -> None:
             session_id=runtime_session_id,
         )
     elif runtime_settings.voice_profile_enabled and not offline:
-        logger.warning("voice profile is disabled because the internal token is not configured")
+        logger.warning("voice profile is disabled because policy authority or token is unavailable")
     runtime.cue_scheduler.min_speech_ms = runtime_settings.listener_cue_min_speech_ms
     runtime.cue_scheduler.pause_ms = runtime_settings.listener_cue_pause_ms
     runtime.cue_scheduler.cooldown_ms = runtime_settings.listener_cue_cooldown_ms
@@ -1256,6 +1347,8 @@ async def entrypoint(ctx: Any) -> None:
             await _close_component("memory_context_client", memory_context_client.close())
         if voice_profile_client is not None:
             await _close_component("voice_profile_client", voice_profile_client.close())
+        if mode_policy_client is not None:
+            await _close_component("mode_policy_client", mode_policy_client.aclose())
         if archive_sink is not None:
             await _close_component("archive_sink", archive_sink.close())
         if shutdown_errors:

@@ -1107,6 +1107,15 @@ describe("authenticated Control API client", () => {
         jsonResponse({
           session_id: "omni-session",
           voice_backend: "qwen_omni",
+          interaction: {
+            interaction_mode: "companion",
+            mode_policy_version: "s2-v1",
+            companion_style_id: "starlight",
+            companion_style_version: "companion-v1",
+            digital_self_version_id: null,
+            relationship_profile_id: null,
+            legacy_grant_id: null,
+          },
         }),
       )
       .mockResolvedValueOnce({
@@ -1140,7 +1149,11 @@ describe("authenticated Control API client", () => {
       expect.objectContaining({
         user_id: "anonymous-user",
         voice_backend: "qwen_omni",
+        interaction_mode: "companion",
       }),
+    );
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).not.toHaveProperty(
+      "digital_self_version_id",
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
@@ -1172,6 +1185,52 @@ describe("authenticated Control API client", () => {
           "Content-Type": "application/json",
         }),
       }),
+    );
+  });
+
+  it("loads server mode capabilities and rejects an unbound voice session", async () => {
+    window.localStorage.setItem(
+      "memoria:identity",
+      JSON.stringify({ user_id: "owner", access_token: "legacy-token" }),
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        user_id: "owner",
+        account_type: "registered",
+        access_token: "short-token",
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        selected_companion_id: "starlight",
+        modes: {
+          companion: { status: "available", conversational: true },
+          self_preview: {
+            status: "blocked",
+            conversational: true,
+            missing: ["approved_digital_self_version"],
+          },
+        },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        session_id: "unbound-session",
+        voice_backend: "cascade",
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      bootstrapIdentity,
+      createSession,
+      getInteractionCapabilities,
+    } = await import("./api.js");
+    await bootstrapIdentity();
+
+    await expect(getInteractionCapabilities()).resolves.toEqual(
+      expect.objectContaining({ selected_companion_id: "starlight" }),
+    );
+    await expect(createSession("owner")).rejects.toThrow(
+      "服务端没有返回可验证的陪伴模式",
+    );
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/memoria-api/v1/interaction/capabilities",
     );
   });
 });

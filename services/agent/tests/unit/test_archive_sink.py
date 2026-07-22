@@ -58,6 +58,107 @@ async def test_failed_delivery_is_encrypted_and_replayed_idempotently(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_parent_not_recorded_response_remains_spooled_for_retry(tmp_path: Path) -> None:
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(425))
+    )
+    spool_path = tmp_path / "archive.spool"
+    sink = ArchiveSink(
+        ArchiveSinkConfig(
+            endpoint="https://control.test/v1/archive/session-events",
+            internal_token="internal-test-token",
+            spool_path=spool_path,
+            spool_key=Fernet.generate_key().decode("ascii"),
+            spool_max_bytes=64 * 1024,
+        ),
+        client=client,
+    )
+    event = {
+        "event_id": "assistant-before-parent",
+        "session_id": "session-001",
+        "event_type": "assistant.playout_stopped",
+        "occurred_at": "2026-07-19T08:00:00+00:00",
+        "speaker_class": "assistant",
+        "source": "generation_fence.actual_heard",
+        "turn_id": 1,
+        "generation_id": 1,
+        "payload": {"text": "必须等待父话轮。", "actual_heard": True},
+    }
+
+    assert await sink.publish(event) is False
+    encrypted = spool_path.read_bytes()
+    assert encrypted
+    assert await sink.replay() == 0
+    assert spool_path.read_bytes() == encrypted
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_new_parent_event_unblocks_an_older_425_child(tmp_path: Path) -> None:
+    parent_recorded = False
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal parent_recorded
+        event = json.loads(request.content)
+        event_id = str(event["event_id"])
+        calls.append(event_id)
+        if event_id == "parent-turn":
+            parent_recorded = True
+            return httpx.Response(201)
+        if event_id == "assistant-child" and not parent_recorded:
+            return httpx.Response(425)
+        return httpx.Response(201)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    spool_path = tmp_path / "archive.spool"
+    sink = ArchiveSink(
+        ArchiveSinkConfig(
+            endpoint="https://control.test/v1/archive/session-events",
+            internal_token="internal-test-token",
+            spool_path=spool_path,
+            spool_key=Fernet.generate_key().decode("ascii"),
+            spool_max_bytes=64 * 1024,
+        ),
+        client=client,
+    )
+    assistant = {
+        "event_id": "assistant-child",
+        "session_id": "session-001",
+        "event_type": "assistant.playout_stopped",
+        "occurred_at": "2026-07-19T08:00:01+00:00",
+        "speaker_class": "assistant",
+        "source": "generation_fence.actual_heard",
+        "turn_id": 1,
+        "generation_id": 1,
+        "payload": {"text": "等待父话轮。", "actual_heard": True},
+    }
+    parent = {
+        "event_id": "parent-turn",
+        "session_id": "session-001",
+        "event_type": "speech.utterance_finalized",
+        "occurred_at": "2026-07-19T08:00:00+00:00",
+        "speaker_class": "owner",
+        "source": "funasr.authoritative_final",
+        "turn_id": 1,
+        "generation_id": 1,
+        "payload": {"text": "父话轮。", "persona_eligible": True},
+    }
+
+    assert await sink.publish(assistant) is False
+    assert await sink.publish(parent) is True
+    assert parent_recorded is True
+    assert spool_path.read_bytes() == b""
+    assert calls == [
+        "assistant-child",
+        "assistant-child",
+        "parent-turn",
+        "assistant-child",
+    ]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_deleted_session_is_discarded_without_blocking_later_spooled_events(
     tmp_path: Path,
 ) -> None:

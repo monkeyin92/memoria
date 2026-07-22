@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.mode_policy_client import ModePolicy
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -22,6 +23,19 @@ def _decision(
         template_version=1,
         profile_id="profile-001",
         permissions=permissions_for_speaker(classification),  # type: ignore[arg-type]
+    )
+
+
+def _enable_companion_policy(runtime: DuplexRuntime) -> None:
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=True,
+            shadow_low_sensitivity_persona=True,
+        )
     )
 
 
@@ -76,6 +90,7 @@ async def test_transcript_history_eligibility_is_frozen_for_user_and_assistant(
         published.append(event)
 
     runtime = DuplexRuntime.create(session_id="history-binding")
+    _enable_companion_policy(runtime)
     runtime.set_event_publisher(publish)
     runtime.set_reject_non_owner_voice(False)
     await runtime.orchestrator.ready()
@@ -110,12 +125,18 @@ async def test_transcript_history_eligibility_is_frozen_for_user_and_assistant(
 @pytest.mark.asyncio
 async def test_interrupted_assistant_uses_the_original_generation_history_binding() -> None:
     published: list[dict[str, object]] = []
+    archived: list[dict[str, object]] = []
 
     async def publish(event: dict[str, object]) -> None:
         published.append(event)
 
+    async def archive(event: dict[str, object]) -> None:
+        archived.append(event)
+
     runtime = DuplexRuntime.create(session_id="interrupted-history-binding")
+    _enable_companion_policy(runtime)
     runtime.set_event_publisher(publish)
+    runtime.set_evidence_publisher(archive)
     await runtime.orchestrator.ready()
     runtime._speaker_decision = _decision("owner")
     runtime._speaker_class = "owner"
@@ -147,6 +168,13 @@ async def test_interrupted_assistant_uses_the_original_generation_history_bindin
     assert assistant["turn_id"] == old.turn_id
     assert assistant["generation_id"] == old.generation_id + 1
     assert assistant["history_eligible"] is True
+    archived_assistant = next(
+        event
+        for event in archived
+        if event.get("event_type") == "assistant.playout_stopped"
+    )
+    assert archived_assistant["turn_id"] == old.turn_id
+    assert archived_assistant["generation_id"] == old.generation_id
     await runtime.close()
 
 
@@ -216,6 +244,7 @@ async def test_classification_and_user_final_use_the_same_speaker_class() -> Non
         evidence.append(event)
 
     runtime = DuplexRuntime.create(session_id="session-speaker-evidence")
+    _enable_companion_policy(runtime)
     runtime.set_speaker_classifier(classify, sample_rate=16000)
     runtime.set_evidence_publisher(publish)
     runtime.on_user_voice_started()
@@ -246,6 +275,11 @@ async def test_classification_and_user_final_use_the_same_speaker_class() -> Non
         "speech_ms": 100,
         "pause_ratio": pytest.approx(0.5),
         "quality_score": 0.9,
+        "interaction_mode": "companion",
+        "mode_policy_version": "test-policy",
+        "simulated_output": False,
+        "history_eligible": True,
+        "owner_projection_eligible": True,
     }
     await runtime.close()
 

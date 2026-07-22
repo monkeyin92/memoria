@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
-from services.archive.domain import ContextQuery, LifeArchivePort, RawVoiceRevocation
+from services.archive.domain import ContextQuery, LifeArchivePort, RawVoiceRevocation, SpeakerClass
 from services.archive.object_store import ObjectRef
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.control_api.app.main import create_app
@@ -202,9 +202,10 @@ async def test_account_can_append_and_read_an_idempotent_evidence_event(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         identity = (await client.post("/v1/auth/anonymous")).json()
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
         event = {
             "event_id": "event-api-001",
-            "account_id": identity["user_id"],
+            "session_id": session["session_id"],
             "event_type": "speech.utterance_finalized",
             "occurred_at": occurred_at,
             "speaker_class": "owner",
@@ -212,8 +213,8 @@ async def test_account_can_append_and_read_an_idempotent_evidence_event(
             "payload": {"text": "我在杭州读过书。"},
         }
         internal_headers = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
-        first = await client.post("/v1/archive/events", headers=internal_headers, json=event)
-        duplicate = await client.post("/v1/archive/events", headers=internal_headers, json=event)
+        first = await client.post("/v1/archive/session-events", headers=internal_headers, json=event)
+        duplicate = await client.post("/v1/archive/session-events", headers=internal_headers, json=event)
         timeline = await client.get("/v1/archive/timeline", headers=headers)
 
     assert first.status_code == 201
@@ -221,6 +222,53 @@ async def test_account_can_append_and_read_an_idempotent_evidence_event(
     assert duplicate.status_code == 200
     assert duplicate.json()["duplicate"] is True
     assert [item["event_id"] for item in timeline.json()["items"]] == ["event-api-001"]
+
+
+@pytest.mark.asyncio
+async def test_generic_speech_event_requires_a_session_and_cannot_trigger_persona(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "generic-speech-persona", "password": "safe-password"},
+            )
+        ).json()
+        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        await client.post(
+            "/v1/persona/consent",
+            headers=headers,
+            json={"accepted": True, "policy_version": "persona-learning-v1"},
+        )
+        response = await client.post(
+            "/v1/archive/events",
+            headers=internal,
+            json={
+                "event_id": "generic-speech-persona",
+                "account_id": identity["user_id"],
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "owner",
+                "source": "funasr.authoritative_final",
+                "payload": {
+                    "text": "我会先听完，再认真回答。",
+                    "persona_eligible": True,
+                    "speech_ms": 8000,
+                    "pause_ratio": 0.55,
+                    "quality_score": 0.95,
+                },
+            },
+        )
+        traits = await client.get("/v1/persona/traits?include_candidates=true", headers=headers)
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "session_bound_event_required"
+    assert traits.json() == {"items": []}
 
 
 @pytest.mark.asyncio
@@ -242,11 +290,11 @@ async def test_internal_archive_writer_cannot_append_after_deletion_fence(
             json={
                 "event_id": "too-late-event",
                 "account_id": identity["user_id"],
-                "event_type": "speech.utterance_finalized",
+                "event_type": "account.deletion_fence_probe",
                 "occurred_at": datetime.now(UTC).isoformat(),
-                "speaker_class": "owner",
+                "speaker_class": "system",
                 "source": "test",
-                "payload": {"text": "不应写入"},
+                "payload": {"reason": "不应写入"},
             },
         )
 
@@ -331,8 +379,12 @@ async def test_raw_voice_consent_archives_owner_audio_and_revocation_deletes_blo
             headers=internal,
             json=event,
         )
+        transcript_payload = (
+            await client.get("/v1/archive/timeline", headers=headers)
+        ).json()["items"][0]["payload"]
         body = {
             **event,
+            "payload": transcript_payload,
             "audio_base64": base64.b64encode(wav).decode("ascii"),
             "media_type": "audio/wav",
             "retention_policy": "account_lifetime",
@@ -404,6 +456,55 @@ async def test_raw_voice_consent_archives_owner_audio_and_revocation_deletes_blo
     assert after_revoke.json() == {"consent": None}
     assert late.status_code == 410
     assert objects.objects == {}
+
+
+@pytest.mark.asyncio
+async def test_raw_audio_waits_for_an_existing_canonical_owner_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    objects = TrackingArchiveObjectStore()
+    app.state.archive_object_store = objects
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "missing-raw-parent", "password": "safe-password"},
+            )
+        ).json()
+        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        grant = (
+            await client.post(
+                "/v1/archive/raw-voice-consent",
+                headers=headers,
+                json={"policy_version": "raw-voice-archive-v1"},
+            )
+        ).json()
+        raw_audio = await client.post(
+            "/v1/archive/session-raw-audio",
+            headers=internal,
+            json={
+                "event_id": "missing-raw-parent",
+                "session_id": session["session_id"],
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "owner",
+                "source": "funasr.authoritative_final",
+                "consent_grant_id": grant["consent_grant_id"],
+                "payload": {"text": "不能由音频创建话轮。", "persona_eligible": True},
+                "audio_base64": base64.b64encode(_wav()).decode("ascii"),
+            },
+        )
+        traits = await client.get("/v1/persona/traits?include_candidates=true", headers=headers)
+
+    assert raw_audio.status_code == 425
+    assert raw_audio.json()["detail"] == {"code": "parent_turn_not_recorded"}
+    assert objects.objects == {}
+    assert traits.json() == {"items": []}
 
 
 @pytest.mark.asyncio
@@ -506,6 +607,20 @@ async def test_raw_voice_revocation_keeps_manifest_until_object_deletion_retries
                 },
             )
         ).json()
+        parent = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "raw-audio-revocation-retry",
+                "session_id": session["session_id"],
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "owner",
+                "source": "funasr.authoritative_final",
+                "consent_grant_id": grant["consent_grant_id"],
+                "payload": {"text": "对象删除失败时保留清单供重试。"},
+            },
+        )
         uploaded = await client.post(
             "/v1/archive/session-raw-audio",
             headers=internal,
@@ -528,7 +643,8 @@ async def test_raw_voice_revocation_keeps_manifest_until_object_deletion_retries
         objects_after_failed = dict(objects.objects)
         retried = await client.delete("/v1/archive/raw-voice-consent", headers=headers)
 
-    assert uploaded.status_code == 201
+    assert parent.status_code == 201
+    assert uploaded.status_code == 200
     assert failed.status_code == 503
     assert len(retained) == 1
     assert retained[0].object_key in objects_after_failed
@@ -735,6 +851,21 @@ async def test_cancelled_raw_audio_request_deletes_the_uncommitted_object(
                 },
             )
         ).json()
+        parent = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "cancelled-raw-audio",
+                "session_id": session["session_id"],
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "owner",
+                "source": "funasr.authoritative_final",
+                "consent_grant_id": grant["consent_grant_id"],
+                "payload": {"text": "请求取消仍需补偿对象。"},
+            },
+        )
+        assert parent.status_code == 201
         started = asyncio.Event()
         app.state.life_archive = CancellingBlobArchive(app.state.life_archive, started)
         request_task = asyncio.create_task(
@@ -776,6 +907,9 @@ async def test_guest_and_uncertain_evidence_is_recorded_but_hidden_from_owner_co
         identity = (await client.post("/v1/auth/anonymous")).json()
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        classified_session = (
+            await client.post("/v1/sessions", headers=headers, json={})
+        ).json()
         responses = []
         for speaker_class in ("guest", "uncertain"):
             responses.append(
@@ -795,11 +929,11 @@ async def test_guest_and_uncertain_evidence_is_recorded_but_hidden_from_owner_co
             )
             responses.append(
                 await client.post(
-                    "/v1/archive/events",
+                    "/v1/archive/session-events",
                     headers=internal,
                     json={
                         "event_id": f"discard-direct-{speaker_class}",
-                        "account_id": identity["user_id"],
+                        "session_id": classified_session["session_id"],
                         "event_type": "speaker.classified",
                         "occurred_at": datetime.now(UTC).isoformat(),
                         "speaker_class": speaker_class,
@@ -847,6 +981,21 @@ async def test_agent_records_session_event_without_trusting_an_account_id(
             )
         ).json()
         internal_headers = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+        parent = await client.post(
+            "/v1/archive/session-events",
+            headers=internal_headers,
+            json={
+                "event_id": "session-event-parent-001",
+                "session_id": session["session_id"],
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "owner",
+                "source": "funasr.authoritative_final",
+                "turn_id": 1,
+                "generation_id": 2,
+                "payload": {"text": "先保存这句用户话轮。"},
+            },
+        )
         recorded = await client.post(
             "/v1/archive/session-events",
             headers=internal_headers,
@@ -859,13 +1008,207 @@ async def test_agent_records_session_event_without_trusting_an_account_id(
                 "source": "generation_fence.actual_heard",
                 "turn_id": 1,
                 "generation_id": 2,
-                "payload": {"text": "你实际听到了这一句。", "actual_heard": True},
+                "payload": {
+                    "text": "你实际听到了这一句。",
+                    "actual_heard": True,
+                    "history_eligible": False,
+                    "owner_projection_eligible": False,
+                },
             },
         )
         timeline = await client.get("/v1/archive/timeline", headers=headers)
 
-    assert recorded.status_code == 201
+    assert (parent.status_code, recorded.status_code) == (201, 201)
     assert timeline.json()["items"][0]["payload"]["actual_heard"] is True
+    assert timeline.json()["items"][0]["payload"]["history_eligible"] is True
+    assert timeline.json()["items"][0]["payload"]["owner_projection_eligible"] is True
+
+
+@pytest.mark.asyncio
+async def test_assistant_evidence_waits_for_its_canonical_parent_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (await client.post("/v1/auth/anonymous")).json()
+        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        response = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "missing-parent-assistant",
+                "session_id": session["session_id"],
+                "event_type": "assistant.playout_stopped",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "assistant",
+                "source": "generation_fence.actual_heard",
+                "turn_id": 7,
+                "generation_id": 3,
+                "payload": {"text": "迟到的回复。", "actual_heard": True},
+            },
+        )
+
+    assert response.status_code == 425
+    assert response.json()["detail"] == {"code": "parent_turn_not_recorded"}
+
+
+@pytest.mark.parametrize(
+    (
+        "speaker_class",
+        "reason_code",
+        "expected_history",
+        "expected_owner_projection",
+        "expected_private_authority",
+        "expected_low_sensitivity",
+    ),
+    (
+        pytest.param("owner", None, True, True, True, False, id="owner"),
+        pytest.param(
+            "guest",
+            "shadow_owner_candidate",
+            False,
+            False,
+            False,
+            False,
+            id="guest-forged-shadow-reason",
+        ),
+        pytest.param(
+            "uncertain",
+            "shadow_owner_candidate",
+            True,
+            False,
+            False,
+            True,
+            id="shadow-owner-candidate",
+        ),
+        pytest.param(
+            "uncertain",
+            "shadow_ambiguous_candidate",
+            False,
+            False,
+            False,
+            False,
+            id="ambiguous",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_session_events_canonicalize_the_user_and_assistant_permission_matrix(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    speaker_class: SpeakerClass,
+    reason_code: str | None,
+    expected_history: bool,
+    expected_owner_projection: bool,
+    expected_private_authority: bool,
+    expected_low_sensitivity: bool,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    user_event_id = f"interaction-user-{speaker_class}-{reason_code or 'formal'}"
+    assistant_event_id = f"interaction-assistant-{speaker_class}-{reason_code or 'formal'}"
+    forged_interaction = {
+        "interaction_mode": "legacy",
+        "mode_policy_version": "caller-forged",
+        "simulated_output": True,
+        "history_eligible": not expected_history,
+        "owner_projection_eligible": not expected_owner_projection,
+        "capabilities": {"private_memory": True, "persona": True, "tools": True},
+        "caller_forged": True,
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (await client.post("/v1/auth/anonymous")).json()
+        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        user_event = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": user_event_id,
+                "session_id": session["session_id"],
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": speaker_class,
+                "source": "test",
+                "turn_id": 1,
+                "generation_id": 1,
+                "payload": {
+                    "text": user_event_id,
+                    "speaker_reason_code": reason_code,
+                    "interaction_mode": "legacy",
+                    "mode_policy_version": "caller-forged",
+                    "simulated_output": True,
+                    "history_eligible": not expected_history,
+                    "owner_projection_eligible": not expected_owner_projection,
+                    "interaction": forged_interaction,
+                },
+            },
+        )
+        assistant_event = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": assistant_event_id,
+                "session_id": session["session_id"],
+                "event_type": "assistant.playout_stopped",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "assistant",
+                "source": "generation_fence.actual_heard",
+                "turn_id": 1,
+                "generation_id": 1,
+                "payload": {
+                    "text": assistant_event_id,
+                    "actual_heard": True,
+                    "interaction_mode": "legacy",
+                    "mode_policy_version": "caller-forged",
+                    "simulated_output": True,
+                    "history_eligible": expected_history,
+                    "owner_projection_eligible": expected_owner_projection,
+                    "interaction": forged_interaction,
+                },
+            },
+        )
+
+    assert (user_event.status_code, assistant_event.status_code) == (201, 201)
+    recorded = await app.state.life_archive.context(
+        ContextQuery(
+            account_id=identity["user_id"],
+            session_id=session["session_id"],
+            speaker_class=speaker_class,
+        )
+    )
+    events = {event.event_id: event for event in recorded.evidence}
+    assert {user_event_id, assistant_event_id}.issubset(events)
+
+    for event_id in (user_event_id, assistant_event_id):
+        payload = events[event_id].payload
+        interaction = payload["interaction"]
+        assert payload["interaction_mode"] == interaction["interaction_mode"] == "companion"
+        assert payload["mode_policy_version"] == interaction["mode_policy_version"] == "s2-v1"
+        assert payload["simulated_output"] is interaction["simulated_output"] is False
+        assert payload["history_eligible"] is expected_history
+        assert interaction["history_eligible"] is expected_history
+        assert payload["owner_projection_eligible"] is expected_owner_projection
+        assert interaction["owner_projection_eligible"] is expected_owner_projection
+        assert "caller_forged" not in interaction
+
+    user_capabilities = events[user_event_id].payload["interaction"]["capabilities"]
+    assert user_capabilities["private_memory"] is expected_private_authority
+    assert user_capabilities["persona"] is expected_private_authority
+    assert user_capabilities["tools"] is expected_private_authority
+    assert user_capabilities["persona_low_sensitivity"] is expected_low_sensitivity
+    assert user_capabilities["history"] is expected_history
+    assert user_capabilities["learning"] is expected_history
+    assistant_capabilities = events[assistant_event_id].payload["interaction"]["capabilities"]
+    assert assistant_capabilities["private_memory"] is False
+    assert assistant_capabilities["persona"] is False
+    assert assistant_capabilities["persona_low_sensitivity"] is False
+    assert assistant_capabilities["tools"] is False
 
 
 @pytest.mark.asyncio
@@ -941,6 +1284,7 @@ async def test_account_can_search_review_and_trace_compiled_life_memory(
         identity = (await client.post("/v1/auth/anonymous")).json()
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         internal_headers = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
         for index, text in enumerate(
             (
                 "我们家的家训是答应别人的事一定做到。",
@@ -948,17 +1292,16 @@ async def test_account_can_search_review_and_trace_compiled_life_memory(
             )
         ):
             response = await client.post(
-                "/v1/archive/events",
+                "/v1/archive/session-events",
                 headers=internal_headers,
                 json={
                     "event_id": f"memory-api-{index}",
-                    "account_id": identity["user_id"],
+                    "session_id": session["session_id"],
                     "event_type": "speech.utterance_finalized",
                     "occurred_at": datetime(2026, 7, 19, 9, index, tzinfo=UTC).isoformat(),
                     "speaker_class": "owner",
                     "source": "test",
                     "payload": {"text": text},
-                    "session_id": "memory-api-session",
                     "turn_id": index + 1,
                 },
             )
@@ -1027,19 +1370,26 @@ async def test_agent_gets_only_confirmed_owner_memory_from_the_session_account(
                 json={"user_id": first["user_id"], "voice_backend": "cascade"},
             )
         ).json()
+        second_session = (
+            await client.post(
+                "/v1/sessions",
+                headers=second_headers,
+                json={"user_id": second["user_id"], "voice_backend": "cascade"},
+            )
+        ).json()
 
         events = (
-            ("first-confirmed", first["user_id"], "我们家的家训是答应别人的事一定做到。"),
-            ("first-candidate", first["user_id"], "我在杭州读过书。"),
-            ("second-confirmed", second["user_id"], "我们家的家训是每天早睡。"),
+            ("first-confirmed", first_session["session_id"], "我们家的家训是答应别人的事一定做到。"),
+            ("first-candidate", first_session["session_id"], "我在杭州读过书。"),
+            ("second-confirmed", second_session["session_id"], "我们家的家训是每天早睡。"),
         )
-        for index, (event_id, account_id, text) in enumerate(events):
+        for index, (event_id, session_id, text) in enumerate(events):
             response = await client.post(
-                "/v1/archive/events",
+                "/v1/archive/session-events",
                 headers=internal_headers,
                 json={
                     "event_id": event_id,
-                    "account_id": account_id,
+                    "session_id": session_id,
                     "event_type": "speech.utterance_finalized",
                     "occurred_at": datetime(2026, 7, 19, 10, index, tzinfo=UTC).isoformat(),
                     "speaker_class": "owner",
@@ -1261,12 +1611,19 @@ async def test_registered_account_exports_only_its_portable_archive(
                 },
             )
             assert saved.status_code == 201
+            session = (
+                await client.post(
+                    "/v1/sessions",
+                    headers=headers,
+                    json={"user_id": identity["user_id"], "voice_backend": "cascade"},
+                )
+            ).json()
             recorded = await client.post(
-                "/v1/archive/events",
+                "/v1/archive/session-events",
                 headers=internal_headers,
                 json={
                     "event_id": f"export-{identity['user_id']}",
-                    "account_id": identity["user_id"],
+                    "session_id": session["session_id"],
                     "event_type": "speech.utterance_finalized",
                     "occurred_at": datetime.now(UTC).isoformat(),
                     "speaker_class": "owner",
@@ -1332,11 +1689,11 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
             )
         ).json()
         recorded = await client.post(
-            "/v1/archive/events",
+            "/v1/archive/session-events",
             headers=internal_headers,
             json={
                 "event_id": "delete-owner-evidence",
-                "account_id": owner["user_id"],
+                "session_id": session["session_id"],
                 "event_type": "speech.utterance_finalized",
                 "occurred_at": datetime.now(UTC).isoformat(),
                 "speaker_class": "owner",

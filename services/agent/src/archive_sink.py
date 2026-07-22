@@ -97,21 +97,11 @@ class ArchiveSink:
                         await self._replay_locked()
                         queued_lines = self._read_lines()
                         if queued_lines:
-                            queued_event = False
-                            for queued_line in queued_lines:
-                                try:
-                                    queued_payload = self._fernet.decrypt(queued_line)
-                                except InvalidToken as exc:
-                                    raise ArchiveSpoolKeyError(
-                                        "archive spool key mismatch or corrupt data"
-                                    ) from exc
-                                queued_target, _ = self._decode_envelope(queued_payload)
-                                if queued_target == "event":
-                                    queued_event = True
-                                    break
-                            if target == "event" and not queued_event:
-                                if await self._deliver(payload):
-                                    return True
+                            if target == "event" and await self._deliver(payload):
+                                # A newly arrived parent turn may unblock an older
+                                # assistant event that was waiting with HTTP 425.
+                                await self._replay_locked()
+                                return True
                             self._append(payload)
                             return False
                     if await self._deliver(payload):
@@ -274,6 +264,10 @@ class ArchiveSink:
             return False
         if response.status_code in {200, 201, 202}:
             return True
+        if response.status_code == 425:
+            # Derived evidence can race its canonical parent across retries.
+            # Keep it encrypted until the parent turn is durably visible.
+            return False
         if target == "raw_audio" and response.status_code in {403, 409, 410, 413, 422}:
             logger.error(
                 "raw voice spool row discarded after permanent response status=%s event_id=%s",

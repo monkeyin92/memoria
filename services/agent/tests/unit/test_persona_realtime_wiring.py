@@ -14,6 +14,7 @@ from services.agent.src.memory_context_client import (
     MemoryContextItem,
     MemoryContextSnapshot,
 )
+from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.persona_client import PersonaCapsuleSnapshot
 from services.agent.src.voice_profile_client import VoiceRuntimeProfile
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
@@ -53,6 +54,17 @@ async def _prepare_speaker(
     profile_id: str = "profile-001",
     reason_code: str | None = None,
 ) -> None:
+    if runtime.fence.turn_id == 0 and runtime.fence.generation_id == 0:
+        runtime.set_mode_policy(
+            ModePolicy.companion_for_test(
+                policy_version="test-policy",
+                private_context=True,
+                owner_evidence=True,
+                tools=True,
+                voice_profile=True,
+                shadow_low_sensitivity_persona=True,
+            )
+        )
     async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
         return _decision(
             classification,
@@ -236,7 +248,7 @@ async def test_guest_cannot_read_cached_persona_and_baseline_context_is_unchange
     await asyncio.sleep(0)
 
     assert not any("人格胶囊" in message.text_content for message in captured["ctx"].messages())
-    assert refresh_calls[0]["speaker_class"] == "guest"
+    assert refresh_calls == []
     await runtime.close()
 
 
@@ -296,7 +308,7 @@ async def test_guest_context_cannot_see_owner_turns_or_use_tools(
 
 
 @pytest.mark.asyncio
-async def test_uncertain_can_use_confirmed_style_without_private_history_memory_or_tools(
+async def test_uncertain_uses_generic_chat_without_private_history_memory_or_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -360,10 +372,10 @@ async def test_uncertain_can_use_confirmed_style_without_private_history_memory_
         message.text_content for message in captured["ctx"].messages() if message.role == "system"
     )
     assert conversation == [("user", "怎么开始？")]
-    assert "已确认表达风格 v1" in system_text
+    assert "已确认表达风格 v1" not in system_text
     assert "身份未确认" in system_text
     assert captured["tools"] == []
-    assert refresh_calls[0]["speaker_class"] == "uncertain"
+    assert refresh_calls == []
     await runtime.close()
 
 
@@ -565,6 +577,16 @@ async def test_completed_voice_resolution_is_applied_without_network_wait() -> N
         session_id="session-voice-active",
         tts=TTSStub(),  # type: ignore[arg-type]
     )
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=True,
+            shadow_low_sensitivity_persona=True,
+        )
+    )
     await runtime.orchestrator.ready()
     agent = DuplexVoiceAgent(
         instructions="test",
@@ -598,6 +620,16 @@ async def test_voice_profile_refresh_runs_in_background_on_vad_start() -> None:
     runtime = DuplexRuntime.create(
         session_id="session-voice-refresh",
         tts=TTSStub(),  # type: ignore[arg-type]
+    )
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=True,
+            shadow_low_sensitivity_persona=True,
+        )
     )
     runtime.set_voice_profile_refresher(refresh)
 
@@ -660,6 +692,16 @@ async def test_first_turn_waits_for_voice_profile_refresh_before_applying_voice(
     runtime = DuplexRuntime.create(
         session_id="session-voice-first-turn",
         tts=TTSStub(),  # type: ignore[arg-type]
+    )
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=True,
+            shadow_low_sensitivity_persona=True,
+        )
     )
     runtime.set_voice_profile_refresher(refresh)
     await runtime.orchestrator.ready()

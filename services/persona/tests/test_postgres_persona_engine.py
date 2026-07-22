@@ -55,6 +55,57 @@ class _FakePool:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("speaker_class", "persona_eligible"),
+    (
+        pytest.param("owner", None, id="owner-missing"),
+        pytest.param("owner", False, id="owner-false"),
+        pytest.param("uncertain", None, id="uncertain-missing"),
+        pytest.param("uncertain", False, id="uncertain-false"),
+    ),
+)
+async def test_postgres_persona_learning_fails_closed_without_explicit_turn_eligibility(
+    speaker_class: str,
+    persona_eligible: bool | None,
+) -> None:
+    payload: dict[str, object] = {"text": "我觉得先把事实弄清楚。"}
+    if persona_eligible is not None:
+        payload["persona_eligible"] = persona_eligible
+    if speaker_class == "uncertain":
+        payload.update(
+            {
+                "speaker_reason_code": "shadow_owner_candidate",
+                "speaker_profile_id": "persona-shadow-profile",
+                "speaker_quality_score": 0.9,
+                "speaker_model_version": "campplus-test",
+                "speaker_template_version": 1,
+            }
+        )
+    connection = _FakeConnection()
+    connection.fetchrow.return_value = {
+        "event_type": "speech.utterance_finalized",
+        "speaker_class": speaker_class,
+        "source": "test",
+        "payload": payload,
+        "occurred_at": datetime(2026, 7, 21, 12, 0, tzinfo=UTC),
+    }
+    engine = PostgresPersonaEngine("postgresql://test/test", extractor=_EmptyExtractor())
+    engine._pool = _FakePool(connection)
+
+    result = await engine.observe(
+        PersonaEvidence(
+            account_id="persona-account",
+            source_event_id="ineligible-persona-turn",
+            learning_allowed=True,
+        )
+    )
+
+    assert result.accepted is False
+    assert result.reason == "persona_ineligible_turn"
+    connection.fetchval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_persona_account_lock_is_transaction_scoped_and_namespaced() -> None:
     connection = AsyncMock(spec=asyncpg.Connection)
 
@@ -73,7 +124,7 @@ async def test_postgres_observation_rechecks_consent_in_final_write_transaction(
         "event_type": "speech.utterance_finalized",
         "speaker_class": "owner",
         "source": "test",
-        "payload": {"text": "没有可提取特征"},
+        "payload": {"text": "没有可提取特征", "persona_eligible": True},
         "occurred_at": datetime(2026, 7, 21, 12, 0, tzinfo=UTC),
     }
     connection.fetchval.side_effect = (None, None, None, None)
@@ -189,7 +240,7 @@ async def test_postgres_persona_matches_versioned_public_contract_and_forces_rls
                 occurred_at=datetime(2026, 7, 19, 14, index, tzinfo=UTC),
                 speaker_class="owner",
                 source="contract-test",
-                payload={"text": text},
+                payload={"text": text, "persona_eligible": True},
             )
         )
         observed = await engine.observe(
@@ -216,7 +267,10 @@ async def test_postgres_persona_matches_versioned_public_contract_and_forces_rls
             occurred_at=datetime(2026, 7, 19, 14, 4, tzinfo=UTC),
             speaker_class="owner",
             source="contract-test",
-            payload={"text": "做重大决定时，我习惯先列事实，再睡一晚。"},
+            payload={
+                "text": "做重大决定时，我习惯先列事实，再睡一晚。",
+                "persona_eligible": True,
+            },
         )
     )
     decision = await engine.observe(

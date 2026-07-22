@@ -111,6 +111,14 @@ CREATE TABLE IF NOT EXISTS voice_sessions (
         CHECK (voice_backend IN ('cascade', 'qwen_omni')),
     omni_sdp_exchanges INTEGER NOT NULL DEFAULT 0
         CHECK (omni_sdp_exchanges >= 0),
+    interaction_mode TEXT NOT NULL DEFAULT 'companion'
+        CHECK (interaction_mode IN ('companion', 'self_preview', 'legacy', 'archive')),
+    mode_policy_version TEXT NOT NULL DEFAULT 's2-v1',
+    digital_self_version_id TEXT,
+    relationship_profile_id TEXT,
+    legacy_grant_id TEXT,
+    companion_style_id TEXT,
+    companion_style_version TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES profiles(user_id) ON DELETE CASCADE
 );
@@ -275,6 +283,23 @@ class MemoryStore:
                         "omni_sdp_exchanges INTEGER NOT NULL DEFAULT 0 "
                         "CHECK (omni_sdp_exchanges >= 0)"
                     )
+                frozen_columns = {
+                    "interaction_mode": "TEXT NOT NULL DEFAULT 'companion'",
+                    "mode_policy_version": "TEXT NOT NULL DEFAULT 's2-v1'",
+                    "digital_self_version_id": "TEXT",
+                    "relationship_profile_id": "TEXT",
+                    "legacy_grant_id": "TEXT",
+                    "companion_style_id": "TEXT",
+                    "companion_style_version": "TEXT",
+                }
+                for name, definition in frozen_columns.items():
+                    if name not in voice_session_columns:
+                        connection.execute(f"ALTER TABLE voice_sessions ADD COLUMN {name} {definition}")
+                connection.execute(
+                    "UPDATE voice_sessions SET companion_style_id = 'starlight', "
+                    "companion_style_version = 'companion-v1' "
+                    "WHERE companion_style_id IS NULL"
+                )
                 voice_session_sql = connection.execute(
                     "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'voice_sessions'"
                 ).fetchone()
@@ -291,13 +316,23 @@ class MemoryStore:
                                 CHECK (voice_backend IN ('cascade', 'qwen_omni')),
                             omni_sdp_exchanges INTEGER NOT NULL DEFAULT 0
                                 CHECK (omni_sdp_exchanges >= 0),
+                            interaction_mode TEXT NOT NULL DEFAULT 'companion'
+                                CHECK (interaction_mode IN ('companion', 'self_preview', 'legacy', 'archive')),
+                            mode_policy_version TEXT NOT NULL DEFAULT 's2-v1',
+                            digital_self_version_id TEXT,
+                            relationship_profile_id TEXT,
+                            legacy_grant_id TEXT,
+                            companion_style_id TEXT,
+                            companion_style_version TEXT,
                             created_at TEXT NOT NULL,
                             FOREIGN KEY (user_id) REFERENCES profiles(user_id)
                                 ON DELETE CASCADE
                         );
                         INSERT INTO voice_sessions (
                             session_id, user_id, room_name, voice_backend,
-                            omni_sdp_exchanges, created_at
+                            omni_sdp_exchanges, interaction_mode, mode_policy_version,
+                            digital_self_version_id, relationship_profile_id, legacy_grant_id,
+                            companion_style_id, companion_style_version, created_at
                         )
                         SELECT
                             session_id,
@@ -309,6 +344,7 @@ class MemoryStore:
                                 ELSE voice_backend
                             END,
                             COALESCE(omni_sdp_exchanges, 0),
+                            'companion', 's2-v1', NULL, NULL, NULL, 'starlight', 'companion-v1',
                             created_at
                         FROM voice_sessions_legacy;
                         DROP TABLE voice_sessions_legacy;
@@ -949,20 +985,35 @@ class MemoryStore:
         room_name: str,
         voice_backend: str,
         created_at: str,
+        interaction_mode: str,
+        mode_policy_version: str,
+        digital_self_version_id: str | None,
+        relationship_profile_id: str | None,
+        legacy_grant_id: str | None,
+        companion_style_id: str | None,
+        companion_style_version: str | None,
     ) -> dict[str, Any]:
         with self._connection() as connection:
             self._ensure_profile(connection, user_id, created_at)
             connection.execute(
                 """
                 INSERT INTO voice_sessions (
-                    session_id, user_id, room_name, voice_backend, created_at
-                ) VALUES (?, ?, ?, ?, ?)
+                    session_id, user_id, room_name, voice_backend, interaction_mode,
+                    mode_policy_version, digital_self_version_id, relationship_profile_id,
+                    legacy_grant_id, companion_style_id, companion_style_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (session_id, user_id, room_name, voice_backend, created_at),
+                (
+                    session_id, user_id, room_name, voice_backend, interaction_mode,
+                    mode_policy_version, digital_self_version_id, relationship_profile_id,
+                    legacy_grant_id, companion_style_id, companion_style_version, created_at,
+                ),
             )
             row = connection.execute(
                 """
-                SELECT session_id, user_id, room_name, voice_backend, created_at
+                SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
+                       mode_policy_version, digital_self_version_id, relationship_profile_id,
+                       legacy_grant_id, companion_style_id, companion_style_version, created_at
                 FROM voice_sessions WHERE session_id = ?
                 """,
                 (session_id,),
@@ -975,7 +1026,9 @@ class MemoryStore:
         with self._connection() as connection:
             row = connection.execute(
                 """
-                SELECT session_id, user_id, room_name, voice_backend, created_at
+                SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
+                       mode_policy_version, digital_self_version_id, relationship_profile_id,
+                       legacy_grant_id, companion_style_id, companion_style_version, created_at
                 FROM voice_sessions
                 WHERE session_id = ? AND user_id = ?
                 """,
@@ -988,7 +1041,9 @@ class MemoryStore:
         with self._connection() as connection:
             row = connection.execute(
                 """
-                SELECT session_id, user_id, room_name, voice_backend, created_at
+                SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
+                       mode_policy_version, digital_self_version_id, relationship_profile_id,
+                       legacy_grant_id, companion_style_id, companion_style_version, created_at
                 FROM voice_sessions WHERE session_id = ?
                 """,
                 (session_id,),
@@ -999,7 +1054,9 @@ class MemoryStore:
         with self._connection() as connection:
             rows = connection.execute(
                 """
-                SELECT session_id, user_id, room_name, voice_backend, created_at
+                SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
+                       mode_policy_version, digital_self_version_id, relationship_profile_id,
+                       legacy_grant_id, companion_style_id, companion_style_version, created_at
                 FROM voice_sessions WHERE user_id = ? ORDER BY created_at, session_id
                 """,
                 (user_id,),

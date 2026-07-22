@@ -60,12 +60,22 @@ async def test_account_session_termination_closes_live_connections_and_invalidat
         password_hash=hash_password("safe-passphrase"),
         now=now,
     )
+    frozen_companion = {
+        "interaction_mode": "companion",
+        "mode_policy_version": "s2-v1",
+        "digital_self_version_id": None,
+        "relationship_profile_id": None,
+        "legacy_grant_id": None,
+        "companion_style_id": "starlight",
+        "companion_style_version": "companion-v1",
+    }
     store.add_voice_session(
         session_id="cascade-session",
         user_id="account-delete",
         room_name="cascade-room",
         voice_backend="cascade",
         created_at=now,
+        **frozen_companion,
     )
     store.add_voice_session(
         session_id="omni-session",
@@ -73,6 +83,7 @@ async def test_account_session_termination_closes_live_connections_and_invalidat
         room_name="omni-room",
         voice_backend="qwen_omni",
         created_at=now,
+        **frozen_companion,
     )
     registry = ConnectionRegistryStub()
     closed_rooms: list[str] = []

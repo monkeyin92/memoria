@@ -266,7 +266,7 @@ export function CompanionOnboarding({ userId, onComplete }) {
             emotion="happy"
             className="enrollment-companion-visual"
           />
-          <div><span>你的伙伴</span><strong>{selected.name}</strong></div>
+          <div><span>你的培育伙伴</span><strong>{selected.name}</strong></div>
         </div>
 
         <div className="onboarding-copy">
@@ -331,7 +331,7 @@ export function CompanionOnboarding({ userId, onComplete }) {
   return (
     <section
       className="screen companion-onboarding choose-step"
-      aria-label="选择陪伴机器人"
+      aria-label="选择陪伴方式"
       ref={screenRef}
     >
       <header className="onboarding-header">
@@ -339,16 +339,21 @@ export function CompanionOnboarding({ userId, onComplete }) {
         <span>1 / 2</span>
       </header>
       <div className="onboarding-copy">
-        <p className="eyebrow">先认识彼此</p>
-        <h1>选一个最合拍的伙伴</h1>
-        <p>找到最愿意和你长久说话的那个。</p>
+        <p className="eyebrow">先选它怎样陪你</p>
+        <h1>选择喜欢的陪伴方式</h1>
+        <p>这里只调整语气、回复长短和提问深浅，以后可以随时更换。</p>
+      </div>
+
+      <div className="companion-boundaries" aria-label="陪伴方式与数字分身的边界">
+        <p><strong>陪伴方式</strong>决定助手怎样回应，不代表你的性格。</p>
+        <p><strong>数字分身</strong>只从你本人说过、确认或纠正的内容成长；伙伴说的话不会成为你的证据。</p>
       </div>
 
       <div className="companion-carousel-shell">
         <button
           type="button"
           className="carousel-arrow carousel-previous"
-          aria-label="上一个机器人"
+          aria-label="上一个伙伴"
           title="上一个"
           disabled={selectedIndex === 0}
           onClick={() => selectCompanion(selectedIndex - 1)}
@@ -387,7 +392,7 @@ export function CompanionOnboarding({ userId, onComplete }) {
         <button
           type="button"
           className="carousel-arrow carousel-next"
-          aria-label="下一个机器人"
+          aria-label="下一个伙伴"
           title="下一个"
           disabled={selectedIndex === companions.length - 1}
           onClick={() => selectCompanion(selectedIndex + 1)}
@@ -396,7 +401,7 @@ export function CompanionOnboarding({ userId, onComplete }) {
         </button>
       </div>
 
-      <div className="companion-pagination" aria-label="机器人分页">
+      <div className="companion-pagination" aria-label="陪伴方式分页">
         {companions.map((companion, index) => (
           <button
             type="button"
@@ -461,7 +466,7 @@ export function CompanionOnboarding({ userId, onComplete }) {
           setError("");
         }}
       >
-        选择 {selected.name}
+        让 {selected.name} 陪我
         <CaretRight size={19} weight="bold" />
       </button>
     </section>

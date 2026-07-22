@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   enrollVoiceProfile: vi.fn(),
   evaluateVoiceProfile: vi.fn(),
   exportAccountArchive: vi.fn(),
+  getInteractionCapabilities: vi.fn(),
   getPersonaStatus: vi.fn(),
   getPersonaTraits: vi.fn(),
   getPersonaVersions: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock("../api.js", () => ({
   enrollVoiceProfile: mocks.enrollVoiceProfile,
   evaluateVoiceProfile: mocks.evaluateVoiceProfile,
   exportAccountArchive: mocks.exportAccountArchive,
+  getInteractionCapabilities: mocks.getInteractionCapabilities,
   getPersonaStatus: mocks.getPersonaStatus,
   getPersonaTraits: mocks.getPersonaTraits,
   getPersonaVersions: mocks.getPersonaVersions,
@@ -91,6 +93,27 @@ describe("DigitalSelfPanel", () => {
     mocks.getPersonaStatus.mockImplementation(async () => ({
       learning_allowed: personaAllowed,
     }));
+    mocks.getInteractionCapabilities.mockResolvedValue({
+      selected_companion_id: "starlight",
+      modes: {
+        companion: { status: "available", conversational: true },
+        archive: { status: "available", conversational: false },
+        self_preview: {
+          status: "blocked",
+          conversational: true,
+          missing: ["approved_digital_self_version"],
+        },
+        legacy: {
+          status: "blocked",
+          conversational: true,
+          missing: [
+            "frozen_digital_self_version",
+            "relationship_profile",
+            "legacy_grant",
+          ],
+        },
+      },
+    });
     mocks.getPersonaTraits.mockImplementation(async () => ({ items: personaTraits }));
     mocks.getPersonaVersions.mockImplementation(async () => ({ items: personaVersions }));
     mocks.getSpeakerProfiles.mockImplementation(async () => ({ items: speakerProfiles }));
@@ -147,6 +170,50 @@ describe("DigitalSelfPanel", () => {
     expect(screen.getByText(/“过滤明显旁人（实验）”可减少旁人插话/))
       .toBeInTheDocument();
     expect(screen.getByText(/不能单独授权删除、导出或其他敏感操作/)).toBeInTheDocument();
+  });
+
+  it("separates the light companion from the evidence-grown digital self and exposes only ready modes", async () => {
+    const onOpenArchive = vi.fn();
+    const onChangeCompanion = vi.fn();
+    render(
+      <DigitalSelfPanel
+        onBack={vi.fn()}
+        onOpenArchive={onOpenArchive}
+        onChangeCompanion={onChangeCompanion}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "互动模式" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "陪伴模式" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "档案模式" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "数字自我预览" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "传承模式" })).toBeInTheDocument();
+    expect(screen.getByText("需要先建立并批准数字分身版本")).toBeInTheDocument();
+    expect(screen.getByText("需要冻结版本、关系档案和传承授权")).toBeInTheDocument();
+    expect(screen.getByText(/伙伴说的话不会成为你的性格证据/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "更换陪伴方式" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开生活档案" }));
+    expect(onChangeCompanion).toHaveBeenCalledOnce();
+    expect(onOpenArchive).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: /数字自我预览/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /传承模式/ })).not.toBeInTheDocument();
+  });
+
+  it("fails closed when the server mode authority cannot be loaded", async () => {
+    mocks.getInteractionCapabilities.mockRejectedValueOnce(new Error("offline"));
+    render(
+      <DigitalSelfPanel
+        onBack={vi.fn()}
+        onOpenArchive={vi.fn()}
+        onChangeCompanion={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "互动模式" })).toBeInTheDocument();
+    expect(screen.getByText(/部分状态暂时无法同步/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "更换陪伴方式" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开生活档案" })).not.toBeInTheDocument();
   });
 
   it("shows evidenced emphasis and emotional expression with Chinese labels", async () => {

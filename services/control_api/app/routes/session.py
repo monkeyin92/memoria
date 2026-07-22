@@ -11,10 +11,12 @@ from typing import Annotated, Any, Literal, cast
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from services.common.companions import DEFAULT_COMPANION_ID, companion_definition
 from services.control_api.app.account_gate import require_writable_account
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.mode_policy import FrozenMode, ModePolicy
 from services.control_api.app.security import (
     AuthenticatedUser,
     create_session_id,
@@ -48,12 +50,31 @@ class ClientInfo(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     user_id: str | None = Field(default=None, min_length=1, max_length=128)
     voice_backend: Literal["cascade", "qwen_omni"] = "cascade"
+    interaction_mode: Literal["companion", "self_preview", "legacy", "archive"] = "companion"
+    # S2 accepts the public contract but ignores future-mode references until
+    # S3/S7/S9 can validate and freeze them server-side.
+    digital_self_version_id: str | None = Field(default=None, min_length=1, max_length=128)
+    relationship_profile_id: str | None = Field(default=None, min_length=1, max_length=128)
+    legacy_grant_id: str | None = Field(default=None, min_length=1, max_length=128)
     locale: str = "zh-CN"
     client: ClientInfo = Field(default_factory=ClientInfo)
+
+    @model_validator(mode="after")
+    def reject_client_owned_future_references(self) -> CreateSessionRequest:
+        if any(
+            value is not None
+            for value in (
+                self.digital_self_version_id,
+                self.relationship_profile_id,
+                self.legacy_grant_id,
+            )
+        ):
+            raise ValueError("S2 future mode references are server-owned and unavailable")
+        return self
 
 
 class CreateSessionResponse(BaseModel):
@@ -65,6 +86,7 @@ class CreateSessionResponse(BaseModel):
     agent_name: str
     voice_backend: Literal["cascade"] = "cascade"
     config: dict[str, Any]
+    interaction: dict[str, Any]
 
 
 class CreateOmniSessionResponse(BaseModel):
@@ -72,6 +94,7 @@ class CreateOmniSessionResponse(BaseModel):
     voice_backend: Literal["qwen_omni"] = "qwen_omni"
     sdp_exchange_path: str
     config: dict[str, Any]
+    interaction: dict[str, Any]
 
 
 class StopResponseBody(BaseModel):
@@ -167,6 +190,21 @@ async def create_session(
 ) -> CreateSessionResponse | CreateOmniSessionResponse:
     settings = request.app.state.settings
     user_id = require_matching_user(body.user_id, user) if body.user_id else user.user_id
+    availability = ModePolicy.availability(body.interaction_mode)
+    if not availability.conversational:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "mode_not_conversational", "mode": body.interaction_mode},
+        )
+    if availability.status == "blocked":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "mode_blocked",
+                "mode": body.interaction_mode,
+                "missing": list(availability.missing),
+            },
+        )
     if settings.environment == "production" and body.voice_backend in REALTIME_BACKENDS:
         raise HTTPException(status_code=409, detail="端到端实时模型仅限隔离 A/B 环境")
     session_id = create_session_id()
@@ -175,6 +213,13 @@ async def create_session(
     identity = f"user-{user_id}-{session_id[:8]}"
     store = cast(MemoryStore, request.app.state.memory_store)
     created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    companion = companion_definition(
+        store.get_profile(user_id=user_id, now=created_at).get("companion_id")
+        or DEFAULT_COMPANION_ID
+    )
+    if companion is None:  # Stored profile data must not silently broaden the policy.
+        raise HTTPException(status_code=409, detail="companion profile is unavailable")
+    frozen = ModePolicy.freeze_companion(companion)
     if body.voice_backend in OMNI_BACKENDS:
         if not settings.dashscope_api_key.get_secret_value():
             raise HTTPException(status_code=503, detail="Qwen3.5-Omni 服务端尚未配置")
@@ -186,6 +231,13 @@ async def create_session(
             room_name=room_name,
             voice_backend=body.voice_backend,
             created_at=created_at,
+            interaction_mode=frozen.interaction_mode,
+            mode_policy_version=frozen.mode_policy_version,
+            digital_self_version_id=frozen.digital_self_version_id,
+            relationship_profile_id=frozen.relationship_profile_id,
+            legacy_grant_id=frozen.legacy_grant_id,
+            companion_style_id=frozen.companion_style_id,
+            companion_style_version=frozen.companion_style_version,
         )
         turn_detection = _omni_turn_detection(settings)
         ab_profile = (
@@ -232,6 +284,7 @@ async def create_session(
                     },
                 },
             },
+            interaction=_frozen_values(frozen),
         )
 
     token, ttl = mint_participant_token(
@@ -246,6 +299,13 @@ async def create_session(
         room_name=room_name,
         voice_backend=body.voice_backend,
         created_at=created_at,
+        interaction_mode=frozen.interaction_mode,
+        mode_policy_version=frozen.mode_policy_version,
+        digital_self_version_id=frozen.digital_self_version_id,
+        relationship_profile_id=frozen.relationship_profile_id,
+        legacy_grant_id=frozen.legacy_grant_id,
+        companion_style_id=frozen.companion_style_id,
+        companion_style_version=frozen.companion_style_version,
     )
     return CreateSessionResponse(
         session_id=session_id,
@@ -258,7 +318,12 @@ async def create_session(
             "locale": body.locale,
             "allow_text_fallback": True,
         },
+        interaction=_frozen_values(frozen),
     )
+
+
+def _frozen_values(frozen: FrozenMode) -> dict[str, str | None]:
+    return frozen.payload()
 
 
 @router.post("/{session_id}/omni/sdp", response_class=Response)

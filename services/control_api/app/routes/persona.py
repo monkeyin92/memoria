@@ -12,6 +12,7 @@ from services.archive.domain import EvidenceNotFoundError
 from services.control_api.app.account_gate import require_writable_account
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.mode_policy import FrozenMode, ModePolicy
 from services.control_api.app.security import (
     AuthenticatedUser,
     require_active_voice_session,
@@ -235,6 +236,7 @@ class SessionCapsuleCreate(BaseModel):
 
     session_id: str = Field(min_length=1, max_length=128)
     speaker_class: Literal["owner", "guest", "uncertain"]
+    speaker_reason_code: str | None = Field(default=None, max_length=96)
     topic: str = Field(default="", max_length=1000)
     enabled: bool = True
     max_chars: int = Field(default=1200, ge=160, le=4000)
@@ -249,8 +251,23 @@ async def session_capsule(
     session = require_active_voice_session(request, body.session_id)
     engine = _engine(request)
     account_id = str(session["user_id"])
+    trusted_interaction = ModePolicy.trusted_context(
+        FrozenMode.from_session(session),
+        speaker_class=body.speaker_class,
+        reason_code=body.speaker_reason_code,
+    )
+    capabilities = trusted_interaction["capabilities"]
+    if not capabilities["persona"] and not capabilities["persona_low_sensitivity"]:
+        return {
+            "interaction": trusted_interaction,
+            "version_id": None,
+            "version_number": None,
+            "prompt_fragment": "",
+            "delivery_rate": 1.0,
+            "entries": [],
+        }
     confirmed_style_only = (
-        body.speaker_class == "uncertain"
+        capabilities["persona_low_sensitivity"]
         and _store(request).get_account(user_id=account_id) is not None
     )
     capsule = await engine.capsule(
@@ -264,6 +281,7 @@ async def session_capsule(
         )
     )
     return {
+        "interaction": trusted_interaction,
         "version_id": capsule.version_id,
         "version_number": capsule.version_number,
         "prompt_fragment": capsule.prompt_fragment,

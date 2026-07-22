@@ -112,7 +112,7 @@ Compose 解析、Shell/JSON、`git diff --check` 通过。Standards 与 Spec 两
 
 ### S2：混合人格与四模式控制壳
 
-状态：IN_PROGRESS
+状态：COMPLETED（2026-07-22）
 
 实现：
 
@@ -123,7 +123,27 @@ Compose 解析、Shell/JSON、`git diff --check` 通过。Standards 与 Spec 两
 - 五伙伴映射到轻量静态 Companion Style，允许更换且不修改 Digital Self；
 - onboarding 文案改为“选择陪伴方式”，分别展示“它怎样陪你”和“数字分身怎样成长”。
 
-验收：guest/uncertain 不得进入 owner Self Preview/Archive 私有内容；伙伴切换不改变 Persona/manifest；模拟输出不进入主人学习。
+- Control 与 Agent 共用冻结的 `ModePolicy` 合同：会话范围字段、能力上限、`history_eligible`、
+  formal-owner-only 的 `owner_projection_eligible`、shadow-owner 低敏学习原因码，以及
+  assistant 生成的 generation-bound 覆盖值均由服务端 canonicalize。
+- 实时语音事件强制走 `/v1/archive/session-events`；通用 `/v1/archive/events` 拒绝
+  session-bound 事件，不能绕过说话人/模式门禁触发 Persona。
+- H5 增加四模式能力面板和双成长线；Self Preview/Legacy 在依赖未满足时明确显示
+  `建设中`，不以隐藏按钮代替服务端阻断。
+- 已完成 onboarding 的用户可直接更换陪伴方式，不需重录声纹；伙伴切换只影响下一次
+  会话冻结的陪伴风格，当前会话及 Digital Self 来源不变。
+- canonical 用户话轮是同 session/turn/generation 的唯一父事件；assistant 已听证据和
+  原始音频只能继承或绑定该父事件。缺父事件返回可重试状态，不能创建另一条主人证据。
+- Persona 对 owner/uncertain 都要求显式 `persona_eligible=true`；缺失或 false 在
+  Control、SQLite 与 PostgreSQL 三层 fail closed。
+
+验收证据：正式临时 pgvector 环境 842 passed、2 skipped、0 failed，总覆盖率
+89.40%；关键父事件、中断 generation 与 425 spool 定向再验收 55 passed、1 skipped。
+H5 全量 `158/158` 与 production build 通过；Ruff、strict mypy、Compose 合同和
+`git diff --check` 通过。
+本地 in-app browser 在 390×844 与 667×375 视口均无水平溢出，控制台无 error/warn。
+guest/uncertain 不得进入 owner 私有能力；shadow owner 只保留历史与低敏学习，
+不获得 private memory、tools 或 owner projection；模拟输出不进入主人学习。
 
 ### S3：DigitalSelfVersion 与不可变 manifest
 

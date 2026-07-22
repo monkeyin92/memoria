@@ -211,8 +211,8 @@ class PersonaEngine:
 ### 5.4 Control API / H5 用户流程
 
 - `POST /v1/auth/register`、`POST /v1/auth/login`、`GET /v1/auth/me`：创建或恢复稳定账号身份；旧匿名 Bearer 注册时保持原 `user_id`。
-- `POST /v1/archive/events`：内部可信调用，追加话轮/播放/纠错事件。
-- `POST /v1/archive/session-events`、`POST /v1/archive/session-context`：Agent 只提交 `session_id`，服务端解析账户；写入与读取分别使用独立 capability token。
+- `POST /v1/archive/events`：仅用于非实时、已由其他服务验证来源的治理/导入事件；不接受实时语音事件，也不会触发 Persona 学习。
+- `POST /v1/archive/session-events`、`POST /v1/archive/session-context`：实时语音唯一写入/读取入口。Agent 只提交 `session_id`，服务端解析账户并按冻结会话模式、说话人原因码和 generation-bound 资格生成 canonical interaction；写入与读取分别使用独立 capability token。
 - `GET /v1/archive/raw-voice-consent`、`POST /v1/archive/raw-voice-consent`、`DELETE /v1/archive/raw-voice-consent`：H5 查看、授予和撤销原始主人语音长期保存授权；撤销删除历史原始音频，不删除转写和结构化记忆。
 - `GET /v1/archive/session-raw-voice-consent`、`POST /v1/archive/session-raw-audio`：Agent 按会话查询当前授权并提交 owner WAV；Control API 从 `session_id` 解析账户，不接受调用方指定账户。
 - `GET /v1/archive/timeline`：读取不可变证据时间线，保留既有对话记录契约。

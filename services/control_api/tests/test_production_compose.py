@@ -227,6 +227,7 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
             "MEMORIA_MEMORY_READ_TOKEN": "memory-read-token",
             "MEMORIA_PERSONA_READ_TOKEN": "persona-read-token",
             "MEMORIA_VOICE_RESOLUTION_TOKEN": "voice-resolution-token",
+            "MEMORIA_INTERACTION_POLICY_TOKEN": "interaction-policy-token",
             "MEMORIA_PERSONA_ENABLED": "false",
             "MEMORIA_MEMORY_CONTEXT_ENABLED": "false",
             "MEMORIA_VOICE_PROFILE_ENABLED": "false",
@@ -258,6 +259,8 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     assert control["MEMORIA_MEMORY_READ_TOKEN"] == "memory-read-token"
     assert control["MEMORIA_PERSONA_READ_TOKEN"] == "persona-read-token"
     assert control["MEMORIA_VOICE_RESOLUTION_TOKEN"] == "voice-resolution-token"
+    assert control["MEMORIA_INTERACTION_POLICY_TOKEN"] == "interaction-policy-token"
+    assert agent["MEMORIA_INTERACTION_POLICY_TOKEN"] == "interaction-policy-token"
     for disabled_capability in (
         "MEMORIA_MEMORY_READ_TOKEN",
         "MEMORIA_PERSONA_READ_TOKEN",

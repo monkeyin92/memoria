@@ -9,8 +9,12 @@ from services.agent.src.contracts.errors import ConfigValidationError
 
 
 @pytest.fixture(autouse=True)
-def agent_heartbeat_token(monkeypatch: pytest.MonkeyPatch) -> None:
+def mandatory_agent_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MEMORIA_AGENT_HEARTBEAT_TOKEN", "heartbeat-token-material-32-characters")
+    monkeypatch.setenv(
+        "MEMORIA_INTERACTION_POLICY_TOKEN",
+        "interaction-policy-material-32-characters",
+    )
 
 
 def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -181,6 +185,18 @@ def test_production_agent_heartbeat_requires_independent_token() -> None:
             MEMORIA_ARCHIVE_SINK_ENABLED=False,
             MEMORIA_AGENT_HEARTBEAT_TOKEN="",
         )
+
+
+def test_production_interaction_policy_requires_independent_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
+    monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.delenv("MEMORIA_INTERACTION_POLICY_TOKEN", raising=False)
+
+    with pytest.raises(ValidationError, match="interaction policy"):
+        AgentSettings()
 
 
 def test_production_formal_speaker_authority_requires_independent_token(

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from services.agent.src.agent import _chunk_text
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.state_machine import ConversationState
 
 
@@ -28,6 +29,16 @@ def test_chunk_text_extracts_content() -> None:
 @pytest.mark.asyncio
 async def test_active_llm_task_set_and_cancelled_on_interrupt() -> None:
     runtime = DuplexRuntime.create()
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=True,
+            shadow_low_sensitivity_persona=True,
+        )
+    )
     await runtime.orchestrator.ready()
     await runtime.on_turn_committed("用户问题")
     fence = runtime.fence
@@ -316,6 +327,16 @@ async def test_deep_path_runs_via_task_manager_then_speaks_fast_summary() -> Non
             return None
 
     runtime = DuplexRuntime.create()
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=True,
+            shadow_low_sensitivity_persona=True,
+        )
+    )
     runtime._speaker_class = "owner"
     spoken: list[str] = []
     runtime.configure_deep_path(FakeDeepClient())

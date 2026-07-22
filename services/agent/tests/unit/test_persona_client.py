@@ -176,7 +176,10 @@ async def test_uncertain_style_capsule_is_cached_separately_from_owner_and_guest
             session_id="session-001", speaker_class="owner", topic="owner"
         )
         assert await client.refresh(
-            session_id="session-001", speaker_class="uncertain", topic="uncertain"
+            session_id="session-001",
+            speaker_class="uncertain",
+            topic="uncertain",
+            speaker_reason_code="shadow_owner_candidate",
         )
 
         owner = client.cached(session_id="session-001", speaker_class="owner")

@@ -61,6 +61,59 @@ class PostgresLifeArchive:
         async with pool.acquire() as connection, connection.transaction():
             return await self._record_with_connection(connection, event)
 
+    async def event(
+        self,
+        *,
+        account_id: str,
+        event_id: str,
+    ) -> EvidenceEvent | None:
+        if not account_id.strip() or not event_id.strip():
+            raise ValueError("event lookup requires account_id and event_id")
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._scope(connection, account_id)
+            row = await connection.fetchrow(
+                """
+                SELECT * FROM archive_evidence_events
+                WHERE account_id = $1 AND event_id = $2
+                """,
+                account_id,
+                event_id,
+            )
+        return self._event_from_row(row) if row is not None else None
+
+    async def turn_event(
+        self,
+        *,
+        account_id: str,
+        session_id: str,
+        turn_id: int,
+        generation_id: int,
+        event_type: str,
+    ) -> EvidenceEvent | None:
+        if not account_id.strip() or not session_id.strip() or not event_type.strip():
+            raise ValueError("turn event lookup requires account, session and event type")
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._scope(connection, account_id)
+            rows = await connection.fetch(
+                """
+                SELECT * FROM archive_evidence_events
+                WHERE account_id = $1 AND session_id = $2
+                  AND turn_id = $3 AND generation_id = $4 AND event_type = $5
+                ORDER BY recorded_at DESC, event_id DESC
+                LIMIT 2
+                """,
+                account_id,
+                session_id,
+                turn_id,
+                generation_id,
+                event_type,
+            )
+        if len(rows) > 1:
+            raise IdempotencyConflictError("turn has multiple canonical evidence events")
+        return self._event_from_row(rows[0]) if rows else None
+
     async def grant_raw_voice_consent(
         self,
         *,

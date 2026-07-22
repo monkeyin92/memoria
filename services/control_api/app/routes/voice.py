@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
-from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -13,7 +12,11 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.archive.domain import EvidenceNotFoundError
-from services.common.companions import DESIGNED_VOICE_MODEL, designed_voice_profile
+from services.common.companions import (
+    DEFAULT_COMPANION_ID,
+    DESIGNED_VOICE_MODEL,
+    designed_voice_profile,
+)
 from services.control_api.app.account_gate import require_writable_account
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
@@ -466,11 +469,11 @@ async def session_resolution(
         and resolution.model.startswith("cosyvoice-v3.5-")
     )
     if resolution.mode == "fallback" or legacy_cosyvoice_profile:
-        profile = _store(request).get_profile(
-            user_id=account_id,
-            now=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        # The companion is frozen with the session. Profile changes only affect
+        # future sessions and can never alter a running conversation's voice.
+        designed_profile = designed_voice_profile(
+            session.get("companion_style_id") or DEFAULT_COMPANION_ID
         )
-        designed_profile = designed_voice_profile(profile.get("companion_id"))
         if designed_profile is not None:
             return {
                 "mode": "designed",

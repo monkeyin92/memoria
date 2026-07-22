@@ -44,6 +44,7 @@ from services.control_api.app.account_gate import (
 )
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.mode_policy import FrozenMode, ModePolicy, SpeakerClass
 from services.control_api.app.security import (
     AuthenticatedUser,
     require_active_voice_session,
@@ -61,6 +62,24 @@ router = APIRouter(prefix="/v1/archive", tags=["archive"])
 logger = logging.getLogger(__name__)
 MAX_RAW_VOICE_WAV_BYTES = 2 * 1024 * 1024
 MAX_RAW_VOICE_BASE64_CHARS = ((MAX_RAW_VOICE_WAV_BYTES + 2) // 3) * 4
+SESSION_BOUND_EVENT_TYPES = frozenset(
+    {
+        "speech.utterance_finalized",
+        "speaker.classified",
+        "assistant.playout_progressed",
+        "assistant.playout_stopped",
+    }
+)
+SERVER_INTERACTION_PAYLOAD_KEYS = frozenset(
+    {
+        "interaction",
+        "interaction_mode",
+        "mode_policy_version",
+        "simulated_output",
+        "history_eligible",
+        "owner_projection_eligible",
+    }
+)
 
 
 class EvidenceEventCreate(BaseModel):
@@ -119,6 +138,8 @@ class SessionEvidenceEventCreate(BaseModel):
         if self.event_type.startswith("assistant."):
             if self.speaker_class != "assistant" or self.payload.get("actual_heard") is not True:
                 raise ValueError("assistant archive events require actual-heard evidence")
+            if self.turn_id is None or self.generation_id is None:
+                raise ValueError("assistant archive events require turn_id and generation_id")
         elif self.speaker_class == "assistant":
             raise ValueError("assistant speaker_class is only valid for assistant events")
         return self
@@ -356,7 +377,7 @@ def _schedule_persona_observation(
 ) -> None:
     if duplicate or event.event_type != "speech.utterance_finalized":
         return
-    if event.payload.get("persona_eligible") is False:
+    if event.payload.get("persona_eligible") is not True:
         return
     if event.speaker_class == "uncertain":
         if (
@@ -402,6 +423,26 @@ def _require_archive_write_token(
     _require_internal_token(request, "archive_write", token)
 
 
+def _canonical_turn_eligibility(event: EvidenceEvent) -> tuple[bool, bool] | None:
+    interaction = event.payload.get("interaction")
+    if not isinstance(interaction, Mapping):
+        return None
+    history = event.payload.get("history_eligible")
+    owner_projection = event.payload.get("owner_projection_eligible")
+    if not isinstance(history, bool) or not isinstance(owner_projection, bool):
+        return None
+    if (
+        interaction.get("history_eligible") is not history
+        or interaction.get("owner_projection_eligible") is not owner_projection
+    ):
+        return None
+    nested_history = interaction.get("history_eligible")
+    nested_owner_projection = interaction.get("owner_projection_eligible")
+    if not isinstance(nested_history, bool) or not isinstance(nested_owner_projection, bool):
+        return None
+    return nested_history, nested_owner_projection
+
+
 def _require_memory_read_token(
     request: Request,
     token: Annotated[str | None, Header(alias="X-Memoria-Internal-Token")] = None,
@@ -413,9 +454,16 @@ def _require_memory_read_token(
 async def append_event(
     body: EvidenceEventCreate,
     request: Request,
-    background_tasks: BackgroundTasks,
     _: Annotated[None, Depends(_require_archive_write_token)],
 ) -> JSONResponse:
+    if body.event_type in SESSION_BOUND_EVENT_TYPES:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "session_bound_event_required",
+                "event_type": body.event_type,
+            },
+        )
     event = EvidenceEvent(**body.model_dump())
     try:
         async with _account_write(request, body.account_id):
@@ -423,12 +471,6 @@ async def append_event(
     except IdempotencyConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     _wake_compiler(request)
-    _schedule_persona_observation(
-        request,
-        background_tasks,
-        event=event,
-        duplicate=result.duplicate,
-    )
     return JSONResponse(
         status_code=200 if result.duplicate else 201,
         content={
@@ -448,22 +490,113 @@ async def append_session_event(
     _: Annotated[None, Depends(_require_archive_write_token)],
 ) -> JSONResponse:
     session = require_active_voice_session(request, body.session_id)
+    archive = _archive(request)
+    account_id = str(session["user_id"])
     values = body.model_dump()
-    values["account_id"] = str(session["user_id"])
+    values["account_id"] = account_id
+    payload = dict(values["payload"])
+    reason_code = payload.get("speaker_reason_code") or payload.get("reason_code")
+    if not isinstance(reason_code, str):
+        reason_code = None
+    assistant_event = body.speaker_class == "assistant"
+    parent_eligibility: tuple[bool, bool] | None = None
+    if assistant_event:
+        assert body.turn_id is not None and body.generation_id is not None
+        try:
+            parent = await archive.turn_event(
+                account_id=account_id,
+                session_id=body.session_id,
+                turn_id=body.turn_id,
+                generation_id=body.generation_id,
+                event_type="speech.utterance_finalized",
+            )
+        except IdempotencyConflictError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "ambiguous_parent_turn"},
+            ) from exc
+        if parent is None:
+            raise HTTPException(
+                status_code=425,
+                detail={"code": "parent_turn_not_recorded"},
+            )
+        parent_eligibility = _canonical_turn_eligibility(parent)
+        if parent_eligibility is None:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "parent_turn_not_canonical"},
+            )
+    elif (
+        body.event_type == "speech.utterance_finalized"
+        and body.turn_id is not None
+        and body.generation_id is not None
+    ):
+        try:
+            existing_turn = await archive.turn_event(
+                account_id=account_id,
+                session_id=body.session_id,
+                turn_id=body.turn_id,
+                generation_id=body.generation_id,
+                event_type=body.event_type,
+            )
+        except IdempotencyConflictError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "ambiguous_parent_turn"},
+            ) from exc
+        if existing_turn is not None and existing_turn.event_id != body.event_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "turn_event_conflict"},
+            )
+    policy_speaker = cast(
+        SpeakerClass,
+        "guest" if assistant_event else body.speaker_class,
+    )
+    trusted_interaction = ModePolicy.trusted_context(
+        FrozenMode.from_session(session),
+        speaker_class=policy_speaker,
+        reason_code=reason_code,
+        history_eligible=(
+            parent_eligibility[0] if parent_eligibility is not None else None
+        ),
+        owner_projection_eligible=(
+            parent_eligibility[1] if parent_eligibility is not None else None
+        ),
+    )
+    for key in SERVER_INTERACTION_PAYLOAD_KEYS:
+        payload.pop(key, None)
+    payload.update(
+        {
+            "interaction_mode": trusted_interaction["interaction_mode"],
+            "mode_policy_version": trusted_interaction["mode_policy_version"],
+            "simulated_output": trusted_interaction["simulated_output"],
+            "history_eligible": trusted_interaction["history_eligible"],
+            "owner_projection_eligible": trusted_interaction[
+                "owner_projection_eligible"
+            ],
+            "interaction": trusted_interaction,
+        }
+    )
+    values["payload"] = payload
     event = EvidenceEvent(**values)
     try:
         async with _account_write(request, event.account_id):
-            result = await _archive(request).record(event)
+            result = await archive.record(event)
     except IdempotencyConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     _wake_compiler(request)
-    _schedule_persona_observation(
-        request,
-        background_tasks,
-        event=event,
-        duplicate=result.duplicate,
-        allow_uncertain_candidate=True,
-    )
+    if trusted_interaction["capabilities"]["learning"] or (
+        body.speaker_class == "uncertain"
+        and trusted_interaction["capabilities"]["persona_low_sensitivity"]
+    ):
+        _schedule_persona_observation(
+            request,
+            background_tasks,
+            event=event,
+            duplicate=result.duplicate,
+            allow_uncertain_candidate=True,
+        )
     return JSONResponse(
         status_code=200 if result.duplicate else 201,
         content={
@@ -576,11 +709,25 @@ async def append_session_raw_audio(
     ):
         raise HTTPException(status_code=403, detail="raw voice consent grant does not match")
     audio = _decode_owner_wav(body.audio_base64)
-    values = body.model_dump(
-        exclude={"audio_base64", "media_type", "retention_policy"}
-    )
-    values["account_id"] = account_id
-    event = EvidenceEvent(**values)
+    event = await archive.event(account_id=account_id, event_id=body.event_id)
+    if event is None:
+        raise HTTPException(
+            status_code=425,
+            detail={"code": "parent_turn_not_recorded"},
+        )
+    if (
+        event.session_id != body.session_id
+        or event.turn_id != body.turn_id
+        or event.generation_id != body.generation_id
+        or event.event_type != "speech.utterance_finalized"
+        or event.speaker_class != "owner"
+        or event.consent_grant_id != body.consent_grant_id
+        or _canonical_turn_eligibility(event) != (True, True)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "raw_audio_parent_mismatch"},
+        )
     reference: ObjectRef | None = None
     try:
         async with _account_write(request, account_id):
@@ -612,7 +759,6 @@ async def append_session_raw_audio(
         if reference is not None:
             await _delete_object_safely(store, reference)
         raise
-    _wake_compiler(request)
     return JSONResponse(
         status_code=200 if result.duplicate else 201,
         content={
@@ -632,6 +778,12 @@ async def session_memory_context(
     _: Annotated[None, Depends(_require_memory_read_token)],
 ) -> dict[str, Any]:
     session = require_active_voice_session(request, body.session_id)
+    trusted_interaction = ModePolicy.trusted_context(
+        FrozenMode.from_session(session),
+        speaker_class=body.speaker_class,
+    )
+    if not trusted_interaction["capabilities"]["private_memory"]:
+        return {"items": []}
     result = await _catalog(request).context(
         MemorySearchQuery(
             account_id=str(session["user_id"]),

@@ -273,12 +273,36 @@ export function logoutAllDevices() {
   return logout("/v1/auth/logout-all");
 }
 
-export function createSession(userId, voiceBackend = "cascade") {
-  return request("/v1/sessions", {
+function requireCompanionInteraction(session) {
+  const interaction = session?.interaction;
+  if (
+    interaction?.interaction_mode !== "companion" ||
+    typeof interaction.mode_policy_version !== "string" ||
+    !interaction.mode_policy_version ||
+    typeof interaction.companion_style_id !== "string" ||
+    !interaction.companion_style_id ||
+    typeof interaction.companion_style_version !== "string" ||
+    !interaction.companion_style_version ||
+    interaction.digital_self_version_id !== null ||
+    interaction.relationship_profile_id !== null ||
+    interaction.legacy_grant_id !== null
+  ) {
+    throw new Error("服务端没有返回可验证的陪伴模式，会话已停止");
+  }
+  return session;
+}
+
+export function getInteractionCapabilities() {
+  return request("/v1/interaction/capabilities");
+}
+
+export async function createSession(userId, voiceBackend = "cascade") {
+  const session = await request("/v1/sessions", {
     method: "POST",
     body: JSON.stringify({
       user_id: userId,
       voice_backend: voiceBackend,
+      interaction_mode: "companion",
       locale: "zh-CN",
       client: {
         platform: "h5",
@@ -287,6 +311,7 @@ export function createSession(userId, voiceBackend = "cascade") {
       },
     }),
   });
+  return requireCompanionInteraction(session);
 }
 
 export function exchangeOmniSdp(sessionId, offerSdp) {

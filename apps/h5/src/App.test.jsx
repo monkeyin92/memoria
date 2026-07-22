@@ -19,6 +19,15 @@ const mocks = vi.hoisted(() => ({
   getMemoryDays: vi.fn().mockResolvedValue({ items: [] }),
   getLifeTimeline: vi.fn().mockResolvedValue({ items: [] }),
   getMemoryReviewQueue: vi.fn().mockResolvedValue({ items: [] }),
+  getInteractionCapabilities: vi.fn().mockResolvedValue({
+    selected_companion_id: "starlight",
+    modes: {
+      companion: { status: "available", conversational: true },
+      archive: { status: "available", conversational: false },
+      self_preview: { status: "blocked", conversational: true },
+      legacy: { status: "blocked", conversational: true },
+    },
+  }),
   getRawVoiceConsent: vi.fn().mockResolvedValue({ consent: null }),
   getProfile: vi.fn(),
   loginAccount: vi.fn(),
@@ -63,6 +72,7 @@ vi.mock("./api.js", () => ({
   getMemoryDays: mocks.getMemoryDays,
   getLifeTimeline: mocks.getLifeTimeline,
   getMemoryReviewQueue: mocks.getMemoryReviewQueue,
+  getInteractionCapabilities: mocks.getInteractionCapabilities,
   getRawVoiceConsent: mocks.getRawVoiceConsent,
   getProfile: mocks.getProfile,
   loginAccount: mocks.loginAccount,
@@ -226,7 +236,7 @@ describe("App identity and profile preferences", () => {
       );
     });
     expect(
-      await screen.findByRole("heading", { name: "选一个最合拍的伙伴" }),
+      await screen.findByRole("heading", { name: "选择喜欢的陪伴方式" }),
     ).toBeInTheDocument();
     expect(mocks.getProfile).toHaveBeenCalledWith("registered-user");
   });
@@ -594,6 +604,33 @@ describe("App identity and profile preferences", () => {
     fireEvent.click(screen.getByRole("button", { name: "返回我的" }));
     expect(await screen.findByRole("heading", { name: "我的" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
+  });
+
+  it("opens companion switching from interaction mode and saves only the next-session style", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      account_type: "registered",
+      access_token: "token",
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    fireEvent.click(await screen.findByRole("button", { name: /数字心智与声音/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "更换陪伴方式" }));
+
+    expect(await screen.findByRole("region", { name: "更换陪伴方式" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", {
+      name: "选择玄墨，克制回应 · 很少追问 · 1–2 句",
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "保存玄墨的陪伴方式" }));
+
+    await waitFor(() => {
+      expect(mocks.updateProfile).toHaveBeenCalledWith("anonymous-user", {
+        companion_id: "xuanmo",
+      });
+    });
+    expect(await screen.findByRole("heading", { name: "数字心智与声音" })).toBeInTheDocument();
   });
 
   it("opens raw voice consent from My through Privacy and Data", async () => {

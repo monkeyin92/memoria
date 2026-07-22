@@ -62,6 +62,7 @@ class PersonaClient:
         session_id: str,
         speaker_class: SpeakerClass,
         topic: str,
+        speaker_reason_code: str | None = None,
     ) -> bool:
         if not session_id.strip() or len(topic) > 1000:
             raise ValueError("persona refresh requires session_id and topic <= 1000 characters")
@@ -69,16 +70,25 @@ class PersonaClient:
         if speaker_class == "guest":
             self._clear_session(session_id)
             return False
+        if (
+            speaker_class == "uncertain"
+            and speaker_reason_code != "shadow_owner_candidate"
+        ):
+            self._clear_session(session_id)
+            return False
         cache_key = (session_id, speaker_class)
+        body: dict[str, str] = {
+            "session_id": session_id,
+            "speaker_class": speaker_class,
+            "topic": topic,
+        }
+        if speaker_reason_code is not None:
+            body["speaker_reason_code"] = speaker_reason_code
         try:
             response = await self._client.post(
                 self._config.endpoint,
                 headers={"X-Memoria-Internal-Token": self._config.internal_token},
-                json={
-                    "session_id": session_id,
-                    "speaker_class": speaker_class,
-                    "topic": topic,
-                },
+                json=body,
                 timeout=self._config.timeout_s,
             )
             response.raise_for_status()

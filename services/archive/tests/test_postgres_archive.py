@@ -36,6 +36,9 @@ async def test_postgres_archive_matches_the_idempotent_public_contract() -> None
     event = EvidenceEvent(
         event_id="postgres-contract-event",
         account_id="postgres-contract-account",
+        session_id="postgres-contract-session",
+        turn_id=1,
+        generation_id=1,
         event_type="speech.utterance_finalized",
         occurred_at=datetime(2026, 7, 19, 9, 0, tzinfo=UTC),
         speaker_class="owner",
@@ -45,6 +48,14 @@ async def test_postgres_archive_matches_the_idempotent_public_contract() -> None
 
     first = await archive.record(event)
     duplicate = await archive.record(event)
+    by_id = await archive.event(account_id="postgres-contract-account", event_id=event.event_id)
+    by_turn = await archive.turn_event(
+        account_id="postgres-contract-account",
+        session_id="postgres-contract-session",
+        turn_id=1,
+        generation_id=1,
+        event_type="speech.utterance_finalized",
+    )
     await archive.record(
         EvidenceEvent(
             event_id="postgres-contract-legacy-guest",
@@ -73,6 +84,8 @@ async def test_postgres_archive_matches_the_idempotent_public_contract() -> None
     assert first.duplicate is False
     assert duplicate.duplicate is True
     assert duplicate.outbox_id == first.outbox_id
+    assert by_id == event
+    assert by_turn == event
     assert reviewed.current_text == "PostgreSQL 更正合同测试"
     assert {item.event_id for item in context.evidence} == {
         "postgres-contract-event",

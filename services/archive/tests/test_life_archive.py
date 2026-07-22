@@ -42,6 +42,45 @@ async def test_recording_the_same_event_is_idempotent(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_event_and_turn_event_lookup_return_the_exact_canonical_evidence(tmp_path) -> None:
+    archive = LifeArchive.sqlite(tmp_path / "archive.sqlite3")
+    event = EvidenceEvent(
+        event_id="turn-lookup-event",
+        account_id="account-001",
+        session_id="session-001",
+        turn_id=3,
+        generation_id=2,
+        event_type="speech.utterance_finalized",
+        occurred_at=datetime(2026, 7, 19, 8, 0, tzinfo=UTC),
+        speaker_class="owner",
+        source="funasr.authoritative_final",
+        payload={"text": "精确查询父话轮。"},
+    )
+    await archive.record(event)
+
+    by_id = await archive.event(account_id="account-001", event_id=event.event_id)
+    by_turn = await archive.turn_event(
+        account_id="account-001",
+        session_id="session-001",
+        turn_id=3,
+        generation_id=2,
+        event_type="speech.utterance_finalized",
+    )
+
+    assert by_id == event
+    assert by_turn == event
+    assert (
+        await archive.turn_event(
+            account_id="account-001",
+            session_id="session-001",
+            turn_id=3,
+            generation_id=1,
+            event_type="speech.utterance_finalized",
+        )
+    ) is None
+
+
+@pytest.mark.asyncio
 async def test_reusing_an_event_id_for_different_content_is_rejected(tmp_path) -> None:
     archive = LifeArchive.sqlite(tmp_path / "archive.sqlite3")
     original = EvidenceEvent(

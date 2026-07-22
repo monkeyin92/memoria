@@ -112,7 +112,8 @@ async def test_qwen_persona_traits_round_trip_through_engine(tmp_path: Path) -> 
             payload={
                 "text": "讲工作经历时，我通常按时间说，最后补反思；但紧急汇报会先说结论。"
                 "涉及长期承诺时，重大决定前先核对事实，再留一晚；出现紧急安全风险会立即行动。"
-                "已经明确答应别人的事，我会优先做到；如果会伤害家人安全，就重新协商。"
+                "已经明确答应别人的事，我会优先做到；如果会伤害家人安全，就重新协商。",
+                "persona_eligible": True,
             },
         )
     )
@@ -168,7 +169,8 @@ async def test_evidenced_emphasis_and_emotional_expression_round_trip_through_en
             speaker_class="owner",
             source="test",
             payload={
-                "text": "讲重要事情时我会重读结论；安慰家人时语气会更柔和、停顿更多。"
+                "text": "讲重要事情时我会重读结论；安慰家人时语气会更柔和、停顿更多。",
+                "persona_eligible": True,
             },
         )
     )

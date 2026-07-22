@@ -37,6 +37,7 @@ from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import auth as auth_routes
+from services.control_api.app.routes import interaction as interaction_routes
 from services.control_api.app.routes import memory as memory_routes
 from services.control_api.app.routes import persona as persona_routes
 from services.control_api.app.routes import readiness as readiness_routes
@@ -522,6 +523,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(auth_routes.router)
+    app.include_router(interaction_routes.router)
     app.include_router(archive_routes.router)
     app.include_router(session_routes.router)
     app.include_router(speaker_routes.router)
