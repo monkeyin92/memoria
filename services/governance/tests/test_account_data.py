@@ -20,6 +20,7 @@ from services.governance.account_data import (
     AccountDeletionWorker,
     SqliteAccountRepository,
 )
+from services.self_model.registry import SelfModelRegistry
 from services.speaker.authority import SpeakerAuthority
 from services.speaker.domain import EmbeddingResult, EnrollmentRequest, EnrollmentSample
 from services.voice_profile.domain import ProviderVoice, VoiceEnrollmentRequest
@@ -145,13 +146,117 @@ async def _fixture(
         occurred_at=datetime.now(UTC),
         speaker_class="owner",
         source="test",
-        payload={"text": "删除传播测试。"},
+        payload={
+            "text": "删除传播测试。",
+            "interaction_mode": "companion",
+            "simulated_output": False,
+            "owner_projection_eligible": True,
+        },
     )
     await archive.record(event)
     MemoryCatalog.sqlite(
         database_path,
         extractor=RuleBasedMemoryExtractor(),
     ).initialize()
+    self_model = SelfModelRegistry.sqlite(database_path)
+    claim = await self_model.create_cognitive_claim(
+        account_id=account_id,
+        claim_type="belief",
+        statement="删除账户时，认知模型也必须完整清除。",
+        confidence=0.9,
+        idempotency_key="governance-self-model-create",
+    )
+    await self_model.add_source(
+        account_id=account_id,
+        item_kind="cognitive_claim",
+        item_id=claim.claim_id,
+        source_event_id=event.event_id,
+        relation="support",
+        adopted=True,
+        negative=False,
+        expected_version=claim.version,
+        idempotency_key="governance-self-model-source",
+    )
+    decision = await self_model.create_decision_case(
+        account_id=account_id,
+        kind="real",
+        context="是否完整删除数字自我数据",
+        options=("完整删除", "只隐藏"),
+        constraints=("必须可验证",),
+        chosen_option="完整删除",
+        rejected_options=("只隐藏",),
+        outcome="等待删除流程验证",
+        reflection="删除必须覆盖所有派生模型。",
+        still_endorsed=True,
+        idempotency_key="governance-decision-create",
+    )
+    await self_model.add_source(
+        account_id=account_id,
+        item_kind="decision_case",
+        item_id=decision.case_id,
+        source_event_id=event.event_id,
+        relation="support",
+        adopted=True,
+        negative=False,
+        expected_version=decision.version,
+        idempotency_key="governance-decision-source",
+    )
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute(
+            """
+            INSERT INTO person_entities (
+                person_id, account_id, canonical_key, display_name,
+                relationship_to_owner, status, source_event_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?)
+            """,
+            (
+                "governance-person",
+                account_id,
+                "family:governance-person",
+                "家人",
+                "family",
+                event.event_id,
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO relationships (
+                relationship_id, account_id, person_id, relationship_type,
+                status, source_event_id, valid_at
+            ) VALUES (?, ?, ?, ?, 'confirmed', ?, ?)
+            """,
+            (
+                "governance-relationship",
+                account_id,
+                "governance-person",
+                "family",
+                event.event_id,
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+    relationship_profile = await self_model.create_relationship_profile(
+        account_id=account_id,
+        person_id="governance-person",
+        relationship_id="governance-relationship",
+        salutation="家人",
+        tone="温和坦诚",
+        advice_style="先听完再建议",
+        boundaries=("不透露第三方私密内容",),
+        idempotency_key="governance-relationship-profile-create",
+    )
+    await self_model.add_source(
+        account_id=account_id,
+        item_kind="relationship_profile",
+        item_id=relationship_profile.profile_id,
+        source_event_id=event.event_id,
+        relation="support",
+        adopted=True,
+        negative=False,
+        expected_version=relationship_profile.version_number,
+        idempotency_key="governance-relationship-profile-source",
+    )
 
     archive_objects = EncryptedLocalObjectStore(
         root=tmp_path / "archive-objects",
@@ -276,6 +381,10 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
     assert "encryption_key_version" not in serialized
     assert "object_backend" not in serialized
     assert "episode_evidence" in exported["sections"]["archive"]
+    assert "删除账户时，认知模型也必须完整清除。" in serialized
+    assert "是否完整删除数字自我数据" in serialized
+    assert "温和坦诚" in serialized
+    assert "self_model_command_receipts" in serialized
 
     deleted = await governance.delete_account("account-governance")
 

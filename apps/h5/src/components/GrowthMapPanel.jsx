@@ -45,7 +45,17 @@ const rejectionLabels = {
   persona_candidate: "表达特征仍待确认",
   persona_disabled: "表达特征已停用",
   persona_source_ineligible: "表达来源不符合主人证据要求",
+  legacy_persona_candidate: "旧人格候选不会进入认知模型",
   relationship_not_confirmed: "关系信息仍待确认",
+  relationship_profile_pending_owner_approval: "关系画像仍待本人批准",
+  self_model_not_approved: "认知材料仍待本人审核",
+  self_model_hypothetical_decision: "情境推演不会当作真实经历",
+  self_model_no_longer_endorsed: "本人已不再认同该决策",
+  self_model_unresolved_conflict: "认知材料仍有未解决矛盾",
+  self_model_negative_evidence: "认知材料已有本人否定证据",
+  self_model_missing_owner_adopted_source: "缺少可采用的本人来源",
+  self_model_step_up_review_required: "需要密码复核",
+  self_model_owner_counterexample_required: "需要本人补充例外或反例",
   voice_not_ready: "声音档案尚未通过完整评估",
   not_owner: "不是主人原话",
   simulated_or_non_companion: "来自模拟或非陪伴模式",
@@ -87,6 +97,9 @@ const sourceTargetKinds = new Set([
   "person_entity",
   "timeline_entry",
   "relationship",
+  "cognitive_claim",
+  "decision_case",
+  "relationship_profile",
   "voice_profile",
 ]);
 
@@ -111,6 +124,206 @@ function errorMessage(error) {
 
 function callOrFallback(fn, fallback) {
   return typeof fn === "function" ? fn : fallback;
+}
+
+function emptyChoiceResponse() {
+  return {
+    options: ["", ""],
+    constraints: "",
+    chosenOption: "",
+    outcome: "",
+    reflection: "",
+    stillEndorsed: "",
+  };
+}
+
+function responseLines(value) {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function structuredChoiceResponse(kind, response = emptyChoiceResponse()) {
+  const options = response.options.map((option) => option.trim()).filter(Boolean);
+  const distinctOptions = new Set(options);
+  const chosenOption = response.chosenOption.trim();
+  if (
+    options.length < 2 ||
+    options.length !== distinctOptions.size ||
+    !distinctOptions.has(chosenOption)
+  ) return null;
+
+  const constraints = responseLines(response.constraints);
+  const reflection = response.reflection.trim();
+  const rejectedOptions = options.filter((option) => option !== chosenOption);
+  if (kind === "decision_review") {
+    const outcome = response.outcome.trim();
+    if (
+      constraints.length === 0 ||
+      !outcome ||
+      !reflection ||
+      !["yes", "no"].includes(response.stillEndorsed)
+    ) {
+      return null;
+    }
+    return {
+      answer: reflection,
+      structured: {
+        options,
+        constraints,
+        chosen_option: chosenOption,
+        rejected_options: rejectedOptions,
+        outcome,
+        reflection,
+        still_endorsed: response.stillEndorsed === "yes",
+      },
+    };
+  }
+  return {
+    answer: reflection || `我会选择：${chosenOption}`,
+    structured: {
+      options,
+      ...(constraints.length ? { constraints } : {}),
+      chosen_option: chosenOption,
+      rejected_options: rejectedOptions,
+      ...(reflection ? { reflection } : {}),
+    },
+  };
+}
+
+function ChoiceResponseForm({ task, response, busy, onChange, onSubmit }) {
+  const review = task.kind === "decision_review";
+  const complete = Boolean(structuredChoiceResponse(task.kind, response));
+  const update = (patch) => onChange({ ...response, ...patch });
+  const updateOption = (index, value) => {
+    const options = [...response.options];
+    options[index] = value;
+    update({ options });
+  };
+
+  return (
+    <form
+      className="growth-choice-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void onSubmit(task);
+      }}
+    >
+      <p className="growth-task-disclaimer" data-kind={task.kind}>
+        {review
+          ? "完整复盘会作为待本人确认的真实决策候选。"
+          : "这是情境推演，不会被当作真实经历。"}
+      </p>
+      <fieldset>
+        <legend>备选方案（至少两项）</legend>
+        {response.options.map((option, index) => (
+          <label className="growth-choice-option" key={index}>
+            <span>方案 {index + 1}</span>
+            <input
+              value={option}
+              onChange={(event) => updateOption(index, event.target.value)}
+              disabled={busy}
+            />
+          </label>
+        ))}
+        <button
+          type="button"
+          className="button-quiet growth-choice-add"
+          onClick={() => update({ options: [...response.options, ""] })}
+          disabled={busy || response.options.length >= 32}
+        >
+          添加方案
+        </button>
+      </fieldset>
+      <fieldset>
+        <legend>你会选哪一项？</legend>
+        <div className="growth-choice-radios">
+          {response.options
+            .map((option) => option.trim())
+            .filter(Boolean)
+            .map((option, index) => (
+              <label key={`${option}:${index}`}>
+                <input
+                  type="radio"
+                  name={`growth-choice-${task.task_id}`}
+                  value={option}
+                  checked={response.chosenOption === option}
+                  onChange={(event) => update({ chosenOption: event.target.value })}
+                  disabled={busy}
+                />
+                {option}
+              </label>
+            ))}
+        </div>
+      </fieldset>
+      <label>
+        {review ? "当时的约束（每行一项）" : "约束条件（每行一项，可选）"}
+        <textarea
+          value={response.constraints}
+          onChange={(event) => update({ constraints: event.target.value })}
+          rows={2}
+          disabled={busy}
+        />
+      </label>
+      {review && (
+        <label>
+          结果
+          <textarea
+            value={response.outcome}
+            onChange={(event) => update({ outcome: event.target.value })}
+            rows={2}
+            disabled={busy}
+          />
+        </label>
+      )}
+      <label>
+        {review ? "复盘" : "你的思考（可选）"}
+        <textarea
+          value={response.reflection}
+          onChange={(event) => update({ reflection: event.target.value })}
+          rows={2}
+          disabled={busy}
+        />
+      </label>
+      {review && (
+        <fieldset>
+          <legend>现在仍认同这个选择吗？</legend>
+          <div className="growth-choice-radios">
+            <label>
+              <input
+                type="radio"
+                name={`growth-endorsed-${task.task_id}`}
+                value="yes"
+                checked={response.stillEndorsed === "yes"}
+                onChange={(event) => update({ stillEndorsed: event.target.value })}
+                disabled={busy}
+              />
+              仍认同
+            </label>
+            <label>
+              <input
+                type="radio"
+                name={`growth-endorsed-${task.task_id}`}
+                value="no"
+                checked={response.stillEndorsed === "no"}
+                onChange={(event) => update({ stillEndorsed: event.target.value })}
+                disabled={busy}
+              />
+              不再认同
+            </label>
+          </div>
+        </fieldset>
+      )}
+      <button
+        type="submit"
+        className="button-primary"
+        disabled={busy || !complete}
+      >
+        {busy ? "正在保存…" : review ? "保存完整复盘" : "保存情境选择"}
+      </button>
+    </form>
+  );
 }
 
 function weightLabel(weight) {
@@ -242,6 +455,7 @@ export function GrowthMapPanel({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [answers, setAnswers] = useState({});
+  const [choiceResponses, setChoiceResponses] = useState({});
   const eventIds = useRef({});
   const createGenerations = useRef({});
   const feedbackGenerations = useRef({});
@@ -371,8 +585,14 @@ export function GrowthMapPanel({
   };
 
   const submitAnswer = async (task) => {
-    const answer = answers[task.task_id]?.trim();
-    if (!answer) {
+    const choiceResponse = task.kind === "scenario_choice" || task.kind === "decision_review"
+      ? structuredChoiceResponse(task.kind, choiceResponses[task.task_id])
+      : null;
+    const answer = choiceResponse?.answer || answers[task.task_id]?.trim();
+    if (!answer || (
+      (task.kind === "scenario_choice" || task.kind === "decision_review") &&
+      !choiceResponse
+    )) {
       setError("请先写下你的回答。");
       return;
     }
@@ -386,6 +606,7 @@ export function GrowthMapPanel({
         eventIdFor(`task:${task.task_id}:response:${task.revision}`),
         task.revision,
         answer,
+        choiceResponse?.structured,
       ).then(async (nextTask) => {
         if (nextTask.status === "completed") return nextTask;
         const completeKey = `task:${task.task_id}:complete:${nextTask.revision}`;
@@ -401,6 +622,7 @@ export function GrowthMapPanel({
     if (updated) {
       setTasks((current) => current.map((item) => item.task_id === updated.task_id ? updated : item));
       setAnswers((current) => ({ ...current, [task.task_id]: "" }));
+      setChoiceResponses((current) => ({ ...current, [task.task_id]: emptyChoiceResponse() }));
       await reload({ silent: true });
     }
   };
@@ -500,7 +722,18 @@ export function GrowthMapPanel({
                                 ? "继续任务"
                                 : "开始任务"}
                           </button>
-                        ) : kind === "natural_chat" ? null : (
+                        ) : kind === "natural_chat" ? null : task.kind === "scenario_choice" || task.kind === "decision_review" ? (
+                          <ChoiceResponseForm
+                            task={task}
+                            response={choiceResponses[task.task_id] || emptyChoiceResponse()}
+                            busy={Boolean(busy)}
+                            onChange={(response) => setChoiceResponses((current) => ({
+                              ...current,
+                              [task.task_id]: response,
+                            }))}
+                            onSubmit={submitAnswer}
+                          />
+                        ) : (
                           <form onSubmit={(event) => { event.preventDefault(); void submitAnswer(task); }}>
                             <label htmlFor={`growth-answer-${task.task_id}`}>你的回答</label>
                             <textarea

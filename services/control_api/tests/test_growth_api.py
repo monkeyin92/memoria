@@ -148,6 +148,248 @@ async def test_growth_task_concurrency_and_event_payload_idempotency(
 
 
 @pytest.mark.asyncio
+async def test_structured_decision_review_preserves_fields_and_creates_a_real_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _registered(client)
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        created = await client.post(
+            "/v1/growth/tasks",
+            headers=headers,
+            json={"event_id": "decision-create", "kind": "decision_review"},
+        )
+        task_id = created.json()["task_id"]
+        await client.post(
+            f"/v1/growth/tasks/{task_id}/transitions",
+            headers=headers,
+            json={
+                "event_id": "decision-active",
+                "to_status": "active",
+                "expected_revision": 0,
+            },
+        )
+        response_body = {
+            "event_id": "decision-response",
+            "expected_revision": 1,
+            "answer": "在预算有限时，我选择先做小范围验证。",
+            "options": ["直接全量上线", "先做小范围验证"],
+            "constraints": ["预算有限", "必须先保护存量用户"],
+            "chosen_option": "先做小范围验证",
+            "rejected_options": ["直接全量上线"],
+            "outcome": "避免了大范围返工。",
+            "reflection": "这个选择仍符合当时的约束。",
+            "still_endorsed": True,
+        }
+        first = await client.post(
+            f"/v1/growth/tasks/{task_id}/responses",
+            headers=headers,
+            json=response_body,
+        )
+        duplicate = await client.post(
+            f"/v1/growth/tasks/{task_id}/responses",
+            headers=headers,
+            json=response_body,
+        )
+        self_model = await client.get("/v1/self-model", headers=headers)
+        timeline = await client.get("/v1/archive/timeline", headers=headers)
+
+    decisions = self_model.json()["decision_cases"]
+    payload = next(
+        item["payload"]
+        for item in timeline.json()["items"]
+        if item["event_id"] == "decision-response"
+    )
+    assert first.status_code == 200
+    assert duplicate.status_code == 200
+    assert len(decisions) == 1
+    assert decisions[0]["decision_kind"] == "real"
+    assert decisions[0]["status"] == "candidate"
+    assert decisions[0]["effective"] is False
+    assert decisions[0]["options"] == response_body["options"]
+    assert decisions[0]["constraints"] == response_body["constraints"]
+    assert decisions[0]["chosen_option"] == response_body["chosen_option"]
+    assert decisions[0]["rejected_options"] == response_body["rejected_options"]
+    assert decisions[0]["outcome"] == response_body["outcome"]
+    assert decisions[0]["reflection"] == response_body["reflection"]
+    assert decisions[0]["still_endorsed"] is True
+    assert decisions[0]["sources"][0]["source_event_id"] == "decision-response"
+    assert {field: payload[field] for field in response_body if field not in {"event_id", "expected_revision", "answer"}} == {
+        field: response_body[field]
+        for field in response_body
+        if field not in {"event_id", "expected_revision", "answer"}
+    }
+    assert payload["decision_projection"] == "real"
+
+
+@pytest.mark.asyncio
+async def test_plain_text_decision_review_stays_an_unresolved_hypothetical_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _registered(client)
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        created = await client.post(
+            "/v1/growth/tasks",
+            headers=headers,
+            json={"event_id": "plain-decision-create", "kind": "decision_review"},
+        )
+        task_id = created.json()["task_id"]
+        await client.post(
+            f"/v1/growth/tasks/{task_id}/transitions",
+            headers=headers,
+            json={
+                "event_id": "plain-decision-active",
+                "to_status": "active",
+                "expected_revision": 0,
+            },
+        )
+        response = await client.post(
+            f"/v1/growth/tasks/{task_id}/responses",
+            headers=headers,
+            json={
+                "event_id": "plain-decision-response",
+                "expected_revision": 1,
+                "answer": "当时想了很多，最后觉得还可以。",
+            },
+        )
+        self_model = await client.get("/v1/self-model", headers=headers)
+        timeline = await client.get("/v1/archive/timeline", headers=headers)
+
+    decision = self_model.json()["decision_cases"][0]
+    payload = next(
+        item["payload"]
+        for item in timeline.json()["items"]
+        if item["event_id"] == "plain-decision-response"
+    )
+    assert response.status_code == 200
+    assert decision["decision_kind"] == "hypothetical"
+    assert decision["status"] == "candidate"
+    assert decision["effective"] is False
+    assert decision["options"] == ["信息不足（未提供可核验的结构化备选）"]
+    assert decision["chosen_option"] == "信息不足（未提供可核验的结构化备选）"
+    assert "信息不足" in decision["context"]
+    assert decision["reflection"] == "当时想了很多，最后觉得还可以。"
+    assert decision["still_endorsed"] is False
+    assert payload["decision_projection"] == "unresolved"
+
+
+@pytest.mark.asyncio
+async def test_decision_review_without_constraints_cannot_become_a_real_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        owner = await _registered(client)
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        created = await client.post(
+            "/v1/growth/tasks",
+            headers=headers,
+            json={"event_id": "constraint-create", "kind": "decision_review"},
+        )
+        task_id = created.json()["task_id"]
+        await client.post(
+            f"/v1/growth/tasks/{task_id}/transitions",
+            headers=headers,
+            json={
+                "event_id": "constraint-active",
+                "to_status": "active",
+                "expected_revision": 0,
+            },
+        )
+        response = await client.post(
+            f"/v1/growth/tasks/{task_id}/responses",
+            headers=headers,
+            json={
+                "event_id": "constraint-response",
+                "expected_revision": 1,
+                "answer": "我选择先验证。",
+                "options": ["直接上线", "先验证"],
+                "chosen_option": "先验证",
+                "rejected_options": ["直接上线"],
+                "outcome": "减少了返工。",
+                "reflection": "这个选择仍然合理。",
+                "still_endorsed": True,
+            },
+        )
+        self_model = await client.get("/v1/self-model", headers=headers)
+        timeline = await client.get("/v1/archive/timeline", headers=headers)
+
+    decision = self_model.json()["decision_cases"][0]
+    payload = next(
+        item["payload"]
+        for item in timeline.json()["items"]
+        if item["event_id"] == "constraint-response"
+    )
+    assert response.status_code == 200
+    assert decision["decision_kind"] == "hypothetical"
+    assert decision["effective"] is False
+    assert payload["decision_projection"] == "unresolved"
+
+
+@pytest.mark.asyncio
+async def test_scenario_choice_remains_hypothetical_with_structured_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await _registered(client)
+        headers = {"Authorization": f"Bearer {owner['access_token']}"}
+        created = await client.post(
+            "/v1/growth/tasks",
+            headers=headers,
+            json={"event_id": "scenario-create", "kind": "scenario_choice"},
+        )
+        task_id = created.json()["task_id"]
+        await client.post(
+            f"/v1/growth/tasks/{task_id}/transitions",
+            headers=headers,
+            json={
+                "event_id": "scenario-active",
+                "to_status": "active",
+                "expected_revision": 0,
+            },
+        )
+        response = await client.post(
+            f"/v1/growth/tasks/{task_id}/responses",
+            headers=headers,
+            json={
+                "event_id": "scenario-response",
+                "expected_revision": 1,
+                "answer": "我会先确认家人的安全，再评估机会。",
+                "options": ["直接接受机会", "先确认家人安全"],
+                "constraints": ["家人安全优先"],
+                "chosen_option": "先确认家人安全",
+                "rejected_options": ["直接接受机会"],
+                "outcome": "仅为情境推演。",
+                "reflection": "这是我希望自己遵守的顺序。",
+                "still_endorsed": True,
+            },
+        )
+        self_model = await client.get("/v1/self-model", headers=headers)
+
+    decision = self_model.json()["decision_cases"][0]
+    assert response.status_code == 200
+    assert decision["decision_kind"] == "hypothetical"
+    assert decision["status"] == "candidate"
+    assert decision["effective"] is False
+    assert decision["still_endorsed"] is True
+
+
+@pytest.mark.asyncio
 async def test_natural_chat_task_is_frozen_into_the_voice_session_and_evidence(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

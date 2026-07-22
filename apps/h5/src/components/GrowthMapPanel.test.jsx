@@ -112,6 +112,79 @@ describe("GrowthMapPanel", () => {
 
   });
 
+  it("requires a complete decision review before saving a real decision candidate", async () => {
+    mocks.getGrowthTasks.mockResolvedValue({
+      items: [task({
+        kind: "decision_review",
+        prompt: "预算有限时，你当时如何决定？",
+      })],
+    });
+    render(<GrowthMapPanel onStartChat={vi.fn()} />);
+
+    expect(await screen.findByText("完整复盘会作为待本人确认的真实决策候选。")).toBeInTheDocument();
+    const save = screen.getByRole("button", { name: "保存完整复盘" });
+    expect(save).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("方案 1"), { target: { value: "直接全量上线" } });
+    fireEvent.change(screen.getByLabelText("方案 2"), { target: { value: "先做小范围验证" } });
+    fireEvent.click(screen.getByLabelText("先做小范围验证"));
+    fireEvent.change(screen.getByLabelText("当时的约束（每行一项）"), {
+      target: { value: "预算有限\n保护存量用户" },
+    });
+    fireEvent.change(screen.getByLabelText("结果"), { target: { value: "避免大范围返工" } });
+    fireEvent.change(screen.getByLabelText("复盘"), { target: { value: "这个选择仍符合当时的约束。" } });
+    fireEvent.click(screen.getByLabelText("仍认同"));
+
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() => expect(mocks.respondGrowthTask).toHaveBeenCalledWith(
+      "task-1",
+      expect.any(String),
+      1,
+      "这个选择仍符合当时的约束。",
+      {
+        options: ["直接全量上线", "先做小范围验证"],
+        constraints: ["预算有限", "保护存量用户"],
+        chosen_option: "先做小范围验证",
+        rejected_options: ["直接全量上线"],
+        outcome: "避免大范围返工",
+        reflection: "这个选择仍符合当时的约束。",
+        still_endorsed: true,
+      },
+    ));
+  });
+
+  it("labels scenario choices as hypothetical and sends their structured choice", async () => {
+    mocks.getGrowthTasks.mockResolvedValue({
+      items: [task({
+        kind: "scenario_choice",
+        prompt: "如果时间和预算都有限，你会怎么选？",
+      })],
+    });
+    render(<GrowthMapPanel onStartChat={vi.fn()} />);
+
+    expect(await screen.findByText("这是情境推演，不会被当作真实经历。")).toBeInTheDocument();
+    const save = screen.getByRole("button", { name: "保存情境选择" });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("方案 1"), { target: { value: "直接上线" } });
+    fireEvent.change(screen.getByLabelText("方案 2"), { target: { value: "先验证" } });
+    fireEvent.click(screen.getByLabelText("先验证"));
+
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() => expect(mocks.respondGrowthTask).toHaveBeenCalledWith(
+      "task-1",
+      expect.any(String),
+      1,
+      "我会选择：先验证",
+      {
+        options: ["直接上线", "先验证"],
+        chosen_option: "先验证",
+        rejected_options: ["直接上线"],
+      },
+    ));
+  });
+
   it("records an owner correction and refreshes the map", async () => {
     render(<GrowthMapPanel onStartChat={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", {
@@ -126,6 +199,42 @@ describe("GrowthMapPanel", () => {
     const feedbackEventId = mocks.reviewGrowthOwnerAction.mock.calls[0][0];
     expect(feedbackEventId).not.toBe("event-expression");
     expect(mocks.getGrowthOverview).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps approved self-model material correctable from the growth map", async () => {
+    mocks.getGrowthOverview.mockResolvedValue({
+      dimensions: [{
+        ...dimension,
+        key: "decision_cases",
+        adopted_sources: [{
+          ...dimension.adopted_sources[0],
+          target_kind: "cognitive_claim",
+          target_id: "claim-1",
+          label: "我会先确认事实",
+          event_type: "self_model.approved",
+        }],
+        rejected_reason_counts: {
+          self_model_owner_counterexample_required: 1,
+        },
+      }],
+    });
+    render(<GrowthMapPanel onStartChat={vi.fn()} />);
+
+    expect(
+      await screen.findByText("需要本人补充例外或反例 1 条"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {
+      name: "不像我：决策案例来源 1，我会先确认事实",
+    }));
+
+    await waitFor(() => {
+      expect(mocks.reviewGrowthOwnerAction).toHaveBeenCalledWith(
+        expect.any(String),
+        "not_me",
+        "cognitive_claim",
+        "claim-1",
+      );
+    });
   });
 
   it("reuses one feedback event id when the same correction is retried", async () => {

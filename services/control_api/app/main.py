@@ -43,6 +43,7 @@ from services.control_api.app.routes import interaction as interaction_routes
 from services.control_api.app.routes import memory as memory_routes
 from services.control_api.app.routes import persona as persona_routes
 from services.control_api.app.routes import readiness as readiness_routes
+from services.control_api.app.routes import self_model as self_model_routes
 from services.control_api.app.routes import session as session_routes
 from services.control_api.app.routes import speaker as speaker_routes
 from services.control_api.app.routes import voice as voice_routes
@@ -67,6 +68,9 @@ from services.persona.engine import PersonaEngine
 from services.persona.postgres_engine import PostgresPersonaEngine
 from services.persona.qwen_extractor import FallbackPersonaExtractor, QwenPersonaExtractor
 from services.persona.rules import PersonaExtractor, RuleBasedPersonaExtractor
+from services.self_model.domain import SelfModelRegistryPort
+from services.self_model.postgres_registry import PostgresSelfModelRegistry
+from services.self_model.registry import SelfModelRegistry
 from services.speaker.authority import SpeakerAuthority
 from services.speaker.campplus_http import (
     CampPlusHTTPEmbeddingAdapter,
@@ -364,6 +368,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     postgres_persona: PostgresPersonaEngine | None = None
     postgres_digital_self: PostgresDigitalSelfRegistry | None = None
     postgres_growth: PostgresGrowthReader | None = None
+    postgres_self_model: PostgresSelfModelRegistry | None = None
     archive: LifeArchivePort
     memory_catalog: MemoryCatalogPort
     persona_engine: PersonaEnginePort
@@ -422,13 +427,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await to_thread(sqlite_digital_self.initialize)
         digital_self_registry = sqlite_digital_self
     app.state.digital_self_registry = digital_self_registry
+    self_model_registry: SelfModelRegistryPort
+    if archive_url:
+        postgres_self_model = PostgresSelfModelRegistry(archive_url)
+        await postgres_self_model.initialize()
+        self_model_registry = postgres_self_model
+    else:
+        sqlite_self_model = SelfModelRegistry.sqlite(settings.memoria_db_path)
+        await to_thread(sqlite_self_model.initialize)
+        self_model_registry = sqlite_self_model
+    app.state.self_model_registry = self_model_registry
     # S4 is intentionally read-only over the same ledger; no coverage cache exists.
     if archive_url:
-        postgres_growth = PostgresGrowthReader(archive_url)
+        postgres_growth = PostgresGrowthReader(
+            archive_url,
+            self_model_registry=self_model_registry,
+        )
         await postgres_growth.initialize()
         app.state.growth_reader = postgres_growth
     else:
-        app.state.growth_reader = GrowthReader.sqlite(settings.memoria_db_path)
+        app.state.growth_reader = GrowthReader.sqlite(
+            settings.memoria_db_path,
+            self_model_registry=self_model_registry,
+        )
     voice_profile_manager, voice_sample_signer, voice_object_store = _voice_profile_services(
         settings
     )
@@ -485,6 +506,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await postgres_persona.close()
         if postgres_digital_self is not None:
             await postgres_digital_self.close()
+        if postgres_self_model is not None:
+            await postgres_self_model.close()
         if postgres_growth is not None:
             await postgres_growth.close()
         if postgres_catalog is not None:
@@ -531,7 +554,11 @@ def create_app() -> FastAPI:
         extractor=_persona_extractor(settings),
     )
     app.state.digital_self_registry = DigitalSelfRegistry.sqlite(settings.memoria_db_path)
-    app.state.growth_reader = GrowthReader.sqlite(settings.memoria_db_path)
+    app.state.self_model_registry = SelfModelRegistry.sqlite(settings.memoria_db_path)
+    app.state.growth_reader = GrowthReader.sqlite(
+        settings.memoria_db_path,
+        self_model_registry=app.state.self_model_registry,
+    )
     app.state.speaker_authority = _speaker_authority(settings)
     voice_profile_manager, voice_sample_signer, voice_object_store = _voice_profile_services(
         settings
@@ -565,6 +592,7 @@ def create_app() -> FastAPI:
     app.include_router(memory_routes.router)
     app.include_router(persona_routes.router)
     app.include_router(digital_self_routes.router)
+    app.include_router(self_model_routes.router)
     app.include_router(growth_routes.router)
     app.include_router(voice_routes.router)
     app.include_router(readiness_routes.router)

@@ -57,6 +57,20 @@ _ARCHIVE_EXPORT_TABLES = (
     TableSpec("persona_versions", json_columns=frozenset({"snapshot_json"})),
     TableSpec("digital_self_versions", json_columns=frozenset({"manifest_json"})),
     TableSpec("digital_self_lifecycle_audit_events"),
+    TableSpec("self_model_cognitive_claims"),
+    TableSpec(
+        "self_model_decision_cases",
+        json_columns=frozenset(
+            {"options_json", "constraints_json", "rejected_options_json"}
+        ),
+    ),
+    TableSpec(
+        "self_model_relationship_profiles",
+        json_columns=frozenset({"boundaries_json"}),
+    ),
+    TableSpec("self_model_sources"),
+    TableSpec("self_model_audit_events", json_columns=frozenset({"payload_json"})),
+    TableSpec("self_model_command_receipts"),
     TableSpec("voice_clone_consents"),
     TableSpec(
         "voice_samples",
@@ -85,6 +99,15 @@ _ARCHIVE_DELETE_ORDER = (
     "persona_evidence",
     "persona_observation_receipts",
     "speech_style_stats",
+    "self_model_cognitive_claim_sources",
+    "self_model_decision_case_sources",
+    "self_model_relationship_profile_sources",
+    "self_model_sources",
+    "self_model_command_receipts",
+    "self_model_audit_events",
+    "self_model_relationship_profiles",
+    "self_model_decision_cases",
+    "self_model_cognitive_claims",
     "digital_self_lifecycle_audit_events",
     "digital_self_versions",
     "persona_versions",
@@ -144,6 +167,22 @@ _POSTGRES_ARCHIVE_EXPORT_TABLES = (
     TableSpec("persona_versions", json_columns=frozenset({"snapshot"})),
     TableSpec("digital_self_versions", json_columns=frozenset({"manifest_json"})),
     TableSpec("digital_self_lifecycle_audit_events"),
+    TableSpec("self_model_cognitive_claims"),
+    TableSpec(
+        "self_model_cognitive_claim_sources",
+    ),
+    TableSpec(
+        "self_model_decision_cases",
+        json_columns=frozenset({"options", "constraints", "rejected_options"}),
+    ),
+    TableSpec("self_model_decision_case_sources"),
+    TableSpec(
+        "self_model_relationship_profiles",
+        json_columns=frozenset({"boundaries"}),
+    ),
+    TableSpec("self_model_relationship_profile_sources"),
+    TableSpec("self_model_audit_events", json_columns=frozenset({"details"})),
+    TableSpec("self_model_command_receipts"),
     TableSpec("voice_clone_consents"),
     TableSpec(
         "voice_samples",
@@ -170,6 +209,7 @@ _POSTGRES_ARCHIVE_DELETE_ORDER = tuple(
         "transcript_versions": "archive_transcript_versions",
     }.get(table, table)
     for table in _ARCHIVE_DELETE_ORDER
+    if table != "self_model_sources"
 )
 
 _DELETION_STEP_RANK = {
@@ -537,6 +577,9 @@ class PostgresAccountRepository:
         try:
             async with connection.transaction():
                 await self._scope(connection, account_id)
+                await connection.execute(
+                    "SELECT set_config('app.self_model_delete', 'true', true)"
+                )
                 counts: dict[str, int] = {}
                 for table in self._delete_order:
                     columns = await self._column_names(connection, table)

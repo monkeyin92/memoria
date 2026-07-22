@@ -22,15 +22,34 @@ from services.growth.policy import (
 )
 from services.growth.tasks import TaskEventAction, apply_task_event
 from services.persona.domain import LEGACY_COGNITIVE_TRAIT_CATEGORIES
+from services.self_model.domain import (
+    CognitiveClaim,
+    DecisionCase,
+    RelationshipProfile,
+    SelfModelItem,
+    SelfModelRegistryPort,
+)
+from services.self_model.policy import activation_decision
 
 
 class GrowthReader:
-    def __init__(self, path: str) -> None:
+    def __init__(
+        self,
+        path: str,
+        *,
+        self_model_registry: SelfModelRegistryPort | None = None,
+    ) -> None:
         self._path = Path(path).expanduser().resolve()
+        self._self_model_registry = self_model_registry
 
     @classmethod
-    def sqlite(cls, path: str) -> GrowthReader:
-        return cls(path)
+    def sqlite(
+        cls,
+        path: str,
+        *,
+        self_model_registry: SelfModelRegistryPort | None = None,
+    ) -> GrowthReader:
+        return cls(path, self_model_registry=self_model_registry)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._path, timeout=5)
@@ -96,6 +115,13 @@ class GrowthReader:
             version_targets,
             version_target_events,
         ) = self._sources(account_id)
+        await self._append_self_model_sources(
+            account_id=account_id,
+            adopted=adopted,
+            rejected=rejected,
+            version_targets=version_targets,
+            version_target_events=version_target_events,
+        )
         result: list[dict[str, Any]] = []
         for dimension in DIMENSIONS:
             sources = adopted[dimension]
@@ -135,6 +161,106 @@ class GrowthReader:
             )
         return {"dimensions": result}
 
+    async def _append_self_model_sources(
+        self,
+        *,
+        account_id: str,
+        adopted: dict[GrowthDimension, list[dict[str, Any]]],
+        rejected: dict[GrowthDimension, Counter[str]],
+        version_targets: dict[GrowthDimension, set[str]],
+        version_target_events: dict[GrowthDimension, dict[str, set[str]]],
+    ) -> None:
+        registry = self._self_model_registry
+        if registry is None:
+            return
+        claims = await registry.cognitive_claims(account_id=account_id)
+        decisions = await registry.decision_cases(account_id=account_id)
+        profiles = await registry.relationship_profiles(account_id=account_id)
+        items: tuple[SelfModelItem, ...] = (*claims, *decisions, *profiles)
+        profiled_relationships: set[str] = set()
+        for item in items:
+            if (
+                isinstance(item, RelationshipProfile)
+                and item.relationship_id not in profiled_relationships
+            ):
+                profiled_relationships.add(item.relationship_id)
+                pending = rejected["relationship_models"].get(
+                    "relationship_profile_pending_owner_approval",
+                    0,
+                )
+                if pending == 1:
+                    del rejected["relationship_models"][
+                        "relationship_profile_pending_owner_approval"
+                    ]
+                elif pending > 1:
+                    rejected["relationship_models"][
+                        "relationship_profile_pending_owner_approval"
+                    ] -= 1
+            dimension: GrowthDimension = (
+                "relationship_models"
+                if isinstance(item, RelationshipProfile)
+                else "decision_cases"
+            )
+            activation = activation_decision(item)
+            if not activation.effective:
+                for reason in activation.reasons:
+                    rejected[dimension][f"self_model_{reason}"] += 1
+                continue
+            source = next(
+                source
+                for source in item.sources
+                if source.speaker_class == "owner"
+                and source.relation == "support"
+                and source.adopted
+                and not source.negative
+            )
+            target_kind, target_id, version_target_id, label = self._self_model_identity(
+                item
+            )
+            adopted[dimension].append(
+                {
+                    "kind": "self_model",
+                    "target_kind": target_kind,
+                    "target_id": target_id,
+                    "version_target_id": version_target_id,
+                    "event_id": source.source_event_id,
+                    "label": label,
+                    "weight": "strong",
+                    "occurred_at": source.occurred_at.isoformat(),
+                    "event_type": "self_model.approved",
+                }
+            )
+            version_targets[dimension].add(version_target_id)
+            version_target_events[dimension][version_target_id] = {
+                evidence.source_event_id for evidence in item.sources
+            }
+
+    @staticmethod
+    def _self_model_identity(
+        item: SelfModelItem,
+    ) -> tuple[str, str, str, str]:
+        if isinstance(item, CognitiveClaim):
+            return (
+                "cognitive_claim",
+                item.claim_id,
+                item.claim_id,
+                item.statement,
+            )
+        if isinstance(item, DecisionCase):
+            return (
+                "decision_case",
+                item.case_id,
+                item.case_id,
+                item.context,
+            )
+        version_target_id = f"{item.profile_id}@{item.version_number}"
+        return (
+            "relationship_profile",
+            item.profile_id,
+            version_target_id,
+            item.salutation,
+        )
+
     async def target_belongs(self, *, account_id: str, target_kind: str, target_id: str) -> bool:
         table = {
             "memory_claim": "memory_claims",
@@ -145,6 +271,9 @@ class GrowthReader:
             "timeline_entry": "timeline_entries",
             "relationship": "relationships",
             "voice_profile": "voice_profiles",
+            "cognitive_claim": "self_model_cognitive_claims",
+            "decision_case": "self_model_decision_cases",
+            "relationship_profile": "self_model_relationship_profiles",
         }.get(target_kind)
         if table is None or not self._path.is_file():
             return False
@@ -160,6 +289,9 @@ class GrowthReader:
                 "timeline_entry": "timeline_id",
                 "relationship": "relationship_id",
                 "voice_profile": "profile_id",
+                "cognitive_claim": "claim_id",
+                "decision_case": "case_id",
+                "relationship_profile": "profile_id",
             }[target_kind]
             return connection.execute(
                 f"SELECT 1 FROM {table} WHERE account_id = ? AND {column} = ?",

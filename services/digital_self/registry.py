@@ -20,9 +20,12 @@ from services.digital_self.compiler import (
     DEFAULT_COMPILER_VERSION,
     DEFAULT_POLICY_VERSION,
     build_manifest,
+    cognitive_entry,
+    decision_entry,
     decode_manifest,
     memory_entry,
     persona_entry,
+    relationship_entry,
 )
 from services.digital_self.domain import (
     DigitalSelfVersion,
@@ -34,6 +37,20 @@ from services.digital_self.domain import (
 )
 from services.persona.domain import LEGACY_COGNITIVE_TRAIT_CATEGORIES
 from services.persona.engine import PersonaEngine
+from services.self_model.domain import (
+    CognitiveClaim,
+    CognitiveClaimType,
+    DecisionCase,
+    DecisionKind,
+    ItemStatus,
+    RelationshipProfile,
+    RelationshipProfileStatus,
+    SelfModelItemKind,
+    SelfModelSource,
+    SourceRelation,
+)
+from services.self_model.policy import is_effective
+from services.self_model.registry import SelfModelRegistry
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS digital_self_versions (
@@ -108,6 +125,17 @@ _TRANSITIONS: dict[str, tuple[VersionStatus, VersionStatus]] = {
 _SHA256_HEX = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
+def _optional_datetime(value: object) -> datetime | None:
+    return datetime.fromisoformat(str(value)) if value is not None else None
+
+
+def _json_strings(value: object) -> tuple[str, ...]:
+    decoded = json.loads(str(value))
+    if not isinstance(decoded, list):
+        raise SourceSnapshotConflictError("self model list field is invalid")
+    return tuple(str(item) for item in decoded)
+
+
 class DigitalSelfRegistry:
     def __init__(
         self,
@@ -144,6 +172,7 @@ class DigitalSelfRegistry:
         with self._initialize_lock:
             if self._initialized:
                 return
+            SelfModelRegistry.sqlite(self._path).initialize()
             PersonaEngine.sqlite(self._path).initialize()
             MemoryCatalog.sqlite(
                 self._path,
@@ -413,6 +442,7 @@ class DigitalSelfRegistry:
             (account_id,),
         ).fetchone()
         if persona_row is None:
+            entries.extend(self._self_model_entries(connection, account_id))
             return entries, None
         persona_version_id = str(persona_row["version_id"])
         try:
@@ -483,7 +513,153 @@ class DigitalSelfRegistry:
             ):
                 continue
             entries.append(entry)
+        entries.extend(self._self_model_entries(connection, account_id))
         return entries, persona_version_id
+
+    def _self_model_entries(
+        self,
+        connection: sqlite3.Connection,
+        account_id: str,
+    ) -> builtins.list[ManifestEntry]:
+        entries: builtins.list[ManifestEntry] = []
+        claim_rows = connection.execute(
+            """
+            SELECT * FROM self_model_cognitive_claims
+            WHERE account_id = ? ORDER BY claim_id
+            """,
+            (account_id,),
+        ).fetchall()
+        for row in claim_rows:
+            claim_id = str(row["claim_id"])
+            claim = CognitiveClaim(
+                claim_id=claim_id,
+                account_id=account_id,
+                claim_type=cast(CognitiveClaimType, str(row["claim_type"])),
+                statement=str(row["statement"]),
+                context=str(row["context"]),
+                confidence=float(row["confidence"]),
+                sharing_scope=str(row["sharing_scope"]),
+                status=cast(ItemStatus, str(row["status"])),
+                unresolved_conflict=bool(row["unresolved_conflict"]),
+                sources=self._self_model_sources(
+                    connection, account_id, "cognitive_claim", claim_id, 0
+                ),
+                owner_reviewed_at=_optional_datetime(row["owner_reviewed_at"]),
+                step_up_verified=bool(row["step_up_verified"]),
+                version=int(row["version"]),
+                created_at=datetime.fromisoformat(str(row["created_at"])),
+                updated_at=datetime.fromisoformat(str(row["updated_at"])),
+            )
+            if is_effective(claim):
+                entries.append(cognitive_entry(claim))
+
+        decision_rows = connection.execute(
+            """
+            SELECT * FROM self_model_decision_cases
+            WHERE account_id = ? ORDER BY case_id
+            """,
+            (account_id,),
+        ).fetchall()
+        for row in decision_rows:
+            case_id = str(row["case_id"])
+            decision = DecisionCase(
+                case_id=case_id,
+                account_id=account_id,
+                kind=cast(DecisionKind, str(row["kind"])),
+                context=str(row["context"]),
+                options=_json_strings(row["options_json"]),
+                constraints=_json_strings(row["constraints_json"]),
+                chosen_option=str(row["chosen_option"]),
+                rejected_options=_json_strings(row["rejected_options_json"]),
+                outcome=str(row["outcome"]),
+                reflection=str(row["reflection"]),
+                still_endorsed=bool(row["still_endorsed"]),
+                sharing_scope=str(row["sharing_scope"]),
+                status=cast(ItemStatus, str(row["status"])),
+                unresolved_conflict=bool(row["unresolved_conflict"]),
+                sources=self._self_model_sources(
+                    connection, account_id, "decision_case", case_id, 0
+                ),
+                owner_reviewed_at=_optional_datetime(row["owner_reviewed_at"]),
+                step_up_verified=bool(row["step_up_verified"]),
+                version=int(row["version"]),
+                created_at=datetime.fromisoformat(str(row["created_at"])),
+                updated_at=datetime.fromisoformat(str(row["updated_at"])),
+            )
+            if is_effective(decision):
+                entries.append(decision_entry(decision))
+
+        profile_rows = connection.execute(
+            """
+            SELECT * FROM self_model_relationship_profiles
+            WHERE account_id = ? ORDER BY profile_id, version_number
+            """,
+            (account_id,),
+        ).fetchall()
+        for row in profile_rows:
+            profile_id = str(row["profile_id"])
+            version_number = int(row["version_number"])
+            profile = RelationshipProfile(
+                profile_id=profile_id,
+                account_id=account_id,
+                version_number=version_number,
+                person_id=str(row["person_id"]),
+                relationship_id=str(row["relationship_id"]),
+                salutation=str(row["salutation"]),
+                tone=str(row["tone"]),
+                advice_style=str(row["advice_style"]),
+                sharing_scope=str(row["sharing_scope"]),
+                boundaries=_json_strings(row["boundaries_json"]),
+                status=cast(RelationshipProfileStatus, str(row["status"])),
+                unresolved_conflict=bool(row["unresolved_conflict"]),
+                sources=self._self_model_sources(
+                    connection,
+                    account_id,
+                    "relationship_profile",
+                    profile_id,
+                    version_number,
+                ),
+                owner_reviewed_at=_optional_datetime(row["owner_reviewed_at"]),
+                step_up_verified=bool(row["step_up_verified"]),
+                created_at=datetime.fromisoformat(str(row["created_at"])),
+            )
+            if is_effective(profile):
+                entries.append(relationship_entry(profile))
+        return entries
+
+    @staticmethod
+    def _self_model_sources(
+        connection: sqlite3.Connection,
+        account_id: str,
+        item_kind: SelfModelItemKind,
+        item_id: str,
+        item_version: int,
+    ) -> tuple[SelfModelSource, ...]:
+        rows = connection.execute(
+            """
+            SELECT source.source_event_id, source.relation, source.adopted,
+                   source.negative, evidence.speaker_class, evidence.occurred_at
+            FROM self_model_sources AS source
+            JOIN evidence_events AS evidence
+              ON evidence.event_id = source.source_event_id
+             AND evidence.account_id = source.account_id
+            WHERE source.account_id = ? AND source.item_kind = ?
+              AND source.item_id = ? AND source.item_version = ?
+            ORDER BY source.source_event_id, source.relation
+            """,
+            (account_id, item_kind, item_id, item_version),
+        ).fetchall()
+        return tuple(
+            SelfModelSource(
+                source_event_id=str(row["source_event_id"]),
+                relation=cast(SourceRelation, str(row["relation"])),
+                adopted=bool(row["adopted"]),
+                negative=bool(row["negative"]),
+                speaker_class=cast(SpeakerClass, str(row["speaker_class"])),
+                occurred_at=datetime.fromisoformat(str(row["occurred_at"])),
+            )
+            for row in rows
+        )
 
     @staticmethod
     def _negative_targets(

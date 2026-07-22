@@ -14,6 +14,7 @@ from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 from services.digital_self.postgres_registry import PostgresDigitalSelfRegistry
 from services.growth.postgres_reader import PostgresGrowthReader
 from services.persona.postgres_engine import PostgresPersonaEngine
+from services.self_model.postgres_registry import PostgresSelfModelRegistry
 
 
 def _dsn(dsn: str, *, user: str, password: str, database: str) -> str:
@@ -38,6 +39,7 @@ async def test_postgres_reader_matches_sqlite_semantics_and_respects_force_rls()
     catalog: PostgresMemoryCatalog | None = None
     persona: PostgresPersonaEngine | None = None
     registry: PostgresDigitalSelfRegistry | None = None
+    self_model: PostgresSelfModelRegistry | None = None
     reader: PostgresGrowthReader | None = None
     try:
         await admin.execute(f"CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}' NOSUPERUSER NOBYPASSRLS")
@@ -47,11 +49,16 @@ async def test_postgres_reader_matches_sqlite_semantics_and_respects_force_rls()
         catalog = PostgresMemoryCatalog(app_dsn, extractor=RuleBasedMemoryExtractor())
         persona = PostgresPersonaEngine(app_dsn)
         registry = PostgresDigitalSelfRegistry(app_dsn)
-        reader = PostgresGrowthReader(app_dsn)
+        self_model = PostgresSelfModelRegistry(app_dsn)
         await archive.initialize()
         await catalog.initialize()
         await persona.initialize()
         await registry.initialize()
+        await self_model.initialize()
+        reader = PostgresGrowthReader(
+            app_dsn,
+            self_model_registry=self_model,
+        )
         connection = await asyncpg.connect(app_dsn)
         try:
             async with connection.transaction():
@@ -98,10 +105,11 @@ async def test_postgres_reader_matches_sqlite_semantics_and_respects_force_rls()
                     account_a,
                     datetime(2026, 7, 22, tzinfo=UTC),
                 )
+                eligible_relationship_id = uuid.uuid4()
                 await connection.execute(
                     """INSERT INTO relationships (relationship_id, account_id, person_id, relationship_type, status, source_event_id, valid_at)
                        VALUES ($1, $2, $3, 'friend', 'confirmed', 'growth-source', $4)""",
-                    uuid.uuid4(),
+                    eligible_relationship_id,
                     account_a,
                     eligible_person_id,
                     datetime(2026, 7, 22, tzinfo=UTC),
@@ -140,6 +148,94 @@ async def test_postgres_reader_matches_sqlite_semantics_and_respects_force_rls()
             assert await connection.fetchval("SELECT count(*) FROM memory_claims") == 0
         finally:
             await connection.close()
+        claim = await self_model.create_cognitive_claim(
+            account_id=account_a,
+            claim_type="belief",
+            statement="我相信先确认事实再判断。",
+            confidence=0.9,
+            idempotency_key="growth-pg-create-claim",
+        )
+        claim = await self_model.add_source(
+            account_id=account_a,
+            item_kind="cognitive_claim",
+            item_id=claim.claim_id,
+            source_event_id="growth-source",
+            relation="support",
+            adopted=True,
+            negative=False,
+            expected_version=claim.version,
+            idempotency_key="growth-pg-source-claim",
+        )
+        await self_model.review_cognitive_claim(
+            account_id=account_a,
+            claim_id=claim.claim_id,
+            status="confirmed",
+            expected_version=claim.version,
+            step_up_verified=False,
+            idempotency_key="growth-pg-confirm-claim",
+        )
+        decision = await self_model.create_decision_case(
+            account_id=account_a,
+            kind="real",
+            context="决定先确认事实",
+            options=("直接决定", "先确认"),
+            constraints=("时间有限",),
+            chosen_option="先确认",
+            rejected_options=("直接决定",),
+            outcome="减少误判",
+            reflection="仍然认同",
+            still_endorsed=True,
+            idempotency_key="growth-pg-create-decision",
+        )
+        decision = await self_model.add_source(
+            account_id=account_a,
+            item_kind="decision_case",
+            item_id=decision.case_id,
+            source_event_id="growth-source",
+            relation="support",
+            adopted=True,
+            negative=False,
+            expected_version=decision.version,
+            idempotency_key="growth-pg-source-decision",
+        )
+        await self_model.review_decision_case(
+            account_id=account_a,
+            case_id=decision.case_id,
+            status="confirmed",
+            expected_version=decision.version,
+            step_up_verified=False,
+            idempotency_key="growth-pg-confirm-decision",
+        )
+        profile = await self_model.create_relationship_profile(
+            account_id=account_a,
+            person_id=str(eligible_person_id),
+            relationship_id=str(eligible_relationship_id),
+            salutation="阿青",
+            tone="温和",
+            advice_style="先听再建议",
+            boundaries=("不谈财务细节",),
+            idempotency_key="growth-pg-create-profile",
+        )
+        profile = await self_model.add_source(
+            account_id=account_a,
+            item_kind="relationship_profile",
+            item_id=profile.profile_id,
+            source_event_id="growth-source",
+            relation="support",
+            adopted=True,
+            negative=False,
+            expected_version=profile.version_number,
+            idempotency_key="growth-pg-source-profile",
+        )
+        await self_model.review_relationship_profile(
+            account_id=account_a,
+            profile_id=profile.profile_id,
+            version_number=profile.version_number,
+            status="approved",
+            expected_status="candidate",
+            step_up_verified=True,
+            idempotency_key="growth-pg-approve-profile",
+        )
         draft = await registry.build(account_id=account_a)
         testing = await registry.begin_testing(
             account_id=account_a,
@@ -171,16 +267,19 @@ async def test_postgres_reader_matches_sqlite_semantics_and_respects_force_rls()
         )
         assert relationship_a["rejected_reason_counts"] == {
             "owner_projection_ineligible": 1,
-            "relationship_profile_pending_owner_approval": 1,
         }
-        assert relationship_a["adopted_sources"] == []
+        assert relationship_a["adopted_sources"][0]["target_kind"] == (
+            "relationship_profile"
+        )
         decision_a = next(
             item for item in overview_a["dimensions"] if item["key"] == "decision_cases"
         )
         assert decision_a["rejected_reason_counts"] == {
             "legacy_persona_candidate": 1
         }
-        assert decision_a["adopted_sources"] == []
+        assert {
+            source["target_kind"] for source in decision_a["adopted_sources"]
+        } == {"cognitive_claim", "decision_case"}
         assert life_b["status"] == "empty"
 
         await archive.record(
@@ -256,6 +355,8 @@ async def test_postgres_reader_matches_sqlite_semantics_and_respects_force_rls()
             await reader.close()
         if registry is not None:
             await registry.close()
+        if self_model is not None:
+            await self_model.close()
         if persona is not None:
             await persona.close()
         if catalog is not None:

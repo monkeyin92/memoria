@@ -377,6 +377,65 @@ describe("authenticated Control API client", () => {
     );
   });
 
+  it("validates all manifest-v2 source counts against the embedded summary", async () => {
+    const sourceSummary = {
+      memory_claim_count: 2,
+      persona_trait_count: 1,
+      cognitive_claim_count: 3,
+      decision_case_count: 2,
+      relationship_profile_count: 1,
+      persona_version_id: "persona-1",
+      source_summary_sha256: "b".repeat(64),
+    };
+    const version = {
+      version_id: "digital-self-v2",
+      version_number: 2,
+      status: "draft",
+      manifest_sha256: "a".repeat(64),
+      manifest: {
+        schema_version: "digital-self-manifest-v2",
+        compiler_version: "digital-self-compiler-v2",
+        policy_version: "digital-self-policy-v2",
+        parent_version_id: "digital-self-v1",
+        rollback_target_version_id: null,
+        entries: [],
+        source_summary: sourceSummary,
+      },
+      source_summary: sourceSummary,
+      parent_version_id: "digital-self-v1",
+      rollback_target_version_id: null,
+      created_at: "2026-07-22T00:00:00+00:00",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        user_id: "registered-user",
+        username: "memorykeeper",
+        account_type: "registered",
+        access_token: "digital-self-token",
+      }, 201))
+      .mockResolvedValueOnce(jsonResponse({ items: [version] }))
+      .mockResolvedValueOnce(jsonResponse({
+        items: [{
+          ...version,
+          source_summary: {
+            ...sourceSummary,
+            decision_case_count: 3,
+          },
+        }],
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { getDigitalSelfVersions, registerAccount } = await import("./api.js");
+
+    await registerAccount("memorykeeper", "safe-passphrase");
+    await expect(getDigitalSelfVersions()).resolves.toEqual({
+      items: [version],
+    });
+    await expect(getDigitalSelfVersions()).rejects.toThrow(
+      "数字分身版本响应无效",
+    );
+  });
+
   it("loads and reviews the structured life archive with the account token", async () => {
     const fetchMock = vi
       .fn()
@@ -1473,7 +1532,15 @@ describe("authenticated Control API client", () => {
     }));
     await expect(getGrowthTasks()).resolves.toEqual({ items: [task] });
     await createGrowthTask("event-1", "life_interview");
-    await respondGrowthTask("task-1", "event-1", 1, "我的回答");
+    await respondGrowthTask("task-1", "event-1", 1, "我的回答", {
+      options: ["直接上线", "先验证"],
+      constraints: ["预算有限"],
+      chosen_option: "先验证",
+      rejected_options: ["直接上线"],
+      outcome: "避免返工",
+      reflection: "先验证更稳妥。",
+      still_endorsed: true,
+    });
     await transitionGrowthTask("task-1", "event-1", "completed", 2);
     await reviewGrowthOwnerAction("event-1", "not_me", "memory_claim", "trait-1");
 
@@ -1486,6 +1553,13 @@ describe("authenticated Control API client", () => {
       event_id: "event-1",
       expected_revision: 1,
       answer: "我的回答",
+      options: ["直接上线", "先验证"],
+      constraints: ["预算有限"],
+      chosen_option: "先验证",
+      rejected_options: ["直接上线"],
+      outcome: "避免返工",
+      reflection: "先验证更稳妥。",
+      still_endorsed: true,
     });
     expect(JSON.parse(fetchMock.mock.calls[5][1].body)).toEqual({
       event_id: "event-1",
@@ -1498,6 +1572,26 @@ describe("authenticated Control API client", () => {
       target_kind: "memory_claim",
       target_id: "trait-1",
     });
+  });
+
+  it("rejects malformed structured growth responses before sending them", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { respondGrowthTask } = await import("./api.js");
+
+    expect(() => respondGrowthTask("task-1", "event-1", 1, "", {})).toThrow(
+      "请先写下你的回答",
+    );
+    expect(() => respondGrowthTask("task-1", "event-1", 1, "", {
+      options: ["可行方案", ""],
+    })).toThrow("成长任务选项无效");
+    expect(() => respondGrowthTask("task-1", "event-1", 1, "", {
+      still_endorsed: "yes",
+    })).toThrow("成长任务结构化回答无效");
+    expect(() => respondGrowthTask("task-1", "event-1", 1, "", {
+      unknown: true,
+    })).toThrow("成长任务结构化回答无效");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects malformed growth-map status values", async () => {
@@ -1524,5 +1618,205 @@ describe("authenticated Control API client", () => {
     const { getGrowthOverview, registerAccount } = await import("./api.js");
     await registerAccount("growth-owner", "safe-passphrase");
     await expect(getGrowthOverview()).rejects.toThrow("成长地图响应无效");
+  });
+
+  it("validates and reviews cognitive, decision and relationship material", async () => {
+    const source = {
+      source_event_id: "source-1",
+      relation: "support",
+      adopted: true,
+      negative: false,
+      speaker_class: "owner",
+      occurred_at: "2026-07-22T00:00:00Z",
+      excerpt: "我会先确认事实。",
+    };
+    const common = {
+      account_id: "owner",
+      sharing_scope: "private",
+      unresolved_conflict: false,
+      sources: [source],
+      owner_reviewed_at: null,
+      step_up_verified: false,
+      effective: false,
+      effective_reasons: ["not_approved"],
+      created_at: "2026-07-22T00:00:00Z",
+    };
+    const claim = {
+      ...common,
+      kind: "cognitive_claim",
+      claim_id: "claim-1",
+      claim_type: "belief",
+      statement: "我会先确认事实。",
+      context: "",
+      confidence: 0.9,
+      status: "candidate",
+      version: 2,
+      updated_at: "2026-07-22T00:00:00Z",
+    };
+    const decision = {
+      ...common,
+      kind: "decision_case",
+      case_id: "case-1",
+      decision_kind: "hypothetical",
+      context: "如果重新选择",
+      options: ["先确认"],
+      constraints: [],
+      chosen_option: "先确认",
+      rejected_options: [],
+      outcome: "",
+      reflection: "",
+      still_endorsed: true,
+      status: "candidate",
+      version: 2,
+      updated_at: "2026-07-22T00:00:00Z",
+    };
+    const relationship = {
+      ...common,
+      kind: "relationship_profile",
+      profile_id: "profile-1",
+      version_number: 1,
+      person_id: "person-1",
+      relationship_id: "relationship-1",
+      salutation: "梅姐",
+      tone: "坦诚",
+      advice_style: "先听再建议",
+      boundaries: ["不谈财务"],
+      status: "candidate",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        user_id: "owner",
+        account_type: "registered",
+        access_token: "self-model-token",
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        claims: [claim],
+        decision_cases: [decision],
+        relationship_profiles: [relationship],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ...claim,
+        status: "confirmed",
+        effective: true,
+        effective_reasons: [],
+        owner_reviewed_at: "2026-07-22T01:00:00Z",
+        version: 3,
+        updated_at: "2026-07-22T01:00:00Z",
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ...decision,
+        status: "confirmed",
+        effective_reasons: ["hypothetical_decision"],
+        owner_reviewed_at: "2026-07-22T01:00:00Z",
+        version: 3,
+        updated_at: "2026-07-22T01:00:00Z",
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ...relationship,
+        status: "approved",
+        effective: true,
+        effective_reasons: [],
+        owner_reviewed_at: "2026-07-22T01:00:00Z",
+        step_up_verified: true,
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      getSelfModel,
+      registerAccount,
+      reviewSelfModelClaim,
+      reviewSelfModelDecisionCase,
+      reviewSelfModelRelationshipProfile,
+    } = await import("./api.js");
+
+    await registerAccount("self-model-owner", "safe-passphrase");
+    await expect(getSelfModel()).resolves.toEqual({
+      claims: [claim],
+      decision_cases: [decision],
+      relationship_profiles: [relationship],
+    });
+    await reviewSelfModelClaim("claim-1", "confirmed", 2, "confirm-claim");
+    await reviewSelfModelDecisionCase("case-1", "confirmed", 2, "confirm-case");
+    await reviewSelfModelRelationshipProfile(
+      "profile-1",
+      1,
+      "approved",
+      "candidate",
+      "approve-profile",
+      "safe-passphrase",
+    );
+
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      "/memoria-api/v1/self-model/claims/claim-1/review",
+    );
+    expect(JSON.parse(fetchMock.mock.calls[4][1].body)).toEqual({
+      status: "approved",
+      expected_status: "candidate",
+      idempotency_key: "approve-profile",
+      password: "safe-passphrase",
+    });
+  });
+
+  it("records an owner counterexample for a cognitive claim", async () => {
+    const claim = {
+      account_id: "owner",
+      kind: "cognitive_claim",
+      claim_id: "claim-1",
+      claim_type: "value",
+      statement: "家庭安全高于短期收益。",
+      context: "",
+      confidence: 0.9,
+      sharing_scope: "private",
+      status: "candidate",
+      unresolved_conflict: false,
+      sources: [{
+        source_event_id: "counterexample-1",
+        relation: "counterexample",
+        adopted: false,
+        negative: false,
+        speaker_class: "owner",
+        occurred_at: "2026-07-22T00:00:00Z",
+        excerpt: "当家人已经安全时，我愿意尝试。",
+      }],
+      owner_reviewed_at: null,
+      step_up_verified: false,
+      effective: false,
+      effective_reasons: ["not_approved"],
+      version: 3,
+      created_at: "2026-07-22T00:00:00Z",
+      updated_at: "2026-07-22T00:00:00Z",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        user_id: "owner",
+        account_type: "registered",
+        access_token: "self-model-token",
+      }))
+      .mockResolvedValueOnce(jsonResponse(claim));
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      addSelfModelClaimCounterexample,
+      registerAccount,
+    } = await import("./api.js");
+
+    await registerAccount("self-model-owner", "safe-passphrase");
+    await expect(
+      addSelfModelClaimCounterexample(
+        "claim-1",
+        "家人安全且风险可控时，我也愿意尝试。",
+        2,
+        "counterexample-1",
+      ),
+    ).resolves.toEqual(claim);
+
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/memoria-api/v1/self-model/claims/claim-1/counterexamples",
+    );
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+      event_id: "counterexample-1",
+      expected_version: 2,
+      text: "家人安全且风险可控时，我也愿意尝试。",
+    });
   });
 });

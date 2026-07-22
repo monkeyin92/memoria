@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  addSelfModelClaimCounterexample: vi.fn(),
   approveDigitalSelfVersion: vi.fn(),
   beginDigitalSelfTesting: vi.fn(),
   buildDigitalSelfVersion: vi.fn(),
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   getGrowthOverview: vi.fn(),
   getGrowthTasks: vi.fn(),
   getInteractionCapabilities: vi.fn(),
+  getSelfModel: vi.fn(),
   getPersonaStatus: vi.fn(),
   getPersonaTraits: vi.fn(),
   getPersonaVersions: vi.fn(),
@@ -28,6 +30,9 @@ const mocks = vi.hoisted(() => ({
   reviewGrowthOwnerAction: vi.fn(),
   previewVoiceBlindTrial: vi.fn(),
   reviewPersonaTrait: vi.fn(),
+  reviewSelfModelClaim: vi.fn(),
+  reviewSelfModelDecisionCase: vi.fn(),
+  reviewSelfModelRelationshipProfile: vi.fn(),
   revokePersonaConsent: vi.fn(),
   revokeDigitalSelfVersion: vi.fn(),
   revokeSpeakerProfile: vi.fn(),
@@ -42,6 +47,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../api.js", () => ({
+  addSelfModelClaimCounterexample: mocks.addSelfModelClaimCounterexample,
   approveDigitalSelfVersion: mocks.approveDigitalSelfVersion,
   beginDigitalSelfTesting: mocks.beginDigitalSelfTesting,
   buildDigitalSelfVersion: mocks.buildDigitalSelfVersion,
@@ -57,6 +63,7 @@ vi.mock("../api.js", () => ({
   getGrowthOverview: mocks.getGrowthOverview,
   getGrowthTasks: mocks.getGrowthTasks,
   getInteractionCapabilities: mocks.getInteractionCapabilities,
+  getSelfModel: mocks.getSelfModel,
   getPersonaStatus: mocks.getPersonaStatus,
   getPersonaTraits: mocks.getPersonaTraits,
   getPersonaVersions: mocks.getPersonaVersions,
@@ -68,6 +75,9 @@ vi.mock("../api.js", () => ({
   reviewGrowthOwnerAction: mocks.reviewGrowthOwnerAction,
   previewVoiceBlindTrial: mocks.previewVoiceBlindTrial,
   reviewPersonaTrait: mocks.reviewPersonaTrait,
+  reviewSelfModelClaim: mocks.reviewSelfModelClaim,
+  reviewSelfModelDecisionCase: mocks.reviewSelfModelDecisionCase,
+  reviewSelfModelRelationshipProfile: mocks.reviewSelfModelRelationshipProfile,
   revokePersonaConsent: mocks.revokePersonaConsent,
   revokeDigitalSelfVersion: mocks.revokeDigitalSelfVersion,
   revokeSpeakerProfile: mocks.revokeSpeakerProfile,
@@ -163,6 +173,11 @@ describe("DigitalSelfPanel", () => {
           ],
         },
       },
+    });
+    mocks.getSelfModel.mockResolvedValue({
+      claims: [],
+      decision_cases: [],
+      relationship_profiles: [],
     });
     mocks.getPersonaTraits.mockImplementation(async () => ({ items: personaTraits }));
     mocks.getPersonaVersions.mockImplementation(async () => ({ items: personaVersions }));
@@ -279,6 +294,52 @@ describe("DigitalSelfPanel", () => {
     });
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "冻结此版本" })).toHaveFocus();
+    });
+  });
+
+  it("shows manifest-v2 cognitive, decision and relationship source counts", async () => {
+    const sourceSummary = {
+      memory_claim_count: 1,
+      persona_trait_count: 2,
+      cognitive_claim_count: 3,
+      decision_case_count: 4,
+      relationship_profile_count: 5,
+      persona_version_id: "persona-1",
+      source_summary_sha256: "b".repeat(64),
+    };
+    digitalSelfVersions = [digitalSelfVersion({
+      version_number: 2,
+      manifest: {
+        schema_version: "digital-self-manifest-v2",
+        compiler_version: "digital-self-compiler-v2",
+        policy_version: "digital-self-policy-v2",
+        parent_version_id: "digital-self-1",
+        rollback_target_version_id: null,
+        entries: [],
+        source_summary: sourceSummary,
+      },
+      source_summary: sourceSummary,
+      parent_version_id: "digital-self-1",
+    })];
+
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    const card = (await screen.findByText("版本 2")).closest(
+      ".digital-version-card",
+    );
+    expect(card).not.toBeNull();
+    const summary = Object.fromEntries(
+      [...card.querySelectorAll(".digital-version-summary > div")].map((item) => [
+        item.querySelector("dt")?.textContent,
+        item.querySelector("dd")?.textContent,
+      ]),
+    );
+    expect(summary).toMatchObject({
+      已确认记忆: "1",
+      人格特征: "2",
+      认知主张: "3",
+      真实决策: "4",
+      关系画像: "5",
     });
   });
 

@@ -89,6 +89,24 @@
   `decision_habit/value_priority` 与原始 relationship 只能显示为 legacy candidate，
   不得进入 adopted/effective 状态或 manifest。
 
+## 硅基生命路线 S5 验证
+
+- 已完成 `CognitiveClaim / DecisionCase / RelationshipProfile`：候选、审核、生效、反例、
+  负面证据、版本和来源均可追溯；高敏主张与关系画像要求 step-up。
+- SQLite/PostgreSQL 三类创建接口将主记录、sources、receipt/audit 放在同一事务；来源缺失、
+  越权、重复或写入失败都会整体回滚；PostgreSQL 旧关系版本唯一约束可幂等迁移。
+- Growth Map 的 `decision_review` 必须提供至少两个方案、选项、约束、结果、反思和当前认同；
+  缺约束或纯文本只能形成 unresolved hypothetical；`scenario_choice` 始终 hypothetical。
+- H5 新增认知/决策/关系审核面板、可展开 Evidence 原话/反例摘要、密码错误可重试、
+  “不授予访问权”边界文案和结构化成长任务表单。
+- DigitalSelf manifest v2 增加认知主张、真实决策和关系画像计数/typed entries，同时保留
+  v1 digest/rollback 兼容；账户导出、删除、RLS 和生命周期表已覆盖新领域。
+- 正式临时 PostgreSQL 17 + pgvector 环境 920 passed、2 skipped、0 failed，总覆盖率
+  89.32%；H5 全量 195 passed，production build、Ruff、strict mypy、
+  `git diff --check` 通过。
+- S6 待做：统一 `DigitalSelfResponsePlanner`，让回答明确区分 fact/inference/unknown 并记录
+  generation/version/来源 provenance；当前还不能宣称 Self Preview 已可用。
+
 ## 当前生产
 
 - 唯一交付客户端为 H5：

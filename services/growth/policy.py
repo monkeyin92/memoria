@@ -28,7 +28,7 @@ DIMENSIONS: tuple[GrowthDimension, ...] = (
     "legacy",
 )
 DEPENDENCY_PENDING = frozenset(
-    {"important_people", "decision_cases", "relationship_models", "voice", "legacy"}
+    {"voice", "legacy"}
 )
 
 def version_target_ids(
@@ -60,6 +60,32 @@ def version_target_ids(
             and "trait_id" in entry
         }
         return set(current_target_ids), frozen
+    if dimension == "decision_cases":
+        frozen = {
+            str(entry["claim_id"])
+            for entry in entries
+            if isinstance(entry, dict)
+            and entry.get("type") == "cognitive_claim"
+            and "claim_id" in entry
+        }
+        frozen.update(
+            str(entry["case_id"])
+            for entry in entries
+            if isinstance(entry, dict)
+            and entry.get("type") == "decision_case"
+            and "case_id" in entry
+        )
+        return set(current_target_ids), frozen
+    if dimension == "relationship_models":
+        frozen = {
+            f"{entry['profile_id']}@{entry['version_number']}"
+            for entry in entries
+            if isinstance(entry, dict)
+            and entry.get("type") == "relationship_profile"
+            and "profile_id" in entry
+            and "version_number" in entry
+        }
+        return set(current_target_ids), frozen
     return set(), set()
 
 
@@ -71,19 +97,19 @@ def apply_negative_evidence(
 ) -> tuple[list[Mapping[str, Any]], set[str]]:
     """Find dimension conflicts and the targets eligible for the next manifest."""
 
-    expected_target_kind = {
-        "life_chapters": "memory_claim",
-        "expression": "persona_trait",
-        "decision_cases": "persona_trait",
-    }.get(dimension)
+    expected_target_kinds = {
+        "life_chapters": frozenset({"memory_claim"}),
+        "expression": frozenset({"persona_trait"}),
+        "decision_cases": frozenset({"cognitive_claim", "decision_case"}),
+        "relationship_models": frozenset({"relationship_profile"}),
+    }.get(dimension, frozenset())
     effective_targets = set(target_events)
     conflicts: list[Mapping[str, Any]] = []
     for negative in negatives:
         target_kind = str(negative.get("target_kind") or "")
         target_id = str(negative.get("target_id") or "")
         direct_target_match = (
-            expected_target_kind is not None
-            and target_kind == expected_target_kind
+            target_kind in expected_target_kinds
             and target_id in target_events
         )
         source_target_ids = {
@@ -109,4 +135,16 @@ def apply_negative_evidence(
         if direct_target_match:
             effective_targets.discard(target_id)
         effective_targets.difference_update(source_target_ids)
+        effective_targets.difference_update(
+            str(source.get("version_target_id") or "")
+            for source in sources
+            if (
+                target_kind,
+                target_id,
+            )
+            == (
+                str(source.get("target_kind") or ""),
+                str(source.get("target_id") or ""),
+            )
+        )
     return conflicts, effective_targets

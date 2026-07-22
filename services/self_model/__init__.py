@@ -1,0 +1,55 @@
+"""Evidence-backed cognitive, decision and relationship models."""
+
+from services.self_model.domain import (
+    CognitiveClaim,
+    CognitiveClaimType,
+    DecisionCase,
+    DecisionKind,
+    InvalidSelfModelTransitionError,
+    ItemStatus,
+    RelationshipProfile,
+    RelationshipProfileStatus,
+    RelationshipReferenceError,
+    SelfModelIdempotencyConflictError,
+    SelfModelItem,
+    SelfModelItemKind,
+    SelfModelNotFoundError,
+    SelfModelRegistryPort,
+    SelfModelSource,
+    SelfModelVersionConflictError,
+    SourceRelation,
+    UntrustedSelfModelSourceError,
+)
+from services.self_model.policy import (
+    HIGH_SENSITIVITY_CLAIM_TYPES,
+    ActivationDecision,
+    activation_decision,
+    is_effective,
+)
+from services.self_model.registry import SelfModelRegistry
+
+__all__ = [
+    "HIGH_SENSITIVITY_CLAIM_TYPES",
+    "ActivationDecision",
+    "CognitiveClaim",
+    "CognitiveClaimType",
+    "DecisionCase",
+    "DecisionKind",
+    "InvalidSelfModelTransitionError",
+    "ItemStatus",
+    "RelationshipProfile",
+    "RelationshipProfileStatus",
+    "RelationshipReferenceError",
+    "SelfModelIdempotencyConflictError",
+    "SelfModelItem",
+    "SelfModelItemKind",
+    "SelfModelNotFoundError",
+    "SelfModelRegistryPort",
+    "SelfModelRegistry",
+    "SelfModelSource",
+    "SelfModelVersionConflictError",
+    "SourceRelation",
+    "UntrustedSelfModelSourceError",
+    "activation_decision",
+    "is_effective",
+]

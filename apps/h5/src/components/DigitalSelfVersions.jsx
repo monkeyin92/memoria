@@ -142,7 +142,8 @@ export function DigitalSelfVersions({
       </div>
 
       <p className="digital-section-copy">
-        版本只编译你已确认的记忆和当前已生效的人格特征；陪伴伙伴说的话不会进入。
+        版本只编译你已确认的记忆、表达特征、认知主张、真实决策和关系画像；
+        陪伴伙伴说的话不会进入。
         已批准版本才可用于未来的数字自我预览，已冻结版本才可用于未来传承。
       </p>
 
@@ -177,6 +178,18 @@ export function DigitalSelfVersions({
             "confirmed_persona_trait_count",
             "persona_traits",
           );
+          const cognitiveCount = sourceCount(
+            summary,
+            "cognitive_claim_count",
+          );
+          const decisionCount = sourceCount(
+            summary,
+            "decision_case_count",
+          );
+          const relationshipCount = sourceCount(
+            summary,
+            "relationship_profile_count",
+          );
           const action = actionFor(version);
           const ActionIcon = action.icon;
           return (
@@ -198,6 +211,18 @@ export function DigitalSelfVersions({
                 <div>
                   <dt>人格特征</dt>
                   <dd>{personaCount}</dd>
+                </div>
+                <div>
+                  <dt>认知主张</dt>
+                  <dd>{cognitiveCount}</dd>
+                </div>
+                <div>
+                  <dt>真实决策</dt>
+                  <dd>{decisionCount}</dd>
+                </div>
+                <div>
+                  <dt>关系画像</dt>
+                  <dd>{relationshipCount}</dd>
                 </div>
                 <div>
                   <dt>Manifest</dt>

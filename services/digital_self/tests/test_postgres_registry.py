@@ -15,8 +15,10 @@ from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 from services.digital_self.domain import (
-    EmptyDigitalSelfSourceError,
+    CognitiveClaimManifestEntry,
+    DecisionCaseManifestEntry,
     MemoryClaimManifestEntry,
+    RelationshipProfileManifestEntry,
     SourceSnapshotConflictError,
     VersionNotFoundError,
 )
@@ -83,6 +85,11 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
     app_password = f"digital-self-{suffix}-password"
     account_a = f"digital-self-a-{suffix}"
     account_b = f"digital-self-b-{suffix}"
+    cognitive_id = uuid.uuid4()
+    decision_id = uuid.uuid4()
+    profile_id = uuid.uuid4()
+    person_id = uuid.uuid4()
+    relationship_id = uuid.uuid4()
     admin = await asyncpg.connect(admin_dsn)
     archive: PostgresLifeArchive | None = None
     catalog: PostgresMemoryCatalog | None = None
@@ -196,6 +203,141 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
                             ensure_ascii=False,
                         ),
                     )
+                    if account_id == account_a:
+                        counterexample_event_id = f"counterexample-{account_id}"
+                        await connection.execute(
+                            """
+                            INSERT INTO archive_evidence_events (
+                                event_id, account_id, event_type, schema_version,
+                                occurred_at, speaker_class, source, payload,
+                                content_sha256
+                            ) VALUES ($1, $2, 'speech.utterance_finalized', 1, $3,
+                                      'owner', 'digital-self-test', $4::jsonb, $5)
+                            """,
+                            counterexample_event_id,
+                            account_id,
+                            datetime(2026, 7, 22, 8, 1, tzinfo=UTC),
+                            '{"text":"owner counterexample","interaction_mode":"companion","owner_projection_eligible":true}',
+                            "b" * 64,
+                        )
+                        await connection.execute(
+                            """
+                            INSERT INTO person_entities (
+                                person_id, account_id, canonical_key, display_name,
+                                relationship_to_owner, status, source_event_id,
+                                created_at
+                            ) VALUES ($1, $2, 'friend:lin', '小林', 'friend',
+                                      'confirmed', $3, $4)
+                            """,
+                            person_id,
+                            account_id,
+                            event_id,
+                            datetime(2026, 7, 22, 8, 0, tzinfo=UTC),
+                        )
+                        await connection.execute(
+                            """
+                            INSERT INTO relationships (
+                                relationship_id, account_id, person_id,
+                                relationship_type, status, source_event_id,
+                                valid_at
+                            ) VALUES ($1, $2, $3, 'friend', 'confirmed', $4, $5)
+                            """,
+                            relationship_id,
+                            account_id,
+                            person_id,
+                            event_id,
+                            datetime(2026, 7, 22, 8, 0, tzinfo=UTC),
+                        )
+                        await connection.execute(
+                            """
+                            INSERT INTO self_model_cognitive_claims (
+                                claim_id, account_id, claim_type, statement,
+                                context, confidence, sharing_scope, status,
+                                owner_reviewed_at, step_up_verified
+                            ) VALUES ($1, $2, 'value', '先核实事实再做结论',
+                                      '工作决策', 0.95, 'private', 'confirmed',
+                                      $3, true)
+                            """,
+                            cognitive_id,
+                            account_id,
+                            datetime(2026, 7, 22, 8, 2, tzinfo=UTC),
+                        )
+                        for source_event_id, relation, adopted in (
+                            (event_id, "support", True),
+                            (counterexample_event_id, "counterexample", False),
+                        ):
+                            await connection.execute(
+                                """
+                                INSERT INTO self_model_cognitive_claim_sources (
+                                    claim_id, account_id, source_event_id,
+                                    relation, adopted, negative
+                                ) VALUES ($1, $2, $3, $4, $5, false)
+                                """,
+                                cognitive_id,
+                                account_id,
+                                source_event_id,
+                                relation,
+                                adopted,
+                            )
+                        await connection.execute(
+                            """
+                            INSERT INTO self_model_decision_cases (
+                                case_id, account_id, kind, context, options,
+                                constraints, chosen_option, rejected_options,
+                                outcome, reflection, still_endorsed,
+                                sharing_scope, status, owner_reviewed_at
+                            ) VALUES (
+                                $1, $2, 'real', '是否接受异地工作',
+                                '["接受","拒绝"]'::jsonb, '["家庭"]'::jsonb,
+                                '拒绝', '["接受"]'::jsonb, '留在本地',
+                                '家庭稳定更重要', true, 'private', 'confirmed', $3
+                            )
+                            """,
+                            decision_id,
+                            account_id,
+                            datetime(2026, 7, 22, 8, 2, tzinfo=UTC),
+                        )
+                        await connection.execute(
+                            """
+                            INSERT INTO self_model_decision_case_sources (
+                                case_id, account_id, source_event_id,
+                                relation, adopted, negative
+                            ) VALUES ($1, $2, $3, 'support', true, false)
+                            """,
+                            decision_id,
+                            account_id,
+                            event_id,
+                        )
+                        await connection.execute(
+                            """
+                            INSERT INTO self_model_relationship_profiles (
+                                profile_id, account_id, version_number, person_id,
+                                relationship_id, salutation, tone, advice_style,
+                                sharing_scope, boundaries, status,
+                                owner_reviewed_at, step_up_verified
+                            ) VALUES (
+                                $1, $2, 1, $3, $4, '小林', '温和',
+                                '先倾听再建议', 'family',
+                                '["不分享私密经历"]'::jsonb, 'approved', $5, true
+                            )
+                            """,
+                            profile_id,
+                            account_id,
+                            person_id,
+                            relationship_id,
+                            datetime(2026, 7, 22, 8, 2, tzinfo=UTC),
+                        )
+                        await connection.execute(
+                            """
+                            INSERT INTO self_model_relationship_profile_sources (
+                                profile_id, profile_version, account_id,
+                                source_event_id, relation, adopted, negative
+                            ) VALUES ($1, 1, $2, $3, 'support', true, false)
+                            """,
+                            profile_id,
+                            account_id,
+                            event_id,
+                        )
 
             assert await connection.fetchval("SELECT count(*) FROM memory_claims") == 0
             assert await connection.fetchval("SELECT count(*) FROM digital_self_versions") == 0
@@ -206,6 +348,26 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
         version_b = await registry.build(account_id=account_b)
         assert "legacy value candidate" not in str(version_a.manifest)
         assert "legacy value candidate" not in str(version_b.manifest)
+        assert [
+            type(entry)
+            for entry in version_a.manifest.entries
+            if isinstance(
+                entry,
+                (
+                    CognitiveClaimManifestEntry,
+                    DecisionCaseManifestEntry,
+                    RelationshipProfileManifestEntry,
+                ),
+            )
+        ] == [
+            CognitiveClaimManifestEntry,
+            DecisionCaseManifestEntry,
+            RelationshipProfileManifestEntry,
+        ]
+        assert version_a.manifest.source_summary.cognitive_claim_count == 1
+        assert version_a.manifest.source_summary.decision_case_count == 1
+        assert version_a.manifest.source_summary.relationship_profile_count == 1
+        assert version_b.manifest.source_summary.cognitive_claim_count == 0
         claim_a_id = next(
             entry.claim_id
             for entry in version_a.manifest.entries
@@ -227,8 +389,9 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
                 },
             )
         )
-        with pytest.raises(EmptyDigitalSelfSourceError):
-            await registry.build(account_id=account_a)
+        after_negative = await registry.build(account_id=account_a)
+        assert after_negative.manifest.source_summary.memory_claim_count == 0
+        assert after_negative.manifest.source_summary.cognitive_claim_count == 1
         with pytest.raises(VersionNotFoundError):
             await registry.get(account_id=account_b, version_id=version_a.version_id)
         with pytest.raises(SourceSnapshotConflictError):
@@ -266,7 +429,7 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
             expected_manifest_sha256=version_a.manifest_sha256,
         )
         assert rolled_back.status == "draft"
-        assert rolled_back.manifest.parent_version_id == version_a.version_id
+        assert rolled_back.manifest.parent_version_id == after_negative.version_id
         assert rolled_back.manifest.rollback_target_version_id == version_a.version_id
 
         connection = await asyncpg.connect(app_dsn)
@@ -274,12 +437,12 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
             async with connection.transaction():
                 await connection.execute("SELECT set_config('app.account_id', $1, true)", account_a)
                 assert await connection.fetchval("SELECT count(*) FROM memory_claims") == 1
-                assert await connection.fetchval("SELECT count(*) FROM digital_self_versions") == 2
+                assert await connection.fetchval("SELECT count(*) FROM digital_self_versions") == 3
                 assert (
                     await connection.fetchval(
                         "SELECT count(*) FROM digital_self_lifecycle_audit_events"
                     )
-                    == 6
+                    == 7
                 )
                 assert (
                     await connection.fetchval(
@@ -327,15 +490,15 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
 
         governance = PostgresAccountRepository.archive(app_dsn)
         exported = await governance.export_account(account_a)
-        assert len(exported["digital_self_versions"]) == 2
+        assert len(exported["digital_self_versions"]) == 3
         assert version_a.manifest_sha256 in str(exported["digital_self_versions"])
         assert exported["digital_self_versions"][0]["manifest"]["schema_version"] == (
-            "digital-self-manifest-v1"
+            "digital-self-manifest-v2"
         )
-        assert len(exported["digital_self_lifecycle_audit_events"]) == 6
+        assert len(exported["digital_self_lifecycle_audit_events"]) == 7
         deleted = await governance.delete_account(account_a)
-        assert deleted["digital_self_lifecycle_audit_events"] == 6
-        assert deleted["digital_self_versions"] == 2
+        assert deleted["digital_self_lifecycle_audit_events"] == 7
+        assert deleted["digital_self_versions"] == 3
         assert await governance.remaining_account_rows(account_a) == {}
         assert (
             await registry.get(account_id=account_b, version_id=version_b.version_id)

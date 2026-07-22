@@ -8,17 +8,29 @@ from pathlib import Path
 import pytest
 from services.archive.domain import EvidenceEvent
 from services.archive.life_archive import LifeArchive
+from services.digital_self.compiler import (
+    canonical_json_bytes,
+    canonical_manifest_bytes,
+    entry_dict,
+    sha256_hex,
+)
 from services.digital_self.domain import (
+    CognitiveClaimManifestEntry,
+    DecisionCaseManifestEntry,
+    DigitalSelfManifest,
+    DigitalSelfSourceSummary,
     EmptyDigitalSelfSourceError,
     InvalidVersionTransitionError,
     ManifestIntegrityError,
     MemoryClaimManifestEntry,
     PersonaTraitManifestEntry,
+    RelationshipProfileManifestEntry,
     SourceSnapshotConflictError,
     VersionNotFoundError,
 )
 from services.digital_self.registry import DigitalSelfRegistry
 from services.governance.account_data import SqliteAccountRepository
+from services.self_model.registry import SelfModelRegistry
 
 _OCCURRED_AT = datetime(2026, 7, 22, 8, 0, tzinfo=UTC)
 
@@ -457,7 +469,7 @@ async def test_account_governance_exports_and_deletes_digital_self_versions(
     rows = exported["digital_self_versions"]
     assert len(rows) == 1
     assert rows[0]["manifest_sha256"] == version.manifest_sha256
-    assert rows[0]["manifest"]["schema_version"] == "digital-self-manifest-v1"
+    assert rows[0]["manifest"]["schema_version"] == "digital-self-manifest-v2"
     audit_rows = exported["digital_self_lifecycle_audit_events"]
     assert len(audit_rows) == 1
     assert audit_rows[0]["action"] == "build"
@@ -561,3 +573,380 @@ async def test_transitions_require_a_well_formed_manifest_digest(tmp_path: Path)
     assert (await registry.get(account_id="owner-account", version_id=version.version_id)).status == (
         "draft"
     )
+
+
+@pytest.mark.asyncio
+async def test_v2_build_compiles_only_effective_self_model_entries(tmp_path: Path) -> None:
+    path = tmp_path / "memoria.sqlite3"
+    registry = DigitalSelfRegistry.sqlite(path)
+    registry.initialize()
+    await _seed_sources(path)
+    archive = LifeArchive.sqlite(path)
+    for event_id in ("owner-counterexample", "owner-negative"):
+        await archive.record(
+            EvidenceEvent(
+                event_id=event_id,
+                account_id="owner-account",
+                event_type="speech.utterance_finalized",
+                occurred_at=_OCCURRED_AT,
+                speaker_class="owner",
+                source="registry-test",
+                payload={
+                    "text": event_id,
+                    "interaction_mode": "companion",
+                    "prompt_kind": "spontaneous",
+                    "owner_projection_eligible": True,
+                },
+            )
+        )
+    now = _OCCURRED_AT.isoformat()
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO person_entities (
+                person_id, account_id, canonical_key, display_name,
+                relationship_to_owner, status, source_event_id, created_at
+            ) VALUES ('person-self-model', 'owner-account', 'friend:李梅', '李梅',
+                      'friend', 'confirmed', 'owner-account-owner-source', ?)
+            """,
+            (now,),
+        )
+        connection.execute(
+            """
+            INSERT INTO relationships (
+                relationship_id, account_id, person_id, relationship_type,
+                status, source_event_id, valid_at
+            ) VALUES ('relationship-self-model', 'owner-account',
+                      'person-self-model', 'friend', 'confirmed',
+                      'owner-account-owner-source', ?)
+            """,
+            (now,),
+        )
+
+    self_model = SelfModelRegistry.sqlite(path)
+    claim = await self_model.create_cognitive_claim(
+        account_id="owner-account",
+        claim_type="value",
+        statement="家庭安全高于短期收益",
+        confidence=0.95,
+        idempotency_key="effective-claim",
+    )
+    claim = await self_model.add_source(
+        account_id="owner-account",
+        item_kind="cognitive_claim",
+        item_id=claim.claim_id,
+        source_event_id="owner-account-owner-source",
+        relation="support",
+        adopted=True,
+        negative=False,
+        expected_version=claim.version,
+        idempotency_key="effective-claim-support",
+    )
+    claim = await self_model.add_source(
+        account_id="owner-account",
+        item_kind="cognitive_claim",
+        item_id=claim.claim_id,
+        source_event_id="owner-counterexample",
+        relation="counterexample",
+        adopted=False,
+        negative=False,
+        expected_version=claim.version,
+        idempotency_key="effective-claim-boundary",
+    )
+    claim = await self_model.review_cognitive_claim(
+        account_id="owner-account",
+        claim_id=claim.claim_id,
+        status="confirmed",
+        expected_version=claim.version,
+        step_up_verified=True,
+        idempotency_key="effective-claim-review",
+    )
+
+    decision = await self_model.create_decision_case(
+        account_id="owner-account",
+        kind="real",
+        context="是否接受异地工作",
+        options=("接受", "拒绝"),
+        constraints=("家庭",),
+        chosen_option="拒绝",
+        rejected_options=("接受",),
+        outcome="留在本地",
+        reflection="家庭稳定更重要",
+        still_endorsed=True,
+        idempotency_key="effective-decision",
+    )
+    decision = await self_model.add_source(
+        account_id="owner-account",
+        item_kind="decision_case",
+        item_id=decision.case_id,
+        source_event_id="owner-account-owner-source",
+        relation="support",
+        adopted=True,
+        negative=False,
+        expected_version=decision.version,
+        idempotency_key="effective-decision-support",
+    )
+    await self_model.review_decision_case(
+        account_id="owner-account",
+        case_id=decision.case_id,
+        status="confirmed",
+        expected_version=decision.version,
+        step_up_verified=False,
+        idempotency_key="effective-decision-review",
+    )
+
+    hypothetical = await self_model.create_decision_case(
+        account_id="owner-account",
+        kind="hypothetical",
+        context="假设移居海外",
+        options=("去", "不去"),
+        constraints=(),
+        chosen_option="去",
+        rejected_options=("不去",),
+        outcome="",
+        reflection="",
+        still_endorsed=True,
+        idempotency_key="hypothetical-decision",
+    )
+    hypothetical = await self_model.add_source(
+        account_id="owner-account",
+        item_kind="decision_case",
+        item_id=hypothetical.case_id,
+        source_event_id="owner-account-owner-source",
+        relation="support",
+        adopted=True,
+        negative=False,
+        expected_version=hypothetical.version,
+        idempotency_key="hypothetical-decision-support",
+    )
+    await self_model.review_decision_case(
+        account_id="owner-account",
+        case_id=hypothetical.case_id,
+        status="confirmed",
+        expected_version=hypothetical.version,
+        step_up_verified=False,
+        idempotency_key="hypothetical-decision-review",
+    )
+
+    negative = await self_model.create_cognitive_claim(
+        account_id="owner-account",
+        claim_type="belief",
+        statement="我总会选择最稳妥的方案",
+        confidence=0.7,
+        idempotency_key="negative-claim",
+    )
+    negative = await self_model.add_source(
+        account_id="owner-account",
+        item_kind="cognitive_claim",
+        item_id=negative.claim_id,
+        source_event_id="owner-account-owner-source",
+        relation="support",
+        adopted=True,
+        negative=False,
+        expected_version=negative.version,
+        idempotency_key="negative-claim-support",
+    )
+    negative = await self_model.add_source(
+        account_id="owner-account",
+        item_kind="cognitive_claim",
+        item_id=negative.claim_id,
+        source_event_id="owner-negative",
+        relation="counterexample",
+        adopted=False,
+        negative=True,
+        expected_version=negative.version,
+        idempotency_key="negative-claim-negative",
+    )
+    await self_model.review_cognitive_claim(
+        account_id="owner-account",
+        claim_id=negative.claim_id,
+        status="confirmed",
+        expected_version=negative.version,
+        step_up_verified=False,
+        idempotency_key="negative-claim-review",
+    )
+    candidate = await self_model.create_cognitive_claim(
+        account_id="owner-account",
+        claim_type="belief",
+        statement="仍待本人确认的候选声明",
+        confidence=0.6,
+        idempotency_key="candidate-claim",
+    )
+
+    missing_counterexample = await self_model.create_cognitive_claim(
+        account_id="owner-account",
+        claim_type="red_line",
+        statement="不为收益牺牲家人安全",
+        confidence=0.9,
+        idempotency_key="missing-counterexample",
+    )
+    missing_counterexample = await self_model.add_source(
+        account_id="owner-account",
+        item_kind="cognitive_claim",
+        item_id=missing_counterexample.claim_id,
+        source_event_id="owner-account-owner-source",
+        relation="support",
+        adopted=True,
+        negative=False,
+        expected_version=missing_counterexample.version,
+        idempotency_key="missing-counterexample-support",
+    )
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            UPDATE self_model_cognitive_claims
+            SET status = 'confirmed', owner_reviewed_at = ?,
+                step_up_verified = 1, version = version + 1, updated_at = ?
+            WHERE claim_id = ?
+            """,
+            (now, now, missing_counterexample.claim_id),
+        )
+
+    profile = await self_model.create_relationship_profile(
+        account_id="owner-account",
+        person_id="person-self-model",
+        relationship_id="relationship-self-model",
+        salutation="梅姐",
+        tone="坦诚",
+        advice_style="先听再建议",
+        boundaries=("不谈财务细节",),
+        idempotency_key="effective-profile",
+        sharing_scope="family",
+    )
+    profile = await self_model.add_source(
+        account_id="owner-account",
+        item_kind="relationship_profile",
+        item_id=profile.profile_id,
+        source_event_id="owner-account-owner-source",
+        relation="support",
+        adopted=True,
+        negative=False,
+        expected_version=profile.version_number,
+        idempotency_key="effective-profile-support",
+    )
+    await self_model.review_relationship_profile(
+        account_id="owner-account",
+        profile_id=profile.profile_id,
+        version_number=profile.version_number,
+        status="approved",
+        expected_status="candidate",
+        step_up_verified=True,
+        idempotency_key="effective-profile-review",
+    )
+    unapproved = await self_model.create_relationship_profile(
+        account_id="owner-account",
+        person_id="person-self-model",
+        relationship_id="relationship-self-model",
+        salutation="李梅",
+        tone="正式",
+        advice_style="只回答问题",
+        boundaries=(),
+        idempotency_key="unapproved-profile",
+    )
+
+    version = await registry.build(account_id="owner-account")
+    self_model_entries = tuple(
+        entry
+        for entry in version.manifest.entries
+        if isinstance(
+            entry,
+            (
+                CognitiveClaimManifestEntry,
+                DecisionCaseManifestEntry,
+                RelationshipProfileManifestEntry,
+            ),
+        )
+    )
+
+    assert [type(entry) for entry in self_model_entries] == [
+        CognitiveClaimManifestEntry,
+        DecisionCaseManifestEntry,
+        RelationshipProfileManifestEntry,
+    ]
+    assert claim.claim_id in str(self_model_entries)
+    assert decision.case_id in str(self_model_entries)
+    assert profile.profile_id in str(self_model_entries)
+    assert hypothetical.case_id not in str(version.manifest)
+    assert negative.claim_id not in str(version.manifest)
+    assert candidate.claim_id not in str(version.manifest)
+    assert missing_counterexample.claim_id not in str(version.manifest)
+    assert unapproved.profile_id not in str(version.manifest)
+    assert version.manifest.source_summary.cognitive_claim_count == 1
+    assert version.manifest.source_summary.decision_case_count == 1
+    assert version.manifest.source_summary.relationship_profile_count == 1
+
+
+@pytest.mark.asyncio
+async def test_rollback_of_v1_creates_v2_without_mutating_old_bytes(tmp_path: Path) -> None:
+    path = tmp_path / "memoria.sqlite3"
+    registry = DigitalSelfRegistry.sqlite(path)
+    registry.initialize()
+    entry = MemoryClaimManifestEntry(
+        claim_id="legacy-memory",
+        category="life_story",
+        subject_key="owner",
+        predicate="prefers",
+        value="tea",
+        confidence=0.9,
+        sensitive_domain="personal",
+        extractor_version="extractor-v1",
+        source_event_id="legacy-source",
+        valid_at="2026-07-22T08:00:00+00:00",
+    )
+    source_sha256 = sha256_hex(
+        canonical_json_bytes(
+            {
+                "entries": [entry_dict(entry)],
+                "persona_version_id": None,
+            }
+        )
+    )
+    legacy_manifest = DigitalSelfManifest(
+        schema_version="digital-self-manifest-v1",
+        compiler_version="digital-self-compiler-v1",
+        policy_version="digital-self-policy-v1",
+        parent_version_id=None,
+        rollback_target_version_id=None,
+        entries=(entry,),
+        source_summary=DigitalSelfSourceSummary(
+            memory_claim_count=1,
+            persona_trait_count=0,
+            persona_version_id=None,
+            source_summary_sha256=source_sha256,
+        ),
+    )
+    legacy_bytes = canonical_manifest_bytes(legacy_manifest)
+    legacy_digest = sha256_hex(legacy_bytes)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO digital_self_versions (
+                version_id, account_id, version_number, status, manifest_json,
+                manifest_sha256, source_summary_sha256, parent_version_id,
+                rollback_target_version_id, created_at
+            ) VALUES ('legacy-v1', 'owner-account', 1, 'revoked', ?, ?, ?, NULL, NULL, ?)
+            """,
+            (
+                legacy_bytes.decode(),
+                legacy_digest,
+                source_sha256,
+                _OCCURRED_AT.isoformat(),
+            ),
+        )
+
+    rollback = await registry.rollback(
+        account_id="owner-account",
+        target_version_id="legacy-v1",
+        expected_manifest_sha256=legacy_digest,
+    )
+    reloaded = await registry.get(
+        account_id="owner-account",
+        version_id="legacy-v1",
+    )
+
+    assert rollback.manifest.schema_version == "digital-self-manifest-v2"
+    assert rollback.manifest.entries == (entry,)
+    assert rollback.manifest.rollback_target_version_id == "legacy-v1"
+    assert reloaded.manifest.schema_version == "digital-self-manifest-v1"
+    assert canonical_manifest_bytes(reloaded.manifest) == legacy_bytes
+    assert reloaded.manifest_sha256 == legacy_digest

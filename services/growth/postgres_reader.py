@@ -23,12 +23,26 @@ from services.growth.policy import (
 )
 from services.growth.tasks import TaskEventAction, apply_task_event
 from services.persona.domain import LEGACY_COGNITIVE_TRAIT_CATEGORIES
+from services.self_model.domain import (
+    CognitiveClaim,
+    DecisionCase,
+    RelationshipProfile,
+    SelfModelItem,
+    SelfModelRegistryPort,
+)
+from services.self_model.policy import activation_decision
 
 
 class PostgresGrowthReader:
-    def __init__(self, dsn: str) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        self_model_registry: SelfModelRegistryPort | None = None,
+    ) -> None:
         self._dsn = dsn
         self._pool: asyncpg.Pool | None = None
+        self._self_model_registry = self_model_registry
 
     async def initialize(self) -> None:
         if self._pool is None:
@@ -225,6 +239,13 @@ class PostgresGrowthReader:
             for row in negative_rows
             if (payload := _payload(row["payload"])).get("action_type") in {"not_me", "would_not_say"}
         ]
+        await self._append_self_model_sources(
+            account_id=account_id,
+            adopted=adopted,
+            rejected=rejected,
+            version_targets=version_targets,
+            version_target_events=version_target_events,
+        )
         dimensions: list[dict[str, Any]] = []
         for key in DIMENSIONS:
             sources = adopted[key]
@@ -250,6 +271,78 @@ class PostgresGrowthReader:
             dimensions.append({"key": key, "status": status, "adopted_sources": sources, "rejected_reason_counts": dict(dimension_rejected), "conflicts": conflicts, "recent_changes": [{field: item[field] for field in ("event_id", "event_type", "occurred_at")} for item in (sources[-5:] + conflicts[-5:])], "dependency_blockers": blockers, "version_readiness": readiness})
         return {"dimensions": dimensions}
 
+    async def _append_self_model_sources(
+        self,
+        *,
+        account_id: str,
+        adopted: dict[GrowthDimension, list[dict[str, Any]]],
+        rejected: dict[GrowthDimension, Counter[str]],
+        version_targets: dict[GrowthDimension, set[str]],
+        version_target_events: dict[GrowthDimension, dict[str, set[str]]],
+    ) -> None:
+        registry = self._self_model_registry
+        if registry is None:
+            return
+        claims = await registry.cognitive_claims(account_id=account_id)
+        decisions = await registry.decision_cases(account_id=account_id)
+        profiles = await registry.relationship_profiles(account_id=account_id)
+        items: tuple[SelfModelItem, ...] = (*claims, *decisions, *profiles)
+        profiled_relationships: set[str] = set()
+        for item in items:
+            if (
+                isinstance(item, RelationshipProfile)
+                and item.relationship_id not in profiled_relationships
+            ):
+                profiled_relationships.add(item.relationship_id)
+                pending = rejected["relationship_models"].get(
+                    "relationship_profile_pending_owner_approval",
+                    0,
+                )
+                if pending == 1:
+                    del rejected["relationship_models"][
+                        "relationship_profile_pending_owner_approval"
+                    ]
+                elif pending > 1:
+                    rejected["relationship_models"][
+                        "relationship_profile_pending_owner_approval"
+                    ] -= 1
+            dimension: GrowthDimension = (
+                "relationship_models"
+                if isinstance(item, RelationshipProfile)
+                else "decision_cases"
+            )
+            activation = activation_decision(item)
+            if not activation.effective:
+                for reason in activation.reasons:
+                    rejected[dimension][f"self_model_{reason}"] += 1
+                continue
+            source = next(
+                source
+                for source in item.sources
+                if source.speaker_class == "owner"
+                and source.relation == "support"
+                and source.adopted
+                and not source.negative
+            )
+            target_kind, target_id, version_target_id, label = _self_model_identity(item)
+            adopted[dimension].append(
+                {
+                    "kind": "self_model",
+                    "target_kind": target_kind,
+                    "target_id": target_id,
+                    "version_target_id": version_target_id,
+                    "event_id": source.source_event_id,
+                    "label": label,
+                    "weight": "strong",
+                    "occurred_at": source.occurred_at.isoformat(),
+                    "event_type": "self_model.approved",
+                }
+            )
+            version_targets[dimension].add(version_target_id)
+            version_target_events[dimension][version_target_id] = {
+                evidence.source_event_id for evidence in item.sources
+            }
+
     async def target_belongs(self, *, account_id: str, target_kind: str, target_id: str) -> bool:
         table, column = {
             "memory_claim": ("memory_claims", "claim_id"),
@@ -260,6 +353,9 @@ class PostgresGrowthReader:
             "timeline_entry": ("timeline_entries", "timeline_id"),
             "relationship": ("relationships", "relationship_id"),
             "voice_profile": ("voice_profiles", "profile_id"),
+            "cognitive_claim": ("self_model_cognitive_claims", "claim_id"),
+            "decision_case": ("self_model_decision_cases", "case_id"),
+            "relationship_profile": ("self_model_relationship_profiles", "profile_id"),
         }.get(target_kind, ("", ""))
         if not table:
             return False
@@ -275,6 +371,9 @@ class PostgresGrowthReader:
                     "timeline_entry",
                     "relationship",
                     "voice_profile",
+                    "cognitive_claim",
+                    "decision_case",
+                    "relationship_profile",
                 }
                 else target_id
             )
@@ -317,6 +416,20 @@ def _event(row: asyncpg.Record, account_id: str) -> EvidenceEvent:
 
 def _source(target_kind: str, target_id: str, event: EvidenceEvent, label: str, weight: str) -> dict[str, str]:
     return {"kind": "evidence", "target_kind": target_kind, "target_id": target_id, "event_id": event.event_id, "label": label, "weight": weight, "occurred_at": event.occurred_at.isoformat(), "event_type": event.event_type}
+
+
+def _self_model_identity(item: SelfModelItem) -> tuple[str, str, str, str]:
+    if isinstance(item, CognitiveClaim):
+        return ("cognitive_claim", item.claim_id, item.claim_id, item.statement)
+    if isinstance(item, DecisionCase):
+        return ("decision_case", item.case_id, item.case_id, item.context)
+    version_target_id = f"{item.profile_id}@{item.version_number}"
+    return (
+        "relationship_profile",
+        item.profile_id,
+        version_target_id,
+        item.salutation,
+    )
 
 
 def _version_readiness(dimension: GrowthDimension, targets: set[str], version: dict[str, Any] | None, blockers: list[str]) -> dict[str, Any]:

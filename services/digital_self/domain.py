@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
 
+from services.self_model.domain import CognitiveClaimType, DecisionKind
+
 VersionStatus = Literal["draft", "testing", "approved", "frozen", "revoked"]
 
 
@@ -57,7 +59,60 @@ class PersonaTraitManifestEntry:
     entry_type: Literal["persona_trait"] = "persona_trait"
 
 
-type ManifestEntry = MemoryClaimManifestEntry | PersonaTraitManifestEntry
+@dataclass(frozen=True, slots=True)
+class CognitiveClaimManifestEntry:
+    claim_id: str
+    claim_type: CognitiveClaimType
+    statement: str
+    context: str
+    confidence: float
+    sharing_scope: str
+    support_source_event_ids: tuple[str, ...]
+    counterexample_source_event_ids: tuple[str, ...]
+    entry_type: Literal["cognitive_claim"] = "cognitive_claim"
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionCaseManifestEntry:
+    case_id: str
+    kind: DecisionKind
+    context: str
+    options: tuple[str, ...]
+    constraints: tuple[str, ...]
+    chosen_option: str
+    rejected_options: tuple[str, ...]
+    outcome: str
+    reflection: str
+    still_endorsed: bool
+    sharing_scope: str
+    support_source_event_ids: tuple[str, ...]
+    counterexample_source_event_ids: tuple[str, ...]
+    entry_type: Literal["decision_case"] = "decision_case"
+
+
+@dataclass(frozen=True, slots=True)
+class RelationshipProfileManifestEntry:
+    profile_id: str
+    version_number: int
+    person_id: str
+    relationship_id: str
+    salutation: str
+    tone: str
+    advice_style: str
+    sharing_scope: str
+    boundaries: tuple[str, ...]
+    support_source_event_ids: tuple[str, ...]
+    counterexample_source_event_ids: tuple[str, ...]
+    entry_type: Literal["relationship_profile"] = "relationship_profile"
+
+
+type ManifestEntry = (
+    MemoryClaimManifestEntry
+    | PersonaTraitManifestEntry
+    | CognitiveClaimManifestEntry
+    | DecisionCaseManifestEntry
+    | RelationshipProfileManifestEntry
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +121,9 @@ class DigitalSelfSourceSummary:
     persona_trait_count: int
     persona_version_id: str | None
     source_summary_sha256: str
+    cognitive_claim_count: int = 0
+    decision_case_count: int = 0
+    relationship_profile_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)

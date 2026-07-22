@@ -225,17 +225,32 @@ guest/uncertain 不得进入 owner 私有能力；shadow owner 只保留历史�
 
 ### S5：CognitiveClaim、DecisionCase 与 RelationshipProfile
 
-状态：PENDING
+状态：COMPLETED（2026-07-22）
 
 实现顺序：
 
-1. CognitiveClaim：belief/preference/value/decision_rule/red_line/uncertainty/conflict/support，含情境、反例、置信度、状态和多来源；
+1. CognitiveClaim：belief/preference/value/decision_rule/red_line/uncertainty/conflict/support，
+   含情境、反例、置信度、状态和多来源；高敏内容必须密码复核。
 2. DecisionCase：情境、候选方案、约束、选择、舍弃、结果、反思和当前是否仍认同；
-3. RelationshipProfile：复用 `person_entities/relationships`，只新增称呼、语气、建议方式、共享范围、禁区和批准状态。
+   结构化 `decision_review` 缺少约束时保持 hypothetical。
+3. RelationshipProfile：复用 `person_entities/relationships`，只新增称呼、语气、建议方式、
+   共享范围、禁区和批准状态；批准不等于访问授权。
 
 旧 `decision_habit/value_priority` 和关系事实只能成为 candidate，不自动升级为高敏生效策略。
 
-验收：所有生效项至少一个 owner 来源；高敏项必须本人审核且保留反例；关系画像不能授予访问权或改写人物事实。
+交付：
+
+- [x] SQLite/PostgreSQL 一等领域模型、FORCE RLS、幂等和 CAS；
+- [x] 三类创建接口与 sources 在同一事务写入，失败全回滚；
+- [x] Growth Map 四类任务接入结构化决策字段；真实复盘与情境推演分流；
+- [x] H5 审核面板、来源原话展开、反例补充、step-up 和关系权限边界文案；
+- [x] DigitalSelf manifest v2、导出/删除/生命周期治理和版本统计；
+- [x] 旧 v1 manifest 字节/摘要/回滚兼容。
+
+验收：所有生效项至少一个 owner 来源；高敏项必须本人审核且保留反例；关系画像不能授予
+访问权或改写人物事实。正式临时 PostgreSQL 17 + pgvector 环境 920 passed、2 skipped、
+0 failed，总覆盖率 89.32%；H5 全量 195 passed，production build、Ruff、strict mypy 和
+`git diff --check` 通过。来源原话由 owner-scoped Evidence 查询并截断为审核摘要。
 
 ### S6：DigitalSelfResponsePlanner 与回答来源
 

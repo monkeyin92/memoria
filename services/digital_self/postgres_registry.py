@@ -18,9 +18,12 @@ from services.digital_self.compiler import (
     DEFAULT_COMPILER_VERSION,
     DEFAULT_POLICY_VERSION,
     build_manifest,
+    cognitive_entry,
+    decision_entry,
     decode_manifest,
     memory_entry,
     persona_entry,
+    relationship_entry,
 )
 from services.digital_self.domain import (
     DigitalSelfVersion,
@@ -31,6 +34,18 @@ from services.digital_self.domain import (
     VersionStatus,
 )
 from services.persona.domain import LEGACY_COGNITIVE_TRAIT_CATEGORIES
+from services.self_model.domain import (
+    CognitiveClaim,
+    CognitiveClaimType,
+    DecisionCase,
+    DecisionKind,
+    ItemStatus,
+    RelationshipProfile,
+    RelationshipProfileStatus,
+    SelfModelSource,
+    SourceRelation,
+)
+from services.self_model.policy import is_effective
 
 _TRANSITIONS: dict[str, tuple[VersionStatus, VersionStatus]] = {
     "begin_testing": ("draft", "testing"),
@@ -65,8 +80,12 @@ class PostgresDigitalSelfRegistry:
         if pool is None:  # pragma: no cover
             raise RuntimeError("failed to create PostgreSQL digital self pool")
         schema = Path(__file__).with_name("postgres_schema.sql").read_text(encoding="utf-8")
+        self_model_schema = (
+            Path(__file__).parents[1] / "self_model" / "postgres_schema.sql"
+        ).read_text(encoding="utf-8")
         try:
             async with pool.acquire() as connection:
+                await connection.execute(self_model_schema)
                 await connection.execute(schema)
         except Exception:
             await pool.close()
@@ -366,6 +385,7 @@ class PostgresDigitalSelfRegistry:
             account_id,
         )
         if persona_row is None:
+            entries.extend(await self._self_model_entries(connection, account_id))
             return entries, None
         persona_version_id = str(persona_row["version_id"])
         snapshot = persona_row["snapshot"]
@@ -442,7 +462,174 @@ class PostgresDigitalSelfRegistry:
             ):
                 continue
             entries.append(entry)
+        entries.extend(await self._self_model_entries(connection, account_id))
         return entries, persona_version_id
+
+    async def _self_model_entries(
+        self,
+        connection: asyncpg.Connection,
+        account_id: str,
+    ) -> builtins.list[ManifestEntry]:
+        entries: builtins.list[ManifestEntry] = []
+        claim_rows = await connection.fetch(
+            """
+            SELECT * FROM self_model_cognitive_claims
+            WHERE account_id = $1 ORDER BY claim_id
+            """,
+            account_id,
+        )
+        for row in claim_rows:
+            claim_id = str(row["claim_id"])
+            claim = CognitiveClaim(
+                claim_id=claim_id,
+                account_id=account_id,
+                claim_type=cast(CognitiveClaimType, str(row["claim_type"])),
+                statement=str(row["statement"]),
+                context=str(row["context"]),
+                confidence=float(row["confidence"]),
+                sharing_scope=str(row["sharing_scope"]),
+                status=cast(ItemStatus, str(row["status"])),
+                unresolved_conflict=bool(row["unresolved_conflict"]),
+                sources=await self._self_model_sources(
+                    connection,
+                    account_id,
+                    "self_model_cognitive_claim_sources",
+                    "claim_id",
+                    claim_id,
+                ),
+                owner_reviewed_at=cast(datetime | None, row["owner_reviewed_at"]),
+                step_up_verified=bool(row["step_up_verified"]),
+                version=int(row["version"]),
+                created_at=cast(datetime, row["created_at"]),
+                updated_at=cast(datetime, row["updated_at"]),
+            )
+            if is_effective(claim):
+                entries.append(cognitive_entry(claim))
+
+        decision_rows = await connection.fetch(
+            """
+            SELECT * FROM self_model_decision_cases
+            WHERE account_id = $1 ORDER BY case_id
+            """,
+            account_id,
+        )
+        for row in decision_rows:
+            case_id = str(row["case_id"])
+            decision = DecisionCase(
+                case_id=case_id,
+                account_id=account_id,
+                kind=cast(DecisionKind, str(row["kind"])),
+                context=str(row["context"]),
+                options=_string_tuple(row["options"]),
+                constraints=_string_tuple(row["constraints"]),
+                chosen_option=str(row["chosen_option"]),
+                rejected_options=_string_tuple(row["rejected_options"]),
+                outcome=str(row["outcome"]),
+                reflection=str(row["reflection"]),
+                still_endorsed=bool(row["still_endorsed"]),
+                sharing_scope=str(row["sharing_scope"]),
+                status=cast(ItemStatus, str(row["status"])),
+                unresolved_conflict=bool(row["unresolved_conflict"]),
+                sources=await self._self_model_sources(
+                    connection,
+                    account_id,
+                    "self_model_decision_case_sources",
+                    "case_id",
+                    case_id,
+                ),
+                owner_reviewed_at=cast(datetime | None, row["owner_reviewed_at"]),
+                step_up_verified=bool(row["step_up_verified"]),
+                version=int(row["version"]),
+                created_at=cast(datetime, row["created_at"]),
+                updated_at=cast(datetime, row["updated_at"]),
+            )
+            if is_effective(decision):
+                entries.append(decision_entry(decision))
+
+        profile_rows = await connection.fetch(
+            """
+            SELECT * FROM self_model_relationship_profiles
+            WHERE account_id = $1 ORDER BY profile_id, version_number
+            """,
+            account_id,
+        )
+        for row in profile_rows:
+            profile_id = str(row["profile_id"])
+            version_number = int(row["version_number"])
+            profile = RelationshipProfile(
+                profile_id=profile_id,
+                account_id=account_id,
+                version_number=version_number,
+                person_id=str(row["person_id"]),
+                relationship_id=str(row["relationship_id"]),
+                salutation=str(row["salutation"]),
+                tone=str(row["tone"]),
+                advice_style=str(row["advice_style"]),
+                sharing_scope=str(row["sharing_scope"]),
+                boundaries=_string_tuple(row["boundaries"]),
+                status=cast(RelationshipProfileStatus, str(row["status"])),
+                unresolved_conflict=bool(row["unresolved_conflict"]),
+                sources=await self._self_model_sources(
+                    connection,
+                    account_id,
+                    "self_model_relationship_profile_sources",
+                    "profile_id",
+                    profile_id,
+                    profile_version=version_number,
+                ),
+                owner_reviewed_at=cast(datetime | None, row["owner_reviewed_at"]),
+                step_up_verified=bool(row["step_up_verified"]),
+                created_at=cast(datetime, row["created_at"]),
+            )
+            if is_effective(profile):
+                entries.append(relationship_entry(profile))
+        return entries
+
+    @staticmethod
+    async def _self_model_sources(
+        connection: asyncpg.Connection,
+        account_id: str,
+        table: str,
+        id_column: str,
+        item_id: str,
+        *,
+        profile_version: int | None = None,
+    ) -> tuple[SelfModelSource, ...]:
+        version_clause = (
+            " AND source.profile_version = $3"
+            if profile_version is not None
+            else ""
+        )
+        parameters: tuple[object, ...] = (
+            (account_id, uuid.UUID(item_id), profile_version)
+            if profile_version is not None
+            else (account_id, uuid.UUID(item_id))
+        )
+        rows = await connection.fetch(
+            f"""
+            SELECT source.source_event_id, source.relation, source.adopted,
+                   source.negative, evidence.speaker_class, evidence.occurred_at
+            FROM {table} AS source
+            JOIN archive_evidence_events AS evidence
+              ON evidence.event_id = source.source_event_id
+             AND evidence.account_id = source.account_id
+            WHERE source.account_id = $1 AND source.{id_column} = $2
+            {version_clause}
+            ORDER BY source.source_event_id, source.relation
+            """,
+            *parameters,
+        )
+        return tuple(
+            SelfModelSource(
+                source_event_id=str(row["source_event_id"]),
+                relation=cast(SourceRelation, str(row["relation"])),
+                adopted=bool(row["adopted"]),
+                negative=bool(row["negative"]),
+                speaker_class=cast(SpeakerClass, str(row["speaker_class"])),
+                occurred_at=cast(datetime, row["occurred_at"]),
+            )
+            for row in rows
+        )
 
     @staticmethod
     async def _negative_targets(
@@ -655,3 +842,11 @@ def _payload(value: object) -> dict[str, object]:
             raise SourceSnapshotConflictError("evidence payload is invalid")
         return cast(dict[str, object], decoded)
     return cast(dict[str, object], value)
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, list):
+        raise SourceSnapshotConflictError("self model list field is invalid")
+    return tuple(str(item) for item in value)

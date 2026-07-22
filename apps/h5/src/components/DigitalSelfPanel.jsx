@@ -51,6 +51,7 @@ import { AccountDeletionForm } from "./AccountDeletionForm.jsx";
 import { DigitalSelfVersions } from "./DigitalSelfVersions.jsx";
 import { GrowthMapPanel } from "./GrowthMapPanel.jsx";
 import { InteractionModePanel } from "./InteractionModePanel.jsx";
+import { SelfModelPanel } from "./SelfModelPanel.jsx";
 
 const traitLabels = {
   verbal_tic: "口头表达",
@@ -141,6 +142,7 @@ export function DigitalSelfPanel({
   const [confirmation, setConfirmation] = useState(null);
   const [interactionCapabilities, setInteractionCapabilities] = useState(null);
   const [growthSourceCount, setGrowthSourceCount] = useState(0);
+  const [selfModelRevision, setSelfModelRevision] = useState(0);
   const [personaAllowed, setPersonaAllowed] = useState(false);
   const [personaConsent, setPersonaConsent] = useState(false);
   const [traits, setTraits] = useState([]);
@@ -505,9 +507,15 @@ export function DigitalSelfPanel({
               onStartChat={onStartChat}
               onOverview={handleGrowthOverview}
               voiceSessionActive={voiceSessionActive}
-              refreshToken={digitalSelfVersions
-                .map((version) => `${version.version_id}:${version.status}`)
-                .join("|")}
+              refreshToken={[
+                selfModelRevision,
+                ...digitalSelfVersions.map(
+                  (version) => `${version.version_id}:${version.status}`,
+                ),
+              ].join("|")}
+            />
+            <SelfModelPanel
+              onChanged={() => setSelfModelRevision((current) => current + 1)}
             />
             <DigitalSelfVersions
               versions={digitalSelfVersions}
