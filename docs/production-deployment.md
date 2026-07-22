@@ -5,8 +5,8 @@
 - H5：`https://122.51.108.140:8443/`
 - H5 兼容路径：`https://122.51.108.140:8443/memoria-h5/`
 - Control API：`https://122.51.108.140:8443/memoria-api/`
-- 当前正式 runtime release：`20260720-182535`
-- 当前 H5 release：`20260720-182535`
+- 当前正式 runtime release：`20260721-224804`
+- 当前 H5 release：`20260721-224804`
 - Control API 上游：`127.0.0.1:8791`
 - LiveKit：自建 `livekit/livekit-server:v1.13.3`，位于 `/opt/livekit`，Compose project 为 `memoria-livekit`
 - LiveKit 信令：`wss://122.51.108.140:8443`，经 Nginx `/rtc`、`/agent` 转发到 `127.0.0.1:7880`
@@ -18,11 +18,11 @@
 - Runtime：版本目录位于 `/opt/memoria/releases/`，`/opt/memoria/current` 原子软链指向当前 release
 - H5：版本目录位于 `/var/www/memoria-releases/`，`/var/www/memoria-h5` 原子软链指向当前 release
 
-Memoria 使用独立静态资源/API 路径、回环端口、Compose project 和限流 zone。新服务器的 443 继续由既有 WMS 虚拟主机占用；8443 由 Nginx stream 预读协议，TLS 流量转到 `127.0.0.1:9443` 的 Memoria HTTPS server，原生 ICE/TCP 转到 `127.0.0.1:8444` 后进入 LiveKit 容器的 8443。当前公网正式入口是 8443。公网 `/memoria-api/internal/` 固定返回 404；WMS 的 `/wms/` 路由与既有数据保留且服务保持 active。当前迁移证据见 `docs/releases/20260720-140053.md`，onboarding 热修见 `docs/releases/20260720-145953.md`，账号注销 UI 热修见 `docs/releases/20260720-162553.md`，runtime 删除幂等热修见 `docs/releases/20260720-164942.md`，PCM 声纹录音修复见 `docs/releases/20260720-174545.md`，重复登记与音色跳变修复见 `docs/releases/20260720-182535.md`。
+Memoria 使用独立静态资源/API 路径、回环端口、Compose project 和限流 zone。新服务器的 443 继续由既有 WMS 虚拟主机占用；8443 由 Nginx stream 预读协议，TLS 流量转到 `127.0.0.1:9443` 的 Memoria HTTPS server，原生 ICE/TCP 转到 `127.0.0.1:8444` 后进入 LiveKit 容器的 8443。当前公网正式入口是 8443。公网 `/memoria-api/internal/` 固定返回 404；WMS 的 `/wms/` 路由与既有数据保留且服务保持 active。当前生产证据见 `docs/releases/20260721-224804.md`，历史迁移与热修证据保留在 `docs/releases/`。
 
 终身档案迁移到 PostgreSQL + 对象存储后的备份、PITR、对象清单与联合恢复门禁见 [`archive-backup-restore-runbook.md`](./archive-backup-restore-runbook.md)。现有 SQLite 发布快照只覆盖旧主库，不得被描述为终身档案生产恢复方案。
 
-> P0.5、P1-P6 的稳定账号、终身记忆、Persona、SpeakerAuthority、VoiceProfile 与账户治理底座随 `20260720-140053` 部署，当前 runtime 为 `20260720-182535`（关闭遗留逐会话声纹登记并保持伙伴音色）。CAM++ 仍为 shadow-only，正式声纹/复刻声音不得在真人授权与盲测前激活。当前 PostgreSQL、WAL archive、MinIO 和备份均同机，没有异地副本/KMS/PITR，不能承诺“永不丢失”。
+> P0.5、P1-P6 的稳定账号、终身记忆、Persona、SpeakerAuthority、VoiceProfile 与账户治理底座随 `20260720-140053` 部署，当前 runtime/H5 为 `20260721-224804`。CAM++ 仍为 shadow-only，正式声纹/复刻声音不得在真人授权与盲测前激活。当前 PostgreSQL、WAL archive、MinIO 和备份均同机，没有异地副本/KMS/PITR，不能承诺“永不丢失”。
 
 ## TLS 与自动续期
 
@@ -64,11 +64,18 @@ DASHSCOPE_API_KEY
 MEMORIA_AUTH_SECRET
 ```
 
+豆包 TTS 鉴权必须二选一：旧控制台使用 `DOUBAO_TTS_APP_ID` +
+`DOUBAO_TTS_ACCESS_TOKEN`，新控制台可使用 `DOUBAO_TTS_API_KEY`。这些值只允许进入
+`/etc/memoria-agent.env`；双向 WebSocket 不使用 Secret Key，禁止把
+`DOUBAO_TTS_SECRET_KEY` 写入运维源、候选 env 或服务器配置。候选文件安装后仍必须保持
+`root:root 0600`。
+
 当前生产使用的非 secret 配置：
 
 ```dotenv
 ENVIRONMENT=production
 LLM_PROVIDER=qwen
+TTS_PROVIDER=doubao
 DEPLOYMENT_PROFILE=cn_self_hosted
 PUBLIC_BASE_URL=https://122.51.108.140:8443/memoria-api
 ALLOWED_ORIGINS=https://122.51.108.140:8443
@@ -87,12 +94,13 @@ DASHSCOPE_SUMMARY_MODEL=qwen-plus
 FUNASR_MODEL=fun-asr-realtime
 FUNASR_SAMPLE_RATE=16000
 FUNASR_MAX_SENTENCE_SILENCE_MS=550
-COSYVOICE_MODEL=cosyvoice-v3.5-flash
-COSYVOICE_VOICE_PROFILE=warm_companion
-COSYVOICE_INSTRUCT_STYLE=auto
-COSYVOICE_SAMPLE_RATE=24000
-COSYVOICE_WORD_TIMESTAMPS=true
-# Deploy designed_voice_ids.json next to the agent (or set COSYVOICE_VOICE to a voice_id).
+FUNASR_CONTEXT_ENABLED=false
+DOUBAO_TTS_WS_URL=wss://openspeech.bytedance.com/api/v3/tts/bidirection
+DOUBAO_TTS_RESOURCE_ID=seed-tts-2.0
+DOUBAO_TTS_VOICE_PROFILE=warm_companion
+DOUBAO_TTS_VOICE_REGISTRY=infra/voices/doubao_voice_ids.json
+DOUBAO_TTS_SAMPLE_RATE=24000
+DOUBAO_TTS_POOL_SIZE=4
 
 MEMORIA_TIMEZONE=Asia/Shanghai
 READINESS_GATE_TTL_S=86400
@@ -103,6 +111,7 @@ ENDPOINTING_MAX_DELAY_S=2.20
 ENDPOINTING_ALPHA=0.85
 INTERRUPTION_MIN_DURATION_S=0.45
 FALSE_INTERRUPTION_TIMEOUT_S=1.70
+MEMORIA_SPEAKER_GUEST_THRESHOLD=0.40
 ```
 
 生产默认 LLM 和每日回顾均使用百炼 Qwen。账号版本发布后，浏览器只接收注册账号 Bearer token 和短期 LiveKit participant token；`/v1/auth/anonymous` 仅用于兼容旧身份并在注册时原地升级。服务端在持久化消息、Profile 或向 Agent/FunASR 传递上下文前统一做 PII 脱敏，所有 memory/session route 均校验 token subject 与资源所有权。账号登录不等于当前说话人是主人，私人档案权限仍需结合 `owner / guest / uncertain` 判定。
@@ -121,9 +130,9 @@ P0～P6 发布后，Control API `/health/ready` 还必须同时返回以下 9 �
 
 ## P0.5、P1～P6 上线状态与后续门槛
 
-1. `20260720-140053` 已在新服务器部署 pgvector、FORCE RLS、MinIO 版本控制、四类 capability token、独立 SpeakerAuthority token、迁移/联合恢复、core readiness 和真实 Provider smoke；当前 runtime/H5 为 `20260720-182535`。
+1. `20260720-140053` 已在新服务器部署 pgvector、FORCE RLS、MinIO 版本控制、四类 capability token、独立 SpeakerAuthority token、迁移/联合恢复、core readiness 和真实 Provider smoke；当前 runtime/H5 为 `20260721-224804`。
 2. 当前低成本底座为同机 PostgreSQL、WAL archive、MinIO 和备份；PITR、异地副本与 KMS 仍是下一阶段可靠性门槛，不能把同机恢复演练描述为异地容灾。
-3. 使用授权样本完成 SpeakerAuthority 指标报告和 CosyVoice 真人盲测前，不得激活正式声纹模板或复刻声音。
+3. 使用授权样本完成 SpeakerAuthority 指标报告和历史 CosyVoice 复刻声音真人盲测前，不得激活正式声纹模板或复刻声音；当前豆包主链只使用已审核的原生 TTS 2.0 音色。
 4. 账户删除 worker、LiveKit 房间删除权限、对象全版本删除权限和供应商声音删除权限必须同时具备；缺任一权限时删除只能保持 `deleting`，不得伪报完成。
 5. 每个后续候选仍必须通过完整 PostgreSQL 合同、联合恢复、core readiness、Provider smoke、镜像 secret 扫描和真实 H5 浏览器检查，再按“runtime 先、H5 最后”顺序切流；原生 iOS 客户端已从仓库移除。
 
@@ -131,10 +140,10 @@ P0～P6 发布后，Control API `/health/ready` 还必须同时返回以下 9 �
 
 H5 必须最后激活。标准顺序是：本机构建并校验工件 → 暂存 release 与 H5 → 创建并验证数据快照 → 服务器导入镜像 → 原子切 runtime → 容器/Provider/readiness 门禁 → Nginx 与证书检查 → 最后原子切 H5 → 公网验收。这样既避免小内存服务器构建卡死，也避免新 H5 连接尚未 ready 的 runtime。
 
-下面命令以已部署基线 release `20260720-140053` 为完整示例；当前线上 runtime/H5 release 为 `20260720-182535`。后续发布只修改第一行 `RELEASE_TAG`，且 tag 必须非空、唯一、不可复用。
+下面命令沿用已验证的生产目录布局；当前线上 runtime/H5 为 `20260721-224804`。执行前必须在 shell 显式设置一个非空、唯一、不可复用的新 `RELEASE_TAG`，示例块会在缺失时立即失败。
 
 ```bash
-RELEASE_TAG=20260720-140053
+: "${RELEASE_TAG:?set a new unique RELEASE_TAG, for example YYYYMMDD-HHMMSS}"
 RELEASE_DIR=/opt/memoria/releases/$RELEASE_TAG
 H5_DIR=/var/www/memoria-releases/$RELEASE_TAG
 BACKUP=/var/lib/memoria/memoria-pre-$RELEASE_TAG.sqlite3
@@ -218,6 +227,14 @@ done
 
 只有本机构建环境不可用且已确认服务器有足够资源时，才允许把服务器构建作为显式回退；不得把它恢复为默认发布路径。
 
+镜像和候选 H5 暂存后、切流前运行隔离 server smoke。脚本使用候选 H5、临时 SQLite、
+`18791/18891`，不会占用在线 Control API 的 `8791`：
+
+```bash
+sudo /opt/memoria/releases/$RELEASE_TAG/scripts/smoke_server_deployment.sh \
+  "$RELEASE_TAG"
+```
+
 ### 2. 暂存工件，不切公网软链
 
 把完整 release 放入 `$RELEASE_DIR`，把 production build 放入 `$H5_DIR`。此阶段不得修改 `/opt/memoria/current` 或 `/var/www/memoria-h5`。
@@ -241,6 +258,7 @@ release_root=/var/www/memoria-releases
 candidate=$1
 candidate_assets=$candidate/assets
 install -d -o root -g root -m 0755 "$candidate_assets"
+find "$candidate_assets" -type f -name "._*" -delete
 
 declare -a historical_assets=()
 for source in "$release_root"/*/assets; do
@@ -258,19 +276,26 @@ for source in "${historical_assets[@]}"; do
       printf "immutable asset collision: %s\n" "$relative" >&2
       exit 1
     fi
-  done < <(find "$source" -type f -print0)
+  done < <(find "$source" -type f ! -name "._*" -print0)
 done
 
-# GNU cp on the Ubuntu release host: existing candidate files always win.
+# 只追加真实资源；macOS AppleDouble `._*` 是不可服务的元数据垃圾，不进入新 union。
 for source in "${historical_assets[@]}"; do
-  cp -a --no-dereference --update=none -- "$source/." "$candidate_assets/"
+  while IFS= read -r -d "" old_asset; do
+    relative=${old_asset#"$source"/}
+    destination="$candidate_assets/$relative"
+    if [ ! -e "$destination" ]; then
+      install -d -o root -g root -m 0755 "$(dirname "$destination")"
+      cp -a --no-dereference -- "$old_asset" "$destination"
+    fi
+  done < <(find "$source" -type f ! -name "._*" -print0)
 done
 
 for source in "${historical_assets[@]}"; do
   while IFS= read -r -d "" old_asset; do
     relative=${old_asset#"$source"/}
     test -f "$candidate_assets/$relative"
-  done < <(find "$source" -type f -print0)
+  done < <(find "$source" -type f ! -name "._*" -print0)
 done
 ' bash "$H5_DIR"
 ```
@@ -378,13 +403,17 @@ sudo /opt/memoria/current/scripts/refresh_readiness.sh
 curl -fsS http://127.0.0.1:8791/health/ready
 ```
 
-当前生产 `20260720-140053` 的精确成功文本为：
+成功输出必须绑定本次唯一 tag，例如：
 
 ```text
 livekit_smoke_test PASS: authenticated room-service access
-provider_smoke_test PASS: FunASR, Qwen, CosyVoice
-readiness refresh PASS: 20260720-140053 (qwen)
+provider_smoke_test PASS: FunASR, Qwen, Doubao
+readiness refresh PASS: $RELEASE_TAG (qwen)
 ```
+
+`Doubao` 通过必须同时满足：双向增量文本合成返回非空 24 kHz、单声道、
+PCM signed 16-bit little-endian 音频，字级时间戳非空且单调，并将同一段合成音频降采样后
+送入 FunASR，最终文本命中测试语义。任何一项失败都不能写入 readiness evidence。
 
 `SKIP`、只验证变量存在或单独 HTTP 200 均不算通过。readiness evidence 写入 SQLite，绑定 release、provider 与 UTC 时间；同 release 重启保持，新 release 必须重跑，24 小时后过期。刷新 timer 每 12 小时执行：
 
@@ -438,7 +467,7 @@ sudo docker logs --since 5m memoria-livekit-livekit-1 2>&1 | wc -l
 
 `memoria` 与 `wms` 都是 sites-enabled 下的 root-owned 0644 常规文件，不是软链。8443 的 stream mux 依赖 `libnginx-mod-stream`；`memoria` 中必须保留 `127.0.0.1:9443 ssl` 的 IP 默认虚拟主机和域名 SNI 虚拟主机，LiveKit Compose 必须把容器 8443 只映射到主机 `127.0.0.1:8444`。`/rtc`、`/agent` 与 `/twirp/` 必须关闭 access log，避免短期 participant JWT 进入 query-string 日志。若本次配置有变化，先备份到不会被 Nginx include 的 root-only 目录，安装新文件后执行：
 
-注册和登录必须分别命中精确 location：`/memoria-api/v1/auth/register`、`/memoria-api/v1/auth/login`，两者均使用 `client_max_body_size 4k` 与 `limit_req zone=memoria_session burst=3 nodelay`。`20260716-225754` 未安装仓库中新增的 `/memoria-api/v1/sessions/` 专用限流块；线上既有通用 `/memoria-api/` 代理已通过真实 Omni SDP 验证，应用层同时执行 64 KiB、所有权和每会话两次交换限制。后续安装新块仍须按本节先备份、`nginx -t`，成功后才 reload。
+注册和登录必须分别命中精确 location：`/memoria-api/v1/auth/register`、`/memoria-api/v1/auth/login`，两者均使用 `client_max_body_size 4k` 与 `limit_req zone=memoria_session burst=3 nodelay`。`20260716-225754` 的真实 Omni SDP 只属于历史兼容/A-B 证据；当前 H5 不暴露 Omni 入口。若后续恢复该隔离能力，应用层仍须执行 64 KiB、所有权和每会话两次交换限制。安装任何 `/memoria-api/v1/sessions/` 专用块仍须按本节先备份、`nginx -t`，成功后才 reload。
 
 ```bash
 sudo nginx -t
@@ -528,7 +557,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' \
 curl -fsS https://122.51.108.140:8443/wms/
 ```
 
-验收标准：公网 8443 的根 H5、兼容 H5、SPA、live、ready 和 WMS 均为 200；ready 的 release 必须等于本次唯一 `RELEASE_TAG`、provider 为 `qwen`；internal、PocketSparks 与 Goods Invoice 原路径为 404；IP 证书 SAN 必须精确包含 `122.51.108.140`，域名 SNI 必须返回包含 `aigcnice.com` 与 `www.aigcnice.com` 的域名证书。`/rtc`、`/agent`、`/twirp/` 必须命中自建 LiveKit，真实浏览器 participant 必须为 `active` 且 `connectionType=tcp` 或 `udp`，不能是 `unknown`。服务器本机用 SNI/loopback 额外确认 443 根路径仍由 WMS 提供。另需确认 `wms.service` 为 active/enabled，Memoria 不得改动其目录或数据。
+验收标准：公网 8443 的根 H5、兼容 H5、SPA、live、ready 和 WMS 均为 200；ready 的 release 必须等于本次唯一 `RELEASE_TAG`、LLM 为 `qwen`、TTS 为 `doubao` 且 9 项 core check 全 ready；internal、PocketSparks 与 Goods Invoice 原路径为 404；IP 证书 SAN 必须精确包含 `122.51.108.140`，域名 SNI 必须返回包含 `aigcnice.com` 与 `www.aigcnice.com` 的域名证书。`/rtc`、`/agent`、`/twirp/` 必须命中自建 LiveKit，真实浏览器 participant 必须为 `active` 且 `connectionType=tcp` 或 `udp`，不能是 `unknown`。服务器本机用 SNI/loopback 额外确认 443 根路径仍由 WMS 提供。另需确认 `wms.service` 为 active/enabled，Memoria 不得改动其目录或数据。
 
 ### 身份、隔离与持久化
 
@@ -540,7 +569,7 @@ curl -fsS https://122.51.108.140:8443/wms/
 6. 写入含邮箱、手机号或证件号的消息/Profile 后，只读检查 SQLite，确认保存的是脱敏文本。
 7. 双方消息只持久化权威字幕，分段字幕与最终字幕不重复。
 8. 按北京时间生成每日回顾，断言 `source=qwen`。
-9. 修改 Profile 与三个偏好，创建 session 并记录 stop/recovery；重启 Control API 后，账号、消息、回顾、Profile、偏好、会话控制和 readiness evidence 均保持。
+9. 修改 Profile 与四个偏好（含“过滤明显旁人（实验）”），创建 session 并记录 stop/recovery；重启 Control API 后，账号、消息、回顾、Profile、偏好、会话控制和 readiness evidence 均保持。
 10. 同 release 重启保持 ready；新 release 在 Provider smoke 前必须为 not ready。
 11. `POST /v1/archive/exports` 必须重新验证密码，导出 manifest 可复算且不包含密码哈希、声纹模板密文、对象密钥/路径、供应商 voice ID 或盲测映射。
 12. `POST /v1/archive/deletion-requests` 必须要求精确确认短语；执行后旧 Bearer、再次登录、旧 session 和迟到 Agent 写入分别返回 401/410，其他账户保持可用。
@@ -564,40 +593,56 @@ curl -fsS https://122.51.108.140:8443/wms/
 6. 静音后模拟断线并恢复，静音状态保持；重连超过 10 秒回到可重试状态。
 7. 模拟 Agent 不发布 ready，45 秒后会话关闭且可再次点击开始。
 8. 首页、回顾页和个人页无 console error、CORS error 或横向溢出。
+9. “过滤明显旁人（实验）”默认开启：formal guest/owner mismatch 与明确的 shadow guest 普通话轮及“停一下”不能控制会话；shadow/formal ambiguous 为避免误静音主人可普通聊天，但保持 non-owner/uncertain、`history_eligible=false`。关闭后访客可聊天和打断，但不会取得 owner 权限。
+10. formal owner 与 `shadow_owner_candidate` 的双方终稿可进入主人历史；访客、ambiguous、无档案、authority 不可用及缺少 `history_eligible` 的话轮与对应 AI 回复只实时显示，不得落库或进入自动摘要。
 
 ## 回滚
 
-当前 H5 可直接回滚到 `20260720-174545`，无需切换或重启 runtime：
+禁止在 runbook 中长期硬编码“当前”回滚版本。每次发布在切软链前记录真实目标，并把
+两份服务 env 备份到同一 release tag 命名的 root-only 文件：
 
 ```bash
-H5_ROLLBACK_TAG=20260720-174545
-sudo test -d "/var/www/memoria-releases/$H5_ROLLBACK_TAG"
-sudo ln -s "memoria-releases/$H5_ROLLBACK_TAG" "/var/www/.memoria-h5.$H5_ROLLBACK_TAG"
-sudo mv -Tf "/var/www/.memoria-h5.$H5_ROLLBACK_TAG" /var/www/memoria-h5
+PREV_RUNTIME_TAG="$(basename "$(readlink -f /opt/memoria/current)")"
+PREV_H5_TAG="$(basename "$(readlink -f /var/www/memoria-h5)")"
+CONTROL_ENV_BACKUP="/var/backups/memoria/memoria-control-api.env-pre-$RELEASE_TAG"
+AGENT_ENV_BACKUP="/var/backups/memoria/memoria-agent.env-pre-$RELEASE_TAG"
+
+sudo test -d "/opt/memoria/releases/$PREV_RUNTIME_TAG"
+sudo test -d "/var/www/memoria-releases/$PREV_H5_TAG"
+sudo docker image inspect "memoria-agent:$PREV_RUNTIME_TAG" >/dev/null
+sudo docker image inspect "memoria-control-api:$PREV_RUNTIME_TAG" >/dev/null
+sudo test "$(stat -c '%U:%G:%a' "$CONTROL_ENV_BACKUP")" = root:root:600
+sudo test "$(stat -c '%U:%G:%a' "$AGENT_ENV_BACKUP")" = root:root:600
 ```
 
-当前 runtime 直接回滚点为 `20260720-164942`（H5 配套回滚点为 `20260720-174545`）；更早的完整 runtime/H5 联合回滚点为 `20260719-000731`。后者使用保留的旧 `/etc/memoria.env`；完整回滚时不要用当前拆分后的 Control/Agent env 覆盖旧配置：
+H5-only 故障只切回发布前记录的 H5；runtime、Provider 或 readiness 故障必须先恢复
+双 env，再切回发布前 runtime。旧 runtime 不能读取新 release 的 provider 配置：
 
 ```bash
-RUNTIME_ROLLBACK_TAG=20260719-000731
-H5_ROLLBACK_TAG=20260719-000731
-sudo test -d "/opt/memoria/releases/$RUNTIME_ROLLBACK_TAG"
-sudo test -d "/var/www/memoria-releases/$H5_ROLLBACK_TAG"
-sudo test -f /etc/memoria.env
-sudo docker image inspect "memoria-agent:$RUNTIME_ROLLBACK_TAG" >/dev/null
-sudo docker image inspect "memoria-control-api:$RUNTIME_ROLLBACK_TAG" >/dev/null
+sudo ln -s "memoria-releases/$PREV_H5_TAG" \
+  "/var/www/.memoria-h5.rollback-$RELEASE_TAG"
+sudo mv -Tf "/var/www/.memoria-h5.rollback-$RELEASE_TAG" /var/www/memoria-h5
 
-sudo ln -s "memoria-releases/$H5_ROLLBACK_TAG" "/var/www/.memoria-h5.$H5_ROLLBACK_TAG"
-sudo mv -Tf "/var/www/.memoria-h5.$H5_ROLLBACK_TAG" /var/www/memoria-h5
+sudo install -o root -g root -m 0600 \
+  "$CONTROL_ENV_BACKUP" /etc/memoria-control-api.env
+sudo install -o root -g root -m 0600 \
+  "$AGENT_ENV_BACKUP" /etc/memoria-agent.env
 
-sudo ln -s "releases/$RUNTIME_ROLLBACK_TAG" "/opt/memoria/.current.$RUNTIME_ROLLBACK_TAG"
-sudo mv -Tf "/opt/memoria/.current.$RUNTIME_ROLLBACK_TAG" /opt/memoria/current
-cd "/opt/memoria/releases/$RUNTIME_ROLLBACK_TAG"
-MEMORIA_RELEASE_TAG="$RUNTIME_ROLLBACK_TAG" \
-sudo -E docker compose -f docker-compose.production.yml up -d --no-build
+sudo ln -s "releases/$PREV_RUNTIME_TAG" \
+  "/opt/memoria/.current.rollback-$RELEASE_TAG"
+sudo mv -Tf "/opt/memoria/.current.rollback-$RELEASE_TAG" /opt/memoria/current
+
+cd /opt/memoria/current
+MEMORIA_RELEASE_TAG="$PREV_RUNTIME_TAG" \
+sudo -E docker compose -f docker-compose.production.yml \
+  up -d --no-build --wait --wait-timeout 120
+sudo /opt/memoria/current/scripts/refresh_readiness.sh
+curl -fsS http://127.0.0.1:8791/health/ready
 ```
 
-随后验证旧 H5、API live/ready、匿名兼容、创建 session 和持久数据。不要自动回滚 PostgreSQL/MinIO 数据；只有数据格式确实不兼容时才在另存当前状态后恢复对应 SQLite/档案备份，并保留失败 release 的原始副本。
+随后验证旧 H5、API live/ready、匿名兼容、创建 session 和持久数据。不要自动回滚
+SQLite、PostgreSQL 或 MinIO；只有数据格式确实不兼容时，才在另存当前状态后恢复对应
+备份，并保留失败 release 的原始副本。
 
 ## 日常运维
 

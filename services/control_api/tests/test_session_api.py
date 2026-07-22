@@ -699,8 +699,11 @@ async def test_readiness_requires_fresh_authenticated_smokes(
         "llm": True,
         "llm_provider": "qwen",
         "release_tag": "release-test-a",
-        "cosyvoice": True,
-        "cosyvoice_timestamps": True,
+        "tts": {
+            "provider": "doubao",
+            "audio": True,
+            "word_timestamps": True,
+        },
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         before = await client.get("/health/ready")
@@ -717,12 +720,31 @@ async def test_readiness_requires_fresh_authenticated_smokes(
         missing_timestamps = await client.post(
             "/internal/readiness/smokes",
             headers={"Authorization": "Bearer test-auth-material-that-is-long-enough"},
-            json={key: value for key, value in mark_body.items() if key != "cosyvoice_timestamps"},
+            json={**mark_body, "tts": {"provider": "doubao", "audio": True}},
         )
         failed_timestamps = await client.post(
             "/internal/readiness/smokes",
             headers={"Authorization": "Bearer test-auth-material-that-is-long-enough"},
-            json={**mark_body, "cosyvoice_timestamps": False},
+            json={
+                **mark_body,
+                "tts": {
+                    "provider": "doubao",
+                    "audio": True,
+                    "word_timestamps": False,
+                },
+            },
+        )
+        wrong_tts_provider = await client.post(
+            "/internal/readiness/smokes",
+            headers={"Authorization": "Bearer test-auth-material-that-is-long-enough"},
+            json={
+                **mark_body,
+                "tts": {
+                    "provider": "cosyvoice",
+                    "audio": True,
+                    "word_timestamps": True,
+                },
+            },
         )
         marked = await client.post(
             "/internal/readiness/smokes",
@@ -737,10 +759,12 @@ async def test_readiness_requires_fresh_authenticated_smokes(
     assert wrong_release.status_code == 409
     assert missing_timestamps.status_code == 422
     assert failed_timestamps.status_code == 422
+    assert wrong_tts_provider.status_code == 422
     assert marked.status_code == 200
     assert ready.status_code == 200
     assert ready.json()["checks"]["llm"] == {"provider": "qwen", "passed": True}
-    assert ready.json()["checks"]["cosyvoice"] == {
+    assert ready.json()["checks"]["tts"] == {
+        "provider": "doubao",
         "audio": True,
         "word_timestamps": True,
     }
@@ -758,8 +782,11 @@ async def test_readiness_evidence_survives_restart_and_is_release_bound(
         "llm": True,
         "llm_provider": "qwen",
         "release_tag": "release-test-a",
-        "cosyvoice": True,
-        "cosyvoice_timestamps": True,
+        "tts": {
+            "provider": "doubao",
+            "audio": True,
+            "word_timestamps": True,
+        },
     }
     first_app = create_app()
     async with AsyncClient(
@@ -940,9 +967,7 @@ def test_production_s3_endpoints_require_complete_explicit_credentials() -> None
 
 def test_production_requires_memory_embeddings_for_pgvector_search() -> None:
     settings = _valid_archive_pipeline_settings(
-        MEMORIA_ARCHIVE_COMPILER_DATABASE_URL=(
-            "postgresql://memoria-compiler:test@db/memoria"
-        ),
+        MEMORIA_ARCHIVE_COMPILER_DATABASE_URL=("postgresql://memoria-compiler:test@db/memoria"),
         MEMORIA_ARCHIVE_COMPILER_ROLE="memoria-compiler",
     )
 

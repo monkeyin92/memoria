@@ -403,6 +403,7 @@ describe("authenticated Control API client", () => {
       auto_summary: false,
       voice_reply: false,
       gentle_reminders: false,
+      reject_non_owner_voice: false,
       timezone: "Asia/Shanghai",
     });
 
@@ -423,6 +424,7 @@ describe("authenticated Control API client", () => {
       auto_summary: false,
       voice_reply: false,
       gentle_reminders: false,
+      reject_non_owner_voice: false,
       timezone: "Asia/Shanghai",
     });
   });
@@ -518,6 +520,7 @@ describe("authenticated Control API client", () => {
       user_id: "account-a",
       role: "user",
       text: "只属于账号 A",
+      history_eligible: true,
     });
     await flushPendingMessages();
 
@@ -539,7 +542,14 @@ describe("authenticated Control API client", () => {
     window.localStorage.setItem("memoria:identity", JSON.stringify(identity));
     window.localStorage.setItem(
       "memoria:pending-messages:account-a",
-      JSON.stringify([{ user_id: "account-a", role: "user", text: "旧消息" }]),
+      JSON.stringify([
+        {
+          user_id: "account-a",
+          role: "user",
+          text: "旧消息",
+          history_eligible: true,
+        },
+      ]),
     );
     const lateSave = deferred();
     const fetchMock = vi
@@ -558,6 +568,48 @@ describe("authenticated Control API client", () => {
     lateSave.resolve(jsonResponse({ detail: "account deleted" }, 409));
     await flushing;
 
+    expect(
+      window.localStorage.getItem("memoria:pending-messages:account-a"),
+    ).toBeNull();
+  });
+
+  it("never sends or queues history-ineligible messages", async () => {
+    window.localStorage.setItem(
+      "memoria:identity",
+      JSON.stringify({
+        user_id: "account-a",
+        username: "account-a",
+        account_type: "registered",
+        access_token: "saved-token",
+      }),
+    );
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        user_id: "account-a",
+        username: "account-a",
+        account_type: "registered",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      bootstrapIdentity,
+      cachePendingMessage,
+      flushPendingMessages,
+      saveMessage,
+    } = await import("./api.js");
+    await bootstrapIdentity();
+    const guest = {
+      user_id: "account-a",
+      role: "user",
+      text: "访客消息",
+      history_eligible: false,
+    };
+
+    await saveMessage(guest);
+    cachePendingMessage(guest);
+    await flushPendingMessages();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(
       window.localStorage.getItem("memoria:pending-messages:account-a"),
     ).toBeNull();

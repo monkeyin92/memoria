@@ -24,6 +24,8 @@ COPY README.md ./
 COPY services ./services
 COPY packages ./packages
 COPY scripts/mark_readiness.py ./scripts/mark_readiness.py
+# Historical CosyVoice previews initialize their approved baseline before applying a clone.
+COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 RUN mkdir -p /data \
     && chown 65532:65532 /data
 

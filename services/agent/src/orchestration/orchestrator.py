@@ -67,8 +67,8 @@ class PlaybackController:
 
 
 @dataclass
-class CosyPoolHandle:
-    """Minimal interface used by orchestrator for discard on interrupt."""
+class TTSPoolHandle:
+    """Minimal provider-neutral interface used to cancel TTS on interrupt."""
 
     discarded: list[GenerationFence] = field(default_factory=list)
 
@@ -90,7 +90,7 @@ class Orchestrator:
     task_manager: TaskManager = field(default_factory=TaskManager)
     interruption_guard: ChineseInterruptionGuard = field(default_factory=ChineseInterruptionGuard)
     playback: PlaybackController = field(default_factory=PlaybackController)
-    cosyvoice_pool: CosyPoolHandle = field(default_factory=CosyPoolHandle)
+    tts_pool: TTSPoolHandle = field(default_factory=TTSPoolHandle)
     mic_open: bool = True  # MUST remain true while assistant speaks
     vad_active: bool = True
     asr_active: bool = True
@@ -370,7 +370,7 @@ class Orchestrator:
             self._tts_cancel.set()
             await cancel_and_wait(self._active_llm_task)
             await cancel_and_wait(self._active_tts_task)
-            await self.cosyvoice_pool.discard_active_connection(old)
+            await self.tts_pool.discard_active_connection(old)
             await self.task_manager.cancel_cancellable(old)
             interrupted_message = self.context.commit_interrupted_assistant_text(heard_text)
             self._pending_interrupted_from = old

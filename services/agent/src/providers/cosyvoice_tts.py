@@ -168,6 +168,7 @@ class PooledConnection:
     ws: ClientConnection
     conn_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     in_use: bool = False
+    burst: bool = False
     failed: bool = False
     closed: bool = False
 
@@ -211,8 +212,9 @@ class CosyVoicePool:
     async def warm(self, size: int | None = None) -> None:
         n = size if size is not None else self.config.pool_size
         for _ in range(n):
-            conn = await self._open()
-            await self._available.put(conn)
+            async with self._lock:
+                conn = await self._open()
+                await self._available.put(conn)
         self.metrics.set_tts_pool_available(self.available_approx)
 
     async def _open(self) -> PooledConnection:
@@ -237,24 +239,46 @@ class CosyVoicePool:
         self._breaker.before_request()
         try:
             conn = await asyncio.wait_for(self._available.get(), timeout=wait_s)
-            if conn.closed or conn.failed:
-                conn = await self._open()
-            conn.in_use = True
-            self.metrics.set_tts_pool_available(self.available_approx)
-            return conn
         except TimeoutError:
-            conn = await self._open()
-            conn.in_use = True
-            return conn
+            conn = None
+        if conn is None or conn.closed or conn.failed:
+            async with self._lock:
+                if self._closing:
+                    raise RuntimeError("CosyVoice pool is closing")
+                while True:
+                    try:
+                        conn = self._available.get_nowait()
+                    except asyncio.QueueEmpty:
+                        conn = await self._open()
+                        conn.burst = len(self._all) > self.config.pool_size
+                        break
+                    if not conn.closed and not conn.failed:
+                        break
+        conn.in_use = True
+        self.metrics.set_tts_pool_available(self.available_approx)
+        return conn
 
     async def release(self, conn: PooledConnection) -> None:
         self._unbind_connection(conn)
-        if conn.failed or conn.closed:
+        async with self._lock:
+            if self._closing:
+                return
+            should_discard = conn.failed or conn.closed
+            if not should_discard and not (conn.burst and len(self._all) > self.config.pool_size):
+                conn.burst = False
+                conn.in_use = False
+                self._breaker.record_success()
+                await self._available.put(conn)
+                self.metrics.set_tts_pool_available(self.available_approx)
+                return
+            conn.in_use = False
+        if should_discard:
             await self.discard(conn, reason="failed_or_closed")
             return
-        conn.in_use = False
-        self._breaker.record_success()
-        await self._available.put(conn)
+        with contextlib.suppress(Exception):
+            await conn.ws.close()
+        conn.closed = True
+        self._all.pop(conn.conn_id, None)
         self.metrics.set_tts_pool_available(self.available_approx)
 
     async def discard(self, conn: PooledConnection, *, reason: str) -> None:
@@ -315,17 +339,20 @@ class CosyVoicePool:
 
     async def aclose(self) -> None:
         self._closing = True
-        for task in tuple(self._refill_tasks):
+        refill_tasks = tuple(self._refill_tasks)
+        for task in refill_tasks:
             task.cancel()
-        if self._refill_tasks:
-            await asyncio.gather(*tuple(self._refill_tasks), return_exceptions=True)
+        if refill_tasks:
+            await asyncio.gather(*refill_tasks, return_exceptions=True)
         self._refill_tasks.clear()
-        for conn in list(self._all.values()):
+        async with self._lock:
+            connections = list(self._all.values())
+            self.active_by_fence.clear()
+            while not self._available.empty():
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    self._available.get_nowait()
+        for conn in connections:
             await self.discard(conn, reason="shutdown")
-        self.active_by_fence.clear()
-        while not self._available.empty():
-            with contextlib.suppress(asyncio.QueueEmpty):
-                self._available.get_nowait()
         self.metrics.set_tts_pool_available(0)
 
 
@@ -731,6 +758,18 @@ class CosyVoiceTTS(tts.TTS[Any]):
 
             cancel_watcher = asyncio.create_task(watch_cancel(), name="cosyvoice-cancel-watch")
 
+        async def settle_cancel_watcher(*, cancellation_requested: bool) -> None:
+            nonlocal cancel_watcher
+            if cancel_watcher is None:
+                return
+            if cancellation_requested:
+                await cancel_watcher
+            else:
+                cancel_watcher.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await cancel_watcher
+            cancel_watcher = None
+
         try:
             run = build_run_task(
                 task_id=task_id,
@@ -850,6 +889,12 @@ class CosyVoiceTTS(tts.TTS[Any]):
                 raise CosyVoiceFirstAudioTimeoutError()
             if not all_words:
                 raise CosyVoiceTimestampError("CosyVoice returned no word timestamps")
+            if cancel_event is not None and cancel_event.is_set():
+                await settle_cancel_watcher(cancellation_requested=True)
+                return SynthesizeResult(
+                    bytes(pcm_buf), tuple(all_words), task_id, alignment_status, True
+                )
+            await settle_cancel_watcher(cancellation_requested=False)
             if not discarded:
                 await self._pool.release(conn)
             return SynthesizeResult(
@@ -872,10 +917,9 @@ class CosyVoiceTTS(tts.TTS[Any]):
                 raise CosyVoiceBeforeAudioError(str(exc)) from exc
             raise
         finally:
-            if cancel_watcher is not None:
-                cancel_watcher.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await cancel_watcher
+            await settle_cancel_watcher(
+                cancellation_requested=cancel_event is not None and cancel_event.is_set()
+            )
 
     async def aclose(self) -> None:
         await self._pool.aclose()

@@ -4,6 +4,8 @@ import json
 
 import pytest
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
+from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
+from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
 from services.agent.src.providers.funasr_stt import FunASRConfig
 
 
@@ -34,6 +36,113 @@ def test_funasr_config_from_env() -> None:
 def test_funasr_default_sentence_silence_matches_turn_endpointing() -> None:
     cfg = FunASRConfig.from_env({"DASHSCOPE_API_KEY": "key"})
     assert cfg.max_sentence_silence_ms == 550
+
+
+def test_doubao_config_uses_approved_profile_and_old_console_auth() -> None:
+    voice = catalog_by_id()["bright_peer"]
+    config = DoubaoTTSConfig.from_env(
+        {
+            "DOUBAO_TTS_MOCK_WS_URL": "ws://mock",
+            "DOUBAO_TTS_VOICE_PROFILE": "bright_peer",
+            "DOUBAO_TTS_APP_ID": "app-test",
+            "DOUBAO_TTS_ACCESS_TOKEN": "token-test",
+        }
+    )
+
+    assert config.ws_url == "ws://mock"
+    assert config.speaker == voice.speaker_id
+    headers = config.auth_headers(connect_id="connect-test")
+    assert headers["X-Api-App-Id"] == "app-test"
+    assert headers["X-Api-Access-Key"] == "token-test"
+    assert headers["X-Api-Resource-Id"] == "seed-tts-2.0"
+    assert "X-Api-Key" not in headers
+
+
+@pytest.mark.parametrize(
+    "auth",
+    [
+        {
+            "DOUBAO_TTS_API_KEY": "api-key",
+            "DOUBAO_TTS_APP_ID": "app-id",
+            "DOUBAO_TTS_ACCESS_TOKEN": "access-token",
+        },
+        {"DOUBAO_TTS_APP_ID": "app-id"},
+        {"DOUBAO_TTS_ACCESS_TOKEN": "access-token"},
+    ],
+)
+def test_doubao_config_requires_exactly_one_complete_auth_mode(
+    auth: dict[str, str],
+) -> None:
+    with pytest.raises(ValueError, match="exactly one complete authentication mode"):
+        DoubaoTTSConfig.from_env(
+            {
+                "DOUBAO_TTS_VOICE_PROFILE": "warm_companion",
+                **auth,
+            }
+        )
+
+
+def test_doubao_speech_plan_keeps_alignment_safe_and_clamps_rate() -> None:
+    config = DoubaoTTSConfig(
+        api_key="test",
+        speaker=catalog_by_id()["warm_companion"].speaker_id,
+        instruction="不要保留这条指令",
+        pool_size=0,
+    )
+    tts = DoubaoTTS(config)
+
+    tts.apply_speech_plan(emotion="happy", rate=1.2)
+
+    assert tts.current_instruction is None
+    assert tts.current_rate == 1.05
+
+
+def test_production_doubao_rejects_unapproved_explicit_voice() -> None:
+    with pytest.raises(ValueError, match="approved companion voice"):
+        DoubaoTTSConfig.from_env(
+            {
+                "ENVIRONMENT": "production",
+                "DOUBAO_TTS_API_KEY": "test",
+                "DOUBAO_TTS_VOICE_PROFILE": "warm_companion",
+                "DOUBAO_TTS_SPEAKER": "unapproved-voice",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "environment,variable,ws_url",
+    [
+        (
+            "production",
+            "DOUBAO_TTS_WS_URL",
+            "ws://openspeech.bytedance.com/api/v3/tts/bidirection",
+        ),
+        (
+            "production",
+            "DOUBAO_TTS_WS_URL",
+            "wss://user:password@openspeech.bytedance.com/api/v3/tts/bidirection",
+        ),
+        (
+            "development",
+            "DOUBAO_TTS_MOCK_WS_URL",
+            "ws://mock/path#credentials",
+        ),
+    ],
+)
+def test_doubao_config_rejects_unsafe_websocket_urls(
+    environment: str,
+    variable: str,
+    ws_url: str,
+) -> None:
+    env = {
+        "ENVIRONMENT": environment,
+        "DOUBAO_TTS_API_KEY": "test",
+        "DOUBAO_TTS_VOICE_PROFILE": "warm_companion",
+        variable: ws_url,
+    }
+
+    with pytest.raises(ValueError, match="Doubao TTS WebSocket URL"):
+        DoubaoTTSConfig.from_env(env)
 
 
 def test_cosyvoice_config_from_env_prefers_mock_url() -> None:

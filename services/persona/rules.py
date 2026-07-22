@@ -3,15 +3,38 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
+from collections import Counter, defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from services.persona.domain import PersonaEvidence, PersonaTraitCategory
 
 TICS = ("我觉得", "其实", "说实话", "怎么说呢", "坦白说", "总的来说")
 AUTO_PROMOTE = frozenset(
-    {"verbal_tic", "sentence_length", "speech_rate", "pause_style"}
+    {"verbal_tic", "sentence_length", "speech_rate", "pause_style", "discourse_style"}
+)
+OWNER_AUTO_PROMOTE_OBSERVATIONS = 3
+UNCERTAIN_AUTO_PROMOTE_OBSERVATIONS = 6
+UNCERTAIN_AUTO_PROMOTE_SESSIONS = 3
+EXCLUSIVE_STYLE_CATEGORIES = frozenset({"sentence_length", "speech_rate", "pause_style"})
+EXCLUSIVE_BUCKET_DOMINANCE_RATIO = 2
+_FIXED_STYLE_DESCRIPTIONS = frozenset(
+    {
+        *(f"表达观点时常用“{tic}”自然起句" for tic in TICS),
+        "日常表达偏好短句，先给出核心意思",
+        "日常表达偏好中等长度句子，信息与节奏较均衡",
+        "日常表达偏好较完整的长句和上下文铺垫",
+        "说话节奏偏从容，适合保留自然停顿",
+        "说话节奏中等，吐字和信息密度较均衡",
+        "说话节奏偏快，倾向连续表达完整想法",
+        "表达时会留较多自然停顿",
+        "表达时停顿密度适中",
+        "表达较连贯，停顿相对少",
+        "表达复杂问题时偏好按“先…再…”组织顺序",
+    }
 )
 CATEGORY_ORDER = {
     "verbal_tic": 0,
@@ -34,6 +57,17 @@ class PersonaCandidate:
     description: str
     context: str
     counterexample: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ExclusiveBucketObservation:
+    trait_id: str
+    status: str
+    review_event_id: str | None
+    updated_at: str
+    speaker_class: str | None
+    session_id: str | None
+    payload: Mapping[str, Any]
 
 
 class PersonaExtractor(Protocol):
@@ -157,3 +191,133 @@ class RuleBasedPersonaExtractor:
         evidence: PersonaEvidence,
     ) -> tuple[PersonaCandidate, ...]:
         return extract_candidates(text, evidence)
+
+
+def should_auto_promote(
+    *,
+    category: PersonaTraitCategory,
+    status: str,
+    owner_count: int,
+    uncertain_count: int,
+    uncertain_session_count: int,
+    uncertain_profile_count: int,
+) -> bool:
+    if (
+        status == "disabled"
+        or category not in AUTO_PROMOTE
+        or category in EXCLUSIVE_STYLE_CATEGORIES
+    ):
+        return False
+    owner_ready = owner_count >= OWNER_AUTO_PROMOTE_OBSERVATIONS
+    uncertain_ready = (
+        owner_count == 0
+        and uncertain_count >= UNCERTAIN_AUTO_PROMOTE_OBSERVATIONS
+        and uncertain_session_count >= UNCERTAIN_AUTO_PROMOTE_SESSIONS
+        and uncertain_profile_count == 1
+    )
+    return owner_ready or uncertain_ready
+
+
+def _dominant_bucket(counts: Mapping[str, int], minimum: int) -> str | None:
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    if not ranked or ranked[0][1] < minimum:
+        return None
+    runner_up = ranked[1][1] if len(ranked) > 1 else 0
+    if runner_up and ranked[0][1] < EXCLUSIVE_BUCKET_DOMINANCE_RATIO * runner_up:
+        return None
+    return ranked[0][0]
+
+
+def exclusive_auto_promote_target(
+    category: PersonaTraitCategory,
+    observations: tuple[ExclusiveBucketObservation, ...],
+    *,
+    uncertain_profile_id: str | None = None,
+) -> str | None:
+    """Choose one exclusive style bucket from one trusted evidence lane."""
+
+    if category not in EXCLUSIVE_STYLE_CATEGORIES:
+        return None
+    states: dict[str, tuple[str, str | None, str]] = {}
+    owner_counts: Counter[str] = Counter()
+    uncertain_counts: dict[str, Counter[str]] = defaultdict(Counter)
+    uncertain_sessions: dict[tuple[str, str], set[str]] = defaultdict(set)
+    profiles: set[str] = set()
+    for observation in observations:
+        if observation.status == "disabled":
+            continue
+        states[observation.trait_id] = (
+            observation.status,
+            observation.review_event_id,
+            observation.updated_at,
+        )
+        if observation.speaker_class == "owner":
+            owner_counts[observation.trait_id] += 1
+            continue
+        if observation.speaker_class != "uncertain":
+            continue
+        provenance = trusted_uncertain_profile(observation.payload)
+        if provenance is None:
+            continue
+        profile_id, _quality = provenance
+        profiles.add(profile_id)
+        uncertain_counts[profile_id][observation.trait_id] += 1
+        if observation.session_id:
+            uncertain_sessions[(profile_id, observation.trait_id)].add(observation.session_id)
+
+    manually_confirmed = [
+        (updated_at, trait_id)
+        for trait_id, (status, review_event_id, updated_at) in states.items()
+        if status == "confirmed" and review_event_id is not None
+    ]
+    if manually_confirmed:
+        return max(manually_confirmed)[1]
+    if owner_counts:
+        return _dominant_bucket(owner_counts, OWNER_AUTO_PROMOTE_OBSERVATIONS)
+    if uncertain_profile_id is not None:
+        profiles = {uncertain_profile_id} if uncertain_profile_id in profiles else set()
+    if len(profiles) != 1:
+        return None
+    profile_id = next(iter(profiles))
+    target = _dominant_bucket(
+        uncertain_counts[profile_id],
+        UNCERTAIN_AUTO_PROMOTE_OBSERVATIONS,
+    )
+    if target is None:
+        return None
+    if len(uncertain_sessions[(profile_id, target)]) < UNCERTAIN_AUTO_PROMOTE_SESSIONS:
+        return None
+    return target
+
+
+def trusted_uncertain_profile(payload: Mapping[str, Any]) -> tuple[str, float] | None:
+    """Return the shadow-owner profile and quality for Persona-safe evidence."""
+
+    profile_id = payload.get("speaker_profile_id")
+    model_version = payload.get("speaker_model_version")
+    template_version = payload.get("speaker_template_version")
+    quality = payload.get("speaker_quality_score")
+    if (
+        payload.get("persona_eligible") is not True
+        or payload.get("speaker_reason_code") != "shadow_owner_candidate"
+        or not isinstance(profile_id, str)
+        or not profile_id.strip()
+        or not isinstance(model_version, str)
+        or not model_version.strip()
+        or isinstance(template_version, bool)
+        or not isinstance(template_version, int)
+        or template_version < 1
+        or isinstance(quality, bool)
+        or not isinstance(quality, (int, float))
+        or not math.isfinite(float(quality))
+        or not 0.5 <= float(quality) <= 1
+    ):
+        return None
+    return profile_id.strip(), float(quality)
+
+
+def safe_confirmed_style_description(description: str) -> str | None:
+    """Return only fixed, non-personal style labels safe for uncertain speakers."""
+
+    normalized = description.strip()
+    return normalized if normalized in _FIXED_STYLE_DESCRIPTIONS else None

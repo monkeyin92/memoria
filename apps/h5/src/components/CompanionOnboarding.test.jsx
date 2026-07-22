@@ -17,6 +17,7 @@ vi.mock("../lib/audioEnrollment.js", () => ({
 }));
 
 import { CompanionOnboarding } from "./CompanionOnboarding.jsx";
+import { companions } from "../lib/companions.js";
 
 describe("CompanionOnboarding", () => {
   beforeEach(() => {
@@ -59,6 +60,20 @@ describe("CompanionOnboarding", () => {
     vi.restoreAllMocks();
   });
 
+  it("maps every companion to its versioned Doubao preview", () => {
+    expect(companions.map(({ id, voiceName, voicePreview }) => ({
+      id,
+      voiceName,
+      voicePreview,
+    }))).toEqual([
+      { id: "starlight", voiceName: "阳光青年 2.0", voicePreview: "/assets/voices/starlight-doubao-v1.wav" },
+      { id: "taoxi", voiceName: "甜美桃子 2.0", voicePreview: "/assets/voices/taoxi-doubao-v1.wav" },
+      { id: "mianmian", voiceName: "温柔小雅 2.0", voicePreview: "/assets/voices/mianmian-doubao-v1.wav" },
+      { id: "axu", voiceName: "高冷沉稳 2.0", voicePreview: "/assets/voices/axu-doubao-v1.wav" },
+      { id: "xuanmo", voiceName: "深夜播客 2.0", voicePreview: "/assets/voices/xuanmo-doubao-v1.wav" },
+    ]);
+  });
+
   it("lets the user browse all five companions and demo expressions and voice", async () => {
     const { container } = render(
       <CompanionOnboarding userId="owner-1" onComplete={() => undefined} />,
@@ -67,7 +82,8 @@ describe("CompanionOnboarding", () => {
     expect(screen.getAllByRole("button", { name: /^选择/ })).toHaveLength(6);
     fireEvent.click(screen.getByRole("button", { name: "下一个机器人" }));
     expect(screen.getByRole("heading", { name: "桃喜" })).toBeInTheDocument();
-    expect(screen.getByText("清脆、轻快，回应里带一点自然上扬")).toBeInTheDocument();
+    expect(screen.getByText("甜美桃子 2.0")).toBeInTheDocument();
+    expect(screen.getByText("清甜、灵动，回应里带一点自然上扬")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "开心" }));
     expect(container.querySelector('[data-companion="taoxi"][data-expression="happy"]'))
@@ -75,6 +91,10 @@ describe("CompanionOnboarding", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "试听桃喜的声音" }));
     await waitFor(() => expect(HTMLMediaElement.prototype.play).toHaveBeenCalled());
+    expect(container.querySelector("audio")).toHaveAttribute(
+      "src",
+      "/assets/voices/taoxi-doubao-v1.wav",
+    );
   });
 
   it("shows a recoverable message when microphone permission is denied", async () => {

@@ -15,7 +15,6 @@ import {
 } from "@phosphor-icons/react";
 
 import {
-  activateVoiceProfile,
   createVoiceBlindTrial,
   enrollSpeakerProfiles,
   enrollVoiceProfile,
@@ -125,7 +124,6 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
   const [personaAllowed, setPersonaAllowed] = useState(false);
   const [personaConsent, setPersonaConsent] = useState(false);
   const [traits, setTraits] = useState([]);
-  const [traitCounterexamples, setTraitCounterexamples] = useState({});
   const [versions, setVersions] = useState([]);
   const [speakerConsent, setSpeakerConsent] = useState(false);
   const [speakerFiles, setSpeakerFiles] = useState([]);
@@ -237,7 +235,7 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
       await reload({ silent: true });
       setVoiceFile(null);
       setBlindTrial(null);
-      setNotice("候选声音已创建。试听并完成 A/B 评估后才能激活。");
+      setNotice("候选声音已创建。你可以继续试听和评估；当前豆包语音暂不应用此档案。");
     } catch (actionError) {
       setError(errorMessage(actionError, "候选声音没有创建成功，请检查录音后重试。"));
     } finally {
@@ -329,6 +327,16 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
       null
     : null;
   const activeVersion = versions.find((version) => version.status === "active");
+  const learnedTraits = traits.filter(
+    (trait) => trait.status === "confirmed" || trait.status === "disabled",
+  );
+  const historicalVersions = versions.filter((version) => version.status !== "active");
+  const hasPersonaArchive = Boolean(
+    activeVersion || learnedTraits.length || historicalVersions.length,
+  );
+  const personaLearningStatus = activeVersion
+    ? `v${activeVersion.version_number} 已启用`
+    : "持续学习中（聊天越多越准确）";
 
   return (
     <section className="screen digital-self-screen" aria-label="数字心智与声音">
@@ -368,10 +376,10 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
                 <StatusBadge value={personaAllowed ? "active" : "pending"} />
               </div>
               <p className="digital-explainer">
-                只学习主人已授权的对话证据。候选特征需要你确认；撤销后停止新增学习，历史版本仍可追溯和停用。
+                授权后会在自然聊天中持续提取特征；只有跨会话重复出现的低敏表达风格会自动生效。撤销后停止学习，已生效特征仍可停用和回滚。
               </p>
 
-              {!personaAllowed ? (
+              {!personaAllowed && (
                 <div className="digital-consent-box">
                   <label>
                     <input
@@ -388,44 +396,47 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
                     onClick={() => void run(
                       "persona-grant",
                       grantPersonaConsent,
-                      "人格学习已开启，候选特征仍需你确认。",
+                      "人格学习已开启，系统会在持续聊天中自动更新。",
                     )}
                   >
                     {busy === "persona-grant" ? "正在开启…" : "开启人格学习"}
                   </button>
                 </div>
-              ) : (
+              )}
+              {personaAllowed && (
+                <div className="digital-meta-row">
+                  <span>{activeVersion ? "当前版本" : "学习状态"}</span>
+                  <strong>{personaLearningStatus}</strong>
+                  <button
+                    type="button"
+                    className="text-danger"
+                    onClick={() => confirm({
+                      key: "persona-revoke",
+                      title: "撤销人格学习授权",
+                      body: "将立即停止采集新的表达与思维证据。已形成的特征不会偷偷继续更新。",
+                      confirmLabel: "确认撤销人格学习",
+                      action: revokePersonaConsent,
+                      success: "人格学习授权已撤销。",
+                    })}
+                  >
+                    撤销人格学习授权
+                  </button>
+                </div>
+              )}
+              {!personaAllowed && hasPersonaArchive && (
+                <div className="digital-meta-row">
+                  <span>当前版本</span>
+                  <strong>
+                    {activeVersion ? `v${activeVersion.version_number} 已启用` : "档案已保留"}
+                  </strong>
+                </div>
+              )}
+              {(personaAllowed || hasPersonaArchive) && (
                 <>
-                  <div className="digital-meta-row">
-                    <span>当前版本</span>
-                    <strong>{activeVersion ? `v${activeVersion.version_number}` : "尚未发布"}</strong>
-                    <button
-                      type="button"
-                      className="text-danger"
-                      onClick={() => confirm({
-                        key: "persona-revoke",
-                        title: "撤销人格学习授权",
-                        body: "将立即停止采集新的表达与思维证据。已形成的特征不会偷偷继续更新。",
-                        confirmLabel: "确认撤销人格学习",
-                        action: revokePersonaConsent,
-                        success: "人格学习授权已撤销。",
-                      })}
-                    >
-                      撤销人格学习授权
-                    </button>
-                  </div>
-                  {traits.length ? (
+                  {learnedTraits.length ? (
                     <div className="trait-list">
-                      {traits.map((trait) => {
-                        const needsCounterexample =
-                          ["decision_habit", "value_priority"].includes(
-                            trait.category,
-                          ) &&
-                          !trait.counterexample?.trim();
-                        const counterexample =
-                          traitCounterexamples[trait.trait_id]?.trim() || "";
-                        return (
-                          <article className="trait-card" key={trait.trait_id}>
+                      {learnedTraits.map((trait) => (
+                        <article className="trait-card" key={trait.trait_id}>
                           <div className="trait-meta">
                             <span>{traitLabels[trait.category] || trait.category}</span>
                             <StatusBadge value={trait.status} />
@@ -439,45 +450,9 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
                               <strong>例外/反例</strong>
                               {trait.counterexample}
                             </p>
-                          ) : needsCounterexample ? (
-                            <label className="trait-counterexample-field">
-                              <span>例外或反例（确认前必填）</span>
-                              <textarea
-                                rows={2}
-                                maxLength={2000}
-                                value={traitCounterexamples[trait.trait_id] || ""}
-                                placeholder="例如：出现紧急安全风险时，我会立即行动。"
-                                onChange={(event) => setTraitCounterexamples(
-                                  (current) => ({
-                                    ...current,
-                                    [trait.trait_id]: event.target.value,
-                                  }),
-                                )}
-                              />
-                            </label>
                           ) : null}
                           {trait.status !== "disabled" && (
                             <div className="inline-actions">
-                              {trait.status === "candidate" && (
-                                <button
-                                  type="button"
-                                  className="button-secondary"
-                                  disabled={needsCounterexample && !counterexample}
-                                  onClick={() => void run(
-                                    `trait-confirm-${trait.trait_id}`,
-                                    () => needsCounterexample
-                                      ? reviewPersonaTrait(
-                                        trait.trait_id,
-                                        "confirm",
-                                        { counterexample },
-                                      )
-                                      : reviewPersonaTrait(trait.trait_id, "confirm"),
-                                    "这条人格特征已由你确认。",
-                                  )}
-                                >
-                                  确认这条特征
-                                </button>
-                              )}
                               <button
                                 type="button"
                                 className="button-quiet"
@@ -491,17 +466,20 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
                               </button>
                             </div>
                           )}
-                          </article>
-                        );
-                      })}
+                        </article>
+                      ))}
                     </div>
                   ) : (
-                    <p className="digital-empty">继续自然聊天即可积累候选特征，不需要刻意训练。</p>
+                    <p className="digital-empty">
+                      {personaAllowed
+                        ? "继续自然聊天即可。证据充分后，系统会自动生成并更新人格版本。"
+                        : "人格学习已停止；重新授权后可继续积累新特征。"}
+                    </p>
                   )}
-                  {versions.filter((version) => version.status !== "active").length > 0 && (
+                  {historicalVersions.length > 0 && (
                     <details className="version-history">
                       <summary>查看人格历史版本</summary>
-                      {versions.filter((version) => version.status !== "active").map((version) => (
+                      {historicalVersions.map((version) => (
                         <div key={version.version_id}>
                           <span>v{version.version_number} · {version.reason}</span>
                           <button
@@ -525,7 +503,9 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
               )}
               {confirmation?.key === "persona-revoke" && (
                 <ConfirmAction
-                  {...confirmation}
+                  title={confirmation.title}
+                  body={confirmation.body}
+                  confirmLabel={confirmation.confirmLabel}
                   busy={busy === confirmation.key}
                   onCancel={() => setConfirmation(null)}
                   onConfirm={() => void executeConfirmation()}
@@ -533,7 +513,9 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
               )}
               {confirmation?.key?.startsWith("persona-rollback-") && (
                 <ConfirmAction
-                  {...confirmation}
+                  title={confirmation.title}
+                  body={confirmation.body}
+                  confirmLabel={confirmation.confirmLabel}
                   busy={busy === confirmation.key}
                   onCancel={() => setConfirmation(null)}
                   onConfirm={() => void executeConfirmation()}
@@ -553,7 +535,7 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
               <div className="digital-warning">
                 <WarningCircle size={20} weight="fill" aria-hidden="true" />
                 <p>
-                  声纹只用于区分主人、访客或不确定。访客仍可普通聊天，但不能读取或写入主人私人记忆；声纹不能单独授权删除、导出或其他敏感操作。
+                  声纹只用于区分主人、访客或不确定。“我的”里的“过滤明显旁人（实验）”可减少旁人插话；关闭时访客可聊，但不会访问或写入主人回顾。声纹不能单独授权删除、导出或其他敏感操作。
                 </p>
               </div>
               <div className="digital-consent-box">
@@ -618,7 +600,9 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
               </div>
               {confirmation?.key?.startsWith("speaker-revoke-") && (
                 <ConfirmAction
-                  {...confirmation}
+                  title={confirmation.title}
+                  body={confirmation.body}
+                  confirmLabel={confirmation.confirmLabel}
                   busy={busy === confirmation.key}
                   onCancel={() => setConfirmation(null)}
                   onConfirm={() => void executeConfirmation()}
@@ -642,7 +626,7 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
                 />
               </div>
               <p className="digital-explainer">
-                复刻声音不等于声纹身份，也不等于人格。当前使用 FunASR + CosyVoice 3.5 级联；候选声音必须经过同文本试听和门禁评估。
+                复刻声音不等于声纹身份，也不等于人格。当前实时对话使用 FunASR + 豆包 TTS 2.0 级联；历史复刻档案继续保留和可撤销，但暂不应用于当前豆包语音，也不能在此激活。
               </p>
 
               {voiceCleanupIncomplete ? (
@@ -697,7 +681,7 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
                       onClick={() => confirm({
                         key: "voice-consent-revoke",
                         title: "撤销声音复刻总授权",
-                        body: "所有未撤销声音档案都会停止使用，并进入供应商删除流程。实时对话恢复安全基线音色。",
+                        body: "所有未撤销声音档案都会停止使用，并进入供应商删除流程。实时对话继续使用所选伙伴的豆包设计音色。",
                         confirmLabel: "确认撤销声音授权",
                         action: revokeVoiceConsent,
                         success: "声音复刻总授权已撤销。",
@@ -808,7 +792,7 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
                             uncanny: evaluation.uncanny,
                             notes: evaluation.notes,
                           }),
-                          "A/B 评估已提交。只有所有门禁通过才能激活。",
+                          "A/B 评估已提交。结果会保留在历史档案中，当前豆包语音暂不应用此档案。",
                         );
                       }}
                     >
@@ -883,24 +867,16 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
                     <p className="voice-quality-pending" role="status">
                       <ClockCounterClockwise size={18} />
                       {selectedVoice.quality_status === "failed"
-                        ? "服务端质量探针未通过，暂不能激活。"
-                        : "主观盲测已通过，等待服务端质量探针后才能激活。"}
+                        ? "服务端质量探针未通过，档案仅作为历史记录保留。"
+                        : "主观盲测已通过，等待服务端质量探针；档案暂不应用于当前豆包语音。"}
                     </p>
                   ) : selectedVoice.status !== "active" ? (
-                    <button
-                      type="button"
-                      className="button-primary full-width"
-                      disabled={Boolean(busy)}
-                      onClick={() => void run(
-                        "voice-activate",
-                        () => activateVoiceProfile(selectedVoice.profile_id),
-                        "声音档案已激活，下一次实时话轮将安全刷新使用。",
-                      )}
-                    >
-                      {busy === "voice-activate" ? "正在激活…" : "激活这个声音"}
-                    </button>
+                    <p className="voice-quality-pending" role="status">
+                      <ClockCounterClockwise size={18} />
+                      历史档案已通过评估，但暂不应用于当前豆包语音。实时对话继续使用所选伙伴的豆包设计音色。
+                    </p>
                   ) : (
-                    <p className="voice-active-note"><CheckCircle size={18} weight="fill" /> 当前实时对话正在使用此档案；故障时自动回到安全基线。</p>
+                    <p className="voice-active-note"><CheckCircle size={18} weight="fill" /> 此档案保留原激活状态，但暂不应用于当前豆包语音；实时对话使用所选伙伴的豆包设计音色。</p>
                   )}
                   <button
                     type="button"
@@ -908,7 +884,7 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
                     onClick={() => confirm({
                       key: `voice-profile-revoke-${selectedVoice.profile_id}`,
                       title: "撤销声音档案",
-                      body: "实时对话会立即回到安全基线音色，并请求供应商删除对应复刻声音。",
+                      body: "实时对话继续使用所选伙伴的豆包设计音色，并请求供应商删除对应复刻声音。",
                       confirmLabel: "确认撤销声音档案",
                       action: () => revokeVoiceProfile(selectedVoice.profile_id),
                       success: "声音档案已撤销。",
@@ -920,7 +896,9 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
               )}
               {confirmation?.key === "voice-consent-revoke" && (
                 <ConfirmAction
-                  {...confirmation}
+                  title={confirmation.title}
+                  body={confirmation.body}
+                  confirmLabel={confirmation.confirmLabel}
                   busy={busy === confirmation.key}
                   onCancel={() => setConfirmation(null)}
                   onConfirm={() => void executeConfirmation()}
@@ -928,7 +906,9 @@ export function DigitalSelfPanel({ onBack, onAccountDeleted }) {
               )}
               {confirmation?.key?.startsWith("voice-profile-revoke-") && (
                 <ConfirmAction
-                  {...confirmation}
+                  title={confirmation.title}
+                  body={confirmation.body}
+                  confirmLabel={confirmation.confirmLabel}
                   busy={busy === confirmation.key}
                   onCancel={() => setConfirmation(null)}
                   onConfirm={() => void executeConfirmation()}

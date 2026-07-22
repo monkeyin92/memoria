@@ -180,6 +180,20 @@ def test_interrupt_then_chat_has_no_control_ack() -> None:
     assert route.enter_chat is True
 
 
+def test_paused_reply_resume_trace_routes_back_to_the_interrupted_answer() -> None:
+    """Regression from production: TTS ack + pause + resume may share one ASR final."""
+
+    route = route_utterance(
+        "好的，好的。 等一下。 继续。",
+        resumable_reply=True,
+    )
+
+    assert route.intent is UtteranceIntent.RESUME
+    assert route.reason == "resume_interrupted_reply"
+    assert route.enter_chat is True
+    assert route.should_interrupt is False
+
+
 def test_enrolled_chat_not_blocked_as_enroll() -> None:
     route = route_utterance("我是主人", speaker_state=SpeakerGateState.ENROLLED)
     assert route.intent is UtteranceIntent.CHAT
@@ -238,8 +252,8 @@ def test_legacy_speaker_gate_routes_human_mismatch_as_guest(
             "shadow-1",
             800,
             "conversation",
-            True,
-            "target_unconfirmed",
+            False,
+            "target_non_owner",
         ),
         (
             "uncertain",
@@ -249,6 +263,33 @@ def test_legacy_speaker_gate_routes_human_mismatch_as_guest(
             "interrupt",
             False,
             "target_insufficient_speech",
+        ),
+        (
+            "uncertain",
+            "ambiguous_score",
+            "active-1",
+            800,
+            "conversation",
+            True,
+            "target_unconfirmed",
+        ),
+        (
+            "uncertain",
+            "shadow_ambiguous_candidate",
+            "shadow-1",
+            800,
+            "conversation",
+            True,
+            "target_unconfirmed",
+        ),
+        (
+            "uncertain",
+            "ambiguous_score",
+            "active-1",
+            800,
+            "interrupt",
+            False,
+            "target_unconfirmed",
         ),
         (
             "uncertain",
@@ -300,7 +341,7 @@ def test_target_speaker_focus_is_separate_from_authority_permissions(
     assert route.reason == reason
 
 
-def test_explicit_wait_can_yield_on_uncalibrated_shadow_but_not_formal_guest() -> None:
+def test_strict_explicit_wait_cannot_be_used_by_non_owner() -> None:
     shadow_command = route_target_speaker(
         classification="uncertain",
         reason_code="shadow_guest_candidate",
@@ -317,8 +358,50 @@ def test_explicit_wait_can_yield_on_uncalibrated_shadow_but_not_formal_guest() -
         context="interrupt",
         explicit_interrupt=True,
     )
+    shadow_ambiguous_command = route_target_speaker(
+        classification="uncertain",
+        reason_code="shadow_ambiguous_candidate",
+        profile_id="shadow-1",
+        pcm_duration_ms=320,
+        context="interrupt",
+        explicit_interrupt=True,
+    )
 
-    assert shadow_command.allow_input is True
-    assert shadow_command.reason == "target_explicit_control"
+    assert shadow_command.allow_input is False
+    assert shadow_command.reason == "target_non_owner"
     assert formal_guest_command.allow_input is False
     assert formal_guest_command.reason == "target_non_owner"
+    assert shadow_ambiguous_command.allow_input is True
+    assert shadow_ambiguous_command.reason == "target_explicit_control"
+
+
+@pytest.mark.parametrize(
+    ("classification", "reason_code", "context", "explicit_interrupt", "reason"),
+    [
+        ("guest", "owner_mismatch", "conversation", False, "target_guest_allowed"),
+        ("guest", "owner_mismatch", "interrupt", True, "target_guest_allowed"),
+        ("uncertain", "shadow_guest_candidate", "conversation", False, "target_guest_allowed"),
+        ("uncertain", "shadow_guest_candidate", "interrupt", True, "target_guest_allowed"),
+        ("uncertain", "shadow_ambiguous_candidate", "conversation", False, "target_unconfirmed"),
+        ("uncertain", "shadow_ambiguous_candidate", "interrupt", True, "target_explicit_control"),
+    ],
+)
+def test_permissive_policy_allows_guest_and_ambiguous_conversation_and_interrupt(
+    classification: str,
+    reason_code: str,
+    context: str,
+    explicit_interrupt: bool,
+    reason: str,
+) -> None:
+    route = route_target_speaker(
+        classification=classification,
+        reason_code=reason_code,
+        profile_id="profile-1",
+        pcm_duration_ms=800,
+        context=context,  # type: ignore[arg-type]
+        explicit_interrupt=explicit_interrupt,
+        reject_non_owner_voice=False,
+    )
+
+    assert route.allow_input is True
+    assert route.reason == reason

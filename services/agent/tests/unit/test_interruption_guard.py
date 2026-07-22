@@ -97,3 +97,17 @@ def test_playback_input_guard_opens_feedback_circuit_on_third_rapid_turn() -> No
         False,
         "feedback_circuit_open",
     )
+
+
+def test_unanchored_playback_transcript_cannot_bypass_echo_guard_as_interrupt() -> None:
+    guard = PlaybackInputGuard(enabled=True)
+
+    decision = guard.observe(
+        "不是一座只有历史的城市",
+        final=True,
+        assistant_text="南京不是一座只有历史的城市，也是一座现代都市。",
+        during_playback_if_unstarted=True,
+    )
+
+    assert decision is PlaybackInputDecision.IGNORE
+    assert guard.candidate_reason == "unanchored_playback_transcript"

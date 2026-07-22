@@ -9,7 +9,7 @@ import secrets
 from pathlib import Path
 from urllib.parse import quote
 
-from services.agent.src.config import AgentSettings
+from services.agent.src.config import AgentSettings, validate_doubao_auth
 from services.control_api.app.config import ControlSettings
 
 from scripts.split_production_env import (
@@ -21,10 +21,7 @@ from scripts.split_production_env import (
     split_env,
 )
 
-_MODEL_VERSION = (
-    "campplus-cn-common@v1.0.0+ckpt.3388cf5f+"
-    "onnx.7a39d2e5e566+fbank.v1"
-)
+_MODEL_VERSION = "campplus-cn-common@v1.0.0+ckpt.3388cf5f+onnx.7a39d2e5e566+fbank.v1"
 
 
 def _token() -> str:
@@ -60,6 +57,12 @@ def prepare(
         | set(_AGENT_EXTRA_KEYS)
     )
     values = {key: value for key, value in legacy.items() if key in known}
+    validate_doubao_auth(
+        api_key=values.get("DOUBAO_TTS_API_KEY", ""),
+        app_id=values.get("DOUBAO_TTS_APP_ID", ""),
+        access_token=values.get("DOUBAO_TTS_ACCESS_TOKEN", ""),
+        required=True,
+    )
     dashscope_key = _required(values, "DASHSCOPE_API_KEY")
     app_password = _required(postgres, "MEMORIA_DB_APP_PASSWORD")
     compiler_password = _required(postgres, "MEMORIA_DB_COMPILER_PASSWORD")
@@ -87,14 +90,10 @@ def prepare(
             "MEMORIA_SPEAKER_INTERNAL_TOKEN": _token(),
             "MEMORIA_SPEAKER_EMBEDDING_TOKEN": _token(),
             "MEMORIA_SPEAKER_TEMPLATE_KEY": _fernet_key(),
-            "MEMORIA_SPEAKER_EMBEDDING_URL": (
-                "http://speaker-model:8001/v1/embeddings/speaker"
-            ),
+            "MEMORIA_SPEAKER_EMBEDDING_URL": ("http://speaker-model:8001/v1/embeddings/speaker"),
             "MEMORIA_SPEAKER_EMBEDDING_MODEL": _MODEL_VERSION,
             "MEMORIA_SPEAKER_AUTHORITY_ENABLED": "true",
-            "MEMORIA_SPEAKER_AUTHORITY_URL": (
-                "http://control-api:8000/v1/speakers/classify"
-            ),
+            "MEMORIA_SPEAKER_AUTHORITY_URL": ("http://control-api:8000/v1/speakers/classify"),
             "MEMORIA_SPEAKER_AUTHORITY_TIMEOUT_S": "0.4",
             "MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY": _fernet_key(),
             "MEMORIA_VOICE_SAMPLE_KEY_VERSION": "voice-sample-v1",
@@ -127,17 +126,11 @@ def prepare(
             "MEMORIA_ARCHIVE_SPOOL_PATH": "/data/archive-events.spool",
             "MEMORIA_ARCHIVE_SPOOL_MAX_BYTES": "8388608",
             "MEMORIA_PERSONA_ENABLED": "true",
-            "MEMORIA_PERSONA_CAPSULE_URL": (
-                "http://control-api:8000/v1/persona/session-capsule"
-            ),
+            "MEMORIA_PERSONA_CAPSULE_URL": ("http://control-api:8000/v1/persona/session-capsule"),
             "MEMORIA_MEMORY_CONTEXT_ENABLED": "true",
-            "MEMORIA_MEMORY_CONTEXT_URL": (
-                "http://control-api:8000/v1/archive/session-context"
-            ),
+            "MEMORIA_MEMORY_CONTEXT_URL": ("http://control-api:8000/v1/archive/session-context"),
             "MEMORIA_VOICE_PROFILE_ENABLED": "true",
-            "MEMORIA_VOICE_PROFILE_URL": (
-                "http://control-api:8000/v1/voices/session-resolution"
-            ),
+            "MEMORIA_VOICE_PROFILE_URL": ("http://control-api:8000/v1/voices/session-resolution"),
             "LIVEKIT_ADAPTIVE_INTERRUPTION": "false",
             "PREEMPTIVE_GENERATION": "false",
             "PREEMPTIVE_TTS": "false",

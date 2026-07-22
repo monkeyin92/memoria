@@ -10,18 +10,17 @@ from services.agent.src.contracts.errors import ConfigValidationError
 
 def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FUNASR_SAMPLE_RATE", "16000")
-    monkeypatch.setenv("COSYVOICE_SAMPLE_RATE", "24000")
-    monkeypatch.setenv("COSYVOICE_WORD_TIMESTAMPS", "true")
     monkeypatch.setenv("VAD_MIN_SILENCE_DURATION_S", "0.30")
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     monkeypatch.setenv("LIVEKIT_ADAPTIVE_INTERRUPTION", "true")
     s = AgentSettings()
     assert s.funasr_sample_rate == 16000
-    assert s.cosyvoice_sample_rate == 24000
+    assert s.funasr_context_enabled is False
+    assert s.doubao_tts_sample_rate == 24000
+    assert s.tts_provider == "doubao"
     assert s.listener_cues_enabled is False
     assert s.listener_cue_playback == "main_track"
     assert s.listener_cue_aec_validated is False
-    assert s.cosyvoice_paralinguistic_tags is True
     assert s.persona_enabled is False
     assert s.memory_context_enabled is False
     assert s.voice_profile_enabled is False
@@ -30,7 +29,6 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_cn_self_hosted_forces_v1_mini(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "cn_self_hosted")
     monkeypatch.setenv("LIVEKIT_TURN_DETECTOR_VERSION", "v1")
-    monkeypatch.setenv("COSYVOICE_WORD_TIMESTAMPS", "true")
     s = AgentSettings()
     assert s.livekit_turn_detector_version == "v1-mini"
 
@@ -43,7 +41,6 @@ def test_rejects_bad_sample_rate(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_rejects_deprecated_deepseek_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEEPSEEK_FAST_MODEL", "deepseek-chat")
-    monkeypatch.setenv("COSYVOICE_WORD_TIMESTAMPS", "true")
     with pytest.raises(ValidationError):
         AgentSettings()
 
@@ -60,11 +57,45 @@ def test_online_settings_require_provider_endpoints_and_keys(
         "LIVEKIT_API_SECRET",
         "DASHSCOPE_API_KEY",
         "DASHSCOPE_WS_URL",
+        "DOUBAO_TTS_API_KEY",
+        "DOUBAO_TTS_APP_ID",
+        "DOUBAO_TTS_ACCESS_TOKEN",
     ):
         monkeypatch.delenv(name, raising=False)
 
     with pytest.raises(ConfigValidationError, match="LIVEKIT_URL.*DASHSCOPE_WS_URL"):
         load_settings(require_keys=True)
+
+
+@pytest.mark.parametrize(
+    "auth",
+    [
+        {
+            "DOUBAO_TTS_API_KEY": "api-key",
+            "DOUBAO_TTS_APP_ID": "app-id",
+            "DOUBAO_TTS_ACCESS_TOKEN": "access-token",
+        },
+        {"DOUBAO_TTS_APP_ID": "app-id"},
+        {"DOUBAO_TTS_ACCESS_TOKEN": "access-token"},
+    ],
+)
+def test_agent_settings_requires_one_complete_doubao_auth_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    auth: dict[str, str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in (
+        "DOUBAO_TTS_API_KEY",
+        "DOUBAO_TTS_APP_ID",
+        "DOUBAO_TTS_ACCESS_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in auth.items():
+        monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError, match="exactly one complete authentication mode"):
+        AgentSettings()
 
 
 def test_dashscope_qwen_is_the_default_llm(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -116,6 +147,7 @@ def test_explicit_deepseek_requires_its_key(
     monkeypatch.setenv("LIVEKIT_API_SECRET", "test-secret")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-test-key")
     monkeypatch.setenv("DASHSCOPE_WS_URL", "wss://dashscope")
+    monkeypatch.setenv("DOUBAO_TTS_API_KEY", "doubao-test-key")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
     with pytest.raises(ConfigValidationError, match="DEEPSEEK_API_KEY"):
@@ -204,6 +236,29 @@ def test_production_plaintext_internal_url_is_limited_to_local_docker_dns(
     )
 
     with pytest.raises(ValidationError, match="HTTPS or local Docker DNS"):
+        AgentSettings()
+
+
+@pytest.mark.parametrize(
+    "ws_url",
+    [
+        "ws://openspeech.bytedance.com/api/v3/tts/bidirection",
+        "wss://user:password@openspeech.bytedance.com/api/v3/tts/bidirection",
+        "wss://openspeech.bytedance.com/api/v3/tts/bidirection#credentials",
+    ],
+)
+def test_production_rejects_unsafe_doubao_websocket_urls(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    ws_url: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
+    monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("DOUBAO_TTS_WS_URL", ws_url)
+
+    with pytest.raises(ValidationError, match="DOUBAO_TTS_WS_URL"):
         AgentSettings()
 
 

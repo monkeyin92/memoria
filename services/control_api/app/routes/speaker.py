@@ -7,6 +7,7 @@ import binascii
 import hmac
 import uuid
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
 import httpx
@@ -196,15 +197,23 @@ async def classify(
     _: Annotated[None, Depends(_require_internal_token)],
 ) -> dict[str, Any]:
     session = require_active_voice_session(request, body.session_id)
+    account_id = str(session["user_id"])
     decision = await _authority(request).classify(
         SpeakerSample(
-            account_id=str(session["user_id"]),
+            account_id=account_id,
             session_id=body.session_id,
             pcm=_decode_pcm(body.audio_base64),
             sample_rate=body.sample_rate,
         )
     )
-    return asdict(decision)
+    profile = _store(request).get_profile(
+        user_id=account_id,
+        now=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    )
+    return {
+        **asdict(decision),
+        "reject_non_owner_voice": bool(profile["reject_non_owner_voice"]),
+    }
 
 
 @router.delete("/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)

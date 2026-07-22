@@ -1161,6 +1161,7 @@ async def test_owner_acoustic_metrics_reach_persona_through_an_allowlist(
                     "source": "funasr.authoritative_final",
                     "payload": {
                         "text": text,
+                        "persona_eligible": True,
                         "speech_ms": 8000,
                         "pause_ratio": 0.55,
                         "quality_score": 0.95,
@@ -1193,6 +1194,7 @@ async def test_owner_acoustic_metrics_reach_persona_through_an_allowlist(
                     "source": "funasr.authoritative_final",
                     "payload": {
                         "text": "这条样本不能进入主人的人格学习。",
+                        "persona_eligible": True,
                         "speech_ms": 8000,
                         "pause_ratio": 0.55,
                         "quality_score": quality_score,
@@ -1202,7 +1204,12 @@ async def test_owner_acoustic_metrics_reach_persona_through_an_allowlist(
             )
             assert recorded.status_code == 201
 
-        traits = (await client.get("/v1/persona/traits", headers=headers)).json()["items"]
+        traits = (
+            await client.get(
+                "/v1/persona/traits?include_candidates=true",
+                headers=headers,
+            )
+        ).json()["items"]
 
     speech_rate = next(item for item in traits if item["category"] == "speech_rate")
     pause_style = next(item for item in traits if item["category"] == "pause_style")

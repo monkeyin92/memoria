@@ -13,6 +13,7 @@ from services.agent.src.contracts.errors import ConfigValidationError
 
 DeploymentProfile = Literal["livekit_cloud", "cn_self_hosted"]
 LLMProvider = Literal["qwen", "deepseek"]
+TTSProvider = Literal["doubao"]
 
 
 def _secure_internal_url(value: str) -> bool:
@@ -21,6 +22,45 @@ def _secure_internal_url(value: str) -> bool:
         parsed.scheme == "http"
         and parsed.hostname in {"control-api", "localhost", "127.0.0.1", "::1"}
     )
+
+
+def _valid_websocket_url(value: str, *, require_tls: bool) -> bool:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    schemes = {"wss"} if require_tls else {"ws", "wss"}
+    return (
+        parsed.scheme in schemes
+        and parsed.hostname is not None
+        and parsed.username is None
+        and parsed.password is None
+        and "#" not in value
+    )
+
+
+def validate_doubao_auth(
+    *,
+    api_key: str,
+    app_id: str,
+    access_token: str,
+    required: bool,
+) -> None:
+    """Require one complete Doubao authentication mode without silent precedence."""
+
+    has_api_key = bool(api_key.strip())
+    has_app_id = bool(app_id.strip())
+    has_access_token = bool(access_token.strip())
+    has_app_pair = has_app_id and has_access_token
+    if (
+        has_app_id != has_access_token
+        or (has_api_key and (has_app_id or has_access_token))
+        or (required and not (has_api_key or has_app_pair))
+    ):
+        raise ValueError(
+            "Doubao TTS requires exactly one complete authentication mode: API Key or "
+            "App ID plus Access Token"
+        )
 
 
 class AgentSettings(BaseSettings):
@@ -32,6 +72,7 @@ class AgentSettings(BaseSettings):
     )
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     llm_provider: LLMProvider = Field(default="qwen", alias="LLM_PROVIDER")
+    tts_provider: TTSProvider = Field(default="doubao", alias="TTS_PROVIDER")
 
     livekit_url: str = Field(default="", alias="LIVEKIT_URL")
     livekit_api_key: str = Field(default="", alias="LIVEKIT_API_KEY")
@@ -55,30 +96,34 @@ class AgentSettings(BaseSettings):
     funasr_model: str = Field(default="fun-asr-realtime", alias="FUNASR_MODEL")
     funasr_sample_rate: int = Field(default=16000, alias="FUNASR_SAMPLE_RATE")
     funasr_max_sentence_silence_ms: int = Field(default=550, alias="FUNASR_MAX_SENTENCE_SILENCE_MS")
+    funasr_context_enabled: bool = Field(default=False, alias="FUNASR_CONTEXT_ENABLED")
 
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
     deepseek_fast_model: str = Field(default="deepseek-v4-flash", alias="DEEPSEEK_FAST_MODEL")
     deepseek_deep_model: str = Field(default="deepseek-v4-pro", alias="DEEPSEEK_DEEP_MODEL")
 
-    cosyvoice_model: str = Field(default="cosyvoice-v3.5-flash", alias="COSYVOICE_MODEL")
-    # Designed voice_id (v3.5) or system longanyang (v3-flash). Profile → registry.
-    cosyvoice_voice: str = Field(default="", alias="COSYVOICE_VOICE")
-    cosyvoice_voice_profile: str = Field(
+    doubao_tts_api_key: SecretStr = Field(default=SecretStr(""), alias="DOUBAO_TTS_API_KEY")
+    doubao_tts_app_id: str = Field(default="", alias="DOUBAO_TTS_APP_ID")
+    doubao_tts_access_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="DOUBAO_TTS_ACCESS_TOKEN",
+    )
+    doubao_tts_ws_url: str = Field(
+        default="wss://openspeech.bytedance.com/api/v3/tts/bidirection",
+        alias="DOUBAO_TTS_WS_URL",
+    )
+    doubao_tts_resource_id: str = Field(
+        default="seed-tts-2.0",
+        alias="DOUBAO_TTS_RESOURCE_ID",
+    )
+    doubao_tts_voice_profile: str = Field(
         default="warm_companion",
-        alias="COSYVOICE_VOICE_PROFILE",
+        alias="DOUBAO_TTS_VOICE_PROFILE",
     )
-    cosyvoice_instruct_style: str = Field(default="auto", alias="COSYVOICE_INSTRUCT_STYLE")
-    cosyvoice_sample_rate: int = Field(default=24000, alias="COSYVOICE_SAMPLE_RATE")
-    cosyvoice_word_timestamps: bool = Field(default=True, alias="COSYVOICE_WORD_TIMESTAMPS")
-    cosyvoice_pool_size: int = Field(default=4, alias="COSYVOICE_POOL_SIZE")
-    # When true, inject CosyVoice markup like [laughter]/[breath] on delivery.
-    # Keep false for PlainText system voices unless the deployed model is verified.
-    cosyvoice_paralinguistic_tags: bool = Field(
-        # P0-2: laugh/breath/emphasis markup via DeliveryPlan; serious scenes strip.
-        default=True,
-        alias="COSYVOICE_PARALINGUISTIC_TAGS",
-    )
+    doubao_tts_speaker: str = Field(default="", alias="DOUBAO_TTS_SPEAKER")
+    doubao_tts_sample_rate: int = Field(default=24000, alias="DOUBAO_TTS_SAMPLE_RATE")
+    doubao_tts_pool_size: int = Field(default=4, alias="DOUBAO_TTS_POOL_SIZE")
 
     vad_min_silence_duration_s: float = Field(default=0.30, alias="VAD_MIN_SILENCE_DURATION_S")
     preemptive_tts: bool = Field(default=False, alias="PREEMPTIVE_TTS")
@@ -314,11 +359,11 @@ class AgentSettings(BaseSettings):
             raise ValueError("FUNASR_SAMPLE_RATE must be 16000")
         return v
 
-    @field_validator("cosyvoice_sample_rate")
+    @field_validator("doubao_tts_sample_rate")
     @classmethod
-    def _cosy_sr(cls, v: int) -> int:
+    def _doubao_sr(cls, v: int) -> int:
         if v != 24000:
-            raise ValueError("COSYVOICE_SAMPLE_RATE must be 24000")
+            raise ValueError("DOUBAO_TTS_SAMPLE_RATE must be 24000")
         return v
 
     @field_validator("vad_min_silence_duration_s")
@@ -337,8 +382,22 @@ class AgentSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _profile_rules(self) -> AgentSettings:
-        if not self.cosyvoice_word_timestamps:
-            raise ValueError("COSYVOICE_WORD_TIMESTAMPS must be true")
+        validate_doubao_auth(
+            api_key=self.doubao_tts_api_key.get_secret_value(),
+            app_id=self.doubao_tts_app_id,
+            access_token=self.doubao_tts_access_token.get_secret_value(),
+            required=False,
+        )
+        if self.doubao_tts_resource_id != "seed-tts-2.0":
+            raise ValueError("DOUBAO_TTS_RESOURCE_ID must be seed-tts-2.0")
+        if not _valid_websocket_url(
+            self.doubao_tts_ws_url,
+            require_tls=self.environment == "production",
+        ):
+            raise ValueError(
+                "DOUBAO_TTS_WS_URL must use wss:// in production and contain no userinfo "
+                "or fragment"
+            )
         if self.deployment_profile == "livekit_cloud" and not self.livekit_adaptive_interruption:
             raise ValueError("livekit_cloud requires LIVEKIT_ADAPTIVE_INTERRUPTION=true")
         if self.deployment_profile == "cn_self_hosted":
@@ -419,6 +478,14 @@ def load_settings(*, require_keys: bool = False) -> AgentSettings:
                 ("LIVEKIT_API_SECRET", settings.livekit_api_secret),
                 ("DASHSCOPE_API_KEY", settings.dashscope_api_key),
                 ("DASHSCOPE_WS_URL", settings.dashscope_ws_url),
+                (
+                    "DOUBAO_TTS_AUTH",
+                    settings.doubao_tts_api_key.get_secret_value()
+                    or (
+                        settings.doubao_tts_app_id
+                        and settings.doubao_tts_access_token.get_secret_value()
+                    ),
+                ),
             ]
             if not val
         ]

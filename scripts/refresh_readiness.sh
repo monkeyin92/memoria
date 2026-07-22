@@ -50,7 +50,7 @@ case "${llm_provider:-qwen}" in
   deepseek) llm_label=DeepSeek ;;
   *) echo "invalid LLM_PROVIDER in $agent_env" >&2; exit 1 ;;
 esac
-provider_expected="provider_smoke_test PASS: FunASR, $llm_label, CosyVoice"
+provider_expected="provider_smoke_test PASS: FunASR, $llm_label, Doubao"
 for attempt in 1 2; do
   if provider_output="$(run_required_provider_smoke 2>&1)" \
     && grep -Fqx "$provider_expected" <<<"$provider_output"; then

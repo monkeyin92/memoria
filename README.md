@@ -2,20 +2,20 @@
 
 完整 monorepo，实现规范见 `full_duplex_voice_agent_architecture_zh.md`。
 
-**生产默认选型**：自建 LiveKit Server `1.13.3` · LiveKit Agents `1.6.5` · FunASR Realtime · 百炼 Qwen · CosyVoice Realtime · Python 3.12。默认发布不依赖任何可选 LLM 覆盖配置。
+**代码默认选型**：自建 LiveKit Server `1.13.3` · LiveKit Agents `1.6.5` · FunASR Realtime · 百炼 Qwen · 豆包 Seed-TTS 2.0 双向流式 · Python 3.12。当前线上 release 与候选发布状态以 `HANDOFF.md` 为准；默认发布不依赖任何可选 LLM 覆盖配置。
 
 ## 生产交付
 
 - H5：<https://122.51.108.140:8443/>
 - Control API：<https://122.51.108.140:8443/memoria-api/>
-- 当前 runtime release：`20260720-182535`
-- 当前 H5 release：`20260720-182535`
-- 发布记录：`docs/releases/20260720-140053.md`、`docs/releases/20260720-145953.md`、`docs/releases/20260720-162553.md`、`docs/releases/20260720-164942.md`、`docs/releases/20260720-174545.md`、`docs/releases/20260720-182535.md`
+- 当前 runtime release：`20260721-224804`
+- 当前 H5 release：`20260721-224804`
+- 最新发布记录：`docs/releases/20260721-224804.md`；历史证据保留在 `docs/releases/`
 - TLS：公网 IP `122.51.108.140` 使用 Let's Encrypt 短期证书；当前公网入口为 8443，443 继续由既有 WMS 使用。任何 Nginx reload 前都必须先通过 `nginx -t`。
 
 当前线上 H5 使用用户名/密码稳定账号和短期 LiveKit participant token；旧匿名身份仍可在注册时原地升级。消息、个人资料、偏好、会话控制和 readiness evidence 按用户隔离；PII 在持久化或发送 Provider 上下文前统一脱敏。浏览器 bundle 不包含永久凭据。
 
-> 生产状态边界：P0.5、P1-P6 工程能力底座随 `20260720-140053` 部署，当前 runtime/H5 为 `20260720-182535`；正式声纹仍为 shadow-only，复刻声音尚未通过授权真人盲测。同机 PostgreSQL/MinIO 没有异地副本/KMS/PITR，不能宣传为已完成规模化声纹验收或“永不丢失”。
+> 生产状态边界：P0.5、P1-P6 工程能力底座随 `20260720-140053` 部署，当前 runtime/H5 为 `20260721-224804`；“过滤明显旁人（实验）”默认开启，只拒绝明确 guest，ambiguous 为避免误静音主人可聊天但无主人历史或私人权限。正式声纹仍为 shadow-only，复刻声音尚未通过授权真人盲测。同机 PostgreSQL/MinIO 没有异地副本/KMS/PITR，不能宣传为已完成规模化声纹验收或“永不丢失”。
 
 P0.5～P6 工程切片已完成并部署；声纹模型使用独立 `speaker-model` 容器承载固定 CAM++ ONNX 版本，Control API readiness 会校验模型健康与版本。CAM++ 不提供 anti-spoof，因此当前只允许 shadow/`uncertain` 结果，不能把模型冒烟当作生产主人识别。
 
@@ -67,7 +67,7 @@ npm --prefix apps/h5 run build
 
 本地默认使用 `/memoria-h5/` base path；生产 Control API 通过同源 `/memoria-api` 访问，永久密钥不会进入浏览器 bundle。H5 通过 `/v1/auth/me` 恢复稳定账号身份；只有服务端返回 401/403 才清理失效身份，临时网络故障不会切换用户数据归属。
 
-当前本地交付已通过 H5 121 项测试、production build 和移动端浏览器回归；注册后选角、表情与设计音色试听、三段声纹登记、匿名注册原地升级、跨账号 Profile 隔离、隐私授权断网 fail-closed、无横向溢出和 console 0 warning/error 均已验收。声纹登记仍为 shadow-only，不代表已启用生产主人识别。
+当前本地交付已通过 H5 138 项测试、production build 和移动端浏览器回归；注册后选角、表情与设计音色试听、三段声纹登记、匿名注册原地升级、跨账号 Profile 隔离、默认“过滤明显旁人（实验）”、主人历史 fail-closed、无横向溢出和 console 0 warning/error 均已验收。声纹登记仍为 shadow-only，不代表已启用强身份认证。
 
 会话只有收到当前 Agent 在 `voice-agent.ui` topic 发布的显式 `assistant_state: ready` 后才进入可用态；LiveKit transport 已连接但 45 秒内未收到该事件时，H5 会断开并恢复为可重试状态。Agent 在音频输出与 UI publisher 就绪后先发布并等待 `ready`，随后才生成首次欢迎语，避免欢迎语先于客户端可用态。
 
@@ -121,7 +121,7 @@ API secret 永远只放控制 API 与 Agent 服务端；H5 只接收短期 parti
 | 路径 | 说明 |
 |---|---|
 | `services/agent/src/orchestration/` | 状态机、Fence、HeardText、分段、打断 |
-| `services/agent/src/providers/` | FunASR / CosyVoice / OpenAI-compatible LLM 协议与适配 |
+| `services/agent/src/providers/` | FunASR / 豆包 TTS / OpenAI-compatible LLM 协议与适配；CosyVoice 仅保留历史兼容代码 |
 | `services/control_api/` | 账号、会话、档案、人格、声纹、声音、导出/删除与 health |
 | `apps/h5/` | 面向移动浏览器的 Memoria 三页产品 |
 | `apps/web/` | 历史 Web 客户端源码；不属于当前 H5-only 交付与门禁 |
@@ -132,13 +132,13 @@ API secret 永远只放控制 API 与 Agent 服务端；H5 只接收短期 parti
 - `DEPLOYMENT_PROFILE=livekit_cloud`：Adaptive Interruption + Turn Detector `v1`
 - `DEPLOYMENT_PROFILE=cn_self_hosted`：Turn Detector `v1-mini` + `ChineseInterruptionGuard`
 
-H5 的生产 Compose、自建 LiveKit、IP TLS、Nginx 路由、Provider 门禁、备份和回滚步骤见 `docs/production-deployment.md`。`https://122.51.108.140:8443/` 直接交付 H5；同一端口还通过 Nginx stream 复用为 LiveKit RTC/TCP 回退，`/wms/` 保留给既有 WMS。静态资源与 API 继续使用 `/memoria-h5/`、`/memoria-api/` 独立路径。当前迁移、H5 注销 UI、runtime 删除热修、PCM 声纹录音及重复登记/音色跳变修复证据分别见 `docs/releases/20260720-140053.md`、`docs/releases/20260720-162553.md`、`docs/releases/20260720-164942.md`、`docs/releases/20260720-174545.md`、`docs/releases/20260720-182535.md`；P0.5～P6 的本地工程基线记录见 `docs/releases/20260719-local-memory-persona.md`。
+H5 的生产 Compose、自建 LiveKit、IP TLS、Nginx 路由、Provider 门禁、备份和回滚步骤见 `docs/production-deployment.md`。`https://122.51.108.140:8443/` 直接交付 H5；同一端口还通过 Nginx stream 复用为 LiveKit RTC/TCP 回退，`/wms/` 保留给既有 WMS。静态资源与 API 继续使用 `/memoria-h5/`、`/memoria-api/` 独立路径。当前生产证据见 `docs/releases/20260721-224804.md`；历史迁移、热修与回滚证据保留在 `docs/releases/`。
 
 ## 实现偏差
 
 1. **工作区布局**：规范示例为 `voice-agent/` 根目录；本仓库以 monorepo 根目录直接承载同等树结构（`apps/`、`services/`、`packages/`、`infra/`、`scripts/`）。
-2. **LiveKit STT/TTS 基类**：FunASR/CosyVoice 提供完整协议会话与连接池，并在 `agent.py` 中挂入 `AgentSession`；若固定版本 `livekit-agents==1.6.5` 的 `stt.STT`/`tts.TTS` 抽象字段与骨架略有差异，以该版本公开 API 为准，协议语义保持规范第 12/15 章。
-3. **规模化设备门槛**：LiveKit、FunASR、Qwen、CosyVoice 的生产实网 smoke 已通过。200 条真实设备录音、AEC 矩阵和第 21 章 SLO 属于后续规模化门禁，不作为当前 H5 成品交付的阻塞项。
+2. **LiveKit STT/TTS 基类**：FunASR/豆包提供完整协议会话与连接池，并在 `agent.py` 中挂入 `AgentSession`；若固定版本 `livekit-agents==1.6.5` 的 `stt.STT`/`tts.TTS` 抽象字段与骨架略有差异，以该版本公开 API 为准，协议语义保持规范第 12/15 章。
+3. **规模化设备门槛**：LiveKit、FunASR、Qwen 与豆包仍须以每次 release 的生产实网 smoke 为准。200 条真实设备录音、AEC 矩阵和第 21 章 SLO 属于后续规模化门禁，不作为当前 H5 成品交付的阻塞项。
 4. **预生成桥接 PCM 缓存**：桥接语文本在 `prompts.BRIDGE_PHRASES`；二进制 PCM 缓存可在生产预热任务中填充，离线路径使用 mock TTS。
 
 ## 故障排查
@@ -148,10 +148,10 @@ H5 的生产 Compose、自建 LiveKit、IP TLS、Nginx 路由、Provider 门禁�
 | 反应慢 | endpointing → LLM TTFT → phrase wait → TTS TTFB → playback |
 | 总抢话 | VAD min silence ≥0.25；Turn Detector；勿把 FunASR sentence_end 当对话 EOT |
 | 嗯一声就停 | Adaptive Interruption / backchannel / aligned_transcript=word / AEC |
-| 打断后仍播旧内容 | generation_id 先递增；CosyVoice 连接关闭；fence 比对；tool_epoch |
+| 打断后仍播旧内容 | generation_id 先递增；豆包 session 取消并丢连接；fence 比对；tool_epoch |
 
 ## 验收
 
-当前本地工程质量门为 Ruff、mypy strict、全量 pytest、离线 E2E、Control API/Agent 镜像构建；H5 质量门为 121 项测试、production build 与移动浏览器验收。完整追踪矩阵见 `docs/requirements_traceability_matrix.md`，终身记忆架构与阶段状态见 `docs/memory-persona-architecture-v1.md` 和 `docs/memory-persona-implementation-plan.md`。
+当前本地工程质量门为 Ruff、mypy strict、全量 pytest、Doubao 离线 E2E、Control API/Agent 镜像构建；本 release 的 `uv run pytest -q` 退出码为 0（`730 tests collected`），H5 为 `138/138`。最近一次覆盖率证据 `82.05%` 仍低于既有 85% 门槛，必须保留 waiver。完整追踪矩阵见 `docs/requirements_traceability_matrix.md`，终身记忆架构与阶段状态见 `docs/memory-persona-architecture-v1.md` 和 `docs/memory-persona-implementation-plan.md`。
 
 只要出现 **旧 generation 误播** 或 **旧 tool epoch 误播**，发布结论必须是 **REJECT**。

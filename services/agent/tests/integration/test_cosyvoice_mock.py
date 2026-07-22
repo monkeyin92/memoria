@@ -241,6 +241,7 @@ async def test_cosyvoice_midflight_cancel_closes_ws_and_clears_binding() -> None
             first_audio_timeout_s=1.0,
         )
         tts = CosyVoiceTTS(cfg)
+        await tts.pool.warm(1)
         cancel = asyncio.Event()
         fence = GenerationFence("s", 1, 1, 0)
         task = asyncio.create_task(
@@ -253,6 +254,20 @@ async def test_cosyvoice_midflight_cancel_closes_ws_and_clears_binding() -> None
         assert result.discarded
         assert not tts.pool.active_by_fence
         assert tts.pool.discarded_count == 1
+        for _ in range(100):
+            if tts.pool.available_approx == 1:
+                break
+            await asyncio.sleep(0.01)
+        assert tts.pool.available_approx == 1
+        assert srv.connections == 2
+
+        srv.scenario = "happy"
+        resumed = await tts.synthesize_stream_text(
+            ["补池连接复用"],
+            fence=GenerationFence("s", 2, 2, 0),
+        )
+        assert resumed.pcm and resumed.words
+        assert srv.connections == 2
         await tts.aclose()
     finally:
         srv.stop()
@@ -268,7 +283,7 @@ async def test_pool_discard_refills_in_background_and_shutdown_waits_for_it() ->
         await pool.warm(1)
         conn = await pool.acquire()
         await pool.discard(conn, reason="error")
-        for _ in range(50):
+        for _ in range(100):
             if pool.available_approx == 1:
                 break
             await asyncio.sleep(0.01)

@@ -1,9 +1,12 @@
 ---
 status: accepted
 date: 2026-07-20
+amended_by: 0015-user-configurable-owner-only-conversation-policy
 ---
 
 # 将目标说话人聚焦与 SpeakerAuthority 权限平面分离
+
+> 2026-07-21：普通聊天一律 fail-open 的产品默认已由 ADR 0015 修订；当前默认只拒绝明确的 formal/shadow guest，ambiguous 为避免误静音主人仍可聊天但不获得权限或历史资格。本 ADR 的权限分离、完整端点分类和统一 Router 原则继续有效。
 
 ## Context
 
@@ -21,9 +24,11 @@ date: 2026-07-20
 在启用正式 `SpeakerAuthority` 的实时 Agent 会话中，增加
 `TargetSpeakerFocus` 作为独立的交互控制面：
 
-- 正式 `guest` / `owner_mismatch` 不能提交话轮或打断播放。
-- shadow `guest/ambiguous` 与低于 600 ms 的语音不能因普通旁人讲话抢断
-  播放；普通聊天则 fail-open，仍保持 `uncertain` 权限。
+- 策略开启时，正式 `guest` / `owner_mismatch` 不能提交话轮或打断播放；用户关闭
+  `reject_non_owner_voice` 后可放开普通交互，但权限仍保持 non-owner。
+- 明确的 shadow `guest` 与低于 600 ms 的语音不能因普通旁人讲话抢断
+  播放；shadow/formal `ambiguous` 普通聊天则 fail-open，仍保持 `uncertain`
+  权限且不进入主人历史。
 - 最终 ASR 经 `utterance_router` 判为明确暂停/让话控制意图时（例如“等一下”），
   即使 shadow 声纹尚未校准也可以停止当前播放并返回固定让话确认；该语句不进入
   聊天、不读取私人记忆、不写长期记忆，也不授予敏感动作权限。

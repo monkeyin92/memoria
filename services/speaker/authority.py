@@ -373,9 +373,12 @@ class SpeakerAuthority:
             # Shadow output never changes authority. Keep its candidate score even
             # when the short conversational sample fails authority-quality gates,
             # so the realtime target-speaker focus can reject a clear bystander.
+            effective_guest_threshold = min(
+                float(row["guest_threshold"]), self._guest_threshold
+            )
             if score >= float(row["owner_threshold"]):
                 reason = "shadow_owner_candidate"
-            elif score <= float(row["guest_threshold"]):
+            elif score <= effective_guest_threshold:
                 reason = "shadow_guest_candidate"
             else:
                 reason = "shadow_ambiguous_candidate"

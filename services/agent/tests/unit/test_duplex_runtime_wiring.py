@@ -21,6 +21,95 @@ from services.agent.src.orchestration.speaker_verify import SpeakerGateState, Sp
 from services.agent.src.orchestration.state_machine import ConversationState
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSTT
+from services.speaker.domain import SpeakerDecision, permissions_for_speaker
+
+
+def _speaker_decision(*, profile_id: str = "profile-owner-001") -> SpeakerDecision:
+    return SpeakerDecision(
+        classification="owner",
+        score=0.95,
+        quality_score=0.9,
+        reason_code="owner_match",
+        model_version="campplus-test",
+        template_version=1,
+        profile_id=profile_id,
+        permissions=permissions_for_speaker("owner"),
+    )
+
+
+def _shadow_speaker_decision(*, profile_id: str) -> SpeakerDecision:
+    return SpeakerDecision(
+        classification="uncertain",
+        score=0.8,
+        quality_score=0.9,
+        reason_code="shadow_owner_candidate",
+        model_version="campplus-test",
+        template_version=1,
+        profile_id=profile_id,
+        permissions=permissions_for_speaker("uncertain"),
+    )
+
+
+async def _classify_speaker(runtime: DuplexRuntime, decision: SpeakerDecision) -> None:
+    async def _classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return decision
+
+    runtime.set_speaker_classifier(_classify, sample_rate=16_000)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x01\x00" * 800)
+    runtime.on_user_voice_stopped()
+    assert await runtime.await_speaker_classification() is decision
+
+
+@pytest.mark.asyncio
+async def test_uncertain_user_evidence_carries_shadow_owner_provenance() -> None:
+    evidence: list[dict[str, object]] = []
+
+    async def _publish(event: dict[str, object]) -> None:
+        evidence.append(event)
+
+    runtime = DuplexRuntime.create(session_id="shadow-persona-session")
+    runtime.set_evidence_publisher(_publish)
+    await _classify_speaker(runtime, _shadow_speaker_decision(profile_id="shadow-profile-1"))
+
+    text = "我觉得先听完对方，再认真回答这个问题。"
+    assert runtime.accept_user_turn(text) == (True, None)
+    runtime.publish_transcript(speaker="user", text=text, final=True)
+    await asyncio.sleep(0)
+
+    utterance = next(
+        event for event in evidence if event.get("event_type") == "speech.utterance_finalized"
+    )
+    assert utterance["speaker_class"] == "uncertain"
+    assert utterance["payload"] == {
+        "text": text,
+        "persona_eligible": True,
+        "speaker_reason_code": "shadow_owner_candidate",
+        "speaker_profile_id": "shadow-profile-1",
+        "speaker_quality_score": 0.9,
+        "speaker_model_version": "campplus-test",
+        "speaker_template_version": 1,
+    }
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_playback_end_clears_unanchored_echo_before_the_next_vad() -> None:
+    cleared: list[str] = []
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    runtime.set_user_turn_clearer(lambda: cleared.append("clear"))
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("你好")
+    runtime.update_pending_assistant_text("你好呀，很高兴见到你。")
+    await runtime.on_playback_started()
+
+    assert runtime.observe_user_transcript("你好呀我告现你", final=False) == "wait"
+    await runtime.on_assistant_reply_completed("你好呀，很高兴见到你。")
+
+    assert cleared == ["clear"]
+    assert runtime._user_transcript_contaminated is False
+    assert runtime._suspected_playback_prefixes == []
+    await runtime.close()
 
 
 @pytest.mark.asyncio
@@ -48,14 +137,111 @@ async def test_interrupt_says_friendly_yield_when_was_speaking() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pause_clears_livekit_turn_before_ack_and_marks_the_next_resume() -> None:
+    """Production trace must not merge yield TTS,「等一下」and「继续」into one chat turn."""
+
+    events: list[str] = []
+
+    def _clear_user_turn() -> None:
+        events.append("clear")
+
+    async def _yield(_phrase: str) -> None:
+        events.append("ack")
+
+    runtime = DuplexRuntime.create(session_id="pause-then-resume")
+    runtime.set_user_turn_clearer(_clear_user_turn)
+    runtime.set_interrupt_yield(_yield)
+    await runtime.orchestrator.ready()
+    owner = _speaker_decision()
+    await _classify_speaker(runtime, owner)
+    await runtime.on_turn_committed("介绍一下南京")
+    await runtime.on_assistant_speaking("南京是江苏省省会，也是中国四大古都之一。")
+    runtime._was_speaking = True
+    runtime.input_guard.candidate_text = "等一下"
+
+    first = await runtime.on_real_interrupt(
+        cause="target_speaker_confirmed",
+        synchronized_transcript="南京是江苏省省会，",
+    )
+    await runtime.on_real_interrupt(
+        cause="livekit_playback_interrupted",
+        synchronized_transcript="南京是江苏省省会，",
+    )
+    await asyncio.sleep(0.05)
+
+    assert events == ["clear", "ack"]
+    await _classify_speaker(runtime, owner)
+    accepted, reason = runtime.accept_user_turn(
+        "好的，好的。 等一下。 继续。",
+        speech_anchored=True,
+    )
+    assert accepted is True
+    assert reason is None
+    resumed = await runtime.on_turn_committed("好的，好的。 等一下。 继续。")
+    assert resumed.turn_id == first.turn_id + 1
+    assert runtime.is_resume_generation(resumed)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_different_owner_profile_cannot_resume_the_interrupted_reply() -> None:
+    runtime = DuplexRuntime.create(session_id="resume-speaker-mismatch")
+    await runtime.orchestrator.ready()
+    await _classify_speaker(runtime, _speaker_decision(profile_id="profile-owner-a"))
+    await runtime.on_turn_committed("说说我的私人安排")
+    await runtime.on_assistant_speaking("你的私人安排是周末回家。")
+    runtime._was_speaking = True
+    runtime.input_guard.candidate_text = "等一下"
+    await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+
+    await _classify_speaker(runtime, _speaker_decision(profile_id="profile-owner-b"))
+    accepted, reason = runtime.accept_user_turn("继续", speech_anchored=True)
+    resumed = await runtime.on_turn_committed("继续")
+
+    assert accepted is True
+    assert reason is None
+    assert not runtime.is_resume_generation(resumed)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_different_shadow_profile_cannot_resume_the_interrupted_reply() -> None:
+    runtime = DuplexRuntime.create(session_id="resume-shadow-mismatch")
+    await runtime.orchestrator.ready()
+    await _classify_speaker(
+        runtime,
+        _shadow_speaker_decision(profile_id="profile-shadow-a"),
+    )
+    await runtime.on_turn_committed("介绍一下南京")
+    await runtime.on_assistant_speaking("南京是江苏省省会。")
+    runtime._was_speaking = True
+    runtime.input_guard.candidate_text = "等一下"
+    await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+
+    await _classify_speaker(
+        runtime,
+        _shadow_speaker_decision(profile_id="profile-shadow-b"),
+    )
+    accepted, reason = runtime.accept_user_turn("继续", speech_anchored=True)
+    resumed = await runtime.on_turn_committed("继续")
+
+    assert accepted is True
+    assert reason is None
+    assert not runtime.is_resume_generation(resumed)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_interrupt_with_content_does_not_play_a_control_ack() -> None:
     """「等一下我想问…」interrupts, then leaves the actual question to chat."""
     said: list[str] = []
+    cleared: list[str] = []
 
     async def _yield(phrase: str) -> None:
         said.append(phrase)
 
     runtime = DuplexRuntime.create(session_id="interrupt-then-chat")
+    runtime.set_user_turn_clearer(lambda: cleared.append("clear"))
     await runtime.orchestrator.ready()
     await runtime.on_turn_committed("讲个故事")
     await runtime.on_assistant_speaking("很长的故事内容")
@@ -69,6 +255,69 @@ async def test_interrupt_with_content_does_not_play_a_control_ack() -> None:
 
     assert not returned.matches(before)
     assert said == []
+    assert cleared == []
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_clear_user_turn_failure_does_not_block_yield_or_restore_listening() -> None:
+    """A LiveKit clear failure must not strand the conversation before the ack."""
+
+    said: list[str] = []
+
+    def _clear_user_turn() -> None:
+        raise ValueError("injected clear failure")
+
+    async def _yield(phrase: str) -> None:
+        said.append(phrase)
+
+    runtime = DuplexRuntime.create(session_id="clear-failure")
+    runtime.set_user_turn_clearer(_clear_user_turn)
+    runtime.set_interrupt_yield(_yield)
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("介绍一下南京")
+    await runtime.on_assistant_speaking("南京是江苏省省会。")
+    runtime._was_speaking = True
+    runtime.input_guard.candidate_text = "等一下"
+
+    await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+    await asyncio.sleep(0.05)
+
+    assert said == ["嗯，你说。"]
+    assert runtime.interaction_phase.value == "listening"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_after_control_grace_accepts_missing_speech_anchor() -> None:
+    """LiveKit can omit speaking metrics for「继续」right after a control ack."""
+
+    async def _yield(_phrase: str) -> None:
+        return None
+
+    runtime = DuplexRuntime.create(
+        session_id="resume-missing-anchor",
+        input_guard_enabled=True,
+    )
+    runtime.set_interrupt_yield(_yield)
+    await runtime.orchestrator.ready()
+    owner = _speaker_decision()
+    await _classify_speaker(runtime, owner)
+    await runtime.on_turn_committed("介绍一下南京")
+    await runtime.on_assistant_speaking("南京是江苏省省会。")
+    runtime._was_speaking = True
+    runtime.input_guard.candidate_text = "等一下"
+    await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+    await asyncio.sleep(0.05)
+    await _classify_speaker(runtime, owner)
+    runtime._fresh_user_speech = False
+
+    accepted, reason = runtime.accept_user_turn("继续", speech_anchored=False)
+
+    assert accepted is True
+    assert reason is None
+    resumed = await runtime.on_turn_committed("继续")
+    assert runtime.is_resume_generation(resumed)
     await runtime.close()
 
 
@@ -222,6 +471,8 @@ async def test_after_control_chat_fail_opens_missing_speech_epoch() -> None:
     assert accepted is True
     assert reason is None or reason != "missing_speech_epoch"
     await runtime.close()
+
+
 @pytest.mark.asyncio
 async def test_stop_talking_phrase_acks_quietly() -> None:
     """「别说了 / 暂停」must ack「好的。」not invite「嗯，你说。」"""
@@ -408,9 +659,7 @@ async def test_enroll_collects_pcm_even_if_was_speaking_stuck() -> None:
     assert runtime._enroll_collecting is True
     # 1s of voiced-like tone @16k
     n = 16000
-    samples = [
-        int(12000 * math.sin(2 * math.pi * 180 * i / 16000)) for i in range(n)
-    ]
+    samples = [int(12000 * math.sin(2 * math.pi * 180 * i / 16000)) for i in range(n)]
     pcm = struct.pack("<" + "h" * n, *samples)
     runtime.feed_speaker_pcm(pcm)
     result = runtime.poll_speaker_enrollment()
@@ -510,10 +759,15 @@ def test_runtime_accepts_only_numeric_allowlisted_webrtc_metrics(
             "jitter": 0.004,
             "packets_lost": 0,
             "packets_received": 100,
+            "packets_lost_delta": 0,
+            "packets_received_delta": 80,
+            "packets_discarded_delta": 0,
             "bytes_received": 12_000,
             "concealed_samples": 480,
+            "concealed_samples_delta": 0,
             "silent_concealed_samples": 240,
             "total_samples_received": 48_000,
+            "total_samples_received_delta": 24_000,
             "concealment_ratio": 0.01,
             "non_silent_concealment_ratio": 0.005,
             "jitter_buffer_delay": 0.12,
@@ -587,8 +841,7 @@ async def test_listener_cue_uses_an_isolated_cancel_domain_and_never_enters_hist
     assert [turn.role for turn in runtime.orchestrator.context.turns] == ["user"]
     assert runtime.interaction_phase.value == "thinking_silent"
     assert any(
-        event.get("type") == "assistant_state"
-        and event.get("state") == "thinking_silent"
+        event.get("type") == "assistant_state" and event.get("state") == "thinking_silent"
         for event in published
     )
     await runtime.close()
@@ -624,9 +877,7 @@ async def test_runtime_applies_ephemeral_emotion_to_the_next_cosyvoice_generatio
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.INFO)
-    tts = CosyVoiceTTS(
-        CosyVoiceConfig(api_key="key", ws_url="wss://example", pool_size=0)
-    )
+    tts = CosyVoiceTTS(CosyVoiceConfig(api_key="key", ws_url="wss://example", pool_size=0))
     runtime = DuplexRuntime.create(session_id="emotion-session", tts=tts)
     await runtime.orchestrator.ready()
 
@@ -649,9 +900,7 @@ async def test_runtime_applies_ephemeral_emotion_to_the_next_cosyvoice_generatio
 
 @pytest.mark.asyncio
 async def test_runtime_uses_happy_delivery_only_for_safe_laughter_context() -> None:
-    tts = CosyVoiceTTS(
-        CosyVoiceConfig(api_key="key", ws_url="wss://example", pool_size=0)
-    )
+    tts = CosyVoiceTTS(CosyVoiceConfig(api_key="key", ws_url="wss://example", pool_size=0))
     runtime = DuplexRuntime.create(session_id="laughter-session", tts=tts)
     await runtime.orchestrator.ready()
 
@@ -679,9 +928,7 @@ async def test_runtime_uses_happy_delivery_only_for_safe_laughter_context() -> N
 
 @pytest.mark.asyncio
 async def test_late_emotion_result_cannot_style_the_next_turn() -> None:
-    tts = CosyVoiceTTS(
-        CosyVoiceConfig(api_key="key", ws_url="wss://example", pool_size=0)
-    )
+    tts = CosyVoiceTTS(CosyVoiceConfig(api_key="key", ws_url="wss://example", pool_size=0))
     runtime = DuplexRuntime.create(session_id="late-emotion-session", tts=tts)
     await runtime.orchestrator.ready()
 
@@ -851,10 +1098,7 @@ async def test_interrupt_discards_cosy_pool_binding() -> None:
 
     conn = PooledConnection(ws=FakeWS())  # type: ignore[arg-type]
     tts.pool.bind_active(fence, conn)
-    key = (
-        f"{fence.session_id}:{fence.turn_id}:"
-        f"{fence.generation_id}:{fence.tool_epoch}"
-    )
+    key = f"{fence.session_id}:{fence.turn_id}:{fence.generation_id}:{fence.tool_epoch}"
     assert key in tts.pool.active_by_fence
     await runtime.on_real_interrupt()
     assert key not in tts.pool.active_by_fence

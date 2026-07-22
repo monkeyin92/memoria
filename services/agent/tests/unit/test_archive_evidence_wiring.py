@@ -49,7 +49,10 @@ async def test_only_final_user_and_actual_heard_assistant_text_become_evidence()
         ("speech.utterance_finalized", "uncertain"),
         ("assistant.playout_stopped", "assistant"),
     ]
-    assert published[0]["payload"] == {"text": "我在杭州读过书。"}
+    assert published[0]["payload"] == {
+        "text": "我在杭州读过书。",
+        "persona_eligible": False,
+    }
     assert published[1]["payload"] == {
         "text": "原来你在杭州读过书。",
         "actual_heard": True,
@@ -121,7 +124,10 @@ async def test_archived_transcripts_are_redacted_before_fingerprinting_and_deliv
     await asyncio.sleep(0)
 
     assert [event["payload"] for event in published] == [
-        {"text": "我的手机号是[手机号]，邮箱是[邮箱]。"},
+        {
+            "text": "我的手机号是[手机号]，邮箱是[邮箱]。",
+            "persona_eligible": False,
+        },
         {"text": "我记下了[手机号]。", "actual_heard": True},
     ]
     assert "13800138000" not in json.dumps(published, ensure_ascii=False)
@@ -150,7 +156,9 @@ async def test_runtime_close_drains_durable_evidence_instead_of_canceling_it() -
     assert close_task.done() is False
     release.set()
     await close_task
-    assert [event["payload"] for event in published] == [{"text": "关机前也要保存。"}]
+    assert [event["payload"] for event in published] == [
+        {"text": "关机前也要保存。", "persona_eligible": False}
+    ]
 
 
 @pytest.mark.asyncio
@@ -193,6 +201,6 @@ async def test_runtime_close_timeout_spools_inflight_evidence(tmp_path: Path) ->
     ]
     assert [envelope["target"] for envelope in persisted] == ["event"]
     assert [envelope["body"]["payload"] for envelope in persisted] == [
-        {"text": "超时也必须落盘。"}
+        {"text": "超时也必须落盘。", "persona_eligible": False}
     ]
     await client.aclose()

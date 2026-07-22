@@ -48,6 +48,64 @@ def current_user_only_chat_context(chat_ctx: Any) -> Any:
     return safe
 
 
+def interrupted_reply_chat_context(
+    chat_ctx: Any,
+    heard_assistant: list[str],
+    *,
+    include_previous_user: bool,
+) -> Any:
+    """Expose the heard reply, plus its prompt only to the verified owner.
+
+    Shadow continuity may reuse audio already heard in the room, but it cannot
+    recover the owner's preceding prompt, private memory, or tools.
+    """
+
+    safe = heard_only_chat_context(chat_ctx, heard_assistant)
+    items = list(safe.items)
+    current_user_index = next(
+        (
+            index
+            for index in range(len(items) - 1, -1, -1)
+            if str(getattr(items[index], "role", "")) == "user"
+        ),
+        None,
+    )
+    if current_user_index is None:
+        return current_user_only_chat_context(safe)
+    assistant_index = next(
+        (
+            index
+            for index in range(current_user_index - 1, -1, -1)
+            if str(getattr(items[index], "role", "")) == "assistant"
+        ),
+        None,
+    )
+    if assistant_index is None:
+        return current_user_only_chat_context(safe)
+    previous_user_index = next(
+        (
+            index
+            for index in range(
+                (assistant_index if assistant_index is not None else current_user_index) - 1,
+                -1,
+                -1,
+            )
+            if str(getattr(items[index], "role", "")) == "user"
+        ),
+        None,
+    )
+    keep = {current_user_index}
+    if assistant_index is not None:
+        keep.add(assistant_index)
+    if include_previous_user and previous_user_index is not None:
+        keep.add(previous_user_index)
+    for index, item in enumerate(items):
+        if index not in keep:
+            safe.remove(item)
+    items[current_user_index].content = ["继续"]
+    return safe
+
+
 class ContextAssembler:
     """Merge actual-heard history, persona and confirmed memory for one LLM call."""
 
@@ -61,12 +119,20 @@ class ContextAssembler:
         speaker_class: str,
         persona_fragment: str = "",
         memory: MemoryContextSnapshot | None = None,
+        resume_interrupted_reply: bool = False,
     ) -> Any:
-        safe = (
-            heard_only_chat_context(chat_ctx, heard_assistant)
-            if speaker_class == "owner"
-            else current_user_only_chat_context(chat_ctx)
-        )
+        if resume_interrupted_reply:
+            safe = interrupted_reply_chat_context(
+                chat_ctx,
+                heard_assistant,
+                include_previous_user=speaker_class == "owner",
+            )
+        else:
+            safe = (
+                heard_only_chat_context(chat_ctx, heard_assistant)
+                if speaker_class == "owner"
+                else current_user_only_chat_context(chat_ctx)
+            )
         if persona_fragment:
             safe.add_message(role="system", content=persona_fragment)
         if memory is not None and memory.items:

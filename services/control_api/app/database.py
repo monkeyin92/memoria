@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS profiles (
     auto_summary INTEGER NOT NULL DEFAULT 1 CHECK (auto_summary IN (0, 1)),
     voice_reply INTEGER NOT NULL DEFAULT 1 CHECK (voice_reply IN (0, 1)),
     gentle_reminders INTEGER NOT NULL DEFAULT 0 CHECK (gentle_reminders IN (0, 1)),
+    reject_non_owner_voice INTEGER NOT NULL DEFAULT 1
+        CHECK (reject_non_owner_voice IN (0, 1)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -116,6 +118,9 @@ _PROFILE_BOOLEAN_COLUMNS = {
     "auto_summary": "INTEGER NOT NULL DEFAULT 1 CHECK (auto_summary IN (0, 1))",
     "voice_reply": "INTEGER NOT NULL DEFAULT 1 CHECK (voice_reply IN (0, 1))",
     "gentle_reminders": "INTEGER NOT NULL DEFAULT 0 CHECK (gentle_reminders IN (0, 1))",
+    "reject_non_owner_voice": (
+        "INTEGER NOT NULL DEFAULT 1 CHECK (reject_non_owner_voice IN (0, 1))"
+    ),
 }
 
 
@@ -512,7 +517,7 @@ class MemoryStore:
             profile = connection.execute(
                 """
                 SELECT user_id, display_name, bio, avatar_url, companion_id, timezone,
-                       auto_summary, voice_reply, gentle_reminders,
+                       auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
                 """,
@@ -548,7 +553,12 @@ class MemoryStore:
             ).fetchall()
         profile_data = dict(profile) if profile is not None else None
         if profile_data is not None:
-            for key in ("auto_summary", "voice_reply", "gentle_reminders"):
+            for key in (
+                "auto_summary",
+                "voice_reply",
+                "gentle_reminders",
+                "reject_non_owner_voice",
+            ):
                 profile_data[key] = bool(profile_data[key])
         summary_data = []
         for row in summaries:
@@ -877,7 +887,7 @@ class MemoryStore:
             row = connection.execute(
                 """
                 SELECT user_id, display_name, bio, avatar_url, companion_id, timezone,
-                       auto_summary, voice_reply, gentle_reminders,
+                       auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
                 """,
@@ -899,7 +909,7 @@ class MemoryStore:
             current = connection.execute(
                 """
                 SELECT display_name, bio, avatar_url, companion_id, timezone,
-                       auto_summary, voice_reply, gentle_reminders
+                       auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice
                 FROM profiles WHERE user_id = ?
                 """,
                 (user_id,),
@@ -911,7 +921,8 @@ class MemoryStore:
                 """
                 UPDATE profiles
                 SET display_name = ?, bio = ?, avatar_url = ?, companion_id = ?, timezone = ?,
-                    auto_summary = ?, voice_reply = ?, gentle_reminders = ?, updated_at = ?
+                    auto_summary = ?, voice_reply = ?, gentle_reminders = ?,
+                    reject_non_owner_voice = ?, updated_at = ?
                 WHERE user_id = ?
                 """,
                 (
@@ -923,6 +934,7 @@ class MemoryStore:
                     int(bool(merged["auto_summary"])),
                     int(bool(merged["voice_reply"])),
                     int(bool(merged["gentle_reminders"])),
+                    int(bool(merged["reject_non_owner_voice"])),
                     now,
                     user_id,
                 ),
@@ -930,7 +942,7 @@ class MemoryStore:
             row = connection.execute(
                 """
                 SELECT user_id, display_name, bio, avatar_url, companion_id, timezone,
-                       auto_summary, voice_reply, gentle_reminders,
+                       auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
                 """,

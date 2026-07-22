@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -27,11 +28,16 @@ from services.persona.domain import (
     require_persona_counterexample,
 )
 from services.persona.rules import (
-    AUTO_PROMOTE,
     CATEGORY_ORDER,
+    EXCLUSIVE_STYLE_CATEGORIES,
     TICS,
+    ExclusiveBucketObservation,
     PersonaExtractor,
     RuleBasedPersonaExtractor,
+    exclusive_auto_promote_target,
+    safe_confirmed_style_description,
+    should_auto_promote,
+    trusted_uncertain_profile,
 )
 
 _CONTAMINATION = frozenset(
@@ -58,12 +64,10 @@ class PostgresPersonaEngine:
         pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=10, command_timeout=15)
         if pool is None:  # pragma: no cover
             raise RuntimeError("failed to create PostgreSQL persona pool")
-        archive_schema = (
-            Path(__file__).parents[1] / "archive" / "postgres_schema.sql"
-        ).read_text(encoding="utf-8")
-        persona_schema = Path(__file__).with_name("postgres_schema.sql").read_text(
+        archive_schema = (Path(__file__).parents[1] / "archive" / "postgres_schema.sql").read_text(
             encoding="utf-8"
         )
+        persona_schema = Path(__file__).with_name("postgres_schema.sql").read_text(encoding="utf-8")
         async with pool.acquire() as connection:
             await connection.execute(archive_schema)
             await connection.execute(persona_schema)
@@ -78,6 +82,15 @@ class PostgresPersonaEngine:
     @staticmethod
     async def _scope(connection: asyncpg.Connection, account_id: str) -> None:
         await connection.execute("SELECT set_config('app.account_id', $1, true)", account_id)
+
+    @staticmethod
+    async def _lock_account(connection: asyncpg.Connection, account_id: str) -> None:
+        """Serialize Persona mutations for one account inside the transaction."""
+
+        await connection.fetchval(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            f"memoria-persona:{account_id}",
+        )
 
     @staticmethod
     async def _duplicate_observation(
@@ -109,6 +122,19 @@ class PostgresPersonaEngine:
             tuple(str(item["trait_id"]) for item in trait_rows),
         )
 
+    @staticmethod
+    async def _learning_allowed(connection: asyncpg.Connection, account_id: str) -> bool:
+        return (
+            await connection.fetchval(
+                """
+                SELECT 1 FROM persona_learning_consents
+                WHERE account_id = $1 AND revoked_at IS NULL
+                """,
+                account_id,
+            )
+            is not None
+        )
+
     async def observe(self, evidence: PersonaEvidence) -> ObservationResult:
         if not evidence.learning_allowed:
             return ObservationResult(False, "learning_not_authorized")
@@ -134,7 +160,8 @@ class PostgresPersonaEngine:
                 "system",
             }:
                 return ObservationResult(False, "assistant_or_synthetic_evidence")
-            if row["speaker_class"] != "owner":
+            speaker_class = str(row["speaker_class"])
+            if speaker_class not in {"owner", "uncertain"}:
                 return ObservationResult(False, "speaker_not_owner")
             if row["event_type"] != "speech.utterance_finalized":
                 return ObservationResult(False, "unsupported_evidence_type")
@@ -144,21 +171,46 @@ class PostgresPersonaEngine:
             text = str(payload.get("text") or "").strip()
             if not text:
                 return ObservationResult(False, "empty_evidence")
+            if (
+                speaker_class == "owner"
+                and str(row["source"]) == "funasr.authoritative_final"
+                and payload.get("persona_eligible") is not True
+            ):
+                return ObservationResult(False, "persona_ineligible_turn")
+            uncertain_provenance = (
+                trusted_uncertain_profile(payload) if speaker_class == "uncertain" else None
+            )
+            if speaker_class == "uncertain" and uncertain_provenance is None:
+                return ObservationResult(False, "untrusted_uncertain_speaker")
             duplicate = await self._duplicate_observation(connection, evidence)
             if duplicate is not None:
                 return duplicate
             occurred_at = row["occurred_at"]
 
-        candidates = await self._extractor.extract(text, evidence)
+        if speaker_class == "uncertain":
+            assert uncertain_provenance is not None
+            extraction_evidence = replace(
+                evidence,
+                speech_duration_ms=None,
+                pause_ratio=None,
+                quality_score=uncertain_provenance[1],
+            )
+        else:
+            extraction_evidence = evidence
+        candidates = await self._extractor.extract(text, extraction_evidence)
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, evidence.account_id)
+            await self._lock_account(connection, evidence.account_id)
+            if not await self._learning_allowed(connection, evidence.account_id):
+                return ObservationResult(False, "learning_not_authorized")
             duplicate = await self._duplicate_observation(connection, evidence)
             if duplicate is not None:
                 return duplicate
             trait_ids: list[str] = []
-            promoted = False
-            tic_counts = {tic: text.count(tic) for tic in TICS if tic in text}
-            await self._update_style_stats(connection, evidence, text, tic_counts)
+            version_changed = False
+            if speaker_class == "owner":
+                tic_counts = {tic: text.count(tic) for tic in TICS if tic in text}
+                await self._update_style_stats(connection, evidence, text, tic_counts)
             for candidate in candidates:
                 trait_uuid = _stable_uuid(
                     "persona-trait",
@@ -166,6 +218,33 @@ class PostgresPersonaEngine:
                     candidate.category,
                     candidate.normalized_key,
                 )
+                current = await connection.fetchrow(
+                    """
+                    SELECT status, EXISTS (
+                        SELECT 1
+                        FROM persona_evidence AS pe
+                        JOIN archive_evidence_events AS ae
+                          ON ae.event_id = pe.source_event_id
+                         AND ae.account_id = pe.account_id
+                        WHERE pe.trait_id = persona_traits.trait_id
+                          AND ae.speaker_class = 'owner'
+                    ) AS has_owner_evidence
+                    FROM persona_traits
+                    WHERE trait_id = $1 AND account_id = $2
+                    """,
+                    trait_uuid,
+                    evidence.account_id,
+                )
+                if current is not None and str(current["status"]) == "disabled":
+                    continue
+                if (
+                    speaker_class == "uncertain"
+                    and current is not None
+                    and (
+                        str(current["status"]) != "candidate" or bool(current["has_owner_evidence"])
+                    )
+                ):
+                    continue
                 trait_ids.append(str(trait_uuid))
                 await connection.execute(
                     """
@@ -195,24 +274,83 @@ class PostgresPersonaEngine:
                     evidence.account_id,
                     evidence.source_event_id,
                     evidence.scene,
-                    evidence.quality_score if evidence.quality_score is not None else 1.0,
+                    extraction_evidence.quality_score
+                    if extraction_evidence.quality_score is not None
+                    else 1.0,
                     occurred_at,
                 )
                 if inserted:
-                    count = int(
-                        await connection.fetchval(
-                            "SELECT COUNT(*) FROM persona_evidence WHERE trait_id = $1",
-                            trait_uuid,
-                        )
+                    counts = await connection.fetchrow(
+                        """
+                        SELECT
+                            COUNT(*) AS total_count,
+                            COUNT(*) FILTER (WHERE ae.speaker_class = 'owner') AS owner_count,
+                            COUNT(*) FILTER (
+                                WHERE ae.speaker_class = 'uncertain'
+                                  AND ae.payload @> '{
+                                      "persona_eligible": true,
+                                      "speaker_reason_code": "shadow_owner_candidate"
+                                  }'::jsonb
+                                  AND COALESCE(ae.payload->>'speaker_profile_id', '') = $2
+                            )
+                                AS uncertain_count,
+                            COUNT(DISTINCT ae.session_id)
+                                FILTER (
+                                    WHERE ae.speaker_class = 'uncertain'
+                                      AND ae.payload @> '{
+                                          "persona_eligible": true,
+                                          "speaker_reason_code": "shadow_owner_candidate"
+                                      }'::jsonb
+                                      AND COALESCE(
+                                          ae.payload->>'speaker_profile_id', ''
+                                      ) = $2
+                                ) AS uncertain_session_count,
+                            COUNT(DISTINCT ae.payload->>'speaker_profile_id')
+                                FILTER (
+                                    WHERE ae.speaker_class = 'uncertain'
+                                      AND ae.payload @> '{
+                                          "persona_eligible": true,
+                                          "speaker_reason_code": "shadow_owner_candidate"
+                                      }'::jsonb
+                                      AND COALESCE(
+                                          ae.payload->>'speaker_profile_id', ''
+                                      ) = $2
+                                ) AS uncertain_profile_count
+                        FROM persona_evidence AS pe
+                        JOIN archive_evidence_events AS ae
+                          ON ae.event_id = pe.source_event_id
+                         AND ae.account_id = pe.account_id
+                        WHERE pe.trait_id = $1
+                        """,
+                        trait_uuid,
+                        uncertain_provenance[0] if uncertain_provenance is not None else "",
                     )
+                    assert counts is not None
+                    count = int(counts["total_count"])
+                    owner_count = int(counts["owner_count"])
+                    uncertain_count = int(counts["uncertain_count"])
+                    uncertain_session_count = int(counts["uncertain_session_count"])
+                    uncertain_profile_count = int(counts["uncertain_profile_count"])
                     current = await connection.fetchrow(
                         "SELECT status FROM persona_traits WHERE trait_id = $1",
                         trait_uuid,
                     )
                     status = str(current["status"]) if current is not None else "candidate"
-                    if candidate.category in AUTO_PROMOTE and count >= 3:
-                        status = "confirmed"
-                        promoted = promoted or current is None or current["status"] != "confirmed"
+                    if candidate.category not in EXCLUSIVE_STYLE_CATEGORIES:
+                        if should_auto_promote(
+                            category=candidate.category,
+                            status=status,
+                            owner_count=owner_count,
+                            uncertain_count=uncertain_count,
+                            uncertain_session_count=uncertain_session_count,
+                            uncertain_profile_count=uncertain_profile_count,
+                        ):
+                            status = "confirmed"
+                            version_changed = (
+                                version_changed
+                                or current is None
+                                or current["status"] != "confirmed"
+                            )
                     await connection.execute(
                         """
                         UPDATE persona_traits
@@ -225,6 +363,20 @@ class PostgresPersonaEngine:
                         status,
                         trait_uuid,
                     )
+                    if candidate.category in EXCLUSIVE_STYLE_CATEGORIES:
+                        version_changed = (
+                            await self._reconcile_exclusive_category(
+                                connection,
+                                account_id=evidence.account_id,
+                                category=candidate.category,
+                                uncertain_profile_id=(
+                                    uncertain_provenance[0]
+                                    if uncertain_provenance is not None
+                                    else None
+                                ),
+                            )
+                            or version_changed
+                        )
             await connection.execute(
                 """
                 INSERT INTO persona_observation_receipts (
@@ -238,17 +390,93 @@ class PostgresPersonaEngine:
                 await self._publish_version(
                     connection,
                     evidence.account_id,
-                    reason="stable_style_observation",
+                    reason="automatic_style_learning_v1",
                 )
-                if promoted
+                if version_changed
                 else None
             )
         return ObservationResult(
             accepted=True,
-            reason="observed",
+            reason="candidate_observed" if speaker_class == "uncertain" else "observed",
             candidate_trait_ids=tuple(trait_ids),
             published_version_id=version.version_id if version is not None else None,
         )
+
+    @staticmethod
+    async def _reconcile_exclusive_category(
+        connection: asyncpg.Connection,
+        *,
+        account_id: str,
+        category: PersonaTraitCategory,
+        uncertain_profile_id: str | None = None,
+    ) -> bool:
+        rows = await connection.fetch(
+            """
+            SELECT
+                pt.trait_id, pt.status, pt.review_event_id, pt.updated_at,
+                ae.speaker_class, ae.session_id, ae.payload
+            FROM persona_traits AS pt
+            LEFT JOIN persona_evidence AS pe
+              ON pe.trait_id = pt.trait_id
+             AND pe.account_id = pt.account_id
+            LEFT JOIN archive_evidence_events AS ae
+              ON ae.event_id = pe.source_event_id
+             AND ae.account_id = pe.account_id
+            WHERE pt.account_id = $1 AND pt.category = $2
+              AND pt.status <> 'disabled'
+            ORDER BY pt.trait_id, pe.occurred_at, pe.source_event_id
+            """,
+            account_id,
+            category,
+        )
+        observations: list[ExclusiveBucketObservation] = []
+        for row in rows:
+            payload = row["payload"]
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            observations.append(
+                ExclusiveBucketObservation(
+                    trait_id=str(row["trait_id"]),
+                    status=str(row["status"]),
+                    review_event_id=(
+                        str(row["review_event_id"]) if row["review_event_id"] is not None else None
+                    ),
+                    updated_at=str(row["updated_at"]),
+                    speaker_class=(
+                        str(row["speaker_class"]) if row["speaker_class"] is not None else None
+                    ),
+                    session_id=(str(row["session_id"]) if row["session_id"] is not None else None),
+                    payload=payload or {},
+                )
+            )
+        target = exclusive_auto_promote_target(
+            category,
+            tuple(observations),
+            uncertain_profile_id=uncertain_profile_id,
+        )
+        changed = False
+        seen: set[str] = set()
+        for row in rows:
+            trait_id = str(row["trait_id"])
+            if trait_id in seen:
+                continue
+            seen.add(trait_id)
+            status = str(row["status"])
+            desired = "confirmed" if trait_id == target else "candidate"
+            if status == desired:
+                continue
+            await connection.execute(
+                """
+                UPDATE persona_traits
+                SET status = $1, updated_at = now()
+                WHERE trait_id = $2 AND account_id = $3 AND status <> 'disabled'
+                """,
+                desired,
+                uuid.UUID(trait_id),
+                account_id,
+            )
+            changed = True
+        return changed
 
     @staticmethod
     async def _update_style_stats(
@@ -306,6 +534,7 @@ class PostgresPersonaEngine:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, command.account_id)
+            await self._lock_account(connection, command.account_id)
             row = await connection.fetchrow(
                 """
                 SELECT * FROM persona_traits
@@ -357,6 +586,18 @@ class PostgresPersonaEngine:
                 },
             )
             await self._insert_evidence(connection, review_event)
+            if status == "confirmed" and str(row["category"]) in EXCLUSIVE_STYLE_CATEGORIES:
+                await connection.execute(
+                    """
+                    UPDATE persona_traits
+                    SET status = 'candidate', updated_at = now()
+                    WHERE account_id = $1 AND category = $2 AND trait_id <> $3
+                      AND status = 'confirmed'
+                    """,
+                    command.account_id,
+                    row["category"],
+                    trait_id,
+                )
             await connection.execute(
                 """
                 UPDATE persona_traits
@@ -409,20 +650,37 @@ class PostgresPersonaEngine:
         for row in ordered:
             evidence = await connection.fetch(
                 """
-                SELECT source_event_id FROM persona_evidence
-                WHERE trait_id = $1 ORDER BY occurred_at, source_event_id
+                SELECT pe.source_event_id, pe.scene, ae.speaker_class
+                FROM persona_evidence AS pe
+                JOIN archive_evidence_events AS ae
+                  ON ae.event_id = pe.source_event_id
+                 AND ae.account_id = pe.account_id
+                WHERE pe.trait_id = $1
+                ORDER BY pe.occurred_at, pe.source_event_id
                 """,
                 row["trait_id"],
             )
+            owner_evidence = [item for item in evidence if item["speaker_class"] == "owner"]
+            selected_evidence = owner_evidence or evidence
             snapshot.append(
                 {
                     "trait_id": str(row["trait_id"]),
                     "category": str(row["category"]),
                     "description": str(row["description"]),
-                    "context": str(row["context"]),
+                    "context": (
+                        str(selected_evidence[0]["scene"])
+                        if selected_evidence
+                        else str(row["context"])
+                    ),
                     "counterexample": str(row["counterexample"]),
-                    "confidence": float(row["confidence"]),
-                    "source_event_ids": [str(item["source_event_id"]) for item in evidence],
+                    "confidence": (
+                        min(0.95, 0.45 + 0.13 * len(selected_evidence))
+                        if owner_evidence
+                        else float(row["confidence"])
+                    ),
+                    "source_event_ids": [
+                        str(item["source_event_id"]) for item in selected_evidence
+                    ],
                 }
             )
         active = await connection.fetchrow(
@@ -484,6 +742,7 @@ class PostgresPersonaEngine:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
+            await self._lock_account(connection, account_id)
             row = await connection.fetchrow(
                 """
                 SELECT * FROM persona_versions
@@ -541,15 +800,21 @@ class PostgresPersonaEngine:
         )
 
     async def capsule(self, request: PersonaRequest) -> PersonaCapsule:
-        if not request.enabled or request.speaker_class != "owner":
+        confirmed_style_only = request.speaker_class == "uncertain" and request.confirmed_style_only
+        if not request.enabled or (request.speaker_class != "owner" and not confirmed_style_only):
             return PersonaCapsule()
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, request.account_id)
+            await self._lock_account(connection, request.account_id)
             row = await connection.fetchrow(
                 """
-                SELECT * FROM persona_versions
-                WHERE account_id = $1 AND status = 'active'
+                SELECT persona_versions.*
+                FROM persona_versions
+                JOIN persona_learning_consents USING (account_id)
+                WHERE persona_versions.account_id = $1
+                  AND persona_versions.status = 'active'
+                  AND persona_learning_consents.revoked_at IS NULL
                 """,
                 request.account_id,
             )
@@ -558,9 +823,28 @@ class PostgresPersonaEngine:
         snapshot = row["snapshot"]
         if isinstance(snapshot, str):
             snapshot = json.loads(snapshot)
+        if confirmed_style_only:
+            safe_snapshot: list[dict[str, Any]] = []
+            for item in snapshot:
+                description = safe_confirmed_style_description(str(item.get("description") or ""))
+                if description is None:
+                    continue
+                safe_snapshot.append(
+                    {
+                        **item,
+                        "description": description,
+                        "context": "",
+                        "counterexample": "",
+                        "source_event_ids": [],
+                    }
+                )
+            snapshot = safe_snapshot
         ranked = sorted(snapshot, key=lambda item: self._capsule_rank(item, request.topic))
         prefix = (
-            f"[人格胶囊 v{row['version_number']}] "
+            f"[已确认表达风格 v{row['version_number']}] "
+            "仅调整表达方式，不推断或透露账户主人的身份、经历、价值观和决定。"
+            if confirmed_style_only
+            else f"[人格胶囊 v{row['version_number']}] "
             "仅在自然且相关时参考，不机械复读口头禅；不得声称你就是账户主人。"
         )
         lines = [prefix]
@@ -610,7 +894,9 @@ class PostgresPersonaEngine:
 
     @staticmethod
     def _delivery_rate(entries: list[PersonaCapsuleEntry]) -> float:
-        descriptions = " ".join(item.description for item in entries if item.category == "speech_rate")
+        descriptions = " ".join(
+            item.description for item in entries if item.category == "speech_rate"
+        )
         if "偏从容" in descriptions:
             return 0.95
         if "偏快" in descriptions:
@@ -674,6 +960,7 @@ class PostgresPersonaEngine:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
+            await self._lock_account(connection, account_id)
             current = await connection.fetchrow(
                 "SELECT * FROM persona_learning_consents WHERE account_id = $1",
                 account_id,
@@ -729,6 +1016,7 @@ class PostgresPersonaEngine:
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
+            await self._lock_account(connection, account_id)
             current = await connection.fetchrow(
                 "SELECT * FROM persona_learning_consents WHERE account_id = $1",
                 account_id,

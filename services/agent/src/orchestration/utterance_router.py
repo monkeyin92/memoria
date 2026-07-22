@@ -17,6 +17,7 @@ from services.agent.src.orchestration.interruption_guard import (
     interrupt_ack_phrase,
     is_explicit_interrupt,
     is_interrupt_command_only,
+    is_resume_command_only,
     normalize_short,
 )
 from services.agent.src.orchestration.speaker_verify import SpeakerGateState
@@ -31,6 +32,8 @@ class UtteranceIntent(StrEnum):
     INTERRUPT_COMMAND = "interrupt_command"
     # Explicit interrupt wording plus real content (等一下我想问…) — interrupt then chat.
     INTERRUPT_THEN_CHAT = "interrupt_then_chat"
+    # Continue the answer that the user explicitly paused.
+    RESUME = "resume"
     # Normal conversational turn.
     CHAT = "chat"
     # Empty / whitespace-only ASR.
@@ -74,22 +77,27 @@ def route_target_speaker(
     pcm_duration_ms: int,
     context: Literal["conversation", "interrupt"] = "conversation",
     explicit_interrupt: bool = False,
+    reject_non_owner_voice: bool = True,
 ) -> TargetSpeakerRoute:
     """Decide whether the current voice may control this account's conversation.
 
-    Shadow CAM++ candidates remain ``uncertain`` for authority. They may protect
-    an active reply from a likely nearby talker, but they must not mute ordinary
-    conversation: the shadow model has not passed production identity metrics.
-    Formal ``guest``/mismatch results remain blocked in both contexts. An
-    explicit pause command may stop playout on an uncalibrated shadow result:
-    it never enters chat or grants private authority, while ordinary nearby
-    speech remains unable to interrupt.
+    Shadow CAM++ candidates remain ``uncertain`` for authority. Strict focus
+    rejects only a formal mismatch or clear shadow guest; ambiguous candidates
+    use the normal unconfirmed conversation/interrupt rules. Disabling the
+    interaction filter never upgrades memory, tool, or sensitive-action permissions.
     """
 
     if reason_code in {"no_active_profile", "authority_unconfigured"}:
         return TargetSpeakerRoute(allow_input=True, reason="target_profile_absent")
-    if classification == "guest" or reason_code == "owner_mismatch":
-        return TargetSpeakerRoute(allow_input=False, reason="target_non_owner")
+    non_owner = classification == "guest" or reason_code in {
+        "owner_mismatch",
+        "shadow_guest_candidate",
+    }
+    if non_owner:
+        return TargetSpeakerRoute(
+            allow_input=not reject_non_owner_voice,
+            reason="target_non_owner" if reject_non_owner_voice else "target_guest_allowed",
+        )
     if context == "conversation":
         # Shadow decisions are useful for permissions, not identity gating.
         if classification == "owner" or reason_code == "shadow_owner_candidate":
@@ -104,12 +112,6 @@ def route_target_speaker(
         return TargetSpeakerRoute(allow_input=False, reason="target_insufficient_speech")
     if classification == "owner" or reason_code == "shadow_owner_candidate":
         return TargetSpeakerRoute(allow_input=True, reason="target_owner")
-    if reason_code in {
-        "shadow_guest_candidate",
-        "shadow_ambiguous_candidate",
-        "ambiguous_score",
-    }:
-        return TargetSpeakerRoute(allow_input=False, reason="target_non_owner")
     if reason_code in {
         "model_timeout",
         "model_unavailable",
@@ -160,15 +162,17 @@ def route_utterance(
     text: str,
     *,
     speaker_state: SpeakerGateState | str | None = None,
+    resumable_reply: bool = False,
 ) -> UtteranceRoute:
     """Classify one utterance. First matching rule wins (see tests for the table).
 
     Priority (high → low):
       1. speaker PENDING → enroll (blocks all chat, including stop phrases)
       2. empty text → empty
-      3. interrupt-command-only → interrupt_command (no chat, yield/stop ack)
-      4. explicit interrupt + content → interrupt_then_chat
-      5. default → chat
+      3. resume command while a reply is paused → resume
+      4. interrupt-command-only → interrupt_command (no chat, yield/stop ack)
+      5. explicit interrupt + content → interrupt_then_chat
+      6. default → chat
     """
     normalized = normalize_short(text)
     state = _as_speaker_state(speaker_state)
@@ -196,7 +200,21 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 3) Pure control phrases — do not let LLM answer「怎么了？」
+    # 3) Resume is stateful:「继续」is ordinary chat unless this session owns
+    # an explicitly paused reply. Ack echo and the pause phrase may be folded
+    # into the same ASR final, so match the whole control-only sequence.
+    if resumable_reply and is_resume_command_only(text):
+        return UtteranceRoute(
+            intent=UtteranceIntent.RESUME,
+            reason="resume_interrupted_reply",
+            enter_chat=True,
+            should_interrupt=False,
+            speaker_gate_override=False,
+            ack_phrase=None,
+            normalized_text=normalized,
+        )
+
+    # 4) Pure control phrases — do not let LLM answer「怎么了？」
     if is_interrupt_command_only(text):
         return UtteranceRoute(
             intent=UtteranceIntent.INTERRUPT_COMMAND,
@@ -208,7 +226,7 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 4) Interrupt wording with real content → barge-in then chat
+    # 5) Interrupt wording with real content → barge-in then chat
     if is_explicit_interrupt(text):
         return UtteranceRoute(
             intent=UtteranceIntent.INTERRUPT_THEN_CHAT,
@@ -220,7 +238,7 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 5) Normal chat
+    # 6) Normal chat
     return UtteranceRoute(
         intent=UtteranceIntent.CHAT,
         reason="chat",

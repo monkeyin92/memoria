@@ -60,6 +60,7 @@ const defaultProfile = {
   auto_summary: true,
   voice_reply: true,
   gentle_reminders: false,
+  reject_non_owner_voice: true,
   companion_id: null,
 };
 
@@ -134,6 +135,8 @@ export function App() {
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryError, setMemoryError] = useState("");
   const [summaryRunning, setSummaryRunning] = useState(false);
+  const [preferenceSaving, setPreferenceSaving] = useState(false);
+  const [preferenceError, setPreferenceError] = useState("");
   const activeUserIdRef = useRef("");
   const userId = identity?.user_id || "";
 
@@ -159,13 +162,20 @@ export function App() {
 
   const handleFinalTranscript = useCallback(
     async (line) => {
-      if (!userId || activeUserIdRef.current !== userId) return;
+      if (
+        !userId ||
+        activeUserIdRef.current !== userId ||
+        line.history_eligible !== true
+      ) {
+        return;
+      }
       const nextEmotion = classifyEmotion(line.text);
       const message = {
         user_id: userId,
         role: line.speaker,
         text: line.text,
         emotion: nextEmotion,
+        history_eligible: true,
       };
       try {
         await saveMessage(message);
@@ -213,6 +223,8 @@ export function App() {
   useEffect(() => {
     if (!userId) return;
     const requestedUserId = userId;
+    setPreferenceSaving(false);
+    setPreferenceError("");
     setProfileReady(false);
     setProfile(defaultProfile);
     setDraftProfile(defaultProfile);
@@ -313,18 +325,32 @@ export function App() {
     }
   };
 
-  const togglePreference = (field) => {
+  const togglePreference = async (field) => {
+    if (preferenceSaving) return;
+    const requestedUserId = userId;
     const next = { ...profile, [field]: !profile[field] };
-    if (field === "voice_reply" && next.voice_reply) {
-      void voice.resumeAudio(true);
+    setPreferenceSaving(true);
+    setPreferenceError("");
+    try {
+      const saved = await updateProfile(requestedUserId, next);
+      if (activeUserIdRef.current !== requestedUserId) return;
+      const confirmed = saved ? { ...next, ...saved } : next;
+      setProfile(confirmed);
+      setDraftProfile(confirmed);
+      window.localStorage.setItem(
+        profileStorageKey(requestedUserId),
+        JSON.stringify(confirmed),
+      );
+      if (field === "voice_reply" && confirmed.voice_reply) {
+        void voice.resumeAudio(true);
+      }
+    } catch {
+      if (activeUserIdRef.current === requestedUserId) {
+        setPreferenceError("偏好保存失败，请检查网络后重试。");
+      }
+    } finally {
+      if (activeUserIdRef.current === requestedUserId) setPreferenceSaving(false);
     }
-    setProfile(next);
-    setDraftProfile(next);
-    window.localStorage.setItem(
-      profileStorageKey(userId),
-      JSON.stringify(next),
-    );
-    void updateProfile(userId, next).catch(() => undefined);
   };
 
   const handleAccountDeleted = async () => {
@@ -340,6 +366,8 @@ export function App() {
     setMemoryLoading(false);
     setMemoryError("");
     setSummaryRunning(false);
+    setPreferenceSaving(false);
+    setPreferenceError("");
     setEditingProfile(false);
     setDigitalSelfOpen(false);
     setPrivacyDataOpen(false);
@@ -597,6 +625,8 @@ export function App() {
             setEditing={setEditingProfile}
             onSave={saveProfile}
             onToggle={togglePreference}
+            preferenceSaving={preferenceSaving}
+            preferenceError={preferenceError}
             onOpenDigitalSelf={() => setDigitalSelfOpen(true)}
             onOpenPrivacyData={() => setPrivacyDataOpen(true)}
             onAccountDeleted={handleAccountDeleted}
@@ -771,6 +801,8 @@ function ProfileScreen({
   setEditing,
   onSave,
   onToggle,
+  preferenceSaving,
+  preferenceError,
   onOpenDigitalSelf,
   onOpenPrivacyData,
   onAccountDeleted,
@@ -836,18 +868,28 @@ function ProfileScreen({
         <section className="settings-card">
           <h3>陪伴偏好</h3>
           <PreferenceRow
+            Icon={Fingerprint}
+            title="过滤明显旁人（实验）"
+            caption="默认过滤明显旁人；关闭后访客可聊，但仍不能访问或写入主人回顾"
+            checked={profile.reject_non_owner_voice}
+            onToggle={() => void onToggle("reject_non_owner_voice")}
+            disabled={preferenceSaving}
+          />
+          <PreferenceRow
             Icon={Brain}
             title="自动生成每日回顾"
             caption="每次聊天结束后静默整理"
             checked={profile.auto_summary}
-            onToggle={() => onToggle("auto_summary")}
+            onToggle={() => void onToggle("auto_summary")}
+            disabled={preferenceSaving}
           />
           <PreferenceRow
             Icon={Waveform}
             title="语音回应"
             caption="让 Memoria 用声音陪你"
             checked={profile.voice_reply}
-            onToggle={() => onToggle("voice_reply")}
+            onToggle={() => void onToggle("voice_reply")}
+            disabled={preferenceSaving}
           />
           <PreferenceRow
             Icon={Bell}
@@ -856,6 +898,7 @@ function ProfileScreen({
             checked={profile.gentle_reminders}
             disabled
           />
+          {preferenceError && <p className="inline-error" role="alert">{preferenceError}</p>}
         </section>
 
         <button

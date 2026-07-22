@@ -1,12 +1,20 @@
 # 中文全双工级联语音 Agent：可实施架构与工程设计规范
 
-> **版本**：1.1.0
-> **基准日期**：2026-07-19
-> **目标技术栈**：FunASR Realtime API + 百炼 Qwen LLM + CosyVoice 3.5 Realtime API + LiveKit Agents
+> **版本**：1.2.0
+> **基准日期**：2026-07-21
+> **目标技术栈**：FunASR Realtime API + 百炼 Qwen LLM + 豆包 TTS 2.0 双向流式 API + LiveKit Agents
 > **部署前提**：无 GPU；只使用第三方模型 API；允许使用普通 CPU 云主机或托管 Agent 运行时
 > **目标语言**：普通话为主，兼容少量中英混说
 > **唯一客户端**：`apps/h5`；原生 iOS 已从仓库移除，legacy `apps/web` 只保留历史源码，不进入实现、CI、部署或验收
 > **文档性质**：规范性设计文档。文中的 **MUST / MUST NOT / SHOULD / MAY** 分别表示必须、禁止、建议、可选。
+
+> [!IMPORTANT]
+> **TTS 选型已更新（superseded notice）**：当前级联播放主链是豆包
+> `seed-tts-2.0` 双向流式 WebSocket，详见
+> [ADR 0012](./docs/adr/0012-doubao-bidirectional-tts-and-voice-registry.md)。
+> 本文后续仍出现的 CosyVoice 专属协议、配置、代码骨架、容量估算和验收项仅作
+> 历史迁移资料，不再是当前主链规范。供应商无关的原子打断、generation fence、
+> 迟到输出隔离和实际已听文本不变量仍然有效。
 
 当前默认 LLM provider 是 `qwen`；仓库保留的 DeepSeek 适配器和测试只用于显式兼容覆盖，不得隐式替换 Qwen，也不属于本架构默认选型。终身记忆、人格复刻和声纹扩展见 [`docs/memory-persona-architecture-v1.md`](./docs/memory-persona-architecture-v1.md)。
 
@@ -29,7 +37,7 @@
 
 1. 用户设备的回声消除和麦克风质量；
 2. 用户到 RTC 节点、RTC 节点到模型 API 的网络 RTT；
-3. FunASR、Qwen、CosyVoice 的当时负载和限流；
+3. FunASR、Qwen、豆包 TTS 的当时负载和限流；
 4. 业务提示词、工具耗时和回答长度；
 5. 中文打断与附和测试数据是否覆盖真实用户。
 
@@ -51,7 +59,7 @@
 | ASR | 阿里云百炼 `fun-asr-realtime` WebSocket | 流式中间结果、最终结果、中文、字词级时间戳 |
 | 快速回答 LLM | 百炼 `qwen-turbo`，流式输出 | 低延迟口语回答、工具意图判定 |
 | 深度任务 LLM | 百炼 `qwen-plus` | 复杂分析、RAG、工具编排；不阻塞前台交互 |
-| TTS | `cosyvoice-v3.5-flash` + 声音设计音色（默认 `warm_companion`） | freeform Instruct + 字级时间戳；见 `infra/voices/` |
+| TTS | 豆包 `seed-tts-2.0` 双向流式 + 批准音色目录（默认 `warm_companion`） | 直接消费 LLM 增量短语，支持取消会话；24 kHz mono PCM 与字级时间戳；见 ADR 0012 |
 | 控制 API | FastAPI + Pydantic v2 | 签发 LiveKit Token、会话配置、健康检查 |
 | 短期状态 | 进程内内存；多实例时 Redis | 实时关键路径不得等待数据库 |
 | 长期存储 | PostgreSQL，异步写入 | 对话、指标、业务事件和审计 |
@@ -71,7 +79,7 @@
                        │
           ┌────────────┼────────────┐
           ▼            ▼            ▼
-       FunASR       Qwen LLM     CosyVoice 3.5
+       FunASR       Qwen LLM     Doubao TTS 2.0
 ```
 
 特点：
@@ -91,7 +99,7 @@
                        │
           ┌────────────┼────────────┐
           ▼            ▼            ▼
-       FunASR       Qwen LLM     CosyVoice 3.5
+       FunASR       Qwen LLM     Doubao TTS 2.0
 ```
 
 特点：
@@ -154,7 +162,7 @@ flowchart LR
 
     FAST --> SEG[中文口语分段器]
     DEEP --> SEG
-    SEG --> TTS[CosyVoice Realtime Adapter]
+    SEG --> TTS[Doubao Bidirectional TTS Adapter]
     TTS --> OUT[Agent Audio Output]
     OUT -->|WebRTC Opus| LK
     LK --> SPK[用户扬声器]
@@ -221,8 +229,10 @@ voice-agent/
 │       ├── src/providers/
 │       │   ├── funasr_stt.py
 │       │   ├── funasr_protocol.py
-│       │   ├── cosyvoice_tts.py
-│       │   ├── cosyvoice_protocol.py
+│       │   ├── doubao_tts.py
+│       │   ├── doubao_protocol.py
+│       │   ├── cosyvoice_tts.py       # 历史适配器，不进入当前播放主链
+│       │   ├── cosyvoice_protocol.py  # 历史协议
 │       │   └── deepseek.py       # 历史文件名：Qwen/DeepSeek 共用兼容客户端
 │       ├── src/orchestration/
 │       │   ├── state_machine.py
@@ -383,6 +393,7 @@ QWEN_DEEP_MODEL=qwen-plus
 # FunASR
 FUNASR_MODEL=fun-asr-realtime
 FUNASR_SAMPLE_RATE=16000
+FUNASR_CONTEXT_ENABLED=false
 FUNASR_LANGUAGE=zh
 FUNASR_CHUNK_MS=80
 FUNASR_MAX_SENTENCE_SILENCE_MS=650
@@ -392,21 +403,19 @@ FUNASR_RECONNECT_AUDIO_MS=1500
 FUNASR_CONNECT_TIMEOUT_S=5
 FUNASR_RESULT_TIMEOUT_S=8
 
-# CosyVoice
-COSYVOICE_MODEL=cosyvoice-v3.5-flash
-COSYVOICE_VOICE_PROFILE=warm_companion
-COSYVOICE_INSTRUCT_STYLE=auto
-COSYVOICE_SAMPLE_RATE=24000
-COSYVOICE_FORMAT=pcm
-COSYVOICE_LANGUAGE=zh
-COSYVOICE_RATE=1.0
-COSYVOICE_PITCH=1.0
-COSYVOICE_VOLUME=50
-COSYVOICE_WORD_TIMESTAMPS=true
-COSYVOICE_POOL_SIZE=4
-COSYVOICE_CONNECT_TIMEOUT_S=5
-COSYVOICE_FIRST_AUDIO_TIMEOUT_S=1.5
-COSYVOICE_TOTAL_TIMEOUT_S=20
+# Doubao TTS 2.0（鉴权二选一）
+DOUBAO_TTS_API_KEY=
+DOUBAO_TTS_APP_ID=
+DOUBAO_TTS_ACCESS_TOKEN=
+DOUBAO_TTS_WS_URL=wss://openspeech.bytedance.com/api/v3/tts/bidirection
+DOUBAO_TTS_RESOURCE_ID=seed-tts-2.0
+DOUBAO_TTS_VOICE_PROFILE=warm_companion
+DOUBAO_TTS_VOICE_REGISTRY=infra/voices/doubao_voice_ids.json
+DOUBAO_TTS_SAMPLE_RATE=24000
+DOUBAO_TTS_POOL_SIZE=4
+DOUBAO_TTS_CONNECT_TIMEOUT_S=5
+DOUBAO_TTS_FIRST_AUDIO_TIMEOUT_S=1.5
+DOUBAO_TTS_TOTAL_TIMEOUT_S=20
 
 # Turn handling
 VAD_MIN_SPEECH_DURATION_S=0.05
@@ -444,9 +453,9 @@ PII_REDACTION_ENABLED=true
 
 - 所有已启用 Provider 的必需密钥非空；默认 `LLM_PROVIDER=qwen` 只使用服务端 `DASHSCOPE_API_KEY`；
 - `FUNASR_SAMPLE_RATE == 16000`；
-- `COSYVOICE_SAMPLE_RATE` 是 24000；
+- `DOUBAO_TTS_SAMPLE_RATE` 是 24000；
 - `VAD_MIN_SILENCE_DURATION_S >= 0.25`；
-- `COSYVOICE_WORD_TIMESTAMPS=true`；
+- 豆包双向流式返回非空、单调的字级时间戳；
 - `livekit_cloud` 档案下 `LIVEKIT_ADAPTIVE_INTERRUPTION=true`；
 - `cn_self_hosted` 档案下自动将 `LIVEKIT_TURN_DETECTOR_VERSION=v1-mini`；
 - `QWEN_FAST_MODEL / QWEN_DEEP_MODEL` 非空；只有显式选择可选 `LLM_PROVIDER=deepseek` 时才校验 DeepSeek 模型与密钥；
@@ -496,7 +505,7 @@ FunASR 发送器 MUST 聚合过小的 LiveKit 帧，禁止每个 10/20 ms 帧单
 
 ### 7.3 TTS 输出
 
-CosyVoice 统一请求：
+豆包 TTS 2.0 统一请求：
 
 ```text
 编码：raw PCM signed 16-bit little-endian
@@ -732,7 +741,7 @@ from livekit.agents import (
 from livekit.plugins import openai
 
 from .providers.funasr_stt import FunASRSTT
-from .providers.cosyvoice_tts import CosyVoiceTTS
+from .providers.doubao_tts import DoubaoTTS
 
 VOICE_SYSTEM_PROMPT = """
 你是实时中文语音助手。像面对面聊天一样说话，不要朗读文章。
@@ -752,7 +761,7 @@ async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
 
     stt = FunASRSTT.from_env()
-    tts = CosyVoiceTTS.from_env()
+    tts = DoubaoTTS.from_env()
     settings = AgentSettings()
 
     # Qwen 默认走百炼 OpenAI-compatible endpoint；provider、模型和密钥
@@ -872,7 +881,7 @@ capabilities = stt.STTCapabilities(
     aligned_transcript="word",
     offline_recognize=False,
     keyterms=False,
-    chat_context=True,
+    chat_context=False,  # 生产默认关闭；仅显式受控实验可开启
 )
 ```
 
@@ -969,6 +978,21 @@ FunASR `result-generated` 的核心字段：
 
 每个字/词转换为 LiveKit `TimedString`，时间单位从毫秒转换为秒。标点拼接到对应词之后，但时间范围沿用该词。
 
+### 12.4.1 权威用户话轮边界
+
+Provider final 只表示 ASR 完成了一段识别，不等于该文本已经被产品接受。扬声器回声可能在
+没有新 VAD 的情况下形成 interim/final，并被 LiveKit 与下一段真实语音拼到同一内部话轮。
+
+- 播放期间没有新 VAD/PCM 锚点的 interim 只等待，final 直接隔离；不能凭“不是”“停一下”
+  等文字关键词绕过声学边界。
+- 若播放结束时只存在无锚回声，且尚未出现新 VAD，立即清理 LiveKit user-turn/STT buffer；
+  清理失败时仍由 canonical accumulator 兜底。
+- Runtime 按 speech epoch 保存 accepted finals，并在 endpoint 完成时冻结 FIFO canonical snapshot。
+  `on_user_turn_completed` 必须在任何 `await` 前消费最老 snapshot，只用该 epoch 的 accepted
+  finals 重建 canonical text；空结果不建话轮，迟到的旧控制回调不得清理下一 speech epoch。
+- Router、LLM、H5 final、archive、memory 和 Persona 必须共用该 canonical text；H5 不自行
+  拼接或猜测回声前缀。
+
 ### 12.5 稳定前缀算法
 
 FunASR 中间结果会改写尾部。`StablePrefixTracker` 必须按以下确定性算法生成 `PREFLIGHT_TRANSCRIPT`：
@@ -997,7 +1021,8 @@ FunASR 中间结果会改写尾部。`StablePrefixTracker` 必须按以下确定
 
 ### 12.6 ASR 上下文
 
-FunASR 上下文仅用于提升专有名词和连续对话识别，不代替 LLM 历史：
+FunASR 历史上下文在生产默认关闭：`FUNASR_CONTEXT_ENABLED=false`，`run-task` 的
+`input.context=[]`。只有显式受控实验才允许通过 `continue-task/input.context` 开启；开启时：
 
 - 最多发送最近 5 条 user 和 5 条 assistant；
 - 每条截断到 400 个字符以内；
@@ -1005,6 +1030,8 @@ FunASR 上下文仅用于提升专有名词和连续对话识别，不代替 LLM
 - 通过 LiveKit 的 conversation item hook 推送到适配器；
 - 过滤密钥、卡号、身份证等敏感信息后再发送；
 - 上下文更新失败不得中断实时识别。
+- 必须先通过“旧 user/assistant 内容不泄漏到当前 final”的协议回归和真实设备 A/B，才能
+  进入候选发布。
 
 ### 12.7 重连和音频回放
 
@@ -1026,7 +1053,7 @@ class FunASRSTT(stt.STT):
             interim_results=True,
             aligned_transcript="word",
             offline_recognize=False,
-            chat_context=True,
+            chat_context=config.conversation_context_enabled,
         ))
         self._config = config
         self._context_items: deque[dict[str, object]] = deque(maxlen=10)
@@ -1046,6 +1073,8 @@ class FunASRSTT(stt.STT):
         raise NotImplementedError("FunASRSTT is streaming-only; call stream()")
 
     def _push_conversation_item(self, ev) -> None:
+        if not self._config.conversation_context_enabled:
+            return
         item = conversation_item_to_funasr_context(ev)
         if item is not None:
             self._context_items.append(item)
@@ -1053,12 +1082,17 @@ class FunASRSTT(stt.STT):
             stream.update_context(tuple(self._context_items))
 
     def stream(self, *, language="zh", conn_options=DEFAULT_API_CONNECT_OPTIONS):
+        initial_context = (
+            tuple(self._context_items)
+            if self._config.conversation_context_enabled
+            else ()
+        )
         stream = FunASRRecognizeStream(
             stt=self,
             config=self._config,
             conn_options=conn_options,
             sample_rate=16000,
-            initial_context=tuple(self._context_items),
+            initial_context=initial_context,
         )
         self._streams.add(stream)
         return stream
@@ -1285,7 +1319,28 @@ def test_phrase_segmenter(text, expected):
 
 ---
 
-## 15. CosyVoice Realtime 适配器
+## 15. 当前 TTS 输出契约与历史 CosyVoice 适配器
+
+当前主链的规范性输出契约如下：
+
+- provider 固定为豆包 `seed-tts-2.0` 双向流式 WebSocket；连接可复用，每个
+  generation 使用独立 session，LLM 短语以增量 `TaskRequest` 发送；
+- 音频固定为 PCM s16le、24 kHz、mono；字幕必须包含单调的字级时间戳，并与
+  同一 session 的 PCM 播放进度对齐；
+- 正常 session 完成后连接可回池；用户打断或 session 失败时，发送
+  `CancelSession`（若仍可发送）并关闭、剔除该连接，迟到帧继续由 fence 丢弃；
+- 字级时间戳是 `HeardTextTracker` 的输入，缺失时 provider smoke/readiness
+  不得通过；
+- 五个机器人只使用 `infra/voices/doubao_voice_ids.json` 的批准音色；历史
+  CosyVoice clone profile 不进入当前播放链路；
+- 当前不发送 `context_texts`：真实探针测得它会让字幕偏移超过 1.4 秒。
+
+鉴权、音色映射、单向/双向取舍和取消细节以
+[ADR 0012](./docs/adr/0012-doubao-bidirectional-tts-and-voice-registry.md) 为准。
+
+> **以下 15.1–15.8 为已被 ADR 0012 取代的 CosyVoice 历史实现说明。**
+> 其中 `streaming=True`、`aligned_transcript=True` 以及取消后淘汰活跃连接的
+> 供应商无关原则仍适用；CosyVoice 的事件名、配置键和代码骨架不再是当前规范。
 
 ### 15.1 LiveKit 能力声明
 
@@ -1296,7 +1351,8 @@ capabilities = tts.TTSCapabilities(
 )
 ```
 
-当前默认使用 `cosyvoice-v3.5-flash`。运行时音色优先级固定为：已激活且仍在授权期内的克隆音色、用户所选陪伴伙伴的设计音色、`COSYVOICE_VOICE_PROFILE=warm_companion` 全局默认音色。Control API 只返回稳定的设计音色目录键和模型名，不返回真实供应商 `voice_id`；Agent 必须从本地批准 registry 解析并校验前缀。任何 profile、复刻音色或可选系统音色都必须通过 smoke test 验证字级时间戳非空；否则 Adaptive Interruption 和实际已听文本追踪不通过，服务不得进入 ready。`longanyang` 只保留为显式 v3 fallback，不是默认音色。
+历史默认使用 `cosyvoice-v3.5-flash`。当时的音色优先级、registry 与
+`longanyang` fallback 只用于解释旧资产和旧实现，不得据此配置当前播放主链。
 
 ### 15.2 WebSocket 连接池
 
@@ -1492,7 +1548,7 @@ class CosyVoiceSynthesizeStream(tts.SynthesizeStream):
 - 立即把助手播放音量降低到原来的 25%；
 - 不立即销毁生成；
 - 开始 250 ms 判定窗口；
-- 若用户发出高置信度关键词“停、等等、不是、别说了”，立即确认打断。
+- 只有先出现新 VAD/PCM 锚点，且用户发出高置信度关键词“停、等等、不是、别说了”，才确认打断；无锚文本一律按播放回声隔离。
 
 #### 层 2：80–350 ms 声学/文本判定
 
@@ -1525,7 +1581,19 @@ class CosyVoiceSynthesizeStream(tts.SynthesizeStream):
 - 若无法安全恢复原音频，则重新合成剩余当前句；
 - 不重复已经实际播放的文字。
 
-### 16.3 业务特定短答优化
+### 16.3 用户主动暂停与恢复
+
+“等一下/停一下”和“继续/接着说”不是两个互不相关的普通 chat，而是同一个受状态约束的控制序列，必须统一进入 `UtteranceRouter`：
+
+- 仅当助手确实在回答且命中纯暂停命令时，保存一次性可恢复状态；“等一下，我想问……”仍是 `INTERRUPT_THEN_CHAT`，不得吞掉正文；
+- 纯暂停确认后、播放“好的，你说”之类控制确认音前，调用 LiveKit `AgentSession.clear_user_turn()` 清空旧 endpoint buffer，并按语音 epoch 幂等，避免确认音、暂停词和下一句“继续”被拼成一个 ASR final；
+- 只有存在可恢复回答时，“继续/接着说”才路由为 `RESUME`；否则仍是普通 chat；
+- 恢复必须创建新的 `GenerationFence`，从 actual-heard 回答前缀续接，不复活旧 LLM/TTS task，也不重复用户已经听到的内容；只有同一正式 `owner` 可同时带入原问题；
+- shadow-only 下，同一 shadow profile 的 `uncertain` 只允许用房间里已经播放过的回答前缀恢复，不带入原问题；不同 profile、普通 `uncertain` 和 `guest` 退回普通 chat，始终不得读取更早私人历史、Persona 私密条目、记忆或工具。
+- `RESUME`、纯暂停、附和、过短控制话轮和 ASR 修复话轮可以保留审计记录，但必须标记为
+  Persona-ineligible；不得用确认音或控制词累计人格证据。
+
+### 16.4 业务特定短答优化
 
 对于只允许“是/否/确认”的业务节点，不完全依赖通用 Turn Detector：
 
@@ -1548,7 +1616,7 @@ T0  记录 barge_in_detected
 3. 客户端收到事件后停止当前音轨播放并记录 playback_stopped
 4. 取消 Qwen 流式生成 task
 5. 取消 PhraseSegmenter 与 TTS sender/receiver task
-6. 关闭并丢弃当前 CosyVoice WebSocket
+6. 取消并丢弃当前 TTS 活跃 WebSocket；豆包先尝试发送 `CancelSession`
 7. 对 cancellable 工具发送取消；不可取消工具只作 fence 隔离
 8. 根据 TTS 对齐和播放进度计算实际已听文本
 9. 把助手历史截断到实际已听文本
@@ -1572,7 +1640,7 @@ async def confirm_interruption(self, cause: str) -> None:
         await self._playback.stop_and_flush()
         await cancel_and_wait(self._active_llm_task)
         await cancel_and_wait(self._active_tts_task)
-        await self._cosyvoice_pool.discard_active_connection(old)
+        await self._tts_pool.discard_active_connection(old)
         await self._task_manager.cancel_cancellable(old)
         self._context.commit_interrupted_assistant_text(heard_text)
         self._state = ConversationState.USER_SPEAKING
@@ -1594,7 +1662,7 @@ VAD 检测与 duck           30–80 ms
 - 只暂停浏览器播放器，但让 LLM/TTS 在后台继续；
 - 先等待 ASR final 再停止；
 - 用户打断后仍把完整助手回答写入历史；
-- 为了复用 CosyVoice 连接而继续消费旧 task；
+- 为了复用 TTS 连接而继续消费旧 session/task；
 - 工具结果回来时不检查 fence；
 - 用户新问题已开始仍恢复旧音频。
 
@@ -1606,7 +1674,7 @@ VAD 检测与 duck           30–80 ms
 
 Tracker 同时使用：
 
-1. CosyVoice 字级时间戳；
+1. 当前 TTS provider 的字级时间戳；
 2. LiveKit 实际播放起始时刻；
 3. 客户端或服务端的播放进度/停止时刻；
 4. RTC jitter buffer 安全余量。
@@ -1658,7 +1726,7 @@ heard_audio_ms = max(
 - 助手说话时麦克风和 FunASR 持续工作；
 - FunASR interim/final/时间戳适配；
 - Qwen 非思考流式回答；
-- CosyVoice 流式 PCM；
+- 豆包双向流式 PCM 与字级时间戳；
 - 打断时同时停止播放、LLM、TTS；
 - `GenerationFence`；
 - `HeardTextTracker`；
@@ -1703,7 +1771,7 @@ heard_audio_ms = max(
 - 快速模型和深度任务模型分离；
 - 可取消工具与 `tool_epoch`；
 - 结果口语压缩；
-- CosyVoice 连接池预热。
+- 豆包连接池预热。
 
 #### 阶段 3 验收
 
@@ -1744,11 +1812,8 @@ class SpeakingStyle(StrEnum):
 - 三轮指数平滑，禁止一帧抖动导致风格突变；
 - 语速只在 0.90–1.10 范围内调整；
 - 音高首版保持 1.0；
-- CosyVoice 3.5 的 instruction 使用服务端 `DeliveryPlan` 生成的简短自然语言，例如：
-
-```text
-自然、温暖地闲聊，语气中性，停顿从容。
-```
+- 豆包只使用服务端 `DeliveryPlan` 生成并限幅后的原生语速、响度和音高参数；
+  当前不得发送 `context_texts`，避免字幕时间戳相对 PCM 偏移。
 
 #### 阶段 4 验收
 
@@ -1829,8 +1894,8 @@ Token 只能连接指定 room，TTL 300 秒。永久 LiveKit API Secret 仅在�
 - LiveKit 可连接；
 - FunASR smoke task 成功；
 - Qwen 轻量请求成功；
-- CosyVoice 连接池至少有一条 ready；
-- 所选 CosyVoice 音色返回有效时间戳；
+- 豆包连接池至少有一条 ready；
+- 所选豆包批准音色返回有效时间戳；
 - 配置校验通过。
 
 ### 20.3 前端行为
@@ -2015,9 +2080,9 @@ state_transition_total{from,to,event}
 “现在连接不太稳定，我们再试一次。”
 ```
 
-缓存语句使用同一 CosyVoice 音色预生成，并标注版本。不可用固定桥接语冒充真实业务结果。
+缓存语句使用同一豆包批准音色预生成，并标注版本。不可用固定桥接语冒充真实业务结果。
 
-### 22.3 CosyVoice
+### 22.3 豆包 TTS 2.0
 
 | 故障 | 动作 |
 |---|---|
@@ -2091,16 +2156,19 @@ services/agent/src/providers/protocol parsing >= 90%
 - task-failed；
 - 中途断线与回放；
 - 慢事件和乱序保护。
+- 历史 context 默认关闭，旧 user/assistant 文本不出现在当前 final；
+- 播放回声 final 与 interim-only 两种污染后再说真实问题，canonical final 只保留真实话语；
+- 多个快速 speech epoch 排队提交时，各自 accepted/contaminated 状态不能串轮。
 
-#### CosyVoice
+#### 豆包 TTS 2.0
 
-- sentence-begin；
-- sentence-synthesis + 紧随二进制 PCM；
-- sentence-end + words；
-- 多句累计时间戳；
+- `StartConnection` / `StartSession`；
+- 多次增量 `TaskRequest` 与二进制 PCM；
+- `FinishSession` 与字级字幕；
+- 多片段累计时间戳；
 - 时间戳晚到；
-- task-failed；
-- 用户取消时连接被关闭且不回池。
+- session failed；
+- 用户取消时发送 `CancelSession`，随后连接被关闭且不回池。
 
 #### Qwen
 
@@ -2157,7 +2225,7 @@ services/agent/src/providers/protocol parsing >= 90%
 - 外放 50%、80% 音量；
 - 安静房间、办公室、街边。
 
-同一设备助手播放期间，FunASR 不应大量识别出助手自己的声音。若发生，先修 AEC/音频路由，不得用关键词规则掩盖。
+同一设备助手播放期间，FunASR 不应大量识别出助手自己的声音。若发生，先修 AEC/音频路由，不得用关键词规则掩盖；同时服务端必须隔离无 VAD 锚转写、在安全边界清理旧 user turn，并保证错误文本不进入 UI、LLM、archive 或 Persona。
 
 ### 23.5 Chaos 测试
 
@@ -2165,7 +2233,7 @@ services/agent/src/providers/protocol parsing >= 90%
 
 - FunASR 连接每 30–120 秒断开；
 - Qwen 首 token 延迟 5 秒；
-- CosyVoice 在第二句 task-failed；
+- 豆包 TTS 在第二个增量 `TaskRequest` 后 session failed；
 - RTC 丢包 5%、10%；
 - 工具延迟 20 秒后返回旧结果；
 - 客户端断线 3 秒重连；
@@ -2193,7 +2261,7 @@ services/agent/src/providers/protocol parsing >= 90%
 - [ ] 第 21 章所有 SLO 达标；
 - [ ] 100 次连续打断没有旧音频；
 - [ ] 100 次工具条件修改没有旧结果误播；
-- [ ] CosyVoice 时间戳 smoke test 非空；
+- [ ] 豆包 PCM 与字级时间戳 smoke test 非空且对齐；
 - [ ] 助手说话时麦克风轨道始终开启；
 - [ ] 安全扫描未发现前端密钥；
 - [ ] 生产构建使用锁文件；
@@ -2211,13 +2279,14 @@ services/agent/src/providers/protocol parsing >= 90%
 ```text
 用户 -> LiveKit RTC 节点
 Agent -> FunASR WebSocket
-Agent -> CosyVoice WebSocket
+Agent -> 豆包 TTS WebSocket
 Agent -> Qwen HTTPS
 ```
 
 原则：
 
-- Agent 应尽可能靠近 FunASR/CosyVoice 的阿里云地域；
+- Agent 应综合靠近 FunASR/Qwen 的阿里云地域与豆包 TTS 的火山引擎接入点，
+  以真实 RTT 和首包结果选址；
 - 用户和 Agent 跨境时必须以实测为准；
 - 不要为了少 100 ms 模型生成时间，容忍 300 ms 额外网络 RTT；
 - DNS、TLS 握手和冷连接必须通过连接复用/预热从关键路径移除；
@@ -2345,7 +2414,7 @@ Agent Worker：4 vCPU / 8 GB RAM
 
 单 Worker 的会话上限必须通过 30 分钟持续负载测试确认，测试内容包含同时说话、打断和 TTS。不得仅用静默连接测试容量。
 
-### 24.6 CosyVoice 连接池容量
+### 24.6 豆包连接池容量
 
 ```text
 pool_size = ceil(峰值同机并发 TTS × 1.5)
@@ -2375,7 +2444,7 @@ pool_size = ceil(峰值同机并发 TTS × 1.5)
 
 ### 25.1 密钥
 
-- FunASR、CosyVoice、Qwen、LiveKit Secret 只存在服务端；
+- FunASR、豆包 TTS、Qwen、LiveKit Secret 只存在服务端；
 - 前端只收到短期 LiveKit participant token；
 - 密钥通过云 Secrets 注入，不写进镜像、仓库或日志；
 - 不同环境使用不同密钥和 Workspace；
@@ -2576,7 +2645,7 @@ e2e:
 - 输出含“连接正常”；
 - 没有把 provider-specific thinking/reasoning 字段当 content。
 
-### 27.3 CosyVoice
+### 27.3 豆包 TTS 2.0
 
 合成：
 
@@ -2586,13 +2655,13 @@ e2e:
 
 通过条件：
 
-- `cosyvoice-v3.5-flash` + 经 registry 批准的设计音色（默认 profile `warm_companion`）；
-- 24 kHz raw PCM；
-- 收到二进制音频；
-- 收到 sentence-end；
+- `seed-tts-2.0` + 经 registry 批准的机器人音色（默认 profile `warm_companion`）；
+- 使用双向流式 WebSocket，并在同一 session 发送至少两个增量 `TaskRequest`；
+- 收到 24 kHz、mono、PCM s16le 二进制音频；
+- 收到字级字幕事件；
 - words 非空；
 - 时间戳单调且末尾与 PCM 时长误差 ≤300 ms；
-- 正常 task-finished。
+- 正常 `SessionFinished`；取消探针能发出 `CancelSession` 并淘汰连接。
 
 任何 smoke test 失败，`/health/ready` 必须失败。
 
@@ -2624,7 +2693,7 @@ e2e:
 - speech-to-speech P50/P95；
 - barge-in stop P95；
 - false interruption；
-- FunASR/CosyVoice 连接失败；
+- FunASR/豆包 TTS 连接或 session 失败；
 - stale result dropped；
 - 会话异常结束；
 - 用户主动停止回答频率；
@@ -2640,7 +2709,7 @@ e2e:
 stale audio playback detected > 0
 stale tool playback detected > 0
 ready replicas < 1
-CosyVoice timestamp empty rate > 1%
+Doubao timestamp empty rate > 1%
 barge-in stop P95 > 300 ms for 10 min
 speech-to-speech P95 > 1800 ms for 10 min
 provider error rate > 5% for 5 min
@@ -2688,13 +2757,24 @@ endpointing -> LLM TTFT -> phrase wait -> TTS TTFB -> RTC playback
 4. 自建守卫白名单；
 5. AEC 是否把助手声音和用户附和混在一起。
 
+#### “字幕出现用户没说过的上轮内容”
+
+依次检查：
+
+1. 浏览器/系统 AEC 是否生效，扬声器回声是否回灌麦克风；
+2. `user_started_speaking` 与 ASR interim/final 的实际时序；
+3. `unanchored_playback_transcript` 指标是否增长；
+4. 播放结束、下一次 VAD 前是否完成 `clear_user_turn`；
+5. `canonical_user_turn_rebuilt` 的 accepted segment 数量与长度；
+6. `FUNASR_CONTEXT_ENABLED` 是否仍为 `false`。
+
 #### “被打断后又继续说旧内容”
 
 检查：
 
 1. generation_id 是否先递增；
 2. speech handle 是否清空；
-3. CosyVoice 连接是否真正关闭；
+3. 豆包是否已发送 `CancelSession`，且对应连接真正关闭；
 4. token/audio 帧是否比对 fence；
 5. 客户端是否丢弃旧 generation 事件；
 6. 工具结果是否检查 tool_epoch。
@@ -2721,7 +2801,7 @@ endpointing -> LLM TTFT -> phrase wait -> TTS TTFB -> RTC playback
 - interim/final/word timestamps；
 - mock server 和测试。
 
-### PR 3：CosyVoice 插件
+### PR 3：豆包 TTS 2.0 插件
 
 - WebSocket 生命周期；
 - 连接池；
@@ -2792,16 +2872,16 @@ endpointing -> LLM TTFT -> phrase wait -> TTS TTFB -> RTC playback
 
 最高优先级规则：
 1. 规范中的 MUST、MUST NOT、状态机、不变量、接口和验收测试不可改写。
-2. 固定使用 FunASR Realtime、Qwen、CosyVoice 和 LiveKit Agents；
+2. 固定使用 FunASR Realtime、Qwen、豆包 Seed-TTS 2.0 双向流式和 LiveKit Agents；
    不得擅自替换模型供应商或改成传统“等整句后再处理”的实现。
 3. Python 固定 3.12；`livekit-agents`、`livekit-plugins-openai`、`livekit-plugins-silero` 固定 1.6.5；`openai` 固定在 `>=2.36,<3`。
 4. 不得在关键路径留下 TODO、pass、mock-only、伪代码或未实现异常。
 5. 不得把供应商密钥放入前端；必须生成 .env.example。
 6. 所有异步结果必须经过 GenerationFence；旧音频和旧工具结果误播必须为零。
 7. 助手说话时麦克风、VAD 和 FunASR 必须持续运行。
-8. 必须实现 CosyVoice 字级对齐和 HeardTextTracker；历史只保存实际已听文本。
+8. 必须实现豆包字级字幕对齐和 HeardTextTracker；历史只保存实际已听文本。
 9. 用户打断必须同时取消播放、LLM、TTS 和可取消工具；被取消的
-   CosyVoice WebSocket 必须关闭并从池中剔除。
+   豆包 session 必须取消，对应 WebSocket 必须关闭并从池中剔除。
 10. 必须实现本地协议 mock server，使单元/集成测试不依赖真实 API。
 11. 必须生成 uv.lock、apps/h5/package-lock.json、Dockerfile、Makefile、README、CI。
 12. 必须运行并修复 lint、type check、unit、integration 和离线 E2E。
@@ -2836,7 +2916,7 @@ G. 不要重新询问规范已经给出的选择。只有密钥、域名和业�
 - 连续 100 次工具条件修改没有旧 tool epoch 输出；
 - README 能让新开发者从空环境启动；
 - 真实密钥存在时，provider_smoke_test 能验证 FunASR final/时间戳、
-  Qwen 流式 content、CosyVoice PCM/字级时间戳。
+  Qwen 流式 content、豆包 PCM/字级时间戳和取消连接淘汰。
 ```
 
 ### 30.1 编码 Agent 必须生成的追踪矩阵
@@ -2845,10 +2925,10 @@ G. 不要重新询问规范已经给出的选择。只有密钥、域名和业�
 
 | 规范要求 | 实现文件 | 测试文件 | 状态 |
 |---|---|---|---|
-| 旧 generation 音频不得播放 | `generation_fence.py`, `cosyvoice_tts.py` | `test_generation_fence.py`, `test_cancel_tts.py` | PASS |
+| 旧 generation 音频不得播放 | `generation_fence.py`, `doubao_tts.py` | `test_generation_fence.py`, `test_doubao_mock.py` | PASS |
 | 助手历史只含实际已听文本 | `heard_text_tracker.py` | `test_heard_text_tracker.py` | PASS |
 | FunASR 字级时间戳 | `funasr_stt.py` | `test_funasr_protocol.py` | PASS |
-| CosyVoice 取消后丢连接 | `cosyvoice_tts.py` | `test_cosyvoice_pool.py` | PASS |
+| 豆包取消后丢连接 | `doubao_tts.py` | `test_doubao_mock.py` | PASS |
 
 追踪矩阵缺失即视为交付不完整。
 
@@ -2923,9 +3003,10 @@ ASR 分句与对话话权不是同一问题。用户可能在一个短暂停顿�
 
 预生成可以隐藏 LLM 延迟，但在话轮完成前播放会增加抢话风险。第一版只预生成文本，等正式提交后再播放。
 
-### ADR-004：为什么取消 CosyVoice 时直接关闭连接
+### ADR-004：为什么取消活跃 TTS 时淘汰连接
 
-正确停止旧音频比连接复用更重要。没有可靠取消确认时，关闭连接是最明确的隔离边界。
+正确停止旧音频比连接复用更重要。豆包先尝试发送 `CancelSession`，随后仍关闭并
+淘汰活跃连接，以 fence 和物理连接边界共同阻止迟到音频；完整决策见 ADR 0012。
 
 ### ADR-005：为什么保存实际已听文本
 
@@ -2958,7 +3039,12 @@ ASR 分句与对话话权不是同一问题。用户可能在一个短暂停顿�
 - Agent Deployment：<https://docs.livekit.io/deploy/agents/>
 - Self-hosting：<https://docs.livekit.io/transport/self-hosting/>
 
-### 阿里云百炼 / Model Studio
+### 火山引擎豆包 TTS
+
+- 双向流式语音合成：<https://docs.volcengine.com/docs/6561/2532486?lang=zh>
+- 音色列表：<https://docs.volcengine.com/docs/6561/1257544?lang=zh>
+
+### 阿里云百炼 / Model Studio（ASR、Qwen 与历史 TTS 资料）
 
 - FunASR Client Events：<https://help.aliyun.com/en/model-studio/fun-asr-client-events>
 - FunASR Server Events：<https://help.aliyun.com/en/model-studio/fun-asr-server-events>
@@ -2990,7 +3076,7 @@ ASR 分句与对话话权不是同一问题。用户可能在一个短暂停顿�
 ## Provider Smoke
 - FunASR final + timestamps: PASS/FAIL
 - Qwen stream content: PASS/FAIL
-- CosyVoice PCM + timestamps: PASS/FAIL
+- Doubao PCM + timestamps + cancel: PASS/FAIL
 
 ## Latency
 - Speech-to-speech P50:

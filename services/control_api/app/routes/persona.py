@@ -110,6 +110,7 @@ async def revoke_consent(
 async def list_traits(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    include_candidates: bool = False,
 ) -> dict[str, Any]:
     traits = await _engine(request).traits(account_id=user.user_id)
     return {
@@ -128,6 +129,7 @@ async def list_traits(
                 "version_id": trait.version_id,
             }
             for trait in traits
+            if include_candidates or trait.status != "candidate"
         ]
     }
 
@@ -245,13 +247,20 @@ async def session_capsule(
     _: Annotated[None, Depends(_require_internal_token)],
 ) -> dict[str, Any]:
     session = require_active_voice_session(request, body.session_id)
-    capsule = await _engine(request).capsule(
+    engine = _engine(request)
+    account_id = str(session["user_id"])
+    confirmed_style_only = (
+        body.speaker_class == "uncertain"
+        and _store(request).get_account(user_id=account_id) is not None
+    )
+    capsule = await engine.capsule(
         PersonaRequest(
-            account_id=str(session["user_id"]),
+            account_id=account_id,
             speaker_class=body.speaker_class,
             topic=body.topic,
             enabled=body.enabled,
             max_chars=body.max_chars,
+            confirmed_style_only=confirmed_style_only,
         )
     )
     return {

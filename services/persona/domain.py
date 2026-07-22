@@ -117,12 +117,15 @@ class PersonaRequest:
     topic: str = ""
     enabled: bool = True
     max_chars: int = 1200
+    confirmed_style_only: bool = False
 
     def __post_init__(self) -> None:
         if not self.account_id.strip() or not 160 <= self.max_chars <= 4000:
             raise ValueError("persona request requires account_id and max_chars 160..4000")
         if len(self.topic) > 1000:
             raise ValueError("persona topic must not exceed 1000 characters")
+        if self.confirmed_style_only and self.speaker_class != "uncertain":
+            raise ValueError("confirmed style access is only valid for uncertain speakers")
 
 
 @dataclass(frozen=True, slots=True)

@@ -33,7 +33,7 @@ async def test_unconnected_session_control_methods_and_ring_bound() -> None:
         await session.connect()
 
 
-def test_resample_pcm_and_stt_context_object_mapping() -> None:
+def test_resample_pcm_and_stt_does_not_forward_chat_history() -> None:
     pcm = b"\x00\x00" * 160
     assert resample_pcm_16le(pcm, src_rate=16000, dst_rate=16000) is pcm
     downsampled = resample_pcm_16le(pcm, src_rate=16000, dst_rate=8000)
@@ -54,11 +54,6 @@ def test_resample_pcm_and_stt_context_object_mapping() -> None:
     plugin._push_conversation_item(Event())
     plugin.push_conversation_item({"role": "invalid", "text": "ignored"})
     session = plugin.create_session()
-    assert session._context == (
-        {
-            "role": "assistant",
-            "content": [{"type": "text", "text": "已经听到的内容"}],
-        },
-    )
+    assert session._context == ()
     assert plugin.provider == "alibaba_model_studio"
     assert plugin.model == "fun-asr-realtime"

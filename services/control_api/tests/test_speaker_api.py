@@ -6,9 +6,12 @@ from pathlib import Path
 import pytest
 from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
+from services.control_api.app.config import ControlSettings
 from services.control_api.app.main import create_app
 from services.speaker.authority import SpeakerAuthority
 from services.speaker.domain import EmbeddingResult
+
+ROOT = Path(__file__).resolve().parents[3]
 
 
 class FakeEmbeddingAdapter:
@@ -43,6 +46,20 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 def _audio(value: bytes) -> str:
     return base64.b64encode(value).decode("ascii")
+
+
+def test_shadow_guest_runtime_default_and_examples_are_040(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MEMORIA_SPEAKER_GUEST_THRESHOLD", raising=False)
+
+    assert ControlSettings(_env_file=None).speaker_guest_threshold == 0.40
+    assert "MEMORIA_SPEAKER_GUEST_THRESHOLD=0.40" in (ROOT / ".env.example").read_text(
+        encoding="utf-8"
+    )
+    assert "MEMORIA_SPEAKER_GUEST_THRESHOLD=0.40" in (
+        ROOT / "infra" / "memoria.env.production.example"
+    ).read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -113,6 +130,11 @@ async def test_registered_owner_manages_shadow_active_and_revoked_speaker_profil
                 "sample_rate": 16000,
             },
         )
+        policy_update = await client.put(
+            f"/v1/memory/profile/{identity['user_id']}",
+            headers=owner_headers,
+            json={"reject_non_owner_voice": False},
+        )
         guest = await client.post(
             "/v1/speakers/classify",
             headers=internal,
@@ -143,7 +165,10 @@ async def test_registered_owner_manages_shadow_active_and_revoked_speaker_profil
     assert activated.status_code == 204
     assert owner.json()["classification"] == "owner"
     assert owner.json()["permissions"]["read_private_memory"] is True
+    assert owner.json()["reject_non_owner_voice"] is True
+    assert policy_update.status_code == 200
     assert guest.json()["classification"] == "guest"
+    assert guest.json()["reject_non_owner_voice"] is False
     assert guest.json()["permissions"] == {
         "normal_conversation": True,
         "read_private_memory": False,

@@ -55,6 +55,7 @@ from services.governance.account_data import (
     AccountDeletionIncompleteError,
 )
 from services.persona.domain import PersonaEnginePort, PersonaEvidence
+from services.persona.rules import trusted_uncertain_profile
 
 router = APIRouter(prefix="/v1/archive", tags=["archive"])
 logger = logging.getLogger(__name__)
@@ -351,12 +352,20 @@ def _schedule_persona_observation(
     *,
     event: EvidenceEvent,
     duplicate: bool,
+    allow_uncertain_candidate: bool = False,
 ) -> None:
-    if (
-        duplicate
-        or event.event_type != "speech.utterance_finalized"
-        or event.speaker_class != "owner"
-    ):
+    if duplicate or event.event_type != "speech.utterance_finalized":
+        return
+    if event.payload.get("persona_eligible") is False:
+        return
+    if event.speaker_class == "uncertain":
+        if (
+            not allow_uncertain_candidate
+            or _store(request).get_account(user_id=event.account_id) is None
+            or trusted_uncertain_profile(event.payload) is None
+        ):
+            return
+    elif event.speaker_class != "owner":
         return
     engine = cast(PersonaEnginePort, request.app.state.persona_engine)
     metrics = _persona_metrics(event.payload)
@@ -453,6 +462,7 @@ async def append_session_event(
         background_tasks,
         event=event,
         duplicate=result.duplicate,
+        allow_uncertain_candidate=True,
     )
     return JSONResponse(
         status_code=200 if result.duplicate else 201,

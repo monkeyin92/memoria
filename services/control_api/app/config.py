@@ -149,7 +149,7 @@ class ControlSettings(BaseSettings):
         alias="MEMORIA_SPEAKER_OWNER_THRESHOLD",
     )
     speaker_guest_threshold: float = Field(
-        default=0.45,
+        default=0.40,
         ge=0.0,
         le=0.8,
         alias="MEMORIA_SPEAKER_GUEST_THRESHOLD",
@@ -208,6 +208,10 @@ class ControlSettings(BaseSettings):
     )
 
     llm_provider: Literal["qwen", "deepseek"] = Field(default="qwen", alias="LLM_PROVIDER")
+    tts_provider: Literal["cosyvoice", "doubao"] = Field(
+        default="doubao",
+        alias="TTS_PROVIDER",
+    )
     dashscope_api_key: SecretStr = Field(default=SecretStr(""), alias="DASHSCOPE_API_KEY")
     dashscope_ws_url: str = Field(default="", alias="DASHSCOPE_WS_URL")
     dashscope_workspace_id: str = Field(default="", alias="DASHSCOPE_WORKSPACE_ID")

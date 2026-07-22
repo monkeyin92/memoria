@@ -1,4 +1,4 @@
-"""Session-scoped active voice resolver with fail-closed clone caching."""
+"""Session-scoped voice resolver with fail-closed runtime caching."""
 
 from __future__ import annotations
 
@@ -7,8 +7,10 @@ from typing import Any
 
 import httpx
 
-from services.agent.src.providers.cosyvoice_voice_catalog import (
-    resolve_approved_designed_voice,
+from services.agent.src.providers.doubao_voice_catalog import (
+    DOUBAO_TTS_MODEL,
+    catalog_by_id,
+    resolve_approved_voice,
 )
 
 
@@ -50,8 +52,6 @@ class VoiceProfileClient:
             raise ValueError("voice profile refresh requires session_id")
         epoch = self._epochs.get(session_id, 0) + 1
         self._epochs[session_id] = epoch
-        # A revoked clone must not remain usable while validation is in flight.
-        self._cache.pop(session_id, None)
         client = self._client or httpx.AsyncClient(timeout=self._config.timeout_s)
         try:
             response = await client.post(
@@ -69,7 +69,9 @@ class VoiceProfileClient:
                 await client.aclose()
         if self._epochs.get(session_id) != epoch:
             return False
-        if profile is not None:
+        if profile is None:
+            self._cache.pop(session_id, None)
+        else:
             self._cache[session_id] = profile
         return True
 
@@ -92,7 +94,7 @@ class VoiceProfileClient:
                 raise ValueError("invalid designed voice response")
             if not all(isinstance(value, str) and value for value in (profile_id, model)):
                 raise ValueError("invalid designed voice response")
-            voice_id = resolve_approved_designed_voice(
+            voice_id = resolve_approved_voice(
                 profile_id=str(profile_id),
                 model=str(model),
             )
@@ -110,7 +112,19 @@ class VoiceProfileClient:
         voice_id = payload.get("voice_id")
         if not all(isinstance(value, str) and value for value in (profile_id, model, voice_id)):
             raise ValueError("invalid active voice response")
-        if not str(model).startswith("cosyvoice-v3.5-"):
+        approved_profile = next(
+            (spec.profile_id for spec in catalog_by_id().values() if spec.speaker_id == voice_id),
+            None,
+        )
+        if (
+            model != DOUBAO_TTS_MODEL
+            or approved_profile is None
+            or resolve_approved_voice(
+                profile_id=approved_profile,
+                model=str(model),
+            )
+            != voice_id
+        ):
             raise ValueError("unsupported active voice model")
         return VoiceRuntimeProfile(
             profile_id=str(profile_id),

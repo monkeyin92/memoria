@@ -113,11 +113,6 @@ export function classifyOmniControlUtterance(text) {
   return { kind: "interrupt_then_chat", ack: null };
 }
 
-/** @deprecated use classifyOmniControlUtterance */
-export function isOmniInterruptCommandOnly(text) {
-  return classifyOmniControlUtterance(text).kind === "interrupt_only";
-}
-
 export function omniInterruptAckPhrase(text) {
   const c = classifyOmniControlUtterance(text);
   return c.ack || "嗯，你说。";

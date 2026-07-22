@@ -8,28 +8,26 @@ import os
 import tempfile
 from pathlib import Path
 
-from services.agent.src.config import AgentSettings
+from services.agent.src.config import AgentSettings, validate_doubao_auth
 from services.control_api.app.config import ControlSettings
 
 _AGENT_EXTRA_KEYS = frozenset(
     {
         "BACKCHANNEL_BOUNDARY_END_S",
         "BACKCHANNEL_BOUNDARY_START_S",
-        "COSYVOICE_CONNECT_TIMEOUT_S",
-        "COSYVOICE_FIRST_AUDIO_TIMEOUT_S",
-        "COSYVOICE_FORMAT",
-        "COSYVOICE_LANGUAGE",
-        "COSYVOICE_PITCH",
-        "COSYVOICE_RATE",
-        "COSYVOICE_TOTAL_TIMEOUT_S",
-        "COSYVOICE_VOICE_REGISTRY",
-        "COSYVOICE_VOLUME",
         "DASHSCOPE_REGION",
         "DEEPSEEK_DEEP_TOTAL_TIMEOUT_S",
         "DEEPSEEK_FAST_FIRST_TOKEN_TIMEOUT_S",
         "DEEPSEEK_FAST_MAX_TOKENS",
         "DEEPSEEK_FAST_TEMPERATURE",
         "DEEPSEEK_FAST_TOTAL_TIMEOUT_S",
+        "DOUBAO_TTS_CONNECT_TIMEOUT_S",
+        "DOUBAO_TTS_FIRST_AUDIO_TIMEOUT_S",
+        "DOUBAO_TTS_LOUDNESS_RATE",
+        "DOUBAO_TTS_PITCH",
+        "DOUBAO_TTS_SPEECH_RATE",
+        "DOUBAO_TTS_TOTAL_TIMEOUT_S",
+        "DOUBAO_TTS_VOICE_REGISTRY",
         "ENDPOINTING_ALPHA",
         "ENDPOINTING_MAX_DELAY_S",
         "ENDPOINTING_MIN_DELAY_S",
@@ -78,6 +76,14 @@ def _aliases(settings_type: type[AgentSettings] | type[ControlSettings]) -> set[
 def split_env(
     values: dict[str, str],
 ) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    if "DOUBAO_TTS_SECRET_KEY" in values:
+        raise ValueError("DOUBAO_TTS_SECRET_KEY is not used and must not be deployed")
+    validate_doubao_auth(
+        api_key=values.get("DOUBAO_TTS_API_KEY", ""),
+        app_id=values.get("DOUBAO_TTS_APP_ID", ""),
+        access_token=values.get("DOUBAO_TTS_ACCESS_TOKEN", ""),
+        required=False,
+    )
     if values.get("ENVIRONMENT", "").strip().lower() == "production":
         if values.get("MEMORIA_ARCHIVE_INTERNAL_TOKEN", "").strip():
             raise ValueError("production forbids the legacy all-access internal token")
@@ -112,9 +118,7 @@ def split_env(
         if not enabled:
             agent.pop(token, None)
     embedding_token = values.get("MEMORIA_SPEAKER_EMBEDDING_TOKEN", "").strip()
-    speaker_model = (
-        {"MEMORIA_SPEAKER_MODEL_TOKEN": embedding_token} if embedding_token else {}
-    )
+    speaker_model = {"MEMORIA_SPEAKER_MODEL_TOKEN": embedding_token} if embedding_token else {}
     return control, agent, speaker_model
 
 

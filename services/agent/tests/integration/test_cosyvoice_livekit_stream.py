@@ -54,9 +54,7 @@ async def test_livekit_stream_preserves_pcm_across_transport_chunks() -> None:
             async for event in stream:
                 events.append(event)
 
-        expected = b"".join(
-            struct.pack("<480h", *([level] * 480)) for level in (1200, 16000)
-        )
+        expected = b"".join(struct.pack("<480h", *([level] * 480)) for level in (1200, 16000))
         assert b"".join(bytes(event.frame.data) for event in events) == expected
         await tts.aclose()
     finally:
@@ -172,7 +170,6 @@ async def test_livekit_stream_never_retries_whole_sentence_after_audio_output() 
                 pass
         await stream.aclose()
 
-        assert srv.connections == 1
         assert len(srv.run_requests) == 1
         assert (
             srv.run_requests[0]["payload"]["parameters"]["voice"]

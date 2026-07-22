@@ -302,6 +302,200 @@ async def test_post_playback_english_assistant_echo_is_ignored() -> None:
 
 
 @pytest.mark.asyncio
+async def test_playback_echo_final_is_removed_before_the_next_real_turn_is_committed() -> None:
+    published: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    runtime.set_event_publisher(publish)
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("你好呀")
+    runtime.update_pending_assistant_text("你好呀！很高兴见到你。")
+    await runtime.on_playback_started()
+
+    echo = runtime.observe_user_transcript("你好呀！ 我告现你。", final=True)
+    await runtime.on_assistant_reply_completed("你好呀！很高兴见到你。")
+    runtime.on_user_voice_started()
+    real = runtime.observe_user_transcript("介绍一下南京。", final=True)
+
+    message = llm.ChatMessage(
+        role="user",
+        content=["你好呀！ 我告现你。 介绍一下南京。"],
+    )
+    message.metrics["started_speaking_at"] = 1.0
+    message.metrics["stopped_speaking_at"] = 2.0
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    await agent.on_user_turn_completed(llm.ChatContext.empty(), message)
+    await asyncio.sleep(0)
+
+    user_finals = [
+        event["text"]
+        for event in published
+        if event.get("type") == "transcript_delta"
+        and event.get("speaker") == "user"
+        and event.get("final") is True
+    ]
+    assert echo == "ignore"
+    assert real == "accept"
+    assert message.text_content == "介绍一下南京。"
+    assert runtime.orchestrator.context.turns[-1].content == "介绍一下南京。"
+    assert user_finals == ["介绍一下南京。"]
+
+
+@pytest.mark.asyncio
+async def test_queued_turn_callbacks_consume_only_their_own_speech_epoch() -> None:
+    """Later VAD epochs may arrive while LiveKit serializes completed-turn hooks."""
+
+    published: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    runtime.set_event_publisher(publish)
+    await runtime.orchestrator.ready()
+    runtime.update_pending_assistant_text("你好呀！很高兴见到你。")
+    await runtime.on_playback_started()
+
+    assert runtime.observe_user_transcript("你好呀！ 我告现你。", final=True) == "ignore"
+    runtime._was_speaking = False
+
+    raw_turns = (
+        "你好呀！ 我告现你。 介绍一下南京。",
+        "南京有哪些景点？",
+        "夫子庙晚上几点关门？",
+    )
+    canonical_turns = (
+        "介绍一下南京。",
+        "南京有哪些景点？",
+        "夫子庙晚上几点关门？",
+    )
+    for text in canonical_turns:
+        runtime.on_user_voice_started()
+        assert runtime.observe_user_transcript(text, final=True) == "accept"
+
+    class Message:
+        def __init__(self, text: str) -> None:
+            self.content = [text]
+            self.metrics = {"started_speaking_at": 1.0, "stopped_speaking_at": 2.0}
+
+        def text_content(self) -> str:
+            return "".join(self.content)
+
+    messages = [Message(text) for text in raw_turns]
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    for message in messages:
+        await agent.on_user_turn_completed(llm.ChatContext.empty(), message)
+    await asyncio.sleep(0)
+
+    assert [message.text_content() for message in messages] == list(canonical_turns)
+    assert [turn.content for turn in runtime.orchestrator.context.turns] == list(canonical_turns)
+    assert [
+        event["text"]
+        for event in published
+        if event.get("type") == "transcript_delta"
+        and event.get("speaker") == "user"
+        and event.get("final") is True
+    ] == list(canonical_turns)
+
+
+@pytest.mark.asyncio
+async def test_queued_control_turn_cannot_clear_the_following_speech_epoch() -> None:
+    cleared: list[str] = []
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    runtime.set_user_turn_clearer(lambda: cleared.append("clear"))
+    await runtime.orchestrator.ready()
+
+    runtime.on_user_voice_started()
+    assert runtime.observe_user_transcript("等一下", final=True) == "accept"
+    runtime.on_user_voice_started()
+    assert runtime.observe_user_transcript("介绍一下南京。", final=True) == "accept"
+
+    class Message:
+        def __init__(self, text: str) -> None:
+            self.content = [text]
+            self.metrics = {"started_speaking_at": 1.0, "stopped_speaking_at": 2.0}
+
+        def text_content(self) -> str:
+            return "".join(self.content)
+
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    with pytest.raises(StopResponse):
+        await agent.on_user_turn_completed(llm.ChatContext.empty(), Message("等一下"))
+    await agent.on_user_turn_completed(
+        llm.ChatContext.empty(),
+        Message("介绍一下南京。"),
+    )
+
+    assert cleared == []
+    assert [turn.content for turn in runtime.orchestrator.context.turns] == ["介绍一下南京。"]
+
+
+@pytest.mark.asyncio
+async def test_playback_echo_interim_is_removed_from_a_later_cumulative_final() -> None:
+    published: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    runtime.set_event_publisher(publish)
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("你好呀")
+    runtime.update_pending_assistant_text("你好呀！很高兴见到你。")
+    await runtime.on_playback_started()
+
+    echo = runtime.observe_user_transcript("你好呀！ 我告现你。", final=False)
+    await runtime.on_assistant_reply_completed("你好呀！很高兴见到你。")
+    runtime.on_user_voice_started()
+    combined = runtime.observe_user_transcript(
+        "你好呀！ 我告现你。 介绍一下南京。",
+        final=True,
+    )
+
+    message = llm.ChatMessage(
+        role="user",
+        content=["你好呀！ 我告现你。 介绍一下南京。"],
+    )
+    message.metrics["started_speaking_at"] = 1.0
+    message.metrics["stopped_speaking_at"] = 2.0
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    await agent.on_user_turn_completed(llm.ChatContext.empty(), message)
+    await asyncio.sleep(0)
+
+    user_finals = [
+        event["text"]
+        for event in published
+        if event.get("type") == "transcript_delta"
+        and event.get("speaker") == "user"
+        and event.get("final") is True
+    ]
+    assert echo == "wait"
+    assert combined == "accept"
+    assert message.text_content == "介绍一下南京。"
+    assert runtime.orchestrator.context.turns[-1].content == "介绍一下南京。"
+    assert user_finals == ["介绍一下南京。"]
+
+
+@pytest.mark.asyncio
+async def test_short_playback_prefix_does_not_remove_a_matching_real_question() -> None:
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("介绍南京")
+    runtime.update_pending_assistant_text("南京不是一座只有历史的城市。")
+    await runtime.on_playback_started()
+
+    assert runtime.observe_user_transcript("南京", final=False) == "wait"
+    await runtime.on_assistant_reply_completed("南京不是一座只有历史的城市。")
+    runtime.on_user_voice_started()
+    assert runtime.observe_user_transcript("南京有哪些景点？", final=True) == "accept"
+
+    assert runtime.consume_canonical_user_turn("南京有哪些景点？") == "南京有哪些景点？"
+
+
+@pytest.mark.asyncio
 async def test_production_echo_trace_is_quarantined_while_assistant_is_speaking() -> None:
     runtime = DuplexRuntime.create(input_guard_enabled=True)
     await runtime.orchestrator.ready()
@@ -676,12 +870,16 @@ class _FakeTTS:
         self.pool = _FakePool()
         self.bound: list[Any] = []
         self.alignment_callback: Any | None = None
+        self.closed = False
 
     def bind_fence(self, fence: Any) -> None:
         self.bound.append(fence)
 
     def set_alignment_callback(self, callback: Any) -> None:
         self.alignment_callback = callback
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 @pytest.mark.asyncio
@@ -737,6 +935,7 @@ class _FakeSession(_Emitter):
         self.started: tuple[Any, Any, Any] | None = None
         self.generated: list[str] = []
         self.interrupt_count = 0
+        self.clear_user_turn_count = 0
         self.said: list[str] = []
         self.options = SimpleNamespace(interruption=_RecordingInterruption())
         _FakeSession.last = self
@@ -754,6 +953,9 @@ class _FakeSession(_Emitter):
         self.said.append(text)
         return text
 
+    def clear_user_turn(self) -> None:
+        self.clear_user_turn_count += 1
+
     async def generate_reply(self, *, instructions: str) -> None:
         self.generated.append(instructions)
 
@@ -762,13 +964,13 @@ class _FakeSession(_Emitter):
 async def test_entrypoint_routes_control_playback_and_ui_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from services.agent.src.providers import cosyvoice_tts, deepseek, funasr_stt
+    from services.agent.src.providers import deepseek, doubao_tts, funasr_stt
 
     fake_tts = _FakeTTS()
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "cn_self_hosted")
     monkeypatch.setenv("SPEAKER_VERIFY_ENABLED", "false")
 
-    class FakeCosy:
+    class FakeDoubao:
         @classmethod
         def from_env(cls) -> _FakeTTS:
             return fake_tts
@@ -790,7 +992,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
         async def aclose(self) -> None:
             self.closed = True
 
-    monkeypatch.setattr(cosyvoice_tts, "CosyVoiceTTS", FakeCosy)
+    monkeypatch.setattr(doubao_tts, "DoubaoTTS", FakeDoubao)
     monkeypatch.setattr(funasr_stt, "FunASRSTT", FakeFun)
     monkeypatch.setattr(deepseek, "DeepSeekConfig", FakeDeepConfig)
     monkeypatch.setattr(deepseek, "DeepSeekClient", FakeDeepClient)
@@ -823,6 +1025,8 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     await asyncio.sleep(0)
     runtime: DuplexRuntime = ctx.proc.userdata["duplex_runtime"]
     assert runtime.session_id == "public-session"
+    runtime._clear_control_user_turn(cause="production_wiring_test")
+    assert session.clear_user_turn_count == 1
 
     session.emit("agent_state_changed", SimpleNamespace(new_state="thinking"))
     session.emit("user_input_transcribed", SimpleNamespace(transcript="你好", is_final=True))
@@ -954,4 +1158,5 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
 
     assert len(shutdown_callbacks) == 1
     await shutdown_callbacks[0]()
+    assert fake_tts.closed
     assert room.handlers["data_received"] == []

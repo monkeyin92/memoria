@@ -53,7 +53,7 @@ class PersonaClient:
         self._config = config
         self._client = client or httpx.AsyncClient(timeout=config.timeout_s)
         self._owns_client = client is None
-        self._cache: dict[str, _CacheEntry] = {}
+        self._cache: dict[tuple[str, SpeakerClass], _CacheEntry] = {}
         self._epochs: dict[str, int] = {}
 
     async def refresh(
@@ -66,9 +66,10 @@ class PersonaClient:
         if not session_id.strip() or len(topic) > 1000:
             raise ValueError("persona refresh requires session_id and topic <= 1000 characters")
         epoch = self._next_epoch(session_id)
-        if speaker_class != "owner":
-            self._cache.pop(session_id, None)
+        if speaker_class == "guest":
+            self._clear_session(session_id)
             return False
+        cache_key = (session_id, speaker_class)
         try:
             response = await self._client.post(
                 self._config.endpoint,
@@ -84,14 +85,14 @@ class PersonaClient:
             capsule = self._parse(response.json())
         except (httpx.HTTPError, TypeError, ValueError):
             if self._epochs.get(session_id) == epoch:
-                self._cache.pop(session_id, None)
+                self._cache.pop(cache_key, None)
             return False
         if self._epochs.get(session_id) != epoch:
             return False
         if capsule.prompt_fragment:
-            self._cache[session_id] = _CacheEntry(capsule, time.monotonic())
+            self._cache[cache_key] = _CacheEntry(capsule, time.monotonic())
         else:
-            self._cache.pop(session_id, None)
+            self._cache.pop(cache_key, None)
         return True
 
     def cached(
@@ -100,17 +101,23 @@ class PersonaClient:
         session_id: str,
         speaker_class: SpeakerClass,
     ) -> PersonaCapsuleSnapshot | None:
-        if speaker_class != "owner":
+        if speaker_class == "guest":
             self._next_epoch(session_id)
-            self._cache.pop(session_id, None)
+            self._clear_session(session_id)
             return None
-        entry = self._cache.get(session_id)
+        cache_key = (session_id, speaker_class)
+        entry = self._cache.get(cache_key)
         if entry is None:
             return None
         if time.monotonic() - entry.fetched_at > self._config.cache_ttl_s:
-            self._cache.pop(session_id, None)
+            self._cache.pop(cache_key, None)
             return None
         return entry.capsule
+
+    def _clear_session(self, session_id: str) -> None:
+        for key in tuple(self._cache):
+            if key[0] == session_id:
+                self._cache.pop(key, None)
 
     def _next_epoch(self, session_id: str) -> int:
         epoch = self._epochs.get(session_id, 0) + 1

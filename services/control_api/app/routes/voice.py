@@ -397,6 +397,12 @@ async def activate_profile(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    settings = cast(ControlSettings, request.app.state.settings)
+    if settings.tts_provider == "doubao":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="当前豆包语音链路不支持激活历史 CosyVoice 克隆音色",
+        )
     try:
         profile = await _manager(request).activate(
             account_id=user.user_id,
@@ -452,7 +458,14 @@ async def session_resolution(
     session = require_active_voice_session(request, body.session_id)
     account_id = str(session["user_id"])
     resolution = await _manager(request).resolve(account_id=account_id)
-    if resolution.mode == "fallback":
+    settings = cast(ControlSettings, request.app.state.settings)
+    legacy_cosyvoice_profile = (
+        settings.tts_provider == "doubao"
+        and resolution.mode == "active"
+        and resolution.model is not None
+        and resolution.model.startswith("cosyvoice-v3.5-")
+    )
+    if resolution.mode == "fallback" or legacy_cosyvoice_profile:
         profile = _store(request).get_profile(
             user_id=account_id,
             now=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -463,6 +476,13 @@ async def session_resolution(
                 "mode": "designed",
                 "profile_id": designed_profile,
                 "model": DESIGNED_VOICE_MODEL,
+                "voice_id": None,
+            }
+        if legacy_cosyvoice_profile:
+            return {
+                "mode": "fallback",
+                "profile_id": None,
+                "model": None,
                 "voice_id": None,
             }
     return {

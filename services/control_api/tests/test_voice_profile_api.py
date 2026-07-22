@@ -8,7 +8,7 @@ from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 from services.archive.object_store import EncryptedLocalObjectStore
 from services.control_api.app.main import create_app
-from services.voice_profile.domain import ProviderVoice
+from services.voice_profile.domain import ProviderVoice, VoiceResolution
 from services.voice_profile.manager import VoiceProfileManager
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.sample_url import VoiceSampleURLSigner
@@ -53,11 +53,32 @@ class PreviewStub:
         return b"RIFF-preview"
 
 
+class LegacyResolutionStub:
+    async def resolve(self, *, account_id: str) -> VoiceResolution:
+        assert account_id
+        return VoiceResolution(
+            mode="active",
+            profile_id="legacy-cosyvoice-profile",
+            model="cosyvoice-v3.5-flash",
+            voice_id="cosyvoice-v3.5-flash-clone-owner001",
+        )
+
+
+class ActivationStub:
+    def __init__(self) -> None:
+        self.called = False
+
+    async def activate(self, *, account_id: str, profile_id: str) -> None:
+        self.called = True
+        raise AssertionError(f"unexpected activation: {account_id=} {profile_id=}")
+
+
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEMORIA_DB_PATH", str(tmp_path / "memoria.sqlite3"))
     monkeypatch.setenv("MEMORIA_AUTH_SECRET", "test-auth-material-that-is-long-enough")
     monkeypatch.setenv("MEMORIA_ARCHIVE_INTERNAL_TOKEN", "test-internal-archive-token")
     monkeypatch.setenv("OFFLINE_MOCK", "true")
+    monkeypatch.setenv("TTS_PROVIDER", "cosyvoice")
 
 
 def test_control_api_selects_postgres_voice_profiles_with_archive_dsn(
@@ -73,6 +94,79 @@ def test_control_api_selects_postgres_voice_profiles_with_archive_dsn(
     app = create_app()
 
     assert isinstance(app.state.voice_profile_manager, PostgresVoiceProfileManager)
+
+
+@pytest.mark.asyncio
+async def test_legacy_active_clone_resolves_to_selected_doubao_companion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("TTS_PROVIDER", "doubao")
+    app = create_app()
+    app.state.voice_profile_manager = LegacyResolutionStub()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "legacy-voice-owner", "password": "safe-password"},
+            )
+        ).json()
+        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        selected = await client.put(
+            f"/v1/memory/profile/{identity['user_id']}",
+            headers=headers,
+            json={"companion_id": "taoxi"},
+        )
+        session = (
+            await client.post(
+                "/v1/sessions",
+                headers=headers,
+                json={"user_id": identity["user_id"], "voice_backend": "cascade"},
+            )
+        ).json()
+        resolved = await client.post(
+            "/v1/voices/session-resolution",
+            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
+            json={"session_id": session["session_id"]},
+        )
+
+    assert selected.status_code == 200
+    assert resolved.json() == {
+        "mode": "designed",
+        "profile_id": "bright_peer",
+        "model": "seed-tts-2.0",
+        "voice_id": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_doubao_runtime_rejects_new_cosyvoice_clone_activation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("TTS_PROVIDER", "doubao")
+    app = create_app()
+    manager = ActivationStub()
+    app.state.voice_profile_manager = manager
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "doubao-voice-owner", "password": "safe-password"},
+            )
+        ).json()
+        response = await client.post(
+            "/v1/voices/profiles/legacy-cosyvoice-profile/activate",
+            headers={"Authorization": f"Bearer {identity['access_token']}"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "当前豆包语音链路不支持激活历史 CosyVoice 克隆音色"
+    assert not manager.called
 
 
 @pytest.mark.asyncio
@@ -249,7 +343,7 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
     assert designed.json() == {
         "mode": "designed",
         "profile_id": "low_magnetic",
-        "model": "cosyvoice-v3.5-flash",
+        "model": "seed-tts-2.0",
         "voice_id": None,
     }
     assert unavailable_sample.status_code == 404

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 
 import httpx
 import pytest
@@ -102,11 +103,100 @@ async def test_guest_or_failed_refresh_clears_private_capsule() -> None:
 
 
 @pytest.mark.asyncio
+async def test_empty_capsule_refresh_clears_the_previous_consent_cache() -> None:
+    before: dict[str, object] = {
+        "version_id": "persona-v1",
+        "version_number": 1,
+        "prompt_fragment": "private capsule",
+        "entries": [],
+    }
+    after: dict[str, object] = {
+        "version_id": None,
+        "version_number": None,
+        "prompt_fragment": "",
+        "entries": [],
+    }
+    responses: Iterator[dict[str, object]] = iter((before, after))
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=next(responses)))
+    ) as http_client:
+        client = PersonaClient(
+            PersonaClientConfig(
+                endpoint="https://control.test/v1/persona/session-capsule",
+                internal_token="persona-internal-token",
+            ),
+            client=http_client,
+        )
+        assert await client.refresh(
+            session_id="session-001", speaker_class="owner", topic="before revoke"
+        )
+        assert client.cached(session_id="session-001", speaker_class="owner") is not None
+
+        assert await client.refresh(
+            session_id="session-001", speaker_class="owner", topic="after revoke"
+        )
+
+    assert client.cached(session_id="session-001", speaker_class="owner") is None
+
+
+@pytest.mark.asyncio
+async def test_uncertain_style_capsule_is_cached_separately_from_owner_and_guest_clears_both(
+) -> None:
+    requests: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        speaker_class = body["speaker_class"]
+        return httpx.Response(
+            200,
+            json={
+                "version_id": "persona-v2",
+                "version_number": 2,
+                "prompt_fragment": (
+                    "owner-private-capsule"
+                    if speaker_class == "owner"
+                    else "confirmed-style-only"
+                ),
+                "delivery_rate": 1.0,
+                "entries": [],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = PersonaClient(
+            PersonaClientConfig(
+                endpoint="https://control.test/v1/persona/session-capsule",
+                internal_token="persona-internal-token",
+            ),
+            client=http_client,
+        )
+        assert await client.refresh(
+            session_id="session-001", speaker_class="owner", topic="owner"
+        )
+        assert await client.refresh(
+            session_id="session-001", speaker_class="uncertain", topic="uncertain"
+        )
+
+        owner = client.cached(session_id="session-001", speaker_class="owner")
+        uncertain = client.cached(session_id="session-001", speaker_class="uncertain")
+        guest = client.cached(session_id="session-001", speaker_class="guest")
+
+    assert [request["speaker_class"] for request in requests] == ["owner", "uncertain"]
+    assert owner is not None and owner.prompt_fragment == "owner-private-capsule"
+    assert uncertain is not None and uncertain.prompt_fragment == "confirmed-style-only"
+    assert guest is None
+    assert client.cached(session_id="session-001", speaker_class="owner") is None
+    assert client.cached(session_id="session-001", speaker_class="uncertain") is None
+
+
+@pytest.mark.asyncio
 async def test_stale_capsule_is_not_returned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = 100.0
-    monkeypatch.setattr(persona_module.time, "monotonic", lambda: now)
+    monkeypatch.setattr(persona_module.time, "monotonic", lambda: now)  # type: ignore[attr-defined]
 
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(

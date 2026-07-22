@@ -41,7 +41,9 @@ export COSYVOICE_VOICE_PROFILE=warm_companion
 export COSYVOICE_INSTRUCT_STYLE=auto   # v3.5 自动用 freeform 指令
 export COSYVOICE_WORD_TIMESTAMPS=true
 
-python scripts/provider_smoke_test.py   # 必须：字级时间戳非空
+uv run pytest services/voice_profile/tests/test_cosyvoice_preview.py \
+  services/agent/tests/integration/test_cosyvoice_mock.py
+# 生产主链 smoke 只验证豆包；历史 CosyVoice 音色还必须单独做授权真人盲听。
 ```
 
 ## 内置 profile

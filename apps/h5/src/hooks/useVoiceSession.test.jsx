@@ -246,6 +246,7 @@ describe("useVoiceSession production edges", () => {
         text: "你好。",
         final: true,
         heard: false,
+        history_eligible: true,
         turn_id: 1,
         generation_id: 1,
       });
@@ -701,10 +702,10 @@ describe("useVoiceSession production edges", () => {
         liveKit.RoomEvent.DataReceived,
         encodeEvent({
           type: "transcript_delta",
-          speaker: "assistant",
-          text: "权威回答",
+          speaker: "user",
+          text: "主人问题",
           final: true,
-          heard: true,
+          history_eligible: true,
           turn_id: 1,
           generation_id: 1,
         }),
@@ -714,6 +715,26 @@ describe("useVoiceSession production edges", () => {
       );
     });
     expect(onFinalTranscript).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "transcript_delta",
+          speaker: "assistant",
+          text: "权威回答",
+          final: true,
+          heard: true,
+          history_eligible: true,
+          turn_id: 1,
+          generation_id: 1,
+        }),
+        agent,
+        null,
+        "voice-agent.ui",
+      );
+    });
+    expect(onFinalTranscript).toHaveBeenCalledTimes(2);
     expect(onFinalTranscript).toHaveBeenCalledWith(
       expect.objectContaining({ text: "权威回答" }),
     );
@@ -728,6 +749,7 @@ describe("useVoiceSession production edges", () => {
           text: "同一代修订后的最终稿",
           final: true,
           heard: true,
+          history_eligible: true,
           turn_id: 1,
           generation_id: 1,
         }),
@@ -737,7 +759,7 @@ describe("useVoiceSession production edges", () => {
       );
     });
     expect(result.current.latestTranscript.text).toBe("同一代修订后的最终稿");
-    expect(onFinalTranscript).toHaveBeenCalledTimes(1);
+    expect(onFinalTranscript).toHaveBeenCalledTimes(2);
 
     act(() => {
       room.emit(
@@ -747,7 +769,69 @@ describe("useVoiceSession production edges", () => {
       );
     });
     expect(result.current.latestTranscript.text).toBe("同一代修订后的最终稿");
-    expect(onFinalTranscript).toHaveBeenCalledTimes(1);
+    expect(onFinalTranscript).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows history-ineligible transcripts but never persists them", async () => {
+    const { result, room, onFinalTranscript } = await renderStartedHook();
+    const agent = { isAgent: true };
+
+    act(() => {
+      for (const event of [
+        {
+          speaker: "user",
+          text: "访客问题",
+          final: true,
+          history_eligible: false,
+          turn_id: 2,
+          generation_id: 2,
+        },
+        {
+          speaker: "assistant",
+          text: "访客对应回答",
+          final: true,
+          heard: true,
+          history_eligible: false,
+          turn_id: 2,
+          generation_id: 2,
+        },
+        {
+          speaker: "user",
+          text: "旧版缺少资格字段",
+          final: true,
+          turn_id: 3,
+          generation_id: 3,
+        },
+        {
+          speaker: "assistant",
+          text: "非法资格字段",
+          final: true,
+          heard: true,
+          history_eligible: "true",
+          turn_id: 4,
+          generation_id: 4,
+        },
+      ]) {
+        room.emit(
+          liveKit.RoomEvent.DataReceived,
+          encodeEvent({
+            type: "transcript_delta",
+            ...event,
+          }),
+          agent,
+          null,
+          "voice-agent.ui",
+        );
+      }
+    });
+
+    expect(result.current.transcripts.map((line) => line.text)).toEqual([
+      "访客问题",
+      "访客对应回答",
+      "旧版缺少资格字段",
+      "非法资格字段",
+    ]);
+    expect(onFinalTranscript).not.toHaveBeenCalled();
   });
 
   it("clears account-scoped voice state when the session is reset", async () => {
@@ -925,6 +1009,7 @@ describe("useVoiceSession production edges", () => {
           speaker: "user",
           text: "你好。",
           final: true,
+          history_eligible: true,
           turn_id: 1,
           generation_id: 1,
         }),
@@ -1130,6 +1215,53 @@ describe("useVoiceSession production edges", () => {
         }),
       ),
     );
+  });
+
+  it("explains a strict speaker rejection and clears it after an accepted turn", async () => {
+    const { result, room } = await renderStartedHook();
+
+    act(() => {
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "audio_trace",
+          source: "agent",
+          session_id: "session-1",
+          name: "target_speaker_rejected",
+          status: "ok",
+          turn_id: 0,
+          generation_id: 0,
+          detail: { reason: "target_non_owner" },
+        }),
+        { isAgent: true },
+        null,
+        "voice-agent.ui",
+      );
+    });
+
+    expect(result.current.error).toMatch(/没有确认到主人声音/);
+
+    act(() => {
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "transcript_delta",
+          session_id: "session-1",
+          speaker: "user",
+          text: "这句已经放行",
+          final: true,
+          heard: false,
+          history_eligible: false,
+          turn_id: 1,
+          generation_id: 1,
+        }),
+        { isAgent: true },
+        null,
+        "voice-agent.ui",
+      );
+    });
+
+    expect(result.current.error).toBe("");
   });
 
   it("ducks playback during a candidate interruption and restores it smoothly", async () => {

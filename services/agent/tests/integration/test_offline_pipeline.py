@@ -8,16 +8,17 @@ from collections.abc import AsyncIterator
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.orchestrator import OfflinePipeline, Orchestrator
-from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
 from services.agent.src.providers.deepseek import (
     DeepSeekClient,
     DeepSeekConfig,
     filter_content_for_tts,
 )
+from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
+from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
 from services.agent.tests.integration.mock_servers import (
-    MockCosyVoiceServer,
     MockDeepSeekServer,
+    MockDoubaoServer,
     MockFunASRServer,
 )
 
@@ -26,7 +27,7 @@ from services.agent.tests.integration.mock_servers import (
 async def test_offline_asr_llm_tts() -> None:
     asr_srv = MockFunASRServer(scenario="happy")
     llm_srv = MockDeepSeekServer(scenario="happy")
-    tts_srv = MockCosyVoiceServer(scenario="happy")
+    tts_srv = MockDoubaoServer(scenario="happy")
     asr_srv.start()
     llm_srv.start()
     tts_srv.start()
@@ -48,14 +49,19 @@ async def test_offline_asr_llm_tts() -> None:
         await asr.aclose()
 
         orch = Orchestrator()
-        tts = CosyVoiceTTS(CosyVoiceConfig(api_key="t", ws_url=tts_srv.ws_url, pool_size=1))
+        tts = DoubaoTTS(
+            DoubaoTTSConfig(
+                api_key="t",
+                ws_url=tts_srv.ws_url,
+                speaker=catalog_by_id()["warm_companion"].speaker_id,
+                pool_size=1,
+            )
+        )
         await tts.pool.warm(1)
         ds = DeepSeekClient(DeepSeekConfig(api_key="t", base_url=llm_srv.base_url))
 
         async def llm_stream(text: str, fence: GenerationFence) -> AsyncIterator[str]:
-            async for _f, chunk in ds.stream_fast(
-                [{"role": "user", "content": text}], fence=fence
-            ):
+            async for _f, chunk in ds.stream_fast([{"role": "user", "content": text}], fence=fence):
                 piece = filter_content_for_tts(chunk)
                 if piece:
                     yield piece

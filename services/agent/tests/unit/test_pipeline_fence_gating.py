@@ -148,6 +148,7 @@ async def test_livekit_playback_fact_commits_and_publishes_only_heard_text() -> 
             "heard": True,
             "turn_id": 1,
             "generation_id": 1,
+            "history_eligible": False,
         },
         {
             "type": "transcript_delta",
@@ -157,7 +158,8 @@ async def test_livekit_playback_fact_commits_and_publishes_only_heard_text() -> 
             "heard": True,
             "turn_id": 1,
             "generation_id": 1,
-        }
+            "history_eligible": False,
+        },
     ]
 
 
@@ -314,6 +316,7 @@ async def test_deep_path_runs_via_task_manager_then_speaks_fast_summary() -> Non
             return None
 
     runtime = DuplexRuntime.create()
+    runtime._speaker_class = "owner"
     spoken: list[str] = []
     runtime.configure_deep_path(FakeDeepClient())
     runtime.set_result_speaker(spoken.append)

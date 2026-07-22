@@ -193,9 +193,12 @@ export function notifyRtcRecovered(sessionId) {
 }
 
 export function saveMessage(message) {
+  if (message?.history_eligible !== true) return Promise.resolve(null);
+  const payload = { ...message };
+  delete payload.history_eligible;
   return request("/v1/memory/messages", {
     method: "POST",
-    body: JSON.stringify(message),
+    body: JSON.stringify(payload),
   });
 }
 
@@ -266,6 +269,7 @@ export function updateProfile(userId, profile) {
     "auto_summary",
     "voice_reply",
     "gentle_reminders",
+    "reject_non_owner_voice",
     "companion_id",
   ]) {
     if (profile[field] !== undefined) payload[field] = profile[field];
@@ -454,7 +458,7 @@ function readPendingMessages(key) {
 }
 
 export function cachePendingMessage(message) {
-  if (!message?.user_id) return;
+  if (!message?.user_id || message.history_eligible !== true) return;
   const key = pendingMessagesKey(message.user_id);
   const pending = readPendingMessages(key);
   pending.push(message);

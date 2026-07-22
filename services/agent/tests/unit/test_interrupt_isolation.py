@@ -41,7 +41,7 @@ async def test_100_interrupt_zero_stale_audio() -> None:
         assert orch.publish_audio_if_current(new_fence, b"\x03\x04") is True
 
         # Cosy pool discard called with old fence
-        assert any(f.generation_id == old_fence.generation_id for f in orch.cosyvoice_pool.discarded)
+        assert any(f.generation_id == old_fence.generation_id for f in orch.tts_pool.discarded)
 
     assert published_after_cancel == 0
     assert orch.stale_audio_outputs == 100  # each old publish attempt counted

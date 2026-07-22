@@ -56,6 +56,10 @@ _LONGFORM_HINTS = (
 _SENTENCE_ENDINGS = frozenset("。！？；!?")
 TELEMETRY_TOPIC = "voice-agent.telemetry"
 CASCADE_OPUS_MAX_BITRATE = 64_000
+NON_OWNER_CONTEXT_PROMPT = (
+    "当前说话人身份未确认。不得假装或声称自己是其父母、家人或亲属；"
+    "不得透露账户主人的私人上下文。可以正常回答当前内容，并使用中性称呼。"
+)
 
 try:
     from livekit import agents, rtc
@@ -178,7 +182,14 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             self._runtime.heard_tracker.observe_alignment(fence, utterance_id, status)
 
     async def on_user_turn_completed(self, turn_ctx: Any, new_message: Any) -> None:
-        text = _message_text(new_message) if new_message is not None else ""
+        raw_text = _message_text(new_message) if new_message is not None else ""
+        canonical_text = self._runtime.consume_canonical_user_turn(raw_text)
+        canonical_speech_epoch = self._runtime.consumed_canonical_speech_epoch
+        if canonical_text is None:
+            raise StopResponse()
+        text = canonical_text
+        if new_message is not None and text != raw_text.strip() and hasattr(new_message, "content"):
+            new_message.content = [text]
         if text.strip():
             has_speech_metrics = hasattr(new_message, "metrics")
             metrics = getattr(new_message, "metrics", {}) or {}
@@ -212,6 +223,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             accepted, reason = self._runtime.accept_user_turn(
                 text.strip(),
                 speech_anchored=speech_anchored,
+                canonical_speech_epoch=canonical_speech_epoch,
             )
             if not accepted:
                 logger.info(
@@ -251,14 +263,18 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             )
             self._llm_text_buf = ""
             if self._persona_client is not None:
-                self._runtime._spawn(
-                    self._persona_client.refresh(
+                try:
+                    await self._persona_client.refresh(
                         session_id=self._runtime.session_id,
                         speaker_class=speaker.classification,
                         topic=text.strip(),
-                    ),
-                    name=f"persona-prefetch-{fence.turn_id}",
-                )
+                    )
+                except Exception:
+                    logger.warning(
+                        "persona refresh failed closed session_id=%s",
+                        self._runtime.session_id,
+                        exc_info=True,
+                    )
             if self._memory_context_client is not None:
                 self._runtime._spawn(
                     self._memory_context_client.refresh(
@@ -302,6 +318,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             yield  # pragma: no cover  # make this an async generator
 
         fence = self._runtime.fence
+        resume_interrupted_reply = self._runtime.is_resume_generation(fence)
         if self._runtime.tts is not None:
             self._runtime.tts.bind_fence(fence)
 
@@ -315,10 +332,13 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         ]
         persona_fragment = ""
         memory_snapshot = None
-        if self._persona_client is not None and self._current_speaker_class == "owner":
+        if self._persona_client is not None and self._current_speaker_class in {
+            "owner",
+            "uncertain",
+        }:
             capsule = self._persona_client.cached(
                 session_id=self._runtime.session_id,
-                speaker_class="owner",
+                speaker_class=self._current_speaker_class,
             )
             if capsule is not None:
                 persona_fragment = capsule.prompt_fragment
@@ -345,7 +365,25 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             speaker_class=self._current_speaker_class,
             persona_fragment=persona_fragment,
             memory=memory_snapshot,
+            resume_interrupted_reply=resume_interrupted_reply,
         )
+        if self._current_speaker_class != "owner":
+            safe_chat_ctx.add_message(role="system", content=NON_OWNER_CONTEXT_PROMPT)
+        if resume_interrupted_reply:
+            resume_basis = (
+                "保留的原问题和用户实际听到的回答前缀"
+                if self._current_speaker_class == "owner"
+                else "用户实际听到的回答前缀"
+            )
+            safe_chat_ctx.add_message(
+                role="system",
+                content=(
+                    "用户当前是在恢复刚才由其主动暂停的同一条回答。"
+                    f"请依据{resume_basis}，"
+                    "从中断处自然续接；不要重开话题、重复已听内容，"
+                    "也不要询问用户想继续什么。"
+                ),
+            )
         if self._runtime.speech_plan.llm_instruction:
             safe_chat_ctx.add_message(
                 role="system",
@@ -360,11 +398,18 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         reply_budget_exhausted = False
         first_content_marked = False
         first_phrase_marked = False
-        last_user = ""
-        for turn in reversed(self._runtime.orchestrator.context.turns):
-            if turn.role == "user" and turn.content:
-                last_user = turn.content
-                break
+        user_turns = [
+            turn.content
+            for turn in self._runtime.orchestrator.context.turns
+            if turn.role == "user" and turn.content
+        ]
+        last_user = (
+            user_turns[-2]
+            if resume_interrupted_reply and len(user_turns) >= 2
+            else user_turns[-1]
+            if user_turns
+            else ""
+        )
         longform = any(hint in last_user for hint in _LONGFORM_HINTS) or (
             self._runtime.speech_plan.delivery_mode in {"deliberative", "supportive"}
         )
@@ -659,15 +704,15 @@ def build_session_kwargs(
 
 
 async def entrypoint(ctx: Any) -> None:
-    """Production LiveKit entry. Wires FunASR/CosyVoice/LLM + DuplexRuntime."""
+    """Production LiveKit entry. Wires FunASR/Doubao TTS/LLM + DuplexRuntime."""
     if not _HAS_LIVEKIT:
         raise RuntimeError("livekit-agents not installed")
 
     await ctx.connect()
 
     from services.agent.src.config import AgentSettings
-    from services.agent.src.providers.cosyvoice_tts import CosyVoiceTTS
     from services.agent.src.providers.deepseek import DeepSeekClient, DeepSeekConfig
+    from services.agent.src.providers.doubao_tts import DoubaoTTS
     from services.agent.src.providers.funasr_stt import FunASRSTT
     from services.agent.src.providers.qwen_emotion_asr import (
         QwenEmotionConfig,
@@ -675,11 +720,11 @@ async def entrypoint(ctx: Any) -> None:
     )
 
     stt_plugin = FunASRSTT.from_env()
-    tts_plugin = CosyVoiceTTS.from_env()
+    tts_plugin = DoubaoTTS.from_env()
     try:
         await tts_plugin.pool.warm()
     except Exception as exc:
-        logger.warning("CosyVoice pool warm failed (will open on demand): %s", exc)
+        logger.warning("Doubao TTS pool warm failed (will open on demand): %s", exc)
 
     import httpx
 
@@ -724,7 +769,7 @@ async def entrypoint(ctx: Any) -> None:
         tts=tts_plugin,
         input_guard_enabled=profile == "cn_self_hosted",
         listener_cues_enabled=cues_on,
-        use_paralinguistic_tags=runtime_settings.cosyvoice_paralinguistic_tags,
+        use_paralinguistic_tags=False,
         speaker_verifier=speaker_verifier,
     )
     if runtime_settings.speaker_authority_enabled and not offline:
@@ -742,11 +787,14 @@ async def entrypoint(ctx: Any) -> None:
         )
 
         async def _classify_speaker(pcm: bytes, sample_rate: int) -> Any:
-            return await speaker_authority.classify(
-                session_id=runtime_session_id,
-                pcm=pcm,
-                sample_rate=sample_rate,
-            )
+            try:
+                return await speaker_authority.classify(
+                    session_id=runtime_session_id,
+                    pcm=pcm,
+                    sample_rate=sample_rate,
+                )
+            finally:
+                runtime.set_reject_non_owner_voice(speaker_authority.reject_non_owner_voice)
 
         runtime.set_speaker_classifier(
             _classify_speaker,
@@ -936,6 +984,7 @@ async def entrypoint(ctx: Any) -> None:
     session_kwargs.pop("turn_handling_config", None)
 
     session = AgentSession(**session_kwargs)
+    runtime.set_user_turn_clearer(session.clear_user_turn)
 
     async def _publish_ui_event(event: dict[str, Any]) -> None:
         await ctx.room.local_participant.publish_data(
@@ -1024,7 +1073,7 @@ async def entrypoint(ctx: Any) -> None:
         """
         phrase = (text or "").strip() or "嗯，你说。"
         await asyncio.sleep(0.12)
-        sample_rate = int(runtime_settings.cosyvoice_sample_rate or 24000)
+        sample_rate = int(runtime_settings.doubao_tts_sample_rate or 24000)
         played = False
         if hasattr(tts_plugin, "synthesize_stream_text"):
             try:
@@ -1200,6 +1249,7 @@ async def entrypoint(ctx: Any) -> None:
             stt_plugin.set_pcm_observer(None)
             await _close_component("emotion_sidecar", emotion_sidecar.aclose())
         await _close_component("runtime", runtime.close())
+        await _close_component("tts", tts_plugin.aclose())
         if persona_client is not None:
             await _close_component("persona_client", persona_client.close())
         if memory_context_client is not None:
@@ -1221,7 +1271,7 @@ async def entrypoint(ctx: Any) -> None:
     await ready_publish
 
     async def _say_fixed(text: str, *, interruptible: bool = False) -> None:
-        """One CosyVoice stream of fixed text — avoids multi-phrase LLM TTS glitches."""
+        """One TTS stream of fixed text to avoid multi-phrase voice glitches."""
         if hasattr(tts_plugin, "apply_speech_plan"):
             tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
         handle = session.say(
@@ -1242,7 +1292,7 @@ async def entrypoint(ctx: Any) -> None:
         await asyncio.sleep(0.2)
 
     if runtime.speaker_verifier.enabled:
-        # Fixed single-stream prompt (not generate_reply) so CosyVoice does not
+        # Fixed single-stream prompt (not generate_reply) so TTS does not
         # split into multiple phrases that sound like a second voice / speed-up.
         runtime.publish_assistant_state("speaker_enroll")
         runtime.mark_audio_event("speaker_enroll_prompt_started")

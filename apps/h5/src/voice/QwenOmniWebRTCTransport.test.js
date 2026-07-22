@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { QwenOmniWebRTCTransport } from "./QwenOmniWebRTCTransport.js";
-import { extractInboundAudioStats } from "./webrtcStats.js";
+import {
+  addInboundAudioDeltas,
+  extractInboundAudioStats,
+} from "./webrtcStats.js";
 
 class FakeDataChannel {
   constructor(label) {
@@ -160,6 +163,36 @@ describe("QwenOmniWebRTCTransport", () => {
       average_jitter_buffer_target_delay_ms: 0.037,
       encoded_audio_bitrate_kbps: 96,
     });
+  });
+
+  it("separates track startup counters from packets discarded during playback", () => {
+    const baseline = {
+      packets_received: 172,
+      packets_discarded: 164,
+      packets_lost: 0,
+      concealed_samples: 0,
+      total_samples_received: 240_000,
+    };
+
+    expect(
+      addInboundAudioDeltas(
+        {
+          ...baseline,
+          packets_received: 267,
+          packets_discarded: 164,
+          total_samples_received: 480_000,
+        },
+        baseline,
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        packets_received_delta: 95,
+        packets_discarded_delta: 0,
+        packets_lost_delta: 0,
+        concealed_samples_delta: 0,
+        total_samples_received_delta: 240_000,
+      }),
+    );
   });
 
   it("samples inbound audio quality after WebRTC connects", async () => {

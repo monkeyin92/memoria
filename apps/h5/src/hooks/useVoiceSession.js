@@ -9,11 +9,16 @@ import {
   stopResponse,
 } from "../api.js";
 import { QwenOmniWebRTCTransport } from "../voice/QwenOmniWebRTCTransport.js";
-import { extractInboundAudioStats } from "../voice/webrtcStats.js";
+import {
+  addInboundAudioDeltas,
+  extractInboundAudioStats,
+} from "../voice/webrtcStats.js";
 
 const UI_TOPIC = "voice-agent.ui";
 const TELEMETRY_TOPIC = "voice-agent.telemetry";
 const AGENT_READY_TIMEOUT_MS = 45_000;
+const SPEAKER_REJECT_MESSAGE =
+  "没有确认到主人声音，已忽略这句话。若是你本人，可在“我的”关闭“过滤明显旁人（实验）”后再说一次。";
 const VOICE_EMOTION_LABELS = new Set([
   "neutral",
   "happy",
@@ -98,7 +103,10 @@ function parseEvent(payload) {
       ) {
         return null;
       }
-      return event;
+      return {
+        ...event,
+        history_eligible: event.history_eligible === true,
+      };
     }
     if (event.type === "audio_trace") {
       if (
@@ -188,6 +196,7 @@ export function useVoiceSession({
   const omniAudioElementRef = useRef(null);
   const statsTrackRef = useRef(null);
   const statsTimerRef = useRef(null);
+  const statsBaselineRef = useRef(null);
   const pendingEmotionRef = useRef(new Map());
   const latestAcceptedUserTurnRef = useRef(0);
   const emotionTimerRef = useRef(null);
@@ -248,6 +257,9 @@ export function useVoiceSession({
       line.final &&
       line.text.trim()
     ) {
+      setError((current) =>
+        current === SPEAKER_REJECT_MESSAGE ? "" : current,
+      );
       clearEmotionHint();
       latestAcceptedUserTurnRef.current = line.turn_id;
       const pendingEmotion = pendingEmotionRef.current.get(line.turn_id);
@@ -286,6 +298,7 @@ export function useVoiceSession({
       authoritative &&
       line.final &&
       line.text.trim() &&
+      line.history_eligible === true &&
       (line.speaker === "user" || line.heard === true);
     const persistKey = `${line.speaker}:${line.turn_id}:${line.generation_id}`;
     if (shouldPersist && !persistedRef.current.has(persistKey)) {
@@ -293,6 +306,7 @@ export function useVoiceSession({
       finalTranscriptRef.current?.({
         speaker: line.speaker,
         text: line.text.trim(),
+        history_eligible: true,
         turn_id: line.turn_id,
         generation_id: line.generation_id,
       });
@@ -475,6 +489,7 @@ export function useVoiceSession({
       statsTimerRef.current = null;
     }
     statsTrackRef.current = null;
+    statsBaselineRef.current = null;
   }, []);
 
   const startStatsSampling = useCallback(
@@ -489,7 +504,12 @@ export function useVoiceSession({
             await track.getRTCStatsReport(),
           );
           if (isCurrent() && statsTrackRef.current === track && metrics) {
-            recordAudioDiagnostic("webrtc_inbound_audio", "ok", metrics);
+            statsBaselineRef.current ||= metrics;
+            recordAudioDiagnostic(
+              "webrtc_inbound_audio",
+              "ok",
+              addInboundAudioDeltas(metrics, statsBaselineRef.current),
+            );
           }
         } catch {
           // Stats are diagnostic-only and must never disturb playback.
@@ -874,6 +894,12 @@ export function useVoiceSession({
               { ...event, source: event.source || "agent" },
             ];
             setAudioDiagnostics(audioDiagnosticsRef.current);
+            if (
+              event.name === "target_speaker_rejected" &&
+              event.detail?.reason === "target_non_owner"
+            ) {
+              setError(SPEAKER_REJECT_MESSAGE);
+            }
             return;
           }
           if (event.type === "assistant_audio") {

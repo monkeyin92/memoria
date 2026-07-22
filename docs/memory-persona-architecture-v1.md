@@ -1,8 +1,8 @@
 # Memoria 终身记忆、人格复刻与声纹系统架构 v1
 
-> 状态：P0.5～P6 本地工程已落地；生产部署、真人样本与真实设备验收待外部条件
-> 日期：2026-07-19
-> 适用主链：FunASR Realtime + Qwen LLM + CosyVoice 3.5
+> 状态：P0.5～P6 已部署生产；真人样本、真实设备矩阵与异地容灾仍待验收
+> 日期：2026-07-21
+> 适用主链：FunASR Realtime + Qwen LLM + 豆包 Seed-TTS 2.0 双向流式
 > 关联研究：[实时 ASR、TTS、声音复刻与声纹能力对比](./research/20260718_realtime_voice_provider_comparison_zh.md)
 
 ## 1. 决策摘要
@@ -27,7 +27,7 @@ Memoria 保留当前低成本、可审计的级联实时语音主链，新增一
 - 自动形成候选人物、关系、人生事件、家风家训、育儿理念、工作经验、处世智慧和经验问答。
 - 每条长期事实与人格特征都有来源、有效时间、置信度、状态和版本，可查看、纠正、质疑、撤销。
 - 长期学习口头禅、句长、停顿、语速、措辞、表达结构、价值排序和决策习惯，在每次对话中按需生成小型人格胶囊。
-- 使用正式 speaker embedding 输出 `owner / guest / uncertain`，访客可以普通对话但不读取或污染主人私人档案。
+- 使用 speaker embedding 输出 `owner / guest / uncertain`；产品默认开启“过滤明显旁人（实验）”，明确 guest 被拒，ambiguous 为避免误静音主人可普通对话但始终不能读取或污染主人私人档案；关闭后访客也可普通对话，权限边界不变。
 - 管理 CosyVoice 3.5 复刻音色的样本授权、供应商 ID、版本、效果评估和撤销。
 - 不破坏现有 `GenerationFence`、`HeardTextTracker`、`UtteranceRouter`、打断和实际已听文本语义。
 
@@ -42,12 +42,12 @@ Memoria 保留当前低成本、可审计的级联实时语音主链，新增一
 
 ### 2.3 当前约束
 
-- 本地工程同时提供 SQLite 开发适配器与 PostgreSQL 17 生产适配器；当前线上 release 尚未切换到本架构，不能把本地合同测试描述为生产能力。
+- SQLite 开发适配器与 PostgreSQL 17 生产适配器已经随生产底座部署；本地合同仍不能替代真人样本、真实设备和异地恢复验收。
 - Agent 已用非阻塞短缓存接入人生记忆和人格胶囊；缓存未命中、过期、非法响应或说话人降权时回退近期话轮，不在首声路径等待慢服务。
 - `SpeakerAuthority` 已有固定 CAM++ ONNX HTTP 服务、三态判定、shadow/评估/激活与撤销；Control API readiness 会校验模型服务健康和版本；会话级 log-mel 只保留媒体/微噪声守卫，不能授予 owner 权限。
-- 人格学习已接收正式 owner 话轮的 `speech_ms / pause_ratio / quality_score`，但真人表达节奏、价值观和“像本人”仍需长期授权样本与 A/B 校准。
+- 人格学习对授权 owner 话轮接收 `speech_ms / pause_ratio / quality_score`；shadow-only 的可信 `uncertain` 只使用与同一 shadow profile 绑定的文本证据，不采用声学指标。真人表达节奏、价值观和“像本人”仍需长期授权样本与 A/B 校准。
 - `VoiceProfileManager` 已覆盖授权、持久化 enrollment saga、服务端盲测、客观质量探针、激活和撤销；供应商 enrollment、真人盲听及供应商删除仍需真实凭据和样本验收。
-- 用户名/密码账号、匿名原地升级、跨账户隔离、导出与账户删除均只在本地工程完成；当前生产仍是旧身份/存储版本，发布前不能宣称跨设备恢复或终身档案已经上线。
+- 用户名/密码账号、匿名原地升级、跨账户隔离、导出与账户删除已经部署；同机 PostgreSQL/对象存储不等于异地容灾，仍不能承诺绝对不丢失。
 
 ## 3. 总体架构
 
@@ -55,7 +55,7 @@ Memoria 保留当前低成本、可审计的级联实时语音主链，新增一
 flowchart LR
     subgraph Client["H5 客户端（唯一交付端）"]
         MIC["麦克风 + AEC/NS/AGC"]
-        UI["档案、审核与授权 UI"]
+        UI["档案审核、人格授权、停用与撤销 UI"]
         LOGIN["注册 / 登录"]
     end
 
@@ -72,7 +72,7 @@ flowchart LR
         ROUTER["UtteranceRouter + 权限策略"]
         CTX["ContextAssembler"]
         LLM["Qwen LLM"]
-        TTS["CosyVoice 3.5"]
+        TTS["豆包 Seed-TTS 2.0"]
         FENCE["GenerationFence + HeardTextTracker"]
     end
 
@@ -82,7 +82,7 @@ flowchart LR
         ARCHIVE["LifeArchive"]
         PERSONA["PersonaEngine"]
         VOICE["VoiceProfileManager"]
-        REVIEW["用户审核、纠错与撤销"]
+        REVIEW["记忆审核、人格纠错/停用与撤销"]
     end
 
     subgraph Stores["最小物理底座"]
@@ -155,7 +155,7 @@ flowchart LR
 
 ### 4.4 PersonaEngine
 
-职责：从已确认、属于账户主人的证据中学习表达与心智特征；处理冲突、衰减和场景适用性；按当前请求生成有预算的人格胶囊。
+职责：从已授权 owner 证据及严格受限、同一 shadow profile 的 `uncertain` 文本证据中学习表达特征；处理冲突、版本和场景适用性；只把 confirmed 的安全特征组装为有预算的人格胶囊。
 
 它不负责：保存原始音频、把单轮情绪直接变成人格、选择供应商音色。
 
@@ -206,7 +206,7 @@ class PersonaEngine:
     async def review(self, command: PersonaReview) -> PersonaTrait: ...
 ```
 
-只有 `owner + confirmed` 或用户明确确认的证据可晋升为稳定人格；候选特征可用于审核界面，但默认不进入生产 Prompt。
+单次观察先进入 candidate。低敏表达特征达到稳定门槛后由系统自动发布：owner 至少 3 次可信观察；shadow-only uncertain 至少 6 次、跨 3 个会话、绑定同一可信 shadow profile。声纹轮换后按新 profile 独立重新累计；不同 profile 不合并。互斥风格的主导证据至少达到次高项 2 倍才可晋升，且同类别最多一个 confirmed。价值排序和决策习惯不自动发布；candidate 不进入生产 Prompt，也不进入客户默认界面。
 
 ### 5.4 Control API / H5 用户流程
 
@@ -225,7 +225,7 @@ class PersonaEngine:
 - `POST /v1/voices/profiles/{id}/blind-trials`、`POST /v1/voices/blind-trials/{id}/preview`：服务端保存 A/B 映射，客户端只看到槽位和同文试听。
 - `POST /v1/voices/profiles/{id}/evaluations`、`POST /v1/voices/profiles/{id}/quality-measurements`：主人主观盲测和内部客观质量探针分开提交，两者通过后才能激活。
 - `POST /v1/voices/session-resolution`：Agent 用独立 capability token 按 `session_id` 解析当前激活音色，不接受客户端指定账户。
-- `/v1/persona/consent`、`GET /v1/persona/traits`、`POST /v1/persona/traits/{id}/review`、`POST /v1/persona/session-capsule`：人格授权、解释、审核和会话胶囊。
+- `/v1/persona/consent`、`GET /v1/persona/traits`、`POST /v1/persona/traits/{id}/review`、`POST /v1/persona/session-capsule`：人格授权、已生效特征解释和会话胶囊；review 保留为纠错/停用/兼容 seam，不是客户日常确认步骤。
 - `POST /v1/archive/exports`、`POST /v1/archive/deletion-requests`：导出和删除工作流。
 
 ## 6. 证据事件模型
@@ -414,9 +414,9 @@ flowchart LR
 
 | 结论 | 普通对话 | 读取主人私人记忆 | 写主人长期记忆/人格 | 敏感动作 |
 |---|---:|---:|---:|---:|
-| `owner` | 允许 | 按会话授权允许 | 允许进入候选/确认流程 | 仍按风险需要二次认证 |
-| `guest` | 允许 | 禁止 | 默认禁止，保存到隔离访客会话 | 禁止 |
-| `uncertain` | 允许 | 默认禁止或仅公开信息 | 暂存待主人确认，不学习人格 | 设备解锁/Passkey/主人确认 |
+| `owner` | 允许 | 按会话授权允许 | 授权且话轮合格时进入低敏自动学习；高敏候选不自动发布 | 仍按风险需要二次认证 |
+| `guest` | 默认拒绝；关闭“过滤明显旁人（实验）”后允许 | 禁止 | 禁止进入主人历史、长期记忆或 Persona | 禁止 |
+| `uncertain` | `shadow_owner_candidate` 允许；`shadow_ambiguous_candidate` / formal `ambiguous_score` 为避免误静音主人允许普通聊天但不确认身份；明确的 `shadow_guest_candidate` 默认拒绝，关闭开关后允许；无档案/服务不可用保持可对话 | 默认禁止或仅公开信息 | 只有与同一可信 shadow-owner profile 及 generation 绑定的合格文本可学习低敏风格；其余话轮及对应 AI 回复不进入主人历史 | 设备解锁/Passkey/主人确认 |
 
 ### 11.3 登记与撤销
 
@@ -436,14 +436,16 @@ flowchart LR
 
 学习流程：
 
-- 只接收已通过 speaker 权限的主人证据；
+- 正式 `owner` 证据进入稳定学习；已登录、已授权 active session 中，只有 `shadow_owner_candidate`、质量合格且绑定同一 profile 的 `uncertain` 文本可进入低敏学习；正式 `guest`、匿名会话、ambiguous/no-audio/model-timeout 和 direct archive 写入不进入；
 - 对合成音频、助手文本、访客、电视/回声和低质量重叠语音加硬性污染标签并排除；
-- 对重复出现、跨场景稳定的风格统计逐步提高置信度；
-- 正式 owner 用户话轮可携带经边界校验的 `speech_ms / pause_ratio / quality_score`，用于语速和停顿统计；guest、uncertain、非有限值、越界值与低质量指标一律不学习；
+- owner 低敏特征至少 3 次可信观察自动发布；uncertain 至少 6 次、跨 3 个非空 session 且同一 profile 才自动发布；同一会话重复不能代替跨会话稳定性；
+- 句长、语速和停顿等互斥 bucket 按 owner/当前可信 shadow profile lane 聚合，只有主导证据至少达到次高项 2 倍才可 confirmed；声纹轮换后新 profile 可独立重新累计，且不能同时向 Prompt 注入矛盾风格；
+- 正式 owner 用户话轮可携带经边界校验的 `speech_ms / pause_ratio / quality_score`，用于语速和停顿统计；guest、uncertain、非有限值、越界值与低质量指标一律不进入声学风格统计；
 - 价值观和决策习惯必须附带具体情境和反例，不能压成“理性”“稳重”等单标签；
-- 候选人格经审核或稳定门槛后进入版本化 `PersonaProfile`；
-- 当前对话只加载与主题、关系、情绪和权限匹配的人格胶囊；
-- 用户纠正会生成新版本并回滚受影响投影，不删除历史解释链。
+- 低敏候选达到稳定门槛后自动进入版本化 `PersonaProfile`；价值/决策候选保持内部候选，review 仅用于纠错、停用和兼容；
+- 当前对话只加载与主题、关系、情绪和权限匹配的人格胶囊；`uncertain` 仅可在已登录且授权仍有效时读取主人已确认、且可映射到固定安全描述白名单的低敏表达风格，胶囊清空自由文本情境/反例/证据 ID，并排除价值/决策、私人记忆、旧话轮和工具；`guest` 始终为空；
+- 客户端不展示或要求逐条确认 candidate，只展示持续学习状态和已生效特征；用户停用为 sticky，后续观察不能复活；纠正/回滚生成新版本但不删除历史解释链；
+- consent 校验与 observe/capsule 在同一账户事务中完成；撤销后下一话轮先刷新授权状态，再决定是否应用缓存胶囊。
 
 ## 13. CosyVoice 3.5 声音档案
 
@@ -469,7 +471,7 @@ flowchart LR
 3. `owner` 读取授权范围内记忆；`guest/uncertain` 使用隔离上下文。
 4. `ContextAssembler` 从本地预计算投影组装上下文，设置硬超时；超时回退近期话轮，不阻塞回答。
 5. Qwen 输出当前回答；`DeliveryPlan` 与 `PersonaCapsule` 共同约束表达，但安全策略优先。
-6. CosyVoice 3.5 流式合成；`GenerationFence` 和实际播放进度保持现有取消语义。
+6. 豆包 Seed-TTS 2.0 双向流式合成；`GenerationFence` 和实际播放进度保持现有取消语义。
 7. 用户 final、speaker 结论和实际已听助手文本通过 outbox 进入账本。
 
 ### 14.2 建议新增预算
@@ -519,7 +521,7 @@ flowchart LR
 
 ### 17.3 人格与声音
 
-- 口头禅/节奏统计稳定性、人格候选确认/撤销率、污染样本拦截率。
+- 口头禅/节奏统计稳定性、自动晋升准确率、跨会话稳定性、误自动人格率、停用/纠正/回滚率和污染样本拦截率。
 - 盲测音色相似度、自然度、长句稳定性、首包、取消尾音和时间戳偏差。
 - Persona 打开/关闭 A/B 的“像本人”评分，同时监控错误自信和冒犯率。
 
@@ -530,10 +532,10 @@ flowchart LR
 | PostgreSQL 短暂不可用 | 当前对话继续；事件写本地有界加密 spool，恢复后幂等回放；容量受压先舍弃可选原始音频，暂时失败音频不阻塞后续转写，禁止驱逐转写或无限堆积 |
 | MemoryCompiler 失败 | 证据保留，投影标记 stale 并重试；不影响实时回答 |
 | 向量模型失败 | 回退全文/结构化检索；不丢失权威数据 |
-| Speaker 模型超时/低质量 | `uncertain`；允许普通对话，关闭私人检索和人格写入 |
+| Speaker 模型超时/低质量 | `uncertain`；无档案/服务不可用时普通对话可继续，但该 generation 的双方终稿均不进入主人历史；关闭私人检索、价值/决策、声学统计和 Persona 自动晋升，只有可信 shadow-owner 文本 lane 可积累低敏候选 |
 | CosyVoice 复刻音色失效 | 回退已批准系统音色并提示声音档案需要处理 |
 | 对象存储失败 | 不提交声纹/声音登记完成；文本事件可先记录缺失媒体状态 |
-| 权限或授权缺失 | fail-closed 于私人数据和敏感动作，不静音普通对话 |
+| 权限或授权缺失 | fail-closed 于私人数据、主人历史和敏感动作；默认“过滤明显旁人（实验）”只拒绝明确 guest，ambiguous 普通聊天 fail-open 但不升级权限 |
 | 账户删除中断 | 保持账户与会话 tombstone，拒绝新读写；从最后 checkpoint 幂等重试，外部资产未清空前不删账户凭据 |
 
 ## 19. 实施顺序
@@ -559,11 +561,11 @@ flowchart LR
 
 ### 19.2 P4 已落地形态（2026-07-19）
 
-- SQLite/PostgreSQL `PersonaEngine` 共用 `observe / capsule / review` seam；价值观与决策习惯默认停在 candidate，只有人工审核才能发布。
-- 低风险表达特征需要至少三个独立主人证据才自动晋升；助手、合成音频、guest、echo、overlap、replay、低质量和未授权样本在入口硬拒绝。
+- SQLite/PostgreSQL `PersonaEngine` 共用 `observe / capsule / review` seam；价值观与决策习惯默认停在内部 candidate，不自动发布。
+- 低风险表达特征由 owner 3 次可信观察，或同一 `shadow_owner_candidate` profile 的 uncertain 6 次/3 会话自动晋升；不同 profile 不合并，声纹轮换后新 profile 独立累计；互斥 bucket 采用 2:1 主导门槛且同类别单一生效。助手、合成音频、guest、ambiguous/no-audio、控制话轮、echo、overlap、replay、低质量和未授权样本在入口硬拒绝。
 - Persona 版本保存证据 ID、情境、反例和置信度，支持确认、纠正、禁用与回滚；授权和撤销写入证据账本。
 - Agent 的 `PersonaClient` 只提交 `session_id + speaker_class + topic`；Control API 从会话解析账户，不接受 Agent 传 `account_id`。
-- 实时链路不等待 Persona 网络：后台刷新短期缓存，Qwen 只读取已完成且未过期的 owner 胶囊；guest/uncertain、超时、服务异常和非法响应均使用现有基线。
+- 每个已接受话轮在进入 Qwen 前先用有界超时刷新 Persona 授权/胶囊，撤销或失败即清除旧缓存；owner 可读取完整 confirmed 胶囊，可信 uncertain 只读固定安全描述白名单中的 confirmed 低敏风格，guest 始终为空。
 - 胶囊只加入 actual-heard 聊天上下文副本，不进入长期聊天历史；Agent 明确忽略 `delivery_rate`，真人 A/B 前 CosyVoice 默认保持 `rate=1.0`。
 
 ### 19.3 P5 已落地形态（2026-07-19）
@@ -576,7 +578,7 @@ flowchart LR
 
 ### 19.4 P6 已落地形态（2026-07-19）
 
-- `ContextAssembler` 将 owner confirmed 人生记忆、PersonaCapsule 与 actual-heard 上下文合并为当轮副本；guest/uncertain、超时、过期与非法响应都不注入私人内容。
+- `ContextAssembler` 将 owner confirmed 人生记忆、PersonaCapsule 与 actual-heard 上下文合并为当轮副本；guest 不注入，uncertain 只允许固定白名单的 confirmed 低敏表达风格，超时、过期与非法响应均不注入私人内容。
 - 内部能力令牌拆成四个最小权限域；会话级接口只接收 `session_id`，Control API 解析账户并检查删除 tombstone。
 - 账户导出、写入 fence、实时会话终止、供应商/对象/数据库级删除、checkpoint 重试和完成 tombstone 构成一条可恢复删除控制面。
 - `/health/ready` 同时探测 Control DB、LifeArchive、MemoryCatalog、Persona、SpeakerAuthority、VoiceProfile、档案对象存储、声音对象存储和独立 `speaker-model`；模型服务必须返回 `status=ready` 与精确 `model_version`，生产配置/Provider smoke 仍是独立门禁。

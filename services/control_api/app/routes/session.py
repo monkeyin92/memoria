@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 telemetry_logger = logging.getLogger("uvicorn.error")
 CONTROL_TOPIC = "voice-agent.control"
 QWEN_OMNI_FLASH_MODEL = "qwen3.5-omni-flash-realtime"
-# Backward-compatible alias used by older tests and docs.
-QWEN_OMNI_MODEL = QWEN_OMNI_FLASH_MODEL
 QWEN_OMNI_WORKSPACE_ID = "llm-qp8mf178biax7m6c"
 # WebRTC realtime backends (browser media direct to DashScope).
 OMNI_BACKENDS = frozenset({"qwen_omni"})

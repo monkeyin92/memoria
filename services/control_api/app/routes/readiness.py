@@ -25,6 +25,14 @@ from services.voice_profile.domain import VoiceProfilePort
 router = APIRouter(tags=["health"])
 
 
+class TTSSmokeChecks(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["doubao"]
+    audio: bool
+    word_timestamps: bool
+
+
 class SmokeChecks(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -33,8 +41,7 @@ class SmokeChecks(BaseModel):
     llm: bool
     llm_provider: Literal["qwen", "deepseek"]
     release_tag: str = Field(min_length=1, max_length=200)
-    cosyvoice: bool
-    cosyvoice_timestamps: bool
+    tts: TTSSmokeChecks
 
     @model_validator(mode="after")
     def require_all_passed(self) -> SmokeChecks:
@@ -43,8 +50,8 @@ class SmokeChecks(BaseModel):
                 self.livekit,
                 self.funasr,
                 self.llm,
-                self.cosyvoice,
-                self.cosyvoice_timestamps,
+                self.tts.audio,
+                self.tts.word_timestamps,
             )
         ):
             raise ValueError("all readiness smokes must pass")
@@ -301,9 +308,9 @@ async def health_ready(request: Request) -> JSONResponse:
                     "livekit": "skipped",
                     "funasr": "skipped",
                     "llm": {"provider": settings.llm_provider, "status": "skipped"},
-                    "cosyvoice": "skipped",
+                    "tts": {"provider": "doubao", "status": "skipped"},
                 },
-            }
+            },
         )
 
     missing = _missing_config(settings)
@@ -333,7 +340,8 @@ async def health_ready(request: Request) -> JSONResponse:
                 "livekit": True,
                 "funasr": True,
                 "llm": {"provider": settings.llm_provider, "passed": True},
-                "cosyvoice": {
+                "tts": {
+                    "provider": "doubao",
                     "audio": True,
                     "word_timestamps": True,
                 },

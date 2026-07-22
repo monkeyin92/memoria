@@ -13,22 +13,23 @@ from typing import Any
 async def run_offline() -> dict[str, Any]:
     from services.agent.src.contracts.ids import GenerationFence
     from services.agent.src.orchestration.orchestrator import OfflinePipeline, Orchestrator
-    from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
     from services.agent.src.providers.deepseek import (
         DeepSeekClient,
         DeepSeekConfig,
         filter_content_for_tts,
     )
+    from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
+    from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
     from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
     from services.agent.tests.integration.mock_servers import (
-        MockCosyVoiceServer,
         MockDeepSeekServer,
+        MockDoubaoServer,
         MockFunASRServer,
     )
 
     asr_srv = MockFunASRServer(scenario="happy")
     llm_srv = MockDeepSeekServer(scenario="happy")
-    tts_srv = MockCosyVoiceServer(scenario="happy")
+    tts_srv = MockDoubaoServer(scenario="happy")
     asr_srv.start()
     llm_srv.start()
     tts_srv.start()
@@ -52,7 +53,14 @@ async def run_offline() -> dict[str, Any]:
             user_text = "你好，这是实时语音测试。"
 
         orch = Orchestrator()
-        tts = CosyVoiceTTS(CosyVoiceConfig(api_key="offline", ws_url=tts_srv.ws_url, pool_size=1))
+        tts = DoubaoTTS(
+            DoubaoTTSConfig(
+                api_key="offline",
+                ws_url=tts_srv.ws_url,
+                speaker=catalog_by_id()["warm_companion"].speaker_id,
+                pool_size=1,
+            )
+        )
         await tts.pool.warm(1)
         ds = DeepSeekClient(DeepSeekConfig(api_key="offline", base_url=llm_srv.base_url))
 

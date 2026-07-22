@@ -14,6 +14,7 @@ def _online_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LIVEKIT_API_SECRET", "test-livekit-material")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
     monkeypatch.setenv("DASHSCOPE_WS_URL", "wss://dashscope.example.com/realtime")
+    monkeypatch.setenv("DOUBAO_TTS_API_KEY", "test-doubao-key")
     monkeypatch.setenv("LLM_PROVIDER", "qwen")
     monkeypatch.setenv("MEMORIA_RELEASE_TAG", "release-test-a")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
@@ -59,4 +60,9 @@ def test_mark_uses_selected_llm_provider_without_exposing_secret(
     assert verify_env._mark_smokes_passed("http://127.0.0.1:8000") is True
     assert captured["payload"]["llm_provider"] == "deepseek"
     assert captured["payload"]["release_tag"] == "release-test-a"
+    assert captured["payload"]["tts"] == {
+        "provider": "doubao",
+        "audio": True,
+        "word_timestamps": True,
+    }
     assert captured["authorization"] == "test-auth-material-that-is-long-enough"

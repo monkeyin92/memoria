@@ -38,8 +38,11 @@ def test_mark_and_check_use_control_env_secret_and_release_metadata(
                 "llm": True,
                 "llm_provider": "deepseek",
                 "release_tag": "release-test-a",
-                "cosyvoice": True,
-                "cosyvoice_timestamps": True,
+                "tts": {
+                    "provider": "doubao",
+                    "audio": True,
+                    "word_timestamps": True,
+                },
             },
         },
         {"url": "http://control-api:8000/health/ready"},

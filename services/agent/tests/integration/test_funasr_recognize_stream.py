@@ -110,3 +110,38 @@ async def test_funasr_recognize_stream_deduplicates_final_sentence_id() -> None:
     finally:
         srv.stop()
         await plugin.aclose()
+
+
+@pytest.mark.asyncio
+async def test_funasr_recognize_stream_does_not_leak_prior_chat_into_current_turn() -> None:
+    srv = MockFunASRServer(scenario="context_leak")
+    srv.start()
+    try:
+        plugin = FunASRSTT(FunASRConfig(api_key="test", ws_url=srv.ws_url))
+        plugin.push_conversation_item({"role": "user", "text": "你好呀！"})
+        plugin.push_conversation_item(
+            {"role": "assistant", "text": "你好呀！很高兴见到你。"}
+        )
+        stream = plugin.stream()
+        samples = 4000
+        stream.push_frame(
+            rtc.AudioFrame(
+                data=b"\x00\x00" * samples,
+                sample_rate=16000,
+                num_channels=1,
+                samples_per_channel=samples,
+            )
+        )
+        stream.end_input()
+
+        events = [event async for event in stream]
+        finals = [
+            event.alternatives[0].text
+            for event in events
+            if event.type is stt.SpeechEventType.FINAL_TRANSCRIPT and event.alternatives
+        ]
+
+        assert finals == ["介绍一下南京。"]
+    finally:
+        srv.stop()
+        await plugin.aclose()

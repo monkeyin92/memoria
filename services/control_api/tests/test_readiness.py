@@ -54,9 +54,7 @@ async def test_speaker_model_probe_requires_ready_status_and_matching_model() ->
         )
 
     settings = ControlSettings(
-        MEMORIA_SPEAKER_EMBEDDING_URL=(
-            "http://speaker-model.test:8001/v1/embeddings/speaker"
-        ),
+        MEMORIA_SPEAKER_EMBEDDING_URL=("http://speaker-model.test:8001/v1/embeddings/speaker"),
         MEMORIA_SPEAKER_EMBEDDING_TOKEN=SecretStr("speaker-model-token"),
         MEMORIA_SPEAKER_EMBEDDING_MODEL="campplus-test-v1",
     )
@@ -259,8 +257,11 @@ async def test_smoke_mark_rejects_invalid_control_production_configuration(
         "llm": True,
         "llm_provider": "qwen",
         "release_tag": "release-readiness-test",
-        "cosyvoice": True,
-        "cosyvoice_timestamps": True,
+        "tts": {
+            "provider": "doubao",
+            "audio": True,
+            "word_timestamps": True,
+        },
     }
 
     async with AsyncClient(
@@ -269,9 +270,7 @@ async def test_smoke_mark_rejects_invalid_control_production_configuration(
     ) as client:
         response = await client.post(
             "/internal/readiness/smokes",
-            headers={
-                "Authorization": "Bearer control-auth-material-that-is-long-enough"
-            },
+            headers={"Authorization": "Bearer control-auth-material-that-is-long-enough"},
             json=body,
         )
 

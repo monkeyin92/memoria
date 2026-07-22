@@ -1,7 +1,7 @@
 # Memoria 终身记忆、人格复刻与声纹系统实施计划
 
-> 更新时间：2026-07-19
-> 当前阶段：唯一客户端为 `apps/h5`；P0.5、P1～P6 已随 `20260719-215553` 部署；授权真人样本、真实手机矩阵和异地容灾仍待完成
+> 更新时间：2026-07-21
+> 当前阶段：唯一客户端为 `apps/h5`；P0.5、P1～P6 已部署；授权真人样本、真实手机矩阵和异地容灾仍待完成
 > 原则：每阶段都是可运行的纵向切片；完成后更新本文件与 `HANDOFF.md`，运行该阶段门禁，再向产品负责人报告。
 
 ## 1. 最终完成定义
@@ -14,7 +14,7 @@
 - [x] 注册/登录可恢复稳定 `user_id`，且账号身份与说话人身份、人物实体严格分离。
 - [x] 证据账本、人物/关系/时间线/知识、人格、声纹和声音档案均有正式数据模型、API、权限和自动化测试；CAM++ 模型服务已纳入本地纵向合同。
 - [x] 现有 SQLite 数据可幂等迁移到 PostgreSQL，失败可回滚；无法证明为 owner 的 legacy user 证据保持 `uncertain`，不污染主人上下文。
-- [x] H5 能查看时间线、搜索记忆、审核候选/冲突、管理声纹、人格、声音档案和原始语音授权。
+- [x] H5 能查看时间线、搜索并审核人生记忆候选/冲突、管理声纹、已生效人格、声音档案和原始语音授权；Persona 内部候选不要求客户逐条查看或确认。
 - [x] 导出、纠错、撤销、删除、备份和恢复路径可执行。
 
 ### 1.2 生产验收
@@ -31,7 +31,7 @@
 
 ## 2. 已确认技术路线
 
-- 实时主链：FunASR Realtime + Qwen LLM + CosyVoice 3.5。
+- 实时主链：FunASR Realtime + Qwen LLM + 豆包 Seed-TTS 2.0 双向流式；历史 CosyVoice 3.5 只保留复刻资产治理，不进入当前播放主链。
 - 证据真相：追加式 Evidence Event；聊天、人物、时间线、知识和人格是投影。
 - 生产长期底座：PostgreSQL + pgvector；大对象：S3/OSS；Redis 仅短期状态。
 - 身份控制：`owner / guest / uncertain`，普通对话与私人权限分开。
@@ -47,10 +47,10 @@
 | P1 证据账本与底座 | **COMPLETED（2026-07-19，本地工程）** | 每个可信话轮可幂等落账；SQLite 可迁移；可备份恢复 |
 | P2 说话人权限 | **COMPLETED（2026-07-19，本地工程）** | owner/guest/uncertain 三态、可运行 CAM++ ONNX 服务、shadow 与 readiness 版本门禁 |
 | P3 人生知识库 | **COMPLETED（2026-07-19，本地工程）** | 人物、关系、时间线、经验知识、审核、冲突、全文/结构检索 |
-| P4 人格复刻 | **COMPLETED（2026-07-19，本地工程）** | 风格/价值观版本化；PersonaCapsule 接入实时 Qwen，CosyVoice 保守不自动改速 |
+| P4 人格复刻 | **COMPLETED（2026-07-19，本地工程）** | 风格/价值观版本化；PersonaCapsule 接入实时 Qwen；豆包当前不发送会破坏字幕对齐的 `context_texts` |
 | P5 声音复刻治理 | **COMPLETED（2026-07-19，本地工程）** | CosyVoice 3.5 登记、授权、版本、激活、撤销和 H5 管理 |
 | P6 全链收口 | **COMPLETED（2026-07-19，本地工程）** | P6.1～P6.4 本地工程门禁完成；真实 Provider、真人样本、生产基础设施和设备验收待外部条件 |
-| 生产平台发布 | **DEPLOYED（2026-07-19，`20260719-215553`）** | H5-only、PostgreSQL/pgvector、MinIO、CAM++、Provider/readiness、公网与回滚门禁通过；真人/异地门槛未完成 |
+| 生产平台发布 | **DEPLOYED（首次平台版 `20260719-215553`；当前版本见 `HANDOFF.md`）** | H5-only、PostgreSQL/pgvector、MinIO、CAM++、Provider/readiness、公网与回滚门禁通过；真人/异地门槛未完成 |
 
 ## 4. P0：领域、架构与契约
 
@@ -155,7 +155,7 @@
 1. **P2.1 三态领域控制面**
    - 新增 `SpeakerDecision(owner/guest/uncertain)`，替换二元 accepted/mismatch 业务语义。
    - 将 `UtteranceRouter` 的 enroll/interrupt/chat 规则与 speaker 权限合并到单一决策点。
-   - guest/uncertain 不再直接静音；只限制私人记忆和敏感动作。
+   - Profile 的 `reject_non_owner_voice` 默认开启：formal guest/owner mismatch 与明确的 shadow guest 默认拒绝；shadow/formal ambiguous 为避免误静音主人可普通对话，但私人记忆、主人历史和敏感动作权限不升级。用户关闭后可放开访客交互，权限边界不变。
 
 2. **P2.2 正式 embedding 适配器**
    - 评估并固定 CAM++、ERes2NetV2 或等价 ONNX 模型及许可证。
@@ -174,7 +174,8 @@
 
 - [x] `SpeakerAuthority.enroll/classify/revoke` seam 测试通过。
 - [x] owner、guest、uncertain、短话、低 SNR、维度错误、重放风险和模型超时均有确定性结果。
-- [x] 访客可普通对话但无法读取/写入主人私人记忆。
+- [x] 默认“过滤明显旁人（实验）”时，formal guest/owner mismatch 与明确的 shadow guest 不能提交普通话轮或控制播放；ambiguous 可对话但无主人历史/私人权限，关闭后访客可对话且权限仍不升级。
+- [x] `history_eligible` 按 `(turn_id, generation_id)` 冻结；只有 formal owner / shadow owner 的双方终稿进入主人历史，缺失字段 fail-closed。
 - [x] fail-open owner 路径为 0；低质量、无模型、无模板和超时统一为 uncertain。
 - [x] 激活接口强制不少于 200 条样本且要求 FAR/FRR/EER/unknown rejection 报告明确 `passed`；真实授权样本报告仍属于生产验收，未凭空生成。
 
@@ -185,7 +186,7 @@
 - CAM++ 不带 anti-spoof head，`risk_assessment=unavailable`、replay/synthetic sentinel 为 `1.0`；所有 shadow 结论保持 `uncertain`，不开放生产 owner 权限。
 - SQLite 与 PostgreSQL 适配器均加密模板；原始登记 PCM 不入库，只保存样本哈希与质量元数据；撤销后模板密文为 `NULL`。
 - PostgreSQL 17 上声纹合同与 P1 账本合同合计 `3 passed`；声纹表启用并强制 RLS，模板版本和 active 唯一约束由数据库保证。
-- Agent 在 ASR final 前并行发起 session-scoped 分类，Control API 服务端解析账户；guest/uncertain 继续聊天，但 Router 关闭私人检索、长期学习和敏感动作。
+- Agent 在 ASR final 前并行发起 session-scoped 分类，Control API 服务端解析账户；默认策略下明确 guest 被 Router 拒绝，ambiguous/无档案或用户关闭过滤时可聊天，但均关闭私人检索、长期学习和敏感动作。
 - 旧 log-mel `OPEN` 已移除，只保留远场媒体/微噪声守卫，不能授予 owner 权限或因声音不同静音真实访客。
 
 ## 7. P3：人物、关系、时间线与经验知识
@@ -241,20 +242,24 @@
    - 口头禅、句长、语速、停顿、措辞和叙事结构按场景聚合。
    - 排除助手、合成音频、访客、回声、低质量和未授权样本。
 
-2. **P4.2 价值与决策特征**
+2. **P4.2 特征抽取与稳定门槛**
    - 每条特征保存情境、证据、反例、置信度和有效期。
-   - 单轮观察只进入 candidate；重复稳定或审核后发布。
+   - 单轮观察只进入 candidate；owner 低敏风格至少 3 次可信观察自动发布。
+   - shadow-only uncertain 只接受同一 `shadow_owner_candidate` profile 的合格文本，至少 6 次、跨 3 个非空 session 后自动发布；不采纳声学语速/停顿指标。
+   - 互斥句长/语速/停顿 bucket 采用 2:1 主导门槛且同类别最多一个 confirmed；不同 shadow profile 不合并，声纹轮换后新 profile 独立累计；价值与决策特征不自动发布。
 
-3. **P4.3 人格版本与审核**
-   - 生成可解释的 Persona 版本；支持确认、纠正、禁用和回滚。
+3. **P4.3 自动版本与用户控制**
+   - 稳定低敏特征自动生成可解释 Persona 版本；candidate 不进入客户默认界面。
+   - 支持纠正、sticky 禁用和回滚；review API 保留为兼容 seam，不是日常确认步骤。
 
 4. **P4.4 PersonaCapsule 实时接线**
    - Agent 只发送 `session_id + speaker_class + topic`，Control API 服务端解析账户。
-   - 胶囊在后台预取；LLM 只读取最近已完成缓存，不等待网络。
+   - 每个已接受话轮进入 LLM 前执行一次有界刷新；空结果、撤销或失败先清除该 `(session_id, speaker_class)` 缓存，再回退无 Persona 基线。
    - 胶囊作为当轮临时 system message 加入 actual-heard 上下文副本，不写回聊天历史。
    - Qwen 决定内容，`DeliveryPlan` + PersonaCapsule 控制表达；安全策略优先。
-   - guest/uncertain、超时、非法响应和过期缓存立即退回当前基线。
-   - Agent 不采用人格服务建议的 TTS 语速；默认保持 CosyVoice `rate=1.0`，真人 A/B 前不自动改速。
+   - guest、未登录/未授权 uncertain、超时、非法响应和过期缓存立即退回当前基线；已登录且授权有效的 uncertain 只读已 confirmed、且能映射到固定安全描述白名单的低敏表达风格，自由文本情境/反例/证据 ID、价值/决策、私人记忆、旧话轮和工具继续禁止。
+   - 每个已接受话轮进入 Qwen 前以有界超时刷新 consent/capsule；撤销或失败必须清除旧 Persona 缓存，不能在下一话轮继续应用。
+   - Agent 不采用人格服务建议的任意 TTS 指令；豆包只使用有界语速/响度/音高，且在时间戳 A/B 通过前不发送 `context_texts`。
 
 ### 完成门禁
 
@@ -262,17 +267,22 @@
 - [x] 合成输出和访客污染测试 100% 拦截。
 - [x] 关闭 Persona 后与当前基线一致；超时不会增加首声阻塞。
 - [x] 每个胶囊条目可追溯证据和 Persona 版本。
+- [x] uncertain 同一可信 profile 的 6 次/3 会话可自动生成 v1；同会话重复、不同 profile、ambiguous/no-audio、低质量和控制话轮不得晋升。
+- [x] disabled 后续观察不复活；撤销 consent 后 owner/uncertain capsule 均为空。
+- [x] H5 无 Persona 候选确认控件，撤销采集授权后仍可管理历史已生效特征和版本。
 - [ ] 真人 A/B 比较“像本人”、自然度、错误自信和冒犯率。
 
 ### 本地验证
 
-- Python 全量 381 项收集，376 通过、5 项外部环境条件跳过；RuntimeWarning 与未回收协程告警按 error 处理。
+- Python 全量 705 项收集，684 通过、21 项外部 PostgreSQL/真实模型环境条件跳过；RuntimeWarning 与未回收协程告警按 error 处理。
 - 临时 PostgreSQL 17 上 P1～P4 条件合同合计 `5 passed`，容器已停止并删除。
 - Ruff、mypy strict、`git diff --check` 全部通过。
 
 ## 9. P5：CosyVoice 3.5 声音档案与管理体验
 
 **状态：COMPLETED（2026-07-19，本地工程；正式 enrollment 与真人盲测待外部条件）**
+
+本章记录历史 CosyVoice 复刻资产的授权与治理。当前实时播放主链已切换豆包，历史 active clone 仅可查看、评估与撤销；会话解析必须回退用户所选伙伴的已批准豆包原生音色。
 
 ### 纵向切片
 
@@ -301,7 +311,7 @@
 - [x] 未授权、过期、已撤销 voice profile 不能被 TTS 解析。
 - [x] 声音复刻样本与声纹模板权限完全隔离。
 - [x] 撤销后 H5、API、对象存储、供应商和缓存状态一致。
-- [x] CosyVoice 失败回退无断会话、无 secret 泄漏。
+- [x] 历史 CosyVoice profile 不进入豆包运行时；回退伙伴原生音色时无 secret 泄漏。
 - [ ] 真人授权录音和盲测完成后才标记生产可用。
 
 本地工程前四项已由 SQLite/PostgreSQL 合同、Control API/H5 流程和 Agent 降级回归覆盖。最后一项属于生产验收，保持未勾选。
@@ -330,9 +340,11 @@
 - [x] Clone 在首音频前失败、首帧超时、空时间戳或 task-start 失败时，只重试一次经 catalog 与 registry 白名单批准的设计基线音色。
 - [x] LiveKit 流在产生音频前可回放输入并降级；一旦产生音频绝不整句重试，避免双音轨重叠。
 - [x] 每次流创建快照 clone 与 baseline 配置，防止会话内切换音色造成竞态；任意 clone 不能被用作生产 baseline。
-- [x] Readiness 把 `cosyvoice_timestamps` 作为独立必填项，缺失或为 false 均不允许 ready。
+- [x] Readiness 把豆包 `word_timestamps` 作为独立必填项，缺失或为 false 均不允许 ready。
 - [x] `last_user_audio` 只在真实 VAD 停止时记录，endpointing 与 SpeakerAuthority 等待均计入用户停止到助手首声延迟。
 - [x] 说话人嵌入契约把 `synthetic_risk` 与 `replay_risk` 分开；任一风险不安全即降为 uncertain，owner 仍不自动取得敏感动作授权。
+- [x] 权威用户话轮隔离播放期无 VAD 锚回声；LiveKit 拼接污染只提交 accepted finals，全污染空话轮不进入 Router/LLM/UI/archive/Persona。
+- [x] FunASR 历史对话 context 默认关闭；旧 user/assistant 文本不得泄漏到当前识别 final。
 
 本阶段 73 项目标回归和追加 36 项 readiness/权限/声音档案回归通过；PostgreSQL 17 实库 SpeakerAuthority 合同通过；Ruff、mypy strict 与 `git diff --check` 通过。
 
@@ -404,11 +416,11 @@
 
 ## 12. 外部验收与部署入口
 
-本地公开 seam 和 P0.5、P1～P6 纵向切片已实现并随 `20260719-215553` 发布；后续不再扩展原生客户端，只按以下顺序推进 H5：
+本地公开 seam 和 P0.5、P1～P6 纵向切片已实现，首次随 `20260719-215553` 发布；后续不再扩展原生客户端，只按以下顺序推进 H5：
 
 1. 已完成同机 PostgreSQL/pgvector、MinIO、WAL archive 与联合恢复演练；继续补齐 KMS、异地副本、PITR 和独立恢复环境。
-2. 已使用真实 Provider 密钥通过 FunASR、Qwen、CosyVoice 3.5、LiveKit smoke/readiness 与生产镜像门禁。
+2. 既有 production 已通过 FunASR、Qwen、豆包 Seed-TTS 2.0 双向流式与 LiveKit 门禁；后续 Provider 变更仍须重新通过同等级的实网 smoke/readiness 与生产镜像门禁。
 3. 使用明确授权真人样本和真实手机 H5 完成声纹指标、人格/声音盲测及全双工设备矩阵。
-4. 后续发布继续创建唯一 release tag，本机构建 `linux/amd64` 工件，服务器只加载并切换；不得覆盖当前生产 `20260719-215553`。
+4. 后续发布继续创建唯一 release tag，本机构建 `linux/amd64` 工件，服务器只加载并切换；不得复用或覆盖任何已存在的生产 tag。
 
 授权真人样本、真实手机矩阵和异地容灾未完成前，可以确认工程能力已上线，但不能标记为规模化声纹、复刻声音或“永不丢失”的生产验收完成。

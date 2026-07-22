@@ -215,7 +215,11 @@ def main() -> int:
     default = registry["voices"].get("warm_companion", {}).get("voice_id")
     if default:
         print(f"  # export COSYVOICE_VOICE={default}")
-    print("  python scripts/provider_smoke_test.py")
+    print(
+        "  uv run pytest services/voice_profile/tests/test_cosyvoice_preview.py "
+        "services/agent/tests/integration/test_cosyvoice_mock.py"
+    )
+    print("  # Then run an authorized human blind-listening evaluation.")
     return 0
 
 

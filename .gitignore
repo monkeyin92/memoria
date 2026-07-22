@@ -48,6 +48,7 @@ apps/web/coverage/
 .npm-cache/
 tmp/
 scratch/
+outputs/
 
 # Local mascot cutout backups (opaque masters)
 apps/h5/public/assets/_opaque_backup/

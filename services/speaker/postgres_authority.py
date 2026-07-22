@@ -274,9 +274,12 @@ class PostgresSpeakerAuthority:
             # Shadow output never changes authority. Keep its candidate score even
             # when the short conversational sample fails authority-quality gates,
             # so the realtime target-speaker focus can reject a clear bystander.
+            effective_guest_threshold = min(
+                float(row["guest_threshold"]), self._guest_threshold
+            )
             if score >= float(row["owner_threshold"]):
                 reason_code = "shadow_owner_candidate"
-            elif score <= float(row["guest_threshold"]):
+            elif score <= effective_guest_threshold:
                 reason_code = "shadow_guest_candidate"
             else:
                 reason_code = "shadow_ambiguous_candidate"

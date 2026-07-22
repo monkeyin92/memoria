@@ -3,31 +3,52 @@ set -Eeuo pipefail
 
 tag="${1:?usage: smoke_server_deployment.sh <release-tag>}"
 release="/opt/memoria/releases/$tag"
+h5_release="/var/www/memoria-releases/$tag"
 image="memoria-control-api:$tag"
 container="memoria-control-preflight"
-nginx_config="$release/infra/nginx-memoria-loopback-smoke.conf"
 data_dir="$(mktemp -d /tmp/memoria-preflight-data.XXXXXX)"
 workdir="$(mktemp -d /tmp/memoria-preflight-work.XXXXXX)"
-host_header="Host: aginice.cn"
+api_port=18791
+nginx_port=18891
+nginx_config="$workdir/nginx.conf"
+nginx_pid="$workdir/nginx.pid"
+nginx_error_log="$workdir/nginx-error.log"
+smoke_https="$workdir/memoria-https.conf"
+www_root="$workdir/www"
+host_header="Host: aigcnice.com"
 
 cleanup() {
-  if sudo test -f /tmp/memoria-nginx-smoke.pid; then
+  if sudo test -f "$nginx_pid"; then
     sudo nginx -s quit -c "$nginx_config" >/dev/null 2>&1 || true
   fi
   sudo docker rm -f "$container" >/dev/null 2>&1 || true
   sudo rm -rf "$data_dir" "$workdir"
-  sudo rm -f /tmp/memoria-nginx-smoke.pid /tmp/memoria-nginx-smoke-error.log
 }
 trap cleanup EXIT
 
-test -f "$nginx_config"
+test -f "$release/infra/nginx-memoria-loopback-smoke.conf"
+test -f "$release/infra/nginx-memoria-https.conf"
+test -f "$h5_release/index.html"
 sudo docker image inspect "$image" >/dev/null
-if sudo ss -ltn | grep -qE ':(8791|18891)[[:space:]]'; then
-  echo "preflight ports 8791 or 18891 are already in use" >&2
+if sudo ss -ltn | grep -qE ":($api_port|$nginx_port)[[:space:]]"; then
+  echo "preflight ports $api_port or $nginx_port are already in use" >&2
   exit 1
 fi
 
 sudo chown 65532:65532 "$data_dir"
+install -d -m 0755 "$www_root"
+ln -s "$h5_release" "$www_root/memoria-h5"
+sed \
+  -e "s#127\\.0\\.0\\.1:8791#127.0.0.1:$api_port#g" \
+  -e "s#root /var/www;#root $www_root;#g" \
+  "$release/infra/nginx-memoria-https.conf" >"$smoke_https"
+sed \
+  -e "s#/tmp/memoria-nginx-smoke.pid#$nginx_pid#g" \
+  -e "s#/tmp/memoria-nginx-smoke-error.log#$nginx_error_log#g" \
+  -e "s#listen 127\\.0\\.0\\.1:18891;#listen 127.0.0.1:$nginx_port;#g" \
+  -e "s#/etc/nginx/snippets/memoria-https.conf;#$smoke_https;#g" \
+  "$release/infra/nginx-memoria-loopback-smoke.conf" >"$nginx_config"
+chmod 0755 "$workdir"
 
 start_control() {
   sudo docker run -d --name "$container" \
@@ -35,17 +56,20 @@ start_control() {
     --security-opt no-new-privileges:true \
     --cap-drop ALL \
     --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
-    -p 127.0.0.1:8791:8000 \
+    -p "127.0.0.1:$api_port:8000" \
     -v "$data_dir:/data" \
-    -e ENVIRONMENT=production \
-    -e MEMORIA_RELEASE_TAG=preflight \
-    -e PUBLIC_BASE_URL=https://aginice.cn:8443/memoria-api \
-    -e ALLOWED_ORIGINS=https://aginice.cn,https://www.aginice.cn,https://aginice.cn:8443,https://www.aginice.cn:8443 \
+    -e ENVIRONMENT=development \
+    -e "MEMORIA_RELEASE_TAG=$tag-preflight" \
+    -e PUBLIC_BASE_URL=https://aigcnice.com:8443/memoria-api \
+    -e ALLOWED_ORIGINS=https://122.51.108.140:8443,https://aigcnice.com:8443,https://www.aigcnice.com:8443 \
     -e LIVEKIT_URL=wss://preflight.livekit.cloud \
     -e LIVEKIT_API_KEY=preflight-key \
     -e LIVEKIT_API_SECRET=preflight-secret \
     -e MEMORIA_AUTH_SECRET=preflight-auth-secret-that-is-longer-than-thirty-two-characters \
     -e MEMORIA_DB_PATH=/data/memoria.sqlite3 \
+    -e MEMORIA_SPEAKER_DB_PATH=/data/speakers.sqlite3 \
+    -e MEMORIA_ARCHIVE_OBJECT_STORE_PATH=/data/archive-objects \
+    -e MEMORIA_VOICE_SAMPLE_STORE_PATH=/data/voice-samples \
     -e MEMORIA_TIMEZONE=Asia/Shanghai \
     -e OFFLINE_MOCK=true \
     "$image" >/dev/null
@@ -53,7 +77,7 @@ start_control() {
 
 wait_control() {
   for _ in $(seq 1 20); do
-    if curl -fsS http://127.0.0.1:8791/health/live >/dev/null 2>&1; then
+    if curl -fsS "http://127.0.0.1:$api_port/health/live" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -68,7 +92,7 @@ wait_control
 sudo nginx -t -c "$nginx_config"
 sudo nginx -c "$nginx_config"
 
-base=http://127.0.0.1:18891
+base="http://127.0.0.1:$nginx_port"
 curl -fsS -H "$host_header" -D "$workdir/h5.headers" \
   "$base/memoria-h5/" -o "$workdir/h5.index"
 curl -fsS -H "$host_header" \
@@ -105,6 +129,14 @@ curl -fsS -H "$host_header" -H "$auth_header" -H 'Content-Type: application/json
   -X PUT "$base/memoria-api/v1/memory/profile/$user_id" \
   -d '{"display_name":"部署预检","bio":"loopback","timezone":"Asia/Shanghai"}' \
   -o "$workdir/profile.put.json"
+python3 -c 'import json,sys; body=json.load(open(sys.argv[1])); assert body["reject_non_owner_voice"] is True' \
+  "$workdir/profile.put.json"
+curl -fsS -H "$host_header" -H "$auth_header" -H 'Content-Type: application/json' \
+  -X PUT "$base/memoria-api/v1/memory/profile/$user_id" \
+  -d '{"reject_non_owner_voice":false}' \
+  -o "$workdir/profile.preference.json"
+python3 -c 'import json,sys; body=json.load(open(sys.argv[1])); assert body["reject_non_owner_voice"] is False' \
+  "$workdir/profile.preference.json"
 curl -fsS -H "$host_header" -H "$auth_header" -H 'Content-Type: application/json' \
   -X POST "$base/memoria-api/v1/memory/messages" \
   -d "{\"user_id\":\"$user_id\",\"role\":\"user\",\"text\":\"部署预检消息\",\"emotion\":\"calm\"}" \
@@ -120,9 +152,9 @@ curl -fsS -H "$host_header" -H "$auth_header" \
 curl -fsS -H "$host_header" -H "$auth_header" \
   "$base/memoria-api/v1/memory/days?user_id=$user_id" \
   -o "$workdir/days.get.json"
-python3 -c 'import json,sys; body=json.load(open(sys.argv[1])); assert body["display_name"] == "部署预检" and body["timezone"] == "Asia/Shanghai"' \
+python3 -c 'import json,sys; body=json.load(open(sys.argv[1])); assert body["display_name"] == "部署预检" and body["timezone"] == "Asia/Shanghai" and body["reject_non_owner_voice"] is False' \
   "$workdir/profile.get.json"
 python3 -c 'import json,sys; body=json.load(open(sys.argv[1])); assert body["items"] and body["items"][0]["message_count"] == 1' \
   "$workdir/days.get.json"
 
-echo "server deployment smoke: PASS (H5, SPA fallback, API proxy, SQLite restart persistence)"
+echo "server deployment smoke: PASS (candidate H5, SPA, API, owner-only default, SQLite restart)"

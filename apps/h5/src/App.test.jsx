@@ -441,7 +441,129 @@ describe("App identity and profile preferences", () => {
     );
 
     fireEvent.click(screen.getByRole("switch", { name: /语音回应/ }));
-    expect(mocks.resumeAudio).toHaveBeenCalledWith(true);
+    await waitFor(() => expect(mocks.resumeAudio).toHaveBeenCalledWith(true));
+  });
+
+  it("defaults to bystander filtering and commits changes only after the server confirms", async () => {
+    const update = deferred();
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      access_token: "token",
+    });
+    mocks.updateProfile.mockReturnValueOnce(update.promise);
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    const onlyOwner = await screen.findByRole("switch", {
+      name: /过滤明显旁人（实验）/,
+    });
+    expect(onlyOwner).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText(/关闭后访客可聊，但仍不能访问或写入主人回顾/))
+      .toBeInTheDocument();
+
+    fireEvent.click(onlyOwner);
+    expect(onlyOwner).toHaveAttribute("aria-checked", "true");
+    expect(mocks.updateProfile).toHaveBeenLastCalledWith(
+      "anonymous-user",
+      expect.objectContaining({ reject_non_owner_voice: false }),
+    );
+
+    await act(async () => {
+      update.resolve({ reject_non_owner_voice: false });
+      await update.promise;
+    });
+    await waitFor(() =>
+      expect(onlyOwner).toHaveAttribute("aria-checked", "false"),
+    );
+  });
+
+  it("keeps the confirmed only-owner setting when the profile update fails", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      access_token: "token",
+    });
+    mocks.updateProfile.mockRejectedValueOnce(new Error("offline"));
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    const onlyOwner = await screen.findByRole("switch", {
+      name: /过滤明显旁人（实验）/,
+    });
+    fireEvent.click(onlyOwner);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("偏好保存失败");
+    expect(onlyOwner).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("does not carry a late preference update into the next account", async () => {
+    const lateUpdate = deferred();
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "old-account",
+      username: "old-account",
+      account_type: "registered",
+      access_token: "old-token",
+    });
+    mocks.registerAccount.mockResolvedValue({
+      user_id: "new-account",
+      username: "new-account",
+      account_type: "registered",
+      access_token: "new-token",
+    });
+    mocks.getProfile.mockImplementation(async (requestedUserId) => ({
+      user_id: requestedUserId,
+      display_name: "小忆",
+      bio: "慢慢说",
+      auto_summary: true,
+      voice_reply: true,
+      gentle_reminders: false,
+      reject_non_owner_voice: true,
+      companion_id: "starlight",
+    }));
+    mocks.updateProfile.mockReturnValueOnce(lateUpdate.promise);
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    const oldSwitch = await screen.findByRole("switch", {
+      name: /过滤明显旁人（实验）/,
+    });
+    fireEvent.click(oldSwitch);
+    expect(oldSwitch).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /注销账号/ }));
+    fireEvent.change(screen.getByLabelText("删除验证密码"), {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.change(screen.getByLabelText("输入“永久删除我的全部数据”"), {
+      target: { value: "永久删除我的全部数据" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "注销账号并删除全部数据" }),
+    );
+    await screen.findByRole("heading", { name: "创建你的 Memoria 账号" });
+
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "new-account" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
+    await screen.findByRole("heading", { name: /小忆/ });
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    const newSwitch = await screen.findByRole("switch", {
+      name: /过滤明显旁人（实验）/,
+    });
+    expect(newSwitch).toBeEnabled();
+    expect(newSwitch).toHaveAttribute("aria-checked", "true");
+
+    await act(async () => {
+      lateUpdate.resolve({ reject_non_owner_voice: false });
+      await lateUpdate.promise;
+    });
+    expect(newSwitch).toHaveAttribute("aria-checked", "true");
   });
 
   it("opens digital-self controls from My as a full-screen detail and returns predictably", async () => {
@@ -550,7 +672,11 @@ describe("App identity and profile preferences", () => {
 
     let saving;
     await act(async () => {
-      saving = oldAccountTranscript({ speaker: "user", text: "不要带到新账号" });
+      saving = oldAccountTranscript({
+        speaker: "user",
+        text: "不要带到新账号",
+        history_eligible: true,
+      });
       await Promise.resolve();
     });
     fireEvent.click(screen.getByRole("button", { name: "我的" }));
@@ -570,6 +696,33 @@ describe("App identity and profile preferences", () => {
       lateSave.reject(new Error("late write rejected"));
       await saving;
     });
+    expect(mocks.cachePendingMessage).not.toHaveBeenCalled();
+  });
+
+  it("never sends a history-ineligible guest transcript to save or pending cache", async () => {
+    let onFinalTranscript;
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "registered-user",
+      username: "memorykeeper",
+      account_type: "registered",
+      access_token: "token",
+    });
+    mocks.useVoiceSession.mockImplementation((options) => {
+      onFinalTranscript = options.onFinalTranscript;
+      return voiceState();
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    await act(async () => {
+      await onFinalTranscript({
+        speaker: "user",
+        text: "访客消息",
+        history_eligible: false,
+      });
+    });
+
+    expect(mocks.saveMessage).not.toHaveBeenCalled();
     expect(mocks.cachePendingMessage).not.toHaveBeenCalled();
   });
 

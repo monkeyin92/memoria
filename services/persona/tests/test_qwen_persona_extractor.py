@@ -129,6 +129,10 @@ async def test_qwen_persona_traits_round_trip_through_engine(tmp_path: Path) -> 
             transport=httpx.MockTransport(handler),
         ),
     )
+    await engine.grant_consent(
+        account_id="persona-account",
+        policy_version="persona-learning-v1",
+    )
     observed = await engine.observe(
         PersonaEvidence(
             account_id="persona-account",
@@ -199,6 +203,10 @@ async def test_evidenced_emphasis_and_emotional_expression_round_trip_through_en
             model="qwen-test",
             transport=httpx.MockTransport(handler),
         ),
+    )
+    await engine.grant_consent(
+        account_id="persona-account",
+        policy_version="persona-learning-v1",
     )
     observed = await engine.observe(
         PersonaEvidence(

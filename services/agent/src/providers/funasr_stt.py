@@ -57,6 +57,7 @@ class FunASRConfig:
     reconnect_audio_ms: int = 1500
     connect_timeout_s: float = 5.0
     result_timeout_s: float = 8.0
+    conversation_context_enabled: bool = False
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> FunASRConfig:
@@ -76,6 +77,9 @@ class FunASRConfig:
             reconnect_audio_ms=int(e.get("FUNASR_RECONNECT_AUDIO_MS", "1500")),
             connect_timeout_s=float(e.get("FUNASR_CONNECT_TIMEOUT_S", "5")),
             result_timeout_s=float(e.get("FUNASR_RESULT_TIMEOUT_S", "8")),
+            conversation_context_enabled=(
+                e.get("FUNASR_CONTEXT_ENABLED", "false").lower() == "true"
+            ),
         )
 
 
@@ -561,7 +565,7 @@ class FunASRSTT(stt.STT[Any]):
                 aligned_transcript="word",
                 offline_recognize=False,
                 keyterms=False,
-                chat_context=True,
+                chat_context=config.conversation_context_enabled,
             )
         )
         self._config = config
@@ -593,6 +597,8 @@ class FunASRSTT(stt.STT[Any]):
         raise NotImplementedError("FunASRSTT is streaming-only; call stream()")
 
     def _push_conversation_item(self, ev: Any) -> None:
+        if not self._config.conversation_context_enabled:
+            return
         item: dict[str, Any]
         if isinstance(ev, dict):
             item = ev

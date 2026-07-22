@@ -56,6 +56,7 @@ COPY packages ./packages
 COPY services/__init__.py ./services/__init__.py
 COPY scripts/verify_env.py scripts/livekit_smoke_test.py scripts/provider_smoke_test.py ./scripts/
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
+COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json
 USER 65532:65532
 EOF
 
@@ -66,6 +67,7 @@ WORKDIR /app
 COPY services ./services
 COPY packages ./packages
 COPY scripts/mark_readiness.py ./scripts/mark_readiness.py
+COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 USER 65532:65532
 EOF
 

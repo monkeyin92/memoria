@@ -63,8 +63,11 @@ def _mark_smokes_passed(base_url: str) -> bool:
             "llm": True,
             "llm_provider": os.getenv("LLM_PROVIDER", "qwen"),
             "release_tag": os.getenv("MEMORIA_RELEASE_TAG", "development"),
-            "cosyvoice": True,
-            "cosyvoice_timestamps": True,
+            "tts": {
+                "provider": "doubao",
+                "audio": True,
+                "word_timestamps": True,
+            },
         },
     )
     if status != 200 or body.get("status") != "marked":

@@ -18,6 +18,30 @@ const inboundAudioFields = {
   removedSamplesForAcceleration: "removed_samples_for_acceleration",
 };
 
+const inboundDeltaFields = [
+  "packets_lost",
+  "packets_received",
+  "packets_discarded",
+  "concealed_samples",
+  "total_samples_received",
+];
+
+export function addInboundAudioDeltas(metrics, baseline = metrics) {
+  const result = { ...metrics };
+  for (const field of inboundDeltaFields) {
+    if (
+      typeof metrics?.[field] === "number" &&
+      typeof baseline?.[field] === "number"
+    ) {
+      result[`${field}_delta`] = Math.max(
+        0,
+        metrics[field] - baseline[field],
+      );
+    }
+  }
+  return result;
+}
+
 export function extractInboundAudioStats(report) {
   const rows = report?.values ? report.values() : Array.isArray(report) ? report : [];
   for (const row of rows) {

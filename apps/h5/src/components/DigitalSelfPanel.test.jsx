@@ -60,6 +60,7 @@ import { DigitalSelfPanel } from "./DigitalSelfPanel.jsx";
 
 let personaAllowed;
 let personaTraits;
+let personaVersions;
 let speakerProfiles;
 let voiceConsent;
 let voiceProfiles;
@@ -83,6 +84,7 @@ describe("DigitalSelfPanel", () => {
     vi.clearAllMocks();
     personaAllowed = false;
     personaTraits = [];
+    personaVersions = [];
     speakerProfiles = [];
     voiceConsent = null;
     voiceProfiles = [];
@@ -90,7 +92,7 @@ describe("DigitalSelfPanel", () => {
       learning_allowed: personaAllowed,
     }));
     mocks.getPersonaTraits.mockImplementation(async () => ({ items: personaTraits }));
-    mocks.getPersonaVersions.mockResolvedValue({ items: [] });
+    mocks.getPersonaVersions.mockImplementation(async () => ({ items: personaVersions }));
     mocks.getSpeakerProfiles.mockImplementation(async () => ({ items: speakerProfiles }));
     mocks.getVoiceProfiles.mockImplementation(async () => ({
       consent: voiceConsent,
@@ -142,6 +144,8 @@ describe("DigitalSelfPanel", () => {
     expect(screen.getByRole("heading", { name: "声纹识别" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "声音复刻" })).toBeInTheDocument();
     expect(screen.getByText(/声纹只用于区分主人、访客或不确定/)).toBeInTheDocument();
+    expect(screen.getByText(/“过滤明显旁人（实验）”可减少旁人插话/))
+      .toBeInTheDocument();
     expect(screen.getByText(/不能单独授权删除、导出或其他敏感操作/)).toBeInTheDocument();
   });
 
@@ -154,7 +158,7 @@ describe("DigitalSelfPanel", () => {
         description: "讲重要事情时会重读关键结论",
         confidence: 0.78,
         observation_count: 2,
-        status: "candidate",
+        status: "confirmed",
       },
       {
         trait_id: "emotion-style-1",
@@ -162,7 +166,7 @@ describe("DigitalSelfPanel", () => {
         description: "安慰家人时语气更柔和",
         confidence: 0.8,
         observation_count: 2,
-        status: "candidate",
+        status: "confirmed",
       },
     ];
 
@@ -172,7 +176,101 @@ describe("DigitalSelfPanel", () => {
     expect(screen.getByText("情绪表达")).toBeInTheDocument();
   });
 
-  it("grants and revokes persona learning and lets the owner review a candidate trait", async () => {
+  it("keeps persona learning in opt-in state until the owner grants consent", async () => {
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    expect(
+      await screen.findByLabelText("我同意 Memoria 学习我的表达与思维偏好"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("学习状态")).not.toBeInTheDocument();
+  });
+
+  it("shows persona learning as continuous before the first version exists", async () => {
+    personaAllowed = true;
+
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    expect(
+      await screen.findByText("持续学习中（聊天越多越准确）"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("尚未发布")).not.toBeInTheDocument();
+  });
+
+  it("keeps internal persona candidates out of the customer workflow", async () => {
+    personaAllowed = true;
+    personaTraits = [
+      { trait_id: "candidate-1", category: "verbal_tic", status: "candidate" },
+      { trait_id: "confirmed-1", category: "pause_style", status: "confirmed" },
+      { trait_id: "candidate-2", category: "speech_rate", status: "candidate" },
+    ];
+
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    expect(
+      await screen.findByText("持续学习中（聊天越多越准确）"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("2 条待确认")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认这条特征" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("shows the active persona version with neutral wording", async () => {
+    personaAllowed = true;
+    personaTraits = [
+      { trait_id: "candidate-1", category: "verbal_tic", status: "candidate" },
+    ];
+    personaVersions = [
+      { version_id: "version-3", version_number: 3, status: "active" },
+    ];
+
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    expect(await screen.findByText("v3 已启用")).toBeInTheDocument();
+    expect(screen.queryByText("v3 已自动更新")).not.toBeInTheDocument();
+    expect(screen.queryByText("1 条待确认")).not.toBeInTheDocument();
+  });
+
+  it("keeps confirmed traits and version controls available after consent is revoked", async () => {
+    personaAllowed = false;
+    personaTraits = [
+      {
+        trait_id: "confirmed-1",
+        category: "pause_style",
+        description: "思考时会自然停顿",
+        confidence: 0.84,
+        observation_count: 8,
+        status: "confirmed",
+      },
+    ];
+    personaVersions = [
+      { version_id: "version-2", version_number: 2, status: "active", reason: "trait_disable" },
+      { version_id: "version-1", version_number: 1, status: "superseded", reason: "initial" },
+    ];
+
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    expect(
+      await screen.findByLabelText("我同意 Memoria 学习我的表达与思维偏好"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("v2 已启用")).toBeInTheDocument();
+    expect(screen.getByText("思考时会自然停顿")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "停用" }));
+    await waitFor(() => {
+      expect(mocks.reviewPersonaTrait).toHaveBeenCalledWith("confirmed-1", "disable");
+    });
+
+    fireEvent.click(screen.getByText("查看人格历史版本"));
+    fireEvent.click(screen.getByRole("button", { name: /回退/ }));
+    expect(
+      screen.getByRole("alertdialog", { name: "回退到人格版本 v1" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认回退版本" }));
+    await waitFor(() => {
+      expect(mocks.rollbackPersonaVersion).toHaveBeenCalledWith("version-1");
+    });
+  });
+
+  it("grants and revokes automatic persona learning without candidate review", async () => {
     personaTraits = [
       {
         trait_id: "trait-1",
@@ -187,9 +285,6 @@ describe("DigitalSelfPanel", () => {
     mocks.grantPersonaConsent.mockImplementation(async () => {
       personaAllowed = true;
     });
-    mocks.reviewPersonaTrait.mockImplementation(async () => {
-      personaTraits = [{ ...personaTraits[0], status: "confirmed" }];
-    });
     mocks.revokePersonaConsent.mockImplementation(async () => {
       personaAllowed = false;
     });
@@ -200,17 +295,16 @@ describe("DigitalSelfPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "开启人格学习" }));
     await waitFor(() => expect(mocks.grantPersonaConsent).toHaveBeenCalledOnce());
 
-    fireEvent.click(await screen.findByRole("button", { name: "确认这条特征" }));
-    await waitFor(() => {
-      expect(mocks.reviewPersonaTrait).toHaveBeenCalledWith("trait-1", "confirm");
-    });
+    expect(screen.queryByRole("button", { name: "确认这条特征" }))
+      .not.toBeInTheDocument();
+    expect(mocks.reviewPersonaTrait).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "撤销人格学习授权" }));
     fireEvent.click(screen.getByRole("button", { name: "确认撤销人格学习" }));
     await waitFor(() => expect(mocks.revokePersonaConsent).toHaveBeenCalledOnce());
   });
 
-  it("requires an owner-supplied counterexample before confirming a decision trait", async () => {
+  it("does not expose sensitive decision candidates for customer confirmation", async () => {
     personaAllowed = true;
     personaTraits = [
       {
@@ -225,23 +319,16 @@ describe("DigitalSelfPanel", () => {
     ];
     render(<DigitalSelfPanel onBack={vi.fn()} />);
 
-    const confirmation = await screen.findByRole("button", { name: "确认这条特征" });
-    expect(confirmation).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("例外或反例（确认前必填）"), {
-      target: { value: "紧急安全风险出现时会立即行动。" },
-    });
-    fireEvent.click(confirmation);
-
-    await waitFor(() => {
-      expect(mocks.reviewPersonaTrait).toHaveBeenCalledWith(
-        "decision-1",
-        "confirm",
-        { counterexample: "紧急安全风险出现时会立即行动。" },
-      );
-    });
+    expect(
+      await screen.findByText("持续学习中（聊天越多越准确）"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("做决定前习惯先收集足够信息"))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认这条特征" }))
+      .not.toBeInTheDocument();
   });
 
-  it("shows an existing counterexample for a value trait without blocking confirmation", async () => {
+  it("shows an already active value trait without asking for confirmation", async () => {
     personaAllowed = true;
     personaTraits = [
       {
@@ -251,14 +338,16 @@ describe("DigitalSelfPanel", () => {
         counterexample: "承诺会伤害家人安全时会重新协商。",
         confidence: 0.9,
         observation_count: 9,
-        status: "candidate",
+        status: "confirmed",
       },
     ];
     render(<DigitalSelfPanel onBack={vi.fn()} />);
 
     expect(await screen.findByText("承诺会伤害家人安全时会重新协商。"))
       .toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "确认这条特征" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "确认这条特征" }))
+      .not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "停用" })).toBeEnabled();
   });
 
   it("prepares three recordings, registers a shadow speaker profile and supports revocation", async () => {
@@ -389,27 +478,37 @@ describe("DigitalSelfPanel", () => {
     await waitFor(() => expect(mocks.revokeVoiceProfile).toHaveBeenCalledWith("voice-1"));
   });
 
-  it("only enables voice activation after subjective and server quality gates pass", async () => {
+  it("keeps an evaluated clone as history without offering activation", async () => {
     voiceConsent = { policy_version: "voice-clone-v1", granted_at: "2026-07-19" };
     voiceProfiles = [
       candidateVoice({ evaluation_status: "passed", quality_status: "passed" }),
     ];
-    mocks.activateVoiceProfile.mockImplementation(async () => {
-      voiceProfiles = [
-        candidateVoice({
-          status: "active",
-          evaluation_status: "passed",
-          quality_status: "passed",
-        }),
-      ];
-    });
 
     render(<DigitalSelfPanel onBack={vi.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "激活这个声音" }));
 
-    await waitFor(() => {
-      expect(mocks.activateVoiceProfile).toHaveBeenCalledWith("voice-1");
-    });
+    expect(await screen.findByText(/历史档案已通过评估，但暂不应用于当前豆包语音/))
+      .toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "激活这个声音" }))
+      .not.toBeInTheDocument();
+    expect(mocks.activateVoiceProfile).not.toHaveBeenCalled();
+  });
+
+  it("marks a previously active clone as historical and not applied to Doubao", async () => {
+    voiceConsent = { policy_version: "voice-clone-v1", granted_at: "2026-07-19" };
+    voiceProfiles = [
+      candidateVoice({
+        status: "active",
+        evaluation_status: "passed",
+        quality_status: "passed",
+      }),
+    ];
+
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    expect(await screen.findByText(/此档案保留原激活状态，但暂不应用于当前豆包语音/))
+      .toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "激活这个声音" }))
+      .not.toBeInTheDocument();
   });
 
   it("shows incomplete voice cleanup and retries revoked consent deletion", async () => {

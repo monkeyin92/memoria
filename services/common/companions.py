@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Final
 
 DEFAULT_COMPANION_ID: Final = "starlight"
-DESIGNED_VOICE_MODEL: Final = "cosyvoice-v3.5-flash"
+DESIGNED_VOICE_MODEL: Final = "seed-tts-2.0"
 
 COMPANION_VOICE_PROFILES: Final[dict[str, str]] = {
     "starlight": "warm_companion",

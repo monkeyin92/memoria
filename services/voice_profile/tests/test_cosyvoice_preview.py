@@ -5,8 +5,23 @@ import wave
 from types import SimpleNamespace
 
 import pytest
+from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig
 from services.voice_profile import cosyvoice_preview as preview_module
 from services.voice_profile.cosyvoice_preview import CosyVoicePreviewRenderer
+
+
+def test_production_preview_baseline_resolves_from_bundled_legacy_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("COSYVOICE_MODEL", "cosyvoice-v3.5-flash")
+    monkeypatch.setenv("COSYVOICE_VOICE_PROFILE", "warm_companion")
+    monkeypatch.delenv("COSYVOICE_VOICE", raising=False)
+    monkeypatch.delenv("COSYVOICE_VOICE_REGISTRY", raising=False)
+
+    config = CosyVoiceConfig.from_env()
+
+    assert config.voice.startswith("cosyvoice-v3.5-flash-vd-warmboy-")
 
 
 @pytest.mark.asyncio

@@ -38,6 +38,7 @@ class SpeakerAuthorityClient:
     ) -> None:
         self._config = config
         self._client = client
+        self.reject_non_owner_voice = True
 
     async def classify(
         self,
@@ -48,6 +49,8 @@ class SpeakerAuthorityClient:
     ) -> SpeakerDecision:
         if not session_id.strip() or not pcm or sample_rate < 8000:
             raise ValueError("session_id and supported PCM audio are required")
+        # Every request starts fail-closed; only an explicit JSON boolean may relax it.
+        self.reject_non_owner_voice = True
         client = self._client or httpx.AsyncClient()
         try:
             response = await client.post(
@@ -62,10 +65,20 @@ class SpeakerAuthorityClient:
             )
             response.raise_for_status()
             payload = response.json()
+            if isinstance(payload, dict) and isinstance(
+                payload.get("reject_non_owner_voice"), bool
+            ):
+                requested_policy = payload["reject_non_owner_voice"]
+            else:
+                requested_policy = True
         finally:
             if self._client is None:
                 await client.aclose()
-        return self._decision(payload)
+        decision = self._decision(payload)
+        # Apply the relaxation only after the complete trusted response passes
+        # validation. A malformed authority result must leave the policy strict.
+        self.reject_non_owner_voice = requested_policy
+        return decision
 
     @staticmethod
     def _decision(payload: Any) -> SpeakerDecision:

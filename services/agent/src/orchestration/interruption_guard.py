@@ -115,12 +115,7 @@ _PUNCTUATION = " \t\r\n。！？.!?，,；;：:\"'“”‘’（）()【】[]"
 
 
 def normalize_short(text: str) -> str:
-    return (
-        text.strip()
-        .replace(" ", "")
-        .replace("　", "")
-        .strip("。！？!?，,；;：:")
-    )
+    return text.strip().replace(" ", "").replace("　", "").strip("。！？!?，,；;：:")
 
 
 def is_backchannel(text: str, *, duration_ms: int) -> bool:
@@ -170,6 +165,26 @@ _INTERRUPT_FILLERS = (
     "你",
 )
 
+_CONTROL_ACK_FILLERS = _INTERRUPT_FILLERS + (
+    "好",
+    "好的",
+    "可以",
+    "行",
+    "你说",
+    "我在听",
+)
+
+_RESUME_COMMANDS = (
+    "继续说",
+    "继续讲",
+    "接着说",
+    "接着讲",
+    "往下说",
+    "你继续",
+    "请继续",
+    "继续",
+)
+
 
 def is_interrupt_command_only(text: str) -> bool:
     """True when the utterance is only stop/wait commands (no real question).
@@ -183,11 +198,32 @@ def is_interrupt_command_only(text: str) -> bool:
     remainder = t
     for p in sorted(INTERRUPT_PREFIXES, key=len, reverse=True):
         remainder = remainder.replace(p, "")
-    for filler in _INTERRUPT_FILLERS:
+    for filler in sorted(_CONTROL_ACK_FILLERS, key=len, reverse=True):
         remainder = remainder.replace(filler, "")
     remainder = normalize_short(remainder)
     # Allow at most one leftover char (noise from ASR)
     return len(remainder) <= 1
+
+
+def is_resume_command_only(text: str) -> bool:
+    """True for a resume command, including a leaked control ack/pause prefix.
+
+    Production ASR can endpoint「好的，好的。等一下。继续。」as one final
+    after the fixed yield ack reaches the microphone. Real content after the
+    resume command must remain chat instead of being swallowed as control.
+    """
+
+    normalized = normalize_short(text)
+    if not normalized or not any(command in normalized for command in _RESUME_COMMANDS):
+        return False
+    remainder = normalized
+    for command in sorted(_RESUME_COMMANDS, key=len, reverse=True):
+        remainder = remainder.replace(command, "")
+    for interrupt in sorted(INTERRUPT_PREFIXES, key=len, reverse=True):
+        remainder = remainder.replace(interrupt, "")
+    for filler in sorted(_CONTROL_ACK_FILLERS, key=len, reverse=True):
+        remainder = remainder.replace(filler, "")
+    return len(normalize_short(remainder)) <= 1
 
 
 def count_cjk_chars(text: str) -> int:
@@ -297,21 +333,27 @@ class PlaybackInputGuard:
     enabled: bool = False
     feedback_window_s: float = 15.0
     max_feedback_turns: int = 2
-    interruption_guard: ChineseInterruptionGuard = field(
-        default_factory=ChineseInterruptionGuard
-    )
+    interruption_guard: ChineseInterruptionGuard = field(default_factory=ChineseInterruptionGuard)
     multilingual: bool = False
     candidate_active: bool = False
     candidate_during_playback: bool = False
+    candidate_vad_anchored: bool = True
     candidate_started_ns: int | None = None
     candidate_decision: PlaybackInputDecision = PlaybackInputDecision.ACCEPT
     candidate_text: str = ""
     candidate_reason: str | None = None
     _feedback_turns_ns: deque[int] = field(default_factory=deque)
 
-    def start(self, *, during_playback: bool, now_ns: int | None = None) -> None:
+    def start(
+        self,
+        *,
+        during_playback: bool,
+        now_ns: int | None = None,
+        vad_anchored: bool = True,
+    ) -> None:
         self.candidate_active = True
         self.candidate_during_playback = self.enabled and during_playback
+        self.candidate_vad_anchored = vad_anchored
         self.candidate_started_ns = now_ns if now_ns is not None else time.monotonic_ns()
         self.candidate_decision = (
             PlaybackInputDecision.WAIT
@@ -328,12 +370,24 @@ class PlaybackInputGuard:
         final: bool,
         assistant_text: str,
         now_ns: int | None = None,
+        during_playback_if_unstarted: bool = False,
     ) -> PlaybackInputDecision:
         if not self.candidate_active:
-            self.start(during_playback=False, now_ns=now_ns)
+            self.start(
+                during_playback=during_playback_if_unstarted,
+                now_ns=now_ns,
+                vad_anchored=False,
+            )
         self.candidate_text = text
         if not self.candidate_during_playback:
             self.candidate_decision = PlaybackInputDecision.ACCEPT
+            return self.candidate_decision
+
+        if not self.candidate_vad_anchored:
+            self.candidate_reason = "unanchored_playback_transcript"
+            self.candidate_decision = (
+                PlaybackInputDecision.IGNORE if final else PlaybackInputDecision.WAIT
+            )
             return self.candidate_decision
 
         content = _content(text)

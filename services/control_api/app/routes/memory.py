@@ -115,6 +115,7 @@ class ProfileRecord(BaseModel):
     auto_summary: bool
     voice_reply: bool
     gentle_reminders: bool
+    reject_non_owner_voice: bool
     created_at: datetime
     updated_at: datetime
 
@@ -130,6 +131,7 @@ class ProfileUpdate(BaseModel):
     auto_summary: bool | None = None
     voice_reply: bool | None = None
     gentle_reminders: bool | None = None
+    reject_non_owner_voice: bool | None = None
 
     @field_validator("avatar_url")
     @classmethod

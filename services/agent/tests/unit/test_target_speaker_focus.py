@@ -75,11 +75,10 @@ async def test_target_focus_rejects_formal_guest_from_chat() -> None:
     ("reason_code", "pcm"),
     [
         ("shadow_guest_candidate", FOCUS_PCM),
-        ("shadow_ambiguous_candidate", FOCUS_PCM),
         ("shadow_guest_candidate", b"\x01\x00" * int(SAMPLE_RATE * 0.3)),
     ],
 )
-async def test_shadow_result_cannot_mute_normal_conversation(
+async def test_strict_policy_rejects_shadow_non_owner_from_normal_conversation(
     reason_code: str,
     pcm: bytes,
 ) -> None:
@@ -103,11 +102,30 @@ async def test_shadow_result_cannot_mute_normal_conversation(
         accepted, reason = runtime.accept_user_turn("这是正常的一句话")
 
         assert observed is shadow_result
-        assert accepted is True
-        assert reason is None
+        assert accepted is False
+        assert reason == "target_non_owner"
         assert runtime.speaker_permissions.normal_conversation is True
         assert runtime.speaker_permissions.read_private_memory is False
         assert runtime.speaker_permissions.write_long_term_memory is False
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_strict_policy_allows_shadow_ambiguous_chat_without_private_authority() -> None:
+    runtime = DuplexRuntime.create()
+    shadow_result = _decision("uncertain", reason_code="shadow_ambiguous_candidate")
+
+    try:
+        observed = await _classify_turn(runtime, shadow_result)
+        accepted, reason = runtime.accept_user_turn("这是正常的一句话")
+
+        assert observed is shadow_result
+        assert accepted is True
+        assert reason is None
+        assert runtime.speaker_permissions.read_private_memory is False
+        assert runtime.speaker_permissions.write_long_term_memory is False
+        assert runtime._current_history_eligible() is False
     finally:
         await runtime.close()
 
@@ -154,7 +172,10 @@ class _PlaybackSession(_Emitter):
 
 
 @pytest.mark.asyncio
-async def test_playback_shadow_guest_cannot_lower_interrupt_gate_or_stop_playout() -> None:
+@pytest.mark.parametrize("candidate", ["这是旁边的人在说话", "停一下"])
+async def test_playback_shadow_guest_cannot_lower_interrupt_gate_or_stop_playout(
+    candidate: str,
+) -> None:
     runtime = DuplexRuntime.create(input_guard_enabled=True)
     session = _PlaybackSession()
     callback_calls = 0
@@ -185,7 +206,7 @@ async def test_playback_shadow_guest_cannot_lower_interrupt_gate_or_stop_playout
         session.emit("user_state_changed", SimpleNamespace(new_state="listening"))
         session.emit(
             "user_input_transcribed",
-            SimpleNamespace(transcript="这是旁边的人在说话", is_final=True),
+            SimpleNamespace(transcript=candidate, is_final=True),
         )
         await asyncio.sleep(0)
 
@@ -197,7 +218,10 @@ async def test_playback_shadow_guest_cannot_lower_interrupt_gate_or_stop_playout
 
 
 @pytest.mark.asyncio
-async def test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout() -> None:
+@pytest.mark.parametrize("candidate", ["这是旁边的人在说话", "停一下"])
+async def test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout(
+    candidate: str,
+) -> None:
     runtime = DuplexRuntime.create()
     stop_calls = 0
 
@@ -214,7 +238,7 @@ async def test_playback_shadow_guest_fallback_cannot_bump_fence_or_stop_playout(
             runtime,
             _decision("uncertain", reason_code="shadow_guest_candidate"),
         )
-        runtime.input_guard.candidate_text = "这是旁边的人在说话"
+        runtime.input_guard.candidate_text = candidate
         before = runtime.fence
 
         returned = await runtime.on_real_interrupt(
@@ -263,6 +287,7 @@ async def test_explicit_interrupt_ack_matches_command_only_policy(
             runtime,
             _decision("uncertain", reason_code="shadow_guest_candidate"),
         )
+        runtime.set_reject_non_owner_voice(False)
         runtime.input_guard.candidate_text = candidate
         runtime.set_interrupt_yield(_yield)
         before = runtime.fence
@@ -276,6 +301,37 @@ async def test_explicit_interrupt_ack_matches_command_only_policy(
         assert not returned.matches(before)
         assert stopped == 1
         assert said == expected_ack
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_permissive_policy_allows_formal_guest_to_interrupt() -> None:
+    runtime = DuplexRuntime.create()
+    stopped = 0
+
+    async def _stop_playback() -> str | None:
+        nonlocal stopped
+        stopped += 1
+        return None
+
+    try:
+        await runtime.orchestrator.ready()
+        await runtime.on_turn_committed("开始播放")
+        await runtime.on_assistant_speaking("机器人正在播放回复")
+        runtime._was_speaking = True
+        await _classify_turn(runtime, _decision("guest", reason_code="owner_mismatch"))
+        runtime.set_reject_non_owner_voice(False)
+        runtime.input_guard.candidate_text = "停一下"
+        before = runtime.fence
+
+        returned = await runtime.on_real_interrupt(
+            cause="livekit_playback_interrupted",
+            stop_playback=_stop_playback,
+        )
+
+        assert not returned.matches(before)
+        assert stopped == 1
     finally:
         await runtime.close()
 
@@ -359,7 +415,7 @@ async def test_explicit_partial_interrupt_survives_final_asr_revision() -> None:
         runtime.set_target_speaker_focus(True)
         runtime.set_speaker_classifier(
             lambda pcm, sample_rate: _classify_as(
-                _decision("uncertain", reason_code="shadow_guest_candidate"),
+                _decision("uncertain", reason_code="shadow_owner_candidate"),
                 pcm,
                 sample_rate,
             ),

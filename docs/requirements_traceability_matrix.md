@@ -2,15 +2,17 @@
 
 | 规范要求 | 实现文件 | 测试文件 | 状态 |
 |---|---|---|---|
-| 生产默认选型 FunASR/百炼 Qwen/CosyVoice/LiveKit 1.6.5 | `pyproject.toml`, `config.py`, `providers/*`, `agent.py` | `test_versions.py`, `test_config.py` | PASS |
+| 代码默认选型 FunASR/百炼 Qwen/豆包 Seed-TTS 2.0 双向流式/LiveKit 1.6.5 | `pyproject.toml`, `config.py`, `providers/*`, `agent.py` | `test_versions.py`, `test_config.py`, `test_agent_production_wiring.py` | PASS-LOCAL |
 | GenerationFence 全字段比对；旧结果丢弃 | `contracts/ids.py`, `orchestration/generation_fence.py` | `test_generation_fence.py`, `test_interrupt_isolation.py` | PASS |
-| 旧 generation 音频不得播放 | `orchestrator.py`, `cosyvoice_tts.py` | `test_interrupt_isolation.py` | PASS |
+| 旧 generation 音频不得播放 | `orchestrator.py`, `doubao_tts.py` | `test_interrupt_isolation.py`, `test_doubao_mock.py` | PASS-LOCAL |
 | 旧 tool_epoch 结果不得播报 | `task_manager.py`, `orchestrator.py` | `test_tool_epoch_isolation.py` | PASS |
 | 状态机合法/非法转换 | `orchestration/state_machine.py` | `test_state_machine.py` | PASS |
 | 助手历史只含实际已听文本 | `heard_text_tracker.py`, `context_manager.py` | `test_heard_text_tracker.py`, `test_interrupt_isolation.py` | PASS |
 | FunASR 协议/字级时间戳 | `funasr_protocol.py`, `funasr_stt.py` | `test_funasr_protocol.py`, `test_funasr_mock.py` | PASS |
 | FunASR LiveKit `stt.STT` + `RecognizeStream._run` | `funasr_stt.py` (`FunASRSTT`, `FunASRRecognizeStream`) | `test_livekit_adapters.py` | PASS |
-| CosyVoice LiveKit `tts.TTS` + `SynthesizeStream._run` | `cosyvoice_tts.py` (`CosyVoiceTTS`, `CosyVoiceSynthesizeStream`) | `test_livekit_adapters.py` | PASS |
+| 播放期无 VAD 锚 final/interim 不进入权威用户话轮；发现污染后只提交对应 speech epoch 的 accepted finals，FIFO snapshot 隔离排队回调，迟到控制回调不能清下一轮，空结果不建话轮 | `interruption_guard.py`, `duplex_runtime.py`, `agent.py` | `test_interruption_guard.py`, `test_agent_production_wiring.py`, `test_duplex_runtime_wiring.py` | PASS-PROD |
+| FunASR 历史对话 context 默认关闭，旧 user/assistant 内容不得泄漏进当前识别 | `funasr_stt.py`, `config.py`, `split_production_env.py` | `test_funasr_session_edges.py`, `test_funasr_recognize_stream.py`, `test_production_compose.py` | PASS-PROD |
+| 豆包 LiveKit `tts.TTS` + 双向增量 `SynthesizeStream._run` | `doubao_tts.py` (`DoubaoTTS`, `DoubaoSynthesizeStream`) | `test_doubao_mock.py`, `test_agent_production_wiring.py` | PASS-LOCAL |
 | Agent entry wires Orchestrator/Fence/interrupt | `agent.py`, `duplex_runtime.py` | `test_duplex_runtime_wiring.py` | PASS |
 | LLM/TTS 生产路径 GenerationFence 门控 | `DuplexVoiceAgent.llm_node/tts_node` | `test_pipeline_fence_gating.py` | PASS |
 | 非预生成 turn 先提交 fence 再启动 LLM；THINKING 可接收真实新轮次 | `agent.py`, `orchestrator.py` | `test_agent_production_wiring.py`, `test_orchestration_edges.py` | PASS |
@@ -19,8 +21,8 @@
 | speaking 生命周期 → HeardTextTracker | `duplex_runtime.on_assistant_speaking/on_playback_done` | `test_pipeline_fence_gating.py` | PASS |
 | 工具 cancel_event 协同取消 | `task_manager.py` | `test_tool_cancel_event.py` | PASS |
 | FunASR 稳定前缀 | `stable_prefix.py` | `test_stable_prefix.py` | PASS |
-| CosyVoice 连接池；取消丢连接 | `cosyvoice_tts.py` | `test_cosyvoice_mock.py` | PASS |
-| CosyVoice 时间戳缩放/退化 | `cosyvoice_protocol.py` | `test_timestamp_scale.py` | PASS |
+| 豆包连接池复用；取消发送 `CancelSession` 并丢连接 | `doubao_tts.py` | `test_doubao_mock.py` | PASS-LOCAL |
+| 豆包字级字幕按完整 PCM 对齐；缩放后时间戳才进入 LiveKit | `doubao_protocol.py`, `doubao_tts.py` | `test_doubao_protocol.py`, `test_doubao_mock.py` | PASS-LOCAL |
 | Qwen 默认快/深模型；可选配置不得隐式覆盖默认 provider | `config.py`, `agent.py` | `test_dashscope_qwen_is_the_default_llm`, `test_deepseek_key_does_not_override_qwen_implicitly` | PASS |
 | 中文口语分段器 | `phrase_segmenter.py` | `test_phrase_segmenter.py` | PASS |
 | 附和/打断规则；播放期及播放后英文回声、异常脚本与快速打断熔断；按四类原因归档 | `interruption_guard.py` | `test_interruption_guard.py`, `test_agent_production_wiring.py` | PASS |
@@ -33,7 +35,7 @@
 | 控制 API session/stop/health | `control_api/app/*` | `test_session_api.py` | PASS |
 | 匿名 Bearer 身份；已存 token 先经 `/v1/auth/me` 校验 | `control_api/app/routes/auth.py`, `apps/h5/src/api.js` | `test_session_api.py`, `apps/h5/src/api.test.js` | PASS |
 | 缺少认证与跨用户 memory/session 隔离 | `control_api/app/security.py`, `routes/memory.py`, `routes/session.py` | `test_memory_api.py`, `test_session_api.py` | PASS |
-| 消息、Profile、Agent/FunASR 上下文统一 PII 脱敏 | `services/common/redaction.py`, `routes/memory.py`, `context_manager.py`, `funasr_protocol.py` | `test_memory_api.py`, `test_orchestration_edges.py`, `test_funasr_protocol.py` | PASS |
+| 消息、Profile 与 Agent 上下文统一 PII 脱敏；FunASR 历史 context 仅保留显式实验入口且生产默认关闭 | `services/common/redaction.py`, `routes/memory.py`, `context_manager.py`, `funasr_protocol.py`, `funasr_stt.py` | `test_memory_api.py`, `test_orchestration_edges.py`, `test_funasr_protocol.py`, `test_funasr_recognize_stream.py` | PASS |
 | SQLite 持久化会话控制与 release-bound readiness evidence | `control_api/app/database.py`, `routes/session.py`, `routes/readiness.py` | `test_session_api.py` | PASS |
 | RTC 恢复两端原子前移 generation | `rtc-recovered` route, `agent.py`, `apps/h5/src/hooks/useVoiceSession.js` | Python/H5 recovery tests | PASS |
 | legacy Web session store / generation 丢弃 | `apps/web/src/state/sessionStore.ts` | 历史 Web tests | HISTORICAL-NOT-IN-SCOPE |
@@ -42,29 +44,32 @@
 | H5 五伙伴正面机身、四种 SVG 表情与权威语音情绪驱动 | `apps/h5/src/components/Mascot.jsx`, `apps/h5/src/lib/companions.js`, `apps/h5/public/assets/companions/` | `apps/h5/src/components/Mascot.test.jsx`, `apps/h5/src/hooks/useVoiceSession.test.jsx`, 浏览器交互 QA | PASS-LOCAL |
 | 注册后滑卡选角、性格/表情/设计音色试听与三段 shadow 声纹登记 | `CompanionOnboarding.jsx`, `companions.js`, `routes/memory.py`, `routes/speaker.py`, `routes/voice.py` | `CompanionOnboarding.test.jsx`, `App.test.jsx`, `test_memory_api.py`, `test_voice_profile_api.py` | PASS-LOCAL |
 | H5 实时语音、停止回答、声音解锁、静音保持与 10 秒重连恢复 | `apps/h5/src/hooks/useVoiceSession.js`, `apps/h5/src/App.jsx` | `apps/h5/src/hooks/useVoiceSession.test.jsx`, 浏览器交互 QA | PASS |
-| 首声全链路 trace 与 CosyVoice 首包超时恢复 | `duplex_runtime.py`, `agent.py`, `cosyvoice_tts.py`, `apps/h5/src/hooks/useVoiceSession.js` | `test_duplex_runtime_wiring.py`, `test_cosyvoice_livekit_stream.py`, H5 hook tests | PASS-LOCAL |
+| 首声全链路 trace 与豆包首包超时恢复；首包计时不包含 LLM 首 token 等待 | `duplex_runtime.py`, `agent.py`, `doubao_tts.py`, `apps/h5/src/hooks/useVoiceSession.js` | `test_duplex_runtime_wiring.py`, `test_doubao_mock.py`, H5 hook tests | PASS-LOCAL |
 | 候选打断 duck-first，确认后停止或平滑恢复 | `duplex_runtime.py`, `interruption_guard.py`, `apps/h5/src/hooks/useVoiceSession.js` | `test_agent_production_wiring.py`, H5 hook tests | PASS-LOCAL |
 | listener cue 独立调度、上限、冷却、禁用场景与独立取消域 | `orchestration/cue_scheduler.py`, `duplex_runtime.py` | `test_cue_scheduler.py`, `test_duplex_runtime_wiring.py` | PASS-LOCAL |
 | FunASR 主链 + Qwen3-ASR 非阻塞情绪旁路；短 TTL、不持久化 | `funasr_stt.py`, `qwen_emotion_asr.py`, `orchestration/emotion.py`, `duplex_runtime.py` | `test_qwen_emotion_sidecar.py`, `test_emotion_policy.py`, `test_duplex_runtime_wiring.py` | PASS-LOCAL |
-| 每 generation 的受控 CosyVoice 情绪与 neutral 回退 | `orchestration/prosody.py`, `cosyvoice_tts.py`, `duplex_runtime.py` | `test_emotion_policy.py`, `test_provider_config.py`, `test_duplex_runtime_wiring.py` | PASS-LOCAL |
+| 每 generation 的豆包受控语速/响度/音高与 native timbre 回退；为时间戳安全不发送 `context_texts` | `orchestration/prosody.py`, `doubao_tts.py`, `duplex_runtime.py` | `test_emotion_policy.py`, `test_provider_config.py`, `test_duplex_runtime_wiring.py` | PASS-LOCAL |
 | 旧 Qwen Omni/Audio 端到端 A/B | 历史代码/发布记录；当前 H5 入口已下线 | 历史 A/B 证据 | HISTORICAL-NOT-IN-SCOPE |
-| H5 只持久化权威字幕，避免分段字幕重复落库 | `apps/h5/src/hooks/useVoiceSession.js` | `persists only authoritative transcript_delta events` | PASS |
+| H5 只消费 Agent canonical final，不自行拼接/清洗，并避免分段字幕重复落库 | `agent.py`, `duplex_runtime.py`, `apps/h5/src/hooks/useVoiceSession.js` | Agent canonical 回归、`persists only authoritative transcript_delta events` | PASS |
 | H5 每日回顾与北京时间日期 | `apps/h5/src/App.jsx`, `apps/h5/src/api.js`, `apps/h5/src/lib/date.js` | `apps/h5/src/lib/date.test.js`、Control API tests | PASS |
-| H5 个人资料与三个偏好持久化 | `apps/h5/src/App.jsx`, `apps/h5/src/api.js`, `services/control_api/app/routes/memory.py` | `apps/h5/src/App.test.jsx`, `test_memory_api.py` | PASS |
+| H5 个人资料与四个偏好持久化（含默认开启的“过滤明显旁人（实验）”） | `apps/h5/src/App.jsx`, `apps/h5/src/api.js`, `services/control_api/app/routes/memory.py` | `apps/h5/src/App.test.jsx`, `test_memory_api.py` | PASS |
 | 稳定账号、匿名原地升级与跨账户隔离 | `routes/auth.py`, `database.py`, `AuthScreen.jsx`, `api.js` | `test_account_auth.py`, `App.test.jsx`, `api.test.js` | PASS-LOCAL |
 | 证据账本、人物/关系/时间线/知识与混合检索 | `services/archive/*`, `routes/archive.py`, `LifeArchivePanel.jsx` | archive/control/H5 tests | PASS-LOCAL |
-| owner/guest/uncertain 三态；guest/uncertain 仍进入不可变证据账本，但不进入主人投影、私人上下文或 Persona 学习 | `services/speaker/*`, `routes/archive.py`, `speaker_authority_client.py`, `utterance_router.py` | speaker/control/agent tests，含 guest/uncertain 入账与投影隔离合同 | PASS-LOCAL |
+| owner/guest/uncertain 三态；guest/uncertain 仍进入不可变证据账本且不进入主人记忆投影；只有注册、授权、active session、同一可信 `shadow_owner_candidate` profile 的合格文本可按 6 次/3 会话自动学习低敏 Persona | `services/speaker/*`, `routes/archive.py`, `services/persona/*`, `speaker_authority_client.py`, `utterance_router.py` | speaker/control/agent/persona tests，含 guest/anonymous/direct/ambiguous/no-audio/低质量/跨 profile/控制话轮隔离 | PASS-PROD |
+| `reject_non_owner_voice=true` 默认拒绝 formal guest/owner mismatch 与明确的 shadow guest；shadow/formal ambiguous 普通聊天 fail-open 但 `history_eligible=false`、无私人权限；关闭后只放开交互，不升级 owner、记忆、工具或敏感操作权限；shadow cutoff 为 0.40 | `routes/speaker.py`, `speaker_authority_client.py`, `utterance_router.py`, `duplex_runtime.py`, `DigitalSelfPanel.jsx` | `test_speaker_api.py`, `test_speaker_authority.py`, `test_target_speaker_focus.py`, `test_utterance_router.py`, `DigitalSelfPanel.test.jsx`，含真实 score matrix 主人 4/4 放行、孩子 6/7 拒绝 | PASS-PROD |
+| 主人历史只消费按 `(turn_id, generation_id)` 冻结且显式 `history_eligible=true` 的 Agent 权威终稿；访客、ambiguous、无档案、authority 不可用及缺字段的话轮和对应 AI 回复均 fail-closed | `duplex_runtime.py`, `useVoiceSession.js`, `App.jsx`, `api.js` | Agent fence/history tests，H5 Hook/App/API/cache tests | PASS-LOCAL |
 | 固定 CAM++ ONNX 模型服务；模型 digest、HTTP 鉴权、192 维 embedding、shadow-only 与 anti-spoof fail-closed | `services/speaker_model/*`, `infra/Dockerfile.speaker-model`, `scripts/smoke_campplus_onnx.py`, `docs/adr/0010-campplus-shadow-and-readiness-boundary.md` | speaker-model API/engine、真实 ONNX smoke、Control API shadow 纵向合同、容器 HTTP smoke | PASS-LOCAL |
 | Control API readiness 实时探测 speaker-model，拒绝宕机、非 ready 和 model_version 漂移 | `services/control_api/app/routes/readiness.py` | `services/control_api/tests/test_readiness.py` | PASS-LOCAL |
-| Persona 证据、反例门禁、版本审核与实时胶囊 | `services/persona/*`, `persona_client.py`, `DigitalSelfPanel.jsx` | persona/control/agent/H5 tests | PASS-LOCAL |
-| CosyVoice 3.5 声音授权、登记 saga、盲测、质量门禁与撤销；profile/orphan 外部清理未完成返回 503，H5 可见并幂等重试 | `services/voice_profile/*`, `routes/voice.py`, `DigitalSelfPanel.jsx` | voice profile/control/agent/H5 tests + SQLite/PostgreSQL Provider/orphan contract | PASS-LOCAL |
+| Persona 低敏特征跨会话自动发布、shadow profile 独立 lane、互斥 bucket 2:1 且单一生效、candidate 默认不下发客户、disabled sticky、consent 原子门禁和当前话轮刷新；shadow-only uncertain 只读固定安全描述白名单并清空自由文本/证据，仍隔离价值/决策、私人记忆、旧话轮与工具 | `services/persona/*`, `routes/persona.py`, `persona_client.py`, `agent.py`, `context_assembler.py`, `DigitalSelfPanel.jsx` | persona/control/agent/H5 tests + 本地 API/H5 自动 v1 闭环 | PASS-PROD |
+| 历史 CosyVoice 3.5 复刻资产继续支持查看、评估与撤销，但不进入豆包播放主链；会话按所选伙伴回退已批准豆包原生音色 | `services/voice_profile/*`, `routes/voice.py`, `voice_profile_client.py`, `DigitalSelfPanel.jsx` | voice profile/control/agent/H5 tests + SQLite/PostgreSQL Provider/orphan contract | PASS-LOCAL |
+| 五伙伴豆包原生音色、服务端 registry 白名单与版本化真实试听 | `services/common/companions.py`, `doubao_voice_catalog.py`, `infra/voices/doubao_voice_ids.json`, `apps/h5/public/assets/voices/*-doubao-v1.wav` | `test_doubao_voice_catalog.py`, `test_voice_profile_api.py`, H5 onboarding tests | PASS-LOCAL |
 | 原始主人语音独立授权、同一加密 spool 分流；撤销事务先冻结授权并快照对象，删除成功后按精确键清 manifest；临时失败音频保留重试但不阻塞后续/新转写 | `archive_sink.py`, `routes/archive.py`, `services/archive/*`, `PrivacyDataPanel.jsx` | archive/control/agent/H5 tests + SQLite/PostgreSQL 并发及 HTTP contract | PASS-LOCAL |
 | 账户导出、删除 fence、tombstone、外部资产清理与联合恢复 | `services/governance/*`, `session_termination.py`, restore scripts/runbook | governance/control/restore tests | PASS-LOCAL |
 | H5 视觉、可访问性与移动端溢出 | `apps/h5/src/styles.css`, `apps/h5/AGENTS.md` | 390×844、375×667、667×375 浏览器 QA、reduced-motion、console 检查 | PASS-LOCAL |
 | 本地 mock servers | `tests/integration/mock_servers.py` | integration tests | PASS |
 | 离线 ASR→LLM→TTS | `scripts/run_e2e.py`, `OfflinePipeline` | `test_offline_pipeline.py` | PASS |
-| 当前生产基线 Provider smoke（`20260720-182535`） | `scripts/livekit_smoke_test.py`, `scripts/provider_smoke_test.py`, `docs/releases/20260720-182535.md` | LiveKit、FunASR、Qwen、CosyVoice 实网证据 | PASS-PROD-BASELINE |
-| 当前本地候选 Provider smoke/readiness | 同上；候选尚未部署且未注入真实 Provider 凭据 | 未执行 | NOT-RUN-LOCAL |
+| 当前生产基线 Provider smoke（runtime `20260721-224804`） | `scripts/livekit_smoke_test.py`, `scripts/provider_smoke_test.py`, `docs/releases/20260721-224804.md` | LiveKit、FunASR、Qwen、豆包 PCM/字幕/取消、9 项 core readiness 实网证据 | PASS-PROD-BASELINE |
+| 当前 release canonical/Persona 发布门禁 | `scripts/provider_smoke_test.py`, `scripts/mark_readiness.py`, `scripts/refresh_readiness.sh` | 新 release 绑定 FunASR、Qwen、豆包、core readiness、H5 与 WMS 无回归 | PASS-PROD |
 | 韵律自适应（阶段4） | `orchestration/prosody.py` | `test_prosody.py` | PASS |
 | 双部署档案 | `config.py`, `agent.build_turn_handling_config` | `test_config.py` | PASS |
 | H5 前端无永久密钥 | `.env.example`, Control API, `apps/h5/` | `apps/h5/src/api.test.js`, production bundle static scan | PASS |
@@ -74,12 +79,12 @@
 | 生产发布、备份与回滚 runbook | `docs/production-deployment.md`, `HANDOFF.md` | 首次发布清单与回滚步骤 | PASS-DOC |
 | 可观测性 registry/结构化日志/追踪；输入守卫按原因计数；生产未启动或对外暴露 Prometheus endpoint | `observability/*`, `duplex_runtime.py` | `test_metrics_exporter.py`, `test_duplex_runtime_wiring.py` | PASS-INTERNAL |
 | Python 质量门 | `pyproject.toml`, `.github/workflows/ci.yml` | Ruff、mypy strict、全量 pytest | PASS-LOCAL |
-| H5 质量门 | `apps/h5/package.json`, `apps/h5/src/**/*.test.*` | 121 项测试、production build、移动端浏览器与 console 回归 | PASS-LOCAL |
+| H5 质量门 | `apps/h5/package.json`, `apps/h5/src/**/*.test.*` | 全量测试、production build、移动端浏览器与 console 回归 | PASS-LOCAL |
 | legacy Web/iOS 质量门 | Web 保留历史源码；原生 iOS 已移除 | Web 不进入当前 CI/DoD；iOS 无构建门 | HISTORICAL-NOT-IN-SCOPE / REMOVED |
 | 200 条真实中文录音、AEC 设备矩阵、第 21 章 SLO | 需外部测试数据与设备 | 尚未执行 | NOT-VALIDATED |
 
 ## 当前发布结论
 
-当前已发布生产基线为 runtime/H5 `20260720-182535`，默认 provider 为 `qwen`，H5 只暴露 FunASR + Qwen + CosyVoice 3.5 级联。稳定账号、终身记忆、Persona、shadow 声纹、声音档案治理与原始语音授权底座已部署；标为 `PASS-LOCAL` 的单项仍只代表本地自动化或浏览器验收，不能替代真实设备、真人样本和规模化生产验收。
+当前已发布生产基线为 runtime/H5 `20260721-224804`，默认主链为 FunASR + Qwen + 豆包 Seed-TTS 2.0 双向流式。“过滤明显旁人（实验）”、ambiguous 无权限 fail-open、generation-bound 主人历史隔离、canonical 用户话轮和 Persona 低敏自动学习已通过本地闭环及生产发布门禁；但自动化仍不能替代真实设备主人/孩子复测、真人样本和规模化生产验收。
 
 200 条明确授权真人录音、完整 AEC/噪声/重叠/回放设备矩阵、真人 Persona/声音盲测、生产 PostgreSQL/S3/KMS 联合恢复与真实手机 H5 验收仍为 **NOT-VALIDATED**。原生 iOS 已从仓库移除，legacy Web 不属于当前产品范围。

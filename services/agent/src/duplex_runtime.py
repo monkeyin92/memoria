@@ -10,10 +10,11 @@ import logging
 import math
 import time
 import uuid
+from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence, new_session_id
@@ -30,7 +31,7 @@ from services.agent.src.orchestration.interruption_guard import (
     PlaybackInputGuard,
     interrupt_ack_phrase,
 )
-from services.agent.src.orchestration.orchestrator import CosyPoolHandle, Orchestrator
+from services.agent.src.orchestration.orchestrator import Orchestrator, TTSPoolHandle
 from services.agent.src.orchestration.phrase_segmenter import PhraseSegmenter
 from services.agent.src.orchestration.prosody import (
     SpeechPlan,
@@ -52,7 +53,6 @@ from services.agent.src.orchestration.utterance_router import (
     route_target_speaker,
     route_utterance,
 )
-from services.agent.src.providers.cosyvoice_tts import CosyVoicePool, CosyVoiceTTS
 from services.common.redaction import redact_pii
 from services.speaker.domain import (
     SpeakerDecision,
@@ -62,9 +62,12 @@ from services.speaker.domain import (
 
 logger = logging.getLogger(__name__)
 
+ResumeSpeakerBinding = tuple[str, str, int | None, str]
+
 POST_PLAYBACK_ECHO_GUARD_MS = 800
 PLAYBACK_INPUT_BLOCK_MIN_WORDS = 1000
 TARGET_SPEAKER_MIN_PCM_MS = 600
+HISTORY_ELIGIBILITY_MAX_FENCES = 32
 CLIENT_AUDIO_TRACE_NAMES = frozenset(
     {
         "audio_unlock",
@@ -87,11 +90,16 @@ CLIENT_AUDIO_METRIC_NAMES = frozenset(
         "packets_lost",
         "packets_received",
         "packets_discarded",
+        "packets_lost_delta",
+        "packets_received_delta",
+        "packets_discarded_delta",
         "bytes_received",
         "nack_count",
         "concealed_samples",
+        "concealed_samples_delta",
         "silent_concealed_samples",
         "total_samples_received",
+        "total_samples_received_delta",
         "concealment_events",
         "concealment_ratio",
         "non_silent_concealment_ratio",
@@ -108,12 +116,49 @@ CLIENT_AUDIO_METRIC_NAMES = frozenset(
     }
 )
 
+_TRANSCRIPT_BOUNDARY_CHARS = " \t\r\n。！？.!?，,；;：:\"'“”‘’（）()【】[]"
+
+
+def _strip_matching_transcript_prefix(text: str, prefix: str) -> tuple[bool, str]:
+    """Strip a previously observed ASR prefix while tolerating punctuation rewrites."""
+
+    expected = "".join(char.casefold() for char in prefix if char.isalnum())
+    actual = "".join(char.casefold() for char in text if char.isalnum())
+    if len(expected) < 6 or len(actual) <= len(expected):
+        return False, text
+    matched = 0
+    for index, char in enumerate(text):
+        if not char.isalnum():
+            continue
+        folded = char.casefold()
+        if len(folded) != 1 or folded != expected[matched]:
+            return False, text
+        matched += 1
+        if matched == len(expected):
+            return True, text[index + 1 :].lstrip(_TRANSCRIPT_BOUNDARY_CHARS)
+    return False, text
+
+
+@dataclass(frozen=True)
+class CanonicalUserTurnSnapshot:
+    """Transcript decisions frozen at one VAD speech-epoch boundary."""
+
+    speech_epoch: int | None
+    accepted_finals: tuple[str, ...]
+    contaminated: bool
+    suspected_playback_prefixes: tuple[str, ...]
+
 
 @dataclass
-class LiveKitCosyPoolAdapter(CosyPoolHandle):
-    """Adapt CosyVoicePool.discard_active_connection for Orchestrator."""
+class ActiveTTSPool(Protocol):
+    async def discard_active_connection(self, fence: GenerationFence) -> None: ...
 
-    pool: CosyVoicePool | None = None
+
+@dataclass
+class LiveKitTTSPoolAdapter(TTSPoolHandle):
+    """Adapt the active provider pool to the orchestrator cancellation seam."""
+
+    pool: ActiveTTSPool | None = None
     discarded: list[GenerationFence] = field(default_factory=list)
 
     async def discard_active_connection(self, fence: GenerationFence) -> None:
@@ -127,7 +172,7 @@ class DuplexRuntime:
     """Session-scoped orchestration bound to LiveKit agent lifecycle."""
 
     orchestrator: Orchestrator
-    tts: CosyVoiceTTS | None = None
+    tts: Any | None = None
     session_id: str = field(default_factory=new_session_id)
     input_guard: PlaybackInputGuard = field(default_factory=PlaybackInputGuard)
     latency_trace: LatencyTrace = field(default_factory=LatencyTrace)
@@ -142,6 +187,14 @@ class DuplexRuntime:
     _pending_assistant_text: str = ""
     _played_assistant_text: str = ""
     _fresh_user_speech: bool = False
+    _accepted_user_finals: list[str] = field(default_factory=list)
+    _user_transcript_contaminated: bool = False
+    _suspected_playback_prefixes: list[str] = field(default_factory=list)
+    _canonical_speech_epoch: int | None = None
+    _canonical_final_observed: bool = False
+    _canonical_turn_snapshots: deque[CanonicalUserTurnSnapshot] = field(default_factory=deque)
+    _consumed_canonical_speech_epoch: int | None = None
+    _persona_evidence_eligible: bool = False
     _playback_fence: GenerationFence | None = None
     _last_playback_completed_ns: int | None = None
     _set_interruption_min_words: Callable[[int], None] | None = None
@@ -160,7 +213,9 @@ class DuplexRuntime:
     _speaker_pcm: bytearray = field(default_factory=bytearray)
     _speaker_collecting: bool = False
     _speaker_classification_task: asyncio.Task[Any] | None = None
+    _history_eligible_by_fence: dict[tuple[int, int], bool] = field(default_factory=dict)
     _target_speaker_focus_enabled: bool = False
+    _reject_non_owner_voice: bool = True
     _target_focus_epoch: int | None = None
     _target_focus_pending_epoch: int | None = None
     _target_speaker_interrupt: Callable[[], Awaitable[None]] | None = None
@@ -169,6 +224,13 @@ class DuplexRuntime:
     _result_speaker: Callable[[str], Any] | None = None
     _interrupt_yield: Callable[[str], Awaitable[None]] | None = None
     _false_interrupt_recover: Callable[[], Awaitable[None]] | None = None
+    _user_turn_clearer: Callable[[], None] | None = None
+    _cleared_control_epoch: int | None = None
+    _paused_reply_available: bool = False
+    _reply_speaker_binding: ResumeSpeakerBinding | None = None
+    _paused_reply_binding: ResumeSpeakerBinding | None = None
+    _resume_pending: bool = False
+    _resume_fence: GenerationFence | None = None
     _last_interrupt_yield_ns: int | None = None
     _last_false_recover_ns: int | None = None
     _last_listen_restore_ns: int | None = None
@@ -200,7 +262,7 @@ class DuplexRuntime:
         cls,
         *,
         session_id: str | None = None,
-        tts: CosyVoiceTTS | None = None,
+        tts: Any | None = None,
         input_guard_enabled: bool = False,
         listener_cues_enabled: bool = False,
         use_paralinguistic_tags: bool = False,
@@ -209,7 +271,7 @@ class DuplexRuntime:
         sid = session_id or new_session_id()
         orch = Orchestrator(session_id=sid)
         if tts is not None:
-            orch.cosyvoice_pool = LiveKitCosyPoolAdapter(pool=tts.pool)
+            orch.tts_pool = LiveKitTTSPoolAdapter(pool=tts.pool)
         return cls(
             orchestrator=orch,
             tts=tts,
@@ -286,9 +348,12 @@ class DuplexRuntime:
         self._target_speaker_interrupt = interrupt
 
     def set_target_speaker_focus(self, enabled: bool) -> None:
-        """Enable owner-only conversation control for a formal authority session."""
+        """Enable target-speaker routing for a formal authority session."""
 
         self._target_speaker_focus_enabled = enabled
+
+    def set_reject_non_owner_voice(self, reject: bool) -> None:
+        self._reject_non_owner_voice = reject
 
     @property
     def speaker_permissions(self) -> SpeakerPermissions:
@@ -296,6 +361,20 @@ class DuplexRuntime:
             return self._speaker_decision.permissions
         classification = self._speaker_class if self._speaker_class == "owner" else "uncertain"
         return permissions_for_speaker(classification)  # type: ignore[arg-type]
+
+    def _current_history_eligible(self) -> bool:
+        decision = self._speaker_decision
+        return decision is not None and (
+            decision.classification == "owner" or decision.reason_code == "shadow_owner_candidate"
+        )
+
+    def _bind_history_eligibility(self, fence: GenerationFence, eligible: bool) -> None:
+        self._history_eligible_by_fence[(fence.turn_id, fence.generation_id)] = eligible
+        while len(self._history_eligible_by_fence) > HISTORY_ELIGIBILITY_MAX_FENCES:
+            self._history_eligible_by_fence.pop(next(iter(self._history_eligible_by_fence)))
+
+    def _history_eligible(self, fence: GenerationFence) -> bool:
+        return self._history_eligible_by_fence.get((fence.turn_id, fence.generation_id), False)
 
     def set_result_speaker(self, speaker: Callable[[str], Any]) -> None:
         self._result_speaker = speaker
@@ -451,6 +530,7 @@ class DuplexRuntime:
             pcm_duration_ms=pcm_duration_ms,
             context=context,
             explicit_interrupt=explicit_interrupt,
+            reject_non_owner_voice=self._reject_non_owner_voice,
         )
 
     def _reject_target_speaker(
@@ -616,8 +696,13 @@ class DuplexRuntime:
         route = route_utterance(
             text if text is not None else self._interrupt_candidate_text(),
             speaker_state=self.speaker_verifier.state,
+            resumable_reply=(
+                self._paused_reply_available
+                and self._paused_reply_binding is not None
+                and self._paused_reply_binding == self._current_resume_speaker_binding()
+            ),
         )
-        if route.should_interrupt:
+        if route.should_interrupt or route.intent is UtteranceIntent.RESUME:
             return route
         if self._sticky_interrupt_epoch == self._speaker_epoch:
             return self._sticky_interrupt_route or route
@@ -1073,6 +1158,7 @@ class DuplexRuntime:
             "final": final,
             "turn_id": fence.turn_id,
             "generation_id": fence.generation_id,
+            "history_eligible": bool(final and self._history_eligible(fence)),
         }
         if heard is not None:
             event["heard"] = heard
@@ -1083,7 +1169,11 @@ class DuplexRuntime:
         if speaker == "user":
             event_type = "speech.utterance_finalized"
             speaker_class = self._speaker_class
-            payload: dict[str, Any] = {"text": archive_text}
+            payload: dict[str, Any] = {
+                "text": archive_text,
+                "persona_eligible": self._persona_evidence_eligible,
+            }
+            payload.update(self._speaker_persona_provenance())
             payload.update(self._owner_acoustic_evidence())
         elif speaker == "assistant" and heard is True:
             event_type = "assistant.playout_stopped"
@@ -1128,6 +1218,20 @@ class DuplexRuntime:
                 name=f"duplex-evidence-{event_type.replace('.', '-')}",
                 durable=True,
             )
+
+    def _speaker_persona_provenance(self) -> dict[str, Any]:
+        """Bind Persona eligibility to the decision for this exact speech epoch."""
+
+        decision = self._speaker_decision
+        if decision is None:
+            return {}
+        return {
+            "speaker_reason_code": decision.reason_code,
+            "speaker_profile_id": decision.profile_id,
+            "speaker_quality_score": decision.quality_score,
+            "speaker_model_version": decision.model_version,
+            "speaker_template_version": decision.template_version,
+        }
 
     def _owner_acoustic_evidence(self) -> dict[str, int | float]:
         decision = self._speaker_decision
@@ -1351,7 +1455,9 @@ class DuplexRuntime:
     def on_user_voice_started(self, *, now_ns: int | None = None) -> PlaybackInputDecision:
         self.refresh_voice_profile()
         self.refresh_memory_context()
+        self._seal_canonical_speech_epoch()
         self._speaker_epoch += 1
+        self._canonical_speech_epoch = self._speaker_epoch
         self._target_focus_epoch = None
         self._target_focus_pending_epoch = None
         self._sticky_interrupt_epoch = None
@@ -1410,7 +1516,30 @@ class DuplexRuntime:
             final=final,
             assistant_text=self._pending_assistant_text or self._played_assistant_text,
             now_ns=now_ns,
+            during_playback_if_unstarted=self._was_speaking,
         )
+        if (
+            self.input_guard.candidate_during_playback
+            and not self.input_guard.candidate_vad_anchored
+            and text.strip()
+        ):
+            self._user_transcript_contaminated = True
+            prefix = text.strip()
+            if not self._suspected_playback_prefixes or (
+                self._suspected_playback_prefixes[-1] != prefix
+            ):
+                self._suspected_playback_prefixes.append(prefix)
+                del self._suspected_playback_prefixes[:-8]
+        if final:
+            if self.input_guard.candidate_vad_anchored:
+                self._canonical_final_observed = True
+            if decision is PlaybackInputDecision.ACCEPT and self.input_guard.candidate_vad_anchored:
+                self._accepted_user_finals.append(text.strip())
+            elif decision is PlaybackInputDecision.IGNORE:
+                self._user_transcript_contaminated = True
+                self.orchestrator.metrics.inc_guarded_user_input(
+                    self.input_guard.candidate_reason or "playback_noise"
+                )
         raw_route = route_utterance(text, speaker_state=self.speaker_verifier.state)
         if decision is PlaybackInputDecision.ACCEPT and raw_route.should_interrupt:
             # FunASR may revise a clear interim「等一下」into a nearby final
@@ -1428,13 +1557,119 @@ class DuplexRuntime:
             self._schedule_listener_cue(text, now_ns=now_ns)
         return decision
 
+    def _canonical_snapshot(self) -> CanonicalUserTurnSnapshot:
+        return CanonicalUserTurnSnapshot(
+            speech_epoch=self._canonical_speech_epoch,
+            accepted_finals=tuple(part for part in self._accepted_user_finals if part),
+            contaminated=self._user_transcript_contaminated,
+            suspected_playback_prefixes=tuple(self._suspected_playback_prefixes),
+        )
+
+    def _reset_canonical_speech_epoch(self) -> None:
+        self._accepted_user_finals.clear()
+        self._user_transcript_contaminated = False
+        self._suspected_playback_prefixes.clear()
+        self._canonical_speech_epoch = None
+        self._canonical_final_observed = False
+
+    def _seal_canonical_speech_epoch(self) -> None:
+        """Queue a completed VAD epoch before later ASR events can mutate it."""
+
+        if self._canonical_speech_epoch is None or not self._canonical_final_observed:
+            return
+        self._canonical_turn_snapshots.append(self._canonical_snapshot())
+        self._reset_canonical_speech_epoch()
+
+    def consume_canonical_user_turn(self, raw_text: str) -> str | None:
+        """Consume the oldest VAD-epoch snapshot for LiveKit's ordered callback."""
+
+        if self._canonical_turn_snapshots:
+            snapshot = self._canonical_turn_snapshots.popleft()
+        elif (
+            self._canonical_final_observed
+            or self._accepted_user_finals
+            or self._user_transcript_contaminated
+        ):
+            snapshot = self._canonical_snapshot()
+            self._reset_canonical_speech_epoch()
+        else:
+            self._consumed_canonical_speech_epoch = (
+                self._speaker_epoch if self._fresh_user_speech else None
+            )
+            return raw_text.strip()
+
+        self._consumed_canonical_speech_epoch = snapshot.speech_epoch
+        accepted = snapshot.accepted_finals
+        contaminated = snapshot.contaminated
+        suspected_prefixes = snapshot.suspected_playback_prefixes
+        if not contaminated:
+            return " ".join(accepted).strip() or raw_text.strip()
+        canonical_parts: list[str] = []
+        prefixes = sorted(
+            suspected_prefixes,
+            key=lambda value: sum(char.isalnum() for char in value),
+            reverse=True,
+        )
+        for part in accepted:
+            clean = part
+            for prefix in prefixes:
+                matched, remainder = _strip_matching_transcript_prefix(clean, prefix)
+                if matched:
+                    clean = remainder
+                    break
+            if clean.strip():
+                canonical_parts.append(clean.strip())
+        canonical = " ".join(canonical_parts).strip()
+        logger.info(
+            "canonical_user_turn_rebuilt accepted_segments=%s raw_len=%s canonical_len=%s "
+            "session_id=%s",
+            len(accepted),
+            len(raw_text.strip()),
+            len(canonical),
+            self.session_id,
+        )
+        return canonical or None
+
+    @property
+    def consumed_canonical_speech_epoch(self) -> int | None:
+        return self._consumed_canonical_speech_epoch
+
+    def discard_pending_user_transcript(self) -> None:
+        """Discard only the current endpoint buffer, never older queued callbacks."""
+
+        self._reset_canonical_speech_epoch()
+
+    def _clear_unanchored_playback_transcript(self) -> None:
+        """Reset LiveKit STT after echo-only playback input, before the next VAD."""
+
+        if (
+            not self._suspected_playback_prefixes
+            or self._fresh_user_speech
+            or self._user_turn_clearer is None
+        ):
+            return
+        try:
+            self._user_turn_clearer()
+        except Exception:
+            logger.warning(
+                "playback transcript clear failed session_id=%s",
+                self.session_id,
+                exc_info=True,
+            )
+            self.mark_audio_event("playback_transcript_cleared", status="error")
+            return
+        self.discard_pending_user_transcript()
+        self.mark_audio_event("playback_transcript_cleared")
+
     def accept_user_turn(
         self,
         text: str,
         *,
         speech_anchored: bool | None = None,
+        canonical_speech_epoch: int | None = None,
     ) -> tuple[bool, str | None]:
         self.speaker_verifier.mark_utterance_end()
+        self._persona_evidence_eligible = False
         # Single control-plane decision: enroll / pure interrupt / chat.
         # Side effects (early enroll finalize, yield ack) stay here; intent is
         # owned by utterance_router so barge-in and turn-commit cannot diverge.
@@ -1485,6 +1720,10 @@ class DuplexRuntime:
                     "ack_len": len(route.ack_phrase or ""),
                 },
             )
+            self._clear_control_user_turn(
+                cause="interrupt_command_turn",
+                speech_epoch=canonical_speech_epoch,
+            )
             # Hand floor back: unlock LiveKit min_words so the next real utterance
             # can commit (prod: after 停一下, min_words stuck at 1000 + orphan FINAL).
             self._restore_listen_after_control(cause="interrupt_command_turn")
@@ -1495,13 +1734,16 @@ class DuplexRuntime:
             )
             return False, route.reason
         if self.input_guard.enabled and speech_anchored is not None:
-            missing_anchor = not speech_anchored or not self._fresh_user_speech
+            snapshot_has_vad = canonical_speech_epoch is not None
+            missing_anchor = not speech_anchored or not (
+                snapshot_has_vad or self._fresh_user_speech
+            )
             if missing_anchor:
                 # Prod: after「停一下」LiveKit often emits orphan FINAL without
                 # started/stopped speaking metrics → session goes permanently silent.
                 if (
                     route.enter_chat
-                    and route.intent is UtteranceIntent.CHAT
+                    and route.intent in {UtteranceIntent.CHAT, UtteranceIntent.RESUME}
                     and self._within_control_restore_grace()
                     and len(route.normalized_text) >= 2
                 ):
@@ -1517,12 +1759,14 @@ class DuplexRuntime:
                         "speech_epoch_fail_open",
                         detail={"reason": "after_control_grace"},
                     )
-                    self._fresh_user_speech = False
+                    if canonical_speech_epoch in {None, self._speaker_epoch}:
+                        self._fresh_user_speech = False
                 else:
-                    self._fresh_user_speech = False
+                    if canonical_speech_epoch in {None, self._speaker_epoch}:
+                        self._fresh_user_speech = False
                     self.orchestrator.metrics.inc_guarded_user_input("missing_speech_epoch")
                     return False, "missing_speech_epoch"
-            else:
+            elif canonical_speech_epoch in {None, self._speaker_epoch}:
                 self._fresh_user_speech = False
         if self.speaker_verifier.active and not self._speaker_allows_user_input(
             context="turn_commit"
@@ -1535,9 +1779,19 @@ class DuplexRuntime:
         accepted, reason = self.input_guard.accept_turn(text)
         if not accepted:
             self.orchestrator.metrics.inc_guarded_user_input(reason or "unknown")
+        else:
+            lexical_chars = sum(char.isalnum() for char in route.normalized_text)
+            self._persona_evidence_eligible = (
+                route.intent is UtteranceIntent.CHAT and lexical_chars >= 8
+            )
+            self._resume_pending = route.intent is UtteranceIntent.RESUME
+            if route.enter_chat:
+                self._paused_reply_available = False
+                self._paused_reply_binding = None
         return accepted, reason
 
     async def on_turn_committed(self, user_text: str) -> GenerationFence:
+        history_eligible = self._current_history_eligible()
         self.cancel_listener_cue()
         self._apply_speech_plan(user_text, turn_id=self.fence.turn_id + 1)
         self._last_playback_completed_ns = None
@@ -1547,6 +1801,10 @@ class DuplexRuntime:
             await self.orchestrator.bump_tool_epoch_on_condition_change()
         await self.orchestrator.on_vad_start()
         fence = await self.orchestrator.commit_turn(user_text)
+        self._bind_history_eligibility(fence, history_eligible)
+        self._reply_speaker_binding = self._current_resume_speaker_binding()
+        self._resume_fence = fence if self._resume_pending else None
+        self._resume_pending = False
         self.set_interaction_phase(
             InteractionPhase.THINKING_SILENT,
             cause="turn_committed",
@@ -1557,7 +1815,11 @@ class DuplexRuntime:
         self._playback_fence = None
         if self.tts is not None:
             self.tts.bind_fence(fence)
-        if self._deep_client is not None and _needs_deep_path(user_text):
+        if (
+            self._deep_client is not None
+            and self.speaker_permissions.read_private_memory
+            and _needs_deep_path(user_text)
+        ):
             await self._start_deep_task(fence)
         return fence
 
@@ -1598,6 +1860,87 @@ class DuplexRuntime:
     def set_false_interrupt_recover(self, recover: Callable[[], Awaitable[None]] | None) -> None:
         """Called when LiveKit already stopped audio but speaker gate rejected barge-in."""
         self._false_interrupt_recover = recover
+
+    def set_user_turn_clearer(self, clearer: Callable[[], None] | None) -> None:
+        """Inject LiveKit's synchronous user-turn reset at the session boundary."""
+
+        self._user_turn_clearer = clearer
+
+    def _clear_control_user_turn(
+        self,
+        *,
+        cause: str,
+        speech_epoch: int | None = None,
+    ) -> None:
+        """Drop one endpoint buffer before the control ack can leak into ASR."""
+
+        target_epoch = self._speaker_epoch if speech_epoch is None else speech_epoch
+        if target_epoch != self._speaker_epoch:
+            logger.info(
+                "stale control user-turn clear skipped control_epoch=%s current_epoch=%s "
+                "cause=%s session_id=%s",
+                target_epoch,
+                self._speaker_epoch,
+                cause,
+                self.session_id,
+            )
+            self.mark_audio_event(
+                "control_user_turn_clear_skipped",
+                status="ignored",
+                detail={"cause": cause, "reason": "stale_speech_epoch"},
+            )
+            return
+        self.discard_pending_user_transcript()
+        if self._user_turn_clearer is None or self._cleared_control_epoch == target_epoch:
+            return
+        try:
+            self._user_turn_clearer()
+        except Exception:
+            logger.warning(
+                "control user-turn clear failed cause=%s session_id=%s",
+                cause,
+                self.session_id,
+                exc_info=True,
+            )
+            self.mark_audio_event(
+                "control_user_turn_cleared",
+                status="error",
+                detail={"cause": cause},
+            )
+            return
+        self._cleared_control_epoch = target_epoch
+        self.mark_audio_event(
+            "control_user_turn_cleared",
+            detail={"cause": cause},
+        )
+
+    def is_resume_generation(self, fence: GenerationFence | None = None) -> bool:
+        """Whether this generation resumes the answer explicitly paused by the user."""
+
+        candidate = fence or self.fence
+        return self._resume_fence is not None and self._resume_fence.matches(candidate)
+
+    def _current_resume_speaker_binding(self) -> ResumeSpeakerBinding | None:
+        """Return the verified identity allowed to recover this speaker's reply."""
+
+        decision = self._speaker_decision
+        if decision is None or not decision.profile_id:
+            return None
+        if decision.classification == "owner":
+            authority = "owner"
+        elif (
+            decision.classification == "uncertain"
+            and decision.reason_code == "shadow_owner_candidate"
+        ):
+            authority = "shadow_owner_candidate"
+        else:
+            return None
+        return (
+            decision.classification,
+            decision.profile_id,
+            decision.template_version,
+            authority,
+        )
 
     def _assistant_was_mid_reply(self, *, was_speaking: bool) -> bool:
         if was_speaking or self._playback_fence is not None:
@@ -1818,6 +2161,8 @@ class DuplexRuntime:
             synchronized_transcript=synchronized_transcript,
             force_generation_bump=force_generation_bump,
         )
+        if create_user_turn and barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND:
+            self._clear_control_user_turn(cause=f"interrupt:{cause}")
         self._was_speaking = False
         self._last_playback_completed_ns = None
         self._pending_assistant_text = ""
@@ -1827,6 +2172,16 @@ class DuplexRuntime:
         if self.tts is not None:
             self.tts.bind_fence(new_fence)
         if not new_fence.matches(old_fence):
+            if (
+                create_user_turn
+                and mid_reply
+                and barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND
+            ):
+                self._paused_reply_binding = self._reply_speaker_binding
+                self._paused_reply_available = self._paused_reply_binding is not None
+            elif create_user_turn:
+                self._paused_reply_available = False
+                self._paused_reply_binding = None
             self.publish_assistant_state("interrupted")
             self.set_interaction_phase(
                 InteractionPhase.INTERRUPTED,
@@ -1890,6 +2245,10 @@ class DuplexRuntime:
             if finalized is None:
                 return
             heard, event_fence = finalized
+            self._bind_history_eligibility(
+                event_fence,
+                self._history_eligible(interrupted_from),
+            )
             self._was_speaking = False
             self._pending_assistant_text = ""
             self._played_assistant_text = heard
@@ -1913,6 +2272,7 @@ class DuplexRuntime:
             # which used to leave _was_speaking stuck and block enroll PCM forever.
             self._was_speaking = False
             self._last_playback_completed_ns = time.monotonic_ns()
+            self._clear_unanchored_playback_transcript()
             if self._played_assistant_text:
                 self.publish_transcript(
                     speaker="assistant",
@@ -1927,6 +2287,7 @@ class DuplexRuntime:
             return
         # LiveKit emits this item only after uninterrupted playout completes.
         heard = text
+        reply_fence = self._playback_fence or self.fence
         heard = await self.orchestrator.finish_livekit_playback(
             tools_active=self._pending_tool_results > 0,
             synchronized_transcript=heard,
@@ -1936,6 +2297,7 @@ class DuplexRuntime:
         self._played_assistant_text = heard
         self._playback_fence = None
         self._last_playback_completed_ns = time.monotonic_ns()
+        self._clear_unanchored_playback_transcript()
         self.publish_assistant_state(
             "tool_waiting" if self._pending_tool_results > 0 else "listening"
         )
@@ -1945,6 +2307,7 @@ class DuplexRuntime:
                 text=heard,
                 final=True,
                 heard=True,
+                fence=reply_fence,
             )
 
     def should_ignore_post_playback_backchannel(

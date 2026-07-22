@@ -29,8 +29,9 @@ COPY services/speaker ./services/speaker
 COPY packages ./packages
 COPY services/__init__.py ./services/__init__.py
 COPY scripts/verify_env.py scripts/livekit_smoke_test.py scripts/provider_smoke_test.py ./scripts/
-# Designed CosyVoice v3.5 profile → voice_id map (no secrets).
+# Reviewed runtime voice maps (no secrets).
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
+COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json
 
 USER 65532:65532
 ENTRYPOINT ["/app/.venv/bin/python", "-m", "services.agent.src.main"]

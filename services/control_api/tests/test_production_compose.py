@@ -20,15 +20,9 @@ def test_production_services_use_separate_env_files_and_persistent_agent_spool()
 
 
 def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> None:
-    compose = (ROOT / "infra" / "memoria-data.production.yml").read_text(
-        encoding="utf-8"
-    )
-    postgres_init = (ROOT / "infra" / "postgres" / "init-memoria.sh").read_text(
-        encoding="utf-8"
-    )
-    minio_init = (ROOT / "infra" / "minio" / "provision.sh").read_text(
-        encoding="utf-8"
-    )
+    compose = (ROOT / "infra" / "memoria-data.production.yml").read_text(encoding="utf-8")
+    postgres_init = (ROOT / "infra" / "postgres" / "init-memoria.sh").read_text(encoding="utf-8")
+    minio_init = (ROOT / "infra" / "minio" / "provision.sh").read_text(encoding="utf-8")
 
     assert "name: memoria-data" in compose
     assert 'pgvector/pgvector:0.8.1-pg17-bookworm"' in compose
@@ -63,9 +57,7 @@ def test_production_runbook_pins_data_compose_path_and_network_bootstrap_order()
 def test_production_stack_contains_pinned_authenticated_campplus_model() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
     dockerfile = (ROOT / "infra" / "Dockerfile.speaker-model").read_text(encoding="utf-8")
-    requirements = (ROOT / "infra" / "requirements-speaker-model.txt").read_text(
-        encoding="utf-8"
-    )
+    requirements = (ROOT / "infra" / "requirements-speaker-model.txt").read_text(encoding="utf-8")
 
     assert "\n  speaker-model:\n" in compose
     assert "dockerfile: infra/Dockerfile.speaker-model" in compose
@@ -104,9 +96,7 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
     assert "--mark-smokes-passed" not in script
     assert "--check-ready" not in script
 
-    control_dockerfile = (ROOT / "infra" / "Dockerfile.control-api").read_text(
-        encoding="utf-8"
-    )
+    control_dockerfile = (ROOT / "infra" / "Dockerfile.control-api").read_text(encoding="utf-8")
     delta_builder = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
     copy_line = "COPY scripts/mark_readiness.py ./scripts/mark_readiness.py"
     assert copy_line in control_dockerfile
@@ -133,10 +123,21 @@ def test_current_compose_never_builds_the_legacy_web_client() -> None:
     assert "Dockerfile.web" not in compose
 
 
-def test_agent_image_includes_cross_service_runtime_dependencies() -> None:
-    dockerfile = (ROOT / "infra" / "Dockerfile.agent").read_text(encoding="utf-8")
+def test_runtime_images_include_voice_registries_needed_by_agent_and_legacy_previews() -> None:
+    agent_dockerfile = (ROOT / "infra" / "Dockerfile.agent").read_text(encoding="utf-8")
+    control_dockerfile = (ROOT / "infra" / "Dockerfile.control-api").read_text(encoding="utf-8")
+    delta_builder = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
 
-    assert "COPY services/speaker ./services/speaker" in dockerfile
+    assert "COPY services/speaker ./services/speaker" in agent_dockerfile
+    doubao_registry = "COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json"
+    cosyvoice_registry = (
+        "COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json"
+    )
+    assert doubao_registry in agent_dockerfile
+    assert doubao_registry in delta_builder
+    assert cosyvoice_registry in agent_dockerfile
+    assert cosyvoice_registry in control_dockerfile
+    assert delta_builder.count(cosyvoice_registry) == 2
 
 
 def test_nginx_bounds_raw_voice_upload_without_raising_all_api_body_limits() -> None:
@@ -177,13 +178,26 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
             "MEMORIA_MEMORY_CONTEXT_ENABLED": "false",
             "MEMORIA_VOICE_PROFILE_ENABLED": "false",
             "DASHSCOPE_API_KEY": "dashscope",
+            "TTS_PROVIDER": "doubao",
+            "DOUBAO_TTS_APP_ID": "doubao-app-id",
+            "DOUBAO_TTS_ACCESS_TOKEN": "doubao-access-token",
+            "DOUBAO_TTS_CONNECT_TIMEOUT_S": "5",
             "FUNASR_MODEL": "fun-asr-realtime",
+            "FUNASR_CONTEXT_ENABLED": "false",
         }
     )
 
     assert control["MEMORIA_AUTH_SECRET"] == "auth"
     assert control["MEMORIA_SPEAKER_EMBEDDING_TOKEN"] == "speaker-model-token"
+    assert control["TTS_PROVIDER"] == "doubao"
+    assert agent["TTS_PROVIDER"] == "doubao"
     assert agent["DASHSCOPE_API_KEY"] == "dashscope"
+    assert agent["DOUBAO_TTS_APP_ID"] == "doubao-app-id"
+    assert agent["DOUBAO_TTS_ACCESS_TOKEN"] == "doubao-access-token"
+    assert agent["DOUBAO_TTS_CONNECT_TIMEOUT_S"] == "5"
+    assert "DOUBAO_TTS_APP_ID" not in control
+    assert "DOUBAO_TTS_ACCESS_TOKEN" not in control
+    assert "DOUBAO_TTS_API_KEY" not in control
     assert speaker_model == {"MEMORIA_SPEAKER_MODEL_TOKEN": "speaker-model-token"}
     assert agent["MEMORIA_ARCHIVE_WRITE_TOKEN"] == "archive-write-token"
     assert control["MEMORIA_MEMORY_READ_TOKEN"] == "memory-read-token"
@@ -196,6 +210,7 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     ):
         assert disabled_capability not in agent
     assert agent["FUNASR_MODEL"] == "fun-asr-realtime"
+    assert agent["FUNASR_CONTEXT_ENABLED"] == "false"
     for forbidden in (
         "MEMORIA_AUTH_SECRET",
         "MEMORIA_ARCHIVE_DATABASE_URL",
@@ -211,6 +226,30 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
         assert forbidden not in agent
     assert control["MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY"] == "archive-access"
     assert control["MEMORIA_VOICE_OBJECT_ACCESS_KEY"] == "voice-access"
+
+
+def test_production_env_split_rejects_unused_doubao_secret_key() -> None:
+    with pytest.raises(ValueError, match="must not be deployed"):
+        split_env({"DOUBAO_TTS_SECRET_KEY": "unused-secret"})
+
+
+@pytest.mark.parametrize(
+    "auth",
+    [
+        {
+            "DOUBAO_TTS_API_KEY": "api-key",
+            "DOUBAO_TTS_APP_ID": "app-id",
+            "DOUBAO_TTS_ACCESS_TOKEN": "access-token",
+        },
+        {"DOUBAO_TTS_APP_ID": "app-id"},
+        {"DOUBAO_TTS_ACCESS_TOKEN": "access-token"},
+    ],
+)
+def test_production_env_split_rejects_ambiguous_or_partial_doubao_auth(
+    auth: dict[str, str],
+) -> None:
+    with pytest.raises(ValueError, match="exactly one complete authentication mode"):
+        split_env(auth)
 
 
 def test_production_env_split_rejects_the_legacy_all_access_token() -> None:

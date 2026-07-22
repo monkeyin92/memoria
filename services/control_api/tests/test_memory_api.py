@@ -66,6 +66,8 @@ async def test_messages_summary_and_profile_persist(
         assert user_message.status_code == 201
         assert assistant_message.status_code == 201
         assert user_message.json()["local_date"] == _today()
+        initial_profile = await client.get(f"/v1/memory/profile/{user_id}", headers=headers)
+        assert initial_profile.json()["reject_non_owner_voice"] is True
 
         generated = await client.post(
             f"/v1/memory/days/{_today()}/summary",
@@ -87,6 +89,7 @@ async def test_messages_summary_and_profile_persist(
                 "auto_summary": False,
                 "voice_reply": False,
                 "gentle_reminders": True,
+                "reject_non_owner_voice": False,
                 "companion_id": "mianmian",
             },
         )
@@ -110,7 +113,10 @@ async def test_messages_summary_and_profile_persist(
     assert profile.json()["auto_summary"] is False
     assert profile.json()["voice_reply"] is False
     assert profile.json()["gentle_reminders"] is True
+    assert profile.json()["reject_non_owner_voice"] is False
     assert profile.json()["companion_id"] == "mianmian"
+    exported = persisted_app.state.memory_store.export_account_data(user_id=user_id)
+    assert exported["profile"]["reject_non_owner_voice"] is False
 
 
 @pytest.mark.asyncio

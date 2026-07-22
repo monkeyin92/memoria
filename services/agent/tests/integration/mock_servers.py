@@ -1,4 +1,4 @@
-"""Local protocol mock WebSocket/HTTP servers for FunASR / CosyVoice / DeepSeek."""
+"""Local protocol mock WebSocket/HTTP servers for speech and LLM providers."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from typing import Any
 
 import websockets
 from aiohttp import web
+from services.agent.src.providers.doubao_protocol import EventType, MessageType
 from websockets.asyncio.server import ServerConnection
 
 _LOOPBACK_CLIENT_HOST = "localhost"  # Keep mock traffic out of system proxies.
@@ -21,7 +22,7 @@ class MockFunASRServer:
     host: str = "127.0.0.1"
     port: int = 0
     scenario: str = (
-        "happy"  # happy|interim_rewrite|duplicate_final|heartbeat|missing_ts|fail|disconnect_once
+        "happy"  # happy|context_leak|interim_rewrite|duplicate_final|heartbeat|missing_ts|fail|disconnect_once
     )
     connections_closed: int = 0
     tasks_started: list[str] = field(default_factory=list)
@@ -135,7 +136,17 @@ class MockFunASRServer:
             if self.scenario == "heartbeat":
                 await ws.send(_result(task_id, "", sentence_end=False, heartbeat=True, words=[]))
 
-            if self.scenario == "interim_rewrite":
+            if self.scenario == "context_leak":
+                context = msg.get("payload", {}).get("input", {}).get("context", [])
+                previous = " ".join(
+                    str(content.get("text") or "")
+                    for item in context
+                    for content in item.get("content", [])
+                    if isinstance(content, dict)
+                ).strip()
+                text = f"{previous} 介绍一下南京。".strip()
+                await ws.send(_result(task_id, text, sentence_end=True, words=_chars(text)))
+            elif self.scenario == "interim_rewrite":
                 await ws.send(
                     _result(task_id, "我想定", sentence_end=False, words=_chars("我想定"))
                 )
@@ -431,6 +442,248 @@ class MockCosyVoiceServer:
             except Exception:
                 pass
             self.closed_without_reuse += 1
+
+
+_DOUBAO_CONNECTION_EVENTS = frozenset(
+    {
+        EventType.START_CONNECTION,
+        EventType.FINISH_CONNECTION,
+        EventType.CONNECTION_STARTED,
+        EventType.CONNECTION_FAILED,
+        EventType.CONNECTION_FINISHED,
+    }
+)
+_DOUBAO_CONNECTION_RESPONSES = frozenset(
+    {
+        EventType.CONNECTION_STARTED,
+        EventType.CONNECTION_FAILED,
+        EventType.CONNECTION_FINISHED,
+    }
+)
+
+
+def _doubao_sized(value: bytes) -> bytes:
+    return struct.pack(">I", len(value)) + value
+
+
+def _doubao_server_frame(
+    event: EventType,
+    *,
+    session_id: str = "",
+    connect_id: str = "",
+    payload: bytes = b"{}",
+    audio: bool = False,
+) -> bytes:
+    message_type = MessageType.AUDIO_ONLY_SERVER if audio else MessageType.FULL_SERVER_RESPONSE
+    serialization = 0 if audio else 1
+    frame = bytearray((0x11, (int(message_type) << 4) | 0x04, serialization << 4, 0x00))
+    frame.extend(struct.pack(">i", int(event)))
+    if event not in _DOUBAO_CONNECTION_EVENTS:
+        frame.extend(_doubao_sized(session_id.encode()))
+    if event in _DOUBAO_CONNECTION_RESPONSES:
+        frame.extend(_doubao_sized(connect_id.encode()))
+    frame.extend(_doubao_sized(payload))
+    return bytes(frame)
+
+
+def _parse_doubao_client_frame(data: bytes) -> tuple[EventType, str, dict[str, Any]]:
+    header_size = (data[0] & 0x0F) * 4
+    offset = header_size
+    event = EventType(struct.unpack_from(">i", data, offset)[0])
+    offset += 4
+
+    def take_sized() -> bytes:
+        nonlocal offset
+        size = struct.unpack_from(">I", data, offset)[0]
+        offset += 4
+        value = data[offset : offset + size]
+        offset += size
+        return value
+
+    session_id = ""
+    if event not in _DOUBAO_CONNECTION_EVENTS:
+        session_id = take_sized().decode()
+    raw_payload = take_sized()
+    payload = json.loads(raw_payload) if raw_payload else {}
+    return event, session_id, payload
+
+
+@dataclass
+class MockDoubaoServer:
+    host: str = "127.0.0.1"
+    port: int = 0
+    scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|slow|slow_once|slow_after_first|empty_ts|scaled_ts
+    connections: int = 0
+    sessions: int = 0
+    task_requests: list[list[str]] = field(default_factory=list)
+    speakers: list[str] = field(default_factory=list)
+    canceled_sessions: list[str] = field(default_factory=list)
+    request_headers: list[dict[str, str]] = field(default_factory=list)
+    pcm: bytes = b""
+    _server: Any = None
+    _thread: threading.Thread | None = None
+    _loop: asyncio.AbstractEventLoop | None = None
+
+    @property
+    def ws_url(self) -> str:
+        return f"ws://{_LOOPBACK_CLIENT_HOST}:{self.port}"
+
+    def start(self) -> None:
+        ready = threading.Event()
+
+        def _run() -> None:
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+
+            async def _start() -> Any:
+                return await websockets.serve(self._handler, self.host, self.port)
+
+            self._server = self._loop.run_until_complete(_start())
+            self.port = int(self._server.sockets[0].getsockname()[1])
+            ready.set()
+            self._loop.run_forever()
+            self._loop.run_until_complete(self._server.wait_closed())
+            self._loop.close()
+
+        self._thread = threading.Thread(target=_run, daemon=True)
+        self._thread.start()
+        ready.wait(timeout=5)
+
+    def stop(self) -> None:
+        if self._loop is None or self._server is None:
+            return
+
+        def _close() -> None:
+            self._server.close()
+
+            async def _wait() -> None:
+                await self._server.wait_closed()
+                assert self._loop is not None
+                self._loop.stop()
+
+            self._loop.create_task(_wait())
+
+        self._loop.call_soon_threadsafe(_close)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    async def _handler(self, ws: ServerConnection) -> None:
+        self.connections += 1
+        connection_index = self.connections - 1
+        headers = {name.lower(): value for name, value in ws.request.headers.raw_items()}
+        self.request_headers.append(headers)
+        connect_id = f"mock-doubao-{self.connections}"
+        active_session = ""
+        active_texts: list[str] | None = None
+        try:
+            raw = await ws.recv()
+            assert isinstance(raw, bytes)
+            event, _, _ = _parse_doubao_client_frame(raw)
+            assert event == EventType.START_CONNECTION
+            await ws.send(
+                _doubao_server_frame(
+                    EventType.CONNECTION_STARTED,
+                    connect_id=connect_id,
+                )
+            )
+            async for raw in ws:
+                if not isinstance(raw, bytes):
+                    continue
+                event, session_id, payload = _parse_doubao_client_frame(raw)
+                if event == EventType.START_SESSION:
+                    active_session = session_id
+                    active_texts = []
+                    self.sessions += 1
+                    self.task_requests.append(active_texts)
+                    req_params = payload.get("req_params", {})
+                    self.speakers.append(str(req_params.get("speaker") or ""))
+                    await ws.send(
+                        _doubao_server_frame(
+                            EventType.SESSION_STARTED,
+                            session_id=session_id,
+                        )
+                    )
+                elif event == EventType.TASK_REQUEST and active_texts is not None:
+                    req_params = payload.get("req_params", {})
+                    active_texts.append(str(req_params.get("text") or ""))
+                elif event == EventType.CANCEL_SESSION:
+                    self.canceled_sessions.append(session_id)
+                    await ws.send(
+                        _doubao_server_frame(
+                            EventType.SESSION_CANCELED,
+                            session_id=session_id,
+                        )
+                    )
+                elif event == EventType.FINISH_SESSION and active_texts is not None:
+                    if self.scenario == "slow" or (
+                        self.scenario == "slow_after_first" and self.sessions > 1
+                    ):
+                        continue
+                    if self.scenario == "slow_once" and connection_index == 0:
+                        await asyncio.sleep(0.3)
+                    await self._send_session_result(ws, active_session, active_texts)
+                    active_session = ""
+                    active_texts = None
+                elif event == EventType.FINISH_CONNECTION:
+                    await ws.send(
+                        _doubao_server_frame(
+                            EventType.CONNECTION_FINISHED,
+                            connect_id=connect_id,
+                        )
+                    )
+                    return
+        except websockets.exceptions.ConnectionClosed:
+            return
+
+    async def _send_session_result(
+        self,
+        ws: ServerConnection,
+        session_id: str,
+        texts: list[str],
+    ) -> None:
+        full_text = "".join(texts) or "你好"
+        samples = max(480, len(full_text) * 240)
+        pcm = struct.pack(f"<{samples}h", *([1200] * samples))
+        self.pcm = pcm
+        if self.scenario == "split_pcm":
+            midpoint = len(pcm) // 2
+            chunks = (pcm[:midpoint], pcm[midpoint:])
+        elif self.scenario == "split_pcm_odd":
+            chunks = (pcm[:1], pcm[1:3], pcm[3:257], pcm[257:])
+        elif self.scenario == "odd_pcm":
+            chunks = (pcm + b"\x00",)
+        else:
+            chunks = (pcm,)
+        for chunk in chunks:
+            await ws.send(
+                _doubao_server_frame(
+                    EventType.TTS_RESPONSE,
+                    session_id=session_id,
+                    payload=chunk,
+                    audio=True,
+                )
+            )
+        if self.scenario != "empty_ts":
+            duration_s = samples / 24000
+            subtitle_duration_s = duration_s + 0.5 if self.scenario == "scaled_ts" else duration_s
+            step = subtitle_duration_s / len(full_text)
+            words = [
+                {"word": char, "startTime": index * step, "endTime": (index + 1) * step}
+                for index, char in enumerate(full_text)
+            ]
+            await ws.send(
+                _doubao_server_frame(
+                    EventType.TTS_SUBTITLE,
+                    session_id=session_id,
+                    payload=json.dumps({"words": words}, ensure_ascii=False).encode(),
+                )
+            )
+        await ws.send(
+            _doubao_server_frame(
+                EventType.SESSION_FINISHED,
+                session_id=session_id,
+            )
+        )
 
 
 @dataclass

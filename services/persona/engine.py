@@ -7,6 +7,7 @@ import re
 import sqlite3
 import threading
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -28,11 +29,16 @@ from services.persona.domain import (
     require_persona_counterexample,
 )
 from services.persona.rules import (
-    AUTO_PROMOTE,
     CATEGORY_ORDER,
+    EXCLUSIVE_STYLE_CATEGORIES,
     TICS,
+    ExclusiveBucketObservation,
     PersonaExtractor,
     RuleBasedPersonaExtractor,
+    exclusive_auto_promote_target,
+    safe_confirmed_style_description,
+    should_auto_promote,
+    trusted_uncertain_profile,
 )
 
 _SCHEMA = """
@@ -187,6 +193,19 @@ class PersonaEngine:
             tuple(str(item["trait_id"]) for item in trait_rows),
         )
 
+    @staticmethod
+    def _learning_allowed(connection: sqlite3.Connection, account_id: str) -> bool:
+        return (
+            connection.execute(
+                """
+                SELECT 1 FROM persona_learning_consents
+                WHERE account_id = ? AND revoked_at IS NULL
+                """,
+                (account_id,),
+            ).fetchone()
+            is not None
+        )
+
     async def observe(self, evidence: PersonaEvidence) -> ObservationResult:
         if not evidence.learning_allowed:
             return ObservationResult(False, "learning_not_authorized")
@@ -210,7 +229,8 @@ class PersonaEngine:
                 "system",
             }:
                 return ObservationResult(False, "assistant_or_synthetic_evidence")
-            if row["speaker_class"] != "owner":
+            speaker_class = str(row["speaker_class"])
+            if speaker_class not in {"owner", "uncertain"}:
                 return ObservationResult(False, "speaker_not_owner")
             if row["event_type"] != "speech.utterance_finalized":
                 return ObservationResult(False, "unsupported_evidence_type")
@@ -219,22 +239,46 @@ class PersonaEngine:
             text = str(payload.get("text") or "").strip()
             if not text:
                 return ObservationResult(False, "empty_evidence")
+            if (
+                speaker_class == "owner"
+                and str(row["source"]) == "funasr.authoritative_final"
+                and payload.get("persona_eligible") is not True
+            ):
+                return ObservationResult(False, "persona_ineligible_turn")
+            uncertain_provenance = (
+                trusted_uncertain_profile(payload) if speaker_class == "uncertain" else None
+            )
+            if speaker_class == "uncertain" and uncertain_provenance is None:
+                return ObservationResult(False, "untrusted_uncertain_speaker")
             duplicate = self._duplicate_observation(connection, evidence)
             if duplicate is not None:
                 return duplicate
             occurred_at = str(row["occurred_at"])
 
-        candidates = await self._extractor.extract(text, evidence)
+        if speaker_class == "uncertain":
+            assert uncertain_provenance is not None
+            extraction_evidence = replace(
+                evidence,
+                speech_duration_ms=None,
+                pause_ratio=None,
+                quality_score=uncertain_provenance[1],
+            )
+        else:
+            extraction_evidence = evidence
+        candidates = await self._extractor.extract(text, extraction_evidence)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            if not self._learning_allowed(connection, evidence.account_id):
+                return ObservationResult(False, "learning_not_authorized")
             duplicate = self._duplicate_observation(connection, evidence)
             if duplicate is not None:
                 return duplicate
             now = datetime.now(UTC).isoformat()
             trait_ids: list[str] = []
-            promoted = False
-            tic_counts = {tic: text.count(tic) for tic in TICS if tic in text}
-            self._update_style_stats(connection, evidence, text, tic_counts, now)
+            version_changed = False
+            if speaker_class == "owner":
+                tic_counts = {tic: text.count(tic) for tic in TICS if tic in text}
+                self._update_style_stats(connection, evidence, text, tic_counts, now)
             for candidate in candidates:
                 trait_id = _stable_id(
                     "persona-trait",
@@ -242,6 +286,32 @@ class PersonaEngine:
                     candidate.category,
                     candidate.normalized_key,
                 )
+                current = connection.execute(
+                    """
+                    SELECT status, EXISTS (
+                        SELECT 1
+                        FROM persona_evidence AS pe
+                        JOIN evidence_events AS ee
+                          ON ee.event_id = pe.source_event_id
+                         AND ee.account_id = pe.account_id
+                        WHERE pe.trait_id = persona_traits.trait_id
+                          AND ee.speaker_class = 'owner'
+                    ) AS has_owner_evidence
+                    FROM persona_traits
+                    WHERE trait_id = ? AND account_id = ?
+                    """,
+                    (trait_id, evidence.account_id),
+                ).fetchone()
+                if current is not None and str(current["status"]) == "disabled":
+                    continue
+                if (
+                    speaker_class == "uncertain"
+                    and current is not None
+                    and (
+                        str(current["status"]) != "candidate" or bool(current["has_owner_evidence"])
+                    )
+                ):
+                    continue
                 trait_ids.append(trait_id)
                 connection.execute(
                     """
@@ -274,26 +344,101 @@ class PersonaEngine:
                         evidence.account_id,
                         evidence.source_event_id,
                         evidence.scene,
-                        evidence.quality_score if evidence.quality_score is not None else 1.0,
+                        extraction_evidence.quality_score
+                        if extraction_evidence.quality_score is not None
+                        else 1.0,
                         occurred_at,
                     ),
                 ).rowcount
                 if inserted:
-                    count = int(
-                        connection.execute(
-                            "SELECT COUNT(*) FROM persona_evidence WHERE trait_id = ?",
-                            (trait_id,),
-                        ).fetchone()[0]
-                    )
+                    counts = connection.execute(
+                        """
+                        SELECT
+                            COUNT(*) AS total_count,
+                            SUM(CASE WHEN ee.speaker_class = 'owner' THEN 1 ELSE 0 END)
+                                AS owner_count,
+                            SUM(CASE
+                                WHEN ee.speaker_class = 'uncertain'
+                                 AND json_extract(ee.payload_json, '$.persona_eligible') = 1
+                                 AND json_extract(
+                                     ee.payload_json, '$.speaker_reason_code'
+                                 ) = 'shadow_owner_candidate'
+                                 AND COALESCE(json_extract(
+                                     ee.payload_json, '$.speaker_profile_id'
+                                 ), '') = ?
+                                THEN 1 ELSE 0
+                            END)
+                                AS uncertain_count,
+                            COUNT(DISTINCT CASE
+                                WHEN ee.speaker_class = 'uncertain'
+                                 AND json_extract(ee.payload_json, '$.persona_eligible') = 1
+                                 AND json_extract(
+                                     ee.payload_json, '$.speaker_reason_code'
+                                 ) = 'shadow_owner_candidate'
+                                 AND COALESCE(json_extract(
+                                     ee.payload_json, '$.speaker_profile_id'
+                                 ), '') = ?
+                                THEN ee.session_id
+                            END) AS uncertain_session_count,
+                            COUNT(DISTINCT CASE
+                                WHEN ee.speaker_class = 'uncertain'
+                                 AND json_extract(ee.payload_json, '$.persona_eligible') = 1
+                                 AND json_extract(
+                                     ee.payload_json, '$.speaker_reason_code'
+                                 ) = 'shadow_owner_candidate'
+                                 AND COALESCE(json_extract(
+                                     ee.payload_json, '$.speaker_profile_id'
+                                 ), '') = ?
+                                THEN json_extract(
+                                    ee.payload_json, '$.speaker_profile_id'
+                                )
+                            END) AS uncertain_profile_count
+                        FROM persona_evidence AS pe
+                        JOIN evidence_events AS ee
+                          ON ee.event_id = pe.source_event_id
+                         AND ee.account_id = pe.account_id
+                        WHERE pe.trait_id = ?
+                        """,
+                        (
+                            uncertain_provenance[0]
+                            if uncertain_provenance is not None
+                            else "",
+                            uncertain_provenance[0]
+                            if uncertain_provenance is not None
+                            else "",
+                            uncertain_provenance[0]
+                            if uncertain_provenance is not None
+                            else "",
+                            trait_id,
+                        ),
+                    ).fetchone()
+                    assert counts is not None
+                    count = int(counts["total_count"])
+                    owner_count = int(counts["owner_count"])
+                    uncertain_count = int(counts["uncertain_count"])
+                    uncertain_session_count = int(counts["uncertain_session_count"])
+                    uncertain_profile_count = int(counts["uncertain_profile_count"])
                     confidence = min(0.95, 0.45 + 0.13 * count)
                     previous = connection.execute(
                         "SELECT status FROM persona_traits WHERE trait_id = ?",
                         (trait_id,),
                     ).fetchone()
                     status = str(previous["status"]) if previous is not None else "candidate"
-                    if candidate.category in AUTO_PROMOTE and count >= 3:
-                        status = "confirmed"
-                        promoted = promoted or previous is None or previous["status"] != "confirmed"
+                    if candidate.category not in EXCLUSIVE_STYLE_CATEGORIES:
+                        if should_auto_promote(
+                            category=candidate.category,
+                            status=status,
+                            owner_count=owner_count,
+                            uncertain_count=uncertain_count,
+                            uncertain_session_count=uncertain_session_count,
+                            uncertain_profile_count=uncertain_profile_count,
+                        ):
+                            status = "confirmed"
+                            version_changed = (
+                                version_changed
+                                or previous is None
+                                or previous["status"] != "confirmed"
+                            )
                     connection.execute(
                         """
                         UPDATE persona_traits
@@ -302,6 +447,21 @@ class PersonaEngine:
                         """,
                         (count, confidence, status, now, trait_id),
                     )
+                    if candidate.category in EXCLUSIVE_STYLE_CATEGORIES:
+                        version_changed = (
+                            self._reconcile_exclusive_category(
+                                connection,
+                                account_id=evidence.account_id,
+                                category=candidate.category,
+                                now=now,
+                                uncertain_profile_id=(
+                                    uncertain_provenance[0]
+                                    if uncertain_provenance is not None
+                                    else None
+                                ),
+                            )
+                            or version_changed
+                        )
             connection.execute(
                 """
                 INSERT INTO persona_observation_receipts (
@@ -314,17 +474,89 @@ class PersonaEngine:
                 self._publish_version(
                     connection,
                     evidence.account_id,
-                    reason="stable_style_observation",
+                    reason="automatic_style_learning_v1",
                 ).version_id
-                if promoted
+                if version_changed
                 else None
             )
         return ObservationResult(
             accepted=True,
-            reason="observed",
+            reason="candidate_observed" if speaker_class == "uncertain" else "observed",
             candidate_trait_ids=tuple(trait_ids),
             published_version_id=version_id,
         )
+
+    @staticmethod
+    def _reconcile_exclusive_category(
+        connection: sqlite3.Connection,
+        *,
+        account_id: str,
+        category: PersonaTraitCategory,
+        now: str,
+        uncertain_profile_id: str | None = None,
+    ) -> bool:
+        rows = connection.execute(
+            """
+            SELECT
+                pt.trait_id, pt.status, pt.review_event_id, pt.updated_at,
+                ee.speaker_class, ee.session_id, ee.payload_json
+            FROM persona_traits AS pt
+            LEFT JOIN persona_evidence AS pe
+              ON pe.trait_id = pt.trait_id
+             AND pe.account_id = pt.account_id
+            LEFT JOIN evidence_events AS ee
+              ON ee.event_id = pe.source_event_id
+             AND ee.account_id = pe.account_id
+            WHERE pt.account_id = ? AND pt.category = ?
+              AND pt.status <> 'disabled'
+            ORDER BY pt.trait_id, pe.occurred_at, pe.source_event_id
+            """,
+            (account_id, category),
+        ).fetchall()
+        observations = tuple(
+            ExclusiveBucketObservation(
+                trait_id=str(row["trait_id"]),
+                status=str(row["status"]),
+                review_event_id=(
+                    str(row["review_event_id"]) if row["review_event_id"] is not None else None
+                ),
+                updated_at=str(row["updated_at"]),
+                speaker_class=(
+                    str(row["speaker_class"]) if row["speaker_class"] is not None else None
+                ),
+                session_id=str(row["session_id"]) if row["session_id"] is not None else None,
+                payload=(
+                    json.loads(str(row["payload_json"])) if row["payload_json"] is not None else {}
+                ),
+            )
+            for row in rows
+        )
+        target = exclusive_auto_promote_target(
+            category,
+            observations,
+            uncertain_profile_id=uncertain_profile_id,
+        )
+        changed = False
+        seen: set[str] = set()
+        for row in rows:
+            trait_id = str(row["trait_id"])
+            if trait_id in seen:
+                continue
+            seen.add(trait_id)
+            status = str(row["status"])
+            desired = "confirmed" if trait_id == target else "candidate"
+            if status == desired:
+                continue
+            connection.execute(
+                """
+                UPDATE persona_traits
+                SET status = ?, updated_at = ?
+                WHERE trait_id = ? AND account_id = ? AND status <> 'disabled'
+                """,
+                (desired, now, trait_id, account_id),
+            )
+            changed = True
+        return changed
 
     @staticmethod
     def _update_style_stats(
@@ -428,6 +660,16 @@ class PersonaEngine:
             )
             self._insert_evidence(connection, review_event)
             now = datetime.now(UTC).isoformat()
+            if status == "confirmed" and str(row["category"]) in EXCLUSIVE_STYLE_CATEGORIES:
+                connection.execute(
+                    """
+                    UPDATE persona_traits
+                    SET status = 'candidate', updated_at = ?
+                    WHERE account_id = ? AND category = ? AND trait_id <> ?
+                      AND status = 'confirmed'
+                    """,
+                    (now, command.account_id, row["category"], command.trait_id),
+                )
             connection.execute(
                 """
                 UPDATE persona_traits
@@ -475,25 +717,44 @@ class PersonaEngine:
             """,
             (account_id,),
         ).fetchall()
-        ordered = sorted(rows, key=lambda row: (CATEGORY_ORDER[str(row["category"])], row["trait_id"]))
+        ordered = sorted(
+            rows, key=lambda row: (CATEGORY_ORDER[str(row["category"])], row["trait_id"])
+        )
         snapshot: list[dict[str, Any]] = []
         for row in ordered:
             evidence = connection.execute(
                 """
-                SELECT source_event_id FROM persona_evidence
-                WHERE trait_id = ? ORDER BY occurred_at, source_event_id
+                SELECT pe.source_event_id, pe.scene, ee.speaker_class
+                FROM persona_evidence AS pe
+                JOIN evidence_events AS ee
+                  ON ee.event_id = pe.source_event_id
+                 AND ee.account_id = pe.account_id
+                WHERE pe.trait_id = ?
+                ORDER BY pe.occurred_at, pe.source_event_id
                 """,
                 (row["trait_id"],),
             ).fetchall()
+            owner_evidence = [item for item in evidence if item["speaker_class"] == "owner"]
+            selected_evidence = owner_evidence or evidence
             snapshot.append(
                 {
                     "trait_id": str(row["trait_id"]),
                     "category": str(row["category"]),
                     "description": str(row["description"]),
-                    "context": str(row["context"]),
+                    "context": (
+                        str(selected_evidence[0]["scene"])
+                        if selected_evidence
+                        else str(row["context"])
+                    ),
                     "counterexample": str(row["counterexample"]),
-                    "confidence": float(row["confidence"]),
-                    "source_event_ids": [str(item["source_event_id"]) for item in evidence],
+                    "confidence": (
+                        min(0.95, 0.45 + 0.13 * len(selected_evidence))
+                        if owner_evidence
+                        else float(row["confidence"])
+                    ),
+                    "source_event_ids": [
+                        str(item["source_event_id"]) for item in selected_evidence
+                    ],
                 }
             )
         active = connection.execute(
@@ -596,22 +857,47 @@ class PersonaEngine:
             )
 
     async def capsule(self, request: PersonaRequest) -> PersonaCapsule:
-        if not request.enabled or request.speaker_class != "owner":
+        confirmed_style_only = request.speaker_class == "uncertain" and request.confirmed_style_only
+        if not request.enabled or (request.speaker_class != "owner" and not confirmed_style_only):
             return PersonaCapsule()
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
-                SELECT * FROM persona_versions
-                WHERE account_id = ? AND status = 'active'
+                SELECT persona_versions.*
+                FROM persona_versions
+                JOIN persona_learning_consents USING (account_id)
+                WHERE persona_versions.account_id = ?
+                  AND persona_versions.status = 'active'
+                  AND persona_learning_consents.revoked_at IS NULL
                 """,
                 (request.account_id,),
             ).fetchone()
         if row is None:
             return PersonaCapsule()
         snapshot = json.loads(str(row["snapshot_json"]))
+        if confirmed_style_only:
+            safe_snapshot: list[dict[str, Any]] = []
+            for item in snapshot:
+                description = safe_confirmed_style_description(str(item.get("description") or ""))
+                if description is None:
+                    continue
+                safe_snapshot.append(
+                    {
+                        **item,
+                        "description": description,
+                        "context": "",
+                        "counterexample": "",
+                        "source_event_ids": [],
+                    }
+                )
+            snapshot = safe_snapshot
         ranked = sorted(snapshot, key=lambda item: self._capsule_rank(item, request.topic))
         prefix = (
-            f"[人格胶囊 v{row['version_number']}] "
+            f"[已确认表达风格 v{row['version_number']}] "
+            "仅调整表达方式，不推断或透露账户主人的身份、经历、价值观和决定。"
+            if confirmed_style_only
+            else f"[人格胶囊 v{row['version_number']}] "
             "仅在自然且相关时参考，不机械复读口头禅；不得声称你就是账户主人。"
         )
         lines = [prefix]
@@ -651,7 +937,13 @@ class PersonaEngine:
     def _capsule_rank(item: dict[str, Any], topic: str) -> tuple[int, int, str]:
         description = str(item["description"])
         context = str(item["context"])
-        relevant = bool(topic and any(token in description or token in context for token in PersonaEngine._topic_tokens(topic)))
+        relevant = bool(
+            topic
+            and any(
+                token in description or token in context
+                for token in PersonaEngine._topic_tokens(topic)
+            )
+        )
         category = str(item["category"])
         return (0 if relevant else 1, CATEGORY_ORDER[category], str(item["trait_id"]))
 
@@ -664,7 +956,9 @@ class PersonaEngine:
 
     @staticmethod
     def _delivery_rate(entries: list[PersonaCapsuleEntry]) -> float:
-        descriptions = " ".join(item.description for item in entries if item.category == "speech_rate")
+        descriptions = " ".join(
+            item.description for item in entries if item.category == "speech_rate"
+        )
         if "偏从容" in descriptions:
             return 0.95
         if "偏快" in descriptions:
@@ -719,6 +1013,7 @@ class PersonaEngine:
         if not account_id.strip() or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", policy_version):
             raise ValueError("persona consent requires account_id and a versioned policy")
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             current = connection.execute(
                 "SELECT * FROM persona_learning_consents WHERE account_id = ?",
                 (account_id,),
@@ -769,6 +1064,7 @@ class PersonaEngine:
         if not account_id.strip():
             raise ValueError("persona consent revocation requires account_id")
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             current = connection.execute(
                 "SELECT * FROM persona_learning_consents WHERE account_id = ?",
                 (account_id,),
