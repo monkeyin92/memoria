@@ -1243,14 +1243,22 @@ async def test_registered_account_exports_only_its_portable_archive(
         ).json()
         owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
         other_headers = {"Authorization": f"Bearer {other['access_token']}"}
-        for identity, headers, text in (
-            (owner, owner_headers, "请记住我喜欢雨天散步。"),
-            (other, other_headers, "另一账户的私密内容。"),
+        for index, (identity, headers, text) in enumerate(
+            (
+                (owner, owner_headers, "请记住我喜欢雨天散步。"),
+                (other, other_headers, "另一账户的私密内容。"),
+            ),
+            start=1,
         ):
             saved = await client.post(
                 "/v1/memory/messages",
                 headers=headers,
-                json={"user_id": identity["user_id"], "role": "user", "text": text},
+                json={
+                    "user_id": identity["user_id"],
+                    "client_message_id": f"00000000-0000-4000-8000-{index:012d}",
+                    "role": "user",
+                    "text": text,
+                },
             )
             assert saved.status_code == 201
             recorded = await client.post(

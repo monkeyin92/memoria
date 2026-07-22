@@ -877,11 +877,21 @@ async def test_runtime_applies_ephemeral_emotion_to_the_next_cosyvoice_generatio
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.INFO)
+    published: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
     tts = CosyVoiceTTS(CosyVoiceConfig(api_key="key", ws_url="wss://example", pool_size=0))
     runtime = DuplexRuntime.create(session_id="emotion-session", tts=tts)
+    runtime.set_event_publisher(publish)
     await runtime.orchestrator.ready()
 
     first = runtime.observe_acoustic_emotion("sad", text="最近有点累", turn_id=1)
+    await asyncio.sleep(0)
+    first_event = next(event for event in published if event["type"] == "emotion_observation")
+    assert first_event["turn_id"] == 1
+    assert first_event["generation_id"] == 1
     await runtime.on_turn_committed("第一轮")
     second = runtime.observe_acoustic_emotion("sad", text="还是很低落", turn_id=2)
     await runtime.on_turn_committed("第二轮")

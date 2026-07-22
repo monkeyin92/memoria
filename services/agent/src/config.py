@@ -232,6 +232,10 @@ class AgentSettings(BaseSettings):
         default=SecretStr(""),
         alias="MEMORIA_ARCHIVE_WRITE_TOKEN",
     )
+    agent_heartbeat_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_AGENT_HEARTBEAT_TOKEN",
+    )
     memory_read_token: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_MEMORY_READ_TOKEN",
@@ -340,10 +344,17 @@ class AgentSettings(BaseSettings):
 
     def internal_token(
         self,
-        capability: Literal["archive_write", "memory_read", "persona_read", "voice_resolution"],
+        capability: Literal[
+            "archive_write",
+            "agent_heartbeat",
+            "memory_read",
+            "persona_read",
+            "voice_resolution",
+        ],
     ) -> str:
         configured = {
             "archive_write": self.archive_write_token,
+            "agent_heartbeat": self.agent_heartbeat_token,
             "memory_read": self.memory_read_token,
             "persona_read": self.persona_read_token,
             "voice_resolution": self.voice_resolution_token,
@@ -416,7 +427,10 @@ class AgentSettings(BaseSettings):
         if self.environment == "production":
             if self.livekit_url.startswith("ws://") or self.livekit_url.startswith("http://"):
                 raise ValueError("production forbids plaintext media/control URLs")
-            capability_tokens: list[str] = []
+            heartbeat_token = self.internal_token("agent_heartbeat")
+            if len(heartbeat_token) < 32:
+                raise ValueError("production agent heartbeat requires a scoped token")
+            capability_tokens: list[str] = [heartbeat_token]
             if self.archive_sink_enabled:
                 token = self.internal_token("archive_write")
                 spool_key = self.archive_spool_key.get_secret_value()

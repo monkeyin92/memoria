@@ -3,9 +3,23 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+UI_EVENT_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        "assistant_audio",
+        "assistant_state",
+        "audio_trace",
+        "emotion_observation",
+        "listener_cue",
+        "speaker_enroll_progress",
+        "speaker_enroll_result",
+        "speaker_reject",
+        "transcript_delta",
+    }
+)
 
 
 class EventKind(StrEnum):

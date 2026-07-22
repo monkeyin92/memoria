@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   getRawVoiceConsent: vi.fn().mockResolvedValue({ consent: null }),
   getProfile: vi.fn(),
   loginAccount: vi.fn(),
+  logoutAllDevices: vi.fn(),
+  logoutCurrentDevice: vi.fn(),
   registerAccount: vi.fn(),
   reviewMemoryClaim: vi.fn(),
   saveMessage: vi.fn().mockResolvedValue(undefined),
@@ -64,6 +66,8 @@ vi.mock("./api.js", () => ({
   getRawVoiceConsent: mocks.getRawVoiceConsent,
   getProfile: mocks.getProfile,
   loginAccount: mocks.loginAccount,
+  logoutAllDevices: mocks.logoutAllDevices,
+  logoutCurrentDevice: mocks.logoutCurrentDevice,
   registerAccount: mocks.registerAccount,
   reviewMemoryClaim: mocks.reviewMemoryClaim,
   saveMessage: mocks.saveMessage,
@@ -133,6 +137,8 @@ describe("App identity and profile preferences", () => {
     vi.clearAllMocks();
     window.localStorage.clear();
     mocks.flushPendingMessages.mockResolvedValue(undefined);
+    mocks.logoutAllDevices.mockResolvedValue(undefined);
+    mocks.logoutCurrentDevice.mockResolvedValue(undefined);
     mocks.deleteAccountData.mockResolvedValue({ status: "completed" });
     mocks.endVoice.mockResolvedValue(undefined);
     mocks.resetVoice.mockResolvedValue(undefined);
@@ -610,6 +616,47 @@ describe("App identity and profile preferences", () => {
       .not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "返回我的" }));
     expect(await screen.findByRole("heading", { name: "我的" })).toBeInTheDocument();
+  });
+
+  it("logs out the current device and returns to the account gate", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "registered-user",
+      username: "memorykeeper",
+      account_type: "registered",
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /退出当前设备/ }));
+
+    await waitFor(() => {
+      expect(mocks.logoutCurrentDevice).toHaveBeenCalledOnce();
+      expect(mocks.resetVoice).toHaveBeenCalledOnce();
+    });
+    expect(await screen.findByRole("heading", { name: "创建你的 Memoria 账号" }))
+      .toBeInTheDocument();
+  });
+
+  it("requires confirmation before logging out every device and reports failures", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "registered-user",
+      username: "memorykeeper",
+      account_type: "registered",
+    });
+    mocks.logoutAllDevices.mockRejectedValueOnce(new Error("network unavailable"));
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /退出所有设备/ }));
+    expect(mocks.logoutAllDevices).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog", { name: "确认退出所有设备" }))
+      .toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认退出所有设备" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("退出失败，请检查网络后重试");
+    expect(screen.getByRole("heading", { name: "我的" })).toBeInTheDocument();
   });
 
   it("ends realtime voice and returns to the account gate after permanent deletion", async () => {

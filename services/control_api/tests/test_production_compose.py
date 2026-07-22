@@ -19,6 +19,34 @@ def test_production_services_use_separate_env_files_and_persistent_agent_spool()
     assert "target: /data" in compose
 
 
+def test_production_agent_healthcheck_uses_accepted_heartbeat_checker() -> None:
+    compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    readiness = (ROOT / "services/control_api/app/routes/readiness.py").read_text(
+        encoding="utf-8"
+    )
+    control = compose.split("  control-api:\n", 1)[1].split("  agent:\n", 1)[0]
+    agent = compose.split("  agent:\n", 1)[1]
+
+    assert "http://127.0.0.1:8000/health/live" in control
+    assert "AGENT_HEARTBEAT_MAX_AGE_S = 45" in readiness
+    assert "control-api:\n        condition: service_healthy" in agent
+    assert "kill -0 1" not in agent
+    assert "services.agent.src.heartbeat" in agent
+    assert "--check-health" in agent
+    assert "interval: 10s" in agent
+    assert "timeout: 3s" in agent
+    assert "retries: 2" in agent
+
+
+def test_production_control_disables_query_bearing_uvicorn_access_logs() -> None:
+    compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    control = compose.split("  control-api:\n", 1)[1].split("  agent:\n", 1)[0]
+    dockerfile = (ROOT / "infra" / "Dockerfile.control-api").read_text(encoding="utf-8")
+
+    assert "--no-access-log" in control
+    assert '"--no-access-log"' in dockerfile
+
+
 def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> None:
     compose = (ROOT / "infra" / "memoria-data.production.yml").read_text(encoding="utf-8")
     postgres_init = (ROOT / "infra" / "postgres" / "init-memoria.sh").read_text(encoding="utf-8")
@@ -154,6 +182,28 @@ def test_nginx_bounds_raw_voice_upload_without_raising_all_api_body_limits() -> 
     assert "client_max_body_size 4m;" not in generic
 
 
+def test_nginx_protects_h5_with_csp_and_hides_signed_sample_tokens_from_access_logs() -> None:
+    nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
+
+    h5 = nginx.split("location = /memoria-h5/index.html {", 1)[1].split("}", 1)[0]
+    assert "Content-Security-Policy" in h5
+    assert "connect-src 'self' wss:" in h5
+    assert "media-src 'self' blob:" in h5
+
+    exact = "location ^~ /memoria-api/v1/voices/provider-samples/ {"
+    assert nginx.count(exact) == 1
+    sample = nginx.split(exact, 1)[1].split("}", 1)[0]
+    assert "access_log off;" in sample
+    assert "proxy_pass http://127.0.0.1:8791/v1/voices/provider-samples/;" in sample
+
+
+def test_production_example_declares_control_only_object_read_keyrings() -> None:
+    example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
+
+    assert "MEMORIA_VOICE_SAMPLE_READ_KEYS=" in example
+    assert "MEMORIA_ARCHIVE_OBJECT_READ_KEYS=" in example
+
+
 def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent() -> None:
     control, agent, speaker_model = split_env(
         {
@@ -162,15 +212,18 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
             "MEMORIA_ARCHIVE_COMPILER_DATABASE_URL": "postgresql://compiler@db/memoria",
             "MEMORIA_MEMORY_EMBEDDING_API_KEY": "memory-embedding-key",
             "MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY": "archive-key",
+            "MEMORIA_ARCHIVE_OBJECT_READ_KEYS": '{"archive-v1":"archive-old-key"}',
             "MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY": "archive-access",
             "MEMORIA_ARCHIVE_OBJECT_SECRET_KEY": "archive-secret",
             "MEMORIA_SPEAKER_TEMPLATE_KEY": "speaker-key",
             "MEMORIA_SPEAKER_EMBEDDING_TOKEN": "speaker-model-token",
             "MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY": "voice-key",
+            "MEMORIA_VOICE_SAMPLE_READ_KEYS": '{"voice-v1":"voice-old-key"}',
             "MEMORIA_VOICE_OBJECT_ACCESS_KEY": "voice-access",
             "MEMORIA_VOICE_OBJECT_SECRET_KEY": "voice-secret",
             "MEMORIA_VOICE_SAMPLE_URL_SECRET": "voice-url",
             "MEMORIA_ARCHIVE_WRITE_TOKEN": "archive-write-token",
+            "MEMORIA_AGENT_HEARTBEAT_TOKEN": "agent-heartbeat-token",
             "MEMORIA_MEMORY_READ_TOKEN": "memory-read-token",
             "MEMORIA_PERSONA_READ_TOKEN": "persona-read-token",
             "MEMORIA_VOICE_RESOLUTION_TOKEN": "voice-resolution-token",
@@ -200,6 +253,8 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     assert "DOUBAO_TTS_API_KEY" not in control
     assert speaker_model == {"MEMORIA_SPEAKER_MODEL_TOKEN": "speaker-model-token"}
     assert agent["MEMORIA_ARCHIVE_WRITE_TOKEN"] == "archive-write-token"
+    assert agent["MEMORIA_AGENT_HEARTBEAT_TOKEN"] == "agent-heartbeat-token"
+    assert control["MEMORIA_AGENT_HEARTBEAT_TOKEN"] == "agent-heartbeat-token"
     assert control["MEMORIA_MEMORY_READ_TOKEN"] == "memory-read-token"
     assert control["MEMORIA_PERSONA_READ_TOKEN"] == "persona-read-token"
     assert control["MEMORIA_VOICE_RESOLUTION_TOKEN"] == "voice-resolution-token"
@@ -217,8 +272,10 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
         "MEMORIA_ARCHIVE_COMPILER_DATABASE_URL",
         "MEMORIA_MEMORY_EMBEDDING_API_KEY",
         "MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY",
+        "MEMORIA_ARCHIVE_OBJECT_READ_KEYS",
         "MEMORIA_SPEAKER_TEMPLATE_KEY",
         "MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY",
+        "MEMORIA_VOICE_SAMPLE_READ_KEYS",
         "MEMORIA_VOICE_SAMPLE_URL_SECRET",
         "MEMORIA_ARCHIVE_OBJECT_SECRET_KEY",
         "MEMORIA_VOICE_OBJECT_SECRET_KEY",
@@ -226,6 +283,8 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
         assert forbidden not in agent
     assert control["MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY"] == "archive-access"
     assert control["MEMORIA_VOICE_OBJECT_ACCESS_KEY"] == "voice-access"
+    assert control["MEMORIA_ARCHIVE_OBJECT_READ_KEYS"] == '{"archive-v1":"archive-old-key"}'
+    assert control["MEMORIA_VOICE_SAMPLE_READ_KEYS"] == '{"voice-v1":"voice-old-key"}'
 
 
 def test_production_env_split_rejects_unused_doubao_secret_key() -> None:

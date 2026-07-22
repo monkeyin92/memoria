@@ -165,6 +165,41 @@ describe("QwenOmniWebRTCTransport", () => {
     });
   });
 
+  it("logs only bounded upstream error fields", async () => {
+    const stream = { getAudioTracks: () => [], getTracks: () => [] };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    });
+    const events = callbacks();
+    const transport = new QwenOmniWebRTCTransport(events);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await transport.prepare();
+      await transport.connect({ session_id: "omni-session", config: {} });
+      const txt = new FakeDataChannel("txt");
+      peerConnections[0].emitDataChannel(txt);
+      txt.emit({ type: "error", event_id: "secret-event-id", error: {
+        type: "provider_error", code: "bad_request", message: "x".repeat(300),
+        param: "private_param", transcript: "must-not-log",
+      } });
+      txt.emit({
+        type: "conversation.item.input_audio_transcription.failed",
+        error: { code: "asr_failed", message: "y".repeat(300), raw_audio: "must-not-log" },
+      });
+
+      expect(consoleError).toHaveBeenNthCalledWith(1, "[omni] upstream error event", {
+        type: "provider_error", code: "bad_request", message: "x".repeat(240), param: "private_param",
+      });
+      expect(consoleError).toHaveBeenNthCalledWith(2, "[omni] transcription failed", {
+        code: "asr_failed", message: "y".repeat(240), param: "",
+      });
+    } finally {
+      transport.close();
+      consoleError.mockRestore();
+    }
+  });
+
   it("separates track startup counters from packets discarded during playback", () => {
     const baseline = {
       packets_received: 172,

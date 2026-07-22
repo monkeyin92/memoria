@@ -264,7 +264,10 @@ async def test_postgres_persona_matches_versioned_public_contract_and_forces_rls
     assert "我觉得" in capsule.prompt_fragment
     assert confirmed.version_id
     assert "先列事实，再睡一晚" in decision_capsule.prompt_fragment
-    assert {entry.category for entry in uncertain_style_capsule.entries} == {"verbal_tic"}
+    assert {entry.category for entry in uncertain_style_capsule.entries} == {
+        "verbal_tic",
+        "sentence_length",
+    }
     assert "先列事实，再睡一晚" not in uncertain_style_capsule.prompt_fragment
     assert all(not entry.context for entry in uncertain_style_capsule.entries)
     assert all(not entry.counterexample for entry in uncertain_style_capsule.entries)

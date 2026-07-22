@@ -758,14 +758,11 @@ export class QwenOmniWebRTCTransport {
       const code = String(err.code || event.code || "").slice(0, 80);
       const message = String(err.message || event.message || "").slice(0, 240);
       const param = String(err.param || event.param || "").slice(0, 80);
-      // Always log full upstream error for browser DevTools diagnosis.
       console.error("[omni] upstream error event", {
-        event_id: event.event_id,
         type: errorType,
         code,
         message,
         param,
-        raw: event,
       });
       // Recoverable race: cancel+create before server settled. Re-queue + cancel.
       if (/already has an active response/i.test(message)) {
@@ -801,7 +798,11 @@ export class QwenOmniWebRTCTransport {
       const err = event.error && typeof event.error === "object" ? event.error : {};
       const code = String(err.code || "").slice(0, 80);
       const message = String(err.message || "").slice(0, 240);
-      console.error("[omni] transcription failed", { code, message, raw: event });
+      console.error("[omni] transcription failed", {
+        code,
+        message,
+        param: String(err.param || "").slice(0, 80),
+      });
       this.onDiagnostic("omni_transcription_failed", "error", {
         type: "transcription_failed",
         code,

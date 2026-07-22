@@ -5,28 +5,143 @@
   "oneOf": [
     {
       "type": "object",
-      "required": ["type", "session_id", "state", "turn_id", "generation_id", "at"],
+      "required": ["type", "session_id", "state", "phase", "turn_id", "generation_id", "at"],
       "properties": {
         "type": { "const": "assistant_state" },
         "session_id": { "type": "string" },
         "state": { "type": "string" },
+        "phase": { "type": "string" },
         "turn_id": { "type": "integer" },
         "generation_id": { "type": "integer" },
+        "tool_epoch": { "type": "integer", "minimum": 0 },
         "at": { "type": "string", "format": "date-time" }
       },
       "additionalProperties": false
     },
     {
       "type": "object",
-      "required": ["type", "speaker", "text", "final", "turn_id", "generation_id"],
+      "required": ["type", "speaker", "text", "final", "turn_id", "generation_id", "history_eligible"],
       "properties": {
         "type": { "const": "transcript_delta" },
         "speaker": { "enum": ["user", "assistant"] },
         "text": { "type": "string" },
         "final": { "type": "boolean" },
         "heard": { "type": "boolean" },
+        "history_eligible": { "type": "boolean" },
         "turn_id": { "type": "integer" },
-        "generation_id": { "type": "integer" }
+        "generation_id": { "type": "integer" },
+        "tool_epoch": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "source", "session_id", "name", "status", "turn_id", "generation_id", "at"],
+      "properties": {
+        "type": { "const": "audio_trace" },
+        "source": { "enum": ["agent", "client"] },
+        "session_id": { "type": "string" },
+        "name": { "type": "string" },
+        "status": { "type": "string" },
+        "detail": { "type": "object" },
+        "turn_id": { "type": "integer" },
+        "generation_id": { "type": "integer" },
+        "tool_epoch": { "type": "integer", "minimum": 0 },
+        "at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "session_id", "action", "gain", "turn_id", "generation_id", "at"],
+      "properties": {
+        "type": { "const": "assistant_audio" },
+        "session_id": { "type": "string" },
+        "action": { "enum": ["duck", "restore"] },
+        "gain": { "type": "number", "minimum": 0, "maximum": 1 },
+        "turn_id": { "type": "integer" },
+        "generation_id": { "type": "integer" },
+        "tool_epoch": { "type": "integer", "minimum": 0 },
+        "at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "session_id", "label", "provider_label", "provider_confidence", "evidence", "persist", "turn_id", "generation_id", "expires_after_ms", "at"],
+      "properties": {
+        "type": { "const": "emotion_observation" },
+        "session_id": { "type": "string" },
+        "label": { "type": "string" },
+        "provider_label": { "type": "string" },
+        "provider_confidence": { "type": ["number", "null"] },
+        "evidence": { "type": "array", "items": { "type": "string" } },
+        "persist": { "const": false },
+        "turn_id": { "type": "integer" },
+        "generation_id": { "type": "integer" },
+        "tool_epoch": { "type": "integer", "minimum": 0 },
+        "expires_after_ms": { "type": "integer", "exclusiveMinimum": 0 },
+        "at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "session_id", "state", "speech_ms", "target_ms", "elapsed_ms", "at"],
+      "properties": {
+        "type": { "const": "speaker_enroll_progress" },
+        "session_id": { "type": "string" },
+        "state": { "type": "string" },
+        "speech_ms": { "type": "integer", "minimum": 0 },
+        "target_ms": { "type": "integer", "minimum": 1 },
+        "elapsed_ms": { "type": "integer", "minimum": 0 },
+        "at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "session_id", "accepted", "reason", "score", "speech_ms", "state", "at"],
+      "properties": {
+        "type": { "const": "speaker_enroll_result" },
+        "session_id": { "type": "string" },
+        "accepted": { "type": "boolean" },
+        "reason": { "type": "string" },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "speech_ms": { "type": "integer", "minimum": 0 },
+        "state": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "session_id", "context", "reason", "score", "utt", "roll", "speech_ms", "at"],
+      "properties": {
+        "type": { "const": "speaker_reject" },
+        "session_id": { "type": "string" },
+        "context": { "type": "string" },
+        "reason": { "type": "string" },
+        "score": { "type": "number", "minimum": -1, "maximum": 1 },
+        "utt": { "type": "number", "minimum": -1, "maximum": 1 },
+        "roll": { "type": "number", "minimum": -1, "maximum": 1 },
+        "speech_ms": { "type": "integer", "minimum": 0 },
+        "at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "session_id", "cue_id", "cue_epoch", "user_turn_id", "state", "phase", "at"],
+      "properties": {
+        "type": { "const": "listener_cue" },
+        "session_id": { "type": "string" },
+        "cue_id": { "type": "string" },
+        "cue_epoch": { "type": "integer", "minimum": 0 },
+        "user_turn_id": { "type": "integer", "minimum": 0 },
+        "state": { "type": "string" },
+        "phase": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" }
       },
       "additionalProperties": false
     }

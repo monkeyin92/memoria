@@ -8,9 +8,11 @@ import hashlib
 import hmac
 import logging
 import os
+import secrets
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import jwt
@@ -85,12 +87,15 @@ def verify_password(password: str, encoded: str) -> bool:
 @dataclass(frozen=True, slots=True)
 class AuthenticatedUser:
     user_id: str
+    session_id: str | None
+    jti: str | None
 
 
 def mint_memoria_access_token(
     settings: ControlSettings,
     *,
     user_id: str,
+    session_id: str,
     ttl_s: int | None = None,
 ) -> tuple[str, int]:
     ttl = ttl_s if ttl_s is not None else settings.memoria_auth_token_ttl_s
@@ -100,6 +105,8 @@ def mint_memoria_access_token(
             "iss": settings.memoria_auth_issuer,
             "aud": settings.memoria_auth_audience,
             "sub": user_id,
+            "sid": session_id,
+            "jti": str(uuid.uuid4()),
             "iat": now,
             "nbf": now,
             "exp": now + ttl,
@@ -109,6 +116,52 @@ def mint_memoria_access_token(
         algorithm="HS256",
     )
     return (token.decode("utf-8") if isinstance(token, bytes) else str(token), ttl)
+
+
+def create_refresh_token(*, session_id: str) -> str:
+    return f"{session_id}.{secrets.token_urlsafe(48)}"
+
+
+def create_legacy_upgrade_refresh_token(
+    settings: ControlSettings,
+    *,
+    session_id: str,
+    legacy_access_token: str,
+) -> str:
+    """Derive a retryable migration refresh token without persisting token plaintext."""
+    digest = hmac.new(
+        settings.memoria_auth_secret.get_secret_value().encode("utf-8"),
+        b"memoria-legacy-upgrade-refresh-v1\0" + legacy_access_token.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{session_id}.{digest}"
+
+
+def refresh_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def decode_legacy_access_token(settings: ControlSettings, token: str) -> str | None:
+    try:
+        claims = jwt.decode(
+            token,
+            settings.memoria_auth_secret.get_secret_value(),
+            algorithms=["HS256"],
+            audience=settings.memoria_auth_audience,
+            issuer=settings.memoria_auth_issuer,
+            options={"require": ["exp", "iat", "nbf", "sub", "aud", "iss"]},
+        )
+    except jwt.PyJWTError:
+        return None
+    user_id = claims.get("sub")
+    if (
+        claims.get("typ") != "memoria_access"
+        or "sid" in claims
+        or not isinstance(user_id, str)
+        or not user_id
+    ):
+        return None
+    return user_id
 
 
 def require_authenticated_user(
@@ -147,20 +200,44 @@ def require_authenticated_user(
         ) from exc
 
     user_id = claims.get("sub")
-    if claims.get("typ") != "memoria_access" or not isinstance(user_id, str) or not user_id:
+    session_id = claims.get("sid")
+    jti = claims.get("jti")
+    valid_session = (
+        isinstance(session_id, str)
+        and bool(session_id)
+        and isinstance(jti, str)
+        and bool(jti)
+    )
+    if (
+        claims.get("typ") != "memoria_access"
+        or not isinstance(user_id, str)
+        or not user_id
+        or not valid_session
+    ):
         raise HTTPException(
             status_code=401,
             detail="invalid access token claims",
             headers={"WWW-Authenticate": "Bearer"},
         )
     store = getattr(request.app.state, "memory_store", None)
-    if store is not None and store.is_account_unavailable(user_id=user_id):
-        raise HTTPException(
-            status_code=401,
-            detail="account is unavailable",
-            headers={"WWW-Authenticate": "Bearer"},
+    if store is not None:
+        unavailable = store.is_account_unavailable(user_id=user_id)
+        inactive_session = valid_session and not store.auth_session_active(
+            session_id=session_id,
+            user_id=user_id,
+            now=datetime.now(UTC).isoformat(),
         )
-    return AuthenticatedUser(user_id=user_id)
+        if unavailable or inactive_session:
+            raise HTTPException(
+                status_code=401,
+                detail="access session is unavailable",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    return AuthenticatedUser(
+        user_id=user_id,
+        session_id=session_id if valid_session else None,
+        jti=jti if valid_session else None,
+    )
 
 
 def optional_authenticated_user(

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import os
 import re
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -77,13 +79,65 @@ def _decrypt_and_verify(fernet: Fernet, encrypted: bytes, reference: ObjectRef) 
     return plaintext
 
 
+def _keyring(
+    *,
+    key: str,
+    key_version: str,
+    read_keys: Mapping[str, str] | None,
+) -> tuple[Fernet, dict[str, Fernet]]:
+    if not key_version.strip():
+        raise ValueError("key_version must not be blank")
+    raw_keys = dict(read_keys or {})
+    if key_version in raw_keys:
+        raise ValueError("read_keys must not include active key version")
+    if any(not isinstance(version, str) or not version.strip() for version in raw_keys):
+        raise ValueError("read key versions must not be blank")
+    try:
+        encoded_keys = [
+            key.encode("ascii"),
+            *(value.encode("ascii") for value in raw_keys.values()),
+        ]
+        fernets = [Fernet(encoded) for encoded in encoded_keys]
+        materials = [base64.urlsafe_b64decode(encoded) for encoded in encoded_keys]
+    except (AttributeError, ValueError, UnicodeEncodeError) as exc:
+        raise ValueError("object encryption keys must be valid Fernet keys") from exc
+    if len(materials) != len(set(materials)):
+        raise ValueError("active and read-only key material must be unique")
+    active, *read_fernets = fernets
+    return active, dict(zip(raw_keys, read_fernets, strict=True))
+
+
+def _fernet_for_version(
+    *,
+    active: Fernet,
+    active_version: str,
+    read_keys: Mapping[str, Fernet],
+    version: str,
+) -> Fernet:
+    if version == active_version:
+        return active
+    try:
+        return read_keys[version]
+    except KeyError as exc:
+        raise ObjectIntegrityError("unknown encryption key version") from exc
+
+
 class EncryptedLocalObjectStore:
-    def __init__(self, *, root: Path, key: str, key_version: str) -> None:
-        if not key_version.strip():
-            raise ValueError("key_version must not be blank")
+    def __init__(
+        self,
+        *,
+        root: Path,
+        key: str,
+        key_version: str,
+        read_keys: Mapping[str, str] | None = None,
+    ) -> None:
         self._root = root.expanduser().resolve()
-        self._fernet = Fernet(key.encode("ascii"))
         self._key_version = key_version
+        self._fernet, self._read_fernets = _keyring(
+            key=key,
+            key_version=key_version,
+            read_keys=read_keys,
+        )
 
     async def put(
         self,
@@ -120,7 +174,16 @@ class EncryptedLocalObjectStore:
 
     async def get(self, reference: ObjectRef) -> bytes:
         _validate_owner(reference)
-        return _decrypt_and_verify(self._fernet, self._path(reference).read_bytes(), reference)
+        return _decrypt_and_verify(
+            _fernet_for_version(
+                active=self._fernet,
+                active_version=self._key_version,
+                read_keys=self._read_fernets,
+                version=reference.encryption_key_version,
+            ),
+            self._path(reference).read_bytes(),
+            reference,
+        )
 
     async def delete(self, reference: ObjectRef) -> None:
         _validate_owner(reference)
@@ -143,14 +206,19 @@ class EncryptedS3ObjectStore:
         bucket: str,
         key: str,
         key_version: str,
+        read_keys: Mapping[str, str] | None = None,
         prefix: str = "memoria",
     ) -> None:
-        if not bucket.strip() or not key_version.strip():
+        if not bucket.strip():
             raise ValueError("bucket and key_version must not be blank")
         self._client = client
         self._bucket = bucket
-        self._fernet = Fernet(key.encode("ascii"))
         self._key_version = key_version
+        self._fernet, self._read_fernets = _keyring(
+            key=key,
+            key_version=key_version,
+            read_keys=read_keys,
+        )
         self._prefix = prefix
 
     @classmethod
@@ -160,6 +228,7 @@ class EncryptedS3ObjectStore:
         bucket: str,
         key: str,
         key_version: str,
+        read_keys: Mapping[str, str] | None = None,
         endpoint_url: str | None = None,
         region_name: str | None = None,
         access_key_id: str | None = None,
@@ -183,6 +252,7 @@ class EncryptedS3ObjectStore:
             bucket=bucket,
             key=key,
             key_version=key_version,
+            read_keys=read_keys,
             prefix=prefix,
         )
 
@@ -228,7 +298,16 @@ class EncryptedS3ObjectStore:
             Key=reference.object_key,
         )
         encrypted = await asyncio.to_thread(response["Body"].read)
-        return _decrypt_and_verify(self._fernet, encrypted, reference)
+        return _decrypt_and_verify(
+            _fernet_for_version(
+                active=self._fernet,
+                active_version=self._key_version,
+                read_keys=self._read_fernets,
+                version=reference.encryption_key_version,
+            ),
+            encrypted,
+            reference,
+        )
 
     async def delete(self, reference: ObjectRef) -> None:
         _validate_owner(reference)
@@ -245,9 +324,7 @@ class EncryptedS3ObjectStore:
             for group in ("Versions", "DeleteMarkers"):
                 for item in response.get(group, []):
                     if item.get("Key") == object_key and item.get("VersionId") is not None:
-                        versions.append(
-                            {"Key": object_key, "VersionId": str(item["VersionId"])}
-                        )
+                        versions.append({"Key": object_key, "VersionId": str(item["VersionId"])})
             if not response.get("IsTruncated"):
                 break
             request["KeyMarker"] = response["NextKeyMarker"]

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import memory as memory_routes
 from services.control_api.app.routes.memory import DailySummaryContent
+from services.control_api.app.security import mint_memoria_access_token
 
 
 def _today() -> str:
@@ -49,6 +53,7 @@ async def test_messages_summary_and_profile_persist(
             headers=headers,
             json={
                 "user_id": user_id,
+                "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b00",
                 "role": "user",
                 "text": "今天完成了产品原型，我很开心。",
                 "emotion": "happy",
@@ -59,6 +64,7 @@ async def test_messages_summary_and_profile_persist(
             headers=headers,
             json={
                 "user_id": user_id,
+                "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b01",
                 "role": "assistant",
                 "text": "太棒了，可以记录下最满意的部分。",
             },
@@ -120,6 +126,171 @@ async def test_messages_summary_and_profile_persist(
 
 
 @pytest.mark.asyncio
+async def test_messages_are_idempotent_per_client_message_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_database(monkeypatch, tmp_path)
+    app = create_app()
+    client_message_id = "6c83b852-8c91-4e5e-91df-6fd4cb4fe7a8"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, headers = await _anonymous_identity(client)
+        payload = {
+            "user_id": user_id,
+            "client_message_id": client_message_id,
+            "role": "user",
+            "text": "  同一条消息  ",
+            "emotion": "  happy  ",
+        }
+        created = await client.post("/v1/memory/messages", headers=headers, json=payload)
+        retried = await client.post(
+            "/v1/memory/messages",
+            headers=headers,
+            json={**payload, "text": "同一条消息", "emotion": "happy"},
+        )
+        conflicting = await client.post(
+            "/v1/memory/messages",
+            headers=headers,
+            json={**payload, "text": "不同的消息"},
+        )
+
+    assert created.status_code == 201
+    assert retried.status_code == 200
+    assert retried.json() == created.json()
+    assert conflicting.status_code == 409
+    with sqlite3.connect(tmp_path / "nested" / "memoria.sqlite3") as connection:
+        assert connection.execute("SELECT count(*) FROM messages").fetchone()[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_idempotency_rejects_different_sensitive_requests_that_redact_identically(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_database(monkeypatch, tmp_path)
+    app = create_app()
+    client_message_id = "9c39b09c-d5c7-4ab9-9d8d-dbd8b42300e8"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, headers = await _anonymous_identity(client)
+        created = await client.post(
+            "/v1/memory/messages",
+            headers=headers,
+            json={
+                "user_id": user_id,
+                "client_message_id": client_message_id,
+                "role": "user",
+                "text": "请联系 13812345678",
+            },
+        )
+        conflict = await client.post(
+            "/v1/memory/messages",
+            headers=headers,
+            json={
+                "user_id": user_id,
+                "client_message_id": client_message_id,
+                "role": "user",
+                "text": "请联系 13912345678",
+            },
+        )
+
+    assert created.status_code == 201
+    assert conflict.status_code == 409
+    assert "fingerprint" not in conflict.text.lower()
+    with sqlite3.connect(tmp_path / "nested" / "memoria.sqlite3") as connection:
+        fingerprint = connection.execute(
+            "SELECT request_fingerprint FROM messages WHERE client_message_id = ?",
+            (client_message_id,),
+        ).fetchone()[0]
+    assert len(fingerprint) == 64
+    assert fingerprint not in created.text
+
+
+@pytest.mark.asyncio
+async def test_message_idempotency_survives_auth_secret_rotation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_database(monkeypatch, tmp_path)
+    monkeypatch.setenv("MEMORIA_MESSAGE_IDEMPOTENCY_SECRET", "message-idempotency-secret-that-is-independent")
+    app = create_app()
+    client_message_id = "ac3e9c24-3d4e-41a1-ae66-705dbd54aabe"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, headers = await _anonymous_identity(client)
+        payload = {
+            "user_id": user_id,
+            "client_message_id": client_message_id,
+            "role": "user",
+            "text": "认证轮换不应改变消息幂等性",
+        }
+        created = await client.post("/v1/memory/messages", headers=headers, json=payload)
+        claims = jwt.decode(headers["Authorization"].removeprefix("Bearer "), options={"verify_signature": False})
+        app.state.settings.memoria_auth_secret = SecretStr("rotated-auth-secret-that-is-long-enough")
+        rotated_access, _ = mint_memoria_access_token(
+            app.state.settings,
+            user_id=user_id,
+            session_id=str(claims["sid"]),
+        )
+        retried = await client.post(
+            "/v1/memory/messages",
+            headers={"Authorization": f"Bearer {rotated_access}"},
+            json=payload,
+        )
+
+    assert created.status_code == 201
+    assert retried.status_code == 200
+    assert retried.json() == created.json()
+
+
+@pytest.mark.asyncio
+async def test_missing_client_message_id_is_rejected_even_during_legacy_window(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_database(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "MEMORIA_LEGACY_AUTH_COMPAT_UNTIL",
+        (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+    )
+    app = create_app()
+    legacy_user_id = "anon-legacy-message-window"
+    app.state.memory_store.get_profile(
+        user_id=legacy_user_id,
+        now=datetime.now(UTC).isoformat(),
+    )
+    now = int(time.time())
+    legacy_access = jwt.encode(
+        {
+            "iss": "memoria-control-api",
+            "aud": "memoria-h5",
+            "sub": legacy_user_id,
+            "iat": now,
+            "nbf": now,
+            "exp": now + 300,
+            "typ": "memoria_access",
+        },
+        "test-auth-material-that-is-long-enough",
+        algorithm="HS256",
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        modern_user_id, modern_headers = await _anonymous_identity(client)
+        modern = await client.post(
+            "/v1/memory/messages",
+            headers=modern_headers,
+            json={"user_id": modern_user_id, "role": "user", "text": "现代页面必须带 ID"},
+        )
+        created = await client.post(
+            "/v1/memory/messages",
+            headers={"Authorization": f"Bearer {legacy_access}"},
+            json={"user_id": legacy_user_id, "role": "user", "text": "旧页面兼容消息"},
+        )
+
+    assert modern.status_code == 422
+    assert created.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_memory_routes_require_bearer_and_enforce_user_identity(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -133,7 +304,7 @@ async def test_memory_routes_require_bearer_and_enforce_user_identity(
         cross_user = await client.post(
             "/v1/memory/messages",
             headers=first_headers,
-            json={"user_id": second_user, "role": "user", "text": "hello"},
+            json={"user_id": second_user, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b02", "role": "user", "text": "hello"},
         )
         own = await client.get(
             f"/v1/memory/profile/{first_user}",
@@ -161,7 +332,7 @@ async def test_messages_and_profile_are_redacted_before_persistence(
         message = await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": user_id, "role": "user", "text": sensitive_text},
+            json={"user_id": user_id, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b03", "role": "user", "text": sensitive_text},
         )
         profile = await client.put(
             f"/v1/memory/profile/{user_id}",
@@ -200,17 +371,27 @@ async def test_memory_api_validates_user_and_text_lengths(
         blank_user = await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": "   ", "role": "user", "text": "hello"},
+            json={"user_id": "   ", "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b04", "role": "user", "text": "hello"},
         )
         blank_text = await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": user_id, "role": "user", "text": "   "},
+            json={"user_id": user_id, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b05", "role": "user", "text": "   "},
         )
         long_text = await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": user_id, "role": "user", "text": "x" * 8001},
+            json={"user_id": user_id, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b06", "role": "user", "text": "x" * 8001},
+        )
+        missing_client_message_id = await client.post(
+            "/v1/memory/messages",
+            headers=headers,
+            json={"user_id": user_id, "role": "user", "text": "hello"},
+        )
+        malformed_client_message_id = await client.post(
+            "/v1/memory/messages",
+            headers=headers,
+            json={"user_id": user_id, "client_message_id": "not-a-uuid", "role": "user", "text": "hello"},
         )
         invalid_timezone = await client.put(
             f"/v1/memory/profile/{user_id}",
@@ -225,6 +406,8 @@ async def test_memory_api_validates_user_and_text_lengths(
     assert blank_user.status_code == 422
     assert blank_text.status_code == 422
     assert long_text.status_code == 422
+    assert missing_client_message_id.status_code == 422
+    assert malformed_client_message_id.status_code == 422
     assert invalid_timezone.status_code == 422
     assert invalid_companion.status_code == 422
 
@@ -270,6 +453,51 @@ def test_existing_registered_profiles_migrate_to_starlight(tmp_path: Path) -> No
     assert profile["companion_id"] == "starlight"
 
 
+def test_existing_messages_migrate_without_fabricating_request_fingerprints(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy-messages.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE profiles (
+                user_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL DEFAULT '朋友',
+                bio TEXT NOT NULL DEFAULT '',
+                avatar_url TEXT NOT NULL DEFAULT '',
+                timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                text TEXT NOT NULL,
+                emotion TEXT,
+                local_date TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            INSERT INTO profiles (user_id, created_at, updated_at)
+            VALUES ('legacy-user', '2026-07-21T00:00:00Z', '2026-07-21T00:00:00Z');
+            INSERT INTO messages (user_id, role, text, local_date, created_at)
+            VALUES (
+                'legacy-user', 'user', '旧消息', '2026-07-21', '2026-07-21T00:00:00Z'
+            );
+            """
+        )
+
+    MemoryStore(str(path)).initialize()
+
+    with sqlite3.connect(path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(messages)")}
+        migrated = connection.execute(
+            "SELECT client_message_id, request_fingerprint FROM messages"
+        ).fetchone()
+    assert {"client_message_id", "request_fingerprint"} <= columns
+    assert migrated == (None, None)
+
+
 @pytest.mark.asyncio
 async def test_qwen_summary_is_used_by_default(
     monkeypatch: pytest.MonkeyPatch,
@@ -295,7 +523,7 @@ async def test_qwen_summary_is_used_by_default(
         await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": user_id, "role": "user", "text": "完成了产品原型"},
+            json={"user_id": user_id, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b07", "role": "user", "text": "完成了产品原型"},
         )
         response = await client.post(
             f"/v1/memory/days/{_today()}/summary",
@@ -339,7 +567,7 @@ async def test_deepseek_is_only_used_when_explicitly_selected(
         await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": user_id, "role": "user", "text": "测试显式选择"},
+            json={"user_id": user_id, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b08", "role": "user", "text": "测试显式选择"},
         )
         response = await client.post(
             f"/v1/memory/days/{_today()}/summary",
@@ -369,7 +597,7 @@ async def test_qwen_failure_uses_explicit_fallback(
         await client.post(
             "/v1/memory/messages",
             headers=headers,
-            json={"user_id": user_id, "role": "user", "text": "记录一条消息"},
+            json={"user_id": user_id, "client_message_id": "b66e1d57-2e02-4e3c-bc75-ef7058218b09", "role": "user", "text": "记录一条消息"},
         )
         response = await client.post(
             f"/v1/memory/days/{_today()}/summary",

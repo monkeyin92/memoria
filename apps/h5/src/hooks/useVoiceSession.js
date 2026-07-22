@@ -266,7 +266,7 @@ export function useVoiceSession({
       pendingEmotionRef.current.clear();
       if (
         pendingEmotion &&
-        pendingEmotion.generation_id + 1 >= line.generation_id
+        pendingEmotion.generation_id === line.generation_id
       ) {
         activateEmotionHint(pendingEmotion);
       }
@@ -889,6 +889,7 @@ export function useVoiceSession({
           if (!event) return;
           if (event.type === "audio_trace") {
             if (event.session_id !== sessionRef.current?.session_id) return;
+            if (event.generation_id < generationRef.current) return;
             audioDiagnosticsRef.current = [
               ...audioDiagnosticsRef.current.slice(-49),
               { ...event, source: event.source || "agent" },
@@ -921,7 +922,7 @@ export function useVoiceSession({
           if (event.type === "emotion_observation") {
             if (!initialReadyRef.current) return;
             if (event.session_id !== sessionRef.current?.session_id) return;
-            if (event.generation_id + 1 < generationRef.current) return;
+            if (event.generation_id < generationRef.current) return;
             const acceptedTurn = latestAcceptedUserTurnRef.current;
             if (event.turn_id < acceptedTurn || event.turn_id > acceptedTurn + 1) {
               return;

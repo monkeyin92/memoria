@@ -881,7 +881,7 @@ describe("useVoiceSession production edges", () => {
           label: "happy",
           persist: false,
           turn_id: 1,
-          generation_id: 0,
+          generation_id: 1,
           expires_after_ms: 500,
         }),
         agent,
@@ -910,10 +910,45 @@ describe("useVoiceSession production edges", () => {
     expect(result.current.emotionHint).toEqual({
       label: "happy",
       turnId: 1,
-      generationId: 0,
+      generationId: 1,
     });
 
     act(() => vi.advanceTimersByTime(500));
+    expect(result.current.emotionHint).toBeNull();
+  });
+
+  it("never applies a pending emotion from an older generation to a newer turn", async () => {
+    const { result, room } = await renderStartedHook();
+    const agent = { isAgent: true };
+    const emit = (event) =>
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent(event),
+        agent,
+        null,
+        "voice-agent.ui",
+      );
+
+    act(() => {
+      emit({
+        type: "emotion_observation",
+        session_id: "session-1",
+        label: "sad",
+        persist: false,
+        turn_id: 1,
+        generation_id: 0,
+        expires_after_ms: 30_000,
+      });
+      emit({
+        type: "transcript_delta",
+        speaker: "user",
+        text: "这是新一代话轮",
+        final: true,
+        turn_id: 1,
+        generation_id: 1,
+      });
+    });
+
     expect(result.current.emotionHint).toBeNull();
   });
 
@@ -936,7 +971,7 @@ describe("useVoiceSession production edges", () => {
         label: "sad",
         persist: false,
         turn_id: 1,
-        generation_id: 0,
+        generation_id: 1,
         expires_after_ms: 30_000,
       });
       emit({
@@ -1262,6 +1297,47 @@ describe("useVoiceSession production edges", () => {
     });
 
     expect(result.current.error).toBe("");
+  });
+
+  it("drops a stale target-speaker rejection after a newer generation is active", async () => {
+    const { result, room } = await renderStartedHook();
+
+    act(() => {
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "assistant_state",
+          session_id: "session-1",
+          state: "listening",
+          turn_id: 2,
+          generation_id: 2,
+        }),
+        { isAgent: true },
+        null,
+        "voice-agent.ui",
+      );
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "audio_trace",
+          source: "agent",
+          session_id: "session-1",
+          name: "target_speaker_rejected",
+          status: "ok",
+          turn_id: 1,
+          generation_id: 1,
+          detail: { reason: "target_non_owner" },
+        }),
+        { isAgent: true },
+        null,
+        "voice-agent.ui",
+      );
+    });
+
+    expect(result.current.error).toBe("");
+    expect(result.current.audioDiagnostics).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "target_speaker_rejected" })]),
+    );
   });
 
   it("ducks playback during a candidate interruption and restores it smoothly", async () => {

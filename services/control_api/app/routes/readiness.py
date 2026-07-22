@@ -7,11 +7,12 @@ from asyncio import to_thread
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Annotated, Literal, cast
+from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from services.archive.domain import ContextQuery, LifeArchivePort
 from services.archive.memory_domain import MemoryCatalogPort
@@ -23,6 +24,7 @@ from services.speaker.domain import SpeakerAuthorityPort
 from services.voice_profile.domain import VoiceProfilePort
 
 router = APIRouter(tags=["health"])
+AGENT_HEARTBEAT_MAX_AGE_S = 45
 
 
 class TTSSmokeChecks(BaseModel):
@@ -56,6 +58,23 @@ class SmokeChecks(BaseModel):
         ):
             raise ValueError("all readiness smokes must pass")
         return self
+
+
+class AgentHeartbeat(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    release_tag: str = Field(min_length=1, max_length=200)
+    boot_id: UUID
+    worker_ready: bool
+    livekit_ready: bool
+    last_loop_at: datetime
+
+    @field_validator("last_loop_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("agent heartbeat timestamp must include timezone")
+        return value.astimezone(UTC)
 
 
 def _settings(request: Request) -> ControlSettings:
@@ -260,6 +279,59 @@ def _require_internal_secret(
         raise HTTPException(status_code=401, detail="invalid internal authentication")
 
 
+def _require_agent_token(request: Request, supplied: str | None) -> None:
+    expected = _settings(request).internal_token("agent_heartbeat")
+    if not expected or supplied is None or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="invalid agent heartbeat authentication")
+
+
+def _agent_state(request: Request, settings: ControlSettings) -> dict[str, object]:
+    if settings.environment != "production":
+        return {"status": "skipped"}
+    heartbeat = cast(AgentHeartbeat | None, getattr(request.app.state, "agent_heartbeat", None))
+    if heartbeat is None:
+        return {"status": "missing"}
+    state: dict[str, object] = {
+        "release_tag": heartbeat.release_tag,
+        "boot_id": str(heartbeat.boot_id),
+        "worker_ready": heartbeat.worker_ready,
+        "livekit_ready": heartbeat.livekit_ready,
+        "last_loop_at": heartbeat.last_loop_at.isoformat(),
+    }
+    age_s = (datetime.now(UTC) - heartbeat.last_loop_at).total_seconds()
+    if heartbeat.release_tag != settings.memoria_release_tag:
+        status = "release_mismatch"
+    elif age_s < 0:
+        status = "invalid"
+    elif age_s > AGENT_HEARTBEAT_MAX_AGE_S:
+        status = "stale"
+    elif not heartbeat.worker_ready or not heartbeat.livekit_ready:
+        status = "starting"
+    else:
+        status = "ready"
+    return {"status": status, **state}
+
+
+@router.post("/internal/readiness/agent-heartbeat")
+def record_agent_heartbeat(
+    body: AgentHeartbeat,
+    request: Request,
+    token: Annotated[str | None, Header(alias="X-Memoria-Internal-Token")] = None,
+) -> dict[str, object]:
+    _require_agent_token(request, token)
+    settings = _settings(request)
+    if body.release_tag != settings.memoria_release_tag:
+        raise HTTPException(status_code=409, detail="agent release tag does not match config")
+    request.app.state.agent_heartbeat = body
+    return {
+        "status": "recorded",
+        "release_tag": body.release_tag,
+        "boot_id": str(body.boot_id),
+        "last_loop_at": body.last_loop_at.isoformat(),
+        "expires_in": AGENT_HEARTBEAT_MAX_AGE_S,
+    }
+
+
 @router.post("/internal/readiness/smokes")
 def mark_smokes_passed(
     body: SmokeChecks,
@@ -305,6 +377,7 @@ async def health_ready(request: Request) -> JSONResponse:
                 "checks": {
                     "config": config_ready,
                     "core": core_checks,
+                    "agent": {"status": "skipped"},
                     "livekit": "skipped",
                     "funasr": "skipped",
                     "llm": {"provider": settings.llm_provider, "status": "skipped"},
@@ -315,7 +388,9 @@ async def health_ready(request: Request) -> JSONResponse:
 
     missing = _missing_config(settings)
     smoke_state = _smoke_state(request, settings)
-    if not config_ready or missing or smoke_state != "passed" or not core_ready:
+    agent_state = _agent_state(request, settings)
+    agent_ready = agent_state["status"] in {"ready", "skipped"}
+    if not config_ready or missing or smoke_state != "passed" or not core_ready or not agent_ready:
         return JSONResponse(
             status_code=503,
             content={
@@ -327,6 +402,7 @@ async def health_ready(request: Request) -> JSONResponse:
                 "checks": {
                     "config": config_ready and not missing,
                     "core": core_checks,
+                    "agent": agent_state,
                 },
             },
         )
@@ -337,6 +413,7 @@ async def health_ready(request: Request) -> JSONResponse:
             "checks": {
                 "config": True,
                 "core": core_checks,
+                "agent": agent_state,
                 "livekit": True,
                 "funasr": True,
                 "llm": {"provider": settings.llm_provider, "passed": True},

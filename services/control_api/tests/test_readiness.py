@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -275,3 +276,107 @@ async def test_smoke_mark_rejects_invalid_control_production_configuration(
         )
 
     assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_fresh_agent_heartbeat_opens_production_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_local(monkeypatch, tmp_path)
+    app = create_app()
+    app.state.settings = ControlSettings(
+        _env_file=None,
+        ENVIRONMENT="production",
+        MEMORIA_RELEASE_TAG="release-heartbeat-test",
+        MEMORIA_AGENT_HEARTBEAT_TOKEN=SecretStr("agent-heartbeat-token"),
+        OFFLINE_MOCK=False,
+    )
+
+    async def ready_core(*_: object) -> dict[str, str]:
+        return {"control_database": "ready"}
+
+    monkeypatch.setattr(readiness_routes, "_valid_configuration", lambda _: True)
+    monkeypatch.setattr(readiness_routes, "_missing_config", lambda _: [])
+    monkeypatch.setattr(readiness_routes, "_smoke_state", lambda *_: "passed")
+    monkeypatch.setattr(readiness_routes, "_core_checks", ready_core)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        missing = await client.get("/health/ready")
+        heartbeat = await client.post(
+            "/internal/readiness/agent-heartbeat",
+            headers={"X-Memoria-Internal-Token": "agent-heartbeat-token"},
+            json={
+                "release_tag": "release-heartbeat-test",
+                "boot_id": "8f819a3b-ec8f-4319-94ab-7cace979145f",
+                "worker_ready": True,
+                "livekit_ready": True,
+                "last_loop_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        ready = await client.get("/health/ready")
+
+    assert missing.status_code == 503
+    assert missing.json()["checks"]["agent"] == {"status": "missing"}
+    assert heartbeat.status_code == 200
+    assert heartbeat.json()["status"] == "recorded"
+    assert ready.status_code == 200
+    assert ready.json()["checks"]["agent"] == {
+        "status": "ready",
+        "release_tag": "release-heartbeat-test",
+        "boot_id": "8f819a3b-ec8f-4319-94ab-7cace979145f",
+        "worker_ready": True,
+        "livekit_ready": True,
+        "last_loop_at": heartbeat.json()["last_loop_at"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_stale_agent_heartbeat_closes_production_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_local(monkeypatch, tmp_path)
+    app = create_app()
+    app.state.settings = ControlSettings(
+        _env_file=None,
+        ENVIRONMENT="production",
+        MEMORIA_RELEASE_TAG="release-heartbeat-test",
+        MEMORIA_AGENT_HEARTBEAT_TOKEN=SecretStr("agent-heartbeat-token"),
+        OFFLINE_MOCK=False,
+    )
+
+    async def ready_core(*_: object) -> dict[str, str]:
+        return {"control_database": "ready"}
+
+    monkeypatch.setattr(readiness_routes, "_valid_configuration", lambda _: True)
+    monkeypatch.setattr(readiness_routes, "_missing_config", lambda _: [])
+    monkeypatch.setattr(readiness_routes, "_smoke_state", lambda *_: "passed")
+    monkeypatch.setattr(readiness_routes, "_core_checks", ready_core)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        heartbeat = await client.post(
+            "/internal/readiness/agent-heartbeat",
+            headers={"X-Memoria-Internal-Token": "agent-heartbeat-token"},
+            json={
+                "release_tag": "release-heartbeat-test",
+                "boot_id": "8f819a3b-ec8f-4319-94ab-7cace979145f",
+                "worker_ready": True,
+                "livekit_ready": True,
+                "last_loop_at": datetime.fromtimestamp(
+                    datetime.now(UTC).timestamp() - 46,
+                    tz=UTC,
+                ).isoformat(),
+            },
+        )
+        stale = await client.get("/health/ready")
+
+    assert heartbeat.status_code == 200
+    assert stale.status_code == 503
+    assert stale.json()["checks"]["agent"]["status"] == "stale"

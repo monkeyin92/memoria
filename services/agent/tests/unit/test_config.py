@@ -8,6 +8,11 @@ from services.agent.src.config import AgentSettings, load_settings
 from services.agent.src.contracts.errors import ConfigValidationError
 
 
+@pytest.fixture(autouse=True)
+def agent_heartbeat_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEMORIA_AGENT_HEARTBEAT_TOKEN", "heartbeat-token-material-32-characters")
+
+
 def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FUNASR_SAMPLE_RATE", "16000")
     monkeypatch.setenv("VAD_MIN_SILENCE_DURATION_S", "0.30")
@@ -165,6 +170,17 @@ def test_production_archive_sink_requires_encryption_and_internal_auth(
 
     with pytest.raises(ValidationError, match="archive"):
         AgentSettings()
+
+
+def test_production_agent_heartbeat_requires_independent_token() -> None:
+    with pytest.raises(ValidationError, match="heartbeat"):
+        AgentSettings(
+            _env_file=None,
+            ENVIRONMENT="production",
+            LIVEKIT_URL="wss://test.livekit.cloud",
+            MEMORIA_ARCHIVE_SINK_ENABLED=False,
+            MEMORIA_AGENT_HEARTBEAT_TOKEN="",
+        )
 
 
 def test_production_formal_speaker_authority_requires_independent_token(

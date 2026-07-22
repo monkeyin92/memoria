@@ -2,22 +2,29 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import logging
 import re
 from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import parse_qsl, urlsplit
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from services.common.companions import COMPANION_IDS
 from services.common.redaction import redact_pii
 from services.control_api.app.account_gate import require_writable_account
 from services.control_api.app.config import ControlSettings
-from services.control_api.app.database import MemoryStore
+from services.control_api.app.database import (
+    MemoryStore,
+    MessageIdempotencyConflictError,
+)
 from services.control_api.app.security import (
     AuthenticatedUser,
     require_authenticated_user,
@@ -46,6 +53,7 @@ class MessageCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     user_id: UserId
+    client_message_id: str = Field(min_length=36, max_length=36)
     role: Literal["user", "assistant"]
     text: str = Field(min_length=1, max_length=8000)
     emotion: str | None = Field(default=None, max_length=32)
@@ -55,10 +63,19 @@ class MessageCreate(BaseModel):
     def validate_user_id(cls, value: str) -> str:
         return _clean_user_id(value)
 
+    @field_validator("client_message_id")
+    @classmethod
+    def validate_client_message_id(cls, value: str) -> str:
+        try:
+            return str(UUID(value))
+        except ValueError as exc:
+            raise ValueError("client_message_id must be a UUID") from exc
+
 
 class MessageRecord(BaseModel):
     id: int
     user_id: str
+    client_message_id: str
     role: Literal["user", "assistant"]
     text: str
     emotion: str | None
@@ -169,6 +186,30 @@ def _store(request: Request) -> MemoryStore:
 
 def _settings(request: Request) -> ControlSettings:
     return cast(ControlSettings, request.app.state.settings)
+
+
+def _message_request_fingerprint(
+    settings: ControlSettings,
+    *,
+    user_id: str,
+    body: MessageCreate,
+) -> str:
+    canonical = json.dumps(
+        {
+            "emotion": body.emotion,
+            "role": body.role,
+            "text": body.text,
+            "user_id": user_id,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hmac.new(
+        settings.memoria_message_idempotency_secret.get_secret_value().encode("utf-8"),
+        b"memoria-message-idempotency-v1\0" + canonical,
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def _fallback_summary(messages: list[dict[str, Any]], summary_date: date) -> DailySummaryContent:
@@ -316,22 +357,36 @@ def create_message(
     body: MessageCreate,
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+    response: Response,
 ) -> dict[str, Any]:
     user_id = require_matching_user(body.user_id, user)
     settings = _settings(request)
+    client_message_id = body.client_message_id
     try:
         local_timezone = ZoneInfo(settings.memoria_timezone)
     except ZoneInfoNotFoundError as exc:
         raise HTTPException(status_code=500, detail="server timezone is invalid") from exc
     now = datetime.now(UTC)
-    return _store(request).add_message(
-        user_id=user_id,
-        role=body.role,
-        text=redact_pii(body.text),
-        emotion=redact_pii(body.emotion) if body.emotion else None,
-        local_date=now.astimezone(local_timezone).date().isoformat(),
-        created_at=now.isoformat().replace("+00:00", "Z"),
-    )
+    try:
+        record, duplicate = _store(request).add_message(
+            user_id=user_id,
+            client_message_id=client_message_id,
+            request_fingerprint=_message_request_fingerprint(
+                settings,
+                user_id=user_id,
+                body=body,
+            ),
+            role=body.role,
+            text=redact_pii(body.text),
+            emotion=redact_pii(body.emotion) if body.emotion else None,
+            local_date=now.astimezone(local_timezone).date().isoformat(),
+            created_at=now.isoformat().replace("+00:00", "Z"),
+        )
+    except MessageIdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail="client_message_id payload conflict") from exc
+    if duplicate:
+        response.status_code = 200
+    return record
 
 
 @router.get("/days", response_model=DailyListResponse)

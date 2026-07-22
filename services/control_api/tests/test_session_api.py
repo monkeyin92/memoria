@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -885,7 +886,11 @@ def test_production_config_requires_immutable_release_tag() -> None:
         LIVEKIT_API_KEY="key",
         LIVEKIT_API_SECRET="test-livekit-material-long-enough",
         MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
+        MEMORIA_MESSAGE_IDEMPOTENCY_SECRET=(
+            "test-message-idempotency-material-that-is-long-enough"
+        ),
         MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-long-enough",
+        MEMORIA_AGENT_HEARTBEAT_TOKEN="test-heartbeat-material-that-is-long-enough",
         MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
         MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
@@ -914,7 +919,11 @@ def _valid_archive_pipeline_settings(**overrides: str) -> ControlSettings:
         "LIVEKIT_API_KEY": "key",
         "LIVEKIT_API_SECRET": "test-livekit-material-long-enough",
         "MEMORIA_AUTH_SECRET": "test-auth-material-that-is-long-enough",
+        "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET": (
+            "test-message-idempotency-material-that-is-long-enough"
+        ),
         "MEMORIA_ARCHIVE_WRITE_TOKEN": "test-archive-write-material-long-enough",
+        "MEMORIA_AGENT_HEARTBEAT_TOKEN": "test-heartbeat-material-that-is-long-enough",
         "MEMORIA_MEMORY_READ_TOKEN": "test-memory-read-material-long-enough",
         "MEMORIA_PERSONA_READ_TOKEN": "test-persona-read-material-long-enough",
         "MEMORIA_VOICE_RESOLUTION_TOKEN": "test-voice-resolve-material-long-enough",
@@ -986,12 +995,82 @@ def test_production_rejects_reused_internal_capability_tokens() -> None:
         LIVEKIT_API_SECRET="test-livekit-material-long-enough",
         MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
         MEMORIA_ARCHIVE_WRITE_TOKEN=shared,
+        MEMORIA_AGENT_HEARTBEAT_TOKEN=shared,
         MEMORIA_MEMORY_READ_TOKEN=shared,
         MEMORIA_PERSONA_READ_TOKEN=shared,
         MEMORIA_VOICE_RESOLUTION_TOKEN=shared,
     )
 
     with pytest.raises(ValueError, match="capability tokens must be independent"):
+        settings.validate_production()
+
+
+def test_production_requires_an_independent_message_idempotency_secret() -> None:
+    auth_secret = "test-auth-material-that-is-long-enough"
+    settings = ControlSettings(
+        ENVIRONMENT="production",
+        PUBLIC_BASE_URL="https://voice.example.com",
+        ALLOWED_ORIGINS="https://voice.example.com",
+        LIVEKIT_URL="wss://livekit.example.com",
+        LIVEKIT_API_KEY="key",
+        LIVEKIT_API_SECRET="test-livekit-material-that-is-long-enough",
+        MEMORIA_AUTH_SECRET=auth_secret,
+        MEMORIA_MESSAGE_IDEMPOTENCY_SECRET=auth_secret,
+        MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-that-is-long-enough",
+        MEMORIA_AGENT_HEARTBEAT_TOKEN="test-heartbeat-material-that-is-long-enough",
+        MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-that-is-long-enough",
+        MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-that-is-long-enough",
+        MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-that-is-long-enough",
+    )
+
+    with pytest.raises(ValueError, match="MEMORIA_MESSAGE_IDEMPOTENCY_SECRET"):
+        settings.validate_production()
+
+
+def test_production_rejects_the_development_message_idempotency_secret() -> None:
+    settings = ControlSettings(
+        ENVIRONMENT="production",
+        PUBLIC_BASE_URL="https://voice.example.com",
+        ALLOWED_ORIGINS="https://voice.example.com",
+        LIVEKIT_URL="wss://livekit.example.com",
+        LIVEKIT_API_KEY="key",
+        LIVEKIT_API_SECRET="test-livekit-material-long-enough",
+        MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
+        MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-long-enough",
+        MEMORIA_AGENT_HEARTBEAT_TOKEN="test-heartbeat-material-that-is-long-enough",
+        MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
+        MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
+        MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
+    )
+
+    with pytest.raises(ValueError, match="MEMORIA_MESSAGE_IDEMPOTENCY_SECRET"):
+        settings.validate_production()
+
+
+@pytest.mark.parametrize("reuse", ["active-read", "read-read", "cross-domain"])
+def test_production_rejects_reused_object_keyring_material(reuse: str) -> None:
+    archive_active = Fernet.generate_key().decode("ascii")
+    archive_old = Fernet.generate_key().decode("ascii")
+    voice_active = Fernet.generate_key().decode("ascii")
+    speaker_template = Fernet.generate_key().decode("ascii")
+    archive_read = {"archive-v1": archive_old}
+    voice_read: dict[str, str] = {}
+    if reuse == "active-read":
+        archive_read = {"archive-v1": archive_active}
+    elif reuse == "read-read":
+        archive_read = {"archive-v1": archive_old, "archive-v0": archive_old}
+    else:
+        voice_read = {"voice-v1": speaker_template}
+    settings = _valid_archive_pipeline_settings(
+        MEMORIA_SPEAKER_TEMPLATE_KEY=speaker_template,
+        MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY=voice_active,
+        MEMORIA_VOICE_SAMPLE_READ_KEYS=json.dumps(voice_read),
+        MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY=archive_active,
+        MEMORIA_ARCHIVE_OBJECT_KEY_VERSION="archive-v2",
+        MEMORIA_ARCHIVE_OBJECT_READ_KEYS=json.dumps(archive_read),
+    )
+
+    with pytest.raises(ValueError, match="key material must be unique"):
         settings.validate_production()
 
 
@@ -1005,7 +1084,11 @@ def test_production_config_requires_an_independent_archive_object_key() -> None:
         LIVEKIT_API_KEY="key",
         LIVEKIT_API_SECRET="test-livekit-material-long-enough",
         MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
+        MEMORIA_MESSAGE_IDEMPOTENCY_SECRET=(
+            "test-message-idempotency-material-that-is-long-enough"
+        ),
         MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-long-enough",
+        MEMORIA_AGENT_HEARTBEAT_TOKEN="test-heartbeat-material-that-is-long-enough",
         MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
         MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
@@ -1025,6 +1108,16 @@ def test_production_config_requires_an_independent_archive_object_key() -> None:
         settings.validate_production()
 
 
+def test_production_rejects_invalid_archive_object_read_key_map_without_leaking_it() -> None:
+    secret = "not-json-object-key-material"
+    settings = _valid_archive_pipeline_settings(MEMORIA_ARCHIVE_OBJECT_READ_KEYS=secret)
+
+    with pytest.raises(ValueError, match="valid archive object keys") as exc_info:
+        settings.validate_production()
+
+    assert secret not in str(exc_info.value)
+
+
 def test_production_rejects_reused_voice_sample_and_speaker_template_key() -> None:
     shared_biometric_key = Fernet.generate_key().decode("ascii")
     settings = ControlSettings(
@@ -1035,7 +1128,11 @@ def test_production_rejects_reused_voice_sample_and_speaker_template_key() -> No
         LIVEKIT_API_KEY="key",
         LIVEKIT_API_SECRET="test-livekit-material-long-enough",
         MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
+        MEMORIA_MESSAGE_IDEMPOTENCY_SECRET=(
+            "test-message-idempotency-material-that-is-long-enough"
+        ),
         MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-long-enough",
+        MEMORIA_AGENT_HEARTBEAT_TOKEN="test-heartbeat-material-that-is-long-enough",
         MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
         MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
@@ -1066,7 +1163,11 @@ def test_production_rejects_a_shared_archive_and_voice_object_bucket() -> None:
         LIVEKIT_API_KEY="key",
         LIVEKIT_API_SECRET="test-livekit-material-long-enough",
         MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
+        MEMORIA_MESSAGE_IDEMPOTENCY_SECRET=(
+            "test-message-idempotency-material-that-is-long-enough"
+        ),
         MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-long-enough",
+        MEMORIA_AGENT_HEARTBEAT_TOKEN="test-heartbeat-material-that-is-long-enough",
         MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
         MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
@@ -1096,7 +1197,11 @@ def test_production_config_requires_formal_speaker_secrets_and_model() -> None:
         LIVEKIT_API_KEY="key",
         LIVEKIT_API_SECRET="test-livekit-material-long-enough",
         MEMORIA_AUTH_SECRET="test-auth-material-that-is-long-enough",
+        MEMORIA_MESSAGE_IDEMPOTENCY_SECRET=(
+            "test-message-idempotency-material-that-is-long-enough"
+        ),
         MEMORIA_ARCHIVE_WRITE_TOKEN="test-archive-write-material-long-enough",
+        MEMORIA_AGENT_HEARTBEAT_TOKEN="test-heartbeat-material-that-is-long-enough",
         MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
         MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",

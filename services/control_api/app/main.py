@@ -199,6 +199,7 @@ def _voice_profile_services(
             bucket=settings.voice_object_bucket,
             key=object_key,
             key_version=settings.voice_sample_key_version,
+            read_keys=settings.voice_sample_read_key_map(),
             endpoint_url=settings.voice_object_endpoint or None,
             region_name=settings.voice_object_region or None,
             access_key_id=(
@@ -214,6 +215,7 @@ def _voice_profile_services(
             root=Path(settings.voice_sample_store_path),
             key=object_key,
             key_version=settings.voice_sample_key_version,
+            read_keys=settings.voice_sample_read_key_map(),
         )
     configured_signer = settings.voice_sample_url_secret.get_secret_value()
     signer_secret = (
@@ -269,6 +271,7 @@ def _archive_object_store(settings: ControlSettings) -> ObjectStore:
             bucket=settings.archive_object_bucket,
             key=object_key,
             key_version=settings.archive_object_key_version,
+            read_keys=settings.archive_object_read_key_map(),
             endpoint_url=settings.archive_object_endpoint or None,
             region_name=settings.archive_object_region or None,
             access_key_id=(
@@ -283,6 +286,7 @@ def _archive_object_store(settings: ControlSettings) -> ObjectStore:
         root=Path(settings.archive_object_store_path),
         key=object_key,
         key_version=settings.archive_object_key_version,
+        read_keys=settings.archive_object_read_key_map(),
     )
 
 

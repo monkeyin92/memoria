@@ -139,7 +139,7 @@ python3 -c 'import json,sys; body=json.load(open(sys.argv[1])); assert body["rej
   "$workdir/profile.preference.json"
 curl -fsS -H "$host_header" -H "$auth_header" -H 'Content-Type: application/json' \
   -X POST "$base/memoria-api/v1/memory/messages" \
-  -d "{\"user_id\":\"$user_id\",\"role\":\"user\",\"text\":\"部署预检消息\",\"emotion\":\"calm\"}" \
+  -d "{\"user_id\":\"$user_id\",\"client_message_id\":\"00000000-0000-4000-8000-000000000001\",\"role\":\"user\",\"text\":\"部署预检消息\",\"emotion\":\"calm\"}" \
   -o "$workdir/message.post.json"
 
 sudo docker rm -f "$container" >/dev/null

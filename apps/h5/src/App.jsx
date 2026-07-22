@@ -15,6 +15,7 @@ import {
   PencilSimple,
   PhoneDisconnect,
   ShieldCheck,
+  SignOut,
   Sparkle,
   Trash,
   UserCircle,
@@ -29,6 +30,8 @@ import {
   getMemoryDays,
   getProfile,
   loginAccount,
+  logoutAllDevices,
+  logoutCurrentDevice,
   registerAccount,
   saveMessage,
   summarizeDay,
@@ -376,6 +379,11 @@ export function App() {
     await voiceReset.catch(() => undefined);
   };
 
+  const handleLogout = async (allDevices) => {
+    await (allDevices ? logoutAllDevices() : logoutCurrentDevice());
+    await handleAccountDeleted();
+  };
+
   if (!identityReady || identityError || (identity && !profileReady)) {
     return (
       <main className="mobile-prototype" data-page="bootstrap">
@@ -629,6 +637,8 @@ export function App() {
             preferenceError={preferenceError}
             onOpenDigitalSelf={() => setDigitalSelfOpen(true)}
             onOpenPrivacyData={() => setPrivacyDataOpen(true)}
+            onLogoutCurrent={() => handleLogout(false)}
+            onLogoutAll={() => handleLogout(true)}
             onAccountDeleted={handleAccountDeleted}
             accountDeletionOpen={accountDeletionOpen}
             setAccountDeletionOpen={setAccountDeletionOpen}
@@ -805,16 +815,33 @@ function ProfileScreen({
   preferenceError,
   onOpenDigitalSelf,
   onOpenPrivacyData,
+  onLogoutCurrent,
+  onLogoutAll,
   onAccountDeleted,
   accountDeletionOpen,
   setAccountDeletionOpen,
 }) {
   const [accountDeletionBusy, setAccountDeletionBusy] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState("");
+  const [logoutError, setLogoutError] = useState("");
+  const [logoutAllConfirmationOpen, setLogoutAllConfirmationOpen] =
+    useState(false);
   const companion = companionById(profile.companion_id);
   const momentCount = memoryDays.reduce(
     (total, day) => total + day.message_count,
     0,
   );
+  const runLogout = async (scope) => {
+    setLogoutBusy(scope);
+    setLogoutError("");
+    try {
+      await (scope === "all" ? onLogoutAll() : onLogoutCurrent());
+    } catch {
+      setLogoutError("退出失败，请检查网络后重试。");
+    } finally {
+      setLogoutBusy("");
+    }
+  };
   return (
     <section
       className={`screen profile-screen ${editing || accountDeletionOpen ? "sheet-open" : ""}`}
@@ -916,6 +943,69 @@ function ProfileScreen({
           <span><strong>隐私与数据</strong><small>专属凭证保护你的对话</small></span>
           <CaretRight size={19} weight="bold" />
         </button>
+
+        <section className="account-session-card" aria-labelledby="account-session-title">
+          <h3 id="account-session-title">账户与设备</h3>
+          <button
+            type="button"
+            className="account-logout-entry"
+            disabled={Boolean(logoutBusy)}
+            aria-busy={logoutBusy === "current" || undefined}
+            onClick={() => void runLogout("current")}
+          >
+            <SignOut size={19} weight="bold" aria-hidden="true" />
+            <span>
+              <strong>{logoutBusy === "current" ? "正在退出…" : "退出当前设备"}</strong>
+              <small>其他已登录设备保持在线</small>
+            </span>
+          </button>
+          <button
+            type="button"
+            className="account-logout-entry account-logout-all"
+            disabled={Boolean(logoutBusy)}
+            onClick={() => {
+              setLogoutError("");
+              setLogoutAllConfirmationOpen(true);
+            }}
+          >
+            <SignOut size={19} weight="bold" aria-hidden="true" />
+            <span>
+              <strong>退出所有设备</strong>
+              <small>所有设备都需要重新登录</small>
+            </span>
+          </button>
+
+          {logoutAllConfirmationOpen && (
+            <div
+              className="account-logout-confirmation"
+              role="alertdialog"
+              aria-label="确认退出所有设备"
+            >
+              <p>确定要结束所有设备上的登录吗？</p>
+              <div>
+                <button
+                  type="button"
+                  disabled={Boolean(logoutBusy)}
+                  onClick={() => setLogoutAllConfirmationOpen(false)}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={Boolean(logoutBusy)}
+                  aria-busy={logoutBusy === "all" || undefined}
+                  onClick={() => void runLogout("all")}
+                >
+                  {logoutBusy === "all" ? "正在退出…" : "确认退出所有设备"}
+                </button>
+              </div>
+            </div>
+          )}
+          {logoutError && (
+            <p className="inline-error" role="alert">{logoutError}</p>
+          )}
+        </section>
 
         <button
           type="button"

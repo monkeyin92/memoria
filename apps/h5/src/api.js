@@ -7,29 +7,74 @@ const identityStorageKey = "memoria:identity";
 const legacyIdentityStorageKey = "memoria:anonymous-identity";
 let activeIdentity = null;
 let identityPromise = null;
+let refreshPromise = null;
+
+function identitySnapshot(identity) {
+  if (!identity || typeof identity.user_id !== "string" || !identity.user_id) {
+    return null;
+  }
+  return {
+    user_id: identity.user_id,
+    username: identity.username || null,
+    account_type: identity.account_type || "registered",
+  };
+}
 
 function readStoredIdentity() {
   try {
-    const raw =
-      window.localStorage.getItem(identityStorageKey) ||
-      window.localStorage.getItem(legacyIdentityStorageKey);
-    const value = JSON.parse(raw || "null");
-    if (
-      value &&
-      typeof value.user_id === "string" &&
-      value.user_id &&
-      typeof value.access_token === "string" &&
-      value.access_token
-    ) {
-      return value;
+    const read = (key) => {
+      try {
+        return JSON.parse(window.localStorage.getItem(key) || "null");
+      } catch {
+        return null;
+      }
+    };
+    const current = read(identityStorageKey);
+    const legacy = read(legacyIdentityStorageKey);
+    const currentSnapshot = identitySnapshot(current);
+    const legacySnapshot = identitySnapshot(legacy);
+    if (currentSnapshot && !current?.access_token) {
+      window.localStorage.removeItem(legacyIdentityStorageKey);
+      return currentSnapshot;
     }
+    const value = currentSnapshot && current?.access_token
+      ? current
+      : legacySnapshot && legacy?.access_token
+        ? legacy
+        : current || legacy;
+    const snapshot = identitySnapshot(value);
+    if (!snapshot) return null;
+    const legacyAccessToken = typeof value?.access_token === "string"
+      ? value.access_token
+      : null;
+    return {
+      ...snapshot,
+      ...(legacyAccessToken
+        ? { legacy_access_token: legacyAccessToken }
+        : {}),
+    };
   } catch {
     // Invalid local identity data is ignored; the account gate will recover it.
   }
   return null;
 }
 
-async function request(
+async function upgradeLegacyAccess(token) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await performRequest(
+        "/v1/auth/upgrade",
+        { method: "POST", headers: { Authorization: `Bearer ${token}` } },
+        { authenticated: false },
+      );
+    } catch (error) {
+      if (attempt || error?.status) throw error;
+    }
+  }
+  throw new Error("legacy upgrade retry exhausted");
+}
+
+async function performRequest(
   path,
   options = {},
   { authenticated = true, responseType = "json" } = {},
@@ -39,6 +84,7 @@ async function request(
   }
   const response = await fetch(`${baseUrl}${path}`, {
     ...options,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(authenticated
@@ -59,6 +105,7 @@ async function request(
     }
     const error = new Error(message || `请求失败（${response.status}）`);
     error.status = response.status;
+    error.retryAfter = response.headers?.get?.("Retry-After") || null;
     throw error;
   }
 
@@ -68,42 +115,106 @@ async function request(
   return response.json();
 }
 
-function persistIdentity(identity) {
+function persistSnapshot(identity) {
+  const snapshot = identitySnapshot(identity);
+  if (!snapshot) throw new Error("账号身份响应无效");
+  window.localStorage.setItem(identityStorageKey, JSON.stringify(snapshot));
+  window.localStorage.removeItem(legacyIdentityStorageKey);
+  return snapshot;
+}
+
+function acceptAuthIdentity(identity) {
+  const snapshot = identitySnapshot(identity);
+  if (!snapshot || typeof identity.access_token !== "string" || !identity.access_token) {
+    throw new Error("账号身份响应无效");
+  }
   activeIdentity = {
-    user_id: identity.user_id,
-    username: identity.username || null,
-    account_type: identity.account_type || "registered",
+    ...snapshot,
     access_token: identity.access_token,
   };
-  window.localStorage.setItem(identityStorageKey, JSON.stringify(activeIdentity));
-  window.localStorage.removeItem(legacyIdentityStorageKey);
-  return activeIdentity;
+  return persistSnapshot(snapshot);
+}
+
+function clearActiveIdentity({ removeSnapshot = true } = {}) {
+  activeIdentity = null;
+  if (removeSnapshot) {
+    window.localStorage.removeItem(identityStorageKey);
+    window.localStorage.removeItem(legacyIdentityStorageKey);
+  }
+}
+
+function refreshRetryDelayMs(error) {
+  const seconds = Number.parseFloat(error?.retryAfter);
+  if (!Number.isFinite(seconds) || seconds < 0) return 250;
+  return Math.min(seconds * 1_000, 5_000);
+}
+
+async function performRefreshWithRaceRetry() {
+  try {
+    return await performRequest(
+      "/v1/auth/refresh",
+      { method: "POST" },
+      { authenticated: false },
+    );
+  } catch (error) {
+    if (error?.status !== 409) throw error;
+    await new Promise((resolve) => setTimeout(resolve, refreshRetryDelayMs(error)));
+    return performRequest(
+      "/v1/auth/refresh",
+      { method: "POST" },
+      { authenticated: false },
+    );
+  }
+}
+
+function refreshAccess() {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = performRefreshWithRaceRetry()
+    .then(acceptAuthIdentity)
+    .catch((error) => {
+      clearActiveIdentity({ removeSnapshot: [401, 403].includes(error?.status) });
+      throw error;
+    })
+    .finally(() => {
+      refreshPromise = null;
+    });
+  return refreshPromise;
+}
+
+async function request(
+  path,
+  options = {},
+  { authenticated = true, responseType = "json" } = {},
+) {
+  try {
+    return await performRequest(path, options, { authenticated, responseType });
+  } catch (error) {
+    if (!authenticated || error?.status !== 401) throw error;
+    await refreshAccess();
+    return performRequest(path, options, { authenticated, responseType });
+  }
 }
 
 export function bootstrapIdentity() {
-  if (activeIdentity) return Promise.resolve(activeIdentity);
+  if (activeIdentity) return Promise.resolve(identitySnapshot(activeIdentity));
   if (identityPromise) return identityPromise;
 
   const stored = readStoredIdentity();
   identityPromise = (async () => {
-    if (stored) {
-      activeIdentity = stored;
-      try {
-        const current = await request("/v1/auth/me");
-        if (current?.user_id === stored.user_id) {
-          return persistIdentity({ ...stored, ...current });
-        }
-      } catch (error) {
-        activeIdentity = null;
-        if (![401, 403].includes(error?.status)) {
-          throw error;
-        }
+    try {
+      if (stored?.legacy_access_token) {
+        const upgraded = await upgradeLegacyAccess(stored.legacy_access_token);
+        return acceptAuthIdentity(upgraded);
       }
-      activeIdentity = null;
-      window.localStorage.removeItem(identityStorageKey);
-      window.localStorage.removeItem(legacyIdentityStorageKey);
+      return await refreshAccess();
+    } catch (error) {
+      if ([401, 403].includes(error?.status)) {
+        clearActiveIdentity();
+        return null;
+      }
+      clearActiveIdentity({ removeSnapshot: false });
+      throw error;
     }
-    return null;
   })().finally(() => {
     identityPromise = null;
   });
@@ -122,7 +233,7 @@ export async function registerAccount(username, password) {
   if (!identity?.user_id || !identity?.access_token) {
     throw new Error("账号注册响应无效");
   }
-  return persistIdentity(identity);
+  return acceptAuthIdentity(identity);
 }
 
 export async function loginAccount(username, password) {
@@ -137,7 +248,29 @@ export async function loginAccount(username, password) {
   if (!identity?.user_id || !identity?.access_token) {
     throw new Error("账号登录响应无效");
   }
-  return persistIdentity(identity);
+  return acceptAuthIdentity(identity);
+}
+
+export async function createAnonymousIdentity() {
+  const identity = await request(
+    "/v1/auth/anonymous",
+    { method: "POST" },
+    { authenticated: false },
+  );
+  return acceptAuthIdentity(identity);
+}
+
+async function logout(path) {
+  await request(path, { method: "POST" });
+  clearActiveIdentity();
+}
+
+export function logoutCurrentDevice() {
+  return logout("/v1/auth/logout");
+}
+
+export function logoutAllDevices() {
+  return logout("/v1/auth/logout-all");
 }
 
 export function createSession(userId, voiceBackend = "cascade") {
@@ -192,9 +325,37 @@ export function notifyRtcRecovered(sessionId) {
   });
 }
 
+function createClientMessageId() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  return [...bytes]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, "$1-$2-$3-$4-$5");
+}
+
+function ensureClientMessageId(message) {
+  if (typeof message?.client_message_id === "string" && message.client_message_id) {
+    return message;
+  }
+  message.client_message_id = createClientMessageId();
+  return message;
+}
+
 export function saveMessage(message) {
   if (message?.history_eligible !== true) return Promise.resolve(null);
-  const payload = { ...message };
+  const payload = { ...ensureClientMessageId(message) };
   delete payload.history_eligible;
   return request("/v1/memory/messages", {
     method: "POST",
@@ -461,7 +622,7 @@ export function cachePendingMessage(message) {
   if (!message?.user_id || message.history_eligible !== true) return;
   const key = pendingMessagesKey(message.user_id);
   const pending = readPendingMessages(key);
-  pending.push(message);
+  pending.push(ensureClientMessageId(message));
   window.localStorage.setItem(key, JSON.stringify(pending.slice(-80)));
 }
 
@@ -476,7 +637,7 @@ export async function flushPendingMessages() {
   const pending = [
     ...readPendingMessages(key),
     ...legacy.filter((message) => message?.user_id === userId),
-  ];
+  ].map(ensureClientMessageId);
   const otherAccounts = legacy.filter((message) => message?.user_id !== userId);
   if (otherAccounts.length) {
     window.localStorage.setItem(legacyKey, JSON.stringify(otherAccounts));
@@ -484,6 +645,7 @@ export async function flushPendingMessages() {
     window.localStorage.removeItem(legacyKey);
   }
   if (!pending.length) return;
+  window.localStorage.setItem(key, JSON.stringify(pending));
   const failed = [];
   for (const message of pending) {
     if (!isCurrentIdentity()) return;

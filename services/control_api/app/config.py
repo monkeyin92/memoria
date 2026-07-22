@@ -2,13 +2,37 @@
 
 from __future__ import annotations
 
+import base64
+import json
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from services.common.security_constants import DEV_AUTH_SECRET
+from services.common.security_constants import (
+    DEV_AUTH_SECRET,
+    DEV_MESSAGE_IDEMPOTENCY_SECRET,
+)
+
+
+def _read_key_map(value: str, *, label: str) -> dict[str, str]:
+    if not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} read key map must be valid JSON") from exc
+    if not isinstance(parsed, dict) or any(
+        not isinstance(version, str)
+        or not version.strip()
+        or not isinstance(key, str)
+        or not key.strip()
+        for version, key in parsed.items()
+    ):
+        raise ValueError(f"{label} read key map must be a version-to-key object")
+    return parsed
 
 
 class ControlSettings(BaseSettings):
@@ -42,6 +66,10 @@ class ControlSettings(BaseSettings):
         default=SecretStr(""),
         alias="MEMORIA_ARCHIVE_WRITE_TOKEN",
     )
+    memoria_agent_heartbeat_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_AGENT_HEARTBEAT_TOKEN",
+    )
     memoria_memory_read_token: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_MEMORY_READ_TOKEN",
@@ -65,6 +93,10 @@ class ControlSettings(BaseSettings):
     archive_object_key_version: str = Field(
         default="archive-object-v1",
         alias="MEMORIA_ARCHIVE_OBJECT_KEY_VERSION",
+    )
+    archive_object_read_keys: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_ARCHIVE_OBJECT_READ_KEYS",
     )
     archive_object_bucket: str = Field(default="", alias="MEMORIA_ARCHIVE_OBJECT_BUCKET")
     archive_object_endpoint: str = Field(default="", alias="MEMORIA_ARCHIVE_OBJECT_ENDPOINT")
@@ -165,6 +197,10 @@ class ControlSettings(BaseSettings):
     voice_sample_key_version: str = Field(
         default="voice-sample-v1",
         alias="MEMORIA_VOICE_SAMPLE_KEY_VERSION",
+    )
+    voice_sample_read_keys: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_VOICE_SAMPLE_READ_KEYS",
     )
     voice_object_bucket: str = Field(default="", alias="MEMORIA_VOICE_OBJECT_BUCKET")
     voice_object_endpoint: str = Field(default="", alias="MEMORIA_VOICE_OBJECT_ENDPOINT")
@@ -295,6 +331,10 @@ class ControlSettings(BaseSettings):
         default=SecretStr(DEV_AUTH_SECRET),
         alias="MEMORIA_AUTH_SECRET",
     )
+    memoria_message_idempotency_secret: SecretStr = Field(
+        default=SecretStr(DEV_MESSAGE_IDEMPOTENCY_SECRET),
+        alias="MEMORIA_MESSAGE_IDEMPOTENCY_SECRET",
+    )
     memoria_auth_issuer: str = Field(
         default="memoria-control-api",
         alias="MEMORIA_AUTH_ISSUER",
@@ -304,10 +344,27 @@ class ControlSettings(BaseSettings):
         alias="MEMORIA_AUTH_AUDIENCE",
     )
     memoria_auth_token_ttl_s: int = Field(
-        default=31_536_000,
-        ge=300,
-        le=31_536_000,
+        default=900,
+        ge=600,
+        le=900,
         alias="MEMORIA_AUTH_TOKEN_TTL_S",
+    )
+    memoria_auth_refresh_ttl_s: int = Field(
+        default=2_592_000,
+        ge=86_400,
+        le=2_592_000,
+        alias="MEMORIA_AUTH_REFRESH_TTL_S",
+    )
+    memoria_refresh_cookie_name: str = Field(
+        default="memoria_refresh",
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        alias="MEMORIA_REFRESH_COOKIE_NAME",
+    )
+    legacy_auth_compat_until: datetime | None = Field(
+        default=None,
+        alias="MEMORIA_LEGACY_AUTH_COMPAT_UNTIL",
     )
     memoria_release_tag: str = Field(default="development", alias="MEMORIA_RELEASE_TAG")
     readiness_gate_ttl_s: int = Field(
@@ -321,12 +378,58 @@ class ControlSettings(BaseSettings):
     def origins_list(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
+    @field_validator("legacy_auth_compat_until", mode="before")
+    @classmethod
+    def require_absolute_utc_legacy_auth_cutoff(cls, value: object) -> datetime | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, str):
+            try:
+                value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError("MEMORIA_LEGACY_AUTH_COMPAT_UNTIL must be absolute UTC") from exc
+        if (
+            not isinstance(value, datetime)
+            or value.tzinfo is None
+            or value.utcoffset() != timedelta(0)
+        ):
+            raise ValueError("MEMORIA_LEGACY_AUTH_COMPAT_UNTIL must be absolute UTC")
+        cutoff = value.astimezone(UTC)
+        remaining = cutoff - datetime.now(UTC)
+        if remaining > timedelta(hours=24):
+            raise ValueError("MEMORIA_LEGACY_AUTH_COMPAT_UNTIL must be within 24 hours")
+        return cutoff
+
+    def legacy_auth_compat_active(self, *, now: datetime | None = None) -> bool:
+        cutoff = self.legacy_auth_compat_until
+        current = now or datetime.now(UTC)
+        return cutoff is not None and current < cutoff
+
+    def archive_object_read_key_map(self) -> dict[str, str]:
+        return _read_key_map(
+            self.archive_object_read_keys.get_secret_value(),
+            label="archive object",
+        )
+
+    def voice_sample_read_key_map(self) -> dict[str, str]:
+        return _read_key_map(
+            self.voice_sample_read_keys.get_secret_value(),
+            label="voice sample",
+        )
+
     def internal_token(
         self,
-        capability: Literal["archive_write", "memory_read", "persona_read", "voice_resolution"],
+        capability: Literal[
+            "archive_write",
+            "agent_heartbeat",
+            "memory_read",
+            "persona_read",
+            "voice_resolution",
+        ],
     ) -> str:
         configured = {
             "archive_write": self.memoria_archive_write_token,
+            "agent_heartbeat": self.memoria_agent_heartbeat_token,
             "memory_read": self.memoria_memory_read_token,
             "persona_read": self.memoria_persona_read_token,
             "voice_resolution": self.memoria_voice_resolution_token,
@@ -353,16 +456,31 @@ class ControlSettings(BaseSettings):
             raise ValueError("MEMORIA_AUTH_SECRET must differ from LIVEKIT_API_SECRET")
         capability_tokens = {
             "MEMORIA_ARCHIVE_WRITE_TOKEN": self.internal_token("archive_write"),
+            "MEMORIA_AGENT_HEARTBEAT_TOKEN": self.internal_token("agent_heartbeat"),
             "MEMORIA_MEMORY_READ_TOKEN": self.internal_token("memory_read"),
             "MEMORIA_PERSONA_READ_TOKEN": self.internal_token("persona_read"),
             "MEMORIA_VOICE_RESOLUTION_TOKEN": self.internal_token("voice_resolution"),
         }
         if any(len(token) < 32 for token in capability_tokens.values()):
-            raise ValueError("production requires four capability-scoped internal tokens")
+            raise ValueError("production requires five capability-scoped internal tokens")
         if len(set(capability_tokens.values())) != len(capability_tokens) or any(
             token in {auth_secret, self.livekit_api_secret} for token in capability_tokens.values()
         ):
             raise ValueError("production internal capability tokens must be independent")
+        message_idempotency_secret = self.memoria_message_idempotency_secret.get_secret_value()
+        if (
+            message_idempotency_secret == DEV_MESSAGE_IDEMPOTENCY_SECRET
+            or len(message_idempotency_secret) < 32
+            or message_idempotency_secret
+            in {
+                auth_secret,
+                self.livekit_api_secret,
+                *capability_tokens.values(),
+            }
+        ):
+            raise ValueError(
+                "production requires an independent MEMORIA_MESSAGE_IDEMPOTENCY_SECRET (>=32 chars)"
+            )
         archive_url = self.archive_database_url.get_secret_value()
         if not archive_url.startswith(("postgresql://", "postgres://")):
             raise ValueError("production requires MEMORIA_ARCHIVE_DATABASE_URL for PostgreSQL")
@@ -403,8 +521,13 @@ class ControlSettings(BaseSettings):
             from cryptography.fernet import Fernet
 
             Fernet(voice_key.encode("ascii"))
+            voice_read_keys = self.voice_sample_read_key_map()
+            if self.voice_sample_key_version in voice_read_keys:
+                raise ValueError("active version cannot be read-only")
+            for read_key in voice_read_keys.values():
+                Fernet(read_key.encode("ascii"))
         except (ValueError, UnicodeEncodeError) as exc:
-            raise ValueError("production requires a valid voice sample Fernet key") from exc
+            raise ValueError("production requires valid voice sample object keys") from exc
         if voice_key == template_key:
             raise ValueError(
                 "production requires independent voice sample and speaker template keys"
@@ -436,10 +559,29 @@ class ControlSettings(BaseSettings):
             from cryptography.fernet import Fernet
 
             Fernet(archive_object_key.encode("ascii"))
+            archive_read_keys = self.archive_object_read_key_map()
+            if self.archive_object_key_version in archive_read_keys:
+                raise ValueError("active version cannot be read-only")
+            for read_key in archive_read_keys.values():
+                Fernet(read_key.encode("ascii"))
         except (ValueError, UnicodeEncodeError) as exc:
-            raise ValueError("production requires a valid archive object Fernet key") from exc
+            raise ValueError("production requires valid archive object keys") from exc
         if archive_object_key in {voice_key, template_key}:
             raise ValueError("production requires an independent archive object key")
+        key_material = [
+            template_key,
+            voice_key,
+            *voice_read_keys.values(),
+            archive_object_key,
+            *archive_read_keys.values(),
+        ]
+        decoded_key_material = {
+            base64.urlsafe_b64decode(value.encode("ascii")) for value in key_material
+        }
+        if len(decoded_key_material) != len(key_material):
+            raise ValueError(
+                "production encryption key material must be unique across active and read-only keyrings"
+            )
         if not self.archive_object_bucket.strip():
             raise ValueError("production requires an S3-compatible archive object bucket")
         archive_access_key = self.archive_object_access_key.get_secret_value().strip()
@@ -449,9 +591,7 @@ class ControlSettings(BaseSettings):
         ):
             raise ValueError("production requires a complete archive object credential pair")
         if self.archive_object_bucket.strip() == self.voice_object_bucket.strip():
-            raise ValueError(
-                "production requires independent archive and voice object buckets"
-            )
+            raise ValueError("production requires independent archive and voice object buckets")
         release_tag = self.memoria_release_tag.strip().lower()
         if release_tag in ("", "latest", "development"):
             raise ValueError("production requires an immutable MEMORIA_RELEASE_TAG")

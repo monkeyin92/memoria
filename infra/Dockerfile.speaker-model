@@ -34,6 +34,13 @@ RUN python /tmp/export_campplus_onnx.py \
 
 FROM python:3.12.13-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b AS runtime
 
+ARG MEMORIA_RELEASE_COMMIT
+ARG MEMORIA_RELEASE_TAG
+ARG MEMORIA_IMAGE_ROLE=speaker-model
+LABEL org.opencontainers.image.revision="${MEMORIA_RELEASE_COMMIT}" \
+      org.opencontainers.image.version="${MEMORIA_RELEASE_TAG}" \
+      com.memoria.release.role="${MEMORIA_IMAGE_ROLE}"
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \

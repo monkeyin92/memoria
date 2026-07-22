@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import secrets
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote
 
@@ -30,6 +31,11 @@ def _token() -> str:
 
 def _fernet_key() -> str:
     return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii")
+
+
+def _keep_or_create(values: dict[str, str], key: str, factory: Callable[[], str]) -> str:
+    existing = values.get(key, "")
+    return existing if existing.strip() else factory()
 
 
 def _required(values: dict[str, str], key: str) -> str:
@@ -84,19 +90,29 @@ def prepare(
             ),
             "MEMORIA_ARCHIVE_COMPILER_ROLE": "memoria_compiler",
             "MEMORIA_ARCHIVE_WRITE_TOKEN": _token(),
+            "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET": _keep_or_create(
+                values, "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET", _token
+            ),
+            "MEMORIA_AGENT_HEARTBEAT_TOKEN": _token(),
             "MEMORIA_MEMORY_READ_TOKEN": _token(),
             "MEMORIA_PERSONA_READ_TOKEN": _token(),
             "MEMORIA_VOICE_RESOLUTION_TOKEN": _token(),
             "MEMORIA_SPEAKER_INTERNAL_TOKEN": _token(),
             "MEMORIA_SPEAKER_EMBEDDING_TOKEN": _token(),
-            "MEMORIA_SPEAKER_TEMPLATE_KEY": _fernet_key(),
+            "MEMORIA_SPEAKER_TEMPLATE_KEY": _keep_or_create(
+                values, "MEMORIA_SPEAKER_TEMPLATE_KEY", _fernet_key
+            ),
             "MEMORIA_SPEAKER_EMBEDDING_URL": ("http://speaker-model:8001/v1/embeddings/speaker"),
             "MEMORIA_SPEAKER_EMBEDDING_MODEL": _MODEL_VERSION,
             "MEMORIA_SPEAKER_AUTHORITY_ENABLED": "true",
             "MEMORIA_SPEAKER_AUTHORITY_URL": ("http://control-api:8000/v1/speakers/classify"),
             "MEMORIA_SPEAKER_AUTHORITY_TIMEOUT_S": "0.4",
-            "MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY": _fernet_key(),
-            "MEMORIA_VOICE_SAMPLE_KEY_VERSION": "voice-sample-v1",
+            "MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY": _keep_or_create(
+                values, "MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY", _fernet_key
+            ),
+            "MEMORIA_VOICE_SAMPLE_KEY_VERSION": _keep_or_create(
+                values, "MEMORIA_VOICE_SAMPLE_KEY_VERSION", lambda: "voice-sample-v1"
+            ),
             "MEMORIA_VOICE_SAMPLE_URL_SECRET": _token(),
             "MEMORIA_VOICE_OBJECT_BUCKET": "memoria-voice",
             "MEMORIA_VOICE_OBJECT_ENDPOINT": "http://memoria-minio:9000",
@@ -105,8 +121,12 @@ def prepare(
             "MEMORIA_VOICE_OBJECT_SECRET_KEY": voice_secret,
             "MEMORIA_VOICE_OBJECT_PREFIX": "voice-clone",
             "MEMORIA_VOICE_TARGET_MODEL": "cosyvoice-v3.5-flash",
-            "MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY": _fernet_key(),
-            "MEMORIA_ARCHIVE_OBJECT_KEY_VERSION": "archive-object-v1",
+            "MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY": _keep_or_create(
+                values, "MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY", _fernet_key
+            ),
+            "MEMORIA_ARCHIVE_OBJECT_KEY_VERSION": _keep_or_create(
+                values, "MEMORIA_ARCHIVE_OBJECT_KEY_VERSION", lambda: "archive-object-v1"
+            ),
             "MEMORIA_ARCHIVE_OBJECT_BUCKET": "memoria-archive",
             "MEMORIA_ARCHIVE_OBJECT_ENDPOINT": "http://memoria-minio:9000",
             "MEMORIA_ARCHIVE_OBJECT_REGION": "us-east-1",
@@ -122,7 +142,9 @@ def prepare(
             "MEMORIA_ARCHIVE_SESSION_EVENTS_URL": (
                 "http://control-api:8000/v1/archive/session-events"
             ),
-            "MEMORIA_ARCHIVE_SPOOL_KEY": _fernet_key(),
+            "MEMORIA_ARCHIVE_SPOOL_KEY": _keep_or_create(
+                values, "MEMORIA_ARCHIVE_SPOOL_KEY", _fernet_key
+            ),
             "MEMORIA_ARCHIVE_SPOOL_PATH": "/data/archive-events.spool",
             "MEMORIA_ARCHIVE_SPOOL_MAX_BYTES": "8388608",
             "MEMORIA_PERSONA_ENABLED": "true",

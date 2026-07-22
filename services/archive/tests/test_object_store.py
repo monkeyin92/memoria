@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import io
 import sys
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from services.archive.object_store import (
     EncryptedLocalObjectStore,
     EncryptedS3ObjectStore,
+    ObjectIntegrityError,
     ObjectOwnershipError,
 )
 
@@ -86,6 +88,112 @@ async def test_object_reference_cannot_cross_account_ownership_boundary(tmp_path
         await store.delete(replace(reference, account_id="account-a"))
 
     assert await store.get(reference) == b"belongs to account b"
+
+
+@pytest.mark.asyncio
+async def test_local_key_rotation_reads_old_reference_and_writes_active_key(tmp_path: Path) -> None:
+    old_key = Fernet.generate_key().decode("ascii")
+    active_key = Fernet.generate_key().decode("ascii")
+    root = tmp_path / "objects"
+    old_store = EncryptedLocalObjectStore(root=root, key=old_key, key_version="v1")
+    old_reference = await old_store.put(
+        account_id="account-001",
+        purpose="source-audio",
+        data=b"old archive audio",
+        media_type="audio/wav",
+    )
+    rotated = EncryptedLocalObjectStore(
+        root=root,
+        key=active_key,
+        key_version="v2",
+        read_keys={"v1": old_key},
+    )
+
+    assert await rotated.get(old_reference) == b"old archive audio"
+    active_reference = await rotated.put(
+        account_id="account-001",
+        purpose="source-audio",
+        data=b"new archive audio",
+        media_type="audio/wav",
+    )
+    assert active_reference.encryption_key_version == "v2"
+    active_ciphertext = (root / active_reference.object_key).read_bytes()
+    with pytest.raises(InvalidToken):
+        Fernet(old_key).decrypt(active_ciphertext)
+    with pytest.raises(ObjectIntegrityError, match="unknown encryption key version"):
+        await rotated.get(replace(old_reference, encryption_key_version="retired"))
+
+
+@pytest.mark.parametrize(
+    "read_keys",
+    [
+        lambda active: {"v1": active},
+        lambda _active: {
+            "v1": (shared := Fernet.generate_key().decode("ascii")),
+            "v0": shared,
+        },
+    ],
+)
+def test_keyring_rejects_duplicate_key_material(
+    tmp_path: Path,
+    read_keys: object,
+) -> None:
+    active = Fernet.generate_key().decode("ascii")
+
+    with pytest.raises(ValueError, match="key material must be unique"):
+        EncryptedLocalObjectStore(
+            root=tmp_path / "objects",
+            key=active,
+            key_version="v2",
+            read_keys=read_keys(active),  # type: ignore[operator]
+        )
+
+
+@pytest.mark.asyncio
+async def test_s3_key_rotation_reads_old_reference_and_writes_active_key() -> None:
+    class S3Stub:
+        def __init__(self) -> None:
+            self.objects: dict[str, bytes] = {}
+
+        def put_object(self, **kwargs: object) -> None:
+            self.objects[str(kwargs["Key"])] = bytes(kwargs["Body"])
+
+        def get_object(self, **kwargs: object) -> dict[str, io.BytesIO]:
+            return {"Body": io.BytesIO(self.objects[str(kwargs["Key"])])}
+
+    old_key = Fernet.generate_key().decode("ascii")
+    active_key = Fernet.generate_key().decode("ascii")
+    client = S3Stub()
+    old_store = EncryptedS3ObjectStore(
+        client=client,
+        bucket="archive",
+        key=old_key,
+        key_version="v1",
+    )
+    old_reference = await old_store.put(
+        account_id="account-001",
+        purpose="source-audio",
+        data=b"old s3 archive audio",
+        media_type="audio/wav",
+    )
+    rotated = EncryptedS3ObjectStore(
+        client=client,
+        bucket="archive",
+        key=active_key,
+        key_version="v2",
+        read_keys={"v1": old_key},
+    )
+
+    assert await rotated.get(old_reference) == b"old s3 archive audio"
+    active_reference = await rotated.put(
+        account_id="account-001",
+        purpose="source-audio",
+        data=b"new s3 archive audio",
+        media_type="audio/wav",
+    )
+    assert active_reference.encryption_key_version == "v2"
+    with pytest.raises(ObjectIntegrityError, match="unknown encryption key version"):
+        await rotated.get(replace(old_reference, encryption_key_version="retired"))
 
 
 @pytest.mark.asyncio

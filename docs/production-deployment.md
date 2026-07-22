@@ -47,6 +47,7 @@ Agent 与 Control API 的内部能力必须分别配置，值至少 32 字符且
 
 ```text
 MEMORIA_ARCHIVE_WRITE_TOKEN
+MEMORIA_AGENT_HEARTBEAT_TOKEN
 MEMORIA_MEMORY_READ_TOKEN
 MEMORIA_PERSONA_READ_TOKEN
 MEMORIA_VOICE_RESOLUTION_TOKEN
@@ -105,7 +106,11 @@ DOUBAO_TTS_POOL_SIZE=4
 MEMORIA_TIMEZONE=Asia/Shanghai
 READINESS_GATE_TTL_S=86400
 SESSION_TOKEN_TTL_S=300
-MEMORIA_AUTH_TOKEN_TTL_S=31536000
+MEMORIA_AUTH_TOKEN_TTL_S=900
+MEMORIA_AUTH_REFRESH_TTL_S=2592000
+MEMORIA_REFRESH_COOKIE_NAME=memoria_refresh
+MEMORIA_LEGACY_AUTH_COMPAT_UNTIL=
+MEMORIA_MESSAGE_IDEMPOTENCY_SECRET=
 ENDPOINTING_MIN_DELAY_S=1.50
 ENDPOINTING_MAX_DELAY_S=2.20
 ENDPOINTING_ALPHA=0.85
@@ -115,6 +120,18 @@ MEMORIA_SPEAKER_GUEST_THRESHOLD=0.40
 ```
 
 生产默认 LLM 和每日回顾均使用百炼 Qwen。账号版本发布后，浏览器只接收注册账号 Bearer token 和短期 LiveKit participant token；`/v1/auth/anonymous` 仅用于兼容旧身份并在注册时原地升级。服务端在持久化消息、Profile 或向 Agent/FunASR 传递上下文前统一做 PII 脱敏，所有 memory/session route 均校验 token subject 与资源所有权。账号登录不等于当前说话人是主人，私人档案权限仍需结合 `owner / guest / uncertain` 判定。
+
+认证会话切换必须使用显式、有限的兼容窗口。runtime 先切流时，仅可把
+`MEMORIA_LEGACY_AUTH_COMPAT_UNTIL` 只接受绝对 UTC，且不能晚于启动时刻 24 小时；空值默认关闭，
+非 UTC 或过长窗口会拒绝启动。已过期的截止值允许服务正常重启，但兼容能力自然保持关闭。
+窗口内 sidless 旧 access token 只允许调用 `/v1/auth/upgrade`，
+不能直接读取档案、写消息或调用其他业务接口；新 H5 只有在升级成功并写入安全快照后才清除
+旧 token，网络中断或页面重载可在同一截止窗口内继续恢复匿名账号。所有现代消息请求都必须
+提交 `client_message_id`。`MEMORIA_MESSAGE_IDEMPOTENCY_SECRET` 在生产至少 32 字符，且必须
+独立于认证、LiveKit 和 capability token；它应在 auth secret 轮换时保持不变。
+新 H5 切流并验收后仍须把原定窗口保留到绝对截止，让尚未重载的匿名用户有一次迁移机会；
+到期后再删除该变量并重启。即使到期值暂未清理，服务也会自动恢复严格 401，禁止滚动延长
+或因已过期配置拒绝启动。发布记录必须写明截止时间与迁移期提示。
 
 ## Agent 显式就绪门禁
 
@@ -126,11 +143,17 @@ LiveKit transport 连接不代表 Agent 可用：
 
 该协议由 H5 自动化回归覆盖。
 
-P0～P6 发布后，Control API `/health/ready` 还必须同时返回以下 9 个 core check：Control DB、LifeArchive、MemoryCatalog、Persona、SpeakerAuthority、VoiceProfile、档案对象存储、声音对象存储和独立 `speaker-model`。前 8 项必须为 `ready`；`speaker-model` 必须实时请求 `/health/ready`，验证 HTTP 200、`status=ready` 和精确 `model_version`。对象存储检查执行最小加密 `put/get/delete` canary；空账户或尚无 active 声音档案可以 ready，但缺组件、数据库/模型异常、版本漂移或对象 canary 失败必须返回 503。开发/离线未配置模型时只允许明确显示 `skipped`，不代表生产 ready。
+P0～P6 发布后，Control API `/health/ready` 还必须同时返回以下 9 个 core check：Control DB、LifeArchive、MemoryCatalog、Persona、SpeakerAuthority、VoiceProfile、档案对象存储、声音对象存储和独立 `speaker-model`。前 8 项必须为 `ready`；`speaker-model` 必须实时请求 `/health/ready`，验证 HTTP 200、`status=ready` 和精确 `model_version`。此外，Agent 必须每 10 秒使用独立 capability token 上报 release、boot ID、worker 与 LiveKit 注册状态；心跳缺失、未就绪、版本不符或超过 45 秒都会令 readiness 返回 503。对象存储检查执行最小加密 `put/get/delete` canary；空账户或尚无 active 声音档案可以 ready，但缺组件、数据库/模型异常、版本漂移或对象 canary 失败必须返回 503。开发/离线未配置模型时只允许明确显示 `skipped`，不代表生产 ready。
+
+Compose 的 Control API 容器健康检查固定使用 `/health/live`：Agent 必须先等 Control 的进程可接收心跳，不能拿依赖 Agent 心跳的 `/health/ready` 做启动门禁。相对地，Agent 容器健康检查调用 `python -m services.agent.src.heartbeat --check-health`，它同时验证 LiveKit SDK 本机 `8081` 返回 2xx，以及 `/tmp/memoria-agent-heartbeat.json` 中同一 release 的最近一次已被 Control 接受的 ready 心跳（30 秒内）。POST、鉴权、响应失败或 LiveKit 正在重连都不会刷新该无 secret 的原子状态文件；配合 10 秒检查间隔、3 秒超时和 2 次重试，最迟在最后一次 ready 心跳后的 60 秒内把 Agent 容器标为 unhealthy。Control `/health/ready` 的心跳 freshness 仍为 45 秒，两者分工不变。
+
+Agent 的注册探针绑定当前固定版本 `livekit-agents==1.6.5` 的私有状态：仅当 `_id` 非空且不为 `unregistered`，并且 `_closed / _connecting / _connection_failed` 均表示已连接时才算注册。SDK 的 `8081` 在重连阶段仍可能返回 200，不能单独作为注册证据。升级 LiveKit Agents 前必须重新核对这些字段及重连路径，并同步更新探针契约测试。
+
+生产 Control API 必须以 `uvicorn --no-access-log` 启动，由 Nginx 记录常规访问；签名声音样本路由同时 `access_log off`。这样 query 中的短期样本 token 不会进入 Nginx 或 Uvicorn access log，应用日志也不得自行记录完整 URL。
 
 ## P0.5、P1～P6 上线状态与后续门槛
 
-1. `20260720-140053` 已在新服务器部署 pgvector、FORCE RLS、MinIO 版本控制、四类 capability token、独立 SpeakerAuthority token、迁移/联合恢复、core readiness 和真实 Provider smoke；当前 runtime/H5 为 `20260721-224804`。
+1. `20260720-140053` 已在新服务器部署 pgvector、FORCE RLS、MinIO 版本控制、能力级 token、独立 SpeakerAuthority token、迁移/联合恢复、core readiness 和真实 Provider smoke；当前 runtime/H5 为 `20260721-224804`。
 2. 当前低成本底座为同机 PostgreSQL、WAL archive、MinIO 和备份；PITR、异地副本与 KMS 仍是下一阶段可靠性门槛，不能把同机恢复演练描述为异地容灾。
 3. 使用授权样本完成 SpeakerAuthority 指标报告和历史 CosyVoice 复刻声音真人盲测前，不得激活正式声纹模板或复刻声音；当前豆包主链只使用已审核的原生 TTS 2.0 音色。
 4. 账户删除 worker、LiveKit 房间删除权限、对象全版本删除权限和供应商声音删除权限必须同时具备；缺任一权限时删除只能保持 `deleting`，不得伪报完成。
@@ -146,6 +169,8 @@ H5 必须最后激活。标准顺序是：本机构建并校验工件 → 暂存
 : "${RELEASE_TAG:?set a new unique RELEASE_TAG, for example YYYYMMDD-HHMMSS}"
 RELEASE_DIR=/opt/memoria/releases/$RELEASE_TAG
 H5_DIR=/var/www/memoria-releases/$RELEASE_TAG
+UPLOAD_DIR=/opt/memoria/incoming/$RELEASE_TAG
+RELEASE_SOURCE_DIR=$UPLOAD_DIR/memoria
 BACKUP=/var/lib/memoria/memoria-pre-$RELEASE_TAG.sqlite3
 PROTECTED_BACKUP_DIR=/var/backups/memoria
 PROTECTED_BACKUP=$PROTECTED_BACKUP_DIR/memoria-pre-$RELEASE_TAG.sqlite3
@@ -165,15 +190,38 @@ AGENT_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-agent.env-pre-$RELEASE_TAG
 RELEASE_TAG=YYYYMMDD-HHMMSS
 BASE_TAG=上一健康版本
 ARTIFACT_DIR="$(mktemp -d /tmp/memoria-release.XXXXXX)"
+MEMORIA_RELEASE_COMMIT="$(git rev-parse HEAD)"
+
+# release 文档须先写入 docs/releases/$RELEASE_TAG.md 并随代码提交；构建前创建唯一 tag。
+test -f "docs/releases/$RELEASE_TAG.md"
+git tag -a "$RELEASE_TAG" "$MEMORIA_RELEASE_COMMIT" -m "Memoria $RELEASE_TAG"
+
+# 正式工件必须来自唯一且干净的 Git commit/tag；tracked/untracked 变更都会拒绝。
+python3 scripts/verify_release_source.py \
+  --root . \
+  --expected-commit "$MEMORIA_RELEASE_COMMIT" \
+  --release-tag "$RELEASE_TAG" \
+  --create-archive "$ARTIFACT_DIR/source.tar"
+python3 scripts/package_release_verifier.py \
+  --root . \
+  --expected-commit "$MEMORIA_RELEASE_COMMIT" \
+  --release-tag "$RELEASE_TAG" \
+  --output "$ARTIFACT_DIR/release-verifier.pyz"
+if command -v sha256sum >/dev/null 2>&1; then
+  MEMORIA_RELEASE_VERIFIER_SHA256="$(sha256sum "$ARTIFACT_DIR/release-verifier.pyz" | cut -d ' ' -f1)"
+else
+  MEMORIA_RELEASE_VERIFIER_SHA256="$(shasum -a 256 "$ARTIFACT_DIR/release-verifier.pyz" | cut -d ' ' -f1)"
+fi
+printf 'copy this verifier hash into the authenticated server shell: %s\n' \
+  "$MEMORIA_RELEASE_VERIFIER_SHA256"
 
 # 依赖未变化：复用本地基础镜像，只复制应用代码。
 # Docker Desktop 的 BuildKit 不能解析无 registry 的本地基础 tag 时，
 # 显式使用本地 daemon 的 legacy builder；构建结果仍须验证为 amd64。
 DOCKER_CONTEXT=default DOCKER_BUILDKIT=0 \
   BASE_TAG="$BASE_TAG" NEW_TAG="$RELEASE_TAG" \
+  MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
   bash scripts/delta_build_images.sh
-docker tag "memoria-speaker-model:$BASE_TAG" \
-  "memoria-speaker-model:$RELEASE_TAG"
 
 for image in agent control-api speaker-model; do
   test "$(docker image inspect "memoria-$image:$RELEASE_TAG" \
@@ -181,18 +229,40 @@ for image in agent control-api speaker-model; do
 done
 
 npm --prefix apps/h5 run build
+python3 scripts/package_h5_artifact.py \
+  --source apps/h5/dist \
+  --expected-commit "$MEMORIA_RELEASE_COMMIT" \
+  --release-tag "$RELEASE_TAG" \
+  --output "$ARTIFACT_DIR/h5-dist.tar.gz"
 docker save --platform linux/amd64 \
   "memoria-agent:$RELEASE_TAG" \
   "memoria-control-api:$RELEASE_TAG" \
   "memoria-speaker-model:$RELEASE_TAG" \
-  | zstd -T0 -10 -o "$ARTIFACT_DIR/images.tar.zst"
+  -o "$ARTIFACT_DIR/images.tar"
+for artifact in source.tar images.tar h5-dist.tar.gz; do
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$ARTIFACT_DIR" && sha256sum "$artifact" > "$artifact.sha256")
+  else
+    (cd "$ARTIFACT_DIR" && shasum -a 256 "$artifact" > "$artifact.sha256")
+  fi
+done
+
+# 上传前生成 canonical manifest：固定 source/images/H5 三件套、tag/commit 与 payload digest。
+python3 scripts/create_release_manifest.py \
+  --root . \
+  --release-tag "$RELEASE_TAG" \
+  --expected-commit "$MEMORIA_RELEASE_COMMIT" \
+  --source-archive "$ARTIFACT_DIR/source.tar" \
+  --images-archive "$ARTIFACT_DIR/images.tar" \
+  --h5-artifact "$ARTIFACT_DIR/h5-dist.tar.gz" \
+  --output "$ARTIFACT_DIR/release-manifest.json"
 if command -v sha256sum >/dev/null 2>&1; then
-  sha256sum "$ARTIFACT_DIR/images.tar.zst" \
-    > "$ARTIFACT_DIR/images.tar.zst.sha256"
+  MEMORIA_RELEASE_MANIFEST_SHA256="$(sha256sum "$ARTIFACT_DIR/release-manifest.json" | cut -d ' ' -f1)"
 else
-  shasum -a 256 "$ARTIFACT_DIR/images.tar.zst" \
-    > "$ARTIFACT_DIR/images.tar.zst.sha256"
+  MEMORIA_RELEASE_MANIFEST_SHA256="$(shasum -a 256 "$ARTIFACT_DIR/release-manifest.json" | cut -d ' ' -f1)"
 fi
+printf 'copy this manifest hash into the authenticated server shell: %s\n' \
+  "$MEMORIA_RELEASE_MANIFEST_SHA256"
 ```
 
 依赖变化时不要运行增量脚本，在本机执行完整构建：
@@ -200,32 +270,76 @@ fi
 ```bash
 docker buildx build --platform linux/amd64 --load \
   -f infra/Dockerfile.agent \
+  --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
+  --build-arg MEMORIA_RELEASE_TAG="$RELEASE_TAG" \
   -t "memoria-agent:$RELEASE_TAG" .
 docker buildx build --platform linux/amd64 --load \
   -f infra/Dockerfile.control-api \
+  --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
+  --build-arg MEMORIA_RELEASE_TAG="$RELEASE_TAG" \
   -t "memoria-control-api:$RELEASE_TAG" .
 docker buildx build --platform linux/amd64 --load \
   -f infra/Dockerfile.speaker-model \
+  --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
+  --build-arg MEMORIA_RELEASE_TAG="$RELEASE_TAG" \
   -t "memoria-speaker-model:$RELEASE_TAG" .
 ```
 
 Dockerfile 必须从 `uv.lock` 或固定 requirements 导出并安装固定版本与哈希，任何不匹配都令构建失败；不得使用 `latest`。完整构建后同样执行上面的架构校验、H5 build、`docker save` 和 SHA-256 清单生成。
 
-将 release 源目录、`apps/h5/dist/`、压缩镜像与 SHA-256 清单上传到服务器临时目录。服务器只做校验和导入：
+将 `source.tar`、`images.tar`、`h5-dist.tar.gz`、三份 SHA-256 清单、
+`release-manifest.json` 与 `release-verifier.pyz` 一起上传到服务器临时目录。
+manifest 必须在上传前生成，且不得在服务器重建。验证器由已审核 commit 中的三个脚本确定性打包；
+其 SHA-256 必须从本地认证终端单独复制到服务器 shell，不能读取上传目录中的 sidecar 或 manifest
+代替这个信任锚。服务器先验证该哈希，再由验证器核对完整三件套，成功后才能解包源码。此机制是
+**commit-bound provenance**，不等同于第三方签名或抗恶意持有构建权限者的供应链签名。服务器只做校验和导入：
 
 ```bash
-sha256sum -c images.tar.zst.sha256
-zstd -t images.tar.zst
-zstd -dc images.tar.zst | sudo docker load
+cd "$UPLOAD_DIR"
+: "${MEMORIA_RELEASE_COMMIT:?set the reviewed 40-character release commit}"
+: "${MEMORIA_RELEASE_VERIFIER_SHA256:?copy the verifier hash from the authenticated build shell}"
+: "${MEMORIA_RELEASE_MANIFEST_SHA256:?copy the manifest hash from the authenticated build shell}"
+printf '%s  %s\n' \
+  "$MEMORIA_RELEASE_VERIFIER_SHA256" "$UPLOAD_DIR/release-verifier.pyz" \
+  | sha256sum -c -
+printf '%s  %s\n' \
+  "$MEMORIA_RELEASE_MANIFEST_SHA256" "$UPLOAD_DIR/release-manifest.json" \
+  | sha256sum -c -
+python3 "$UPLOAD_DIR/release-verifier.pyz" \
+  --manifest "$UPLOAD_DIR/release-manifest.json" \
+  --artifact-dir "$UPLOAD_DIR" \
+  --expected-tag "$RELEASE_TAG" \
+  --expected-commit "$MEMORIA_RELEASE_COMMIT"
+sudo tar --extract --file "$UPLOAD_DIR/source.tar" \
+  --directory "$UPLOAD_DIR" --no-same-owner --no-same-permissions
+sha256sum -c source.tar.sha256
+sha256sum -c images.tar.sha256
+sha256sum -c h5-dist.tar.gz.sha256
+sudo docker load -i "$UPLOAD_DIR/images.tar"
+python3 "$UPLOAD_DIR/release-verifier.pyz" \
+  --manifest "$UPLOAD_DIR/release-manifest.json" \
+  --artifact-dir "$UPLOAD_DIR" \
+  --expected-tag "$RELEASE_TAG" \
+  --expected-commit "$MEMORIA_RELEASE_COMMIT" \
+  --verify-imported-images
 for image in agent control-api speaker-model; do
   sudo docker image inspect "memoria-$image:$RELEASE_TAG" \
     --format '{{.Id}} {{.Architecture}}'
 done
 ```
 
+H5 只从已校验的归档解包到候选目录，不接受另行上传或就地修改的裸 `dist/`：
+
+```bash
+sudo install -d -m 0755 "$H5_DIR"
+sudo tar --extract --gzip --file "$UPLOAD_DIR/h5-dist.tar.gz" \
+  --directory "$H5_DIR" --no-same-owner --no-same-permissions
+sudo test -f "$H5_DIR/index.html"
+```
+
 跨 Docker Desktop containerd store 与 Linux Docker Engine 时，顶层 `.Id` 可能不同，不能用两端 `.Id` 相等作为工件一致性条件。上传路径以镜像归档 SHA-256 为主证据；需要把服务器镜像回补本机时，再分别对 `{{json .RootFS.Layers}}` 与 `{{json .Config}}` 做 SHA-256，两组哈希均一致才算同一工件。
 
-只有本机构建环境不可用且已确认服务器有足够资源时，才允许把服务器构建作为显式回退；不得把它恢复为默认发布路径。
+只有本机构建环境不可用且已确认服务器有足够资源时，才允许把服务器构建作为显式回退；不得把它恢复为默认发布路径。导入校验成功后，候选 runtime 必须从 `$UPLOAD_DIR/memoria`（即 source archive 解包结果）安装，不能把本机 checkout 或仅 release 文档当作 source evidence。
 
 镜像和候选 H5 暂存后、切流前运行隔离 server smoke。脚本使用候选 H5、临时 SQLite、
 `18791/18891`，不会占用在线 Control API 的 `8791`：
@@ -240,9 +354,16 @@ sudo /opt/memoria/releases/$RELEASE_TAG/scripts/smoke_server_deployment.sh \
 把完整 release 放入 `$RELEASE_DIR`，把 production build 放入 `$H5_DIR`。此阶段不得修改 `/opt/memoria/current` 或 `/var/www/memoria-h5`。
 
 ```bash
+sudo install -d -m 0755 "$RELEASE_DIR"
+sudo cp -a "$RELEASE_SOURCE_DIR/." "$RELEASE_DIR/"
+printf 'MEMORIA_RELEASE_COMMIT=%s\nMEMORIA_RELEASE_TAG=%s\n' \
+  "$MEMORIA_RELEASE_COMMIT" "$RELEASE_TAG" \
+  | sudo tee "$RELEASE_DIR/.env" >/dev/null
 sudo test -f "$RELEASE_DIR/docker-compose.production.yml"
+sudo test -s "$RELEASE_DIR/.env"
 sudo test -f "$H5_DIR/index.html"
 sudo chown -R root:root "$RELEASE_DIR" "$H5_DIR"
+sudo chmod 0644 "$RELEASE_DIR/.env"
 sudo find "$RELEASE_DIR" "$H5_DIR" -type d -exec chmod 0755 {} +
 ```
 

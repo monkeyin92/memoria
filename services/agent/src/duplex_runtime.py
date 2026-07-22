@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
-from services.agent.src.contracts.events import TimedWord
+from services.agent.src.contracts.events import UI_EVENT_TYPES, TimedWord
 from services.agent.src.contracts.ids import GenerationFence, new_session_id
 from services.agent.src.observability.tracing import LatencyTrace
 from services.agent.src.orchestration.cue_scheduler import CueScheduler, ListenerCue
@@ -948,6 +948,8 @@ class DuplexRuntime:
         return task
 
     def _publish(self, event: dict[str, Any]) -> asyncio.Task[Any] | None:
+        if event.get("type") not in UI_EVENT_TYPES:
+            raise ValueError("unsupported voice-agent.ui event type")
         if self._event_publisher is not None:
             return self._spawn(
                 self._event_publisher(event),
@@ -1294,6 +1296,7 @@ class DuplexRuntime:
             key: value for key, value in self._emotion_by_turn.items() if key >= current_turn_id
         }
         fence = self.fence
+        target_generation_id = fence.generation_id + int(turn_id > fence.turn_id)
         self._publish(
             {
                 "type": "emotion_observation",
@@ -1304,7 +1307,7 @@ class DuplexRuntime:
                 "evidence": list(observation.evidence),
                 "persist": False,
                 "turn_id": turn_id,
-                "generation_id": fence.generation_id,
+                "generation_id": target_generation_id,
                 "expires_after_ms": self.emotion_smoother.ttl_ms,
                 "at": datetime.now(UTC).isoformat(),
             }

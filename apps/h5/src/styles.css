@@ -1162,6 +1162,70 @@ body {
 .privacy-card small { margin-top: 3px; color: var(--muted); font-size: 8px; }
 .privacy-card { cursor: pointer; transition: border-color 180ms ease, background 180ms ease; }
 .privacy-card:active { border-color: #adc1dd; background: var(--soft-blue); }
+.account-session-card {
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid #e9e8e5;
+  border-radius: 21px;
+  background: var(--white);
+}
+.account-session-card h3 {
+  margin: 0;
+  padding: 13px 15px 10px;
+  color: var(--ink);
+  font-size: 11px;
+}
+.account-logout-entry {
+  width: 100%;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-top: 1px solid #efeeeb;
+  padding: 10px 15px;
+  background: transparent;
+  color: #526984;
+  text-align: left;
+  cursor: pointer;
+}
+.account-logout-entry:disabled,
+.account-logout-confirmation button:disabled { cursor: not-allowed; opacity: 0.55; }
+.account-logout-entry span,
+.account-logout-entry strong,
+.account-logout-entry small { display: block; }
+.account-logout-entry strong { color: var(--ink); font-size: 11px; }
+.account-logout-entry small { margin-top: 2px; color: var(--muted); font-size: 8px; }
+.account-logout-all,
+.account-logout-all strong { color: var(--danger); }
+.account-logout-confirmation {
+  margin: 0 12px 12px;
+  padding: 12px;
+  border: 1px solid #ead7d7;
+  border-radius: 15px;
+  background: #fff8f7;
+}
+.account-logout-confirmation p {
+  margin: 0 0 10px;
+  color: #744f4f;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.account-logout-confirmation > div { display: flex; justify-content: flex-end; gap: 8px; }
+.account-logout-confirmation button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 12px;
+  padding: 0 13px;
+  background: #ece9e5;
+  color: #596273;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.account-logout-confirmation button.danger { background: var(--danger); color: white; }
+.account-session-card .inline-error { margin: 0 12px 12px; }
 .account-delete-entry {
   width: 100%;
   min-height: 52px;

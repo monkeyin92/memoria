@@ -355,7 +355,7 @@
 - [x] 注册账户导出要求密码复核，输出按账户隔离的规范 JSON 与 manifest SHA-256；排除密码哈希、声纹模板密文、对象密钥/路径、供应商 voice ID 和盲测映射。
 - [x] 全账户删除先阻断新写并排空在途写，随后关闭实时连接/LiveKit 房间、写会话 tombstone、撤销供应商声音、删除档案/声音对象和全部账户权威行/投影。
 - [x] 删除使用持久化 checkpoint 与后台重试；任何外部资产失败保持 `deleting`，旧令牌、登录、会话读取和迟到 Agent 写入均 fail-closed，不能复活数据。
-- [x] Agent 内部能力拆成 `archive_write / memory_read / persona_read / voice_resolution` 四个独立 token；生产拒绝缺失、过短或复用，H5 不接收这些 token。
+- [x] Agent 内部能力拆成 `archive_write / agent_heartbeat / memory_read / persona_read / voice_resolution` 五个独立 token；生产拒绝缺失、过短或复用，H5 不接收这些 token。
 - [x] 声音 enrollment 使用持久化 saga；模糊供应商结果不自动重发，进入 reconciliation。服务端隐藏 A/B 映射，主观盲测与内部质量探针分别通过后才允许激活。
 - [x] `/health/ready` 探测 Control DB、LifeArchive、MemoryCatalog、Persona、SpeakerAuthority、VoiceProfile 与两个对象存储；缺组件或 canary 失败返回 503。
 - [x] PostgreSQL 17 联合恢复覆盖 21 张权威表、档案/声音加密对象、投影重建、14 项孤儿检查、31 张 RLS 表与 25 项账户作用域检查，报告 `passed=true`，实测 RTO 3.76 秒。

@@ -6,6 +6,9 @@ services:
     build:
       context: .
       dockerfile: infra/Dockerfile.speaker-model
+      args:
+        MEMORIA_RELEASE_COMMIT: "${MEMORIA_RELEASE_COMMIT:?MEMORIA_RELEASE_COMMIT is required}"
+        MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
     env_file:
       - /etc/memoria-speaker-model.env
     environment:
@@ -44,6 +47,8 @@ services:
       context: .
       dockerfile: infra/Dockerfile.control-api
       args:
+        MEMORIA_RELEASE_COMMIT: "${MEMORIA_RELEASE_COMMIT:?MEMORIA_RELEASE_COMMIT is required}"
+        MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
         UV_DEFAULT_INDEX: "${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}"
     env_file:
       - /etc/memoria-control-api.env
@@ -62,6 +67,7 @@ services:
       - "8000"
       - --workers
       - "1"
+      - --no-access-log
     ports:
       - "127.0.0.1:8791:8000"
     volumes:
@@ -98,6 +104,8 @@ services:
       context: .
       dockerfile: infra/Dockerfile.agent
       args:
+        MEMORIA_RELEASE_COMMIT: "${MEMORIA_RELEASE_COMMIT:?MEMORIA_RELEASE_COMMIT is required}"
+        MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
         UV_DEFAULT_INDEX: "${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}"
     env_file:
       - /etc/memoria-agent.env
@@ -110,10 +118,15 @@ services:
       control-api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -m
+        - services.agent.src.heartbeat
+        - --check-health
+      interval: 10s
+      timeout: 3s
+      retries: 2
       start_period: 20s
     restart: unless-stopped
     read_only: true

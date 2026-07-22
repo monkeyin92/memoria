@@ -1,5 +1,33 @@
 # 项目交接
 
+## 当前开发目标：硅基生命路线
+
+- 开发分支：`codex/silicon-life-roadmap`；基线为已提交并推送的
+  `98b04727b5521f9ffdd4061c3bc5a95b538d0bde`。生产仍保持下节所述
+  `20260721-224804`，本分支尚未发布。
+- 已完成当前 HEAD/线上/架构差距审计，并新增
+  [`docs/silicon-life-implementation-plan.md`](docs/silicon-life-implementation-plan.md)
+  与 ADR-0016。产品固定采用“轻人格陪伴者 + 空白成长数字分身”：伙伴只学习如何陪伴，
+  Digital Self 只从主人证据、确认、纠错和负面证据成长。
+- S1 内测可信底座已完成：Agent 新鲜 heartbeat、短 access/旋转 refresh、最长 24 小时且
+  可跨重载恢复的旧匿名身份迁移、消息幂等独立密钥、对象 keyring、严格 generation fence、
+  事件合同/浏览器日志/CSP/签名 URL 日志，以及 commit-bound source/image/H5 发布门禁。
+- 当前阶段为 S2：建立 `companion / self_preview / legacy / archive` 的服务端 ModePolicy，
+  冻结会话模式与轻量 Companion Style；S3/S9 前 Self Preview 与 Legacy 必须明确 blocked。
+- 后续严格按不可变 DigitalSelfVersion、成长地图、认知/决策/关系、回答来源、
+  Self Preview、本人声音、Legacy、全量验收与部署顺序推进。
+- 本轮不建设分布式、多区域、KMS、异地副本或 PITR；保留为正式商用前待办。遗嘱、
+  死亡认证与法律执行也不在当前工程能力内。
+
+## 硅基生命路线 S1 验证
+
+- 后端正式临时 pgvector 环境：796 collected，793 passed、3 skipped、0 failed；总覆盖率
+  88.41%，orchestration 92%，protocol 91%，全部正式门槛通过。
+- H5 全量测试与 production build 通过；Ruff、strict mypy、Compose 解析、Shell/JSON、
+  `git diff --check` 通过。
+- Standards 与 Spec 最终复审均无 P0/P1。容灾、KMS、异地备份/PITR 与历史第三方凭据
+  轮换证明仍按用户边界列为正式商用前待办，不能借本阶段验收宣称已完成。
+
 ## 当前生产
 
 - 唯一交付客户端为 H5：
