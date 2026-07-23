@@ -236,6 +236,85 @@ async def test_agent_fetches_response_plan_once_per_committed_turn(
 
 
 @pytest.mark.asyncio
+async def test_companion_voice_turn_reaches_llm_when_guest_filter_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="companion-voice-turn")
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=False,
+            owner_evidence=False,
+            tools=False,
+            voice_profile=False,
+            shadow_low_sensitivity_persona=False,
+        )
+    )
+    runtime.set_reject_non_owner_voice(False)
+    runtime.set_target_speaker_focus(True)
+    runtime.tts = SimpleNamespace(
+        current_voice_profile_id="warm_companion",
+        current_model="seed-tts-2.0",
+        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice_kind="designed",
+        bind_fence=lambda _fence: None,
+    )
+
+    class Message:
+        def text_content(self) -> str:
+            return "你好"
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return SpeakerDecision(
+            classification="uncertain",
+            score=0.42,
+            quality_score=0.95,
+            reason_code="shadow_guest_candidate",
+            model_version="campplus-test",
+            template_version=1,
+            profile_id=None,
+            permissions=permissions_for_speaker("uncertain"),
+        )
+
+    class ResponsePlannerStub:
+        async def fetch(self, **_kwargs: object) -> ResponsePlanFetch:
+            return ResponsePlanFetch(
+                plan=_plan_for_fence(
+                    runtime.fence,
+                    instructions="只回答当前问题。",
+                    speaker_class="uncertain",
+                ),
+                reason="ok",
+            )
+
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x01\x00" * 800)
+    runtime.on_user_voice_stopped()
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=ResponsePlannerStub(),  # type: ignore[arg-type]
+        llm_provider="qwen",
+        llm_model="qwen-plus",
+        tts_provider="doubao",
+        tts_model="seed-tts-2.0",
+    )
+    monkeypatch.setattr(
+        agent_mod.Agent.default,
+        "llm_node",
+        staticmethod(lambda *_args: _text_source("你好，我在。")),
+    )  # type: ignore[arg-type]
+
+    await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
+    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+
+    assert output
+    assert runtime.generation_voice_for(runtime.fence) is not None
+    assert runtime.response_provenance_for(runtime.fence) is not None
+
+
+@pytest.mark.asyncio
 async def test_agent_drops_response_plan_when_fence_changes_during_fetch() -> None:
     runtime = DuplexRuntime.create()
 

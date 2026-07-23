@@ -703,10 +703,7 @@ class DuplexRuntime:
         if (
             self._speaker_classifier is None
             or not self._speaker_pcm
-            or (
-                self._speaker_classification_task is not None
-                and not self._speaker_classification_task.done()
-            )
+            or self._speaker_classification_task is not None
         ):
             return
         epoch = self._speaker_epoch
@@ -865,7 +862,7 @@ class DuplexRuntime:
             self._speaker_decision = decision
             self._speaker_class = "uncertain"
             return decision
-        result = await task
+        result = await asyncio.shield(task)
         if not isinstance(result, SpeakerDecision):  # pragma: no cover - task contract guard
             return self._uncertain_speaker_decision("authority_invalid")
         return result

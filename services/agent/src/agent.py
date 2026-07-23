@@ -932,9 +932,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     policy=policy,
                 )
             fence = await self._runtime.on_turn_committed(text.strip())
-            if policy.mode in {"self_preview", "legacy"} and not self._bind_current_tts_voice(
-                fence
-            ):
+            if self._runtime.tts is not None and not self._bind_current_tts_voice(fence):
                 logger.error(
                     "generation voice binding rejected session_id=%s turn_id=%s generation_id=%s",
                     fence.session_id,

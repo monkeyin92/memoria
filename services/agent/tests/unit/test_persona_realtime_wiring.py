@@ -567,6 +567,10 @@ async def test_completed_voice_resolution_is_applied_without_network_wait() -> N
 
     class TTSStub:
         pool = object()
+        current_voice_profile_id = "warm_companion"
+        current_model = "seed-tts-2.0"
+        current_voice = "zh_male_yangguangqingnian_uranus_bigtts"
+        current_voice_kind = "designed"
 
         def set_alignment_callback(self, _callback: object) -> None:
             return None
@@ -574,7 +578,21 @@ async def test_completed_voice_resolution_is_applied_without_network_wait() -> N
         def bind_fence(self, _fence: object) -> None:
             return None
 
-        def apply_voice_profile(self, *, model: str, voice: str) -> None:
+        def apply_voice_profile(
+            self,
+            *,
+            model: str,
+            voice: str,
+            profile_id: str,
+            provider: str,
+            voice_kind: str,
+            resource_id: str,
+        ) -> None:
+            _ = provider
+            self.current_voice_profile_id = profile_id
+            self.current_model = resource_id
+            self.current_voice = voice
+            self.current_voice_kind = voice_kind
             applied.append((model, voice))
 
         def use_baseline_voice(self) -> None:
@@ -584,9 +602,9 @@ async def test_completed_voice_resolution_is_applied_without_network_wait() -> N
         def cached(self, *, session_id: str) -> VoiceRuntimeProfile:
             assert session_id == "session-voice-active"
             return VoiceRuntimeProfile(
-                profile_id="profile-001",
-                model="cosyvoice-v3.5-flash",
-                voice_id="cosyvoice-v3.5-flash-clone-owner001",
+                profile_id="warm_companion",
+                model="seed-tts-2.0",
+                voice_id="zh_male_yangguangqingnian_uranus_bigtts",
             )
 
     runtime = DuplexRuntime.create(
@@ -612,7 +630,7 @@ async def test_completed_voice_resolution_is_applied_without_network_wait() -> N
 
     await agent.on_user_turn_completed(llm.ChatContext.empty(), Message("继续"))
 
-    assert applied == [("cosyvoice-v3.5-flash", "cosyvoice-v3.5-flash-clone-owner001")]
+    assert applied == [("seed-tts-2.0", "zh_male_yangguangqingnian_uranus_bigtts")]
     await runtime.close()
 
 
@@ -672,6 +690,10 @@ async def test_first_turn_waits_for_voice_profile_refresh_before_applying_voice(
 
     class TTSStub:
         pool = object()
+        current_voice_profile_id = "warm_companion"
+        current_model = "seed-tts-2.0"
+        current_voice = "zh_male_yangguangqingnian_uranus_bigtts"
+        current_voice_kind = "designed"
 
         def set_alignment_callback(self, _callback: object) -> None:
             return None
@@ -682,7 +704,21 @@ async def test_first_turn_waits_for_voice_profile_refresh_before_applying_voice(
         def use_baseline_voice(self) -> None:
             applied.append("baseline")
 
-        def apply_voice_profile(self, *, model: str, voice: str) -> None:
+        def apply_voice_profile(
+            self,
+            *,
+            model: str,
+            voice: str,
+            profile_id: str,
+            provider: str,
+            voice_kind: str,
+            resource_id: str,
+        ) -> None:
+            _ = provider
+            self.current_voice_profile_id = profile_id
+            self.current_model = resource_id
+            self.current_voice = voice
+            self.current_voice_kind = voice_kind
             applied.append(f"{model}:{voice}")
 
     class VoiceStub:
@@ -693,9 +729,9 @@ async def test_first_turn_waits_for_voice_profile_refresh_before_applying_voice(
             if not self.ready:
                 return None
             return VoiceRuntimeProfile(
-                profile_id="profile-first-turn",
-                model="cosyvoice-v3.5-flash",
-                voice_id="cosyvoice-v3.5-flash-vd-brightpeer-approved",
+                profile_id="warm_companion",
+                model="seed-tts-2.0",
+                voice_id="zh_male_yangguangqingnian_uranus_bigtts",
             )
 
     voice = VoiceStub()
@@ -738,5 +774,5 @@ async def test_first_turn_waits_for_voice_profile_refresh_before_applying_voice(
 
     release.set()
     await turn
-    assert applied[-1] == ("cosyvoice-v3.5-flash:cosyvoice-v3.5-flash-vd-brightpeer-approved")
+    assert applied[-1] == "seed-tts-2.0:zh_male_yangguangqingnian_uranus_bigtts"
     await runtime.close()

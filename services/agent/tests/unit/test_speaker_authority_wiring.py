@@ -259,6 +259,68 @@ async def test_classification_and_user_final_use_the_same_speaker_class() -> Non
 
 
 @pytest.mark.asyncio
+async def test_late_speaker_wait_does_not_republish_the_same_epoch() -> None:
+    archived: dict[str, tuple[object, object]] = {}
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return _decision("owner")
+
+    async def archive(event: dict[str, object]) -> None:
+        event_id = str(event["event_id"])
+        binding = (event["turn_id"], event["generation_id"])
+        if event_id in archived and archived[event_id] != binding:
+            raise RuntimeError("speaker.classified event_id conflict")
+        archived[event_id] = binding
+
+    runtime = DuplexRuntime.create(session_id="session-speaker-late-wait")
+    runtime.set_speaker_classifier(classify, sample_rate=16000)
+    runtime.set_evidence_publisher(archive)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x00\x01")
+    runtime.on_user_voice_stopped()
+
+    await runtime.await_speaker_classification()
+    await runtime.on_turn_committed("这是我的经历")
+    await runtime.await_speaker_classification()
+    await runtime.close()
+
+    assert len(archived) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiter_does_not_cancel_the_shared_speaker_classification() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    classify_calls = 0
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        nonlocal classify_calls
+        classify_calls += 1
+        started.set()
+        await release.wait()
+        return _decision("owner")
+
+    runtime = DuplexRuntime.create(session_id="session-speaker-cancelled-waiter")
+    runtime.set_speaker_classifier(classify, sample_rate=16000)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x00\x01")
+    runtime.on_user_voice_stopped()
+
+    first_waiter = asyncio.create_task(runtime.await_speaker_classification())
+    await started.wait()
+    first_waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first_waiter
+
+    release.set()
+    decision = await runtime.await_speaker_classification()
+
+    assert decision.classification == "owner"
+    assert classify_calls == 1
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_speaker_authority_wait_is_visible_in_endpointing_latency() -> None:
     async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
         await asyncio.sleep(0.01)
