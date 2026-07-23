@@ -15,6 +15,10 @@ def mandatory_agent_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
         "MEMORIA_INTERACTION_POLICY_TOKEN",
         "interaction-policy-material-32-characters",
     )
+    monkeypatch.setenv(
+        "MEMORIA_RESPONSE_PLAN_TOKEN",
+        "response-plan-token-material-32-characters",
+    )
 
 
 def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -33,6 +37,8 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.persona_enabled is False
     assert s.memory_context_enabled is False
     assert s.voice_profile_enabled is False
+    assert s.response_plan_url.endswith("/v1/interaction/response-plan")
+    assert s.response_plan_timeout_s == 0.8
 
 
 def test_cn_self_hosted_forces_v1_mini(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -196,6 +202,53 @@ def test_production_interaction_policy_requires_independent_token(
     monkeypatch.delenv("MEMORIA_INTERACTION_POLICY_TOKEN", raising=False)
 
     with pytest.raises(ValidationError, match="interaction policy"):
+        AgentSettings()
+
+
+def test_production_response_plan_requires_scoped_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
+    monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.delenv("MEMORIA_RESPONSE_PLAN_TOKEN", raising=False)
+
+    with pytest.raises(ValidationError, match="response plan requires a scoped token"):
+        AgentSettings()
+
+
+def test_production_response_plan_requires_secure_internal_url(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
+    monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv(
+        "MEMORIA_RESPONSE_PLAN_URL",
+        "http://planner.internal.example/v1/interaction/response-plan",
+    )
+
+    with pytest.raises(ValidationError, match="response plan URL requires HTTPS"):
+        AgentSettings()
+
+
+def test_production_response_plan_token_is_independent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    shared = "shared-policy-plan-token-material-32-characters"
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
+    monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEMORIA_INTERACTION_POLICY_TOKEN", shared)
+    monkeypatch.setenv("MEMORIA_RESPONSE_PLAN_TOKEN", shared)
+
+    with pytest.raises(ValidationError, match="capability tokens must be independent"):
         AgentSettings()
 
 

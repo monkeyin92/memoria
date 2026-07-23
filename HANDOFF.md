@@ -14,21 +14,25 @@
   事件合同/浏览器日志/CSP/签名 URL 日志，以及 commit-bound source/image/H5 发布门禁。
 - S2 已完成：建立 `companion / self_preview / legacy / archive` 的服务端 ModePolicy，
   冻结会话模式与轻量 Companion Style；Self Preview 与 Legacy 在依赖未满足时由服务端
-  明确 blocked。实时语音统一走 session-bound archive contract，shadow owner 只保留
-  history/低敏学习，不获得 private/tools/owner projection。
+  明确 blocked。实时语音统一走 session-bound archive contract；shadow owner candidate
+  只允许独立的低敏 Persona style 候选，不获得主人历史、学习资格、private/tools 或
+  owner projection。
 - S3 已完成：不可变 `DigitalSelfVersion`、canonical manifest、digest CAS、完整状态机、
   rollback、同事务生命周期审计、SQLite/PostgreSQL 双实现、FORCE RLS、账户导出/删除和
   H5 管理面均已落地。
 - S4 已完成：从现有 Evidence、Memory、Persona 与 manifest 派生七维成长地图、四类
   培育任务、来源权重、冲突、版本就绪度和高权重负面证据；不建立第二份人物事实或
   伪精确人格百分比。
-- 当前开发阶段为 S5：建立 `CognitiveClaim / DecisionCase / RelationshipProfile`。
-  旧 `decision_habit/value_priority` 和原始关系事实只允许作为待审核候选，不能直接成为
-  生效认知策略、关系画像或 Digital Self manifest 条目。
-- 后续严格按不可变 DigitalSelfVersion、成长地图、认知/决策/关系、回答来源、
-  Self Preview、本人声音、Legacy、全量验收与部署顺序推进。
-- 本轮不建设分布式、多区域、KMS、异地副本或 PITR；保留为正式商用前待办。遗嘱、
-  死亡认证与法律执行也不在当前工程能力内。
+- 当前开发阶段已完成 S6：建立统一的 `DigitalSelfResponsePlanner`，
+  让回答显式区分 fact / inference / unknown，并把生成的 response plan、
+  response provenance 以 exact fence 写回 archive evidence。旧 `decision_habit/value_priority`
+  和原始关系事实只允许作为待审核候选，不能直接成为生效认知策略、关系画像或
+  Digital Self manifest 条目。
+- 下一阶段为 S7：开放 owner-only Self Preview、来源展开、“不像我”负面证据、
+  版本比较和 Fidelity Evaluation；之后再进入本人声音、Legacy、全量验收与部署。
+- 本轮不建设分布式、多区域、KMS、异地副本或 PITR；保留为正式商用前待办。当前
+  response-plan first-write-wins 快照依赖 Control API 单进程，扩展到多副本前必须迁移到
+  共享一致性存储。遗嘱、死亡认证与法律执行也不在当前工程能力内。
 
 ## 硅基生命路线 S1 验证
 
@@ -104,8 +108,26 @@
 - 正式临时 PostgreSQL 17 + pgvector 环境 920 passed、2 skipped、0 failed，总覆盖率
   89.32%；H5 全量 195 passed，production build、Ruff、strict mypy、
   `git diff --check` 通过。
-- S6 待做：统一 `DigitalSelfResponsePlanner`，让回答明确区分 fact/inference/unknown 并记录
-  generation/version/来源 provenance；当前还不能宣称 Self Preview 已可用。
+- S6 已完成的核心改动：
+  - `services/digital_self/response_planner.py` 提供纯确定性的响应规划器；
+  - `/v1/interaction/response-plan` 只接受 session/fence/speaker_decision 的最小契约，
+    返回 bounded instructions / grounded_items / voice_target / provenance；完整 fence
+    采用 first-write-wins 快照，同 fence 改 query 或 speaker snapshot 返回 409；
+  - `services/agent/src/agent.py` 改为在 committed fence 后获取并缓存 response plan，
+    严格比对 speaker、ModePolicy、Digital Self/relationship 引用和 voice target；
+    LLM 节点只消费这份控制端计划，不再拼 persona/memory prompt；
+  - `ContextAssembler` 收窄到 heard/current/resume + response-plan 指令；
+  - false-interrupt recovery 仅发固定控制 ack，不再重新拼私有 prompt；
+  - `DuplexRuntime` 已删除旧 memory refresher 与 DeepSeek background generation seam；
+  - archive evidence 绑定 bounded response provenance，并由服务端重算
+    fact/inference/unknown/disclosure、核验 owner source 与 projection eligibility；
+  - shadow owner candidate 只允许低敏 persona style 来源。
+- S6 正式门禁：PostgreSQL 17 + pgvector 全量 998 passed、2 skipped、0 failed，
+  总覆盖率 89.20%；H5 15 files / 195 tests 与 production build 通过；Ruff、139 个
+  strict mypy source files、`git diff --check` 通过。S6 不新增 H5 可见入口，因此没有
+  将静态 build 冒充浏览器 acceptance。
+- Self Preview / Legacy 仍未开放；S7 必须完成 owner-only 预览和 Fidelity 闭环后，
+  才能宣称 Digital Self 可供本人试用。
 
 ## 当前生产
 

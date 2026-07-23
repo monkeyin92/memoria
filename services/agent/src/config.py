@@ -252,6 +252,10 @@ class AgentSettings(BaseSettings):
         default=SecretStr(""),
         alias="MEMORIA_INTERACTION_POLICY_TOKEN",
     )
+    response_plan_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_RESPONSE_PLAN_TOKEN",
+    )
     interaction_policy_url: str = Field(
         default="http://control-api:8000/v1/interaction/session-policy",
         alias="MEMORIA_INTERACTION_POLICY_URL",
@@ -261,6 +265,16 @@ class AgentSettings(BaseSettings):
         ge=0.05,
         le=2.0,
         alias="MEMORIA_INTERACTION_POLICY_TIMEOUT_S",
+    )
+    response_plan_url: str = Field(
+        default="http://control-api:8000/v1/interaction/response-plan",
+        alias="MEMORIA_RESPONSE_PLAN_URL",
+    )
+    response_plan_timeout_s: float = Field(
+        default=0.8,
+        ge=0.05,
+        le=2.0,
+        alias="MEMORIA_RESPONSE_PLAN_TIMEOUT_S",
     )
     archive_spool_key: SecretStr = Field(
         default=SecretStr(""),
@@ -365,6 +379,7 @@ class AgentSettings(BaseSettings):
             "persona_read",
             "voice_resolution",
             "interaction_policy",
+            "response_plan",
         ],
     ) -> str:
         configured = {
@@ -374,6 +389,7 @@ class AgentSettings(BaseSettings):
             "persona_read": self.persona_read_token,
             "voice_resolution": self.voice_resolution_token,
             "interaction_policy": self.interaction_policy_token,
+            "response_plan": self.response_plan_token,
         }[capability].get_secret_value()
         if configured or self.environment == "production":
             return configured
@@ -492,6 +508,12 @@ class AgentSettings(BaseSettings):
                     "production interaction policy URL requires HTTPS or local Docker DNS"
                 )
             capability_tokens.append(interaction_token)
+            response_plan_token = self.internal_token("response_plan")
+            if len(response_plan_token) < 32:
+                raise ValueError("production response plan requires a scoped token")
+            if not _secure_internal_url(self.response_plan_url):
+                raise ValueError("production response plan URL requires HTTPS or local Docker DNS")
+            capability_tokens.append(response_plan_token)
             if len(capability_tokens) != len(set(capability_tokens)):
                 raise ValueError("production internal capability tokens must be independent")
             if self.speaker_authority_enabled:

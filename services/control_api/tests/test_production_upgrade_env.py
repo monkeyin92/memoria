@@ -107,6 +107,10 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert agent["MEMORIA_INTERACTION_POLICY_TOKEN"] != agent[
         "MEMORIA_AGENT_HEARTBEAT_TOKEN"
     ]
+    assert len(control["MEMORIA_RESPONSE_PLAN_TOKEN"]) >= 32
+    assert control["MEMORIA_RESPONSE_PLAN_TOKEN"] != control[
+        "MEMORIA_INTERACTION_POLICY_TOKEN"
+    ]
     assert speaker_model == {
         "MEMORIA_SPEAKER_MODEL_TOKEN": control["MEMORIA_SPEAKER_EMBEDDING_TOKEN"]
     }

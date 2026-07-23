@@ -99,13 +99,8 @@ class ModePolicy:
         *,
         reason_code: str | None = None,
     ) -> bool:
-        return self.capability("history") and (
-            speaker_class == "owner"
-            or (
-                speaker_class == "uncertain"
-                and reason_code == "shadow_owner_candidate"
-            )
-        )
+        del reason_code
+        return speaker_class == "owner" and self.capability("history")
 
     def owner_projection_eligible(self, speaker_class: SpeakerClass) -> bool:
         return speaker_class == "owner" and self.capability("history")
@@ -116,13 +111,8 @@ class ModePolicy:
         *,
         reason_code: str | None = None,
     ) -> bool:
-        return self.capability("learning") and (
-            speaker_class == "owner"
-            or (
-                speaker_class == "uncertain"
-                and reason_code == "shadow_owner_candidate"
-            )
-        )
+        del reason_code
+        return speaker_class == "owner" and self.capability("learning")
 
     @classmethod
     def unavailable(cls, reason: str) -> ModePolicy:

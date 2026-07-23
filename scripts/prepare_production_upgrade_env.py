@@ -98,6 +98,9 @@ def prepare(
             "MEMORIA_PERSONA_READ_TOKEN": _token(),
             "MEMORIA_VOICE_RESOLUTION_TOKEN": _token(),
             "MEMORIA_INTERACTION_POLICY_TOKEN": _token(),
+            "MEMORIA_RESPONSE_PLAN_TOKEN": _token(),
+            "MEMORIA_RESPONSE_PLAN_URL": "http://control-api:8000/v1/interaction/response-plan",
+            "MEMORIA_RESPONSE_PLAN_TIMEOUT_S": "0.8",
             "MEMORIA_SPEAKER_INTERNAL_TOKEN": _token(),
             "MEMORIA_SPEAKER_EMBEDDING_TOKEN": _token(),
             "MEMORIA_SPEAKER_TEMPLATE_KEY": _keep_or_create(

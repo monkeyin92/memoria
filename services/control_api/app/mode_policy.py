@@ -132,8 +132,8 @@ class ModePolicy:
             persona=account_active and companion and owner_private,
             persona_low_sensitivity=account_active and companion and shadow_owner,
             tools=account_active and companion and owner_private,
-            history=account_active and companion and (owner_private or shadow_owner),
-            learning=account_active and companion and (owner_private or shadow_owner),
+            history=account_active and companion and owner_private,
+            learning=account_active and companion and owner_private,
             voice_profile=account_active and companion,
         )
 
@@ -161,7 +161,7 @@ class ModePolicy:
             )
         )
         resolved_owner_projection_eligible = (
-            frozen.interaction_mode == "companion" and speaker_class == "owner"
+            capabilities.history and speaker_class == "owner"
             if owner_projection_eligible is None
             else bool(
                 owner_projection_eligible

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from types import SimpleNamespace
 
 import pytest
 from services.agent.src.agent import _chunk_text
@@ -306,57 +305,3 @@ async def test_interrupt_without_alignment_keeps_only_completed_segments() -> No
         for turn in runtime.orchestrator.context.turns
         if turn.role == "assistant"
     ] == ["第一句。"]
-
-
-@pytest.mark.asyncio
-async def test_deep_path_runs_via_task_manager_then_speaks_fast_summary() -> None:
-    class FakeDeepClient:
-        async def stream_deep(
-            self, messages: object, *, fence: object
-        ) -> AsyncIterator[tuple[object, SimpleNamespace]]:
-            _ = messages
-            yield fence, SimpleNamespace(content="很长的分析结果")
-
-        async def stream_fast(
-            self, messages: object, *, fence: object
-        ) -> AsyncIterator[tuple[object, SimpleNamespace]]:
-            _ = messages
-            yield fence, SimpleNamespace(content="结论已经确认。")
-
-        async def aclose(self) -> None:
-            return None
-
-    runtime = DuplexRuntime.create()
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=True,
-            shadow_low_sensitivity_persona=True,
-        )
-    )
-    runtime._speaker_class = "owner"
-    spoken: list[str] = []
-    runtime.configure_deep_path(FakeDeepClient())
-    runtime.set_result_speaker(spoken.append)
-    await runtime.orchestrator.ready()
-    await runtime.on_turn_committed("请深入分析多个方案")
-    runtime.update_pending_assistant_text("我先核对关键条件。")
-    await runtime.on_playback_started()
-    await runtime.on_playback_finished(
-        playback_position_s=0.5,
-        interrupted=False,
-        synchronized_transcript="我先核对关键条件。",
-    )
-    await runtime.on_assistant_reply_completed("我先核对关键条件。")
-
-    for _ in range(20):
-        if spoken:
-            break
-        await asyncio.sleep(0.01)
-
-    assert spoken == ["结论已经确认。"]
-    assert runtime.orchestrator.state is ConversationState.THINKING
-    await runtime.close()

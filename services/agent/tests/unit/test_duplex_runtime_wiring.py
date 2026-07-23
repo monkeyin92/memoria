@@ -105,7 +105,7 @@ async def test_uncertain_user_evidence_carries_shadow_owner_provenance() -> None
         "interaction_mode": "companion",
         "mode_policy_version": "test-policy",
         "simulated_output": False,
-        "history_eligible": True,
+        "history_eligible": False,
         "owner_projection_eligible": False,
     }
     await runtime.close()

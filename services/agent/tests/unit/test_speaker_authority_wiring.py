@@ -75,7 +75,7 @@ async def test_guest_classification_is_rejected_by_target_focus_but_closes_priva
     ("decision", "expected"),
     [
         (_decision("owner"), True),
-        (_decision("uncertain", reason_code="shadow_owner_candidate"), True),
+        (_decision("uncertain", reason_code="shadow_owner_candidate"), False),
         (_decision("guest"), False),
         (_decision("uncertain", reason_code="shadow_guest_candidate"), False),
     ],
@@ -175,33 +175,6 @@ async def test_interrupted_assistant_uses_the_original_generation_history_bindin
     )
     assert archived_assistant["turn_id"] == old.turn_id
     assert archived_assistant["generation_id"] == old.generation_id
-    await runtime.close()
-
-
-@pytest.mark.asyncio
-async def test_non_owner_turn_cannot_start_the_background_deep_tool() -> None:
-    class DeepStub:
-        called = False
-
-        async def stream_deep(self, *_args: object, **_kwargs: object):  # type: ignore[no-untyped-def]
-            self.called = True
-            if False:
-                yield None
-
-        async def aclose(self) -> None:
-            return None
-
-    deep = DeepStub()
-    runtime = DuplexRuntime.create(session_id="guest-deep-tool-gate")
-    runtime.configure_deep_path(deep)
-    await runtime.orchestrator.ready()
-    runtime._speaker_decision = _decision("guest")
-    runtime._speaker_class = "guest"
-
-    await runtime.on_turn_committed("请深入分析" + "这个问题" * 20)
-
-    assert deep.called is False
-    assert runtime.orchestrator.task_manager.active_count() == 0
     await runtime.close()
 
 

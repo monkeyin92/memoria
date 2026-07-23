@@ -14,7 +14,13 @@ from types import SimpleNamespace
 import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
-from services.archive.domain import ContextQuery, LifeArchivePort, RawVoiceRevocation, SpeakerClass
+from services.archive.domain import (
+    ContextQuery,
+    EvidenceEvent,
+    LifeArchivePort,
+    RawVoiceRevocation,
+    SpeakerClass,
+)
 from services.archive.object_store import ObjectRef
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.control_api.app.main import create_app
@@ -130,6 +136,46 @@ def _wav(pcm: bytes = b"\x00\x00" * 1600) -> bytes:
         writer.setframerate(16_000)
         writer.writeframes(pcm)
     return output.getvalue()
+
+
+def _response_provenance(
+    *,
+    session_id: str,
+    turn_id: int,
+    generation_id: int,
+    source_refs: list[dict[str, object]],
+    **overrides: object,
+) -> dict[str, object]:
+    return {
+        "fence": {
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "generation_id": generation_id,
+            "tool_epoch": 0,
+        },
+        "planner_policy_version": "digital-self-response-planner-v1",
+        "interaction_mode": "legacy",
+        "mode_policy_version": "caller-forged",
+        "digital_self_version_id": None,
+        "manifest_sha256": None,
+        "relationship_profile_id": None,
+        "relationship_profile_version": None,
+        "speaker_class": "guest",
+        "speaker_reason_code": "caller-forged",
+        "speaker_profile_id": "caller-forged",
+        "speaker_model_version": "caller-forged",
+        "speaker_template_version": 99,
+        "source_refs": source_refs,
+        "epistemic_status": "fact",
+        "epistemic_reason_codes": ["caller-forged"],
+        "disclosures": ["inference", "privacy_refusal"],
+        "llm_provider": "qwen",
+        "llm_model": "qwen-test",
+        "tts_provider": "doubao",
+        "tts_model": "seed-tts-2.0",
+        "actual_voice_profile_id": None,
+        **overrides,
+    }
 
 
 @pytest.mark.asyncio
@@ -1093,20 +1139,497 @@ async def test_agent_records_session_event_without_trusting_an_account_id(
                 "source": "generation_fence.actual_heard",
                 "turn_id": 1,
                 "generation_id": 2,
+                "tool_epoch": 0,
                 "payload": {
                     "text": "你实际听到了这一句。",
                     "actual_heard": True,
                     "history_eligible": False,
                     "owner_projection_eligible": False,
+                    "response_provenance": {
+                        "fence": {
+                            "session_id": session["session_id"],
+                            "turn_id": 1,
+                            "generation_id": 2,
+                            "tool_epoch": 0,
+                        },
+                        "planner_policy_version": "digital-self-response-planner-v1",
+                        "interaction_mode": "legacy",
+                        "mode_policy_version": "caller-forged",
+                        "digital_self_version_id": None,
+                        "manifest_sha256": None,
+                        "relationship_profile_id": None,
+                        "relationship_profile_version": None,
+                        "speaker_class": "guest",
+                        "speaker_reason_code": "caller-forged",
+                        "speaker_profile_id": "caller-forged",
+                        "speaker_model_version": "caller-forged",
+                        "speaker_template_version": 99,
+                        "source_refs": [
+                            {
+                                "kind": "persona_trait",
+                                "item_id": "trait-1",
+                                "source_event_ids": ["session-event-parent-001"],
+                            }
+                        ],
+                        "epistemic_status": "fact",
+                        "epistemic_reason_codes": ["caller-forged"],
+                        "disclosures": ["inference", "privacy_refusal"],
+                        "llm_provider": "qwen",
+                        "llm_model": "qwen-test",
+                        "tts_provider": "doubao",
+                        "tts_model": "seed-tts-2.0",
+                        "actual_voice_profile_id": None,
+                    },
+                },
+            },
+        )
+        mismatched_fence = await client.post(
+            "/v1/archive/session-events",
+            headers=internal_headers,
+            json={
+                "event_id": "session-event-fence-mismatch",
+                "session_id": session["session_id"],
+                "event_type": "assistant.playout_stopped",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "assistant",
+                "source": "generation_fence.actual_heard",
+                "turn_id": 1,
+                "generation_id": 2,
+                "tool_epoch": 0,
+                "payload": {
+                    "text": "这条回答携带了错误的完整 fence。",
+                    "actual_heard": True,
+                    "response_provenance": _response_provenance(
+                        session_id=session["session_id"],
+                        turn_id=1,
+                        generation_id=99,
+                        source_refs=[
+                            {
+                                "kind": "persona_trait",
+                                "item_id": "trait-1",
+                                "source_event_ids": ["session-event-parent-001"],
+                            }
+                        ],
+                    ),
+                },
+            },
+        )
+        forged_planner = await client.post(
+            "/v1/archive/session-events",
+            headers=internal_headers,
+            json={
+                "event_id": "session-event-planner-mismatch",
+                "session_id": session["session_id"],
+                "event_type": "assistant.playout_stopped",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "assistant",
+                "source": "generation_fence.actual_heard",
+                "turn_id": 1,
+                "generation_id": 2,
+                "tool_epoch": 0,
+                "payload": {
+                    "text": "这条回答携带了未知规划器版本。",
+                    "actual_heard": True,
+                    "response_provenance": _response_provenance(
+                        session_id=session["session_id"],
+                        turn_id=1,
+                        generation_id=2,
+                        source_refs=[],
+                        planner_policy_version="forged-planner",
+                    ),
                 },
             },
         )
         timeline = await client.get("/v1/archive/timeline", headers=headers)
 
     assert (parent.status_code, recorded.status_code) == (201, 201)
-    assert timeline.json()["items"][0]["payload"]["actual_heard"] is True
-    assert timeline.json()["items"][0]["payload"]["history_eligible"] is True
-    assert timeline.json()["items"][0]["payload"]["owner_projection_eligible"] is True
+    assert mismatched_fence.status_code == 409
+    assert mismatched_fence.json()["detail"] == {
+        "code": "response_provenance_fence_mismatch"
+    }
+    assert forged_planner.status_code == 409
+    assert forged_planner.json()["detail"] == {
+        "code": "response_provenance_planner_invalid"
+    }
+    assistant_payload = timeline.json()["items"][0]["payload"]
+    assert assistant_payload["actual_heard"] is True
+    assert assistant_payload["history_eligible"] is True
+    assert assistant_payload["owner_projection_eligible"] is True
+    provenance = assistant_payload["response_provenance"]
+    assert provenance["interaction_mode"] == "companion"
+    assert provenance["mode_policy_version"] == "s2-v1"
+    assert provenance["speaker_class"] == "owner"
+    assert provenance["speaker_reason_code"] == "unavailable"
+    assert provenance["speaker_model_version"] == "unavailable"
+    assert provenance["speaker_profile_id"] is None
+    assert provenance["speaker_template_version"] is None
+    assert provenance["source_refs"][0]["source_event_ids"] == [
+        "session-event-parent-001"
+    ]
+    assert provenance["epistemic_status"] == "not_applicable"
+    assert provenance["epistemic_reason_codes"] == ["no_grounded_items"]
+    assert provenance["disclosures"] == []
+    assert "score" not in provenance
+
+
+@pytest.mark.asyncio
+async def test_response_provenance_rejects_guest_or_assistant_source_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (await client.post("/v1/auth/anonymous")).json()
+        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        guest_source = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "guest-source-forged-provenance",
+                "session_id": session["session_id"],
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "guest",
+                "source": "funasr.authoritative_final",
+                "turn_id": 8,
+                "generation_id": 8,
+                "payload": {"text": "访客提供的内容不能成为主人回答来源。"},
+            },
+        )
+        parent = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "owner-parent-forged-provenance",
+                "session_id": session["session_id"],
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "owner",
+                "source": "funasr.authoritative_final",
+                "turn_id": 9,
+                "generation_id": 9,
+                "payload": {"text": "主人当前问题。"},
+            },
+        )
+        rejected = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "assistant-forged-provenance",
+                "session_id": session["session_id"],
+                "event_type": "assistant.playout_stopped",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "assistant",
+                "source": "generation_fence.actual_heard",
+                "turn_id": 9,
+                "generation_id": 9,
+                "tool_epoch": 0,
+                "payload": {
+                    "text": "不能归档为有主人来源的回答。",
+                    "actual_heard": True,
+                    "response_provenance": {
+                        "fence": {
+                            "session_id": session["session_id"],
+                            "turn_id": 9,
+                            "generation_id": 9,
+                            "tool_epoch": 0,
+                        },
+                        "planner_policy_version": "digital-self-response-planner-v1",
+                        "interaction_mode": "companion",
+                        "mode_policy_version": "s2-v1",
+                        "digital_self_version_id": None,
+                        "manifest_sha256": None,
+                        "relationship_profile_id": None,
+                        "relationship_profile_version": None,
+                        "speaker_class": "owner",
+                        "speaker_reason_code": "owner_match",
+                        "speaker_profile_id": "speaker-profile",
+                        "speaker_model_version": "campplus-test",
+                        "speaker_template_version": 1,
+                        "source_refs": [
+                            {
+                                "kind": "memory_claim",
+                                "item_id": "forged-claim",
+                                "source_event_ids": ["guest-source-forged-provenance"],
+                            }
+                        ],
+                        "epistemic_status": "fact",
+                        "epistemic_reason_codes": ["grounded_manifest"],
+                        "disclosures": [],
+                        "llm_provider": "qwen",
+                        "llm_model": "qwen-test",
+                        "tts_provider": "doubao",
+                        "tts_model": "seed-tts-2.0",
+                        "actual_voice_profile_id": None,
+                    },
+                },
+            },
+        )
+
+    assert (guest_source.status_code, parent.status_code) == (201, 201)
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"] == {"code": "response_provenance_source_invalid"}
+
+
+@pytest.mark.asyncio
+async def test_response_provenance_requires_a_nonempty_source_ref(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (await client.post("/v1/auth/anonymous")).json()
+        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        parent = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "empty-source-parent",
+                "session_id": session["session_id"],
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "owner",
+                "source": "funasr.authoritative_final",
+                "turn_id": 1,
+                "generation_id": 1,
+                "payload": {"text": "主人问题。"},
+            },
+        )
+        rejected = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "empty-source-response",
+                "session_id": session["session_id"],
+                "event_type": "assistant.playout_stopped",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "assistant",
+                "source": "generation_fence.actual_heard",
+                "turn_id": 1,
+                "generation_id": 1,
+                "tool_epoch": 0,
+                "payload": {
+                    "text": "这条来源为空。",
+                    "actual_heard": True,
+                    "response_provenance": _response_provenance(
+                        session_id=session["session_id"],
+                        turn_id=1,
+                        generation_id=1,
+                        source_refs=[
+                            {
+                                "kind": "memory_claim",
+                                "item_id": "empty-source-claim",
+                                "source_event_ids": [],
+                            }
+                        ]
+                    ),
+                },
+            },
+        )
+
+    assert parent.status_code == 201
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"]["code"] == "response_provenance_invalid"
+
+
+@pytest.mark.asyncio
+async def test_response_provenance_requires_projection_eligibility_and_allows_owner_actions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (await client.post("/v1/auth/anonymous")).json()
+        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        await app.state.life_archive.record(
+            EvidenceEvent(
+                event_id="source-without-projection",
+                account_id=identity["user_id"],
+                event_type="speech.utterance_finalized",
+                occurred_at=datetime.now(UTC),
+                speaker_class="owner",
+                source="test",
+                payload={"text": "缺少投影资格。"},
+            )
+        )
+        await app.state.life_archive.record(
+            EvidenceEvent(
+                event_id="owner-action-source",
+                account_id=identity["user_id"],
+                event_type="owner.action_recorded",
+                occurred_at=datetime.now(UTC),
+                speaker_class="owner",
+                source="user.growth_feedback",
+                payload={"owner_projection_eligible": True},
+            )
+        )
+        parent = {
+            "session_id": session["session_id"],
+            "event_type": "speech.utterance_finalized",
+            "occurred_at": datetime.now(UTC).isoformat(),
+            "speaker_class": "owner",
+            "source": "funasr.authoritative_final",
+            "payload": {"text": "主人问题。"},
+        }
+        first_parent = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={**parent, "event_id": "missing-projection-parent", "turn_id": 1, "generation_id": 1},
+        )
+        missing_projection = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "missing-projection-response",
+                "session_id": session["session_id"],
+                "event_type": "assistant.playout_stopped",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "assistant",
+                "source": "generation_fence.actual_heard",
+                "turn_id": 1,
+                "generation_id": 1,
+                "tool_epoch": 0,
+                "payload": {
+                    "text": "不应采用缺少资格的来源。",
+                    "actual_heard": True,
+                    "response_provenance": _response_provenance(
+                        session_id=session["session_id"],
+                        turn_id=1,
+                        generation_id=1,
+                        source_refs=[
+                            {
+                                "kind": "memory_claim",
+                                "item_id": "missing-projection-claim",
+                                "source_event_ids": ["source-without-projection"],
+                            }
+                        ]
+                    ),
+                },
+            },
+        )
+        second_parent = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={**parent, "event_id": "owner-action-parent", "turn_id": 2, "generation_id": 2},
+        )
+        owner_action = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "owner-action-response",
+                "session_id": session["session_id"],
+                "event_type": "assistant.playout_stopped",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "assistant",
+                "source": "generation_fence.actual_heard",
+                "turn_id": 2,
+                "generation_id": 2,
+                "tool_epoch": 0,
+                "payload": {
+                    "text": "允许已验证的主人行动来源。",
+                    "actual_heard": True,
+                    "response_provenance": _response_provenance(
+                        session_id=session["session_id"],
+                        turn_id=2,
+                        generation_id=2,
+                        source_refs=[
+                            {
+                                "kind": "memory_claim",
+                                "item_id": "owner-action-claim",
+                                "source_event_ids": ["owner-action-source"],
+                            }
+                        ]
+                    ),
+                },
+            },
+        )
+
+    assert (first_parent.status_code, second_parent.status_code) == (201, 201)
+    assert missing_projection.json()["detail"] == {
+        "code": "response_provenance_source_invalid"
+    }
+    assert owner_action.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_shadow_owner_candidate_archives_style_only_persona_snapshot_without_source_refs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (await client.post("/v1/auth/anonymous")).json()
+        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=headers, json={})).json()
+        shadow_parent = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "shadow-style-parent",
+                "session_id": session["session_id"],
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "uncertain",
+                "source": "funasr.authoritative_final",
+                "turn_id": 2,
+                "generation_id": 2,
+                "tool_epoch": 0,
+                "payload": {
+                    "text": "可能是主人。",
+                    "speaker_reason_code": "shadow_owner_candidate",
+                },
+            },
+        )
+        response = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "shadow-style-response",
+                "session_id": session["session_id"],
+                "event_type": "assistant.playout_stopped",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "assistant",
+                "source": "generation_fence.actual_heard",
+                "turn_id": 2,
+                "generation_id": 2,
+                "tool_epoch": 0,
+                "payload": {
+                    "text": "只采用低敏风格。",
+                    "actual_heard": True,
+                    "response_provenance": _response_provenance(
+                        session_id=session["session_id"],
+                        turn_id=2,
+                        generation_id=2,
+                        source_refs=[],
+                        persona_version_id="persona-version-1",
+                        persona_version_number=1,
+                        persona_style_only=True,
+                    ),
+                },
+            },
+        )
+
+    assert (shadow_parent.status_code, response.status_code) == (201, 201)
+    provenance = (await app.state.life_archive.event(
+        account_id=identity["user_id"], event_id="shadow-style-response"
+    )).payload["response_provenance"]
+    assert provenance["epistemic_status"] == "not_applicable"
+    assert provenance["disclosures"] == []
+    assert provenance["source_refs"] == []
+    assert provenance["persona_version_id"] == "persona-version-1"
+    assert provenance["persona_version_number"] == 1
+    assert provenance["persona_style_only"] is True
 
 
 @pytest.mark.asyncio
@@ -1164,7 +1687,7 @@ async def test_assistant_evidence_waits_for_its_canonical_parent_turn(
         pytest.param(
             "uncertain",
             "shadow_owner_candidate",
-            True,
+            False,
             False,
             False,
             True,

@@ -51,6 +51,17 @@ from services.control_api.app.security import (
     require_authenticated_user,
     verify_password,
 )
+from services.digital_self.domain import (
+    CognitiveClaimManifestEntry,
+    DecisionCaseManifestEntry,
+    DigitalSelfVersion,
+    MemoryClaimManifestEntry,
+    PersonaTraitManifestEntry,
+    RegistryPort,
+    RelationshipProfileManifestEntry,
+    VersionNotFoundError,
+)
+from services.digital_self.response_planner import PLANNER_POLICY_VERSION
 from services.governance.account_data import (
     AccountDataGovernance,
     AccountDeletionIncompleteError,
@@ -60,6 +71,7 @@ from services.persona.rules import trusted_uncertain_profile
 
 router = APIRouter(prefix="/v1/archive", tags=["archive"])
 logger = logging.getLogger(__name__)
+_LOCAL_SAFE_PLANNER_POLICY_VERSION = "local-safe-fallback-v1"
 MAX_RAW_VOICE_WAV_BYTES = 2 * 1024 * 1024
 MAX_RAW_VOICE_BASE64_CHARS = ((MAX_RAW_VOICE_WAV_BYTES + 2) // 3) * 4
 SESSION_BOUND_EVENT_TYPES = frozenset(
@@ -88,6 +100,8 @@ SERVER_INTERACTION_PAYLOAD_KEYS = frozenset(
         "prompt_kind",
         "learning_task_id",
         "learning_task_kind",
+        "response_provenance",
+        "tool_epoch",
     }
 )
 
@@ -133,6 +147,7 @@ class SessionEvidenceEventCreate(BaseModel):
     payload: dict[str, Any]
     turn_id: int | None = Field(default=None, ge=0)
     generation_id: int | None = Field(default=None, ge=0)
+    tool_epoch: int | None = Field(default=None, ge=0)
     speaker_identity_id: str | None = Field(default=None, max_length=128)
     consent_grant_id: str | None = Field(default=None, max_length=128)
     schema_version: int = Field(default=1, ge=1, le=100)
@@ -150,6 +165,8 @@ class SessionEvidenceEventCreate(BaseModel):
                 raise ValueError("assistant archive events require actual-heard evidence")
             if self.turn_id is None or self.generation_id is None:
                 raise ValueError("assistant archive events require turn_id and generation_id")
+            if self.payload.get("response_provenance") is not None and self.tool_epoch is None:
+                raise ValueError("response provenance requires the complete generation fence")
         elif self.speaker_class == "assistant":
             raise ValueError("assistant speaker_class is only valid for assistant events")
         return self
@@ -184,6 +201,90 @@ class SessionMemoryContextCreate(BaseModel):
     limit: int = Field(default=8, ge=1, le=20)
 
 
+class ResponseSourceRefCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    kind: Literal[
+        "memory_claim",
+        "persona_trait",
+        "cognitive_claim",
+        "decision_case",
+        "relationship_profile",
+    ]
+    item_id: str = Field(min_length=1, max_length=128)
+    source_event_ids: list[str] = Field(min_length=1, max_length=32)
+
+    @field_validator("source_event_ids")
+    @classmethod
+    def validate_source_event_ids(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() or len(value) > 128 for value in values):
+            raise ValueError("response provenance source ids are invalid")
+        if len(values) != len(set(values)):
+            raise ValueError("response provenance source ids must be unique")
+        return values
+
+
+class ResponseGenerationFenceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    session_id: str = Field(min_length=1, max_length=128)
+    turn_id: int = Field(ge=0, le=2**31 - 1)
+    generation_id: int = Field(ge=0, le=2**31 - 1)
+    tool_epoch: int = Field(ge=0, le=2**31 - 1)
+
+
+class ResponseProvenanceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    fence: ResponseGenerationFenceCreate
+    planner_policy_version: str = Field(min_length=1, max_length=64)
+    interaction_mode: Literal["companion", "self_preview", "legacy", "archive"]
+    mode_policy_version: str = Field(min_length=1, max_length=128)
+    digital_self_version_id: str | None = Field(default=None, max_length=128)
+    manifest_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    relationship_profile_id: str | None = Field(default=None, max_length=128)
+    relationship_profile_version: int | None = Field(default=None, ge=1)
+    speaker_class: Literal["owner", "guest", "uncertain"]
+    speaker_reason_code: str = Field(min_length=1, max_length=96)
+    speaker_profile_id: str | None = Field(default=None, max_length=128)
+    speaker_model_version: str = Field(min_length=1, max_length=128)
+    speaker_template_version: int | None = Field(default=None, ge=1)
+    persona_version_id: str | None = Field(default=None, max_length=128)
+    persona_version_number: int | None = Field(default=None, ge=1)
+    persona_style_only: bool = False
+    source_refs: list[ResponseSourceRefCreate] = Field(default_factory=list, max_length=32)
+    epistemic_status: Literal["not_applicable", "fact", "inference", "unknown", "mixed"]
+    epistemic_reason_codes: list[str] = Field(default_factory=list, max_length=16)
+    disclosures: list[
+        Literal["digital_identity", "inference", "unknown", "privacy_refusal"]
+    ] = Field(default_factory=list, max_length=4)
+    llm_provider: str | None = Field(default=None, max_length=64)
+    llm_model: str | None = Field(default=None, max_length=128)
+    tts_provider: str | None = Field(default=None, max_length=64)
+    tts_model: str | None = Field(default=None, max_length=128)
+    actual_voice_profile_id: str | None = Field(default=None, max_length=128)
+
+    @field_validator("epistemic_reason_codes")
+    @classmethod
+    def validate_reason_codes(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() or len(value) > 64 for value in values):
+            raise ValueError("response provenance reason codes are invalid")
+        if len(values) != len(set(values)):
+            raise ValueError("response provenance reason codes must be unique")
+        return values
+
+    @model_validator(mode="after")
+    def validate_persona_snapshot(self) -> ResponseProvenanceCreate:
+        if bool(self.persona_version_id) != (self.persona_version_number is not None):
+            raise ValueError("persona provenance version fields must be paired")
+        if self.persona_style_only and self.persona_version_id is None:
+            raise ValueError("persona style-only provenance requires a persona snapshot")
+        return self
+
+
 def _limit_payload(payload: dict[str, Any]) -> dict[str, Any]:
     import json
 
@@ -207,6 +308,320 @@ def _store(request: Request) -> MemoryStore:
 
 def _catalog(request: Request) -> MemoryCatalogPort:
     return cast(MemoryCatalogPort, request.app.state.memory_catalog)
+
+
+def _digital_self_registry(request: Request) -> RegistryPort:
+    return cast(RegistryPort, request.app.state.digital_self_registry)
+
+
+def _manifest_source_refs(
+    version: DigitalSelfVersion,
+) -> dict[tuple[str, str], frozenset[str]]:
+    refs: dict[tuple[str, str], frozenset[str]] = {}
+    for entry in version.manifest.entries:
+        if isinstance(entry, MemoryClaimManifestEntry):
+            refs[("memory_claim", entry.claim_id)] = frozenset(
+                {entry.source_event_id}
+            )
+        elif isinstance(entry, PersonaTraitManifestEntry):
+            refs[("persona_trait", entry.trait_id)] = frozenset(
+                entry.source_event_ids
+            )
+        elif isinstance(entry, CognitiveClaimManifestEntry):
+            refs[("cognitive_claim", entry.claim_id)] = frozenset(
+                (
+                    *entry.support_source_event_ids,
+                    *entry.counterexample_source_event_ids,
+                )
+            )
+        elif isinstance(entry, DecisionCaseManifestEntry):
+            refs[("decision_case", entry.case_id)] = frozenset(
+                (
+                    *entry.support_source_event_ids,
+                    *entry.counterexample_source_event_ids,
+                )
+            )
+        elif isinstance(entry, RelationshipProfileManifestEntry):
+            refs[("relationship_profile", entry.profile_id)] = frozenset(
+                (
+                    *entry.support_source_event_ids,
+                    *entry.counterexample_source_event_ids,
+                )
+            )
+    return refs
+
+
+def _canonical_epistemic_provenance(
+    *,
+    source_refs: list[ResponseSourceRefCreate],
+    interaction_mode: str,
+    parent: EvidenceEvent,
+    submitted_disclosures: list[str],
+    persona_style_only: bool,
+) -> tuple[str, list[str], list[str]]:
+    """Derive claim certainty from verified source kinds, never caller labels."""
+
+    if persona_style_only:
+        return "not_applicable", ["persona_style_only"], []
+    kinds = {ref.kind for ref in source_refs}
+    if "decision_case" in kinds:
+        status, reason_codes, disclosures = (
+            "inference",
+            ["decision_precedent"],
+            ["inference"],
+        )
+    elif kinds & {"memory_claim", "cognitive_claim"}:
+        status, reason_codes, disclosures = "fact", ["grounded_manifest"], []
+    elif interaction_mode == "companion":
+        status, reason_codes, disclosures = "not_applicable", ["no_grounded_items"], []
+    else:
+        status, reason_codes, disclosures = "unknown", ["no_approved_source"], ["unknown"]
+
+    if interaction_mode in {"self_preview", "legacy"}:
+        disclosures.insert(0, "digital_identity")
+    if not source_refs and "privacy_refusal" in submitted_disclosures:
+        disclosures.append("privacy_refusal")
+    return status, reason_codes, list(dict.fromkeys(disclosures))
+
+
+async def _canonical_response_provenance(
+    request: Request,
+    *,
+    raw: object,
+    session: Mapping[str, Any],
+    parent: EvidenceEvent,
+    tool_epoch: int,
+) -> dict[str, Any]:
+    try:
+        submitted = ResponseProvenanceCreate.model_validate(raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "response_provenance_invalid"},
+        ) from exc
+    account_id = str(session["user_id"])
+    source_refs = submitted.source_refs
+    local_safe_plan = (
+        submitted.planner_policy_version == _LOCAL_SAFE_PLANNER_POLICY_VERSION
+    )
+    if submitted.planner_policy_version not in {
+        PLANNER_POLICY_VERSION,
+        _LOCAL_SAFE_PLANNER_POLICY_VERSION,
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_planner_invalid"},
+        )
+    if local_safe_plan and (
+        source_refs
+        or submitted.persona_version_id is not None
+        or submitted.persona_style_only
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_planner_invalid"},
+        )
+    if (
+        submitted.fence.session_id != str(session["session_id"])
+        or submitted.fence.turn_id != parent.turn_id
+        or submitted.fence.generation_id != parent.generation_id
+        or submitted.fence.tool_epoch != tool_epoch
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_fence_mismatch"},
+        )
+    shadow_owner_candidate = (
+        parent.speaker_class == "uncertain"
+        and parent.payload.get("speaker_reason_code") == "shadow_owner_candidate"
+    )
+    if submitted.persona_style_only and (
+        not shadow_owner_candidate
+        or source_refs
+        or str(session["interaction_mode"]) != "companion"
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_private_source_denied"},
+        )
+    if (
+        submitted.persona_version_id is not None
+        and not submitted.persona_style_only
+        and (
+            parent.speaker_class != "owner"
+            or str(session["interaction_mode"]) != "companion"
+        )
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_private_source_denied"},
+        )
+    if parent.speaker_class != "owner" and source_refs:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_private_source_denied"},
+        )
+    version_id = session.get("digital_self_version_id")
+    interaction_mode = str(session["interaction_mode"])
+    manifest_sha256: str | None = None
+    allowed_manifest_refs: dict[tuple[str, str], frozenset[str]] | None = None
+    if isinstance(version_id, str) and version_id:
+        try:
+            version = await _digital_self_registry(request).get(
+                account_id=account_id,
+                version_id=version_id,
+            )
+        except VersionNotFoundError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "response_provenance_version_unavailable"},
+            ) from exc
+        if (
+            interaction_mode == "self_preview"
+            and version.status not in {"approved", "frozen"}
+        ) or (interaction_mode == "legacy" and version.status != "frozen"):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "response_provenance_version_unavailable"},
+            )
+        manifest_sha256 = version.manifest_sha256
+        allowed_manifest_refs = _manifest_source_refs(version)
+    elif (
+        submitted.manifest_sha256 is not None
+        or interaction_mode in {"self_preview", "legacy"}
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_version_unavailable"},
+        )
+    elif interaction_mode == "companion" and version_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_version_unavailable"},
+        )
+    relationship_profile_id = (
+        str(session["relationship_profile_id"])
+        if isinstance(session.get("relationship_profile_id"), str)
+        else None
+    )
+    relationship_profile_version: int | None = None
+    if relationship_profile_id is not None:
+        if allowed_manifest_refs is None:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "response_provenance_relationship_unavailable"},
+            )
+        relationship_entry = next(
+            (
+                entry
+                for entry in version.manifest.entries
+                if isinstance(entry, RelationshipProfileManifestEntry)
+                and entry.profile_id == relationship_profile_id
+            ),
+            None,
+        )
+        if relationship_entry is None:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "response_provenance_relationship_unavailable"},
+            )
+        relationship_profile_version = relationship_entry.version_number
+    source_event_ids = tuple(
+        dict.fromkeys(
+            source_event_id
+            for ref in source_refs
+            for source_event_id in ref.source_event_ids
+        )
+    )
+    if allowed_manifest_refs is not None:
+        for ref in source_refs:
+            allowed = allowed_manifest_refs.get((ref.kind, ref.item_id))
+            if allowed is None or not set(ref.source_event_ids).issubset(allowed):
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "response_provenance_source_invalid"},
+                )
+    events = await asyncio.gather(
+        *(
+            _archive(request).event(
+                account_id=account_id,
+                event_id=source_event_id,
+            )
+            for source_event_id in source_event_ids
+        )
+    )
+    if any(event is None for event in events):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_source_invalid"},
+        )
+    resolved_events = tuple(cast(EvidenceEvent, event) for event in events)
+    if any(
+        event.speaker_class != "owner"
+        or event.event_type
+        not in {"speech.utterance_finalized", "owner.action_recorded"}
+        or event.payload.get("owner_projection_eligible") is not True
+        for event in resolved_events
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_source_invalid"},
+        )
+    parent_payload = parent.payload
+    reason_code = parent_payload.get("speaker_reason_code")
+    model_version = parent_payload.get("speaker_model_version")
+    profile_id = parent_payload.get("speaker_profile_id")
+    template_version = parent_payload.get("speaker_template_version")
+    epistemic_status, epistemic_reason_codes, disclosures = (
+        _canonical_epistemic_provenance(
+            source_refs=source_refs,
+            interaction_mode=interaction_mode,
+            parent=parent,
+            submitted_disclosures=list(submitted.disclosures),
+            persona_style_only=submitted.persona_style_only,
+        )
+    )
+    return {
+        "fence": submitted.fence.model_dump(),
+        "planner_policy_version": (
+            _LOCAL_SAFE_PLANNER_POLICY_VERSION
+            if local_safe_plan
+            else PLANNER_POLICY_VERSION
+        ),
+        "interaction_mode": interaction_mode,
+        "mode_policy_version": str(session["mode_policy_version"]),
+        "digital_self_version_id": version_id if isinstance(version_id, str) else None,
+        "manifest_sha256": manifest_sha256,
+        "relationship_profile_id": relationship_profile_id,
+        "relationship_profile_version": relationship_profile_version,
+        "speaker_class": parent.speaker_class,
+        "speaker_reason_code": (
+            reason_code if isinstance(reason_code, str) and reason_code else "unavailable"
+        ),
+        "speaker_profile_id": profile_id if isinstance(profile_id, str) else None,
+        "speaker_model_version": (
+            model_version
+            if isinstance(model_version, str) and model_version
+            else "unavailable"
+        ),
+        "speaker_template_version": (
+            template_version
+            if isinstance(template_version, int) and template_version > 0
+            else None
+        ),
+        "persona_version_id": submitted.persona_version_id,
+        "persona_version_number": submitted.persona_version_number,
+        "persona_style_only": submitted.persona_style_only,
+        "source_refs": [ref.model_dump() for ref in source_refs],
+        "epistemic_status": epistemic_status,
+        "epistemic_reason_codes": epistemic_reason_codes,
+        "disclosures": disclosures,
+        "llm_provider": submitted.llm_provider,
+        "llm_model": submitted.llm_model,
+        "tts_provider": submitted.tts_provider,
+        "tts_model": submitted.tts_model,
+        "actual_voice_profile_id": submitted.actual_voice_profile_id,
+    }
 
 
 def _governance(request: Request) -> AccountDataGovernance:
@@ -415,6 +830,31 @@ def _schedule_persona_observation(
     )
 
 
+def _schedule_low_sensitivity_persona_observation(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    *,
+    event: EvidenceEvent,
+    duplicate: bool,
+) -> None:
+    """Keep shadow candidates separate from owner-history learning."""
+
+    if (
+        event.speaker_class != "uncertain"
+        or event.payload.get("speaker_reason_code") != "shadow_owner_candidate"
+        or event.payload.get("history_eligible") is not False
+        or event.payload.get("owner_projection_eligible") is not False
+    ):
+        return
+    _schedule_persona_observation(
+        request,
+        background_tasks,
+        event=event,
+        duplicate=duplicate,
+        allow_uncertain_candidate=True,
+    )
+
+
 def _require_internal_token(
     request: Request,
     capability: Literal["archive_write", "memory_read"],
@@ -508,6 +948,7 @@ async def append_session_event(
     archive = _archive(request)
     account_id = str(session["user_id"])
     values = body.model_dump()
+    tool_epoch = values.pop("tool_epoch")
     values["account_id"] = account_id
     payload = dict(values["payload"])
     reason_code = payload.get("speaker_reason_code") or payload.get("reason_code")
@@ -515,6 +956,7 @@ async def append_session_event(
         reason_code = None
     assistant_event = body.speaker_class == "assistant"
     parent_eligibility: tuple[bool, bool] | None = None
+    parent: EvidenceEvent | None = None
     if assistant_event:
         assert body.turn_id is not None and body.generation_id is not None
         try:
@@ -564,6 +1006,21 @@ async def append_session_event(
                 status_code=409,
                 detail={"code": "turn_event_conflict"},
             )
+    raw_response_provenance = payload.get("response_provenance")
+    canonical_response_provenance: dict[str, Any] | None = None
+    if raw_response_provenance is not None:
+        if not assistant_event or parent is None:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "response_provenance_invalid"},
+            )
+        canonical_response_provenance = await _canonical_response_provenance(
+            request,
+            raw=raw_response_provenance,
+            session=session,
+            parent=parent,
+            tool_epoch=cast(int, tool_epoch),
+        )
     policy_speaker = cast(
         SpeakerClass,
         "guest" if assistant_event else body.speaker_class,
@@ -597,6 +1054,10 @@ async def append_session_event(
             "prompt_kind": prompt_kind,
         }
     )
+    if tool_epoch is not None:
+        payload["tool_epoch"] = tool_epoch
+    if canonical_response_provenance is not None:
+        payload["response_provenance"] = canonical_response_provenance
     learning_task_id = session.get("learning_task_id")
     async def record_event() -> tuple[EvidenceEvent, Any]:
         values["payload"] = payload
@@ -630,16 +1091,19 @@ async def append_session_event(
     else:
         event, result = await record_event()
     _wake_compiler(request)
-    if trusted_interaction["capabilities"]["learning"] or (
-        body.speaker_class == "uncertain"
-        and trusted_interaction["capabilities"]["persona_low_sensitivity"]
-    ):
+    if trusted_interaction["capabilities"]["learning"]:
         _schedule_persona_observation(
             request,
             background_tasks,
             event=event,
             duplicate=result.duplicate,
-            allow_uncertain_candidate=True,
+        )
+    elif trusted_interaction["capabilities"]["persona_low_sensitivity"]:
+        _schedule_low_sensitivity_persona_observation(
+            request,
+            background_tasks,
+            event=event,
+            duplicate=result.duplicate,
         )
     return JSONResponse(
         status_code=200 if result.duplicate else 201,

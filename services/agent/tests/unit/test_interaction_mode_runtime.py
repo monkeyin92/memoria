@@ -114,7 +114,7 @@ async def test_guest_uncertain_and_shadow_cannot_become_owner_projection(
 
 
 @pytest.mark.asyncio
-async def test_shadow_owner_candidate_keeps_history_and_low_sensitivity_learning_without_owner_authority() -> None:
+async def test_shadow_owner_candidate_keeps_only_low_sensitivity_persona_without_owner_history() -> None:
     runtime = DuplexRuntime.create(session_id="session-shadow-owner")
     runtime.set_mode_policy(_companion_policy())
     await runtime.orchestrator.ready()
@@ -123,15 +123,15 @@ async def test_shadow_owner_candidate_keeps_history_and_low_sensitivity_learning
     assert accepted
     fence = await runtime.on_turn_committed("这是主人在本轮留下的完整表达。")
 
-    assert runtime._history_eligible(fence) is True
+    assert runtime._history_eligible(fence) is False
     policy = runtime.mode_policy_for_fence(fence)
     assert policy.history_eligible(
         "uncertain", reason_code="shadow_owner_candidate"
-    ) is True
+    ) is False
     assert policy.owner_projection_eligible("uncertain") is False
     assert policy.allows_learning(
         "uncertain", reason_code="shadow_owner_candidate"
-    ) is True
+    ) is False
     assert policy.allows_private_context("uncertain") is False
     assert policy.allows_tools("uncertain") is False
     await runtime.close()

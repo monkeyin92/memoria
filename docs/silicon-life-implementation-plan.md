@@ -17,7 +17,8 @@
 
 本轮明确不实现：
 
-- 多区域、分布式 worker、Redis 协调或微服务拆分；
+- 多区域、分布式 worker、Redis 协调或微服务拆分；当前 response-plan
+  first-write-wins 快照依赖 Control API 单进程，扩展到多副本前必须改为共享一致性存储；
 - KMS、异地副本、PITR 和跨机房恢复。它们保留在待办，不能因此宣称“永久不丢失”；
 - 遗嘱效力、死亡认证、法院/公证流程或自动法律执行；
 - 未经官方能力和真实盲测验证的“已复刻本人声音”宣传。
@@ -142,8 +143,9 @@ Compose 解析、Shell/JSON、`git diff --check` 通过。Standards 与 Spec 两
 H5 全量 `158/158` 与 production build 通过；Ruff、strict mypy、Compose 合同和
 `git diff --check` 通过。
 本地 in-app browser 在 390×844 与 667×375 视口均无水平溢出，控制台无 error/warn。
-guest/uncertain 不得进入 owner 私有能力；shadow owner 只保留历史与低敏学习，
-不获得 private memory、tools 或 owner projection；模拟输出不进入主人学习。
+guest/uncertain 不得进入 owner 私有能力；shadow owner candidate 只允许形成独立的
+低敏 Persona style 候选，不获得主人历史、学习资格、private memory、tools 或 owner
+projection；模拟输出不进入主人学习。
 
 ### S3：DigitalSelfVersion 与不可变 manifest
 
@@ -254,7 +256,7 @@ guest/uncertain 不得进入 owner 私有能力；shadow owner 只保留历史�
 
 ### S6：DigitalSelfResponsePlanner 与回答来源
 
-状态：PENDING
+状态：COMPLETED（2026-07-22）
 
 唯一规划接口：
 
@@ -265,7 +267,26 @@ plan(mode, actor, version_id, query, relationship_id, speaker_decision)
 
 现有 `ContextAssembler` 收敛为 Planner 内部 adapter，不保留平行 prompt 规则链。每个回答记录完整 generation fence、mode/version、Persona/Memory/Cognitive 来源 ID、Planner policy version、LLM/TTS model、关系与 disclosure 决策，不记录不必要正文。
 
-验收：无来源具体个人事实 <1%；冲突或越权来源稳定进入 unknown；inference 不包装成本人亲口事实；安全规则始终高于风格。
+交付：
+
+- [x] Control API 以完整 `session/turn/generation/tool_epoch` 做 first-write-wins
+  响应快照；相同输入幂等返回，修改 query 或 speaker snapshot 返回冲突；
+- [x] Agent 严格校验 fence、speaker snapshot、冻结 ModePolicy、Digital Self /
+  relationship 引用和 voice target；失败只允许当前话轮安全降级；
+- [x] 实时链路删除旧 PersonaClient、MemoryContextClient 和 DeepSeek background
+  generation seam，`ContextAssembler` 只消费一个 canonical response plan；
+- [x] `fact / inference / unknown`、身份披露、隐私拒绝和 deterministic direct text
+  由 Planner 决定，DecisionCase 只能作为 inference precedent；
+- [x] actual-heard assistant evidence 绑定同一 fence 的有界 provenance；Archive
+  重新核验 owner source、projection eligibility、manifest/relationship，并在服务端
+  重算 epistemic status 与 disclosures；
+- [x] shadow owner candidate 只可使用已确认低敏 persona style，不能携带 owner
+  memory/cognitive/decision/relationship 来源。
+
+验收：正式临时 PostgreSQL 17 + pgvector 环境 998 passed、2 skipped、0 failed，
+总覆盖率 89.20%；H5 15 files / 195 tests 与 production build 通过；Ruff、139 个
+strict mypy source files 和 `git diff --check` 通过。无来源、冲突或越权来源稳定进入
+unknown/privacy；inference 不包装成本人亲口事实；安全规则始终高于风格。
 
 ### S7：Self Preview 与 Fidelity Evaluation
 

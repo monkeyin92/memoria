@@ -16,13 +16,68 @@ from services.agent.src.agent import (
     DuplexVoiceAgent,
     should_enable_legacy_speaker_verifier,
 )
+from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.state_machine import ConversationState
+from services.agent.src.response_planner_client import (
+    ResponseGroundedItem,
+    ResponsePlan,
+    ResponsePlanFetch,
+    ResponseProvenance,
+    ResponseVoiceTarget,
+)
+from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
 async def _text_source(*parts: str) -> AsyncIterator[str]:
     for part in parts:
         yield part
+
+
+def _plan_for_fence(
+    fence: GenerationFence,
+    *,
+    instructions: str,
+    direct_text: str | None = None,
+    grounded_items: tuple[ResponseGroundedItem, ...] = (),
+    speaker_class: str = "owner",
+) -> ResponsePlan:
+    return ResponsePlan(
+        fence=fence,
+        instructions=instructions,
+        direct_text=direct_text,
+        epistemic_status="fact",
+        epistemic_reason_codes=("grounded_manifest",),
+        grounded_items=grounded_items,
+        disclosures=(),
+        voice_target=ResponseVoiceTarget(
+            kind="companion",
+            profile_id="warm_companion",
+            model="seed-tts-2.0",
+        ),
+        provenance=ResponseProvenance(
+            planner_policy_version="digital-self-response-planner-v1",
+            interaction_mode="companion",
+            mode_policy_version="test-policy",
+            digital_self_version_id=None,
+            manifest_sha256=None,
+            persona_version_id=None,
+            persona_version_number=None,
+            persona_style_only=False,
+            relationship_profile_id=None,
+            relationship_profile_version=None,
+            speaker_class=speaker_class,  # type: ignore[arg-type]
+            speaker_reason_code=("owner_match" if speaker_class == "owner" else "owner_mismatch"),
+            speaker_profile_id=("profile-owner-001" if speaker_class == "owner" else None),
+            speaker_model_version="campplus-test",
+            speaker_template_version=1,
+            source_refs=(),
+            epistemic_status="fact",
+            epistemic_reason_codes=("grounded_manifest",),
+            disclosures=(),
+        ),
+    )
 
 
 def test_formal_speaker_authority_disables_legacy_session_enrollment() -> None:
@@ -51,6 +106,21 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
     runtime.orchestrator.context.commit_assistant_heard("实际听到的旧回复")
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
     agent._current_speaker_class = "owner"
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="【控制计划】只使用当前已确认上下文；不要复述未听到的旧回答。",
+        grounded_items=(
+            ResponseGroundedItem(
+                kind="memory_claim",
+                item_id="claim-1",
+                content="已确认资料：他在杭州读过书。",
+                use_as="fact",
+                source_event_ids=("event-1",),
+                confidence=0.9,
+                sharing_scope="private",
+            ),
+        ),
+    )
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="旧问题")
     chat_ctx.add_message(role="assistant", content="未听到的完整旧回复")
@@ -83,23 +153,265 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
     output = [item async for item in agent.llm_node(chat_ctx, [], None)]
 
-    assert [message.text_content for message in captured["ctx"].messages()] == [
+    assert [
+        message.text_content for message in captured["ctx"].messages() if message.role != "system"
+    ] == [
         "旧问题",
         "实际听到的旧回复",
         "当前问题",
     ]
+    system_text = "\n".join(
+        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+    )
+    assert "【控制计划】" in system_text
+    assert "claim-1" in system_text
+    assert "杭州" in system_text
+    assert "人格胶囊" not in system_text
+    assert "经确认的人生记忆" not in system_text
     assert "可以，我先帮你看一下。" in output
     assert not any(isinstance(item, FlushSentinel) for item in output)
     assert runtime.orchestrator.active_llm_task is None
 
 
 @pytest.mark.asyncio
-async def test_agent_adds_only_the_current_turn_delivery_instruction(
+async def test_agent_fetches_response_plan_once_per_committed_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create()
+
+    class Message:
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def text_content(self) -> str:
+            return self._text
+
+    fetch_calls: list[dict[str, object]] = []
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> Any:
+        return SpeakerDecision(
+            classification="owner",
+            score=0.98,
+            quality_score=0.95,
+            reason_code="owner_match",
+            model_version="campplus-test",
+            template_version=1,
+            profile_id="profile-owner-001",
+            permissions=permissions_for_speaker("owner"),
+        )
+
+    class ResponsePlannerStub:
+        async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
+            fetch_calls.append(dict(kwargs))
+            return ResponsePlanFetch(
+                plan=_plan_for_fence(
+                    runtime.fence,
+                    instructions="【控制计划】只使用当前已确认上下文。",
+                ),
+                reason="ok",
+            )
+
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x01\x00" * 800)
+    runtime.on_user_voice_stopped()
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=ResponsePlannerStub(),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        agent_mod.Agent.default, "llm_node", staticmethod(lambda *_args: _text_source("好。"))
+    )  # type: ignore[arg-type]
+
+    await agent.on_user_turn_completed(llm.ChatContext.empty(), Message("当前问题"))
+
+    assert len(fetch_calls) == 1
+    assert fetch_calls[0]["session_id"] == runtime.session_id
+    assert fetch_calls[0]["query"] == "当前问题"
+    assert fetch_calls[0]["fence"] == runtime.fence
+    assert runtime.response_provenance_for(runtime.fence) is None
+    assert [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    assert runtime.response_provenance_for(runtime.fence) is not None
+
+
+@pytest.mark.asyncio
+async def test_agent_drops_response_plan_when_fence_changes_during_fetch() -> None:
+    runtime = DuplexRuntime.create()
+
+    class Message:
+        def text_content(self) -> str:
+            return "会过期的问题"
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return SpeakerDecision(
+            classification="owner",
+            score=0.98,
+            quality_score=0.95,
+            reason_code="owner_match",
+            model_version="campplus-test",
+            template_version=1,
+            profile_id="profile-owner-001",
+            permissions=permissions_for_speaker("owner"),
+        )
+
+    fetch_calls = 0
+
+    class ResponsePlannerStub:
+        async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
+            nonlocal fetch_calls
+            fetch_calls += 1
+            requested_fence = kwargs["fence"]
+            assert isinstance(requested_fence, GenerationFence)
+            await runtime.orchestrator.bump_tool_epoch_on_condition_change()
+            return ResponsePlanFetch(
+                plan=_plan_for_fence(
+                    requested_fence,
+                    instructions="这份计划已经过期。",
+                ),
+                reason="ok",
+            )
+
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x01\x00" * 800)
+    runtime.on_user_voice_stopped()
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=ResponsePlannerStub(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(StopResponse):
+        await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
+
+    assert fetch_calls == 1
+    assert agent._response_plan_by_fence == {}
+
+
+@pytest.mark.asyncio
+async def test_planner_failure_fallback_is_current_turn_only_and_disables_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="fallback-current-only")
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=False,
+            shadow_low_sensitivity_persona=False,
+        )
+    )
+
+    class Message:
+        def text_content(self) -> str:
+            return "只回答现在这个问题"
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return SpeakerDecision(
+            classification="owner",
+            score=0.98,
+            quality_score=0.95,
+            reason_code="owner_match",
+            model_version="campplus-test",
+            template_version=1,
+            profile_id="profile-owner-001",
+            permissions=permissions_for_speaker("owner"),
+        )
+
+    class ResponsePlannerStub:
+        async def fetch(self, **_kwargs: object) -> ResponsePlanFetch:
+            return ResponsePlanFetch(plan=None, reason="http_503")
+
+    captured: dict[str, Any] = {}
+
+    async def fake_llm_node(
+        _agent: Any,
+        safe_ctx: Any,
+        tools: list[Any],
+        _settings: Any,
+    ) -> AsyncIterator[str]:
+        captured.update(ctx=safe_ctx, tools=tools)
+        yield "安全回答。"
+
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x01\x00" * 800)
+    runtime.on_user_voice_stopped()
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=ResponsePlannerStub(),  # type: ignore[arg-type]
+    )
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="旧私人问题：保险号码是多少？")
+    chat_ctx.add_message(role="assistant", content="旧私人回答：号码是 123456。")
+    chat_ctx.add_message(role="user", content="只回答现在这个问题")
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+
+    await agent.on_user_turn_completed(chat_ctx, Message())
+    assert [item async for item in agent.llm_node(chat_ctx, ["private-tool"], None)] == [
+        "安全回答。"
+    ]
+
+    conversation = [
+        (message.role, message.text_content)
+        for message in captured["ctx"].messages()
+        if message.role != "system"
+    ]
+    system_text = "\n".join(
+        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+    )
+    assert conversation == [("user", "只回答现在这个问题")]
+    assert "不得读取、引用或推断历史对话" in system_text
+    assert "123456" not in system_text
+    assert captured["tools"] == []
+    provenance = runtime.response_provenance_for(runtime.fence)
+    assert provenance is not None
+    assert provenance["source_refs"] == []
+
+
+@pytest.mark.asyncio
+async def test_agent_uses_direct_response_text_without_calling_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create()
+    await runtime.on_turn_committed("直接回答")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="【控制计划】",
+        direct_text="可以，直接说这一句。",
+    )
+    called = False
+
+    async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
+        nonlocal called
+        called = True
+        yield "不应触发"
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+
+    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+
+    assert called is False
+    assert "".join(str(item) for item in output) == "可以，直接说这一句。"
+    assert runtime.response_provenance_for(runtime.fence) is not None
+
+
+@pytest.mark.asyncio
+async def test_agent_adds_only_the_canonical_response_plan_system_block(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = DuplexRuntime.create()
     await runtime.on_turn_committed("帮我安排一个十五分钟的英语口语训练")
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="只回答当前训练安排。",
+    )
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="帮我安排一个十五分钟的英语口语训练")
     captured: dict[str, Any] = {}
@@ -116,9 +428,12 @@ async def test_agent_adds_only_the_current_turn_delivery_instruction(
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 
     assert [item async for item in agent.llm_node(chat_ctx, [], None)]
-    messages = captured["ctx"].messages()
-    assert messages[-1].role == "system"
-    assert "短衔接" in messages[-1].text_content
+    system_messages = [
+        message for message in captured["ctx"].messages() if message.role == "system"
+    ]
+    assert len(system_messages) == 1
+    assert "只回答当前训练安排" in system_messages[0].text_content
+    assert "short" not in system_messages[0].text_content.lower()
     assert [message.text_content for message in chat_ctx.messages()] == [
         "帮我安排一个十五分钟的英语口语训练"
     ]
@@ -131,6 +446,10 @@ async def test_agent_llm_node_drops_token_after_fence_change(
     runtime = DuplexRuntime.create()
     await runtime.on_turn_committed("问题")
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="仅回答当前问题。",
+    )
 
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
         yield llm.ChatChunk(id="empty")
@@ -149,6 +468,16 @@ async def test_non_preemptive_turn_commits_fence_before_first_llm_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = DuplexRuntime.create()
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=False,
+            owner_evidence=False,
+            tools=False,
+            voice_profile=False,
+            shadow_low_sensitivity_persona=False,
+        )
+    )
     await runtime.orchestrator.ready()
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
 
@@ -569,6 +898,10 @@ async def test_reply_budget_stops_after_three_spoken_sentences(
     runtime = DuplexRuntime.create()
     await runtime.on_turn_committed("介绍一下")
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="简洁介绍。",
+    )
 
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
         for sentence in (
@@ -607,6 +940,10 @@ async def test_reply_budget_truncates_an_oversized_first_segment(
     runtime = DuplexRuntime.create()
     await runtime.on_turn_committed("详细介绍")
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="详细介绍。",
+    )
 
     async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
         yield "这" * 140 + "。"

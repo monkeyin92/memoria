@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import hashlib
 import inspect
+import json
 import logging
 import math
 import time
@@ -45,7 +46,6 @@ from services.agent.src.orchestration.speaker_verify import (
     voiced_stats_from_pcm,
 )
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
-from services.agent.src.orchestration.task_manager import ToolSpec, spoken_result_summarizer
 from services.agent.src.orchestration.utterance_router import (
     TargetSpeakerRoute,
     UtteranceIntent,
@@ -70,6 +70,23 @@ POST_PLAYBACK_ECHO_GUARD_MS = 800
 PLAYBACK_INPUT_BLOCK_MIN_WORDS = 1000
 TARGET_SPEAKER_MIN_PCM_MS = 600
 HISTORY_ELIGIBILITY_MAX_FENCES = 32
+RESPONSE_PROVENANCE_MAX_BYTES = 16 * 1024
+RESPONSE_PROVENANCE_MAX_FENCES = 32
+_RESPONSE_PROVENANCE_FORBIDDEN_KEYS = frozenset(
+    {
+        "query",
+        "prompt",
+        "instructions",
+        "content",
+        "excerpt",
+        "score",
+        "quality_score",
+        "embedding",
+        "audio",
+        "token",
+        "cookie",
+    }
+)
 CLIENT_AUDIO_TRACE_NAMES = frozenset(
     {
         "audio_unlock",
@@ -222,6 +239,10 @@ class DuplexRuntime:
     )
     _mode_policy: ModePolicy = field(default_factory=lambda: ModePolicy.unavailable("not_fetched"))
     _mode_policy_by_fence: dict[tuple[int, int], ModePolicy] = field(default_factory=dict)
+    _response_provenance_by_fence: dict[
+        tuple[int, int, int],
+        dict[str, Any],
+    ] = field(default_factory=dict)
     _target_speaker_focus_enabled: bool = False
     _reject_non_owner_voice: bool = True
     _target_focus_epoch: int | None = None
@@ -245,7 +266,6 @@ class DuplexRuntime:
     _playback_started_ns: int | None = None
     # After control yield, accept chat turns even if LiveKit omits speech anchors.
     CONTROL_RESTORE_SPEECH_EPOCH_GRACE_MS: int = 20_000
-    _deep_client: Any | None = None
     _background_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     _durable_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     _durable_task_errors: list[BaseException] = field(default_factory=list)
@@ -263,7 +283,6 @@ class DuplexRuntime:
     _emotion_by_turn: dict[int, EmotionObservation] = field(default_factory=dict)
     _voice_profile_refresher: Callable[[], Coroutine[Any, Any, Any]] | None = None
     _voice_profile_refresh_task: asyncio.Task[Any] | None = None
-    _memory_context_refresher: Callable[[], Coroutine[Any, Any, Any]] | None = None
 
     @classmethod
     def create(
@@ -445,6 +464,60 @@ class DuplexRuntime:
             False,
         )
 
+    def bind_response_provenance(
+        self,
+        fence: GenerationFence,
+        provenance: dict[str, Any],
+    ) -> bool:
+        """Freeze bounded planner/model/source IDs for one exact generation."""
+
+        if not self.fence.matches(fence) or fence.session_id != self.session_id:
+            return False
+        try:
+            encoded = json.dumps(
+                provenance,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode()
+        except (TypeError, ValueError):
+            return False
+        if (
+            not provenance
+            or len(encoded) > RESPONSE_PROVENANCE_MAX_BYTES
+            or self._contains_forbidden_provenance_key(provenance)
+        ):
+            return False
+        key = (fence.turn_id, fence.generation_id, fence.tool_epoch)
+        self._response_provenance_by_fence[key] = json.loads(encoded)
+        while len(self._response_provenance_by_fence) > RESPONSE_PROVENANCE_MAX_FENCES:
+            self._response_provenance_by_fence.pop(
+                next(iter(self._response_provenance_by_fence))
+            )
+        return True
+
+    @classmethod
+    def _contains_forbidden_provenance_key(cls, value: object) -> bool:
+        if isinstance(value, dict):
+            return any(
+                str(key).lower() in _RESPONSE_PROVENANCE_FORBIDDEN_KEYS
+                or cls._contains_forbidden_provenance_key(item)
+                for key, item in value.items()
+            )
+        if isinstance(value, list):
+            return any(cls._contains_forbidden_provenance_key(item) for item in value)
+        return False
+
+    def response_provenance_for(
+        self,
+        fence: GenerationFence,
+    ) -> dict[str, Any] | None:
+        stored = self._response_provenance_by_fence.get(
+            (fence.turn_id, fence.generation_id, fence.tool_epoch)
+        )
+        return json.loads(json.dumps(stored)) if stored is not None else None
+
     def set_result_speaker(self, speaker: Callable[[str], Any]) -> None:
         self._result_speaker = speaker
 
@@ -492,20 +565,6 @@ class DuplexRuntime:
             # The resolver is fail-closed; the caller will apply the baseline
             # because the cache is empty, while the conversation remains live.
             logger.warning("voice profile refresh failed", exc_info=True)
-
-    def set_memory_context_refresher(
-        self,
-        refresher: Callable[[], Coroutine[Any, Any, Any]],
-    ) -> None:
-        self._memory_context_refresher = refresher
-
-    def refresh_memory_context(self) -> asyncio.Task[Any] | None:
-        if self._memory_context_refresher is None:
-            return None
-        return self._spawn(
-            self._memory_context_refresher(),
-            name="memory-context-refresh",
-        )
 
     def feed_speaker_pcm(self, pcm: bytes) -> None:
         if self._speaker_collecting and pcm:
@@ -1261,6 +1320,9 @@ class DuplexRuntime:
             event_type = "assistant.playout_stopped"
             speaker_class = "assistant"
             payload = {"text": archive_text, "actual_heard": True}
+            response_provenance = self.response_provenance_for(archive_fence)
+            if response_provenance is not None:
+                payload["response_provenance"] = response_provenance
             self._next_user_prompt_kind = classify_prompt_kind(archive_text)
         else:
             return
@@ -1275,7 +1337,8 @@ class DuplexRuntime:
         fingerprint = hashlib.sha256(
             (
                 f"{self.session_id}\0{event_type}\0{speaker}\0"
-                f"{archive_fence.turn_id}\0{archive_fence.generation_id}\0{archive_text}"
+                f"{archive_fence.turn_id}\0{archive_fence.generation_id}\0"
+                f"{archive_fence.tool_epoch}\0{archive_text}"
             ).encode()
         ).hexdigest()
         evidence = {
@@ -1291,6 +1354,7 @@ class DuplexRuntime:
             ),
             "turn_id": archive_fence.turn_id,
             "generation_id": archive_fence.generation_id,
+            "tool_epoch": archive_fence.tool_epoch,
             "payload": payload,
         }
         if (
@@ -1584,7 +1648,6 @@ class DuplexRuntime:
 
     def on_user_voice_started(self, *, now_ns: int | None = None) -> PlaybackInputDecision:
         self.refresh_voice_profile()
-        self.refresh_memory_context()
         self._seal_canonical_speech_epoch()
         self._speaker_epoch += 1
         self._canonical_speech_epoch = self._speaker_epoch
@@ -1917,13 +1980,18 @@ class DuplexRuntime:
             self._persona_evidence_eligible = (
                 route.intent is UtteranceIntent.CHAT
                 and lexical_chars >= 8
-                and self._mode_policy.allows_learning(
-                    self._speaker_class,  # type: ignore[arg-type]
-                    reason_code=(
-                        self._speaker_decision.reason_code
-                        if self._speaker_decision is not None
-                        else None
-                    ),
+                and (
+                    self._mode_policy.allows_learning(
+                        self._speaker_class,  # type: ignore[arg-type]
+                        reason_code=(
+                            self._speaker_decision.reason_code
+                            if self._speaker_decision is not None
+                            else None
+                        ),
+                    )
+                    or self._mode_policy.allows_low_sensitivity_persona(
+                        is_shadow=self.is_shadow_speaker()
+                    )
                 )
             )
             self._resume_pending = route.intent is UtteranceIntent.RESUME
@@ -1963,13 +2031,6 @@ class DuplexRuntime:
         self._playback_fence = None
         if self.tts is not None:
             self.tts.bind_fence(fence)
-        if (
-            self._deep_client is not None
-            and self.speaker_permissions.read_private_memory
-            and self.mode_policy_for_fence(fence).allows_tools("owner")
-            and _needs_deep_path(user_text)
-        ):
-            await self._start_deep_task(fence)
         return fence
 
     async def on_assistant_speaking(
@@ -2504,102 +2565,6 @@ class DuplexRuntime:
             return existing
         return existing + segment
 
-    def configure_deep_path(self, client: Any) -> None:
-        """Run DeepSeek Pro behind TaskManager and summarize through the fast model."""
-        self._deep_client = client
-
-        async def _deep_reasoning(
-            args: dict[str, Any],
-            cancel_event: asyncio.Event,
-        ) -> dict[str, Any]:
-            fence = args["fence"]
-            messages = self.orchestrator.context.build_messages(current_user_final="")
-            deep_text = ""
-            async for result_fence, chunk in client.stream_deep(messages, fence=fence):
-                if cancel_event.is_set() or not result_fence.matches(fence):
-                    return {"error": "cancelled"}
-                deep_text += chunk.content
-            if cancel_event.is_set():
-                return {"error": "cancelled"}
-            summary_messages = [
-                {
-                    "role": "system",
-                    "content": "把结果压缩成一到三句自然中文口语，只保留结论，不输出Markdown。",
-                },
-                {"role": "user", "content": deep_text[:12000]},
-            ]
-            summary = ""
-            async for result_fence, chunk in client.stream_fast(
-                summary_messages,
-                fence=fence,
-            ):
-                if cancel_event.is_set() or not result_fence.matches(fence):
-                    return {"error": "cancelled"}
-                summary += chunk.content
-            return {"summary": summary}
-
-        self.orchestrator.task_manager.register(
-            ToolSpec(
-                name="deep_reasoning",
-                description="DeepSeek Pro background reasoning",
-                input_schema={"type": "object"},
-                cancellable=True,
-                idempotent=True,
-                timeout_s=90.0,
-            ),
-            _deep_reasoning,
-        )
-
-    async def _start_deep_task(self, fence: GenerationFence) -> None:
-        rec = await self.orchestrator.task_manager.start(
-            "deep_reasoning",
-            {"fence": fence},
-            fence,
-        )
-        self._pending_tool_results += 1
-
-        async def _deliver() -> None:
-            try:
-                try:
-                    payload = await rec.task
-                except asyncio.CancelledError:
-                    return
-                except Exception:
-                    logger.warning("deep background task failed", exc_info=True)
-                    return
-                while fence.matches(self.fence) and self.orchestrator.state in {
-                    ConversationState.THINKING,
-                    ConversationState.SPEAKING,
-                    ConversationState.INTERRUPTION_PENDING,
-                }:
-                    await asyncio.sleep(0.05)
-                if not fence.matches(self.fence):
-                    self.orchestrator.gate_tool_result(fence, payload)
-                    return
-                accepted = await self.orchestrator.accept_background_result(fence, payload)
-                if not isinstance(accepted, dict):
-                    return
-                spoken = spoken_result_summarizer(accepted)
-                if self._result_speaker is not None and "error" not in accepted:
-                    # P1-6: tool spoken result stays on the same generation fence.
-                    if self.tts is not None:
-                        self.tts.bind_fence(fence)
-                    self.update_pending_assistant_text(spoken)
-                    self.mark_audio_event(
-                        "tool_result_same_generation",
-                        detail={
-                            "turn_id": fence.turn_id,
-                            "generation_id": fence.generation_id,
-                            "tool_epoch": fence.tool_epoch,
-                        },
-                    )
-                    self._result_speaker(spoken)
-                    self.publish_assistant_state("thinking")
-            finally:
-                self._pending_tool_results = max(0, self._pending_tool_results - 1)
-
-        self._spawn(_deliver(), name=f"deep-result-{rec.tool_task_id}")
-
     def attach_session_events(self, session: Any) -> None:
         """Subscribe to public AgentSession events; playout is attached separately."""
 
@@ -2846,27 +2811,7 @@ class DuplexRuntime:
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
         await self.orchestrator.close()
-        if self._deep_client is not None:
-            await self._deep_client.aclose()
         if self._durable_task_errors:
             raise RuntimeError("one or more durable evidence tasks failed") from (
                 self._durable_task_errors[0]
             )
-
-
-def _needs_deep_path(text: str) -> bool:
-    if len(text) >= 80:
-        return True
-    return any(
-        hint in text
-        for hint in (
-            "详细比较",
-            "深入分析",
-            "制定计划",
-            "搜索",
-            "检索",
-            "查资料",
-            "文件分析",
-            "多个方案",
-        )
-    )

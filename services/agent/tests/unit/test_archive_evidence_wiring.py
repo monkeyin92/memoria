@@ -121,6 +121,69 @@ async def test_actual_heard_assistant_prompt_kind_is_consumed_by_next_user_turn(
 
 
 @pytest.mark.asyncio
+async def test_actual_heard_assistant_binds_bounded_response_provenance_to_exact_fence() -> None:
+    runtime = DuplexRuntime.create(session_id="session-response-plan")
+    published: list[dict[str, object]] = []
+
+    async def capture(event: dict[str, object]) -> None:
+        published.append(event)
+
+    provenance = {
+        "fence": {
+            "session_id": runtime.fence.session_id,
+            "turn_id": runtime.fence.turn_id,
+            "generation_id": runtime.fence.generation_id,
+            "tool_epoch": runtime.fence.tool_epoch,
+        },
+        "planner_policy_version": "digital-self-response-planner-v1",
+        "interaction_mode": "companion",
+        "mode_policy_version": "test-policy",
+        "digital_self_version_id": None,
+        "manifest_sha256": None,
+        "relationship_profile_id": None,
+        "relationship_profile_version": None,
+        "speaker_class": "owner",
+        "speaker_reason_code": "owner_match",
+        "speaker_profile_id": "owner-profile",
+        "speaker_model_version": "campplus-test",
+        "speaker_template_version": 1,
+        "source_refs": [
+            {
+                "kind": "memory_claim",
+                "item_id": "claim-1",
+                "source_event_ids": ["event-1"],
+            }
+        ],
+        "epistemic_status": "fact",
+        "epistemic_reason_codes": ["exact_owner_source"],
+        "disclosures": [],
+    }
+    runtime.set_evidence_publisher(capture)
+
+    assert runtime.bind_response_provenance(runtime.fence, provenance) is True
+    assert runtime.bind_response_provenance(
+        runtime.fence.bump_generation(),
+        provenance,
+    ) is False
+    assert runtime.bind_response_provenance(
+        runtime.fence,
+        {**provenance, "instructions": "不得写入 archive"},
+    ) is False
+
+    runtime.publish_transcript(
+        speaker="assistant",
+        text="你曾经说过会先确认事实。",
+        final=True,
+        heard=True,
+    )
+    await asyncio.sleep(0)
+
+    assert published[0]["payload"]["response_provenance"] == provenance
+    assert published[0]["tool_epoch"] == runtime.fence.tool_epoch
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_verified_owner_turn_snapshots_pcm_for_the_shared_archive_sink() -> None:
     runtime = DuplexRuntime.create(session_id="session-owner-audio")
     _enable_owner_projection(runtime)

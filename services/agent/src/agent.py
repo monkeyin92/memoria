@@ -18,11 +18,17 @@ from services.agent.src.context_assembler import (
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
-from services.agent.src.memory_context_client import MemoryContextClient
 from services.agent.src.mode_policy_client import ModePolicy
-from services.agent.src.persona_client import PersonaClient
 from services.agent.src.prompts import VOICE_SYSTEM_PROMPT
+from services.agent.src.response_planner_client import (
+    CANONICAL_PLANNER_POLICY_VERSION,
+    ResponsePlan,
+    ResponsePlannerClient,
+    ResponseProvenance,
+    ResponseVoiceTarget,
+)
 from services.agent.src.voice_profile_client import VoiceProfileClient
+from services.common.companions import DESIGNED_VOICE_MODEL, companion_definition
 
 if TYPE_CHECKING:
     pass
@@ -57,11 +63,6 @@ _LONGFORM_HINTS = (
 _SENTENCE_ENDINGS = frozenset("。！？；!?")
 TELEMETRY_TOPIC = "voice-agent.telemetry"
 CASCADE_OPUS_MAX_BITRATE = 64_000
-NON_OWNER_CONTEXT_PROMPT = (
-    "当前说话人身份未确认。不得假装或声称自己是其父母、家人或亲属；"
-    "不得透露账户主人的私人上下文。可以正常回答当前内容，并使用中性称呼。"
-)
-
 try:
     from livekit import agents, rtc
     from livekit.agents import Agent, AgentSession, StopResponse, llm, room_io
@@ -156,22 +157,224 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         *,
         instructions: str,
         runtime: DuplexRuntime,
-        persona_client: PersonaClient | None = None,
-        memory_context_client: MemoryContextClient | None = None,
+        # Kept as ignored compatibility keywords for older callers.  Realtime
+        # never creates or reads the legacy persona/memory clients.
+        persona_client: Any = None,
+        memory_context_client: Any = None,
         voice_profile_client: VoiceProfileClient | None = None,
+        response_planner_client: ResponsePlannerClient | None = None,
+        llm_provider: str = "unknown",
+        llm_model: str = "unknown",
+        tts_provider: str = "unknown",
+        tts_model: str = "unknown",
+        actual_voice_profile_id: str | None = None,
     ) -> None:
         if _HAS_LIVEKIT:
             super().__init__(instructions=instructions)
         self._runtime = runtime
-        self._persona_client = persona_client
-        self._memory_context_client = memory_context_client
+        _ = (persona_client, memory_context_client)
         self._voice_profile_client = voice_profile_client
+        self._response_planner_client = response_planner_client
+        self._llm_provider = llm_provider
+        self._llm_model = llm_model
+        self._tts_provider = tts_provider
+        self._tts_model = tts_model
+        self._actual_voice_profile_id = actual_voice_profile_id
         self._context_assembler = ContextAssembler()
-        self._current_speaker_class: Literal["owner", "guest", "uncertain"] = "uncertain"
         self._llm_text_buf = ""
+        self._response_plan_by_fence: dict[tuple[str, int, int, int], ResponsePlan] = {}
         alignment_setter = getattr(runtime.tts, "set_alignment_callback", None)
         if callable(alignment_setter):
             alignment_setter(self._observe_tts_alignment)
+
+    @staticmethod
+    def _response_plan_key(fence: GenerationFence) -> tuple[str, int, int, int]:
+        return (fence.session_id, fence.turn_id, fence.generation_id, fence.tool_epoch)
+
+    def _bind_response_plan_provenance(
+        self,
+        fence: GenerationFence,
+        plan: ResponsePlan,
+    ) -> bool:
+        return self._runtime.bind_response_provenance(
+            fence,
+            plan.provenance.archive_payload(
+                fence=fence,
+                llm_provider=self._llm_provider,
+                llm_model=self._llm_model,
+                tts_provider=self._tts_provider,
+                tts_model=self._tts_model,
+                actual_voice_profile_id=self._actual_voice_profile_id,
+            ),
+        )
+
+    @staticmethod
+    def _is_local_safe_plan(plan: ResponsePlan) -> bool:
+        return plan.provenance.planner_policy_version == "local-safe-fallback-v1"
+
+    def _plan_matches_mode_policy(
+        self,
+        plan: ResponsePlan,
+        policy: ModePolicy,
+    ) -> bool:
+        """Allow a plan only when it is bound to this fence's frozen policy."""
+
+        provenance = plan.provenance
+        if (
+            policy.mode is None
+            or provenance.interaction_mode != policy.mode
+            or provenance.mode_policy_version != policy.policy_version
+        ):
+            return False
+        if self._is_local_safe_plan(plan):
+            return (
+                policy.mode in {"companion", "self_preview", "legacy"}
+                and self._fallback_voice_target_matches(plan.voice_target)
+            )
+        references = dict(policy.references)
+        if provenance.planner_policy_version != CANONICAL_PLANNER_POLICY_VERSION:
+            return False
+        if policy.mode == "companion":
+            companion = companion_definition(policy.companion_style_id)
+            return (
+                companion is not None
+                and plan.voice_target.kind == "companion"
+                and plan.voice_target.profile_id == companion.designed_voice_profile
+                and plan.voice_target.model == DESIGNED_VOICE_MODEL
+                and provenance.digital_self_version_id is None
+                and provenance.manifest_sha256 is None
+                and self._persona_snapshot_matches(provenance)
+                and provenance.relationship_profile_id is None
+                and provenance.relationship_profile_version is None
+            )
+        if policy.mode not in {"self_preview", "legacy"}:
+            return False
+        if provenance.digital_self_version_id is None:
+            if provenance.manifest_sha256 is not None:
+                return False
+        elif (
+            provenance.manifest_sha256 is None
+            or references.get("digital_self_version_id")
+            != provenance.digital_self_version_id
+            or references.get("manifest_sha256") != provenance.manifest_sha256
+        ):
+            return False
+        if provenance.relationship_profile_id is None:
+            if provenance.relationship_profile_version is not None:
+                return False
+        elif (
+            provenance.relationship_profile_version is None
+            or references.get("relationship_profile_id")
+            != provenance.relationship_profile_id
+            or references.get("relationship_profile_version")
+            != str(provenance.relationship_profile_version)
+        ):
+            return False
+        if plan.voice_target.kind == "fallback":
+            return self._fallback_voice_target_matches(plan.voice_target)
+        return (
+            plan.voice_target.kind == "approved_personal"
+            and plan.voice_target.profile_id is not None
+            and references.get("voice_profile_id") == plan.voice_target.profile_id
+            and references.get("voice_model") == plan.voice_target.model
+        )
+
+    def _fallback_voice_target_matches(self, voice_target: ResponseVoiceTarget) -> bool:
+        return (
+            voice_target.kind == "fallback"
+            and voice_target.profile_id is None
+            and voice_target.model == self._tts_model
+        )
+
+    @staticmethod
+    def _persona_snapshot_matches(provenance: ResponseProvenance) -> bool:
+        absent = (
+            provenance.persona_version_id is None
+            and provenance.persona_version_number is None
+        )
+        present = (
+            provenance.persona_version_id is not None
+            and provenance.persona_version_number is not None
+        )
+        if not absent and not present:
+            return False
+        if absent:
+            return not provenance.persona_style_only
+        if not provenance.persona_style_only:
+            return provenance.speaker_class == "owner"
+        return (
+            provenance.speaker_class == "uncertain"
+            and provenance.speaker_reason_code == "shadow_owner_candidate"
+            and provenance.persona_version_id is not None
+            and not provenance.source_refs
+        )
+
+    def _local_safe_plan(
+        self,
+        *,
+        fence: GenerationFence,
+        speaker: Any,
+        reason: str,
+    ) -> ResponsePlan:
+        policy = self._runtime.mode_policy_for_fence(fence)
+        mode = policy.mode or "legacy"
+        raw_speaker_class = getattr(speaker, "classification", "uncertain")
+        speaker_class = cast(
+            Literal["owner", "guest", "uncertain"],
+            raw_speaker_class
+            if raw_speaker_class in {"owner", "guest", "uncertain"}
+            else "uncertain",
+        )
+        speaker_reason = getattr(speaker, "reason_code", "speaker_unavailable")
+        speaker_model = getattr(speaker, "model_version", "unknown")
+        speaker_profile = getattr(speaker, "profile_id", None)
+        speaker_template = getattr(speaker, "template_version", None)
+        companion = mode == "companion"
+        return ResponsePlan(
+            fence=fence,
+            instructions=(
+                "仅依据当前用户这一轮内容回答。不得读取、引用或推断历史对话、"
+                "账户主人的私人记忆、人格、关系或工具结果；不确定时明确说明。"
+                if companion
+                else "禁止生成普通回答；仅返回固定安全拒答。"
+            ),
+            direct_text=None if companion else "当前模式暂时无法安全生成回答。",
+            epistemic_status="not_applicable",
+            epistemic_reason_codes=("local_safe_fallback", reason),
+            grounded_items=(),
+            disclosures=("privacy_refusal", "unknown"),
+            voice_target=ResponseVoiceTarget(
+                kind="fallback",
+                profile_id=None,
+                model=self._tts_model,
+            ),
+            provenance=ResponseProvenance(
+                planner_policy_version="local-safe-fallback-v1",
+                interaction_mode=mode,
+                mode_policy_version=policy.policy_version or "unavailable",
+                digital_self_version_id=None,
+                manifest_sha256=None,
+                persona_version_id=None,
+                persona_version_number=None,
+                persona_style_only=False,
+                relationship_profile_id=None,
+                relationship_profile_version=None,
+                speaker_class=speaker_class,
+                speaker_reason_code=speaker_reason,
+                speaker_profile_id=speaker_profile,
+                speaker_model_version=speaker_model,
+                speaker_template_version=speaker_template,
+                source_refs=(),
+                epistemic_status="not_applicable",
+                epistemic_reason_codes=("local_safe_fallback", reason),
+                disclosures=("privacy_refusal", "unknown"),
+            ),
+        )
+
+    def _cache_response_plan(self, plan: ResponsePlan) -> None:
+        self._response_plan_by_fence[self._response_plan_key(plan.fence)] = plan
+        while len(self._response_plan_by_fence) > 32:
+            self._response_plan_by_fence.pop(next(iter(self._response_plan_by_fence)))
 
     def _observe_tts_alignment(
         self,
@@ -247,7 +450,6 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     reason,
                 )
                 raise StopResponse()
-            self._current_speaker_class = speaker.classification
             policy = self._runtime.mode_policy
             if (
                 self._voice_profile_client is not None
@@ -268,36 +470,77 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 fence=fence,
             )
             self._llm_text_buf = ""
-            is_shadow = self._runtime.is_shadow_speaker()
-            if self._persona_client is not None and (
-                policy.allows_private_persona(speaker.classification)
-                or policy.allows_low_sensitivity_persona(is_shadow=is_shadow)
-            ):
+            fetch_reason = "missing_response_planner_client"
+            plan = None
+            if self._response_planner_client is not None:
                 try:
-                    await self._persona_client.refresh(
+                    fetch = await self._response_planner_client.fetch(
                         session_id=self._runtime.session_id,
-                        speaker_class=speaker.classification,
-                        speaker_reason_code=speaker.reason_code,
-                        topic=text.strip(),
+                        query=text.strip(),
+                        fence=fence,
+                        speaker_decision=speaker,
                     )
+                    plan = fetch.plan
+                    fetch_reason = fetch.reason
                 except Exception:
                     logger.warning(
-                        "persona refresh failed closed session_id=%s",
+                        "response plan fetch failed closed session_id=%s turn_id=%s",
                         self._runtime.session_id,
+                        fence.turn_id,
                         exc_info=True,
                     )
-            if (
-                self._memory_context_client is not None
-                and policy.allows_private_context(speaker.classification)
-            ):
-                self._runtime._spawn(
-                    self._memory_context_client.refresh(
-                        session_id=self._runtime.session_id,
-                        speaker_class=speaker.classification,
-                        topic=text.strip(),
-                    ),
-                    name=f"memory-context-prefetch-{fence.turn_id}",
+                    fetch_reason = "request_exception"
+            if not fence.matches(self._runtime.fence):
+                logger.info(
+                    "stale response plan dropped session_id=%s turn_id=%s reason=runtime_fence",
+                    self._runtime.session_id,
+                    fence.turn_id,
                 )
+                raise StopResponse()
+            if plan is not None and not plan.fence.matches(fence):
+                logger.info(
+                    "stale response plan dropped session_id=%s turn_id=%s reason=plan_fence",
+                    self._runtime.session_id,
+                    fence.turn_id,
+                )
+                raise StopResponse()
+            if plan is None and fetch_reason == "fence_mismatch":
+                logger.info(
+                    "stale response plan dropped session_id=%s turn_id=%s reason=fetch_fence",
+                    self._runtime.session_id,
+                    fence.turn_id,
+                )
+                raise StopResponse()
+            policy = self._runtime.mode_policy_for_fence(fence)
+            if (
+                plan is not None
+                and self._runtime.mode_policy_enforced
+                and not self._plan_matches_mode_policy(plan, policy)
+            ):
+                logger.warning(
+                    "response plan dropped for policy mismatch session_id=%s turn_id=%s",
+                    self._runtime.session_id,
+                    fence.turn_id,
+                )
+                plan = None
+                fetch_reason = "mode_policy_mismatch"
+            if plan is None:
+                plan = self._local_safe_plan(
+                    fence=fence,
+                    speaker=speaker,
+                    reason=fetch_reason,
+                )
+            self._cache_response_plan(plan)
+            logger.info(
+                "response_plan_cached reason=%s mode=%s direct_text=%s fallback=%s "
+                "session_id=%s turn_id=%s",
+                fetch_reason,
+                plan.provenance.interaction_mode,
+                plan.direct_text is not None,
+                self._is_local_safe_plan(plan),
+                self._runtime.session_id,
+                fence.turn_id,
+            )
             logger.info(
                 "turn_committed turn_id=%s generation_id=%s tool_epoch=%s text_len=%s",
                 fence.turn_id,
@@ -354,73 +597,49 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             for turn in self._runtime.orchestrator.context.turns
             if turn.role == "assistant"
         ]
-        persona_fragment = ""
-        memory_snapshot = None
-        if self._persona_client is not None and (
-            policy.allows_private_persona(self._current_speaker_class)
-            or policy.allows_low_sensitivity_persona(
-                is_shadow=self._runtime.is_shadow_speaker()
+        response_plan = self._response_plan_by_fence.get(self._response_plan_key(fence))
+        if response_plan is None or not response_plan.fence.matches(fence):
+            logger.error(
+                "llm request blocked without exact response plan session_id=%s "
+                "turn_id=%s generation_id=%s",
+                self._runtime.session_id,
+                fence.turn_id,
+                fence.generation_id,
             )
-        ):
-            capsule = self._persona_client.cached(
-                session_id=self._runtime.session_id,
-                speaker_class=self._current_speaker_class,
-            )
-            if capsule is not None:
-                persona_fragment = capsule.prompt_fragment
-                logger.info(
-                    "persona_capsule_applied version_id=%s version_number=%s session_id=%s",
-                    capsule.version_id,
-                    capsule.version_number,
-                    self._runtime.session_id,
-                )
+            return
         if (
-            self._memory_context_client is not None
-            and policy.allows_private_context(self._current_speaker_class)
+            self._runtime.mode_policy_enforced
+            and not self._plan_matches_mode_policy(response_plan, policy)
         ):
-            memory_snapshot = self._memory_context_client.cached(
-                session_id=self._runtime.session_id,
-                speaker_class="owner",
+            logger.error(
+                "llm request blocked by response plan policy mismatch session_id=%s "
+                "turn_id=%s generation_id=%s",
+                self._runtime.session_id,
+                fence.turn_id,
+                fence.generation_id,
             )
-            if memory_snapshot is not None:
-                logger.info(
-                    "memory_context_applied sources=%s session_id=%s",
-                    len(memory_snapshot.items),
-                    self._runtime.session_id,
-                )
+            return
+        provenance_bound = self._bind_response_plan_provenance(fence, response_plan)
+        if not provenance_bound:
+            logger.error(
+                "response provenance bind failed closed mode=%s fallback=%s "
+                "session_id=%s turn_id=%s generation_id=%s",
+                policy.mode,
+                self._is_local_safe_plan(response_plan),
+                self._runtime.session_id,
+                fence.turn_id,
+                fence.generation_id,
+            )
+            return
+        speaker_class = response_plan.provenance.speaker_class
         safe_chat_ctx = self._context_assembler.assemble(
             chat_ctx=chat_ctx,
             heard_assistant=heard_assistant,
-            speaker_class=self._current_speaker_class,
-            persona_fragment=persona_fragment,
-            memory=memory_snapshot,
+            speaker_class=speaker_class,
+            response_plan=response_plan,
             resume_interrupted_reply=resume_interrupted_reply,
+            force_current_user_only=self._is_local_safe_plan(response_plan),
         )
-        if self._current_speaker_class != "owner":
-            safe_chat_ctx.add_message(role="system", content=NON_OWNER_CONTEXT_PROMPT)
-        companion_style_prompt = policy.companion_style_prompt
-        if companion_style_prompt is not None:
-            safe_chat_ctx.add_message(role="system", content=companion_style_prompt)
-        if resume_interrupted_reply:
-            resume_basis = (
-                "保留的原问题和用户实际听到的回答前缀"
-                if self._current_speaker_class == "owner"
-                else "用户实际听到的回答前缀"
-            )
-            safe_chat_ctx.add_message(
-                role="system",
-                content=(
-                    "用户当前是在恢复刚才由其主动暂停的同一条回答。"
-                    f"请依据{resume_basis}，"
-                    "从中断处自然续接；不要重开话题、重复已听内容，"
-                    "也不要询问用户想继续什么。"
-                ),
-            )
-        if self._runtime.speech_plan.llm_instruction:
-            safe_chat_ctx.add_message(
-                role="system",
-                content=self._runtime.speech_plan.llm_instruction,
-            )
         segmenter = self._runtime.orchestrator.segmenter
         if segmenter is None:
             raise RuntimeError("PhraseSegmenter is not configured")
@@ -486,8 +705,46 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         stream: Any = None
         try:
             self._runtime.mark_audio_event("llm_request_started")
+            if response_plan.direct_text is not None:
+                self._runtime.mark_audio_event("llm_first_content_token")
+                gated = self._runtime.gate_llm_token(fence, response_plan.direct_text)
+                if gated is not None:
+                    self._llm_text_buf += gated
+                    for segment in segmenter.push_token(gated):
+                        accepted_segment = _accept_segment(segment.text)
+                        if accepted_segment is None:
+                            break
+                        if not first_phrase_marked:
+                            self._runtime.mark_audio_event(
+                                "first_phrase_ready",
+                                detail={
+                                    "stream_speak_while_think": True,
+                                    "generation_id": fence.generation_id,
+                                },
+                            )
+                            first_phrase_marked = True
+                        yield accepted_segment
+                    if fence.matches(self._runtime.fence) and not reply_budget_exhausted:
+                        for segment in segmenter.flush(end_of_stream=True):
+                            accepted_segment = _accept_segment(segment.text)
+                            if accepted_segment is None:
+                                break
+                            if not first_phrase_marked:
+                                self._runtime.mark_audio_event(
+                                    "first_phrase_ready",
+                                    detail={
+                                        "stream_speak_while_think": True,
+                                        "generation_id": fence.generation_id,
+                                    },
+                                )
+                                first_phrase_marked = True
+                            yield accepted_segment
+                return
             safe_tools = (
-                tools if policy.allows_tools(self._current_speaker_class) else []
+                tools
+                if policy.allows_tools(speaker_class)
+                and not self._is_local_safe_plan(response_plan)
+                else []
             )
             stream = Agent.default.llm_node(self, safe_chat_ctx, safe_tools, model_settings)
             # default may return async gen or coroutine of async gen
@@ -745,7 +1002,6 @@ async def entrypoint(ctx: Any) -> None:
     await ctx.connect()
 
     from services.agent.src.config import AgentSettings
-    from services.agent.src.providers.deepseek import DeepSeekClient, DeepSeekConfig
     from services.agent.src.providers.doubao_tts import DoubaoTTS
     from services.agent.src.providers.funasr_stt import FunASRSTT
     from services.agent.src.providers.qwen_emotion_asr import (
@@ -832,7 +1088,9 @@ async def entrypoint(ctx: Any) -> None:
     else:
         runtime.set_mode_policy(
             ModePolicy.unavailable(
-                "missing_interaction_policy_token" if not interaction_policy_token else "offline_mock"
+                "missing_interaction_policy_token"
+                if not interaction_policy_token
+                else "offline_mock"
             )
         )
         logger.error(
@@ -927,57 +1185,20 @@ async def entrypoint(ctx: Any) -> None:
         runtime._spawn(_replay_archive_spool(), name="archive-spool-replay")
     elif runtime_settings.archive_sink_enabled:
         logger.warning("archive sink is disabled because token or spool key is not configured")
-    persona_client = None
-    persona_token = runtime_settings.internal_token("persona_read")
-    if (
-        runtime_settings.persona_enabled
-        and persona_token
-        and (
-            runtime.mode_policy.capability("persona")
-            or runtime.mode_policy.capability("persona_low_sensitivity")
-        )
-        and not offline
-    ):
-        from services.agent.src.persona_client import PersonaClientConfig
+    response_planner_client = None
+    response_plan_token = runtime_settings.internal_token("response_plan")
+    if response_plan_token and not offline:
+        from services.agent.src.response_planner_client import ResponsePlannerClientConfig
 
-        persona_client = PersonaClient(
-            PersonaClientConfig(
-                endpoint=runtime_settings.persona_capsule_url,
-                internal_token=persona_token,
-                timeout_s=runtime_settings.persona_timeout_s,
-                cache_ttl_s=runtime_settings.persona_cache_ttl_s,
+        response_planner_client = ResponsePlannerClient(
+            ResponsePlannerClientConfig(
+                endpoint=runtime_settings.response_plan_url,
+                internal_token=response_plan_token,
+                timeout_s=runtime_settings.response_plan_timeout_s,
             )
         )
-    elif runtime_settings.persona_enabled and not offline:
-        logger.warning("persona is disabled because policy authority or token is unavailable")
-    memory_context_client = None
-    memory_token = runtime_settings.internal_token("memory_read")
-    if (
-        runtime_settings.memory_context_enabled
-        and memory_token
-        and runtime.mode_policy.capability("private_memory")
-        and not offline
-    ):
-        from services.agent.src.memory_context_client import MemoryContextClientConfig
-
-        memory_context_client = MemoryContextClient(
-            MemoryContextClientConfig(
-                endpoint=runtime_settings.memory_context_url,
-                internal_token=memory_token,
-                timeout_s=runtime_settings.memory_context_timeout_s,
-                cache_ttl_s=runtime_settings.memory_context_cache_ttl_s,
-                limit=runtime_settings.memory_context_limit,
-            )
-        )
-        runtime.set_memory_context_refresher(
-            lambda: memory_context_client.refresh(
-                session_id=runtime_session_id,
-                speaker_class="owner",
-                topic="",
-            )
-        )
-    elif runtime_settings.memory_context_enabled and not offline:
-        logger.warning("memory context is disabled because policy authority or token is unavailable")
+    elif not offline:
+        logger.warning("response plan is disabled because token is unavailable")
     voice_profile_client = None
     voice_token = runtime_settings.internal_token("voice_resolution")
     if (
@@ -1049,16 +1270,6 @@ async def entrypoint(ctx: Any) -> None:
                     observer(pcm)
 
         stt_plugin.set_pcm_observer(_fanout_pcm)
-    deep_client = DeepSeekClient(
-        DeepSeekConfig(
-            api_key=runtime_settings.llm_api_key,
-            base_url=runtime_settings.llm_base_url,
-            fast_model=runtime_settings.llm_fast_model,
-            deep_model=runtime_settings.llm_deep_model,
-            deep_total_timeout_s=float(os.getenv("DEEPSEEK_DEEP_TOTAL_TIMEOUT_S", "90")),
-        )
-    )
-    runtime.configure_deep_path(deep_client)
     await runtime.orchestrator.ready()
     ctx.proc.userdata["duplex_runtime"] = runtime
     ctx.proc.userdata["generation_fence"] = runtime.fence
@@ -1224,22 +1435,8 @@ async def entrypoint(ctx: Any) -> None:
     runtime.set_interrupt_yield(_interrupt_yield_say)
 
     async def _false_interrupt_recover() -> None:
-        """Nearby noise stopped LiveKit playout; speaker gate rejected — continue."""
+        """Nearby noise stopped playout; acknowledge without starting a new generation."""
         await _say_control_ack("我继续。")
-        last_user = ""
-        for turn in reversed(runtime.orchestrator.context.turns):
-            if turn.role == "user" and turn.content:
-                last_user = turn.content.strip()
-                break
-        if last_user:
-            with contextlib.suppress(Exception):
-                await session.generate_reply(
-                    instructions=(
-                        f"用户刚才的问题是：{last_user}。"
-                        "刚才回答被旁边杂声打断了。不要提打断或杂声，"
-                        "用一两句完整自然的中文把答案说完。"
-                    ),
-                )
 
     runtime.set_false_interrupt_recover(_false_interrupt_recover)
 
@@ -1294,12 +1491,25 @@ async def entrypoint(ctx: Any) -> None:
 
     ctx.room.on("data_received", _on_control_packet)
 
+    active_voice_profile = (
+        voice_profile_client.cached(session_id=runtime_session_id)
+        if voice_profile_client is not None
+        else None
+    )
     agent = DuplexVoiceAgent(
         instructions=VOICE_SYSTEM_PROMPT,
         runtime=runtime,
-        persona_client=persona_client,
-        memory_context_client=memory_context_client,
         voice_profile_client=voice_profile_client,
+        response_planner_client=response_planner_client,
+        llm_provider=runtime_settings.llm_provider,
+        llm_model=runtime_settings.llm_fast_model,
+        tts_provider="volcengine_doubao",
+        tts_model=runtime_settings.doubao_tts_resource_id,
+        actual_voice_profile_id=(
+            active_voice_profile.profile_id
+            if active_voice_profile is not None
+            else runtime_settings.doubao_tts_voice_profile
+        ),
     )
 
     await session.start(
@@ -1341,10 +1551,8 @@ async def entrypoint(ctx: Any) -> None:
             await _close_component("emotion_sidecar", emotion_sidecar.aclose())
         await _close_component("runtime", runtime.close())
         await _close_component("tts", tts_plugin.aclose())
-        if persona_client is not None:
-            await _close_component("persona_client", persona_client.close())
-        if memory_context_client is not None:
-            await _close_component("memory_context_client", memory_context_client.close())
+        if response_planner_client is not None:
+            await _close_component("response_planner_client", response_planner_client.aclose())
         if voice_profile_client is not None:
             await _close_component("voice_profile_client", voice_profile_client.close())
         if mode_policy_client is not None:

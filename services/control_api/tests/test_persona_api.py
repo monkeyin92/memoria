@@ -366,13 +366,13 @@ async def test_single_uncertain_candidate_is_hidden_but_owner_review_api_remains
     assert reviewed.json()["status"] == "confirmed"
     assert versions_after_review.json()["items"][0]["version_number"] == 1
     interaction = uncertain_capsule.json()["interaction"]
-    assert interaction["history_eligible"] is True
+    assert interaction["history_eligible"] is False
     assert interaction["owner_projection_eligible"] is False
     assert interaction["capabilities"]["private_memory"] is False
     assert interaction["capabilities"]["persona"] is False
     assert interaction["capabilities"]["persona_low_sensitivity"] is True
     assert interaction["capabilities"]["tools"] is False
-    assert interaction["capabilities"]["learning"] is True
+    assert interaction["capabilities"]["learning"] is False
     assert "已确认表达风格 v1" in uncertain_capsule.json()["prompt_fragment"]
     assert [item["category"] for item in uncertain_capsule.json()["entries"]] == ["verbal_tic"]
     assert revoked_uncertain_capsule.json()["entries"] == []
