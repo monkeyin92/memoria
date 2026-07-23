@@ -138,9 +138,10 @@
   均要求 hidden A/B mapping；approve verdict 必须满足 coverage 完整、identity disclosure、
   decision inference disclosure、privacy refusal 和 blind preference safety gate。
 - 本地质量门：
-  - H5 定向 138 passed；H5 全量 213 passed；production build 通过；
+  - H5 定向 140 passed；H5 全量 215 passed；production build 通过；
   - Python 定向 `interaction / digital_self / self_preview / preview_registry / mode_policy / interaction_mode_agent`
     61 passed；
+  - PostgreSQL 17 + pgvector 临时环境全量：1005 collected，1003 passed、2 skipped、0 failed；
   - Ruff、strict mypy、`git diff --check` 通过。
 - 本地浏览器验收（2026-07-23）：
   - 390×844：真实登录后进入“数字心智与声音”→“数字分身预览”，显示

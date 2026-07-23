@@ -158,6 +158,7 @@ async def test_livekit_playback_fact_commits_and_publishes_only_heard_text() -> 
             "heard": True,
             "turn_id": 1,
             "generation_id": 1,
+            "tool_epoch": 0,
             "history_eligible": False,
         },
         {
@@ -168,6 +169,7 @@ async def test_livekit_playback_fact_commits_and_publishes_only_heard_text() -> 
             "heard": True,
             "turn_id": 1,
             "generation_id": 1,
+            "tool_epoch": 0,
             "history_eligible": False,
         },
     ]

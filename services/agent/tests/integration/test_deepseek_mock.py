@@ -112,7 +112,10 @@ async def test_deepseek_retries_once_before_first_content(scenario: str) -> None
             DeepSeekConfig(
                 api_key="t",
                 base_url=srv.base_url,
-                fast_first_token_timeout_s=0.05,
+                # Keep the timeout far below the mock's 5-second first request,
+                # but leave enough headroom for the immediate retry under a
+                # concurrently loaded test process.
+                fast_first_token_timeout_s=0.2,
                 fast_total_timeout_s=1.0,
             )
         )

@@ -302,9 +302,10 @@ unknown/privacy；inference 不包装成本人亲口事实；安全规则始终�
 
 本地验收：
 
-- H5 定向 138 passed、全量 213 passed，production build 通过；
+- H5 定向 140 passed、全量 215 passed，production build 通过；
 - Python 定向 `interaction / digital_self / self_preview / preview_registry / mode_policy / interaction_mode_agent`
   全通过；
+- PostgreSQL 17 + pgvector 临时环境全量：1005 collected，1003 passed、2 skipped、0 failed；
 - 390×844 / 667×375 本地浏览器验收通过：Self Preview 可见、版本可选、Fidelity 可见、
   无横向溢出，console error/warn 为空。
 
