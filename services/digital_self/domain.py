@@ -106,6 +106,42 @@ class RelationshipProfileManifestEntry:
     entry_type: Literal["relationship_profile"] = "relationship_profile"
 
 
+@dataclass(frozen=True, slots=True)
+class VoiceProfileManifestRef:
+    profile_id: str
+    version_number: int
+    provider: str
+    target_model: str
+    resource_id: str
+    provider_expires_at: str
+    speaker_sha256: str
+
+    def __post_init__(self) -> None:
+        if not self.profile_id.strip():
+            raise ValueError("voice profile ref requires profile_id")
+        if self.version_number < 1:
+            raise ValueError("voice profile ref version_number must be >= 1")
+        if self.provider != "volcengine_doubao":
+            raise ValueError("voice profile ref provider is unsupported")
+        if self.target_model != "seed-icl-2.0":
+            raise ValueError("voice profile ref target_model is unsupported")
+        if self.resource_id != "seed-icl-2.0":
+            raise ValueError("voice profile ref resource_id is unsupported")
+        if len(self.speaker_sha256) != 64 or any(
+            char not in "0123456789abcdef" for char in self.speaker_sha256
+        ):
+            raise ValueError("voice profile ref speaker digest must be lowercase SHA-256")
+        try:
+            expires_at = datetime.fromisoformat(self.provider_expires_at)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("voice profile ref expiry must be ISO-8601") from exc
+        offset = expires_at.utcoffset()
+        if expires_at.tzinfo is None or offset is None:
+            raise ValueError("voice profile ref expiry must be UTC aware")
+        if offset.total_seconds() != 0:
+            raise ValueError("voice profile ref expiry must be UTC")
+
+
 type ManifestEntry = (
     MemoryClaimManifestEntry
     | PersonaTraitManifestEntry
@@ -124,6 +160,7 @@ class DigitalSelfSourceSummary:
     cognitive_claim_count: int = 0
     decision_case_count: int = 0
     relationship_profile_count: int = 0
+    voice_profile: VoiceProfileManifestRef | None = None
 
 
 @dataclass(frozen=True, slots=True)

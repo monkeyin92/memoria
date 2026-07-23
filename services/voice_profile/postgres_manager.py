@@ -19,6 +19,7 @@ from services.voice_profile.domain import (
     EvaluationRequiredError,
     ProviderSample,
     ProviderVoice,
+    ProviderVoiceDeletionUnsupportedError,
     VoiceBlindPreviewTarget,
     VoiceBlindSlot,
     VoiceBlindTrial,
@@ -53,6 +54,7 @@ class PostgresVoiceProfileManager:
         sample_url_factory: Callable[[str], str],
         provider_region: str,
         target_model: str,
+        provider_name: str = "alibaba_model_studio",
     ) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("voice profile DSN must use PostgreSQL")
@@ -62,6 +64,9 @@ class PostgresVoiceProfileManager:
         self._sample_url_factory = sample_url_factory
         self._provider_region = provider_region
         self._target_model = target_model
+        if not provider_name.strip():
+            raise ValueError("voice provider name is required")
+        self._provider_name = provider_name
         self._pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
@@ -188,7 +193,7 @@ class PostgresVoiceProfileManager:
             except Exception:
                 deletion_incomplete = True
             else:
-                deletion_incomplete = deletion_incomplete or profile.deletion_status != "completed"
+                deletion_incomplete = deletion_incomplete or profile.deletion_status == "failed"
         if deletion_incomplete:
             raise VoiceEnrollmentReconciliationRequiredError(
                 "voice profile deletion incomplete; retry consent revocation"
@@ -364,8 +369,8 @@ class PostgresVoiceProfileManager:
                     version_number, provider, provider_region, target_model,
                     provider_prefix, sample_purpose, state, created_at, updated_at
                 ) VALUES (
-                    $1, $2, $3, $4, $5, $6, 'alibaba_model_studio', $7, $8,
-                    $9, $10, 'intent', $11, $11
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+                    $10, $11, 'intent', $12, $12
                 ) RETURNING *
                 """,
                 operation_id,
@@ -374,6 +379,7 @@ class PostgresVoiceProfileManager:
                 profile_id,
                 sample_id,
                 version,
+                self._provider_name,
                 self._provider_region,
                 self._target_model,
                 f"m{profile_id.hex[:9]}",
@@ -421,14 +427,15 @@ class PostgresVoiceProfileManager:
                     provider, provider_region, target_model, status,
                     created_at, updated_at
                 ) VALUES (
-                    $1, $2, $3, $4, 'alibaba_model_studio', $5, $6,
-                    'enrolling', $7, $7
+                    $1, $2, $3, $4, $5, $6, $7,
+                    'enrolling', $8, $8
                 )
                 """,
                 operation["profile_id"],
                 request.account_id,
                 operation["sample_id"],
                 int(operation["version_number"]),
+                self._provider_name,
                 self._provider_region,
                 self._target_model,
                 now,
@@ -478,9 +485,7 @@ class PostgresVoiceProfileManager:
     async def _finalize_enrollment(self, operation: asyncpg.Record) -> VoiceProfile:
         provider_voice_id = str(operation["provider_voice_id"] or "")
         if not provider_voice_id:
-            raise VoiceEnrollmentReconciliationRequiredError(
-                "voice provider result is unavailable"
-            )
+            raise VoiceEnrollmentReconciliationRequiredError("voice provider result is unavailable")
         now = datetime.now(UTC)
         event = self._event(
             str(operation["account_id"]),
@@ -960,6 +965,10 @@ class PostgresVoiceProfileManager:
                 raise EvaluationRequiredError("a passed candidate evaluation is required")
             if row["quality_status"] != "passed":
                 raise EvaluationRequiredError("a passed provider quality measurement is required")
+            if row["provider"] == "volcengine_doubao":
+                expires_at = cast(datetime | None, row["provider_expires_at"])
+                if not row["provider_voice_id"] or expires_at is None or expires_at <= now:
+                    raise EvaluationRequiredError("an unexpired Doubao provider voice is required")
             event = self._event(
                 account_id,
                 "voice_profile.activated",
@@ -1005,19 +1014,28 @@ class PostgresVoiceProfileManager:
                 """
                 SELECT * FROM voice_profiles
                 WHERE account_id = $1 AND status = 'active'
+                  AND evaluation_status = 'passed'
+                  AND quality_status = 'passed'
                 """,
                 account_id,
             )
         if consent is None or row is None or row["provider_voice_id"] is None:
             return VoiceResolution(mode="fallback")
         expires = cast(datetime | None, row["provider_expires_at"])
+        if row["provider"] == "volcengine_doubao" and expires is None:
+            return VoiceResolution(mode="fallback")
         if expires is not None and expires <= datetime.now(UTC):
             return VoiceResolution(mode="fallback")
         return VoiceResolution(
             mode="active",
             profile_id=str(row["profile_id"]),
+            version_number=int(row["version_number"]),
+            provider=str(row["provider"]),
+            voice_kind="personal",
             model=str(row["target_model"]),
+            resource_id=str(row["target_model"]),
             voice_id=str(row["provider_voice_id"]),
+            provider_expires_at=expires,
         )
 
     async def profiles(self, *, account_id: str) -> tuple[VoiceProfile, ...]:
@@ -1073,13 +1091,16 @@ class PostgresVoiceProfileManager:
         provider_asset_absent: bool = False,
         sample_asset_absent: bool = False,
     ) -> VoiceProfile:
-        if sum(
-            (
-                provider_voice is not None,
-                provider_asset_absent,
-                sample_asset_absent,
+        if (
+            sum(
+                (
+                    provider_voice is not None,
+                    provider_asset_absent,
+                    sample_asset_absent,
+                )
             )
-        ) != 1:
+            != 1
+        ):
             raise ValueError("exactly one enrollment reconciliation outcome is required")
         operation = await self._operation(
             account_id=account_id,
@@ -1110,10 +1131,14 @@ class PostgresVoiceProfileManager:
                 state="sample_uploaded",
             )
         else:
-            if str(operation["state"]) not in {
-                "upload_submitted",
-                "reconciliation_required",
-            } or await self._profile_row(account_id, operation["profile_id"]) is not None:
+            if (
+                str(operation["state"])
+                not in {
+                    "upload_submitted",
+                    "reconciliation_required",
+                }
+                or await self._profile_row(account_id, operation["profile_id"]) is not None
+            ):
                 raise ValueError("enrollment has no ambiguous sample upload")
             await self._set_operation_state(
                 account_id,
@@ -1220,7 +1245,7 @@ class PostgresVoiceProfileManager:
                 )
                 assert refreshed is not None
                 return self._synthetic_profile(refreshed)
-            if row["status"] == "revoked" and row["deletion_status"] == "completed":
+            if row["status"] == "revoked" and row["deletion_status"] in {"completed", "pending"}:
                 return self._profile(row)
             if row["status"] != "revoked":
                 event = self._event(
@@ -1247,19 +1272,23 @@ class PostgresVoiceProfileManager:
                 else None
             )
             provider_result_ambiguous = (
-                row["enrollment_state"]
-                in {"provider_submitted", "reconciliation_required"}
+                row["enrollment_state"] in {"provider_submitted", "reconciliation_required"}
                 and voice_id is None
             )
         await self._object_store.delete(reference)
         deletion_status: VoiceDeletionStatus = (
             "failed" if provider_result_ambiguous else "completed"
         )
+        cleanup_error: str | None = None
         try:
             if voice_id is not None:
                 await self._provider.delete_voice(voice_id=voice_id)
+        except ProviderVoiceDeletionUnsupportedError:
+            deletion_status = "pending"
+            cleanup_error = "provider_deletion_unsupported_manual_cleanup"
         except Exception:
             deletion_status = "failed"
+            cleanup_error = "provider_asset_deletion_incomplete"
         completed_at = datetime.now(UTC)
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
@@ -1294,16 +1323,95 @@ class PostgresVoiceProfileManager:
                     SET state = $1, last_error = $2, updated_at = $3
                     WHERE operation_id = $4 AND account_id = $5
                     """,
-                    "revoked" if deletion_status == "completed" else "reconciliation_required",
-                    (
-                        None
-                        if deletion_status == "completed"
-                        else "provider_asset_deletion_incomplete"
-                    ),
+                    "revoked"
+                    if deletion_status in {"completed", "pending"}
+                    else "reconciliation_required",
+                    cleanup_error,
                     completed_at,
                     row["enrollment_operation_id"],
                     account_id,
                 )
+        assert updated is not None
+        return self._profile(updated)
+
+    async def confirm_provider_deletion(
+        self,
+        *,
+        account_id: str,
+        profile_id: str,
+        evidence_reference: str,
+    ) -> VoiceProfile:
+        """Record an operator-confirmed provider deletion without storing raw voice IDs."""
+
+        reference = evidence_reference.strip()
+        if not reference:
+            raise ValueError("provider deletion evidence reference is required")
+        profile_uuid = uuid.UUID(profile_id)
+        now = datetime.now(UTC)
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._scope(connection, account_id)
+            row = await connection.fetchrow(
+                """
+                SELECT * FROM voice_profiles
+                WHERE profile_id = $1 AND account_id = $2
+                FOR UPDATE
+                """,
+                profile_uuid,
+                account_id,
+            )
+            if row is None:
+                raise EvidenceNotFoundError(profile_id)
+            if row["status"] != "revoked":
+                raise EvaluationRequiredError(
+                    "only a revoked voice profile can confirm provider deletion"
+                )
+            if row["deletion_status"] == "completed":
+                return self._profile(row)
+            if row["deletion_status"] not in {"pending", "failed"}:
+                raise EvaluationRequiredError(
+                    "provider deletion must be pending or failed before confirmation"
+                )
+            provider_voice_id = (
+                str(row["provider_voice_id"]) if row["provider_voice_id"] is not None else ""
+            )
+            event = self._event(
+                account_id,
+                "voice_profile.provider_deletion_confirmed",
+                {
+                    "profile_id": profile_id,
+                    "provider": str(row["provider"]),
+                    "provider_voice_sha256": (
+                        hashlib.sha256(provider_voice_id.encode("utf-8")).hexdigest()
+                        if provider_voice_id
+                        else None
+                    ),
+                    "evidence_reference": reference,
+                },
+            )
+            await self._insert_evidence(connection, event)
+            updated = await connection.fetchrow(
+                """
+                UPDATE voice_profiles
+                SET deletion_status = 'completed', provider_deleted_at = $1,
+                    updated_at = $1
+                WHERE profile_id = $2 AND account_id = $3
+                RETURNING *
+                """,
+                now,
+                profile_uuid,
+                account_id,
+            )
+            await connection.execute(
+                """
+                UPDATE voice_enrollment_operations
+                SET state = 'revoked', last_error = NULL, updated_at = $1
+                WHERE profile_id = $2 AND account_id = $3
+                """,
+                now,
+                profile_uuid,
+                account_id,
+            )
         assert updated is not None
         return self._profile(updated)
 
@@ -1399,9 +1507,7 @@ class PostgresVoiceProfileManager:
             sample_purpose=str(row["sample_purpose"]),
             state=cast(VoiceEnrollmentOperationState, row["state"]),
             provider_voice_id=(
-                str(row["provider_voice_id"])
-                if row["provider_voice_id"] is not None
-                else None
+                str(row["provider_voice_id"]) if row["provider_voice_id"] is not None else None
             ),
             last_error=str(row["last_error"]) if row["last_error"] is not None else None,
             created_at=cast(datetime, row["created_at"]),

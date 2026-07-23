@@ -10,7 +10,9 @@ import pytest
 from cryptography.fernet import Fernet
 from services.archive.object_store import EncryptedLocalObjectStore, ObjectRef
 from services.voice_profile.domain import (
+    EvaluationRequiredError,
     ProviderVoice,
+    ProviderVoiceDeletionUnsupportedError,
     VoiceEnrollmentReconciliationRequiredError,
     VoiceEnrollmentRequest,
     VoiceEvaluationRequest,
@@ -54,6 +56,12 @@ class ProviderStub:
             raise RuntimeError("provider unavailable")
 
 
+class UnsupportedDeleteProvider(ProviderStub):
+    async def delete_voice(self, *, voice_id: str) -> None:
+        self.deleted.append(voice_id)
+        raise ProviderVoiceDeletionUnsupportedError("manual cleanup required")
+
+
 class AmbiguousPutStore:
     def __init__(self, inner: EncryptedLocalObjectStore) -> None:
         self.inner = inner
@@ -94,6 +102,103 @@ async def _cleanup(dsn: str, *account_ids: str) -> None:
             account_id,
         )
     await connection.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the PostgreSQL voice contract test",
+)
+async def test_postgres_persists_doubao_provider_and_keeps_unconfirmed_delete_pending(
+    tmp_path: Path,
+) -> None:
+    dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    account_id = "postgres-doubao-voice-provider"
+    provider = UnsupportedDeleteProvider()
+    manager = PostgresVoiceProfileManager(
+        dsn,
+        object_store=EncryptedLocalObjectStore(
+            root=tmp_path / "doubao-voice-objects",
+            key=Fernet.generate_key().decode("ascii"),
+            key_version="voice-postgres-test-v1",
+        ),
+        provider=provider,
+        sample_url_factory=lambda sample_id: (
+            f"https://control.test/v1/voices/provider-samples/{sample_id}?token=signed"
+        ),
+        provider_region="cn-beijing",
+        target_model="seed-icl-2.0",
+        provider_name="volcengine_doubao",
+    )
+    try:
+        await manager.grant_consent(account_id=account_id, policy_version="voice-clone-v1")
+        candidate = await manager.enroll(
+            VoiceEnrollmentRequest(
+                account_id=account_id,
+                audio=b"RIFF" + b"\x01\x02" * 16_000,
+                media_type="audio/wav",
+                duration_ms=12_000,
+                sample_rate=24_000,
+            )
+        )
+        connection = await asyncpg.connect(dsn)
+        try:
+            await connection.execute(
+                """
+                UPDATE voice_profiles
+                SET evaluation_status = 'passed', quality_status = 'passed',
+                    provider_expires_at = NULL
+                WHERE profile_id = $1::uuid
+                """,
+                candidate.profile_id,
+            )
+        finally:
+            await connection.close()
+        with pytest.raises(EvaluationRequiredError, match="unexpired Doubao"):
+            await manager.activate(
+                account_id=account_id,
+                profile_id=candidate.profile_id,
+            )
+        assert candidate.provider_expires_at is not None
+        connection = await asyncpg.connect(dsn)
+        try:
+            await connection.execute(
+                "UPDATE voice_profiles SET provider_expires_at = $1 WHERE profile_id = $2::uuid",
+                candidate.provider_expires_at,
+                candidate.profile_id,
+            )
+        finally:
+            await connection.close()
+        await manager.activate(account_id=account_id, profile_id=candidate.profile_id)
+        connection = await asyncpg.connect(dsn)
+        try:
+            await connection.execute(
+                "UPDATE voice_profiles SET provider_expires_at = NULL WHERE profile_id = $1::uuid",
+                candidate.profile_id,
+            )
+        finally:
+            await connection.close()
+        assert (await manager.resolve(account_id=account_id)).mode == "fallback"
+        revoked = await manager.revoke_profile(
+            account_id=account_id,
+            profile_id=candidate.profile_id,
+        )
+
+        assert candidate.provider == "volcengine_doubao"
+        assert candidate.target_model == "seed-icl-2.0"
+        assert revoked.status == "revoked"
+        assert revoked.deletion_status == "pending"
+        assert (await manager.resolve(account_id=account_id)).mode == "fallback"
+        assert provider.deleted == [candidate.provider_voice_id]
+        confirmed = await manager.confirm_provider_deletion(
+            account_id=account_id,
+            profile_id=candidate.profile_id,
+            evidence_reference="doubao-console-ticket/postgres-cleanup-001",
+        )
+        assert confirmed.deletion_status == "completed"
+    finally:
+        await manager.close()
+        await _cleanup(dsn, account_id)
 
 
 @pytest.mark.asyncio
@@ -212,6 +317,20 @@ async def test_postgres_voice_profile_matches_lifecycle_contract_and_forces_rls(
     assert [item.status for item in profiles] == ["active", "candidate"]
     assert resolution.profile_id == candidates[-1].profile_id
     assert isolated == ()
+
+    await manager.record_quality_measurement(
+        VoiceQualityMeasurementRequest(
+            account_id=account_id,
+            profile_id=candidates[-1].profile_id,
+            source_run_id="postgres-probe-active-regression",
+            first_audio_ms=700,
+            cancel_tail_ms=120,
+            timestamp_error_ms=90,
+            long_sentence_chars=240,
+            long_sentence_completion_ratio=0.50,
+        )
+    )
+    assert (await manager.resolve(account_id=account_id)).mode == "fallback"
 
     revoked = await manager.revoke_profile(
         account_id=account_id,
@@ -499,9 +618,7 @@ async def test_postgres_enrollment_retry_reuses_persisted_provider_result(
         await manager.enroll(ambiguous_request)
     pending = await manager.pending_enrollments(account_id=account_id)
     ambiguous = next(
-        item
-        for item in pending
-        if item.enrollment_key == "postgres-stable-enrollment-ambiguous"
+        item for item in pending if item.enrollment_key == "postgres-stable-enrollment-ambiguous"
     )
     recovered = ProviderVoice(
         voice_id=f"cosyvoice-v3.5-flash-clone-{ambiguous.provider_prefix}",

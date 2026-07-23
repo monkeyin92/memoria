@@ -78,9 +78,7 @@ async def _approved_version(
             ),
         )
     headers = {"Authorization": f"Bearer {owner['access_token']}"}
-    built = (
-        await client.post("/v1/digital-self/versions", headers=headers)
-    ).json()
+    built = (await client.post("/v1/digital-self/versions", headers=headers)).json()
     await client.post(
         f"/v1/digital-self/versions/{built['version_id']}/testing",
         headers=headers,
@@ -264,6 +262,10 @@ async def test_owner_preview_grant_freezes_self_preview_session_and_is_one_time(
     assert interaction["history_eligible"] is False
     assert interaction["owner_projection_eligible"] is False
     assert interaction["companion_style_id"] is None
+    assert interaction["fallback_voice_profile_id"] == "warm_companion"
+    assert interaction["fallback_voice_provider"] == "volcengine_doubao"
+    assert interaction["fallback_voice_model"] == "seed-tts-2.0"
+    assert interaction["fallback_voice_resource_id"] == "seed-tts-2.0"
     assert replay.status_code == 409
     assert second_grant.status_code == 201
     assert legacy_direct_grant.status_code == 409

@@ -307,7 +307,7 @@ describe("useVoiceSession production edges", () => {
           tools: false,
           history: false,
           learning: false,
-          voice_profile: false,
+          voice_profile: true,
         },
       },
     });

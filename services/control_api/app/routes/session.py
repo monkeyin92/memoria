@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -25,13 +26,14 @@ from services.control_api.app.security import (
     require_authenticated_user,
     require_matching_user,
 )
-from services.digital_self.domain import VersionNotFoundError
+from services.digital_self.domain import VersionNotFoundError, VoiceProfileManifestRef
 from services.digital_self.preview import (
     PreviewConflictError,
     PreviewNotFoundError,
     SelfPreviewRegistryPort,
 )
 from services.speaker.domain import SpeakerAuthorityPort
+from services.voice_profile.domain import VoiceProfilePort, VoiceResolution
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
 logger = logging.getLogger(__name__)
@@ -50,6 +52,52 @@ OMNI_MAX_SDP_EXCHANGES = 2
 _WORKSPACE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 
 _STOP_REQUESTS: list[dict[str, Any]] = []
+
+
+def _matching_preview_voice(
+    ref: VoiceProfileManifestRef | None,
+    resolution: VoiceResolution,
+) -> tuple[
+    str | None,
+    int | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+]:
+    expires_at = (
+        resolution.provider_expires_at.isoformat()
+        if resolution.provider_expires_at is not None
+        else None
+    )
+    speaker_sha256 = (
+        hashlib.sha256(resolution.voice_id.encode("utf-8")).hexdigest()
+        if resolution.voice_id is not None
+        else None
+    )
+    if (
+        ref is None
+        or resolution.mode != "active"
+        or resolution.voice_kind != "personal"
+        or resolution.profile_id != ref.profile_id
+        or resolution.version_number != ref.version_number
+        or resolution.provider != ref.provider
+        or resolution.model != ref.target_model
+        or resolution.resource_id != ref.resource_id
+        or expires_at != ref.provider_expires_at
+        or speaker_sha256 != ref.speaker_sha256
+    ):
+        return None, None, None, None, None, None, None
+    return (
+        ref.profile_id,
+        ref.version_number,
+        ref.provider,
+        ref.target_model,
+        ref.resource_id,
+        ref.provider_expires_at,
+        ref.speaker_sha256,
+    )
 
 
 class ClientInfo(BaseModel):
@@ -228,9 +276,15 @@ async def create_session(
             status_code=409,
             detail={"code": "self_preview_requires_controlled_backend"},
         )
-    preview_registry = cast(
-        SelfPreviewRegistryPort, request.app.state.self_preview_registry
+    store = cast(MemoryStore, request.app.state.memory_store)
+    created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    companion = companion_definition(
+        store.get_profile(user_id=user_id, now=created_at).get("companion_id")
+        or DEFAULT_COMPANION_ID
     )
+    if companion is None:
+        raise HTTPException(status_code=409, detail="companion profile is unavailable")
+    preview_registry = cast(SelfPreviewRegistryPort, request.app.state.self_preview_registry)
     if body.interaction_mode == "self_preview":
         assert body.preview_grant_id is not None
         try:
@@ -277,12 +331,9 @@ async def create_session(
                 status_code=409,
                 detail={"code": "preview_version_unavailable"},
             )
-        speaker_authority = cast(
-            SpeakerAuthorityPort, request.app.state.speaker_authority
-        )
+        speaker_authority = cast(SpeakerAuthorityPort, request.app.state.speaker_authority)
         if not any(
-            profile.status == "active"
-            for profile in await speaker_authority.profiles(user_id)
+            profile.status == "active" for profile in await speaker_authority.profiles(user_id)
         ):
             raise HTTPException(
                 status_code=409,
@@ -291,11 +342,37 @@ async def create_session(
                     "missing": ["verified_owner_voice"],
                 },
             )
+        voice_resolution = await cast(
+            VoiceProfilePort, request.app.state.voice_profile_manager
+        ).resolve(account_id=user_id)
+        (
+            voice_profile_id,
+            voice_profile_version,
+            voice_provider,
+            voice_model,
+            voice_resource_id,
+            voice_provider_expires_at,
+            voice_speaker_sha256,
+        ) = _matching_preview_voice(
+            version.manifest.source_summary.voice_profile,
+            voice_resolution,
+        )
         preview_frozen = ModePolicy.freeze_self_preview(
             version_id=version.version_id,
             manifest_sha256=version.manifest_sha256,
             preview_grant_id=grant.grant_id,
             perspective=grant.perspective,
+            voice_profile_id=voice_profile_id,
+            voice_profile_version=voice_profile_version,
+            voice_provider=voice_provider,
+            voice_model=voice_model,
+            voice_resource_id=voice_resource_id,
+            voice_provider_expires_at=voice_provider_expires_at,
+            voice_speaker_sha256=voice_speaker_sha256,
+            fallback_voice_profile_id=companion.designed_voice_profile,
+            fallback_voice_provider="volcengine_doubao",
+            fallback_voice_model="seed-tts-2.0",
+            fallback_voice_resource_id="seed-tts-2.0",
         )
     else:
         preview_frozen = None
@@ -303,17 +380,9 @@ async def create_session(
     # The room name is also the Agent's trusted source for the public session id.
     room_name = f"voice-{session_id}"
     identity = f"user-{user_id}-{session_id[:8]}"
-    store = cast(MemoryStore, request.app.state.memory_store)
-    created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     if preview_frozen is not None:
         frozen = preview_frozen
     else:
-        companion = companion_definition(
-            store.get_profile(user_id=user_id, now=created_at).get("companion_id")
-            or DEFAULT_COMPANION_ID
-        )
-        if companion is None:  # Stored profile data must not silently broaden the policy.
-            raise HTTPException(status_code=409, detail="companion profile is unavailable")
         frozen = ModePolicy.freeze_companion(companion)
 
     async def persist_voice_session() -> str | None:
@@ -352,6 +421,17 @@ async def create_session(
                     legacy_grant_id=frozen.legacy_grant_id,
                     companion_style_id=frozen.companion_style_id,
                     companion_style_version=frozen.companion_style_version,
+                    voice_profile_id=frozen.voice_profile_id,
+                    voice_profile_version=frozen.voice_profile_version,
+                    voice_provider=frozen.voice_provider,
+                    voice_model=frozen.voice_model,
+                    voice_resource_id=frozen.voice_resource_id,
+                    voice_provider_expires_at=frozen.voice_provider_expires_at,
+                    voice_speaker_sha256=frozen.voice_speaker_sha256,
+                    fallback_voice_profile_id=frozen.fallback_voice_profile_id,
+                    fallback_voice_provider=frozen.fallback_voice_provider,
+                    fallback_voice_model=frozen.fallback_voice_model,
+                    fallback_voice_resource_id=frozen.fallback_voice_resource_id,
                     learning_task_id=learning_task_id,
                 )
                 return learning_task_id
@@ -371,6 +451,17 @@ async def create_session(
             legacy_grant_id=frozen.legacy_grant_id,
             companion_style_id=frozen.companion_style_id,
             companion_style_version=frozen.companion_style_version,
+            voice_profile_id=frozen.voice_profile_id,
+            voice_profile_version=frozen.voice_profile_version,
+            voice_provider=frozen.voice_provider,
+            voice_model=frozen.voice_model,
+            voice_resource_id=frozen.voice_resource_id,
+            voice_provider_expires_at=frozen.voice_provider_expires_at,
+            voice_speaker_sha256=frozen.voice_speaker_sha256,
+            fallback_voice_profile_id=frozen.fallback_voice_profile_id,
+            fallback_voice_provider=frozen.fallback_voice_provider,
+            fallback_voice_model=frozen.fallback_voice_model,
+            fallback_voice_resource_id=frozen.fallback_voice_resource_id,
             learning_task_id=None,
         )
         return None

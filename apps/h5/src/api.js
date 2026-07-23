@@ -323,6 +323,13 @@ export function logoutAllDevices() {
 
 function requireCompanionInteraction(session) {
   const interaction = session?.interaction;
+  const voiceProfileId = interaction?.voice_profile_id ?? null;
+  const voiceProfileVersion = interaction?.voice_profile_version ?? null;
+  const voiceProvider = interaction?.voice_provider ?? null;
+  const voiceModel = interaction?.voice_model ?? null;
+  const voiceResourceId = interaction?.voice_resource_id ?? null;
+  const voiceProviderExpiresAt = interaction?.voice_provider_expires_at ?? null;
+  const voiceSpeakerSha256 = interaction?.voice_speaker_sha256 ?? null;
   if (
     interaction?.interaction_mode !== "companion" ||
     typeof interaction.mode_policy_version !== "string" ||
@@ -336,7 +343,18 @@ function requireCompanionInteraction(session) {
     (interaction.preview_grant_id ?? null) !== null ||
     (interaction.perspective ?? null) !== null ||
     interaction.relationship_profile_id !== null ||
-    interaction.legacy_grant_id !== null
+    interaction.legacy_grant_id !== null ||
+    voiceProfileId !== null ||
+    voiceProfileVersion !== null ||
+    voiceProvider !== null ||
+    voiceModel !== null ||
+    voiceResourceId !== null ||
+    voiceProviderExpiresAt !== null ||
+    voiceSpeakerSha256 !== null ||
+    (interaction.fallback_voice_profile_id ?? null) !== null ||
+    (interaction.fallback_voice_provider ?? null) !== null ||
+    (interaction.fallback_voice_model ?? null) !== null ||
+    (interaction.fallback_voice_resource_id ?? null) !== null
   ) {
     throw new Error("服务端没有返回可验证的陪伴模式，会话已停止");
   }
@@ -348,6 +366,13 @@ const selfPreviewPerspectives = new Set(["owner", "child", "friend"]);
 function requireSelfPreviewInteraction(session) {
   const interaction = session?.interaction;
   const capabilities = interaction?.capabilities;
+  const voiceProfileId = interaction?.voice_profile_id ?? null;
+  const voiceProfileVersion = interaction?.voice_profile_version ?? null;
+  const voiceProvider = interaction?.voice_provider ?? null;
+  const voiceModel = interaction?.voice_model ?? null;
+  const voiceResourceId = interaction?.voice_resource_id ?? null;
+  const voiceProviderExpiresAt = interaction?.voice_provider_expires_at ?? null;
+  const voiceSpeakerSha256 = interaction?.voice_speaker_sha256 ?? null;
   if (
     session?.voice_backend !== "cascade" ||
     interaction?.interaction_mode !== "self_preview" ||
@@ -367,6 +392,36 @@ function requireSelfPreviewInteraction(session) {
     interaction.companion_style_version !== null ||
     interaction.relationship_profile_id !== null ||
     interaction.legacy_grant_id !== null ||
+    !(
+      (
+        voiceProfileId === null &&
+        voiceProfileVersion === null &&
+        voiceProvider === null &&
+        voiceModel === null &&
+        voiceResourceId === null &&
+        voiceProviderExpiresAt === null &&
+        voiceSpeakerSha256 === null
+      ) ||
+      (
+        typeof voiceProfileId === "string" &&
+        voiceProfileId.trim() &&
+        Number.isInteger(voiceProfileVersion) &&
+        voiceProfileVersion >= 1 &&
+        voiceProvider === "volcengine_doubao" &&
+        voiceModel === "seed-icl-2.0" &&
+        voiceResourceId === "seed-icl-2.0" &&
+        typeof voiceProviderExpiresAt === "string" &&
+        !Number.isNaN(new Date(voiceProviderExpiresAt).getTime()) &&
+        /(Z|[+-]00:00)$/.test(voiceProviderExpiresAt) &&
+        typeof voiceSpeakerSha256 === "string" &&
+        /^[a-f0-9]{64}$/.test(voiceSpeakerSha256)
+      )
+    ) ||
+    typeof interaction.fallback_voice_profile_id !== "string" ||
+    !interaction.fallback_voice_profile_id.trim() ||
+    interaction.fallback_voice_provider !== "volcengine_doubao" ||
+    interaction.fallback_voice_model !== "seed-tts-2.0" ||
+    interaction.fallback_voice_resource_id !== "seed-tts-2.0" ||
     !isJsonObject(capabilities) ||
     capabilities.conversation !== true ||
     capabilities.private_memory !== false ||
@@ -375,7 +430,7 @@ function requireSelfPreviewInteraction(session) {
     capabilities.tools !== false ||
     capabilities.history !== false ||
     capabilities.learning !== false ||
-    capabilities.voice_profile !== false
+    capabilities.voice_profile !== true
   ) {
     throw new Error("服务端没有返回可验证的数字分身预览模式，会话已停止");
   }
@@ -1272,6 +1327,7 @@ const digitalSelfStatuses = new Set([
 const digitalSelfManifestSchemas = new Set([
   "digital-self-manifest-v1",
   "digital-self-manifest-v2",
+  "digital-self-manifest-v3",
 ]);
 
 function requireDigitalSelfVersionId(versionId) {
@@ -1306,7 +1362,11 @@ function parseNullableDigitalSelfId(value) {
 }
 
 function parseDigitalSelfSourceSummary(value, schemaVersion) {
-  const isV2 = schemaVersion === "digital-self-manifest-v2";
+  const isV2 = ["digital-self-manifest-v2", "digital-self-manifest-v3"].includes(
+    schemaVersion,
+  );
+  const isV3 = schemaVersion === "digital-self-manifest-v3";
+  const voiceProfile = parseDigitalSelfVoiceProfile(value?.voice_profile);
   if (
     !isJsonObject(value) ||
     !Number.isInteger(value.memory_claim_count) ||
@@ -1325,6 +1385,8 @@ function parseDigitalSelfSourceSummary(value, schemaVersion) {
         value.decision_case_count < 0 ||
         !Number.isInteger(value.relationship_profile_count) ||
         value.relationship_profile_count < 0))
+    ||
+    (!isV3 && value.voice_profile !== undefined)
   ) {
     invalidDigitalSelfResponse();
   }
@@ -1339,6 +1401,36 @@ function parseDigitalSelfSourceSummary(value, schemaVersion) {
       : {}),
     persona_version_id: value.persona_version_id?.trim() || null,
     source_summary_sha256: value.source_summary_sha256.toLowerCase(),
+    ...(isV3 ? { voice_profile: voiceProfile } : {}),
+  };
+}
+
+function parseDigitalSelfVoiceProfile(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (
+    !isJsonObject(value) ||
+    typeof value.profile_id !== "string" ||
+    !value.profile_id.trim() ||
+    !Number.isInteger(value.version_number) ||
+    value.version_number < 1 ||
+    value.provider !== "volcengine_doubao" ||
+    value.target_model !== "seed-icl-2.0" ||
+    value.resource_id !== "seed-icl-2.0" ||
+    typeof value.provider_expires_at !== "string" ||
+    Number.isNaN(new Date(value.provider_expires_at).getTime()) ||
+    !/(Z|[+-]00:00)$/.test(value.provider_expires_at) ||
+    typeof value.speaker_sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.speaker_sha256)
+  ) {
+    invalidDigitalSelfResponse();
+  }
+  return {
+    ...value,
+    profile_id: value.profile_id.trim(),
+    provider_expires_at: value.provider_expires_at.trim(),
+    speaker_sha256: value.speaker_sha256,
   };
 }
 
@@ -1352,7 +1444,9 @@ function sameDigitalSelfSourceSummary(left, right) {
     (left.relationship_profile_count ?? 0) ===
       (right.relationship_profile_count ?? 0) &&
     left.persona_version_id === right.persona_version_id &&
-    left.source_summary_sha256 === right.source_summary_sha256
+    left.source_summary_sha256 === right.source_summary_sha256 &&
+    JSON.stringify(left.voice_profile ?? null) ===
+      JSON.stringify(right.voice_profile ?? null)
   );
 }
 

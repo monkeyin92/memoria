@@ -54,6 +54,7 @@ from services.agent.src.orchestration.utterance_router import (
     route_target_speaker,
     route_utterance,
 )
+from services.common.companions import companion_definition
 from services.common.evidence_policy import classify_prompt_kind
 from services.common.redaction import redact_pii
 from services.speaker.domain import (
@@ -168,6 +169,16 @@ class CanonicalUserTurnSnapshot:
     suspected_playback_prefixes: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class GenerationVoiceSnapshot:
+    """Applied TTS identity frozen to one exact generation fence."""
+
+    profile_id: str | None
+    resource_id: str
+    speaker_sha256: str
+    voice_kind: Literal["designed", "personal"]
+
+
 @dataclass
 class ActiveTTSPool(Protocol):
     async def discard_active_connection(self, fence: GenerationFence) -> None: ...
@@ -234,14 +245,16 @@ class DuplexRuntime:
     _speaker_collecting: bool = False
     _speaker_classification_task: asyncio.Task[Any] | None = None
     _history_eligible_by_fence: dict[tuple[int, int], bool] = field(default_factory=dict)
-    _owner_projection_eligible_by_fence: dict[tuple[int, int], bool] = field(
-        default_factory=dict
-    )
+    _owner_projection_eligible_by_fence: dict[tuple[int, int], bool] = field(default_factory=dict)
     _mode_policy: ModePolicy = field(default_factory=lambda: ModePolicy.unavailable("not_fetched"))
     _mode_policy_by_fence: dict[tuple[int, int], ModePolicy] = field(default_factory=dict)
     _response_provenance_by_fence: dict[
         tuple[int, int, int],
         dict[str, Any],
+    ] = field(default_factory=dict)
+    _voice_snapshot_by_fence: dict[
+        tuple[int, int, int],
+        GenerationVoiceSnapshot,
     ] = field(default_factory=dict)
     _target_speaker_focus_enabled: bool = False
     _reject_non_owner_voice: bool = True
@@ -416,7 +429,9 @@ class DuplexRuntime:
         )
 
     def _bind_mode_policy(self, fence: GenerationFence, policy: ModePolicy | None = None) -> None:
-        self._mode_policy_by_fence[(fence.turn_id, fence.generation_id)] = policy or self._mode_policy
+        self._mode_policy_by_fence[(fence.turn_id, fence.generation_id)] = (
+            policy or self._mode_policy
+        )
         while len(self._mode_policy_by_fence) > HISTORY_ELIGIBILITY_MAX_FENCES:
             self._mode_policy_by_fence.pop(next(iter(self._mode_policy_by_fence)))
 
@@ -501,10 +516,86 @@ class DuplexRuntime:
         key = (fence.turn_id, fence.generation_id, fence.tool_epoch)
         self._response_provenance_by_fence[key] = json.loads(encoded)
         while len(self._response_provenance_by_fence) > RESPONSE_PROVENANCE_MAX_FENCES:
-            self._response_provenance_by_fence.pop(
-                next(iter(self._response_provenance_by_fence))
-            )
+            self._response_provenance_by_fence.pop(next(iter(self._response_provenance_by_fence)))
         return True
+
+    def bind_generation_voice(
+        self,
+        fence: GenerationFence,
+        *,
+        profile_id: str | None,
+        resource_id: str,
+        speaker_sha256: str,
+        voice_kind: Literal["designed", "personal"],
+    ) -> bool:
+        """Bind or update the voice actually used by this exact generation."""
+
+        policy = self.mode_policy_for_fence(fence)
+        references = dict(policy.references)
+        companion = companion_definition(policy.companion_style_id)
+        personal_contract = (
+            policy.mode == "self_preview"
+            and profile_id is not None
+            and profile_id == references.get("voice_profile_id")
+            and references.get("voice_profile_version") is not None
+            and references.get("voice_provider") == "volcengine_doubao"
+            and references.get("voice_model") == "seed-icl-2.0"
+            and references.get("voice_resource_id") == "seed-icl-2.0"
+            and references.get("voice_provider_expires_at") is not None
+            and speaker_sha256 == references.get("voice_speaker_sha256")
+        )
+        designed_contract = (
+            (
+                policy.mode == "companion"
+                and companion is not None
+                and profile_id == companion.designed_voice_profile
+            )
+            or (
+                policy.mode == "self_preview"
+                and profile_id == references.get("fallback_voice_profile_id")
+                and references.get("fallback_voice_provider") == "volcengine_doubao"
+                and references.get("fallback_voice_model") == "seed-tts-2.0"
+                and references.get("fallback_voice_resource_id") == "seed-tts-2.0"
+            )
+            or (policy.mode == "legacy" and profile_id is None)
+        )
+        if (
+            fence.session_id != self.session_id
+            or not self.fence.matches(fence)
+            or (
+                profile_id is not None
+                and (not profile_id or len(profile_id) > 128 or profile_id != profile_id.strip())
+            )
+            or resource_id not in {"seed-tts-2.0", "seed-icl-2.0"}
+            or len(speaker_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in speaker_sha256)
+            or voice_kind not in {"designed", "personal"}
+            or (voice_kind == "personal") != (resource_id == "seed-icl-2.0")
+            or (voice_kind == "personal" and not personal_contract)
+            or (
+                voice_kind == "designed"
+                and (resource_id != "seed-tts-2.0" or not designed_contract)
+            )
+        ):
+            return False
+        key = (fence.turn_id, fence.generation_id, fence.tool_epoch)
+        self._voice_snapshot_by_fence[key] = GenerationVoiceSnapshot(
+            profile_id=profile_id,
+            resource_id=resource_id,
+            speaker_sha256=speaker_sha256,
+            voice_kind=voice_kind,
+        )
+        while len(self._voice_snapshot_by_fence) > RESPONSE_PROVENANCE_MAX_FENCES:
+            self._voice_snapshot_by_fence.pop(next(iter(self._voice_snapshot_by_fence)))
+        return True
+
+    def generation_voice_for(
+        self,
+        fence: GenerationFence,
+    ) -> GenerationVoiceSnapshot | None:
+        return self._voice_snapshot_by_fence.get(
+            (fence.turn_id, fence.generation_id, fence.tool_epoch)
+        )
 
     @classmethod
     def _contains_forbidden_provenance_key(cls, value: object) -> bool:
@@ -525,7 +616,20 @@ class DuplexRuntime:
         stored = self._response_provenance_by_fence.get(
             (fence.turn_id, fence.generation_id, fence.tool_epoch)
         )
-        return json.loads(json.dumps(stored)) if stored is not None else None
+        if stored is None:
+            return None
+        provenance = cast(dict[str, Any], json.loads(json.dumps(stored)))
+        voice = self.generation_voice_for(fence)
+        if voice is not None:
+            provenance.update(
+                {
+                    "tts_model": voice.resource_id,
+                    "actual_voice_profile_id": voice.profile_id,
+                    "actual_voice_resource_id": voice.resource_id,
+                    "actual_voice_speaker_sha256": voice.speaker_sha256,
+                }
+            )
+        return provenance
 
     def set_result_speaker(self, speaker: Callable[[str], Any]) -> None:
         self._result_speaker = speaker
@@ -1220,11 +1324,12 @@ class DuplexRuntime:
         status: str = "ok",
         detail: dict[str, Any] | None = None,
         mono_ns: int | None = None,
+        fence: GenerationFence | None = None,
     ) -> None:
         """Record and publish one server-side first-audio stage without blocking media."""
         if status == "ok":
             self.latency_trace.mark(name, mono_ns=mono_ns)
-        fence = self.fence
+        fence = fence or self.fence
         event: dict[str, Any] = {
             "type": "audio_trace",
             "source": "agent",
@@ -1348,16 +1453,12 @@ class DuplexRuntime:
                             )
                 disclosures = provenance.get("disclosures")
                 event["preview_provenance"] = {
-                    "digital_self_version_id": provenance[
-                        "digital_self_version_id"
-                    ][:128],
+                    "digital_self_version_id": provenance["digital_self_version_id"][:128],
                     "manifest_sha256": provenance["manifest_sha256"][:64],
                     "turn_id": archive_fence.turn_id,
                     "generation_id": archive_fence.generation_id,
                     "tool_epoch": archive_fence.tool_epoch,
-                    "epistemic_status": str(
-                        provenance.get("epistemic_status") or "unknown"
-                    )[:32],
+                    "epistemic_status": str(provenance.get("epistemic_status") or "unknown")[:32],
                     "disclosures": (
                         [str(value)[:64] for value in disclosures[:4]]
                         if isinstance(disclosures, list)

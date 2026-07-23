@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -8,7 +10,7 @@ from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 from services.archive.object_store import EncryptedLocalObjectStore
 from services.control_api.app.main import create_app
-from services.voice_profile.domain import ProviderVoice, VoiceResolution
+from services.voice_profile.domain import ProviderVoice, VoiceProfile, VoiceResolution
 from services.voice_profile.manager import VoiceProfileManager
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.sample_url import VoiceSampleURLSigner
@@ -59,7 +61,10 @@ class LegacyResolutionStub:
         return VoiceResolution(
             mode="active",
             profile_id="legacy-cosyvoice-profile",
+            provider="alibaba_model_studio",
+            voice_kind="personal",
             model="cosyvoice-v3.5-flash",
+            resource_id="cosyvoice-v3.5-flash",
             voice_id="cosyvoice-v3.5-flash-clone-owner001",
         )
 
@@ -71,6 +76,86 @@ class ActivationStub:
     async def activate(self, *, account_id: str, profile_id: str) -> None:
         self.called = True
         raise AssertionError(f"unexpected activation: {account_id=} {profile_id=}")
+
+    async def profiles(self, *, account_id: str) -> tuple[VoiceProfile, ...]:
+        del account_id
+        return (
+            _voice_profile(
+                "legacy-cosyvoice-profile", "alibaba_model_studio", "cosyvoice-v3.5-flash"
+            ),
+        )
+
+
+class DoubaoActivationStub:
+    def __init__(self) -> None:
+        self.called = False
+        self.profile = _voice_profile(
+            "doubao-personal-profile",
+            "volcengine_doubao",
+            "seed-icl-2.0",
+        )
+
+    async def profiles(self, *, account_id: str) -> tuple[VoiceProfile, ...]:
+        del account_id
+        return (self.profile,)
+
+    async def activate(self, *, account_id: str, profile_id: str) -> VoiceProfile:
+        assert account_id and profile_id == self.profile.profile_id
+        self.called = True
+        return self.profile
+
+
+class FrozenPreviewResolutionStub:
+    def __init__(self, resolution: VoiceResolution) -> None:
+        self.resolution = resolution
+
+    async def resolve(self, *, account_id: str) -> VoiceResolution:
+        assert account_id
+        return self.resolution
+
+
+class ProviderDeletionConfirmationStub:
+    def __init__(self) -> None:
+        self.confirmations: list[dict[str, str]] = []
+
+    async def confirm_provider_deletion(
+        self,
+        *,
+        account_id: str,
+        profile_id: str,
+        evidence_reference: str,
+    ) -> VoiceProfile:
+        self.confirmations.append(
+            {
+                "account_id": account_id,
+                "profile_id": profile_id,
+                "evidence_reference": evidence_reference,
+            }
+        )
+        return replace(
+            _voice_profile(profile_id, "volcengine_doubao", "seed-icl-2.0"),
+            status="revoked",
+            deletion_status="completed",
+            revoked_at=datetime.now(UTC),
+        )
+
+
+def _voice_profile(profile_id: str, provider: str, target_model: str) -> VoiceProfile:
+    return VoiceProfile(
+        profile_id=profile_id,
+        sample_id="sample-001",
+        version_number=1,
+        provider=provider,
+        provider_region="cn-beijing",
+        target_model=target_model,
+        provider_voice_id="smoke-verified-synth-speaker",
+        status="candidate",
+        evaluation_status="passed",
+        quality_status="passed",
+        deletion_status="not_requested",
+        provider_expires_at=None,
+        created_at=datetime.now(UTC),
+    )
 
 
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -94,6 +179,48 @@ def test_control_api_selects_postgres_voice_profiles_with_archive_dsn(
     app = create_app()
 
     assert isinstance(app.state.voice_profile_manager, PostgresVoiceProfileManager)
+
+
+@pytest.mark.asyncio
+async def test_manual_provider_cleanup_requires_dedicated_token_and_is_audited(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "MEMORIA_VOICE_CLEANUP_TOKEN",
+        "test-voice-cleanup-material-long-enough",
+    )
+    app = create_app()
+    manager = ProviderDeletionConfirmationStub()
+    app.state.voice_profile_manager = manager
+    body = {
+        "account_id": "voice-owner",
+        "evidence_reference": "doubao-console-ticket/cleanup-001",
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        rejected = await client.post(
+            "/v1/voices/profiles/personal-v1/provider-deletion-confirmations",
+            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
+            json=body,
+        )
+        confirmed = await client.post(
+            "/v1/voices/profiles/personal-v1/provider-deletion-confirmations",
+            headers={"X-Memoria-Voice-Cleanup-Token": ("test-voice-cleanup-material-long-enough")},
+            json=body,
+        )
+
+    assert rejected.status_code == 401
+    assert confirmed.status_code == 200
+    assert confirmed.json()["deletion_status"] == "completed"
+    assert manager.confirmations == [
+        {
+            "account_id": "voice-owner",
+            "profile_id": "personal-v1",
+            "evidence_reference": "doubao-console-ticket/cleanup-001",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -136,8 +263,112 @@ async def test_legacy_active_clone_resolves_to_selected_doubao_companion(
     assert resolved.json() == {
         "mode": "designed",
         "profile_id": "bright_peer",
+        "provider": "volcengine_doubao",
+        "voice_kind": "designed",
         "model": "seed-tts-2.0",
+        "resource_id": "seed-tts-2.0",
         "voice_id": None,
+        "speaker_sha256": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_self_preview_resolution_requires_exact_frozen_voice_ref(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    expires_at = "2027-07-23T00:00:00+00:00"
+    manager = FrozenPreviewResolutionStub(
+        VoiceResolution(
+            mode="active",
+            profile_id="voice-profile-1",
+            version_number=3,
+            provider="volcengine_doubao",
+            voice_kind="personal",
+            model="seed-icl-2.0",
+            resource_id="seed-icl-2.0",
+            voice_id="provider-secret-id",
+            provider_expires_at=datetime.fromisoformat(expires_at),
+        )
+    )
+    app.state.voice_profile_manager = manager
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "frozen-preview-owner", "password": "safe-password"},
+            )
+        ).json()
+        app.state.memory_store.add_voice_session(
+            session_id="frozen-preview-session",
+            user_id=identity["user_id"],
+            room_name="room-frozen-preview-session",
+            voice_backend="cascade",
+            created_at=datetime.now(UTC).isoformat(),
+            interaction_mode="self_preview",
+            mode_policy_version="s8-v1",
+            digital_self_version_id="digital-self-1",
+            digital_self_manifest_sha256="manifest-1",
+            preview_grant_id="grant-1",
+            self_preview_perspective="owner",
+            voice_profile_id="voice-profile-1",
+            voice_profile_version=3,
+            voice_provider="volcengine_doubao",
+            voice_model="seed-icl-2.0",
+            voice_resource_id="seed-icl-2.0",
+            voice_provider_expires_at=expires_at,
+            voice_speaker_sha256=(
+                "5235c7027839d3b116078b4f0f00e87c91437c81836a347f3c2a8f48e56f9558"
+            ),
+            fallback_voice_profile_id="bright_peer",
+            fallback_voice_provider="volcengine_doubao",
+            fallback_voice_model="seed-tts-2.0",
+            fallback_voice_resource_id="seed-tts-2.0",
+        )
+        exact = await client.post(
+            "/v1/voices/session-resolution",
+            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
+            json={"session_id": "frozen-preview-session"},
+        )
+        manager.resolution = VoiceResolution(
+            mode="active",
+            profile_id="voice-profile-1",
+            version_number=4,
+            provider="volcengine_doubao",
+            voice_kind="personal",
+            model="seed-icl-2.0",
+            resource_id="seed-icl-2.0",
+            voice_id="new-provider-secret-id",
+            provider_expires_at=datetime.fromisoformat(expires_at),
+        )
+        mismatch = await client.post(
+            "/v1/voices/session-resolution",
+            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
+            json={"session_id": "frozen-preview-session"},
+        )
+
+    assert exact.json() == {
+        "mode": "active",
+        "profile_id": "voice-profile-1",
+        "provider": "volcengine_doubao",
+        "voice_kind": "personal",
+        "model": "seed-icl-2.0",
+        "resource_id": "seed-icl-2.0",
+        "voice_id": "provider-secret-id",
+        "speaker_sha256": ("5235c7027839d3b116078b4f0f00e87c91437c81836a347f3c2a8f48e56f9558"),
+    }
+    assert mismatch.json() == {
+        "mode": "designed",
+        "profile_id": "bright_peer",
+        "provider": "volcengine_doubao",
+        "voice_kind": "designed",
+        "model": "seed-tts-2.0",
+        "resource_id": "seed-tts-2.0",
+        "voice_id": None,
+        "speaker_sha256": None,
     }
 
 
@@ -167,6 +398,34 @@ async def test_doubao_runtime_rejects_new_cosyvoice_clone_activation(
     assert response.status_code == 409
     assert response.json()["detail"] == "当前豆包语音链路不支持激活历史 CosyVoice 克隆音色"
     assert not manager.called
+
+
+@pytest.mark.asyncio
+async def test_doubao_runtime_allows_seed_icl_personal_clone_activation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("TTS_PROVIDER", "doubao")
+    app = create_app()
+    manager = DoubaoActivationStub()
+    app.state.voice_profile_manager = manager
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "doubao-seed-icl-owner", "password": "safe-password"},
+            )
+        ).json()
+        response = await client.post(
+            "/v1/voices/profiles/doubao-personal-profile/activate",
+            headers={"Authorization": f"Bearer {identity['access_token']}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "volcengine_doubao"
+    assert manager.called
 
 
 @pytest.mark.asyncio
@@ -321,33 +580,48 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
         None,
         "cosyvoice-v3.5-flash",
     }
-    assert next(
+    candidate_preview_voice_id = next(
         item["voice_id"] for item in preview_renderer.requests if item["model"] is not None
-    ) == resolved.json()["voice_id"]
+    )
+    assert candidate_preview_voice_id is not None
     assert evaluated.json()["status"] == "passed"
     assert measured.json()["status"] == "passed"
     assert activated.json()["status"] == "active"
-    assert resolved.json()["mode"] == "active"
-    assert resolved.json()["profile_id"] == profile["profile_id"]
-    assert resolved.json()["model"] == "cosyvoice-v3.5-flash"
-    assert resolved.json()["voice_id"].startswith("cosyvoice-v3.5-flash-clone-")
+    assert resolved.json() == {
+        "mode": "designed",
+        "profile_id": "warm_companion",
+        "provider": "volcengine_doubao",
+        "voice_kind": "designed",
+        "model": "seed-tts-2.0",
+        "resource_id": "seed-tts-2.0",
+        "voice_id": None,
+        "speaker_sha256": None,
+    }
     assert revoked.json()["status"] == "revoked"
     assert revoked.json()["deletion_status"] == "completed"
     assert fallback.json() == {
         "mode": "designed",
         "profile_id": "warm_companion",
+        "provider": "volcengine_doubao",
+        "voice_kind": "designed",
         "model": "seed-tts-2.0",
+        "resource_id": "seed-tts-2.0",
         "voice_id": None,
+        "speaker_sha256": None,
     }
     assert selected.status_code == 200
     assert designed.json() == {
         "mode": "designed",
         "profile_id": "warm_companion",
+        "provider": "volcengine_doubao",
+        "voice_kind": "designed",
         "model": "seed-tts-2.0",
+        "resource_id": "seed-tts-2.0",
         "voice_id": None,
+        "speaker_sha256": None,
     }
     assert unavailable_sample.status_code == 404
-    assert provider.deleted == [resolved.json()["voice_id"]]
+    assert provider.deleted == [candidate_preview_voice_id]
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import hmac
 from typing import Annotated, Any, Literal, cast
 
@@ -20,6 +21,7 @@ from services.common.companions import (
 from services.control_api.app.account_gate import require_writable_account
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.mode_policy import FrozenMode
 from services.control_api.app.security import (
     AuthenticatedUser,
     require_active_voice_session,
@@ -70,6 +72,21 @@ def _require_internal_token(
     expected = cast(ControlSettings, request.app.state.settings).internal_token("voice_resolution")
     if not expected or token is None or not hmac.compare_digest(token, expected):
         raise HTTPException(status_code=401, detail="valid internal voice token required")
+
+
+def _require_cleanup_token(
+    request: Request,
+    token: Annotated[
+        str | None,
+        Header(alias="X-Memoria-Voice-Cleanup-Token"),
+    ] = None,
+) -> None:
+    expected = cast(ControlSettings, request.app.state.settings).internal_token("voice_cleanup")
+    if not expected or token is None or not hmac.compare_digest(token, expected):
+        raise HTTPException(
+            status_code=401,
+            detail="valid internal voice cleanup token required",
+        )
 
 
 def _profile_payload(profile: VoiceProfile) -> dict[str, Any]:
@@ -402,10 +419,15 @@ async def activate_profile(
 ) -> dict[str, Any]:
     settings = cast(ControlSettings, request.app.state.settings)
     if settings.tts_provider == "doubao":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="当前豆包语音链路不支持激活历史 CosyVoice 克隆音色",
-        )
+        profiles = await _manager(request).profiles(account_id=user.user_id)
+        legacy = next((profile for profile in profiles if profile.profile_id == profile_id), None)
+        if legacy is not None and (
+            legacy.provider != "volcengine_doubao" or legacy.target_model != "seed-icl-2.0"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="当前豆包语音链路不支持激活历史 CosyVoice 克隆音色",
+            )
     try:
         profile = await _manager(request).activate(
             account_id=user.user_id,
@@ -438,11 +460,44 @@ async def revoke_profile(
             status_code=503,
             detail="声音资产删除未完成，请稍后重试",
         ) from exc
-    if profile.deletion_status != "completed":
+    if profile.deletion_status == "failed":
         raise HTTPException(
             status_code=503,
             detail="声音资产删除未完成，请稍后重试",
         )
+    return _profile_payload(profile)
+
+
+class ProviderDeletionConfirmationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    account_id: str = Field(min_length=1, max_length=128)
+    evidence_reference: str = Field(
+        min_length=8,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+    )
+
+
+@router.post("/profiles/{profile_id}/provider-deletion-confirmations")
+async def confirm_provider_deletion(
+    profile_id: str,
+    body: ProviderDeletionConfirmationCreate,
+    request: Request,
+    _: Annotated[None, Depends(_require_cleanup_token)],
+) -> dict[str, Any]:
+    """Converge a manual provider cleanup after operator-side verification."""
+
+    try:
+        profile = await _manager(request).confirm_provider_deletion(
+            account_id=body.account_id,
+            profile_id=profile_id,
+            evidence_reference=body.evidence_reference,
+        )
+    except EvidenceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="voice profile not found") from exc
+    except EvaluationRequiredError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _profile_payload(profile)
 
 
@@ -459,40 +514,79 @@ async def session_resolution(
     _: Annotated[None, Depends(_require_internal_token)],
 ) -> dict[str, Any]:
     session = require_active_voice_session(request, body.session_id)
+    frozen = FrozenMode.from_session(session)
     account_id = str(session["user_id"])
-    resolution = await _manager(request).resolve(account_id=account_id)
-    settings = cast(ControlSettings, request.app.state.settings)
-    legacy_cosyvoice_profile = (
-        settings.tts_provider == "doubao"
-        and resolution.mode == "active"
-        and resolution.model is not None
-        and resolution.model.startswith("cosyvoice-v3.5-")
-    )
-    if resolution.mode == "fallback" or legacy_cosyvoice_profile:
-        # The companion is frozen with the session. Profile changes only affect
-        # future sessions and can never alter a running conversation's voice.
-        designed_profile = designed_voice_profile(
-            session.get("companion_style_id") or DEFAULT_COMPANION_ID
-        )
+    if frozen.interaction_mode == "companion":
+        designed_profile = designed_voice_profile(frozen.companion_style_id or DEFAULT_COMPANION_ID)
         if designed_profile is not None:
             return {
                 "mode": "designed",
                 "profile_id": designed_profile,
+                "provider": "volcengine_doubao",
+                "voice_kind": "designed",
                 "model": DESIGNED_VOICE_MODEL,
+                "resource_id": DESIGNED_VOICE_MODEL,
                 "voice_id": None,
+                "speaker_sha256": None,
             }
-        if legacy_cosyvoice_profile:
+    if frozen.interaction_mode == "self_preview":
+        resolution = await _manager(request).resolve(account_id=account_id)
+        speaker_sha256 = (
+            hashlib.sha256(resolution.voice_id.encode("utf-8")).hexdigest()
+            if resolution.voice_id is not None
+            else None
+        )
+        if (
+            resolution.mode == "active"
+            and resolution.voice_kind == "personal"
+            and resolution.profile_id == frozen.voice_profile_id
+            and resolution.version_number == frozen.voice_profile_version
+            and resolution.provider == frozen.voice_provider
+            and resolution.model == frozen.voice_model
+            and resolution.resource_id == frozen.voice_resource_id
+            and (
+                resolution.provider_expires_at.isoformat()
+                if resolution.provider_expires_at is not None
+                else None
+            )
+            == frozen.voice_provider_expires_at
+            and speaker_sha256 == frozen.voice_speaker_sha256
+        ):
             return {
-                "mode": "fallback",
-                "profile_id": None,
-                "model": None,
+                "mode": resolution.mode,
+                "profile_id": resolution.profile_id,
+                "provider": resolution.provider,
+                "voice_kind": resolution.voice_kind,
+                "model": resolution.model,
+                "resource_id": resolution.resource_id,
+                "voice_id": resolution.voice_id,
+                "speaker_sha256": speaker_sha256,
+            }
+        if (
+            frozen.fallback_voice_profile_id is not None
+            and frozen.fallback_voice_provider == "volcengine_doubao"
+            and frozen.fallback_voice_model == DESIGNED_VOICE_MODEL
+            and frozen.fallback_voice_resource_id == DESIGNED_VOICE_MODEL
+        ):
+            return {
+                "mode": "designed",
+                "profile_id": frozen.fallback_voice_profile_id,
+                "provider": frozen.fallback_voice_provider,
+                "voice_kind": "designed",
+                "model": frozen.fallback_voice_model,
+                "resource_id": frozen.fallback_voice_resource_id,
                 "voice_id": None,
+                "speaker_sha256": None,
             }
     return {
-        "mode": resolution.mode,
-        "profile_id": resolution.profile_id,
-        "model": resolution.model,
-        "voice_id": resolution.voice_id,
+        "mode": "fallback",
+        "profile_id": None,
+        "provider": None,
+        "voice_kind": None,
+        "model": None,
+        "resource_id": None,
+        "voice_id": None,
+        "speaker_sha256": None,
     }
 
 

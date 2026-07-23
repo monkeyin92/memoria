@@ -112,6 +112,7 @@ function candidateVoice(overrides = {}) {
     evaluation_status: "pending",
     quality_status: "pending",
     deletion_status: "not_requested",
+    provider: "volcengine_doubao",
     target_model: "cosyvoice-v3.5-plus",
     created_at: "2026-07-19T00:00:00Z",
     ...overrides,
@@ -918,6 +919,59 @@ describe("DigitalSelfPanel", () => {
     expect(mocks.activateVoiceProfile).not.toHaveBeenCalled();
   });
 
+  it("allows a fully evaluated Doubao seed-icl-2.0 candidate to activate", async () => {
+    voiceConsent = { policy_version: "voice-clone-v1", granted_at: "2026-07-19" };
+    voiceProfiles = [
+      candidateVoice({
+        provider: "volcengine_doubao",
+        target_model: "seed-icl-2.0",
+        evaluation_status: "passed",
+        quality_status: "passed",
+      }),
+    ];
+    mocks.activateVoiceProfile.mockImplementation(async () => {
+      voiceProfiles = [
+        candidateVoice({
+          provider: "volcengine_doubao",
+          target_model: "seed-icl-2.0",
+          status: "active",
+          evaluation_status: "passed",
+          quality_status: "passed",
+        }),
+      ];
+    });
+
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "启用个人声音" }));
+    await waitFor(() => expect(mocks.activateVoiceProfile).toHaveBeenCalledWith("voice-1"));
+    expect(
+      await screen.findAllByText(
+        /请重建并批准新的数字分身版本；只有该版本的数字分身预览会使用本人声音/,
+      ),
+    ).not.toHaveLength(0);
+  });
+
+  it("shows an active Doubao personal voice and its next-session boundary", async () => {
+    voiceConsent = { policy_version: "voice-clone-v1", granted_at: "2026-07-19" };
+    voiceProfiles = [
+      candidateVoice({
+        provider: "volcengine_doubao",
+        target_model: "seed-icl-2.0",
+        status: "active",
+        evaluation_status: "passed",
+        quality_status: "passed",
+      }),
+    ];
+
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    expect(
+      await screen.findByText(/个人声音已启用。请重建并批准新的数字分身版本/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "启用个人声音" })).not.toBeInTheDocument();
+  });
+
   it("marks a previously active clone as historical and not applied to Doubao", async () => {
     voiceConsent = { policy_version: "voice-clone-v1", granted_at: "2026-07-19" };
     voiceProfiles = [
@@ -934,6 +988,27 @@ describe("DigitalSelfPanel", () => {
       .toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "激活这个声音" }))
       .not.toBeInTheDocument();
+  });
+
+  it("shows revoked Doubao profiles as provider-cleanup pending without retrying or claiming completion", async () => {
+    voiceConsent = { policy_version: "voice-clone-v1", granted_at: "2026-07-19" };
+    voiceProfiles = [
+      candidateVoice({
+        provider: "volcengine_doubao",
+        target_model: "seed-icl-2.0",
+        status: "revoked",
+        deletion_status: "pending",
+      }),
+    ];
+
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    expect(await screen.findByText("供应商清理待处理")).toBeInTheDocument();
+    expect(
+      screen.getByText(/声音档案已停止使用；供应商清理待处理，需人工确认/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试删除声音资产" })).not.toBeInTheDocument();
+    expect(screen.queryByText("删除未完成")).not.toBeInTheDocument();
   });
 
   it("shows incomplete voice cleanup and retries revoked consent deletion", async () => {

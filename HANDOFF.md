@@ -30,8 +30,12 @@
   Digital Self manifest 条目。
 - S7 已完成：owner-only Self Preview、来源展开、“不像我”/纠正负面证据、
   版本比较、holdout Fidelity Evaluation、owner step-up、active speaker gate、
-  exact preview provenance、stale/version gate 与 H5 预览工作台均已打通；下一阶段进入
-  S8 本人声音、S9 Legacy、S10 全量验收与部署。
+  exact preview provenance、stale/version gate 与 H5 预览工作台均已打通。
+- S8 代码与本地自动化已完成：Doubao Voice Clone adapter、manifest v3 个人音色引用、
+  session 七字段冻结、所选伙伴独立 fallback、seed-tts/seed-icl 独立资源池、
+  generation-bound 实际音色 provenance、
+  首音频前一次安全回退和 H5 启用/版本重建流程均已落地。真实样本、synth speaker 映射、
+  本人盲测和真机听感仍是明确外部验收项；下一阶段进入 S9 Legacy。
 - 本轮不建设分布式、多区域、KMS、异地副本或 PITR；保留为正式商用前待办。当前
   response-plan first-write-wins 快照依赖 Control API 单进程，扩展到多副本前必须迁移到
   共享一致性存储。遗嘱、死亡认证与法律执行也不在当前工程能力内。
@@ -161,6 +165,35 @@
   将静态 build 冒充浏览器 acceptance。
 - Self Preview 已在本地完成 owner-only 预览与 Fidelity 闭环，Legacy 仍未开放；
   进入 S8/S9 前不能宣称本人声音或传承模式已可用。
+
+## 硅基生命路线 S8 验证
+
+- DigitalSelf manifest v3 可选绑定一个 exact VoiceProfile ref；Self Preview session 冻结
+  profile/version/provider/model/resource/expiry/speaker digest 七字段，并独立冻结所选伙伴
+  fallback。Companion 不绑定 personal voice；profile 撤销、过期、版本、expiry 或 digest
+  变化均回退会话所选伙伴，不读取进程默认伙伴。
+- Doubao runtime 将 `seed-tts-2.0` 与 `seed-icl-2.0` 分池；个人音色首音频前失败在同一
+  generation 只回退一次，首音频后不重放，旧 generation callback 不会污染新回答。
+- response provenance 只记录实际 profile/resource 和 speaker SHA-256；Control 再按冻结
+  session 核验；personal 的 version/expiry 必须完整，设计音色 digest 由服务端批准目录重算。
+  raw provider speaker ID、clone key 和样本正文均不进入 Archive/H5。
+- active profile 后续复评失败、质量失败或 Doubao expiry 缺失/过期时立即停止解析；
+  `pending/manual` 云端删除只能由独立 `voice_cleanup` 能力携带工单引用审计收敛，Agent/H5
+  不能调用。
+- H5 支持 v3 manifest、豆包个人音色启用、重建并批准新版本提示，以及过期、撤销和
+  `pending/manual` 供应商清理状态；日常陪伴始终使用伙伴音色。
+- 正式临时 PostgreSQL 17 + pgvector 全量：1079 passed、3 skipped、0 failed；总覆盖率
+  87.76%，orchestration 92%，protocol 92%。H5 18 files / 219 tests 与 production build
+  通过；Ruff、142 个 strict mypy source files、Shell/JSON、`git diff --check` 通过。
+- In-app browser：390×844 与 667×375 均显示“陪伴者有稳定但克制的工作风格 / 数字分身
+  独立成长”及“默认使用所选伙伴豆包设计音色”，无横向溢出；干净 reload 后 console
+  error/warn 为空。approved v1 + active owner voiceprint 已创建 `self_preview / s8-v1`
+  会话，并冻结玄墨 `low_magnetic / seed-tts-2.0` fallback；本机无 LiveKit，媒体连接未冒充
+  真实音频验收。
+- 未进行真实 provider/sample/device 验收：synth-ready speaker 映射保持 fail closed；未上传
+  本人录音，未宣称个人声音已真实复刻或应用。生产仍是 `20260721-224804`，尚未发布本分支。
+- S8 最终复审无 P0/P1；此前发现的复评门禁、canonical 版本绑定、首 PCM 后重放、
+  Archive 精确声音证明和人工删除收敛 5 项 P1 均已有回归测试。
 
 ## 当前生产
 

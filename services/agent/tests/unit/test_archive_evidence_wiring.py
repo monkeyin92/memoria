@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 
@@ -46,6 +47,34 @@ def _enable_owner_projection(runtime: DuplexRuntime) -> None:
             voice_profile=True,
             shadow_low_sensitivity_persona=True,
         )
+    )
+
+
+def _self_preview_voice_policy() -> ModePolicy:
+    return ModePolicy(
+        mode="self_preview",
+        policy_version="s8-v1",
+        companion_style_id=None,
+        style_version=None,
+        references=tuple(
+            sorted(
+                {
+                    "voice_profile_id": "personal-voice-1",
+                    "voice_profile_version": "1",
+                    "voice_provider": "volcengine_doubao",
+                    "voice_model": "seed-icl-2.0",
+                    "voice_resource_id": "seed-icl-2.0",
+                    "voice_provider_expires_at": "2026-08-01T00:00:00+00:00",
+                    "voice_speaker_sha256": "a" * 64,
+                    "fallback_voice_profile_id": "bright_peer",
+                    "fallback_voice_provider": "volcengine_doubao",
+                    "fallback_voice_model": "seed-tts-2.0",
+                    "fallback_voice_resource_id": "seed-tts-2.0",
+                }.items()
+            )
+        ),
+        capabilities=(),
+        companion_style=None,
     )
 
 
@@ -161,14 +190,20 @@ async def test_actual_heard_assistant_binds_bounded_response_provenance_to_exact
     runtime.set_evidence_publisher(capture)
 
     assert runtime.bind_response_provenance(runtime.fence, provenance) is True
-    assert runtime.bind_response_provenance(
-        runtime.fence.bump_generation(),
-        provenance,
-    ) is False
-    assert runtime.bind_response_provenance(
-        runtime.fence,
-        {**provenance, "instructions": "不得写入 archive"},
-    ) is False
+    assert (
+        runtime.bind_response_provenance(
+            runtime.fence.bump_generation(),
+            provenance,
+        )
+        is False
+    )
+    assert (
+        runtime.bind_response_provenance(
+            runtime.fence,
+            {**provenance, "instructions": "不得写入 archive"},
+        )
+        is False
+    )
 
     runtime.publish_transcript(
         speaker="assistant",
@@ -181,6 +216,80 @@ async def test_actual_heard_assistant_binds_bounded_response_provenance_to_exact
     assert published[0]["payload"]["response_provenance"] == provenance
     assert published[0]["tool_epoch"] == runtime.fence.tool_epoch
     await runtime.close()
+
+
+def test_generation_voice_snapshot_is_hashed_and_rejects_stale_fences() -> None:
+    runtime = DuplexRuntime.create(session_id="session-voice-snapshot")
+    _enable_owner_projection(runtime)
+    fence = runtime.fence
+    speaker_sha256 = hashlib.sha256(b"baseline-speaker").hexdigest()
+
+    assert runtime.bind_generation_voice(
+        fence,
+        profile_id="warm_companion",
+        resource_id="seed-tts-2.0",
+        speaker_sha256=speaker_sha256,
+        voice_kind="designed",
+    )
+    snapshot = runtime.generation_voice_for(fence)
+    assert snapshot is not None
+    assert snapshot.profile_id == "warm_companion"
+    assert snapshot.resource_id == "seed-tts-2.0"
+    assert snapshot.voice_kind == "designed"
+    assert snapshot.speaker_sha256 == speaker_sha256
+    assert not hasattr(snapshot, "speaker")
+
+    stale = fence.bump_generation()
+    assert not runtime.bind_generation_voice(
+        stale,
+        profile_id="stale",
+        resource_id="seed-tts-2.0",
+        speaker_sha256="b" * 64,
+        voice_kind="designed",
+    )
+    assert runtime.generation_voice_for(stale) is None
+
+
+def test_self_preview_generation_voice_requires_frozen_personal_digest_and_fallback() -> None:
+    runtime = DuplexRuntime.create(session_id="session-self-preview-voice")
+    runtime.set_mode_policy(_self_preview_voice_policy())
+    fence = runtime.fence
+
+    assert not runtime.bind_generation_voice(
+        fence,
+        profile_id="personal-voice-1",
+        resource_id="seed-icl-2.0",
+        speaker_sha256="b" * 64,
+        voice_kind="personal",
+    )
+    assert runtime.bind_generation_voice(
+        fence,
+        profile_id="personal-voice-1",
+        resource_id="seed-icl-2.0",
+        speaker_sha256="a" * 64,
+        voice_kind="personal",
+    )
+    assert not runtime.bind_generation_voice(
+        fence,
+        profile_id="warm_companion",
+        resource_id="seed-tts-2.0",
+        speaker_sha256="c" * 64,
+        voice_kind="designed",
+    )
+    assert not runtime.bind_generation_voice(
+        fence,
+        profile_id=None,
+        resource_id="seed-tts-2.0",
+        speaker_sha256="c" * 64,
+        voice_kind="designed",
+    )
+    assert runtime.bind_generation_voice(
+        fence,
+        profile_id="bright_peer",
+        resource_id="seed-tts-2.0",
+        speaker_sha256="c" * 64,
+        voice_kind="designed",
+    )
 
 
 @pytest.mark.asyncio

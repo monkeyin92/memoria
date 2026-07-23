@@ -2577,9 +2577,11 @@ body {
 .digital-status[data-status="passed"] { background: var(--soft-green); color: var(--success); }
 .digital-status[data-status="candidate"],
 .digital-status[data-status="pending"],
+.digital-status[data-status="cleanup_pending"],
 .digital-status[data-status="shadow"] { background: var(--soft-amber); color: #865f18; }
 .digital-status[data-status="failed"],
 .digital-status[data-status="revoked"],
+.digital-status[data-status="expired"],
 .digital-status[data-status="disabled"] { background: var(--soft-red); color: var(--danger); }
 .digital-explainer {
   margin: 12px 0 0;

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import asyncpg
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from services.archive.domain import (
     ContextQuery,
@@ -23,8 +24,13 @@ from services.archive.domain import (
 )
 from services.archive.object_store import ObjectRef
 from services.archive.postgres_archive import PostgresLifeArchive
+from services.common.companions import designed_voice_speaker_sha256
 from services.control_api.app.main import create_app
-from services.control_api.app.routes.archive import _observe_persona
+from services.control_api.app.routes.archive import (
+    ResponseProvenanceCreate,
+    _canonical_actual_voice,
+    _observe_persona,
+)
 
 
 class PersonaObservationStub:
@@ -171,11 +177,194 @@ def _response_provenance(
         "disclosures": ["inference", "privacy_refusal"],
         "llm_provider": "qwen",
         "llm_model": "qwen-test",
-        "tts_provider": "doubao",
+        "tts_provider": "volcengine_doubao",
         "tts_model": "seed-tts-2.0",
-        "actual_voice_profile_id": None,
+        "actual_voice_profile_id": "warm_companion",
+        "actual_voice_resource_id": "seed-tts-2.0",
+        "actual_voice_speaker_sha256": designed_voice_speaker_sha256("warm_companion"),
         **overrides,
     }
+
+
+def test_personal_voice_archive_requires_exact_frozen_speaker_digest() -> None:
+    frozen_digest = "1" * 64
+    provider_expires_at = "2027-07-23T00:00:00+00:00"
+    session = {
+        "interaction_mode": "self_preview",
+        "mode_policy_version": "s8-v1",
+        "voice_profile_id": "voice-profile-1",
+        "voice_profile_version": 1,
+        "voice_provider": "volcengine_doubao",
+        "voice_model": "seed-icl-2.0",
+        "voice_resource_id": "seed-icl-2.0",
+        "voice_provider_expires_at": provider_expires_at,
+        "voice_speaker_sha256": frozen_digest,
+    }
+    submitted = ResponseProvenanceCreate.model_validate(
+        _response_provenance(
+            session_id="voice-digest-session",
+            turn_id=1,
+            generation_id=1,
+            source_refs=[],
+            interaction_mode="self_preview",
+            tts_model="seed-icl-2.0",
+            actual_voice_profile_id="voice-profile-1",
+            actual_voice_profile_version=1,
+            actual_voice_resource_id="seed-icl-2.0",
+            actual_voice_provider_expires_at=provider_expires_at,
+            actual_voice_speaker_sha256=frozen_digest,
+        )
+    )
+
+    assert _canonical_actual_voice(
+        submitted=submitted,
+        session=session,
+        interaction_mode="self_preview",
+    ) == (
+        "voice-profile-1",
+        1,
+        "seed-icl-2.0",
+        provider_expires_at,
+        frozen_digest,
+    )
+
+    for update in (
+        {"actual_voice_profile_version": 2},
+        {"actual_voice_provider_expires_at": "2027-07-24T00:00:00+00:00"},
+        {"actual_voice_speaker_sha256": "2" * 64},
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            _canonical_actual_voice(
+                submitted=submitted.model_copy(update=update),
+                session=session,
+                interaction_mode="self_preview",
+            )
+        assert exc_info.value.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "missing",
+    ["actual_voice_profile_version", "actual_voice_provider_expires_at"],
+)
+def test_personal_voice_provenance_requires_version_and_expiry(missing: str) -> None:
+    values = _response_provenance(
+        session_id="incomplete-personal-provenance",
+        turn_id=1,
+        generation_id=1,
+        source_refs=[],
+        interaction_mode="self_preview",
+        tts_model="seed-icl-2.0",
+        actual_voice_profile_id="voice-profile-1",
+        actual_voice_profile_version=1,
+        actual_voice_resource_id="seed-icl-2.0",
+        actual_voice_provider_expires_at="2027-07-23T00:00:00+00:00",
+        actual_voice_speaker_sha256="1" * 64,
+    )
+    values.pop(missing)
+
+    with pytest.raises(ValueError, match="requires version and expiry"):
+        ResponseProvenanceCreate.model_validate(values)
+
+
+@pytest.mark.parametrize("missing", ["voice_profile_version", "voice_provider_expires_at"])
+def test_personal_voice_archive_rejects_an_incomplete_frozen_contract(
+    missing: str,
+) -> None:
+    provider_expires_at = "2027-07-23T00:00:00+00:00"
+    session = {
+        "interaction_mode": "self_preview",
+        "mode_policy_version": "s8-v1",
+        "voice_profile_id": "voice-profile-1",
+        "voice_profile_version": 1,
+        "voice_provider": "volcengine_doubao",
+        "voice_model": "seed-icl-2.0",
+        "voice_resource_id": "seed-icl-2.0",
+        "voice_provider_expires_at": provider_expires_at,
+        "voice_speaker_sha256": "1" * 64,
+    }
+    session.pop(missing)
+    submitted = ResponseProvenanceCreate.model_validate(
+        _response_provenance(
+            session_id="incomplete-personal-voice-session",
+            turn_id=1,
+            generation_id=1,
+            source_refs=[],
+            interaction_mode="self_preview",
+            tts_model="seed-icl-2.0",
+            actual_voice_profile_id="voice-profile-1",
+            actual_voice_profile_version=1,
+            actual_voice_resource_id="seed-icl-2.0",
+            actual_voice_provider_expires_at=provider_expires_at,
+            actual_voice_speaker_sha256="1" * 64,
+        )
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        _canonical_actual_voice(
+            submitted=submitted,
+            session=session,
+            interaction_mode="self_preview",
+        )
+    assert exc_info.value.status_code == 409
+
+
+@pytest.mark.parametrize(
+    ("interaction_mode", "session", "profile_id"),
+    [
+        (
+            "companion",
+            {
+                "interaction_mode": "companion",
+                "mode_policy_version": "s2-v1",
+                "companion_style_id": "starlight",
+            },
+            "warm_companion",
+        ),
+        (
+            "self_preview",
+            {
+                "interaction_mode": "self_preview",
+                "mode_policy_version": "s8-v1",
+                "fallback_voice_profile_id": "bright_peer",
+                "fallback_voice_provider": "volcengine_doubao",
+                "fallback_voice_model": "seed-tts-2.0",
+                "fallback_voice_resource_id": "seed-tts-2.0",
+            },
+            "bright_peer",
+        ),
+    ],
+)
+def test_designed_voice_archive_requires_the_canonical_speaker_digest(
+    interaction_mode: str,
+    session: dict[str, object],
+    profile_id: str,
+) -> None:
+    canonical_digest = designed_voice_speaker_sha256(profile_id)
+    submitted = ResponseProvenanceCreate.model_validate(
+        _response_provenance(
+            session_id="designed-voice-session",
+            turn_id=1,
+            generation_id=1,
+            source_refs=[],
+            interaction_mode=interaction_mode,
+            actual_voice_profile_id=profile_id,
+            actual_voice_speaker_sha256=canonical_digest,
+        )
+    )
+
+    assert _canonical_actual_voice(
+        submitted=submitted,
+        session=session,
+        interaction_mode=interaction_mode,
+    ) == (profile_id, None, "seed-tts-2.0", None, canonical_digest)
+
+    with pytest.raises(HTTPException) as exc_info:
+        _canonical_actual_voice(
+            submitted=submitted.model_copy(update={"actual_voice_speaker_sha256": "f" * 64}),
+            session=session,
+            interaction_mode=interaction_mode,
+        )
+    assert exc_info.value.status_code == 409
 
 
 @pytest.mark.asyncio
@@ -259,8 +448,12 @@ async def test_account_can_append_and_read_an_idempotent_evidence_event(
             "payload": {"text": "我在杭州读过书。"},
         }
         internal_headers = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
-        first = await client.post("/v1/archive/session-events", headers=internal_headers, json=event)
-        duplicate = await client.post("/v1/archive/session-events", headers=internal_headers, json=event)
+        first = await client.post(
+            "/v1/archive/session-events", headers=internal_headers, json=event
+        )
+        duplicate = await client.post(
+            "/v1/archive/session-events", headers=internal_headers, json=event
+        )
         timeline = await client.get("/v1/archive/timeline", headers=headers)
 
     assert first.status_code == 201
@@ -313,10 +506,7 @@ async def test_session_prompt_kind_accepts_valid_internal_value_and_defaults_inv
         )
         timeline = await client.get("/v1/archive/timeline", headers=bearer)
 
-    kinds = {
-        item["event_id"]: item["payload"]["prompt_kind"]
-        for item in timeline.json()["items"]
-    }
+    kinds = {item["event_id"]: item["payload"]["prompt_kind"] for item in timeline.json()["items"]}
     assert kinds == {"prompt-invalid": "spontaneous", "prompt-leading": "leading"}
 
 
@@ -510,9 +700,9 @@ async def test_raw_voice_consent_archives_owner_audio_and_revocation_deletes_blo
             headers=internal,
             json=event,
         )
-        transcript_payload = (
-            await client.get("/v1/archive/timeline", headers=headers)
-        ).json()["items"][0]["payload"]
+        transcript_payload = (await client.get("/v1/archive/timeline", headers=headers)).json()[
+            "items"
+        ][0]["payload"]
         body = {
             **event,
             "payload": transcript_payload,
@@ -1038,9 +1228,7 @@ async def test_guest_and_uncertain_evidence_is_recorded_but_hidden_from_owner_co
         identity = (await client.post("/v1/auth/anonymous")).json()
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         session = (await client.post("/v1/sessions", headers=headers, json={})).json()
-        classified_session = (
-            await client.post("/v1/sessions", headers=headers, json={})
-        ).json()
+        classified_session = (await client.post("/v1/sessions", headers=headers, json={})).json()
         responses = []
         for speaker_class in ("guest", "uncertain"):
             responses.append(
@@ -1176,9 +1364,13 @@ async def test_agent_records_session_event_without_trusting_an_account_id(
                         "disclosures": ["inference", "privacy_refusal"],
                         "llm_provider": "qwen",
                         "llm_model": "qwen-test",
-                        "tts_provider": "doubao",
+                        "tts_provider": "volcengine_doubao",
                         "tts_model": "seed-tts-2.0",
-                        "actual_voice_profile_id": None,
+                        "actual_voice_profile_id": "warm_companion",
+                        "actual_voice_resource_id": "seed-tts-2.0",
+                        "actual_voice_speaker_sha256": designed_voice_speaker_sha256(
+                            "warm_companion"
+                        ),
                     },
                 },
             },
@@ -1240,17 +1432,41 @@ async def test_agent_records_session_event_without_trusting_an_account_id(
                 },
             },
         )
+        mismatched_voice = await client.post(
+            "/v1/archive/session-events",
+            headers=internal_headers,
+            json={
+                "event_id": "session-event-voice-mismatch",
+                "session_id": session["session_id"],
+                "event_type": "assistant.playout_stopped",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "assistant",
+                "source": "generation_fence.actual_heard",
+                "turn_id": 1,
+                "generation_id": 2,
+                "tool_epoch": 0,
+                "payload": {
+                    "text": "这条回答伪造了实际使用的音色。",
+                    "actual_heard": True,
+                    "response_provenance": _response_provenance(
+                        session_id=session["session_id"],
+                        turn_id=1,
+                        generation_id=2,
+                        source_refs=[],
+                        actual_voice_profile_id="forged-profile",
+                    ),
+                },
+            },
+        )
         timeline = await client.get("/v1/archive/timeline", headers=headers)
 
     assert (parent.status_code, recorded.status_code) == (201, 201)
     assert mismatched_fence.status_code == 409
-    assert mismatched_fence.json()["detail"] == {
-        "code": "response_provenance_fence_mismatch"
-    }
+    assert mismatched_fence.json()["detail"] == {"code": "response_provenance_fence_mismatch"}
     assert forged_planner.status_code == 409
-    assert forged_planner.json()["detail"] == {
-        "code": "response_provenance_planner_invalid"
-    }
+    assert forged_planner.json()["detail"] == {"code": "response_provenance_planner_invalid"}
+    assert mismatched_voice.status_code == 409
+    assert mismatched_voice.json()["detail"] == {"code": "response_provenance_voice_mismatch"}
     assistant_payload = timeline.json()["items"][0]["payload"]
     assert assistant_payload["actual_heard"] is True
     assert assistant_payload["history_eligible"] is True
@@ -1263,12 +1479,17 @@ async def test_agent_records_session_event_without_trusting_an_account_id(
     assert provenance["speaker_model_version"] == "unavailable"
     assert provenance["speaker_profile_id"] is None
     assert provenance["speaker_template_version"] is None
-    assert provenance["source_refs"][0]["source_event_ids"] == [
-        "session-event-parent-001"
-    ]
+    assert provenance["source_refs"][0]["source_event_ids"] == ["session-event-parent-001"]
     assert provenance["epistemic_status"] == "not_applicable"
     assert provenance["epistemic_reason_codes"] == ["no_grounded_items"]
     assert provenance["disclosures"] == []
+    assert provenance["tts_provider"] == "volcengine_doubao"
+    assert provenance["tts_model"] == "seed-tts-2.0"
+    assert provenance["actual_voice_profile_id"] == "warm_companion"
+    assert provenance["actual_voice_resource_id"] == "seed-tts-2.0"
+    assert provenance["actual_voice_speaker_sha256"] == designed_voice_speaker_sha256(
+        "warm_companion"
+    )
     assert "score" not in provenance
 
 
@@ -1361,9 +1582,13 @@ async def test_response_provenance_rejects_guest_or_assistant_source_evidence(
                         "disclosures": [],
                         "llm_provider": "qwen",
                         "llm_model": "qwen-test",
-                        "tts_provider": "doubao",
+                        "tts_provider": "volcengine_doubao",
                         "tts_model": "seed-tts-2.0",
-                        "actual_voice_profile_id": None,
+                        "actual_voice_profile_id": "warm_companion",
+                        "actual_voice_resource_id": "seed-tts-2.0",
+                        "actual_voice_speaker_sha256": designed_voice_speaker_sha256(
+                            "warm_companion"
+                        ),
                     },
                 },
             },
@@ -1427,7 +1652,7 @@ async def test_response_provenance_requires_a_nonempty_source_ref(
                                 "item_id": "empty-source-claim",
                                 "source_event_ids": [],
                             }
-                        ]
+                        ],
                     ),
                 },
             },
@@ -1483,7 +1708,12 @@ async def test_response_provenance_requires_projection_eligibility_and_allows_ow
         first_parent = await client.post(
             "/v1/archive/session-events",
             headers=internal,
-            json={**parent, "event_id": "missing-projection-parent", "turn_id": 1, "generation_id": 1},
+            json={
+                **parent,
+                "event_id": "missing-projection-parent",
+                "turn_id": 1,
+                "generation_id": 1,
+            },
         )
         missing_projection = await client.post(
             "/v1/archive/session-events",
@@ -1511,7 +1741,7 @@ async def test_response_provenance_requires_projection_eligibility_and_allows_ow
                                 "item_id": "missing-projection-claim",
                                 "source_event_ids": ["source-without-projection"],
                             }
-                        ]
+                        ],
                     ),
                 },
             },
@@ -1547,16 +1777,14 @@ async def test_response_provenance_requires_projection_eligibility_and_allows_ow
                                 "item_id": "owner-action-claim",
                                 "source_event_ids": ["owner-action-source"],
                             }
-                        ]
+                        ],
                     ),
                 },
             },
         )
 
     assert (first_parent.status_code, second_parent.status_code) == (201, 201)
-    assert missing_projection.json()["detail"] == {
-        "code": "response_provenance_source_invalid"
-    }
+    assert missing_projection.json()["detail"] == {"code": "response_provenance_source_invalid"}
     assert owner_action.status_code == 201
 
 
@@ -1621,9 +1849,11 @@ async def test_shadow_owner_candidate_archives_style_only_persona_snapshot_witho
         )
 
     assert (shadow_parent.status_code, response.status_code) == (201, 201)
-    provenance = (await app.state.life_archive.event(
-        account_id=identity["user_id"], event_id="shadow-style-response"
-    )).payload["response_provenance"]
+    provenance = (
+        await app.state.life_archive.event(
+            account_id=identity["user_id"], event_id="shadow-style-response"
+        )
+    ).payload["response_provenance"]
     assert provenance["epistemic_status"] == "not_applicable"
     assert provenance["disclosures"] == []
     assert provenance["source_refs"] == []
@@ -1832,9 +2062,7 @@ async def test_session_event_retry_ignores_delivery_timestamp_but_rejects_semant
         owner = (await client.post("/v1/auth/anonymous")).json()
         owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
         session = (await client.post("/v1/sessions", headers=owner_headers, json={})).json()
-        other_session = (
-            await client.post("/v1/sessions", headers=owner_headers, json={})
-        ).json()
+        other_session = (await client.post("/v1/sessions", headers=owner_headers, json={})).json()
         other_owner = (await client.post("/v1/auth/anonymous")).json()
         other_owner_headers = {"Authorization": f"Bearer {other_owner['access_token']}"}
         other_owner_session = (
@@ -1987,7 +2215,11 @@ async def test_agent_gets_only_confirmed_owner_memory_from_the_session_account(
         ).json()
 
         events = (
-            ("first-confirmed", first_session["session_id"], "我们家的家训是答应别人的事一定做到。"),
+            (
+                "first-confirmed",
+                first_session["session_id"],
+                "我们家的家训是答应别人的事一定做到。",
+            ),
             ("first-candidate", first_session["session_id"], "我在杭州读过书。"),
             ("second-confirmed", second_session["session_id"], "我们家的家训是每天早睡。"),
         )
@@ -2057,8 +2289,7 @@ async def test_agent_gets_only_confirmed_owner_memory_from_the_session_account(
 
     assert owner.status_code == 200
     assert {
-        (item["kind"], item["source_event_id"], item["status"])
-        for item in owner.json()["items"]
+        (item["kind"], item["source_event_id"], item["status"]) for item in owner.json()["items"]
     } == {
         ("claim", "first-confirmed", "confirmed"),
         ("knowledge", "first-confirmed", "confirmed"),
@@ -2366,9 +2597,7 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
             json={"username": "delete-owner", "password": "safe-passphrase"},
         )
         replacement_body = replacement.json()
-        replacement_headers = {
-            "Authorization": f"Bearer {replacement_body['access_token']}"
-        }
+        replacement_headers = {"Authorization": f"Bearer {replacement_body['access_token']}"}
         replacement_profile = await client.get(
             f"/v1/memory/profile/{replacement_body['user_id']}",
             headers=replacement_headers,

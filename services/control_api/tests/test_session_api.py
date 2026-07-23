@@ -894,6 +894,7 @@ def test_production_config_requires_immutable_release_tag() -> None:
         MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
         MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
+        MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-long-enough",
         MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
@@ -929,6 +930,7 @@ def _valid_archive_pipeline_settings(**overrides: str) -> ControlSettings:
         "MEMORIA_MEMORY_READ_TOKEN": "test-memory-read-material-long-enough",
         "MEMORIA_PERSONA_READ_TOKEN": "test-persona-read-material-long-enough",
         "MEMORIA_VOICE_RESOLUTION_TOKEN": "test-voice-resolve-material-long-enough",
+        "MEMORIA_VOICE_CLEANUP_TOKEN": "test-voice-cleanup-material-long-enough",
         "MEMORIA_INTERACTION_POLICY_TOKEN": "test-interaction-policy-material-long-enough",
         "MEMORIA_RESPONSE_PLAN_TOKEN": "test-response-plan-material-long-enough",
         "MEMORIA_ARCHIVE_DATABASE_URL": "postgresql://archive:test@db/memoria",
@@ -950,7 +952,7 @@ def _valid_archive_pipeline_settings(**overrides: str) -> ControlSettings:
 def test_production_requires_a_response_plan_capability_token() -> None:
     settings = _valid_archive_pipeline_settings(MEMORIA_RESPONSE_PLAN_TOKEN="")
 
-    with pytest.raises(ValueError, match="seven capability-scoped"):
+    with pytest.raises(ValueError, match="eight capability-scoped"):
         settings.validate_production()
 
 
@@ -1010,6 +1012,7 @@ def test_production_rejects_reused_internal_capability_tokens() -> None:
         MEMORIA_MEMORY_READ_TOKEN=shared,
         MEMORIA_PERSONA_READ_TOKEN=shared,
         MEMORIA_VOICE_RESOLUTION_TOKEN=shared,
+        MEMORIA_VOICE_CLEANUP_TOKEN=shared,
         MEMORIA_INTERACTION_POLICY_TOKEN=shared,
         MEMORIA_RESPONSE_PLAN_TOKEN=shared,
     )
@@ -1034,6 +1037,7 @@ def test_production_requires_an_independent_message_idempotency_secret() -> None
         MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-that-is-long-enough",
         MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-that-is-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-that-is-long-enough",
+        MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-that-is-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-that-is-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-that-is-long-enough",
     )
@@ -1056,6 +1060,7 @@ def test_production_rejects_the_development_message_idempotency_secret() -> None
         MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
         MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
+        MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-long-enough",
     )
@@ -1109,6 +1114,7 @@ def test_production_config_requires_an_independent_archive_object_key() -> None:
         MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
         MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
+        MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-long-enough",
         MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
@@ -1155,6 +1161,7 @@ def test_production_rejects_reused_voice_sample_and_speaker_template_key() -> No
         MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
         MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
+        MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-long-enough",
         MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
@@ -1192,6 +1199,7 @@ def test_production_rejects_a_shared_archive_and_voice_object_bucket() -> None:
         MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
         MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
+        MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-long-enough",
         MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
@@ -1228,6 +1236,7 @@ def test_production_config_requires_formal_speaker_secrets_and_model() -> None:
         MEMORIA_MEMORY_READ_TOKEN="test-memory-read-material-long-enough",
         MEMORIA_PERSONA_READ_TOKEN="test-persona-read-material-long-enough",
         MEMORIA_VOICE_RESOLUTION_TOKEN="test-voice-resolve-material-long-enough",
+        MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-long-enough",
         MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",

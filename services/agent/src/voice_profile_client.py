@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -12,6 +13,9 @@ from services.agent.src.providers.doubao_voice_catalog import (
     catalog_by_id,
     resolve_approved_voice,
 )
+
+DOUBAO_PERSONAL_VOICE_MODEL = "seed-icl-2.0"
+DOUBAO_PROVIDER = "volcengine_doubao"
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +37,10 @@ class VoiceRuntimeProfile:
     profile_id: str
     model: str
     voice_id: str
+    provider: str = DOUBAO_PROVIDER
+    voice_kind: Literal["designed", "personal"] = "designed"
+    resource_id: str = DOUBAO_TTS_MODEL
+    speaker_sha256: str | None = None
 
 
 class VoiceProfileClient:
@@ -63,6 +71,13 @@ class VoiceProfileClient:
             response.raise_for_status()
             profile = self._parse(response.json())
         except (httpx.HTTPError, TypeError, ValueError):
+            cached = self._cache.get(session_id)
+            if (
+                self._epochs.get(session_id) == epoch
+                and cached is not None
+                and cached.voice_kind == "personal"
+            ):
+                self._cache.pop(session_id, None)
             return False
         finally:
             if self._client is None:
@@ -82,18 +97,52 @@ class VoiceProfileClient:
     def _parse(payload: Any) -> VoiceRuntimeProfile | None:
         if not isinstance(payload, dict):
             raise ValueError("invalid voice profile response")
+        required_fields = {
+            "mode",
+            "profile_id",
+            "provider",
+            "voice_kind",
+            "model",
+            "resource_id",
+            "voice_id",
+            "speaker_sha256",
+        }
+        if not required_fields.issubset(payload):
+            raise ValueError("incomplete voice profile response")
         mode = payload.get("mode")
         if mode == "fallback":
-            if any(payload.get(name) is not None for name in ("profile_id", "model", "voice_id")):
+            if any(
+                payload.get(name) is not None
+                for name in (
+                    "profile_id",
+                    "provider",
+                    "voice_kind",
+                    "model",
+                    "resource_id",
+                    "voice_id",
+                    "speaker_sha256",
+                )
+            ):
                 raise ValueError("invalid fallback voice response")
             return None
         if mode == "designed":
             profile_id = payload.get("profile_id")
+            provider = payload.get("provider")
+            voice_kind = payload.get("voice_kind")
             model = payload.get("model")
-            if payload.get("voice_id") is not None:
+            resource_id = payload.get("resource_id")
+            if payload.get("voice_id") is not None or payload.get("speaker_sha256") is not None:
                 raise ValueError("invalid designed voice response")
-            if not all(isinstance(value, str) and value for value in (profile_id, model)):
+            if (
+                provider != DOUBAO_PROVIDER
+                or voice_kind != "designed"
+                or model != DOUBAO_TTS_MODEL
+                or resource_id != DOUBAO_TTS_MODEL
+                or not isinstance(profile_id, str)
+                or not profile_id.strip()
+            ):
                 raise ValueError("invalid designed voice response")
+            profile_id = profile_id.strip()
             voice_id = resolve_approved_voice(
                 profile_id=str(profile_id),
                 model=str(model),
@@ -104,32 +153,41 @@ class VoiceProfileClient:
                 profile_id=str(profile_id),
                 model=str(model),
                 voice_id=voice_id,
+                provider=DOUBAO_PROVIDER,
+                voice_kind="designed",
+                resource_id=DOUBAO_TTS_MODEL,
             )
         if mode != "active":
             raise ValueError("invalid voice profile response")
         profile_id = payload.get("profile_id")
+        provider = payload.get("provider")
+        voice_kind = payload.get("voice_kind")
         model = payload.get("model")
+        resource_id = payload.get("resource_id")
         voice_id = payload.get("voice_id")
-        if not all(isinstance(value, str) and value for value in (profile_id, model, voice_id)):
-            raise ValueError("invalid active voice response")
-        approved_profile = next(
-            (spec.profile_id for spec in catalog_by_id().values() if spec.speaker_id == voice_id),
-            None,
-        )
+        speaker_sha256 = payload.get("speaker_sha256")
         if (
-            model != DOUBAO_TTS_MODEL
-            or approved_profile is None
-            or resolve_approved_voice(
-                profile_id=approved_profile,
-                model=str(model),
-            )
-            != voice_id
+            provider != DOUBAO_PROVIDER
+            or voice_kind != "personal"
+            or model != DOUBAO_PERSONAL_VOICE_MODEL
+            or resource_id != DOUBAO_PERSONAL_VOICE_MODEL
+            or not all(isinstance(value, str) and value for value in (profile_id, voice_id))
+            or profile_id != str(profile_id).strip()
+            or voice_id != str(voice_id).strip()
+            or not isinstance(speaker_sha256, str)
+            or speaker_sha256 != hashlib.sha256(str(voice_id).encode()).hexdigest()
         ):
-            raise ValueError("unsupported active voice model")
+            raise ValueError("invalid active voice response")
+        if any(spec.speaker_id == voice_id for spec in catalog_by_id().values()):
+            raise ValueError("personal voice cannot reuse a designed catalog speaker")
         return VoiceRuntimeProfile(
             profile_id=str(profile_id),
             model=str(model),
             voice_id=str(voice_id),
+            provider=DOUBAO_PROVIDER,
+            voice_kind="personal",
+            resource_id=str(resource_id),
+            speaker_sha256=speaker_sha256,
         )
 
     async def close(self) -> None:

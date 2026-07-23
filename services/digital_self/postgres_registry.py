@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
 import json
 import re
 import uuid
@@ -32,6 +33,7 @@ from services.digital_self.domain import (
     SourceSnapshotConflictError,
     VersionNotFoundError,
     VersionStatus,
+    VoiceProfileManifestRef,
 )
 from services.persona.domain import LEGACY_COGNITIVE_TRAIT_CATEGORIES
 from services.self_model.domain import (
@@ -123,7 +125,9 @@ class PostgresDigitalSelfRegistry:
                 await self._scope(connection, account_id)
                 await self._lock_account(connection, account_id)
                 parent = await self._parent_row(connection, account_id, parent_version_id)
-                entries, persona_version_id = await self._source_entries(connection, account_id)
+                entries, persona_version_id, voice_profile = await self._source_entries(
+                    connection, account_id
+                )
                 manifest, manifest_bytes, manifest_sha256 = build_manifest(
                     entries,
                     compiler_version=self._compiler_version,
@@ -131,6 +135,7 @@ class PostgresDigitalSelfRegistry:
                     persona_version_id=persona_version_id,
                     parent_version_id=(str(parent["version_id"]) if parent is not None else None),
                     expected_source_summary_sha256=expected_source_summary_sha256,
+                    voice_profile=voice_profile,
                 )
                 version = await self._insert(
                     connection,
@@ -261,6 +266,7 @@ class PostgresDigitalSelfRegistry:
                 persona_version_id=target.manifest.source_summary.persona_version_id,
                 parent_version_id=parent_id,
                 rollback_target_version_id=target.version_id,
+                voice_profile=target.manifest.source_summary.voice_profile,
             )
             version = await self._insert(
                 connection,
@@ -337,7 +343,12 @@ class PostgresDigitalSelfRegistry:
         self,
         connection: asyncpg.Connection,
         account_id: str,
-    ) -> tuple[builtins.list[ManifestEntry], str | None]:
+    ) -> tuple[
+        builtins.list[ManifestEntry],
+        str | None,
+        VoiceProfileManifestRef | None,
+    ]:
+        voice_profile = await self._voice_profile_ref(connection, account_id)
         negative_targets = await self._negative_targets(connection, account_id)
         memory_rows = await connection.fetch(
             """
@@ -359,10 +370,10 @@ class PostgresDigitalSelfRegistry:
         entries: builtins.list[ManifestEntry] = []
         for row in memory_rows:
             source_event_id = str(row["source_event_id"])
-            if (
-                ("memory_claim", str(row["claim_id"])) in negative_targets
-                or ("source_event", source_event_id) in negative_targets
-            ):
+            if ("memory_claim", str(row["claim_id"])) in negative_targets or (
+                "source_event",
+                source_event_id,
+            ) in negative_targets:
                 continue
             if confirmed_projection_contribution_for(
                 EvidenceEvent(
@@ -386,7 +397,7 @@ class PostgresDigitalSelfRegistry:
         )
         if persona_row is None:
             entries.extend(await self._self_model_entries(connection, account_id))
-            return entries, None
+            return entries, None, voice_profile
         persona_version_id = str(persona_row["version_id"])
         snapshot = persona_row["snapshot"]
         if isinstance(snapshot, str):
@@ -433,12 +444,9 @@ class PostgresDigitalSelfRegistry:
             entry = persona_entry(item, persona_version_id=persona_version_id)
             if not entry.source_event_ids:
                 continue
-            if (
-                ("persona_trait", entry.trait_id) in negative_targets
-                or any(
-                    ("source_event", source_event_id) in negative_targets
-                    for source_event_id in entry.source_event_ids
-                )
+            if ("persona_trait", entry.trait_id) in negative_targets or any(
+                ("source_event", source_event_id) in negative_targets
+                for source_event_id in entry.source_event_ids
             ):
                 continue
             evidence = await connection.fetch(
@@ -453,17 +461,73 @@ class PostgresDigitalSelfRegistry:
             if len(evidence) != len(entry.source_event_ids) or any(
                 not confirmed_projection_contribution_for(
                     EvidenceEvent(
-                        event_id=str(row["event_id"]), account_id=account_id,
-                        event_type=str(row["event_type"]), occurred_at=cast(datetime, row["occurred_at"]),
-                        speaker_class=cast(SpeakerClass, row["speaker_class"]), source=str(row["source"]),
+                        event_id=str(row["event_id"]),
+                        account_id=account_id,
+                        event_type=str(row["event_type"]),
+                        occurred_at=cast(datetime, row["occurred_at"]),
+                        speaker_class=cast(SpeakerClass, row["speaker_class"]),
+                        source=str(row["source"]),
                         payload=_payload(row["payload"]),
                     )
-                ).accepted for row in evidence
+                ).accepted
+                for row in evidence
             ):
                 continue
             entries.append(entry)
         entries.extend(await self._self_model_entries(connection, account_id))
-        return entries, persona_version_id
+        return entries, persona_version_id, voice_profile
+
+    @staticmethod
+    async def _voice_profile_ref(
+        connection: asyncpg.Connection,
+        account_id: str,
+    ) -> VoiceProfileManifestRef | None:
+        tables_exist = await connection.fetchval(
+            """
+            SELECT to_regclass('voice_clone_consents') IS NOT NULL
+               AND to_regclass('voice_profiles') IS NOT NULL
+            """
+        )
+        if not tables_exist:
+            return None
+        row = await connection.fetchrow(
+            """
+            SELECT profile_id, version_number, provider, target_model,
+                   provider_voice_id, provider_expires_at
+            FROM voice_profiles
+            WHERE account_id = $1
+              AND status = 'active'
+              AND evaluation_status = 'passed'
+              AND quality_status = 'passed'
+              AND provider = 'volcengine_doubao'
+              AND target_model = 'seed-icl-2.0'
+              AND provider_voice_id IS NOT NULL
+              AND provider_expires_at IS NOT NULL
+              AND provider_expires_at > CURRENT_TIMESTAMP
+              AND EXISTS (
+                  SELECT 1 FROM voice_clone_consents
+                  WHERE account_id = $1 AND revoked_at IS NULL
+              )
+            """,
+            account_id,
+        )
+        if row is None:
+            return None
+        expires_at = cast(datetime, row["provider_expires_at"])
+        try:
+            return VoiceProfileManifestRef(
+                profile_id=str(row["profile_id"]),
+                version_number=int(row["version_number"]),
+                provider=str(row["provider"]),
+                target_model=str(row["target_model"]),
+                resource_id=str(row["target_model"]),
+                provider_expires_at=expires_at.isoformat(),
+                speaker_sha256=hashlib.sha256(
+                    str(row["provider_voice_id"]).encode("utf-8")
+                ).hexdigest(),
+            )
+        except (AttributeError, TypeError, ValueError):
+            return None
 
     async def _self_model_entries(
         self,
@@ -595,11 +659,7 @@ class PostgresDigitalSelfRegistry:
         *,
         profile_version: int | None = None,
     ) -> tuple[SelfModelSource, ...]:
-        version_clause = (
-            " AND source.profile_version = $3"
-            if profile_version is not None
-            else ""
-        )
+        version_clause = " AND source.profile_version = $3" if profile_version is not None else ""
         parameters: tuple[object, ...] = (
             (account_id, uuid.UUID(item_id), profile_version)
             if profile_version is not None

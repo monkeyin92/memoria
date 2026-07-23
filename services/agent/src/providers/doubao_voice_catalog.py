@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from services.common.companions import DESIGNED_VOICE_SPEAKERS
+
 DOUBAO_TTS_MODEL = "seed-tts-2.0"
 DEFAULT_VOICE_PROFILE = "warm_companion"
 
@@ -26,7 +28,7 @@ DOUBAO_VOICE_CATALOG: tuple[DoubaoVoiceSpec, ...] = (
     DoubaoVoiceSpec(
         profile_id="warm_companion",
         display_name="阳光青年 2.0",
-        speaker_id="zh_male_yangguangqingnian_uranus_bigtts",
+        speaker_id=DESIGNED_VOICE_SPEAKERS["warm_companion"],
         role="default_companion",
         description="明亮、自然，像可靠的同龄朋友",
         preview_text="嗨，我是星澜。我会认真听，也会陪你把想法变成下一步。",
@@ -34,7 +36,7 @@ DOUBAO_VOICE_CATALOG: tuple[DoubaoVoiceSpec, ...] = (
     DoubaoVoiceSpec(
         profile_id="bright_peer",
         display_name="甜美桃子 2.0",
-        speaker_id="zh_female_tianmeitaozi_uranus_bigtts",
+        speaker_id=DESIGNED_VOICE_SPEAKERS["bright_peer"],
         role="energetic_peer",
         description="清甜、灵动，回应里带一点自然上扬",
         preview_text="嗨，我是桃喜。普通的一天，也值得多一点亮晶晶的好心情。",
@@ -42,7 +44,7 @@ DOUBAO_VOICE_CATALOG: tuple[DoubaoVoiceSpec, ...] = (
     DoubaoVoiceSpec(
         profile_id="soft_confidante",
         display_name="温柔小雅 2.0",
-        speaker_id="zh_female_wenrouxiaoya_uranus_bigtts",
+        speaker_id=DESIGNED_VOICE_SPEAKERS["soft_confidante"],
         role="empathic_companion",
         description="温柔、细腻，适合慢慢说和认真倾听",
         preview_text="嗨，我是绵绵。你不用急着变好，慢慢说，我会好好听着。",
@@ -50,7 +52,7 @@ DOUBAO_VOICE_CATALOG: tuple[DoubaoVoiceSpec, ...] = (
     DoubaoVoiceSpec(
         profile_id="calm_guide",
         display_name="高冷沉稳 2.0",
-        speaker_id="zh_male_gaolengchenwen_uranus_bigtts",
+        speaker_id=DESIGNED_VOICE_SPEAKERS["calm_guide"],
         role="planner_guide",
         description="沉着、清晰，分析事情利落但不生硬",
         preview_text="嗨，我是阿序。复杂的事情，我们可以一件一件理清楚。",
@@ -58,7 +60,7 @@ DOUBAO_VOICE_CATALOG: tuple[DoubaoVoiceSpec, ...] = (
     DoubaoVoiceSpec(
         profile_id="low_magnetic",
         display_name="深夜播客 2.0",
-        speaker_id="zh_male_shenyeboke_uranus_bigtts",
+        speaker_id=DESIGNED_VOICE_SPEAKERS["low_magnetic"],
         role="grounded_companion",
         description="低沉、克制，安静里有让人放松的力量",
         preview_text="嗨，我是玄墨。别急，先站稳一点，我会在这里陪着你。",

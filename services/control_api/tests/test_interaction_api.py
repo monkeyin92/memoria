@@ -14,6 +14,7 @@ from services.digital_self.domain import (
     DigitalSelfSourceSummary,
     DigitalSelfVersion,
     VersionNotFoundError,
+    VoiceProfileManifestRef,
 )
 from services.persona.domain import PersonaCapsule, PersonaCapsuleEntry
 
@@ -32,9 +33,7 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv(
         "MEMORIA_INTERACTION_POLICY_TOKEN", "interaction-policy-token-that-is-long-enough"
     )
-    monkeypatch.setenv(
-        "MEMORIA_RESPONSE_PLAN_TOKEN", "response-plan-token-that-is-long-enough"
-    )
+    monkeypatch.setenv("MEMORIA_RESPONSE_PLAN_TOKEN", "response-plan-token-that-is-long-enough")
 
 
 async def _identity(client: AsyncClient) -> tuple[str, dict[str, str]]:
@@ -310,6 +309,46 @@ def _version(*, account_id: str, status: str) -> DigitalSelfVersion:
     )
 
 
+def _voice_version(*, account_id: str) -> DigitalSelfVersion:
+    ref = VoiceProfileManifestRef(
+        profile_id="voice-profile-1",
+        version_number=3,
+        provider="volcengine_doubao",
+        target_model="seed-icl-2.0",
+        resource_id="seed-icl-2.0",
+        provider_expires_at="2027-07-23T00:00:00+00:00",
+        speaker_sha256="1" * 64,
+    )
+    return DigitalSelfVersion(
+        version_id="response-plan-voice-version",
+        account_id=account_id,
+        version_number=1,
+        status="approved",
+        manifest=DigitalSelfManifest(
+            schema_version="digital-self-manifest-v3",
+            compiler_version="test",
+            policy_version="test",
+            parent_version_id=None,
+            rollback_target_version_id=None,
+            entries=(),
+            source_summary=DigitalSelfSourceSummary(
+                memory_claim_count=0,
+                persona_trait_count=0,
+                persona_version_id=None,
+                source_summary_sha256="summary",
+                voice_profile=ref,
+            ),
+        ),
+        manifest_sha256="voice-manifest",
+        created_at=datetime(2026, 7, 23, tzinfo=UTC),
+    )
+
+
+class _CurrentPreviewRegistry:
+    async def version_stale(self, **_: object) -> bool:
+        return False
+
+
 @pytest.mark.asyncio
 async def test_response_plan_requires_its_own_token_and_returns_bounded_companion_plan(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -348,6 +387,72 @@ async def test_response_plan_requires_its_own_token_and_returns_bounded_companio
     assert payload["provenance"]["digital_self_version_id"] is None
     assert "private-request-sentinel-4d7a" not in str(payload)
     assert "score" not in str(payload)
+
+
+@pytest.mark.asyncio
+async def test_response_plan_uses_only_exact_frozen_personal_voice_ref(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, _ = await _identity(client)
+        version = _voice_version(account_id=user_id)
+        app.state.digital_self_registry = _Registry(version)
+        app.state.self_preview_registry = _CurrentPreviewRegistry()
+        for session_id, frozen_version in (
+            ("response-plan-voice-exact", 3),
+            ("response-plan-voice-mismatch", 4),
+        ):
+            app.state.memory_store.add_voice_session(
+                session_id=session_id,
+                user_id=user_id,
+                room_name=f"room-{session_id}",
+                voice_backend="cascade",
+                interaction_mode="self_preview",
+                mode_policy_version="s8-v1",
+                digital_self_version_id=version.version_id,
+                digital_self_manifest_sha256=version.manifest_sha256,
+                preview_grant_id=f"grant-{session_id}",
+                self_preview_perspective="owner",
+                voice_profile_id="voice-profile-1",
+                voice_profile_version=frozen_version,
+                voice_provider="volcengine_doubao",
+                voice_model="seed-icl-2.0",
+                voice_resource_id="seed-icl-2.0",
+                voice_provider_expires_at="2027-07-23T00:00:00+00:00",
+                voice_speaker_sha256="1" * 64,
+                fallback_voice_profile_id="warm_companion",
+                fallback_voice_provider="volcengine_doubao",
+                fallback_voice_model="seed-tts-2.0",
+                fallback_voice_resource_id="seed-tts-2.0",
+                created_at=datetime.now(UTC).isoformat(),
+            )
+        exact = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=_response_plan_body("response-plan-voice-exact"),
+        )
+        mismatch = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=_response_plan_body("response-plan-voice-mismatch"),
+        )
+
+    assert exact.status_code == 200
+    assert exact.json()["voice_target"] == {
+        "kind": "approved_personal",
+        "profile_id": "voice-profile-1",
+        "model": "seed-icl-2.0",
+    }
+    assert mismatch.status_code == 200
+    assert mismatch.json()["voice_target"] == {
+        "kind": "fallback",
+        "profile_id": "warm_companion",
+        "model": "seed-tts-2.0",
+    }
 
 
 @pytest.mark.asyncio

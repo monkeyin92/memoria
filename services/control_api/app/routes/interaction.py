@@ -196,9 +196,7 @@ def _require_response_plan_token(
 ) -> None:
     expected = cast(ControlSettings, request.app.state.settings).internal_token("response_plan")
     if not expected or token is None or not hmac.compare_digest(token, expected):
-        raise HTTPException(
-            status_code=401, detail="valid internal response plan token required"
-        )
+        raise HTTPException(status_code=401, detail="valid internal response plan token required")
 
 
 @router.get("/capabilities")
@@ -220,9 +218,7 @@ async def capabilities(
     if not preview_versions:
         missing.append("approved_digital_self_version")
     else:
-        preview_registry = cast(
-            SelfPreviewRegistryPort, request.app.state.self_preview_registry
-        )
+        preview_registry = cast(SelfPreviewRegistryPort, request.app.state.self_preview_registry)
         preview_ready = False
         for version in preview_versions:
             if await preview_registry.version_stale(
@@ -244,10 +240,7 @@ async def capabilities(
         if not preview_ready:
             missing.append("preview_version_stale_or_fidelity_unready")
     speaker = cast(SpeakerAuthorityPort, request.app.state.speaker_authority)
-    if not any(
-        profile.status == "active"
-        for profile in await speaker.profiles(user.user_id)
-    ):
+    if not any(profile.status == "active" for profile in await speaker.profiles(user.user_id)):
         missing.append("verified_owner_voice")
     modes["self_preview"] = {
         "status": "blocked" if missing else "available",
@@ -331,6 +324,32 @@ def _relationship_in_version(
     return matches[0] if len(matches) == 1 else None
 
 
+def _frozen_personal_voice_matches(
+    frozen: FrozenMode,
+    version: DigitalSelfVersion,
+) -> bool:
+    ref = version.manifest.source_summary.voice_profile
+    return (
+        ref is not None
+        and frozen.voice_profile_id == ref.profile_id
+        and frozen.voice_profile_version == ref.version_number
+        and frozen.voice_provider == ref.provider
+        and frozen.voice_model == ref.target_model
+        and frozen.voice_resource_id == ref.resource_id
+        and frozen.voice_provider_expires_at == ref.provider_expires_at
+        and frozen.voice_speaker_sha256 == ref.speaker_sha256
+    )
+
+
+def _frozen_fallback_voice_matches(frozen: FrozenMode) -> bool:
+    return (
+        frozen.fallback_voice_profile_id is not None
+        and frozen.fallback_voice_provider == "volcengine_doubao"
+        and frozen.fallback_voice_model == DESIGNED_VOICE_MODEL
+        and frozen.fallback_voice_resource_id == DESIGNED_VOICE_MODEL
+    )
+
+
 async def _response_plan_context(
     request: Request, session_id: str
 ) -> tuple[
@@ -353,6 +372,17 @@ async def _response_plan_context(
                     frozen.digital_self_version_id,
                     frozen.relationship_profile_id,
                     frozen.legacy_grant_id,
+                    frozen.voice_profile_id,
+                    frozen.voice_profile_version,
+                    frozen.voice_provider,
+                    frozen.voice_model,
+                    frozen.voice_resource_id,
+                    frozen.voice_provider_expires_at,
+                    frozen.voice_speaker_sha256,
+                    frozen.fallback_voice_profile_id,
+                    frozen.fallback_voice_provider,
+                    frozen.fallback_voice_model,
+                    frozen.fallback_voice_resource_id,
                 )
             )
         ):
@@ -377,7 +407,10 @@ async def _response_plan_context(
             or frozen.manifest_sha256 != version.manifest_sha256
             or frozen.preview_grant_id is None
             or frozen.perspective not in {"owner", "child", "friend"}
-            or await cast(SelfPreviewRegistryPort, request.app.state.self_preview_registry).version_stale(
+            or not _frozen_fallback_voice_matches(frozen)
+            or await cast(
+                SelfPreviewRegistryPort, request.app.state.self_preview_registry
+            ).version_stale(
                 account_id=account_id,
                 version_id=version.version_id,
                 manifest_sha256=version.manifest_sha256,
@@ -593,19 +626,16 @@ def _response_plan_payload(
     *,
     body: ResponsePlanRequest,
     frozen: FrozenMode,
+    version: DigitalSelfVersion | None,
     relationship: RelationshipProfileManifestEntry | None,
     plan: ResponsePlan,
     persona_capsule: PersonaCapsule | None,
 ) -> dict[str, Any]:
     source_refs = [
-        _source_ref_payload(ref)
-        for ref in plan.provenance.source_refs[:16]
-        if ref.source_event_ids
+        _source_ref_payload(ref) for ref in plan.provenance.source_refs[:16] if ref.source_event_ids
     ]
     used_persona_capsule = (
-        persona_capsule
-        if persona_capsule is not None and persona_capsule.entries
-        else None
+        persona_capsule if persona_capsule is not None and persona_capsule.entries else None
     )
     persona_style_only = (
         used_persona_capsule is not None
@@ -622,11 +652,19 @@ def _response_plan_payload(
         }
         if frozen.interaction_mode == "companion" and companion is not None
         else {
-            # S7 intentionally uses a neutral fallback voice. Personal voice
-            # activation belongs to S8 and companion voice/style must not leak.
+            "kind": "approved_personal",
+            "profile_id": frozen.voice_profile_id,
+            "model": frozen.voice_model,
+        }
+        if (
+            frozen.interaction_mode == "self_preview"
+            and version is not None
+            and _frozen_personal_voice_matches(frozen, version)
+        )
+        else {
             "kind": "fallback",
-            "profile_id": None,
-            "model": DESIGNED_VOICE_MODEL,
+            "profile_id": frozen.fallback_voice_profile_id,
+            "model": frozen.fallback_voice_model,
         }
     )
     reason_codes = _epistemic_reason_codes(plan)
@@ -674,14 +712,10 @@ def _response_plan_payload(
             "speaker_model_version": body.speaker_decision.model_version or "unavailable",
             "speaker_template_version": body.speaker_decision.template_version,
             "persona_version_id": (
-                used_persona_capsule.version_id
-                if used_persona_capsule is not None
-                else None
+                used_persona_capsule.version_id if used_persona_capsule is not None else None
             ),
             "persona_version_number": (
-                used_persona_capsule.version_number
-                if used_persona_capsule is not None
-                else None
+                used_persona_capsule.version_number if used_persona_capsule is not None else None
             ),
             "persona_style_only": persona_style_only,
             "source_refs": source_refs,
@@ -743,6 +777,7 @@ async def response_plan(
         payload = _response_plan_payload(
             body=body,
             frozen=frozen,
+            version=version,
             relationship=relationship,
             plan=plan,
             persona_capsule=persona_capsule,

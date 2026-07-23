@@ -8,6 +8,7 @@ enter the realtime process.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import httpx
@@ -82,9 +83,7 @@ class ModePolicy:
         if not self.capability("conversation"):
             return False
         return not (
-            self.mode == "self_preview"
-            and speaker_class is not None
-            and speaker_class != "owner"
+            self.mode == "self_preview" and speaker_class is not None and speaker_class != "owner"
         )
 
     def allows_private_persona(self, speaker_class: SpeakerClass) -> bool:
@@ -217,11 +216,33 @@ class ModePolicyClient:
     def _parse(payload: Any) -> ModePolicy:
         if not isinstance(payload, dict):
             return ModePolicy.unavailable("payload_not_object")
+        required_voice_fields = {
+            "voice_speaker_sha256",
+            "fallback_voice_profile_id",
+            "fallback_voice_provider",
+            "fallback_voice_model",
+            "fallback_voice_resource_id",
+        }
+        if not required_voice_fields.issubset(payload):
+            return ModePolicy.unavailable("payload_invalid")
         mode = payload.get("interaction_mode")
         policy_version = payload.get("mode_policy_version")
         style_id = payload.get("companion_style_id")
         style_version = payload.get("companion_style_version")
         policy_scope = payload.get("policy_scope")
+        raw_voice_profile_version = payload.get("voice_profile_version")
+        voice_profile_version_invalid = False
+        if raw_voice_profile_version is None:
+            voice_profile_version: str | None = None
+        elif (
+            isinstance(raw_voice_profile_version, int)
+            and not isinstance(raw_voice_profile_version, bool)
+            and raw_voice_profile_version >= 1
+        ):
+            voice_profile_version = str(raw_voice_profile_version)
+        else:
+            voice_profile_version = None
+            voice_profile_version_invalid = True
         references = {
             key: payload.get(key)
             for key in (
@@ -231,9 +252,59 @@ class ModePolicyClient:
                 "perspective",
                 "relationship_profile_id",
                 "legacy_grant_id",
+                "voice_profile_id",
+                "voice_provider",
+                "voice_model",
+                "voice_resource_id",
+                "voice_provider_expires_at",
+                "voice_speaker_sha256",
+                "fallback_voice_profile_id",
+                "fallback_voice_provider",
+                "fallback_voice_model",
+                "fallback_voice_resource_id",
             )
         }
+        references["voice_profile_version"] = voice_profile_version
         capabilities = payload.get("capabilities")
+        voice_values = tuple(
+            references[key]
+            for key in (
+                "voice_profile_id",
+                "voice_profile_version",
+                "voice_provider",
+                "voice_model",
+                "voice_resource_id",
+                "voice_provider_expires_at",
+                "voice_speaker_sha256",
+            )
+        )
+        fallback_voice_values = tuple(
+            references[key]
+            for key in (
+                "fallback_voice_profile_id",
+                "fallback_voice_provider",
+                "fallback_voice_model",
+                "fallback_voice_resource_id",
+            )
+        )
+        voice_complete = all(value is not None for value in voice_values)
+        voice_absent = all(value is None for value in voice_values)
+        voice_contract_valid = voice_absent or (
+            voice_complete
+            and references["voice_provider"] == "volcengine_doubao"
+            and references["voice_model"] == "seed-icl-2.0"
+            and references["voice_resource_id"] == "seed-icl-2.0"
+            and _valid_utc_timestamp(references["voice_provider_expires_at"])
+            and _valid_sha256(references["voice_speaker_sha256"])
+        )
+        fallback_voice_complete = all(value is not None for value in fallback_voice_values)
+        fallback_voice_contract_valid = (
+            fallback_voice_complete
+            and _bounded_string(references["fallback_voice_profile_id"])
+            and references["fallback_voice_provider"] == "volcengine_doubao"
+            and references["fallback_voice_model"] == "seed-tts-2.0"
+            and references["fallback_voice_resource_id"] == "seed-tts-2.0"
+        )
         if (
             mode not in {"companion", "self_preview", "legacy", "archive"}
             or policy_scope != "session"
@@ -245,10 +316,9 @@ class ModePolicyClient:
             or not isinstance(capabilities, dict)
             or not all(isinstance(value, bool) for value in capabilities.values())
             or not all(_optional_bounded_string(value) for value in references.values())
-            or (
-                mode == "companion"
-                and any(value is not None for value in references.values())
-            )
+            or voice_profile_version_invalid
+            or not voice_contract_valid
+            or (mode == "companion" and any(value is not None for value in references.values()))
             or (
                 mode == "self_preview"
                 and (
@@ -258,12 +328,10 @@ class ModePolicyClient:
                     or references["perspective"] not in {"owner", "child", "friend"}
                     or references["relationship_profile_id"] is not None
                     or references["legacy_grant_id"] is not None
+                    or not fallback_voice_contract_valid
                 )
             )
-            or (
-                mode != "companion"
-                and (style_id is not None or style_version is not None)
-            )
+            or (mode != "companion" and (style_id is not None or style_version is not None))
         ):
             return ModePolicy.unavailable("payload_invalid")
         style = None
@@ -288,6 +356,28 @@ def _bounded_string(value: Any) -> bool:
 
 def _optional_bounded_string(value: Any) -> bool:
     return value is None or _bounded_string(value)
+
+
+def _valid_utc_timestamp(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return (
+        parsed.tzinfo is not None
+        and parsed.utcoffset() is not None
+        and parsed.utcoffset() == UTC.utcoffset(None)
+    )
+
+
+def _valid_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
 
 
 def _style_for(style_id: object, style_version: object) -> CompanionStyle | None:

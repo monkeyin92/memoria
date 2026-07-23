@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any, Final, Literal, cast
 
@@ -10,7 +11,7 @@ from services.common.companions import COMPANION_STYLE_VERSION, CompanionDefinit
 InteractionMode = Literal["companion", "self_preview", "legacy", "archive"]
 SpeakerClass = Literal["owner", "guest", "uncertain"]
 MODE_POLICY_VERSION: Final = "s2-v1"
-SELF_PREVIEW_POLICY_VERSION: Final = "s7-v1"
+SELF_PREVIEW_POLICY_VERSION: Final = "s8-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,8 +26,19 @@ class FrozenMode:
     legacy_grant_id: str | None
     companion_style_id: str | None
     companion_style_version: str | None
+    voice_profile_id: str | None = None
+    voice_profile_version: int | None = None
+    voice_provider: str | None = None
+    voice_model: str | None = None
+    voice_resource_id: str | None = None
+    voice_provider_expires_at: str | None = None
+    voice_speaker_sha256: str | None = None
+    fallback_voice_profile_id: str | None = None
+    fallback_voice_provider: str | None = None
+    fallback_voice_model: str | None = None
+    fallback_voice_resource_id: str | None = None
 
-    def payload(self) -> dict[str, str | None]:
+    def payload(self) -> dict[str, object]:
         return {
             "interaction_mode": self.interaction_mode,
             "mode_policy_version": self.mode_policy_version,
@@ -38,10 +50,21 @@ class FrozenMode:
             "legacy_grant_id": self.legacy_grant_id,
             "companion_style_id": self.companion_style_id,
             "companion_style_version": self.companion_style_version,
+            "voice_profile_id": self.voice_profile_id,
+            "voice_profile_version": self.voice_profile_version,
+            "voice_provider": self.voice_provider,
+            "voice_model": self.voice_model,
+            "voice_resource_id": self.voice_resource_id,
+            "voice_provider_expires_at": self.voice_provider_expires_at,
+            "voice_speaker_sha256": self.voice_speaker_sha256,
+            "fallback_voice_profile_id": self.fallback_voice_profile_id,
+            "fallback_voice_provider": self.fallback_voice_provider,
+            "fallback_voice_model": self.fallback_voice_model,
+            "fallback_voice_resource_id": self.fallback_voice_resource_id,
         }
 
     @classmethod
-    def from_session(cls, session: dict[str, Any]) -> FrozenMode:
+    def from_session(cls, session: Mapping[str, Any]) -> FrozenMode:
         return cls(
             interaction_mode=cast(InteractionMode, str(session["interaction_mode"])),
             mode_policy_version=str(session["mode_policy_version"]),
@@ -53,11 +76,36 @@ class FrozenMode:
             legacy_grant_id=_optional(session.get("legacy_grant_id")),
             companion_style_id=_optional(session.get("companion_style_id")),
             companion_style_version=_optional(session.get("companion_style_version")),
+            voice_profile_id=_optional(session.get("voice_profile_id")),
+            voice_profile_version=_optional_int(session.get("voice_profile_version")),
+            voice_provider=_optional(session.get("voice_provider")),
+            voice_model=_optional(session.get("voice_model")),
+            voice_resource_id=_optional(session.get("voice_resource_id")),
+            voice_provider_expires_at=_optional(session.get("voice_provider_expires_at")),
+            voice_speaker_sha256=_optional(session.get("voice_speaker_sha256")),
+            fallback_voice_profile_id=_optional(session.get("fallback_voice_profile_id")),
+            fallback_voice_provider=_optional(session.get("fallback_voice_provider")),
+            fallback_voice_model=_optional(session.get("fallback_voice_model")),
+            fallback_voice_resource_id=_optional(session.get("fallback_voice_resource_id")),
         )
 
 
 def _optional(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _optional_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +166,17 @@ class ModePolicy:
             legacy_grant_id=None,
             companion_style_id=definition.companion_id,
             companion_style_version=COMPANION_STYLE_VERSION,
+            voice_profile_id=None,
+            voice_profile_version=None,
+            voice_provider=None,
+            voice_model=None,
+            voice_resource_id=None,
+            voice_provider_expires_at=None,
+            voice_speaker_sha256=None,
+            fallback_voice_profile_id=None,
+            fallback_voice_provider=None,
+            fallback_voice_model=None,
+            fallback_voice_resource_id=None,
         )
 
     @staticmethod
@@ -127,6 +186,17 @@ class ModePolicy:
         manifest_sha256: str,
         preview_grant_id: str,
         perspective: str,
+        voice_profile_id: str | None = None,
+        voice_profile_version: int | None = None,
+        voice_provider: str | None = None,
+        voice_model: str | None = None,
+        voice_resource_id: str | None = None,
+        voice_provider_expires_at: str | None = None,
+        voice_speaker_sha256: str | None = None,
+        fallback_voice_profile_id: str,
+        fallback_voice_provider: str,
+        fallback_voice_model: str,
+        fallback_voice_resource_id: str,
     ) -> FrozenMode:
         return FrozenMode(
             interaction_mode="self_preview",
@@ -139,6 +209,17 @@ class ModePolicy:
             legacy_grant_id=None,
             companion_style_id=None,
             companion_style_version=None,
+            voice_profile_id=voice_profile_id,
+            voice_profile_version=voice_profile_version,
+            voice_provider=voice_provider,
+            voice_model=voice_model,
+            voice_resource_id=voice_resource_id,
+            voice_provider_expires_at=voice_provider_expires_at,
+            voice_speaker_sha256=voice_speaker_sha256,
+            fallback_voice_profile_id=fallback_voice_profile_id,
+            fallback_voice_provider=fallback_voice_provider,
+            fallback_voice_model=fallback_voice_model,
+            fallback_voice_resource_id=fallback_voice_resource_id,
         )
 
     @classmethod
@@ -153,9 +234,7 @@ class ModePolicy:
         available = cls.availability(frozen.interaction_mode).status == "available"
         owner_private = available and speaker_class == "owner"
         shadow_owner = (
-            available
-            and speaker_class == "uncertain"
-            and reason_code == "shadow_owner_candidate"
+            available and speaker_class == "uncertain" and reason_code == "shadow_owner_candidate"
         )
         companion = available and frozen.interaction_mode == "companion"
         self_preview = available and frozen.interaction_mode == "self_preview"
@@ -170,7 +249,8 @@ class ModePolicy:
             tools=account_active and companion and owner_private,
             history=account_active and companion and owner_private,
             learning=account_active and companion and owner_private,
-            voice_profile=account_active and companion,
+            voice_profile=account_active
+            and (companion or (self_preview and speaker_class == "owner")),
         )
 
     @classmethod
@@ -191,18 +271,12 @@ class ModePolicy:
         resolved_history_eligible = (
             capabilities.history
             if history_eligible is None
-            else bool(
-                history_eligible
-                and frozen.interaction_mode == "companion"
-            )
+            else bool(history_eligible and frozen.interaction_mode == "companion")
         )
         resolved_owner_projection_eligible = (
             capabilities.history and speaker_class == "owner"
             if owner_projection_eligible is None
-            else bool(
-                owner_projection_eligible
-                and frozen.interaction_mode == "companion"
-            )
+            else bool(owner_projection_eligible and frozen.interaction_mode == "companion")
         )
         return {
             **frozen.payload(),
@@ -233,6 +307,6 @@ class ModePolicy:
                 tools=companion,
                 history=companion,
                 learning=companion,
-                voice_profile=companion,
+                voice_profile=companion or self_preview,
             ).payload(),
         }

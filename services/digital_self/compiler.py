@@ -20,6 +20,7 @@ from services.digital_self.domain import (
     PersonaTraitManifestEntry,
     RelationshipProfileManifestEntry,
     SourceSnapshotConflictError,
+    VoiceProfileManifestRef,
 )
 from services.self_model.domain import (
     CognitiveClaim,
@@ -31,11 +32,16 @@ from services.self_model.domain import (
 )
 
 V1_MANIFEST_SCHEMA_VERSION = "digital-self-manifest-v1"
-MANIFEST_SCHEMA_VERSION = "digital-self-manifest-v2"
-DEFAULT_COMPILER_VERSION = "digital-self-compiler-v2"
-DEFAULT_POLICY_VERSION = "digital-self-policy-v2"
+V2_MANIFEST_SCHEMA_VERSION = "digital-self-manifest-v2"
+MANIFEST_SCHEMA_VERSION = "digital-self-manifest-v3"
+DEFAULT_COMPILER_VERSION = "digital-self-compiler-v3"
+DEFAULT_POLICY_VERSION = "digital-self-policy-v3"
 _SUPPORTED_SCHEMA_VERSIONS = frozenset(
-    {V1_MANIFEST_SCHEMA_VERSION, MANIFEST_SCHEMA_VERSION}
+    {
+        V1_MANIFEST_SCHEMA_VERSION,
+        V2_MANIFEST_SCHEMA_VERSION,
+        MANIFEST_SCHEMA_VERSION,
+    }
 )
 
 
@@ -108,11 +114,7 @@ def _source_ids(
     relation: str,
 ) -> tuple[str, ...]:
     return tuple(
-        sorted(
-            source.source_event_id
-            for source in sources
-            if source.relation == relation
-        )
+        sorted(source.source_event_id for source in sources if source.relation == relation)
     )
 
 
@@ -202,9 +204,7 @@ def entry_dict(entry: ManifestEntry) -> dict[str, object]:
             "confidence": entry.confidence,
             "sharing_scope": entry.sharing_scope,
             "support_source_event_ids": list(entry.support_source_event_ids),
-            "counterexample_source_event_ids": list(
-                entry.counterexample_source_event_ids
-            ),
+            "counterexample_source_event_ids": list(entry.counterexample_source_event_ids),
         }
     if isinstance(entry, DecisionCaseManifestEntry):
         return {
@@ -221,9 +221,7 @@ def entry_dict(entry: ManifestEntry) -> dict[str, object]:
             "still_endorsed": entry.still_endorsed,
             "sharing_scope": entry.sharing_scope,
             "support_source_event_ids": list(entry.support_source_event_ids),
-            "counterexample_source_event_ids": list(
-                entry.counterexample_source_event_ids
-            ),
+            "counterexample_source_event_ids": list(entry.counterexample_source_event_ids),
         }
     return {
         "type": entry.entry_type,
@@ -237,9 +235,7 @@ def entry_dict(entry: ManifestEntry) -> dict[str, object]:
         "sharing_scope": entry.sharing_scope,
         "boundaries": list(entry.boundaries),
         "support_source_event_ids": list(entry.support_source_event_ids),
-        "counterexample_source_event_ids": list(
-            entry.counterexample_source_event_ids
-        ),
+        "counterexample_source_event_ids": list(entry.counterexample_source_event_ids),
     }
 
 
@@ -255,28 +251,43 @@ def entry_sort_key(entry: ManifestEntry) -> tuple[str, str]:
     return (entry.entry_type, f"{entry.profile_id}:{entry.version_number:020d}")
 
 
+def voice_profile_ref_dict(
+    voice_profile: VoiceProfileManifestRef,
+) -> dict[str, object]:
+    return {
+        "profile_id": voice_profile.profile_id,
+        "version_number": voice_profile.version_number,
+        "provider": voice_profile.provider,
+        "target_model": voice_profile.target_model,
+        "resource_id": voice_profile.resource_id,
+        "provider_expires_at": voice_profile.provider_expires_at,
+        "speaker_sha256": voice_profile.speaker_sha256,
+    }
+
+
 def _source_summary(
     entries: tuple[ManifestEntry, ...],
     *,
     persona_version_id: str | None,
+    schema_version: str,
+    voice_profile: VoiceProfileManifestRef | None = None,
 ) -> DigitalSelfSourceSummary:
     memory_count = sum(isinstance(entry, MemoryClaimManifestEntry) for entry in entries)
     persona_count = sum(isinstance(entry, PersonaTraitManifestEntry) for entry in entries)
-    cognitive_count = sum(
-        isinstance(entry, CognitiveClaimManifestEntry) for entry in entries
-    )
-    decision_count = sum(
-        isinstance(entry, DecisionCaseManifestEntry) for entry in entries
-    )
+    cognitive_count = sum(isinstance(entry, CognitiveClaimManifestEntry) for entry in entries)
+    decision_count = sum(isinstance(entry, DecisionCaseManifestEntry) for entry in entries)
     relationship_count = sum(
         isinstance(entry, RelationshipProfileManifestEntry) for entry in entries
     )
-    source_bytes = canonical_json_bytes(
-        {
-            "entries": [entry_dict(entry) for entry in entries],
-            "persona_version_id": persona_version_id,
-        }
-    )
+    source_payload: dict[str, object] = {
+        "entries": [entry_dict(entry) for entry in entries],
+        "persona_version_id": persona_version_id,
+    }
+    if schema_version == MANIFEST_SCHEMA_VERSION:
+        source_payload["voice_profile"] = (
+            voice_profile_ref_dict(voice_profile) if voice_profile is not None else None
+        )
+    source_bytes = canonical_json_bytes(source_payload)
     return DigitalSelfSourceSummary(
         memory_claim_count=memory_count,
         persona_trait_count=persona_count,
@@ -285,6 +296,7 @@ def _source_summary(
         cognitive_claim_count=cognitive_count,
         decision_case_count=decision_count,
         relationship_profile_count=relationship_count,
+        voice_profile=voice_profile,
     )
 
 
@@ -297,11 +309,17 @@ def build_manifest(
     parent_version_id: str | None,
     rollback_target_version_id: str | None = None,
     expected_source_summary_sha256: str | None = None,
+    voice_profile: VoiceProfileManifestRef | None = None,
 ) -> tuple[DigitalSelfManifest, bytes, str]:
     ordered = tuple(sorted(entries, key=entry_sort_key))
     if not ordered:
         raise EmptyDigitalSelfSourceError("no confirmed owner sources are available")
-    summary = _source_summary(ordered, persona_version_id=persona_version_id)
+    summary = _source_summary(
+        ordered,
+        persona_version_id=persona_version_id,
+        schema_version=MANIFEST_SCHEMA_VERSION,
+        voice_profile=voice_profile,
+    )
     if (
         expected_source_summary_sha256 is not None
         and expected_source_summary_sha256 != summary.source_summary_sha256
@@ -327,17 +345,22 @@ def manifest_dict(manifest: DigitalSelfManifest) -> dict[str, object]:
         "persona_version_id": manifest.source_summary.persona_version_id,
         "source_summary_sha256": manifest.source_summary.source_summary_sha256,
     }
-    if manifest.schema_version == MANIFEST_SCHEMA_VERSION:
+    if manifest.schema_version in {
+        V2_MANIFEST_SCHEMA_VERSION,
+        MANIFEST_SCHEMA_VERSION,
+    }:
         source_summary.update(
             {
-                "cognitive_claim_count": (
-                    manifest.source_summary.cognitive_claim_count
-                ),
+                "cognitive_claim_count": (manifest.source_summary.cognitive_claim_count),
                 "decision_case_count": manifest.source_summary.decision_case_count,
-                "relationship_profile_count": (
-                    manifest.source_summary.relationship_profile_count
-                ),
+                "relationship_profile_count": (manifest.source_summary.relationship_profile_count),
             }
+        )
+    if manifest.schema_version == MANIFEST_SCHEMA_VERSION:
+        source_summary["voice_profile"] = (
+            voice_profile_ref_dict(manifest.source_summary.voice_profile)
+            if manifest.source_summary.voice_profile is not None
+            else None
         )
     return {
         "schema_version": manifest.schema_version,
@@ -392,9 +415,7 @@ def _entry_from_dict(value: Mapping[str, object]) -> ManifestEntry:
                 context=str(value["context"]),
                 confidence=_number(value["confidence"]),
                 sharing_scope=str(value["sharing_scope"]),
-                support_source_event_ids=_string_tuple(
-                    value["support_source_event_ids"]
-                ),
+                support_source_event_ids=_string_tuple(value["support_source_event_ids"]),
                 counterexample_source_event_ids=_string_tuple(
                     value["counterexample_source_event_ids"]
                 ),
@@ -412,9 +433,7 @@ def _entry_from_dict(value: Mapping[str, object]) -> ManifestEntry:
                 reflection=str(value["reflection"]),
                 still_endorsed=_boolean(value["still_endorsed"]),
                 sharing_scope=str(value["sharing_scope"]),
-                support_source_event_ids=_string_tuple(
-                    value["support_source_event_ids"]
-                ),
+                support_source_event_ids=_string_tuple(value["support_source_event_ids"]),
                 counterexample_source_event_ids=_string_tuple(
                     value["counterexample_source_event_ids"]
                 ),
@@ -430,9 +449,7 @@ def _entry_from_dict(value: Mapping[str, object]) -> ManifestEntry:
                 advice_style=str(value["advice_style"]),
                 sharing_scope=str(value["sharing_scope"]),
                 boundaries=_string_tuple(value["boundaries"]),
-                support_source_event_ids=_string_tuple(
-                    value["support_source_event_ids"]
-                ),
+                support_source_event_ids=_string_tuple(value["support_source_event_ids"]),
                 counterexample_source_event_ids=_string_tuple(
                     value["counterexample_source_event_ids"]
                 ),
@@ -458,6 +475,22 @@ def _integer(value: object) -> int:
     if not isinstance(value, (int, str)):
         raise TypeError
     return int(value)
+
+
+def _voice_profile_ref(value: object) -> VoiceProfileManifestRef | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError
+    return VoiceProfileManifestRef(
+        profile_id=str(value["profile_id"]),
+        version_number=_integer(value["version_number"]),
+        provider=str(value["provider"]),
+        target_model=str(value["target_model"]),
+        resource_id=str(value["resource_id"]),
+        provider_expires_at=str(value["provider_expires_at"]),
+        speaker_sha256=str(value["speaker_sha256"]),
+    )
 
 
 def decode_manifest(
@@ -486,6 +519,10 @@ def decode_manifest(
         if len(entries) != len(raw_entries):
             raise TypeError
         schema_version = str(raw["schema_version"])
+        v2_or_newer = schema_version in {
+            V2_MANIFEST_SCHEMA_VERSION,
+            MANIFEST_SCHEMA_VERSION,
+        }
         summary = DigitalSelfSourceSummary(
             memory_claim_count=int(raw_summary["memory_claim_count"]),
             persona_trait_count=int(raw_summary["persona_trait_count"]),
@@ -495,20 +532,15 @@ def decode_manifest(
                 else None
             ),
             source_summary_sha256=str(raw_summary["source_summary_sha256"]),
-            cognitive_claim_count=(
-                int(raw_summary["cognitive_claim_count"])
-                if schema_version == MANIFEST_SCHEMA_VERSION
-                else 0
-            ),
-            decision_case_count=(
-                int(raw_summary["decision_case_count"])
-                if schema_version == MANIFEST_SCHEMA_VERSION
-                else 0
-            ),
+            cognitive_claim_count=(int(raw_summary["cognitive_claim_count"]) if v2_or_newer else 0),
+            decision_case_count=(int(raw_summary["decision_case_count"]) if v2_or_newer else 0),
             relationship_profile_count=(
-                int(raw_summary["relationship_profile_count"])
+                int(raw_summary["relationship_profile_count"]) if v2_or_newer else 0
+            ),
+            voice_profile=(
+                _voice_profile_ref(raw_summary["voice_profile"])
                 if schema_version == MANIFEST_SCHEMA_VERSION
-                else 0
+                else None
             ),
         )
         manifest = DigitalSelfManifest(
@@ -547,7 +579,12 @@ def decode_manifest(
         raise ManifestIntegrityError("v1 manifest contains v2 entries")
     if tuple(sorted(entries, key=entry_sort_key)) != entries or not entries:
         raise ManifestIntegrityError("manifest entries are empty or not sorted")
-    recomputed = _source_summary(entries, persona_version_id=summary.persona_version_id)
+    recomputed = _source_summary(
+        entries,
+        persona_version_id=summary.persona_version_id,
+        schema_version=manifest.schema_version,
+        voice_profile=summary.voice_profile,
+    )
     if recomputed != summary or summary.source_summary_sha256 != expected_source_summary_sha256:
         raise ManifestIntegrityError("manifest source summary conflicts with entries")
     if (

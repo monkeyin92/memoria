@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
 import json
 import re
 import sqlite3
@@ -34,6 +35,7 @@ from services.digital_self.domain import (
     SourceSnapshotConflictError,
     VersionNotFoundError,
     VersionStatus,
+    VoiceProfileManifestRef,
 )
 from services.persona.domain import LEGACY_COGNITIVE_TRAIT_CATEGORIES
 from services.persona.engine import PersonaEngine
@@ -204,7 +206,9 @@ class DigitalSelfRegistry:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             parent = self._parent_row(connection, account_id, parent_version_id)
-            entries, persona_version_id = self._source_entries(connection, account_id)
+            entries, persona_version_id, voice_profile = self._source_entries(
+                connection, account_id
+            )
             manifest, manifest_bytes, manifest_sha256 = build_manifest(
                 entries,
                 compiler_version=self._compiler_version,
@@ -212,6 +216,7 @@ class DigitalSelfRegistry:
                 persona_version_id=persona_version_id,
                 parent_version_id=(str(parent["version_id"]) if parent is not None else None),
                 expected_source_summary_sha256=expected_source_summary_sha256,
+                voice_profile=voice_profile,
             )
             version = self._insert(
                 connection,
@@ -329,6 +334,7 @@ class DigitalSelfRegistry:
                 persona_version_id=target.manifest.source_summary.persona_version_id,
                 parent_version_id=parent_id,
                 rollback_target_version_id=target.version_id,
+                voice_profile=target.manifest.source_summary.voice_profile,
             )
             version = self._insert(
                 connection,
@@ -376,9 +382,7 @@ class DigitalSelfRegistry:
                 """,
                 (target_status, account_id, version_id),
             )
-            version = self._version_from_row(
-                self._required_row(connection, account_id, version_id)
-            )
+            version = self._version_from_row(self._required_row(connection, account_id, version_id))
             self._append_lifecycle_audit(
                 connection,
                 account_id=account_id,
@@ -393,7 +397,12 @@ class DigitalSelfRegistry:
         self,
         connection: sqlite3.Connection,
         account_id: str,
-    ) -> tuple[builtins.list[ManifestEntry], str | None]:
+    ) -> tuple[
+        builtins.list[ManifestEntry],
+        str | None,
+        VoiceProfileManifestRef | None,
+    ]:
+        voice_profile = self._voice_profile_ref(connection, account_id)
         negative_targets = self._negative_targets(connection, account_id)
         memory_rows = connection.execute(
             """
@@ -415,10 +424,10 @@ class DigitalSelfRegistry:
         entries: builtins.list[ManifestEntry] = []
         for row in memory_rows:
             source_event_id = str(row["source_event_id"])
-            if (
-                ("memory_claim", str(row["claim_id"])) in negative_targets
-                or ("source_event", source_event_id) in negative_targets
-            ):
+            if ("memory_claim", str(row["claim_id"])) in negative_targets or (
+                "source_event",
+                source_event_id,
+            ) in negative_targets:
                 continue
             if confirmed_projection_contribution_for(
                 EvidenceEvent(
@@ -443,7 +452,7 @@ class DigitalSelfRegistry:
         ).fetchone()
         if persona_row is None:
             entries.extend(self._self_model_entries(connection, account_id))
-            return entries, None
+            return entries, None, voice_profile
         persona_version_id = str(persona_row["version_id"])
         try:
             snapshot = json.loads(str(persona_row["snapshot_json"]))
@@ -483,12 +492,9 @@ class DigitalSelfRegistry:
             entry = persona_entry(item, persona_version_id=persona_version_id)
             if not entry.source_event_ids:
                 continue
-            if (
-                ("persona_trait", entry.trait_id) in negative_targets
-                or any(
-                    ("source_event", source_event_id) in negative_targets
-                    for source_event_id in entry.source_event_ids
-                )
+            if ("persona_trait", entry.trait_id) in negative_targets or any(
+                ("source_event", source_event_id) in negative_targets
+                for source_event_id in entry.source_event_ids
             ):
                 continue
             placeholders = ",".join("?" for _ in entry.source_event_ids)
@@ -503,18 +509,77 @@ class DigitalSelfRegistry:
             if len(evidence) != len(entry.source_event_ids) or any(
                 not confirmed_projection_contribution_for(
                     EvidenceEvent(
-                        event_id=str(row["event_id"]), account_id=account_id,
+                        event_id=str(row["event_id"]),
+                        account_id=account_id,
                         event_type=str(row["event_type"]),
                         occurred_at=datetime.fromisoformat(str(row["occurred_at"])),
-                        speaker_class=cast(SpeakerClass, row["speaker_class"]), source=str(row["source"]),
+                        speaker_class=cast(SpeakerClass, row["speaker_class"]),
+                        source=str(row["source"]),
                         payload=json.loads(str(row["payload_json"])),
                     )
-                ).accepted for row in evidence
+                ).accepted
+                for row in evidence
             ):
                 continue
             entries.append(entry)
         entries.extend(self._self_model_entries(connection, account_id))
-        return entries, persona_version_id
+        return entries, persona_version_id, voice_profile
+
+    @staticmethod
+    def _voice_profile_ref(
+        connection: sqlite3.Connection,
+        account_id: str,
+    ) -> VoiceProfileManifestRef | None:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table'
+                  AND name IN ('voice_clone_consents', 'voice_profiles')
+                """
+            ).fetchall()
+        }
+        if tables != {"voice_clone_consents", "voice_profiles"}:
+            return None
+        row = connection.execute(
+            """
+            SELECT profile_id, version_number, provider, target_model,
+                   provider_voice_id, provider_expires_at
+            FROM voice_profiles
+            WHERE account_id = ?
+              AND status = 'active'
+              AND evaluation_status = 'passed'
+              AND quality_status = 'passed'
+              AND provider = 'volcengine_doubao'
+              AND target_model = 'seed-icl-2.0'
+              AND provider_voice_id IS NOT NULL
+              AND provider_expires_at IS NOT NULL
+              AND provider_expires_at > ?
+              AND EXISTS (
+                  SELECT 1 FROM voice_clone_consents
+                  WHERE account_id = ? AND revoked_at IS NULL
+              )
+            """,
+            (account_id, datetime.now(UTC).isoformat(), account_id),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            expires_at = datetime.fromisoformat(str(row["provider_expires_at"])).isoformat()
+            return VoiceProfileManifestRef(
+                profile_id=str(row["profile_id"]),
+                version_number=int(row["version_number"]),
+                provider=str(row["provider"]),
+                target_model=str(row["target_model"]),
+                resource_id=str(row["target_model"]),
+                provider_expires_at=expires_at,
+                speaker_sha256=hashlib.sha256(
+                    str(row["provider_voice_id"]).encode("utf-8")
+                ).hexdigest(),
+            )
+        except (TypeError, ValueError):
+            return None
 
     def _self_model_entries(
         self,

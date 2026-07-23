@@ -87,6 +87,10 @@ class VoiceEnrollmentReconciliationRequiredError(RuntimeError):
     pass
 
 
+class ProviderVoiceDeletionUnsupportedError(RuntimeError):
+    """Provider has no confirmed self-service delete contract."""
+
+
 @dataclass(frozen=True, slots=True)
 class VoiceConsent:
     account_id: str
@@ -286,8 +290,13 @@ class ProviderSample:
 class VoiceResolution:
     mode: Literal["active", "fallback"]
     profile_id: str | None = None
+    version_number: int | None = None
+    provider: str | None = None
+    voice_kind: Literal["personal"] | None = None
     model: str | None = None
+    resource_id: str | None = None
     voice_id: str | None = None
+    provider_expires_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,4 +399,12 @@ class VoiceProfilePort(Protocol):
         *,
         account_id: str,
         profile_id: str,
+    ) -> VoiceProfile: ...
+
+    async def confirm_provider_deletion(
+        self,
+        *,
+        account_id: str,
+        profile_id: str,
+        evidence_reference: str,
     ) -> VoiceProfile: ...

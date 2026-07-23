@@ -125,6 +125,17 @@ CREATE TABLE IF NOT EXISTS voice_sessions (
     legacy_grant_id TEXT,
     companion_style_id TEXT,
     companion_style_version TEXT,
+    voice_profile_id TEXT,
+    voice_profile_version INTEGER,
+    voice_provider TEXT,
+    voice_model TEXT,
+    voice_resource_id TEXT,
+    voice_provider_expires_at TEXT,
+    voice_speaker_sha256 TEXT,
+    fallback_voice_profile_id TEXT,
+    fallback_voice_provider TEXT,
+    fallback_voice_model TEXT,
+    fallback_voice_resource_id TEXT,
     learning_task_id TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES profiles(user_id) ON DELETE CASCADE
@@ -301,11 +312,24 @@ class MemoryStore:
                     "legacy_grant_id": "TEXT",
                     "companion_style_id": "TEXT",
                     "companion_style_version": "TEXT",
+                    "voice_profile_id": "TEXT",
+                    "voice_profile_version": "INTEGER",
+                    "voice_provider": "TEXT",
+                    "voice_model": "TEXT",
+                    "voice_resource_id": "TEXT",
+                    "voice_provider_expires_at": "TEXT",
+                    "voice_speaker_sha256": "TEXT",
+                    "fallback_voice_profile_id": "TEXT",
+                    "fallback_voice_provider": "TEXT",
+                    "fallback_voice_model": "TEXT",
+                    "fallback_voice_resource_id": "TEXT",
                     "learning_task_id": "TEXT",
                 }
                 for name, definition in frozen_columns.items():
                     if name not in voice_session_columns:
-                        connection.execute(f"ALTER TABLE voice_sessions ADD COLUMN {name} {definition}")
+                        connection.execute(
+                            f"ALTER TABLE voice_sessions ADD COLUMN {name} {definition}"
+                        )
                 connection.execute(
                     "UPDATE voice_sessions SET companion_style_id = 'starlight', "
                     "companion_style_version = 'companion-v1' "
@@ -315,7 +339,10 @@ class MemoryStore:
                     "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'voice_sessions'"
                 ).fetchone()
                 voice_session_definition = str(voice_session_sql[0]) if voice_session_sql else ""
-                if "qwen_audio" in voice_session_definition or "qwen_omni_plus" in voice_session_definition:
+                if (
+                    "qwen_audio" in voice_session_definition
+                    or "qwen_omni_plus" in voice_session_definition
+                ):
                     connection.executescript(
                         """
                         ALTER TABLE voice_sessions RENAME TO voice_sessions_legacy;
@@ -338,6 +365,17 @@ class MemoryStore:
                             legacy_grant_id TEXT,
                             companion_style_id TEXT,
                             companion_style_version TEXT,
+                            voice_profile_id TEXT,
+                            voice_profile_version INTEGER,
+                            voice_provider TEXT,
+                            voice_model TEXT,
+                            voice_resource_id TEXT,
+                            voice_provider_expires_at TEXT,
+                            voice_speaker_sha256 TEXT,
+                            fallback_voice_profile_id TEXT,
+                            fallback_voice_provider TEXT,
+                            fallback_voice_model TEXT,
+                            fallback_voice_resource_id TEXT,
                             learning_task_id TEXT,
                             created_at TEXT NOT NULL,
                             FOREIGN KEY (user_id) REFERENCES profiles(user_id)
@@ -349,7 +387,13 @@ class MemoryStore:
                             digital_self_version_id, digital_self_manifest_sha256,
                             preview_grant_id, self_preview_perspective,
                             relationship_profile_id, legacy_grant_id,
-                            companion_style_id, companion_style_version, learning_task_id, created_at
+                            companion_style_id, companion_style_version,
+                            voice_profile_id, voice_profile_version, voice_provider,
+                            voice_model, voice_resource_id, voice_provider_expires_at,
+                            voice_speaker_sha256, fallback_voice_profile_id,
+                            fallback_voice_provider, fallback_voice_model,
+                            fallback_voice_resource_id,
+                            learning_task_id, created_at
                         )
                         SELECT
                             session_id,
@@ -363,7 +407,8 @@ class MemoryStore:
                             COALESCE(omni_sdp_exchanges, 0),
                             'companion', 's2-v1', NULL, NULL, NULL, NULL,
                             NULL, NULL, 'starlight', 'companion-v1',
-                            NULL,
+                            NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                            NULL, NULL, NULL, NULL, NULL,
                             created_at
                         FROM voice_sessions_legacy;
                         DROP TABLE voice_sessions_legacy;
@@ -631,9 +676,12 @@ class MemoryStore:
                     (legacy_token_hash,),
                 )
                 return None
-            if connection.execute(
-                "SELECT 1 FROM auth_sessions WHERE user_id = ? LIMIT 1", (user_id,)
-            ).fetchone() is not None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM auth_sessions WHERE user_id = ? LIMIT 1", (user_id,)
+                ).fetchone()
+                is not None
+            ):
                 return None
             self._ensure_profile(connection, user_id, now)
             connection.execute(
@@ -694,7 +742,9 @@ class MemoryStore:
                 return AuthSessionRotationResult(AuthSessionRotationStatus.INVALID)
             if row["consumed_at"] is not None:
                 try:
-                    consumed_at = datetime.fromisoformat(str(row["consumed_at"]).replace("Z", "+00:00"))
+                    consumed_at = datetime.fromisoformat(
+                        str(row["consumed_at"]).replace("Z", "+00:00")
+                    )
                     requested_at = datetime.fromisoformat(now.replace("Z", "+00:00"))
                     age_s = (requested_at - consumed_at).total_seconds()
                 except (TypeError, ValueError):
@@ -909,6 +959,11 @@ class MemoryStore:
                        preview_grant_id, self_preview_perspective,
                        relationship_profile_id, legacy_grant_id,
                        companion_style_id, companion_style_version,
+                       voice_profile_id, voice_profile_version, voice_provider,
+                       voice_model, voice_resource_id, voice_provider_expires_at,
+                       voice_speaker_sha256, fallback_voice_profile_id,
+                       fallback_voice_provider, fallback_voice_model,
+                       fallback_voice_resource_id,
                        learning_task_id, created_at
                 FROM voice_sessions WHERE user_id = ? ORDER BY created_at, session_id
                 """,
@@ -997,12 +1052,8 @@ class MemoryStore:
                     digital_slot = str(item.pop("digital_self_slot"))
                     generic_answer = str(item.pop("generic_answer"))
                     digital_answer = str(item.pop("digital_self_answer"))
-                    item["slot_a"] = (
-                        digital_answer if digital_slot == "a" else generic_answer
-                    )
-                    item["slot_b"] = (
-                        digital_answer if digital_slot == "b" else generic_answer
-                    )
+                    item["slot_a"] = digital_answer if digital_slot == "a" else generic_answer
+                    item["slot_b"] = digital_answer if digital_slot == "b" else generic_answer
                     for key in (
                         "available",
                         "has_source",
@@ -1154,6 +1205,17 @@ class MemoryStore:
         legacy_grant_id: str | None = None,
         companion_style_id: str | None = None,
         companion_style_version: str | None = None,
+        voice_profile_id: str | None = None,
+        voice_profile_version: int | None = None,
+        voice_provider: str | None = None,
+        voice_model: str | None = None,
+        voice_resource_id: str | None = None,
+        voice_provider_expires_at: str | None = None,
+        voice_speaker_sha256: str | None = None,
+        fallback_voice_profile_id: str | None = None,
+        fallback_voice_provider: str | None = None,
+        fallback_voice_model: str | None = None,
+        fallback_voice_resource_id: str | None = None,
         learning_task_id: str | None = None,
     ) -> dict[str, Any]:
         with self._connection() as connection:
@@ -1166,16 +1228,42 @@ class MemoryStore:
                     digital_self_manifest_sha256, preview_grant_id,
                     self_preview_perspective, relationship_profile_id,
                     legacy_grant_id, companion_style_id, companion_style_version,
+                    voice_profile_id, voice_profile_version, voice_provider,
+                    voice_model, voice_resource_id, voice_provider_expires_at,
+                    voice_speaker_sha256, fallback_voice_profile_id,
+                    fallback_voice_provider, fallback_voice_model,
+                    fallback_voice_resource_id,
                     learning_task_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    session_id, user_id, room_name, voice_backend, interaction_mode,
-                    mode_policy_version, digital_self_version_id,
-                    digital_self_manifest_sha256, preview_grant_id,
-                    self_preview_perspective, relationship_profile_id,
-                    legacy_grant_id, companion_style_id, companion_style_version,
-                    learning_task_id, created_at,
+                    session_id,
+                    user_id,
+                    room_name,
+                    voice_backend,
+                    interaction_mode,
+                    mode_policy_version,
+                    digital_self_version_id,
+                    digital_self_manifest_sha256,
+                    preview_grant_id,
+                    self_preview_perspective,
+                    relationship_profile_id,
+                    legacy_grant_id,
+                    companion_style_id,
+                    companion_style_version,
+                    voice_profile_id,
+                    voice_profile_version,
+                    voice_provider,
+                    voice_model,
+                    voice_resource_id,
+                    voice_provider_expires_at,
+                    voice_speaker_sha256,
+                    fallback_voice_profile_id,
+                    fallback_voice_provider,
+                    fallback_voice_model,
+                    fallback_voice_resource_id,
+                    learning_task_id,
+                    created_at,
                 ),
             )
             row = connection.execute(
@@ -1185,6 +1273,11 @@ class MemoryStore:
                        digital_self_manifest_sha256, preview_grant_id,
                        self_preview_perspective, relationship_profile_id,
                        legacy_grant_id, companion_style_id, companion_style_version,
+                       voice_profile_id, voice_profile_version, voice_provider,
+                       voice_model, voice_resource_id, voice_provider_expires_at,
+                       voice_speaker_sha256, fallback_voice_profile_id,
+                       fallback_voice_provider, fallback_voice_model,
+                       fallback_voice_resource_id,
                        learning_task_id, created_at
                 FROM voice_sessions WHERE session_id = ?
                 """,
@@ -1203,6 +1296,11 @@ class MemoryStore:
                        digital_self_manifest_sha256, preview_grant_id,
                        self_preview_perspective, relationship_profile_id,
                        legacy_grant_id, companion_style_id, companion_style_version,
+                       voice_profile_id, voice_profile_version, voice_provider,
+                       voice_model, voice_resource_id, voice_provider_expires_at,
+                       voice_speaker_sha256, fallback_voice_profile_id,
+                       fallback_voice_provider, fallback_voice_model,
+                       fallback_voice_resource_id,
                        learning_task_id, created_at
                 FROM voice_sessions
                 WHERE session_id = ? AND user_id = ?
@@ -1221,6 +1319,11 @@ class MemoryStore:
                        digital_self_manifest_sha256, preview_grant_id,
                        self_preview_perspective, relationship_profile_id,
                        legacy_grant_id, companion_style_id, companion_style_version,
+                       voice_profile_id, voice_profile_version, voice_provider,
+                       voice_model, voice_resource_id, voice_provider_expires_at,
+                       voice_speaker_sha256, fallback_voice_profile_id,
+                       fallback_voice_provider, fallback_voice_model,
+                       fallback_voice_resource_id,
                        learning_task_id, created_at
                 FROM voice_sessions WHERE session_id = ?
                 """,
@@ -1237,6 +1340,11 @@ class MemoryStore:
                        digital_self_manifest_sha256, preview_grant_id,
                        self_preview_perspective, relationship_profile_id,
                        legacy_grant_id, companion_style_id, companion_style_version,
+                       voice_profile_id, voice_profile_version, voice_provider,
+                       voice_model, voice_resource_id, voice_provider_expires_at,
+                       voice_speaker_sha256, fallback_voice_profile_id,
+                       fallback_voice_provider, fallback_voice_model,
+                       fallback_voice_resource_id,
                        learning_task_id, created_at
                 FROM voice_sessions WHERE user_id = ? ORDER BY created_at, session_id
                 """,

@@ -5,7 +5,14 @@ date: 2026-07-19
 
 # Agent 与 Control API 之间使用按能力拆分的内部令牌
 
-Memoria 的 Agent 需要追加证据、上报进程心跳、读取人生记忆、读取人格胶囊、解析当前声音档案和读取会话模式政策。共享一个“内部万能 token”会让任一调用路径被攻破后获得全部内部权限，也难以独立轮换和审计。生产环境因此使用 `archive_write`、`agent_heartbeat`、`memory_read`、`persona_read`、`voice_resolution`、`interaction_policy` 六个互不相同的 capability token；SpeakerAuthority 继续使用独立 token。Control API 的每个内部路由只接受对应能力，Agent 只加载已启用模块需要的令牌。
+Memoria 的内部调用需要追加证据、上报进程心跳、读取人生记忆、读取人格胶囊、解析当前
+声音档案、读取会话模式政策、获取统一回答规划，以及在供应商控制台人工删除个人音色后
+收敛清理证据。共享一个“内部万能 token”会让任一调用路径被攻破后获得全部内部权限，
+也难以独立轮换和审计。生产环境因此使用 `archive_write`、`agent_heartbeat`、
+`memory_read`、`persona_read`、`voice_resolution`、`voice_cleanup`、
+`interaction_policy`、`response_plan` 八个互不相同的 capability token；
+SpeakerAuthority 继续使用独立 token。Control API 的每个内部路由只接受对应能力，Agent
+只加载运行时需要的令牌，`voice_cleanup` 仅保留在 Control/运维侧。
 
 ## Considered Options
 

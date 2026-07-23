@@ -94,6 +94,10 @@ from services.voice_profile.domain import (
     VoicePreviewRenderer,
     VoiceProfilePort,
 )
+from services.voice_profile.doubao_voice_clone import (
+    DoubaoVoiceCloneClient,
+    DoubaoVoiceCloneConfig,
+)
 from services.voice_profile.manager import VoiceProfileManager
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.sample_url import VoiceSampleURLSigner
@@ -216,12 +220,8 @@ def _voice_profile_services(
             read_keys=settings.voice_sample_read_key_map(),
             endpoint_url=settings.voice_object_endpoint or None,
             region_name=settings.voice_object_region or None,
-            access_key_id=(
-                settings.voice_object_access_key.get_secret_value().strip() or None
-            ),
-            secret_access_key=(
-                settings.voice_object_secret_key.get_secret_value().strip() or None
-            ),
+            access_key_id=(settings.voice_object_access_key.get_secret_value().strip() or None),
+            secret_access_key=(settings.voice_object_secret_key.get_secret_value().strip() or None),
             prefix=settings.voice_object_prefix,
         )
     else:
@@ -240,18 +240,39 @@ def _voice_profile_services(
         public_base_url=settings.public_base_url,
         ttl_s=settings.voice_sample_url_ttl_s,
     )
-    api_key = settings.dashscope_api_key.get_secret_value()
     provider: VoiceEnrollmentProvider
-    if settings.offline_mock or not api_key:
+    if settings.offline_mock:
         provider = UnavailableVoiceEnrollmentProvider()
-    else:
-        provider = CosyVoiceEnrollmentClient(
-            CosyVoiceEnrollmentConfig(
-                endpoint=settings.voice_enrollment_url,
-                api_key=api_key,
-                timeout_s=settings.voice_enrollment_timeout_s,
+    elif settings.voice_clone_provider == "volcengine_doubao":
+        api_key = settings.doubao_voice_api_key.get_secret_value()
+        if not api_key:
+            provider = UnavailableVoiceEnrollmentProvider()
+        else:
+            provider = DoubaoVoiceCloneClient(
+                DoubaoVoiceCloneConfig(
+                    endpoint=settings.doubao_voice_clone_url,
+                    query_endpoint=settings.doubao_voice_query_url,
+                    api_key=api_key,
+                    timeout_s=settings.voice_enrollment_timeout_s,
+                    poll_interval_s=settings.doubao_voice_clone_poll_interval_s,
+                    synth_ready_id_mode=settings.doubao_voice_synth_ready_id_mode,
+                    synth_ready_id_field=settings.doubao_voice_synth_ready_id_field,
+                    expires_at_field=settings.doubao_voice_expires_at_field,
+                    expires_at_format=settings.doubao_voice_expires_at_format,
+                )
             )
-        )
+    else:
+        api_key = settings.dashscope_api_key.get_secret_value()
+        if not api_key:
+            provider = UnavailableVoiceEnrollmentProvider()
+        else:
+            provider = CosyVoiceEnrollmentClient(
+                CosyVoiceEnrollmentConfig(
+                    endpoint=settings.voice_enrollment_url,
+                    api_key=api_key,
+                    timeout_s=settings.voice_enrollment_timeout_s,
+                )
+            )
     archive_url = settings.archive_database_url.get_secret_value()
     manager: VoiceProfilePort
     if archive_url:
@@ -262,6 +283,7 @@ def _voice_profile_services(
             sample_url_factory=signer.url,
             provider_region=settings.voice_provider_region,
             target_model=settings.voice_target_model,
+            provider_name=settings.voice_clone_provider,
         )
     else:
         manager = VoiceProfileManager.sqlite(
@@ -271,6 +293,7 @@ def _voice_profile_services(
             sample_url_factory=signer.url,
             provider_region=settings.voice_provider_region,
             target_model=settings.voice_target_model,
+            provider_name=settings.voice_clone_provider,
         )
     return manager, signer, object_store
 
@@ -288,9 +311,7 @@ def _archive_object_store(settings: ControlSettings) -> ObjectStore:
             read_keys=settings.archive_object_read_key_map(),
             endpoint_url=settings.archive_object_endpoint or None,
             region_name=settings.archive_object_region or None,
-            access_key_id=(
-                settings.archive_object_access_key.get_secret_value().strip() or None
-            ),
+            access_key_id=(settings.archive_object_access_key.get_secret_value().strip() or None),
             secret_access_key=(
                 settings.archive_object_secret_key.get_secret_value().strip() or None
             ),
@@ -429,9 +450,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await to_thread(sqlite_digital_self.initialize)
         digital_self_registry = sqlite_digital_self
     app.state.digital_self_registry = digital_self_registry
-    app.state.self_preview_registry = SelfPreviewRegistry.sqlite(
-        settings.memoria_db_path
-    )
+    app.state.self_preview_registry = SelfPreviewRegistry.sqlite(settings.memoria_db_path)
     await to_thread(app.state.self_preview_registry.initialize)
     self_model_registry: SelfModelRegistryPort
     if archive_url:

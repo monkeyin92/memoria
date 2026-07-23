@@ -23,6 +23,7 @@ from services.voice_profile.domain import (
     EvaluationRequiredError,
     ProviderSample,
     ProviderVoice,
+    ProviderVoiceDeletionUnsupportedError,
     VoiceBlindPreviewTarget,
     VoiceBlindSlot,
     VoiceBlindTrial,
@@ -193,6 +194,7 @@ class VoiceProfileManager:
         sample_url_factory: Callable[[str], str],
         provider_region: str,
         target_model: str,
+        provider_name: str = "alibaba_model_studio",
     ) -> None:
         self._path = sqlite_path.expanduser().resolve()
         self._object_store = object_store
@@ -200,6 +202,9 @@ class VoiceProfileManager:
         self._sample_url_factory = sample_url_factory
         self._provider_region = provider_region
         self._target_model = target_model
+        if not provider_name.strip():
+            raise ValueError("voice provider name is required")
+        self._provider_name = provider_name
         self._initialized = False
         self._initialize_lock = threading.Lock()
 
@@ -224,8 +229,7 @@ class VoiceProfileManager:
                 connection.execute("PRAGMA busy_timeout=5000")
                 connection.executescript(_SCHEMA)
                 columns = {
-                    str(row[1])
-                    for row in connection.execute("PRAGMA table_info(voice_profiles)")
+                    str(row[1]) for row in connection.execute("PRAGMA table_info(voice_profiles)")
                 }
                 if "quality_status" not in columns:
                     connection.execute(
@@ -250,9 +254,7 @@ class VoiceProfileManager:
                         )
                 quality_columns = {
                     str(row[1])
-                    for row in connection.execute(
-                        "PRAGMA table_info(voice_quality_measurements)"
-                    )
+                    for row in connection.execute("PRAGMA table_info(voice_quality_measurements)")
                 }
                 if "long_sentence_chars" not in quality_columns:
                     connection.execute(
@@ -387,7 +389,7 @@ class VoiceProfileManager:
             except Exception:
                 deletion_incomplete = True
             else:
-                deletion_incomplete = deletion_incomplete or profile.deletion_status != "completed"
+                deletion_incomplete = deletion_incomplete or profile.deletion_status == "failed"
         if deletion_incomplete:
             raise VoiceEnrollmentReconciliationRequiredError(
                 "voice profile deletion incomplete; retry consent revocation"
@@ -549,7 +551,7 @@ class VoiceProfileManager:
                     operation_id, enrollment_key, account_id, profile_id, sample_id,
                     version_number, provider, provider_region, target_model,
                     provider_prefix, sample_purpose, state, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'alibaba_model_studio', ?, ?, ?, ?,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                           'intent', ?, ?)
                 """,
                 (
@@ -559,6 +561,7 @@ class VoiceProfileManager:
                     str(profile_id),
                     str(sample_id),
                     version,
+                    self._provider_name,
                     self._provider_region,
                     self._target_model,
                     f"m{profile_id.hex[:9]}",
@@ -611,13 +614,14 @@ class VoiceProfileManager:
                     profile_id, account_id, sample_id, version_number,
                     provider, provider_region, target_model, status,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'alibaba_model_studio', ?, ?, 'enrolling', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'enrolling', ?, ?)
                 """,
                 (
                     str(operation["profile_id"]),
                     request.account_id,
                     str(operation["sample_id"]),
                     int(operation["version_number"]),
+                    self._provider_name,
                     self._provider_region,
                     self._target_model,
                     now,
@@ -658,9 +662,7 @@ class VoiceProfileManager:
     async def _finalize_enrollment(self, operation: sqlite3.Row) -> VoiceProfile:
         provider_voice_id = str(operation["provider_voice_id"] or "")
         if not provider_voice_id:
-            raise VoiceEnrollmentReconciliationRequiredError(
-                "voice provider result is unavailable"
-            )
+            raise VoiceEnrollmentReconciliationRequiredError("voice provider result is unavailable")
         now = datetime.now(UTC).isoformat()
         event = self._event(
             str(operation["account_id"]),
@@ -1059,6 +1061,19 @@ class VoiceProfileManager:
                 raise EvaluationRequiredError("a passed candidate evaluation is required")
             if row["quality_status"] != "passed":
                 raise EvaluationRequiredError("a passed provider quality measurement is required")
+            if row["provider"] == "volcengine_doubao":
+                expires_at = (
+                    datetime.fromisoformat(str(row["provider_expires_at"]))
+                    if row["provider_expires_at"] is not None
+                    else None
+                )
+                if (
+                    not row["provider_voice_id"]
+                    or expires_at is None
+                    or expires_at.utcoffset() is None
+                    or expires_at <= now
+                ):
+                    raise EvaluationRequiredError("an unexpired Doubao provider voice is required")
             event = self._event(
                 account_id,
                 "voice_profile.activated",
@@ -1094,6 +1109,8 @@ class VoiceProfileManager:
                 """
                 SELECT * FROM voice_profiles
                 WHERE account_id = ? AND status = 'active'
+                  AND evaluation_status = 'passed'
+                  AND quality_status = 'passed'
                 """,
                 (account_id,),
             ).fetchone()
@@ -1104,13 +1121,20 @@ class VoiceProfileManager:
             if row["provider_expires_at"] is not None
             else None
         )
+        if row["provider"] == "volcengine_doubao" and expires is None:
+            return VoiceResolution(mode="fallback")
         if expires is not None and expires <= datetime.now(UTC):
             return VoiceResolution(mode="fallback")
         return VoiceResolution(
             mode="active",
             profile_id=str(row["profile_id"]),
+            version_number=int(row["version_number"]),
+            provider=str(row["provider"]),
+            voice_kind="personal",
             model=str(row["target_model"]),
+            resource_id=str(row["target_model"]),
             voice_id=str(row["provider_voice_id"]),
+            provider_expires_at=expires,
         )
 
     async def profiles(self, *, account_id: str) -> tuple[VoiceProfile, ...]:
@@ -1159,13 +1183,16 @@ class VoiceProfileManager:
         provider_asset_absent: bool = False,
         sample_asset_absent: bool = False,
     ) -> VoiceProfile:
-        if sum(
-            (
-                provider_voice is not None,
-                provider_asset_absent,
-                sample_asset_absent,
+        if (
+            sum(
+                (
+                    provider_voice is not None,
+                    provider_asset_absent,
+                    sample_asset_absent,
+                )
             )
-        ) != 1:
+            != 1
+        ):
             raise ValueError("exactly one enrollment reconciliation outcome is required")
         operation = self._operation(
             account_id=account_id,
@@ -1191,10 +1218,14 @@ class VoiceProfileManager:
                 state="sample_uploaded",
             )
         else:
-            if str(operation["state"]) not in {
-                "upload_submitted",
-                "reconciliation_required",
-            } or self._profile_row(str(operation["profile_id"])) is not None:
+            if (
+                str(operation["state"])
+                not in {
+                    "upload_submitted",
+                    "reconciliation_required",
+                }
+                or self._profile_row(str(operation["profile_id"])) is not None
+            ):
                 raise ValueError("enrollment has no ambiguous sample upload")
             self._set_operation_state(
                 str(operation["operation_id"]),
@@ -1295,7 +1326,7 @@ class VoiceProfileManager:
                 ).fetchone()
                 assert refreshed is not None
                 return self._synthetic_profile(refreshed)
-            if row["status"] == "revoked" and row["deletion_status"] == "completed":
+            if row["status"] == "revoked" and row["deletion_status"] in {"completed", "pending"}:
                 return self._profile(row)
             if row["status"] != "revoked":
                 event = self._event(
@@ -1320,19 +1351,23 @@ class VoiceProfileManager:
                 else None
             )
             provider_result_ambiguous = (
-                row["enrollment_state"]
-                in {"provider_submitted", "reconciliation_required"}
+                row["enrollment_state"] in {"provider_submitted", "reconciliation_required"}
                 and voice_id is None
             )
         await self._object_store.delete(reference)
         deletion_status: VoiceDeletionStatus = (
             "failed" if provider_result_ambiguous else "completed"
         )
+        cleanup_error: str | None = None
         try:
             if voice_id is not None:
                 await self._provider.delete_voice(voice_id=voice_id)
+        except ProviderVoiceDeletionUnsupportedError:
+            deletion_status = "pending"
+            cleanup_error = "provider_deletion_unsupported_manual_cleanup"
         except Exception:
             deletion_status = "failed"
+            cleanup_error = "provider_asset_deletion_incomplete"
         completed_at = datetime.now(UTC)
         with self._connect() as connection:
             connection.execute(
@@ -1362,12 +1397,10 @@ class VoiceProfileManager:
                     WHERE operation_id = ?
                     """,
                     (
-                        "revoked" if deletion_status == "completed" else "reconciliation_required",
-                        (
-                            None
-                            if deletion_status == "completed"
-                            else "provider_asset_deletion_incomplete"
-                        ),
+                        "revoked"
+                        if deletion_status in {"completed", "pending"}
+                        else "reconciliation_required",
+                        cleanup_error,
                         completed_at.isoformat(),
                         str(row["enrollment_operation_id"]),
                     ),
@@ -1375,6 +1408,80 @@ class VoiceProfileManager:
             updated = connection.execute(
                 "SELECT * FROM voice_profiles WHERE profile_id = ?",
                 (profile_id,),
+            ).fetchone()
+        assert updated is not None
+        return self._profile(updated)
+
+    async def confirm_provider_deletion(
+        self,
+        *,
+        account_id: str,
+        profile_id: str,
+        evidence_reference: str,
+    ) -> VoiceProfile:
+        """Record an operator-confirmed provider deletion without storing raw voice IDs."""
+
+        reference = evidence_reference.strip()
+        if not reference:
+            raise ValueError("provider deletion evidence reference is required")
+        now = datetime.now(UTC)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM voice_profiles
+                WHERE profile_id = ? AND account_id = ?
+                """,
+                (profile_id, account_id),
+            ).fetchone()
+            if row is None:
+                raise EvidenceNotFoundError(profile_id)
+            if row["status"] != "revoked":
+                raise EvaluationRequiredError(
+                    "only a revoked voice profile can confirm provider deletion"
+                )
+            if row["deletion_status"] == "completed":
+                return self._profile(row)
+            if row["deletion_status"] not in {"pending", "failed"}:
+                raise EvaluationRequiredError(
+                    "provider deletion must be pending or failed before confirmation"
+                )
+            provider_voice_id = (
+                str(row["provider_voice_id"]) if row["provider_voice_id"] is not None else ""
+            )
+            event = self._event(
+                account_id,
+                "voice_profile.provider_deletion_confirmed",
+                {
+                    "profile_id": profile_id,
+                    "provider": str(row["provider"]),
+                    "provider_voice_sha256": (
+                        hashlib.sha256(provider_voice_id.encode("utf-8")).hexdigest()
+                        if provider_voice_id
+                        else None
+                    ),
+                    "evidence_reference": reference,
+                },
+            )
+            self._insert_evidence(connection, event)
+            connection.execute(
+                """
+                UPDATE voice_profiles
+                SET deletion_status = 'completed', provider_deleted_at = ?, updated_at = ?
+                WHERE profile_id = ? AND account_id = ?
+                """,
+                (now.isoformat(), now.isoformat(), profile_id, account_id),
+            )
+            connection.execute(
+                """
+                UPDATE voice_enrollment_operations
+                SET state = 'revoked', last_error = NULL, updated_at = ?
+                WHERE profile_id = ? AND account_id = ?
+                """,
+                (now.isoformat(), profile_id, account_id),
+            )
+            updated = connection.execute(
+                "SELECT * FROM voice_profiles WHERE profile_id = ? AND account_id = ?",
+                (profile_id, account_id),
             ).fetchone()
         assert updated is not None
         return self._profile(updated)
@@ -1440,9 +1547,7 @@ class VoiceProfileManager:
             ),
             created_at=datetime.fromisoformat(str(operation["created_at"])),
             revoked_at=(
-                datetime.fromisoformat(str(operation["updated_at"]))
-                if state == "revoked"
-                else None
+                datetime.fromisoformat(str(operation["updated_at"])) if state == "revoked" else None
             ),
         )
 
@@ -1459,9 +1564,7 @@ class VoiceProfileManager:
             sample_purpose=str(row["sample_purpose"]),
             state=cast(VoiceEnrollmentOperationState, row["state"]),
             provider_voice_id=(
-                str(row["provider_voice_id"])
-                if row["provider_voice_id"] is not None
-                else None
+                str(row["provider_voice_id"]) if row["provider_voice_id"] is not None else None
             ),
             last_error=str(row["last_error"]) if row["last_error"] is not None else None,
             created_at=datetime.fromisoformat(str(row["created_at"])),
@@ -1484,9 +1587,7 @@ class VoiceProfileManager:
             evaluation_status=cast(
                 Literal["pending", "passed", "failed"], row["evaluation_status"]
             ),
-            quality_status=cast(
-                Literal["pending", "passed", "failed"], row["quality_status"]
-            ),
+            quality_status=cast(Literal["pending", "passed", "failed"], row["quality_status"]),
             deletion_status=cast(VoiceDeletionStatus, row["deletion_status"]),
             provider_expires_at=(
                 datetime.fromisoformat(str(row["provider_expires_at"]))

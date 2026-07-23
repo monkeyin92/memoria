@@ -8,6 +8,7 @@ from services.agent.src.providers.doubao_voice_catalog import (
     catalog_by_id,
     resolve_approved_voice,
 )
+from services.common.companions import DESIGNED_VOICE_SPEAKERS
 
 
 def test_all_companion_voices_are_unique_and_approved() -> None:
@@ -52,3 +53,9 @@ def test_catalog_covers_stable_profile_keys() -> None:
         "calm_guide",
         "low_magnetic",
     }
+
+
+def test_catalog_reuses_the_common_canonical_speaker_mapping() -> None:
+    assert {
+        voice.profile_id: voice.speaker_id for voice in DOUBAO_VOICE_CATALOG
+    } == DESIGNED_VOICE_SPEAKERS

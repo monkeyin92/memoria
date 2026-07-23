@@ -16,6 +16,7 @@ import {
 
 import {
   approveDigitalSelfVersion,
+  activateVoiceProfile,
   beginDigitalSelfTesting,
   buildDigitalSelfVersion,
   createVoiceBlindTrial,
@@ -72,8 +73,10 @@ const statusLabels = {
   candidate: "待评估",
   confirmed: "已确认",
   disabled: "已停用",
+  expired: "已过期",
   failed: "未通过",
   cleanup_failed: "删除未完成",
+  cleanup_pending: "供应商清理待处理",
   passed: "已通过",
   pending: "待处理",
   revoked: "已撤销",
@@ -98,6 +101,24 @@ function itemsOf(result) {
 
 function errorMessage(error, fallback) {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function isDoubaoPersonalVoice(profile) {
+  return (
+    profile?.provider === "volcengine_doubao" &&
+    profile?.target_model === "seed-icl-2.0"
+  );
+}
+
+function canActivateVoice(profile) {
+  return (
+    isDoubaoPersonalVoice(profile) &&
+    profile?.status !== "active" &&
+    profile?.status !== "revoked" &&
+    profile?.status !== "expired" &&
+    profile?.evaluation_status === "passed" &&
+    profile?.quality_status === "passed"
+  );
 }
 
 function StatusBadge({ value }) {
@@ -382,7 +403,7 @@ export function DigitalSelfPanel({
       await reload({ silent: true });
       setVoiceFile(null);
       setBlindTrial(null);
-      setNotice("候选声音已创建。你可以继续试听和评估；当前豆包语音暂不应用此档案。");
+      setNotice("候选声音已创建。请继续试听和评估；是否可启用取决于供应商和目标模型。");
     } catch (actionError) {
       setError(errorMessage(actionError, "候选声音没有创建成功，请检查录音后重试。"));
     } finally {
@@ -458,21 +479,39 @@ export function DigitalSelfPanel({
   };
 
   const activeVoiceConsent = Boolean(voiceConsent && !voiceConsent.revoked_at);
+  const pendingVoiceCleanupProfile =
+    voiceProfiles.find(
+      (profile) =>
+        profile.status === "revoked" && profile.deletion_status === "pending",
+    ) || null;
   const incompleteVoiceProfile =
     voiceProfiles.find(
       (profile) =>
-        profile.status === "revoked" && profile.deletion_status !== "completed",
+        profile.status === "revoked" &&
+        !["completed", "pending"].includes(profile.deletion_status),
     ) || null;
   const voiceCleanupIncomplete = Boolean(
     incompleteVoiceProfile ||
       (voiceConsent?.revoked_at &&
-        voiceProfiles.some((profile) => profile.deletion_status !== "completed")),
+        voiceProfiles.some(
+          (profile) =>
+            profile.deletion_status !== "completed" &&
+            profile.deletion_status !== "pending",
+        )),
+  );
+  const voiceCleanupPending = Boolean(
+    pendingVoiceCleanupProfile ||
+      (voiceConsent?.revoked_at &&
+        voiceProfiles.some((profile) => profile.deletion_status === "pending")),
   );
   const selectedVoice = activeVoiceConsent
     ? voiceProfiles.find((profile) => profile.status === "candidate") ||
       voiceProfiles.find((profile) => profile.status === "active") ||
+      voiceProfiles.find((profile) => profile.status === "expired") ||
       null
     : null;
+  const hasDoubaoPersonalVoice = voiceProfiles.some(isDoubaoPersonalVoice);
+  const hasLegacyVoice = voiceProfiles.some((profile) => !isDoubaoPersonalVoice(profile));
   const activeVersion = versions.find((version) => version.status === "active");
   const previewCapability = {
     ...(interactionCapabilities?.modes?.self_preview || {}),
@@ -812,12 +851,18 @@ export function DigitalSelfPanel({
                   value={
                     voiceCleanupIncomplete
                       ? "cleanup_failed"
+                      : voiceCleanupPending
+                        ? "cleanup_pending"
                       : selectedVoice?.status || (activeVoiceConsent ? "pending" : "revoked")
                   }
                 />
               </div>
               <p className="digital-explainer">
-                复刻声音不等于声纹身份，也不等于人格。当前实时对话使用 FunASR + 豆包 TTS 2.0 级联；历史复刻档案继续保留和可撤销，但暂不应用于当前豆包语音，也不能在此激活。
+                复刻声音不等于声纹身份，也不等于人格。当前实时对话默认使用所选伙伴的豆包设计音色。
+                {hasDoubaoPersonalVoice &&
+                  " 豆包 seed-icl-2.0 档案需通过主观 A/B 与服务端质量探针后才可启用；启用后还要重建并批准新的数字分身版本，才会用于数字分身预览。日常陪伴始终使用伙伴音色。"}
+                {hasLegacyVoice &&
+                  " 历史 CosyVoice 档案仅保留、可评估和可撤销，不适用于当前豆包，也不能激活。"}
               </p>
 
               {voiceCleanupIncomplete ? (
@@ -837,6 +882,12 @@ export function DigitalSelfPanel({
                   >
                     {busy === "voice-consent-retry" ? "正在重试…" : "重试删除声音资产"}
                   </button>
+                </div>
+              ) : voiceCleanupPending ? (
+                <div className="digital-consent-box">
+                  <p>
+                    声音档案已停止使用；供应商清理待处理，需人工确认。数字分身预览已回退到安全基线音色，日常陪伴仍使用伙伴音色。
+                  </p>
                 </div>
               ) : !activeVoiceConsent ? (
                 <div className="digital-consent-box">
@@ -983,7 +1034,7 @@ export function DigitalSelfPanel({
                             uncanny: evaluation.uncanny,
                             notes: evaluation.notes,
                           }),
-                          "A/B 评估已提交。结果会保留在历史档案中，当前豆包语音暂不应用此档案。",
+                          "A/B 评估已提交。符合条件的豆包档案可在主观与客观两项门禁通过后启用。",
                         );
                       }}
                     >
@@ -1062,12 +1113,43 @@ export function DigitalSelfPanel({
                         : "主观盲测已通过，等待服务端质量探针；档案暂不应用于当前豆包语音。"}
                     </p>
                   ) : selectedVoice.status !== "active" ? (
-                    <p className="voice-quality-pending" role="status">
-                      <ClockCounterClockwise size={18} />
-                      历史档案已通过评估，但暂不应用于当前豆包语音。实时对话继续使用所选伙伴的豆包设计音色。
-                    </p>
+                    canActivateVoice(selectedVoice) ? (
+                      <div className="voice-quality-pending" role="status">
+                        <ClockCounterClockwise size={18} />
+                        <span>主观 A/B 与服务端质量探针均已通过，可以启用个人声音。</span>
+                        <button
+                          type="button"
+                          className="button-primary full-width"
+                          disabled={Boolean(busy)}
+                          onClick={() => void run(
+                            `voice-profile-activate-${selectedVoice.profile_id}`,
+                            () => activateVoiceProfile(selectedVoice.profile_id),
+                            "个人声音已启用。请重建并批准新的数字分身版本；只有该版本的数字分身预览会使用本人声音，日常陪伴仍使用伙伴音色。",
+                          )}
+                        >
+                          {busy === `voice-profile-activate-${selectedVoice.profile_id}`
+                            ? "正在启用…"
+                            : "启用个人声音"}
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="voice-quality-pending" role="status">
+                        <ClockCounterClockwise size={18} />
+                        {selectedVoice.status === "expired"
+                          ? "个人声音档案已过期，数字分身预览已回退到安全基线音色；日常陪伴不受影响。"
+                          : "历史档案已通过评估，但暂不应用于当前豆包语音。实时对话继续使用所选伙伴的豆包设计音色。"}
+                      </p>
+                    )
                   ) : (
-                    <p className="voice-active-note"><CheckCircle size={18} weight="fill" /> 此档案保留原激活状态，但暂不应用于当前豆包语音；实时对话使用所选伙伴的豆包设计音色。</p>
+                    isDoubaoPersonalVoice(selectedVoice) ? (
+                      <p className="voice-active-note">
+                        <CheckCircle size={18} weight="fill" /> 个人声音已启用。请重建并批准新的数字分身版本；只有该版本的数字分身预览会使用本人声音，日常陪伴仍使用伙伴音色。
+                      </p>
+                    ) : (
+                      <p className="voice-active-note">
+                        <CheckCircle size={18} weight="fill" /> 此档案保留原激活状态，但暂不应用于当前豆包语音；实时对话使用所选伙伴的豆包设计音色。
+                      </p>
+                    )
                   )}
                   <button
                     type="button"

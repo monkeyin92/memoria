@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import uuid
@@ -44,6 +45,8 @@ from services.agent.src.providers.reliability import CircuitBreaker
 
 logger = logging.getLogger(__name__)
 DEFAULT_WS_URL = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
+DOUBAO_PERSONAL_VOICE_MODEL = "seed-icl-2.0"
+DOUBAO_PROVIDER = "volcengine_doubao"
 
 
 def _valid_websocket_url(value: str, *, require_tls: bool) -> bool:
@@ -170,6 +173,7 @@ class DoubaoTTSConfig:
 class PooledConnection:
     ws: ClientConnection
     conn_id: str
+    resource_id: str = DOUBAO_TTS_MODEL
     in_use: bool = False
     burst: bool = False
     failed: bool = False
@@ -308,7 +312,11 @@ class DoubaoTTSPool:
                     await ws.close()
             raise
         self._breaker.record_success()
-        conn = PooledConnection(ws=ws, conn_id=connect_id)
+        conn = PooledConnection(
+            ws=ws,
+            conn_id=connect_id,
+            resource_id=self.config.resource_id,
+        )
         self._all[connect_id] = conn
         return conn
 
@@ -332,6 +340,9 @@ class DoubaoTTSPool:
                     if not conn.closed and not conn.failed:
                         break
         conn.in_use = True
+        if conn.resource_id != self.config.resource_id:
+            await self.discard(conn, reason="resource_mismatch")
+            raise RuntimeError("Doubao TTS pool returned a connection for another resource")
         self.metrics.set_tts_pool_available(self.available_approx)
         return conn
 
@@ -456,6 +467,92 @@ class DoubaoTTSPool:
         self.metrics.set_tts_pool_available(0)
 
 
+class DoubaoTTSPoolRouter:
+    """Keep baseline and personal-clone sockets separated by resource header."""
+
+    def __init__(
+        self,
+        baseline_config: DoubaoTTSConfig,
+        baseline_pool: DoubaoTTSPool,
+    ) -> None:
+        self._baseline_resource_id = baseline_config.resource_id
+        self._baseline_pool = baseline_pool
+        self._pools: dict[str, DoubaoTTSPool] = {
+            baseline_config.resource_id: baseline_pool,
+        }
+
+    def for_config(self, config: DoubaoTTSConfig) -> DoubaoTTSPool:
+        resource_id = config.resource_id
+        if resource_id not in {DOUBAO_TTS_MODEL, DOUBAO_PERSONAL_VOICE_MODEL}:
+            raise ValueError("unsupported Doubao TTS resource")
+        pool = self._pools.get(resource_id)
+        if pool is None:
+            pool = DoubaoTTSPool(replace(config), metrics=self.metrics)
+            self._pools[resource_id] = pool
+        if pool.config.resource_id != resource_id:
+            raise RuntimeError("Doubao TTS resource pool is misconfigured")
+        return pool
+
+    async def warm(self, size: int | None = None) -> None:
+        await self._baseline_pool.warm(size)
+
+    @property
+    def config(self) -> DoubaoTTSConfig:
+        return self._baseline_pool.config
+
+    async def acquire(self, *, wait_s: float = 0.3) -> PooledConnection:
+        """Compatibility path for callers that used the baseline pool directly."""
+        return await self._baseline_pool.acquire(wait_s=wait_s)
+
+    async def release(self, conn: PooledConnection) -> None:
+        await self._pool_for_connection(conn).release(conn)
+
+    async def discard(self, conn: PooledConnection, *, reason: str) -> None:
+        await self._pool_for_connection(conn).discard(conn, reason=reason)
+
+    def bind_active(
+        self,
+        fence: GenerationFence,
+        conn: PooledConnection,
+        *,
+        session_id: str = "",
+    ) -> None:
+        self._pool_for_connection(conn).bind_active(fence, conn, session_id=session_id)
+
+    async def discard_active_connection(self, fence: GenerationFence) -> None:
+        await asyncio.gather(
+            *(pool.discard_active_connection(fence) for pool in tuple(self._pools.values()))
+        )
+
+    @property
+    def active_by_fence(self) -> dict[str, PooledConnection]:
+        active: dict[str, PooledConnection] = {}
+        for pool in self._pools.values():
+            active.update(pool.active_by_fence)
+        return active
+
+    @property
+    def available_approx(self) -> int:
+        return sum(pool.available_approx for pool in self._pools.values())
+
+    @property
+    def discarded_count(self) -> int:
+        return sum(pool.discarded_count for pool in self._pools.values())
+
+    @property
+    def metrics(self) -> MetricsRegistry:
+        return self._baseline_pool.metrics
+
+    async def aclose(self) -> None:
+        await asyncio.gather(*(pool.aclose() for pool in tuple(self._pools.values())))
+
+    def _pool_for_connection(self, conn: PooledConnection) -> DoubaoTTSPool:
+        pool = self._pools.get(conn.resource_id)
+        if pool is None:
+            raise ValueError("connection belongs to an unknown Doubao resource pool")
+        return pool
+
+
 class DoubaoSynthesizeStream(tts.SynthesizeStream):
     def __init__(
         self,
@@ -463,6 +560,8 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
         tts_instance: DoubaoTTS,
         config: DoubaoTTSConfig,
         pool: DoubaoTTSPool,
+        fallback_config: DoubaoTTSConfig | None,
+        fallback_pool: DoubaoTTSPool | None,
         conn_options: APIConnectOptions,
         fence: GenerationFence | None,
     ) -> None:
@@ -470,15 +569,54 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
         self._tts_instance = tts_instance
         self._config = config
         self._pool = pool
+        self._fallback_config = fallback_config
+        self._fallback_pool = fallback_pool
         self._fence = fence
         self._conn: PooledConnection | None = None
 
     async def _run(self, output_emitter: tts.AudioEmitter) -> None:
-        conn = await self._pool.acquire()
+        replay: list[str] = []
+        try:
+            await self._run_attempt(
+                output_emitter,
+                config=self._config,
+                pool=self._pool,
+                replay=replay,
+            )
+        except DoubaoBeforeAudioError:
+            if self._fallback_config is None or self._fallback_pool is None:
+                raise
+            self._tts_instance._activate_fallback_for_fence(
+                self._fence,
+                self._fallback_config,
+            )
+            await self._run_attempt(
+                output_emitter,
+                config=self._fallback_config,
+                pool=self._fallback_pool,
+                replay=replay,
+            )
+
+    async def _run_attempt(
+        self,
+        output_emitter: tts.AudioEmitter,
+        *,
+        config: DoubaoTTSConfig,
+        pool: DoubaoTTSPool,
+        replay: list[str],
+    ) -> None:
+        try:
+            conn = await pool.acquire()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if config.resource_id == DOUBAO_PERSONAL_VOICE_MODEL:
+                raise DoubaoBeforeAudioError(str(exc)) from exc
+            raise
         self._conn = conn
         session_id = str(uuid.uuid4())
         if self._fence is not None:
-            self._pool.bind_active(self._fence, conn, session_id=session_id)
+            pool.bind_active(self._fence, conn, session_id=session_id)
         else:
             conn.session_id = session_id
         self._tts_instance._report_alignment(self._fence, session_id, "started")
@@ -486,37 +624,27 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
         got_words = False
         pcm_guard = _PcmContinuityGuard()
         subtitle_words: list[TimedWord] = []
-        output_emitter.initialize(
-            request_id=session_id,
-            sample_rate=self._config.sample_rate,
-            num_channels=1,
-            mime_type="audio/pcm",
-            frame_size_ms=20,
-            stream=True,
-        )
+        emitter_started = False
         try:
             await conn.ws.send(
                 build_client_message(
                     EventType.START_SESSION,
                     session_id=session_id,
                     payload=build_start_session_payload(
-                        speaker=self._config.speaker,
-                        sample_rate=self._config.sample_rate,
-                        speech_rate=self._config.speech_rate,
-                        loudness_rate=self._config.loudness_rate,
-                        pitch=self._config.pitch,
-                        context_texts=(self._config.instruction,)
-                        if self._config.instruction
-                        else (),
+                        speaker=config.speaker,
+                        sample_rate=config.sample_rate,
+                        speech_rate=config.speech_rate,
+                        loudness_rate=config.loudness_rate,
+                        pitch=config.pitch,
+                        context_texts=(config.instruction,) if config.instruction else (),
                         uid=str(uuid.uuid4()),
                     ),
                 )
             )
-            started = await self._receive(conn, timeout_s=self._config.connect_timeout_s)
+            started = await self._receive(conn, timeout_s=config.connect_timeout_s)
             if started.event != EventType.SESSION_STARTED:
                 raise DoubaoBeforeAudioError(_error_message(started))
             self._tts_instance.trace("doubao_session_started")
-            output_emitter.start_segment(segment_id=session_id)
 
             async def send_task_request(data: Any) -> bool:
                 if isinstance(data, self._FlushSentinel):
@@ -524,6 +652,7 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
                 text = str(data)
                 if not text.strip():
                     return False
+                replay.append(text)
                 await conn.ws.send(
                     build_client_message(
                         EventType.TASK_REQUEST,
@@ -533,11 +662,22 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
                 )
                 return True
 
-            async for first_data in self._input_ch:
-                if await send_task_request(first_data):
-                    break
+            replay_count = len(replay)
+            if replay_count:
+                for text in tuple(replay):
+                    await conn.ws.send(
+                        build_client_message(
+                            EventType.TASK_REQUEST,
+                            session_id=session_id,
+                            payload=build_task_request_payload(text),
+                        )
+                    )
             else:
-                raise DoubaoBeforeAudioError("empty-input")
+                async for first_data in self._input_ch:
+                    if await send_task_request(first_data):
+                        break
+                else:
+                    raise DoubaoBeforeAudioError("empty-input")
 
             async def sender() -> None:
                 async for data in self._input_ch:
@@ -548,8 +688,8 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
 
             send_task = asyncio.create_task(sender(), name="doubao-tts-send")
             loop = asyncio.get_running_loop()
-            first_audio_deadline = loop.time() + self._config.first_audio_timeout_s
-            total_deadline = loop.time() + self._config.total_timeout_s
+            first_audio_deadline = loop.time() + config.first_audio_timeout_s
+            total_deadline = loop.time() + config.total_timeout_s
             try:
                 while True:
                     deadline = (
@@ -565,6 +705,16 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
                         raise APIConnectionError(reason) from None
                     if message.message_type == MessageType.AUDIO_ONLY_SERVER:
                         if not got_audio:
+                            output_emitter.initialize(
+                                request_id=session_id,
+                                sample_rate=config.sample_rate,
+                                num_channels=1,
+                                mime_type="audio/pcm",
+                                frame_size_ms=20,
+                                stream=True,
+                            )
+                            output_emitter.start_segment(segment_id=session_id)
+                            emitter_started = True
                             self._tts_instance.trace(
                                 "doubao_first_pcm",
                                 detail={"pcm_bytes": len(message.payload)},
@@ -604,9 +754,7 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
             pcm_guard.finish()
             aligned_words, alignment_status = align_subtitle_words(
                 tuple(subtitle_words),
-                pcm_duration_ms_value=int(
-                    (pcm_guard.pcm_bytes // 2) * 1000 / self._config.sample_rate
-                ),
+                pcm_duration_ms_value=int((pcm_guard.pcm_bytes // 2) * 1000 / config.sample_rate),
             )
             if not aligned_words:
                 raise APIConnectionError("empty-timestamps")
@@ -625,18 +773,25 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
                     for word in aligned_words
                 ]
             )
-            output_emitter.end_segment()
-            await self._pool.release(conn)
+            if emitter_started:
+                output_emitter.end_segment()
+            await pool.release(conn)
             self._conn = None
         except asyncio.CancelledError:
             if self._conn is not None:
-                await self._pool.discard(self._conn, reason="cancel")
+                await pool.discard(self._conn, reason="cancel")
                 self._conn = None
             raise
-        except Exception:
+        except Exception as exc:
             if self._conn is not None:
-                await self._pool.discard(self._conn, reason="error")
+                await pool.discard(self._conn, reason="error")
                 self._conn = None
+            if (
+                not got_audio
+                and config.resource_id == DOUBAO_PERSONAL_VOICE_MODEL
+                and not isinstance(exc, DoubaoBeforeAudioError)
+            ):
+                raise DoubaoBeforeAudioError(str(exc)) from exc
             raise
         finally:
             self._tts_instance.trace("doubao_pcm_summary", detail=pcm_guard.summary())
@@ -651,18 +806,28 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
 
 class DoubaoTTS(tts.TTS[Any]):
     def __init__(self, config: DoubaoTTSConfig, pool: DoubaoTTSPool | None = None) -> None:
+        baseline_config = replace(config)
         super().__init__(
             capabilities=tts.TTSCapabilities(streaming=True, aligned_transcript=True),
-            sample_rate=config.sample_rate,
+            sample_rate=baseline_config.sample_rate,
             num_channels=1,
         )
-        self._config = config
-        self._baseline_profile = config.voice_profile
-        self._baseline_speaker = config.speaker
-        self._pool = pool or DoubaoTTSPool(config)
+        self._config = replace(baseline_config)
+        self._baseline_profile = baseline_config.voice_profile
+        self._baseline_resource_id = baseline_config.resource_id
+        self._baseline_speaker = baseline_config.speaker
+        self._personal_fallback_config: DoubaoTTSConfig | None = None
+        self._voice_kind = "designed"
+        if pool is not None and pool.config.resource_id != self._baseline_resource_id:
+            raise ValueError("injected Doubao TTS pool must use the baseline resource")
+        baseline_pool = pool or DoubaoTTSPool(replace(baseline_config))
+        self._pools = DoubaoTTSPoolRouter(baseline_config, baseline_pool)
         self._active_fence: GenerationFence | None = None
         self._trace_callback: Callable[[str, str, dict[str, Any] | None], None] | None = None
         self._alignment_callback: Callable[[GenerationFence, str, str], None] | None = None
+        self._voice_fallback_callback: (
+            Callable[[GenerationFence, str, str, str, str], None] | None
+        ) = None
 
     @classmethod
     def from_env(cls) -> DoubaoTTS:
@@ -678,8 +843,8 @@ class DoubaoTTS(tts.TTS[Any]):
         return self._config.resource_id
 
     @property
-    def pool(self) -> DoubaoTTSPool:
-        return self._pool
+    def pool(self) -> DoubaoTTSPoolRouter:
+        return self._pools
 
     def bind_fence(self, fence: GenerationFence) -> None:
         self._active_fence = fence
@@ -695,6 +860,12 @@ class DoubaoTTS(tts.TTS[Any]):
         callback: Callable[[GenerationFence, str, str], None],
     ) -> None:
         self._alignment_callback = callback
+
+    def set_voice_fallback_callback(
+        self,
+        callback: Callable[[GenerationFence, str, str, str, str], None],
+    ) -> None:
+        self._voice_fallback_callback = callback
 
     def _report_alignment(
         self,
@@ -717,21 +888,88 @@ class DoubaoTTS(tts.TTS[Any]):
         clamped = min(1.05, max(0.95, rate))
         self._config.speech_rate = round((clamped - 1.0) * 100)
 
-    def apply_voice_profile(self, *, model: str, voice: str) -> None:
+    def apply_voice_profile(
+        self,
+        *,
+        model: str,
+        voice: str,
+        profile_id: str | None = None,
+        provider: str | None = None,
+        voice_kind: str | None = None,
+        resource_id: str | None = None,
+    ) -> None:
+        resource = resource_id or model
+        if voice_kind == "personal":
+            if (
+                provider != DOUBAO_PROVIDER
+                or model != DOUBAO_PERSONAL_VOICE_MODEL
+                or resource != DOUBAO_PERSONAL_VOICE_MODEL
+                or not profile_id
+                or profile_id != profile_id.strip()
+                or not voice.strip()
+                or voice != voice.strip()
+                or any(item.speaker_id == voice for item in catalog_by_id().values())
+            ):
+                raise ValueError("personal voice requires an approved Doubao clone resolution")
+            self._config.resource_id = resource
+            self._config.voice_profile = profile_id
+            self._config.speaker = voice
+            self._config.instruction = None
+            self._voice_kind = "personal"
+            return
         spec = next(
             (item for item in catalog_by_id().values() if item.speaker_id == voice),
             None,
         )
-        if model != DOUBAO_TTS_MODEL or spec is None:
+        if (
+            model != DOUBAO_TTS_MODEL
+            or resource != DOUBAO_TTS_MODEL
+            or spec is None
+            or (provider is not None and provider != DOUBAO_PROVIDER)
+            or (voice_kind is not None and voice_kind != "designed")
+            or (profile_id is not None and profile_id != spec.profile_id)
+        ):
             raise ValueError("active runtime voice must be an approved Doubao TTS 2.0 voice")
         self._config.resource_id = model
         self._config.voice_profile = spec.profile_id
         self._config.speaker = voice
+        self._voice_kind = "designed"
+
+    def configure_personal_fallback(
+        self,
+        *,
+        profile_id: str,
+        provider: str,
+        model: str,
+        resource_id: str,
+        voice: str,
+    ) -> None:
+        approved = resolve_approved_voice(profile_id=profile_id, model=model)
+        if (
+            provider != DOUBAO_PROVIDER
+            or model != DOUBAO_TTS_MODEL
+            or resource_id != DOUBAO_TTS_MODEL
+            or approved is None
+            or voice != approved
+        ):
+            raise ValueError("personal fallback must be an approved designed voice")
+        self._personal_fallback_config = replace(
+            self._config,
+            resource_id=resource_id,
+            voice_profile=profile_id,
+            speaker=voice,
+            instruction=None,
+        )
+
+    def clear_personal_fallback(self) -> None:
+        self._personal_fallback_config = None
 
     def use_baseline_voice(self) -> None:
-        self._config.resource_id = DOUBAO_TTS_MODEL
+        self._config.resource_id = self._baseline_resource_id
         self._config.voice_profile = self._baseline_profile
         self._config.speaker = self._baseline_speaker
+        self._config.instruction = None
+        self._voice_kind = "designed"
 
     @property
     def current_model(self) -> str:
@@ -740,6 +978,14 @@ class DoubaoTTS(tts.TTS[Any]):
     @property
     def current_voice(self) -> str:
         return self._config.speaker
+
+    @property
+    def current_voice_profile_id(self) -> str:
+        return self._config.voice_profile
+
+    @property
+    def current_voice_kind(self) -> str:
+        return self._voice_kind
 
     @property
     def current_instruction(self) -> str | None:
@@ -772,13 +1018,56 @@ class DoubaoTTS(tts.TTS[Any]):
         *,
         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
     ) -> DoubaoSynthesizeStream:
+        config = replace(self._config)
+        personal = config.resource_id == DOUBAO_PERSONAL_VOICE_MODEL
+        fallback_config = self._personal_fallback_or_baseline_config() if personal else None
         return DoubaoSynthesizeStream(
             tts_instance=self,
-            config=replace(self._config),
-            pool=self._pool,
+            config=config,
+            pool=self._pools.for_config(config),
+            fallback_config=fallback_config,
+            fallback_pool=(
+                self._pools.for_config(fallback_config) if fallback_config is not None else None
+            ),
             conn_options=conn_options,
             fence=self._active_fence,
         )
+
+    def _baseline_config(self) -> DoubaoTTSConfig:
+        return replace(
+            self._config,
+            resource_id=self._baseline_resource_id,
+            voice_profile=self._baseline_profile,
+            speaker=self._baseline_speaker,
+            instruction=None,
+        )
+
+    def _personal_fallback_or_baseline_config(self) -> DoubaoTTSConfig:
+        return replace(self._personal_fallback_config or self._baseline_config())
+
+    def _activate_fallback_for_fence(
+        self,
+        fence: GenerationFence | None,
+        fallback_config: DoubaoTTSConfig,
+    ) -> None:
+        speaker_sha256 = hashlib.sha256(fallback_config.speaker.encode()).hexdigest()
+        self.trace(
+            "personal_voice_fallback",
+            status="error",
+            detail={
+                "voice_profile_id": fallback_config.voice_profile,
+                "resource_id": fallback_config.resource_id,
+                "speaker_sha256": speaker_sha256,
+            },
+        )
+        if fence is not None and self._voice_fallback_callback is not None:
+            self._voice_fallback_callback(
+                fence,
+                fallback_config.voice_profile,
+                fallback_config.resource_id,
+                fallback_config.speaker,
+                "designed",
+            )
 
     async def synthesize_stream_text(
         self,
@@ -788,6 +1077,7 @@ class DoubaoTTS(tts.TTS[Any]):
         cancel_event: asyncio.Event | None = None,
     ) -> SynthesizeResult:
         config = replace(self._config)
+        pool = self._pools.for_config(config)
         for attempt in range(2):
             try:
                 return await self._synthesize_once(
@@ -795,8 +1085,15 @@ class DoubaoTTS(tts.TTS[Any]):
                     fence=fence,
                     cancel_event=cancel_event,
                     config=config,
+                    pool=pool,
                 )
-            except (DoubaoBeforeAudioError, DoubaoFirstAudioTimeoutError, DoubaoTimestampError):
+            except (DoubaoBeforeAudioError, DoubaoFirstAudioTimeoutError):
+                if config.resource_id == DOUBAO_PERSONAL_VOICE_MODEL:
+                    fallback_config = self._personal_fallback_or_baseline_config()
+                    self._activate_fallback_for_fence(fence, fallback_config)
+                    config = fallback_config
+                    pool = self._pools.for_config(config)
+                    continue
                 if attempt == 1:
                     raise
         raise AssertionError("unreachable")
@@ -808,10 +1105,18 @@ class DoubaoTTS(tts.TTS[Any]):
         fence: GenerationFence,
         cancel_event: asyncio.Event | None,
         config: DoubaoTTSConfig,
+        pool: DoubaoTTSPool,
     ) -> SynthesizeResult:
-        conn = await self._pool.acquire()
+        try:
+            conn = await pool.acquire()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if config.resource_id == DOUBAO_PERSONAL_VOICE_MODEL:
+                raise DoubaoBeforeAudioError(str(exc)) from exc
+            raise
         session_id = str(uuid.uuid4())
-        self._pool.bind_active(fence, conn, session_id=session_id)
+        pool.bind_active(fence, conn, session_id=session_id)
         pcm_guard = _PcmContinuityGuard()
         pcm = bytearray()
         words: list[TimedWord] = []
@@ -820,7 +1125,7 @@ class DoubaoTTS(tts.TTS[Any]):
 
             async def watch_cancel() -> None:
                 await cancel_event.wait()
-                await self._pool.discard(conn, reason="cancel")
+                await pool.discard(conn, reason="cancel")
 
             cancel_watcher = asyncio.create_task(watch_cancel(), name="doubao-tts-cancel-watch")
 
@@ -927,16 +1232,16 @@ class DoubaoTTS(tts.TTS[Any]):
                 await settle_cancel_watcher(cancellation_requested=True)
                 return SynthesizeResult(bytes(pcm), tuple(words), session_id, "degraded", True)
             await settle_cancel_watcher(cancellation_requested=False)
-            await self._pool.release(conn)
+            await pool.release(conn)
             return SynthesizeResult(bytes(pcm), aligned, session_id, status)
         except asyncio.CancelledError:
-            await self._pool.discard(conn, reason="cancel")
+            await pool.discard(conn, reason="cancel")
             raise
         except Exception as exc:
             if cancel_event is not None and cancel_event.is_set():
-                await self._pool.discard(conn, reason="cancel")
+                await pool.discard(conn, reason="cancel")
                 return SynthesizeResult(bytes(pcm), tuple(words), session_id, "degraded", True)
-            await self._pool.discard(conn, reason="error")
+            await pool.discard(conn, reason="error")
             if not pcm and not isinstance(
                 exc,
                 (
@@ -954,4 +1259,4 @@ class DoubaoTTS(tts.TTS[Any]):
             )
 
     async def aclose(self) -> None:
-        await self._pool.aclose()
+        await self._pools.aclose()

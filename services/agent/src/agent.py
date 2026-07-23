@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -20,6 +21,7 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.prompts import VOICE_SYSTEM_PROMPT
+from services.agent.src.providers.doubao_voice_catalog import resolve_approved_voice
 from services.agent.src.response_planner_client import (
     CANONICAL_PLANNER_POLICY_VERSION,
     ResponsePlan,
@@ -27,7 +29,7 @@ from services.agent.src.response_planner_client import (
     ResponseProvenance,
     ResponseVoiceTarget,
 )
-from services.agent.src.voice_profile_client import VoiceProfileClient
+from services.agent.src.voice_profile_client import VoiceProfileClient, VoiceRuntimeProfile
 from services.common.companions import DESIGNED_VOICE_MODEL, companion_definition
 
 if TYPE_CHECKING:
@@ -122,16 +124,122 @@ def _apply_cached_voice_profile(
     tts_plugin: Any,
     client: VoiceProfileClient,
     session_id: str,
+    mode: str | None = None,
+    policy: ModePolicy | None = None,
 ) -> None:
     profile = client.cached(session_id=session_id)
+    references = dict(policy.references) if policy is not None else {}
+    selected_fallback: VoiceRuntimeProfile | None = None
+    if mode == "self_preview":
+        fallback_profile_id = references.get("fallback_voice_profile_id")
+        fallback_model = references.get("fallback_voice_model")
+        fallback_resource_id = references.get("fallback_voice_resource_id")
+        fallback_provider = references.get("fallback_voice_provider")
+        fallback_voice = (
+            resolve_approved_voice(
+                profile_id=fallback_profile_id,
+                model=fallback_model,
+            )
+            if isinstance(fallback_profile_id, str) and isinstance(fallback_model, str)
+            else None
+        )
+        if (
+            fallback_voice is not None
+            and isinstance(fallback_profile_id, str)
+            and isinstance(fallback_model, str)
+            and isinstance(fallback_resource_id, str)
+            and isinstance(fallback_provider, str)
+            and fallback_provider == "volcengine_doubao"
+            and fallback_model == DESIGNED_VOICE_MODEL
+            and fallback_resource_id == DESIGNED_VOICE_MODEL
+        ):
+            selected_fallback = VoiceRuntimeProfile(
+                profile_id=fallback_profile_id,
+                model=fallback_model,
+                voice_id=fallback_voice,
+                provider=fallback_provider,
+                voice_kind="designed",
+                resource_id=fallback_resource_id,
+            )
     if profile is None:
+        profile = selected_fallback
+    if profile is None:
+        baseline = getattr(tts_plugin, "use_baseline_voice", None)
+        if callable(baseline):
+            baseline()
+        return
+    personal_matches = (
+        profile.voice_kind == "personal"
+        and profile.profile_id == references.get("voice_profile_id")
+        and profile.provider == references.get("voice_provider")
+        and profile.model == references.get("voice_model")
+        and profile.resource_id == references.get("voice_resource_id")
+        and profile.speaker_sha256 == references.get("voice_speaker_sha256")
+    )
+    designed_fallback_matches = (
+        profile.voice_kind == "designed"
+        and profile.profile_id == references.get("fallback_voice_profile_id")
+        and profile.provider == references.get("fallback_voice_provider")
+        and profile.model == references.get("fallback_voice_model")
+        and profile.resource_id == references.get("fallback_voice_resource_id")
+    )
+    if (mode == "companion" and profile.voice_kind != "designed") or (
+        mode == "self_preview" and not (personal_matches or designed_fallback_matches)
+    ):
         baseline = getattr(tts_plugin, "use_baseline_voice", None)
         if callable(baseline):
             baseline()
         return
     apply_profile = getattr(tts_plugin, "apply_voice_profile", None)
     if callable(apply_profile):
-        apply_profile(model=profile.model, voice=profile.voice_id)
+        try:
+            if profile.voice_kind == "personal":
+                configure_fallback = getattr(
+                    tts_plugin,
+                    "configure_personal_fallback",
+                    None,
+                )
+                clear_fallback = getattr(tts_plugin, "clear_personal_fallback", None)
+                if selected_fallback is not None and callable(configure_fallback):
+                    configure_fallback(
+                        profile_id=selected_fallback.profile_id,
+                        provider=selected_fallback.provider,
+                        model=selected_fallback.model,
+                        resource_id=selected_fallback.resource_id,
+                        voice=selected_fallback.voice_id,
+                    )
+                elif callable(clear_fallback):
+                    clear_fallback()
+            apply_profile(
+                model=profile.model,
+                voice=profile.voice_id,
+                profile_id=profile.profile_id,
+                provider=profile.provider,
+                voice_kind=profile.voice_kind,
+                resource_id=profile.resource_id,
+            )
+        except TypeError:
+            if profile.voice_kind == "designed":
+                try:
+                    apply_profile(model=profile.model, voice=profile.voice_id)
+                    return
+                except (TypeError, ValueError):
+                    pass
+            baseline = getattr(tts_plugin, "use_baseline_voice", None)
+            if callable(baseline):
+                baseline()
+            logger.warning(
+                "resolved voice profile rejected; restored baseline profile_id=%s",
+                profile.profile_id,
+            )
+        except ValueError:
+            baseline = getattr(tts_plugin, "use_baseline_voice", None)
+            if callable(baseline):
+                baseline()
+            logger.warning(
+                "resolved voice profile rejected; restored baseline profile_id=%s",
+                profile.profile_id,
+            )
 
 
 def should_enable_legacy_speaker_verifier(settings: Any, *, offline: bool) -> bool:
@@ -179,13 +287,16 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         self._llm_model = llm_model
         self._tts_provider = tts_provider
         self._tts_model = tts_model
-        self._actual_voice_profile_id = actual_voice_profile_id
+        self._legacy_actual_voice_profile_id = actual_voice_profile_id
         self._context_assembler = ContextAssembler()
         self._llm_text_buf = ""
         self._response_plan_by_fence: dict[tuple[str, int, int, int], ResponsePlan] = {}
         alignment_setter = getattr(runtime.tts, "set_alignment_callback", None)
         if callable(alignment_setter):
             alignment_setter(self._observe_tts_alignment)
+        fallback_setter = getattr(runtime.tts, "set_voice_fallback_callback", None)
+        if callable(fallback_setter):
+            fallback_setter(self._observe_tts_voice_fallback)
 
     @staticmethod
     def _response_plan_key(fence: GenerationFence) -> tuple[str, int, int, int]:
@@ -196,16 +307,120 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         fence: GenerationFence,
         plan: ResponsePlan,
     ) -> bool:
-        return self._runtime.bind_response_provenance(
+        voice = self._runtime.generation_voice_for(fence)
+        if self._runtime.tts is not None and voice is None:
+            return False
+        payload = plan.provenance.archive_payload(
+            fence=fence,
+            llm_provider=self._llm_provider,
+            llm_model=self._llm_model,
+            tts_provider=self._tts_provider if voice is not None else None,
+            tts_model=voice.resource_id if voice is not None else None,
+            actual_voice_profile_id=voice.profile_id if voice is not None else None,
+        )
+        if voice is not None:
+            payload.update(
+                {
+                    "actual_voice_resource_id": voice.resource_id,
+                    "actual_voice_speaker_sha256": voice.speaker_sha256,
+                }
+            )
+            if voice.voice_kind == "personal":
+                references = dict(self._runtime.mode_policy_for_fence(fence).references)
+                version = references.get("voice_profile_version")
+                payload.update(
+                    {
+                        "actual_voice_profile_version": (
+                            int(version) if version is not None and version.isdigit() else None
+                        ),
+                        "actual_voice_provider_expires_at": references.get(
+                            "voice_provider_expires_at"
+                        ),
+                    }
+                )
+        return self._runtime.bind_response_provenance(fence, payload)
+
+    def _bind_current_tts_voice(self, fence: GenerationFence) -> bool:
+        tts_plugin = self._runtime.tts
+        if tts_plugin is None:
+            return False
+        profile_id = getattr(tts_plugin, "current_voice_profile_id", None)
+        resource_id = getattr(tts_plugin, "current_model", None)
+        speaker = getattr(tts_plugin, "current_voice", None)
+        voice_kind = getattr(tts_plugin, "current_voice_kind", None)
+        if (
+            not isinstance(profile_id, str)
+            or not profile_id
+            or not isinstance(resource_id, str)
+            or not resource_id
+            or not isinstance(speaker, str)
+            or not speaker
+            or not isinstance(voice_kind, str)
+            or not voice_kind
+        ):
+            return False
+        archive_profile_id = self._archive_voice_profile_id(
             fence,
-            plan.provenance.archive_payload(
-                fence=fence,
-                llm_provider=self._llm_provider,
-                llm_model=self._llm_model,
-                tts_provider=self._tts_provider,
-                tts_model=self._tts_model,
-                actual_voice_profile_id=self._actual_voice_profile_id,
-            ),
+            profile_id=profile_id,
+            voice_kind=voice_kind,
+        )
+        return self._runtime.bind_generation_voice(
+            fence,
+            profile_id=archive_profile_id,
+            resource_id=resource_id,
+            speaker_sha256=hashlib.sha256(speaker.encode()).hexdigest(),
+            voice_kind=cast(Literal["designed", "personal"], voice_kind),
+        )
+
+    def _archive_voice_profile_id(
+        self,
+        fence: GenerationFence,
+        *,
+        profile_id: str,
+        voice_kind: str,
+    ) -> str | None:
+        if voice_kind == "personal":
+            return profile_id
+        mode = self._runtime.mode_policy_for_fence(fence).mode
+        return profile_id if mode in {"companion", "self_preview"} else None
+
+    def _observe_tts_voice_fallback(
+        self,
+        fence: GenerationFence,
+        profile_id: str,
+        resource_id: str,
+        speaker: str,
+        voice_kind: str,
+    ) -> None:
+        speaker_sha256 = hashlib.sha256(speaker.encode()).hexdigest()
+        archive_profile_id = self._archive_voice_profile_id(
+            fence,
+            profile_id=profile_id,
+            voice_kind=voice_kind,
+        )
+        if not self._runtime.bind_generation_voice(
+            fence,
+            profile_id=archive_profile_id,
+            resource_id=resource_id,
+            speaker_sha256=speaker_sha256,
+            voice_kind=cast(Literal["designed", "personal"], voice_kind),
+        ):
+            logger.error(
+                "voice fallback snapshot rejected session_id=%s turn_id=%s generation_id=%s",
+                fence.session_id,
+                fence.turn_id,
+                fence.generation_id,
+            )
+            return
+        self._runtime.mark_audio_event(
+            "voice_generation_fallback",
+            status="error",
+            detail={
+                "voice_profile_id": archive_profile_id,
+                "resource_id": resource_id,
+                "speaker_sha256": speaker_sha256,
+            },
+            fence=fence,
         )
 
     @staticmethod
@@ -227,10 +442,11 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         ):
             return False
         if self._is_local_safe_plan(plan):
-            return (
-                policy.mode in {"companion", "self_preview", "legacy"}
-                and self._fallback_voice_target_matches(plan.voice_target)
-            )
+            return policy.mode in {
+                "companion",
+                "self_preview",
+                "legacy",
+            } and self._fallback_voice_target_matches(plan.voice_target, policy)
         references = dict(policy.references)
         if provenance.planner_policy_version != CANONICAL_PLANNER_POLICY_VERSION:
             return False
@@ -249,13 +465,10 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             )
         if policy.mode not in {"self_preview", "legacy"}:
             return False
-        if provenance.digital_self_version_id is None:
-            if provenance.manifest_sha256 is not None:
-                return False
-        elif (
-            provenance.manifest_sha256 is None
-            or references.get("digital_self_version_id")
-            != provenance.digital_self_version_id
+        if (
+            provenance.digital_self_version_id is None
+            or provenance.manifest_sha256 is None
+            or references.get("digital_self_version_id") != provenance.digital_self_version_id
             or references.get("manifest_sha256") != provenance.manifest_sha256
         ):
             return False
@@ -264,14 +477,13 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 return False
         elif (
             provenance.relationship_profile_version is None
-            or references.get("relationship_profile_id")
-            != provenance.relationship_profile_id
+            or references.get("relationship_profile_id") != provenance.relationship_profile_id
             or references.get("relationship_profile_version")
             != str(provenance.relationship_profile_version)
         ):
             return False
         if plan.voice_target.kind == "fallback":
-            return self._fallback_voice_target_matches(plan.voice_target)
+            return self._fallback_voice_target_matches(plan.voice_target, policy)
         return (
             plan.voice_target.kind == "approved_personal"
             and plan.voice_target.profile_id is not None
@@ -279,7 +491,18 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             and references.get("voice_model") == plan.voice_target.model
         )
 
-    def _fallback_voice_target_matches(self, voice_target: ResponseVoiceTarget) -> bool:
+    def _fallback_voice_target_matches(
+        self,
+        voice_target: ResponseVoiceTarget,
+        policy: ModePolicy,
+    ) -> bool:
+        references = dict(policy.references)
+        if policy.mode == "self_preview":
+            return (
+                voice_target.kind == "fallback"
+                and voice_target.profile_id == references.get("fallback_voice_profile_id")
+                and voice_target.model == references.get("fallback_voice_model")
+            )
         return (
             voice_target.kind == "fallback"
             and voice_target.profile_id is None
@@ -288,10 +511,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
 
     @staticmethod
     def _persona_snapshot_matches(provenance: ResponseProvenance) -> bool:
-        absent = (
-            provenance.persona_version_id is None
-            and provenance.persona_version_number is None
-        )
+        absent = provenance.persona_version_id is None and provenance.persona_version_number is None
         present = (
             provenance.persona_version_id is not None
             and provenance.persona_version_number is not None
@@ -461,8 +681,11 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     tts_plugin=self._runtime.tts,
                     client=self._voice_profile_client,
                     session_id=self._runtime.session_id,
+                    mode=policy.mode,
+                    policy=policy,
                 )
             fence = await self._runtime.on_turn_committed(text.strip())
+            self._bind_current_tts_voice(fence)
             self._runtime.publish_transcript(
                 speaker="user",
                 text=text.strip(),
@@ -609,9 +832,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 fence.generation_id,
             )
             return
-        if (
-            self._runtime.mode_policy_enforced
-            and not self._plan_matches_mode_policy(response_plan, policy)
+        if self._runtime.mode_policy_enforced and not self._plan_matches_mode_policy(
+            response_plan, policy
         ):
             logger.error(
                 "llm request blocked by response plan policy mismatch session_id=%s "
@@ -1226,6 +1448,8 @@ async def entrypoint(ctx: Any) -> None:
             tts_plugin=tts_plugin,
             client=voice_profile_client,
             session_id=runtime_session_id,
+            mode=runtime.mode_policy.mode,
+            policy=runtime.mode_policy,
         )
     elif runtime_settings.voice_profile_enabled and not offline:
         logger.warning("voice profile is disabled because policy authority or token is unavailable")
@@ -1493,11 +1717,6 @@ async def entrypoint(ctx: Any) -> None:
 
     ctx.room.on("data_received", _on_control_packet)
 
-    active_voice_profile = (
-        voice_profile_client.cached(session_id=runtime_session_id)
-        if voice_profile_client is not None
-        else None
-    )
     agent = DuplexVoiceAgent(
         instructions=VOICE_SYSTEM_PROMPT,
         runtime=runtime,
@@ -1507,11 +1726,6 @@ async def entrypoint(ctx: Any) -> None:
         llm_model=runtime_settings.llm_fast_model,
         tts_provider="volcengine_doubao",
         tts_model=runtime_settings.doubao_tts_resource_id,
-        actual_voice_profile_id=(
-            active_voice_profile.profile_id
-            if active_voice_profile is not None
-            else runtime_settings.doubao_tts_voice_profile
-        ),
     )
 
     await session.start(

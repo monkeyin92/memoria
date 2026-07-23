@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import replace
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from livekit.agents import llm
@@ -93,7 +93,7 @@ def _approved_personal_plan(runtime: DuplexRuntime) -> ResponsePlan:
         voice_target=ResponseVoiceTarget(
             kind="approved_personal",
             profile_id="voice-profile-1",
-            model="seed-tts-2.0",
+            model="seed-icl-2.0",
         ),
         provenance=replace(
             plan.provenance,
@@ -342,7 +342,12 @@ def test_plan_policy_validation_requires_version_and_voice_references_for_person
         ("relationship_profile_id", "relationship-1"),
         ("relationship_profile_version", "4"),
         ("voice_profile_id", "voice-profile-1"),
-        ("voice_model", "seed-tts-2.0"),
+        ("voice_model", "seed-icl-2.0"),
+        ("voice_speaker_sha256", "a" * 64),
+        ("fallback_voice_profile_id", "bright_peer"),
+        ("fallback_voice_provider", "volcengine_doubao"),
+        ("fallback_voice_model", "seed-tts-2.0"),
+        ("fallback_voice_resource_id", "seed-tts-2.0"),
     )
     policy = _self_preview_policy(references=references)
     runtime.set_mode_policy(policy)
@@ -378,9 +383,7 @@ def test_plan_policy_validation_requires_version_and_voice_references_for_person
             references=tuple(
                 (
                     key,
-                    "other-voice-profile"
-                    if key == "voice_profile_id"
-                    else value,
+                    "other-voice-profile" if key == "voice_profile_id" else value,
                 )
                 for key, value in references
             )
@@ -406,7 +409,7 @@ def test_plan_policy_validation_requires_version_and_voice_references_for_person
         plan,
         voice_target=ResponseVoiceTarget(
             kind="fallback",
-            profile_id=None,
+            profile_id="bright_peer",
             model="seed-tts-2.0",
         ),
     )
@@ -428,6 +431,71 @@ def test_plan_policy_validation_requires_version_and_voice_references_for_person
             )
         ),
     )
+
+
+@pytest.mark.parametrize("mode", ["self_preview", "legacy"])
+def test_canonical_personal_modes_reject_missing_frozen_digital_self_identity(
+    mode: Literal["self_preview", "legacy"],
+) -> None:
+    runtime = DuplexRuntime.create(session_id=f"strict-{mode}-identity")
+    references = (
+        ("digital_self_version_id", "digital-self-1"),
+        ("manifest_sha256", "a" * 64),
+        ("relationship_profile_id", "relationship-1"),
+        ("relationship_profile_version", "4"),
+        ("voice_profile_id", "voice-profile-1"),
+        ("voice_model", "seed-icl-2.0"),
+        ("fallback_voice_profile_id", "bright_peer"),
+        ("fallback_voice_model", "seed-tts-2.0"),
+    )
+    policy = replace(
+        _self_preview_policy(references=references),
+        mode=mode,
+        policy_version=f"policy-{mode}",
+    )
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        tts_model="seed-tts-2.0",
+    )
+    plan = replace(
+        _approved_personal_plan(runtime),
+        provenance=replace(
+            _approved_personal_plan(runtime).provenance,
+            interaction_mode=mode,
+            mode_policy_version=f"policy-{mode}",
+        ),
+    )
+
+    assert agent._plan_matches_mode_policy(plan, policy)
+    assert not agent._plan_matches_mode_policy(
+        replace(
+            plan,
+            provenance=replace(
+                plan.provenance,
+                digital_self_version_id=None,
+                manifest_sha256=None,
+            ),
+        ),
+        policy,
+    )
+    local_safe = replace(
+        plan,
+        voice_target=ResponseVoiceTarget(
+            kind="fallback",
+            profile_id="bright_peer" if mode == "self_preview" else None,
+            model="seed-tts-2.0",
+        ),
+        provenance=replace(
+            plan.provenance,
+            planner_policy_version="local-safe-fallback-v1",
+            digital_self_version_id=None,
+            manifest_sha256=None,
+            relationship_profile_id=None,
+            relationship_profile_version=None,
+        ),
+    )
+    assert agent._plan_matches_mode_policy(local_safe, policy)
 
 
 def test_local_safe_fallback_requires_the_actual_tts_voice_and_binds_provenance() -> None:

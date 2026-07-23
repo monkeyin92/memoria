@@ -95,22 +95,14 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     )
     assert "QWEN_OMNI_PLUS_VAD_THRESHOLD" not in control
     assert "QWEN_OMNI_PLUS_VAD_THRESHOLD" not in agent
-    assert agent["MEMORIA_AGENT_HEARTBEAT_TOKEN"] == control[
-        "MEMORIA_AGENT_HEARTBEAT_TOKEN"
-    ]
-    assert agent["MEMORIA_AGENT_HEARTBEAT_TOKEN"] != agent[
-        "MEMORIA_ARCHIVE_WRITE_TOKEN"
-    ]
-    assert agent["MEMORIA_INTERACTION_POLICY_TOKEN"] == control[
-        "MEMORIA_INTERACTION_POLICY_TOKEN"
-    ]
-    assert agent["MEMORIA_INTERACTION_POLICY_TOKEN"] != agent[
-        "MEMORIA_AGENT_HEARTBEAT_TOKEN"
-    ]
+    assert agent["MEMORIA_AGENT_HEARTBEAT_TOKEN"] == control["MEMORIA_AGENT_HEARTBEAT_TOKEN"]
+    assert agent["MEMORIA_AGENT_HEARTBEAT_TOKEN"] != agent["MEMORIA_ARCHIVE_WRITE_TOKEN"]
+    assert agent["MEMORIA_INTERACTION_POLICY_TOKEN"] == control["MEMORIA_INTERACTION_POLICY_TOKEN"]
+    assert agent["MEMORIA_INTERACTION_POLICY_TOKEN"] != agent["MEMORIA_AGENT_HEARTBEAT_TOKEN"]
     assert len(control["MEMORIA_RESPONSE_PLAN_TOKEN"]) >= 32
-    assert control["MEMORIA_RESPONSE_PLAN_TOKEN"] != control[
-        "MEMORIA_INTERACTION_POLICY_TOKEN"
-    ]
+    assert control["MEMORIA_RESPONSE_PLAN_TOKEN"] != control["MEMORIA_INTERACTION_POLICY_TOKEN"]
+    assert len(control["MEMORIA_VOICE_CLEANUP_TOKEN"]) >= 32
+    assert "MEMORIA_VOICE_CLEANUP_TOKEN" not in agent
     assert speaker_model == {
         "MEMORIA_SPEAKER_MODEL_TOKEN": control["MEMORIA_SPEAKER_EMBEDDING_TOKEN"]
     }
@@ -272,3 +264,69 @@ def test_upgrade_env_accepts_doubao_api_key_authentication() -> None:
     assert "DOUBAO_TTS_API_KEY" not in control
     assert "DOUBAO_TTS_APP_ID" not in agent
     assert "DOUBAO_TTS_ACCESS_TOKEN" not in agent
+
+
+def test_upgrade_env_routes_independent_doubao_clone_key_to_control_only() -> None:
+    legacy, postgres, minio = _upgrade_inputs()
+    legacy.update(
+        {
+            "MEMORIA_VOICE_CLONE_PROVIDER": "volcengine_doubao",
+            "MEMORIA_VOICE_TARGET_MODEL": "seed-icl-2.0",
+            "MEMORIA_DOUBAO_VOICE_API_KEY": "control-only-clone-key",
+            "MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_MODE": "custom_speaker_id",
+            "MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FIELD": "result.ExpireTime",
+        }
+    )
+
+    control, agent, speaker_model = prepare(
+        legacy=legacy,
+        postgres=postgres,
+        minio=minio,
+        release_tag="20260723-doubao-clone",
+    )
+
+    assert control["MEMORIA_DOUBAO_VOICE_API_KEY"] == "control-only-clone-key"
+    assert control["MEMORIA_VOICE_CLONE_PROVIDER"] == "volcengine_doubao"
+    assert control["MEMORIA_VOICE_TARGET_MODEL"] == "seed-icl-2.0"
+    assert "MEMORIA_DOUBAO_VOICE_API_KEY" not in agent
+    assert "MEMORIA_DOUBAO_VOICE_API_KEY" not in speaker_model
+
+
+def test_upgrade_env_rejects_a_shared_doubao_clone_and_runtime_key() -> None:
+    legacy, postgres, minio = _upgrade_inputs({"DOUBAO_TTS_API_KEY": "shared-key"})
+    legacy.update(
+        {
+            "MEMORIA_VOICE_CLONE_PROVIDER": "volcengine_doubao",
+            "MEMORIA_VOICE_TARGET_MODEL": "seed-icl-2.0",
+            "MEMORIA_DOUBAO_VOICE_API_KEY": "shared-key",
+            "MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_MODE": "custom_speaker_id",
+            "MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FIELD": "result.ExpireTime",
+        }
+    )
+
+    with pytest.raises(ValueError, match="must be independent"):
+        prepare(
+            legacy=legacy,
+            postgres=postgres,
+            minio=minio,
+            release_tag="20260723-doubao-shared-key",
+        )
+
+
+def test_upgrade_env_rejects_unverified_doubao_clone_synth_id_mapping() -> None:
+    legacy, postgres, minio = _upgrade_inputs()
+    legacy.update(
+        {
+            "MEMORIA_VOICE_CLONE_PROVIDER": "volcengine_doubao",
+            "MEMORIA_VOICE_TARGET_MODEL": "seed-icl-2.0",
+            "MEMORIA_DOUBAO_VOICE_API_KEY": "control-only-clone-key",
+        }
+    )
+
+    with pytest.raises(ValueError, match="smoke-verified synth ID mapping"):
+        prepare(
+            legacy=legacy,
+            postgres=postgres,
+            minio=minio,
+            release_tag="20260723-doubao-unverified",
+        )

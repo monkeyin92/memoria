@@ -21,9 +21,7 @@ def test_production_services_use_separate_env_files_and_persistent_agent_spool()
 
 def test_production_agent_healthcheck_uses_accepted_heartbeat_checker() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
-    readiness = (ROOT / "services/control_api/app/routes/readiness.py").read_text(
-        encoding="utf-8"
-    )
+    readiness = (ROOT / "services/control_api/app/routes/readiness.py").read_text(encoding="utf-8")
     control = compose.split("  control-api:\n", 1)[1].split("  agent:\n", 1)[0]
     agent = compose.split("  agent:\n", 1)[1]
 
@@ -227,6 +225,7 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
             "MEMORIA_MEMORY_READ_TOKEN": "memory-read-token",
             "MEMORIA_PERSONA_READ_TOKEN": "persona-read-token",
             "MEMORIA_VOICE_RESOLUTION_TOKEN": "voice-resolution-token",
+            "MEMORIA_VOICE_CLEANUP_TOKEN": "voice-cleanup-token",
             "MEMORIA_INTERACTION_POLICY_TOKEN": "interaction-policy-token",
             "MEMORIA_PERSONA_ENABLED": "false",
             "MEMORIA_MEMORY_CONTEXT_ENABLED": "false",
@@ -259,12 +258,14 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     assert control["MEMORIA_MEMORY_READ_TOKEN"] == "memory-read-token"
     assert control["MEMORIA_PERSONA_READ_TOKEN"] == "persona-read-token"
     assert control["MEMORIA_VOICE_RESOLUTION_TOKEN"] == "voice-resolution-token"
+    assert control["MEMORIA_VOICE_CLEANUP_TOKEN"] == "voice-cleanup-token"
     assert control["MEMORIA_INTERACTION_POLICY_TOKEN"] == "interaction-policy-token"
     assert agent["MEMORIA_INTERACTION_POLICY_TOKEN"] == "interaction-policy-token"
     for disabled_capability in (
         "MEMORIA_MEMORY_READ_TOKEN",
         "MEMORIA_PERSONA_READ_TOKEN",
         "MEMORIA_VOICE_RESOLUTION_TOKEN",
+        "MEMORIA_VOICE_CLEANUP_TOKEN",
     ):
         assert disabled_capability not in agent
     assert agent["FUNASR_MODEL"] == "fun-asr-realtime"
@@ -312,6 +313,20 @@ def test_production_env_split_rejects_ambiguous_or_partial_doubao_auth(
 ) -> None:
     with pytest.raises(ValueError, match="exactly one complete authentication mode"):
         split_env(auth)
+
+
+@pytest.mark.parametrize("runtime_secret", ["DOUBAO_TTS_API_KEY", "DOUBAO_TTS_ACCESS_TOKEN"])
+def test_production_env_split_rejects_shared_clone_and_runtime_tts_secret(
+    runtime_secret: str,
+) -> None:
+    values = {
+        "MEMORIA_DOUBAO_VOICE_API_KEY": "shared-key",
+        runtime_secret: "shared-key",
+    }
+    if runtime_secret == "DOUBAO_TTS_ACCESS_TOKEN":
+        values["DOUBAO_TTS_APP_ID"] = "doubao-app-id"
+    with pytest.raises(ValueError, match="must be independent"):
+        split_env(values)
 
 
 def test_production_env_split_rejects_the_legacy_all_access_token() -> None:

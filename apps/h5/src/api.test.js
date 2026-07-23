@@ -436,6 +436,64 @@ describe("authenticated Control API client", () => {
     );
   });
 
+  it("accepts a v3 manifest with an exact approved personal voice reference", async () => {
+    const sourceSummary = {
+      memory_claim_count: 2,
+      persona_trait_count: 1,
+      cognitive_claim_count: 3,
+      decision_case_count: 2,
+      relationship_profile_count: 1,
+      persona_version_id: "persona-1",
+      source_summary_sha256: "b".repeat(64),
+      voice_profile: {
+        profile_id: "voice-profile-1",
+        version_number: 2,
+        provider: "volcengine_doubao",
+        target_model: "seed-icl-2.0",
+        resource_id: "seed-icl-2.0",
+        provider_expires_at: "2026-08-01T00:00:00+00:00",
+        speaker_sha256: "c".repeat(64),
+      },
+    };
+    const version = {
+      version_id: "digital-self-v3",
+      version_number: 3,
+      status: "approved",
+      manifest_sha256: "a".repeat(64),
+      manifest: {
+        schema_version: "digital-self-manifest-v3",
+        compiler_version: "digital-self-compiler-v3",
+        policy_version: "digital-self-policy-v3",
+        parent_version_id: "digital-self-v2",
+        rollback_target_version_id: null,
+        entries: [],
+        source_summary: sourceSummary,
+      },
+      source_summary: sourceSummary,
+      parent_version_id: "digital-self-v2",
+      rollback_target_version_id: null,
+      created_at: "2026-07-22T00:00:00+00:00",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          user_id: "registered-user",
+          username: "memorykeeper",
+          account_type: "registered",
+          access_token: "digital-self-token",
+        }, 201),
+      )
+      .mockResolvedValueOnce(jsonResponse({ items: [version] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { getDigitalSelfVersions, registerAccount } = await import("./api.js");
+
+    await registerAccount("memorykeeper", "safe-passphrase");
+    await expect(getDigitalSelfVersions()).resolves.toEqual({
+      items: [version],
+    });
+  });
+
   it("loads and reviews the structured life archive with the account token", async () => {
     const fetchMock = vi
       .fn()
@@ -1883,6 +1941,17 @@ describe("authenticated Control API client", () => {
             owner_projection_eligible: false,
             companion_style_id: null,
             companion_style_version: null,
+            voice_profile_id: null,
+            voice_profile_version: null,
+            voice_provider: null,
+            voice_model: null,
+            voice_resource_id: null,
+            voice_provider_expires_at: null,
+            voice_speaker_sha256: null,
+            fallback_voice_profile_id: "warm_companion",
+            fallback_voice_provider: "volcengine_doubao",
+            fallback_voice_model: "seed-tts-2.0",
+            fallback_voice_resource_id: "seed-tts-2.0",
             relationship_profile_id: null,
             legacy_grant_id: null,
             capabilities: {
@@ -1893,7 +1962,7 @@ describe("authenticated Control API client", () => {
               tools: false,
               history: false,
               learning: false,
-              voice_profile: false,
+              voice_profile: true,
             },
           },
         }),

@@ -51,7 +51,9 @@ MEMORIA_AGENT_HEARTBEAT_TOKEN
 MEMORIA_MEMORY_READ_TOKEN
 MEMORIA_PERSONA_READ_TOKEN
 MEMORIA_VOICE_RESOLUTION_TOKEN
+MEMORIA_VOICE_CLEANUP_TOKEN
 MEMORIA_INTERACTION_POLICY_TOKEN
+MEMORIA_RESPONSE_PLAN_TOKEN
 ```
 
 `MEMORIA_SPEAKER_INTERNAL_TOKEN` 也必须独立，不能与上述任一 token 或旧 `MEMORIA_ARCHIVE_INTERNAL_TOKEN` 复用。旧 token 只用于非生产兼容；不得写入 H5 环境、构建参数、浏览器存储或 Nginx 返回头。
@@ -704,6 +706,13 @@ curl -fsS https://122.51.108.140:8443/wms/
 4. 声纹登记与声音复刻分别授权、分别存储和分别撤销；声纹相似不能直接授权导出、删除或其他敏感动作。
 5. 声音 A/B 页面只显示槽位，不暴露候选映射；主观盲测通过但服务端质量探针 pending 时不显示激活入口。
 6. 未授权、过期、撤销、主观失败或质量失败的声音档案不能解析给 Agent；clone 只在首音频前允许一次设计基线回退。
+7. 豆包暂未确认自助删除合同。供应商控制台人工删除并取得工单引用后，运维人员才可使用
+   仅存在于 Control 环境的 `MEMORIA_VOICE_CLEANUP_TOKEN` 调用
+   `POST /v1/voices/profiles/{profile_id}/provider-deletion-confirmations`，请求体只包含
+   `account_id` 与不含敏感正文的 `evidence_reference`。调用前确认 profile 已 revoked 且状态为
+   pending/failed；调用后核验 `deletion_status=completed` 与
+   `voice_profile.provider_deletion_confirmed` evidence。不得把该 token 下发 Agent、H5 或日志，
+   也不得在未实际删除供应商资产时用此入口解锁账户删除。
 
 ### 真实语音与 H5
 

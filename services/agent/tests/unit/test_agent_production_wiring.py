@@ -402,6 +402,77 @@ async def test_agent_uses_direct_response_text_without_calling_llm(
 
 
 @pytest.mark.asyncio
+async def test_cascade_response_fails_closed_without_generation_voice_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create()
+    await runtime.on_turn_committed("必须带声音来源")
+
+    class TTSWithoutBoundVoice:
+        def bind_fence(self, _fence: GenerationFence) -> None:
+            pass
+
+    runtime.tts = TTSWithoutBoundVoice()
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="仅生成有完整审计来源的回答。",
+    )
+    called = False
+
+    async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
+        nonlocal called
+        called = True
+        yield "不应播放"
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+
+    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+
+    assert output == []
+    assert called is False
+    assert runtime.generation_voice_for(runtime.fence) is None
+    assert runtime.response_provenance_for(runtime.fence) is None
+
+
+def test_self_preview_selected_fallback_binds_exact_generation_voice_snapshot() -> None:
+    runtime = DuplexRuntime.create(session_id="self-preview-selected-fallback")
+    runtime.set_mode_policy(
+        ModePolicy(
+            mode="self_preview",
+            policy_version="s8-v1",
+            companion_style_id=None,
+            style_version=None,
+            references=tuple(
+                sorted(
+                    {
+                        "fallback_voice_profile_id": "bright_peer",
+                        "fallback_voice_provider": "volcengine_doubao",
+                        "fallback_voice_model": "seed-tts-2.0",
+                        "fallback_voice_resource_id": "seed-tts-2.0",
+                    }.items()
+                )
+            ),
+            capabilities=(),
+            companion_style=None,
+        )
+    )
+    runtime.tts = SimpleNamespace(
+        current_voice_profile_id="bright_peer",
+        current_model="seed-tts-2.0",
+        current_voice="zh_female_tianmeitaozi_uranus_bigtts",
+        current_voice_kind="designed",
+    )
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+
+    assert agent._bind_current_tts_voice(runtime.fence)
+    snapshot = runtime.generation_voice_for(runtime.fence)
+    assert snapshot is not None
+    assert snapshot.profile_id == "bright_peer"
+    assert snapshot.resource_id == "seed-tts-2.0"
+
+
+@pytest.mark.asyncio
 async def test_agent_adds_only_the_canonical_response_plan_system_block(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

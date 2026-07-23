@@ -20,6 +20,17 @@ def _payload(**overrides: object) -> dict[str, object]:
         "digital_self_version_id": None,
         "relationship_profile_id": None,
         "legacy_grant_id": None,
+        "voice_profile_id": None,
+        "voice_profile_version": None,
+        "voice_provider": None,
+        "voice_model": None,
+        "voice_resource_id": None,
+        "voice_provider_expires_at": None,
+        "voice_speaker_sha256": None,
+        "fallback_voice_profile_id": None,
+        "fallback_voice_provider": None,
+        "fallback_voice_model": None,
+        "fallback_voice_resource_id": None,
         "capabilities": {
             "conversation": True,
             "private_memory": True,
@@ -92,13 +103,17 @@ def test_self_preview_trusts_conversation_ceiling_but_denies_private_capabilitie
     policy = ModePolicyClient._parse(
         _payload(
             interaction_mode="self_preview",
-            mode_policy_version="s7-v1",
+            mode_policy_version="s8-v1",
             companion_style_id=None,
             companion_style_version=None,
             digital_self_version_id="version-001",
             manifest_sha256="a" * 64,
             preview_grant_id="grant-001",
             perspective="child",
+            fallback_voice_profile_id="warm_companion",
+            fallback_voice_provider="volcengine_doubao",
+            fallback_voice_model="seed-tts-2.0",
+            fallback_voice_resource_id="seed-tts-2.0",
             capabilities={
                 "conversation": True,
                 "private_memory": False,
@@ -107,7 +122,7 @@ def test_self_preview_trusts_conversation_ceiling_but_denies_private_capabilitie
                 "tools": False,
                 "history": False,
                 "learning": False,
-                "voice_profile": False,
+                "voice_profile": True,
             },
         )
     )
@@ -123,6 +138,201 @@ def test_self_preview_trusts_conversation_ceiling_but_denies_private_capabilitie
     assert policy.companion_style_prompt is None
 
 
+def test_self_preview_freezes_an_exact_personal_voice_contract() -> None:
+    payload = _payload(
+        interaction_mode="self_preview",
+        mode_policy_version="s8-v1",
+        companion_style_id=None,
+        companion_style_version=None,
+        digital_self_version_id="version-001",
+        manifest_sha256="a" * 64,
+        preview_grant_id="grant-001",
+        perspective="owner",
+        voice_profile_id="voice-profile-1",
+        voice_profile_version=2,
+        voice_provider="volcengine_doubao",
+        voice_model="seed-icl-2.0",
+        voice_resource_id="seed-icl-2.0",
+        voice_provider_expires_at="2026-08-01T00:00:00+00:00",
+        voice_speaker_sha256="b" * 64,
+        fallback_voice_profile_id="warm_companion",
+        fallback_voice_provider="volcengine_doubao",
+        fallback_voice_model="seed-tts-2.0",
+        fallback_voice_resource_id="seed-tts-2.0",
+        capabilities={
+            "conversation": True,
+            "private_memory": False,
+            "persona": False,
+            "persona_low_sensitivity": False,
+            "tools": False,
+            "history": False,
+            "learning": False,
+            "voice_profile": True,
+        },
+    )
+
+    policy = ModePolicyClient._parse(payload)
+
+    assert policy.available is True
+    assert dict(policy.references) == {
+        "digital_self_version_id": "version-001",
+        "legacy_grant_id": None,
+        "manifest_sha256": "a" * 64,
+        "perspective": "owner",
+        "preview_grant_id": "grant-001",
+        "relationship_profile_id": None,
+        "voice_model": "seed-icl-2.0",
+        "voice_profile_id": "voice-profile-1",
+        "voice_profile_version": "2",
+        "voice_provider": "volcengine_doubao",
+        "voice_provider_expires_at": "2026-08-01T00:00:00+00:00",
+        "voice_resource_id": "seed-icl-2.0",
+        "voice_speaker_sha256": "b" * 64,
+        "fallback_voice_profile_id": "warm_companion",
+        "fallback_voice_provider": "volcengine_doubao",
+        "fallback_voice_model": "seed-tts-2.0",
+        "fallback_voice_resource_id": "seed-tts-2.0",
+    }
+    assert not ModePolicyClient._parse({**payload, "voice_profile_version": None}).available
+    assert not ModePolicyClient._parse({**payload, "voice_resource_id": "seed-tts-2.0"}).available
+    assert not ModePolicyClient._parse(
+        {**payload, "voice_provider_expires_at": "2026-08-01T08:00:00+08:00"}
+    ).available
+
+
+@pytest.mark.parametrize("invalid_version", [True, False, "2", 0, -1])
+def test_personal_voice_version_rejects_non_positive_or_non_integer_values(
+    invalid_version: object,
+) -> None:
+    policy = ModePolicyClient._parse(
+        _payload(
+            interaction_mode="self_preview",
+            mode_policy_version="s8-v1",
+            companion_style_id=None,
+            companion_style_version=None,
+            digital_self_version_id="version-001",
+            manifest_sha256="a" * 64,
+            preview_grant_id="grant-001",
+            perspective="owner",
+            voice_profile_id="voice-profile-1",
+            voice_profile_version=invalid_version,
+            voice_provider="volcengine_doubao",
+            voice_model="seed-icl-2.0",
+            voice_resource_id="seed-icl-2.0",
+            voice_provider_expires_at="2026-08-01T00:00:00+00:00",
+            voice_speaker_sha256="b" * 64,
+            fallback_voice_profile_id="warm_companion",
+            fallback_voice_provider="volcengine_doubao",
+            fallback_voice_model="seed-tts-2.0",
+            fallback_voice_resource_id="seed-tts-2.0",
+            capabilities={
+                "conversation": True,
+                "private_memory": False,
+                "persona": False,
+                "persona_low_sensitivity": False,
+                "tools": False,
+                "history": False,
+                "learning": False,
+                "voice_profile": True,
+            },
+        )
+    )
+
+    assert policy.available is False
+    assert policy.unavailable_reason == "payload_invalid"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("voice_speaker_sha256", None),
+        ("voice_speaker_sha256", "A" * 64),
+        ("voice_speaker_sha256", "b" * 63),
+        ("fallback_voice_profile_id", None),
+        ("fallback_voice_provider", "other"),
+        ("fallback_voice_model", "seed-icl-2.0"),
+        ("fallback_voice_resource_id", "seed-icl-2.0"),
+    ],
+)
+def test_self_preview_voice_contract_rejects_partial_or_forged_fields(
+    field: str,
+    value: object,
+) -> None:
+    payload = _payload(
+        interaction_mode="self_preview",
+        mode_policy_version="s8-v1",
+        companion_style_id=None,
+        companion_style_version=None,
+        digital_self_version_id="version-001",
+        manifest_sha256="a" * 64,
+        preview_grant_id="grant-001",
+        perspective="owner",
+        voice_profile_id="voice-profile-1",
+        voice_profile_version=2,
+        voice_provider="volcengine_doubao",
+        voice_model="seed-icl-2.0",
+        voice_resource_id="seed-icl-2.0",
+        voice_provider_expires_at="2026-08-01T00:00:00+00:00",
+        voice_speaker_sha256="b" * 64,
+        fallback_voice_profile_id="warm_companion",
+        fallback_voice_provider="volcengine_doubao",
+        fallback_voice_model="seed-tts-2.0",
+        fallback_voice_resource_id="seed-tts-2.0",
+        capabilities={
+            "conversation": True,
+            "private_memory": False,
+            "persona": False,
+            "persona_low_sensitivity": False,
+            "tools": False,
+            "history": False,
+            "learning": False,
+            "voice_profile": True,
+        },
+    )
+    payload[field] = value
+
+    assert not ModePolicyClient._parse(payload).available
+
+
+def test_self_preview_accepts_all_null_personal_voice_with_complete_fallback() -> None:
+    policy = ModePolicyClient._parse(
+        _payload(
+            interaction_mode="self_preview",
+            mode_policy_version="s8-v1",
+            companion_style_id=None,
+            companion_style_version=None,
+            digital_self_version_id="version-001",
+            manifest_sha256="a" * 64,
+            preview_grant_id="grant-001",
+            perspective="owner",
+            fallback_voice_profile_id="bright_peer",
+            fallback_voice_provider="volcengine_doubao",
+            fallback_voice_model="seed-tts-2.0",
+            fallback_voice_resource_id="seed-tts-2.0",
+            capabilities={
+                "conversation": True,
+                "private_memory": False,
+                "persona": False,
+                "persona_low_sensitivity": False,
+                "tools": False,
+                "history": False,
+                "learning": False,
+                "voice_profile": True,
+            },
+        )
+    )
+
+    assert policy.available
+    assert dict(policy.references)["fallback_voice_profile_id"] == "bright_peer"
+
+
+def test_policy_rejects_missing_frozen_fallback_field_even_in_companion_mode() -> None:
+    payload = _payload()
+    payload.pop("fallback_voice_profile_id")
+
+    assert not ModePolicyClient._parse(payload).available
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "payload,status",
@@ -135,9 +345,7 @@ def test_self_preview_trusts_conversation_ceiling_but_denies_private_capabilitie
         (_payload(), 404),
     ],
 )
-async def test_bad_or_missing_policy_fails_closed(
-    payload: dict[str, object], status: int
-) -> None:
+async def test_bad_or_missing_policy_fails_closed(payload: dict[str, object], status: int) -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(status, json=payload)
 

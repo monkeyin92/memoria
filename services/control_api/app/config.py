@@ -82,6 +82,10 @@ class ControlSettings(BaseSettings):
         default=SecretStr(""),
         alias="MEMORIA_VOICE_RESOLUTION_TOKEN",
     )
+    memoria_voice_cleanup_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_VOICE_CLEANUP_TOKEN",
+    )
     memoria_interaction_policy_token: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_INTERACTION_POLICY_TOKEN",
@@ -236,6 +240,10 @@ class ControlSettings(BaseSettings):
         default="cn-beijing",
         alias="MEMORIA_VOICE_PROVIDER_REGION",
     )
+    voice_clone_provider: Literal["alibaba_model_studio", "volcengine_doubao"] = Field(
+        default="alibaba_model_studio",
+        alias="MEMORIA_VOICE_CLONE_PROVIDER",
+    )
     voice_enrollment_url: str = Field(
         default="https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization",
         alias="MEMORIA_VOICE_ENROLLMENT_URL",
@@ -249,6 +257,42 @@ class ControlSettings(BaseSettings):
     voice_target_model: str = Field(
         default="cosyvoice-v3.5-flash",
         alias="MEMORIA_VOICE_TARGET_MODEL",
+    )
+    doubao_voice_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_DOUBAO_VOICE_API_KEY",
+    )
+    doubao_voice_clone_url: str = Field(
+        default="https://openspeech.bytedance.com/api/v3/tts/voice_clone",
+        alias="MEMORIA_DOUBAO_VOICE_CLONE_URL",
+    )
+    doubao_voice_query_url: str = Field(
+        default="https://openspeech.bytedance.com/api/v3/tts/get_voice",
+        alias="MEMORIA_DOUBAO_VOICE_QUERY_URL",
+    )
+    doubao_voice_clone_poll_interval_s: float = Field(
+        default=1.0,
+        ge=0.05,
+        le=30.0,
+        alias="MEMORIA_DOUBAO_VOICE_CLONE_POLL_INTERVAL_S",
+    )
+    doubao_voice_synth_ready_id_mode: Literal[
+        "unverified", "custom_speaker_id", "response_field"
+    ] = Field(
+        default="unverified",
+        alias="MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_MODE",
+    )
+    doubao_voice_synth_ready_id_field: str = Field(
+        default="",
+        alias="MEMORIA_DOUBAO_VOICE_SYNTH_READY_ID_FIELD",
+    )
+    doubao_voice_expires_at_field: str = Field(
+        default="",
+        alias="MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FIELD",
+    )
+    doubao_voice_expires_at_format: Literal["epoch_ms", "rfc3339"] = Field(
+        default="epoch_ms",
+        alias="MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FORMAT",
     )
 
     llm_provider: Literal["qwen", "deepseek"] = Field(default="qwen", alias="LLM_PROVIDER")
@@ -433,6 +477,7 @@ class ControlSettings(BaseSettings):
             "memory_read",
             "persona_read",
             "voice_resolution",
+            "voice_cleanup",
             "interaction_policy",
             "response_plan",
         ],
@@ -443,6 +488,7 @@ class ControlSettings(BaseSettings):
             "memory_read": self.memoria_memory_read_token,
             "persona_read": self.memoria_persona_read_token,
             "voice_resolution": self.memoria_voice_resolution_token,
+            "voice_cleanup": self.memoria_voice_cleanup_token,
             "interaction_policy": self.memoria_interaction_policy_token,
             "response_plan": self.memoria_response_plan_token,
         }[capability].get_secret_value()
@@ -472,11 +518,12 @@ class ControlSettings(BaseSettings):
             "MEMORIA_MEMORY_READ_TOKEN": self.internal_token("memory_read"),
             "MEMORIA_PERSONA_READ_TOKEN": self.internal_token("persona_read"),
             "MEMORIA_VOICE_RESOLUTION_TOKEN": self.internal_token("voice_resolution"),
+            "MEMORIA_VOICE_CLEANUP_TOKEN": self.internal_token("voice_cleanup"),
             "MEMORIA_INTERACTION_POLICY_TOKEN": self.internal_token("interaction_policy"),
             "MEMORIA_RESPONSE_PLAN_TOKEN": self.internal_token("response_plan"),
         }
         if any(len(token) < 32 for token in capability_tokens.values()):
-            raise ValueError("production requires seven capability-scoped internal tokens")
+            raise ValueError("production requires eight capability-scoped internal tokens")
         if len(set(capability_tokens.values())) != len(capability_tokens) or any(
             token in {auth_secret, self.livekit_api_secret} for token in capability_tokens.values()
         ):
@@ -564,8 +611,23 @@ class ControlSettings(BaseSettings):
             self.voice_object_endpoint.strip() and not voice_access_key
         ):
             raise ValueError("production requires a complete voice object credential pair")
-        if not self.voice_target_model.startswith("cosyvoice-v3.5-"):
-            raise ValueError("production voice cloning requires CosyVoice v3.5")
+        if self.voice_clone_provider == "alibaba_model_studio":
+            if not self.voice_target_model.startswith("cosyvoice-v3.5-"):
+                raise ValueError("CosyVoice voice cloning requires a CosyVoice v3.5 target")
+        else:
+            if self.voice_target_model != "seed-icl-2.0":
+                raise ValueError("Doubao voice cloning requires seed-icl-2.0")
+            if not self.doubao_voice_api_key.get_secret_value().strip():
+                raise ValueError("Doubao voice cloning requires an independent API key")
+            if self.doubao_voice_synth_ready_id_mode == "unverified":
+                raise ValueError("Doubao voice cloning requires a smoke-verified synth ID mapping")
+            if (
+                self.doubao_voice_synth_ready_id_mode == "response_field"
+                and not self.doubao_voice_synth_ready_id_field.strip()
+            ):
+                raise ValueError("Doubao response-field synth ID mapping requires a field path")
+            if not self.doubao_voice_expires_at_field.strip():
+                raise ValueError("Doubao voice cloning requires a provider expiry field path")
         archive_object_key = self.archive_object_encryption_key.get_secret_value()
         if not archive_object_key or not self.archive_object_key_version.strip():
             raise ValueError("production requires encrypted archive object storage")

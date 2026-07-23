@@ -469,7 +469,7 @@ async def test_account_governance_exports_and_deletes_digital_self_versions(
     rows = exported["digital_self_versions"]
     assert len(rows) == 1
     assert rows[0]["manifest_sha256"] == version.manifest_sha256
-    assert rows[0]["manifest"]["schema_version"] == "digital-self-manifest-v2"
+    assert rows[0]["manifest"]["schema_version"] == "digital-self-manifest-v3"
     audit_rows = exported["digital_self_lifecycle_audit_events"]
     assert len(audit_rows) == 1
     assert audit_rows[0]["action"] == "build"
@@ -546,9 +546,7 @@ async def test_lifecycle_audit_is_account_scoped_immutable_and_complete(tmp_path
             rollback.version_id,
         )
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
-            connection.execute(
-                "UPDATE digital_self_lifecycle_audit_events SET action = 'build'"
-            )
+            connection.execute("UPDATE digital_self_lifecycle_audit_events SET action = 'build'")
 
 
 @pytest.mark.asyncio
@@ -570,13 +568,13 @@ async def test_transitions_require_a_well_formed_manifest_digest(tmp_path: Path)
         await registry.begin_testing(  # type: ignore[call-arg]
             account_id="owner-account", version_id=version.version_id
         )
-    assert (await registry.get(account_id="owner-account", version_id=version.version_id)).status == (
-        "draft"
-    )
+    assert (
+        await registry.get(account_id="owner-account", version_id=version.version_id)
+    ).status == ("draft")
 
 
 @pytest.mark.asyncio
-async def test_v2_build_compiles_only_effective_self_model_entries(tmp_path: Path) -> None:
+async def test_v3_build_compiles_only_effective_self_model_entries(tmp_path: Path) -> None:
     path = tmp_path / "memoria.sqlite3"
     registry = DigitalSelfRegistry.sqlite(path)
     registry.initialize()
@@ -877,7 +875,7 @@ async def test_v2_build_compiles_only_effective_self_model_entries(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_rollback_of_v1_creates_v2_without_mutating_old_bytes(tmp_path: Path) -> None:
+async def test_rollback_of_v1_creates_v3_without_mutating_old_bytes(tmp_path: Path) -> None:
     path = tmp_path / "memoria.sqlite3"
     registry = DigitalSelfRegistry.sqlite(path)
     registry.initialize()
@@ -944,7 +942,7 @@ async def test_rollback_of_v1_creates_v2_without_mutating_old_bytes(tmp_path: Pa
         version_id="legacy-v1",
     )
 
-    assert rollback.manifest.schema_version == "digital-self-manifest-v2"
+    assert rollback.manifest.schema_version == "digital-self-manifest-v3"
     assert rollback.manifest.entries == (entry,)
     assert rollback.manifest.rollback_target_version_id == "legacy-v1"
     assert reloaded.manifest.schema_version == "digital-self-manifest-v1"

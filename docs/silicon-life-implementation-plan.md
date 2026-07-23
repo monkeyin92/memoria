@@ -313,13 +313,49 @@ unknown/privacy；inference 不包装成本人亲口事实；安全规则始终�
 
 ### S8：approved Voice Profile 接入实时 TTS
 
-状态：PENDING
+状态：IMPLEMENTATION_COMPLETE / REAL_PROVIDER_ACCEPTANCE_PENDING（2026-07-23）
 
 先以官方文档确认当前豆包个人音色登记、地域、删除、有效期和实时流兼容能力；不得仅删除现有 409。只有 consent 有效、主观盲测和质量探针均通过、未撤销/未过期且绑定当前版本的声音可解析。
 
 运行时 voice resolution 绑定 generation fence；中途撤销、过期、超时或首包失败立即回退所选伙伴批准音色。补专有词发音、长句、情绪、弱网、打断、取消尾音、水印/反滥用测试。
 
 验收：本人相似度/自然度均 >=4/5、违和感 <=2.5/5；无旧 generation 尾音；撤销下一 generation 生效；真实设备通过后才能标记已应用本人声音。
+
+实现结果：
+
+- [x] 新增 Doubao Voice Clone 2.0 adapter；样本只接受短期签名 HTTPS URL、受支持媒体类型
+  和 10 MiB 上限；Control 使用独立 clone credential；供应商 expiry 字段路径必须经账号
+  smoke 明确配置，缺失或过期时拒绝激活；synth-ready speaker 映射默认 `unverified`
+  并 fail closed；
+- [x] manifest v3 增加可选 `VoiceProfileManifestRef`；v1/v2 canonical bytes 与 digest
+  保持不变；只有 consent 有效、两项评测通过、active、未过期的 seed-icl profile 可进入；
+- [x] Self Preview 会话冻结 profile/version/provider/model/resource/expiry/speaker digest 七字段，
+  并与当前 resolution 精确比对；raw provider speaker 不下发 H5；同时独立冻结账户所选伙伴
+  的设计音色快照作为 fallback，不携带陪伴人格能力；Companion 始终使用伙伴设计音色；
+- [x] Agent 为 seed-tts/seed-icl 使用独立 resource pool；每 generation 冻结实际音色，
+  首音频前 personal 失败只回退一次，首音频后不重放，迟到 callback 被 fence 丢弃；
+- [x] Archive 重新核验会话冻结音色，只存 profile/resource/speaker SHA-256，不保存 raw
+  provider speaker ID；personal 要求 version/expiry 等冻结字段完整，设计音色 digest 由
+  服务端批准目录重算；
+- [x] active profile 在后续主观或质量复评失败、Doubao expiry 缺失/过期时立即停止解析；
+  `pending/manual` 云端删除通过独立 `voice_cleanup` 能力与工单引用审计收敛；
+- [x] H5 支持 manifest v3、豆包个人音色评测后启用、版本重建提示、过期与人工清理状态；
+  日常陪伴与数字分身预览的声音边界明确分离；
+- [x] ADR-0019 固化版本绑定、资源池隔离、fallback 和删除清理语义。
+
+本地验收：PostgreSQL 17 + pgvector 全量 1079 passed、3 skipped、0 failed；总覆盖率
+87.76%，orchestration 92%，protocol 92%；H5 18 files / 219 tests 与 production build
+通过；Ruff、142 个 strict mypy source files、Shell/JSON 和 `git diff --check` 通过。
+
+In-app browser 在 390×844 与 667×375 均确认混合方案边界、所选伙伴音色文案和无横向
+溢出，干净 reload 后 console error/warn 为空。使用 approved v1 + active owner voiceprint
+创建的 Self Preview 会话已由服务端冻结为 `s8-v1`，fallback 为所选玄墨
+`low_magnetic / seed-tts-2.0`；本机未运行 LiveKit，故媒体连接不计作真实音频验收。
+
+尚未冒充完成：未上传任何真实声音样本；未验证生产账号的 synth-ready speaker 映射、
+seed-icl 实际 PCM/字幕、quota、官方删除路径、本人盲测或真机长句/弱网/打断。完成这些
+外部验收前，产品只能称“个人声音能力已接入并安全门控”，不能称“已复刻并应用本人声音”。
+最终复审无 P0/P1；收口阶段发现的 5 项 P1 均已修复并由回归测试覆盖。
 
 ### S9：LegacyGrant、冻结核心与关系外壳
 

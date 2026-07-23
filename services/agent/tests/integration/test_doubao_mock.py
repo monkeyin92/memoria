@@ -10,8 +10,10 @@ from livekit.agents.types import USERDATA_TIMED_TRANSCRIPT
 from scripts import provider_smoke_test
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.providers.doubao_tts import (
+    DOUBAO_PERSONAL_VOICE_MODEL,
     DoubaoBeforeAudioError,
     DoubaoPCMContinuityError,
+    DoubaoTimestampError,
     DoubaoTTS,
     DoubaoTTSConfig,
     DoubaoTTSPool,
@@ -194,6 +196,258 @@ async def test_voice_is_snapshotted_before_waiting_for_a_connection() -> None:
 
         assert result.pcm
         assert server.speakers == [_VOICES["warm_companion"].speaker_id]
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
+async def test_personal_and_baseline_resources_use_distinct_pools() -> None:
+    server = MockDoubaoServer()
+    server.start()
+    config = _config(server, first_audio_timeout_s=0.2)
+    tts = DoubaoTTS(config)
+    fence = GenerationFence("resource-pools", 1, 1, 0)
+    try:
+        await tts.pool.warm(1)
+        tts.apply_voice_profile(
+            model=DOUBAO_PERSONAL_VOICE_MODEL,
+            resource_id=DOUBAO_PERSONAL_VOICE_MODEL,
+            voice="S_personal_pool",
+            profile_id="personal-pool",
+            provider="volcengine_doubao",
+            voice_kind="personal",
+        )
+        personal = await tts.synthesize_stream_text(["个人"], fence=fence)
+        tts.use_baseline_voice()
+        baseline = await tts.synthesize_stream_text(
+            ["基线"],
+            fence=GenerationFence("resource-pools", 2, 2, 0),
+        )
+
+        assert personal.pcm and baseline.pcm
+        assert [headers["x-api-resource-id"] for headers in server.request_headers] == [
+            "seed-tts-2.0",
+            "seed-icl-2.0",
+        ]
+        assert server.speakers == ["S_personal_pool", _VOICES["warm_companion"].speaker_id]
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
+async def test_personal_before_audio_failure_falls_back_once_to_baseline() -> None:
+    server = MockDoubaoServer(scenario="slow_once")
+    server.start()
+    config = _config(server, first_audio_timeout_s=0.05)
+    tts = DoubaoTTS(config)
+    try:
+        tts.apply_voice_profile(
+            model=DOUBAO_PERSONAL_VOICE_MODEL,
+            resource_id=DOUBAO_PERSONAL_VOICE_MODEL,
+            voice="S_personal_fallback",
+            profile_id="personal-fallback",
+            provider="volcengine_doubao",
+            voice_kind="personal",
+        )
+        result = await tts.synthesize_stream_text(
+            ["只发送一次文本"],
+            fence=GenerationFence("personal-fallback", 1, 1, 0),
+        )
+
+        assert result.pcm
+        assert server.sessions == 2
+        assert server.task_requests == [["只发送一次文本"], ["只发送一次文本"]]
+        resources = [headers["x-api-resource-id"] for headers in server.request_headers]
+        assert resources[0] == "seed-icl-2.0"
+        assert resources[-1] == "seed-tts-2.0"
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
+async def test_personal_batch_does_not_replay_after_pcm_without_timestamps() -> None:
+    server = MockDoubaoServer(scenario="empty_ts")
+    server.start()
+    tts = DoubaoTTS(_config(server))
+    tts.apply_voice_profile(
+        model=DOUBAO_PERSONAL_VOICE_MODEL,
+        resource_id=DOUBAO_PERSONAL_VOICE_MODEL,
+        voice="S_personal_empty_timestamps",
+        profile_id="personal-empty-timestamps",
+        provider="volcengine_doubao",
+        voice_kind="personal",
+    )
+    try:
+        with pytest.raises(DoubaoTimestampError, match="no word timestamps"):
+            await tts.synthesize_stream_text(
+                ["已经产生音频的句子不能换音色重播"],
+                fence=GenerationFence("personal-empty-timestamps", 1, 1, 0),
+            )
+
+        assert server.sessions == 1
+        assert server.task_requests == [["已经产生音频的句子不能换音色重播"]]
+        assert server.speakers == ["S_personal_empty_timestamps"]
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
+async def test_livekit_personal_before_audio_failure_replays_once_on_baseline() -> None:
+    server = MockDoubaoServer(scenario="slow_once")
+    server.start()
+    tts = DoubaoTTS(_config(server, first_audio_timeout_s=0.05))
+    tts.apply_voice_profile(
+        model=DOUBAO_PERSONAL_VOICE_MODEL,
+        resource_id=DOUBAO_PERSONAL_VOICE_MODEL,
+        voice="S_livekit_personal_fallback",
+        profile_id="livekit-personal-fallback",
+        provider="volcengine_doubao",
+        voice_kind="personal",
+    )
+    tts.bind_fence(GenerationFence("livekit-personal-fallback", 1, 1, 0))
+    try:
+        async with tts.stream(conn_options=APIConnectOptions(max_retry=0)) as stream:
+            stream.push_text("只")
+            stream.push_text("播一次")
+            stream.end_input()
+            events = [event async for event in stream]
+
+        assert events
+        assert server.sessions == 2
+        assert server.task_requests == [["只", "播一次"], ["只", "播一次"]]
+        assert server.speakers == [
+            "S_livekit_personal_fallback",
+            _VOICES["warm_companion"].speaker_id,
+        ]
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
+async def test_personal_batch_pool_acquire_failure_falls_back_to_selected_xuanmo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = MockDoubaoServer()
+    server.start()
+    tts = DoubaoTTS(_config(server))
+    fallback_events: list[tuple[str, str, str]] = []
+    tts.configure_personal_fallback(
+        profile_id="low_magnetic",
+        provider="volcengine_doubao",
+        model="seed-tts-2.0",
+        resource_id="seed-tts-2.0",
+        voice=_VOICES["low_magnetic"].speaker_id,
+    )
+    tts.set_voice_fallback_callback(
+        lambda _fence, profile, resource, speaker, _kind: fallback_events.append(
+            (profile, resource, speaker)
+        )
+    )
+    tts.apply_voice_profile(
+        model=DOUBAO_PERSONAL_VOICE_MODEL,
+        resource_id=DOUBAO_PERSONAL_VOICE_MODEL,
+        voice="S_batch_acquire_failure",
+        profile_id="batch-acquire-failure",
+        provider="volcengine_doubao",
+        voice_kind="personal",
+    )
+    original_for_config = tts._pools.for_config
+
+    class FailingPool:
+        async def acquire(self, *, wait_s: float = 0.3) -> object:
+            del wait_s
+            raise RuntimeError("clone pool unavailable")
+
+    def for_config(config: DoubaoTTSConfig) -> object:
+        if config.resource_id == DOUBAO_PERSONAL_VOICE_MODEL:
+            return FailingPool()
+        return original_for_config(config)
+
+    monkeypatch.setattr(tts._pools, "for_config", for_config)
+    try:
+        result = await tts.synthesize_stream_text(
+            ["克隆池不可用时使用基线"],
+            fence=GenerationFence("batch-acquire", 1, 1, 0),
+        )
+
+        assert result.pcm
+        assert server.sessions == 1
+        assert server.speakers == [_VOICES["low_magnetic"].speaker_id]
+        assert fallback_events == [
+            (
+                "low_magnetic",
+                "seed-tts-2.0",
+                _VOICES["low_magnetic"].speaker_id,
+            )
+        ]
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
+async def test_personal_livekit_pool_acquire_failure_falls_back_to_selected_xuanmo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = MockDoubaoServer()
+    server.start()
+    tts = DoubaoTTS(_config(server))
+    fallback_events: list[tuple[str, str, str]] = []
+    tts.configure_personal_fallback(
+        profile_id="low_magnetic",
+        provider="volcengine_doubao",
+        model="seed-tts-2.0",
+        resource_id="seed-tts-2.0",
+        voice=_VOICES["low_magnetic"].speaker_id,
+    )
+    tts.set_voice_fallback_callback(
+        lambda _fence, profile, resource, speaker, _kind: fallback_events.append(
+            (profile, resource, speaker)
+        )
+    )
+    tts.apply_voice_profile(
+        model=DOUBAO_PERSONAL_VOICE_MODEL,
+        resource_id=DOUBAO_PERSONAL_VOICE_MODEL,
+        voice="S_stream_acquire_failure",
+        profile_id="stream-acquire-failure",
+        provider="volcengine_doubao",
+        voice_kind="personal",
+    )
+    tts.bind_fence(GenerationFence("stream-acquire", 1, 1, 0))
+    original_for_config = tts._pools.for_config
+
+    class FailingPool:
+        async def acquire(self, *, wait_s: float = 0.3) -> object:
+            del wait_s
+            raise RuntimeError("clone pool unavailable")
+
+    def for_config(config: DoubaoTTSConfig) -> object:
+        if config.resource_id == DOUBAO_PERSONAL_VOICE_MODEL:
+            return FailingPool()
+        return original_for_config(config)
+
+    monkeypatch.setattr(tts._pools, "for_config", for_config)
+    try:
+        async with tts.stream(conn_options=APIConnectOptions(max_retry=0)) as stream:
+            stream.push_text("克隆池不可用时使用基线")
+            stream.end_input()
+            events = [event async for event in stream]
+
+        assert events
+        assert server.sessions == 1
+        assert server.speakers == [_VOICES["low_magnetic"].speaker_id]
+        assert fallback_events == [
+            (
+                "low_magnetic",
+                "seed-tts-2.0",
+                _VOICES["low_magnetic"].speaker_id,
+            )
+        ]
     finally:
         await tts.aclose()
         server.stop()

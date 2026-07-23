@@ -37,6 +37,12 @@ from services.archive.memory_domain import (
     MemorySearchQuery,
 )
 from services.archive.object_store import ObjectRef, ObjectStore
+from services.common.companions import (
+    DEFAULT_COMPANION_ID,
+    DESIGNED_VOICE_MODEL,
+    designed_voice_profile,
+    designed_voice_speaker_sha256,
+)
 from services.control_api.app.account_gate import (
     AccountDeletingError,
     AccountOperationGate,
@@ -72,6 +78,8 @@ from services.persona.rules import trusted_uncertain_profile
 router = APIRouter(prefix="/v1/archive", tags=["archive"])
 logger = logging.getLogger(__name__)
 _LOCAL_SAFE_PLANNER_POLICY_VERSION = "local-safe-fallback-v1"
+_DOUBAO_TTS_PROVIDER = "volcengine_doubao"
+_DOUBAO_PERSONAL_VOICE_MODEL = "seed-icl-2.0"
 MAX_RAW_VOICE_WAV_BYTES = 2 * 1024 * 1024
 MAX_RAW_VOICE_BASE64_CHARS = ((MAX_RAW_VOICE_WAV_BYTES + 2) // 3) * 4
 SESSION_BOUND_EVENT_TYPES = frozenset(
@@ -258,14 +266,29 @@ class ResponseProvenanceCreate(BaseModel):
     source_refs: list[ResponseSourceRefCreate] = Field(default_factory=list, max_length=32)
     epistemic_status: Literal["not_applicable", "fact", "inference", "unknown", "mixed"]
     epistemic_reason_codes: list[str] = Field(default_factory=list, max_length=16)
-    disclosures: list[
-        Literal["digital_identity", "inference", "unknown", "privacy_refusal"]
-    ] = Field(default_factory=list, max_length=4)
+    disclosures: list[Literal["digital_identity", "inference", "unknown", "privacy_refusal"]] = (
+        Field(default_factory=list, max_length=4)
+    )
     llm_provider: str | None = Field(default=None, max_length=64)
     llm_model: str | None = Field(default=None, max_length=128)
     tts_provider: str | None = Field(default=None, max_length=64)
     tts_model: str | None = Field(default=None, max_length=128)
-    actual_voice_profile_id: str | None = Field(default=None, max_length=128)
+    actual_voice_profile_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+    )
+    actual_voice_profile_version: int | None = Field(default=None, ge=1)
+    actual_voice_resource_id: Literal["seed-tts-2.0", "seed-icl-2.0"] | None = None
+    actual_voice_provider_expires_at: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+    )
+    actual_voice_speaker_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
 
     @field_validator("epistemic_reason_codes")
     @classmethod
@@ -282,6 +305,41 @@ class ResponseProvenanceCreate(BaseModel):
             raise ValueError("persona provenance version fields must be paired")
         if self.persona_style_only and self.persona_version_id is None:
             raise ValueError("persona style-only provenance requires a persona snapshot")
+        has_tts = self.tts_provider is not None or self.tts_model is not None
+        if has_tts and (self.tts_provider is None or self.tts_model is None):
+            raise ValueError("tts provenance fields must be paired")
+        has_actual_voice = any(
+            value is not None
+            for value in (
+                self.actual_voice_profile_id,
+                self.actual_voice_profile_version,
+                self.actual_voice_resource_id,
+                self.actual_voice_provider_expires_at,
+                self.actual_voice_speaker_sha256,
+            )
+        )
+        if has_tts != has_actual_voice:
+            raise ValueError("tts provenance requires an actual voice snapshot")
+        if has_actual_voice and (
+            self.actual_voice_resource_id is None or self.actual_voice_speaker_sha256 is None
+        ):
+            raise ValueError("actual voice resource and digest are required")
+        if self.actual_voice_resource_id == _DOUBAO_PERSONAL_VOICE_MODEL and (
+            self.actual_voice_profile_id is None
+            or self.actual_voice_profile_version is None
+            or self.actual_voice_provider_expires_at is None
+        ):
+            raise ValueError("personal voice provenance requires version and expiry")
+        if self.actual_voice_resource_id == DESIGNED_VOICE_MODEL and (
+            self.actual_voice_profile_version is not None
+            or self.actual_voice_provider_expires_at is not None
+        ):
+            raise ValueError("designed voice provenance cannot claim personal metadata")
+        if has_actual_voice and (
+            self.tts_provider != _DOUBAO_TTS_PROVIDER
+            or self.tts_model != self.actual_voice_resource_id
+        ):
+            raise ValueError("actual voice snapshot does not match the tts runtime")
         return self
 
 
@@ -320,13 +378,9 @@ def _manifest_source_refs(
     refs: dict[tuple[str, str], frozenset[str]] = {}
     for entry in version.manifest.entries:
         if isinstance(entry, MemoryClaimManifestEntry):
-            refs[("memory_claim", entry.claim_id)] = frozenset(
-                {entry.source_event_id}
-            )
+            refs[("memory_claim", entry.claim_id)] = frozenset({entry.source_event_id})
         elif isinstance(entry, PersonaTraitManifestEntry):
-            refs[("persona_trait", entry.trait_id)] = frozenset(
-                entry.source_event_ids
-            )
+            refs[("persona_trait", entry.trait_id)] = frozenset(entry.source_event_ids)
         elif isinstance(entry, CognitiveClaimManifestEntry):
             refs[("cognitive_claim", entry.claim_id)] = frozenset(
                 (
@@ -384,6 +438,80 @@ def _canonical_epistemic_provenance(
     return status, reason_codes, list(dict.fromkeys(disclosures))
 
 
+def _canonical_actual_voice(
+    *,
+    submitted: ResponseProvenanceCreate,
+    session: Mapping[str, Any],
+    interaction_mode: str,
+) -> tuple[str | None, int | None, str | None, str | None, str | None]:
+    """Validate the applied voice against the exact session-frozen contract."""
+
+    resource_id = submitted.actual_voice_resource_id
+    speaker_sha256 = submitted.actual_voice_speaker_sha256
+    profile_id = submitted.actual_voice_profile_id
+    profile_version = submitted.actual_voice_profile_version
+    provider_expires_at = submitted.actual_voice_provider_expires_at
+    if all(
+        value is None
+        for value in (
+            resource_id,
+            speaker_sha256,
+            profile_id,
+            profile_version,
+            provider_expires_at,
+        )
+    ):
+        return None, None, None, None, None
+    frozen = FrozenMode.from_session(session)
+    valid = False
+    if interaction_mode == "companion":
+        expected_profile = designed_voice_profile(frozen.companion_style_id or DEFAULT_COMPANION_ID)
+        valid = (
+            expected_profile is not None
+            and profile_id == expected_profile
+            and submitted.tts_provider == _DOUBAO_TTS_PROVIDER
+            and resource_id == DESIGNED_VOICE_MODEL
+            and speaker_sha256 == designed_voice_speaker_sha256(expected_profile)
+        )
+    elif interaction_mode in {"self_preview", "legacy"}:
+        personal = (
+            frozen.voice_profile_id is not None
+            and profile_id == frozen.voice_profile_id
+            and frozen.voice_profile_version is not None
+            and profile_version == frozen.voice_profile_version
+            and frozen.voice_provider is not None
+            and submitted.tts_provider == frozen.voice_provider
+            and frozen.voice_model is not None
+            and submitted.tts_model == frozen.voice_model
+            and frozen.voice_resource_id is not None
+            and resource_id == frozen.voice_resource_id
+            and frozen.voice_provider_expires_at is not None
+            and provider_expires_at == frozen.voice_provider_expires_at
+            and frozen.voice_speaker_sha256 is not None
+            and speaker_sha256 == frozen.voice_speaker_sha256
+        )
+        safe_baseline = (
+            frozen.fallback_voice_profile_id is not None
+            and profile_id == frozen.fallback_voice_profile_id
+            and frozen.fallback_voice_provider is not None
+            and submitted.tts_provider == frozen.fallback_voice_provider
+            and frozen.fallback_voice_model is not None
+            and submitted.tts_model == frozen.fallback_voice_model
+            and frozen.fallback_voice_resource_id is not None
+            and resource_id == frozen.fallback_voice_resource_id
+            and speaker_sha256 == designed_voice_speaker_sha256(frozen.fallback_voice_profile_id)
+        )
+        valid = personal or safe_baseline
+    elif interaction_mode == "archive":
+        valid = profile_id is None and resource_id == DESIGNED_VOICE_MODEL
+    if not valid:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_voice_mismatch"},
+        )
+    return profile_id, profile_version, resource_id, provider_expires_at, speaker_sha256
+
+
 async def _canonical_response_provenance(
     request: Request,
     *,
@@ -401,9 +529,7 @@ async def _canonical_response_provenance(
         ) from exc
     account_id = str(session["user_id"])
     source_refs = submitted.source_refs
-    local_safe_plan = (
-        submitted.planner_policy_version == _LOCAL_SAFE_PLANNER_POLICY_VERSION
-    )
+    local_safe_plan = submitted.planner_policy_version == _LOCAL_SAFE_PLANNER_POLICY_VERSION
     if submitted.planner_policy_version not in {
         PLANNER_POLICY_VERSION,
         _LOCAL_SAFE_PLANNER_POLICY_VERSION,
@@ -413,9 +539,7 @@ async def _canonical_response_provenance(
             detail={"code": "response_provenance_planner_invalid"},
         )
     if local_safe_plan and (
-        source_refs
-        or submitted.persona_version_id is not None
-        or submitted.persona_style_only
+        source_refs or submitted.persona_version_id is not None or submitted.persona_style_only
     ):
         raise HTTPException(
             status_code=409,
@@ -436,9 +560,7 @@ async def _canonical_response_provenance(
         and parent.payload.get("speaker_reason_code") == "shadow_owner_candidate"
     )
     if submitted.persona_style_only and (
-        not shadow_owner_candidate
-        or source_refs
-        or str(session["interaction_mode"]) != "companion"
+        not shadow_owner_candidate or source_refs or str(session["interaction_mode"]) != "companion"
     ):
         raise HTTPException(
             status_code=409,
@@ -447,10 +569,7 @@ async def _canonical_response_provenance(
     if (
         submitted.persona_version_id is not None
         and not submitted.persona_style_only
-        and (
-            parent.speaker_class != "owner"
-            or str(session["interaction_mode"]) != "companion"
-        )
+        and (parent.speaker_class != "owner" or str(session["interaction_mode"]) != "companion")
     ):
         raise HTTPException(
             status_code=409,
@@ -477,8 +596,7 @@ async def _canonical_response_provenance(
                 detail={"code": "response_provenance_version_unavailable"},
             ) from exc
         if (
-            interaction_mode == "self_preview"
-            and version.status not in {"approved", "frozen"}
+            interaction_mode == "self_preview" and version.status not in {"approved", "frozen"}
         ) or (interaction_mode == "legacy" and version.status != "frozen"):
             raise HTTPException(
                 status_code=409,
@@ -486,10 +604,7 @@ async def _canonical_response_provenance(
             )
         manifest_sha256 = version.manifest_sha256
         allowed_manifest_refs = _manifest_source_refs(version)
-    elif (
-        submitted.manifest_sha256 is not None
-        or interaction_mode in {"self_preview", "legacy"}
-    ):
+    elif submitted.manifest_sha256 is not None or interaction_mode in {"self_preview", "legacy"}:
         raise HTTPException(
             status_code=409,
             detail={"code": "response_provenance_version_unavailable"},
@@ -528,9 +643,7 @@ async def _canonical_response_provenance(
         relationship_profile_version = relationship_entry.version_number
     source_event_ids = tuple(
         dict.fromkeys(
-            source_event_id
-            for ref in source_refs
-            for source_event_id in ref.source_event_ids
+            source_event_id for ref in source_refs for source_event_id in ref.source_event_ids
         )
     )
     if allowed_manifest_refs is not None:
@@ -558,8 +671,7 @@ async def _canonical_response_provenance(
     resolved_events = tuple(cast(EvidenceEvent, event) for event in events)
     if any(
         event.speaker_class != "owner"
-        or event.event_type
-        not in {"speech.utterance_finalized", "owner.action_recorded"}
+        or event.event_type not in {"speech.utterance_finalized", "owner.action_recorded"}
         or event.payload.get("owner_projection_eligible") is not True
         for event in resolved_events
     ):
@@ -572,21 +684,28 @@ async def _canonical_response_provenance(
     model_version = parent_payload.get("speaker_model_version")
     profile_id = parent_payload.get("speaker_profile_id")
     template_version = parent_payload.get("speaker_template_version")
-    epistemic_status, epistemic_reason_codes, disclosures = (
-        _canonical_epistemic_provenance(
-            source_refs=source_refs,
-            interaction_mode=interaction_mode,
-            parent=parent,
-            submitted_disclosures=list(submitted.disclosures),
-            persona_style_only=submitted.persona_style_only,
-        )
+    epistemic_status, epistemic_reason_codes, disclosures = _canonical_epistemic_provenance(
+        source_refs=source_refs,
+        interaction_mode=interaction_mode,
+        parent=parent,
+        submitted_disclosures=list(submitted.disclosures),
+        persona_style_only=submitted.persona_style_only,
+    )
+    (
+        actual_voice_profile_id,
+        actual_voice_profile_version,
+        actual_voice_resource_id,
+        actual_voice_provider_expires_at,
+        actual_voice_speaker_sha256,
+    ) = _canonical_actual_voice(
+        submitted=submitted,
+        session=session,
+        interaction_mode=interaction_mode,
     )
     return {
         "fence": submitted.fence.model_dump(),
         "planner_policy_version": (
-            _LOCAL_SAFE_PLANNER_POLICY_VERSION
-            if local_safe_plan
-            else PLANNER_POLICY_VERSION
+            _LOCAL_SAFE_PLANNER_POLICY_VERSION if local_safe_plan else PLANNER_POLICY_VERSION
         ),
         "interaction_mode": interaction_mode,
         "mode_policy_version": str(session["mode_policy_version"]),
@@ -600,14 +719,10 @@ async def _canonical_response_provenance(
         ),
         "speaker_profile_id": profile_id if isinstance(profile_id, str) else None,
         "speaker_model_version": (
-            model_version
-            if isinstance(model_version, str) and model_version
-            else "unavailable"
+            model_version if isinstance(model_version, str) and model_version else "unavailable"
         ),
         "speaker_template_version": (
-            template_version
-            if isinstance(template_version, int) and template_version > 0
-            else None
+            template_version if isinstance(template_version, int) and template_version > 0 else None
         ),
         "persona_version_id": submitted.persona_version_id,
         "persona_version_number": submitted.persona_version_number,
@@ -619,8 +734,12 @@ async def _canonical_response_provenance(
         "llm_provider": submitted.llm_provider,
         "llm_model": submitted.llm_model,
         "tts_provider": submitted.tts_provider,
-        "tts_model": submitted.tts_model,
-        "actual_voice_profile_id": submitted.actual_voice_profile_id,
+        "tts_model": actual_voice_resource_id,
+        "actual_voice_profile_id": actual_voice_profile_id,
+        "actual_voice_profile_version": actual_voice_profile_version,
+        "actual_voice_resource_id": actual_voice_resource_id,
+        "actual_voice_provider_expires_at": actual_voice_provider_expires_at,
+        "actual_voice_speaker_sha256": actual_voice_speaker_sha256,
     }
 
 
@@ -1029,9 +1148,7 @@ async def append_session_event(
         FrozenMode.from_session(session),
         speaker_class=policy_speaker,
         reason_code=reason_code,
-        history_eligible=(
-            parent_eligibility[0] if parent_eligibility is not None else None
-        ),
+        history_eligible=(parent_eligibility[0] if parent_eligibility is not None else None),
         owner_projection_eligible=(
             parent_eligibility[1] if parent_eligibility is not None else None
         ),
@@ -1047,9 +1164,7 @@ async def append_session_event(
             "mode_policy_version": trusted_interaction["mode_policy_version"],
             "simulated_output": trusted_interaction["simulated_output"],
             "history_eligible": trusted_interaction["history_eligible"],
-            "owner_projection_eligible": trusted_interaction[
-                "owner_projection_eligible"
-            ],
+            "owner_projection_eligible": trusted_interaction["owner_projection_eligible"],
             "interaction": trusted_interaction,
             "prompt_kind": prompt_kind,
         }
@@ -1059,6 +1174,7 @@ async def append_session_event(
     if canonical_response_provenance is not None:
         payload["response_provenance"] = canonical_response_provenance
     learning_task_id = session.get("learning_task_id")
+
     async def record_event() -> tuple[EvidenceEvent, Any]:
         values["payload"] = payload
         event = EvidenceEvent(**values)
@@ -1076,11 +1192,7 @@ async def append_session_event(
                 account_id=account_id,
                 task_id=learning_task_id,
             )
-            if (
-                task is not None
-                and task.kind == "natural_chat"
-                and task.status == "active"
-            ):
+            if task is not None and task.kind == "natural_chat" and task.status == "active":
                 payload.update(
                     {
                         "learning_task_id": learning_task_id,
@@ -1163,9 +1275,7 @@ async def revoke_raw_voice_consent(
                 await store.delete(reference)
             await archive.purge_raw_voice_blobs(
                 account_id=user.user_id,
-                object_keys=tuple(
-                    reference.object_key for reference in revocation.references
-                ),
+                object_keys=tuple(reference.object_key for reference in revocation.references),
             )
         except Exception as exc:
             logger.exception("raw voice revocation cleanup failed")
@@ -1183,9 +1293,7 @@ async def session_raw_voice_consent(
     _: Annotated[None, Depends(_require_archive_write_token)],
 ) -> dict[str, Any]:
     session = require_active_voice_session(request, session_id)
-    consent = await _archive(request).active_raw_voice_consent(
-        account_id=str(session["user_id"])
-    )
+    consent = await _archive(request).active_raw_voice_consent(account_id=str(session["user_id"]))
     if consent is None:
         return {"allowed": False}
     return {
@@ -1254,7 +1362,9 @@ async def append_session_raw_audio(
     except RawVoiceConsentRequiredError as exc:
         if reference is not None:
             await _delete_object_safely(store, reference)
-        raise HTTPException(status_code=410, detail="raw voice consent is no longer active") from exc
+        raise HTTPException(
+            status_code=410, detail="raw voice consent is no longer active"
+        ) from exc
     except IdempotencyConflictError as exc:
         if reference is not None:
             await _delete_object_safely(store, reference)

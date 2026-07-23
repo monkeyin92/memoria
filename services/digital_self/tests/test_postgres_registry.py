@@ -465,7 +465,9 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
                     )
             with pytest.raises(asyncpg.PostgresError, match="immutable"):
                 async with connection.transaction():
-                    await connection.execute("SELECT set_config('app.account_id', $1, true)", account_a)
+                    await connection.execute(
+                        "SELECT set_config('app.account_id', $1, true)", account_a
+                    )
                     await connection.execute(
                         "UPDATE digital_self_lifecycle_audit_events SET action = 'build'"
                     )
@@ -493,7 +495,7 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
         assert len(exported["digital_self_versions"]) == 3
         assert version_a.manifest_sha256 in str(exported["digital_self_versions"])
         assert exported["digital_self_versions"][0]["manifest"]["schema_version"] == (
-            "digital-self-manifest-v2"
+            "digital-self-manifest-v3"
         )
         assert len(exported["digital_self_lifecycle_audit_events"]) == 7
         deleted = await governance.delete_account(account_a)

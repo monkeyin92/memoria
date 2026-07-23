@@ -84,6 +84,14 @@ def split_env(
         access_token=values.get("DOUBAO_TTS_ACCESS_TOKEN", ""),
         required=False,
     )
+    clone_key = values.get("MEMORIA_DOUBAO_VOICE_API_KEY", "").strip()
+    runtime_tts_secrets = {
+        values.get("DOUBAO_TTS_API_KEY", "").strip(),
+        values.get("DOUBAO_TTS_ACCESS_TOKEN", "").strip(),
+    }
+    runtime_tts_secrets.discard("")
+    if clone_key and clone_key in runtime_tts_secrets:
+        raise ValueError("Doubao voice clone and runtime TTS credentials must be independent")
     if values.get("ENVIRONMENT", "").strip().lower() == "production":
         if values.get("MEMORIA_ARCHIVE_INTERNAL_TOKEN", "").strip():
             raise ValueError("production forbids the legacy all-access internal token")
