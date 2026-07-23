@@ -63,10 +63,12 @@ export function InteractionModePanel({
   digitalSourceCount = 0,
   onOpenArchive,
   onChangeCompanion,
+  onOpenSelfPreview,
 }) {
   const actions = {
     companion: onChangeCompanion,
     archive: onOpenArchive,
+    self_preview: onOpenSelfPreview,
   };
   const selectedCompanionId = capabilities?.selected_companion_id;
   const selectedCompanionName = selectedCompanionId
@@ -105,7 +107,11 @@ export function InteractionModePanel({
                 <p>{copy.description}</p>
                 {available && action ? (
                   <button type="button" className="button-quiet" onClick={action}>
-                    {copy.action}
+                    {mode === "self_preview" ? "打开数字分身预览" : copy.action}
+                  </button>
+                ) : available && mode === "self_preview" ? (
+                  <button type="button" className="button-quiet" disabled>
+                    预览入口未连接
                   </button>
                 ) : (
                   <p className="interaction-mode-blocked">

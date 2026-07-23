@@ -30,7 +30,54 @@
         "history_eligible": { "type": "boolean" },
         "turn_id": { "type": "integer" },
         "generation_id": { "type": "integer" },
-        "tool_epoch": { "type": "integer", "minimum": 0 }
+        "tool_epoch": { "type": "integer", "minimum": 0 },
+        "preview_provenance": {
+          "type": ["object", "null"],
+          "required": [
+            "digital_self_version_id",
+            "manifest_sha256",
+            "turn_id",
+            "generation_id",
+            "tool_epoch",
+            "epistemic_status",
+            "disclosures",
+            "source_refs"
+          ],
+          "properties": {
+            "digital_self_version_id": { "type": "string", "maxLength": 128 },
+            "manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "turn_id": { "type": "integer", "minimum": 0 },
+            "generation_id": { "type": "integer", "minimum": 0 },
+            "tool_epoch": { "type": "integer", "minimum": 0 },
+            "epistemic_status": {
+              "enum": ["fact", "inference", "unknown", "not_applicable"]
+            },
+            "disclosures": {
+              "type": "array",
+              "maxItems": 4,
+              "items": { "type": "string", "maxLength": 64 }
+            },
+            "source_refs": {
+              "type": "array",
+              "maxItems": 12,
+              "items": {
+                "type": "object",
+                "required": ["kind", "item_id", "source_event_ids"],
+                "properties": {
+                  "kind": { "type": "string", "maxLength": 64 },
+                  "item_id": { "type": "string", "maxLength": 128 },
+                  "source_event_ids": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": { "type": "string", "maxLength": 128 }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

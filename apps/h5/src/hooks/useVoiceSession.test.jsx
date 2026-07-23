@@ -91,7 +91,13 @@ vi.mock("../voice/QwenOmniWebRTCTransport.js", () => ({
 import { useVoiceSession } from "./useVoiceSession.js";
 
 function encodeEvent(event) {
-  return new TextEncoder().encode(JSON.stringify(event));
+  return new TextEncoder().encode(
+    JSON.stringify(
+      event.type === "transcript_delta" && !event.session_id
+        ? { ...event, session_id: "session-1" }
+        : event,
+    ),
+  );
 }
 
 function deferred() {
@@ -270,6 +276,122 @@ describe("useVoiceSession production edges", () => {
       await result.current.end();
     });
     expect(transport.close).toHaveBeenCalled();
+  });
+
+  it("freezes self-preview session options and preserves bounded answer provenance", async () => {
+    const digest = "d".repeat(64);
+    api.createSession.mockResolvedValueOnce({
+      session_id: "preview-session",
+      livekit_url: "wss://livekit.example",
+      participant_token: "preview-token",
+      voice_backend: "cascade",
+      interaction: {
+        interaction_mode: "self_preview",
+        mode_policy_version: "s7-v1",
+        digital_self_version_id: "self-v1",
+        manifest_sha256: digest,
+        preview_grant_id: "grant-1",
+        perspective: "child",
+        simulated_output: true,
+        history_eligible: false,
+        owner_projection_eligible: false,
+        companion_style_id: null,
+        companion_style_version: null,
+        relationship_profile_id: null,
+        legacy_grant_id: null,
+        capabilities: {
+          conversation: true,
+          private_memory: false,
+          persona: false,
+          persona_low_sensitivity: false,
+          tools: false,
+          history: false,
+          learning: false,
+          voice_profile: false,
+        },
+      },
+    });
+    const { result } = renderHook(() =>
+      useVoiceSession({
+        userId: "registered-user",
+        onFinalTranscript: vi.fn(),
+      }),
+    );
+    result.current.audioContainerRef.current = document.createElement("div");
+
+    await act(async () => {
+      await result.current.start({
+        interactionMode: "self_preview",
+        previewGrantId: "grant-1",
+      });
+    });
+    expect(api.createSession).toHaveBeenCalledWith(
+      "registered-user",
+      "cascade",
+      null,
+      {
+        interactionMode: "self_preview",
+        previewGrantId: "grant-1",
+      },
+    );
+    const room = liveKit.instances.at(-1);
+    act(() => {
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "assistant_state",
+          session_id: "preview-session",
+          state: "ready",
+          turn_id: 0,
+          generation_id: 0,
+        }),
+        { isAgent: true },
+        null,
+        "voice-agent.ui",
+      );
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "transcript_delta",
+          session_id: "preview-session",
+          speaker: "assistant",
+          text: "这是一次有来源的模拟回答。",
+          final: true,
+          heard: true,
+          history_eligible: false,
+          turn_id: 1,
+          generation_id: 1,
+          tool_epoch: 0,
+          preview_provenance: {
+            digital_self_version_id: "self-v1",
+            manifest_sha256: digest,
+            turn_id: 1,
+            generation_id: 1,
+            tool_epoch: 0,
+            epistemic_status: "fact",
+            disclosures: ["digital_identity"],
+            source_refs: [{
+              kind: "memory_claim",
+              item_id: "memory-1",
+              source_event_ids: ["event-1"],
+            }],
+          },
+        }),
+        { isAgent: true },
+        null,
+        "voice-agent.ui",
+      );
+    });
+    expect(result.current.latestTranscript).toMatchObject({
+      speaker: "assistant",
+      epistemic_status: "fact",
+      source_refs: [{
+        kind: "memory_claim",
+        item_id: "memory-1",
+      }],
+      disclosures: ["digital_identity"],
+      toolEpoch: 0,
+    });
   });
 
   it("keeps a single audio element when Omni repeats the remote stream", async () => {

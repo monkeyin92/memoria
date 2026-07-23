@@ -88,6 +88,41 @@ def test_companion_style_catalog_parity_reaches_the_agent_prompt(
     assert policy.companion_style.interview_depth == interview_depth
 
 
+def test_self_preview_trusts_conversation_ceiling_but_denies_private_capabilities() -> None:
+    policy = ModePolicyClient._parse(
+        _payload(
+            interaction_mode="self_preview",
+            mode_policy_version="s7-v1",
+            companion_style_id=None,
+            companion_style_version=None,
+            digital_self_version_id="version-001",
+            manifest_sha256="a" * 64,
+            preview_grant_id="grant-001",
+            perspective="child",
+            capabilities={
+                "conversation": True,
+                "private_memory": False,
+                "persona": False,
+                "persona_low_sensitivity": False,
+                "tools": False,
+                "history": False,
+                "learning": False,
+                "voice_profile": False,
+            },
+        )
+    )
+
+    assert policy.available is True
+    assert policy.mode == "self_preview"
+    assert policy.allows_conversation() is True
+    assert policy.allows_private_context("owner") is False
+    assert policy.allows_private_persona("owner") is False
+    assert policy.allows_tools("owner") is False
+    assert policy.history_eligible("owner") is False
+    assert policy.owner_projection_eligible("owner") is False
+    assert policy.companion_style_prompt is None
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "payload,status",

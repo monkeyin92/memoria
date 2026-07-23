@@ -26,6 +26,7 @@ from services.digital_self.domain import (
     SourceSnapshotConflictError,
     VersionNotFoundError,
 )
+from services.digital_self.preview import SelfPreviewRegistryPort
 
 router = APIRouter(prefix="/v1/digital-self", tags=["digital-self"])
 
@@ -36,6 +37,10 @@ def _registry(request: Request) -> RegistryPort:
 
 def _store(request: Request) -> MemoryStore:
     return cast(MemoryStore, request.app.state.memory_store)
+
+
+def _preview(request: Request) -> SelfPreviewRegistryPort:
+    return cast(SelfPreviewRegistryPort, request.app.state.self_preview_registry)
 
 
 @asynccontextmanager
@@ -191,6 +196,22 @@ async def _sensitive_transition(
                 expected_manifest_sha256=body.expected_manifest_sha256,
             )
         elif action == "approve":
+            current = await registry.get(
+                account_id=user.user_id,
+                version_id=version_id,
+            )
+            if current.manifest_sha256 != body.expected_manifest_sha256:
+                raise SourceSnapshotConflictError(version_id)
+            verdict = await _preview(request).completed_verdict(
+                account_id=user.user_id,
+                version_id=version_id,
+                manifest_sha256=body.expected_manifest_sha256,
+            )
+            if verdict != "approve":
+                raise _error(
+                    status.HTTP_409_CONFLICT,
+                    "fidelity_approval_required",
+                )
             version = await registry.approve(
                 account_id=user.user_id,
                 version_id=version_id,

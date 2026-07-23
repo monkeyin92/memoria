@@ -10,6 +10,7 @@ from services.common.companions import COMPANION_STYLE_VERSION, CompanionDefinit
 InteractionMode = Literal["companion", "self_preview", "legacy", "archive"]
 SpeakerClass = Literal["owner", "guest", "uncertain"]
 MODE_POLICY_VERSION: Final = "s2-v1"
+SELF_PREVIEW_POLICY_VERSION: Final = "s7-v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +18,9 @@ class FrozenMode:
     interaction_mode: InteractionMode
     mode_policy_version: str
     digital_self_version_id: str | None
+    manifest_sha256: str | None
+    preview_grant_id: str | None
+    perspective: str | None
     relationship_profile_id: str | None
     legacy_grant_id: str | None
     companion_style_id: str | None
@@ -27,6 +31,9 @@ class FrozenMode:
             "interaction_mode": self.interaction_mode,
             "mode_policy_version": self.mode_policy_version,
             "digital_self_version_id": self.digital_self_version_id,
+            "manifest_sha256": self.manifest_sha256,
+            "preview_grant_id": self.preview_grant_id,
+            "perspective": self.perspective,
             "relationship_profile_id": self.relationship_profile_id,
             "legacy_grant_id": self.legacy_grant_id,
             "companion_style_id": self.companion_style_id,
@@ -39,6 +46,9 @@ class FrozenMode:
             interaction_mode=cast(InteractionMode, str(session["interaction_mode"])),
             mode_policy_version=str(session["mode_policy_version"]),
             digital_self_version_id=_optional(session.get("digital_self_version_id")),
+            manifest_sha256=_optional(session.get("digital_self_manifest_sha256")),
+            preview_grant_id=_optional(session.get("preview_grant_id")),
+            perspective=_optional(session.get("self_preview_perspective")),
             relationship_profile_id=_optional(session.get("relationship_profile_id")),
             legacy_grant_id=_optional(session.get("legacy_grant_id")),
             companion_style_id=_optional(session.get("companion_style_id")),
@@ -88,7 +98,7 @@ class ModePolicy:
         if mode == "archive":
             return ModeAvailability("available", False)
         if mode == "self_preview":
-            return ModeAvailability("blocked", True, ("self_preview_runtime",))
+            return ModeAvailability("available", True)
         return ModeAvailability(
             "blocked",
             True,
@@ -101,10 +111,34 @@ class ModePolicy:
             interaction_mode="companion",
             mode_policy_version=MODE_POLICY_VERSION,
             digital_self_version_id=None,
+            manifest_sha256=None,
+            preview_grant_id=None,
+            perspective=None,
             relationship_profile_id=None,
             legacy_grant_id=None,
             companion_style_id=definition.companion_id,
             companion_style_version=COMPANION_STYLE_VERSION,
+        )
+
+    @staticmethod
+    def freeze_self_preview(
+        *,
+        version_id: str,
+        manifest_sha256: str,
+        preview_grant_id: str,
+        perspective: str,
+    ) -> FrozenMode:
+        return FrozenMode(
+            interaction_mode="self_preview",
+            mode_policy_version=SELF_PREVIEW_POLICY_VERSION,
+            digital_self_version_id=version_id,
+            manifest_sha256=manifest_sha256,
+            preview_grant_id=preview_grant_id,
+            perspective=perspective,
+            relationship_profile_id=None,
+            legacy_grant_id=None,
+            companion_style_id=None,
+            companion_style_version=None,
         )
 
     @classmethod
@@ -124,10 +158,12 @@ class ModePolicy:
             and reason_code == "shadow_owner_candidate"
         )
         companion = available and frozen.interaction_mode == "companion"
+        self_preview = available and frozen.interaction_mode == "self_preview"
         # `uncertain` may retain S1's explicitly curated low-sensitivity style
         # path, but is never a private-owner authority.
         return EffectiveCapabilities(
-            conversation=account_active and companion,
+            conversation=account_active
+            and (companion or (self_preview and speaker_class == "owner")),
             private_memory=account_active and companion and owner_private,
             persona=account_active and companion and owner_private,
             persona_low_sensitivity=account_active and companion and shadow_owner,
@@ -182,6 +218,7 @@ class ModePolicy:
         """Return the frozen mode ceiling, not a stale per-turn speaker result."""
         available = cls.availability(frozen.interaction_mode).status == "available"
         companion = available and frozen.interaction_mode == "companion"
+        self_preview = available and frozen.interaction_mode == "self_preview"
         return {
             **frozen.payload(),
             "simulated_output": frozen.interaction_mode != "companion",
@@ -189,7 +226,7 @@ class ModePolicy:
             "owner_projection_eligible": companion,
             "policy_scope": "session",
             "capabilities": EffectiveCapabilities(
-                conversation=companion,
+                conversation=companion or self_preview,
                 private_memory=companion,
                 persona=companion,
                 persona_low_sensitivity=companion,

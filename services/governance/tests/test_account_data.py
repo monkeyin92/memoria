@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -14,6 +14,11 @@ from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.object_store import EncryptedLocalObjectStore
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.security import hash_password
+from services.digital_self.preview import (
+    FIDELITY_CATEGORIES,
+    FidelityTrialSpec,
+    SelfPreviewRegistry,
+)
 from services.governance.account_data import (
     AccountDataGovernance,
     AccountDeletionIncompleteError,
@@ -334,6 +339,64 @@ async def _fixture(
             sample_rate=24_000,
         )
     )
+    preview = SelfPreviewRegistry.sqlite(database_path)
+    now = datetime.now(UTC)
+    grant = await preview.issue_grant(
+        account_id=account_id,
+        version_id="governance-version",
+        manifest_sha256="a" * 64,
+        perspective="owner",
+        expires_at=now + timedelta(minutes=10),
+        idempotency_key="governance-preview-grant",
+        now=now,
+    )
+    evaluation = await preview.start_evaluation(
+        account_id=account_id,
+        version_id="governance-version",
+        manifest_sha256="a" * 64,
+        trial_specs=tuple(
+            FidelityTrialSpec(
+                category=category,
+                prompt=f"{category} prompt",
+                generic_answer=f"generic {category}",
+                digital_self_answer=f"digital {category}",
+                available=True,
+                coverage_gap=None,
+                epistemic_status=(
+                    "unknown"
+                    if category in {"unknown", "privacy"}
+                    else "inference"
+                    if category == "decision"
+                    else "fact"
+                ),
+                has_source=category not in {"unknown", "privacy"},
+                unsupported_fact=False,
+                decision_inference_disclosed=True,
+                privacy_refused=True,
+                identity_disclosed=True,
+            )
+            for category in FIDELITY_CATEGORIES
+        ),
+        idempotency_key="governance-fidelity-evaluation",
+        now=now,
+    )
+    await preview.record_feedback(
+        account_id=account_id,
+        session_id="governance-preview-session",
+        turn_id=1,
+        generation_id=1,
+        tool_epoch=0,
+        version_id="governance-version",
+        manifest_sha256="a" * 64,
+        action="not_like_me",
+        target_source_event_ids=(event.event_id,),
+        correction_text=None,
+        evidence_event_id="governance-preview-feedback",
+        idempotency_key="governance-preview-feedback",
+        now=now,
+    )
+    assert grant.grant_id
+    assert evaluation.evaluation_id
     governance = AccountDataGovernance(
         memory_store=store,
         archive_repository=SqliteAccountRepository.archive(database_path),
@@ -385,6 +448,9 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
     assert "是否完整删除数字自我数据" in serialized
     assert "温和坦诚" in serialized
     assert "self_model_command_receipts" in serialized
+    assert "digital_self_preview" in exported["sections"]["conversation"]
+    assert "governance-preview-session" in serialized
+    assert "digital_self_slot" not in serialized
 
     deleted = await governance.delete_account("account-governance")
 
@@ -398,6 +464,20 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
     ).evidence == ()
     assert store.get_account(user_id="account-governance") is None
     assert store.is_account_deleted(user_id="account-governance") is True
+    with sqlite3.connect(store.path) as connection:
+        for table in (
+            "digital_self_preview_grants",
+            "digital_self_preview_feedback",
+            "digital_self_fidelity_evaluations",
+            "digital_self_fidelity_trials",
+        ):
+            assert (
+                connection.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE account_id = ?",
+                    ("account-governance",),
+                ).fetchone()[0]
+                == 0
+            )
 
 
 @pytest.mark.asyncio

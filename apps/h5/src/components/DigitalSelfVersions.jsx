@@ -51,12 +51,31 @@ function dateLabel(value) {
   }).format(date);
 }
 
-function actionFor(version) {
+function fidelityStatusFor(version, fidelityByVersion) {
+  const summary = fidelityByVersion?.[version?.version_id] || {};
+  return summary.verdict || summary.owner_verdict || summary.status || "";
+}
+
+function fidelityApproved(version, fidelityByVersion) {
+  return ["approve", "approved", "passed"].includes(
+    fidelityStatusFor(version, fidelityByVersion),
+  );
+}
+
+function actionFor(version, fidelityByVersion) {
   if (version.status === "draft") {
     return { id: "testing", label: "进入测试", icon: Flask, needsPassword: false };
   }
   if (version.status === "testing") {
-    return { id: "approve", label: "批准此版本", icon: CheckCircle, needsPassword: true };
+    if (fidelityApproved(version, fidelityByVersion)) {
+      return { id: "approve", label: "批准此版本", icon: CheckCircle, needsPassword: true };
+    }
+    return {
+      id: "fidelity",
+      label: "完成忠实度评测",
+      icon: Flask,
+      needsPassword: false,
+    };
   }
   if (version.status === "approved") {
     return { id: "freeze", label: "冻结此版本", icon: Snowflake, needsPassword: true };
@@ -80,6 +99,8 @@ export function DigitalSelfVersions({
   busy,
   onBuild,
   onTransition,
+  onOpenFidelity,
+  fidelityByVersion = {},
 }) {
   const [pending, setPending] = useState(null);
   const [password, setPassword] = useState("");
@@ -106,7 +127,11 @@ export function DigitalSelfVersions({
   }, [pending]);
 
   const requestAction = async (version, trigger) => {
-    const action = actionFor(version);
+    const action = actionFor(version, fidelityByVersion);
+    if (action.id === "fidelity") {
+      if (onOpenFidelity) onOpenFidelity(version);
+      return;
+    }
     if (!action.needsPassword) {
       await onTransition(action.id, version, "");
       return;
@@ -190,7 +215,7 @@ export function DigitalSelfVersions({
             summary,
             "relationship_profile_count",
           );
-          const action = actionFor(version);
+          const action = actionFor(version, fidelityByVersion);
           const ActionIcon = action.icon;
           return (
             <article className="digital-version-card" key={version.version_id}>
@@ -237,11 +262,16 @@ export function DigitalSelfVersions({
                   ? ` · 回滚自 ${shortIdentifier(version.rollback_target_version_id)}`
                   : ""}
               </p>
+              {version.status === "testing" && !fidelityApproved(version, fidelityByVersion) && (
+                <p className="digital-fidelity-gate">
+                  先完成主人忠实度评测并选择“批准”，才能批准此版本。
+                </p>
+              )}
               <button
                 type="button"
                 className={action.id === "revoke" ? "button-danger" : "button-secondary"}
                 onClick={(event) => void requestAction(version, event.currentTarget)}
-                disabled={Boolean(busy)}
+                disabled={Boolean(busy) || (action.id === "fidelity" && !onOpenFidelity)}
               >
                 <ActionIcon size={18} weight="bold" aria-hidden="true" />
                 {busy === `digital-self-${action.id}-${version.version_id}`

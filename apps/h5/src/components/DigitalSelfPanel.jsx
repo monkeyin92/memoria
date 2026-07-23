@@ -52,6 +52,7 @@ import { DigitalSelfVersions } from "./DigitalSelfVersions.jsx";
 import { GrowthMapPanel } from "./GrowthMapPanel.jsx";
 import { InteractionModePanel } from "./InteractionModePanel.jsx";
 import { SelfModelPanel } from "./SelfModelPanel.jsx";
+import { SelfPreviewPanel } from "./SelfPreviewPanel.jsx";
 
 const traitLabels = {
   verbal_tic: "口头表达",
@@ -134,6 +135,22 @@ export function DigitalSelfPanel({
   onChangeCompanion,
   onStartChat,
   voiceSessionActive = false,
+  accountType = null,
+  selfPreviewCapability = null,
+  activePreview = null,
+  previewAnswers = [],
+  previewBusy = "",
+  fidelitySummary = null,
+  onStartPreview,
+  onStopPreview,
+  onExpandPreviewSources,
+  onSubmitPreviewFeedback,
+  onStartFidelity,
+  onSubmitFidelity,
+  onCompleteFidelity,
+  onSelectFidelityVersion,
+  onOpenFidelity,
+  fidelityByVersion = {},
 }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
@@ -161,6 +178,7 @@ export function DigitalSelfPanel({
   const previewUrlRef = useRef({});
   const [evaluation, setEvaluation] = useState(initialEvaluation);
   const [exportPassword, setExportPassword] = useState("");
+  const [selfPreviewOpen, setSelfPreviewOpen] = useState(false);
 
   const reload = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -456,6 +474,12 @@ export function DigitalSelfPanel({
       null
     : null;
   const activeVersion = versions.find((version) => version.status === "active");
+  const previewCapability = {
+    ...(interactionCapabilities?.modes?.self_preview || {}),
+    ...(selfPreviewCapability || {}),
+    registered_owner:
+      selfPreviewCapability?.registered_owner ?? accountType === "registered",
+  };
   const learnedTraits = traits.filter(
     (trait) => trait.status === "confirmed" || trait.status === "disabled",
   );
@@ -502,6 +526,11 @@ export function DigitalSelfPanel({
               digitalSourceCount={growthSourceCount}
               onOpenArchive={onOpenArchive}
               onChangeCompanion={onChangeCompanion}
+              onOpenSelfPreview={
+                accountType === "registered"
+                  ? () => setSelfPreviewOpen(true)
+                  : undefined
+              }
             />
             <GrowthMapPanel
               onStartChat={onStartChat}
@@ -522,6 +551,11 @@ export function DigitalSelfPanel({
               busy={busy}
               onBuild={buildDigitalSelf}
               onTransition={transitionDigitalSelf}
+              fidelityByVersion={fidelityByVersion}
+              onOpenFidelity={(version) => {
+                onOpenFidelity?.(version);
+                setSelfPreviewOpen(true);
+              }}
             />
             <section className="digital-section" aria-labelledby="persona-title">
               <div className="digital-section-heading">
@@ -1126,6 +1160,34 @@ export function DigitalSelfPanel({
           </div>
         )}
       </div>
+
+      {selfPreviewOpen && (
+        <div className="self-preview-overlay" role="presentation">
+          <SelfPreviewPanel
+            versions={digitalSelfVersions}
+            previewVersions={digitalSelfVersions.filter((version) =>
+              ["approved", "frozen"].includes(version.status),
+            )}
+            evaluationVersions={digitalSelfVersions.filter((version) =>
+              ["testing", "approved", "frozen"].includes(version.status),
+            )}
+            capability={previewCapability}
+            busy={previewBusy || busy}
+            activePreview={activePreview}
+            answers={previewAnswers}
+            fidelitySummary={fidelitySummary}
+            onStart={onStartPreview}
+            onStop={onStopPreview}
+            onExpandSources={onExpandPreviewSources}
+            onSubmitFeedback={onSubmitPreviewFeedback}
+            onStartFidelity={onStartFidelity}
+            onSubmitFidelity={onSubmitFidelity}
+            onCompleteFidelity={onCompleteFidelity}
+            onSelectFidelityVersion={onSelectFidelityVersion}
+            onClose={() => setSelfPreviewOpen(false)}
+          />
+        </div>
+      )}
     </section>
   );
 }

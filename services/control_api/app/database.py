@@ -115,6 +115,12 @@ CREATE TABLE IF NOT EXISTS voice_sessions (
         CHECK (interaction_mode IN ('companion', 'self_preview', 'legacy', 'archive')),
     mode_policy_version TEXT NOT NULL DEFAULT 's2-v1',
     digital_self_version_id TEXT,
+    digital_self_manifest_sha256 TEXT,
+    preview_grant_id TEXT,
+    self_preview_perspective TEXT CHECK (
+        self_preview_perspective IS NULL
+        OR self_preview_perspective IN ('owner', 'child', 'friend')
+    ),
     relationship_profile_id TEXT,
     legacy_grant_id TEXT,
     companion_style_id TEXT,
@@ -288,6 +294,9 @@ class MemoryStore:
                     "interaction_mode": "TEXT NOT NULL DEFAULT 'companion'",
                     "mode_policy_version": "TEXT NOT NULL DEFAULT 's2-v1'",
                     "digital_self_version_id": "TEXT",
+                    "digital_self_manifest_sha256": "TEXT",
+                    "preview_grant_id": "TEXT",
+                    "self_preview_perspective": "TEXT",
                     "relationship_profile_id": "TEXT",
                     "legacy_grant_id": "TEXT",
                     "companion_style_id": "TEXT",
@@ -322,6 +331,9 @@ class MemoryStore:
                                 CHECK (interaction_mode IN ('companion', 'self_preview', 'legacy', 'archive')),
                             mode_policy_version TEXT NOT NULL DEFAULT 's2-v1',
                             digital_self_version_id TEXT,
+                            digital_self_manifest_sha256 TEXT,
+                            preview_grant_id TEXT,
+                            self_preview_perspective TEXT,
                             relationship_profile_id TEXT,
                             legacy_grant_id TEXT,
                             companion_style_id TEXT,
@@ -334,7 +346,9 @@ class MemoryStore:
                         INSERT INTO voice_sessions (
                             session_id, user_id, room_name, voice_backend,
                             omni_sdp_exchanges, interaction_mode, mode_policy_version,
-                            digital_self_version_id, relationship_profile_id, legacy_grant_id,
+                            digital_self_version_id, digital_self_manifest_sha256,
+                            preview_grant_id, self_preview_perspective,
+                            relationship_profile_id, legacy_grant_id,
                             companion_style_id, companion_style_version, learning_task_id, created_at
                         )
                         SELECT
@@ -347,7 +361,8 @@ class MemoryStore:
                                 ELSE voice_backend
                             END,
                             COALESCE(omni_sdp_exchanges, 0),
-                            'companion', 's2-v1', NULL, NULL, NULL, 'starlight', 'companion-v1',
+                            'companion', 's2-v1', NULL, NULL, NULL, NULL,
+                            NULL, NULL, 'starlight', 'companion-v1',
                             NULL,
                             created_at
                         FROM voice_sessions_legacy;
@@ -889,11 +904,115 @@ class MemoryStore:
             ).fetchall()
             sessions = connection.execute(
                 """
-                SELECT session_id, voice_backend, learning_task_id, created_at
+                SELECT session_id, voice_backend, interaction_mode, mode_policy_version,
+                       digital_self_version_id, digital_self_manifest_sha256,
+                       preview_grant_id, self_preview_perspective,
+                       relationship_profile_id, legacy_grant_id,
+                       companion_style_id, companion_style_version,
+                       learning_task_id, created_at
                 FROM voice_sessions WHERE user_id = ? ORDER BY created_at, session_id
                 """,
                 (user_id,),
             ).fetchall()
+            preview: dict[str, list[dict[str, Any]]] = {
+                "grants": [],
+                "feedback": [],
+                "fidelity_evaluations": [],
+                "fidelity_trials": [],
+            }
+            preview_tables = {
+                str(row["name"])
+                for row in connection.execute(
+                    """
+                    SELECT name FROM sqlite_master
+                    WHERE type = 'table' AND name IN (
+                        'digital_self_preview_grants',
+                        'digital_self_preview_feedback',
+                        'digital_self_fidelity_evaluations',
+                        'digital_self_fidelity_trials'
+                    )
+                    """
+                ).fetchall()
+            }
+            if "digital_self_preview_grants" in preview_tables:
+                preview["grants"] = [
+                    dict(row)
+                    for row in connection.execute(
+                        """
+                        SELECT grant_id, version_id, manifest_sha256, perspective,
+                               status, expires_at, created_at, used_at, revoked_at
+                        FROM digital_self_preview_grants
+                        WHERE account_id = ? ORDER BY created_at, grant_id
+                        """,
+                        (user_id,),
+                    ).fetchall()
+                ]
+            if "digital_self_preview_feedback" in preview_tables:
+                for row in connection.execute(
+                    """
+                    SELECT feedback_id, session_id, turn_id, generation_id,
+                           tool_epoch, version_id, manifest_sha256, action,
+                           target_source_event_ids_json, correction_text,
+                           evidence_event_id, created_at
+                    FROM digital_self_preview_feedback
+                    WHERE account_id = ? ORDER BY created_at, feedback_id
+                    """,
+                    (user_id,),
+                ).fetchall():
+                    item = dict(row)
+                    item["target_source_event_ids"] = json.loads(
+                        str(item.pop("target_source_event_ids_json"))
+                    )
+                    preview["feedback"].append(item)
+            if "digital_self_fidelity_evaluations" in preview_tables:
+                preview["fidelity_evaluations"] = [
+                    dict(row)
+                    for row in connection.execute(
+                        """
+                        SELECT evaluation_id, version_id, manifest_sha256,
+                               status, verdict, verdict_rationale,
+                               created_at, completed_at
+                        FROM digital_self_fidelity_evaluations
+                        WHERE account_id = ? ORDER BY created_at, evaluation_id
+                        """,
+                        (user_id,),
+                    ).fetchall()
+                ]
+            if "digital_self_fidelity_trials" in preview_tables:
+                for row in connection.execute(
+                    """
+                    SELECT trial_id, evaluation_id, category, prompt,
+                           generic_answer, digital_self_answer, digital_self_slot,
+                           available, coverage_gap, epistemic_status, has_source,
+                           unsupported_fact, decision_inference_disclosed,
+                           privacy_refused, identity_disclosed, preferred_slot,
+                           rationale, answered_at
+                    FROM digital_self_fidelity_trials
+                    WHERE account_id = ?
+                    ORDER BY evaluation_id, category, trial_id
+                    """,
+                    (user_id,),
+                ).fetchall():
+                    item = dict(row)
+                    digital_slot = str(item.pop("digital_self_slot"))
+                    generic_answer = str(item.pop("generic_answer"))
+                    digital_answer = str(item.pop("digital_self_answer"))
+                    item["slot_a"] = (
+                        digital_answer if digital_slot == "a" else generic_answer
+                    )
+                    item["slot_b"] = (
+                        digital_answer if digital_slot == "b" else generic_answer
+                    )
+                    for key in (
+                        "available",
+                        "has_source",
+                        "unsupported_fact",
+                        "decision_inference_disclosed",
+                        "privacy_refused",
+                        "identity_disclosed",
+                    ):
+                        item[key] = bool(item[key])
+                    preview["fidelity_trials"].append(item)
         profile_data = dict(profile) if profile is not None else None
         if profile_data is not None:
             for key in (
@@ -914,6 +1033,7 @@ class MemoryStore:
             "messages": [dict(row) for row in messages],
             "daily_summaries": summary_data,
             "voice_sessions": [dict(row) for row in sessions],
+            "digital_self_preview": preview,
         }
 
     def finalize_account_deletion(
@@ -939,6 +1059,40 @@ class MemoryStore:
                     str(key): int(value)
                     for key, value in json.loads(str(deletion["deleted_counts_json"])).items()
                 }
+            preview_delete_order = (
+                "digital_self_fidelity_trials",
+                "digital_self_fidelity_evaluations",
+                "digital_self_preview_feedback",
+                "digital_self_preview_grants",
+            )
+            existing_preview_tables = {
+                str(row["name"])
+                for row in connection.execute(
+                    """
+                    SELECT name FROM sqlite_master
+                    WHERE type = 'table' AND name IN (
+                        'digital_self_preview_grants',
+                        'digital_self_preview_feedback',
+                        'digital_self_fidelity_evaluations',
+                        'digital_self_fidelity_trials'
+                    )
+                    """
+                ).fetchall()
+            }
+            preview_counts: dict[str, int] = {}
+            for table in preview_delete_order:
+                if table not in existing_preview_tables:
+                    continue
+                preview_counts[table] = int(
+                    connection.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE account_id = ?",
+                        (user_id,),
+                    ).fetchone()[0]
+                )
+                connection.execute(
+                    f"DELETE FROM {table} WHERE account_id = ?",
+                    (user_id,),
+                )
             counts = {
                 "messages": int(
                     connection.execute(
@@ -960,6 +1114,7 @@ class MemoryStore:
                         "SELECT COUNT(*) FROM auth_sessions WHERE user_id = ?", (user_id,)
                     ).fetchone()[0]
                 ),
+                **preview_counts,
             }
             connection.execute("DELETE FROM profiles WHERE user_id = ?", (user_id,))
             combined = {**deleted_counts, **counts}
@@ -992,10 +1147,13 @@ class MemoryStore:
         interaction_mode: str,
         mode_policy_version: str,
         digital_self_version_id: str | None,
-        relationship_profile_id: str | None,
-        legacy_grant_id: str | None,
-        companion_style_id: str | None,
-        companion_style_version: str | None,
+        digital_self_manifest_sha256: str | None = None,
+        preview_grant_id: str | None = None,
+        self_preview_perspective: str | None = None,
+        relationship_profile_id: str | None = None,
+        legacy_grant_id: str | None = None,
+        companion_style_id: str | None = None,
+        companion_style_version: str | None = None,
         learning_task_id: str | None = None,
     ) -> dict[str, Any]:
         with self._connection() as connection:
@@ -1004,14 +1162,18 @@ class MemoryStore:
                 """
                 INSERT INTO voice_sessions (
                     session_id, user_id, room_name, voice_backend, interaction_mode,
-                    mode_policy_version, digital_self_version_id, relationship_profile_id,
+                    mode_policy_version, digital_self_version_id,
+                    digital_self_manifest_sha256, preview_grant_id,
+                    self_preview_perspective, relationship_profile_id,
                     legacy_grant_id, companion_style_id, companion_style_version,
                     learning_task_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id, user_id, room_name, voice_backend, interaction_mode,
-                    mode_policy_version, digital_self_version_id, relationship_profile_id,
+                    mode_policy_version, digital_self_version_id,
+                    digital_self_manifest_sha256, preview_grant_id,
+                    self_preview_perspective, relationship_profile_id,
                     legacy_grant_id, companion_style_id, companion_style_version,
                     learning_task_id, created_at,
                 ),
@@ -1019,7 +1181,9 @@ class MemoryStore:
             row = connection.execute(
                 """
                 SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
-                       mode_policy_version, digital_self_version_id, relationship_profile_id,
+                       mode_policy_version, digital_self_version_id,
+                       digital_self_manifest_sha256, preview_grant_id,
+                       self_preview_perspective, relationship_profile_id,
                        legacy_grant_id, companion_style_id, companion_style_version,
                        learning_task_id, created_at
                 FROM voice_sessions WHERE session_id = ?
@@ -1035,7 +1199,9 @@ class MemoryStore:
             row = connection.execute(
                 """
                 SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
-                       mode_policy_version, digital_self_version_id, relationship_profile_id,
+                       mode_policy_version, digital_self_version_id,
+                       digital_self_manifest_sha256, preview_grant_id,
+                       self_preview_perspective, relationship_profile_id,
                        legacy_grant_id, companion_style_id, companion_style_version,
                        learning_task_id, created_at
                 FROM voice_sessions
@@ -1051,7 +1217,9 @@ class MemoryStore:
             row = connection.execute(
                 """
                 SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
-                       mode_policy_version, digital_self_version_id, relationship_profile_id,
+                       mode_policy_version, digital_self_version_id,
+                       digital_self_manifest_sha256, preview_grant_id,
+                       self_preview_perspective, relationship_profile_id,
                        legacy_grant_id, companion_style_id, companion_style_version,
                        learning_task_id, created_at
                 FROM voice_sessions WHERE session_id = ?
@@ -1065,7 +1233,9 @@ class MemoryStore:
             rows = connection.execute(
                 """
                 SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
-                       mode_policy_version, digital_self_version_id, relationship_profile_id,
+                       mode_policy_version, digital_self_version_id,
+                       digital_self_manifest_sha256, preview_grant_id,
+                       self_preview_perspective, relationship_profile_id,
                        legacy_grant_id, companion_style_id, companion_style_version,
                        learning_task_id, created_at
                 FROM voice_sessions WHERE user_id = ? ORDER BY created_at, session_id

@@ -576,7 +576,9 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
 
         fence = self._runtime.fence
         policy = self._runtime.mode_policy_for_fence(fence)
-        if self._runtime.mode_policy_enforced and not policy.allows_conversation():
+        if self._runtime.mode_policy_enforced and not policy.allows_conversation(
+            self._runtime.current_speaker_class
+        ):
             logger.error(
                 "llm request blocked by frozen interaction policy session_id=%s "
                 "turn_id=%s generation_id=%s",

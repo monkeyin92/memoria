@@ -31,6 +31,24 @@ const apiErrorMessages = {
   untrusted_owner_source: "所选来源不是可用于数字分身的本人证据。",
   relationship_reference_invalid: "人物或关系来源已经变化，请刷新后重试。",
   invalid_self_model_input: "认知材料内容不完整，请检查后重试。",
+  preview_prerequisite_missing: "数字分身预览的安全条件尚未满足。",
+  preview_grant_conflict: "预览授权已经变化，请重新确认后再试。",
+  preview_grant_not_found: "预览授权不存在或不属于当前账号。",
+  preview_grant_unavailable: "预览授权已使用、撤销或过期，请重新确认。",
+  preview_version_unavailable: "该数字分身版本当前不可用于预览。",
+  preview_version_stale: "该版本已收到新的纠正，需要重新构建并审核。",
+  self_preview_requires_controlled_backend: "数字分身预览只允许使用受控语音链路。",
+  preview_response_not_found: "这轮回答还没有可核验的已听证据。",
+  preview_response_fence_mismatch: "回答来源已变化，请刷新后重试。",
+  preview_source_invalid: "回答来源校验失败，已停止展示。",
+  preview_feedback_scope_mismatch: "这条反馈不属于当前预览会话。",
+  preview_feedback_source_mismatch: "反馈来源已变化，请刷新后重试。",
+  preview_feedback_conflict: "这条反馈已记录或内容发生冲突。",
+  fidelity_conflict: "忠实度评测状态已变化，请刷新后重试。",
+  fidelity_readiness_failed: "当前评测尚未满足完成条件。",
+  fidelity_evaluation_not_found: "忠实度评测不存在或不属于当前账号。",
+  fidelity_trial_not_found: "这道保留题不存在或已变化。",
+  fidelity_approval_required: "请先完成忠实度评测并明确批准这个版本。",
 };
 
 function identitySnapshot(identity) {
@@ -314,10 +332,52 @@ function requireCompanionInteraction(session) {
     typeof interaction.companion_style_version !== "string" ||
     !interaction.companion_style_version ||
     interaction.digital_self_version_id !== null ||
+    (interaction.manifest_sha256 ?? null) !== null ||
+    (interaction.preview_grant_id ?? null) !== null ||
+    (interaction.perspective ?? null) !== null ||
     interaction.relationship_profile_id !== null ||
     interaction.legacy_grant_id !== null
   ) {
     throw new Error("服务端没有返回可验证的陪伴模式，会话已停止");
+  }
+  return session;
+}
+
+const selfPreviewPerspectives = new Set(["owner", "child", "friend"]);
+
+function requireSelfPreviewInteraction(session) {
+  const interaction = session?.interaction;
+  const capabilities = interaction?.capabilities;
+  if (
+    session?.voice_backend !== "cascade" ||
+    interaction?.interaction_mode !== "self_preview" ||
+    typeof interaction.mode_policy_version !== "string" ||
+    !interaction.mode_policy_version ||
+    typeof interaction.digital_self_version_id !== "string" ||
+    !interaction.digital_self_version_id ||
+    typeof interaction.manifest_sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/i.test(interaction.manifest_sha256) ||
+    typeof interaction.preview_grant_id !== "string" ||
+    !interaction.preview_grant_id ||
+    !selfPreviewPerspectives.has(interaction.perspective) ||
+    interaction.simulated_output !== true ||
+    interaction.history_eligible !== false ||
+    interaction.owner_projection_eligible !== false ||
+    interaction.companion_style_id !== null ||
+    interaction.companion_style_version !== null ||
+    interaction.relationship_profile_id !== null ||
+    interaction.legacy_grant_id !== null ||
+    !isJsonObject(capabilities) ||
+    capabilities.conversation !== true ||
+    capabilities.private_memory !== false ||
+    capabilities.persona !== false ||
+    capabilities.persona_low_sensitivity !== false ||
+    capabilities.tools !== false ||
+    capabilities.history !== false ||
+    capabilities.learning !== false ||
+    capabilities.voice_profile !== false
+  ) {
+    throw new Error("服务端没有返回可验证的数字分身预览模式，会话已停止");
   }
   return session;
 }
@@ -330,14 +390,31 @@ export async function createSession(
   userId,
   voiceBackend = "cascade",
   learningTaskId = null,
+  {
+    interactionMode = "companion",
+    previewGrantId = null,
+  } = {},
 ) {
+  if (!["companion", "self_preview"].includes(interactionMode)) {
+    throw new Error("H5 当前只支持陪伴模式或数字分身预览");
+  }
+  if (
+    interactionMode === "self_preview" &&
+    (typeof previewGrantId !== "string" || !previewGrantId.trim())
+  ) {
+    throw new Error("缺少服务端签发的数字分身预览授权");
+  }
   const session = await request("/v1/sessions", {
     method: "POST",
     body: JSON.stringify({
       user_id: userId,
-      voice_backend: voiceBackend,
-      interaction_mode: "companion",
-      learning_task_id: learningTaskId,
+      voice_backend: interactionMode === "self_preview" ? "cascade" : voiceBackend,
+      interaction_mode: interactionMode,
+      learning_task_id:
+        interactionMode === "companion" ? learningTaskId : null,
+      ...(interactionMode === "self_preview"
+        ? { preview_grant_id: previewGrantId.trim() }
+        : {}),
       locale: "zh-CN",
       client: {
         platform: "h5",
@@ -346,7 +423,9 @@ export async function createSession(
       },
     }),
   });
-  return requireCompanionInteraction(session);
+  return interactionMode === "self_preview"
+    ? requireSelfPreviewInteraction(session)
+    : requireCompanionInteraction(session);
 }
 
 export function exchangeOmniSdp(sessionId, offerSdp) {
@@ -1435,6 +1514,384 @@ export function rollbackDigitalSelfVersion(
     password,
     expectedManifestSha256,
   });
+}
+
+const previewGrantStatuses = new Set(["active", "revoked", "expired"]);
+const fidelityCategories = new Set([
+  "fact",
+  "decision",
+  "relationship",
+  "humor",
+  "emotion",
+  "unknown",
+  "privacy",
+]);
+const fidelityStatuses = new Set(["active", "completed"]);
+const fidelityVerdicts = new Set(["approve", "reject"]);
+
+function invalidPreviewResponse(message = "数字分身预览响应无效") {
+  throw new Error(message);
+}
+
+function previewString(value, message = "数字分身预览字段无效") {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(message);
+  }
+  return value.trim();
+}
+
+function previewDate(value) {
+  const text = previewString(value, "数字分身预览时间无效");
+  if (Number.isNaN(new Date(text).getTime())) invalidPreviewResponse();
+  return text;
+}
+
+function parsePreviewVersionSummary(value) {
+  if (
+    !isJsonObject(value) ||
+    !digitalSelfStatuses.has(value.status) ||
+    typeof value.version_stale !== "boolean" ||
+    typeof value.fidelity_eligible !== "boolean" ||
+    typeof value.preview_eligible !== "boolean" ||
+    (value.fidelity_verdict !== null &&
+      !fidelityVerdicts.has(value.fidelity_verdict))
+  ) {
+    invalidPreviewResponse();
+  }
+  return {
+    ...value,
+    version_id: requireDigitalSelfVersionId(value.version_id),
+    manifest_sha256: requireDigitalSelfDigest(value.manifest_sha256),
+    version_stale: value.version_stale === true,
+  };
+}
+
+function parseSelfPreviewCapability(value) {
+  if (
+    !isJsonObject(value) ||
+    !["available", "blocked"].includes(value.status) ||
+    typeof value.registered_owner !== "boolean" ||
+    typeof value.active_owner_voice !== "boolean" ||
+    !Array.isArray(value.missing) ||
+    value.missing.some((item) => typeof item !== "string" || !item)
+  ) {
+    invalidPreviewResponse("数字分身预览能力响应无效");
+  }
+  const rawVersions = value.versions || value.available_versions || [];
+  if (!Array.isArray(rawVersions)) invalidPreviewResponse();
+  return {
+    ...value,
+    conversational: value.conversational === true,
+    missing: [...value.missing],
+    versions: rawVersions.map(parsePreviewVersionSummary),
+  };
+}
+
+export function getSelfPreviewCapability() {
+  return request("/v1/digital-self/preview-capability").then(
+    parseSelfPreviewCapability,
+  );
+}
+
+function parsePreviewGrant(value) {
+  if (
+    !isJsonObject(value) ||
+    !previewGrantStatuses.has(value.status) ||
+    !selfPreviewPerspectives.has(value.perspective) ||
+    value.simulation_only !== true ||
+    value.legacy_authority !== false
+  ) {
+    invalidPreviewResponse("数字分身预览授权响应无效");
+  }
+  return {
+    ...value,
+    grant_id: previewString(value.grant_id, "预览授权标识无效"),
+    version_id: requireDigitalSelfVersionId(value.version_id),
+    manifest_sha256: requireDigitalSelfDigest(value.manifest_sha256),
+    expires_at: previewDate(value.expires_at),
+    created_at: previewDate(value.created_at),
+    used_at: value.used_at === null ? null : previewDate(value.used_at),
+    revoked_at:
+      value.revoked_at === null ? null : previewDate(value.revoked_at),
+  };
+}
+
+export function issueSelfPreviewGrant({
+  versionId,
+  manifestSha256,
+  perspective = "owner",
+  password,
+  idempotencyKey = createClientMessageId(),
+}) {
+  if (!selfPreviewPerspectives.has(perspective)) {
+    throw new Error("数字分身预览视角无效");
+  }
+  if (typeof password !== "string" || password.length < 8) {
+    throw new Error("请输入当前账号密码确认");
+  }
+  return request("/v1/digital-self/preview-grants", {
+    method: "POST",
+    body: JSON.stringify({
+      version_id: requireDigitalSelfVersionId(versionId),
+      manifest_sha256: requireDigitalSelfDigest(manifestSha256),
+      perspective,
+      password,
+      idempotency_key: previewString(idempotencyKey, "预览操作标识无效"),
+    }),
+  }).then(parsePreviewGrant);
+}
+
+export function revokeSelfPreviewGrant(grantId) {
+  const id = previewString(grantId, "预览授权标识无效");
+  return request(
+    `/v1/digital-self/preview-grants/${encodeURIComponent(id)}/revoke`,
+    { method: "POST" },
+  ).then(parsePreviewGrant);
+}
+
+function parsePreviewSource(value) {
+  if (
+    !isJsonObject(value) ||
+    typeof value.excerpt !== "string" ||
+    value.excerpt.length > 400
+  ) {
+    invalidPreviewResponse("回答来源响应无效");
+  }
+  return {
+    kind: previewString(value.kind, "回答来源类型无效"),
+    item_id: previewString(value.item_id, "回答来源条目标识无效"),
+    source_event_id: previewString(
+      value.source_event_id,
+      "回答来源事件标识无效",
+    ),
+    excerpt: value.excerpt,
+  };
+}
+
+export function getSelfPreviewSources({
+  sessionId,
+  turnId,
+  generationId,
+  toolEpoch,
+}) {
+  const session = previewString(sessionId, "预览会话标识无效");
+  for (const [label, value] of [
+    ["话轮", turnId],
+    ["生成", generationId],
+    ["工具纪元", toolEpoch],
+  ]) {
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(`${label}标识无效`);
+    }
+  }
+  return request(
+    `/v1/digital-self/preview-sessions/${encodeURIComponent(session)}` +
+      `/turns/${turnId}/generations/${generationId}/sources` +
+      `?tool_epoch=${toolEpoch}`,
+  ).then((value) => {
+    if (
+      !isJsonObject(value) ||
+      value.session_id !== session ||
+      value.turn_id !== turnId ||
+      value.generation_id !== generationId ||
+      value.tool_epoch !== toolEpoch ||
+      !Array.isArray(value.items) ||
+      value.items.length > 12
+    ) {
+      invalidPreviewResponse("回答来源响应无效");
+    }
+    return {
+      ...value,
+      items: value.items.map(parsePreviewSource),
+    };
+  });
+}
+
+export function submitSelfPreviewFeedback({
+  sessionId,
+  turnId,
+  generationId,
+  toolEpoch,
+  versionId,
+  manifestSha256,
+  action,
+  targetSourceEventIds,
+  correctionText = null,
+  eventId = createClientMessageId(),
+  idempotencyKey = eventId,
+}) {
+  if (!["not_like_me", "correction"].includes(action)) {
+    throw new Error("数字分身纠错动作无效");
+  }
+  if (
+    !Array.isArray(targetSourceEventIds) ||
+    !targetSourceEventIds.length ||
+    targetSourceEventIds.length > 12
+  ) {
+    throw new Error("数字分身纠错来源无效");
+  }
+  if (
+    action === "correction" &&
+    (typeof correctionText !== "string" || !correctionText.trim())
+  ) {
+    throw new Error("请输入你的纠正内容");
+  }
+  return request("/v1/digital-self/preview-feedback", {
+    method: "POST",
+    body: JSON.stringify({
+      event_id: previewString(eventId, "反馈事件标识无效"),
+      idempotency_key: previewString(idempotencyKey, "反馈操作标识无效"),
+      session_id: previewString(sessionId, "预览会话标识无效"),
+      turn_id: turnId,
+      generation_id: generationId,
+      tool_epoch: toolEpoch,
+      version_id: requireDigitalSelfVersionId(versionId),
+      manifest_sha256: requireDigitalSelfDigest(manifestSha256),
+      action,
+      target_source_event_ids: targetSourceEventIds.map((value) =>
+        previewString(value, "反馈来源事件标识无效"),
+      ),
+      correction_text:
+        action === "correction" ? correctionText.trim() : null,
+    }),
+  }).then((value) => {
+    if (
+      !isJsonObject(value) ||
+      value.version_stale !== true ||
+      value.rebuild_required !== true
+    ) {
+      invalidPreviewResponse("数字分身纠错响应无效");
+    }
+    return value;
+  });
+}
+
+function parseFidelityTrial(value) {
+  if (
+    !isJsonObject(value) ||
+    !fidelityCategories.has(value.category) ||
+    typeof value.prompt !== "string" ||
+    typeof value.slot_a !== "string" ||
+    typeof value.slot_b !== "string" ||
+    typeof value.available !== "boolean" ||
+    (value.preferred_slot !== null &&
+      !["a", "b"].includes(value.preferred_slot))
+  ) {
+    invalidPreviewResponse("忠实度保留题响应无效");
+  }
+  return {
+    ...value,
+    trial_id: previewString(value.trial_id, "忠实度保留题标识无效"),
+    coverage_gap:
+      value.coverage_gap === null
+        ? null
+        : previewString(value.coverage_gap, "忠实度覆盖缺口无效"),
+  };
+}
+
+function parseFidelityEvaluation(value) {
+  if (
+    !isJsonObject(value) ||
+    !fidelityStatuses.has(value.status) ||
+    (value.verdict !== null && !fidelityVerdicts.has(value.verdict)) ||
+    (value.status === "active" && value.verdict !== null) ||
+    (value.status === "completed" && value.verdict === null) ||
+    !Array.isArray(value.trials) ||
+    !isJsonObject(value.summary) ||
+    value.mapping_hidden !== true
+  ) {
+    invalidPreviewResponse("忠实度评测响应无效");
+  }
+  return {
+    ...value,
+    evaluation_id: previewString(value.evaluation_id, "忠实度评测标识无效"),
+    version_id: requireDigitalSelfVersionId(value.version_id),
+    manifest_sha256: requireDigitalSelfDigest(value.manifest_sha256),
+    created_at: previewDate(value.created_at),
+    completed_at:
+      value.completed_at === null ? null : previewDate(value.completed_at),
+    trials: value.trials.map(parseFidelityTrial),
+  };
+}
+
+export function getFidelityEvaluations() {
+  return request("/v1/digital-self/fidelity-evaluations").then((value) => {
+    if (!isJsonObject(value) || !Array.isArray(value.items)) {
+      invalidPreviewResponse("忠实度评测列表响应无效");
+    }
+    return { ...value, items: value.items.map(parseFidelityEvaluation) };
+  });
+}
+
+export function getFidelityEvaluation(evaluationId) {
+  const id = previewString(evaluationId, "忠实度评测标识无效");
+  return request(
+    `/v1/digital-self/fidelity-evaluations/${encodeURIComponent(id)}`,
+  ).then(parseFidelityEvaluation);
+}
+
+export function startFidelityEvaluation({
+  versionId,
+  manifestSha256,
+  password = null,
+  previewGrantId = null,
+  idempotencyKey = createClientMessageId(),
+}) {
+  if ((password === null) === (previewGrantId === null)) {
+    throw new Error("忠实度评测需要密码确认或有效预览授权");
+  }
+  return request("/v1/digital-self/fidelity-evaluations", {
+    method: "POST",
+    body: JSON.stringify({
+      version_id: requireDigitalSelfVersionId(versionId),
+      manifest_sha256: requireDigitalSelfDigest(manifestSha256),
+      idempotency_key: previewString(idempotencyKey, "忠实度操作标识无效"),
+      password,
+      preview_grant_id: previewGrantId,
+    }),
+  }).then(parseFidelityEvaluation);
+}
+
+export function chooseFidelityTrial({
+  evaluationId,
+  trialId,
+  preferredSlot,
+  rationale = null,
+}) {
+  if (!["a", "b"].includes(preferredSlot)) {
+    throw new Error("请选择回答 A 或 B");
+  }
+  const evaluation = previewString(evaluationId, "忠实度评测标识无效");
+  const trial = previewString(trialId, "忠实度保留题标识无效");
+  return request(
+    `/v1/digital-self/fidelity-evaluations/${encodeURIComponent(evaluation)}` +
+      `/trials/${encodeURIComponent(trial)}/choice`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        preferred_slot: preferredSlot,
+        rationale,
+      }),
+    },
+  ).then(parseFidelityEvaluation);
+}
+
+export function completeFidelityEvaluation({
+  evaluationId,
+  verdict,
+  rationale = null,
+}) {
+  if (!fidelityVerdicts.has(verdict)) {
+    throw new Error("忠实度评测结论无效");
+  }
+  const id = previewString(evaluationId, "忠实度评测标识无效");
+  return request(
+    `/v1/digital-self/fidelity-evaluations/${encodeURIComponent(id)}/verdict`,
+    {
+      method: "POST",
+      body: JSON.stringify({ verdict, rationale }),
+    },
+  ).then(parseFidelityEvaluation);
 }
 
 export function rollbackPersonaVersion(versionId) {

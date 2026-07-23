@@ -1819,4 +1819,237 @@ describe("authenticated Control API client", () => {
       text: "家人安全且风险可控时，我也愿意尝试。",
     });
   });
+
+  it("freezes and validates a self-preview grant, session, sources, feedback, and fidelity", async () => {
+    const digest = "c".repeat(64);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          user_id: "owner",
+          username: "owner",
+          account_type: "registered",
+          access_token: "preview-token",
+        }, 201),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status: "available",
+          conversational: true,
+          registered_owner: true,
+          active_owner_voice: true,
+          missing: [],
+          versions: [{
+            version_id: "self-v1",
+            version_number: 1,
+            status: "approved",
+            manifest_sha256: digest,
+            version_stale: false,
+            fidelity_verdict: "approve",
+            fidelity_eligible: true,
+            preview_eligible: true,
+          }],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          grant_id: "grant-1",
+          account_id: "owner",
+          version_id: "self-v1",
+          manifest_sha256: digest,
+          perspective: "child",
+          status: "active",
+          expires_at: "2026-07-23T10:00:00Z",
+          created_at: "2026-07-23T09:00:00Z",
+          used_at: null,
+          revoked_at: null,
+          simulation_only: true,
+          legacy_authority: false,
+        }, 201),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_id: "preview-session",
+          voice_backend: "cascade",
+          interaction: {
+            interaction_mode: "self_preview",
+            mode_policy_version: "s7-v1",
+            digital_self_version_id: "self-v1",
+            manifest_sha256: digest,
+            preview_grant_id: "grant-1",
+            perspective: "child",
+            simulated_output: true,
+            history_eligible: false,
+            owner_projection_eligible: false,
+            companion_style_id: null,
+            companion_style_version: null,
+            relationship_profile_id: null,
+            legacy_grant_id: null,
+            capabilities: {
+              conversation: true,
+              private_memory: false,
+              persona: false,
+              persona_low_sensitivity: false,
+              tools: false,
+              history: false,
+              learning: false,
+              voice_profile: false,
+            },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_id: "preview-session",
+          turn_id: 2,
+          generation_id: 4,
+          tool_epoch: 1,
+          items: [{
+            kind: "memory_claim",
+            item_id: "memory-1",
+            source_event_id: "event-1",
+            excerpt: "我在雨天喜欢散步。",
+          }],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          feedback_id: "feedback-1",
+          version_stale: true,
+          rebuild_required: true,
+        }, 201),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          evaluation_id: "eval-1",
+          version_id: "self-v1",
+          manifest_sha256: digest,
+          status: "active",
+          verdict: null,
+          created_at: "2026-07-23T09:00:00Z",
+          completed_at: null,
+          mapping_hidden: true,
+          trials: [{
+            trial_id: "trial-1",
+            category: "unknown",
+            prompt: "未知问题",
+            slot_a: "回答 A",
+            slot_b: "回答 B",
+            available: true,
+            coverage_gap: null,
+            preferred_slot: null,
+          }],
+          summary: {},
+        }, 201),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          evaluation_id: "eval-1",
+          version_id: "self-v1",
+          manifest_sha256: digest,
+          status: "active",
+          verdict: null,
+          created_at: "2026-07-23T09:00:00Z",
+          completed_at: null,
+          mapping_hidden: true,
+          trials: [{
+            trial_id: "trial-1",
+            category: "unknown",
+            prompt: "未知问题",
+            slot_a: "回答 A",
+            slot_b: "回答 B",
+            available: true,
+            coverage_gap: null,
+            preferred_slot: "a",
+          }],
+          summary: {},
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      chooseFidelityTrial,
+      createSession,
+      getSelfPreviewCapability,
+      getSelfPreviewSources,
+      issueSelfPreviewGrant,
+      registerAccount,
+      startFidelityEvaluation,
+      submitSelfPreviewFeedback,
+    } = await import("./api.js");
+
+    await registerAccount("owner", "safe-passphrase");
+    await expect(getSelfPreviewCapability()).resolves.toMatchObject({
+      status: "available",
+      versions: [{ version_id: "self-v1" }],
+    });
+    const grant = await issueSelfPreviewGrant({
+      versionId: "self-v1",
+      manifestSha256: digest,
+      perspective: "child",
+      password: "safe-passphrase",
+      idempotencyKey: "grant-idempotency",
+    });
+    expect(grant.grant_id).toBe("grant-1");
+    await expect(
+      createSession("owner", "cascade", null, {
+        interactionMode: "self_preview",
+        previewGrantId: grant.grant_id,
+      }),
+    ).resolves.toMatchObject({
+      session_id: "preview-session",
+      interaction: {
+        interaction_mode: "self_preview",
+        perspective: "child",
+      },
+    });
+    await expect(
+      getSelfPreviewSources({
+        sessionId: "preview-session",
+        turnId: 2,
+        generationId: 4,
+        toolEpoch: 1,
+      }),
+    ).resolves.toMatchObject({
+      items: [{ source_event_id: "event-1" }],
+    });
+    await expect(
+      submitSelfPreviewFeedback({
+        sessionId: "preview-session",
+        turnId: 2,
+        generationId: 4,
+        toolEpoch: 1,
+        versionId: "self-v1",
+        manifestSha256: digest,
+        action: "not_like_me",
+        targetSourceEventIds: ["event-1"],
+        eventId: "feedback-event-1",
+        idempotencyKey: "feedback-idempotency-1",
+      }),
+    ).resolves.toMatchObject({ version_stale: true });
+    const evaluation = await startFidelityEvaluation({
+      versionId: "self-v1",
+      manifestSha256: digest,
+      password: "safe-passphrase",
+      idempotencyKey: "fidelity-1",
+    });
+    expect(evaluation.trials[0].slot_a).toBe("回答 A");
+    await expect(
+      chooseFidelityTrial({
+        evaluationId: "eval-1",
+        trialId: "trial-1",
+        preferredSlot: "a",
+      }),
+    ).resolves.toMatchObject({
+      trials: [{ preferred_slot: "a" }],
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toMatchObject({
+      interaction_mode: "self_preview",
+      preview_grant_id: "grant-1",
+      learning_task_id: null,
+    });
+    expect(fetchMock.mock.calls[4][0]).toContain(
+      "/v1/digital-self/preview-sessions/preview-session/turns/2/generations/4/sources",
+    );
+  });
 });

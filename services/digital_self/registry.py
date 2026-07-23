@@ -676,12 +676,20 @@ class DigitalSelfRegistry:
         targets: set[tuple[str, str]] = set()
         for row in rows:
             payload = json.loads(str(row["payload_json"]))
-            if payload.get("action_type") not in {"not_me", "would_not_say"}:
+            if payload.get("action_type") not in {
+                "not_me",
+                "would_not_say",
+                "not_like_me",
+                "correction",
+            }:
                 continue
             target_kind = str(payload.get("target_kind") or "")
             target_id = str(payload.get("target_id") or "")
             if target_kind and target_id:
                 targets.add((target_kind, target_id))
+            for source_event_id in payload.get("target_source_event_ids", ()):
+                if isinstance(source_event_id, str) and source_event_id:
+                    targets.add(("source_event", source_event_id))
         return targets
 
     def _parent_row(

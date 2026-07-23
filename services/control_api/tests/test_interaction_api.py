@@ -45,7 +45,7 @@ async def _identity(client: AsyncClient) -> tuple[str, dict[str, str]]:
 
 
 @pytest.mark.asyncio
-async def test_capabilities_expose_explicit_s2_blocks(
+async def test_capabilities_expose_explicit_preview_requirements(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _configure(monkeypatch, tmp_path)
@@ -59,12 +59,15 @@ async def test_capabilities_expose_explicit_s2_blocks(
     assert modes["companion"]["status"] == "available"
     assert modes["archive"] == {"status": "available", "conversational": False}
     assert modes["self_preview"]["status"] == "blocked"
-    assert modes["self_preview"]["missing"] == ["self_preview_runtime"]
+    assert modes["self_preview"]["missing"] == [
+        "approved_digital_self_version",
+        "verified_owner_voice",
+    ]
     assert modes["legacy"]["status"] == "blocked"
 
 
 @pytest.mark.asyncio
-async def test_only_companion_creates_voice_sessions_and_freezes_server_companion(
+async def test_only_companion_creates_voice_sessions_and_keeps_preview_server_owned(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _configure(monkeypatch, tmp_path)
@@ -77,7 +80,9 @@ async def test_only_companion_creates_voice_sessions_and_freezes_server_companio
             json={"digital_self_version_id": "untrusted-client-version"},
         )
         blocked = await client.post(
-            "/v1/sessions", headers=headers, json={"interaction_mode": "self_preview"}
+            "/v1/sessions",
+            headers=headers,
+            json={"interaction_mode": "self_preview"},
         )
         archive = await client.post(
             "/v1/sessions", headers=headers, json={"interaction_mode": "archive"}
@@ -87,8 +92,7 @@ async def test_only_companion_creates_voice_sessions_and_freezes_server_companio
         )
 
     assert invalid_binding.status_code == 422
-    assert blocked.status_code == 409
-    assert blocked.json()["detail"]["code"] == "mode_blocked"
+    assert blocked.status_code == 422
     assert archive.status_code == 409
     assert archive.json()["detail"]["code"] == "mode_not_conversational"
     assert len(app.state.memory_store.list_voice_sessions(user_id=user_id)) == 1

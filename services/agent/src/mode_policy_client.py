@@ -73,13 +73,19 @@ class ModePolicy:
         return None
 
     def capability(self, name: str) -> bool:
-        return self.available and self.mode == "companion" and dict(self.capabilities).get(name, False)
+        return self.available and dict(self.capabilities).get(name, False)
 
     def allows_private_context(self, speaker_class: SpeakerClass) -> bool:
         return speaker_class == "owner" and self.capability("private_memory")
 
-    def allows_conversation(self) -> bool:
-        return self.capability("conversation")
+    def allows_conversation(self, speaker_class: SpeakerClass | None = None) -> bool:
+        if not self.capability("conversation"):
+            return False
+        return not (
+            self.mode == "self_preview"
+            and speaker_class is not None
+            and speaker_class != "owner"
+        )
 
     def allows_private_persona(self, speaker_class: SpeakerClass) -> bool:
         return speaker_class == "owner" and self.capability("persona")
@@ -220,6 +226,9 @@ class ModePolicyClient:
             key: payload.get(key)
             for key in (
                 "digital_self_version_id",
+                "manifest_sha256",
+                "preview_grant_id",
+                "perspective",
                 "relationship_profile_id",
                 "legacy_grant_id",
             )
@@ -239,6 +248,21 @@ class ModePolicyClient:
             or (
                 mode == "companion"
                 and any(value is not None for value in references.values())
+            )
+            or (
+                mode == "self_preview"
+                and (
+                    not _bounded_string(references["digital_self_version_id"])
+                    or not _bounded_string(references["manifest_sha256"])
+                    or not _bounded_string(references["preview_grant_id"])
+                    or references["perspective"] not in {"owner", "child", "friend"}
+                    or references["relationship_profile_id"] is not None
+                    or references["legacy_grant_id"] is not None
+                )
+            )
+            or (
+                mode != "companion"
+                and (style_id is not None or style_version is not None)
             )
         ):
             return ModePolicy.unavailable("payload_invalid")

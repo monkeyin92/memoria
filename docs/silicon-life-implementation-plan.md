@@ -290,7 +290,7 @@ unknown/privacy；inference 不包装成本人亲口事实；安全规则始终�
 
 ### S7：Self Preview 与 Fidelity Evaluation
 
-状态：PENDING
+状态：DONE（2026-07-23）
 
 实现：
 
@@ -299,6 +299,14 @@ unknown/privacy；inference 不包装成本人亲口事实；安全规则始终�
 - 支持“不像我”、纠正、负面证据、版本比较和孩子/朋友视角预演；
 - holdout 评测覆盖事实、决策、关系、幽默、情绪回应、未知和隐私；
 - 本人可盲选通用助手/数字分身回答，批准或否决版本。
+
+本地验收：
+
+- H5 定向 138 passed、全量 213 passed，production build 通过；
+- Python 定向 `interaction / digital_self / self_preview / preview_registry / mode_policy / interaction_mode_agent`
+  全通过；
+- 390×844 / 667×375 本地浏览器验收通过：Self Preview 可见、版本可选、Fidelity 可见、
+  无横向溢出，console error/warn 为空。
 
 初始内部门槛：已确认事实来源覆盖 100%、事实准确率 >=95%、无来源事实 <1%、决策一致率 >=75%、未授权泄漏 0、身份披露 100%。这些不是行业标准，需真实用户校准。
 

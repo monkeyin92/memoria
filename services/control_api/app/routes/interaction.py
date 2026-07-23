@@ -35,6 +35,7 @@ from services.digital_self.domain import (
     RelationshipProfileManifestEntry,
     VersionNotFoundError,
 )
+from services.digital_self.preview import SelfPreviewRegistryPort
 from services.digital_self.response_planner import (
     DigitalSelfResponsePlanner,
     GroundedItem,
@@ -44,6 +45,7 @@ from services.digital_self.response_planner import (
     SourceRef,
 )
 from services.persona.domain import PersonaCapsule, PersonaEnginePort, PersonaRequest
+from services.speaker.domain import SpeakerAuthorityPort
 
 router = APIRouter(prefix="/v1/interaction", tags=["interaction"])
 logger = logging.getLogger(__name__)
@@ -206,12 +208,55 @@ async def capabilities(
 ) -> dict[str, Any]:
     profile = _store(request).get_profile(user_id=user.user_id, now="1970-01-01T00:00:00Z")
     companion = companion_definition(profile.get("companion_id"))
+    modes = {
+        mode: ModePolicy.availability(cast(InteractionMode, mode)).payload()
+        for mode in ("companion", "self_preview", "legacy", "archive")
+    }
+    versions = await _registry(request).list(account_id=user.user_id)
+    preview_versions = tuple(
+        version for version in versions if version.status in {"approved", "frozen"}
+    )
+    missing: list[str] = []
+    if not preview_versions:
+        missing.append("approved_digital_self_version")
+    else:
+        preview_registry = cast(
+            SelfPreviewRegistryPort, request.app.state.self_preview_registry
+        )
+        preview_ready = False
+        for version in preview_versions:
+            if await preview_registry.version_stale(
+                account_id=user.user_id,
+                version_id=version.version_id,
+                manifest_sha256=version.manifest_sha256,
+            ):
+                continue
+            if (
+                await preview_registry.completed_verdict(
+                    account_id=user.user_id,
+                    version_id=version.version_id,
+                    manifest_sha256=version.manifest_sha256,
+                )
+                == "approve"
+            ):
+                preview_ready = True
+                break
+        if not preview_ready:
+            missing.append("preview_version_stale_or_fidelity_unready")
+    speaker = cast(SpeakerAuthorityPort, request.app.state.speaker_authority)
+    if not any(
+        profile.status == "active"
+        for profile in await speaker.profiles(user.user_id)
+    ):
+        missing.append("verified_owner_voice")
+    modes["self_preview"] = {
+        "status": "blocked" if missing else "available",
+        "conversational": True,
+        **({"missing": missing} if missing else {}),
+    }
     return {
         "selected_companion_id": companion.companion_id if companion else None,
-        "modes": {
-            mode: ModePolicy.availability(cast(InteractionMode, mode)).payload()
-            for mode in ("companion", "self_preview", "legacy", "archive")
-        },
+        "modes": modes,
     }
 
 
@@ -324,7 +369,20 @@ async def _response_plan_context(
     if version.account_id != account_id:
         raise _response_plan_unavailable()
     if frozen.interaction_mode == "self_preview":
-        if version.status not in {"approved", "frozen"} or frozen.legacy_grant_id is not None:
+        if (
+            version.status not in {"approved", "frozen"}
+            or frozen.legacy_grant_id is not None
+            or frozen.relationship_profile_id is not None
+            or frozen.companion_style_id is not None
+            or frozen.manifest_sha256 != version.manifest_sha256
+            or frozen.preview_grant_id is None
+            or frozen.perspective not in {"owner", "child", "friend"}
+            or await cast(SelfPreviewRegistryPort, request.app.state.self_preview_registry).version_stale(
+                account_id=account_id,
+                version_id=version.version_id,
+                manifest_sha256=version.manifest_sha256,
+            )
+        ):
             raise _response_plan_unavailable()
     elif frozen.interaction_mode == "legacy":
         if (
@@ -564,7 +622,9 @@ def _response_plan_payload(
         }
         if frozen.interaction_mode == "companion" and companion is not None
         else {
-            "kind": "approved_personal" if plan.direct_text is None else "fallback",
+            # S7 intentionally uses a neutral fallback voice. Personal voice
+            # activation belongs to S8 and companion voice/style must not leak.
+            "kind": "fallback",
             "profile_id": None,
             "model": DESIGNED_VOICE_MODEL,
         }

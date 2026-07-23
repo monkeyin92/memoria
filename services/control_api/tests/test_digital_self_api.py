@@ -9,6 +9,10 @@ from httpx import ASGITransport, AsyncClient
 from services.archive.domain import EvidenceEvent
 from services.archive.life_archive import LifeArchive
 from services.control_api.app.main import create_app
+from services.digital_self.preview import (
+    FIDELITY_CATEGORIES,
+    FidelityTrialSpec,
+)
 from services.digital_self.registry import DigitalSelfRegistry
 
 
@@ -78,6 +82,32 @@ def _headers(identity: dict[str, str]) -> dict[str, str]:
     return {"Authorization": f"Bearer {identity['access_token']}"}
 
 
+def _passing_fidelity_specs() -> tuple[FidelityTrialSpec, ...]:
+    return tuple(
+        FidelityTrialSpec(
+            category=category,
+            prompt=f"{category} prompt",
+            generic_answer="generic",
+            digital_self_answer="digital",
+            available=True,
+            coverage_gap=None,
+            epistemic_status=(
+                "unknown"
+                if category in {"unknown", "privacy"}
+                else "inference"
+                if category == "decision"
+                else "fact"
+            ),
+            has_source=category not in {"unknown", "privacy"},
+            unsupported_fact=False,
+            decision_inference_disclosed=True,
+            privacy_refused=True,
+            identity_disclosed=True,
+        )
+        for category in FIDELITY_CATEGORIES
+    )
+
+
 @pytest.mark.asyncio
 async def test_digital_self_build_rejects_empty_source_and_lists_nothing(
     monkeypatch: pytest.MonkeyPatch,
@@ -128,6 +158,30 @@ async def test_digital_self_build_list_get_and_lifecycle_step_up(
             f"/v1/digital-self/versions/{version_id}/approve",
             headers=headers,
             json={"password": "wrong-password", "expected_manifest_sha256": digest},
+        )
+        evaluation = await app.state.self_preview_registry.start_evaluation(
+            account_id=owner["user_id"],
+            version_id=version_id,
+            manifest_sha256=digest,
+            trial_specs=_passing_fidelity_specs(),
+            idempotency_key="digital-self-lifecycle-fidelity",
+            now=datetime.now(UTC),
+        )
+        for trial in evaluation.trials:
+            await app.state.self_preview_registry.submit_trial_choice(
+                account_id=owner["user_id"],
+                evaluation_id=evaluation.evaluation_id,
+                trial_id=trial.trial_id,
+                preferred_slot="a" if trial.slot_a == "digital" else "b",
+                rationale=None,
+                now=datetime.now(UTC),
+            )
+        await app.state.self_preview_registry.complete_evaluation(
+            account_id=owner["user_id"],
+            evaluation_id=evaluation.evaluation_id,
+            verdict="approve",
+            rationale=None,
+            now=datetime.now(UTC),
         )
         approved = await client.post(
             f"/v1/digital-self/versions/{version_id}/approve",

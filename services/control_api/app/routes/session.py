@@ -25,6 +25,13 @@ from services.control_api.app.security import (
     require_authenticated_user,
     require_matching_user,
 )
+from services.digital_self.domain import VersionNotFoundError
+from services.digital_self.preview import (
+    PreviewConflictError,
+    PreviewNotFoundError,
+    SelfPreviewRegistryPort,
+)
+from services.speaker.domain import SpeakerAuthorityPort
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
 logger = logging.getLogger(__name__)
@@ -59,6 +66,7 @@ class CreateSessionRequest(BaseModel):
     # S2 accepts the public contract but ignores future-mode references until
     # S3/S7/S9 can validate and freeze them server-side.
     digital_self_version_id: str | None = Field(default=None, min_length=1, max_length=128)
+    preview_grant_id: str | None = Field(default=None, min_length=1, max_length=128)
     relationship_profile_id: str | None = Field(default=None, min_length=1, max_length=128)
     legacy_grant_id: str | None = Field(default=None, min_length=1, max_length=128)
     learning_task_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -76,6 +84,10 @@ class CreateSessionRequest(BaseModel):
             )
         ):
             raise ValueError("S2 future mode references are server-owned and unavailable")
+        if self.interaction_mode == "self_preview" and self.preview_grant_id is None:
+            raise ValueError("self_preview requires a server-issued preview grant")
+        if self.interaction_mode != "self_preview" and self.preview_grant_id is not None:
+            raise ValueError("preview_grant_id is only valid for self_preview")
         return self
 
 
@@ -211,19 +223,98 @@ async def create_session(
         )
     if settings.environment == "production" and body.voice_backend in REALTIME_BACKENDS:
         raise HTTPException(status_code=409, detail="端到端实时模型仅限隔离 A/B 环境")
+    if body.interaction_mode == "self_preview" and body.voice_backend != "cascade":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "self_preview_requires_controlled_backend"},
+        )
+    preview_registry = cast(
+        SelfPreviewRegistryPort, request.app.state.self_preview_registry
+    )
+    if body.interaction_mode == "self_preview":
+        assert body.preview_grant_id is not None
+        try:
+            grant = await preview_registry.consume_grant(
+                account_id=user_id,
+                grant_id=body.preview_grant_id,
+                now=datetime.now(UTC),
+            )
+            version = await request.app.state.digital_self_registry.get(
+                account_id=user_id,
+                version_id=grant.version_id,
+            )
+        except (
+            PreviewConflictError,
+            PreviewNotFoundError,
+            VersionNotFoundError,
+        ) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "preview_grant_unavailable"},
+            ) from exc
+        if (
+            version.status not in {"approved", "frozen"}
+            or version.manifest_sha256 != grant.manifest_sha256
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "preview_version_unavailable"},
+            )
+        if (
+            await preview_registry.version_stale(
+                account_id=user_id,
+                version_id=version.version_id,
+                manifest_sha256=version.manifest_sha256,
+            )
+            or await preview_registry.completed_verdict(
+                account_id=user_id,
+                version_id=version.version_id,
+                manifest_sha256=version.manifest_sha256,
+            )
+            != "approve"
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "preview_version_unavailable"},
+            )
+        speaker_authority = cast(
+            SpeakerAuthorityPort, request.app.state.speaker_authority
+        )
+        if not any(
+            profile.status == "active"
+            for profile in await speaker_authority.profiles(user_id)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "preview_prerequisite_missing",
+                    "missing": ["verified_owner_voice"],
+                },
+            )
+        preview_frozen = ModePolicy.freeze_self_preview(
+            version_id=version.version_id,
+            manifest_sha256=version.manifest_sha256,
+            preview_grant_id=grant.grant_id,
+            perspective=grant.perspective,
+        )
+    else:
+        preview_frozen = None
     session_id = create_session_id()
     # The room name is also the Agent's trusted source for the public session id.
     room_name = f"voice-{session_id}"
     identity = f"user-{user_id}-{session_id[:8]}"
     store = cast(MemoryStore, request.app.state.memory_store)
     created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    companion = companion_definition(
-        store.get_profile(user_id=user_id, now=created_at).get("companion_id")
-        or DEFAULT_COMPANION_ID
-    )
-    if companion is None:  # Stored profile data must not silently broaden the policy.
-        raise HTTPException(status_code=409, detail="companion profile is unavailable")
-    frozen = ModePolicy.freeze_companion(companion)
+    if preview_frozen is not None:
+        frozen = preview_frozen
+    else:
+        companion = companion_definition(
+            store.get_profile(user_id=user_id, now=created_at).get("companion_id")
+            or DEFAULT_COMPANION_ID
+        )
+        if companion is None:  # Stored profile data must not silently broaden the policy.
+            raise HTTPException(status_code=409, detail="companion profile is unavailable")
+        frozen = ModePolicy.freeze_companion(companion)
 
     async def persist_voice_session() -> str | None:
         learning_task_id: str | None = None
@@ -254,6 +345,9 @@ async def create_session(
                     interaction_mode=frozen.interaction_mode,
                     mode_policy_version=frozen.mode_policy_version,
                     digital_self_version_id=frozen.digital_self_version_id,
+                    digital_self_manifest_sha256=frozen.manifest_sha256,
+                    preview_grant_id=frozen.preview_grant_id,
+                    self_preview_perspective=frozen.perspective,
                     relationship_profile_id=frozen.relationship_profile_id,
                     legacy_grant_id=frozen.legacy_grant_id,
                     companion_style_id=frozen.companion_style_id,
@@ -270,6 +364,9 @@ async def create_session(
             interaction_mode=frozen.interaction_mode,
             mode_policy_version=frozen.mode_policy_version,
             digital_self_version_id=frozen.digital_self_version_id,
+            digital_self_manifest_sha256=frozen.manifest_sha256,
+            preview_grant_id=frozen.preview_grant_id,
+            self_preview_perspective=frozen.perspective,
             relationship_profile_id=frozen.relationship_profile_id,
             legacy_grant_id=frozen.legacy_grant_id,
             companion_style_id=frozen.companion_style_id,
@@ -356,8 +453,8 @@ async def create_session(
     )
 
 
-def _frozen_values(frozen: FrozenMode) -> dict[str, str | None]:
-    return frozen.payload()
+def _frozen_values(frozen: FrozenMode) -> dict[str, Any]:
+    return ModePolicy.session_context(frozen)
 
 
 @router.post("/{session_id}/omni/sdp", response_class=Response)

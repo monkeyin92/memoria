@@ -44,6 +44,7 @@ from services.control_api.app.routes import memory as memory_routes
 from services.control_api.app.routes import persona as persona_routes
 from services.control_api.app.routes import readiness as readiness_routes
 from services.control_api.app.routes import self_model as self_model_routes
+from services.control_api.app.routes import self_preview as self_preview_routes
 from services.control_api.app.routes import session as session_routes
 from services.control_api.app.routes import speaker as speaker_routes
 from services.control_api.app.routes import voice as voice_routes
@@ -54,6 +55,7 @@ from services.control_api.app.session_termination import (
 )
 from services.digital_self.domain import RegistryPort
 from services.digital_self.postgres_registry import PostgresDigitalSelfRegistry
+from services.digital_self.preview import SelfPreviewRegistry
 from services.digital_self.registry import DigitalSelfRegistry
 from services.governance.account_data import (
     AccountDataGovernance,
@@ -427,6 +429,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await to_thread(sqlite_digital_self.initialize)
         digital_self_registry = sqlite_digital_self
     app.state.digital_self_registry = digital_self_registry
+    app.state.self_preview_registry = SelfPreviewRegistry.sqlite(
+        settings.memoria_db_path
+    )
+    await to_thread(app.state.self_preview_registry.initialize)
     self_model_registry: SelfModelRegistryPort
     if archive_url:
         postgres_self_model = PostgresSelfModelRegistry(archive_url)
@@ -554,6 +560,7 @@ def create_app() -> FastAPI:
         extractor=_persona_extractor(settings),
     )
     app.state.digital_self_registry = DigitalSelfRegistry.sqlite(settings.memoria_db_path)
+    app.state.self_preview_registry = SelfPreviewRegistry.sqlite(settings.memoria_db_path)
     app.state.self_model_registry = SelfModelRegistry.sqlite(settings.memoria_db_path)
     app.state.growth_reader = GrowthReader.sqlite(
         settings.memoria_db_path,
@@ -592,6 +599,7 @@ def create_app() -> FastAPI:
     app.include_router(memory_routes.router)
     app.include_router(persona_routes.router)
     app.include_router(digital_self_routes.router)
+    app.include_router(self_preview_routes.router)
     app.include_router(self_model_routes.router)
     app.include_router(growth_routes.router)
     app.include_router(voice_routes.router)

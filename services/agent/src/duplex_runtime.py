@@ -406,6 +406,15 @@ class DuplexRuntime:
             ModePolicy.unavailable("policy_not_bound_to_fence"),
         )
 
+    @property
+    def current_speaker_class(self) -> Literal["owner", "guest", "uncertain"]:
+        return cast(
+            Literal["owner", "guest", "uncertain"],
+            self._speaker_class
+            if self._speaker_class in {"owner", "guest", "uncertain"}
+            else "uncertain",
+        )
+
     def _bind_mode_policy(self, fence: GenerationFence, policy: ModePolicy | None = None) -> None:
         self._mode_policy_by_fence[(fence.turn_id, fence.generation_id)] = policy or self._mode_policy
         while len(self._mode_policy_by_fence) > HISTORY_ELIGIBILITY_MAX_FENCES:
@@ -1297,10 +1306,65 @@ class DuplexRuntime:
             "final": final,
             "turn_id": fence.turn_id,
             "generation_id": fence.generation_id,
+            "tool_epoch": fence.tool_epoch,
             "history_eligible": bool(final and self._history_eligible(fence)),
         }
         if heard is not None:
             event["heard"] = heard
+        if (
+            speaker == "assistant"
+            and final
+            and heard is True
+            and self.mode_policy_for_fence(archive_fence).mode == "self_preview"
+        ):
+            provenance = self.response_provenance_for(archive_fence)
+            if (
+                isinstance(provenance, dict)
+                and isinstance(provenance.get("digital_self_version_id"), str)
+                and isinstance(provenance.get("manifest_sha256"), str)
+            ):
+                refs: list[dict[str, Any]] = []
+                raw_refs = provenance.get("source_refs")
+                if isinstance(raw_refs, list):
+                    for raw in raw_refs[:12]:
+                        if not isinstance(raw, dict):
+                            continue
+                        kind = raw.get("kind")
+                        item_id = raw.get("item_id")
+                        source_ids = raw.get("source_event_ids")
+                        if (
+                            isinstance(kind, str)
+                            and isinstance(item_id, str)
+                            and isinstance(source_ids, list)
+                        ):
+                            refs.append(
+                                {
+                                    "kind": kind[:64],
+                                    "item_id": item_id[:128],
+                                    "source_event_ids": [
+                                        str(value)[:128] for value in source_ids[:8]
+                                    ],
+                                }
+                            )
+                disclosures = provenance.get("disclosures")
+                event["preview_provenance"] = {
+                    "digital_self_version_id": provenance[
+                        "digital_self_version_id"
+                    ][:128],
+                    "manifest_sha256": provenance["manifest_sha256"][:64],
+                    "turn_id": archive_fence.turn_id,
+                    "generation_id": archive_fence.generation_id,
+                    "tool_epoch": archive_fence.tool_epoch,
+                    "epistemic_status": str(
+                        provenance.get("epistemic_status") or "unknown"
+                    )[:32],
+                    "disclosures": (
+                        [str(value)[:64] for value in disclosures[:4]]
+                        if isinstance(disclosures, list)
+                        else []
+                    ),
+                    "source_refs": refs,
+                }
         self._publish(event)
         if not final or not text.strip():
             return

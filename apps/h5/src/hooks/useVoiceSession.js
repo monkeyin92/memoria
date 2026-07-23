@@ -39,6 +39,76 @@ function cascadeAudioTrackKey(track) {
   return track.sid || track.mediaStreamTrack?.id || track;
 }
 
+function parsePreviewProvenance(value, event) {
+  if (value === undefined) return null;
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    event.speaker !== "assistant" ||
+    event.final !== true ||
+    event.heard !== true ||
+    typeof value.digital_self_version_id !== "string" ||
+    !value.digital_self_version_id ||
+    typeof value.manifest_sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/i.test(value.manifest_sha256) ||
+    value.turn_id !== event.turn_id ||
+    value.generation_id !== event.generation_id ||
+    !Number.isInteger(event.tool_epoch) ||
+    event.tool_epoch !== value.tool_epoch ||
+    !Number.isInteger(value.tool_epoch) ||
+    value.tool_epoch < 0 ||
+    !["fact", "inference", "unknown", "not_applicable"].includes(
+      value.epistemic_status,
+    ) ||
+    !Array.isArray(value.disclosures) ||
+    value.disclosures.length > 4 ||
+    value.disclosures.some((item) => typeof item !== "string" || !item) ||
+    !value.disclosures.includes("digital_identity") ||
+    !Array.isArray(value.source_refs) ||
+    value.source_refs.length > 12 ||
+    (["fact", "inference"].includes(value.epistemic_status) &&
+      value.source_refs.length === 0)
+  ) {
+    return undefined;
+  }
+  const sourceRefs = value.source_refs.map((source) => {
+    if (
+      !source ||
+      typeof source !== "object" ||
+      Array.isArray(source) ||
+      typeof source.kind !== "string" ||
+      !source.kind ||
+      typeof source.item_id !== "string" ||
+      !source.item_id ||
+      !Array.isArray(source.source_event_ids) ||
+      !source.source_event_ids.length ||
+      source.source_event_ids.length > 8 ||
+      source.source_event_ids.some(
+        (eventId) => typeof eventId !== "string" || !eventId,
+      )
+    ) {
+      return null;
+    }
+    return {
+      kind: source.kind,
+      item_id: source.item_id,
+      source_event_ids: [...source.source_event_ids],
+    };
+  });
+  if (sourceRefs.some((source) => source === null)) return undefined;
+  return {
+    digital_self_version_id: value.digital_self_version_id,
+    manifest_sha256: value.manifest_sha256.toLowerCase(),
+    turn_id: value.turn_id,
+    generation_id: value.generation_id,
+    tool_epoch: value.tool_epoch,
+    epistemic_status: value.epistemic_status,
+    disclosures: [...value.disclosures],
+    source_refs: sourceRefs,
+  };
+}
+
 const stateLabels = {
   idle: "轻触我，开始聊聊",
   connecting: "正在靠近你…",
@@ -95,6 +165,8 @@ function parseEvent(payload) {
     }
     if (event.type === "transcript_delta") {
       if (
+        typeof event.session_id !== "string" ||
+        !event.session_id ||
         !["user", "assistant"].includes(event.speaker) ||
         typeof event.text !== "string" ||
         typeof event.final !== "boolean" ||
@@ -103,9 +175,15 @@ function parseEvent(payload) {
       ) {
         return null;
       }
+      const previewProvenance = parsePreviewProvenance(
+        event.preview_provenance,
+        event,
+      );
+      if (previewProvenance === undefined) return null;
       return {
         ...event,
         history_eligible: event.history_eligible === true,
+        preview_provenance: previewProvenance,
       };
     }
     if (event.type === "audio_trace") {
@@ -161,6 +239,8 @@ export function useVoiceSession({
   voiceReplyEnabled = true,
   voiceBackend = "cascade",
   learningTaskId = null,
+  interactionMode = "companion",
+  previewGrantId = null,
 }) {
   const [session, setSession] = useState(null);
   const [uiState, setUiState] = useState("idle");
@@ -287,6 +367,18 @@ export function useVoiceSession({
         heard: line.heard,
         turnId: line.turn_id,
         generationId: line.generation_id,
+        toolEpoch: Number.isInteger(line.tool_epoch)
+          ? line.tool_epoch
+          : line.preview_provenance?.tool_epoch ?? null,
+        previewProvenance: line.preview_provenance || null,
+        source_refs: line.preview_provenance?.source_refs || [],
+        epistemic_status:
+          line.preview_provenance?.epistemic_status || null,
+        disclosures: line.preview_provenance?.disclosures || [],
+        version_id:
+          line.preview_provenance?.digital_self_version_id || null,
+        manifest_sha256:
+          line.preview_provenance?.manifest_sha256 || null,
         authoritative,
       };
       if (index < 0) return [...current.slice(-11), next];
@@ -663,11 +755,11 @@ export function useVoiceSession({
     })();
   }, [recordAudioDiagnostic]);
 
-  const start = useCallback(() => {
-    if (roomRef.current || omniTransportRef.current) return;
+  const start = useCallback((overrides = {}) => {
+    if (roomRef.current || omniTransportRef.current) return null;
     if (!userId) {
       setError("匿名身份尚未就绪，请稍后再试");
-      return;
+      return null;
     }
     const attempt = attemptRef.current + 1;
     attemptRef.current = attempt;
@@ -695,6 +787,19 @@ export function useVoiceSession({
     const selectedBackend = isRealtimeBackend(voiceBackend)
       ? voiceBackend
       : "cascade";
+    const selectedInteractionMode =
+      overrides.interactionMode || interactionMode;
+    const selectedPreviewGrantId =
+      overrides.previewGrantId || previewGrantId;
+    const selectedLearningTaskId =
+      selectedInteractionMode === "companion" ? learningTaskId : null;
+    const sessionOptions =
+      selectedInteractionMode !== "companion" || selectedPreviewGrantId
+        ? {
+            interactionMode: selectedInteractionMode,
+            previewGrantId: selectedPreviewGrantId,
+          }
+        : null;
     if (isRealtimeBackend(selectedBackend)) {
       let transport;
       const isCurrent = () =>
@@ -769,7 +874,14 @@ export function useVoiceSession({
       } catch (caught) {
         preparation = Promise.reject(caught);
       }
-      const creation = createSession(userId, selectedBackend, learningTaskId);
+      const creation = sessionOptions
+        ? createSession(
+            userId,
+            selectedBackend,
+            selectedLearningTaskId,
+            sessionOptions,
+          )
+        : createSession(userId, selectedBackend, selectedLearningTaskId);
       const prepared = preparation.then(
         () => ({ ok: true }),
         (caught) => ({ ok: false, caught }),
@@ -799,6 +911,7 @@ export function useVoiceSession({
               failOmni(transport, "连接超时，请轻触吉祥物再试");
             }, AGENT_READY_TIMEOUT_MS);
           }
+          return created;
         } catch (caught) {
           if (isCurrent()) {
             const denied =
@@ -814,6 +927,7 @@ export function useVoiceSession({
           } else {
             disconnectOmni(transport);
           }
+          return null;
         }
       })();
     }
@@ -857,7 +971,14 @@ export function useVoiceSession({
     }
     return (async () => {
       try {
-        const created = await createSession(userId, selectedBackend, learningTaskId);
+        const created = await (sessionOptions
+          ? createSession(
+              userId,
+              selectedBackend,
+              selectedLearningTaskId,
+              sessionOptions,
+            )
+          : createSession(userId, selectedBackend, selectedLearningTaskId));
         if (!isCurrent()) {
           await disconnectRoom(room);
           return;
@@ -961,10 +1082,17 @@ export function useVoiceSession({
           }
           if (!initialReadyRef.current) return;
           if (event.speaker === "user" && !event.final) return;
+          if (event.session_id !== sessionRef.current?.session_id) return;
           applyTranscript(event, { authoritative: true });
         };
         const onTranscriptionReceived = (segments, participant) => {
           if (!isCurrent() || !initialReadyRef.current) return;
+          if (
+            sessionRef.current?.interaction?.interaction_mode ===
+            "self_preview"
+          ) {
+            return;
+          }
           if (!participant?.isAgent || !segments.length) return;
           const text = segments.map((segment) => segment.text).join("");
           if (!text) return;
@@ -1129,6 +1257,7 @@ export function useVoiceSession({
             }
           }
         }
+        return created;
       } catch (caught) {
         const current = isCurrent();
         if (current) {
@@ -1148,6 +1277,7 @@ export function useVoiceSession({
           setUiState("closed");
         }
         await disconnectRoom(room);
+        return null;
       }
     })();
   }, [
@@ -1161,7 +1291,9 @@ export function useVoiceSession({
     disconnectRoom,
     failOmni,
     failReconnect,
+    interactionMode,
     learningTaskId,
+    previewGrantId,
     publishAudioDiagnostic,
     recordAudioDiagnostic,
     resetEmotionState,

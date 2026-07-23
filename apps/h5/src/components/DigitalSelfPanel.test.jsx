@@ -224,7 +224,12 @@ describe("DigitalSelfPanel", () => {
   afterEach(cleanup);
 
   it("separates persona, speaker identity and cloned voice with clear safety boundaries", async () => {
-    render(<DigitalSelfPanel onBack={vi.fn()} />);
+    render(
+      <DigitalSelfPanel
+        onBack={vi.fn()}
+        fidelityByVersion={{ "digital-self-1": { verdict: "approve" } }}
+      />,
+    );
 
     expect(
       await screen.findByRole("heading", { name: "数字心智与声音" }),
@@ -236,6 +241,73 @@ describe("DigitalSelfPanel", () => {
     expect(screen.getByText(/“过滤明显旁人（实验）”可减少旁人插话/))
       .toBeInTheDocument();
     expect(screen.getByText(/不能单独授权删除、导出或其他敏感操作/)).toBeInTheDocument();
+  });
+
+  it("opens the owner-only Self Preview overlay without making an unavailable callback look usable", async () => {
+    digitalSelfVersions = [digitalSelfVersion({ status: "approved" })];
+    mocks.getInteractionCapabilities.mockResolvedValue({
+      selected_companion_id: "starlight",
+      modes: {
+        companion: { status: "available", conversational: true },
+        archive: { status: "available", conversational: false },
+        self_preview: { status: "available", conversational: true },
+        legacy: { status: "blocked", conversational: true },
+      },
+    });
+
+    render(
+      <DigitalSelfPanel
+        onBack={vi.fn()}
+        accountType="registered"
+        selfPreviewCapability={{
+          status: "available",
+          conversational: true,
+          registered_owner: true,
+          active_owner_voice: true,
+          missing: [],
+          versions: [{
+            version_id: "digital-self-1",
+            status: "approved",
+            manifest_sha256: "a".repeat(64),
+            version_stale: false,
+            fidelity_verdict: "approve",
+            fidelity_eligible: true,
+            preview_eligible: true,
+          }],
+        }}
+        onStartPreview={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "打开数字分身预览" }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "数字分身预览" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("数字分身预览，不代表本人")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "开始数字分身预览" })).toBeDisabled();
+  });
+
+  it("routes a testing version into Fidelity instead of a premature approval dialog", async () => {
+    digitalSelfVersions = [digitalSelfVersion({ status: "testing" })];
+    const onOpenFidelity = vi.fn();
+    render(
+      <DigitalSelfPanel
+        onBack={vi.fn()}
+        accountType="registered"
+        onOpenFidelity={onOpenFidelity}
+      />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "完成忠实度评测" }),
+    );
+    expect(onOpenFidelity).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "testing" }),
+    );
+    expect(screen.getByRole("heading", { name: "数字分身预览" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "批准此版本" })).not.toBeInTheDocument();
   });
 
   it("builds an immutable digital-self draft and requires a digest plus step-up for transitions", async () => {
@@ -252,7 +324,12 @@ describe("DigitalSelfPanel", () => {
       return approved;
     });
 
-    render(<DigitalSelfPanel onBack={vi.fn()} />);
+    render(
+      <DigitalSelfPanel
+        onBack={vi.fn()}
+        fidelityByVersion={{ "digital-self-1": { verdict: "approve" } }}
+      />,
+    );
 
     expect(await screen.findByRole("heading", { name: "数字分身版本" }))
       .toBeInTheDocument();
@@ -322,7 +399,12 @@ describe("DigitalSelfPanel", () => {
       parent_version_id: "digital-self-1",
     })];
 
-    render(<DigitalSelfPanel onBack={vi.fn()} />);
+    render(
+      <DigitalSelfPanel
+        onBack={vi.fn()}
+        fidelityByVersion={{ "digital-self-1": { verdict: "approve" } }}
+      />,
+    );
 
     const card = (await screen.findByText("版本 2")).closest(
       ".digital-version-card",
@@ -348,7 +430,12 @@ describe("DigitalSelfPanel", () => {
     mocks.approveDigitalSelfVersion.mockResolvedValue(
       digitalSelfVersion({ status: "approved" }),
     );
-    render(<DigitalSelfPanel onBack={vi.fn()} />);
+    render(
+      <DigitalSelfPanel
+        onBack={vi.fn()}
+        fidelityByVersion={{ "digital-self-1": { verdict: "approve" } }}
+      />,
+    );
 
     const approve = await screen.findByRole("button", { name: "批准此版本" });
     mocks.getDigitalSelfVersions.mockRejectedValueOnce(new Error("sync offline"));
@@ -369,7 +456,12 @@ describe("DigitalSelfPanel", () => {
     mocks.approveDigitalSelfVersion.mockResolvedValue(
       digitalSelfVersion({ status: "approved" }),
     );
-    render(<DigitalSelfPanel onBack={vi.fn()} />);
+    render(
+      <DigitalSelfPanel
+        onBack={vi.fn()}
+        fidelityByVersion={{ "digital-self-1": { verdict: "approve" } }}
+      />,
+    );
 
     const approve = await screen.findByRole("button", { name: "批准此版本" });
     fireEvent.click(approve);
@@ -386,7 +478,12 @@ describe("DigitalSelfPanel", () => {
 
   it("keeps Tab focus inside the sensitive version dialog", async () => {
     digitalSelfVersions = [digitalSelfVersion({ status: "testing" })];
-    render(<DigitalSelfPanel onBack={vi.fn()} />);
+    render(
+      <DigitalSelfPanel
+        onBack={vi.fn()}
+        fidelityByVersion={{ "digital-self-1": { verdict: "approve" } }}
+      />,
+    );
 
     fireEvent.click(await screen.findByRole("button", { name: "批准此版本" }));
     const passwordInput = screen.getByLabelText("账号密码");
@@ -409,7 +506,12 @@ describe("DigitalSelfPanel", () => {
 
   it("closes a sensitive version dialog with Escape and restores its trigger focus", async () => {
     digitalSelfVersions = [digitalSelfVersion({ status: "testing" })];
-    render(<DigitalSelfPanel onBack={vi.fn()} />);
+    render(
+      <DigitalSelfPanel
+        onBack={vi.fn()}
+        fidelityByVersion={{ "digital-self-1": { verdict: "approve" } }}
+      />,
+    );
 
     const approve = await screen.findByRole("button", { name: "批准此版本" });
     fireEvent.click(approve);

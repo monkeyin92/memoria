@@ -28,8 +28,10 @@
   response provenance 以 exact fence 写回 archive evidence。旧 `decision_habit/value_priority`
   和原始关系事实只允许作为待审核候选，不能直接成为生效认知策略、关系画像或
   Digital Self manifest 条目。
-- 下一阶段为 S7：开放 owner-only Self Preview、来源展开、“不像我”负面证据、
-  版本比较和 Fidelity Evaluation；之后再进入本人声音、Legacy、全量验收与部署。
+- S7 已完成：owner-only Self Preview、来源展开、“不像我”/纠正负面证据、
+  版本比较、holdout Fidelity Evaluation、owner step-up、active speaker gate、
+  exact preview provenance、stale/version gate 与 H5 预览工作台均已打通；下一阶段进入
+  S8 本人声音、S9 Legacy、S10 全量验收与部署。
 - 本轮不建设分布式、多区域、KMS、异地副本或 PITR；保留为正式商用前待办。当前
   response-plan first-write-wins 快照依赖 Control API 单进程，扩展到多副本前必须迁移到
   共享一致性存储。遗嘱、死亡认证与法律执行也不在当前工程能力内。
@@ -118,6 +120,36 @@
     LLM 节点只消费这份控制端计划，不再拼 persona/memory prompt；
   - `ContextAssembler` 收窄到 heard/current/resume + response-plan 指令；
   - false-interrupt recovery 仅发固定控制 ack，不再重新拼私有 prompt；
+
+## 硅基生命路线 S7 验证
+
+- H5：新增 Self Preview 工作台，明确区分 preview 版本与 fidelity 评测版本；支持
+  owner step-up、孩子/朋友视角预演、来源展开、“不像我”/纠正负面证据、版本比较、
+  忠实度盲选与 verdict。
+- Control API / Agent / Registry：新增 `/v1/digital-self/preview-capability`、
+  preview grants、sources、feedback、`fidelity-evaluations` 全链路；Self Preview
+  会话固定 `version_id + manifest_sha256 + perspective + preview_grant_id`，显式禁止
+  companion style、history/private/tools/learning/voice_profile 写入；反馈会将版本标记为 stale，
+  并阻断后续 preview / fidelity 通过。
+- 精确 provenance：assistant 最终已听回答携带 bounded `preview_provenance`
+  （`version_id / manifest_sha256 / turn / generation / tool_epoch / epistemic_status / source_refs`），
+  H5 仅在 Self Preview 中渲染，普通 companion 不暴露。
+- 忠实度门槛：7 类 holdout（fact / decision / relationship / humor / emotion / unknown / privacy）
+  均要求 hidden A/B mapping；approve verdict 必须满足 coverage 完整、identity disclosure、
+  decision inference disclosure、privacy refusal 和 blind preference safety gate。
+- 本地质量门：
+  - H5 定向 138 passed；H5 全量 213 passed；production build 通过；
+  - Python 定向 `interaction / digital_self / self_preview / preview_registry / mode_policy / interaction_mode_agent`
+    61 passed；
+  - Ruff、strict mypy、`git diff --check` 通过。
+- 本地浏览器验收（2026-07-23）：
+  - 390×844：真实登录后进入“数字心智与声音”→“数字分身预览”，显示
+    “数字分身预览，不代表本人”、忠实度评测和 1 个 approved 版本；console error/warn 为空。
+  - 667×375：横屏面板无水平溢出；step-up 密码框高度 44px，可用按钮已启用；
+    console error/warn 为空。
+- 本地验收使用临时数据库 `/tmp/memoria-s7-browser.sqlite3` 与临时 speaker 库
+  `/tmp/memoria-s7-speakers.sqlite3`；浏览器夹具账号 `s7-browser-owner` 仅用于本地 UI 验证，
+  未写入生产。
   - `DuplexRuntime` 已删除旧 memory refresher 与 DeepSeek background generation seam；
   - archive evidence 绑定 bounded response provenance，并由服务端重算
     fact/inference/unknown/disclosure、核验 owner source 与 projection eligibility；
@@ -126,8 +158,8 @@
   总覆盖率 89.20%；H5 15 files / 195 tests 与 production build 通过；Ruff、139 个
   strict mypy source files、`git diff --check` 通过。S6 不新增 H5 可见入口，因此没有
   将静态 build 冒充浏览器 acceptance。
-- Self Preview / Legacy 仍未开放；S7 必须完成 owner-only 预览和 Fidelity 闭环后，
-  才能宣称 Digital Self 可供本人试用。
+- Self Preview 已在本地完成 owner-only 预览与 Fidelity 闭环，Legacy 仍未开放；
+  进入 S8/S9 前不能宣称本人声音或传承模式已可用。
 
 ## 当前生产
 

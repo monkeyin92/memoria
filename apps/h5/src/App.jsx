@@ -1,4 +1,12 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Bell,
   Brain,
@@ -27,14 +35,23 @@ import {
   bootstrapIdentity,
   cachePendingMessage,
   flushPendingMessages,
+  getFidelityEvaluations,
   getGrowthTasks,
   getMemoryDays,
   getProfile,
+  getSelfPreviewCapability,
+  getSelfPreviewSources,
+  issueSelfPreviewGrant,
   loginAccount,
   logoutAllDevices,
   logoutCurrentDevice,
   registerAccount,
+  revokeSelfPreviewGrant,
   saveMessage,
+  startFidelityEvaluation,
+  chooseFidelityTrial,
+  completeFidelityEvaluation,
+  submitSelfPreviewFeedback,
   summarizeDay,
   transitionGrowthTask,
   updateProfile,
@@ -75,6 +92,15 @@ const profileStorageKey = (userId) => `memoria:profile:${userId}`;
 const growthEventId = () =>
   globalThis.crypto?.randomUUID?.()
   || `growth-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const fidelityCategories = [
+  "fact",
+  "decision",
+  "relationship",
+  "humor",
+  "emotion",
+  "unknown",
+  "privacy",
+];
 const DigitalSelfPanel = lazy(() =>
   import("./components/DigitalSelfPanel.jsx").then((module) => ({
     default: module.DigitalSelfPanel,
@@ -127,6 +153,65 @@ function normalizeMemoryDay(item) {
   };
 }
 
+function latestFidelityEvaluations(items) {
+  const latest = {};
+  for (const evaluation of Array.isArray(items) ? items : []) {
+    const existing = latest[evaluation.version_id];
+    if (
+      !existing ||
+      new Date(evaluation.created_at).getTime() >
+        new Date(existing.created_at).getTime()
+    ) {
+      latest[evaluation.version_id] = evaluation;
+    }
+  }
+  return latest;
+}
+
+function fidelityView(evaluation, versionId = null) {
+  if (!evaluation) {
+    return {
+      status: "idle",
+      version_id: versionId,
+      categories: fidelityCategories,
+      current_item: null,
+      all_answered: false,
+      coverage_gaps: [],
+    };
+  }
+  const trials = Array.isArray(evaluation.trials) ? evaluation.trials : [];
+  const availableTrials = trials.filter((trial) => trial.available === true);
+  const coverageGaps = trials.filter((trial) => trial.available !== true);
+  const currentItem =
+    evaluation.status === "active"
+      ? availableTrials.find((trial) => !trial.preferred_slot) || null
+      : null;
+  const summary = evaluation.summary || {};
+  return {
+    ...summary,
+    evaluation_id: evaluation.evaluation_id,
+    version_id: evaluation.version_id,
+    manifest_sha256: evaluation.manifest_sha256,
+    status: evaluation.status,
+    verdict: evaluation.verdict,
+    categories: fidelityCategories,
+    trials,
+    current_item: currentItem,
+    all_answered: availableTrials.every((trial) => trial.preferred_slot),
+    coverage_gaps: coverageGaps,
+    metrics: summary.actual_metrics || summary.metrics || {},
+    targets: summary.targets || {},
+    gates: summary.gates || {},
+  };
+}
+
+function previewAnswerKey(answer) {
+  return (
+    answer?.answer_id ||
+    `${answer?.session_id || "session"}:${answer?.turn_id ?? "turn"}:${answer?.generation_id ?? "generation"}`
+  );
+}
+
 export function App() {
   const [identity, setIdentity] = useState(null);
   const [identityReady, setIdentityReady] = useState(false);
@@ -148,6 +233,12 @@ export function App() {
   const [preferenceSaving, setPreferenceSaving] = useState(false);
   const [preferenceError, setPreferenceError] = useState("");
   const [activeGrowthTask, setActiveGrowthTask] = useState(null);
+  const [selfPreviewCapability, setSelfPreviewCapability] = useState(null);
+  const [activePreview, setActivePreview] = useState(null);
+  const [previewSourceDetails, setPreviewSourceDetails] = useState({});
+  const [previewBusy, setPreviewBusy] = useState("");
+  const [fidelityEvaluations, setFidelityEvaluations] = useState([]);
+  const [fidelityFocusVersionId, setFidelityFocusVersionId] = useState("");
   const activeUserIdRef = useRef("");
   const growthCompletionIdsRef = useRef({});
   const userId = identity?.user_id || "";
@@ -204,7 +295,124 @@ export function App() {
     voiceReplyEnabled: profile.voice_reply,
     voiceBackend: VOICE_BACKEND,
     learningTaskId: activeGrowthTask?.task_id || null,
+    interactionMode:
+      activePreview?.status === "starting" ||
+      activePreview?.status === "running"
+        ? "self_preview"
+        : "companion",
+    previewGrantId: activePreview?.grant_id || null,
   });
+
+  const refreshSelfPreviewState = useCallback(async () => {
+    if (identity?.account_type !== "registered") {
+      setSelfPreviewCapability({
+        status: "blocked",
+        conversational: false,
+        registered_owner: false,
+        active_owner_voice: false,
+        missing: ["registered_owner"],
+        versions: [],
+      });
+      setFidelityEvaluations([]);
+      return;
+    }
+    const [capabilityResult, evaluationsResult] = await Promise.allSettled([
+      getSelfPreviewCapability(),
+      getFidelityEvaluations(),
+    ]);
+    if (capabilityResult.status === "fulfilled") {
+      setSelfPreviewCapability(capabilityResult.value);
+    } else {
+      setSelfPreviewCapability({
+        status: "blocked",
+        conversational: false,
+        registered_owner: true,
+        active_owner_voice: false,
+        missing: ["preview_state_unavailable"],
+        versions: [],
+      });
+    }
+    if (evaluationsResult.status === "fulfilled") {
+      setFidelityEvaluations(evaluationsResult.value.items || []);
+    }
+  }, [identity?.account_type]);
+
+  const upsertFidelityEvaluation = useCallback((evaluation) => {
+    setFidelityEvaluations((current) => [
+      evaluation,
+      ...current.filter(
+        (item) => item.evaluation_id !== evaluation.evaluation_id,
+      ),
+    ]);
+    setFidelityFocusVersionId(evaluation.version_id);
+    return evaluation;
+  }, []);
+
+  useEffect(() => {
+    if (!digitalSelfOpen) return;
+    void refreshSelfPreviewState();
+  }, [digitalSelfOpen, refreshSelfPreviewState]);
+
+  const fidelityByVersion = useMemo(() => {
+    const latest = latestFidelityEvaluations(fidelityEvaluations);
+    return Object.fromEntries(
+      Object.entries(latest).map(([versionId, evaluation]) => [
+        versionId,
+        fidelityView(evaluation, versionId),
+      ]),
+    );
+  }, [fidelityEvaluations]);
+
+  const fidelitySummary = useMemo(() => {
+    const focusVersionId =
+      fidelityFocusVersionId ||
+      activePreview?.version_id ||
+      Object.keys(fidelityByVersion)[0] ||
+      null;
+    return fidelityByVersion[focusVersionId] || fidelityView(null, focusVersionId);
+  }, [
+    activePreview?.version_id,
+    fidelityByVersion,
+    fidelityFocusVersionId,
+  ]);
+
+  const previewAnswers = useMemo(() => {
+    if (!activePreview) return [];
+    const sessionId =
+      voice.session?.session_id || activePreview.session_id || null;
+    return (voice.transcripts || [])
+      .filter(
+        (line) =>
+          line.speaker === "assistant" &&
+          line.final === true &&
+          line.heard === true &&
+          line.previewProvenance,
+      )
+      .map((line) => {
+        const answer = {
+          answer_id: `${sessionId || "preview"}:${line.turnId}:${line.generationId}`,
+          session_id: sessionId,
+          turn_id: line.turnId,
+          generation_id: line.generationId,
+          tool_epoch: line.toolEpoch,
+          text: line.text,
+          epistemic_status: line.epistemic_status,
+          disclosures: line.disclosures || [],
+          source_refs: line.source_refs || [],
+          version_id: line.version_id,
+          manifest_sha256: line.manifest_sha256,
+        };
+        return {
+          ...answer,
+          ...(previewSourceDetails[previewAnswerKey(answer)] || {}),
+        };
+      });
+  }, [
+    activePreview,
+    previewSourceDetails,
+    voice.session?.session_id,
+    voice.transcripts,
+  ]);
 
   const loadMemories = useCallback(async () => {
     if (!userId) return;
@@ -295,6 +503,10 @@ export function App() {
   const sessionCompanion = companionById(
     voice.session?.interaction?.companion_style_id || profile.companion_id,
   );
+  const selfPreviewSession =
+    activePreview?.status === "starting" ||
+    activePreview?.status === "running" ||
+    voice.session?.interaction?.interaction_mode === "self_preview";
 
   const runSummary = async () => {
     setSummaryRunning(true);
@@ -310,8 +522,233 @@ export function App() {
     }
   };
 
+  const stopSelfPreview = useCallback(async () => {
+    const preview = activePreview;
+    const grantId =
+      preview?.grant_id ||
+      voice.session?.interaction?.preview_grant_id ||
+      null;
+    if (!preview && !grantId) {
+      await voice.end();
+      return;
+    }
+    setPreviewBusy("self-preview-stop");
+    setActivePreview((current) =>
+      current ? { ...current, status: "stopping" } : current,
+    );
+    try {
+      await voice.end();
+    } finally {
+      if (grantId) {
+        await revokeSelfPreviewGrant(grantId).catch(() => undefined);
+      }
+      setActivePreview((current) =>
+        !grantId || current?.grant_id === grantId ? null : current,
+      );
+      setPreviewSourceDetails({});
+      setPreviewBusy("");
+      await refreshSelfPreviewState().catch(() => undefined);
+    }
+  }, [
+    activePreview,
+    refreshSelfPreviewState,
+    voice.end,
+    voice.session?.interaction?.preview_grant_id,
+  ]);
+
+  const startSelfPreview = useCallback(
+    async ({ versionId, manifestSha256, password, perspective }) => {
+      if (voice.session) {
+        throw new Error("请先结束当前陪伴对话，再进入数字分身预览。");
+      }
+      setPreviewBusy("self-preview-start");
+      setPreviewSourceDetails({});
+      let grant = null;
+      try {
+        grant = await issueSelfPreviewGrant({
+          versionId,
+          manifestSha256,
+          password,
+          perspective,
+        });
+        setActivePreview({ ...grant, status: "starting" });
+        const created = await voice.start({
+          interactionMode: "self_preview",
+          previewGrantId: grant.grant_id,
+        });
+        if (!created) {
+          throw new Error("数字分身预览会话没有建立，请重新确认后再试。");
+        }
+        const interaction = created.interaction || {};
+        const runningPreview = {
+          ...grant,
+          status: "running",
+          session_id: created.session_id,
+          version_id: interaction.digital_self_version_id,
+          manifest_sha256: interaction.manifest_sha256,
+          perspective: interaction.perspective,
+        };
+        setActivePreview(runningPreview);
+        setFidelityFocusVersionId(runningPreview.version_id);
+        setDigitalSelfOpen(false);
+        setActiveTab("home");
+        return runningPreview;
+      } catch (error) {
+        await voice.end().catch(() => undefined);
+        if (grant?.grant_id) {
+          await revokeSelfPreviewGrant(grant.grant_id).catch(() => undefined);
+        }
+        setActivePreview(null);
+        setPreviewSourceDetails({});
+        throw error;
+      } finally {
+        setPreviewBusy("");
+      }
+    },
+    [voice.end, voice.session, voice.start],
+  );
+
+  const expandSelfPreviewSources = useCallback(async (answer) => {
+    const result = await getSelfPreviewSources({
+      sessionId: answer.session_id,
+      turnId: answer.turn_id,
+      generationId: answer.generation_id,
+      toolEpoch: answer.tool_epoch,
+    });
+    setPreviewSourceDetails((current) => ({
+      ...current,
+      [previewAnswerKey(answer)]: { sources_expanded: result.items },
+    }));
+    return result.items;
+  }, []);
+
+  const submitPreviewFeedback = useCallback(
+    async (answer, { action, correction }) => {
+      const targetSourceEventIds = [
+        ...new Set(
+          (answer.source_refs || []).flatMap((source) => {
+            if (Array.isArray(source.source_event_ids)) {
+              return source.source_event_ids;
+            }
+            return source.source_event_id ? [source.source_event_id] : [];
+          }),
+        ),
+      ];
+      const result = await submitSelfPreviewFeedback({
+        sessionId: answer.session_id,
+        turnId: answer.turn_id,
+        generationId: answer.generation_id,
+        toolEpoch: answer.tool_epoch,
+        versionId: answer.version_id,
+        manifestSha256: answer.manifest_sha256,
+        action,
+        targetSourceEventIds,
+        correctionText: correction || null,
+      });
+      await stopSelfPreview();
+      setFidelityFocusVersionId(answer.version_id);
+      await refreshSelfPreviewState().catch(() => undefined);
+      return result;
+    },
+    [refreshSelfPreviewState, stopSelfPreview],
+  );
+
+  const startFidelity = useCallback(
+    async (version, password) => {
+      setPreviewBusy("fidelity-start");
+      try {
+        const evaluation = await startFidelityEvaluation({
+          versionId: version.version_id,
+          manifestSha256: version.manifest_sha256,
+          password,
+        });
+        return upsertFidelityEvaluation(evaluation);
+      } finally {
+        setPreviewBusy("");
+      }
+    },
+    [upsertFidelityEvaluation],
+  );
+
+  const submitFidelityChoice = useCallback(
+    async ({ itemId, preferredSlot, versionId }) => {
+      const evaluation =
+        latestFidelityEvaluations(fidelityEvaluations)[versionId];
+      if (!evaluation) {
+        throw new Error("忠实度评测状态已经变化，请重新开始。");
+      }
+      setPreviewBusy("fidelity-choice");
+      try {
+        const updated = await chooseFidelityTrial({
+          evaluationId: evaluation.evaluation_id,
+          trialId: itemId,
+          preferredSlot,
+        });
+        return upsertFidelityEvaluation(updated);
+      } finally {
+        setPreviewBusy("");
+      }
+    },
+    [fidelityEvaluations, upsertFidelityEvaluation],
+  );
+
+  const finishFidelity = useCallback(
+    async ({ evaluationId, verdict, rationale }) => {
+      setPreviewBusy("fidelity-verdict");
+      try {
+        const updated = await completeFidelityEvaluation({
+          evaluationId,
+          verdict,
+          rationale: rationale || null,
+        });
+        upsertFidelityEvaluation(updated);
+        await refreshSelfPreviewState().catch(() => undefined);
+        return updated;
+      } finally {
+        setPreviewBusy("");
+      }
+    },
+    [refreshSelfPreviewState, upsertFidelityEvaluation],
+  );
+
+  useEffect(() => {
+    if (
+      activePreview?.status !== "running" ||
+      voice.session ||
+      voice.uiState !== "closed"
+    ) {
+      return;
+    }
+    const grantId = activePreview.grant_id;
+    setPreviewBusy("self-preview-stop");
+    setActivePreview((current) =>
+      current ? { ...current, status: "stopping" } : current,
+    );
+    void (async () => {
+      await revokeSelfPreviewGrant(grantId).catch(() => undefined);
+      setActivePreview((current) =>
+        current?.grant_id === grantId ? null : current,
+      );
+      setPreviewSourceDetails({});
+      setPreviewBusy("");
+      await refreshSelfPreviewState().catch(() => undefined);
+    })();
+  }, [
+    activePreview,
+    refreshSelfPreviewState,
+    voice.session,
+    voice.uiState,
+  ]);
+
   const finishConversation = async () => {
     const endingSession = voice.session;
+    if (
+      activePreview ||
+      endingSession?.interaction?.interaction_mode === "self_preview"
+    ) {
+      await stopSelfPreview();
+      return;
+    }
     await voice.end();
     if (
       activeGrowthTask?.kind === "natural_chat" &&
@@ -426,6 +863,12 @@ export function App() {
     setPreferenceSaving(false);
     setPreferenceError("");
     setActiveGrowthTask(null);
+    setSelfPreviewCapability(null);
+    setActivePreview(null);
+    setPreviewSourceDetails({});
+    setPreviewBusy("");
+    setFidelityEvaluations([]);
+    setFidelityFocusVersionId("");
     growthCompletionIdsRef.current = {};
     setEditingProfile(false);
     setDigitalSelfOpen(false);
@@ -437,6 +880,12 @@ export function App() {
   };
 
   const handleLogout = async (allDevices) => {
+    if (
+      activePreview ||
+      voice.session?.interaction?.interaction_mode === "self_preview"
+    ) {
+      await stopSelfPreview();
+    }
     await (allDevices ? logoutAllDevices() : logoutCurrentDevice());
     await handleAccountDeleted();
   };
@@ -538,6 +987,20 @@ export function App() {
               </button>
             </header>
 
+            {selfPreviewSession && (
+              <article className="self-preview-home-disclosure" role="note">
+                <ShieldCheck size={19} weight="fill" aria-hidden="true" />
+                <div>
+                  <strong>数字分身预览，不代表本人</strong>
+                  <span>
+                    固定版本 {activePreview?.manifest_sha256?.slice(0, 8) || "校验中"}
+                    {" · "}
+                    仅受控模拟，不写入主人历史
+                  </span>
+                </div>
+              </article>
+            )}
+
             <div className="voice-status-row">
               <div className="status-pill" data-state={voice.uiState} role="status">
                 <span className="status-dot" />
@@ -551,9 +1014,11 @@ export function App() {
                 uiState={voice.uiState}
                 companionId={sessionCompanion.id}
                 active={Boolean(voice.session)}
-                disabled={voice.uiState === "connecting"}
+                disabled={
+                  voice.uiState === "connecting" || Boolean(previewBusy)
+                }
                 onActivate={() => {
-                  if (!voice.session) void voice.start();
+                  if (!voice.session && !previewBusy) void voice.start();
                 }}
               />
             </div>
@@ -565,7 +1030,9 @@ export function App() {
                 >
                   <span>
                     {voice.latestTranscript.speaker === "assistant"
-                      ? sessionCompanion.name
+                      ? selfPreviewSession
+                        ? "数字分身"
+                        : sessionCompanion.name
                       : "你"}
                   </span>
                   <p>{voice.latestTranscript.text}</p>
@@ -576,14 +1043,18 @@ export function App() {
                     {voice.uiState === "speaker_enroll"
                       ? "先登记你的声音"
                       : voice.session
-                        ? "想说什么都可以"
+                        ? selfPreviewSession
+                          ? "正在预览已批准的数字分身"
+                          : "想说什么都可以"
                         : "今天想聊点什么？"}
                   </h2>
                   <p>
                     {voice.uiState === "speaker_enroll"
                       ? "请用正常音量连续说大约四秒，例如“我是主人，请记住我的声音”。登记后会优先听你，减少旁边人插话。"
                       : voice.session
-                        ? "不用按住按钮，我会听完再回应。"
+                        ? selfPreviewSession
+                          ? "回答会标明事实、推断或未知；可在数字心智中展开来源并纠正。"
+                          : "不用按住按钮，我会听完再回应。"
                         : "轻触吉祥物，开始一次实时语音对话。"}
                   </p>
                 </div>
@@ -663,6 +1134,26 @@ export function App() {
             <DigitalSelfPanel
               onBack={() => setDigitalSelfOpen(false)}
               voiceSessionActive={Boolean(voice.session)}
+              accountType={identity.account_type}
+              selfPreviewCapability={selfPreviewCapability}
+              activePreview={activePreview}
+              previewAnswers={previewAnswers}
+              previewBusy={previewBusy}
+              fidelitySummary={fidelitySummary}
+              fidelityByVersion={fidelityByVersion}
+              onStartPreview={startSelfPreview}
+              onStopPreview={stopSelfPreview}
+              onExpandPreviewSources={expandSelfPreviewSources}
+              onSubmitPreviewFeedback={submitPreviewFeedback}
+              onStartFidelity={startFidelity}
+              onSubmitFidelity={submitFidelityChoice}
+              onCompleteFidelity={finishFidelity}
+              onSelectFidelityVersion={(version) =>
+                setFidelityFocusVersionId(version.version_id)
+              }
+              onOpenFidelity={(version) =>
+                setFidelityFocusVersionId(version.version_id)
+              }
               onStartChat={(task) => {
                 if (task?.kind === "natural_chat" && task.status === "active") {
                   setActiveGrowthTask(task);
