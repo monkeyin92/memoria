@@ -1,7 +1,7 @@
 # Memoria“硅基生命”建设实施计划
 
 > 日期：2026-07-22  
-> 状态：IN_PROGRESS  
+> 状态：IMPLEMENTATION_COMPLETE / DEPLOYED（外部真人声音与设备验收待办）
 > 基线：Git `98b04727b5521f9ffdd4061c3bc5a95b538d0bde`；H5-only  
 > 分支：`codex/silicon-life-roadmap`
 
@@ -48,7 +48,7 @@
 | Cognitive / Decision / Relationship policy | 局部或缺失 | 新增一等领域模型，来源强制可追溯 |
 | approved personal voice runtime | 明确未接入豆包主链 | 官方能力确认和盲测后独立接入 |
 | 本地质量基线 | Python/H5 当前全量通过 | 关闭 85% coverage 正式门槛 |
-| 当前线上 | `20260721-224804` ready | 最终以可追溯 Git commit 新发布替换 |
+| 当前线上 | `20260723-192611` ready | 已由可追溯 commit/tag 与不可变工件发布 |
 
 ## 4. 默认产品决策
 
@@ -396,7 +396,7 @@ FORCE RLS、跨 grantee、scope、声音、会话/Planner/Agent/Archive、治理
 
 ### S10：全量门禁、部署与公开验收
 
-状态：IN_PROGRESS（2026-07-23）
+状态：DEPLOYED / EXTERNAL_DEVICE_ACCEPTANCE_PENDING（2026-07-23）
 
 顺序：schema/迁移预演 -> 离线 E2E -> Provider smoke -> 隔离候选 -> runtime-first -> H5-last -> IP/域名 -> 真实浏览器/设备 -> 15 分钟观察 -> 回滚演练。
 
@@ -414,14 +414,36 @@ uv run python scripts/run_e2e.py --profile offline
 git diff --check
 ```
 
-最终逐项验证：
+完成证据：
 
-- IP 与域名的 root、H5、SPA、live、ready、静态资源和负向 internal 路由；
-- Companion/Archive/Self Preview/Legacy 正向与越权负例；
-- manifest digest、事实/推断/未知、撤销即时生效、模拟不反哺；
-- approved personal voice 的真机主观验收与安全回退；
-- release 对应干净 Git commit/tag 与不可变 artifact digest；
-- WMS 和同机既有路由不受影响，回滚命令实际可执行。
+- [x] 正式 PostgreSQL 17 + pgvector 全量 1175 passed、3 skipped，覆盖率
+  88.13%；H5 232 tests 与 production build；Ruff、strict mypy、Shell/JSON、
+  Compose、离线 E2E 和 `git diff --check` 通过。
+- [x] schema/迁移恢复预演通过；SQLite 双快照、PostgreSQL custom dump、
+  三份旧 env 与 Nginx 配置均形成 root-only 回滚点。
+- [x] commit-bound tag `20260723-192611`、source/image/H5 不可变 digest、
+  Linux amd64 image ID 与 OCI revision/version label 验证通过。
+- [x] 隔离候选 H5/API/SQLite restart smoke，以及真实 Agent LiveKit 注册、
+  accepted heartbeat 与容器 health 通过。
+- [x] runtime-first 激活后，LiveKit、FunASR、Qwen、Doubao PCM/字时间戳/
+  CancelSession、9/9 core 与 Agent 新鲜 heartbeat 全部通过。
+- [x] Nginx CSP、signed sample `access_log off`、H5-last、183 个历史/当前
+  immutable assets、IP/域名 root/H5/SPA/live/ready 与负向能力门禁通过。
+- [x] WMS active/enabled、443 与 `/wms/` 不受影响；IP/域名证书及 certbot timer 通过。
+- [x] 生产 in-app browser 使用一次性账号验证注册、混合陪伴方案、声纹授权边界、
+  390×844 / 667×375、console 0 warning/error；未请求麦克风，账号已删除。
+- [x] Agent 启动后 15 分 33 秒内 7 次采样均为三容器 healthy/restart 0、
+  readiness/Agent ready、H5 200、WMS active/enabled、错误标记 0。
+- [x] `companion / archive / self_preview / legacy`、manifest、认知/关系、
+  来源状态、撤销和模拟隔离已由本地/集成合同覆盖并部署；生产无真实冻结版本/
+  家庭接收人夹具，因此没有伪造 Legacy/Self Preview 正向用户数据。
+- [ ] approved personal voice 的真实本人样本、synth-ready 映射、本人盲测、
+  真机听感和长句/弱网/打断验收；代码已部署但继续 fail closed。
+- [ ] 200 条授权录音、AEC/噪声/回放攻击/家庭设备矩阵；属于外部设备与样本验收，
+  不阻塞本次工程实施和受控内测部署。
+
+发布记录：
+[`docs/releases/20260723-192611.md`](releases/20260723-192611.md)。
 
 ## 6. 阶段记录规则
 

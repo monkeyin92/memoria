@@ -2,8 +2,9 @@
 
 ## 当前开发目标：硅基生命路线
 
-- 开发分支：`codex/silicon-life-roadmap`；S8 检查点为 `2919516`，S9 已完成本地实现与
-  验收。生产仍保持下节所述 `20260721-224804`，S1–S9 尚未发布。
+- 开发分支：`codex/silicon-life-roadmap`；S1–S10 的代码、生产部署与公开验收已完成。
+  当前 release `20260723-192611` 的 source commit/tag 固定为
+  `0d13d2b22e1d0160529bfd61d2eb1d586ba18d29 / 20260723-192611`。
 - 已完成当前 HEAD/线上/架构差距审计，并新增
   [`docs/silicon-life-implementation-plan.md`](docs/silicon-life-implementation-plan.md)
   与 ADR-0016。产品固定采用“轻人格陪伴者 + 空白成长数字分身”：伙伴只学习如何陪伴，
@@ -194,8 +195,9 @@
   error/warn 为空。approved v1 + active owner voiceprint 已创建 `self_preview / s8-v1`
   会话，并冻结玄墨 `low_magnetic / seed-tts-2.0` fallback；本机无 LiveKit，媒体连接未冒充
   真实音频验收。
-- 未进行真实 provider/sample/device 验收：synth-ready speaker 映射保持 fail closed；未上传
-  本人录音，未宣称个人声音已真实复刻或应用。生产仍是 `20260721-224804`，尚未发布本分支。
+- S8 阶段未进行真实 provider/sample/device 验收：synth-ready speaker 映射保持
+  fail closed；未上传本人录音，未宣称个人声音已真实复刻或应用。该实现随后随
+  `20260723-192611` 部署，但上述外部验收边界没有改变。
 - S8 最终复审无 P0/P1；此前发现的复评门禁、canonical 版本绑定、首 PCM 后重放、
   Archive 精确声音证明和人工删除收敛 5 项 P1 均已有回归测试。
 
@@ -227,15 +229,40 @@
 - 未进行真实 provider/sample/device 验收；未实现死亡认证、遗嘱执行、多执行人、争议冻结、
   异地容灾、PITR、KMS 或分布式一致性。上述均保留为正式商用前待办。
 
+## 硅基生命路线 S10 验证
+
+- `20260723-192611` 已按“runtime-first、H5-last”发布；前一失败候选
+  `20260723-190001` 因 Agent 镜像缺少 `services.archive` 自动回滚，未切 H5，
+  tag 保留且未复用。修复后全量/增量 Agent 镜像统一复制完整 `services/`，
+  生产 Compose 合同 22 tests 和真实 amd64 import/heartbeat 均通过。
+- 新候选在服务器完成固定哈希、release verifier、amd64/OCI label、隔离
+  `smoke_server_deployment.sh`、最小权限 env、PostgreSQL/SQLite 迁移预演、
+  隔离 LiveKit 注册与 Agent heartbeat 验收。
+- runtime 于 2026-07-23 19:47:57 CST 切换；LiveKit、FunASR、Qwen、
+  Doubao PCM/字时间戳/CancelSession、`verify_env` 和 readiness mark/check 均通过。
+  H5 于 19:51:26 CST 最后切换，183 个新旧 immutable assets 逐项 HTTPS 200。
+- 最终 readiness 为 `ready / 20260723-192611`，Agent `ready`，LLM `qwen`、
+  TTS `doubao`、9/9 core ready；三容器 healthy、restart 0。
+- Nginx 已启用 CSP，signed provider sample 路由关闭 access log；IP/域名证书、
+  certbot timer、WMS 共存和公网正/负向门禁均通过。
+- 生产 in-app browser 使用一次性账号验证注册、混合陪伴方案和声纹授权边界：
+  390×844 / 667×375 无水平溢出，console error/warn 为 0；未申请麦克风，
+  账号已永久删除且重新登录为 401。
+- Agent 启动后观察 15 分 33 秒，7 次采样均为 restart 0/healthy、
+  readiness/Agent ready、H5 200、WMS active/enabled、错误标记 0。
+- 详细工件、备份、证书和回滚证据见
+  [`docs/releases/20260723-192611.md`](docs/releases/20260723-192611.md)。
+
 ## 当前生产
 
 - 唯一交付客户端为 H5：
   - <https://122.51.108.140:8443/>
   - <https://aigcnice.com:8443/>
-- runtime/H5 当前 release 均为 `20260721-224804`；固定主链为
+- runtime/H5 当前 release 均为 `20260723-192611`；固定主链为
   FunASR Realtime → 百炼 Qwen → 豆包 Seed-TTS 2.0 双向流式 → LiveKit/H5。
-- `agent / control-api / speaker-model` 均 healthy、restart 0；发布后 15 分钟日志
-  error marker 为 0。readiness 绑定 `20260721-224804`，LLM `qwen`、TTS `doubao`，
+- `agent / control-api / speaker-model` 均 healthy、restart 0；发布后 15 分 33 秒内
+  error marker 为 0。readiness 绑定 `20260723-192611`，Agent `ready`，
+  LLM `qwen`、TTS `doubao`，
   9/9 core checks ready。
 - PostgreSQL 17 + pgvector、MinIO 与 LiveKit 继续独立同机运行；WMS 的 443、
   `/wms/` 和 `/wms/api/` 未改动。
@@ -276,35 +303,43 @@
   runtime 不再消费的 CosyVoice settings/split-env 旧键，以及 Hydra `outputs/`。
 - 新 source artifact 使用 Git clean 文件清单，排除 `__pycache__`、`.pyc`、本地 env、
   Node cache、数据和构建输出；H5 bundle secret-like 扫描通过。
-- 新 H5 union 没有继承 164 个 macOS `._*` AppleDouble 元数据垃圾；保留 178 个真实
+- 当前 H5 union 没有继承 macOS `._*` AppleDouble 元数据垃圾；保留 183 个真实
   新旧 immutable assets。CosyVoice 治理、Omni 隔离 A/B、迁移、ADR 与历史 release
   仍有回滚或取证价值，不误删。
 
 ## 验证与发布证据
 
-- Python：全量 `uv run pytest -q` 退出码 0，`730 tests collected`；Ruff、strict
-  mypy、`git diff --check` 通过。最近一次覆盖率证据为 `82.05%`，仍低于仓库 85%
-  门槛，不能写成 CI 全绿。
-- H5：`138/138`，production build 通过。
-- 服务器候选 smoke：candidate H5、SPA、API、默认/关闭偏好与 SQLite 重启持久化通过。
+- Python：正式临时 PostgreSQL 17 + pgvector 全量 1175 passed、3 skipped、0 failed；
+  总覆盖率 88.13%，orchestration/protocol 均为 92%；Ruff、148 个 strict mypy
+  source files、Shell/JSON、Compose、`git diff --check` 通过。
+- H5：19 files / 232 tests，production build 通过。
+- 服务器候选 smoke：candidate H5、SPA、API、默认/关闭偏好、SQLite 重启持久化、
+  真实 Agent LiveKit 注册和 accepted heartbeat 通过。
 - Provider：LiveKit、FunASR、Qwen、Doubao PCM/字时间戳/CancelSession 全通过；
-  readiness 为 `20260721-224804`、9/9 core ready。
-- 公网：IP/域名 root、H5、SPA、live/ready、新 JS/CSS、负向 internal 路由、Nginx 与
-  WMS 共存通过；178 个真实 union assets 经 SNI loopback 逐项返回成功。
-- 内置浏览器：390×844 与 667×375 无横向溢出，console 0 warning/error；未创建
-  生产测试账号。当前 bundle 为 `index-B2cPI3-1.js` / `index-C6TCaVi0.css`。
-- 发布记录：[`docs/releases/20260721-224804.md`](docs/releases/20260721-224804.md)。
+  readiness 为 `20260723-192611`、Agent ready、9/9 core ready。
+- 公网：IP/域名 root、H5、SPA、live/ready、新 JS/CSS、能力令牌负向门禁、
+  CSP、Nginx、证书续期 timer 与 WMS 共存通过；183 个 union assets 经 HTTPS
+  逐项返回成功。
+- 内置浏览器：生产一次性账号验证注册、混合陪伴方案与声纹授权说明；
+  390×844 与 667×375 无横向溢出，console 0 warning/error，未请求麦克风；
+  账号已删除。
+- 发布记录：
+  [`docs/releases/20260723-192611.md`](docs/releases/20260723-192611.md)。
 
 ## 回滚
 
-- runtime：`20260721-181810`；回滚前恢复：
-  - `/var/backups/memoria/memoria-control-api.env-pre-20260721-224804`
-  - `/var/backups/memoria/memoria-agent.env-pre-20260721-224804`
-- H5：`20260721-181810-rollback-union-20260721-212040`。
+- runtime/H5 回滚点：`20260721-224804`；runtime 回滚前恢复：
+  - `/var/backups/memoria/memoria-control-api.env-pre-20260723-192611`
+  - `/var/backups/memoria/memoria-agent.env-pre-20260723-192611`
+  - `/var/backups/memoria/memoria-speaker-model.env-pre-20260723-192611`
 - SQLite 双快照：
-  - `/var/lib/memoria/memoria-pre-20260721-224804.sqlite3`
-  - `/var/backups/memoria/memoria-pre-20260721-224804.sqlite3`
-- 旧 runtime 可忽略新增 SQLite 列；常规代码回滚不恢复数据库。恢复双 env 后必须以旧
+  - `/var/lib/memoria/memoria-pre-20260723-192611.sqlite3`
+  - `/var/backups/memoria/memoria-pre-20260723-192611.sqlite3`
+- PostgreSQL custom dump：
+  `/var/backups/memoria/memoria-pre-20260723-192611.dump`。
+- Nginx：
+  `/var/backups/memoria/nginx-20260723-192611`。
+- 旧 runtime 可忽略新增表/列；常规代码回滚不恢复数据库。恢复三份 env 后必须以旧
   tag 显式重启 Compose 并刷新 readiness。
 
 ## 已知边界与下一步
@@ -317,5 +352,9 @@
    假装成笑声控制。需单独设计过滤与可验证的笑声降级策略。
 4. 尚未完成 200 条授权录音 FAR/FRR/EER、回放攻击、耳机/扬声器、噪声和弱网矩阵；
    生产 PostgreSQL/MinIO 仍同机，无异地副本/KMS/PITR。
-5. 当前发布来自本地 dirty worktree，Git `HEAD=411b2ea`，尚未提交或推送；生产工件以
-   release artifact SHA-256 为复现依据。
+5. 个人声音代码已部署但继续 fail closed：未完成真实样本、synth-ready provider 映射、
+   本人盲测与真机听感，不能宣称已经复刻或应用本人声音。
+6. 传承运行时已部署，但尚未用真实家庭关系、冻结版本和接收人做生产正向会话；死亡认证、
+   遗嘱执行、多执行人和争议冻结仍不在当前能力内。
+7. IP 证书有效至 2026-07-26 21:15:49 UTC，certbot timer 当前 active/enabled；
+   到期前继续监控自动续期与 Nginx reload。
