@@ -154,7 +154,11 @@ def test_runtime_images_include_voice_registries_needed_by_agent_and_legacy_prev
     control_dockerfile = (ROOT / "infra" / "Dockerfile.control-api").read_text(encoding="utf-8")
     delta_builder = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
 
-    assert "COPY services/speaker ./services/speaker" in agent_dockerfile
+    # Agent imports shared evidence policy which imports services.archive.domain.
+    # Keep full and delta images aligned so a locally green release cannot omit
+    # a transitive runtime module.
+    assert "COPY services ./services" in agent_dockerfile
+    assert delta_builder.count("COPY services ./services") == 2
     doubao_registry = "COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json"
     cosyvoice_registry = (
         "COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json"

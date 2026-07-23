@@ -30,11 +30,8 @@ RUN uv export --frozen --no-dev --no-emit-project --no-header --no-annotate \
     && rm /tmp/requirements.production.txt
 
 COPY README.md ./
-COPY services/agent ./services/agent
-COPY services/common ./services/common
-COPY services/speaker ./services/speaker
+COPY services ./services
 COPY packages ./packages
-COPY services/__init__.py ./services/__init__.py
 COPY scripts/verify_env.py scripts/livekit_smoke_test.py scripts/provider_smoke_test.py ./scripts/
 # Reviewed runtime voice maps (no secrets).
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json

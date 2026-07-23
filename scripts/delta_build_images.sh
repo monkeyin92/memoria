@@ -66,10 +66,8 @@ LABEL org.opencontainers.image.revision="\${MEMORIA_RELEASE_COMMIT}" \\
       com.memoria.release.role="agent"
 USER root
 WORKDIR /app
-COPY services/agent ./services/agent
-COPY services/common ./services/common
+COPY services ./services
 COPY packages ./packages
-COPY services/__init__.py ./services/__init__.py
 COPY scripts/verify_env.py scripts/livekit_smoke_test.py scripts/provider_smoke_test.py ./scripts/
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json
