@@ -2,9 +2,8 @@
 
 ## 当前开发目标：硅基生命路线
 
-- 开发分支：`codex/silicon-life-roadmap`；基线为已提交并推送的
-  `98b04727b5521f9ffdd4061c3bc5a95b538d0bde`。生产仍保持下节所述
-  `20260721-224804`，本分支尚未发布。
+- 开发分支：`codex/silicon-life-roadmap`；S8 检查点为 `2919516`，S9 已完成本地实现与
+  验收。生产仍保持下节所述 `20260721-224804`，S1–S9 尚未发布。
 - 已完成当前 HEAD/线上/架构差距审计，并新增
   [`docs/silicon-life-implementation-plan.md`](docs/silicon-life-implementation-plan.md)
   与 ADR-0016。产品固定采用“轻人格陪伴者 + 空白成长数字分身”：伙伴只学习如何陪伴，
@@ -31,11 +30,16 @@
 - S7 已完成：owner-only Self Preview、来源展开、“不像我”/纠正负面证据、
   版本比较、holdout Fidelity Evaluation、owner step-up、active speaker gate、
   exact preview provenance、stale/version gate 与 H5 预览工作台均已打通。
-- S8 代码与本地自动化已完成：Doubao Voice Clone adapter、manifest v3 个人音色引用、
+- S8 已提交为 `2919516`：Doubao Voice Clone adapter、manifest v3 个人音色引用、
   session 七字段冻结、所选伙伴独立 fallback、seed-tts/seed-icl 独立资源池、
   generation-bound 实际音色 provenance、
   首音频前一次安全回退和 H5 启用/版本重建流程均已落地。真实样本、synth speaker 映射、
-  本人盲测和真机听感仍是明确外部验收项；下一阶段进入 S9 Legacy。
+  本人盲测和真机听感仍是明确外部验收项。
+- S9 已完成：新增 `LegacyAccessResolver` seam，明确区分 actor、Digital Self owner 与
+  speaker subject；grant 固定 frozen version/manifest、approved relationship、exact item
+  scope、声音权限和时效；grantee 关系外壳与 owner core 分离，不走 owner 学习管道。
+  owner 可在世预演、激活和撤销；registered grantee 仅在 active、未过期、未撤销时进入；
+  每 generation 重验 scope、response plan 与实际音色，失败回到冻结设计音色或安全拒答。
 - 本轮不建设分布式、多区域、KMS、异地副本或 PITR；保留为正式商用前待办。当前
   response-plan first-write-wins 快照依赖 Control API 单进程，扩展到多副本前必须迁移到
   共享一致性存储。遗嘱、死亡认证与法律执行也不在当前工程能力内。
@@ -194,6 +198,34 @@
   本人录音，未宣称个人声音已真实复刻或应用。生产仍是 `20260721-224804`，尚未发布本分支。
 - S8 最终复审无 P0/P1；此前发现的复评门禁、canonical 版本绑定、首 PCM 后重放、
   Archive 精确声音证明和人工删除收敛 5 项 P1 均已有回归测试。
+
+## 硅基生命路线 S9 验证
+
+- `LegacyGrant` 固定一个 registered grantee、一个 exact frozen
+  `DigitalSelfVersion + manifest_sha256`、一个 approved `RelationshipProfile`、manifest
+  allowlist、声音权限、激活/到期/撤销状态和一个独立 `LegacyRelationshipShell`。
+- owner 在激活前只可预演且不写 shell；grantee 只有在授权 active、未过期、未撤销时可进入。
+  shell 只接收 actual-heard 的 grantee / digital-self 对话与白名单互动偏好，不进入 owner
+  Evidence、Memory、Persona、Growth 或普通消息，也不能修改 owner core。
+- 每轮 response plan、来源读取、声音选择、拒绝与归档都重验 exact grant/version/manifest/
+  relationship/scope/fence；personal voice 只在 exact 版本且授权有效时使用，失败回退到会话
+  冻结的设计音色，音色与计划不一致时停止回答。
+- 最小审计只保存 actor/owner/grantee/grant/shell/session/fence/target 等 ID、固定动作、
+  决定、原因与时间；不保存 query、prompt、source excerpt、response text 或自由 payload。
+  SQLite/PostgreSQL、FORCE RLS、跨账户 404、账户导出/删除与 refresh/revoke/expiry 均有回归。
+- 当前 manifest v1/v2/v3 没有统一的可分享范围字段，因此首版严格 fail closed：
+  Memory 仅允许明确 `family/public` 的 `sensitive_domain`，Persona 暂不授权，
+  Cognitive/Decision/Relationship 仅允许明确 `family/public` 的 `sharing_scope`。
+  后续可通过 manifest v4 或本人逐项分享审核扩展，但不能自动放宽既有授权。
+- 正式临时 PostgreSQL 17 + pgvector 全量：1175 passed、3 skipped、0 failed；总覆盖率
+  88.13%，orchestration 92%，protocol 92%。H5 19 files / 232 tests 与 production build
+  通过；Ruff、148 个 strict mypy source files、Shell/JSON、Compose、
+  `git diff --check` 和离线 ASR→LLM→TTS E2E 通过。
+- In-app browser：390×844 与 667×375 均可从“数字心智与声音”进入“传承模式”，显示
+  “基于冻结资料生成的数字分身，不是本人”，授权人/接收人视角可切换且无水平溢出；
+  console error/warn 为空。验收仅使用隔离本地账号和空授权状态，未采集真实声音。
+- 未进行真实 provider/sample/device 验收；未实现死亡认证、遗嘱执行、多执行人、争议冻结、
+  异地容灾、PITR、KMS 或分布式一致性。上述均保留为正式商用前待办。
 
 ## 当前生产
 

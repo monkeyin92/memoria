@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,22 +15,40 @@ from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.object_store import EncryptedLocalObjectStore
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.security import hash_password
+from services.digital_self.compiler import build_manifest
+from services.digital_self.domain import (
+    DigitalSelfVersion,
+    MemoryClaimManifestEntry,
+    RelationshipProfileManifestEntry,
+)
 from services.digital_self.preview import (
     FIDELITY_CATEGORIES,
     FidelityTrialSpec,
     SelfPreviewRegistry,
 )
+from services.digital_self.registry import DigitalSelfRegistry
 from services.governance.account_data import (
     AccountDataGovernance,
     AccountDeletionIncompleteError,
     AccountDeletionWorker,
     SqliteAccountRepository,
 )
+from services.legacy.domain import (
+    LegacyAccountExport,
+    LegacyFence,
+    LegacyGrant,
+    LegacyManifestItemRef,
+    RegisteredGranteeSnapshot,
+)
+from services.legacy.registry import LegacyRegistry
+from services.self_model.domain import RelationshipProfile
 from services.self_model.registry import SelfModelRegistry
 from services.speaker.authority import SpeakerAuthority
 from services.speaker.domain import EmbeddingResult, EnrollmentRequest, EnrollmentSample
 from services.voice_profile.domain import ProviderVoice, VoiceEnrollmentRequest
 from services.voice_profile.manager import VoiceProfileManager
+
+_LEGACY_NOW = datetime(2026, 7, 23, 8, 0, tzinfo=UTC)
 
 
 class EmbeddingStub:
@@ -117,6 +136,150 @@ class LateArchiveWriteRepository:
 
     async def remaining_account_rows(self, account_id: str) -> dict[str, int]:
         return await self._delegate.remaining_account_rows(account_id)
+
+
+class LegacyDeleteRetryProbe:
+    """Fail once, then leave rows once so both retry and final verification are exercised."""
+
+    def __init__(self, delegate: LegacyRegistry) -> None:
+        self._delegate = delegate
+        self.delete_calls = 0
+
+    async def export_for_account(self, *, account_id: str) -> LegacyAccountExport:
+        return await self._delegate.export_for_account(account_id=account_id)
+
+    async def delete_for_account(self, *, account_id: str) -> None:
+        self.delete_calls += 1
+        if self.delete_calls == 1:
+            raise RuntimeError("legacy registry temporarily unavailable")
+        if self.delete_calls == 2:
+            return
+        await self._delegate.delete_for_account(account_id=account_id)
+
+
+async def _seed_legacy(
+    path: Path,
+    *,
+    owner_account_id: str = "account-governance",
+    grantee_account_id: str = "legacy-grantee",
+) -> tuple[LegacyRegistry, LegacyGrant, str, DigitalSelfVersion]:
+    relationship_entry = RelationshipProfileManifestEntry(
+        profile_id="11111111-1111-4111-8111-111111111111",
+        version_number=3,
+        person_id="legacy-person",
+        relationship_id="22222222-2222-4222-8222-222222222222",
+        salutation="小梅",
+        tone="warm",
+        advice_style="listen-first",
+        sharing_scope="family",
+        boundaries=("不替代专业意见",),
+        support_source_event_ids=("governance-evidence",),
+        counterexample_source_event_ids=(),
+    )
+    memory_entry = MemoryClaimManifestEntry(
+        claim_id="legacy-memory",
+        category="life_story",
+        subject_key="owner",
+        predicate="lived_in",
+        value="杭州",
+        confidence=0.95,
+        sensitive_domain="family",
+        extractor_version="v1",
+        source_event_id="governance-evidence",
+        valid_at=_LEGACY_NOW.isoformat(),
+    )
+    manifest, manifest_bytes, manifest_sha256 = build_manifest(
+        (memory_entry, relationship_entry),
+        compiler_version="digital-self-compiler-v3",
+        policy_version="digital-self-policy-v3",
+        persona_version_id=None,
+        parent_version_id=None,
+    )
+    version = DigitalSelfVersion(
+        version_id="33333333-3333-4333-8333-333333333333",
+        account_id=owner_account_id,
+        version_number=7,
+        status="frozen",
+        manifest=manifest,
+        manifest_sha256=manifest_sha256,
+        created_at=_LEGACY_NOW,
+    )
+    digital_self = DigitalSelfRegistry.sqlite(path)
+    digital_self.initialize()
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO digital_self_versions (
+                version_id, account_id, version_number, status, manifest_json,
+                manifest_sha256, source_summary_sha256, parent_version_id,
+                rollback_target_version_id, created_at
+            ) VALUES (?, ?, ?, 'frozen', ?, ?, ?, NULL, NULL, ?)
+            """,
+            (
+                version.version_id,
+                owner_account_id,
+                version.version_number,
+                manifest_bytes.decode("utf-8"),
+                manifest_sha256,
+                manifest.source_summary.source_summary_sha256,
+                _LEGACY_NOW.isoformat(),
+            ),
+        )
+    relationship = RelationshipProfile(
+        profile_id=relationship_entry.profile_id,
+        account_id=owner_account_id,
+        version_number=relationship_entry.version_number,
+        person_id=relationship_entry.person_id,
+        relationship_id=relationship_entry.relationship_id,
+        salutation=relationship_entry.salutation,
+        tone=relationship_entry.tone,
+        advice_style=relationship_entry.advice_style,
+        sharing_scope=relationship_entry.sharing_scope,
+        boundaries=relationship_entry.boundaries,
+        status="approved",
+        unresolved_conflict=False,
+        sources=(),
+        owner_reviewed_at=_LEGACY_NOW,
+        step_up_verified=True,
+        created_at=_LEGACY_NOW,
+    )
+    registry = LegacyRegistry.sqlite(path)
+    grant = await registry.issue(
+        owner_account_id=owner_account_id,
+        grantee=RegisteredGranteeSnapshot(grantee_account_id, _LEGACY_NOW),
+        version=version,
+        relationship_profile=relationship,
+        allowed_items=(LegacyManifestItemRef("memory_claim", memory_entry.claim_id),),
+        visibility="family",
+        voice_allowed=True,
+        expires_at=_LEGACY_NOW + timedelta(days=30),
+        idempotency_key="governance-legacy-issue",
+        now=_LEGACY_NOW,
+    )
+    grant = await registry.activate(
+        actor_account_id=owner_account_id,
+        grant_id=grant.grant_id,
+        expected_grant_snapshot_sha256=grant.grant_snapshot_sha256,
+        idempotency_key="governance-legacy-activate",
+        now=_LEGACY_NOW + timedelta(minutes=1),
+    )
+    access = await registry.resolve_access(
+        actor_account_id=grantee_account_id,
+        grant_id=grant.grant_id,
+        purpose="grantee_session",
+        now=_LEGACY_NOW + timedelta(minutes=2),
+    )
+    assert access.shell_id is not None
+    await registry.append_shell_turn(
+        actor_account_id=grantee_account_id,
+        shell_id=access.shell_id,
+        actor_role="digital_self",
+        actual_heard_text="我实际听到了这段传承回答。",
+        fence=LegacyFence("legacy-session", "turn-1", "generation-1", 2),
+        idempotency_key="governance-legacy-turn",
+        now=_LEGACY_NOW + timedelta(minutes=3),
+    )
+    return registry, grant, access.shell_id, version
 
 
 async def _fixture(
@@ -481,6 +644,165 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
 
 
 @pytest.mark.asyncio
+async def test_account_export_and_owner_deletion_cover_complete_legacy_lifecycle(
+    tmp_path: Path,
+) -> None:
+    (
+        _governance,
+        store,
+        _archive,
+        _speaker,
+        voice,
+        _provider,
+        terminator,
+        archive_objects,
+        _archive_reference,
+    ) = await _fixture(tmp_path)
+    legacy, grant, shell_id, _version = await _seed_legacy(store.path)
+    governance = AccountDataGovernance(
+        memory_store=store,
+        archive_repository=SqliteAccountRepository.archive(store.path),
+        speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
+        voice_profiles=voice,
+        legacy_registry=legacy,
+        archive_object_store=archive_objects,
+        session_terminator=terminator,
+    )
+
+    exported = await governance.export_account("account-governance")
+    json.dumps(exported, ensure_ascii=False, sort_keys=True)
+    legacy_section = exported["sections"]["legacy"]
+
+    assert [item["grant_id"] for item in legacy_section["grants"]] == [grant.grant_id]
+    assert [item["shell_id"] for item in legacy_section["shells"]] == [shell_id]
+    assert [item["actual_heard_text"] for item in legacy_section["shell_turns"]] == [
+        "我实际听到了这段传承回答。"
+    ]
+    assert {event["action"] for event in legacy_section["audit_events"]} >= {
+        "issue",
+        "activate",
+        "resolve_access",
+        "append_shell_turn",
+    }
+    assert isinstance(legacy_section["grants"][0]["expires_at"], str)
+    assert isinstance(legacy_section["shell_turns"][0]["occurred_at"], str)
+
+    result = await governance.delete_account("account-governance")
+
+    assert result["status"] == "completed"
+    assert await legacy.export_for_account(account_id="account-governance") == LegacyAccountExport(
+        (), (), (), ()
+    )
+    assert await legacy.export_for_account(account_id="legacy-grantee") == LegacyAccountExport(
+        (), (), (), ()
+    )
+
+
+@pytest.mark.asyncio
+async def test_grantee_deletion_removes_shared_legacy_data_without_owner_core(
+    tmp_path: Path,
+) -> None:
+    (
+        _governance,
+        store,
+        _archive,
+        _speaker,
+        voice,
+        _provider,
+        terminator,
+        archive_objects,
+        _archive_reference,
+    ) = await _fixture(tmp_path)
+    store.register_account(
+        user_id="legacy-grantee",
+        username="legacy-grantee",
+        username_normalized="legacy-grantee",
+        password_hash=hash_password("safe-passphrase"),
+        now=_LEGACY_NOW.isoformat(),
+    )
+    legacy, _grant, _shell_id, version = await _seed_legacy(store.path)
+    digital_self = DigitalSelfRegistry.sqlite(store.path)
+    self_model = SelfModelRegistry.sqlite(store.path)
+    owner_claims = await self_model.cognitive_claims(account_id="account-governance")
+    governance = AccountDataGovernance(
+        memory_store=store,
+        archive_repository=SqliteAccountRepository.archive(store.path),
+        speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
+        voice_profiles=voice,
+        legacy_registry=legacy,
+        archive_object_store=archive_objects,
+        session_terminator=terminator,
+    )
+
+    result = await governance.delete_account("legacy-grantee")
+
+    assert result["status"] == "completed"
+    assert await legacy.export_for_account(account_id="account-governance") == LegacyAccountExport(
+        (), (), (), ()
+    )
+    assert await legacy.export_for_account(account_id="legacy-grantee") == LegacyAccountExport(
+        (), (), (), ()
+    )
+    assert await digital_self.get(
+        account_id="account-governance", version_id=version.version_id
+    ) == version
+    assert await self_model.cognitive_claims(
+        account_id="account-governance"
+    ) == owner_claims
+    assert store.get_account(user_id="account-governance") is not None
+
+
+@pytest.mark.asyncio
+async def test_legacy_deletion_is_retried_and_rechecked_before_verified_empty(
+    tmp_path: Path,
+) -> None:
+    (
+        _governance,
+        store,
+        _archive,
+        _speaker,
+        voice,
+        _provider,
+        terminator,
+        archive_objects,
+        _archive_reference,
+    ) = await _fixture(tmp_path)
+    store.register_account(
+        user_id="legacy-grantee",
+        username="legacy-grantee",
+        username_normalized="legacy-grantee",
+        password_hash=hash_password("safe-passphrase"),
+        now=_LEGACY_NOW.isoformat(),
+    )
+    legacy, _grant, _shell_id, _version = await _seed_legacy(store.path)
+    probe = LegacyDeleteRetryProbe(legacy)
+    governance = AccountDataGovernance(
+        memory_store=store,
+        archive_repository=SqliteAccountRepository.archive(store.path),
+        speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
+        voice_profiles=voice,
+        legacy_registry=probe,  # type: ignore[arg-type]
+        archive_object_store=archive_objects,
+        session_terminator=terminator,
+    )
+
+    with pytest.raises(RuntimeError, match="temporarily unavailable"):
+        await governance.delete_account("legacy-grantee")
+
+    pending = store.get_account_deletion(user_id="legacy-grantee")
+    assert pending is not None
+    assert pending["step"] == "sessions_terminated"
+    assert pending["last_error"] == "RuntimeError"
+
+    assert await governance.retry_pending_deletions() == 1
+    assert probe.delete_calls == 3
+    assert await legacy.export_for_account(account_id="account-governance") == LegacyAccountExport(
+        (), (), (), ()
+    )
+    assert store.is_account_deleted(user_id="legacy-grantee") is True
+
+
+@pytest.mark.asyncio
 async def test_provider_failure_keeps_account_retryable_until_external_asset_is_deleted(
     tmp_path: Path,
 ) -> None:
@@ -496,7 +818,7 @@ async def test_provider_failure_keeps_account_retryable_until_external_asset_is_
     pending = store.get_account_deletion(user_id="account-governance")
     assert pending is not None
     assert pending["status"] == "deleting"
-    assert pending["step"] == "sessions_terminated"
+    assert pending["step"] == "legacy_rows_deleted"
     assert pending["last_error"] == "AccountDeletionIncompleteError"
     request_id = pending["request_id"]
     assert store.get_account(user_id="account-governance") is not None

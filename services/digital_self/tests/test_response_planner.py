@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -73,8 +74,19 @@ def _memory(
     )
 
 
-def _actor(account_id: str = "owner-1") -> PlannerActor:
-    return PlannerActor(account_id=account_id)
+def _actor(
+    account_id: str = "owner-1",
+    *,
+    resource_owner_account_id: str | None = None,
+    legacy_actor_role: str | None = None,
+    allowed_items: frozenset[tuple[str, str]] = frozenset(),
+) -> PlannerActor:
+    return PlannerActor(
+        account_id=account_id,
+        resource_owner_account_id=resource_owner_account_id,
+        legacy_actor_role=legacy_actor_role,  # type: ignore[arg-type]
+        legacy_allowed_items=allowed_items,  # type: ignore[arg-type]
+    )
 
 
 def _owner(*, scopes: frozenset[str] = frozenset()) -> PlannerSpeakerDecision:
@@ -206,7 +218,14 @@ def test_plan_enforces_mode_specific_exact_version_state(
 ) -> None:
     plan = DigitalSelfResponsePlanner.plan(
         mode=mode,  # type: ignore[arg-type]
-        actor=_actor(),
+        actor=(
+            _actor(
+                resource_owner_account_id="owner-1",
+                legacy_actor_role="owner_preview",
+            )
+            if mode == "legacy"
+            else _actor()
+        ),
         version=_version(_memory(), status=status),
         query="tea",
         relationship_id=None,
@@ -379,7 +398,12 @@ def test_legacy_requires_an_exact_matching_relationship_and_explicit_scope() -> 
 
     mismatch = DigitalSelfResponsePlanner.plan(
         mode="legacy",
-        actor=_actor(),
+        actor=_actor(
+            "grantee-1",
+            resource_owner_account_id="owner-1",
+            legacy_actor_role="grantee",
+            allowed_items=frozenset({("memory_claim", "memory-1")}),
+        ),
         version=version,
         query="tea",
         relationship_id="other-relationship",
@@ -387,15 +411,24 @@ def test_legacy_requires_an_exact_matching_relationship_and_explicit_scope() -> 
     )
     unauthorized = DigitalSelfResponsePlanner.plan(
         mode="legacy",
-        actor=_actor(),
+        actor=_actor(
+            "grantee-1",
+            resource_owner_account_id="owner-1",
+            legacy_actor_role="grantee",
+        ),
         version=version,
         query="tea",
         relationship_id="relationship-1",
-        speaker_decision=_owner(),
+        speaker_decision=_owner(scopes=frozenset({"family"})),
     )
     allowed = DigitalSelfResponsePlanner.plan(
         mode="legacy",
-        actor=_actor(),
+        actor=_actor(
+            "grantee-1",
+            resource_owner_account_id="owner-1",
+            legacy_actor_role="grantee",
+            allowed_items=frozenset({("memory_claim", "memory-1")}),
+        ),
         version=version,
         query="tea",
         relationship_id="relationship-1",
@@ -407,6 +440,194 @@ def test_legacy_requires_an_exact_matching_relationship_and_explicit_scope() -> 
     assert allowed.epistemic_status == "fact"
     assert allowed.voice_target.salutation == "Aunt Mei"
     assert allowed.voice_target.boundaries == ("No financial details.",)
+
+
+@pytest.mark.parametrize(
+    ("entry", "item_ref", "query"),
+    (
+        (_memory(claim_id="private-memory"), ("memory_claim", "private-memory"), "tea"),
+        (
+            CognitiveClaimManifestEntry(
+                claim_id="private-cognitive",
+                claim_type="belief",
+                statement="private belief",
+                context="private",
+                confidence=0.9,
+                sharing_scope="private",
+                support_source_event_ids=("private-cognitive-source",),
+                counterexample_source_event_ids=(),
+            ),
+            ("cognitive_claim", "private-cognitive"),
+            "private belief",
+        ),
+        (
+            DecisionCaseManifestEntry(
+                case_id="private-decision",
+                kind="real",
+                context="private decision",
+                options=("a", "b"),
+                constraints=(),
+                chosen_option="a",
+                rejected_options=("b",),
+                outcome="private",
+                reflection="private",
+                still_endorsed=True,
+                sharing_scope="private",
+                support_source_event_ids=("private-decision-source",),
+                counterexample_source_event_ids=(),
+            ),
+            ("decision_case", "private-decision"),
+            "private decision",
+        ),
+    ),
+)
+def test_legacy_defensively_rejects_private_allowlisted_items(
+    entry: object,
+    item_ref: tuple[str, str],
+    query: str,
+) -> None:
+    relationship = RelationshipProfileManifestEntry(
+        profile_id="relationship-profile-1",
+        version_number=1,
+        person_id="person-1",
+        relationship_id="relationship-1",
+        salutation="Aunt Mei",
+        tone="warm",
+        advice_style="listen first",
+        sharing_scope="family",
+        boundaries=(),
+        support_source_event_ids=("relationship-source",),
+        counterexample_source_event_ids=(),
+    )
+    plan = DigitalSelfResponsePlanner.plan(
+        mode="legacy",
+        actor=_actor(
+            "grantee-1",
+            resource_owner_account_id="owner-1",
+            legacy_actor_role="grantee",
+            allowed_items=frozenset({item_ref}),  # type: ignore[arg-type]
+        ),
+        version=_version(entry, relationship, status="frozen"),
+        query=query,
+        relationship_id=relationship.relationship_id,
+        speaker_decision=_owner(),
+    )
+
+    assert plan.instructions.direct_text == "该资料不在当前授权范围内。"
+    assert plan.grounded_items == ()
+
+
+def test_legacy_defensively_filters_unscoped_persona_and_private_relationship() -> None:
+    persona = PersonaTraitManifestEntry(
+        trait_id="private-persona",
+        persona_version_id="persona-version-1",
+        category="verbal_tic",
+        description="private style",
+        context="private",
+        counterexample="",
+        confidence=0.8,
+        source_event_ids=("private-persona-source",),
+    )
+    relationship = RelationshipProfileManifestEntry(
+        profile_id="relationship-profile-1",
+        version_number=1,
+        person_id="person-1",
+        relationship_id="relationship-1",
+        salutation="Aunt Mei",
+        tone="warm",
+        advice_style="listen first",
+        sharing_scope="family",
+        boundaries=(),
+        support_source_event_ids=("relationship-source",),
+        counterexample_source_event_ids=(),
+    )
+    actor = _actor(
+        "grantee-1",
+        resource_owner_account_id="owner-1",
+        legacy_actor_role="grantee",
+        allowed_items=frozenset({("persona_trait", persona.trait_id)}),
+    )
+    persona_plan = DigitalSelfResponsePlanner.plan(
+        mode="legacy",
+        actor=actor,
+        version=_version(persona, relationship, status="frozen"),
+        query="unmatched",
+        relationship_id=relationship.relationship_id,
+        speaker_decision=_owner(),
+    )
+    private_relationship_plan = DigitalSelfResponsePlanner.plan(
+        mode="legacy",
+        actor=actor,
+        version=_version(persona, replace(relationship, sharing_scope="private"), status="frozen"),
+        query="unmatched",
+        relationship_id=relationship.relationship_id,
+        speaker_decision=_owner(),
+    )
+
+    assert persona_plan.voice_target.persona_traits == ()
+    assert all(ref.entry_type != "persona_trait" for ref in persona_plan.provenance.source_refs)
+    assert private_relationship_plan.instructions.direct_text == "该资料不在当前授权范围内。"
+
+
+def test_legacy_owner_preview_and_grantee_are_distinct_from_resource_owner() -> None:
+    relationship = RelationshipProfileManifestEntry(
+        profile_id="relationship-profile-1",
+        version_number=1,
+        person_id="person-1",
+        relationship_id="relationship-1",
+        salutation="孩子",
+        tone="warm",
+        advice_style="listen first",
+        sharing_scope="family",
+        boundaries=(),
+        support_source_event_ids=("relationship-source",),
+        counterexample_source_event_ids=(),
+    )
+    version = _version(_memory(scope="family"), relationship, status="frozen")
+    scope = frozenset({("memory_claim", "memory-1")})
+
+    preview = DigitalSelfResponsePlanner.plan(
+        mode="legacy",
+        actor=_actor(
+            resource_owner_account_id="owner-1",
+            legacy_actor_role="owner_preview",
+            allowed_items=scope,
+        ),
+        version=version,
+        query="tea",
+        relationship_id="relationship-1",
+        speaker_decision=_owner(),
+    )
+    forged_owner = DigitalSelfResponsePlanner.plan(
+        mode="legacy",
+        actor=_actor(
+            "grantee-1",
+            resource_owner_account_id="owner-1",
+            legacy_actor_role="owner_preview",
+            allowed_items=scope,
+        ),
+        version=version,
+        query="tea",
+        relationship_id="relationship-1",
+        speaker_decision=_owner(),
+    )
+    wrong_speaker = DigitalSelfResponsePlanner.plan(
+        mode="legacy",
+        actor=_actor(
+            "grantee-1",
+            resource_owner_account_id="owner-1",
+            legacy_actor_role="grantee",
+            allowed_items=scope,
+        ),
+        version=version,
+        query="tea",
+        relationship_id="relationship-1",
+        speaker_decision=PlannerSpeakerDecision(classification="guest"),
+    )
+
+    assert preview.epistemic_status == "fact"
+    assert forged_owner.disclosure_decision.kind == "privacy"
+    assert wrong_speaker.disclosure_decision.kind == "privacy"
 
 
 def test_prompt_injection_is_query_data_and_never_changes_canonical_instructions() -> None:

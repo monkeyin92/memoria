@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS daily_summaries (
 CREATE TABLE IF NOT EXISTS voice_sessions (
     session_id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
+    resource_owner_account_id TEXT NOT NULL,
     room_name TEXT NOT NULL UNIQUE,
     voice_backend TEXT NOT NULL DEFAULT 'cascade'
         CHECK (voice_backend IN ('cascade', 'qwen_omni')),
@@ -122,7 +123,19 @@ CREATE TABLE IF NOT EXISTS voice_sessions (
         OR self_preview_perspective IN ('owner', 'child', 'friend')
     ),
     relationship_profile_id TEXT,
+    relationship_profile_version INTEGER,
     legacy_grant_id TEXT,
+    legacy_actor_role TEXT CHECK (
+        legacy_actor_role IS NULL OR legacy_actor_role IN ('owner_preview', 'grantee')
+    ),
+    legacy_grantee_account_id TEXT,
+    legacy_shell_id TEXT,
+    legacy_grant_snapshot_sha256 TEXT,
+    legacy_scope_sha256 TEXT,
+    legacy_voice_allowed INTEGER CHECK (
+        legacy_voice_allowed IS NULL OR legacy_voice_allowed IN (0, 1)
+    ),
+    legacy_expires_at TEXT,
     companion_style_id TEXT,
     companion_style_version TEXT,
     voice_profile_id TEXT,
@@ -309,7 +322,16 @@ class MemoryStore:
                     "preview_grant_id": "TEXT",
                     "self_preview_perspective": "TEXT",
                     "relationship_profile_id": "TEXT",
+                    "relationship_profile_version": "INTEGER",
                     "legacy_grant_id": "TEXT",
+                    "resource_owner_account_id": "TEXT",
+                    "legacy_actor_role": "TEXT",
+                    "legacy_grantee_account_id": "TEXT",
+                    "legacy_shell_id": "TEXT",
+                    "legacy_grant_snapshot_sha256": "TEXT",
+                    "legacy_scope_sha256": "TEXT",
+                    "legacy_voice_allowed": "INTEGER",
+                    "legacy_expires_at": "TEXT",
                     "companion_style_id": "TEXT",
                     "companion_style_version": "TEXT",
                     "voice_profile_id": "TEXT",
@@ -335,6 +357,10 @@ class MemoryStore:
                     "companion_style_version = 'companion-v1' "
                     "WHERE companion_style_id IS NULL"
                 )
+                connection.execute(
+                    "UPDATE voice_sessions SET resource_owner_account_id = user_id "
+                    "WHERE resource_owner_account_id IS NULL"
+                )
                 voice_session_sql = connection.execute(
                     "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'voice_sessions'"
                 ).fetchone()
@@ -349,6 +375,7 @@ class MemoryStore:
                         CREATE TABLE voice_sessions (
                             session_id TEXT PRIMARY KEY,
                             user_id TEXT NOT NULL,
+                            resource_owner_account_id TEXT NOT NULL,
                             room_name TEXT NOT NULL UNIQUE,
                             voice_backend TEXT NOT NULL DEFAULT 'cascade'
                                 CHECK (voice_backend IN ('cascade', 'qwen_omni')),
@@ -362,7 +389,15 @@ class MemoryStore:
                             preview_grant_id TEXT,
                             self_preview_perspective TEXT,
                             relationship_profile_id TEXT,
+                            relationship_profile_version INTEGER,
                             legacy_grant_id TEXT,
+                            legacy_actor_role TEXT,
+                            legacy_grantee_account_id TEXT,
+                            legacy_shell_id TEXT,
+                            legacy_grant_snapshot_sha256 TEXT,
+                            legacy_scope_sha256 TEXT,
+                            legacy_voice_allowed INTEGER,
+                            legacy_expires_at TEXT,
                             companion_style_id TEXT,
                             companion_style_version TEXT,
                             voice_profile_id TEXT,
@@ -382,11 +417,16 @@ class MemoryStore:
                                 ON DELETE CASCADE
                         );
                         INSERT INTO voice_sessions (
-                            session_id, user_id, room_name, voice_backend,
+                            session_id, user_id, resource_owner_account_id,
+                            room_name, voice_backend,
                             omni_sdp_exchanges, interaction_mode, mode_policy_version,
                             digital_self_version_id, digital_self_manifest_sha256,
                             preview_grant_id, self_preview_perspective,
-                            relationship_profile_id, legacy_grant_id,
+                            relationship_profile_id, relationship_profile_version,
+                            legacy_grant_id, legacy_actor_role,
+                            legacy_grantee_account_id, legacy_shell_id,
+                            legacy_grant_snapshot_sha256, legacy_scope_sha256,
+                            legacy_voice_allowed, legacy_expires_at,
                             companion_style_id, companion_style_version,
                             voice_profile_id, voice_profile_version, voice_provider,
                             voice_model, voice_resource_id, voice_provider_expires_at,
@@ -398,6 +438,7 @@ class MemoryStore:
                         SELECT
                             session_id,
                             user_id,
+                            user_id,
                             room_name,
                             CASE
                                 WHEN voice_backend = 'qwen_omni_plus' THEN 'qwen_omni'
@@ -406,7 +447,8 @@ class MemoryStore:
                             END,
                             COALESCE(omni_sdp_exchanges, 0),
                             'companion', 's2-v1', NULL, NULL, NULL, NULL,
-                            NULL, NULL, 'starlight', 'companion-v1',
+                            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                            NULL, 'starlight', 'companion-v1',
                             NULL, NULL, NULL, NULL, NULL, NULL, NULL,
                             NULL, NULL, NULL, NULL, NULL,
                             created_at
@@ -955,9 +997,14 @@ class MemoryStore:
             sessions = connection.execute(
                 """
                 SELECT session_id, voice_backend, interaction_mode, mode_policy_version,
+                       resource_owner_account_id,
                        digital_self_version_id, digital_self_manifest_sha256,
                        preview_grant_id, self_preview_perspective,
-                       relationship_profile_id, legacy_grant_id,
+                       relationship_profile_id, relationship_profile_version,
+                       legacy_grant_id, legacy_actor_role,
+                       legacy_grantee_account_id, legacy_shell_id,
+                       legacy_grant_snapshot_sha256, legacy_scope_sha256,
+                       legacy_voice_allowed, legacy_expires_at,
                        companion_style_id, companion_style_version,
                        voice_profile_id, voice_profile_version, voice_provider,
                        voice_model, voice_resource_id, voice_provider_expires_at,
@@ -965,9 +1012,12 @@ class MemoryStore:
                        fallback_voice_provider, fallback_voice_model,
                        fallback_voice_resource_id,
                        learning_task_id, created_at
-                FROM voice_sessions WHERE user_id = ? ORDER BY created_at, session_id
+                FROM voice_sessions
+                WHERE user_id = ? OR resource_owner_account_id = ?
+                   OR legacy_grantee_account_id = ?
+                ORDER BY created_at, session_id
                 """,
-                (user_id,),
+                (user_id, user_id, user_id),
             ).fetchall()
             preview: dict[str, list[dict[str, Any]]] = {
                 "grants": [],
@@ -1192,6 +1242,7 @@ class MemoryStore:
         *,
         session_id: str,
         user_id: str,
+        resource_owner_account_id: str | None = None,
         room_name: str,
         voice_backend: str,
         created_at: str,
@@ -1202,7 +1253,15 @@ class MemoryStore:
         preview_grant_id: str | None = None,
         self_preview_perspective: str | None = None,
         relationship_profile_id: str | None = None,
+        relationship_profile_version: int | None = None,
         legacy_grant_id: str | None = None,
+        legacy_actor_role: str | None = None,
+        legacy_grantee_account_id: str | None = None,
+        legacy_shell_id: str | None = None,
+        legacy_grant_snapshot_sha256: str | None = None,
+        legacy_scope_sha256: str | None = None,
+        legacy_voice_allowed: bool | None = None,
+        legacy_expires_at: str | None = None,
         companion_style_id: str | None = None,
         companion_style_version: str | None = None,
         voice_profile_id: str | None = None,
@@ -1223,22 +1282,28 @@ class MemoryStore:
             connection.execute(
                 """
                 INSERT INTO voice_sessions (
-                    session_id, user_id, room_name, voice_backend, interaction_mode,
+                    session_id, user_id, resource_owner_account_id,
+                    room_name, voice_backend, interaction_mode,
                     mode_policy_version, digital_self_version_id,
                     digital_self_manifest_sha256, preview_grant_id,
                     self_preview_perspective, relationship_profile_id,
-                    legacy_grant_id, companion_style_id, companion_style_version,
+                    relationship_profile_version, legacy_grant_id,
+                    legacy_actor_role, legacy_grantee_account_id, legacy_shell_id,
+                    legacy_grant_snapshot_sha256, legacy_scope_sha256,
+                    legacy_voice_allowed, legacy_expires_at,
+                    companion_style_id, companion_style_version,
                     voice_profile_id, voice_profile_version, voice_provider,
                     voice_model, voice_resource_id, voice_provider_expires_at,
                     voice_speaker_sha256, fallback_voice_profile_id,
                     fallback_voice_provider, fallback_voice_model,
                     fallback_voice_resource_id,
                     learning_task_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
                     user_id,
+                    resource_owner_account_id or user_id,
                     room_name,
                     voice_backend,
                     interaction_mode,
@@ -1248,7 +1313,15 @@ class MemoryStore:
                     preview_grant_id,
                     self_preview_perspective,
                     relationship_profile_id,
+                    relationship_profile_version,
                     legacy_grant_id,
+                    legacy_actor_role,
+                    legacy_grantee_account_id,
+                    legacy_shell_id,
+                    legacy_grant_snapshot_sha256,
+                    legacy_scope_sha256,
+                    None if legacy_voice_allowed is None else int(legacy_voice_allowed),
+                    legacy_expires_at,
                     companion_style_id,
                     companion_style_version,
                     voice_profile_id,
@@ -1268,11 +1341,16 @@ class MemoryStore:
             )
             row = connection.execute(
                 """
-                SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
+                SELECT session_id, user_id, resource_owner_account_id,
+                       room_name, voice_backend, interaction_mode,
                        mode_policy_version, digital_self_version_id,
                        digital_self_manifest_sha256, preview_grant_id,
                        self_preview_perspective, relationship_profile_id,
-                       legacy_grant_id, companion_style_id, companion_style_version,
+                       relationship_profile_version, legacy_grant_id,
+                       legacy_actor_role, legacy_grantee_account_id, legacy_shell_id,
+                       legacy_grant_snapshot_sha256, legacy_scope_sha256,
+                       legacy_voice_allowed, legacy_expires_at,
+                       companion_style_id, companion_style_version,
                        voice_profile_id, voice_profile_version, voice_provider,
                        voice_model, voice_resource_id, voice_provider_expires_at,
                        voice_speaker_sha256, fallback_voice_profile_id,
@@ -1291,11 +1369,16 @@ class MemoryStore:
         with self._connection() as connection:
             row = connection.execute(
                 """
-                SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
+                SELECT session_id, user_id, resource_owner_account_id,
+                       room_name, voice_backend, interaction_mode,
                        mode_policy_version, digital_self_version_id,
                        digital_self_manifest_sha256, preview_grant_id,
                        self_preview_perspective, relationship_profile_id,
-                       legacy_grant_id, companion_style_id, companion_style_version,
+                       relationship_profile_version, legacy_grant_id,
+                       legacy_actor_role, legacy_grantee_account_id, legacy_shell_id,
+                       legacy_grant_snapshot_sha256, legacy_scope_sha256,
+                       legacy_voice_allowed, legacy_expires_at,
+                       companion_style_id, companion_style_version,
                        voice_profile_id, voice_profile_version, voice_provider,
                        voice_model, voice_resource_id, voice_provider_expires_at,
                        voice_speaker_sha256, fallback_voice_profile_id,
@@ -1314,11 +1397,16 @@ class MemoryStore:
         with self._connection() as connection:
             row = connection.execute(
                 """
-                SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
+                SELECT session_id, user_id, resource_owner_account_id,
+                       room_name, voice_backend, interaction_mode,
                        mode_policy_version, digital_self_version_id,
                        digital_self_manifest_sha256, preview_grant_id,
                        self_preview_perspective, relationship_profile_id,
-                       legacy_grant_id, companion_style_id, companion_style_version,
+                       relationship_profile_version, legacy_grant_id,
+                       legacy_actor_role, legacy_grantee_account_id, legacy_shell_id,
+                       legacy_grant_snapshot_sha256, legacy_scope_sha256,
+                       legacy_voice_allowed, legacy_expires_at,
+                       companion_style_id, companion_style_version,
                        voice_profile_id, voice_profile_version, voice_provider,
                        voice_model, voice_resource_id, voice_provider_expires_at,
                        voice_speaker_sha256, fallback_voice_profile_id,
@@ -1335,20 +1423,28 @@ class MemoryStore:
         with self._connection() as connection:
             rows = connection.execute(
                 """
-                SELECT session_id, user_id, room_name, voice_backend, interaction_mode,
+                SELECT session_id, user_id, resource_owner_account_id,
+                       room_name, voice_backend, interaction_mode,
                        mode_policy_version, digital_self_version_id,
                        digital_self_manifest_sha256, preview_grant_id,
                        self_preview_perspective, relationship_profile_id,
-                       legacy_grant_id, companion_style_id, companion_style_version,
+                       relationship_profile_version, legacy_grant_id,
+                       legacy_actor_role, legacy_grantee_account_id, legacy_shell_id,
+                       legacy_grant_snapshot_sha256, legacy_scope_sha256,
+                       legacy_voice_allowed, legacy_expires_at,
+                       companion_style_id, companion_style_version,
                        voice_profile_id, voice_profile_version, voice_provider,
                        voice_model, voice_resource_id, voice_provider_expires_at,
                        voice_speaker_sha256, fallback_voice_profile_id,
                        fallback_voice_provider, fallback_voice_model,
                        fallback_voice_resource_id,
                        learning_task_id, created_at
-                FROM voice_sessions WHERE user_id = ? ORDER BY created_at, session_id
+                FROM voice_sessions
+                WHERE user_id = ? OR resource_owner_account_id = ?
+                   OR legacy_grantee_account_id = ?
+                ORDER BY created_at, session_id
                 """,
-                (user_id,),
+                (user_id, user_id, user_id),
             ).fetchall()
         return tuple(dict(row) for row in rows)
 
@@ -1359,9 +1455,17 @@ class MemoryStore:
                 INSERT OR IGNORE INTO voice_session_tombstones (
                     session_id, user_id_hash, deleted_at
                 )
-                SELECT session_id, ?, ? FROM voice_sessions WHERE user_id = ?
+                SELECT session_id, ?, ? FROM voice_sessions
+                WHERE user_id = ? OR resource_owner_account_id = ?
+                   OR legacy_grantee_account_id = ?
                 """,
-                (self._user_id_hash(user_id), deleted_at, user_id),
+                (
+                    self._user_id_hash(user_id),
+                    deleted_at,
+                    user_id,
+                    user_id,
+                    user_id,
+                ),
             )
         return max(0, cursor.rowcount)
 
@@ -1376,8 +1480,12 @@ class MemoryStore:
     def delete_voice_sessions(self, *, user_id: str) -> int:
         with self._connection() as connection:
             cursor = connection.execute(
-                "DELETE FROM voice_sessions WHERE user_id = ?",
-                (user_id,),
+                """
+                DELETE FROM voice_sessions
+                WHERE user_id = ? OR resource_owner_account_id = ?
+                   OR legacy_grantee_account_id = ?
+                """,
+                (user_id, user_id, user_id),
             )
         return max(0, cursor.rowcount)
 

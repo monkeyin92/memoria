@@ -64,11 +64,13 @@ export function InteractionModePanel({
   onOpenArchive,
   onChangeCompanion,
   onOpenSelfPreview,
+  onOpenLegacy,
 }) {
   const actions = {
     companion: onChangeCompanion,
     archive: onOpenArchive,
     self_preview: onOpenSelfPreview,
+    legacy: onOpenLegacy,
   };
   const selectedCompanionId = capabilities?.selected_companion_id;
   const selectedCompanionName = selectedCompanionId
@@ -96,18 +98,27 @@ export function InteractionModePanel({
             const status = availabilityOf(capabilities, mode);
             const available = status === "available";
             const action = actions[mode];
+            const managementAvailable = mode === "legacy" && Boolean(action);
             const Icon = copy.Icon;
             return (
-              <article className="interaction-mode-card" data-status={status} key={mode}>
+              <article
+                className="interaction-mode-card"
+                data-status={managementAvailable ? "available" : status}
+                key={mode}
+              >
                 <div className="interaction-mode-card-title">
                   <span><Icon size={20} weight="fill" aria-hidden="true" /></span>
                   <h3>{copy.title}</h3>
-                  <small>{available ? "可用" : "建设中"}</small>
+                  <small>{managementAvailable ? "可管理" : available ? "可用" : "建设中"}</small>
                 </div>
                 <p>{copy.description}</p>
-                {available && action ? (
+                {(available || managementAvailable) && action ? (
                   <button type="button" className="button-quiet" onClick={action}>
-                    {mode === "self_preview" ? "打开数字分身预览" : copy.action}
+                    {mode === "self_preview"
+                      ? "打开数字分身预览"
+                      : mode === "legacy"
+                        ? "管理传承授权"
+                        : copy.action}
                   </button>
                 ) : available && mode === "self_preview" ? (
                   <button type="button" className="button-quiet" disabled>

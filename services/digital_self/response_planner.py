@@ -34,7 +34,7 @@ SourceEntryType = Literal[
 ]
 SpeakerClassification = Literal["owner", "guest", "uncertain"]
 
-PLANNER_POLICY_VERSION: Final = "digital-self-response-planner-v1"
+PLANNER_POLICY_VERSION: Final = "digital-self-response-planner-v2"
 MAX_GROUNDED_ITEMS: Final = 4
 MAX_GROUNDED_ITEM_CHARS: Final = 280
 MAX_STYLE_TRAITS: Final = 2
@@ -52,9 +52,12 @@ _CONFLICT_UNKNOWN: Final = "该版本存在未解决的不同说法，无法给�
 
 @dataclass(frozen=True, slots=True)
 class PlannerActor:
-    """Authenticated account scope supplied by the caller."""
+    """Authenticated actor and server-resolved Digital Self ownership."""
 
     account_id: str
+    resource_owner_account_id: str | None = None
+    legacy_actor_role: Literal["owner_preview", "grantee"] | None = None
+    legacy_allowed_items: frozenset[tuple[SourceEntryType, str]] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,7 +167,11 @@ class DigitalSelfResponsePlanner:
                 speaker_decision=speaker_decision,
                 companion_items=companion_items,
             )
-        if version is None or version.account_id != actor.account_id:
+        if version is None:
+            return cls._direct(mode, None, _PRIVATE_REFUSAL, "privacy")
+        if mode == "self_preview" and version.account_id != actor.account_id:
+            return cls._direct(mode, None, _PRIVATE_REFUSAL, "privacy")
+        if mode == "legacy" and not cls._legacy_actor_matches(actor, version):
             return cls._direct(mode, None, _PRIVATE_REFUSAL, "privacy")
         if speaker_decision.classification != "owner":
             return cls._direct(mode, None, _PRIVATE_REFUSAL, "privacy")
@@ -181,21 +188,47 @@ class DigitalSelfResponsePlanner:
             return cls._direct(mode, version, _RELATIONSHIP_REFUSAL, "privacy")
         if relationship_id is not None and relationship is None:
             return cls._direct(mode, version, _RELATIONSHIP_REFUSAL, "privacy")
-        if (
-            mode == "legacy"
-            and relationship is not None
-            and relationship.sharing_scope not in speaker_decision.authorized_scopes
-        ):
-            return cls._direct(mode, version, _SCOPE_REFUSAL, "privacy")
+        entries = version.manifest.entries
+        if mode == "legacy":
+            if not _legacy_scope_allowed(relationship):
+                return cls._direct(mode, version, _SCOPE_REFUSAL, "privacy")
+            scoped = tuple(
+                entry
+                for entry in entries
+                if _legacy_scope_allowed(entry)
+                and (
+                    _manifest_entry_ref(entry) in actor.legacy_allowed_items
+                    or (
+                        isinstance(entry, RelationshipProfileManifestEntry)
+                        and relationship is not None
+                        and entry.profile_id == relationship.profile_id
+                        and entry.version_number == relationship.version_number
+                    )
+                )
+            )
+            matching = cls._matching_entries(entries, query)
+            scoped_matching = cls._matching_entries(scoped, query)
+            if matching and not scoped_matching:
+                return cls._direct(mode, version, _SCOPE_REFUSAL, "privacy")
+            entries = scoped
 
         return cls._plan_entries(
             mode=mode,
             version=version,
             query=query,
-            entries=version.manifest.entries,
+            entries=entries,
             relationship=relationship,
-            speaker_decision=speaker_decision,
         )
+
+    @staticmethod
+    def _legacy_actor_matches(actor: PlannerActor, version: DigitalSelfVersion) -> bool:
+        if actor.resource_owner_account_id != version.account_id:
+            return False
+        if actor.legacy_actor_role == "owner_preview":
+            return actor.account_id == version.account_id
+        if actor.legacy_actor_role == "grantee":
+            return actor.account_id != version.account_id
+        return False
 
     @classmethod
     def _plan_companion(
@@ -287,13 +320,10 @@ class DigitalSelfResponsePlanner:
         query: str,
         entries: tuple[ManifestEntry, ...],
         relationship: RelationshipProfileManifestEntry | None,
-        speaker_decision: PlannerSpeakerDecision,
     ) -> ResponsePlan:
         matching = cls._matching_entries(entries, query)
         if cls._has_conflict(matching):
             return cls._direct(mode, version, _CONFLICT_UNKNOWN, "unknown")
-        if not cls._scopes_allowed(mode, matching, speaker_decision):
-            return cls._direct(mode, version, _SCOPE_REFUSAL, "privacy")
         grounded = cls._bounded_items(cls._items_from_entries(matching, query, allow_all_scopes=True))
         voice_target = cls._voice_target(entries, relationship)
         if not grounded:
@@ -457,29 +487,6 @@ class DigitalSelfResponsePlanner:
         )
 
     @staticmethod
-    def _scopes_allowed(
-        mode: PlannerMode,
-        entries: tuple[ManifestEntry, ...],
-        speaker_decision: PlannerSpeakerDecision,
-    ) -> bool:
-        if mode == "self_preview":
-            return True
-        if mode != "legacy":
-            return True
-        return all(
-            not isinstance(
-                entry,
-                (
-                    MemoryClaimManifestEntry,
-                    CognitiveClaimManifestEntry,
-                    DecisionCaseManifestEntry,
-                ),
-            )
-            or _entry_scope(entry) in speaker_decision.authorized_scopes
-            for entry in entries
-        )
-
-    @staticmethod
     def _valid_version_state(mode: PlannerMode, version: DigitalSelfVersion) -> bool:
         if mode == "self_preview":
             return version.status in {"approved", "frozen"}
@@ -565,12 +572,26 @@ def _entry_text(entry: ManifestEntry) -> str:
     return f"{entry.salutation} {entry.tone} {entry.advice_style} {entry.boundaries}"
 
 
-def _entry_scope(
-    entry: MemoryClaimManifestEntry | CognitiveClaimManifestEntry | DecisionCaseManifestEntry,
-) -> str:
+def _manifest_entry_ref(entry: ManifestEntry) -> tuple[SourceEntryType, str]:
     if isinstance(entry, MemoryClaimManifestEntry):
-        return entry.sensitive_domain
-    return entry.sharing_scope
+        return ("memory_claim", entry.claim_id)
+    if isinstance(entry, PersonaTraitManifestEntry):
+        return ("persona_trait", entry.trait_id)
+    if isinstance(entry, CognitiveClaimManifestEntry):
+        return ("cognitive_claim", entry.claim_id)
+    if isinstance(entry, DecisionCaseManifestEntry):
+        return ("decision_case", entry.case_id)
+    return ("relationship_profile", entry.profile_id)
+
+
+def _legacy_scope_allowed(entry: ManifestEntry | None) -> bool:
+    if isinstance(entry, MemoryClaimManifestEntry):
+        scope = entry.sensitive_domain
+    elif isinstance(entry, PersonaTraitManifestEntry) or entry is None:
+        return False
+    else:
+        scope = entry.sharing_scope
+    return scope in {"family", "public"}
 
 
 def _memory_ref(entry: MemoryClaimManifestEntry) -> SourceRef:

@@ -241,6 +241,7 @@ export function useVoiceSession({
   learningTaskId = null,
   interactionMode = "companion",
   previewGrantId = null,
+  legacyGrantId = null,
 }) {
   const [session, setSession] = useState(null);
   const [uiState, setUiState] = useState("idle");
@@ -784,20 +785,27 @@ export function useVoiceSession({
     audioDiagnosticsRef.current = [];
     setAudioDiagnostics([]);
 
-    const selectedBackend = isRealtimeBackend(voiceBackend)
-      ? voiceBackend
-      : "cascade";
     const selectedInteractionMode =
       overrides.interactionMode || interactionMode;
+    const selectedBackend =
+      selectedInteractionMode === "companion" && isRealtimeBackend(voiceBackend)
+        ? voiceBackend
+        : "cascade";
     const selectedPreviewGrantId =
       overrides.previewGrantId || previewGrantId;
+    const selectedLegacyGrantId =
+      overrides.legacyGrantId || legacyGrantId;
     const selectedLearningTaskId =
       selectedInteractionMode === "companion" ? learningTaskId : null;
-    const sessionOptions =
-      selectedInteractionMode !== "companion" || selectedPreviewGrantId
+    const sessionOptions = selectedInteractionMode === "self_preview"
+      ? {
+          interactionMode: selectedInteractionMode,
+          previewGrantId: selectedPreviewGrantId,
+        }
+      : selectedInteractionMode === "legacy"
         ? {
             interactionMode: selectedInteractionMode,
-            previewGrantId: selectedPreviewGrantId,
+            legacyGrantId: selectedLegacyGrantId,
           }
         : null;
     if (isRealtimeBackend(selectedBackend)) {
@@ -1292,6 +1300,7 @@ export function useVoiceSession({
     failOmni,
     failReconnect,
     interactionMode,
+    legacyGrantId,
     learningTaskId,
     previewGrantId,
     publishAudioDiagnostic,

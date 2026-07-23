@@ -18,12 +18,13 @@ from services.agent.src.context_assembler import (
 )
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.duplex_runtime import DuplexRuntime, GenerationVoiceSnapshot
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.prompts import VOICE_SYSTEM_PROMPT
 from services.agent.src.providers.doubao_voice_catalog import resolve_approved_voice
 from services.agent.src.response_planner_client import (
     CANONICAL_PLANNER_POLICY_VERSION,
+    Disclosure,
     ResponsePlan,
     ResponsePlannerClient,
     ResponseProvenance,
@@ -65,6 +66,8 @@ _LONGFORM_HINTS = (
 _SENTENCE_ENDINGS = frozenset("。！？；!?")
 TELEMETRY_TOPIC = "voice-agent.telemetry"
 CASCADE_OPUS_MAX_BITRATE = 64_000
+_LOCAL_SAFE_REFUSAL_INSTRUCTIONS = "禁止生成普通回答；仅返回固定安全拒答。"
+_LOCAL_SAFE_REFUSAL_TEXT = "当前模式暂时无法安全生成回答。"
 try:
     from livekit import agents, rtc
     from livekit.agents import Agent, AgentSession, StopResponse, llm, room_io
@@ -119,6 +122,40 @@ def _message_text(message: Any) -> str:
     return str(raw or "")
 
 
+def _frozen_designed_fallback(policy: ModePolicy | None) -> VoiceRuntimeProfile | None:
+    if policy is None or policy.mode not in {"self_preview", "legacy"}:
+        return None
+    references = dict(policy.references)
+    profile_id = references.get("fallback_voice_profile_id")
+    model = references.get("fallback_voice_model")
+    resource_id = references.get("fallback_voice_resource_id")
+    provider = references.get("fallback_voice_provider")
+    voice = (
+        resolve_approved_voice(profile_id=profile_id, model=model)
+        if isinstance(profile_id, str) and isinstance(model, str)
+        else None
+    )
+    if (
+        voice is None
+        or not isinstance(profile_id, str)
+        or not isinstance(model, str)
+        or not isinstance(resource_id, str)
+        or not isinstance(provider, str)
+        or provider != "volcengine_doubao"
+        or model != DESIGNED_VOICE_MODEL
+        or resource_id != DESIGNED_VOICE_MODEL
+    ):
+        return None
+    return VoiceRuntimeProfile(
+        profile_id=profile_id,
+        model=model,
+        voice_id=voice,
+        provider=provider,
+        voice_kind="designed",
+        resource_id=resource_id,
+    )
+
+
 def _apply_cached_voice_profile(
     *,
     tts_plugin: Any,
@@ -129,38 +166,7 @@ def _apply_cached_voice_profile(
 ) -> None:
     profile = client.cached(session_id=session_id)
     references = dict(policy.references) if policy is not None else {}
-    selected_fallback: VoiceRuntimeProfile | None = None
-    if mode == "self_preview":
-        fallback_profile_id = references.get("fallback_voice_profile_id")
-        fallback_model = references.get("fallback_voice_model")
-        fallback_resource_id = references.get("fallback_voice_resource_id")
-        fallback_provider = references.get("fallback_voice_provider")
-        fallback_voice = (
-            resolve_approved_voice(
-                profile_id=fallback_profile_id,
-                model=fallback_model,
-            )
-            if isinstance(fallback_profile_id, str) and isinstance(fallback_model, str)
-            else None
-        )
-        if (
-            fallback_voice is not None
-            and isinstance(fallback_profile_id, str)
-            and isinstance(fallback_model, str)
-            and isinstance(fallback_resource_id, str)
-            and isinstance(fallback_provider, str)
-            and fallback_provider == "volcengine_doubao"
-            and fallback_model == DESIGNED_VOICE_MODEL
-            and fallback_resource_id == DESIGNED_VOICE_MODEL
-        ):
-            selected_fallback = VoiceRuntimeProfile(
-                profile_id=fallback_profile_id,
-                model=fallback_model,
-                voice_id=fallback_voice,
-                provider=fallback_provider,
-                voice_kind="designed",
-                resource_id=fallback_resource_id,
-            )
+    selected_fallback = _frozen_designed_fallback(policy)
     if profile is None:
         profile = selected_fallback
     if profile is None:
@@ -183,8 +189,21 @@ def _apply_cached_voice_profile(
         and profile.model == references.get("fallback_voice_model")
         and profile.resource_id == references.get("fallback_voice_resource_id")
     )
-    if (mode == "companion" and profile.voice_kind != "designed") or (
-        mode == "self_preview" and not (personal_matches or designed_fallback_matches)
+    legacy_personal_allowed = references.get("legacy_voice_allowed") is True
+    if (
+        mode == "legacy"
+        and not (designed_fallback_matches or (legacy_personal_allowed and personal_matches))
+        and selected_fallback is not None
+    ):
+        profile = selected_fallback
+        designed_fallback_matches = True
+    if (
+        (mode == "companion" and profile.voice_kind != "designed")
+        or (mode == "self_preview" and not (personal_matches or designed_fallback_matches))
+        or (
+            mode == "legacy"
+            and not (designed_fallback_matches or (legacy_personal_allowed and personal_matches))
+        )
     ):
         baseline = getattr(tts_plugin, "use_baseline_voice", None)
         if callable(baseline):
@@ -302,6 +321,56 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
     def _response_plan_key(fence: GenerationFence) -> tuple[str, int, int, int]:
         return (fence.session_id, fence.turn_id, fence.generation_id, fence.tool_epoch)
 
+    @staticmethod
+    def _generation_voice_matches_target(
+        voice: GenerationVoiceSnapshot | None,
+        target: ResponseVoiceTarget,
+    ) -> bool:
+        expected_kind = "personal" if target.kind == "approved_personal" else "designed"
+        return bool(
+            voice is not None
+            and voice.voice_kind == expected_kind
+            and voice.profile_id == target.profile_id
+            and voice.resource_id == target.model
+        )
+
+    def _ensure_generation_voice_matches_plan(
+        self,
+        fence: GenerationFence,
+        plan: ResponsePlan,
+        policy: ModePolicy,
+    ) -> bool:
+        voice = self._runtime.generation_voice_for(fence)
+        if self._generation_voice_matches_target(voice, plan.voice_target):
+            return True
+        if policy.mode not in {"self_preview", "legacy"} or plan.voice_target.kind != "fallback":
+            return False
+        fallback = _frozen_designed_fallback(policy)
+        if (
+            fallback is None
+            or fallback.profile_id != plan.voice_target.profile_id
+            or fallback.model != plan.voice_target.model
+            or self._runtime.tts is None
+        ):
+            return False
+        apply_profile = getattr(self._runtime.tts, "apply_voice_profile", None)
+        if not callable(apply_profile):
+            return False
+        try:
+            apply_profile(
+                model=fallback.model,
+                voice=fallback.voice_id,
+                profile_id=fallback.profile_id,
+                provider=fallback.provider,
+                voice_kind=fallback.voice_kind,
+                resource_id=fallback.resource_id,
+            )
+        except (TypeError, ValueError):
+            return False
+        return self._bind_current_tts_voice(fence) and self._generation_voice_matches_target(
+            self._runtime.generation_voice_for(fence), plan.voice_target
+        )
+
     def _bind_response_plan_provenance(
         self,
         fence: GenerationFence,
@@ -309,6 +378,13 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
     ) -> bool:
         voice = self._runtime.generation_voice_for(fence)
         if self._runtime.tts is not None and voice is None:
+            return False
+        policy = self._runtime.mode_policy_for_fence(fence)
+        if (
+            policy.mode in {"self_preview", "legacy"}
+            and voice is not None
+            and not self._generation_voice_matches_target(voice, plan.voice_target)
+        ):
             return False
         payload = plan.provenance.archive_payload(
             fence=fence,
@@ -331,7 +407,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 payload.update(
                     {
                         "actual_voice_profile_version": (
-                            int(version) if version is not None and version.isdigit() else None
+                            int(version) if isinstance(version, str) and version.isdigit() else None
                         ),
                         "actual_voice_provider_expires_at": references.get(
                             "voice_provider_expires_at"
@@ -382,7 +458,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         if voice_kind == "personal":
             return profile_id
         mode = self._runtime.mode_policy_for_fence(fence).mode
-        return profile_id if mode in {"companion", "self_preview"} else None
+        return profile_id if mode in {"companion", "self_preview", "legacy"} else None
 
     def _observe_tts_voice_fallback(
         self,
@@ -435,6 +511,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         """Allow a plan only when it is bound to this fence's frozen policy."""
 
         provenance = plan.provenance
+        references = dict(policy.references)
         if (
             policy.mode is None
             or provenance.interaction_mode != policy.mode
@@ -442,12 +519,50 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         ):
             return False
         if self._is_local_safe_plan(plan):
-            return policy.mode in {
-                "companion",
-                "self_preview",
-                "legacy",
-            } and self._fallback_voice_target_matches(plan.voice_target, policy)
-        references = dict(policy.references)
+            companion_safe = policy.mode == "companion" and plan.direct_text is None
+            refusal_safe = (
+                policy.mode in {"self_preview", "legacy"}
+                and plan.instructions == _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
+                and plan.direct_text == _LOCAL_SAFE_REFUSAL_TEXT
+                and not plan.grounded_items
+                and not plan.provenance.source_refs
+                and plan.disclosures
+                == (
+                    ("digital_identity", "privacy_refusal", "unknown")
+                    if policy.mode == "legacy"
+                    else ("privacy_refusal", "unknown")
+                )
+                and plan.provenance.disclosures == plan.disclosures
+            )
+            relationship_version = provenance.relationship_profile_version
+            relationship_safe = provenance.relationship_profile_id == references.get(
+                "relationship_profile_id"
+            ) and (
+                str(relationship_version) if relationship_version is not None else None
+            ) == references.get("relationship_profile_version")
+            frozen_snapshot_safe = (
+                policy.mode == "companion"
+                and provenance.digital_self_version_id is None
+                and provenance.manifest_sha256 is None
+                and provenance.relationship_profile_id is None
+                and provenance.relationship_profile_version is None
+                and self._legacy_provenance_absent(provenance)
+            ) or (
+                policy.mode in {"self_preview", "legacy"}
+                and provenance.digital_self_version_id == references.get("digital_self_version_id")
+                and provenance.manifest_sha256 == references.get("manifest_sha256")
+                and relationship_safe
+                and (
+                    self._legacy_provenance_absent(provenance)
+                    if policy.mode == "self_preview"
+                    else self._legacy_provenance_matches(provenance, references)
+                )
+            )
+            return (
+                (companion_safe or refusal_safe)
+                and frozen_snapshot_safe
+                and self._fallback_voice_target_matches(plan.voice_target, policy)
+            )
         if provenance.planner_policy_version != CANONICAL_PLANNER_POLICY_VERSION:
             return False
         if policy.mode == "companion":
@@ -462,6 +577,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 and self._persona_snapshot_matches(provenance)
                 and provenance.relationship_profile_id is None
                 and provenance.relationship_profile_version is None
+                and self._legacy_provenance_absent(provenance)
             )
         if policy.mode not in {"self_preview", "legacy"}:
             return False
@@ -471,6 +587,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             or references.get("digital_self_version_id") != provenance.digital_self_version_id
             or references.get("manifest_sha256") != provenance.manifest_sha256
         ):
+            return False
+        if policy.mode == "self_preview" and not self._legacy_provenance_absent(provenance):
             return False
         if provenance.relationship_profile_id is None:
             if provenance.relationship_profile_version is not None:
@@ -482,13 +600,59 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             != str(provenance.relationship_profile_version)
         ):
             return False
+        if policy.mode == "legacy":
+            if (
+                "digital_identity" not in plan.disclosures
+                or "digital_identity" not in provenance.disclosures
+                or provenance.speaker_class != "owner"
+                or not self._legacy_provenance_matches(provenance, references)
+            ):
+                return False
         if plan.voice_target.kind == "fallback":
             return self._fallback_voice_target_matches(plan.voice_target, policy)
         return (
             plan.voice_target.kind == "approved_personal"
             and plan.voice_target.profile_id is not None
+            and (policy.mode != "legacy" or references.get("legacy_voice_allowed") is True)
             and references.get("voice_profile_id") == plan.voice_target.profile_id
             and references.get("voice_model") == plan.voice_target.model
+        )
+
+    @staticmethod
+    def _legacy_provenance_absent(provenance: ResponseProvenance) -> bool:
+        return all(
+            value is None
+            for value in (
+                provenance.actor_account_id,
+                provenance.resource_owner_account_id,
+                provenance.legacy_actor_role,
+                provenance.legacy_grantee_account_id,
+                provenance.legacy_grant_id,
+                provenance.legacy_grant_snapshot_sha256,
+                provenance.legacy_scope_sha256,
+                provenance.legacy_shell_id,
+                provenance.legacy_voice_allowed,
+                provenance.legacy_expires_at,
+            )
+        )
+
+    @staticmethod
+    def _legacy_provenance_matches(
+        provenance: ResponseProvenance,
+        references: dict[str, str | bool | None],
+    ) -> bool:
+        return (
+            provenance.actor_account_id == references.get("actor_account_id")
+            and provenance.resource_owner_account_id == references.get("resource_owner_account_id")
+            and provenance.legacy_actor_role == references.get("legacy_actor_role")
+            and provenance.legacy_grantee_account_id == references.get("legacy_grantee_account_id")
+            and provenance.legacy_grant_id == references.get("legacy_grant_id")
+            and provenance.legacy_grant_snapshot_sha256
+            == references.get("legacy_grant_snapshot_sha256")
+            and provenance.legacy_scope_sha256 == references.get("legacy_scope_sha256")
+            and provenance.legacy_shell_id == references.get("legacy_shell_id")
+            and provenance.legacy_voice_allowed == references.get("legacy_voice_allowed")
+            and provenance.legacy_expires_at == references.get("legacy_expires_at")
         )
 
     def _fallback_voice_target_matches(
@@ -497,7 +661,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         policy: ModePolicy,
     ) -> bool:
         references = dict(policy.references)
-        if policy.mode == "self_preview":
+        if policy.mode in {"self_preview", "legacy"}:
             return (
                 voice_target.kind == "fallback"
                 and voice_target.profile_id == references.get("fallback_voice_profile_id")
@@ -550,35 +714,65 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         speaker_profile = getattr(speaker, "profile_id", None)
         speaker_template = getattr(speaker, "template_version", None)
         companion = mode == "companion"
+        references = dict(policy.references)
+        relationship_version_raw = references.get("relationship_profile_version")
+        relationship_version = (
+            int(relationship_version_raw)
+            if isinstance(relationship_version_raw, str) and relationship_version_raw.isdigit()
+            else None
+        )
+        refusal_disclosures: tuple[Disclosure, ...] = (
+            ("digital_identity", "privacy_refusal", "unknown")
+            if mode == "legacy"
+            else ("privacy_refusal", "unknown")
+        )
         return ResponsePlan(
             fence=fence,
             instructions=(
                 "仅依据当前用户这一轮内容回答。不得读取、引用或推断历史对话、"
                 "账户主人的私人记忆、人格、关系或工具结果；不确定时明确说明。"
                 if companion
-                else "禁止生成普通回答；仅返回固定安全拒答。"
+                else _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
             ),
-            direct_text=None if companion else "当前模式暂时无法安全生成回答。",
+            direct_text=None if companion else _LOCAL_SAFE_REFUSAL_TEXT,
             epistemic_status="not_applicable",
             epistemic_reason_codes=("local_safe_fallback", reason),
             grounded_items=(),
-            disclosures=("privacy_refusal", "unknown"),
+            disclosures=("privacy_refusal", "unknown") if companion else refusal_disclosures,
             voice_target=ResponseVoiceTarget(
                 kind="fallback",
-                profile_id=None,
-                model=self._tts_model,
+                profile_id=(
+                    None
+                    if companion
+                    else cast(str | None, references.get("fallback_voice_profile_id"))
+                ),
+                model=(
+                    self._tts_model
+                    if companion
+                    else cast(str, references.get("fallback_voice_model"))
+                ),
             ),
             provenance=ResponseProvenance(
                 planner_policy_version="local-safe-fallback-v1",
                 interaction_mode=mode,
                 mode_policy_version=policy.policy_version or "unavailable",
-                digital_self_version_id=None,
-                manifest_sha256=None,
+                digital_self_version_id=(
+                    None
+                    if companion
+                    else cast(str | None, references.get("digital_self_version_id"))
+                ),
+                manifest_sha256=(
+                    None if companion else cast(str | None, references.get("manifest_sha256"))
+                ),
                 persona_version_id=None,
                 persona_version_number=None,
                 persona_style_only=False,
-                relationship_profile_id=None,
-                relationship_profile_version=None,
+                relationship_profile_id=(
+                    None
+                    if companion
+                    else cast(str | None, references.get("relationship_profile_id"))
+                ),
+                relationship_profile_version=(None if companion else relationship_version),
                 speaker_class=speaker_class,
                 speaker_reason_code=speaker_reason,
                 speaker_profile_id=speaker_profile,
@@ -587,7 +781,60 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 source_refs=(),
                 epistemic_status="not_applicable",
                 epistemic_reason_codes=("local_safe_fallback", reason),
-                disclosures=("privacy_refusal", "unknown"),
+                disclosures=(("privacy_refusal", "unknown") if companion else refusal_disclosures),
+                actor_account_id=(
+                    cast(str | None, references.get("actor_account_id"))
+                    if mode == "legacy"
+                    else None
+                ),
+                resource_owner_account_id=(
+                    cast(str | None, references.get("resource_owner_account_id"))
+                    if mode == "legacy"
+                    else None
+                ),
+                legacy_actor_role=(
+                    cast(
+                        Literal["owner_preview", "grantee"] | None,
+                        references.get("legacy_actor_role"),
+                    )
+                    if mode == "legacy"
+                    else None
+                ),
+                legacy_grantee_account_id=(
+                    cast(str | None, references.get("legacy_grantee_account_id"))
+                    if mode == "legacy"
+                    else None
+                ),
+                legacy_grant_id=(
+                    cast(str | None, references.get("legacy_grant_id"))
+                    if mode == "legacy"
+                    else None
+                ),
+                legacy_grant_snapshot_sha256=(
+                    cast(str | None, references.get("legacy_grant_snapshot_sha256"))
+                    if mode == "legacy"
+                    else None
+                ),
+                legacy_scope_sha256=(
+                    cast(str | None, references.get("legacy_scope_sha256"))
+                    if mode == "legacy"
+                    else None
+                ),
+                legacy_shell_id=(
+                    cast(str | None, references.get("legacy_shell_id"))
+                    if mode == "legacy"
+                    else None
+                ),
+                legacy_voice_allowed=(
+                    cast(bool | None, references.get("legacy_voice_allowed"))
+                    if mode == "legacy"
+                    else None
+                ),
+                legacy_expires_at=(
+                    cast(str | None, references.get("legacy_expires_at"))
+                    if mode == "legacy"
+                    else None
+                ),
             ),
         )
 
@@ -674,7 +921,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             if (
                 self._voice_profile_client is not None
                 and self._runtime.tts is not None
-                and policy.allows_voice_profile()
+                and (policy.allows_voice_profile() or policy.mode == "legacy")
             ):
                 await self._runtime.wait_for_voice_profile_refresh()
                 _apply_cached_voice_profile(
@@ -685,7 +932,16 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     policy=policy,
                 )
             fence = await self._runtime.on_turn_committed(text.strip())
-            self._bind_current_tts_voice(fence)
+            if policy.mode in {"self_preview", "legacy"} and not self._bind_current_tts_voice(
+                fence
+            ):
+                logger.error(
+                    "generation voice binding rejected session_id=%s turn_id=%s generation_id=%s",
+                    fence.session_id,
+                    fence.turn_id,
+                    fence.generation_id,
+                )
+                raise StopResponse()
             self._runtime.publish_transcript(
                 speaker="user",
                 text=text.strip(),
@@ -753,6 +1009,20 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     speaker=speaker,
                     reason=fetch_reason,
                 )
+            if policy.mode in {
+                "self_preview",
+                "legacy",
+            } and not self._ensure_generation_voice_matches_plan(fence, plan, policy):
+                logger.error(
+                    "response plan voice bind failed closed mode=%s fallback=%s "
+                    "session_id=%s turn_id=%s generation_id=%s",
+                    policy.mode,
+                    self._is_local_safe_plan(plan),
+                    self._runtime.session_id,
+                    fence.turn_id,
+                    fence.generation_id,
+                )
+                raise StopResponse()
             self._cache_response_plan(plan)
             logger.info(
                 "response_plan_cached reason=%s mode=%s direct_text=%s fallback=%s "
@@ -838,6 +1108,20 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             logger.error(
                 "llm request blocked by response plan policy mismatch session_id=%s "
                 "turn_id=%s generation_id=%s",
+                self._runtime.session_id,
+                fence.turn_id,
+                fence.generation_id,
+            )
+            return
+        if policy.mode in {
+            "self_preview",
+            "legacy",
+        } and not self._ensure_generation_voice_matches_plan(fence, response_plan, policy):
+            logger.error(
+                "llm request blocked by response plan voice mismatch mode=%s fallback=%s "
+                "session_id=%s turn_id=%s generation_id=%s",
+                policy.mode,
+                self._is_local_safe_plan(response_plan),
                 self._runtime.session_id,
                 fence.turn_id,
                 fence.generation_id,
@@ -1428,7 +1712,7 @@ async def entrypoint(ctx: Any) -> None:
     if (
         runtime_settings.voice_profile_enabled
         and voice_token
-        and runtime.mode_policy.allows_voice_profile()
+        and (runtime.mode_policy.allows_voice_profile() or runtime.mode_policy.mode == "legacy")
         and not offline
     ):
         from services.agent.src.voice_profile_client import VoiceProfileClientConfig

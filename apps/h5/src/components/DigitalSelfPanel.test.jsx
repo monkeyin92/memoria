@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   beginDigitalSelfTesting: vi.fn(),
   buildDigitalSelfVersion: vi.fn(),
   createGrowthTask: vi.fn(),
+  createLegacyGrant: vi.fn(),
+  activateLegacyGrant: vi.fn(),
   activateVoiceProfile: vi.fn(),
   createVoiceBlindTrial: vi.fn(),
   enrollSpeakerProfiles: vi.fn(),
@@ -18,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   getGrowthOverview: vi.fn(),
   getGrowthTasks: vi.fn(),
   getInteractionCapabilities: vi.fn(),
+  getLegacyGrants: vi.fn(),
+  getLegacyShellPreferences: vi.fn(),
   getSelfModel: vi.fn(),
   getPersonaStatus: vi.fn(),
   getPersonaTraits: vi.fn(),
@@ -35,12 +39,14 @@ const mocks = vi.hoisted(() => ({
   reviewSelfModelRelationshipProfile: vi.fn(),
   revokePersonaConsent: vi.fn(),
   revokeDigitalSelfVersion: vi.fn(),
+  revokeLegacyGrant: vi.fn(),
   revokeSpeakerProfile: vi.fn(),
   revokeVoiceConsent: vi.fn(),
   revokeVoiceProfile: vi.fn(),
   rollbackDigitalSelfVersion: vi.fn(),
   rollbackPersonaVersion: vi.fn(),
   transitionGrowthTask: vi.fn(),
+  updateLegacyShellPreferences: vi.fn(),
   deleteAccountData: vi.fn(),
   prepareSpeakerEnrollment: vi.fn(),
   prepareVoiceCloneSample: vi.fn(),
@@ -52,6 +58,8 @@ vi.mock("../api.js", () => ({
   beginDigitalSelfTesting: mocks.beginDigitalSelfTesting,
   buildDigitalSelfVersion: mocks.buildDigitalSelfVersion,
   createGrowthTask: mocks.createGrowthTask,
+  createLegacyGrant: mocks.createLegacyGrant,
+  activateLegacyGrant: mocks.activateLegacyGrant,
   activateVoiceProfile: mocks.activateVoiceProfile,
   createVoiceBlindTrial: mocks.createVoiceBlindTrial,
   enrollSpeakerProfiles: mocks.enrollSpeakerProfiles,
@@ -63,6 +71,8 @@ vi.mock("../api.js", () => ({
   getGrowthOverview: mocks.getGrowthOverview,
   getGrowthTasks: mocks.getGrowthTasks,
   getInteractionCapabilities: mocks.getInteractionCapabilities,
+  getLegacyGrants: mocks.getLegacyGrants,
+  getLegacyShellPreferences: mocks.getLegacyShellPreferences,
   getSelfModel: mocks.getSelfModel,
   getPersonaStatus: mocks.getPersonaStatus,
   getPersonaTraits: mocks.getPersonaTraits,
@@ -80,12 +90,14 @@ vi.mock("../api.js", () => ({
   reviewSelfModelRelationshipProfile: mocks.reviewSelfModelRelationshipProfile,
   revokePersonaConsent: mocks.revokePersonaConsent,
   revokeDigitalSelfVersion: mocks.revokeDigitalSelfVersion,
+  revokeLegacyGrant: mocks.revokeLegacyGrant,
   revokeSpeakerProfile: mocks.revokeSpeakerProfile,
   revokeVoiceConsent: mocks.revokeVoiceConsent,
   revokeVoiceProfile: mocks.revokeVoiceProfile,
   rollbackDigitalSelfVersion: mocks.rollbackDigitalSelfVersion,
   rollbackPersonaVersion: mocks.rollbackPersonaVersion,
   transitionGrowthTask: mocks.transitionGrowthTask,
+  updateLegacyShellPreferences: mocks.updateLegacyShellPreferences,
   deleteAccountData: mocks.deleteAccountData,
 }));
 
@@ -141,6 +153,22 @@ function digitalSelfVersion(overrides = {}) {
   };
 }
 
+function legacyGrant(role, overrides = {}) {
+  return {
+    grant_id: `${role}-legacy-grant`,
+    role,
+    grantee_username: role === "owner" ? "family-member" : "memorykeeper",
+    version_id: role === "owner" ? "frozen-owner-7" : "frozen-grantee-9",
+    version_number: role === "owner" ? 7 : 9,
+    allowed_items: [{ kind: "memory_claim", item_id: "memory-1" }],
+    grant_snapshot_sha256: "d".repeat(64),
+    voice_allowed: false,
+    status: "active",
+    shell: null,
+    ...overrides,
+  };
+}
+
 describe("DigitalSelfPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -183,6 +211,11 @@ describe("DigitalSelfPanel", () => {
     mocks.getPersonaTraits.mockImplementation(async () => ({ items: personaTraits }));
     mocks.getPersonaVersions.mockImplementation(async () => ({ items: personaVersions }));
     mocks.getDigitalSelfVersions.mockImplementation(async () => ({ items: digitalSelfVersions }));
+    mocks.getLegacyGrants.mockImplementation(async (role) => ({
+      role,
+      items: [],
+    }));
+    mocks.getLegacyShellPreferences.mockResolvedValue(null);
     mocks.getSpeakerProfiles.mockImplementation(async () => ({ items: speakerProfiles }));
     mocks.getVoiceProfiles.mockImplementation(async () => ({
       consent: voiceConsent,
@@ -288,6 +321,67 @@ describe("DigitalSelfPanel", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("数字分身预览，不代表本人")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "开始数字分身预览" })).toBeDisabled();
+  });
+
+  it("loads owner and grantee Legacy views without loading companion identity into the Legacy surface", async () => {
+    const onStartLegacy = vi.fn().mockResolvedValue({
+      session_id: "legacy-session",
+      interaction: {
+        interaction_mode: "legacy",
+        legacy_actor_role: "grantee",
+        legacy_shell_id: "shell-grantee",
+      },
+    });
+    mocks.getLegacyGrants.mockImplementation(async (role) => ({
+      role,
+      items: [legacyGrant(role)],
+    }));
+    mocks.getLegacyShellPreferences.mockResolvedValue({
+      shell_id: "shell-grantee",
+      grant_id: "grantee-legacy-grant",
+      preferred_response_length: "balanced",
+      question_frequency: "occasional",
+      revision: 1,
+    });
+
+    render(
+      <DigitalSelfPanel
+        onBack={vi.fn()}
+        accountType="registered"
+        onStartLegacy={onStartLegacy}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "互动模式" });
+    const personaStatusCalls = mocks.getPersonaStatus.mock.calls.length;
+    const personaTraitCalls = mocks.getPersonaTraits.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "管理传承授权" }));
+
+    const dialog = screen.getByRole("dialog", { name: "传承模式" });
+    await waitFor(() => expect(mocks.getLegacyGrants).toHaveBeenCalledWith("owner"));
+    expect(within(dialog).getByText("数字分身版本 v7 · frozen-owner-7"))
+      .toBeInTheDocument();
+    expect(within(dialog).getByText("基于冻结资料生成的数字分身，不是本人"))
+      .toBeInTheDocument();
+    expect(within(dialog).getByText(/只能使用批准的设计音色/))
+      .toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("tab", { name: "接收人视角" }));
+    await waitFor(() => expect(mocks.getLegacyGrants).toHaveBeenCalledWith("grantee"));
+    expect(within(dialog).getByText("数字分身版本 v9 · frozen-grantee-9"))
+      .toBeInTheDocument();
+    expect(within(dialog).queryByText("数字分身版本 v7 · frozen-owner-7"))
+      .not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "进入传承对话" }));
+    await waitFor(() => expect(onStartLegacy).toHaveBeenCalledWith({
+      interactionMode: "legacy",
+      legacyGrantId: "grantee-legacy-grant",
+      legacyActorRole: "grantee",
+    }));
+    expect(mocks.getLegacyShellPreferences).toHaveBeenCalledWith("shell-grantee");
+    expect(mocks.getPersonaStatus).toHaveBeenCalledTimes(personaStatusCalls);
+    expect(mocks.getPersonaTraits).toHaveBeenCalledTimes(personaTraitCalls);
   });
 
   it("routes a testing version into Fidelity instead of a premature approval dialog", async () => {

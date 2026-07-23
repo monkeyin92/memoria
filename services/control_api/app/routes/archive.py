@@ -72,6 +72,16 @@ from services.governance.account_data import (
     AccountDataGovernance,
     AccountDeletionIncompleteError,
 )
+from services.legacy.domain import (
+    LegacyAccessDeniedError,
+    LegacyAccessPurpose,
+    LegacyAccessSnapshot,
+    LegacyAuditTarget,
+    LegacyFence,
+    LegacyIdempotencyConflictError,
+    LegacyNotFoundError,
+    LegacyRegistryPort,
+)
 from services.persona.domain import PersonaEnginePort, PersonaEvidence
 from services.persona.rules import trusted_uncertain_profile
 
@@ -255,6 +265,22 @@ class ResponseProvenanceCreate(BaseModel):
     )
     relationship_profile_id: str | None = Field(default=None, max_length=128)
     relationship_profile_version: int | None = Field(default=None, ge=1)
+    actor_account_id: str | None = Field(default=None, max_length=128)
+    resource_owner_account_id: str | None = Field(default=None, max_length=128)
+    legacy_actor_role: Literal["owner_preview", "grantee"] | None = None
+    legacy_grantee_account_id: str | None = Field(default=None, max_length=128)
+    legacy_grant_id: str | None = Field(default=None, max_length=128)
+    legacy_grant_snapshot_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    legacy_scope_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    legacy_shell_id: str | None = Field(default=None, max_length=128)
+    legacy_voice_allowed: bool | None = None
+    legacy_expires_at: str | None = Field(default=None, min_length=1, max_length=64)
     speaker_class: Literal["owner", "guest", "uncertain"]
     speaker_reason_code: str = Field(min_length=1, max_length=96)
     speaker_profile_id: str | None = Field(default=None, max_length=128)
@@ -301,6 +327,22 @@ class ResponseProvenanceCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_persona_snapshot(self) -> ResponseProvenanceCreate:
+        legacy_values = (
+            self.actor_account_id,
+            self.resource_owner_account_id,
+            self.legacy_actor_role,
+            self.legacy_grantee_account_id,
+            self.legacy_grant_id,
+            self.legacy_grant_snapshot_sha256,
+            self.legacy_scope_sha256,
+            self.legacy_shell_id,
+            self.legacy_voice_allowed,
+            self.legacy_expires_at,
+        )
+        if self.interaction_mode != "legacy" and any(
+            value is not None for value in legacy_values
+        ):
+            raise ValueError("Legacy provenance is forbidden outside Legacy mode")
         if bool(self.persona_version_id) != (self.persona_version_number is not None):
             raise ValueError("persona provenance version fields must be paired")
         if self.persona_style_only and self.persona_version_id is None:
@@ -370,6 +412,85 @@ def _catalog(request: Request) -> MemoryCatalogPort:
 
 def _digital_self_registry(request: Request) -> RegistryPort:
     return cast(RegistryPort, request.app.state.digital_self_registry)
+
+
+def _legacy_registry(request: Request) -> LegacyRegistryPort:
+    return cast(LegacyRegistryPort, request.app.state.legacy_registry)
+
+
+def _legacy_snapshot_matches_session(
+    access: LegacyAccessSnapshot,
+    frozen: FrozenMode,
+) -> bool:
+    return bool(
+        access.actor_role == frozen.legacy_actor_role
+        and access.resource_owner_account_id == frozen.resource_owner_account_id
+        and access.grantee_account_id == frozen.legacy_grantee_account_id
+        and access.grant_id == frozen.legacy_grant_id
+        and access.shell_id == frozen.legacy_shell_id
+        and access.version_id == frozen.digital_self_version_id
+        and access.manifest_sha256 == frozen.manifest_sha256
+        and access.grant_snapshot_sha256 == frozen.legacy_grant_snapshot_sha256
+        and access.scope_sha256 == frozen.legacy_scope_sha256
+        and access.relationship_profile_id == frozen.relationship_profile_id
+        and access.relationship_profile_version == frozen.relationship_profile_version
+        and access.voice_allowed is frozen.legacy_voice_allowed
+        and access.expires_at.isoformat() == frozen.legacy_expires_at
+    )
+
+
+async def _resolve_legacy_access(
+    request: Request,
+    *,
+    session: Mapping[str, Any],
+    now: datetime,
+) -> LegacyAccessSnapshot:
+    frozen = FrozenMode.from_session(session)
+    if ModePolicy.availability(frozen).status != "available" or not frozen.legacy_grant_id:
+        raise HTTPException(status_code=409, detail={"code": "legacy_access_unavailable"})
+    purpose: LegacyAccessPurpose = (
+        "owner_preview" if frozen.legacy_actor_role == "owner_preview" else "grantee_session"
+    )
+    try:
+        access = await _legacy_registry(request).resolve_access(
+            actor_account_id=str(session["user_id"]),
+            grant_id=frozen.legacy_grant_id,
+            purpose=purpose,
+            now=now,
+        )
+    except (LegacyAccessDeniedError, LegacyNotFoundError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "legacy_access_unavailable"},
+        ) from exc
+    if not _legacy_snapshot_matches_session(access, frozen):
+        raise HTTPException(status_code=409, detail={"code": "legacy_access_stale"})
+    return access
+
+
+def _legacy_provenance_matches(
+    submitted: ResponseProvenanceCreate,
+    access: LegacyAccessSnapshot,
+    *,
+    actor_account_id: str,
+) -> bool:
+    return bool(
+        submitted.interaction_mode == "legacy"
+        and submitted.digital_self_version_id == access.version_id
+        and submitted.manifest_sha256 == access.manifest_sha256
+        and submitted.relationship_profile_id == access.relationship_profile_id
+        and submitted.actor_account_id == actor_account_id
+        and submitted.resource_owner_account_id == access.resource_owner_account_id
+        and submitted.legacy_actor_role == access.actor_role
+        and submitted.legacy_grantee_account_id == access.grantee_account_id
+        and submitted.legacy_grant_id == access.grant_id
+        and submitted.legacy_grant_snapshot_sha256 == access.grant_snapshot_sha256
+        and submitted.legacy_scope_sha256 == access.scope_sha256
+        and submitted.legacy_shell_id == access.shell_id
+        and submitted.legacy_voice_allowed is access.voice_allowed
+        and submitted.legacy_expires_at == access.expires_at.isoformat()
+        and submitted.relationship_profile_version == access.relationship_profile_version
+    )
 
 
 def _manifest_source_refs(
@@ -475,7 +596,8 @@ def _canonical_actual_voice(
         )
     elif interaction_mode in {"self_preview", "legacy"}:
         personal = (
-            frozen.voice_profile_id is not None
+            (interaction_mode != "legacy" or frozen.legacy_voice_allowed is True)
+            and frozen.voice_profile_id is not None
             and profile_id == frozen.voice_profile_id
             and frozen.voice_profile_version is not None
             and profile_version == frozen.voice_profile_version
@@ -517,8 +639,9 @@ async def _canonical_response_provenance(
     *,
     raw: object,
     session: Mapping[str, Any],
-    parent: EvidenceEvent,
+    parent: EvidenceEvent | None,
     tool_epoch: int,
+    legacy_access: LegacyAccessSnapshot | None = None,
 ) -> dict[str, Any]:
     try:
         submitted = ResponseProvenanceCreate.model_validate(raw)
@@ -527,7 +650,12 @@ async def _canonical_response_provenance(
             status_code=422,
             detail={"code": "response_provenance_invalid"},
         ) from exc
-    account_id = str(session["user_id"])
+    interaction_mode = str(session["interaction_mode"])
+    account_id = (
+        legacy_access.resource_owner_account_id
+        if legacy_access is not None
+        else str(session["user_id"])
+    )
     source_refs = submitted.source_refs
     local_safe_plan = submitted.planner_policy_version == _LOCAL_SAFE_PLANNER_POLICY_VERSION
     if submitted.planner_policy_version not in {
@@ -547,16 +675,50 @@ async def _canonical_response_provenance(
         )
     if (
         submitted.fence.session_id != str(session["session_id"])
-        or submitted.fence.turn_id != parent.turn_id
-        or submitted.fence.generation_id != parent.generation_id
+        or (parent is not None and submitted.fence.turn_id != parent.turn_id)
+        or (parent is not None and submitted.fence.generation_id != parent.generation_id)
         or submitted.fence.tool_epoch != tool_epoch
     ):
         raise HTTPException(
             status_code=409,
             detail={"code": "response_provenance_fence_mismatch"},
         )
-    shadow_owner_candidate = (
-        parent.speaker_class == "uncertain"
+    if legacy_access is not None and not _legacy_provenance_matches(
+        submitted,
+        legacy_access,
+        actor_account_id=str(session["user_id"]),
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_legacy_mismatch"},
+        )
+    if legacy_access is not None and submitted.mode_policy_version != str(
+        session["mode_policy_version"]
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_legacy_mismatch"},
+        )
+    legacy_fields = (
+        submitted.actor_account_id,
+        submitted.resource_owner_account_id,
+        submitted.legacy_actor_role,
+        submitted.legacy_grantee_account_id,
+        submitted.legacy_grant_id,
+        submitted.legacy_grant_snapshot_sha256,
+        submitted.legacy_scope_sha256,
+        submitted.legacy_shell_id,
+        submitted.legacy_voice_allowed,
+        submitted.legacy_expires_at,
+    )
+    if legacy_access is None and any(value is not None for value in legacy_fields):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_legacy_mismatch"},
+        )
+    shadow_owner_candidate = bool(
+        parent is not None
+        and parent.speaker_class == "uncertain"
         and parent.payload.get("speaker_reason_code") == "shadow_owner_candidate"
     )
     if submitted.persona_style_only and (
@@ -569,19 +731,22 @@ async def _canonical_response_provenance(
     if (
         submitted.persona_version_id is not None
         and not submitted.persona_style_only
-        and (parent.speaker_class != "owner" or str(session["interaction_mode"]) != "companion")
+        and (
+            parent is None
+            or parent.speaker_class != "owner"
+            or str(session["interaction_mode"]) != "companion"
+        )
     ):
         raise HTTPException(
             status_code=409,
             detail={"code": "response_provenance_private_source_denied"},
         )
-    if parent.speaker_class != "owner" and source_refs:
+    if legacy_access is None and (parent is None or parent.speaker_class != "owner") and source_refs:
         raise HTTPException(
             status_code=409,
             detail={"code": "response_provenance_private_source_denied"},
         )
     version_id = session.get("digital_self_version_id")
-    interaction_mode = str(session["interaction_mode"])
     manifest_sha256: str | None = None
     allowed_manifest_refs: dict[tuple[str, str], frozenset[str]] | None = None
     if isinstance(version_id, str) and version_id:
@@ -604,6 +769,16 @@ async def _canonical_response_provenance(
             )
         manifest_sha256 = version.manifest_sha256
         allowed_manifest_refs = _manifest_source_refs(version)
+        if legacy_access is not None and (
+            version.account_id != legacy_access.resource_owner_account_id
+            or version.version_id != legacy_access.version_id
+            or version.version_number != legacy_access.version_number
+            or version.manifest_sha256 != legacy_access.manifest_sha256
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "response_provenance_version_unavailable"},
+            )
     elif submitted.manifest_sha256 is not None or interaction_mode in {"self_preview", "legacy"}:
         raise HTTPException(
             status_code=409,
@@ -641,15 +816,35 @@ async def _canonical_response_provenance(
                 detail={"code": "response_provenance_relationship_unavailable"},
             )
         relationship_profile_version = relationship_entry.version_number
+        if legacy_access is not None and (
+            relationship_profile_id != legacy_access.relationship_profile_id
+            or relationship_profile_version != legacy_access.relationship_profile_version
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "response_provenance_relationship_unavailable"},
+            )
     source_event_ids = tuple(
         dict.fromkeys(
             source_event_id for ref in source_refs for source_event_id in ref.source_event_ids
         )
     )
     if allowed_manifest_refs is not None:
+        allowed_legacy_items = (
+            {(item.kind, item.item_id) for item in legacy_access.allowed_items}
+            if legacy_access is not None
+            else None
+        )
         for ref in source_refs:
             allowed = allowed_manifest_refs.get((ref.kind, ref.item_id))
-            if allowed is None or not set(ref.source_event_ids).issubset(allowed):
+            if (
+                allowed is None
+                or not set(ref.source_event_ids).issubset(allowed)
+                or (
+                    allowed_legacy_items is not None
+                    and (ref.kind, ref.item_id) not in allowed_legacy_items
+                )
+            ):
                 raise HTTPException(
                     status_code=409,
                     detail={"code": "response_provenance_source_invalid"},
@@ -679,7 +874,7 @@ async def _canonical_response_provenance(
             status_code=409,
             detail={"code": "response_provenance_source_invalid"},
         )
-    parent_payload = parent.payload
+    parent_payload = parent.payload if parent is not None else {}
     reason_code = parent_payload.get("speaker_reason_code")
     model_version = parent_payload.get("speaker_model_version")
     profile_id = parent_payload.get("speaker_profile_id")
@@ -687,7 +882,7 @@ async def _canonical_response_provenance(
     epistemic_status, epistemic_reason_codes, disclosures = _canonical_epistemic_provenance(
         source_refs=source_refs,
         interaction_mode=interaction_mode,
-        parent=parent,
+        parent=cast(EvidenceEvent, parent),
         submitted_disclosures=list(submitted.disclosures),
         persona_style_only=submitted.persona_style_only,
     )
@@ -702,7 +897,7 @@ async def _canonical_response_provenance(
         session=session,
         interaction_mode=interaction_mode,
     )
-    return {
+    canonical = {
         "fence": submitted.fence.model_dump(),
         "planner_policy_version": (
             _LOCAL_SAFE_PLANNER_POLICY_VERSION if local_safe_plan else PLANNER_POLICY_VERSION
@@ -713,7 +908,7 @@ async def _canonical_response_provenance(
         "manifest_sha256": manifest_sha256,
         "relationship_profile_id": relationship_profile_id,
         "relationship_profile_version": relationship_profile_version,
-        "speaker_class": parent.speaker_class,
+        "speaker_class": parent.speaker_class if parent is not None else "owner",
         "speaker_reason_code": (
             reason_code if isinstance(reason_code, str) and reason_code else "unavailable"
         ),
@@ -741,6 +936,22 @@ async def _canonical_response_provenance(
         "actual_voice_provider_expires_at": actual_voice_provider_expires_at,
         "actual_voice_speaker_sha256": actual_voice_speaker_sha256,
     }
+    if legacy_access is not None:
+        canonical.update(
+            {
+                "actor_account_id": str(session["user_id"]),
+                "resource_owner_account_id": legacy_access.resource_owner_account_id,
+                "legacy_actor_role": legacy_access.actor_role,
+                "legacy_grantee_account_id": legacy_access.grantee_account_id,
+                "legacy_grant_id": legacy_access.grant_id,
+                "legacy_grant_snapshot_sha256": legacy_access.grant_snapshot_sha256,
+                "legacy_scope_sha256": legacy_access.scope_sha256,
+                "legacy_shell_id": legacy_access.shell_id,
+                "legacy_voice_allowed": legacy_access.voice_allowed,
+                "legacy_expires_at": legacy_access.expires_at.isoformat(),
+            }
+        )
+    return canonical
 
 
 def _governance(request: Request) -> AccountDataGovernance:
@@ -992,6 +1203,145 @@ def _require_archive_write_token(
     _require_internal_token(request, "archive_write", token)
 
 
+async def _append_legacy_shell_event(
+    request: Request,
+    *,
+    body: SessionEvidenceEventCreate,
+    access: LegacyAccessSnapshot,
+    tool_epoch: int | None,
+    response_provenance: Mapping[str, Any] | None,
+) -> JSONResponse:
+    shell_role: Literal["grantee", "digital_self"] | None = None
+    if access.actor_role == "grantee" and body.event_type == "speech.utterance_finalized":
+        if body.speaker_class == "owner":
+            shell_role = "grantee"
+    elif access.actor_role == "grantee" and body.event_type == "assistant.playout_stopped":
+        shell_role = "digital_self"
+    if shell_role is None:
+        return JSONResponse(
+            status_code=200,
+            content={"event_id": body.event_id, "shell_turn_id": None, "isolated": True},
+        )
+    text = body.payload.get("text")
+    if (
+        not isinstance(text, str)
+        or not text.strip()
+        or body.turn_id is None
+        or body.generation_id is None
+        or tool_epoch is None
+        or access.shell_id is None
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "legacy_shell_fence_invalid"},
+        )
+    idempotency_key = "archive:" + hashlib.sha256(body.event_id.encode()).hexdigest()
+    try:
+        turn = await _legacy_registry(request).append_shell_turn(
+            actor_account_id=access.grantee_account_id,
+            shell_id=access.shell_id,
+            actor_role=shell_role,
+            actual_heard_text=text.strip(),
+            fence=LegacyFence(
+                session_id=body.session_id,
+                turn_id=str(body.turn_id),
+                generation_id=str(body.generation_id),
+                tool_epoch=tool_epoch,
+            ),
+            idempotency_key=idempotency_key,
+            now=body.occurred_at.astimezone(UTC),
+        )
+    except (LegacyAccessDeniedError, LegacyNotFoundError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "legacy_access_unavailable"},
+        ) from exc
+    except LegacyIdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "legacy_shell_idempotency_conflict"},
+        ) from exc
+    if shell_role == "digital_self":
+        disclosures = (
+            response_provenance.get("disclosures")
+            if response_provenance is not None
+            else None
+        )
+        if not isinstance(disclosures, list):
+            disclosures = []
+        try:
+            registry = _legacy_registry(request)
+            fence = LegacyFence(
+                session_id=body.session_id,
+                turn_id=str(body.turn_id),
+                generation_id=str(body.generation_id),
+                tool_epoch=tool_epoch,
+            )
+            now = body.occurred_at.astimezone(UTC)
+            actual_voice_profile_id = (
+                response_provenance.get("actual_voice_profile_id")
+                if response_provenance is not None
+                else None
+            )
+            if isinstance(actual_voice_profile_id, str) and actual_voice_profile_id:
+                await registry.append_runtime_audit(
+                    actor_account_id=access.grantee_account_id,
+                    grant_id=access.grant_id,
+                    action="select_voice",
+                    decision="allowed",
+                    reason="voice_selected",
+                    fence=fence,
+                    target=LegacyAuditTarget("voice_profile", actual_voice_profile_id),
+                    now=now,
+                )
+            if "privacy_refusal" in disclosures:
+                await registry.append_runtime_audit(
+                    actor_account_id=access.grantee_account_id,
+                    grant_id=access.grant_id,
+                    action="refuse",
+                    decision="denied",
+                    reason="privacy_refusal",
+                    fence=fence,
+                    target=None,
+                    now=now,
+                )
+            elif "unknown" in disclosures:
+                await registry.append_runtime_audit(
+                    actor_account_id=access.grantee_account_id,
+                    grant_id=access.grant_id,
+                    action="refuse",
+                    decision="denied",
+                    reason="unknown_refusal",
+                    fence=fence,
+                    target=None,
+                    now=now,
+                )
+            else:
+                await registry.append_runtime_audit(
+                    actor_account_id=access.grantee_account_id,
+                    grant_id=access.grant_id,
+                    action="plan_answer",
+                    decision="allowed",
+                    reason="answer_planned",
+                    fence=fence,
+                    target=None,
+                    now=now,
+                )
+        except (LegacyAccessDeniedError, LegacyNotFoundError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "legacy_access_unavailable"},
+            ) from exc
+    return JSONResponse(
+        status_code=201,
+        content={
+            "event_id": body.event_id,
+            "shell_turn_id": turn.shell_turn_id,
+            "isolated": True,
+        },
+    )
+
+
 def _canonical_turn_eligibility(event: EvidenceEvent) -> tuple[bool, bool] | None:
     interaction = event.payload.get("interaction")
     if not isinstance(interaction, Mapping):
@@ -1064,6 +1414,11 @@ async def append_session_event(
     _: Annotated[None, Depends(_require_archive_write_token)],
 ) -> JSONResponse:
     session = require_active_voice_session(request, body.session_id)
+    legacy_access = (
+        await _resolve_legacy_access(request, session=session, now=datetime.now(UTC))
+        if str(session["interaction_mode"]) == "legacy"
+        else None
+    )
     archive = _archive(request)
     account_id = str(session["user_id"])
     values = body.model_dump()
@@ -1076,7 +1431,22 @@ async def append_session_event(
     assistant_event = body.speaker_class == "assistant"
     parent_eligibility: tuple[bool, bool] | None = None
     parent: EvidenceEvent | None = None
-    if assistant_event:
+    if assistant_event and legacy_access is not None:
+        assert body.turn_id is not None and body.generation_id is not None
+        parent = EvidenceEvent(
+            event_id=f"legacy-parent:{body.event_id}",
+            account_id=legacy_access.resource_owner_account_id,
+            event_type="speech.utterance_finalized",
+            occurred_at=body.occurred_at,
+            speaker_class="owner",
+            source="legacy.shell",
+            payload={},
+            session_id=body.session_id,
+            turn_id=body.turn_id,
+            generation_id=body.generation_id,
+        )
+        parent_eligibility = (False, False)
+    elif assistant_event:
         assert body.turn_id is not None and body.generation_id is not None
         try:
             parent = await archive.turn_event(
@@ -1102,7 +1472,7 @@ async def append_session_event(
                 status_code=409,
                 detail={"code": "parent_turn_not_canonical"},
             )
-    elif (
+    elif legacy_access is None and (
         body.event_type == "speech.utterance_finalized"
         and body.turn_id is not None
         and body.generation_id is not None
@@ -1139,6 +1509,12 @@ async def append_session_event(
             session=session,
             parent=parent,
             tool_epoch=cast(int, tool_epoch),
+            legacy_access=legacy_access,
+        )
+    elif assistant_event and legacy_access is not None:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "response_provenance_invalid"},
         )
     policy_speaker = cast(
         SpeakerClass,
@@ -1173,6 +1549,14 @@ async def append_session_event(
         payload["tool_epoch"] = tool_epoch
     if canonical_response_provenance is not None:
         payload["response_provenance"] = canonical_response_provenance
+    if legacy_access is not None:
+        return await _append_legacy_shell_event(
+            request,
+            body=body,
+            access=legacy_access,
+            tool_epoch=tool_epoch,
+            response_provenance=canonical_response_provenance,
+        )
     learning_task_id = session.get("learning_task_id")
 
     async def record_event() -> tuple[EvidenceEvent, Any]:

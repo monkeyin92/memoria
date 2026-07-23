@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   cachePendingMessage: vi.fn(),
   chooseFidelityTrial: vi.fn(),
   completeFidelityEvaluation: vi.fn(),
+  createLegacyGrant: vi.fn(),
   deleteAccountData: vi.fn(),
   endVoice: vi.fn().mockResolvedValue(undefined),
   resetVoice: vi.fn().mockResolvedValue(undefined),
@@ -35,6 +37,8 @@ const mocks = vi.hoisted(() => ({
       legacy: { status: "blocked", conversational: true },
     },
   }),
+  getLegacyGrants: vi.fn().mockResolvedValue({ role: "owner", items: [] }),
+  getLegacyShellPreferences: vi.fn(),
   getDigitalSelfVersions: vi.fn().mockResolvedValue({ items: [] }),
   getFidelityEvaluations: vi.fn().mockResolvedValue({ items: [] }),
   getGrowthOverview: vi.fn().mockResolvedValue({ dimensions: [] }),
@@ -56,6 +60,8 @@ const mocks = vi.hoisted(() => ({
   logoutCurrentDevice: vi.fn(),
   registerAccount: vi.fn(),
   revokeSelfPreviewGrant: vi.fn(),
+  activateLegacyGrant: vi.fn(),
+  revokeLegacyGrant: vi.fn(),
   reviewMemoryClaim: vi.fn(),
   saveMessage: vi.fn().mockResolvedValue(undefined),
   searchLifeArchive: vi.fn().mockResolvedValue({ items: [] }),
@@ -63,6 +69,7 @@ const mocks = vi.hoisted(() => ({
   startFidelityEvaluation: vi.fn(),
   submitSelfPreviewFeedback: vi.fn(),
   updateProfile: vi.fn().mockResolvedValue(undefined),
+  updateLegacyShellPreferences: vi.fn(),
   getPersonaStatus: vi.fn().mockResolvedValue({ learning_allowed: false }),
   getPersonaTraits: vi.fn().mockResolvedValue({ items: [] }),
   getPersonaVersions: vi.fn().mockResolvedValue({ items: [] }),
@@ -101,6 +108,7 @@ vi.mock("./api.js", () => ({
   cachePendingMessage: mocks.cachePendingMessage,
   chooseFidelityTrial: mocks.chooseFidelityTrial,
   completeFidelityEvaluation: mocks.completeFidelityEvaluation,
+  createLegacyGrant: mocks.createLegacyGrant,
   deleteAccountData: mocks.deleteAccountData,
   exportAccountArchive: mocks.exportAccountArchive,
   freezeDigitalSelfVersion: mocks.freezeDigitalSelfVersion,
@@ -109,6 +117,8 @@ vi.mock("./api.js", () => ({
   getLifeTimeline: mocks.getLifeTimeline,
   getMemoryReviewQueue: mocks.getMemoryReviewQueue,
   getInteractionCapabilities: mocks.getInteractionCapabilities,
+  getLegacyGrants: mocks.getLegacyGrants,
+  getLegacyShellPreferences: mocks.getLegacyShellPreferences,
   getDigitalSelfVersions: mocks.getDigitalSelfVersions,
   getFidelityEvaluations: mocks.getFidelityEvaluations,
   getGrowthOverview: mocks.getGrowthOverview,
@@ -123,6 +133,8 @@ vi.mock("./api.js", () => ({
   logoutCurrentDevice: mocks.logoutCurrentDevice,
   registerAccount: mocks.registerAccount,
   revokeSelfPreviewGrant: mocks.revokeSelfPreviewGrant,
+  activateLegacyGrant: mocks.activateLegacyGrant,
+  revokeLegacyGrant: mocks.revokeLegacyGrant,
   reviewMemoryClaim: mocks.reviewMemoryClaim,
   saveMessage: mocks.saveMessage,
   searchLifeArchive: mocks.searchLifeArchive,
@@ -130,6 +142,7 @@ vi.mock("./api.js", () => ({
   startFidelityEvaluation: mocks.startFidelityEvaluation,
   submitSelfPreviewFeedback: mocks.submitSelfPreviewFeedback,
   updateProfile: mocks.updateProfile,
+  updateLegacyShellPreferences: mocks.updateLegacyShellPreferences,
   getPersonaStatus: mocks.getPersonaStatus,
   getPersonaTraits: mocks.getPersonaTraits,
   getPersonaVersions: mocks.getPersonaVersions,
@@ -194,6 +207,75 @@ function voiceState() {
   };
 }
 
+function activeLegacyGrant(overrides = {}) {
+  return {
+    grant_id: "opaque-legacy-grant",
+    role: "grantee",
+    grantee_username: "memorykeeper",
+    version_id: "frozen-self-7",
+    version_number: 7,
+    allowed_items: [{ kind: "memory_claim", item_id: "memory-1" }],
+    grant_snapshot_sha256: "a".repeat(64),
+    voice_allowed: false,
+    status: "active",
+    shell: null,
+    ...overrides,
+  };
+}
+
+async function enterLegacyFromMy() {
+  fireEvent.click(screen.getByRole("button", { name: "我的" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /数字心智与声音/ }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "管理传承授权" }),
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "接收人视角" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "进入传承对话" }),
+  );
+}
+
+function configureActiveLegacyVoice(sessionId = "legacy-session") {
+  let currentSession = null;
+  const start = vi.fn(async () => {
+    currentSession = {
+      session_id: sessionId,
+      interaction: {
+        interaction_mode: "legacy",
+        legacy_actor_role: "grantee",
+        legacy_shell_id: `${sessionId}-shell`,
+        resource_owner_account_id: "owner-account",
+        companion_style_id: null,
+        companion_style_version: null,
+      },
+    };
+    return currentSession;
+  });
+  const clearSession = async () => {
+    currentSession = null;
+  };
+  mocks.bootstrapIdentity.mockResolvedValue({
+    user_id: "legacy-grantee",
+    username: "memorykeeper",
+    account_type: "registered",
+    access_token: "token",
+  });
+  mocks.getLegacyGrants.mockImplementation(async (role) => ({
+    role,
+    items: role === "grantee" ? [activeLegacyGrant()] : [],
+  }));
+  mocks.endVoice.mockImplementation(clearSession);
+  mocks.resetVoice.mockImplementation(clearSession);
+  mocks.useVoiceSession.mockImplementation(() => ({
+    ...voiceState(),
+    session: currentSession,
+    start,
+  }));
+  return start;
+}
+
 describe("App identity and profile preferences", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -220,6 +302,11 @@ describe("App identity and profile preferences", () => {
       status: "revoked",
     });
     mocks.getGrowthTasks.mockResolvedValue({ items: [] });
+    mocks.getLegacyGrants.mockImplementation(async (role) => ({
+      role,
+      items: [],
+    }));
+    mocks.getLegacyShellPreferences.mockResolvedValue(null);
     mocks.updateProfile.mockResolvedValue(undefined);
     mocks.resumeAudio.mockResolvedValue(true);
     mocks.useVoiceSession.mockImplementation(() => voiceState());
@@ -672,6 +759,106 @@ describe("App identity and profile preferences", () => {
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
   });
 
+  it("runs an active grantee Legacy session with an opaque grant and no history side effects", async () => {
+    const startVoice = configureActiveLegacyVoice("legacy-session-1");
+    mocks.getInteractionCapabilities.mockResolvedValue({
+      selected_companion_id: "starlight",
+      modes: {
+        companion: { status: "available", conversational: true },
+        archive: { status: "available", conversational: false },
+        self_preview: { status: "available", conversational: true },
+        legacy: { status: "available", conversational: true },
+      },
+    });
+    mocks.getDigitalSelfVersions.mockResolvedValue({
+      items: [{
+        version_id: "approved-self-8",
+        version_number: 8,
+        status: "approved",
+        manifest_sha256: "b".repeat(64),
+        manifest: { entries: [] },
+        source_summary: {
+          memory_claim_count: 1,
+          persona_trait_count: 0,
+          persona_version_id: null,
+          source_summary_sha256: "c".repeat(64),
+        },
+        parent_version_id: null,
+        created_at: "2026-07-23T00:00:00Z",
+      }],
+    });
+    mocks.getSelfPreviewCapability.mockResolvedValue({
+      status: "available",
+      conversational: true,
+      registered_owner: true,
+      active_owner_voice: true,
+      missing: [],
+      versions: [{
+        version_id: "approved-self-8",
+        status: "approved",
+        manifest_sha256: "b".repeat(64),
+        version_stale: false,
+        fidelity_verdict: "approve",
+        fidelity_eligible: true,
+        preview_eligible: true,
+      }],
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+    await enterLegacyFromMy();
+
+    await waitFor(() => expect(startVoice).toHaveBeenCalledWith({
+      interactionMode: "legacy",
+      legacyGrantId: "opaque-legacy-grant",
+    }));
+    expect(startVoice).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByText("冻结数字分身，不是本人"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/授权接收人会话.*独立关系外壳.*不改写主人核心/))
+      .toBeInTheDocument();
+    expect(mocks.useVoiceSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        interactionMode: "legacy",
+        legacyGrantId: "opaque-legacy-grant",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    fireEvent.click(await screen.findByRole("button", { name: /数字心智与声音/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "打开数字分身预览" }));
+    const previewDialog = screen.getByRole("dialog", { name: "数字分身预览" });
+    fireEvent.change(within(previewDialog).getAllByLabelText("当前账号密码")[0], {
+      target: { value: "safe-passphrase" },
+    });
+    fireEvent.click(within(previewDialog).getByRole("button", { name: "开始数字分身预览" }));
+    expect(await within(previewDialog).findByRole("alert")).toHaveTextContent(
+      "请先结束当前陪伴对话，再进入数字分身预览",
+    );
+    expect(mocks.issueSelfPreviewGrant).not.toHaveBeenCalled();
+    expect(startVoice).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭数字分身预览" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回我的" }));
+    fireEvent.click(screen.getByRole("button", { name: "陪伴" }));
+    fireEvent.click(await screen.findByRole("button", { name: "结束对话" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("冻结数字分身，不是本人"))
+        .not.toBeInTheDocument();
+      expect(mocks.useVoiceSession).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          interactionMode: "companion",
+          legacyGrantId: null,
+        }),
+      );
+    });
+    expect(mocks.endVoice).toHaveBeenCalledOnce();
+    expect(mocks.summarizeDay).not.toHaveBeenCalled();
+    expect(mocks.transitionGrowthTask).not.toHaveBeenCalled();
+    expect(mocks.saveMessage).not.toHaveBeenCalled();
+  });
+
   it("binds a natural-chat growth task to voice and completes it when the chat ends", async () => {
     const naturalTask = {
       task_id: "natural-task",
@@ -878,23 +1065,31 @@ describe("App identity and profile preferences", () => {
   });
 
   it("logs out the current device and returns to the account gate", async () => {
-    mocks.bootstrapIdentity.mockResolvedValue({
-      user_id: "registered-user",
-      username: "memorykeeper",
-      account_type: "registered",
-    });
+    configureActiveLegacyVoice("legacy-session-logout");
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
+    await enterLegacyFromMy();
+    expect(await screen.findByText("冻结数字分身，不是本人"))
+      .toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "我的" }));
 
     fireEvent.click(await screen.findByRole("button", { name: /退出当前设备/ }));
 
     await waitFor(() => {
+      expect(mocks.endVoice).toHaveBeenCalledOnce();
       expect(mocks.logoutCurrentDevice).toHaveBeenCalledOnce();
       expect(mocks.resetVoice).toHaveBeenCalledOnce();
+      expect(mocks.useVoiceSession).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          interactionMode: "companion",
+          legacyGrantId: null,
+        }),
+      );
     });
     expect(await screen.findByRole("heading", { name: "创建你的 Memoria 账号" }))
       .toBeInTheDocument();
+    expect(screen.queryByText("冻结数字分身，不是本人"))
+      .not.toBeInTheDocument();
   });
 
   it("requires confirmation before logging out every device and reports failures", async () => {
@@ -919,15 +1114,13 @@ describe("App identity and profile preferences", () => {
   });
 
   it("ends realtime voice and returns to the account gate after permanent deletion", async () => {
-    mocks.bootstrapIdentity.mockResolvedValue({
-      user_id: "registered-user",
-      username: "memorykeeper",
-      account_type: "registered",
-      access_token: "token",
-    });
+    configureActiveLegacyVoice("legacy-session-delete");
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 
+    await enterLegacyFromMy();
+    expect(await screen.findByText("冻结数字分身，不是本人"))
+      .toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "我的" }));
     fireEvent.click(await screen.findByRole("button", { name: /注销账号/ }));
     expect(
@@ -951,10 +1144,18 @@ describe("App identity and profile preferences", () => {
         "永久删除我的全部数据",
       );
       expect(mocks.resetVoice).toHaveBeenCalledOnce();
+      expect(mocks.useVoiceSession).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          interactionMode: "companion",
+          legacyGrantId: null,
+        }),
+      );
     });
     expect(
       await screen.findByRole("heading", { name: "创建你的 Memoria 账号" }),
     ).toBeInTheDocument();
+    expect(screen.queryByText("冻结数字分身，不是本人"))
+      .not.toBeInTheDocument();
   });
 
   it("does not cache a transcript that fails after its account was deleted", async () => {

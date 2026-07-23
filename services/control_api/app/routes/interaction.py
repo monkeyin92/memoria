@@ -10,6 +10,7 @@ import json
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -30,7 +31,11 @@ from services.control_api.app.security import (
     require_authenticated_user,
 )
 from services.digital_self.domain import (
+    CognitiveClaimManifestEntry,
+    DecisionCaseManifestEntry,
     DigitalSelfVersion,
+    MemoryClaimManifestEntry,
+    PersonaTraitManifestEntry,
     RegistryPort,
     RelationshipProfileManifestEntry,
     VersionNotFoundError,
@@ -44,7 +49,22 @@ from services.digital_self.response_planner import (
     ResponsePlan,
     SourceRef,
 )
+from services.legacy.domain import (
+    LegacyAccessDeniedError,
+    LegacyAccessSnapshot,
+    LegacyAuditTarget,
+    LegacyFence,
+    LegacyGrant,
+    LegacyManifestItemRef,
+    LegacyNotFoundError,
+    LegacyRegistryPort,
+)
 from services.persona.domain import PersonaCapsule, PersonaEnginePort, PersonaRequest
+from services.self_model.domain import (
+    RelationshipProfile,
+    SelfModelNotFoundError,
+    SelfModelRegistryPort,
+)
 from services.speaker.domain import SpeakerAuthorityPort
 
 router = APIRouter(prefix="/v1/interaction", tags=["interaction"])
@@ -175,6 +195,14 @@ def _catalog(request: Request) -> MemoryCatalogPort:
 
 def _persona_engine(request: Request) -> PersonaEnginePort:
     return cast(PersonaEnginePort, request.app.state.persona_engine)
+
+
+def _legacy_registry(request: Request) -> LegacyRegistryPort:
+    return cast(LegacyRegistryPort, request.app.state.legacy_registry)
+
+
+def _self_model_registry(request: Request) -> SelfModelRegistryPort:
+    return cast(SelfModelRegistryPort, request.app.state.self_model_registry)
 
 
 def _require_policy_token(
@@ -324,6 +352,92 @@ def _relationship_in_version(
     return matches[0] if len(matches) == 1 else None
 
 
+def _legacy_access_matches_session(
+    frozen: FrozenMode,
+    access: LegacyAccessSnapshot,
+) -> bool:
+    return (
+        frozen.actor_account_id == access.resource_owner_account_id
+        if access.actor_role == "owner_preview"
+        else frozen.actor_account_id == access.grantee_account_id
+    ) and (
+        frozen.resource_owner_account_id == access.resource_owner_account_id
+        and frozen.legacy_actor_role == access.actor_role
+        and frozen.legacy_grantee_account_id == access.grantee_account_id
+        and frozen.legacy_grant_id == access.grant_id
+        and frozen.legacy_shell_id == access.shell_id
+        and frozen.digital_self_version_id == access.version_id
+        and frozen.manifest_sha256 == access.manifest_sha256
+        and frozen.legacy_grant_snapshot_sha256 == access.grant_snapshot_sha256
+        and frozen.legacy_scope_sha256 == access.scope_sha256
+        and frozen.relationship_profile_id == access.relationship_profile_id
+        and frozen.relationship_profile_version == access.relationship_profile_version
+        and frozen.legacy_voice_allowed is access.voice_allowed
+        and frozen.legacy_expires_at == access.expires_at.isoformat()
+    )
+
+
+def _legacy_relationship_matches(
+    grant: LegacyGrant,
+    live: RelationshipProfile,
+    manifest: RelationshipProfileManifestEntry,
+) -> bool:
+    snapshot = grant.relationship
+    expected = (
+        snapshot.profile_id,
+        snapshot.version_number,
+        snapshot.relationship_id,
+        snapshot.salutation,
+        snapshot.tone,
+        snapshot.advice_style,
+        snapshot.sharing_scope,
+        snapshot.boundaries,
+    )
+    return (
+        live.account_id == grant.owner_account_id
+        and live.status == "approved"
+        and live.step_up_verified
+        and not live.unresolved_conflict
+        and expected
+        == (
+            live.profile_id,
+            live.version_number,
+            live.relationship_id,
+            live.salutation,
+            live.tone,
+            live.advice_style,
+            live.sharing_scope,
+            live.boundaries,
+        )
+        == (
+            manifest.profile_id,
+            manifest.version_number,
+            manifest.relationship_id,
+            manifest.salutation,
+            manifest.tone,
+            manifest.advice_style,
+            manifest.sharing_scope,
+            manifest.boundaries,
+        )
+    )
+
+
+def _legacy_manifest_refs(version: DigitalSelfVersion) -> frozenset[LegacyManifestItemRef]:
+    refs: set[LegacyManifestItemRef] = set()
+    for entry in version.manifest.entries:
+        if hasattr(entry, "claim_id") and isinstance(entry, MemoryClaimManifestEntry):
+            refs.add(LegacyManifestItemRef("memory_claim", entry.claim_id))
+        elif isinstance(entry, PersonaTraitManifestEntry):
+            refs.add(LegacyManifestItemRef("persona_trait", entry.trait_id))
+        elif isinstance(entry, CognitiveClaimManifestEntry):
+            refs.add(LegacyManifestItemRef("cognitive_claim", entry.claim_id))
+        elif isinstance(entry, DecisionCaseManifestEntry):
+            refs.add(LegacyManifestItemRef("decision_case", entry.case_id))
+        elif isinstance(entry, RelationshipProfileManifestEntry):
+            refs.add(LegacyManifestItemRef("relationship_profile", entry.profile_id))
+    return frozenset(refs)
+
+
 def _frozen_personal_voice_matches(
     frozen: FrozenMode,
     version: DigitalSelfVersion,
@@ -357,10 +471,11 @@ async def _response_plan_context(
     str,
     DigitalSelfVersion | None,
     RelationshipProfileManifestEntry | None,
+    LegacyAccessSnapshot | None,
 ]:
     session = require_active_voice_session(request, session_id)
     frozen = FrozenMode.from_session(session)
-    account_id = str(session["user_id"])
+    actor_account_id = str(session["user_id"])
     if frozen.interaction_mode == "companion":
         definition = companion_definition(frozen.companion_style_id)
         if (
@@ -387,16 +502,59 @@ async def _response_plan_context(
             )
         ):
             raise _response_plan_unavailable()
-        return frozen, account_id, None, None
+        return frozen, actor_account_id, None, None, None
     if frozen.interaction_mode == "archive" or not frozen.digital_self_version_id:
         raise _response_plan_unavailable()
+    legacy_access: LegacyAccessSnapshot | None = None
+    resource_owner_account_id = actor_account_id
+    legacy_grant: LegacyGrant | None = None
+    if frozen.interaction_mode == "legacy":
+        if (
+            frozen.legacy_actor_role not in {"owner_preview", "grantee"}
+            or frozen.legacy_grant_id is None
+        ):
+            raise _response_plan_unavailable()
+        purpose: Literal["owner_preview", "grantee_session"] = (
+            "owner_preview"
+            if frozen.legacy_actor_role == "owner_preview"
+            else "grantee_session"
+        )
+        try:
+            legacy_access = await _legacy_registry(request).resolve_access(
+                actor_account_id=actor_account_id,
+                grant_id=frozen.legacy_grant_id,
+                purpose=purpose,
+                now=datetime.now(UTC),
+            )
+            legacy_grant = await _legacy_registry(request).get_grant(
+                actor_account_id=actor_account_id,
+                grant_id=frozen.legacy_grant_id,
+            )
+        except (LegacyAccessDeniedError, LegacyNotFoundError) as exc:
+            raise _response_plan_unavailable() from exc
+        if (
+            not _legacy_access_matches_session(frozen, legacy_access)
+            or legacy_grant.grant_snapshot_sha256
+            != legacy_access.grant_snapshot_sha256
+            or legacy_grant.scope_sha256 != legacy_access.scope_sha256
+            or legacy_grant.allowed_items != legacy_access.allowed_items
+            or _store(request).is_account_unavailable(
+                user_id=legacy_access.resource_owner_account_id
+            )
+            or _store(request).is_account_unavailable(
+                user_id=legacy_access.grantee_account_id
+            )
+        ):
+            raise _response_plan_unavailable()
+        resource_owner_account_id = legacy_access.resource_owner_account_id
     try:
         version = await _registry(request).get(
-            account_id=account_id, version_id=frozen.digital_self_version_id
+            account_id=resource_owner_account_id,
+            version_id=frozen.digital_self_version_id,
         )
     except VersionNotFoundError as exc:
         raise _response_plan_unavailable() from exc
-    if version.account_id != account_id:
+    if version.account_id != resource_owner_account_id:
         raise _response_plan_unavailable()
     if frozen.interaction_mode == "self_preview":
         if (
@@ -411,17 +569,21 @@ async def _response_plan_context(
             or await cast(
                 SelfPreviewRegistryPort, request.app.state.self_preview_registry
             ).version_stale(
-                account_id=account_id,
+                account_id=actor_account_id,
                 version_id=version.version_id,
                 manifest_sha256=version.manifest_sha256,
             )
         ):
             raise _response_plan_unavailable()
     elif frozen.interaction_mode == "legacy":
+        assert legacy_access is not None and legacy_grant is not None
         if (
             version.status != "frozen"
+            or version.version_number != legacy_access.version_number
+            or version.manifest_sha256 != legacy_access.manifest_sha256
             or not frozen.relationship_profile_id
             or not frozen.legacy_grant_id
+            or not set(legacy_access.allowed_items) <= _legacy_manifest_refs(version)
         ):
             raise _response_plan_unavailable()
     else:
@@ -434,7 +596,23 @@ async def _response_plan_context(
     )
     if frozen.relationship_profile_id and relationship is None:
         raise _response_plan_unavailable()
-    return frozen, account_id, version, relationship
+    if frozen.interaction_mode == "legacy":
+        assert legacy_access is not None and legacy_grant is not None and relationship is not None
+        try:
+            live_relationship = await _self_model_registry(request).get_relationship_profile(
+                account_id=resource_owner_account_id,
+                profile_id=legacy_access.relationship_profile_id,
+                version_number=legacy_access.relationship_profile_version,
+            )
+        except SelfModelNotFoundError as exc:
+            raise _response_plan_unavailable() from exc
+        if not _legacy_relationship_matches(
+            legacy_grant,
+            live_relationship,
+            relationship,
+        ):
+            raise _response_plan_unavailable()
+    return frozen, actor_account_id, version, relationship, legacy_access
 
 
 def _epistemic_reason_codes(plan: ResponsePlan) -> list[str]:
@@ -657,8 +835,12 @@ def _response_plan_payload(
             "model": frozen.voice_model,
         }
         if (
-            frozen.interaction_mode == "self_preview"
+            frozen.interaction_mode in {"self_preview", "legacy"}
             and version is not None
+            and (
+                frozen.interaction_mode != "legacy"
+                or frozen.legacy_voice_allowed is True
+            )
             and _frozen_personal_voice_matches(frozen, version)
         )
         else {
@@ -706,6 +888,46 @@ def _response_plan_payload(
             "manifest_sha256": plan.provenance.manifest_sha256,
             "relationship_profile_id": relationship.profile_id if relationship else None,
             "relationship_profile_version": relationship.version_number if relationship else None,
+            "actor_account_id": (
+                frozen.actor_account_id if frozen.interaction_mode == "legacy" else None
+            ),
+            "resource_owner_account_id": (
+                frozen.resource_owner_account_id
+                if frozen.interaction_mode == "legacy"
+                else None
+            ),
+            "legacy_actor_role": (
+                frozen.legacy_actor_role if frozen.interaction_mode == "legacy" else None
+            ),
+            "legacy_grantee_account_id": (
+                frozen.legacy_grantee_account_id
+                if frozen.interaction_mode == "legacy"
+                else None
+            ),
+            "legacy_grant_id": (
+                frozen.legacy_grant_id if frozen.interaction_mode == "legacy" else None
+            ),
+            "legacy_grant_snapshot_sha256": (
+                frozen.legacy_grant_snapshot_sha256
+                if frozen.interaction_mode == "legacy"
+                else None
+            ),
+            "legacy_scope_sha256": (
+                frozen.legacy_scope_sha256
+                if frozen.interaction_mode == "legacy"
+                else None
+            ),
+            "legacy_shell_id": (
+                frozen.legacy_shell_id if frozen.interaction_mode == "legacy" else None
+            ),
+            "legacy_voice_allowed": (
+                frozen.legacy_voice_allowed
+                if frozen.interaction_mode == "legacy"
+                else None
+            ),
+            "legacy_expires_at": (
+                frozen.legacy_expires_at if frozen.interaction_mode == "legacy" else None
+            ),
             "speaker_class": body.speaker_decision.classification,
             "speaker_reason_code": body.speaker_decision.reason_code,
             "speaker_profile_id": body.speaker_decision.profile_id,
@@ -726,13 +948,83 @@ def _response_plan_payload(
     }
 
 
+async def _append_legacy_plan_audit(
+    request: Request,
+    *,
+    body: ResponsePlanRequest,
+    access: LegacyAccessSnapshot,
+    plan: ResponsePlan,
+) -> None:
+    fence = LegacyFence(
+        session_id=body.fence.session_id,
+        turn_id=str(body.fence.turn_id),
+        generation_id=str(body.fence.generation_id),
+        tool_epoch=body.fence.tool_epoch,
+    )
+    registry = _legacy_registry(request)
+    now = datetime.now(UTC)
+    actor_account_id = (
+        access.resource_owner_account_id
+        if access.actor_role == "owner_preview"
+        else access.grantee_account_id
+    )
+    try:
+        for ref in plan.provenance.source_refs[:16]:
+            await registry.append_runtime_audit(
+                actor_account_id=actor_account_id,
+                grant_id=access.grant_id,
+                action="read_source",
+                decision="allowed",
+                reason="source_read",
+                fence=fence,
+                target=LegacyAuditTarget(ref.entry_type, ref.entry_id),
+                now=now,
+            )
+        refusal_kind = plan.disclosure_decision.kind
+        if refusal_kind == "privacy":
+            await registry.append_runtime_audit(
+                actor_account_id=actor_account_id,
+                grant_id=access.grant_id,
+                action="refuse",
+                decision="denied",
+                reason="privacy_refusal",
+                fence=fence,
+                target=None,
+                now=now,
+            )
+        elif refusal_kind == "unknown":
+            await registry.append_runtime_audit(
+                actor_account_id=actor_account_id,
+                grant_id=access.grant_id,
+                action="refuse",
+                decision="denied",
+                reason="unknown_refusal",
+                fence=fence,
+                target=None,
+                now=now,
+            )
+        else:
+            await registry.append_runtime_audit(
+                actor_account_id=actor_account_id,
+                grant_id=access.grant_id,
+                action="plan_answer",
+                decision="allowed",
+                reason="answer_planned",
+                fence=fence,
+                target=None,
+                now=now,
+            )
+    except (LegacyAccessDeniedError, LegacyNotFoundError) as exc:
+        raise _response_plan_unavailable() from exc
+
+
 @router.post("/response-plan")
 async def response_plan(
     body: ResponsePlanRequest,
     request: Request,
     _: Annotated[None, Depends(_require_response_plan_token)],
 ) -> dict[str, Any]:
-    frozen, account_id, version, relationship = await _response_plan_context(
+    frozen, account_id, version, relationship, legacy_access = await _response_plan_context(
         request, body.session_id
     )
     cache = _response_plan_cache(request)
@@ -756,7 +1048,22 @@ async def response_plan(
         )
         plan = DigitalSelfResponsePlanner.plan(
             mode=frozen.interaction_mode,
-            actor=PlannerActor(account_id=account_id),
+            actor=PlannerActor(
+                account_id=account_id,
+                resource_owner_account_id=(
+                    legacy_access.resource_owner_account_id
+                    if legacy_access is not None
+                    else None
+                ),
+                legacy_actor_role=(
+                    legacy_access.actor_role if legacy_access is not None else None
+                ),
+                legacy_allowed_items=(
+                    frozenset((item.kind, item.item_id) for item in legacy_access.allowed_items)
+                    if legacy_access is not None
+                    else frozenset()
+                ),
+            ),
             version=version,
             query=body.query,
             relationship_id=relationship.relationship_id if relationship else None,
@@ -766,11 +1073,7 @@ async def response_plan(
                 model_version=body.speaker_decision.model_version,
                 profile_id=body.speaker_decision.profile_id,
                 template_version=body.speaker_decision.template_version,
-                authorized_scopes=(
-                    frozenset({relationship.sharing_scope})
-                    if relationship is not None
-                    else frozenset()
-                ),
+                authorized_scopes=frozenset(),
             ),
             companion_items=companion_items,
         )
@@ -782,4 +1085,11 @@ async def response_plan(
             plan=plan,
             persona_capsule=persona_capsule,
         )
+        if legacy_access is not None:
+            await _append_legacy_plan_audit(
+                request,
+                body=body,
+                access=legacy_access,
+                plan=plan,
+            )
         return await cache.put(key, fingerprint, payload)

@@ -45,6 +45,34 @@ def _self_preview_policy(*, fallback_profile_id: str = "bright_peer") -> ModePol
     )
 
 
+def _legacy_policy(*, voice_allowed: bool) -> ModePolicy:
+    references: dict[str, str | bool | None] = {
+        "voice_profile_id": "voice-profile-personal" if voice_allowed else None,
+        "voice_profile_version": "3" if voice_allowed else None,
+        "voice_provider": "volcengine_doubao" if voice_allowed else None,
+        "voice_model": "seed-icl-2.0" if voice_allowed else None,
+        "voice_resource_id": "seed-icl-2.0" if voice_allowed else None,
+        "voice_provider_expires_at": ("2027-07-23T00:00:00+00:00" if voice_allowed else None),
+        "voice_speaker_sha256": (
+            _speaker_sha256("S_personal_synth_ready") if voice_allowed else None
+        ),
+        "fallback_voice_profile_id": "bright_peer",
+        "fallback_voice_provider": "volcengine_doubao",
+        "fallback_voice_model": "seed-tts-2.0",
+        "fallback_voice_resource_id": "seed-tts-2.0",
+        "legacy_voice_allowed": voice_allowed,
+    }
+    return ModePolicy(
+        mode="legacy",
+        policy_version="s9-v1",
+        companion_style_id=None,
+        style_version=None,
+        references=tuple(sorted(references.items())),
+        capabilities=(),
+        companion_style=None,
+    )
+
+
 @pytest.mark.asyncio
 async def test_resolution_sends_only_session_id_and_caches_active_profile() -> None:
     observed: dict[str, object] = {}
@@ -244,6 +272,70 @@ async def test_legacy_cosyvoice_active_profile_is_never_cached_for_doubao() -> N
         )
         assert not await client.refresh(session_id="session-legacy")
         assert client.cached(session_id="session-legacy") is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_personal_voice_revocation_switches_to_frozen_designed_fallback() -> None:
+    revoked = False
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        if revoked:
+            return httpx.Response(409, json={"detail": {"code": "legacy_voice_unavailable"}})
+        return httpx.Response(
+            200,
+            json={
+                "mode": "active",
+                "profile_id": "voice-profile-personal",
+                "provider": "volcengine_doubao",
+                "voice_kind": "personal",
+                "model": "seed-icl-2.0",
+                "resource_id": "seed-icl-2.0",
+                "voice_id": "S_personal_synth_ready",
+                "speaker_sha256": _speaker_sha256("S_personal_synth_ready"),
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = VoiceProfileClient(
+            VoiceProfileClientConfig(
+                endpoint="https://control.test/v1/voices/session-resolution",
+                internal_token="voice-internal-token",
+            ),
+            client=http_client,
+        )
+        tts = DoubaoTTS(
+            DoubaoTTSConfig(
+                api_key="test",
+                voice_profile="warm_companion",
+                speaker="zh_male_yangguangqingnian_uranus_bigtts",
+            )
+        )
+        try:
+            assert await client.refresh(session_id="session-legacy")
+            _apply_cached_voice_profile(
+                tts_plugin=tts,
+                client=client,
+                session_id="session-legacy",
+                mode="legacy",
+                policy=_legacy_policy(voice_allowed=True),
+            )
+            assert tts.current_voice_kind == "personal"
+
+            revoked = True
+            assert not await client.refresh(session_id="session-legacy")
+            _apply_cached_voice_profile(
+                tts_plugin=tts,
+                client=client,
+                session_id="session-legacy",
+                mode="legacy",
+                policy=_legacy_policy(voice_allowed=True),
+            )
+            assert client.cached(session_id="session-legacy") is None
+            assert tts.current_voice_profile_id == "bright_peer"
+            assert tts.current_voice == "zh_female_tianmeitaozi_uranus_bigtts"
+            assert tts.current_voice_kind == "designed"
+        finally:
+            await tts.aclose()
 
 
 @pytest.mark.parametrize(

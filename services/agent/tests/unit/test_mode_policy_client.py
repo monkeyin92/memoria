@@ -17,9 +17,22 @@ def _payload(**overrides: object) -> dict[str, object]:
         "companion_style_id": "starlight",
         "companion_style_version": "companion-v1",
         "policy_scope": "session",
+        "actor_account_id": None,
+        "resource_owner_account_id": None,
         "digital_self_version_id": None,
+        "manifest_sha256": None,
+        "preview_grant_id": None,
+        "perspective": None,
         "relationship_profile_id": None,
+        "relationship_profile_version": None,
+        "legacy_actor_role": None,
+        "legacy_grantee_account_id": None,
         "legacy_grant_id": None,
+        "legacy_shell_id": None,
+        "legacy_grant_snapshot_sha256": None,
+        "legacy_scope_sha256": None,
+        "legacy_voice_allowed": None,
+        "legacy_expires_at": None,
         "voice_profile_id": None,
         "voice_profile_version": None,
         "voice_provider": None,
@@ -175,12 +188,22 @@ def test_self_preview_freezes_an_exact_personal_voice_contract() -> None:
 
     assert policy.available is True
     assert dict(policy.references) == {
+        "actor_account_id": None,
         "digital_self_version_id": "version-001",
+        "legacy_actor_role": None,
+        "legacy_expires_at": None,
         "legacy_grant_id": None,
+        "legacy_grant_snapshot_sha256": None,
+        "legacy_grantee_account_id": None,
+        "legacy_scope_sha256": None,
+        "legacy_shell_id": None,
+        "legacy_voice_allowed": None,
         "manifest_sha256": "a" * 64,
         "perspective": "owner",
         "preview_grant_id": "grant-001",
         "relationship_profile_id": None,
+        "relationship_profile_version": None,
+        "resource_owner_account_id": None,
         "voice_model": "seed-icl-2.0",
         "voice_profile_id": "voice-profile-1",
         "voice_profile_version": "2",
@@ -324,6 +347,96 @@ def test_self_preview_accepts_all_null_personal_voice_with_complete_fallback() -
 
     assert policy.available
     assert dict(policy.references)["fallback_voice_profile_id"] == "bright_peer"
+
+
+def _legacy_payload(*, voice_allowed: bool = False) -> dict[str, object]:
+    personal = voice_allowed
+    return _payload(
+        interaction_mode="legacy",
+        mode_policy_version="s9-v1",
+        companion_style_id=None,
+        companion_style_version=None,
+        actor_account_id="grantee-a",
+        resource_owner_account_id="owner-a",
+        digital_self_version_id="version-1",
+        manifest_sha256="a" * 64,
+        relationship_profile_id="relationship-1",
+        relationship_profile_version=3,
+        legacy_actor_role="grantee",
+        legacy_grantee_account_id="grantee-a",
+        legacy_grant_id="grant-1",
+        legacy_shell_id="shell-1",
+        legacy_grant_snapshot_sha256="b" * 64,
+        legacy_scope_sha256="c" * 64,
+        legacy_voice_allowed=voice_allowed,
+        legacy_expires_at="2026-08-23T00:00:00+00:00",
+        voice_profile_id="voice-1" if personal else None,
+        voice_profile_version=2 if personal else None,
+        voice_provider="volcengine_doubao" if personal else None,
+        voice_model="seed-icl-2.0" if personal else None,
+        voice_resource_id="seed-icl-2.0" if personal else None,
+        voice_provider_expires_at=(
+            "2026-08-22T00:00:00+00:00" if personal else None
+        ),
+        voice_speaker_sha256="d" * 64 if personal else None,
+        fallback_voice_profile_id="warm_companion",
+        fallback_voice_provider="volcengine_doubao",
+        fallback_voice_model="seed-tts-2.0",
+        fallback_voice_resource_id="seed-tts-2.0",
+        capabilities={
+            "conversation": True,
+            "private_memory": False,
+            "persona": False,
+            "persona_low_sensitivity": False,
+            "tools": False,
+            "history": False,
+            "learning": False,
+            "voice_profile": voice_allowed,
+        },
+    )
+
+
+def test_legacy_policy_binds_grantee_actor_without_resource_owner_privileges() -> None:
+    policy = ModePolicyClient._parse(_legacy_payload())
+
+    assert policy.available
+    assert policy.allows_conversation("owner")
+    assert not policy.allows_conversation("guest")
+    assert not policy.allows_private_context("owner")
+    assert not policy.allows_private_persona("owner")
+    assert not policy.allows_tools("owner")
+    assert not policy.history_eligible("owner")
+    assert not policy.allows_learning("owner")
+    assert not policy.allows_voice_profile()
+    assert dict(policy.references)["resource_owner_account_id"] == "owner-a"
+
+
+def test_legacy_personal_voice_capability_requires_exact_allowed_snapshot() -> None:
+    policy = ModePolicyClient._parse(_legacy_payload(voice_allowed=True))
+
+    assert policy.available
+    assert policy.allows_voice_profile()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("legacy_grant_id", ""),
+        ("legacy_grant_snapshot_sha256", "f" * 63),
+        ("legacy_scope_sha256", "F" * 64),
+        ("actor_account_id", "stranger"),
+        ("resource_owner_account_id", "grantee-a"),
+        ("legacy_shell_id", None),
+        ("relationship_profile_version", 0),
+        ("legacy_expires_at", "2026-08-23T08:00:00+08:00"),
+        ("fallback_voice_model", "seed-icl-2.0"),
+    ],
+)
+def test_legacy_policy_rejects_forged_authority_and_voice(
+    field: str,
+    value: object,
+) -> None:
+    assert not ModePolicyClient._parse({**_legacy_payload(), field: value}).available
 
 
 def test_policy_rejects_missing_frozen_fallback_field_even_in_companion_mode() -> None:

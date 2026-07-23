@@ -14,6 +14,8 @@ from services.control_api.app.database import MemoryStore
 class RealtimeConnections(Protocol):
     async def close_account(self, account_id: str) -> int: ...
 
+    async def close_sessions(self, session_ids: set[str]) -> int: ...
+
 
 class RealtimeConnection(Protocol):
     async def close(self, *, code: int, reason: str) -> None: ...
@@ -54,6 +56,19 @@ class RealtimeConnectionRegistry:
             self.unregister(account_id=account_id, session_id=session_id)
         return count
 
+    async def close_sessions(self, session_ids: set[str]) -> int:
+        """Close exact sessions without revoking unrelated grantee sessions."""
+
+        count = 0
+        for account_id, account_connections in tuple(self._connections.items()):
+            for session_id, connection in tuple(account_connections.items()):
+                if session_id not in session_ids:
+                    continue
+                await connection.close(code=4401, reason="account deleting")
+                self.unregister(account_id=account_id, session_id=session_id)
+                count += 1
+        return count
+
 
 class AccountSessionTerminator:
     def __init__(
@@ -78,6 +93,9 @@ class AccountSessionTerminator:
             deleted_at=datetime.now(UTC).isoformat(),
         )
         await self._connections.close_account(account_id)
+        await self._connections.close_sessions(
+            {str(session["session_id"]) for session in sessions}
+        )
         for session in sessions:
             if session["voice_backend"] == "cascade":
                 await self._close_room(str(session["room_name"]))

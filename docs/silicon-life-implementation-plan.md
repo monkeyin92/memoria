@@ -359,7 +359,16 @@ seed-icl 实际 PCM/字幕、quota、官方删除路径、本人盲测或真机�
 
 ### S9：LegacyGrant、冻结核心与关系外壳
 
-状态：PENDING
+状态：COMPLETED（2026-07-23）
+
+实现 seam：先由 `LegacyAccessResolver` 把当前登录者、Digital Self 资源主人和当前声纹主体
+拆开，再把服务端冻结的 grant/scope/relationship/version 快照交给唯一
+`DigitalSelfResponsePlanner`。关系画像和 `speaker_decision` 均不能自行授予 scope。
+
+成功标准：owner 可在世预演/激活/撤销；exact registered grantee 只能在 active、未过期、
+未撤销时进入；每个 grantee shell 与 owner core 分离；Legacy 文本不进入 owner Evidence、
+Memory、Persona、Growth 或普通消息；每轮持续数字身份披露。验证覆盖 SQLite/PostgreSQL
+FORCE RLS、跨 grantee、scope、声音、会话/Planner/Agent/Archive、治理、H5 与双 viewport。
 
 首版闭环：一个 owner、一个注册 grantee、一个 frozen version、一个 approved RelationshipProfile 和一个独立 shell。
 
@@ -372,9 +381,22 @@ seed-icl 实际 PCM/字幕、quota、官方删除路径、本人盲测或真机�
 
 验收：跨 grantee、过期、撤销、越 scope、未 frozen、voice 未授权均 fail closed；关系外壳无法改变 manifest digest 或主人核心。
 
+完成证据：
+
+- SQLite/PostgreSQL 双实现、FORCE RLS、跨账户 404、owner/grantee 删除传播、导出和最小审计
+  均已落地；
+- session、ModePolicy、ResponsePlanner、Agent、Archive 与 voice resolution 每轮按 exact
+  grant/version/manifest/relationship/scope/fence 重验；
+- shell 只归档 actual-heard 的 grantee / digital-self 对话和白名单互动偏好，owner 学习管道
+  保持隔离；
+- manifest v1/v2/v3 不增加隐式分享语义：Memory 仅允许明确 `family/public`，
+  Persona 暂不授权，Cognitive/Decision/Relationship 仅允许明确 `family/public`；
+- PostgreSQL 17 + pgvector 全量 1175 passed、3 skipped，覆盖率 88.13%；H5 232 tests；
+  Ruff、strict mypy、build、Compose、Shell/JSON、离线 E2E 和双移动视口浏览器验收通过。
+
 ### S10：全量门禁、部署与公开验收
 
-状态：PENDING
+状态：IN_PROGRESS（2026-07-23）
 
 顺序：schema/迁移预演 -> 离线 E2E -> Provider smoke -> 隔离候选 -> runtime-first -> H5-last -> IP/域名 -> 真实浏览器/设备 -> 15 分钟观察 -> 回滚演练。
 

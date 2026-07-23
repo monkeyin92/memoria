@@ -57,7 +57,7 @@ def _plan_for_fence(
             model="seed-tts-2.0",
         ),
         provenance=ResponseProvenance(
-            planner_policy_version="digital-self-response-planner-v1",
+            planner_policy_version="digital-self-response-planner-v2",
             interaction_mode="companion",
             mode_policy_version="test-policy",
             digital_self_version_id=None,
@@ -433,6 +433,75 @@ async def test_cascade_response_fails_closed_without_generation_voice_snapshot(
     assert called is False
     assert runtime.generation_voice_for(runtime.fence) is None
     assert runtime.response_provenance_for(runtime.fence) is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_turn_stops_before_planning_when_generation_voice_cannot_bind() -> None:
+    runtime = DuplexRuntime.create(session_id="legacy-bind-failure")
+    runtime.set_mode_policy(
+        ModePolicy(
+            mode="legacy",
+            policy_version="s9-v1",
+            companion_style_id=None,
+            style_version=None,
+            references=(
+                ("fallback_voice_profile_id", "bright_peer"),
+                ("fallback_voice_provider", "volcengine_doubao"),
+                ("fallback_voice_model", "seed-tts-2.0"),
+                ("fallback_voice_resource_id", "seed-tts-2.0"),
+                ("legacy_voice_allowed", False),
+            ),
+            capabilities=(("conversation", True),),
+            companion_style=None,
+        )
+    )
+    runtime.tts = SimpleNamespace(
+        current_voice_profile_id="wrong-designed-profile",
+        current_model="seed-tts-2.0",
+        current_voice="wrong-speaker",
+        current_voice_kind="designed",
+        bind_fence=lambda _fence: None,
+    )
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return SpeakerDecision(
+            classification="owner",
+            score=0.98,
+            quality_score=0.95,
+            reason_code="owner_match",
+            model_version="campplus-test",
+            template_version=1,
+            profile_id="profile-owner-001",
+            permissions=permissions_for_speaker("owner"),
+        )
+
+    class PlannerStub:
+        called = False
+
+        async def fetch(self, **_kwargs: object) -> ResponsePlanFetch:
+            self.called = True
+            raise AssertionError("voice binding must fail before response planning")
+
+    class Message:
+        def text_content(self) -> str:
+            return "请继续说。"
+
+    planner = PlannerStub()
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x01\x00" * 800)
+    runtime.on_user_voice_stopped()
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=planner,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(StopResponse):
+        await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
+
+    assert planner.called is False
+    assert runtime.generation_voice_for(runtime.fence) is None
 
 
 def test_self_preview_selected_fallback_binds_exact_generation_voice_snapshot() -> None:

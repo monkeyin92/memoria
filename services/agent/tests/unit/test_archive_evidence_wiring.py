@@ -78,6 +78,37 @@ def _self_preview_voice_policy() -> ModePolicy:
     )
 
 
+def _legacy_voice_policy(*, voice_allowed: bool) -> ModePolicy:
+    return ModePolicy(
+        mode="legacy",
+        policy_version="s9-v1",
+        companion_style_id=None,
+        style_version=None,
+        references=tuple(
+            sorted(
+                {
+                    "voice_profile_id": "personal-voice-1" if voice_allowed else None,
+                    "voice_profile_version": "1" if voice_allowed else None,
+                    "voice_provider": "volcengine_doubao" if voice_allowed else None,
+                    "voice_model": "seed-icl-2.0" if voice_allowed else None,
+                    "voice_resource_id": "seed-icl-2.0" if voice_allowed else None,
+                    "voice_provider_expires_at": (
+                        "2026-08-01T00:00:00+00:00" if voice_allowed else None
+                    ),
+                    "voice_speaker_sha256": "a" * 64 if voice_allowed else None,
+                    "fallback_voice_profile_id": "bright_peer",
+                    "fallback_voice_provider": "volcengine_doubao",
+                    "fallback_voice_model": "seed-tts-2.0",
+                    "fallback_voice_resource_id": "seed-tts-2.0",
+                    "legacy_voice_allowed": voice_allowed,
+                }.items()
+            )
+        ),
+        capabilities=(),
+        companion_style=None,
+    )
+
+
 @pytest.mark.asyncio
 async def test_only_final_user_and_actual_heard_assistant_text_become_evidence() -> None:
     runtime = DuplexRuntime.create(session_id="session-001")
@@ -164,7 +195,7 @@ async def test_actual_heard_assistant_binds_bounded_response_provenance_to_exact
             "generation_id": runtime.fence.generation_id,
             "tool_epoch": runtime.fence.tool_epoch,
         },
-        "planner_policy_version": "digital-self-response-planner-v1",
+        "planner_policy_version": "digital-self-response-planner-v2",
         "interaction_mode": "companion",
         "mode_policy_version": "test-policy",
         "digital_self_version_id": None,
@@ -289,6 +320,43 @@ def test_self_preview_generation_voice_requires_frozen_personal_digest_and_fallb
         resource_id="seed-tts-2.0",
         speaker_sha256="c" * 64,
         voice_kind="designed",
+    )
+
+
+def test_legacy_generation_voice_accepts_only_authorized_personal_or_frozen_fallback() -> None:
+    runtime = DuplexRuntime.create(session_id="session-legacy-voice")
+    runtime.set_mode_policy(_legacy_voice_policy(voice_allowed=True))
+    fence = runtime.fence
+
+    assert runtime.bind_generation_voice(
+        fence,
+        profile_id="personal-voice-1",
+        resource_id="seed-icl-2.0",
+        speaker_sha256="a" * 64,
+        voice_kind="personal",
+    )
+    assert runtime.bind_generation_voice(
+        fence,
+        profile_id="bright_peer",
+        resource_id="seed-tts-2.0",
+        speaker_sha256="b" * 64,
+        voice_kind="designed",
+    )
+    assert not runtime.bind_generation_voice(
+        fence,
+        profile_id="other-designed",
+        resource_id="seed-tts-2.0",
+        speaker_sha256="b" * 64,
+        voice_kind="designed",
+    )
+
+    runtime.set_mode_policy(_legacy_voice_policy(voice_allowed=False))
+    assert not runtime.bind_generation_voice(
+        fence,
+        profile_id="personal-voice-1",
+        resource_id="seed-icl-2.0",
+        speaker_sha256="a" * 64,
+        voice_kind="personal",
     )
 
 

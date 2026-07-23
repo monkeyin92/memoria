@@ -394,6 +394,42 @@ describe("useVoiceSession production edges", () => {
     });
   });
 
+  it("passes only the opaque Legacy grant id and forces the controlled cascade backend", async () => {
+    api.createSession.mockResolvedValueOnce({
+      session_id: "legacy-session",
+      livekit_url: "wss://livekit.example",
+      participant_token: "legacy-token",
+      voice_backend: "cascade",
+      interaction: { interaction_mode: "legacy" },
+    });
+    const { result } = renderHook(() =>
+      useVoiceSession({
+        userId: "legacy-grantee",
+        onFinalTranscript: vi.fn(),
+        voiceBackend: "qwen_omni",
+        interactionMode: "legacy",
+        legacyGrantId: "grant-legacy-1",
+      }),
+    );
+    result.current.audioContainerRef.current = document.createElement("div");
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(api.createSession).toHaveBeenCalledWith(
+      "legacy-grantee",
+      "cascade",
+      null,
+      {
+        interactionMode: "legacy",
+        legacyGrantId: "grant-legacy-1",
+      },
+    );
+    expect(liveKit.instances).toHaveLength(1);
+    expect(omni.instances).toHaveLength(0);
+  });
+
   it("keeps a single audio element when Omni repeats the remote stream", async () => {
     api.createSession.mockResolvedValueOnce({
       session_id: "omni-session",

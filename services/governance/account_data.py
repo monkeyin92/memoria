@@ -10,16 +10,17 @@ import re
 import sqlite3
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import asyncpg
 
 from services.archive.object_store import ObjectRef, ObjectStore
 from services.control_api.app.database import MemoryStore
+from services.legacy.domain import LegacyAccountExport, LegacyRegistryPort
 from services.voice_profile.domain import VoiceProfilePort
 
 _IDENTIFIER = re.compile(r"^[a-z_][a-z0-9_]*$")
@@ -215,12 +216,13 @@ _POSTGRES_ARCHIVE_DELETE_ORDER = tuple(
 _DELETION_STEP_RANK = {
     "started": 0,
     "sessions_terminated": 1,
-    "voice_profiles_deleted": 2,
-    "archive_objects_deleted": 3,
-    "archive_rows_deleted": 4,
-    "speaker_rows_deleted": 5,
-    "verified_empty": 6,
-    "completed": 7,
+    "legacy_rows_deleted": 2,
+    "voice_profiles_deleted": 3,
+    "archive_objects_deleted": 4,
+    "archive_rows_deleted": 5,
+    "speaker_rows_deleted": 6,
+    "verified_empty": 7,
+    "completed": 8,
 }
 
 
@@ -696,6 +698,7 @@ class AccountDataGovernance:
         archive_repository: AccountRepository,
         speaker_repository: AccountRepository,
         voice_profiles: VoiceProfilePort,
+        legacy_registry: LegacyRegistryPort | None = None,
         archive_object_store: ObjectStore | None = None,
         session_terminator: AccountSessionTerminator | None = None,
         operation_blocker: AccountOperationBlocker | None = None,
@@ -704,6 +707,7 @@ class AccountDataGovernance:
         self._archive_repository = archive_repository
         self._speaker_repository = speaker_repository
         self._voice_profiles = voice_profiles
+        self._legacy_registry = legacy_registry
         self._archive_object_store = archive_object_store
         self._session_terminator = session_terminator
         self._operation_blocker = operation_blocker
@@ -711,10 +715,11 @@ class AccountDataGovernance:
         self._deletion_lock = asyncio.Lock()
 
     async def export_account(self, account_id: str) -> dict[str, Any]:
-        control, archive, speaker = await asyncio.gather(
+        control, archive, speaker, legacy = await asyncio.gather(
             asyncio.to_thread(self._memory_store.export_account_data, user_id=account_id),
             self._archive_repository.export_account(account_id),
             self._speaker_repository.export_account(account_id),
+            self._export_legacy(account_id),
         )
         body: dict[str, Any] = {
             "format_version": 1,
@@ -724,6 +729,7 @@ class AccountDataGovernance:
                 "conversation": control,
                 "archive": archive,
                 "speaker": speaker,
+                "legacy": legacy,
             },
         }
         canonical = json.dumps(
@@ -734,6 +740,14 @@ class AccountDataGovernance:
         ).encode("utf-8")
         body["manifest_sha256"] = hashlib.sha256(canonical).hexdigest()
         return body
+
+    async def _export_legacy(self, account_id: str) -> dict[str, Any]:
+        return _portable_legacy_export(await self._legacy_snapshot(account_id))
+
+    async def _legacy_snapshot(self, account_id: str) -> LegacyAccountExport:
+        if self._legacy_registry is None:
+            return _empty_legacy_export()
+        return await self._legacy_registry.export_for_account(account_id=account_id)
 
     async def delete_account(self, account_id: str) -> dict[str, Any]:
         async with self._deletion_lock:
@@ -826,6 +840,18 @@ class AccountDataGovernance:
                 progress["sessions"] = terminated
                 await checkpoint("sessions_terminated")
 
+            if _DELETION_STEP_RANK[step] < _DELETION_STEP_RANK["legacy_rows_deleted"]:
+                if self._legacy_registry is not None:
+                    legacy = await self._legacy_registry.export_for_account(
+                        account_id=account_id
+                    )
+                    progress["legacy.grants"] = len(legacy.grants)
+                    progress["legacy.shells"] = len(legacy.shells)
+                    progress["legacy.shell_turns"] = len(legacy.shell_turns)
+                    progress["legacy.audit_events"] = len(legacy.audit_events)
+                    await self._legacy_registry.delete_for_account(account_id=account_id)
+                await checkpoint("legacy_rows_deleted")
+
             if _DELETION_STEP_RANK[step] < _DELETION_STEP_RANK["voice_profiles_deleted"]:
                 progress["voice.profiles"] = await delete_voice_profiles()
                 await checkpoint("voice_profiles_deleted")
@@ -849,30 +875,46 @@ class AccountDataGovernance:
                 await checkpoint("speaker_rows_deleted")
 
             # Catch any asset or projection that arrived just before the deleting fence.
-            late_profiles, late_references, late_archive_rows, late_speaker_rows = (
+            late_profiles, late_references, late_archive_rows, late_speaker_rows, late_legacy = (
                 await asyncio.gather(
                     self._voice_profiles.profiles(account_id=account_id),
                     self._archive_repository.object_references(account_id),
                     self._archive_repository.remaining_account_rows(account_id),
                     self._speaker_repository.remaining_account_rows(account_id),
+                    self._legacy_snapshot(account_id),
                 )
             )
-            if late_profiles or late_references or late_archive_rows or late_speaker_rows:
+            if (
+                late_profiles
+                or late_references
+                or late_archive_rows
+                or late_speaker_rows
+                or _legacy_export_has_rows(late_legacy)
+            ):
                 progress["voice.profiles"] += await delete_voice_profiles()
                 progress["archive.objects"] += await delete_archive_objects()
+                if self._legacy_registry is not None:
+                    await self._legacy_registry.delete_for_account(account_id=account_id)
                 for prefix, counts in (
                     ("archive", await self._archive_repository.delete_account(account_id)),
                     ("speaker", await self._speaker_repository.delete_account(account_id)),
                 ):
                     for key, value in counts.items():
                         progress[f"{prefix}.{key}"] = progress.get(f"{prefix}.{key}", 0) + value
-            profiles, references, archive_rows, speaker_rows = await asyncio.gather(
+            profiles, references, archive_rows, speaker_rows, legacy_rows = await asyncio.gather(
                 self._voice_profiles.profiles(account_id=account_id),
                 self._archive_repository.object_references(account_id),
                 self._archive_repository.remaining_account_rows(account_id),
                 self._speaker_repository.remaining_account_rows(account_id),
+                self._legacy_snapshot(account_id),
             )
-            if profiles or references or archive_rows or speaker_rows:
+            if (
+                profiles
+                or references
+                or archive_rows
+                or speaker_rows
+                or _legacy_export_has_rows(legacy_rows)
+            ):
                 raise AccountDeletionIncompleteError(
                     "assets or projections appeared while account deletion was running"
                 )
@@ -896,3 +938,31 @@ class AccountDataGovernance:
             "deleted_counts": finalized,
             "terminate_sessions": True,
         }
+
+
+def _empty_legacy_export() -> LegacyAccountExport:
+    return LegacyAccountExport((), (), (), ())
+
+
+def _legacy_export_has_rows(value: LegacyAccountExport) -> bool:
+    return bool(value.grants or value.shells or value.shell_turns or value.audit_events)
+
+
+def _portable_legacy_export(value: LegacyAccountExport) -> dict[str, Any]:
+    def portable(item: Any) -> Any:
+        if isinstance(item, datetime):
+            return item.isoformat()
+        if is_dataclass(item) and not isinstance(item, type):
+            return portable(asdict(cast(Any, item)))
+        if isinstance(item, Mapping):
+            return {str(key): portable(child) for key, child in item.items()}
+        if isinstance(item, (tuple, list)):
+            return [portable(child) for child in item]
+        return item
+
+    return {
+        "grants": portable(value.grants),
+        "shells": portable(value.shells),
+        "shell_turns": portable(value.shell_turns),
+        "audit_events": portable(value.audit_events),
+    }

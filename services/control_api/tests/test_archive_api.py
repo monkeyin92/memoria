@@ -7,7 +7,7 @@ import io
 import os
 import uuid
 import wave
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,6 +31,21 @@ from services.control_api.app.routes.archive import (
     _canonical_actual_voice,
     _observe_persona,
 )
+from services.digital_self.domain import (
+    DigitalSelfManifest,
+    DigitalSelfSourceSummary,
+    DigitalSelfVersion,
+    RelationshipProfileManifestEntry,
+)
+from services.digital_self.response_planner import PLANNER_POLICY_VERSION
+from services.legacy.domain import (
+    LegacyAccessDeniedError,
+    LegacyAccessSnapshot,
+    LegacyAuditTarget,
+    LegacyFence,
+    LegacyManifestItemRef,
+    LegacyShellTurn,
+)
 
 
 class PersonaObservationStub:
@@ -44,6 +59,53 @@ class PersonaObservationStub:
     async def observe(self, evidence: object) -> None:
         del evidence
         self.observations += 1
+
+
+class LegacyArchiveStub:
+    def __init__(self, access: LegacyAccessSnapshot) -> None:
+        self.access = access
+        self.available = True
+        self.turns: dict[str, LegacyShellTurn] = {}
+        self.runtime_audits: list[dict[str, object]] = []
+
+    async def resolve_access(self, **kwargs: object) -> LegacyAccessSnapshot:
+        now = kwargs["now"]
+        if not self.available or not isinstance(now, datetime) or now >= self.access.expires_at:
+            raise LegacyAccessDeniedError("legacy grant is not available")
+        return self.access
+
+    async def append_shell_turn(self, **kwargs: object) -> LegacyShellTurn:
+        key = str(kwargs["idempotency_key"])
+        existing = self.turns.get(key)
+        if existing is not None:
+            return existing
+        fence = kwargs["fence"]
+        turn = LegacyShellTurn(
+            shell_turn_id=f"shell-turn-{len(self.turns) + 1}",
+            shell_id=str(kwargs["shell_id"]),
+            grant_id=self.access.grant_id,
+            actor_role=kwargs["actor_role"],  # type: ignore[arg-type]
+            actual_heard_text=str(kwargs["actual_heard_text"]),
+            fence=fence,  # type: ignore[arg-type]
+            occurred_at=kwargs["now"],  # type: ignore[arg-type]
+        )
+        self.turns[key] = turn
+        return turn
+
+    async def append_runtime_audit(self, **kwargs: object) -> None:
+        self.runtime_audits.append(kwargs)
+
+
+class LegacyVersionStub:
+    def __init__(self, version: DigitalSelfVersion) -> None:
+        self.version = version
+
+    async def get(self, **kwargs: object) -> DigitalSelfVersion:
+        assert kwargs == {
+            "account_id": self.version.account_id,
+            "version_id": self.version.version_id,
+        }
+        return self.version
 
 
 class TrackingArchiveObjectStore:
@@ -159,7 +221,7 @@ def _response_provenance(
             "generation_id": generation_id,
             "tool_epoch": 0,
         },
-        "planner_policy_version": "digital-self-response-planner-v1",
+        "planner_policy_version": PLANNER_POLICY_VERSION,
         "interaction_mode": "legacy",
         "mode_policy_version": "caller-forged",
         "digital_self_version_id": None,
@@ -184,6 +246,101 @@ def _response_provenance(
         "actual_voice_speaker_sha256": designed_voice_speaker_sha256("warm_companion"),
         **overrides,
     }
+
+
+def _legacy_access(*, actor_role: str = "grantee", expired: bool = False) -> LegacyAccessSnapshot:
+    return LegacyAccessSnapshot(
+        actor_role=actor_role,  # type: ignore[arg-type]
+        resource_owner_account_id="legacy-owner",
+        grantee_account_id="legacy-grantee",
+        grant_id="legacy-grant",
+        shell_id="legacy-shell" if actor_role == "grantee" else None,
+        version_id="legacy-version",
+        version_number=7,
+        manifest_sha256="a" * 64,
+        grant_snapshot_sha256="b" * 64,
+        scope_sha256="c" * 64,
+        allowed_items=(LegacyManifestItemRef("relationship_profile", "relationship-1"),),
+        relationship_profile_id="relationship-1",
+        relationship_profile_version=3,
+        voice_allowed=False,
+        expires_at=datetime.now(UTC) + timedelta(days=-1 if expired else 30),
+    )
+
+
+def _legacy_version(access: LegacyAccessSnapshot) -> DigitalSelfVersion:
+    relationship = RelationshipProfileManifestEntry(
+        profile_id=access.relationship_profile_id,
+        version_number=access.relationship_profile_version,
+        person_id="person-1",
+        relationship_id="relationship-id",
+        salutation="小梅",
+        tone="warm",
+        advice_style="listen-first",
+        sharing_scope="family",
+        boundaries=(),
+        support_source_event_ids=(),
+        counterexample_source_event_ids=(),
+    )
+    return DigitalSelfVersion(
+        version_id=access.version_id,
+        account_id=access.resource_owner_account_id,
+        version_number=access.version_number,
+        status="frozen",
+        manifest=DigitalSelfManifest(
+            schema_version="digital-self-manifest-v3",
+            compiler_version="compiler-v3",
+            policy_version="policy-v3",
+            parent_version_id=None,
+            rollback_target_version_id=None,
+            entries=(relationship,),
+            source_summary=DigitalSelfSourceSummary(
+                memory_claim_count=0,
+                persona_trait_count=0,
+                persona_version_id=None,
+                source_summary_sha256="summary",
+                relationship_profile_count=1,
+            ),
+        ),
+        manifest_sha256=access.manifest_sha256,
+        created_at=datetime.now(UTC),
+    )
+
+
+def _add_legacy_session(app: object, access: LegacyAccessSnapshot) -> str:
+    session_id = f"legacy-session-{access.actor_role}-{uuid.uuid4()}"
+    actor = (
+        access.resource_owner_account_id
+        if access.actor_role == "owner_preview"
+        else access.grantee_account_id
+    )
+    app.state.memory_store.add_voice_session(  # type: ignore[attr-defined]
+        session_id=session_id,
+        user_id=actor,
+        resource_owner_account_id=access.resource_owner_account_id,
+        room_name=f"room-{session_id}",
+        voice_backend="cascade",
+        created_at=datetime.now(UTC).isoformat(),
+        interaction_mode="legacy",
+        mode_policy_version="s9-v1",
+        digital_self_version_id=access.version_id,
+        digital_self_manifest_sha256=access.manifest_sha256,
+        relationship_profile_id=access.relationship_profile_id,
+        relationship_profile_version=access.relationship_profile_version,
+        legacy_grant_id=access.grant_id,
+        legacy_actor_role=access.actor_role,
+        legacy_grantee_account_id=access.grantee_account_id,
+        legacy_shell_id=access.shell_id,
+        legacy_grant_snapshot_sha256=access.grant_snapshot_sha256,
+        legacy_scope_sha256=access.scope_sha256,
+        legacy_voice_allowed=access.voice_allowed,
+        legacy_expires_at=access.expires_at.isoformat(),
+        fallback_voice_profile_id="warm_companion",
+        fallback_voice_provider="volcengine_doubao",
+        fallback_voice_model="seed-tts-2.0",
+        fallback_voice_resource_id="seed-tts-2.0",
+    )
+    return session_id
 
 
 def test_personal_voice_archive_requires_exact_frozen_speaker_digest() -> None:
@@ -1270,7 +1427,8 @@ async def test_guest_and_uncertain_evidence_is_recorded_but_hidden_from_owner_co
         "discard-uncertain",
         "discard-direct-uncertain",
     }
-    for speaker_class in ("guest", "uncertain"):
+    speaker_classes: tuple[SpeakerClass, ...] = ("guest", "uncertain")
+    for speaker_class in speaker_classes:
         isolated = await app.state.life_archive.context(
             ContextQuery(
                 account_id=identity["user_id"],
@@ -1340,7 +1498,7 @@ async def test_agent_records_session_event_without_trusting_an_account_id(
                             "generation_id": 2,
                             "tool_epoch": 0,
                         },
-                        "planner_policy_version": "digital-self-response-planner-v1",
+                        "planner_policy_version": PLANNER_POLICY_VERSION,
                         "interaction_mode": "legacy",
                         "mode_policy_version": "caller-forged",
                         "digital_self_version_id": None,
@@ -1558,7 +1716,7 @@ async def test_response_provenance_rejects_guest_or_assistant_source_evidence(
                             "generation_id": 9,
                             "tool_epoch": 0,
                         },
-                        "planner_policy_version": "digital-self-response-planner-v1",
+                        "planner_policy_version": PLANNER_POLICY_VERSION,
                         "interaction_mode": "companion",
                         "mode_policy_version": "s2-v1",
                         "digital_self_version_id": None,
@@ -2651,3 +2809,170 @@ async def test_registered_account_deletion_revokes_login_token_session_and_archi
     assert deleted_session_event.status_code == 410
     assert other_still_exists.status_code == 200
     assert remaining_growth_events.evidence == ()
+
+
+@pytest.mark.asyncio
+async def test_legacy_session_events_only_append_actual_heard_turns_to_the_grantee_shell(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    access = _legacy_access()
+    legacy = LegacyArchiveStub(access)
+    app.state.legacy_registry = legacy
+    app.state.digital_self_registry = LegacyVersionStub(_legacy_version(access))
+    session_id = _add_legacy_session(app, access)
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    now = datetime.now(UTC).isoformat()
+    user_event = {
+        "event_id": "legacy-user-final",
+        "session_id": session_id,
+        "event_type": "speech.utterance_finalized",
+        "occurred_at": now,
+        "speaker_class": "owner",
+        "source": "funasr.authoritative_final",
+        "turn_id": 1,
+        "generation_id": 2,
+        "tool_epoch": 0,
+        "payload": {"text": "这是受赠人实际说出的话。"},
+    }
+    provenance = _response_provenance(
+        session_id=session_id,
+        turn_id=1,
+        generation_id=2,
+        source_refs=[],
+        planner_policy_version="local-safe-fallback-v1",
+        interaction_mode="legacy",
+        mode_policy_version="s9-v1",
+        digital_self_version_id=access.version_id,
+        manifest_sha256=access.manifest_sha256,
+        relationship_profile_id=access.relationship_profile_id,
+        relationship_profile_version=access.relationship_profile_version,
+        actor_account_id=access.grantee_account_id,
+        resource_owner_account_id=access.resource_owner_account_id,
+        legacy_actor_role="grantee",
+        legacy_grantee_account_id=access.grantee_account_id,
+        legacy_grant_id=access.grant_id,
+        legacy_grant_snapshot_sha256=access.grant_snapshot_sha256,
+        legacy_scope_sha256=access.scope_sha256,
+        legacy_shell_id=access.shell_id,
+        legacy_voice_allowed=False,
+        legacy_expires_at=access.expires_at.isoformat(),
+    )
+    assistant_event = {
+        "event_id": "legacy-assistant-playout",
+        "session_id": session_id,
+        "event_type": "assistant.playout_stopped",
+        "occurred_at": now,
+        "speaker_class": "assistant",
+        "source": "generation_fence.actual_heard",
+        "turn_id": 1,
+        "generation_id": 2,
+        "tool_epoch": 0,
+        "payload": {
+            "text": "这是安全拒答。",
+            "actual_heard": True,
+            "response_provenance": provenance,
+        },
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user = await client.post("/v1/archive/session-events", headers=internal, json=user_event)
+        duplicate = await client.post(
+            "/v1/archive/session-events", headers=internal, json=user_event
+        )
+        assistant = await client.post(
+            "/v1/archive/session-events", headers=internal, json=assistant_event
+        )
+
+    assert (user.status_code, duplicate.status_code, assistant.status_code) == (201, 201, 201)
+    assert [turn.actor_role for turn in legacy.turns.values()] == ["grantee", "digital_self"]
+    assert all(turn.fence.tool_epoch == 0 for turn in legacy.turns.values())
+    assert [audit["action"] for audit in legacy.runtime_audits] == [
+        "select_voice",
+        "refuse",
+    ]
+    assert legacy.runtime_audits[0]["reason"] == "voice_selected"
+    assert legacy.runtime_audits[0]["target"] == LegacyAuditTarget(
+        "voice_profile", "warm_companion"
+    )
+    assert legacy.runtime_audits[1]["reason"] == "privacy_refusal"
+    assert all(
+        audit["fence"] == LegacyFence(session_id, "1", "2", 0)
+        for audit in legacy.runtime_audits
+    )
+    assert provenance["source_refs"] == []
+    for account_id in (access.grantee_account_id, access.resource_owner_account_id):
+        context = await app.state.life_archive.context(
+            ContextQuery(account_id=account_id, session_id=session_id, speaker_class="owner")
+        )
+        assert context.evidence == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("denial", ["revoked", "expired"])
+async def test_legacy_archive_fails_closed_after_grant_revocation_or_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    denial: str,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    access = _legacy_access(expired=denial == "expired")
+    legacy = LegacyArchiveStub(access)
+    legacy.available = denial != "revoked"
+    app.state.legacy_registry = legacy
+    session_id = _add_legacy_session(app, access)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/archive/session-events",
+            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
+            json={
+                "event_id": f"legacy-{denial}",
+                "session_id": session_id,
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "owner",
+                "source": "test",
+                "turn_id": 1,
+                "generation_id": 1,
+                "tool_epoch": 0,
+                "payload": {"text": "不得写入。"},
+            },
+        )
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"code": "legacy_access_unavailable"}
+    assert legacy.turns == {}
+
+
+@pytest.mark.asyncio
+async def test_legacy_owner_preview_never_creates_a_relationship_shell_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    access = _legacy_access(actor_role="owner_preview")
+    legacy = LegacyArchiveStub(access)
+    app.state.legacy_registry = legacy
+    session_id = _add_legacy_session(app, access)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/archive/session-events",
+            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
+            json={
+                "event_id": "legacy-owner-preview",
+                "session_id": session_id,
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "speaker_class": "owner",
+                "source": "test",
+                "turn_id": 1,
+                "generation_id": 1,
+                "tool_epoch": 0,
+                "payload": {"text": "预演不形成关系外壳。"},
+            },
+        )
+    assert response.status_code == 200
+    assert response.json()["shell_turn_id"] is None
+    assert legacy.turns == {}

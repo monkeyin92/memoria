@@ -263,7 +263,16 @@ def require_active_voice_session(request: Request, session_id: str) -> dict[str,
     session = store.get_voice_session_by_id(session_id=session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="voice session not found")
-    if store.is_account_unavailable(user_id=str(session["user_id"])):
+    account_ids = {
+        str(value)
+        for value in (
+            session["user_id"],
+            session.get("resource_owner_account_id"),
+            session.get("legacy_grantee_account_id"),
+        )
+        if isinstance(value, str) and value
+    }
+    if any(store.is_account_unavailable(user_id=account_id) for account_id in account_ids):
         raise HTTPException(status_code=410, detail="voice session was deleted")
     return session
 

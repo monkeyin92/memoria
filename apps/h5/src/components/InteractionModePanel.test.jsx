@@ -32,6 +32,20 @@ describe("InteractionModePanel", () => {
     expect(onOpenSelfPreview).toHaveBeenCalledOnce();
   });
 
+  it("opens Legacy grant management before a conversational grant exists", () => {
+    const onOpenLegacy = vi.fn();
+    render(
+      <InteractionModePanel
+        capabilities={{ selected_companion_id: "starlight", modes }}
+        onOpenLegacy={onOpenLegacy}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "管理传承授权" }));
+    expect(onOpenLegacy).toHaveBeenCalledOnce();
+    expect(screen.getByText("可管理")).toBeInTheDocument();
+  });
+
   it("fails closed when Self Preview is available but the callback is missing", () => {
     render(
       <InteractionModePanel

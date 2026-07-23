@@ -534,7 +534,8 @@ class DuplexRuntime:
         references = dict(policy.references)
         companion = companion_definition(policy.companion_style_id)
         personal_contract = (
-            policy.mode == "self_preview"
+            policy.mode in {"self_preview", "legacy"}
+            and (policy.mode != "legacy" or references.get("legacy_voice_allowed") is True)
             and profile_id is not None
             and profile_id == references.get("voice_profile_id")
             and references.get("voice_profile_version") is not None
@@ -545,19 +546,15 @@ class DuplexRuntime:
             and speaker_sha256 == references.get("voice_speaker_sha256")
         )
         designed_contract = (
-            (
-                policy.mode == "companion"
-                and companion is not None
-                and profile_id == companion.designed_voice_profile
-            )
-            or (
-                policy.mode == "self_preview"
-                and profile_id == references.get("fallback_voice_profile_id")
-                and references.get("fallback_voice_provider") == "volcengine_doubao"
-                and references.get("fallback_voice_model") == "seed-tts-2.0"
-                and references.get("fallback_voice_resource_id") == "seed-tts-2.0"
-            )
-            or (policy.mode == "legacy" and profile_id is None)
+            policy.mode == "companion"
+            and companion is not None
+            and profile_id == companion.designed_voice_profile
+        ) or (
+            policy.mode in {"self_preview", "legacy"}
+            and profile_id == references.get("fallback_voice_profile_id")
+            and references.get("fallback_voice_provider") == "volcengine_doubao"
+            and references.get("fallback_voice_model") == "seed-tts-2.0"
+            and references.get("fallback_voice_resource_id") == "seed-tts-2.0"
         )
         if (
             fence.session_id != self.session_id

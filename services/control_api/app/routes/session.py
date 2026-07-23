@@ -26,11 +26,33 @@ from services.control_api.app.security import (
     require_authenticated_user,
     require_matching_user,
 )
-from services.digital_self.domain import VersionNotFoundError, VoiceProfileManifestRef
+from services.digital_self.domain import (
+    CognitiveClaimManifestEntry,
+    DecisionCaseManifestEntry,
+    DigitalSelfVersion,
+    MemoryClaimManifestEntry,
+    PersonaTraitManifestEntry,
+    RelationshipProfileManifestEntry,
+    VersionNotFoundError,
+    VoiceProfileManifestRef,
+)
 from services.digital_self.preview import (
     PreviewConflictError,
     PreviewNotFoundError,
     SelfPreviewRegistryPort,
+)
+from services.legacy.domain import (
+    LegacyAccessDeniedError,
+    LegacyAccessSnapshot,
+    LegacyGrant,
+    LegacyManifestItemRef,
+    LegacyNotFoundError,
+    LegacyRegistryPort,
+)
+from services.self_model.domain import (
+    RelationshipProfile,
+    SelfModelNotFoundError,
+    SelfModelRegistryPort,
 )
 from services.speaker.domain import SpeakerAuthorityPort
 from services.voice_profile.domain import VoiceProfilePort, VoiceResolution
@@ -100,6 +122,77 @@ def _matching_preview_voice(
     )
 
 
+def _manifest_item_refs(version: DigitalSelfVersion) -> frozenset[LegacyManifestItemRef]:
+    refs: set[LegacyManifestItemRef] = set()
+    for entry in version.manifest.entries:
+        if isinstance(entry, MemoryClaimManifestEntry):
+            refs.add(LegacyManifestItemRef("memory_claim", entry.claim_id))
+        elif isinstance(entry, PersonaTraitManifestEntry):
+            refs.add(LegacyManifestItemRef("persona_trait", entry.trait_id))
+        elif isinstance(entry, CognitiveClaimManifestEntry):
+            refs.add(LegacyManifestItemRef("cognitive_claim", entry.claim_id))
+        elif isinstance(entry, DecisionCaseManifestEntry):
+            refs.add(LegacyManifestItemRef("decision_case", entry.case_id))
+        elif isinstance(entry, RelationshipProfileManifestEntry):
+            refs.add(LegacyManifestItemRef("relationship_profile", entry.profile_id))
+    return frozenset(refs)
+
+
+def _legacy_relationship_matches(
+    grant: LegacyGrant,
+    profile: RelationshipProfile,
+    version: DigitalSelfVersion,
+) -> bool:
+    snapshot = grant.relationship
+    manifest = next(
+        (
+            entry
+            for entry in version.manifest.entries
+            if isinstance(entry, RelationshipProfileManifestEntry)
+            and entry.profile_id == snapshot.profile_id
+            and entry.version_number == snapshot.version_number
+        ),
+        None,
+    )
+    expected = (
+        snapshot.profile_id,
+        snapshot.version_number,
+        snapshot.relationship_id,
+        snapshot.salutation,
+        snapshot.tone,
+        snapshot.advice_style,
+        snapshot.sharing_scope,
+        snapshot.boundaries,
+    )
+    live = (
+        profile.profile_id,
+        profile.version_number,
+        profile.relationship_id,
+        profile.salutation,
+        profile.tone,
+        profile.advice_style,
+        profile.sharing_scope,
+        profile.boundaries,
+    )
+    frozen = (
+        manifest.profile_id,
+        manifest.version_number,
+        manifest.relationship_id,
+        manifest.salutation,
+        manifest.tone,
+        manifest.advice_style,
+        manifest.sharing_scope,
+        manifest.boundaries,
+    ) if manifest is not None else None
+    return (
+        profile.account_id == grant.owner_account_id
+        and profile.status == "approved"
+        and profile.step_up_verified
+        and not profile.unresolved_conflict
+        and expected == live == frozen
+    )
+
+
 class ClientInfo(BaseModel):
     platform: str = "web"
     timezone: str = "Asia/Shanghai"
@@ -111,8 +204,8 @@ class CreateSessionRequest(BaseModel):
     user_id: str | None = Field(default=None, min_length=1, max_length=128)
     voice_backend: Literal["cascade", "qwen_omni"] = "cascade"
     interaction_mode: Literal["companion", "self_preview", "legacy", "archive"] = "companion"
-    # S2 accepts the public contract but ignores future-mode references until
-    # S3/S7/S9 can validate and freeze them server-side.
+    # Owner/version/relationship remain server-owned. Legacy accepts only the
+    # opaque grant id and resolves every other authority server-side.
     digital_self_version_id: str | None = Field(default=None, min_length=1, max_length=128)
     preview_grant_id: str | None = Field(default=None, min_length=1, max_length=128)
     relationship_profile_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -122,20 +215,23 @@ class CreateSessionRequest(BaseModel):
     client: ClientInfo = Field(default_factory=ClientInfo)
 
     @model_validator(mode="after")
-    def reject_client_owned_future_references(self) -> CreateSessionRequest:
+    def reject_client_owned_references(self) -> CreateSessionRequest:
         if any(
             value is not None
             for value in (
                 self.digital_self_version_id,
                 self.relationship_profile_id,
-                self.legacy_grant_id,
             )
         ):
-            raise ValueError("S2 future mode references are server-owned and unavailable")
+            raise ValueError("Digital Self and relationship references are server-owned")
         if self.interaction_mode == "self_preview" and self.preview_grant_id is None:
             raise ValueError("self_preview requires a server-issued preview grant")
         if self.interaction_mode != "self_preview" and self.preview_grant_id is not None:
             raise ValueError("preview_grant_id is only valid for self_preview")
+        if self.interaction_mode == "legacy" and self.legacy_grant_id is None:
+            raise ValueError("legacy requires a server-issued grant id")
+        if self.interaction_mode != "legacy" and self.legacy_grant_id is not None:
+            raise ValueError("legacy_grant_id is only valid for legacy")
         return self
 
 
@@ -260,7 +356,7 @@ async def create_session(
             status_code=409,
             detail={"code": "mode_not_conversational", "mode": body.interaction_mode},
         )
-    if availability.status == "blocked":
+    if availability.status == "blocked" and body.interaction_mode != "legacy":
         raise HTTPException(
             status_code=409,
             detail={
@@ -271,10 +367,10 @@ async def create_session(
         )
     if settings.environment == "production" and body.voice_backend in REALTIME_BACKENDS:
         raise HTTPException(status_code=409, detail="端到端实时模型仅限隔离 A/B 环境")
-    if body.interaction_mode == "self_preview" and body.voice_backend != "cascade":
+    if body.interaction_mode in {"self_preview", "legacy"} and body.voice_backend != "cascade":
         raise HTTPException(
             status_code=409,
-            detail={"code": "self_preview_requires_controlled_backend"},
+            detail={"code": f"{body.interaction_mode}_requires_controlled_backend"},
         )
     store = cast(MemoryStore, request.app.state.memory_store)
     created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -285,6 +381,85 @@ async def create_session(
     if companion is None:
         raise HTTPException(status_code=409, detail="companion profile is unavailable")
     preview_registry = cast(SelfPreviewRegistryPort, request.app.state.self_preview_registry)
+    legacy_access: LegacyAccessSnapshot | None = None
+    legacy_grant: LegacyGrant | None = None
+    if body.interaction_mode == "legacy":
+        assert body.legacy_grant_id is not None
+        legacy_registry = cast(LegacyRegistryPort, request.app.state.legacy_registry)
+        try:
+            legacy_grant = await legacy_registry.get_grant(
+                actor_account_id=user_id,
+                grant_id=body.legacy_grant_id,
+            )
+            if user_id == legacy_grant.owner_account_id:
+                purpose: Literal["owner_preview", "grantee_session"] = "owner_preview"
+            elif user_id == legacy_grant.grantee_account_id:
+                purpose = "grantee_session"
+            else:  # pragma: no cover - get_grant already enforces visibility
+                raise LegacyNotFoundError(body.legacy_grant_id)
+            legacy_access = await legacy_registry.resolve_access(
+                actor_account_id=user_id,
+                grant_id=body.legacy_grant_id,
+                purpose=purpose,
+                now=datetime.now(UTC),
+            )
+            if (
+                legacy_access.grant_snapshot_sha256
+                != legacy_grant.grant_snapshot_sha256
+                or legacy_access.scope_sha256 != legacy_grant.scope_sha256
+                or legacy_access.version_id != legacy_grant.version_id
+                or legacy_access.version_number != legacy_grant.version_number
+                or legacy_access.manifest_sha256 != legacy_grant.manifest_sha256
+            ):
+                raise LegacyAccessDeniedError("legacy grant changed during access resolution")
+            if store.is_account_unavailable(
+                user_id=legacy_access.resource_owner_account_id
+            ) or store.is_account_unavailable(user_id=legacy_access.grantee_account_id):
+                raise LegacyAccessDeniedError("legacy account is unavailable")
+            version = await request.app.state.digital_self_registry.get(
+                account_id=legacy_access.resource_owner_account_id,
+                version_id=legacy_access.version_id,
+            )
+            if (
+                version.status != "frozen"
+                or version.version_number != legacy_access.version_number
+                or version.manifest_sha256 != legacy_access.manifest_sha256
+                or not set(legacy_access.allowed_items) <= _manifest_item_refs(version)
+            ):
+                raise LegacyAccessDeniedError("legacy Digital Self snapshot is unavailable")
+            relationship = await cast(
+                SelfModelRegistryPort, request.app.state.self_model_registry
+            ).get_relationship_profile(
+                account_id=legacy_access.resource_owner_account_id,
+                profile_id=legacy_access.relationship_profile_id,
+                version_number=legacy_access.relationship_profile_version,
+            )
+            if not _legacy_relationship_matches(legacy_grant, relationship, version):
+                raise LegacyAccessDeniedError("legacy relationship snapshot is unavailable")
+            speaker_authority = cast(SpeakerAuthorityPort, request.app.state.speaker_authority)
+            if not any(
+                profile.status == "active" for profile in await speaker_authority.profiles(user_id)
+            ):
+                raise LegacyAccessDeniedError("legacy actor voice is not verified")
+        except (
+            LegacyAccessDeniedError,
+            LegacyNotFoundError,
+            SelfModelNotFoundError,
+            VersionNotFoundError,
+        ) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "legacy_grant_unavailable"},
+            ) from exc
+        owner_profile = store.get_profile(
+            user_id=legacy_access.resource_owner_account_id,
+            now=created_at,
+        )
+        companion = companion_definition(
+            owner_profile.get("companion_id") or DEFAULT_COMPANION_ID
+        )
+        if companion is None:  # pragma: no cover - static companion catalog
+            raise HTTPException(status_code=409, detail="companion profile is unavailable")
     if body.interaction_mode == "self_preview":
         assert body.preview_grant_id is not None
         try:
@@ -376,12 +551,74 @@ async def create_session(
         )
     else:
         preview_frozen = None
+    legacy_frozen: FrozenMode | None = None
+    if body.interaction_mode == "legacy":
+        assert legacy_access is not None and legacy_grant is not None
+        legacy_version = await request.app.state.digital_self_registry.get(
+            account_id=legacy_access.resource_owner_account_id,
+            version_id=legacy_access.version_id,
+        )
+        if legacy_access.voice_allowed:
+            voice_resolution = await cast(
+                VoiceProfilePort, request.app.state.voice_profile_manager
+            ).resolve(account_id=legacy_access.resource_owner_account_id)
+            (
+                voice_profile_id,
+                voice_profile_version,
+                voice_provider,
+                voice_model,
+                voice_resource_id,
+                voice_provider_expires_at,
+                voice_speaker_sha256,
+            ) = _matching_preview_voice(
+                legacy_version.manifest.source_summary.voice_profile,
+                voice_resolution,
+            )
+        else:
+            (
+                voice_profile_id,
+                voice_profile_version,
+                voice_provider,
+                voice_model,
+                voice_resource_id,
+                voice_provider_expires_at,
+                voice_speaker_sha256,
+            ) = (None, None, None, None, None, None, None)
+        legacy_frozen = ModePolicy.freeze_legacy(
+            actor_account_id=user_id,
+            resource_owner_account_id=legacy_access.resource_owner_account_id,
+            actor_role=legacy_access.actor_role,
+            grantee_account_id=legacy_access.grantee_account_id,
+            grant_id=legacy_access.grant_id,
+            grant_snapshot_sha256=legacy_access.grant_snapshot_sha256,
+            version_id=legacy_access.version_id,
+            manifest_sha256=legacy_access.manifest_sha256,
+            relationship_profile_id=legacy_access.relationship_profile_id,
+            relationship_profile_version=legacy_access.relationship_profile_version,
+            scope_sha256=legacy_access.scope_sha256,
+            shell_id=legacy_access.shell_id,
+            voice_allowed=legacy_access.voice_allowed,
+            expires_at=legacy_access.expires_at.isoformat(),
+            voice_profile_id=voice_profile_id,
+            voice_profile_version=voice_profile_version,
+            voice_provider=voice_provider,
+            voice_model=voice_model,
+            voice_resource_id=voice_resource_id,
+            voice_provider_expires_at=voice_provider_expires_at,
+            voice_speaker_sha256=voice_speaker_sha256,
+            fallback_voice_profile_id=companion.designed_voice_profile,
+            fallback_voice_provider="volcengine_doubao",
+            fallback_voice_model="seed-tts-2.0",
+            fallback_voice_resource_id="seed-tts-2.0",
+        )
     session_id = create_session_id()
     # The room name is also the Agent's trusted source for the public session id.
     room_name = f"voice-{session_id}"
     identity = f"user-{user_id}-{session_id[:8]}"
     if preview_frozen is not None:
         frozen = preview_frozen
+    elif legacy_frozen is not None:
+        frozen = legacy_frozen
     else:
         frozen = ModePolicy.freeze_companion(companion)
 
@@ -408,6 +645,9 @@ async def create_session(
                 store.add_voice_session(
                     session_id=session_id,
                     user_id=user_id,
+                    resource_owner_account_id=(
+                        frozen.resource_owner_account_id or user_id
+                    ),
                     room_name=room_name,
                     voice_backend=body.voice_backend,
                     created_at=created_at,
@@ -418,7 +658,15 @@ async def create_session(
                     preview_grant_id=frozen.preview_grant_id,
                     self_preview_perspective=frozen.perspective,
                     relationship_profile_id=frozen.relationship_profile_id,
+                    relationship_profile_version=frozen.relationship_profile_version,
                     legacy_grant_id=frozen.legacy_grant_id,
+                    legacy_actor_role=frozen.legacy_actor_role,
+                    legacy_grantee_account_id=frozen.legacy_grantee_account_id,
+                    legacy_shell_id=frozen.legacy_shell_id,
+                    legacy_grant_snapshot_sha256=frozen.legacy_grant_snapshot_sha256,
+                    legacy_scope_sha256=frozen.legacy_scope_sha256,
+                    legacy_voice_allowed=frozen.legacy_voice_allowed,
+                    legacy_expires_at=frozen.legacy_expires_at,
                     companion_style_id=frozen.companion_style_id,
                     companion_style_version=frozen.companion_style_version,
                     voice_profile_id=frozen.voice_profile_id,
@@ -438,6 +686,7 @@ async def create_session(
         store.add_voice_session(
             session_id=session_id,
             user_id=user_id,
+            resource_owner_account_id=frozen.resource_owner_account_id or user_id,
             room_name=room_name,
             voice_backend=body.voice_backend,
             created_at=created_at,
@@ -448,7 +697,15 @@ async def create_session(
             preview_grant_id=frozen.preview_grant_id,
             self_preview_perspective=frozen.perspective,
             relationship_profile_id=frozen.relationship_profile_id,
+            relationship_profile_version=frozen.relationship_profile_version,
             legacy_grant_id=frozen.legacy_grant_id,
+            legacy_actor_role=frozen.legacy_actor_role,
+            legacy_grantee_account_id=frozen.legacy_grantee_account_id,
+            legacy_shell_id=frozen.legacy_shell_id,
+            legacy_grant_snapshot_sha256=frozen.legacy_grant_snapshot_sha256,
+            legacy_scope_sha256=frozen.legacy_scope_sha256,
+            legacy_voice_allowed=frozen.legacy_voice_allowed,
+            legacy_expires_at=frozen.legacy_expires_at,
             companion_style_id=frozen.companion_style_id,
             companion_style_version=frozen.companion_style_version,
             voice_profile_id=frozen.voice_profile_id,

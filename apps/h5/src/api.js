@@ -49,6 +49,12 @@ const apiErrorMessages = {
   fidelity_evaluation_not_found: "忠实度评测不存在或不属于当前账号。",
   fidelity_trial_not_found: "这道保留题不存在或已变化。",
   fidelity_approval_required: "请先完成忠实度评测并明确批准这个版本。",
+  legacy_resource_not_found: "传承授权或关系外壳不存在，或不属于当前账号。",
+  legacy_access_denied: "当前账号没有这项传承访问权限。",
+  legacy_snapshot_conflict: "传承授权已经变化，请刷新后重试。",
+  legacy_idempotency_conflict: "同一传承操作标识已用于不同内容，请刷新后重试。",
+  legacy_contract_invalid: "传承授权内容不完整或不符合冻结边界。",
+  legacy_grantee_not_found: "接收人账号不存在或当前不可用。",
 };
 
 function identitySnapshot(identity) {
@@ -344,6 +350,16 @@ function requireCompanionInteraction(session) {
     (interaction.perspective ?? null) !== null ||
     interaction.relationship_profile_id !== null ||
     interaction.legacy_grant_id !== null ||
+    (interaction.actor_account_id ?? null) !== null ||
+    (interaction.resource_owner_account_id ?? null) !== null ||
+    (interaction.relationship_profile_version ?? null) !== null ||
+    (interaction.legacy_actor_role ?? null) !== null ||
+    (interaction.legacy_grantee_account_id ?? null) !== null ||
+    (interaction.legacy_shell_id ?? null) !== null ||
+    (interaction.legacy_grant_snapshot_sha256 ?? null) !== null ||
+    (interaction.legacy_scope_sha256 ?? null) !== null ||
+    (interaction.legacy_voice_allowed ?? null) !== null ||
+    (interaction.legacy_expires_at ?? null) !== null ||
     voiceProfileId !== null ||
     voiceProfileVersion !== null ||
     voiceProvider !== null ||
@@ -392,6 +408,16 @@ function requireSelfPreviewInteraction(session) {
     interaction.companion_style_version !== null ||
     interaction.relationship_profile_id !== null ||
     interaction.legacy_grant_id !== null ||
+    (interaction.actor_account_id ?? null) !== null ||
+    (interaction.resource_owner_account_id ?? null) !== null ||
+    (interaction.relationship_profile_version ?? null) !== null ||
+    (interaction.legacy_actor_role ?? null) !== null ||
+    (interaction.legacy_grantee_account_id ?? null) !== null ||
+    (interaction.legacy_shell_id ?? null) !== null ||
+    (interaction.legacy_grant_snapshot_sha256 ?? null) !== null ||
+    (interaction.legacy_scope_sha256 ?? null) !== null ||
+    (interaction.legacy_voice_allowed ?? null) !== null ||
+    (interaction.legacy_expires_at ?? null) !== null ||
     !(
       (
         voiceProfileId === null &&
@@ -437,6 +463,107 @@ function requireSelfPreviewInteraction(session) {
   return session;
 }
 
+function requireLegacyInteraction(session, expectedUserId, expectedGrantId) {
+  const interaction = session?.interaction;
+  const capabilities = interaction?.capabilities;
+  const actorRole = interaction?.legacy_actor_role;
+  const actorId = interaction?.actor_account_id;
+  const ownerId = interaction?.resource_owner_account_id;
+  const granteeId = interaction?.legacy_grantee_account_id;
+  const shellId = interaction?.legacy_shell_id;
+  const personalVoice = [
+    interaction?.voice_profile_id,
+    interaction?.voice_profile_version,
+    interaction?.voice_provider,
+    interaction?.voice_model,
+    interaction?.voice_resource_id,
+    interaction?.voice_provider_expires_at,
+    interaction?.voice_speaker_sha256,
+  ];
+  const personalVoiceAbsent = personalVoice.every((value) => value === null);
+  const personalVoiceComplete =
+    typeof personalVoice[0] === "string" &&
+    Boolean(personalVoice[0].trim()) &&
+    Number.isInteger(personalVoice[1]) &&
+    personalVoice[1] >= 1 &&
+    personalVoice[2] === "volcengine_doubao" &&
+    personalVoice[3] === "seed-icl-2.0" &&
+    personalVoice[4] === "seed-icl-2.0" &&
+    typeof personalVoice[5] === "string" &&
+    !Number.isNaN(new Date(personalVoice[5]).getTime()) &&
+    /(Z|[+-]00:00)$/.test(personalVoice[5]) &&
+    typeof personalVoice[6] === "string" &&
+    /^[a-f0-9]{64}$/.test(personalVoice[6]);
+  const ownerPreview =
+    actorRole === "owner_preview" &&
+    actorId === ownerId &&
+    actorId !== granteeId &&
+    shellId === null;
+  const granteeSession =
+    actorRole === "grantee" &&
+    actorId === granteeId &&
+    actorId !== ownerId &&
+    typeof shellId === "string" &&
+    Boolean(shellId.trim());
+  const voiceAllowed = interaction?.legacy_voice_allowed;
+  const expectedVoiceCapability = voiceAllowed === true && personalVoiceComplete;
+  if (
+    session?.voice_backend !== "cascade" ||
+    interaction?.interaction_mode !== "legacy" ||
+    interaction.mode_policy_version !== "s9-v1" ||
+    interaction.policy_scope !== "session" ||
+    actorId !== expectedUserId ||
+    typeof ownerId !== "string" ||
+    !ownerId.trim() ||
+    typeof granteeId !== "string" ||
+    !granteeId.trim() ||
+    typeof interaction.digital_self_version_id !== "string" ||
+    !interaction.digital_self_version_id.trim() ||
+    typeof interaction.manifest_sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(interaction.manifest_sha256) ||
+    interaction.preview_grant_id !== null ||
+    interaction.perspective !== null ||
+    typeof interaction.relationship_profile_id !== "string" ||
+    !interaction.relationship_profile_id.trim() ||
+    !Number.isInteger(interaction.relationship_profile_version) ||
+    interaction.relationship_profile_version < 1 ||
+    interaction.legacy_grant_id !== expectedGrantId ||
+    typeof interaction.legacy_grant_snapshot_sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(interaction.legacy_grant_snapshot_sha256) ||
+    typeof interaction.legacy_scope_sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(interaction.legacy_scope_sha256) ||
+    typeof voiceAllowed !== "boolean" ||
+    typeof interaction.legacy_expires_at !== "string" ||
+    Number.isNaN(new Date(interaction.legacy_expires_at).getTime()) ||
+    !/(Z|[+-]00:00)$/.test(interaction.legacy_expires_at) ||
+    interaction.companion_style_id !== null ||
+    interaction.companion_style_version !== null ||
+    !(ownerPreview || granteeSession) ||
+    !(personalVoiceAbsent || personalVoiceComplete) ||
+    (voiceAllowed === false && !personalVoiceAbsent) ||
+    typeof interaction.fallback_voice_profile_id !== "string" ||
+    !interaction.fallback_voice_profile_id.trim() ||
+    interaction.fallback_voice_provider !== "volcengine_doubao" ||
+    interaction.fallback_voice_model !== "seed-tts-2.0" ||
+    interaction.fallback_voice_resource_id !== "seed-tts-2.0" ||
+    interaction.simulated_output !== true ||
+    interaction.history_eligible !== false ||
+    interaction.owner_projection_eligible !== false ||
+    !isJsonObject(capabilities) ||
+    capabilities.conversation !== true ||
+    capabilities.private_memory !== false ||
+    capabilities.persona !== false ||
+    capabilities.persona_low_sensitivity !== false ||
+    capabilities.tools !== false ||
+    capabilities.history !== false ||
+    capabilities.learning !== false ||
+    capabilities.voice_profile !== expectedVoiceCapability
+  ) {
+    throw new Error("服务端没有返回可验证的传承模式，会话已停止");
+  }
+  return session;
+}
+
 export function getInteractionCapabilities() {
   return request("/v1/interaction/capabilities");
 }
@@ -448,10 +575,11 @@ export async function createSession(
   {
     interactionMode = "companion",
     previewGrantId = null,
+    legacyGrantId = null,
   } = {},
 ) {
-  if (!["companion", "self_preview"].includes(interactionMode)) {
-    throw new Error("H5 当前只支持陪伴模式或数字分身预览");
+  if (!["companion", "self_preview", "legacy"].includes(interactionMode)) {
+    throw new Error("H5 当前只支持陪伴模式、数字分身预览或传承模式");
   }
   if (
     interactionMode === "self_preview" &&
@@ -459,16 +587,25 @@ export async function createSession(
   ) {
     throw new Error("缺少服务端签发的数字分身预览授权");
   }
+  if (
+    interactionMode === "legacy" &&
+    (typeof legacyGrantId !== "string" || !legacyGrantId.trim())
+  ) {
+    throw new Error("缺少传承授权");
+  }
   const session = await request("/v1/sessions", {
     method: "POST",
     body: JSON.stringify({
       user_id: userId,
-      voice_backend: interactionMode === "self_preview" ? "cascade" : voiceBackend,
+      voice_backend: interactionMode === "companion" ? voiceBackend : "cascade",
       interaction_mode: interactionMode,
       learning_task_id:
         interactionMode === "companion" ? learningTaskId : null,
       ...(interactionMode === "self_preview"
         ? { preview_grant_id: previewGrantId.trim() }
+        : {}),
+      ...(interactionMode === "legacy"
+        ? { legacy_grant_id: legacyGrantId.trim() }
         : {}),
       locale: "zh-CN",
       client: {
@@ -478,9 +615,11 @@ export async function createSession(
       },
     }),
   });
-  return interactionMode === "self_preview"
-    ? requireSelfPreviewInteraction(session)
-    : requireCompanionInteraction(session);
+  if (interactionMode === "self_preview") return requireSelfPreviewInteraction(session);
+  if (interactionMode === "legacy") {
+    return requireLegacyInteraction(session, userId, legacyGrantId.trim());
+  }
+  return requireCompanionInteraction(session);
 }
 
 export function exchangeOmniSdp(sessionId, offerSdp) {
@@ -1986,6 +2125,243 @@ export function completeFidelityEvaluation({
       body: JSON.stringify({ verdict, rationale }),
     },
   ).then(parseFidelityEvaluation);
+}
+
+const legacyGrantRoles = new Set(["owner", "grantee"]);
+const legacyGrantStatuses = new Set(["pending", "active", "expired", "revoked"]);
+const legacyItemKinds = new Set([
+  "memory_claim",
+  "persona_trait",
+  "cognitive_claim",
+  "decision_case",
+  "relationship_profile",
+]);
+const legacyVisibilities = new Set(["family", "public"]);
+const legacyResponseLengths = new Set(["brief", "balanced", "detailed"]);
+const legacyQuestionFrequencies = new Set(["rare", "occasional"]);
+
+function invalidLegacyResponse(message = "传承授权响应无效") {
+  throw new Error(message);
+}
+
+function legacyString(value, message = "传承授权字段无效") {
+  if (typeof value !== "string" || !value.trim()) throw new Error(message);
+  return value.trim();
+}
+
+function legacyDigest(value, message = "传承授权摘要无效") {
+  const digest = legacyString(value, message).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error(message);
+  return digest;
+}
+
+function legacyDate(value, message = "传承授权时间无效") {
+  const text = legacyString(value, message);
+  if (Number.isNaN(new Date(text).getTime())) throw new Error(message);
+  return text;
+}
+
+function parseLegacyAllowedItem(value) {
+  if (!isJsonObject(value) || !legacyItemKinds.has(value.kind)) {
+    invalidLegacyResponse();
+  }
+  return {
+    kind: legacyString(value.kind, "传承授权范围类型无效"),
+    item_id: legacyString(value.item_id, "传承授权范围条目标识无效"),
+  };
+}
+
+function parseLegacyGrant(value) {
+  if (
+    !isJsonObject(value) ||
+    !legacyGrantStatuses.has(value.status) ||
+    !Number.isInteger(value.version_number) ||
+    value.version_number < 1 ||
+    !Number.isInteger(value.relationship_profile_version) ||
+    value.relationship_profile_version < 1 ||
+    !Array.isArray(value.allowed_items) ||
+    !value.allowed_items.length ||
+    !legacyVisibilities.has(value.visibility) ||
+    typeof value.voice_allowed !== "boolean" ||
+    !Number.isInteger(value.revision) ||
+    value.revision < 1 ||
+    !Object.prototype.hasOwnProperty.call(value, "activated_at") ||
+    !Object.prototype.hasOwnProperty.call(value, "revoked_at")
+  ) {
+    invalidLegacyResponse();
+  }
+  const optionalDate = (date) => date === null ? null : legacyDate(date);
+  const activatedAt = optionalDate(value.activated_at);
+  const revokedAt = optionalDate(value.revoked_at);
+  const allowedItems = value.allowed_items.map(parseLegacyAllowedItem);
+  const shell = value.shell == null ? null : parseLegacyShellPreferences(value.shell);
+  if (
+    new Set(allowedItems.map((item) => `${item.kind}:${item.item_id}`)).size !==
+      allowedItems.length ||
+    (value.status === "pending" && (activatedAt !== null || revokedAt !== null)) ||
+    (value.status === "active" && (activatedAt === null || revokedAt !== null)) ||
+    (value.status === "expired" && revokedAt !== null) ||
+    (value.status === "revoked" && revokedAt === null)
+  ) {
+    invalidLegacyResponse();
+  }
+  return {
+    ...value,
+    grant_id: legacyString(value.grant_id),
+    owner_account_id: legacyString(value.owner_account_id),
+    owner_username: legacyString(value.owner_username),
+    grantee_account_id: legacyString(value.grantee_account_id),
+    grantee_username: legacyString(value.grantee_username),
+    version_id: requireDigitalSelfVersionId(value.version_id),
+    manifest_sha256: requireDigitalSelfDigest(value.manifest_sha256),
+    relationship_profile_id: legacyString(value.relationship_profile_id),
+    allowed_items: allowedItems,
+    shell,
+    scope_sha256: legacyDigest(value.scope_sha256, "传承授权范围摘要无效"),
+    grant_snapshot_sha256: legacyDigest(value.grant_snapshot_sha256),
+    expires_at: legacyDate(value.expires_at),
+    activated_at: activatedAt,
+    revoked_at: revokedAt,
+    created_at: legacyDate(value.created_at),
+  };
+}
+
+function parseLegacyGrantList(value, expectedRole) {
+  if (
+    !isJsonObject(value) ||
+    !legacyGrantRoles.has(value.role) ||
+    value.role !== expectedRole ||
+    !Array.isArray(value.items)
+  ) {
+    invalidLegacyResponse("传承授权列表响应无效");
+  }
+  return { ...value, items: value.items.map(parseLegacyGrant) };
+}
+
+function validateLegacyAllowedItems(items) {
+  if (!Array.isArray(items) || !items.length) {
+    throw new Error("请至少选择一项传承授权范围");
+  }
+  const parsed = items.map(parseLegacyAllowedItem);
+  if (new Set(parsed.map((item) => `${item.kind}:${item.item_id}`)).size !== parsed.length) {
+    throw new Error("传承授权范围包含重复条目");
+  }
+  return parsed;
+}
+
+function validateLegacyPassword(value) {
+  if (typeof value !== "string" || value.length < 8) {
+    throw new Error("请输入当前账号密码确认");
+  }
+  return value;
+}
+
+export function getLegacyGrants(role) {
+  if (!legacyGrantRoles.has(role)) throw new Error("传承授权视角无效");
+  return request(`/v1/legacy/grants?role=${role}`).then((value) =>
+    parseLegacyGrantList(value, role),
+  );
+}
+
+export function createLegacyGrant(input) {
+  const body = {
+    grantee_username: legacyString(input?.grantee_username, "接收人用户名无效"),
+    version_id: requireDigitalSelfVersionId(input?.version_id),
+    relationship_profile_id: legacyString(
+      input?.relationship_profile_id,
+      "关系画像标识无效",
+    ),
+    allowed_items: validateLegacyAllowedItems(input?.allowed_items),
+    voice_allowed: input?.voice_allowed,
+    expires_at: legacyDate(input?.expires_at),
+    password: validateLegacyPassword(input?.password),
+    idempotency_key: legacyString(input?.idempotency_key, "传承授权操作标识无效"),
+  };
+  if (typeof body.voice_allowed !== "boolean") {
+    throw new Error("个人声音授权选项无效");
+  }
+  return request("/v1/legacy/grants", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }).then(parseLegacyGrant);
+}
+
+function transitionLegacyGrant(grantId, action, input) {
+  const id = legacyString(grantId, "传承授权标识无效");
+  const body = {
+    expected_grant_snapshot_sha256: legacyDigest(
+      input?.expected_grant_snapshot_sha256,
+    ),
+    password: validateLegacyPassword(input?.password),
+    idempotency_key: legacyString(input?.idempotency_key, "传承授权操作标识无效"),
+  };
+  return request(`/v1/legacy/grants/${encodeURIComponent(id)}/${action}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  }).then(parseLegacyGrant);
+}
+
+export function activateLegacyGrant(grantId, input) {
+  return transitionLegacyGrant(grantId, "activate", input);
+}
+
+export function revokeLegacyGrant(grantId, input) {
+  return transitionLegacyGrant(grantId, "revoke", input);
+}
+
+function parseLegacyShellPreferences(value) {
+  const preferences = value?.preferences;
+  if (
+    !isJsonObject(value) ||
+    !isJsonObject(preferences) ||
+    !Number.isInteger(value.revision) ||
+    value.revision < 1 ||
+    !legacyResponseLengths.has(preferences.preferred_response_length) ||
+    !legacyQuestionFrequencies.has(preferences.question_frequency)
+  ) {
+    invalidLegacyResponse("关系外壳偏好响应无效");
+  }
+  return {
+    ...value,
+    shell_id: legacyString(value.shell_id, "关系外壳标识无效"),
+    grant_id: legacyString(value.grant_id, "传承授权标识无效"),
+    owner_account_id: legacyString(value.owner_account_id, "关系外壳账号无效"),
+    grantee_account_id: legacyString(value.grantee_account_id, "关系外壳账号无效"),
+    preferred_response_length: preferences.preferred_response_length,
+    question_frequency: preferences.question_frequency,
+    created_at: legacyDate(value.created_at, "关系外壳时间无效"),
+    updated_at: legacyDate(value.updated_at, "关系外壳时间无效"),
+  };
+}
+
+export function getLegacyShellPreferences(shellId) {
+  const id = legacyString(shellId, "关系外壳标识无效");
+  return request(
+    `/v1/legacy/shells/${encodeURIComponent(id)}/preferences`,
+  ).then(parseLegacyShellPreferences);
+}
+
+export function updateLegacyShellPreferences(shellId, input) {
+  const id = legacyString(shellId, "关系外壳标识无效");
+  if (!Number.isInteger(input?.expected_revision) || input.expected_revision < 1) {
+    throw new Error("关系外壳版本无效");
+  }
+  if (!legacyResponseLengths.has(input?.preferred_response_length)) {
+    throw new Error("回答长度偏好无效");
+  }
+  if (!legacyQuestionFrequencies.has(input?.question_frequency)) {
+    throw new Error("提问频率偏好无效");
+  }
+  const body = {
+    expected_revision: input.expected_revision,
+    preferred_response_length: input.preferred_response_length,
+    question_frequency: input.question_frequency,
+    idempotency_key: legacyString(input?.idempotency_key, "关系外壳操作标识无效"),
+  };
+  return request(`/v1/legacy/shells/${encodeURIComponent(id)}/preferences`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  }).then(parseLegacyShellPreferences);
 }
 
 export function rollbackPersonaVersion(versionId) {

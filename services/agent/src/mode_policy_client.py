@@ -17,6 +17,7 @@ from services.common.companions import COMPANION_STYLE_VERSION, companion_defini
 
 InteractionMode = Literal["companion", "self_preview", "legacy", "archive"]
 SpeakerClass = Literal["owner", "guest", "uncertain"]
+PolicyReferenceValue = str | bool | None
 
 _CONTROL_CAPABILITIES = frozenset(
     {
@@ -58,7 +59,7 @@ class ModePolicy:
     policy_version: str | None
     companion_style_id: str | None
     style_version: str | None
-    references: tuple[tuple[str, str | None], ...]
+    references: tuple[tuple[str, PolicyReferenceValue], ...]
     capabilities: tuple[tuple[str, bool], ...]
     companion_style: CompanionStyle | None
     unavailable_reason: str | None = None
@@ -83,7 +84,9 @@ class ModePolicy:
         if not self.capability("conversation"):
             return False
         return not (
-            self.mode == "self_preview" and speaker_class is not None and speaker_class != "owner"
+            self.mode in {"self_preview", "legacy"}
+            and speaker_class is not None
+            and speaker_class != "owner"
         )
 
     def allows_private_persona(self, speaker_class: SpeakerClass) -> bool:
@@ -223,7 +226,19 @@ class ModePolicyClient:
             "fallback_voice_model",
             "fallback_voice_resource_id",
         }
-        if not required_voice_fields.issubset(payload):
+        required_legacy_fields = {
+            "actor_account_id",
+            "resource_owner_account_id",
+            "relationship_profile_version",
+            "legacy_actor_role",
+            "legacy_grantee_account_id",
+            "legacy_shell_id",
+            "legacy_grant_snapshot_sha256",
+            "legacy_scope_sha256",
+            "legacy_voice_allowed",
+            "legacy_expires_at",
+        }
+        if not (required_voice_fields | required_legacy_fields).issubset(payload):
             return ModePolicy.unavailable("payload_invalid")
         mode = payload.get("interaction_mode")
         policy_version = payload.get("mode_policy_version")
@@ -243,15 +258,37 @@ class ModePolicyClient:
         else:
             voice_profile_version = None
             voice_profile_version_invalid = True
+        raw_relationship_profile_version = payload.get("relationship_profile_version")
+        relationship_profile_version_invalid = False
+        if raw_relationship_profile_version is None:
+            relationship_profile_version: str | None = None
+        elif (
+            isinstance(raw_relationship_profile_version, int)
+            and not isinstance(raw_relationship_profile_version, bool)
+            and raw_relationship_profile_version >= 1
+        ):
+            relationship_profile_version = str(raw_relationship_profile_version)
+        else:
+            relationship_profile_version = None
+            relationship_profile_version_invalid = True
         references = {
             key: payload.get(key)
             for key in (
+                "actor_account_id",
+                "resource_owner_account_id",
                 "digital_self_version_id",
                 "manifest_sha256",
                 "preview_grant_id",
                 "perspective",
                 "relationship_profile_id",
+                "legacy_actor_role",
+                "legacy_grantee_account_id",
                 "legacy_grant_id",
+                "legacy_shell_id",
+                "legacy_grant_snapshot_sha256",
+                "legacy_scope_sha256",
+                "legacy_voice_allowed",
+                "legacy_expires_at",
                 "voice_profile_id",
                 "voice_provider",
                 "voice_model",
@@ -265,6 +302,7 @@ class ModePolicyClient:
             )
         }
         references["voice_profile_version"] = voice_profile_version
+        references["relationship_profile_version"] = relationship_profile_version
         capabilities = payload.get("capabilities")
         voice_values = tuple(
             references[key]
@@ -305,6 +343,64 @@ class ModePolicyClient:
             and references["fallback_voice_model"] == "seed-tts-2.0"
             and references["fallback_voice_resource_id"] == "seed-tts-2.0"
         )
+        text_references = tuple(
+            value
+            for key, value in references.items()
+            if key != "legacy_voice_allowed"
+        )
+        legacy_capabilities = {
+            "conversation": True,
+            "private_memory": False,
+            "persona": False,
+            "persona_low_sensitivity": False,
+            "tools": False,
+            "history": False,
+            "learning": False,
+            "voice_profile": references["legacy_voice_allowed"] is True and voice_complete,
+        }
+        legacy_required = (
+            "actor_account_id",
+            "resource_owner_account_id",
+            "digital_self_version_id",
+            "manifest_sha256",
+            "relationship_profile_id",
+            "relationship_profile_version",
+            "legacy_actor_role",
+            "legacy_grantee_account_id",
+            "legacy_grant_id",
+            "legacy_grant_snapshot_sha256",
+            "legacy_scope_sha256",
+            "legacy_expires_at",
+        )
+        legacy_common_valid = (
+            all(_bounded_string(references[key]) for key in legacy_required)
+            and _valid_sha256(references["manifest_sha256"])
+            and _valid_sha256(references["legacy_grant_snapshot_sha256"])
+            and _valid_sha256(references["legacy_scope_sha256"])
+            and _valid_utc_timestamp(references["legacy_expires_at"])
+            and isinstance(references["legacy_voice_allowed"], bool)
+            and references["resource_owner_account_id"]
+            != references["legacy_grantee_account_id"]
+            and fallback_voice_contract_valid
+            and (references["legacy_voice_allowed"] is True or voice_absent)
+        )
+        legacy_role_valid = (
+            references["legacy_actor_role"] == "owner_preview"
+            and references["actor_account_id"] == references["resource_owner_account_id"]
+            and references["legacy_shell_id"] is None
+        ) or (
+            references["legacy_actor_role"] == "grantee"
+            and references["actor_account_id"] == references["legacy_grantee_account_id"]
+            and _bounded_string(references["legacy_shell_id"])
+        )
+        legacy_contract_valid = (
+            legacy_common_valid
+            and legacy_role_valid
+            and references["preview_grant_id"] is None
+            and references["perspective"] is None
+            and (voice_absent or voice_complete)
+            and capabilities == legacy_capabilities
+        )
         if (
             mode not in {"companion", "self_preview", "legacy", "archive"}
             or policy_scope != "session"
@@ -315,8 +411,13 @@ class ModePolicyClient:
             or set(capabilities or ()) != _CONTROL_CAPABILITIES
             or not isinstance(capabilities, dict)
             or not all(isinstance(value, bool) for value in capabilities.values())
-            or not all(_optional_bounded_string(value) for value in references.values())
+            or not all(_optional_bounded_string(value) for value in text_references)
+            or (
+                references["legacy_voice_allowed"] is not None
+                and not isinstance(references["legacy_voice_allowed"], bool)
+            )
             or voice_profile_version_invalid
+            or relationship_profile_version_invalid
             or not voice_contract_valid
             or (mode == "companion" and any(value is not None for value in references.values()))
             or (
@@ -327,8 +428,28 @@ class ModePolicyClient:
                     or not _bounded_string(references["preview_grant_id"])
                     or references["perspective"] not in {"owner", "child", "friend"}
                     or references["relationship_profile_id"] is not None
+                    or references["relationship_profile_version"] is not None
                     or references["legacy_grant_id"] is not None
                     or not fallback_voice_contract_valid
+                )
+            )
+            or (mode == "legacy" and not legacy_contract_valid)
+            or (
+                mode != "legacy"
+                and any(
+                    references[key] is not None
+                    for key in (
+                        "actor_account_id",
+                        "resource_owner_account_id",
+                        "relationship_profile_version",
+                        "legacy_actor_role",
+                        "legacy_grantee_account_id",
+                        "legacy_grant_snapshot_sha256",
+                        "legacy_scope_sha256",
+                        "legacy_shell_id",
+                        "legacy_voice_allowed",
+                        "legacy_expires_at",
+                    )
                 )
             )
             or (mode != "companion" and (style_id is not None or style_version is not None))

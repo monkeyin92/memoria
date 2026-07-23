@@ -6,6 +6,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -26,6 +27,14 @@ from services.control_api.app.security import (
     AuthenticatedUser,
     require_active_voice_session,
     require_authenticated_user,
+)
+from services.digital_self.domain import RegistryPort, VersionNotFoundError
+from services.legacy.domain import (
+    LegacyAccessDeniedError,
+    LegacyAccessPurpose,
+    LegacyAccessSnapshot,
+    LegacyNotFoundError,
+    LegacyRegistryPort,
 )
 from services.voice_profile.domain import (
     EvaluationRequiredError,
@@ -58,6 +67,41 @@ def _signer(request: Request) -> VoiceSampleURLSigner:
 
 def _preview_renderer(request: Request) -> VoicePreviewRenderer:
     return cast(VoicePreviewRenderer, request.app.state.voice_preview_renderer)
+
+
+def _legacy_registry(request: Request) -> LegacyRegistryPort:
+    return cast(LegacyRegistryPort, request.app.state.legacy_registry)
+
+
+def _digital_self_registry(request: Request) -> RegistryPort:
+    return cast(RegistryPort, request.app.state.digital_self_registry)
+
+
+def _legacy_access_matches_frozen(
+    access: LegacyAccessSnapshot,
+    frozen: FrozenMode,
+) -> bool:
+    return (
+        frozen.actor_account_id
+        == (
+            access.resource_owner_account_id
+            if access.actor_role == "owner_preview"
+            else access.grantee_account_id
+        )
+        and frozen.resource_owner_account_id == access.resource_owner_account_id
+        and frozen.legacy_actor_role == access.actor_role
+        and frozen.legacy_grantee_account_id == access.grantee_account_id
+        and frozen.legacy_grant_id == access.grant_id
+        and frozen.legacy_shell_id == access.shell_id
+        and frozen.digital_self_version_id == access.version_id
+        and frozen.manifest_sha256 == access.manifest_sha256
+        and frozen.legacy_grant_snapshot_sha256 == access.grant_snapshot_sha256
+        and frozen.legacy_scope_sha256 == access.scope_sha256
+        and frozen.relationship_profile_id == access.relationship_profile_id
+        and frozen.relationship_profile_version == access.relationship_profile_version
+        and frozen.legacy_voice_allowed is access.voice_allowed
+        and frozen.legacy_expires_at == access.expires_at.isoformat()
+    )
 
 
 def _require_registered(request: Request, user: AuthenticatedUser) -> None:
@@ -529,15 +573,77 @@ async def session_resolution(
                 "voice_id": None,
                 "speaker_sha256": None,
             }
-    if frozen.interaction_mode == "self_preview":
-        resolution = await _manager(request).resolve(account_id=account_id)
+    if frozen.interaction_mode in {"self_preview", "legacy"}:
+        if frozen.interaction_mode == "legacy":
+            if frozen.legacy_actor_role not in {"owner_preview", "grantee"} or not (
+                frozen.legacy_grant_id and frozen.digital_self_version_id
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "legacy_voice_unavailable"},
+                )
+            purpose: LegacyAccessPurpose = (
+                "owner_preview"
+                if frozen.legacy_actor_role == "owner_preview"
+                else "grantee_session"
+            )
+            try:
+                access = await _legacy_registry(request).resolve_access(
+                    actor_account_id=account_id,
+                    grant_id=frozen.legacy_grant_id,
+                    purpose=purpose,
+                    now=datetime.now(UTC),
+                )
+                version = await _digital_self_registry(request).get(
+                    account_id=access.resource_owner_account_id,
+                    version_id=access.version_id,
+                )
+            except (LegacyAccessDeniedError, LegacyNotFoundError, VersionNotFoundError) as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "legacy_voice_unavailable"},
+                ) from exc
+            if (
+                not _legacy_access_matches_frozen(access, frozen)
+                or version.status != "frozen"
+                or version.account_id != access.resource_owner_account_id
+                or version.version_number != access.version_number
+                or version.manifest_sha256 != access.manifest_sha256
+                or _store(request).is_account_unavailable(user_id=access.resource_owner_account_id)
+                or _store(request).is_account_unavailable(user_id=access.grantee_account_id)
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "legacy_voice_unavailable"},
+                )
+            manifest_voice = version.manifest.source_summary.voice_profile
+            personal_allowed = access.voice_allowed and (
+                manifest_voice is not None
+                and frozen.voice_profile_id == manifest_voice.profile_id
+                and frozen.voice_profile_version == manifest_voice.version_number
+                and frozen.voice_provider == manifest_voice.provider
+                and frozen.voice_model == manifest_voice.target_model
+                and frozen.voice_resource_id == manifest_voice.resource_id
+                and frozen.voice_provider_expires_at == manifest_voice.provider_expires_at
+                and frozen.voice_speaker_sha256 == manifest_voice.speaker_sha256
+            )
+            resolution_account_id = access.resource_owner_account_id
+        else:
+            personal_allowed = True
+            resolution_account_id = account_id
+        resolution = (
+            await _manager(request).resolve(account_id=resolution_account_id)
+            if personal_allowed
+            else None
+        )
         speaker_sha256 = (
             hashlib.sha256(resolution.voice_id.encode("utf-8")).hexdigest()
-            if resolution.voice_id is not None
+            if resolution is not None and resolution.voice_id is not None
             else None
         )
         if (
-            resolution.mode == "active"
+            resolution is not None
+            and resolution.mode == "active"
             and resolution.voice_kind == "personal"
             and resolution.profile_id == frozen.voice_profile_id
             and resolution.version_number == frozen.voice_profile_version

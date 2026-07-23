@@ -16,10 +16,12 @@ import {
 
 import {
   approveDigitalSelfVersion,
+  activateLegacyGrant,
   activateVoiceProfile,
   beginDigitalSelfTesting,
   buildDigitalSelfVersion,
   createVoiceBlindTrial,
+  createLegacyGrant,
   enrollSpeakerProfiles,
   enrollVoiceProfile,
   evaluateVoiceProfile,
@@ -27,6 +29,8 @@ import {
   freezeDigitalSelfVersion,
   getDigitalSelfVersions,
   getInteractionCapabilities,
+  getLegacyGrants,
+  getLegacyShellPreferences,
   getPersonaStatus,
   getPersonaTraits,
   getPersonaVersions,
@@ -38,11 +42,13 @@ import {
   reviewPersonaTrait,
   revokePersonaConsent,
   revokeDigitalSelfVersion,
+  revokeLegacyGrant,
   revokeSpeakerProfile,
   revokeVoiceConsent,
   revokeVoiceProfile,
   rollbackDigitalSelfVersion,
   rollbackPersonaVersion,
+  updateLegacyShellPreferences,
 } from "../api.js";
 import {
   prepareSpeakerEnrollment,
@@ -52,6 +58,7 @@ import { AccountDeletionForm } from "./AccountDeletionForm.jsx";
 import { DigitalSelfVersions } from "./DigitalSelfVersions.jsx";
 import { GrowthMapPanel } from "./GrowthMapPanel.jsx";
 import { InteractionModePanel } from "./InteractionModePanel.jsx";
+import { LegacyPanel } from "./LegacyPanel.jsx";
 import { SelfModelPanel } from "./SelfModelPanel.jsx";
 import { SelfPreviewPanel } from "./SelfPreviewPanel.jsx";
 
@@ -164,6 +171,7 @@ export function DigitalSelfPanel({
   fidelitySummary = null,
   onStartPreview,
   onStopPreview,
+  onStartLegacy,
   onExpandPreviewSources,
   onSubmitPreviewFeedback,
   onStartFidelity,
@@ -200,6 +208,9 @@ export function DigitalSelfPanel({
   const [evaluation, setEvaluation] = useState(initialEvaluation);
   const [exportPassword, setExportPassword] = useState("");
   const [selfPreviewOpen, setSelfPreviewOpen] = useState(false);
+  const [legacyOpen, setLegacyOpen] = useState(false);
+  const [legacyGrants, setLegacyGrants] = useState([]);
+  const [legacyBusy, setLegacyBusy] = useState("");
 
   const reload = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -261,6 +272,61 @@ export function DigitalSelfPanel({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  const loadLegacy = useCallback(async (role) => {
+    setLegacyBusy(`legacy-load-${role}`);
+    setError("");
+    try {
+      const result = await getLegacyGrants(role);
+      const items = itemsOf(result).map((grant) => ({ ...grant, role }));
+      setLegacyGrants((current) => [
+        ...current.filter((grant) => grant.role !== role),
+        ...items,
+      ]);
+      return items;
+    } catch (caught) {
+      setError(errorMessage(caught, "传承授权暂时无法同步，请稍后重试。"));
+      return [];
+    } finally {
+      setLegacyBusy("");
+    }
+  }, []);
+
+  const mutateLegacy = useCallback(async (key, action, role, success) => {
+    setLegacyBusy(key);
+    setError("");
+    setNotice("");
+    try {
+      const result = await action();
+      await loadLegacy(role);
+      setNotice(success);
+      return result;
+    } catch (caught) {
+      setError(errorMessage(caught, "传承授权操作没有完成，请稍后重试。"));
+      return null;
+    } finally {
+      setLegacyBusy("");
+    }
+  }, [loadLegacy]);
+
+  const startLegacySession = useCallback(async (options) => {
+    if (!onStartLegacy || voiceSessionActive) return null;
+    setLegacyBusy("legacy-session-start");
+    setError("");
+    try {
+      const created = await onStartLegacy(options);
+      const shellId = created?.interaction?.legacy_shell_id;
+      if (typeof shellId === "string" && shellId) {
+        await getLegacyShellPreferences(shellId).catch(() => null);
+      }
+      return created;
+    } catch (caught) {
+      setError(errorMessage(caught, "传承会话没有建立，请确认授权仍然有效。"));
+      return null;
+    } finally {
+      setLegacyBusy("");
+    }
+  }, [onStartLegacy, voiceSessionActive]);
 
   useEffect(
     () => () => {
@@ -529,6 +595,26 @@ export function DigitalSelfPanel({
   const personaLearningStatus = activeVersion
     ? `v${activeVersion.version_number} 已启用`
     : "持续学习中（聊天越多越准确）";
+  const legacyRelationships = [
+    ...new Map(
+      digitalSelfVersions.flatMap((version) =>
+        (version.manifest?.entries || [])
+          .filter(
+            (entry) =>
+              (entry.kind || entry.entry_type) === "relationship_profile",
+          )
+          .map((entry) => [
+            entry.profile_id,
+            {
+              ...entry,
+              status: "approved",
+              step_up_verified: true,
+              label: entry.salutation || entry.profile_id,
+            },
+          ]),
+      ),
+    ).values(),
+  ];
 
   return (
     <section className="screen digital-self-screen" aria-label="数字心智与声音">
@@ -568,6 +654,11 @@ export function DigitalSelfPanel({
               onOpenSelfPreview={
                 accountType === "registered"
                   ? () => setSelfPreviewOpen(true)
+                  : undefined
+              }
+              onOpenLegacy={
+                accountType === "registered"
+                  ? () => setLegacyOpen(true)
                   : undefined
               }
             />
@@ -1267,6 +1358,55 @@ export function DigitalSelfPanel({
             onCompleteFidelity={onCompleteFidelity}
             onSelectFidelityVersion={onSelectFidelityVersion}
             onClose={() => setSelfPreviewOpen(false)}
+          />
+        </div>
+      )}
+
+      {legacyOpen && (
+        <div className="self-preview-overlay" role="presentation">
+          <LegacyPanel
+            role="owner"
+            grants={legacyGrants}
+            versions={digitalSelfVersions}
+            relationships={legacyRelationships}
+            load={loadLegacy}
+            create={(body) => mutateLegacy(
+              "legacy-create",
+              () => createLegacyGrant(body),
+              "owner",
+              "传承授权已创建，激活前仅本人可以预演。",
+            )}
+            activate={(grantId, body) => mutateLegacy(
+              "legacy-activate",
+              () => activateLegacyGrant(grantId, body),
+              "owner",
+              "传承授权已激活。",
+            )}
+            revoke={(grantId, body) => mutateLegacy(
+              "legacy-revoke",
+              () => revokeLegacyGrant(grantId, body),
+              "owner",
+              "传承授权已撤销，现有会话将在下一次权威校验时停止。",
+            )}
+            startLegacy={startLegacySession}
+            updatePreferences={async (shellId, body) => {
+              const updated = await mutateLegacy(
+                "legacy-preferences",
+                () => updateLegacyShellPreferences(shellId, body),
+                "grantee",
+                "关系外壳偏好已更新，不会改写主人核心。",
+              );
+              if (updated) {
+                setLegacyGrants((current) => current.map((grant) =>
+                  grant.grant_id === updated.grant_id
+                    ? { ...grant, shell: updated }
+                    : grant
+                ));
+              }
+              return updated;
+            }}
+            busy={legacyBusy || busy || (voiceSessionActive ? "voice-session-active" : "")}
+            onClose={() => setLegacyOpen(false)}
           />
         </div>
       )}

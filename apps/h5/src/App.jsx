@@ -235,6 +235,7 @@ export function App() {
   const [activeGrowthTask, setActiveGrowthTask] = useState(null);
   const [selfPreviewCapability, setSelfPreviewCapability] = useState(null);
   const [activePreview, setActivePreview] = useState(null);
+  const [activeLegacy, setActiveLegacy] = useState(null);
   const [previewSourceDetails, setPreviewSourceDetails] = useState({});
   const [previewBusy, setPreviewBusy] = useState("");
   const [fidelityEvaluations, setFidelityEvaluations] = useState([]);
@@ -299,8 +300,12 @@ export function App() {
       activePreview?.status === "starting" ||
       activePreview?.status === "running"
         ? "self_preview"
+        : activeLegacy?.status === "starting" ||
+            activeLegacy?.status === "running"
+          ? "legacy"
         : "companion",
     previewGrantId: activePreview?.grant_id || null,
+    legacyGrantId: activeLegacy?.grant_id || null,
   });
 
   const refreshSelfPreviewState = useCallback(async () => {
@@ -507,6 +512,10 @@ export function App() {
     activePreview?.status === "starting" ||
     activePreview?.status === "running" ||
     voice.session?.interaction?.interaction_mode === "self_preview";
+  const legacySession =
+    activeLegacy?.status === "starting" ||
+    activeLegacy?.status === "running" ||
+    voice.session?.interaction?.interaction_mode === "legacy";
 
   const runSummary = async () => {
     setSummaryRunning(true);
@@ -521,6 +530,14 @@ export function App() {
       setSummaryRunning(false);
     }
   };
+
+  const stopLegacy = useCallback(async () => {
+    try {
+      await voice.end();
+    } finally {
+      setActiveLegacy(null);
+    }
+  }, [voice.end]);
 
   const stopSelfPreview = useCallback(async () => {
     const preview = activePreview;
@@ -558,7 +575,7 @@ export function App() {
 
   const startSelfPreview = useCallback(
     async ({ versionId, manifestSha256, password, perspective }) => {
-      if (voice.session) {
+      if (voice.session || activeLegacy) {
         throw new Error("请先结束当前陪伴对话，再进入数字分身预览。");
       }
       setPreviewBusy("self-preview-start");
@@ -605,7 +622,46 @@ export function App() {
         setPreviewBusy("");
       }
     },
-    [voice.end, voice.session, voice.start],
+    [activeLegacy, voice.end, voice.session, voice.start],
+  );
+
+  const startLegacy = useCallback(
+    async ({ legacyGrantId, legacyActorRole }) => {
+      if (voice.session || activePreview) {
+        throw new Error("请先结束当前对话，再进入传承模式。");
+      }
+      setActiveLegacy({
+        grant_id: legacyGrantId,
+        actor_role: legacyActorRole,
+        status: "starting",
+      });
+      try {
+        const created = await voice.start({
+          interactionMode: "legacy",
+          legacyGrantId,
+        });
+        if (!created) {
+          throw new Error("传承会话没有建立，请确认授权仍然有效。");
+        }
+        const running = {
+          grant_id: legacyGrantId,
+          actor_role: created.interaction?.legacy_actor_role,
+          shell_id: created.interaction?.legacy_shell_id || null,
+          owner_account_id: created.interaction?.resource_owner_account_id,
+          status: "running",
+          session_id: created.session_id,
+        };
+        setActiveLegacy(running);
+        setDigitalSelfOpen(false);
+        setActiveTab("home");
+        return created;
+      } catch (error) {
+        await voice.end().catch(() => undefined);
+        setActiveLegacy(null);
+        throw error;
+      }
+    },
+    [activePreview, voice.end, voice.session, voice.start],
   );
 
   const expandSelfPreviewSources = useCallback(async (answer) => {
@@ -740,6 +796,17 @@ export function App() {
     voice.uiState,
   ]);
 
+  useEffect(() => {
+    if (
+      activeLegacy?.status !== "running" ||
+      voice.session ||
+      voice.uiState !== "closed"
+    ) {
+      return;
+    }
+    setActiveLegacy(null);
+  }, [activeLegacy?.status, voice.session, voice.uiState]);
+
   const finishConversation = async () => {
     const endingSession = voice.session;
     if (
@@ -747,6 +814,13 @@ export function App() {
       endingSession?.interaction?.interaction_mode === "self_preview"
     ) {
       await stopSelfPreview();
+      return;
+    }
+    if (
+      activeLegacy ||
+      endingSession?.interaction?.interaction_mode === "legacy"
+    ) {
+      await stopLegacy();
       return;
     }
     await voice.end();
@@ -865,6 +939,7 @@ export function App() {
     setActiveGrowthTask(null);
     setSelfPreviewCapability(null);
     setActivePreview(null);
+    setActiveLegacy(null);
     setPreviewSourceDetails({});
     setPreviewBusy("");
     setFidelityEvaluations([]);
@@ -885,6 +960,12 @@ export function App() {
       voice.session?.interaction?.interaction_mode === "self_preview"
     ) {
       await stopSelfPreview();
+    }
+    if (
+      activeLegacy ||
+      voice.session?.interaction?.interaction_mode === "legacy"
+    ) {
+      await stopLegacy();
     }
     await (allDevices ? logoutAllDevices() : logoutCurrentDevice());
     await handleAccountDeleted();
@@ -1001,6 +1082,22 @@ export function App() {
               </article>
             )}
 
+            {legacySession && (
+              <article className="self-preview-home-disclosure" role="note">
+                <ShieldCheck size={19} weight="fill" aria-hidden="true" />
+                <div>
+                  <strong>冻结数字分身，不是本人</strong>
+                  <span>
+                    {activeLegacy?.actor_role === "owner_preview"
+                      ? "本人预演"
+                      : "授权接收人会话"}
+                    {" · "}
+                    新对话只进入独立关系外壳，不改写主人核心
+                  </span>
+                </div>
+              </article>
+            )}
+
             <div className="voice-status-row">
               <div className="status-pill" data-state={voice.uiState} role="status">
                 <span className="status-dot" />
@@ -1032,6 +1129,8 @@ export function App() {
                     {voice.latestTranscript.speaker === "assistant"
                       ? selfPreviewSession
                         ? "数字分身"
+                        : legacySession
+                          ? "冻结数字分身"
                         : sessionCompanion.name
                       : "你"}
                   </span>
@@ -1045,6 +1144,8 @@ export function App() {
                       : voice.session
                         ? selfPreviewSession
                           ? "正在预览已批准的数字分身"
+                          : legacySession
+                            ? "正在与冻结数字分身对话"
                           : "想说什么都可以"
                         : "今天想聊点什么？"}
                   </h2>
@@ -1054,6 +1155,8 @@ export function App() {
                       : voice.session
                         ? selfPreviewSession
                           ? "回答会标明事实、推断或未知；可在数字心智中展开来源并纠正。"
+                          : legacySession
+                            ? "回答只使用当前授权范围；没有足够资料时会明确说不知道。"
                           : "不用按住按钮，我会听完再回应。"
                         : "轻触吉祥物，开始一次实时语音对话。"}
                   </p>
@@ -1143,6 +1246,7 @@ export function App() {
               fidelityByVersion={fidelityByVersion}
               onStartPreview={startSelfPreview}
               onStopPreview={stopSelfPreview}
+              onStartLegacy={startLegacy}
               onExpandPreviewSources={expandSelfPreviewSources}
               onSubmitPreviewFeedback={submitPreviewFeedback}
               onStartFidelity={startFidelity}

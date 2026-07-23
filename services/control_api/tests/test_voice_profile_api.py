@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,13 @@ from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 from services.archive.object_store import EncryptedLocalObjectStore
 from services.control_api.app.main import create_app
+from services.digital_self.domain import (
+    DigitalSelfManifest,
+    DigitalSelfSourceSummary,
+    DigitalSelfVersion,
+    VoiceProfileManifestRef,
+)
+from services.legacy.domain import LegacyAccessDeniedError, LegacyAccessSnapshot
 from services.voice_profile.domain import ProviderVoice, VoiceProfile, VoiceResolution
 from services.voice_profile.manager import VoiceProfileManager
 from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
@@ -114,6 +122,32 @@ class FrozenPreviewResolutionStub:
         return self.resolution
 
 
+class LegacyAccessStub:
+    def __init__(self, access: LegacyAccessSnapshot) -> None:
+        self.access = access
+        self.available = True
+        self.requests: list[dict[str, object]] = []
+
+    async def resolve_access(self, **kwargs: object) -> LegacyAccessSnapshot:
+        self.requests.append(kwargs)
+        now = kwargs.get("now")
+        if not self.available or (isinstance(now, datetime) and self.access.expires_at <= now):
+            raise LegacyAccessDeniedError("legacy grant is not available")
+        return self.access
+
+
+class LegacyVersionStub:
+    def __init__(self, version: DigitalSelfVersion) -> None:
+        self.version = version
+
+    async def get(self, **kwargs: object) -> DigitalSelfVersion:
+        assert kwargs == {
+            "account_id": self.version.account_id,
+            "version_id": self.version.version_id,
+        }
+        return self.version
+
+
 class ProviderDeletionConfirmationStub:
     def __init__(self) -> None:
         self.confirmations: list[dict[str, str]] = []
@@ -164,6 +198,102 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEMORIA_ARCHIVE_INTERNAL_TOKEN", "test-internal-archive-token")
     monkeypatch.setenv("OFFLINE_MOCK", "true")
     monkeypatch.setenv("TTS_PROVIDER", "cosyvoice")
+
+
+def _legacy_access(*, voice_allowed: bool, expired: bool = False) -> LegacyAccessSnapshot:
+    return LegacyAccessSnapshot(
+        actor_role="grantee",
+        resource_owner_account_id="legacy-owner",
+        grantee_account_id="legacy-grantee",
+        grant_id="legacy-grant",
+        shell_id="legacy-shell",
+        version_id="legacy-version",
+        version_number=7,
+        manifest_sha256="a" * 64,
+        grant_snapshot_sha256="b" * 64,
+        scope_sha256="c" * 64,
+        allowed_items=(),
+        relationship_profile_id="relationship-1",
+        relationship_profile_version=3,
+        voice_allowed=voice_allowed,
+        expires_at=datetime.now(UTC) + timedelta(days=-1 if expired else 30),
+    )
+
+
+def _legacy_version(access: LegacyAccessSnapshot, *, voice_id: str) -> DigitalSelfVersion:
+    return DigitalSelfVersion(
+        version_id=access.version_id,
+        account_id=access.resource_owner_account_id,
+        version_number=access.version_number,
+        status="frozen",
+        manifest=DigitalSelfManifest(
+            schema_version="digital-self-manifest-v3",
+            compiler_version="compiler-v3",
+            policy_version="policy-v3",
+            parent_version_id=None,
+            rollback_target_version_id=None,
+            entries=(),
+            source_summary=DigitalSelfSourceSummary(
+                memory_claim_count=0,
+                persona_trait_count=0,
+                persona_version_id=None,
+                source_summary_sha256="summary",
+                voice_profile=VoiceProfileManifestRef(
+                    profile_id="voice-profile-1",
+                    version_number=3,
+                    provider="volcengine_doubao",
+                    target_model="seed-icl-2.0",
+                    resource_id="seed-icl-2.0",
+                    provider_expires_at="2027-07-23T00:00:00+00:00",
+                    speaker_sha256=hashlib.sha256(voice_id.encode()).hexdigest(),
+                ),
+            ),
+        ),
+        manifest_sha256=access.manifest_sha256,
+        created_at=datetime.now(UTC),
+    )
+
+
+def _add_legacy_voice_session(app: object, access: LegacyAccessSnapshot) -> str:
+    voice = _legacy_version(
+        access, voice_id="provider-secret-id"
+    ).manifest.source_summary.voice_profile
+    assert voice is not None
+    session_id = "legacy-voice-session"
+    app.state.memory_store.add_voice_session(  # type: ignore[attr-defined]
+        session_id=session_id,
+        user_id=access.grantee_account_id,
+        resource_owner_account_id=access.resource_owner_account_id,
+        room_name=f"room-{session_id}",
+        voice_backend="cascade",
+        created_at=datetime.now(UTC).isoformat(),
+        interaction_mode="legacy",
+        mode_policy_version="s9-v1",
+        digital_self_version_id=access.version_id,
+        digital_self_manifest_sha256=access.manifest_sha256,
+        relationship_profile_id=access.relationship_profile_id,
+        relationship_profile_version=access.relationship_profile_version,
+        legacy_grant_id=access.grant_id,
+        legacy_actor_role=access.actor_role,
+        legacy_grantee_account_id=access.grantee_account_id,
+        legacy_shell_id=access.shell_id,
+        legacy_grant_snapshot_sha256=access.grant_snapshot_sha256,
+        legacy_scope_sha256=access.scope_sha256,
+        legacy_voice_allowed=access.voice_allowed,
+        legacy_expires_at=access.expires_at.isoformat(),
+        voice_profile_id=voice.profile_id if access.voice_allowed else None,
+        voice_profile_version=voice.version_number if access.voice_allowed else None,
+        voice_provider=voice.provider if access.voice_allowed else None,
+        voice_model=voice.target_model if access.voice_allowed else None,
+        voice_resource_id=voice.resource_id if access.voice_allowed else None,
+        voice_provider_expires_at=voice.provider_expires_at if access.voice_allowed else None,
+        voice_speaker_sha256=voice.speaker_sha256 if access.voice_allowed else None,
+        fallback_voice_profile_id="warm_companion",
+        fallback_voice_provider="volcengine_doubao",
+        fallback_voice_model="seed-tts-2.0",
+        fallback_voice_resource_id="seed-tts-2.0",
+    )
+    return session_id
 
 
 def test_control_api_selects_postgres_voice_profiles_with_archive_dsn(
@@ -370,6 +500,113 @@ async def test_self_preview_resolution_requires_exact_frozen_voice_ref(
         "voice_id": None,
         "speaker_sha256": None,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("voice_allowed", "resolved_profile_id", "expected_mode", "expected_profile_id"),
+    (
+        (True, "voice-profile-1", "active", "voice-profile-1"),
+        (True, "other-personal-profile", "designed", "warm_companion"),
+        (False, "voice-profile-1", "designed", "warm_companion"),
+    ),
+)
+async def test_legacy_voice_resolution_revalidates_frozen_access_and_selects_authorized_voice(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    voice_allowed: bool,
+    resolved_profile_id: str,
+    expected_mode: str,
+    expected_profile_id: str,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    access = _legacy_access(voice_allowed=voice_allowed)
+    legacy = LegacyAccessStub(access)
+    voice_id = "provider-secret-id"
+    app.state.legacy_registry = legacy
+    app.state.digital_self_registry = LegacyVersionStub(_legacy_version(access, voice_id=voice_id))
+    app.state.voice_profile_manager = FrozenPreviewResolutionStub(
+        VoiceResolution(
+            mode="active",
+            profile_id=resolved_profile_id,
+            version_number=3,
+            provider="volcengine_doubao",
+            voice_kind="personal",
+            model="seed-icl-2.0",
+            resource_id="seed-icl-2.0",
+            voice_id=voice_id,
+            provider_expires_at=datetime.fromisoformat("2027-07-23T00:00:00+00:00"),
+        )
+    )
+    session_id = _add_legacy_voice_session(app, access)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/voices/session-resolution",
+            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
+            json={"session_id": session_id},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == expected_mode
+    assert response.json()["profile_id"] == expected_profile_id
+    assert response.json()["voice_kind"] == (
+        "personal" if expected_mode == "active" else "designed"
+    )
+    assert legacy.requests == [
+        {
+            "actor_account_id": access.grantee_account_id,
+            "grant_id": access.grant_id,
+            "purpose": "grantee_session",
+            "now": legacy.requests[0]["now"],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("denial", ["revoked", "expired", "wrong_actor"])
+async def test_legacy_voice_resolution_fails_closed_when_live_access_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    denial: str,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    access = _legacy_access(voice_allowed=True, expired=denial == "expired")
+    legacy = LegacyAccessStub(access)
+    app.state.legacy_registry = legacy
+    app.state.digital_self_registry = LegacyVersionStub(
+        _legacy_version(access, voice_id="provider-secret-id")
+    )
+    app.state.voice_profile_manager = FrozenPreviewResolutionStub(
+        VoiceResolution(
+            mode="active",
+            profile_id="voice-profile-1",
+            version_number=3,
+            provider="volcengine_doubao",
+            voice_kind="personal",
+            model="seed-icl-2.0",
+            resource_id="seed-icl-2.0",
+            voice_id="provider-secret-id",
+            provider_expires_at=datetime.fromisoformat("2027-07-23T00:00:00+00:00"),
+        )
+    )
+    session_id = _add_legacy_voice_session(app, access)
+    if denial == "revoked":
+        legacy.available = False
+    elif denial == "wrong_actor":
+        legacy.access = replace(access, grantee_account_id="different-grantee")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/voices/session-resolution",
+            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
+            json={"session_id": session_id},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"code": "legacy_voice_unavailable"}
 
 
 @pytest.mark.asyncio

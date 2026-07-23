@@ -40,6 +40,7 @@ from services.control_api.app.routes import auth as auth_routes
 from services.control_api.app.routes import digital_self as digital_self_routes
 from services.control_api.app.routes import growth as growth_routes
 from services.control_api.app.routes import interaction as interaction_routes
+from services.control_api.app.routes import legacy as legacy_routes
 from services.control_api.app.routes import memory as memory_routes
 from services.control_api.app.routes import persona as persona_routes
 from services.control_api.app.routes import readiness as readiness_routes
@@ -65,6 +66,9 @@ from services.governance.account_data import (
 )
 from services.growth.postgres_reader import PostgresGrowthReader
 from services.growth.reader import GrowthReader
+from services.legacy.domain import LegacyRegistryPort
+from services.legacy.postgres_registry import PostgresLegacyRegistry
+from services.legacy.registry import LegacyRegistry
 from services.persona.domain import PersonaEnginePort
 from services.persona.engine import PersonaEngine
 from services.persona.postgres_engine import PostgresPersonaEngine
@@ -343,6 +347,7 @@ def _account_data_governance(
     archive_object_store: ObjectStore,
     realtime_connections: RealtimeConnectionRegistry,
     account_operations: AccountOperationGate,
+    legacy_registry: LegacyRegistryPort,
 ) -> AccountDataGovernance:
     archive_url = settings.archive_database_url.get_secret_value()
     archive_repository = (
@@ -361,6 +366,7 @@ def _account_data_governance(
         archive_repository=archive_repository,
         speaker_repository=speaker_repository,
         voice_profiles=voice_profiles,
+        legacy_registry=legacy_registry,
         archive_object_store=archive_object_store,
         session_terminator=AccountSessionTerminator(
             store=store,
@@ -392,6 +398,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     postgres_digital_self: PostgresDigitalSelfRegistry | None = None
     postgres_growth: PostgresGrowthReader | None = None
     postgres_self_model: PostgresSelfModelRegistry | None = None
+    postgres_legacy: PostgresLegacyRegistry | None = None
     archive: LifeArchivePort
     memory_catalog: MemoryCatalogPort
     persona_engine: PersonaEnginePort
@@ -462,6 +469,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await to_thread(sqlite_self_model.initialize)
         self_model_registry = sqlite_self_model
     app.state.self_model_registry = self_model_registry
+    legacy_registry: LegacyRegistryPort
+    if archive_url:
+        postgres_legacy = PostgresLegacyRegistry(archive_url)
+        await postgres_legacy.initialize()
+        legacy_registry = postgres_legacy
+    else:
+        sqlite_legacy = LegacyRegistry.sqlite(settings.memoria_db_path)
+        await to_thread(sqlite_legacy.initialize)
+        legacy_registry = sqlite_legacy
+    app.state.legacy_registry = legacy_registry
     # S4 is intentionally read-only over the same ledger; no coverage cache exists.
     if archive_url:
         postgres_growth = PostgresGrowthReader(
@@ -518,6 +535,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         archive_object_store=archive_object_store,
         realtime_connections=app.state.realtime_connections,
         account_operations=app.state.account_operations,
+        legacy_registry=legacy_registry,
     )
     deletion_worker = AccountDeletionWorker(app.state.account_data_governance)
     deletion_worker.start()
@@ -535,6 +553,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await postgres_self_model.close()
         if postgres_growth is not None:
             await postgres_growth.close()
+        if postgres_legacy is not None:
+            await postgres_legacy.close()
         if postgres_catalog is not None:
             await postgres_catalog.close()
         if postgres_archive is not None:
@@ -581,6 +601,7 @@ def create_app() -> FastAPI:
     app.state.digital_self_registry = DigitalSelfRegistry.sqlite(settings.memoria_db_path)
     app.state.self_preview_registry = SelfPreviewRegistry.sqlite(settings.memoria_db_path)
     app.state.self_model_registry = SelfModelRegistry.sqlite(settings.memoria_db_path)
+    app.state.legacy_registry = LegacyRegistry.sqlite(settings.memoria_db_path)
     app.state.growth_reader = GrowthReader.sqlite(
         settings.memoria_db_path,
         self_model_registry=app.state.self_model_registry,
@@ -602,6 +623,7 @@ def create_app() -> FastAPI:
         archive_object_store=archive_object_store,
         realtime_connections=app.state.realtime_connections,
         account_operations=app.state.account_operations,
+        legacy_registry=app.state.legacy_registry,
     )
     app.add_middleware(
         CORSMiddleware,
@@ -612,6 +634,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(auth_routes.router)
     app.include_router(interaction_routes.router)
+    app.include_router(legacy_routes.router)
     app.include_router(archive_routes.router)
     app.include_router(session_routes.router)
     app.include_router(speaker_routes.router)

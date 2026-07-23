@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Final, Literal, cast
 
 import httpx
@@ -27,7 +28,7 @@ GroundedUse = Literal[
 ]
 Disclosure = Literal["digital_identity", "inference", "unknown", "privacy_refusal"]
 VoiceTargetKind = Literal["companion", "approved_personal", "fallback"]
-CANONICAL_PLANNER_POLICY_VERSION: Final = "digital-self-response-planner-v1"
+CANONICAL_PLANNER_POLICY_VERSION: Final = "digital-self-response-planner-v2"
 
 _EPISTEMIC_STATUSES = frozenset(
     {"not_applicable", "fact", "inference", "unknown", "mixed"}
@@ -88,6 +89,16 @@ _PROVENANCE_KEYS = frozenset(
         "persona_style_only",
         "relationship_profile_id",
         "relationship_profile_version",
+        "actor_account_id",
+        "resource_owner_account_id",
+        "legacy_actor_role",
+        "legacy_grantee_account_id",
+        "legacy_grant_id",
+        "legacy_grant_snapshot_sha256",
+        "legacy_scope_sha256",
+        "legacy_shell_id",
+        "legacy_voice_allowed",
+        "legacy_expires_at",
         "speaker_class",
         "speaker_reason_code",
         "speaker_profile_id",
@@ -164,6 +175,16 @@ class ResponseProvenance:
     epistemic_status: EpistemicStatus
     epistemic_reason_codes: tuple[str, ...]
     disclosures: tuple[Disclosure, ...]
+    actor_account_id: str | None = None
+    resource_owner_account_id: str | None = None
+    legacy_actor_role: Literal["owner_preview", "grantee"] | None = None
+    legacy_grantee_account_id: str | None = None
+    legacy_grant_id: str | None = None
+    legacy_grant_snapshot_sha256: str | None = None
+    legacy_scope_sha256: str | None = None
+    legacy_shell_id: str | None = None
+    legacy_voice_allowed: bool | None = None
+    legacy_expires_at: str | None = None
 
     def archive_payload(
         self,
@@ -192,6 +213,16 @@ class ResponseProvenance:
             "persona_style_only": self.persona_style_only,
             "relationship_profile_id": self.relationship_profile_id,
             "relationship_profile_version": self.relationship_profile_version,
+            "actor_account_id": self.actor_account_id,
+            "resource_owner_account_id": self.resource_owner_account_id,
+            "legacy_actor_role": self.legacy_actor_role,
+            "legacy_grantee_account_id": self.legacy_grantee_account_id,
+            "legacy_grant_id": self.legacy_grant_id,
+            "legacy_grant_snapshot_sha256": self.legacy_grant_snapshot_sha256,
+            "legacy_scope_sha256": self.legacy_scope_sha256,
+            "legacy_shell_id": self.legacy_shell_id,
+            "legacy_voice_allowed": self.legacy_voice_allowed,
+            "legacy_expires_at": self.legacy_expires_at,
             "speaker_class": self.speaker_class,
             "speaker_reason_code": self.speaker_reason_code,
             "speaker_profile_id": self.speaker_profile_id,
@@ -440,6 +471,82 @@ class ResponsePlannerClient:
             or relationship_version < 1
         ):
             raise ValueError("response provenance relationship version is invalid")
+        legacy_actor_role = value.get("legacy_actor_role")
+        if legacy_actor_role is not None and legacy_actor_role not in {
+            "owner_preview",
+            "grantee",
+        }:
+            raise ValueError("response provenance legacy actor role is invalid")
+        legacy_voice_allowed = value.get("legacy_voice_allowed")
+        if legacy_voice_allowed is not None and not isinstance(legacy_voice_allowed, bool):
+            raise ValueError("response provenance legacy voice policy is invalid")
+        legacy_expires_at = cls._optional_text(value, "legacy_expires_at", 64)
+        if legacy_expires_at is not None and not _valid_utc_timestamp(legacy_expires_at):
+            raise ValueError("response provenance legacy expiry is invalid")
+        legacy_grant_snapshot_sha256 = cls._optional_digest(
+            value,
+            "legacy_grant_snapshot_sha256",
+        )
+        legacy_scope_sha256 = cls._optional_digest(value, "legacy_scope_sha256")
+        interaction_mode = cls._text(value, "interaction_mode", 32)
+        actor_account_id = cls._optional_text(value, "actor_account_id", 128)
+        resource_owner_account_id = cls._optional_text(
+            value,
+            "resource_owner_account_id",
+            128,
+        )
+        legacy_grantee_account_id = cls._optional_text(
+            value,
+            "legacy_grantee_account_id",
+            128,
+        )
+        legacy_grant_id = cls._optional_text(value, "legacy_grant_id", 128)
+        legacy_shell_id = cls._optional_text(value, "legacy_shell_id", 128)
+        legacy_fields = (
+            actor_account_id,
+            resource_owner_account_id,
+            legacy_actor_role,
+            legacy_grantee_account_id,
+            legacy_grant_id,
+            legacy_grant_snapshot_sha256,
+            legacy_scope_sha256,
+            legacy_voice_allowed,
+            legacy_expires_at,
+        )
+        if interaction_mode != "legacy" and any(field is not None for field in legacy_fields):
+            raise ValueError("non-legacy response provenance contains legacy authority")
+        if interaction_mode == "legacy":
+            required_legacy_fields = (
+                actor_account_id,
+                resource_owner_account_id,
+                legacy_actor_role,
+                legacy_grantee_account_id,
+                legacy_grant_id,
+                legacy_grant_snapshot_sha256,
+                legacy_scope_sha256,
+                legacy_voice_allowed,
+                legacy_expires_at,
+            )
+            if any(field is None for field in required_legacy_fields):
+                raise ValueError("legacy response provenance is incomplete")
+            if (
+                resource_owner_account_id == legacy_grantee_account_id
+                or (
+                    legacy_actor_role == "owner_preview"
+                    and (
+                        actor_account_id != resource_owner_account_id
+                        or legacy_shell_id is not None
+                    )
+                )
+                or (
+                    legacy_actor_role == "grantee"
+                    and (
+                        actor_account_id != legacy_grantee_account_id
+                        or legacy_shell_id is None
+                    )
+                )
+            ):
+                raise ValueError("legacy response provenance actor binding is invalid")
         persona_version_number = value.get("persona_version_number")
         if persona_version_number is not None and (
             isinstance(persona_version_number, bool)
@@ -469,7 +576,7 @@ class ResponsePlannerClient:
             raise ValueError("response provenance speaker template is invalid")
         return ResponseProvenance(
             planner_policy_version=planner_policy_version,
-            interaction_mode=cls._text(value, "interaction_mode", 32),
+            interaction_mode=interaction_mode,
             mode_policy_version=cls._text(value, "mode_policy_version", 128),
             digital_self_version_id=cls._optional_text(
                 value,
@@ -520,6 +627,19 @@ class ResponsePlannerClient:
                     max_items=4,
                 )
             ),
+            actor_account_id=actor_account_id,
+            resource_owner_account_id=resource_owner_account_id,
+            legacy_actor_role=cast(
+                Literal["owner_preview", "grantee"] | None,
+                legacy_actor_role,
+            ),
+            legacy_grantee_account_id=legacy_grantee_account_id,
+            legacy_grant_id=legacy_grant_id,
+            legacy_grant_snapshot_sha256=legacy_grant_snapshot_sha256,
+            legacy_scope_sha256=legacy_scope_sha256,
+            legacy_shell_id=legacy_shell_id,
+            legacy_voice_allowed=legacy_voice_allowed,
+            legacy_expires_at=legacy_expires_at,
         )
 
     @classmethod
@@ -610,6 +730,16 @@ class ResponsePlannerClient:
         return value
 
     @classmethod
+    def _optional_digest(cls, value: dict[str, Any], key: str) -> str | None:
+        digest = cls._optional_text(value, key, 64)
+        if digest is not None and (
+            len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ValueError("response provenance digest is invalid")
+        return digest
+
+    @classmethod
     def _enum_tuple(
         cls,
         value: Any,
@@ -671,3 +801,15 @@ class ResponsePlannerClient:
     ) -> None:
         if set(value) != expected:
             raise ValueError(f"{label} fields are invalid")
+
+
+def _valid_utc_timestamp(value: str) -> bool:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return (
+        parsed.tzinfo is not None
+        and parsed.utcoffset() is not None
+        and parsed.utcoffset() == UTC.utcoffset(None)
+    )

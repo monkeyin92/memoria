@@ -2122,3 +2122,301 @@ describe("authenticated Control API client", () => {
     );
   });
 });
+
+describe("legacy Control API client", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+  });
+
+  it("sends the exact grant lifecycle and relationship-shell preference contract", async () => {
+    const grant = {
+      grant_id: "legacy-grant-1",
+      owner_account_id: "owner-1",
+      owner_username: "owner",
+      grantee_account_id: "grantee-1",
+      grantee_username: "family-member",
+      version_id: "digital-self-7",
+      version_number: 7,
+      manifest_sha256: "a".repeat(64),
+      relationship_profile_id: "relationship-1",
+      relationship_profile_version: 3,
+      allowed_items: [{ kind: "memory_claim", item_id: "memory-1" }],
+      visibility: "family",
+      scope_sha256: "b".repeat(64),
+      grant_snapshot_sha256: "c".repeat(64),
+      voice_allowed: false,
+      expires_at: "2026-08-01T00:00:00Z",
+      activated_at: null,
+      revoked_at: null,
+      revision: 1,
+      created_at: "2026-07-23T00:00:00Z",
+      status: "pending",
+    };
+    const preferences = {
+      shell_id: "shell-1",
+      grant_id: "legacy-grant-1",
+      owner_account_id: "owner-1",
+      grantee_account_id: "grantee-1",
+      revision: 4,
+      preferences: {
+        preferred_response_length: "balanced",
+        question_frequency: "occasional",
+      },
+      created_at: "2026-07-23T00:00:00Z",
+      updated_at: "2026-07-23T00:00:00Z",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        user_id: "owner-1",
+        username: "owner",
+        account_type: "registered",
+        access_token: "legacy-token",
+      }, 201))
+      .mockResolvedValueOnce(jsonResponse({ role: "owner", items: [grant] }))
+      .mockResolvedValueOnce(jsonResponse(grant, 201))
+      .mockResolvedValueOnce(jsonResponse({
+        ...grant,
+        status: "active",
+        revision: 2,
+        activated_at: "2026-07-23T01:00:00Z",
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ...grant,
+        status: "revoked",
+        revision: 3,
+        revoked_at: "2026-07-23T02:00:00Z",
+      }))
+      .mockResolvedValueOnce(jsonResponse(preferences))
+      .mockResolvedValueOnce(jsonResponse({
+        ...preferences,
+        revision: 5,
+        preferences: {
+          preferred_response_length: "brief",
+          question_frequency: "rare",
+        },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const {
+      activateLegacyGrant,
+      createLegacyGrant,
+      getLegacyGrants,
+      getLegacyShellPreferences,
+      registerAccount,
+      revokeLegacyGrant,
+      updateLegacyShellPreferences,
+    } = await import("./api.js");
+
+    await registerAccount("owner", "safe-passphrase");
+    await expect(getLegacyGrants("owner")).resolves.toMatchObject({
+      role: "owner",
+      items: [{ grant_id: "legacy-grant-1", status: "pending" }],
+    });
+    const createBody = {
+      grantee_username: "family-member",
+      version_id: "digital-self-7",
+      relationship_profile_id: "relationship-1",
+      allowed_items: [{ kind: "memory_claim", item_id: "memory-1" }],
+      voice_allowed: false,
+      expires_at: "2026-08-01T00:00:00Z",
+      password: "safe-passphrase",
+      idempotency_key: "create-legacy-1",
+    };
+    await expect(createLegacyGrant(createBody)).resolves.toMatchObject({
+      grant_snapshot_sha256: "c".repeat(64),
+    });
+    const transitionBody = {
+      expected_grant_snapshot_sha256: "c".repeat(64),
+      password: "safe-passphrase",
+      idempotency_key: "transition-legacy-1",
+    };
+    await expect(
+      activateLegacyGrant("legacy-grant-1", transitionBody),
+    ).resolves.toMatchObject({ status: "active" });
+    await expect(
+      revokeLegacyGrant("legacy-grant-1", {
+        ...transitionBody,
+        idempotency_key: "revoke-legacy-1",
+      }),
+    ).resolves.toMatchObject({ status: "revoked" });
+    await expect(getLegacyShellPreferences("shell-1")).resolves.toMatchObject({
+      revision: 4,
+    });
+    const preferenceBody = {
+      expected_revision: 4,
+      preferred_response_length: "brief",
+      question_frequency: "rare",
+      idempotency_key: "preferences-legacy-1",
+    };
+    await expect(
+      updateLegacyShellPreferences("shell-1", preferenceBody),
+    ).resolves.toMatchObject({ revision: 5 });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/memoria-api/v1/legacy/grants?role=owner",
+      expect.any(Object),
+    );
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual(createBody);
+    expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual(transitionBody);
+    expect(JSON.parse(fetchMock.mock.calls[6][1].body)).toEqual(preferenceBody);
+  });
+
+  it("rejects unknown legacy roles/statuses and incomplete trust-boundary responses", async () => {
+    const validGrant = {
+      grant_id: "legacy-grant-1",
+      owner_account_id: "owner-1",
+      owner_username: "owner",
+      grantee_account_id: "grantee-1",
+      grantee_username: "family-member",
+      version_id: "digital-self-7",
+      version_number: 7,
+      manifest_sha256: "a".repeat(64),
+      relationship_profile_id: "relationship-1",
+      relationship_profile_version: 3,
+      allowed_items: [{ kind: "memory_claim", item_id: "memory-1" }],
+      visibility: "family",
+      scope_sha256: "b".repeat(64),
+      grant_snapshot_sha256: "c".repeat(64),
+      voice_allowed: false,
+      expires_at: "2026-08-01T00:00:00Z",
+      activated_at: null,
+      revoked_at: null,
+      revision: 1,
+      created_at: "2026-07-23T00:00:00Z",
+      status: "pending",
+    };
+    const { grant_snapshot_sha256: _digest, ...missingDigest } = validGrant;
+    const { owner_username: _owner, ...missingOwner } = validGrant;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        user_id: "owner-1",
+        username: "owner",
+        account_type: "registered",
+        access_token: "legacy-token",
+      }, 201))
+      .mockResolvedValueOnce(jsonResponse({ role: "delegate", items: [] }))
+      .mockResolvedValueOnce(jsonResponse({
+        role: "owner",
+        items: [{ ...validGrant, status: "disabled" }],
+      }))
+      .mockResolvedValueOnce(jsonResponse({ role: "owner", items: [missingDigest] }))
+      .mockResolvedValueOnce(jsonResponse({ role: "owner", items: [missingOwner] }))
+      .mockResolvedValueOnce(jsonResponse({
+        shell_id: "shell-1",
+        grant_id: "legacy-grant-1",
+        owner_account_id: "owner-1",
+        grantee_account_id: "grantee-1",
+        revision: 4,
+        preferences: {
+          preferred_response_length: "unbounded",
+          question_frequency: "occasional",
+        },
+        created_at: "2026-07-23T00:00:00Z",
+        updated_at: "2026-07-23T00:00:00Z",
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { getLegacyGrants, getLegacyShellPreferences, registerAccount } =
+      await import("./api.js");
+
+    await registerAccount("owner", "safe-passphrase");
+    expect(() => getLegacyGrants("delegate")).toThrow("传承授权视角无效");
+    await expect(getLegacyGrants("owner")).rejects.toThrow("传承授权列表响应无效");
+    await expect(getLegacyGrants("owner")).rejects.toThrow("传承授权响应无效");
+    await expect(getLegacyGrants("owner")).rejects.toThrow("传承授权摘要无效");
+    await expect(getLegacyGrants("owner")).rejects.toThrow("传承授权字段无效");
+    await expect(getLegacyShellPreferences("shell-1")).rejects.toThrow(
+      "关系外壳偏好响应无效",
+    );
+  });
+
+  it("starts a legacy session with only the grant id and verifies the frozen boundary", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        user_id: "grantee-1",
+        username: "family-member",
+        account_type: "registered",
+        access_token: "legacy-token",
+      }, 201))
+      .mockResolvedValueOnce(jsonResponse({
+        session_id: "legacy-session-1",
+        voice_backend: "cascade",
+        interaction: {
+          interaction_mode: "legacy",
+          mode_policy_version: "s9-v1",
+          policy_scope: "session",
+          actor_account_id: "grantee-1",
+          resource_owner_account_id: "owner-1",
+          digital_self_version_id: "digital-self-7",
+          manifest_sha256: "a".repeat(64),
+          preview_grant_id: null,
+          perspective: null,
+          relationship_profile_id: "relationship-1",
+          relationship_profile_version: 3,
+          legacy_actor_role: "grantee",
+          legacy_grantee_account_id: "grantee-1",
+          legacy_grant_id: "legacy-grant-1",
+          legacy_shell_id: "shell-1",
+          legacy_grant_snapshot_sha256: "b".repeat(64),
+          legacy_scope_sha256: "c".repeat(64),
+          legacy_voice_allowed: false,
+          legacy_expires_at: "2026-08-01T00:00:00Z",
+          companion_style_id: null,
+          companion_style_version: null,
+          voice_profile_id: null,
+          voice_profile_version: null,
+          voice_provider: null,
+          voice_model: null,
+          voice_resource_id: null,
+          voice_provider_expires_at: null,
+          voice_speaker_sha256: null,
+          fallback_voice_profile_id: "warm_companion",
+          fallback_voice_provider: "volcengine_doubao",
+          fallback_voice_model: "seed-tts-2.0",
+          fallback_voice_resource_id: "seed-tts-2.0",
+          simulated_output: true,
+          history_eligible: false,
+          owner_projection_eligible: false,
+          capabilities: {
+            conversation: true,
+            private_memory: false,
+            persona: false,
+            persona_low_sensitivity: false,
+            tools: false,
+            history: false,
+            learning: false,
+            voice_profile: false,
+          },
+        },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { createSession, registerAccount } = await import("./api.js");
+
+    await registerAccount("family-member", "safe-passphrase");
+    await expect(createSession("grantee-1", "qwen-omni", "task-1", {
+      interactionMode: "legacy",
+      legacyGrantId: "legacy-grant-1",
+    })).resolves.toMatchObject({
+      session_id: "legacy-session-1",
+      interaction: {
+        interaction_mode: "legacy",
+        legacy_actor_role: "grantee",
+        legacy_shell_id: "shell-1",
+      },
+    });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+      user_id: "grantee-1",
+      voice_backend: "cascade",
+      interaction_mode: "legacy",
+      legacy_grant_id: "legacy-grant-1",
+      learning_task_id: null,
+    });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).not.toHaveProperty(
+      "preview_grant_id",
+    );
+  });
+});

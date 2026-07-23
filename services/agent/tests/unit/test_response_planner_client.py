@@ -61,7 +61,7 @@ def _plan_payload(**overrides: object) -> dict[str, object]:
             "model": "seed-tts-2.0",
         },
         "provenance": {
-            "planner_policy_version": "digital-self-response-planner-v1",
+            "planner_policy_version": "digital-self-response-planner-v2",
             "interaction_mode": "companion",
             "mode_policy_version": "s2-v1",
             "digital_self_version_id": None,
@@ -71,6 +71,16 @@ def _plan_payload(**overrides: object) -> dict[str, object]:
             "persona_style_only": False,
             "relationship_profile_id": None,
             "relationship_profile_version": None,
+            "actor_account_id": None,
+            "resource_owner_account_id": None,
+            "legacy_actor_role": None,
+            "legacy_grantee_account_id": None,
+            "legacy_grant_id": None,
+            "legacy_grant_snapshot_sha256": None,
+            "legacy_scope_sha256": None,
+            "legacy_shell_id": None,
+            "legacy_voice_allowed": None,
+            "legacy_expires_at": None,
             "speaker_class": "owner",
             "speaker_reason_code": "owner_match",
             "speaker_profile_id": "speaker-profile",
@@ -134,7 +144,7 @@ async def test_fetch_sends_only_bounded_fence_and_non_biometric_speaker_metadata
 
 @pytest.mark.parametrize(
     "planner_policy_version",
-    ["response-planner-v1", "local-safe-fallback-v1", "digital-self-response-planner-v2"],
+    ["response-planner-v1", "local-safe-fallback-v1", "digital-self-response-planner-v1"],
 )
 def test_parse_rejects_noncanonical_planner_policy_version(
     planner_policy_version: str,
@@ -212,6 +222,76 @@ def test_parse_allows_extra_style_or_relationship_provenance_refs() -> None:
     plan = ResponsePlannerClient._parse(payload)
 
     assert len(plan.provenance.source_refs) == 3
+
+
+def _legacy_plan_payload() -> dict[str, object]:
+    payload = _plan_payload(disclosures=["digital_identity"])
+    provenance = payload["provenance"]
+    assert isinstance(provenance, dict)
+    provenance.update(
+        interaction_mode="legacy",
+        mode_policy_version="s9-v1",
+        digital_self_version_id="version-1",
+        manifest_sha256="a" * 64,
+        relationship_profile_id="relationship-1",
+        relationship_profile_version=3,
+        actor_account_id="grantee-a",
+        resource_owner_account_id="owner-a",
+        legacy_actor_role="grantee",
+        legacy_grantee_account_id="grantee-a",
+        legacy_grant_id="grant-1",
+        legacy_grant_snapshot_sha256="b" * 64,
+        legacy_scope_sha256="c" * 64,
+        legacy_shell_id="shell-1",
+        legacy_voice_allowed=False,
+        legacy_expires_at="2026-08-23T00:00:00+00:00",
+        disclosures=["digital_identity"],
+    )
+    return payload
+
+
+def test_parse_legacy_provenance_keeps_actor_and_resource_owner_distinct() -> None:
+    plan = ResponsePlannerClient._parse(_legacy_plan_payload())
+
+    assert plan.provenance.actor_account_id == "grantee-a"
+    assert plan.provenance.resource_owner_account_id == "owner-a"
+    assert plan.provenance.legacy_voice_allowed is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("actor_account_id", "stranger"),
+        ("resource_owner_account_id", "grantee-a"),
+        ("legacy_actor_role", "owner_preview"),
+        ("legacy_shell_id", None),
+        ("legacy_grant_snapshot_sha256", "b" * 63),
+        ("legacy_scope_sha256", "C" * 64),
+        ("legacy_voice_allowed", "false"),
+        ("legacy_expires_at", "2026-08-23T08:00:00+08:00"),
+    ],
+)
+def test_parse_rejects_forged_or_incomplete_legacy_provenance(
+    field: str,
+    value: object,
+) -> None:
+    payload = _legacy_plan_payload()
+    provenance = payload["provenance"]
+    assert isinstance(provenance, dict)
+    provenance[field] = value
+
+    with pytest.raises(ValueError, match="legacy|digest"):
+        ResponsePlannerClient._parse(payload)
+
+
+def test_parse_rejects_legacy_authority_on_non_legacy_plan() -> None:
+    payload = _plan_payload()
+    provenance = payload["provenance"]
+    assert isinstance(provenance, dict)
+    provenance["legacy_grant_id"] = "forged-grant"
+
+    with pytest.raises(ValueError, match="non-legacy"):
+        ResponsePlannerClient._parse(payload)
 
 
 @pytest.mark.parametrize(

@@ -64,7 +64,7 @@ def _response_plan(runtime: DuplexRuntime) -> ResponsePlan:
             model="unknown",
         ),
         provenance=ResponseProvenance(
-            planner_policy_version="digital-self-response-planner-v1",
+            planner_policy_version="digital-self-response-planner-v2",
             interaction_mode="companion",
             mode_policy_version="test-policy",
             digital_self_version_id=None,
