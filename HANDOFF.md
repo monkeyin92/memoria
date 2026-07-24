@@ -282,6 +282,10 @@
 - 三件套、隔离 smoke、候选 Agent 唯一 LiveKit 注册/heartbeat、SQLite 双备份、
   PostgreSQL dump、env/Nginx 备份、runtime 容器、真实 Provider/readiness 和公网
   API/WMS 均通过。启动后错误标记为 0；H5 仍为 `20260723-192611`。
+- 发布后已清理 39 个历史 Memoria Docker image tag，只保留当前
+  `20260724-121900` 和回滚 `20260723-223448` 的 Agent、Control API、Speaker Model
+  六个标签。卷、数据服务、WMS/MySQL/Redis 和已完成的 MinIO provisioning 容器均未删；
+  后者只有约 4 KB，保留以维持数据 Compose 的已完成 provisioning 状态。
 - 已在登录态 Chrome 打开实时陪伴页；真实麦克风验收待用户完成，重点复测普通句子、
   “再见”和“停一下”。详情见
   [`docs/releases/20260724-121900.md`](docs/releases/20260724-121900.md)。
