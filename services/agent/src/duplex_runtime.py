@@ -2089,10 +2089,15 @@ class DuplexRuntime:
             )
             return False, route.reason
         if self.input_guard.enabled and speech_anchored is not None:
-            snapshot_has_vad = canonical_speech_epoch is not None
-            missing_anchor = not speech_anchored or not (
-                snapshot_has_vad or self._fresh_user_speech
+            current_vad_has_pcm = (
+                canonical_speech_epoch == self._speaker_epoch
+                and self._fresh_user_speech
+                and bool(self._speaker_pcm)
             )
+            # LiveKit can emit a real endpointed final without timing metrics.
+            # The current VAD epoch plus its collected PCM is still an
+            # authoritative live-speech anchor; a bare orphan final is not.
+            missing_anchor = not (speech_anchored or current_vad_has_pcm)
             if missing_anchor:
                 # Prod: after「停一下」LiveKit often emits orphan FINAL without
                 # started/stopped speaking metrics → session goes permanently silent.
@@ -2337,7 +2342,9 @@ class DuplexRuntime:
         if self._set_interruption_min_words is not None:
             self._set_interruption_min_words(self._base_interruption_min_words)
         self._was_speaking = False
-        self._playback_fence = None
+        # LiveKit can emit playback_finished after we hand the floor back.
+        # Keep its original fence until that callback finalizes the heard
+        # assistant segment; a subsequent user turn or new playback replaces it.
         self._fresh_user_speech = True
         self._last_listen_restore_ns = time.monotonic_ns()
         # Always force listening after control so UI/logs match.
@@ -2561,7 +2568,7 @@ class DuplexRuntime:
             if (
                 create_user_turn
                 and mid_reply
-                and barge_route.intent is not UtteranceIntent.INTERRUPT_THEN_CHAT
+                and barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND
                 and cause
                 not in {
                     "user_button",

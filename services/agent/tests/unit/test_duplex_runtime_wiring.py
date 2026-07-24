@@ -278,6 +278,33 @@ async def test_interrupt_with_content_does_not_play_a_control_ack() -> None:
 
 
 @pytest.mark.asyncio
+async def test_plain_chat_interrupt_does_not_play_a_control_ack() -> None:
+    """A plain new question must not overlap its reply with an interrupt yield."""
+    said: list[str] = []
+
+    async def _yield(phrase: str) -> None:
+        said.append(phrase)
+
+    runtime = DuplexRuntime.create(session_id="plain-chat-no-ack")
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("讲个故事")
+    await runtime.on_assistant_speaking("很长的故事内容")
+    await runtime.on_playback_started()
+    playback_fence = runtime.fence
+    runtime._was_speaking = True
+    runtime.input_guard.candidate_text = "再见"
+    runtime.set_interrupt_yield(_yield)
+
+    await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+    await asyncio.sleep(0.05)
+
+    assert said == []
+    assert runtime._playback_fence is not None
+    assert runtime._playback_fence.matches(playback_fence)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_clear_user_turn_failure_does_not_block_yield_or_restore_listening() -> None:
     """A LiveKit clear failure must not strand the conversation before the ack."""
 
@@ -488,6 +515,48 @@ async def test_after_control_chat_fail_opens_missing_speech_epoch() -> None:
     )
     assert accepted is True
     assert reason is None or reason != "missing_speech_epoch"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_current_vad_accepts_final_without_livekit_endpoint_metrics() -> None:
+    """A real current VAD epoch must survive an endpoint callback with no metrics."""
+    runtime = DuplexRuntime.create(
+        session_id="current-vad-missing-metrics",
+        input_guard_enabled=True,
+    )
+    await runtime.orchestrator.ready()
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x01\x00" * 800)
+    runtime.on_user_voice_stopped()
+
+    accepted, reason = runtime.accept_user_turn(
+        "再说一遍",
+        speech_anchored=False,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+
+    assert accepted is True
+    assert reason is None
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_orphan_final_without_current_vad_stays_rejected() -> None:
+    """A metric-less final without current VAD PCM remains playback-echo-safe."""
+    runtime = DuplexRuntime.create(
+        session_id="orphan-final-stays-rejected",
+        input_guard_enabled=True,
+    )
+    await runtime.orchestrator.ready()
+
+    accepted, reason = runtime.accept_user_turn(
+        "后到字幕",
+        speech_anchored=False,
+    )
+
+    assert accepted is False
+    assert reason == "missing_speech_epoch"
     await runtime.close()
 
 
