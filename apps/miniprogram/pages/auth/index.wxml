@@ -1,0 +1,41 @@
+<view class="page-shell auth-page">
+  <image class="brand-mascot" src="/assets/mascot-v2-neutral.webp" mode="aspectFit" />
+  <view class="auth-copy">
+    <text class="eyebrow auth-copy-line">让每次回来都还是你</text>
+    <text class="page-title auth-copy-line">{{mode === 'register' ? '创建你的 Memoria 账号' : '欢迎回到 Memoria'}}</text>
+    <text class="page-subtitle auth-copy-line">账号会绑定聊天、回顾与个人资料。访问 token 仅保存在当前小程序运行期。</text>
+  </view>
+
+  <view class="card auth-card">
+    <text class="field-label">用户名</text>
+    <input
+      class="field-input"
+      value="{{username}}"
+      maxlength="32"
+      placeholder="2–32 个文字、数字、点、下划线或短横线"
+      bindinput="onUsernameInput"
+    />
+    <text class="field-label">密码</text>
+    <input
+      class="field-input"
+      value="{{password}}"
+      password
+      maxlength="128"
+      placeholder="至少 8 个字符"
+      bindinput="onPasswordInput"
+    />
+    <text wx:if="{{error}}" class="error-text">{{error}}</text>
+    <button class="primary-button auth-submit" loading="{{loading}}" bindtap="submit">
+      {{mode === 'register' ? '创建账号' : '登录'}}
+    </button>
+    <button class="auth-switch" disabled="{{loading}}" bindtap="toggleMode">
+      {{mode === 'register' ? '已有账号，去登录' : '还没有账号，去创建'}}
+    </button>
+  </view>
+
+  <view class="anonymous-card">
+    <text class="anonymous-title">先体验一下</text>
+    <text class="anonymous-copy">匿名体验不会上传微信身份；关闭小程序后需重新进入或注册账号。</text>
+    <button class="secondary-button" loading="{{loading}}" bindtap="startAnonymous">开始匿名体验</button>
+  </view>
+</view>

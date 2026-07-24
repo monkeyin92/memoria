@@ -1,0 +1,9 @@
+{
+  "desc": "Memoria 小程序页面均可被微信索引规则安全处理。",
+  "rules": [
+    {
+      "action": "allow",
+      "page": "*"
+    }
+  ]
+}

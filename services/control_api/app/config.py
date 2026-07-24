@@ -14,6 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from services.common.security_constants import (
     DEV_AUTH_SECRET,
     DEV_MESSAGE_IDEMPOTENCY_SECRET,
+    DEV_MINIPROGRAM_GATEWAY_TICKET_SECRET,
 )
 
 
@@ -46,6 +47,20 @@ class ControlSettings(BaseSettings):
     livekit_api_key: str = Field(default="", alias="LIVEKIT_API_KEY")
     livekit_api_secret: str = Field(default="", alias="LIVEKIT_API_SECRET")
     livekit_agent_name: str = Field(default="duplex-zh-agent", alias="LIVEKIT_AGENT_NAME")
+    miniprogram_media_gateway_url: str = Field(
+        default="",
+        alias="MINIPROGRAM_MEDIA_GATEWAY_URL",
+    )
+    miniprogram_gateway_ticket_ttl_s: int = Field(
+        default=90,
+        ge=30,
+        le=300,
+        alias="MINIPROGRAM_GATEWAY_TICKET_TTL_S",
+    )
+    memoria_miniprogram_gateway_ticket_secret: SecretStr = Field(
+        default=SecretStr(DEV_MINIPROGRAM_GATEWAY_TICKET_SECRET),
+        alias="MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET",
+    )
 
     memoria_db_path: str = Field(default="data/memoria.sqlite3", alias="MEMORIA_DB_PATH")
     archive_database_url: SecretStr = Field(
@@ -512,6 +527,19 @@ class ControlSettings(BaseSettings):
             raise ValueError("production requires an independent MEMORIA_AUTH_SECRET (>=32 chars)")
         if auth_secret == self.livekit_api_secret:
             raise ValueError("MEMORIA_AUTH_SECRET must differ from LIVEKIT_API_SECRET")
+        gateway_url = self.miniprogram_media_gateway_url.strip()
+        gateway_ticket_secret = self.memoria_miniprogram_gateway_ticket_secret.get_secret_value()
+        if gateway_url:
+            if not gateway_url.startswith("wss://"):
+                raise ValueError("production Mini Program gateway must use secure WSS")
+            if (
+                gateway_ticket_secret == DEV_MINIPROGRAM_GATEWAY_TICKET_SECRET
+                or len(gateway_ticket_secret) < 32
+                or gateway_ticket_secret in {auth_secret, self.livekit_api_secret}
+            ):
+                raise ValueError(
+                    "production requires an independent Mini Program gateway ticket secret"
+                )
         capability_tokens = {
             "MEMORIA_ARCHIVE_WRITE_TOKEN": self.internal_token("archive_write"),
             "MEMORIA_AGENT_HEARTBEAT_TOKEN": self.internal_token("agent_heartbeat"),
@@ -528,6 +556,10 @@ class ControlSettings(BaseSettings):
             token in {auth_secret, self.livekit_api_secret} for token in capability_tokens.values()
         ):
             raise ValueError("production internal capability tokens must be independent")
+        if gateway_url and gateway_ticket_secret in capability_tokens.values():
+            raise ValueError(
+                "Mini Program gateway ticket secret must differ from internal capability tokens"
+            )
         message_idempotency_secret = self.memoria_message_idempotency_secret.get_secret_value()
         if (
             message_idempotency_secret == DEV_MESSAGE_IDEMPOTENCY_SECRET

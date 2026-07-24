@@ -1,0 +1,32 @@
+.privacy-status,
+.privacy-detail,
+.privacy-note-title {
+  display: block;
+}
+
+.privacy-status {
+  color: #354363;
+  font-size: 33rpx;
+  font-weight: 700;
+}
+
+.privacy-detail {
+  margin-top: 14rpx;
+  color: #77839c;
+  font-size: 26rpx;
+  line-height: 1.65;
+}
+
+.privacy-button {
+  margin-top: 28rpx;
+}
+
+.privacy-note {
+  background: #f5f7ff;
+}
+
+.privacy-note-title {
+  color: #5168bc;
+  font-size: 29rpx;
+  font-weight: 700;
+}

@@ -8,14 +8,16 @@ import base64
 import secrets
 from collections.abc import Callable
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from services.agent.src.config import AgentSettings, validate_doubao_auth
 from services.control_api.app.config import ControlSettings
+from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 
 from scripts.split_production_env import (
     _AGENT_EXTRA_KEYS,
     _CONTROL_EXTRA_KEYS,
+    _GATEWAY_EXTRA_KEYS,
     _aliases,
     _read_env,
     _write_env,
@@ -49,18 +51,30 @@ def _postgres_dsn(*, user: str, password: str) -> str:
     return f"postgresql://{user}:{quote(password, safe='')}@memoria-postgres:5432/memoria"
 
 
+def _miniprogram_gateway_url(public_base_url: str) -> str:
+    parsed = urlsplit(public_base_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError("PUBLIC_BASE_URL must be HTTPS to derive Mini Program gateway URL")
+    prefix = parsed.path.rstrip("/")
+    if prefix.endswith("/memoria-api"):
+        prefix = prefix.removesuffix("/memoria-api")
+    return f"wss://{parsed.netloc}{prefix}/memoria-mini-media/v1/mini-program/media"
+
+
 def prepare(
     *,
     legacy: dict[str, str],
     postgres: dict[str, str],
     minio: dict[str, str],
     release_tag: str,
-) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
     known = (
         _aliases(ControlSettings)
         | _aliases(AgentSettings)
         | set(_CONTROL_EXTRA_KEYS)
         | set(_AGENT_EXTRA_KEYS)
+        | _aliases(MiniProgramGatewaySettings)
+        | set(_GATEWAY_EXTRA_KEYS)
     )
     values = {key: value for key, value in legacy.items() if key in known}
     validate_doubao_auth(
@@ -82,6 +96,11 @@ def prepare(
     )
     default_voice_target = (
         "seed-icl-2.0" if voice_clone_provider == "volcengine_doubao" else "cosyvoice-v3.5-flash"
+    )
+    public_base_url = _required(values, "PUBLIC_BASE_URL")
+    gateway_url = (
+        values.get("MINIPROGRAM_MEDIA_GATEWAY_URL", "").strip()
+        or _miniprogram_gateway_url(public_base_url)
     )
     values.update(
         {
@@ -109,6 +128,15 @@ def prepare(
             "MEMORIA_RESPONSE_PLAN_TOKEN": _token(),
             "MEMORIA_RESPONSE_PLAN_URL": "http://control-api:8000/v1/interaction/response-plan",
             "MEMORIA_RESPONSE_PLAN_TIMEOUT_S": "0.8",
+            "MINIPROGRAM_MEDIA_GATEWAY_URL": gateway_url,
+            "MINIPROGRAM_GATEWAY_TICKET_TTL_S": "90",
+            "MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET": _keep_or_create(
+                values,
+                "MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET",
+                _token,
+            ),
+            "MINIPROGRAM_GATEWAY_TICKET_MAX_TTL_S": "300",
+            "MINIPROGRAM_GATEWAY_LIVEKIT_TOKEN_TTL_S": "300",
             "MEMORIA_SPEAKER_INTERNAL_TOKEN": _token(),
             "MEMORIA_SPEAKER_EMBEDDING_TOKEN": _token(),
             "MEMORIA_SPEAKER_TEMPLATE_KEY": _keep_or_create(
@@ -178,12 +206,13 @@ def prepare(
         }
     )
     values.pop("MEMORIA_ARCHIVE_INTERNAL_TOKEN", None)
-    control, agent, speaker_model = split_env(values)
+    control, agent, speaker_model, gateway = split_env(values)
     ControlSettings.model_validate(control).validate_production()
     AgentSettings.model_validate(agent)
+    MiniProgramGatewaySettings.model_validate(gateway).validate_production()
     if not speaker_model:
         raise ValueError("speaker-model env must contain its scoped token")
-    return control, agent, speaker_model
+    return control, agent, speaker_model, gateway
 
 
 def main() -> int:
@@ -195,11 +224,12 @@ def main() -> int:
     parser.add_argument("--control", required=True, type=Path)
     parser.add_argument("--agent", required=True, type=Path)
     parser.add_argument("--speaker-model", required=True, type=Path)
+    parser.add_argument("--gateway", required=True, type=Path)
     args = parser.parse_args()
-    for path in (args.control, args.agent, args.speaker_model):
+    for path in (args.control, args.agent, args.speaker_model, args.gateway):
         if path.exists():
             raise FileExistsError(f"refusing to replace existing candidate: {path}")
-    control, agent, speaker_model = prepare(
+    control, agent, speaker_model, gateway = prepare(
         legacy=_read_env(args.legacy),
         postgres=_read_env(args.postgres),
         minio=_read_env(args.minio),
@@ -208,9 +238,10 @@ def main() -> int:
     _write_env(args.control, control)
     _write_env(args.agent, agent)
     _write_env(args.speaker_model, speaker_model)
+    _write_env(args.gateway, gateway)
     print(
         f"created validated env candidates: control={len(control)}, "
-        f"agent={len(agent)}, speaker-model={len(speaker_model)}"
+        f"agent={len(agent)}, speaker-model={len(speaker_model)}, gateway={len(gateway)}"
     )
     return 0
 

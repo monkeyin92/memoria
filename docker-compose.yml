@@ -52,5 +52,16 @@ services:
     depends_on:
       - control-api
 
+  miniprogram-gateway:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.miniprogram-gateway
+    env_file:
+      - .env
+    ports:
+      - "8010:8010"
+    depends_on:
+      - control-api
+
 volumes:
   postgres-data:

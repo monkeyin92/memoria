@@ -1,0 +1,76 @@
+.auth-page {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.brand-mascot {
+  width: 240rpx;
+  height: 240rpx;
+  margin: 0 auto;
+}
+
+.auth-copy {
+  text-align: center;
+}
+
+.auth-copy-line {
+  display: block;
+}
+
+.auth-card {
+  margin-top: 42rpx;
+}
+
+.field-label {
+  display: block;
+  margin: 18rpx 0 12rpx;
+  color: #47536e;
+  font-size: 27rpx;
+  font-weight: 600;
+}
+
+.field-input {
+  height: 86rpx;
+  box-sizing: border-box;
+  padding: 0 24rpx;
+  border: 1rpx solid #d7e0f6;
+  border-radius: 18rpx;
+  color: #1b2640;
+  background: #f9fbff;
+  font-size: 29rpx;
+}
+
+.auth-submit {
+  margin-top: 32rpx;
+}
+
+.auth-switch {
+  margin-top: 12rpx;
+  color: #596cc4;
+  background: transparent;
+  font-size: 27rpx;
+}
+
+.anonymous-card {
+  margin-top: 24rpx;
+  padding: 24rpx 28rpx;
+  border-radius: 24rpx;
+  background: rgba(232, 238, 255, 0.7);
+}
+
+.anonymous-title {
+  display: block;
+  color: #465baf;
+  font-size: 29rpx;
+  font-weight: 650;
+}
+
+.anonymous-copy {
+  display: block;
+  margin: 10rpx 0 18rpx;
+  color: #6c7b9e;
+  font-size: 25rpx;
+  line-height: 1.5;
+}

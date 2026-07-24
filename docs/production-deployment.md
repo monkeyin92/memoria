@@ -17,6 +17,8 @@
 - 对象存储：独立同机 MinIO，档案/声音两个 bucket 分权并启用版本控制，无公网端口
 - Runtime：版本目录位于 `/opt/memoria/releases/`，`/opt/memoria/current` 原子软链指向当前 release
 - H5：版本目录位于 `/var/www/memoria-releases/`，`/var/www/memoria-h5` 原子软链指向当前 release
+- 原生小程序候选入口：WSS `/memoria-mini-media/v1/mini-program/media`，loopback 上游
+  `127.0.0.1:8792`；只有包含网关镜像和 gateway env 的新 release 才会启用。
 
 Memoria 使用独立静态资源/API 路径、回环端口、Compose project 和限流 zone。新服务器的 443 继续由既有 WMS 虚拟主机占用；8443 由 Nginx stream 预读协议，TLS 流量转到 `127.0.0.1:9443` 的 Memoria HTTPS server，原生 ICE/TCP 转到 `127.0.0.1:8444` 后进入 LiveKit 容器的 8443。当前公网正式入口是 8443。公网 `/memoria-api/internal/` 固定返回 404；WMS 的 `/wms/` 路由与既有数据保留且服务保持 active。当前生产证据见 `docs/releases/20260721-224804.md`，历史迁移与热修证据保留在 `docs/releases/`。
 
@@ -41,7 +43,13 @@ sudo sha256sum /etc/letsencrypt/renewal-hooks/deploy/50-memoria-reload-nginx
 
 ## Secret 与数据边界
 
-生产 secret 按最小权限拆分到服务器 `/etc/memoria-control-api.env` 与 `/etc/memoria-agent.env`，两者权限都必须是 `root:root 0600`。使用 `scripts/split_production_env.py` 从 root-only 运维源生成候选文件；仓库、H5 bundle、发布清单、日志和本文档都不得出现源文件或 secret 值。
+生产 secret 按最小权限拆分到服务器 `/etc/memoria-control-api.env`、
+`/etc/memoria-agent.env`、`/etc/memoria-speaker-model.env` 和
+`/etc/memoria-miniprogram-gateway.env`，四者权限都必须是 `root:root 0600`。使用
+`scripts/split_production_env.py` 从 root-only 运维源生成候选文件；
+仓库、H5 bundle、发布清单、日志和本文档都不得出现源文件或 secret 值。gateway env 只包含
+LiveKit 接入凭据、gateway ticket 签名材料和媒体适配配置；它不包含 `MEMORIA_AUTH_SECRET`、
+档案对象存储密钥、DASHSCOPE 或 Agent capability token。
 
 Agent 与 Control API 的内部能力必须分别配置，值至少 32 字符且两两不同：
 
@@ -57,6 +65,10 @@ MEMORIA_RESPONSE_PLAN_TOKEN
 ```
 
 `MEMORIA_SPEAKER_INTERNAL_TOKEN` 也必须独立，不能与上述任一 token 或旧 `MEMORIA_ARCHIVE_INTERNAL_TOKEN` 复用。旧 token 只用于非生产兼容；不得写入 H5 环境、构建参数、浏览器存储或 Nginx 返回头。
+
+原生小程序网关启用时，`MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET` 必须至少 32 字符，
+独立于 `MEMORIA_AUTH_SECRET`、`LIVEKIT_API_SECRET` 和全部 capability token；它只进入
+Control API 与 gateway env，不进入 Agent 或 H5。
 
 必须非空的变量名：
 
@@ -179,10 +191,16 @@ PROTECTED_BACKUP_DIR=/var/backups/memoria
 PROTECTED_BACKUP=$PROTECTED_BACKUP_DIR/memoria-pre-$RELEASE_TAG.sqlite3
 CONTROL_ENV=/etc/memoria-control-api.env
 AGENT_ENV=/etc/memoria-agent.env
+SPEAKER_MODEL_ENV=/etc/memoria-speaker-model.env
+GATEWAY_ENV=/etc/memoria-miniprogram-gateway.env
 CONTROL_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/control-api.env
 AGENT_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/agent.env
+SPEAKER_MODEL_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/speaker-model.env
+GATEWAY_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/gateway.env
 CONTROL_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-control-api.env-pre-$RELEASE_TAG
 AGENT_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-agent.env-pre-$RELEASE_TAG
+SPEAKER_MODEL_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-speaker-model.env-pre-$RELEASE_TAG
+GATEWAY_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-miniprogram-gateway.env-pre-$RELEASE_TAG
 ```
 
 ### 1. 本机构建、打包并上传固定工件
@@ -226,7 +244,7 @@ DOCKER_CONTEXT=default DOCKER_BUILDKIT=0 \
   MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
   bash scripts/delta_build_images.sh
 
-for image in agent control-api speaker-model; do
+for image in agent control-api speaker-model miniprogram-gateway; do
   test "$(docker image inspect "memoria-$image:$RELEASE_TAG" \
     --format '{{.Architecture}}')" = amd64
 done
@@ -240,6 +258,7 @@ python3 scripts/package_h5_artifact.py \
 docker save --platform linux/amd64 \
   "memoria-agent:$RELEASE_TAG" \
   "memoria-control-api:$RELEASE_TAG" \
+  "memoria-miniprogram-gateway:$RELEASE_TAG" \
   "memoria-speaker-model:$RELEASE_TAG" \
   -o "$ARTIFACT_DIR/images.tar"
 for artifact in source.tar images.tar h5-dist.tar.gz; do
@@ -268,6 +287,11 @@ printf 'copy this manifest hash into the authenticated server shell: %s\n' \
   "$MEMORIA_RELEASE_MANIFEST_SHA256"
 ```
 
+首次包含小程序网关的 release 可以没有上一 tag 的 gateway 镜像；增量脚本会继续复用
+Agent、Control API 和 Speaker Model 的健康基础镜像，只用锁定依赖的
+`Dockerfile.miniprogram-gateway` 完整构建新网关镜像。后续 release 才对 gateway 使用
+同样的增量路径。
+
 依赖变化时不要运行增量脚本，在本机执行完整构建：
 
 ```bash
@@ -286,6 +310,11 @@ docker buildx build --platform linux/amd64 --load \
   --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
   --build-arg MEMORIA_RELEASE_TAG="$RELEASE_TAG" \
   -t "memoria-speaker-model:$RELEASE_TAG" .
+docker buildx build --platform linux/amd64 --load \
+  -f infra/Dockerfile.miniprogram-gateway \
+  --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
+  --build-arg MEMORIA_RELEASE_TAG="$RELEASE_TAG" \
+  -t "memoria-miniprogram-gateway:$RELEASE_TAG" .
 ```
 
 Dockerfile 必须从 `uv.lock` 或固定 requirements 导出并安装固定版本与哈希，任何不匹配都令构建失败；不得使用 `latest`。完整构建后同样执行上面的架构校验、H5 build、`docker save` 和 SHA-256 清单生成。
@@ -325,7 +354,7 @@ python3 "$UPLOAD_DIR/release-verifier.pyz" \
   --expected-tag "$RELEASE_TAG" \
   --expected-commit "$MEMORIA_RELEASE_COMMIT" \
   --verify-imported-images
-for image in agent control-api speaker-model; do
+for image in agent control-api speaker-model miniprogram-gateway; do
   sudo docker image inspect "memoria-$image:$RELEASE_TAG" \
     --format '{{.Id}} {{.Architecture}}'
 done
@@ -470,24 +499,38 @@ sudo sha256sum "$BACKUP" "$PROTECTED_BACKUP"
 
 sudo test "$(stat -c '%U:%G:%a' "$CONTROL_ENV_CANDIDATE")" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' "$AGENT_ENV_CANDIDATE")" = "root:root:600"
-if sudo test -e "$CONTROL_ENV" || sudo test -e "$AGENT_ENV"; then
-  sudo test "$(stat -c '%U:%G:%a' "$CONTROL_ENV")" = "root:root:600"
-  sudo test "$(stat -c '%U:%G:%a' "$AGENT_ENV")" = "root:root:600"
-  sudo install -o root -g root -m 0600 "$CONTROL_ENV" "$CONTROL_ENV_BACKUP"
-  sudo install -o root -g root -m 0600 "$AGENT_ENV" "$AGENT_ENV_BACKUP"
-  sudo sha256sum "$CONTROL_ENV_BACKUP" "$AGENT_ENV_BACKUP"
+sudo test "$(stat -c '%U:%G:%a' "$SPEAKER_MODEL_ENV_CANDIDATE")" = "root:root:600"
+sudo test "$(stat -c '%U:%G:%a' "$GATEWAY_ENV_CANDIDATE")" = "root:root:600"
+for current_env in "$CONTROL_ENV" "$AGENT_ENV" "$SPEAKER_MODEL_ENV"; do
+  sudo test -e "$current_env"
+  sudo test "$(stat -c '%U:%G:%a' "$current_env")" = "root:root:600"
+done
+sudo install -o root -g root -m 0600 "$CONTROL_ENV" "$CONTROL_ENV_BACKUP"
+sudo install -o root -g root -m 0600 "$AGENT_ENV" "$AGENT_ENV_BACKUP"
+sudo install -o root -g root -m 0600 "$SPEAKER_MODEL_ENV" "$SPEAKER_MODEL_ENV_BACKUP"
+if sudo test -e "$GATEWAY_ENV"; then
+  sudo test "$(stat -c '%U:%G:%a' "$GATEWAY_ENV")" = "root:root:600"
+  sudo install -o root -g root -m 0600 "$GATEWAY_ENV" "$GATEWAY_ENV_BACKUP"
+fi
+sudo sha256sum "$CONTROL_ENV_BACKUP" "$AGENT_ENV_BACKUP" "$SPEAKER_MODEL_ENV_BACKUP"
+if sudo test -e "$GATEWAY_ENV_BACKUP"; then
+  sudo sha256sum "$GATEWAY_ENV_BACKUP"
 fi
 sudo install -o root -g root -m 0600 "$CONTROL_ENV_CANDIDATE" "$CONTROL_ENV"
 sudo install -o root -g root -m 0600 "$AGENT_ENV_CANDIDATE" "$AGENT_ENV"
+sudo install -o root -g root -m 0600 "$SPEAKER_MODEL_ENV_CANDIDATE" "$SPEAKER_MODEL_ENV"
+sudo install -o root -g root -m 0600 "$GATEWAY_ENV_CANDIDATE" "$GATEWAY_ENV"
 ```
 
-保护副本放在 root-only `/var/backups/memoria`，避免与容器 bind 目录共享暴露面；`/var/lib/memoria` 中的原始快照继续保留，作为独立的第二份回滚副本。先在可信运维环境用 `scripts/split_production_env.py` 生成 `$CONTROL_ENV_CANDIDATE` 与 `$AGENT_ENV_CANDIDATE`，再执行上述“校验候选 → 备份已有双 env → 安装候选”顺序。数据库、候选 env 和已有 env 备份都必须为 `root:root 0600`，不得为了容器读取而放宽权限。首次从旧版单文件迁移时没有双 env 可备份，条件分支会跳过；旧 release 的配置保持原样供回滚使用。
+保护副本放在 root-only `/var/backups/memoria`，避免与容器 bind 目录共享暴露面；`/var/lib/memoria` 中的原始快照继续保留，作为独立的第二份回滚副本。先在可信运维环境用 `scripts/split_production_env.py` 生成 Control API、Agent、Speaker Model 与 gateway 四份候选 env，再执行上述“校验候选 → 备份已有 env → 安装候选”顺序。前三份旧 env 是既有 runtime 的强制前提；gateway 只在首次接入小程序前不存在，因此它单独条件备份。数据库、候选 env 和已有 env 备份都必须为 `root:root 0600`，不得为了容器读取而放宽权限。
 
 ### 4. 原子激活 runtime
 
 ```bash
 sudo test "$(stat -c '%U:%G:%a' /etc/memoria-control-api.env)" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' /etc/memoria-agent.env)" = "root:root:600"
+sudo test "$(stat -c '%U:%G:%a' /etc/memoria-speaker-model.env)" = "root:root:600"
+sudo test "$(stat -c '%U:%G:%a' /etc/memoria-miniprogram-gateway.env)" = "root:root:600"
 sudo ln -s "releases/$RELEASE_TAG" "/opt/memoria/.current.$RELEASE_TAG"
 sudo mv -Tf "/opt/memoria/.current.$RELEASE_TAG" /opt/memoria/current
 
@@ -730,24 +773,29 @@ curl -fsS https://122.51.108.140:8443/wms/
 ## 回滚
 
 禁止在 runbook 中长期硬编码“当前”回滚版本。每次发布在切软链前记录真实目标，并把
-两份服务 env 备份到同一 release tag 命名的 root-only 文件：
+四份服务 env 备份到同一 release tag 命名的 root-only 文件：
 
 ```bash
 PREV_RUNTIME_TAG="$(basename "$(readlink -f /opt/memoria/current)")"
 PREV_H5_TAG="$(basename "$(readlink -f /var/www/memoria-h5)")"
 CONTROL_ENV_BACKUP="/var/backups/memoria/memoria-control-api.env-pre-$RELEASE_TAG"
 AGENT_ENV_BACKUP="/var/backups/memoria/memoria-agent.env-pre-$RELEASE_TAG"
+SPEAKER_MODEL_ENV_BACKUP="/var/backups/memoria/memoria-speaker-model.env-pre-$RELEASE_TAG"
+GATEWAY_ENV_BACKUP="/var/backups/memoria/memoria-miniprogram-gateway.env-pre-$RELEASE_TAG"
 
 sudo test -d "/opt/memoria/releases/$PREV_RUNTIME_TAG"
 sudo test -d "/var/www/memoria-releases/$PREV_H5_TAG"
 sudo docker image inspect "memoria-agent:$PREV_RUNTIME_TAG" >/dev/null
 sudo docker image inspect "memoria-control-api:$PREV_RUNTIME_TAG" >/dev/null
+sudo docker image inspect "memoria-speaker-model:$PREV_RUNTIME_TAG" >/dev/null
 sudo test "$(stat -c '%U:%G:%a' "$CONTROL_ENV_BACKUP")" = root:root:600
 sudo test "$(stat -c '%U:%G:%a' "$AGENT_ENV_BACKUP")" = root:root:600
+sudo test "$(stat -c '%U:%G:%a' "$SPEAKER_MODEL_ENV_BACKUP")" = root:root:600
 ```
 
 H5-only 故障只切回发布前记录的 H5；runtime、Provider 或 readiness 故障必须先恢复
-双 env，再切回发布前 runtime。旧 runtime 不能读取新 release 的 provider 配置：
+Control API、Agent 与 Speaker Model env；如果存在 gateway 备份也一并恢复，再切回发布前
+runtime。旧 runtime 不能读取新 release 的 provider 配置：
 
 ```bash
 sudo ln -s "memoria-releases/$PREV_H5_TAG" \
@@ -758,6 +806,14 @@ sudo install -o root -g root -m 0600 \
   "$CONTROL_ENV_BACKUP" /etc/memoria-control-api.env
 sudo install -o root -g root -m 0600 \
   "$AGENT_ENV_BACKUP" /etc/memoria-agent.env
+sudo install -o root -g root -m 0600 \
+  "$SPEAKER_MODEL_ENV_BACKUP" /etc/memoria-speaker-model.env
+if sudo test -e "$GATEWAY_ENV_BACKUP"; then
+  sudo install -o root -g root -m 0600 \
+    "$GATEWAY_ENV_BACKUP" /etc/memoria-miniprogram-gateway.env
+else
+  sudo rm -f /etc/memoria-miniprogram-gateway.env
+fi
 
 sudo ln -s "releases/$PREV_RUNTIME_TAG" \
   "/opt/memoria/.current.rollback-$RELEASE_TAG"
@@ -780,5 +836,5 @@ SQLite、PostgreSQL 或 MinIO；只有数据格式确实不兼容时，才在另
 - 每日监控 API live/ready、`memoria-readiness-refresh.timer` 和 `snap.certbot.renew.timer`。
 - 每日确认 WMS 仍为 active/enabled，Memoria 只使用 8443；确认旧项目没有被意外启动并占用 Memoria 端口。
 - 证书续期后验证 SAN、有效期、deploy hook 和 Nginx reload 日志。
-- 每次发布记录 release tag、镜像 ID、H5/Nginx SHA-256、证书指纹、两份 SQLite 快照 SHA-256、两份 env 备份 SHA-256、完整性与 foreign-key 检查、激活时间和回滚点；不得记录 secret。
+- 每次发布记录 release tag、镜像 ID、H5/Nginx SHA-256、证书指纹、两份 SQLite 快照 SHA-256、四份 env 备份 SHA-256、完整性与 foreign-key 检查、激活时间和回滚点；不得记录 secret。
 - 200 条真实中文录音、AEC 设备矩阵和第 21 章 SLO 是规模化上线门禁，不阻塞当前 H5 成品交付。

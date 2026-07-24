@@ -1,0 +1,52 @@
+<view class="page-shell">
+  <text class="eyebrow">我的</text>
+  <text class="page-title">{{profile.display_name || '新朋友'}}</text>
+  <text class="page-subtitle">{{identity.account_type === 'anonymous' ? '匿名体验身份仅在当前运行期有效。' : '你的资料、回顾和授权都由服务端账户保护。'}}</text>
+
+  <view class="card">
+    <text class="field-label">称呼</text>
+    <input class="field-input" value="{{profile.display_name}}" maxlength="64" bindinput="onNameInput" />
+    <text class="field-label">想让伙伴怎样陪你</text>
+    <textarea class="bio-input" value="{{profile.bio}}" maxlength="280" bindinput="onBioInput" />
+    <button class="primary-button save-button" loading="{{saving}}" bindtap="saveProfile">保存资料</button>
+    <text wx:if="{{error}}" class="error-text">{{error}}</text>
+  </view>
+
+  <view class="card">
+    <text class="settings-title">陪伴方式</text>
+    <view wx:for="{{companions}}" wx:key="id" class="companion-row {{profile.companion_id === item.id ? 'companion-selected' : ''}}" data-id="{{item.id}}" bindtap="chooseCompanion">
+      <image class="companion-image" src="/assets/companions/{{item.id}}.webp" mode="aspectFit" />
+      <view class="companion-copy">
+        <text class="companion-name">{{item.name}}</text>
+        <text class="companion-tagline">{{item.tagline}}</text>
+      </view>
+      <text class="companion-check">{{profile.companion_id === item.id ? '已选择' : ''}}</text>
+    </view>
+  </view>
+
+  <view class="card">
+    <text class="settings-title">偏好与保护</text>
+    <view class="setting-row">
+      <view><text class="setting-name">语音回应</text><text class="setting-desc">允许伙伴使用语音回应</text></view>
+      <switch checked="{{profile.voice_reply}}" data-key="voice_reply" bindchange="onSwitch" color="#6178df" />
+    </view>
+    <view class="setting-row">
+      <view><text class="setting-name">自动回顾</text><text class="setting-desc">在服务端条件满足时生成每日回顾</text></view>
+      <switch checked="{{profile.auto_summary}}" data-key="auto_summary" bindchange="onSwitch" color="#6178df" />
+    </view>
+    <view class="setting-row">
+      <view><text class="setting-name">过滤明显旁人（实验）</text><text class="setting-desc">不让明确非主人的声音进入主人私有路径</text></view>
+      <switch checked="{{profile.reject_non_owner_voice}}" data-key="reject_non_owner_voice" bindchange="onSwitch" color="#6178df" />
+    </view>
+  </view>
+
+  <view class="card nav-card" bindtap="openDigitalSelf">
+    <view><text class="settings-title">数字分身成长</text><text class="setting-desc">查看服务端的成长维度、Persona 与版本状态</text></view>
+    <text class="nav-arrow">›</text>
+  </view>
+  <view class="card nav-card" bindtap="openPrivacy">
+    <view><text class="settings-title">隐私与原始语音授权</text><text class="setting-desc">查看或撤回可选的原始音频归档授权</text></view>
+    <text class="nav-arrow">›</text>
+  </view>
+  <button class="danger-button logout-button" bindtap="logout">退出当前小程序会话</button>
+</view>

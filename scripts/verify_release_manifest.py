@@ -28,7 +28,12 @@ _MANIFEST_KEYS = {
 }
 _PAYLOAD_KEYS = _MANIFEST_KEYS - {"digest"}
 _RECORD_KEYS = {"name", "sha256", "size"}
-_ROLES = {"agent": "memoria-agent", "control-api": "memoria-control-api", "speaker-model": "memoria-speaker-model"}
+_ROLES = {
+    "agent": "memoria-agent",
+    "control-api": "memoria-control-api",
+    "miniprogram-gateway": "memoria-miniprogram-gateway",
+    "speaker-model": "memoria-speaker-model",
+}
 
 
 def _file_record(path: Path, *, name: str) -> dict[str, str | int]:
@@ -91,7 +96,7 @@ def verify_image_archive(*, archive: Path, expected_commit: str, release_tag: st
                 raise ValueError("image archive has no manifest")
             manifest = json.load(manifest_file)
             if not isinstance(manifest, list) or len(manifest) != len(_ROLES):
-                raise ValueError("image archive must contain exactly three images")
+                raise ValueError("image archive must contain every required runtime image")
             roles: set[str] = set()
             for entry in manifest:
                 if not isinstance(entry, dict):

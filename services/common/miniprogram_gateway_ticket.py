@@ -1,0 +1,152 @@
+"""Short-lived, audience-bound tickets for the Mini Program media gateway."""
+
+from __future__ import annotations
+
+import time
+import uuid
+from dataclasses import dataclass
+from typing import Final
+
+import jwt
+
+GATEWAY_TICKET_AUDIENCE: Final = "memoria-miniprogram-media-gateway"
+GATEWAY_TICKET_ISSUER: Final = "memoria-control-api"
+GATEWAY_TICKET_TYPE: Final = "memoria_miniprogram_gateway"
+
+
+class GatewayTicketError(ValueError):
+    """A gateway ticket is malformed, expired, or issued for another service."""
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayTicketClaims:
+    session_id: str
+    user_id: str
+    room_name: str
+    identity: str
+    agent_name: str
+    voice_backend: str
+    issued_at_s: int
+    expires_at_s: int
+    ticket_id: str
+
+
+def _require_string(payload: dict[str, object], name: str) -> str:
+    value = payload.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise GatewayTicketError(f"invalid gateway ticket {name}")
+    return value
+
+
+def _require_timestamp(payload: dict[str, object], name: str) -> int:
+    value = payload.get(name)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise GatewayTicketError(f"invalid gateway ticket {name}")
+    return value
+
+
+def issue_gateway_ticket(
+    *,
+    secret: str,
+    session_id: str,
+    user_id: str,
+    room_name: str,
+    identity: str,
+    agent_name: str,
+    ttl_s: int,
+    now_s: int | None = None,
+) -> tuple[str, int]:
+    """Create a bearer ticket that authorizes exactly one frozen cascade session."""
+    if not secret:
+        raise ValueError("gateway ticket signing secret is required")
+    if ttl_s <= 0:
+        raise ValueError("gateway ticket ttl must be positive")
+    fields = {
+        "session_id": session_id,
+        "user_id": user_id,
+        "room_name": room_name,
+        "identity": identity,
+        "agent_name": agent_name,
+    }
+    if any(not isinstance(value, str) or not value.strip() for value in fields.values()):
+        raise ValueError("gateway ticket claims must be non-empty strings")
+    issued_at = int(time.time()) if now_s is None else now_s
+    if issued_at < 0:
+        raise ValueError("gateway ticket issue time must not be negative")
+    payload = {
+        "iss": GATEWAY_TICKET_ISSUER,
+        "aud": GATEWAY_TICKET_AUDIENCE,
+        "typ": GATEWAY_TICKET_TYPE,
+        "sid": session_id,
+        "sub": user_id,
+        "room": room_name,
+        "identity": identity,
+        "agent_name": agent_name,
+        "voice_backend": "cascade",
+        "jti": str(uuid.uuid4()),
+        "iat": issued_at,
+        "nbf": issued_at,
+        "exp": issued_at + ttl_s,
+    }
+    encoded = jwt.encode(payload, secret, algorithm="HS256")
+    return (encoded.decode("utf-8") if isinstance(encoded, bytes) else str(encoded), ttl_s)
+
+
+def verify_gateway_ticket(
+    token: str,
+    *,
+    secret: str,
+    now_s: int | None = None,
+    max_ttl_s: int = 300,
+) -> GatewayTicketClaims:
+    """Verify an independently scoped ticket without ever logging its contents."""
+    if not token.strip() or not secret:
+        raise GatewayTicketError("gateway ticket is missing")
+    if max_ttl_s <= 0:
+        raise ValueError("gateway ticket max ttl must be positive")
+    try:
+        decoded = jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            audience=GATEWAY_TICKET_AUDIENCE,
+            issuer=GATEWAY_TICKET_ISSUER,
+            options={
+                "require": ["exp", "iat", "nbf", "sub", "sid", "aud", "iss", "jti"],
+                "verify_exp": False,
+                "verify_iat": False,
+                "verify_nbf": False,
+            },
+        )
+    except jwt.PyJWTError as exc:
+        raise GatewayTicketError("gateway ticket verification failed") from exc
+    if not isinstance(decoded, dict):
+        raise GatewayTicketError("invalid gateway ticket payload")
+    payload = dict(decoded)
+    issued_at = _require_timestamp(payload, "iat")
+    not_before = _require_timestamp(payload, "nbf")
+    expires_at = _require_timestamp(payload, "exp")
+    current = int(time.time()) if now_s is None else now_s
+    if (
+        not_before != issued_at
+        or expires_at <= issued_at
+        or expires_at - issued_at > max_ttl_s
+        or current < not_before
+        or current >= expires_at
+    ):
+        raise GatewayTicketError("gateway ticket is not currently valid")
+    if payload.get("typ") != GATEWAY_TICKET_TYPE:
+        raise GatewayTicketError("invalid gateway ticket type")
+    if payload.get("voice_backend") != "cascade":
+        raise GatewayTicketError("gateway ticket backend is not allowed")
+    return GatewayTicketClaims(
+        session_id=_require_string(payload, "sid"),
+        user_id=_require_string(payload, "sub"),
+        room_name=_require_string(payload, "room"),
+        identity=_require_string(payload, "identity"),
+        agent_name=_require_string(payload, "agent_name"),
+        voice_backend="cascade",
+        issued_at_s=issued_at,
+        expires_at_s=expires_at,
+        ticket_id=_require_string(payload, "jti"),
+    )

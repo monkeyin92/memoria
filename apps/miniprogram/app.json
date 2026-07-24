@@ -1,0 +1,37 @@
+{
+  "pages": [
+    "pages/home/index",
+    "pages/memory/index",
+    "pages/profile/index",
+    "pages/auth/index",
+    "pages/digital-self/index",
+    "pages/privacy/index"
+  ],
+  "window": {
+    "backgroundColor": "#f7f9ff",
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#f7f9ff",
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "Memoria"
+  },
+  "tabBar": {
+    "color": "#7b8496",
+    "selectedColor": "#4b68d7",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/home/index",
+        "text": "陪伴"
+      },
+      {
+        "pagePath": "pages/memory/index",
+        "text": "回顾"
+      },
+      {
+        "pagePath": "pages/profile/index",
+        "text": "我的"
+      }
+    ]
+  }
+}

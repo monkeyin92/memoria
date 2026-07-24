@@ -1,0 +1,109 @@
+.bio-input {
+  width: 100%;
+  min-height: 150rpx;
+  box-sizing: border-box;
+  padding: 20rpx 24rpx;
+  border: 1rpx solid #d7e0f6;
+  border-radius: 18rpx;
+  background: #f9fbff;
+  color: #1b2640;
+  font-size: 29rpx;
+  line-height: 1.5;
+}
+
+.save-button {
+  margin-top: 26rpx;
+}
+
+.settings-title,
+.setting-name,
+.setting-desc {
+  display: block;
+}
+
+.settings-title {
+  color: #2b3652;
+  font-size: 31rpx;
+  font-weight: 700;
+}
+
+.companion-row {
+  display: flex;
+  align-items: center;
+  min-height: 112rpx;
+  margin-top: 14rpx;
+  padding: 10rpx 12rpx;
+  border-radius: 20rpx;
+}
+
+.companion-selected {
+  background: #eff3ff;
+}
+
+.companion-image {
+  width: 96rpx;
+  height: 96rpx;
+}
+
+.companion-copy {
+  flex: 1;
+  margin-left: 14rpx;
+}
+
+.companion-name,
+.companion-tagline {
+  display: block;
+}
+
+.companion-name {
+  color: #25304b;
+  font-size: 29rpx;
+  font-weight: 650;
+}
+
+.companion-tagline,
+.setting-desc {
+  margin-top: 4rpx;
+  color: #8390a9;
+  font-size: 23rpx;
+  line-height: 1.4;
+}
+
+.companion-check {
+  color: #566fd2;
+  font-size: 22rpx;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22rpx 0;
+  border-bottom: 1rpx solid #edf0f8;
+}
+
+.setting-row:last-child {
+  border-bottom: none;
+}
+
+.setting-name {
+  color: #3c4865;
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.nav-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nav-arrow {
+  color: #8493c1;
+  font-size: 52rpx;
+  font-weight: 300;
+}
+
+.logout-button {
+  margin-top: 24rpx;
+}

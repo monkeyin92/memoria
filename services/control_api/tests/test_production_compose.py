@@ -15,6 +15,7 @@ def test_production_services_use_separate_env_files_and_persistent_agent_spool()
     assert "/etc/memoria-control-api.env" in compose
     assert "/etc/memoria-agent.env" in compose
     assert "/etc/memoria-speaker-model.env" in compose
+    assert "/etc/memoria-miniprogram-gateway.env" in compose
     assert "source: /var/lib/memoria-agent" in compose
     assert "target: /data" in compose
 
@@ -43,6 +44,29 @@ def test_production_control_disables_query_bearing_uvicorn_access_logs() -> None
 
     assert "--no-access-log" in control
     assert '"--no-access-log"' in dockerfile
+
+
+def test_miniprogram_gateway_is_isolated_and_only_exposes_loopback_wss_upstream() -> None:
+    compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "infra" / "Dockerfile.miniprogram-gateway").read_text(
+        encoding="utf-8"
+    )
+    nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
+    gateway = compose.split("  miniprogram-gateway:\n", 1)[1].split("  agent:\n", 1)[0]
+
+    assert "memoria-miniprogram-gateway:${MEMORIA_RELEASE_TAG" in gateway
+    assert "dockerfile: infra/Dockerfile.miniprogram-gateway" in gateway
+    assert "/etc/memoria-miniprogram-gateway.env" in gateway
+    assert '127.0.0.1:8792:8010' in gateway
+    assert "read_only: true" in gateway
+    assert "no-new-privileges:true" in gateway
+    assert "cap_drop:" in gateway
+    assert "--no-access-log" in gateway
+    assert '"--no-access-log"' in dockerfile
+    assert "USER 65532:65532" in dockerfile
+    assert "location = /memoria-mini-media/v1/mini-program/media {" in nginx
+    assert "proxy_pass http://127.0.0.1:8792/v1/mini-program/media;" in nginx
+    assert "access_log off;" in nginx
 
 
 def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> None:
@@ -158,7 +182,7 @@ def test_runtime_images_include_voice_registries_needed_by_agent_and_legacy_prev
     # Keep full and delta images aligned so a locally green release cannot omit
     # a transitive runtime module.
     assert "COPY services ./services" in agent_dockerfile
-    assert delta_builder.count("COPY services ./services") == 2
+    assert delta_builder.count("COPY services ./services") == 3
     doubao_registry = "COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json"
     cosyvoice_registry = (
         "COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json"
@@ -207,7 +231,7 @@ def test_production_example_declares_control_only_object_read_keyrings() -> None
 
 
 def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent() -> None:
-    control, agent, speaker_model = split_env(
+    control, agent, speaker_model, gateway = split_env(
         {
             "MEMORIA_AUTH_SECRET": "auth",
             "MEMORIA_ARCHIVE_DATABASE_URL": "postgresql://db/memoria",
@@ -293,6 +317,7 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     assert control["MEMORIA_VOICE_OBJECT_ACCESS_KEY"] == "voice-access"
     assert control["MEMORIA_ARCHIVE_OBJECT_READ_KEYS"] == '{"archive-v1":"archive-old-key"}'
     assert control["MEMORIA_VOICE_SAMPLE_READ_KEYS"] == '{"voice-v1":"voice-old-key"}'
+    assert gateway == {}
 
 
 def test_production_env_split_rejects_unused_doubao_secret_key() -> None:

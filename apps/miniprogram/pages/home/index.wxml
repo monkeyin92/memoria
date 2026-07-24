@@ -1,0 +1,39 @@
+<view class="page-shell home-page">
+  <view class="home-header">
+    <text class="eyebrow">{{greeting}}，{{profile.display_name || '新朋友'}}</text>
+    <text class="page-title">慢慢说，我会认真听。</text>
+    <text class="page-subtitle">{{companion.name}} · {{companion.tagline}}</text>
+  </view>
+
+  <view class="mascot-card card">
+    <view class="status-pill status-{{status}}">{{statusLabel}}</view>
+    <image class="mascot-image" src="/assets/mascot-v2-neutral.webp" mode="aspectFit" />
+    <text class="mascot-caption">{{active ? '语音正在通过安全媒体网关接入既有陪伴服务。' : companion.description}}</text>
+    <button
+      wx:if="{{!active}}"
+      class="primary-button start-button"
+      loading="{{connecting}}"
+      bindtap="startVoice"
+    >开始语音陪伴</button>
+    <view wx:else class="voice-controls">
+      <button class="secondary-button" bindtap="toggleMic">{{micEnabled ? '静音麦克风' : '打开麦克风'}}</button>
+      <button class="danger-button" bindtap="stopVoice">结束</button>
+    </view>
+    <button wx:if="{{status === 'closed' && sessionId}}" class="secondary-button retry-button" bindtap="retryVoice">恢复语音</button>
+    <text wx:if="{{error}}" class="error-text">{{error}}</text>
+  </view>
+
+  <view class="conversation-card card">
+    <view class="section-heading">
+      <text>实时对话</text>
+      <text class="section-hint">只显示当前会话的 Agent 权威事件</text>
+    </view>
+    <view wx:if="{{!transcript.length}}" class="empty-state">开始后，这里会显示已确认的对话内容。</view>
+    <view wx:for="{{transcript}}" wx:key="id" class="bubble-row bubble-{{item.speaker}}">
+      <view class="bubble">
+        <text class="bubble-speaker">{{item.speaker === 'user' ? '你' : companion.name}}</text>
+        <text class="bubble-text">{{item.text}}</text>
+      </view>
+    </view>
+  </view>
+</view>

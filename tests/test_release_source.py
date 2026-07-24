@@ -105,6 +105,7 @@ def _image_archive(path: Path, *, commit: str, tag: str, bad_role: str | None = 
         for role, image in (
             ("agent", "memoria-agent"),
             ("control-api", "memoria-control-api"),
+            ("miniprogram-gateway", "memoria-miniprogram-gateway"),
             ("speaker-model", "memoria-speaker-model"),
         ):
             config_name = f"{role}.json"

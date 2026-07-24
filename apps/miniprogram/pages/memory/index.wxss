@@ -1,0 +1,67 @@
+.summary-action-label {
+  display: block;
+  margin-bottom: 18rpx;
+  color: #586681;
+  font-size: 27rpx;
+}
+
+.day-card {
+  transition: transform 0.2s ease;
+}
+
+.day-selected {
+  border-color: #8396e7;
+  background: #fbfcff;
+}
+
+.day-heading {
+  display: flex;
+  justify-content: space-between;
+  color: #4b5d9f;
+  font-size: 27rpx;
+  font-weight: 650;
+}
+
+.message-count {
+  color: #8b97af;
+  font-size: 23rpx;
+  font-weight: 400;
+}
+
+.day-title,
+.day-overview,
+.day-suggestion {
+  display: block;
+}
+
+.day-title {
+  margin-top: 16rpx;
+  color: #1f2c49;
+  font-size: 31rpx;
+  font-weight: 700;
+}
+
+.day-overview {
+  margin-top: 12rpx;
+  color: #65718a;
+  font-size: 27rpx;
+  line-height: 1.6;
+}
+
+.highlight-list {
+  margin-top: 14rpx;
+}
+
+.highlight {
+  display: block;
+  color: #6876a2;
+  font-size: 25rpx;
+  line-height: 1.6;
+}
+
+.day-suggestion {
+  margin-top: 14rpx;
+  color: #8a5b80;
+  font-size: 25rpx;
+  line-height: 1.55;
+}

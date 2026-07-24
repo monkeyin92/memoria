@@ -1,0 +1,126 @@
+.home-page {
+  padding-bottom: 72rpx;
+}
+
+.mascot-card {
+  overflow: hidden;
+  text-align: center;
+}
+
+.status-pill {
+  display: inline-flex;
+  padding: 9rpx 20rpx;
+  border-radius: 28rpx;
+  color: #55637f;
+  background: #edf1fc;
+  font-size: 24rpx;
+}
+
+.status-listening {
+  color: #3a7590;
+  background: #e1f7fa;
+}
+
+.status-speaking {
+  color: #6a4fab;
+  background: #eee7ff;
+}
+
+.status-reconnecting {
+  color: #a06b2e;
+  background: #fff3dc;
+}
+
+.mascot-image {
+  display: block;
+  width: 310rpx;
+  height: 310rpx;
+  margin: 8rpx auto -12rpx;
+}
+
+.mascot-caption {
+  display: block;
+  color: #6c7894;
+  font-size: 26rpx;
+  line-height: 1.6;
+}
+
+.start-button {
+  margin-top: 26rpx;
+}
+
+.voice-controls {
+  display: flex;
+  gap: 14rpx;
+  margin-top: 26rpx;
+}
+
+.voice-controls button {
+  flex: 1;
+}
+
+.retry-button {
+  margin-top: 16rpx;
+}
+
+.conversation-card {
+  min-height: 280rpx;
+}
+
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  color: #28334e;
+  font-size: 31rpx;
+  font-weight: 700;
+}
+
+.section-hint {
+  max-width: 350rpx;
+  color: #8c98b0;
+  font-size: 20rpx;
+  font-weight: 400;
+  text-align: right;
+}
+
+.bubble-row {
+  display: flex;
+  margin-top: 20rpx;
+}
+
+.bubble-user {
+  justify-content: flex-end;
+}
+
+.bubble {
+  max-width: 82%;
+  padding: 18rpx 20rpx;
+  border-radius: 20rpx;
+  background: #f1f4fc;
+}
+
+.bubble-user .bubble {
+  color: #fff;
+  background: linear-gradient(135deg, #637bdc, #8c73da);
+}
+
+.bubble-speaker,
+.bubble-text {
+  display: block;
+}
+
+.bubble-speaker {
+  margin-bottom: 6rpx;
+  color: #7f8ca8;
+  font-size: 21rpx;
+}
+
+.bubble-user .bubble-speaker {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.bubble-text {
+  font-size: 28rpx;
+  line-height: 1.55;
+}

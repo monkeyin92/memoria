@@ -10,6 +10,7 @@ from pathlib import Path
 
 from services.agent.src.config import AgentSettings, validate_doubao_auth
 from services.control_api.app.config import ControlSettings
+from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 
 _AGENT_EXTRA_KEYS = frozenset(
     {
@@ -64,8 +65,12 @@ _CONTROL_EXTRA_KEYS = frozenset(
     }
 )
 
+_GATEWAY_EXTRA_KEYS = frozenset({"LOG_LEVEL"})
 
-def _aliases(settings_type: type[AgentSettings] | type[ControlSettings]) -> set[str]:
+
+def _aliases(
+    settings_type: type[AgentSettings] | type[ControlSettings] | type[MiniProgramGatewaySettings],
+) -> set[str]:
     return {
         str(field.alias)
         for field in settings_type.model_fields.values()
@@ -75,7 +80,7 @@ def _aliases(settings_type: type[AgentSettings] | type[ControlSettings]) -> set[
 
 def split_env(
     values: dict[str, str],
-) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
     if "DOUBAO_TTS_SECRET_KEY" in values:
         raise ValueError("DOUBAO_TTS_SECRET_KEY is not used and must not be deployed")
     validate_doubao_auth(
@@ -109,12 +114,14 @@ def split_env(
             raise ValueError("production encryption keys must be independent")
     control_keys = _aliases(ControlSettings) | set(_CONTROL_EXTRA_KEYS)
     agent_keys = _aliases(AgentSettings) | set(_AGENT_EXTRA_KEYS)
-    known = control_keys | agent_keys
+    gateway_keys = _aliases(MiniProgramGatewaySettings) | set(_GATEWAY_EXTRA_KEYS)
+    known = control_keys | agent_keys | gateway_keys
     unknown = sorted(set(values) - known)
     if unknown:
         raise ValueError(f"unrouted production env keys: {', '.join(unknown)}")
     control = {key: value for key, value in values.items() if key in control_keys}
     agent = {key: value for key, value in values.items() if key in agent_keys}
+    gateway = {key: value for key, value in values.items() if key in gateway_keys}
     capability_flags = (
         ("MEMORIA_ARCHIVE_WRITE_TOKEN", "MEMORIA_ARCHIVE_SINK_ENABLED", True),
         ("MEMORIA_MEMORY_READ_TOKEN", "MEMORIA_MEMORY_CONTEXT_ENABLED", False),
@@ -127,7 +134,7 @@ def split_env(
             agent.pop(token, None)
     embedding_token = values.get("MEMORIA_SPEAKER_EMBEDDING_TOKEN", "").strip()
     speaker_model = {"MEMORIA_SPEAKER_MODEL_TOKEN": embedding_token} if embedding_token else {}
-    return control, agent, speaker_model
+    return control, agent, speaker_model, gateway
 
 
 def _read_env(path: Path) -> dict[str, str]:
@@ -175,14 +182,20 @@ def main() -> int:
         type=Path,
         default=Path("/etc/memoria-speaker-model.env"),
     )
+    parser.add_argument(
+        "--gateway",
+        type=Path,
+        default=Path("/etc/memoria-miniprogram-gateway.env"),
+    )
     args = parser.parse_args()
-    control, agent, speaker_model = split_env(_read_env(args.source))
+    control, agent, speaker_model, gateway = split_env(_read_env(args.source))
     _write_env(args.control, control)
     _write_env(args.agent, agent)
     _write_env(args.speaker_model, speaker_model)
+    _write_env(args.gateway, gateway)
     print(
         f"wrote {len(control)} Control API keys, {len(agent)} Agent keys "
-        f"and {len(speaker_model)} Speaker Model keys"
+        f"{len(speaker_model)} Speaker Model keys and {len(gateway)} Gateway keys"
     )
     return 0
 

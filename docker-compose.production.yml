@@ -98,6 +98,55 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
 
+  miniprogram-gateway:
+    image: "memoria-miniprogram-gateway:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.miniprogram-gateway
+      args:
+        MEMORIA_RELEASE_COMMIT: "${MEMORIA_RELEASE_COMMIT:?MEMORIA_RELEASE_COMMIT is required}"
+        MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
+        UV_DEFAULT_INDEX: "${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}"
+    env_file:
+      - /etc/memoria-miniprogram-gateway.env
+    environment:
+      ENVIRONMENT: production
+    command:
+      - /app/.venv/bin/uvicorn
+      - services.miniprogram_gateway.app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8010"
+      - --workers
+      - "1"
+      - --no-access-log
+    ports:
+      - "127.0.0.1:8792:8010"
+    depends_on:
+      control-api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8010/health/live', timeout=3).close()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+
   agent:
     image: "memoria-agent:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
     build:

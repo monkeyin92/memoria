@@ -44,6 +44,15 @@ if ! docker image inspect "memoria-speaker-model:${BASE_TAG}" >/dev/null 2>&1; t
   echo "missing base image memoria-speaker-model:${BASE_TAG}" >&2
   exit 1
 fi
+gateway_base_available=false
+if docker image inspect "memoria-miniprogram-gateway:${BASE_TAG}" >/dev/null 2>&1; then
+  gateway_base_available=true
+else
+  # This service is new to the first release that contains it. Rebuild only
+  # the new image from its pinned Dockerfile while retaining the existing
+  # delta path for Agent, Control API and Speaker Model.
+  echo "no gateway base image for ${BASE_TAG}; building gateway from pinned dependencies"
+fi
 
 for image in agent control-api speaker-model; do
   base_arch="$(docker image inspect "memoria-${image}:${BASE_TAG}" \
@@ -99,6 +108,22 @@ LABEL org.opencontainers.image.revision="\${MEMORIA_RELEASE_COMMIT}" \\
       com.memoria.release.role="speaker-model"
 EOF
 
+if [[ "$gateway_base_available" == true ]]; then
+cat >"$tmp/Dockerfile.miniprogram-gateway" <<EOF
+FROM memoria-miniprogram-gateway:${BASE_TAG}
+ARG MEMORIA_RELEASE_COMMIT
+ARG MEMORIA_RELEASE_TAG
+LABEL org.opencontainers.image.revision="\${MEMORIA_RELEASE_COMMIT}" \\
+      org.opencontainers.image.version="\${MEMORIA_RELEASE_TAG}" \\
+      com.memoria.release.role="miniprogram-gateway"
+USER root
+WORKDIR /app
+COPY services ./services
+COPY packages ./packages
+USER 65532:65532
+EOF
+fi
+
 echo "delta-building memoria-agent:${NEW_TAG} from ${BASE_TAG}"
 docker build \
   --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
@@ -117,7 +142,24 @@ docker build \
   --build-arg MEMORIA_RELEASE_TAG="$NEW_TAG" \
   -f "$tmp/Dockerfile.speaker-model" -t "memoria-speaker-model:${NEW_TAG}" "$ROOT"
 
-for image in agent control-api speaker-model; do
+if [[ "$gateway_base_available" == true ]]; then
+  echo "delta-building memoria-miniprogram-gateway:${NEW_TAG} from ${BASE_TAG}"
+  docker build \
+    --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
+    --build-arg MEMORIA_RELEASE_TAG="$NEW_TAG" \
+    -f "$tmp/Dockerfile.miniprogram-gateway" \
+    -t "memoria-miniprogram-gateway:${NEW_TAG}" "$ROOT"
+else
+  echo "building memoria-miniprogram-gateway:${NEW_TAG} from pinned dependencies"
+  docker build \
+    --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
+    --build-arg MEMORIA_RELEASE_TAG="$NEW_TAG" \
+    --build-arg "UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-https://pypi.org/simple}" \
+    -f "$ROOT/infra/Dockerfile.miniprogram-gateway" \
+    -t "memoria-miniprogram-gateway:${NEW_TAG}" "$ROOT"
+fi
+
+for image in agent control-api speaker-model miniprogram-gateway; do
   built_arch="$(docker image inspect "memoria-${image}:${NEW_TAG}" \
     --format '{{.Architecture}}')"
   if [[ "$built_arch" != "$TARGET_ARCH" ]]; then
@@ -126,7 +168,7 @@ for image in agent control-api speaker-model; do
   fi
 done
 
-for image in agent control-api speaker-model; do
+for image in agent control-api speaker-model miniprogram-gateway; do
   labels="$(docker image inspect "memoria-${image}:${NEW_TAG}" \
     --format '{{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}}')"
   if [[ "$labels" != "$MEMORIA_RELEASE_COMMIT $NEW_TAG $image" ]]; then
@@ -136,5 +178,5 @@ for image in agent control-api speaker-model; do
 done
 
 docker images --format '{{.Repository}}:{{.Tag}} {{.Size}} {{.CreatedSince}}' \
-  | grep -E "memoria-(agent|control-api|speaker-model):${NEW_TAG}" || true
+  | grep -E "memoria-(agent|control-api|speaker-model|miniprogram-gateway):${NEW_TAG}" || true
 echo "delta_build_ok ${NEW_TAG}"

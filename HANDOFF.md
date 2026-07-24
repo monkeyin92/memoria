@@ -267,6 +267,36 @@
 - PostgreSQL 17 + pgvector、MinIO 与 LiveKit 继续独立同机运行；WMS 的 443、
   `/wms/` 和 `/wms/api/` 未改动。
 
+## 微信原生小程序媒体适配器（代码完成，未部署）
+
+- 新增独立 `apps/miniprogram/`，包含登录/注册/匿名体验、陪伴语音、回顾、资料、伙伴、
+  数字分身状态与隐私授权页面；不修改 `apps/h5/**`。
+- 新增 `services/miniprogram_gateway/`：小程序只通过短期 gateway ticket 建立 WSS PCM
+  流；gateway 在服务端作为 LiveKit participant 接入既有 Cascade Agent。小程序不会取得
+  LiveKit participant token、LiveKit API secret 或业务控制通道。
+- Control API 仅对 `client.platform=miniprogram` 返回 gateway URL/ticket；既有 H5
+  response shape 和 LiveKit 直连不变。断线通过同一 frozen session 的 ticket 刷新恢复。
+- 已加入 gateway 镜像、production Compose、Nginx exact WSS route、独立 gateway env、
+  release manifest/verifier 第四镜像，以及部署/回滚说明。首次 gateway release 可只完整构建
+  新网关镜像，其他 runtime 镜像仍走增量路径。
+- 已验证：`uv run pytest` 为 `1176 passed, 27 skipped`；H5 19 files/232 tests 与
+  production build 通过；小程序逻辑测试、Ruff、strict mypy、Shell/JSON、`git diff --check`
+  通过；`git diff -- apps/h5` 为空。
+- 生产网关未部署，真实 AppID 仍未提交到 Git；未完成微信 request/socket 合法域名、隐私声明及 iOS/Android
+  听筒/扬声器/蓝牙、AEC 回灌、前后台、弱网和网络切换真机验收。小程序 access token 刻意
+  仅保留在内存，完全退出后需要重新登录或匿名进入。
+- 2026-07-24 本机微信开发者工具加载修复：移除不支持的
+  `requiredPrivateInfos: ["getRecorderManager"]` 与无效的
+  `permission.scope.record`；录音仍由页面内 `wx.authorize({ scope: "scope.record" })`
+  发起。`digital-self` 页把 `wx:else + wx:for` 拆为标准 `<block>` 条件链，避免 WXML
+  编译拒绝。新增两条配置/WXML 回归测试后，开发者工具实际已进入“登录 Memoria”页面，
+  不再显示 app.json、WXML 或模拟器启动错误；认证页的提示语、标题、说明文案已改为块级
+  排版，避免行内 `<text>` 连续流导致重叠。小程序 8/8 测试通过，H5 diff 仍为空。
+- 2026-07-24 17:43 CST 已通过微信开发者工具上传体验版 `0.8.36`（修订补丁），覆盖此前
+  体验版；工具回执为“代码上传成功”，`tests/` 按 `packOptions.ignore` 未进入体验包。
+  未提交审核或正式发布。当前开发者工具实际仍报 `request:fail url not in domain list`，因此
+  登录与语音联调要等 request/socket 合法域名和生产 gateway 配置完成后再验收。
+
 ## 当前 runtime 热修：漏识别与双音播放
 
 - source/tag：`8412e74c7c3899cba122ad3ff715212d26d11b5b / 20260724-121900`；

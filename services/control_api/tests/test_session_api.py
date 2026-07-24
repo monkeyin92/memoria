@@ -10,6 +10,7 @@ import pytest
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
+from services.common.miniprogram_gateway_ticket import verify_gateway_ticket
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import session as session_routes
@@ -114,6 +115,7 @@ async def test_create_session_and_stop(
         assert data["expires_in"] == 300
         assert data["agent_name"]
         assert data["voice_backend"] == "cascade"
+        assert "media_gateway" not in data
 
         stop = await client.post(
             f"/v1/sessions/{data['session_id']}/stop-response",
@@ -123,6 +125,97 @@ async def test_create_session_and_stop(
     assert stop.status_code == 200
     assert stop.json()["action"] == "atomic_cancel"
     assert stop.json()["create_user_turn"] is False
+
+
+@pytest.mark.asyncio
+async def test_miniprogram_session_uses_gateway_ticket_not_livekit_participant_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path, offline=True)
+    ticket_secret = "miniprogram-ticket-secret-that-is-long-enough"
+    monkeypatch.setenv(
+        "MINIPROGRAM_MEDIA_GATEWAY_URL",
+        "wss://media.example.com/memoria-mini-media/v1/mini-program/media",
+    )
+    monkeypatch.setenv("MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET", ticket_secret)
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, headers = await _anonymous_identity(client)
+        created = await client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={
+                "user_id": user_id,
+                "client": {"platform": "miniprogram", "timezone": "Asia/Shanghai"},
+            },
+        )
+        assert created.status_code == 200
+        data = created.json()
+        refreshed = await client.post(
+            f"/v1/sessions/{data['session_id']}/mini-program/gateway-ticket",
+            headers=headers,
+        )
+
+    assert "participant_token" not in data
+    assert "livekit_url" not in data
+    assert data["voice_backend"] == "cascade"
+    assert data["media_gateway"]["websocket_url"].startswith("wss://")
+    assert data["media_gateway"]["protocol_version"] == 1
+    assert data["media_gateway"]["audio"] == {
+        "sample_rate": 24000,
+        "channels": 1,
+        "sample_format": "s16le",
+        "frame_ms": 20,
+    }
+    first_claims = verify_gateway_ticket(
+        data["media_gateway"]["ticket"],
+        secret=ticket_secret,
+    )
+    assert first_claims.session_id == data["session_id"]
+    assert first_claims.user_id == user_id
+    assert refreshed.status_code == 200
+    refreshed_data = refreshed.json()
+    assert refreshed_data["ticket"] != data["media_gateway"]["ticket"]
+    assert (
+        verify_gateway_ticket(refreshed_data["ticket"], secret=ticket_secret).session_id
+        == data["session_id"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_miniprogram_session_fails_closed_without_gateway_or_non_cascade_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path, offline=True)
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, headers = await _anonymous_identity(client)
+        missing_gateway = await client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={
+                "user_id": user_id,
+                "client": {"platform": "miniprogram", "timezone": "Asia/Shanghai"},
+            },
+        )
+        unsupported_backend = await client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={
+                "user_id": user_id,
+                "voice_backend": "qwen_omni",
+                "client": {"platform": "miniprogram", "timezone": "Asia/Shanghai"},
+            },
+        )
+
+    assert missing_gateway.status_code == 503
+    assert missing_gateway.json()["detail"]["code"] == "miniprogram_media_gateway_unavailable"
+    assert unsupported_backend.status_code == 409
+    assert unsupported_backend.json()["detail"]["code"] == "miniprogram_requires_cascade"
 
 
 @pytest.mark.asyncio
