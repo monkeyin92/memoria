@@ -258,14 +258,33 @@
 - 唯一交付客户端为 H5：
   - <https://122.51.108.140:8443/>
   - <https://aigcnice.com:8443/>
-- runtime 当前为 `20260723-223448`，H5 有意保持 `20260723-192611`；固定主链为
+- runtime 当前为 `20260724-121900`，H5 有意保持 `20260723-192611`；固定主链为
   FunASR Realtime → 百炼 Qwen → 豆包 Seed-TTS 2.0 双向流式 → LiveKit/H5。
 - `agent / control-api / speaker-model` 均 healthy、restart 0；readiness 绑定
-  `20260723-223448`，Agent `ready`，
+  `20260724-121900`，Agent `ready`，
   LLM `qwen`、TTS `doubao`，
   9/9 core checks ready。
 - PostgreSQL 17 + pgvector、MinIO 与 LiveKit 继续独立同机运行；WMS 的 443、
   `/wms/` 和 `/wms/api/` 未改动。
+
+## 当前 runtime 热修：漏识别与双音播放
+
+- source/tag：`8412e74c7c3899cba122ad3ff715212d26d11b5b / 20260724-121900`；
+  runtime 于 2026-07-24 12:36:00 CST 原子切换，H5 未切换。
+- 真实会话的 `missing_speech_epoch` 不是声纹开关拒绝：LiveKit 有时会给出无
+  started/stopped 时间戳的 endpoint FINAL。现在只有同一 current VAD epoch、fresh
+  speech 和该 epoch PCM 同时存在才把它视作真实语音；无该组合的孤立 FINAL 继续拒绝，
+  不放宽回声保护。
+- “再见”属普通 `CHAT`，此前在播放期会同时得到 control ACK 和正式回复，形成两条
+  LiveKit 音轨。现在仅 `INTERRUPT_COMMAND` 才发送短 ACK；CHAT、带内容打断和空候选
+  都不再发送。恢复监听也不再丢弃原播放 fence，保证迟到的
+  `playback_finished` 可完成 heard/history/archive。
+- 三件套、隔离 smoke、候选 Agent 唯一 LiveKit 注册/heartbeat、SQLite 双备份、
+  PostgreSQL dump、env/Nginx 备份、runtime 容器、真实 Provider/readiness 和公网
+  API/WMS 均通过。启动后错误标记为 0；H5 仍为 `20260723-192611`。
+- 已在登录态 Chrome 打开实时陪伴页；真实麦克风验收待用户完成，重点复测普通句子、
+  “再见”和“停一下”。详情见
+  [`docs/releases/20260724-121900.md`](docs/releases/20260724-121900.md)。
 
 ## 当前 runtime 热修：陪伴语音静默与分类事件冲突
 
