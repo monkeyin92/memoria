@@ -3,8 +3,8 @@
 ## 当前开发目标：硅基生命路线
 
 - 开发分支：`codex/silicon-life-roadmap`；S1–S10 的代码、生产部署与公开验收已完成。
-  当前 release `20260723-192611` 的 source commit/tag 固定为
-  `0d13d2b22e1d0160529bfd61d2eb1d586ba18d29 / 20260723-192611`。
+  S1–S10 基线 release 为 `20260723-192611`
+  (`0d13d2b22e1d0160529bfd61d2eb1d586ba18d29`)；当前生产 runtime hotfix 见下文。
 - 已完成当前 HEAD/线上/架构差距审计，并新增
   [`docs/silicon-life-implementation-plan.md`](docs/silicon-life-implementation-plan.md)
   与 ADR-0016。产品固定采用“轻人格陪伴者 + 空白成长数字分身”：伙伴只学习如何陪伴，
@@ -258,14 +258,30 @@
 - 唯一交付客户端为 H5：
   - <https://122.51.108.140:8443/>
   - <https://aigcnice.com:8443/>
-- runtime/H5 当前 release 均为 `20260723-192611`；固定主链为
+- runtime 当前为 `20260723-223448`，H5 有意保持 `20260723-192611`；固定主链为
   FunASR Realtime → 百炼 Qwen → 豆包 Seed-TTS 2.0 双向流式 → LiveKit/H5。
-- `agent / control-api / speaker-model` 均 healthy、restart 0；发布后 15 分 33 秒内
-  error marker 为 0。readiness 绑定 `20260723-192611`，Agent `ready`，
+- `agent / control-api / speaker-model` 均 healthy、restart 0；readiness 绑定
+  `20260723-223448`，Agent `ready`，
   LLM `qwen`、TTS `doubao`，
   9/9 core checks ready。
 - PostgreSQL 17 + pgvector、MinIO 与 LiveKit 继续独立同机运行；WMS 的 443、
   `/wms/` 和 `/wms/api/` 未改动。
+
+## 当前 runtime 热修：陪伴语音静默与分类事件冲突
+
+- source/tag：`b58d6a2e71a9f1a8bdffb26f9638c91c9048f839 / 20260723-223448`；
+  runtime 于 2026-07-23 23:07:37 CST 原子切换，H5 未切换。
+- 根因不是“过滤明显旁人（实验）”开关：普通 `companion` 话轮没有 generation TTS
+  voice snapshot，response provenance 在 LLM 前 fail closed；同一 speaker epoch 的迟到
+  classification 还会以同 event ID、不同 fence 重发并触发 Archive 409。
+- 所有 TTS-backed mode 现在统一绑定当前 generation voice；speaker classification
+  task 每个 epoch 只启动一次，waiter 取消经 `asyncio.shield` 隔离。
+- 生产真实浏览器测试（2026-07-24 11:56:34 CST）为 `companion`、`reject_non_owner_voice=0`：
+  speaker gate 未拒绝，`turn → response plan → LLM → TTS → first_playback` 完整出现；
+  provenance failure、409、spool/durable failure 均为 0。
+- 12 小时以上观察中三容器 healthy、restart 0、readiness 及公网 API/WMS 正常，H5 仍为
+  `20260723-192611`。详情见
+  [`docs/releases/20260723-223448.md`](docs/releases/20260723-223448.md)。
 
 ## 本次热修：避免主人被误静音
 
@@ -328,6 +344,14 @@
 
 ## 回滚
 
+- 当前 hotfix 的普通回滚点为 runtime `20260723-192611`；H5 本来就是该版本。切回 runtime
+  后以旧 tag 重启三项 runtime 容器并刷新 readiness，不自动恢复数据库。
+- 本 hotfix 的 root-only 回滚资产：
+  - `/var/lib/memoria/memoria-pre-20260723-223448.sqlite3`
+  - `/var/backups/memoria/memoria-pre-20260723-223448.sqlite3`
+  - `/var/backups/memoria/memoria-pre-20260723-223448.dump`
+  - `/var/backups/memoria/memoria-<service>.env-pre-20260723-223448`
+  - `/var/backups/memoria/nginx-20260723-223448`
 - runtime/H5 回滚点：`20260721-224804`；runtime 回滚前恢复：
   - `/var/backups/memoria/memoria-control-api.env-pre-20260723-192611`
   - `/var/backups/memoria/memoria-agent.env-pre-20260723-192611`
