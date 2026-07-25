@@ -176,10 +176,12 @@ async def test_explicit_playback_command_interrupts_without_speaker_classifier()
     runtime = DuplexRuntime.create(input_guard_enabled=True)
     session = _PlaybackSession()
     stopped = 0
+    min_words_when_stopped: list[int] = []
 
     async def _stop_playback() -> str | None:
         nonlocal stopped
         stopped += 1
+        min_words_when_stopped.append(session.options.interruption["min_words"])
         return None
 
     async def _interrupt() -> None:
@@ -205,6 +207,7 @@ async def test_explicit_playback_command_interrupts_without_speaker_classifier()
         await asyncio.sleep(0.02)
 
         assert stopped == 1
+        assert min_words_when_stopped == [1_000]
         assert not runtime.fence.matches(before)
         session.emit(
             "user_input_transcribed",

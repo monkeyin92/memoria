@@ -1753,7 +1753,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
         "user_input_transcribed",
         SimpleNamespace(transcript="等等", is_final=True),
     )
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.02)
     assert 0 in session.options.interruption.history
     assert session.options.interruption["min_words"] == 0
     assert session.interrupt_count == 3
@@ -1776,7 +1776,9 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
         ),
     )
     await asyncio.sleep(0.02)
-    assert runtime.orchestrator.context.turns[-1].content == "播放内容"
+    # The accepted control command advanced the fence, so a late completion
+    # cannot overwrite the already-heard, truncated assistant text.
+    assert runtime.orchestrator.context.turns[-1].content == "播放"
 
     await runtime.on_turn_committed("会被语音中断")
     await session.interrupt(force=True)
