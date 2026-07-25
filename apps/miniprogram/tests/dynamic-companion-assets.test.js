@@ -20,10 +20,19 @@ const profileScript = fs.readFileSync(
   path.join(root, "pages/profile/index.js"),
   "utf8",
 );
+const projectConfig = JSON.parse(
+  fs.readFileSync(path.join(root, "project.config.example.json"), "utf8"),
+);
 
 const companionIds = ["starlight", "taoxi", "mianmian", "axu", "xuanmo"];
 
 test("companion images use literal source paths so real packages retain them", () => {
+  assert.ok(
+    projectConfig.packOptions.include.some(
+      (entry) =>
+        entry.type === "folder" && entry.value === "assets/companions/alpha",
+    ),
+  );
   for (const companionId of companionIds) {
     const assetPath = `/assets/companions/alpha/${companionId}.webp`;
     assert.match(homeTemplate, new RegExp(`src="${assetPath}"`));
