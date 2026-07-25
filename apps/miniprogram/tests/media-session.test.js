@@ -145,6 +145,42 @@ test("SocketTask PCM send failure is surfaced instead of being silently ignored"
   await media.close();
 });
 
+test("SocketTask connection failures retain the actionable platform error", async () => {
+  recorder.reset();
+  const socket = {
+    onOpen(listener) {
+      this.openListener = listener;
+    },
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    close() {},
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    {
+      media_gateway: {
+        websocket_url: "wss://voice.example.com/media",
+        ticket: "ticket",
+      },
+    },
+    {},
+  );
+
+  const connecting = media.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.errorListener({ errMsg: "connectSocket:fail url not in domain list" });
+
+  await assert.rejects(connecting, /Socket 合法域名未生效/);
+  await media.close();
+});
+
 test("a recorder without frames is restarted once before the user is notified", async () => {
   recorder.reset();
   const interruptions = [];

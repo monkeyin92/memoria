@@ -5,6 +5,20 @@ const RECORDER_START_TIMEOUT_MS = 2000;
 const FIRST_UPLINK_FRAME_TIMEOUT_MS = 3000;
 const RECORDER_RESTART_DELAY_MS = 120;
 
+function socketConnectionErrorMessage(error) {
+  const detail = typeof error?.errMsg === "string" ? error.errMsg.trim() : "";
+  if (/domain list|合法域名/i.test(detail)) {
+    return "小程序 Socket 合法域名未生效，请检查 wss 域名配置。";
+  }
+  if (/certificate|ssl|tls|handshake/i.test(detail)) {
+    return "语音网络证书校验失败，请检查 Socket 域名证书。";
+  }
+  if (/timeout|timed out/i.test(detail)) {
+    return "语音网络连接超时，请检查网络后重试。";
+  }
+  return detail ? `语音网络连接失败：${detail.slice(0, 120)}` : "语音网络连接失败。";
+}
+
 class MiniProgramMediaSession {
   constructor(session, callbacks = {}) {
     this.session = session;
@@ -54,7 +68,9 @@ class MiniProgramMediaSession {
       });
     });
     this.socket.onMessage((message) => this._onMessage(message));
-    this.socket.onError(() => this._rejectReady(new Error("语音网络连接失败。")));
+    this.socket.onError((error) => {
+      this._rejectReady(new Error(socketConnectionErrorMessage(error)));
+    });
     this.socket.onClose(() => {
       this.player.reset();
       this._rejectReady(new Error("语音连接已关闭。"));
