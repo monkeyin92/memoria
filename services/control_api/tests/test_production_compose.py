@@ -52,6 +52,10 @@ def test_miniprogram_gateway_is_isolated_and_only_exposes_loopback_wss_upstream(
         encoding="utf-8"
     )
     nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
+    limits = (ROOT / "infra" / "nginx-memoria-limits.conf").read_text(encoding="utf-8")
+    loopback_limits = (ROOT / "infra" / "nginx-memoria-loopback-smoke.conf").read_text(
+        encoding="utf-8"
+    )
     gateway = compose.split("  miniprogram-gateway:\n", 1)[1].split("  agent:\n", 1)[0]
 
     assert "memoria-miniprogram-gateway:${MEMORIA_RELEASE_TAG" in gateway
@@ -67,6 +71,9 @@ def test_miniprogram_gateway_is_isolated_and_only_exposes_loopback_wss_upstream(
     assert "location = /memoria-mini-media/v1/mini-program/media {" in nginx
     assert "proxy_pass http://127.0.0.1:8792/v1/mini-program/media;" in nginx
     assert "access_log off;" in nginx
+    assert "limit_req zone=memoria_media burst=6 nodelay;" in nginx
+    assert "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in limits
+    assert "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in loopback_limits
 
 
 def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> None:
