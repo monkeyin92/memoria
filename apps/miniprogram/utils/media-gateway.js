@@ -1,6 +1,11 @@
 const { FRAME_TYPE, decodePcmFrame, encodePcmFrame } = require("./media-protocol");
 const { PcmJitterPlayer } = require("./pcm-player");
 
+const RECORDER_START_TIMEOUT_MS = 2000;
+const FIRST_UPLINK_FRAME_TIMEOUT_MS = 3000;
+const RECORDER_RESTART_DELAY_MS = 120;
+const MAX_QUEUED_UPLINK_FRAMES = 16;
+
 class MiniProgramMediaSession {
   constructor(session, callbacks = {}) {
     this.session = session;
@@ -14,7 +19,16 @@ class MiniProgramMediaSession {
     this.ready = false;
     this.recording = false;
     this.recorderStarted = false;
+    this.recorderStarting = false;
     this.intentionalClose = false;
+    this._firstUplinkFrame = false;
+    this._recoveryAttempted = false;
+    this._uplinkFailed = false;
+    this._sendingUplink = false;
+    this._pendingUplinkFrames = [];
+    this._startTimer = null;
+    this._firstFrameTimer = null;
+    this._restartTimer = null;
     this._readyResolve = null;
     this._readyReject = null;
     this._bindRecorder();
@@ -55,54 +69,67 @@ class MiniProgramMediaSession {
   async setMicrophoneEnabled(enabled) {
     if (!this.ready) return;
     if (enabled && this.recorderStarted && !this.recording) {
+      this._recoveryAttempted = false;
+      this._firstUplinkFrame = false;
       this.recorder.resume();
       this.recording = true;
+      this._armFirstFrameTimeout();
     } else if (enabled && !this.recording) {
+      this._recoveryAttempted = false;
       this._startRecording();
     } else if (!enabled && this.recording) {
       this.recorder.pause();
       this.recording = false;
+      this._pendingUplinkFrames = [];
+      this._clearRecorderTimers();
     }
   }
 
   async close() {
     this.intentionalClose = true;
+    this._clearRecorderTimers();
     if (this.recorderStarted) {
       this.recorder.stop();
       this.recording = false;
       this.recorderStarted = false;
     }
+    this.recorderStarting = false;
+    this._pendingUplinkFrames = [];
+    this._sendingUplink = false;
     this.socket?.close({ code: 1000 });
     this.socket = null;
     await this.player.close();
   }
 
   _bindRecorder() {
+    this.recorder.onStart(() => {
+      if (this.intentionalClose || !this.recorderStarting) return;
+      this.recorderStarting = false;
+      this.recorderStarted = true;
+      this.recording = true;
+      this._clearStartTimer();
+      this._armFirstFrameTimeout();
+    });
     this.recorder.onFrameRecorded((frame) => {
-      if (!this.ready || !this.recording || !this.socket) return;
+      if (!this.ready || !this.recording || !this.socket || this._uplinkFailed) return;
       try {
-        this.socket.send({
-          data: encodePcmFrame(
-            FRAME_TYPE.UPLINK_AUDIO,
-            this.sequence,
-            Date.now(),
-            frame.frameBuffer,
-          ),
-        });
+        const data = encodePcmFrame(
+          FRAME_TYPE.UPLINK_AUDIO,
+          this.sequence,
+          Date.now(),
+          frame.frameBuffer,
+        );
         this.sequence = (this.sequence + 1) >>> 0;
+        this._enqueueUplinkFrame(data);
       } catch {
-        this.callbacks.onError?.("麦克风音频帧不可用。");
+        this._failUplink("麦克风音频帧不可用，请轻触恢复语音。");
       }
     });
     this.recorder.onError(() => {
-      this.recording = false;
-      this.recorderStarted = false;
-      this.callbacks.onInterrupted?.("麦克风录音失败，请轻触恢复语音。");
+      this._failUplink("麦克风录音失败，请轻触恢复语音。");
     });
     this.recorder.onInterruptionBegin(() => {
-      this.recording = false;
-      this.recorderStarted = false;
-      this.callbacks.onInterrupted?.("录音被系统中断，请轻触恢复语音。");
+      this._failUplink("录音被系统中断，请轻触恢复语音。");
     });
   }
 
@@ -145,24 +172,142 @@ class MiniProgramMediaSession {
   }
 
   _startRecording() {
-    if (this.recording) return;
+    if (this.recording || this.recorderStarting || this._uplinkFailed) return;
     let platform = "";
     try {
       platform = typeof wx.getDeviceInfo === "function" ? wx.getDeviceInfo().platform : "";
     } catch {
       platform = "";
     }
-    this.recorder.start({
-      duration: 600000,
-      sampleRate: 16000,
-      numberOfChannels: 1,
-      encodeBitRate: 24000,
-      format: "PCM",
-      frameSize: 1,
-      audioSource: platform === "android" ? "voice_communication" : "auto",
-    });
-    this.recording = true;
-    this.recorderStarted = true;
+    this._firstUplinkFrame = false;
+    this.recorderStarting = true;
+    try {
+      this.recorder.start({
+        duration: 600000,
+        sampleRate: 16000,
+        numberOfChannels: 1,
+        encodeBitRate: 24000,
+        format: "PCM",
+        frameSize: 1,
+        audioSource: platform === "android" ? "voice_communication" : "auto",
+      });
+      this._clearStartTimer();
+      if (this.recorderStarting) {
+        this._startTimer = setTimeout(() => {
+          if (this.recorderStarting) this._recoverRecorder();
+        }, RECORDER_START_TIMEOUT_MS);
+      }
+    } catch {
+      this._recoverRecorder();
+    }
+  }
+
+  _armFirstFrameTimeout() {
+    this._clearFirstFrameTimer();
+    this._firstFrameTimer = setTimeout(() => {
+      if (this.recording && !this._firstUplinkFrame) this._recoverRecorder();
+    }, FIRST_UPLINK_FRAME_TIMEOUT_MS);
+  }
+
+  _enqueueUplinkFrame(data) {
+    this._pendingUplinkFrames.push(data);
+    if (this._pendingUplinkFrames.length > MAX_QUEUED_UPLINK_FRAMES) {
+      this._failUplink("麦克风音频发送拥塞，请轻触恢复语音。");
+      return;
+    }
+    this._drainUplinkFrames();
+  }
+
+  _drainUplinkFrames() {
+    if (
+      this._sendingUplink ||
+      this._uplinkFailed ||
+      !this.socket ||
+      this._pendingUplinkFrames.length === 0
+    ) {
+      return;
+    }
+    const data = this._pendingUplinkFrames.shift();
+    this._sendingUplink = true;
+    try {
+      this.socket.send({
+        data,
+        success: () => {
+          this._sendingUplink = false;
+          if (!this._firstUplinkFrame) {
+            this._firstUplinkFrame = true;
+            this._clearFirstFrameTimer();
+          }
+          this._drainUplinkFrames();
+        },
+        fail: () => {
+          this._sendingUplink = false;
+          this._failUplink("麦克风音频发送失败，请轻触恢复语音。");
+        },
+      });
+    } catch {
+      this._sendingUplink = false;
+      this._failUplink("麦克风音频发送失败，请轻触恢复语音。");
+    }
+  }
+
+  _recoverRecorder() {
+    if (this.intentionalClose || this._uplinkFailed || !this.ready) return;
+    this._clearRecorderTimers();
+    this.recording = false;
+    this.recorderStarted = false;
+    this.recorderStarting = false;
+    this._pendingUplinkFrames = [];
+    this._sendingUplink = false;
+    if (this._recoveryAttempted) {
+      this._failUplink("未收到麦克风音频，请轻触恢复语音。");
+      return;
+    }
+    this._recoveryAttempted = true;
+    try {
+      this.recorder.stop();
+    } catch {
+      // A failed stale-stop must not prevent the one controlled restart.
+    }
+    this._restartTimer = setTimeout(() => {
+      this._restartTimer = null;
+      if (!this.intentionalClose && this.ready && !this._uplinkFailed) this._startRecording();
+    }, RECORDER_RESTART_DELAY_MS);
+  }
+
+  _failUplink(message) {
+    if (this.intentionalClose || this._uplinkFailed) return;
+    this._uplinkFailed = true;
+    this._clearRecorderTimers();
+    this.recording = false;
+    this.recorderStarted = false;
+    this.recorderStarting = false;
+    this._pendingUplinkFrames = [];
+    this._sendingUplink = false;
+    this.callbacks.onInterrupted?.(message);
+  }
+
+  _clearRecorderTimers() {
+    this._clearStartTimer();
+    this._clearFirstFrameTimer();
+    if (this._restartTimer) {
+      clearTimeout(this._restartTimer);
+      this._restartTimer = null;
+    }
+  }
+
+  _clearStartTimer() {
+    if (this._startTimer) {
+      clearTimeout(this._startTimer);
+      this._startTimer = null;
+    }
+  }
+
+  _clearFirstFrameTimer() {
+    if (this._firstFrameTimer) {
+      clearTimeout(this._firstFrameTimer);
+      this._firstFrameTimer = null;
+    }
   }
 
   _rejectReady(error) {

@@ -87,6 +87,9 @@ class MiniProgramLiveKitBridge:
         self._publication: Any | None = None
         self._downlink_sequence = 0
         self._last_uplink_sequence: int | None = None
+        self._uplink_message_count = 0
+        self._uplink_payload_bytes = 0
+        self._uplink_livekit_frame_count = 0
         self._turn_id: int | None = None
         self._generation_id: int | None = None
         self._uplink = PcmFrameAccumulator(
@@ -157,6 +160,10 @@ class MiniProgramLiveKitBridge:
             if frame.sequence != expected:
                 raise GatewayMediaError("PCM uplink sequence is not contiguous")
         self._last_uplink_sequence = frame.sequence
+        self._uplink_message_count += 1
+        self._uplink_payload_bytes += len(frame.payload)
+        if self._uplink_message_count == 1:
+            logger.info("mini_program_uplink_started payload_bytes=%s", len(frame.payload))
         for pcm in self._uplink.feed(frame.payload):
             audio_frame = rtc.AudioFrame(
                 data=pcm,
@@ -165,6 +172,7 @@ class MiniProgramLiveKitBridge:
                 samples_per_channel=self._uplink.samples_per_frame,
             )
             await self._audio_source.capture_frame(audio_frame)
+            self._uplink_livekit_frame_count += 1
 
     async def next_outbound(self) -> GatewayOutboundMessage:
         """Prioritize Agent UI/transcription events without blocking audio when idle."""
@@ -210,6 +218,12 @@ class MiniProgramLiveKitBridge:
                     await room.local_participant.unpublish_track(publication.sid)
             with contextlib.suppress(Exception):
                 await room.disconnect()
+            logger.info(
+                "mini_program_uplink_summary messages=%s payload_bytes=%s livekit_frames=%s",
+                self._uplink_message_count,
+                self._uplink_payload_bytes,
+                self._uplink_livekit_frame_count,
+            )
         self._room_disconnected.set()
 
     def _mint_livekit_token(self) -> str:
