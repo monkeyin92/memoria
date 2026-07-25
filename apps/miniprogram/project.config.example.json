@@ -7,7 +7,12 @@
         "type": "folder"
       }
     ],
-    "include": []
+    "include": [
+      {
+        "value": "assets/companions/alpha",
+        "type": "folder"
+      }
+    ]
   },
   "setting": {
     "urlCheck": true,
