@@ -137,7 +137,10 @@ class MiniProgramLiveKitBridge:
                 queue_size_ms=self._settings.miniprogram_gateway_frame_ms * 10,
             )
             track = rtc.LocalAudioTrack.create_audio_track("miniprogram-microphone", source)
-            self._publication = await room.local_participant.publish_track(track)
+            self._publication = await room.local_participant.publish_track(
+                track,
+                rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE),
+            )
             self._audio_source = source
             self._subscribe_existing_agent_audio(room)
         except Exception as exc:

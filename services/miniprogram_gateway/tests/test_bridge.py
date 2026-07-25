@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from livekit import rtc
 from services.common.miniprogram_gateway_ticket import GatewayTicketClaims
+from services.miniprogram_gateway import bridge as bridge_module
 from services.miniprogram_gateway.bridge import (
     GatewayMediaError,
     GatewayOutboundMessage,
@@ -33,6 +34,91 @@ def test_pcm_accumulator_rejects_partial_sample_and_unbounded_buffer() -> None:
         accumulator.feed(b"\x00")
     with pytest.raises(GatewayMediaError, match="buffer exceeded"):
         accumulator.feed(b"\x00\x00" * 321)
+
+
+@pytest.mark.asyncio
+async def test_bridge_publishes_uplink_as_microphone(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeAudioSource:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+    class FakeLocalAudioTrack:
+        @staticmethod
+        def create_audio_track(_name: str, _source: object) -> object:
+            return object()
+
+    class FakeTrackPublishOptions:
+        def __init__(self, *, source: object) -> None:
+            self.source = source
+
+    class FakeLocalParticipant:
+        def __init__(self) -> None:
+            self.options: FakeTrackPublishOptions | None = None
+
+        async def publish_track(
+            self,
+            _track: object,
+            options: FakeTrackPublishOptions | None = None,
+        ) -> SimpleNamespace:
+            self.options = options
+            return SimpleNamespace(sid="publication-1")
+
+        async def unpublish_track(self, _sid: str) -> None:
+            pass
+
+    class FakeRoom:
+        last_instance: FakeRoom | None = None
+
+        def __init__(self) -> None:
+            self.local_participant = FakeLocalParticipant()
+            self.remote_participants: dict[str, object] = {}
+            FakeRoom.last_instance = self
+
+        def on(self, _event: str, _callback: object) -> None:
+            pass
+
+        async def connect(self, _url: str, _token: str) -> None:
+            pass
+
+        async def disconnect(self) -> None:
+            pass
+
+    fake_rtc = SimpleNamespace(
+        Room=FakeRoom,
+        AudioSource=FakeAudioSource,
+        LocalAudioTrack=FakeLocalAudioTrack,
+        TrackPublishOptions=FakeTrackPublishOptions,
+        TrackSource=SimpleNamespace(SOURCE_MICROPHONE="microphone"),
+    )
+    monkeypatch.setattr(bridge_module, "rtc", fake_rtc)
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(
+            livekit_url="wss://livekit.example.com",
+            livekit_api_key="livekit-key",
+            livekit_api_secret="livekit-secret-that-is-long-enough",
+            memoria_miniprogram_gateway_ticket_secret="gateway-ticket-secret-that-is-long-enough",
+        ),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+
+    await bridge.connect()
+
+    assert FakeRoom.last_instance is not None
+    assert FakeRoom.last_instance.local_participant.options is not None
+    assert (
+        FakeRoom.last_instance.local_participant.options.source
+        == fake_rtc.TrackSource.SOURCE_MICROPHONE
+    )
 
 
 @pytest.mark.asyncio
