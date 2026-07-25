@@ -520,6 +520,10 @@ async def test_explicit_partial_interrupt_survives_final_asr_revision() -> None:
             "user_input_transcribed",
             SimpleNamespace(transcript="等一下", is_final=False),
         )
+        await asyncio.sleep(0.02)
+        assert stop_calls == 1
+        assert not runtime.fence.matches(before)
+
         session.emit("user_state_changed", SimpleNamespace(new_state="listening"))
         session.emit(
             "user_input_transcribed",
@@ -530,5 +534,99 @@ async def test_explicit_partial_interrupt_survives_final_asr_revision() -> None:
         assert stop_calls == 1
         assert not runtime.fence.matches(before)
         assert runtime.accept_user_turn("等一项") == (False, "interrupt_command_only")
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_target_focus_stops_on_explicit_partial_before_endpoint() -> None:
+    """A clear stop phrase must release playback before ASR endpointing finishes."""
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    session = _PlaybackSession()
+    stop_calls = 0
+    classification_calls = 0
+
+    async def _stop_playback() -> str | None:
+        nonlocal stop_calls
+        stop_calls += 1
+        return None
+
+    async def _classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        nonlocal classification_calls
+        classification_calls += 1
+        return _decision("owner", reason_code="owner_match")
+
+    async def _target_interrupt() -> None:
+        await runtime.on_real_interrupt(
+            cause="target_speaker_confirmed",
+            stop_playback=_stop_playback,
+        )
+
+    try:
+        runtime.set_target_speaker_focus(True)
+        runtime.set_speaker_classifier(_classify, sample_rate=SAMPLE_RATE)
+        runtime.set_target_speaker_interrupt(_target_interrupt)
+        runtime.attach_session_events(session)
+        await runtime.orchestrator.ready()
+        await runtime.on_turn_committed("开始播放")
+        await runtime.on_assistant_speaking("机器人正在播放回复")
+        runtime._was_speaking = True
+        before = runtime.fence
+
+        session.emit("user_state_changed", SimpleNamespace(new_state="speaking"))
+        runtime.feed_speaker_pcm(FOCUS_PCM)
+        session.emit(
+            "user_input_transcribed",
+            SimpleNamespace(transcript="等一下", is_final=False),
+        )
+        await asyncio.sleep(0.02)
+
+        assert stop_calls == 1
+        assert not runtime.fence.matches(before)
+        assert classification_calls == 1
+        assert session.options.interruption["min_words"] == 0
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_target_focus_rejects_shadow_guest_explicit_partial_before_endpoint() -> None:
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    session = _PlaybackSession()
+    callback_calls = 0
+
+    async def _target_interrupt() -> None:
+        nonlocal callback_calls
+        callback_calls += 1
+
+    try:
+        runtime.set_target_speaker_focus(True)
+        runtime.set_speaker_classifier(
+            lambda pcm, sample_rate: _classify_as(
+                _decision("uncertain", reason_code="shadow_guest_candidate"),
+                pcm,
+                sample_rate,
+            ),
+            sample_rate=SAMPLE_RATE,
+        )
+        runtime.set_target_speaker_interrupt(_target_interrupt)
+        runtime.attach_session_events(session)
+        await runtime.orchestrator.ready()
+        await runtime.on_turn_committed("开始播放")
+        await runtime.on_assistant_speaking("机器人正在播放回复")
+        runtime._was_speaking = True
+        before = runtime.fence
+
+        session.emit("user_state_changed", SimpleNamespace(new_state="speaking"))
+        runtime.feed_speaker_pcm(FOCUS_PCM)
+        session.emit(
+            "user_input_transcribed",
+            SimpleNamespace(transcript="停一下", is_final=False),
+        )
+        await asyncio.sleep(0.02)
+
+        assert callback_calls == 0
+        assert runtime.fence == before
+        assert session.options.interruption["min_words"] == PLAYBACK_INPUT_BLOCK_MIN_WORDS
     finally:
         await runtime.close()

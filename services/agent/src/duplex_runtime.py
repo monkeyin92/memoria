@@ -2473,24 +2473,35 @@ class DuplexRuntime:
             and self._target_speaker_focus_enabled
             and self._speaker_classifier is not None
         ):
-            # LiveKit may request an interrupt on VAD start. Do not classify the
-            # first few PCM frames: the final transcript handler will decide
-            # against the complete endpointed utterance instead.
-            if self._speaker_collecting:
-                self._target_focus_pending_epoch = self._speaker_epoch
-                self.mark_audio_event(
-                    "target_speaker_waiting_for_endpoint",
-                    detail={"cause": cause},
+            if owner_cmd and self._target_focus_epoch == self._speaker_epoch:
+                # A router-confirmed「等一下 / 停一下」must release playback
+                # before ASR endpointing finishes. This path is reached only
+                # after _confirm_target_speaker_interrupt has checked the
+                # current voiceprint; an unconfirmed LiveKit VAD interrupt
+                # still waits for endpointed audio below.
+                target_route = self._target_speaker_route(
+                    context="interrupt",
+                    explicit_interrupt=True,
                 )
-                return self.fence
-            try:
-                await self.await_speaker_classification()
-            except asyncio.CancelledError:
-                return self.fence
-            target_route = self._target_speaker_route(
-                context="interrupt",
-                explicit_interrupt=barge_route.should_interrupt,
-            )
+            else:
+                # LiveKit may request an interrupt on VAD start. Do not classify
+                # the first few PCM frames: the final transcript handler will
+                # decide against the complete endpointed utterance instead.
+                if self._speaker_collecting:
+                    self._target_focus_pending_epoch = self._speaker_epoch
+                    self.mark_audio_event(
+                        "target_speaker_waiting_for_endpoint",
+                        detail={"cause": cause},
+                    )
+                    return self.fence
+                try:
+                    await self.await_speaker_classification()
+                except asyncio.CancelledError:
+                    return self.fence
+                target_route = self._target_speaker_route(
+                    context="interrupt",
+                    explicit_interrupt=False,
+                )
             if self._target_focus_pending_epoch == self._speaker_epoch:
                 self._target_focus_pending_epoch = None
             if not target_route.allow_input:
@@ -2863,8 +2874,28 @@ class DuplexRuntime:
                         self.publish_assistant_audio("restore", gain=1.0)
                         _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
                         return
+                    route = self._route_candidate()
                     if self._target_speaker_focus_enabled and self._speaker_classifier is not None:
                         _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
+                        if (
+                            not final
+                            and route.should_interrupt
+                            and self._speaker_pcm
+                        ):
+                            # Verify a router-confirmed control phrase as soon
+                            # as streaming ASR hears it. Waiting for VAD
+                            # endpointing made「等一下」arrive after the reply
+                            # had already finished; the classifier still gets
+                            # the currently collected PCM and can reject a
+                            # clear non-owner before the stop bridge runs.
+                            self._start_speaker_classification()
+                            self._spawn(
+                                self._confirm_target_speaker_interrupt(
+                                    self._speaker_epoch
+                                ),
+                                name="target-speaker-explicit-partial",
+                            )
+                            return
                         if final:
                             if self._target_focus_pending_epoch == self._speaker_epoch:
                                 self._target_focus_pending_epoch = None
@@ -2873,7 +2904,6 @@ class DuplexRuntime:
                                 name="target-speaker-playback-focus",
                             )
                         return
-                    route = self._route_candidate()
                     if decision is PlaybackInputDecision.ACCEPT and (
                         final or route.should_interrupt
                     ) and self._request_playback_interrupt():
