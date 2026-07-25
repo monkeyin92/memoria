@@ -23,6 +23,31 @@ run_control() {
     --entrypoint /app/.venv/bin/python control-api "$@"
 }
 
+wait_for_current_release_readiness() {
+  local readiness_url="http://127.0.0.1:8791/health/ready"
+  local payload
+  for _ in $(seq 1 20); do
+    if payload="$(curl -fsS "$readiness_url" 2>/dev/null)" \
+      && printf '%s' "$payload" | python3 -c '
+import json
+import sys
+
+expected = sys.argv[1]
+payload = json.load(sys.stdin)
+agent = payload.get("checks", {}).get("agent", {})
+assert payload.get("status") == "ready"
+assert payload.get("release_tag") == expected
+assert agent.get("status") == "ready"
+assert agent.get("release_tag") == expected
+' "$release_tag" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "readiness did not receive a current Agent heartbeat for $release_tag" >&2
+  return 1
+}
+
 run_required_provider_smoke() {
   "${compose[@]}" run --rm --no-deps \
     -T \
@@ -70,5 +95,7 @@ run_agent -m scripts.verify_env
 # readiness from a short-lived Control API container instead.
 run_control -m scripts.mark_readiness \
   --control-api-url http://control-api:8000
+
+wait_for_current_release_readiness
 
 echo "readiness refresh PASS: $release_tag ($llm_provider)"
