@@ -143,6 +143,7 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
     assert "run_agent -m scripts.verify_env" in script
     assert "run_control -m scripts.mark_readiness" in script
     assert "--control-api-url http://control-api:8000" in script
+    assert "--skip-ready-check" in script
     assert "wait_for_current_release_readiness" in script
     assert "http://127.0.0.1:8791/health/ready" in script
     assert 'payload.get("release_tag") == expected' in script

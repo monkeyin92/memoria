@@ -80,3 +80,20 @@ def test_mark_does_not_run_ready_check_after_mark_failure(
     assert mark_readiness.main([]) == 1
     assert len(calls) == 1
     assert calls[0]["method"] == "POST"
+
+
+def test_mark_only_defers_ready_check_to_the_release_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMORIA_AUTH_SECRET", "control-auth-material-that-is-long-enough")
+    calls: list[dict[str, Any]] = []
+
+    def marked(url: str, **kwargs: Any) -> tuple[int, dict[str, Any]]:
+        calls.append({"url": url, **kwargs})
+        return 200, {"status": "marked"}
+
+    monkeypatch.setattr(mark_readiness, "_request_json", marked)
+
+    assert mark_readiness.main(["--skip-ready-check"]) == 0
+    assert len(calls) == 1
+    assert calls[0]["url"].endswith("/internal/readiness/smokes")

@@ -94,7 +94,8 @@ run_agent -m scripts.verify_env
 # The Agent env intentionally has no MEMORIA_AUTH_SECRET.  Mark and verify
 # readiness from a short-lived Control API container instead.
 run_control -m scripts.mark_readiness \
-  --control-api-url http://control-api:8000
+  --control-api-url http://control-api:8000 \
+  --skip-ready-check
 
 wait_for_current_release_readiness
 

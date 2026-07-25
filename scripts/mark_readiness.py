@@ -92,11 +92,16 @@ def main(argv: list[str] | None = None) -> int:
         "--control-api-url",
         default=os.getenv("CONTROL_API_URL", "http://control-api:8000"),
     )
+    parser.add_argument(
+        "--skip-ready-check",
+        action="store_true",
+        help="mark provider smoke evidence only; a release gate checks readiness separately",
+    )
     args = parser.parse_args(argv)
 
     if not _mark_smokes_passed(args.control_api_url):
         return 1
-    if not _check_ready(args.control_api_url):
+    if not args.skip_ready_check and not _check_ready(args.control_api_url):
         return 1
     return 0
 
