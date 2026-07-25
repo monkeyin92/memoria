@@ -9,8 +9,12 @@
     ],
     "include": [
       {
-        "value": "assets/companions/alpha",
+        "value": "assets/companions/miniprogram",
         "type": "folder"
+      },
+      {
+        "value": "assets/bg/night-stars.png",
+        "type": "file"
       }
     ]
   },
@@ -31,6 +35,7 @@
     "disableUseStrict": false,
     "useCompilerPlugins": false,
     "condition": false,
+    "ignoreUploadUnusedFiles": true,
     "swc": false,
     "disableSWC": true,
     "babelSetting": {

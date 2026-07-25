@@ -6,10 +6,19 @@ class PcmJitterPlayer {
     this.context = null;
     this.nextStartAt = 0;
     this.sources = new Set();
+    this.gain = 1;
+    this.gainNode = null;
   }
 
   async resume() {
-    if (!this.context) this.context = wx.createWebAudioContext();
+    if (!this.context) {
+      this.context = wx.createWebAudioContext();
+      if (typeof this.context.createGain === "function") {
+        this.gainNode = this.context.createGain();
+        this.gainNode.gain.value = this.gain;
+        this.gainNode.connect(this.context.destination);
+      }
+    }
     if (this.context.state !== "running") await this.context.resume();
   }
 
@@ -31,11 +40,17 @@ class PcmJitterPlayer {
     }
     const source = this.context.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.context.destination);
+    source.connect(this.gainNode || this.context.destination);
     this.sources.add(source);
     source.onended = () => this.sources.delete(source);
     source.start(this.nextStartAt);
     this.nextStartAt += buffer.duration;
+  }
+
+  setGain(value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) return;
+    this.gain = Math.min(1, Math.max(0, value));
+    if (this.gainNode) this.gainNode.gain.value = this.gain;
   }
 
   reset() {
@@ -55,6 +70,7 @@ class PcmJitterPlayer {
     if (this.context) {
       await this.context.close();
       this.context = null;
+      this.gainNode = null;
     }
   }
 }

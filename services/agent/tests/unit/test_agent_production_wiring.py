@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
@@ -850,6 +851,46 @@ async def test_post_playback_english_assistant_echo_is_ignored() -> None:
 
 
 @pytest.mark.asyncio
+async def test_delayed_post_playback_assistant_echo_never_publishes_as_user() -> None:
+    published: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    runtime.set_event_publisher(publish)
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("妈妈，你看")
+    reply = "你好！很高兴见到你。今天过得怎么样？"
+    runtime.update_pending_assistant_text(reply)
+    await runtime.on_playback_started()
+    await runtime.on_assistant_reply_completed(reply)
+    runtime._last_playback_completed_ns = time.monotonic_ns() - 6_500_000_000
+
+    runtime.on_user_voice_started()
+    assert runtime.observe_user_transcript(reply, final=True) == "accept"
+    message = llm.ChatMessage(role="user", content=[reply])
+    message.metrics["started_speaking_at"] = 1.0
+    message.metrics["stopped_speaking_at"] = 2.0
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+
+    with pytest.raises(StopResponse):
+        await agent.on_user_turn_completed(llm.ChatContext.empty(), message)
+    await asyncio.sleep(0)
+
+    assert not any(
+        event.get("type") == "transcript_delta"
+        and event.get("speaker") == "user"
+        and event.get("final") is True
+        for event in published
+    )
+    assert (
+        runtime.orchestrator.metrics.get("guarded_user_input_total", {"reason": "assistant_echo"})
+        == 1
+    )
+
+
+@pytest.mark.asyncio
 async def test_playback_echo_final_is_removed_before_the_next_real_turn_is_committed() -> None:
     published: list[dict[str, object]] = []
 
@@ -1679,6 +1720,11 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     session.output.audio.emit("playback_started", SimpleNamespace())
     await asyncio.sleep(0.02)
     assert session.options.interruption["min_words"] == 1000
+    audio_event_count = sum(
+        1
+        for event in room.local_participant.published
+        if event[0].get("type") == "assistant_audio"
+    )
     session.emit(
         "user_state_changed",
         SimpleNamespace(old_state="listening", new_state="speaking"),
@@ -1690,14 +1736,13 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     await asyncio.sleep(0)
     assert session.output.audio.pause_count == 0
     assert session.output.audio.resume_count == 0
-    assert not any(
-        event[0].get("type") == "assistant_audio" and event[0].get("action") == "duck"
+    new_audio_events = [
+        event[0]
         for event in room.local_participant.published
-    )
-    assert not any(
-        event[0].get("type") == "assistant_audio" and event[0].get("action") == "restore"
-        for event in room.local_participant.published
-    )
+        if event[0].get("type") == "assistant_audio"
+    ][audio_event_count:]
+    assert [event.get("action") for event in new_audio_events] == ["duck", "restore"]
+    assert [event.get("gain") for event in new_audio_events] == [0.25, 1.0]
     assert 1000 in session.options.interruption.history
     assert session.options.interruption["min_words"] == 1000
     session.emit(

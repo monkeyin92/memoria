@@ -67,7 +67,9 @@ logger = logging.getLogger(__name__)
 
 ResumeSpeakerBinding = tuple[str, str, int | None, str]
 
-POST_PLAYBACK_ECHO_GUARD_MS = 800
+POST_PLAYBACK_BACKCHANNEL_GUARD_MS = 800
+POST_PLAYBACK_ECHO_GUARD_MS = 10_000
+PLAYBACK_DUCK_GAIN = 0.25
 PLAYBACK_INPUT_BLOCK_MIN_WORDS = 1000
 TARGET_SPEAKER_MIN_PCM_MS = 600
 HISTORY_ELIGIBILITY_MAX_FENCES = 32
@@ -804,11 +806,13 @@ class DuplexRuntime:
         if not route.allow_input:
             self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE
             self._reject_target_speaker(context="playback", route=route)
+            self.publish_assistant_audio("restore", gain=1.0)
             if self._set_interruption_min_words is not None:
                 self._set_interruption_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
             return
         callback = self._target_speaker_interrupt
         if callback is None:
+            self.publish_assistant_audio("restore", gain=1.0)
             return
         self._target_focus_epoch = epoch
         await callback()
@@ -2341,6 +2345,7 @@ class DuplexRuntime:
         """
         if self._set_interruption_min_words is not None:
             self._set_interruption_min_words(self._base_interruption_min_words)
+        self.publish_assistant_audio("restore", gain=1.0)
         self._was_speaking = False
         # LiveKit can emit playback_finished after we hand the floor back.
         # Keep its original fence until that callback finalizes the heard
@@ -2538,6 +2543,7 @@ class DuplexRuntime:
             force_generation_bump=force_generation_bump,
         )
         self._bind_mode_policy(new_fence)
+        self.publish_assistant_audio("restore", gain=1.0)
         if create_user_turn and barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND:
             self._clear_control_user_turn(cause=f"interrupt:{cause}")
         self._was_speaking = False
@@ -2603,6 +2609,7 @@ class DuplexRuntime:
         interrupted: bool,
         synchronized_transcript: str | None,
     ) -> None:
+        self.publish_assistant_audio("restore", gain=1.0)
         if interrupted:
             interrupted_from = self._playback_fence or self.fence
             combined_heard = self._combine_played_text(
@@ -2717,7 +2724,11 @@ class DuplexRuntime:
             duration_ms=int(elapsed_ms),
             assistant_text=self._played_assistant_text,
         )
-        if reason == "backchannel" or self.input_guard.enabled:
+        if reason == "assistant_echo":
+            return reason
+        if elapsed_ms <= POST_PLAYBACK_BACKCHANNEL_GUARD_MS and (
+            reason == "backchannel" or self.input_guard.enabled
+        ):
             return reason
         return None
 
@@ -2766,6 +2777,7 @@ class DuplexRuntime:
                 decision = self.on_user_voice_started()
                 if decision is PlaybackInputDecision.WAIT:
                     _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
+                    self.publish_assistant_audio("duck", gain=PLAYBACK_DUCK_GAIN)
                     self.mark_audio_event("barge_in_detected")
                 else:
                     _set_min_words(base_min_words)
@@ -2787,6 +2799,7 @@ class DuplexRuntime:
                             and self.input_guard.candidate_decision is PlaybackInputDecision.WAIT
                         ):
                             _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
+                            self.publish_assistant_audio("restore", gain=1.0)
                             self.orchestrator.metrics.inc_false_interruptions()
 
                     false_resume_task = self._spawn(
@@ -2832,6 +2845,7 @@ class DuplexRuntime:
                             "playback_input_ignored reason=%s",
                             self.input_guard.candidate_reason or "playback_noise",
                         )
+                        self.publish_assistant_audio("restore", gain=1.0)
                         _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
                         return
                     if self._target_speaker_focus_enabled and self._speaker_classifier is not None:

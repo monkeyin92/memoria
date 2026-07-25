@@ -1,4 +1,4 @@
-<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.webp" mode="widthFix" /></view>
+<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
 
 <view class="page-shell">
   <text class="eyebrow">回顾</text>

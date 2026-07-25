@@ -118,7 +118,18 @@ class MiniProgramMediaSession {
           this._readyReject = null;
           resolve?.();
         }
-        if (event.type === "audio_reset") this.player.reset();
+        if (event.type === "audio_reset") {
+          this.player.setGain(1);
+          this.player.reset();
+        }
+        if (
+          event.type === "ui_event" &&
+          event.event?.type === "assistant_audio" &&
+          (event.event.action === "duck" || event.event.action === "restore") &&
+          typeof event.event.gain === "number"
+        ) {
+          this.player.setGain(event.event.gain);
+        }
         this.callbacks.onEvent?.(event);
       } catch {
         this.callbacks.onError?.("语音服务返回了无效控制消息。");

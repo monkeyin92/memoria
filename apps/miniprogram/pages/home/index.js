@@ -1,6 +1,7 @@
 const api = require("../../utils/api");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { MiniProgramMediaSession } = require("../../utils/media-gateway");
+const { authoritativeTranscript } = require("../../utils/transcript-events");
 
 const defaultProfile = {
   display_name: "新朋友",
@@ -205,19 +206,9 @@ Page({
       this.setData({ error: "语音服务连接已中断，请轻触重新开始。" });
       return;
     }
-    if (event?.type === "transcription") {
-      const segments = Array.isArray(event.segments) ? event.segments : [];
-      const text = segments.map((segment) => segment.text || "").join("");
-      if (text) {
-        this._appendTranscript({
-          speaker: "assistant",
-          text,
-          final: segments.every((segment) => segment.final === true),
-          turnId: event.turn_id,
-          generationId: event.generation_id,
-          source: "transcription",
-        });
-      }
+    const transcript = authoritativeTranscript(event);
+    if (transcript) {
+      this._appendTranscript(transcript);
       return;
     }
     if (event?.type !== "ui_event") return;
@@ -245,21 +236,6 @@ Page({
       }[payload.state];
       if (mapped) this._setStatus(mapped);
       return;
-    }
-    if (payload.type !== "transcript_delta") return;
-    if (
-      (payload.speaker === "user" || payload.speaker === "assistant") &&
-      typeof payload.text === "string" &&
-      payload.text
-    ) {
-      this._appendTranscript({
-        speaker: payload.speaker,
-        text: payload.text,
-        final: payload.final !== false,
-        turnId: payload.turn_id,
-        generationId: payload.generation_id,
-        source: "authoritative",
-      });
     }
   },
 

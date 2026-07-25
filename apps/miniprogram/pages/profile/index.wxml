@@ -1,4 +1,4 @@
-<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.webp" mode="widthFix" /></view>
+<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
 
 <view class="page-shell">
   <text class="eyebrow">你的陪伴空间</text>
@@ -6,11 +6,11 @@
   <view class="profile-hero">
     <view class="hero-glow"></view>
     <view class="hero-avatar-ring">
-      <image wx:if="{{profile.companion_id === 'starlight'}}" class="hero-avatar" src="/assets/companions/alpha/starlight.webp" mode="aspectFit" />
-      <image wx:if="{{profile.companion_id === 'taoxi'}}" class="hero-avatar" src="/assets/companions/alpha/taoxi.webp" mode="aspectFit" />
-      <image wx:if="{{profile.companion_id === 'mianmian'}}" class="hero-avatar" src="/assets/companions/alpha/mianmian.webp" mode="aspectFit" />
-      <image wx:if="{{profile.companion_id === 'axu'}}" class="hero-avatar" src="/assets/companions/alpha/axu.webp" mode="aspectFit" />
-      <image wx:if="{{profile.companion_id === 'xuanmo'}}" class="hero-avatar" src="/assets/companions/alpha/xuanmo.webp" mode="aspectFit" />
+      <image wx:if="{{profile.companion_id === 'starlight'}}" class="hero-avatar" src="/assets/companions/miniprogram/starlight.png" mode="aspectFit" />
+      <image wx:if="{{profile.companion_id === 'taoxi'}}" class="hero-avatar" src="/assets/companions/miniprogram/taoxi.png" mode="aspectFit" />
+      <image wx:if="{{profile.companion_id === 'mianmian'}}" class="hero-avatar" src="/assets/companions/miniprogram/mianmian.png" mode="aspectFit" />
+      <image wx:if="{{profile.companion_id === 'axu'}}" class="hero-avatar" src="/assets/companions/miniprogram/axu.png" mode="aspectFit" />
+      <image wx:if="{{profile.companion_id === 'xuanmo'}}" class="hero-avatar" src="/assets/companions/miniprogram/xuanmo.png" mode="aspectFit" />
     </view>
     <view class="hero-copy">
       <text class="hero-name">{{profile.display_name || '新朋友'}}</text>
@@ -47,11 +47,11 @@
   <view class="card">
     <text class="settings-title">陪伴方式</text>
     <view wx:for="{{companions}}" wx:key="id" class="companion-row {{profile.companion_id === item.id ? 'companion-selected' : ''}}" data-id="{{item.id}}" bindtap="chooseCompanion">
-      <image wx:if="{{item.id === 'starlight'}}" class="companion-image" src="/assets/companions/alpha/starlight.webp" mode="aspectFit" />
-      <image wx:if="{{item.id === 'taoxi'}}" class="companion-image" src="/assets/companions/alpha/taoxi.webp" mode="aspectFit" />
-      <image wx:if="{{item.id === 'mianmian'}}" class="companion-image" src="/assets/companions/alpha/mianmian.webp" mode="aspectFit" />
-      <image wx:if="{{item.id === 'axu'}}" class="companion-image" src="/assets/companions/alpha/axu.webp" mode="aspectFit" />
-      <image wx:if="{{item.id === 'xuanmo'}}" class="companion-image" src="/assets/companions/alpha/xuanmo.webp" mode="aspectFit" />
+      <image wx:if="{{item.id === 'starlight'}}" class="companion-image" src="/assets/companions/miniprogram/starlight.png" mode="aspectFit" />
+      <image wx:if="{{item.id === 'taoxi'}}" class="companion-image" src="/assets/companions/miniprogram/taoxi.png" mode="aspectFit" />
+      <image wx:if="{{item.id === 'mianmian'}}" class="companion-image" src="/assets/companions/miniprogram/mianmian.png" mode="aspectFit" />
+      <image wx:if="{{item.id === 'axu'}}" class="companion-image" src="/assets/companions/miniprogram/axu.png" mode="aspectFit" />
+      <image wx:if="{{item.id === 'xuanmo'}}" class="companion-image" src="/assets/companions/miniprogram/xuanmo.png" mode="aspectFit" />
       <view class="companion-copy">
         <text class="companion-name">{{item.name}}</text>
         <text class="companion-tagline">{{item.tagline}}</text>

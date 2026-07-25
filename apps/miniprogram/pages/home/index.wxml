@@ -13,18 +13,18 @@
   </view>
 </template>
 
-<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.webp" mode="widthFix" /></view>
+<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
 
 <view class="page-shell home-page">
   <view class="home-header">
     <text class="hero-greeting">{{greeting}}，{{profile.display_name || '新朋友'}}</text>
     <text class="hero-title">慢慢说，<text class="hero-title-accent">我会认真听。</text></text>
     <view class="companion-chip">
-      <image wx:if="{{companion.id === 'starlight'}}" class="companion-chip-img" src="/assets/companions/alpha/starlight.webp" mode="aspectFit" />
-      <image wx:if="{{companion.id === 'taoxi'}}" class="companion-chip-img" src="/assets/companions/alpha/taoxi.webp" mode="aspectFit" />
-      <image wx:if="{{companion.id === 'mianmian'}}" class="companion-chip-img" src="/assets/companions/alpha/mianmian.webp" mode="aspectFit" />
-      <image wx:if="{{companion.id === 'axu'}}" class="companion-chip-img" src="/assets/companions/alpha/axu.webp" mode="aspectFit" />
-      <image wx:if="{{companion.id === 'xuanmo'}}" class="companion-chip-img" src="/assets/companions/alpha/xuanmo.webp" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'starlight'}}" class="companion-chip-img" src="/assets/companions/miniprogram/starlight.png" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'taoxi'}}" class="companion-chip-img" src="/assets/companions/miniprogram/taoxi.png" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'mianmian'}}" class="companion-chip-img" src="/assets/companions/miniprogram/mianmian.png" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'axu'}}" class="companion-chip-img" src="/assets/companions/miniprogram/axu.png" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'xuanmo'}}" class="companion-chip-img" src="/assets/companions/miniprogram/xuanmo.png" mode="aspectFit" />
       <text class="companion-chip-text">{{companion.name}} · {{companion.tagline}}</text>
     </view>
   </view>
@@ -38,11 +38,11 @@
     <text class="spark spark-c">✦</text>
 
     <view class="mascot-body-shell">
-      <image wx:if="{{companion.id === 'starlight'}}" class="mascot-body" src="/assets/companions/alpha/starlight.webp" mode="aspectFit" />
-      <image wx:if="{{companion.id === 'taoxi'}}" class="mascot-body" src="/assets/companions/alpha/taoxi.webp" mode="aspectFit" />
-      <image wx:if="{{companion.id === 'mianmian'}}" class="mascot-body" src="/assets/companions/alpha/mianmian.webp" mode="aspectFit" />
-      <image wx:if="{{companion.id === 'axu'}}" class="mascot-body" src="/assets/companions/alpha/axu.webp" mode="aspectFit" />
-      <image wx:if="{{companion.id === 'xuanmo'}}" class="mascot-body" src="/assets/companions/alpha/xuanmo.webp" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'starlight'}}" class="mascot-body" src="/assets/companions/miniprogram/starlight.png" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'taoxi'}}" class="mascot-body" src="/assets/companions/miniprogram/taoxi.png" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'mianmian'}}" class="mascot-body" src="/assets/companions/miniprogram/mianmian.png" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'axu'}}" class="mascot-body" src="/assets/companions/miniprogram/axu.png" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'xuanmo'}}" class="mascot-body" src="/assets/companions/miniprogram/xuanmo.png" mode="aspectFit" />
       <view class="mascot-face tone-{{faceTone}}" style="{{faceStyle}}">
         <view class="face-expression {{expression === 'neutral' ? 'is-visible' : ''}}">
           <view class="brow brow-l"></view>

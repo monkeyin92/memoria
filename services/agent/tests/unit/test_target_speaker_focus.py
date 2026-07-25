@@ -172,6 +172,43 @@ class _PlaybackSession(_Emitter):
 
 
 @pytest.mark.asyncio
+async def test_playback_candidate_ducks_audio_and_echo_rejection_restores_it() -> None:
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    session = _PlaybackSession()
+    published: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    try:
+        runtime.set_event_publisher(publish)
+        runtime.attach_session_events(session)
+        await runtime.orchestrator.ready()
+        await runtime.on_turn_committed("开始播放")
+        runtime.update_pending_assistant_text("你好！很高兴见到你。")
+        await runtime.on_playback_started()
+
+        session.emit("user_state_changed", SimpleNamespace(new_state="speaking"))
+        await asyncio.sleep(0)
+        session.emit(
+            "user_input_transcribed",
+            SimpleNamespace(transcript="你好！很高兴见到你。", is_final=True),
+        )
+        await asyncio.sleep(0)
+
+        audio_events = [
+            event
+            for event in published
+            if event.get("type") == "assistant_audio"
+        ]
+        assert [event["action"] for event in audio_events] == ["duck", "restore"]
+        assert audio_events[0]["gain"] < 1
+        assert audio_events[1]["gain"] == 1
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("candidate", ["这是旁边的人在说话", "停一下"])
 async def test_playback_shadow_guest_cannot_lower_interrupt_gate_or_stop_playout(
     candidate: str,
