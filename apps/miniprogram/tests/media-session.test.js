@@ -90,13 +90,12 @@ test("microphone state waits for RecorderManager.onStart before sending PCM", as
   assert.equal(sent.length, 1);
   assert.equal(sent[0].data instanceof ArrayBuffer, true);
   assert.equal(media.sequence, 1);
-  sent[0].success();
   assert.equal(media._firstUplinkFrame, true);
   assert.deepEqual(errors, []);
   await media.close();
 });
 
-test("PCM frame sends stay serialized until SocketTask confirms the prior frame", async () => {
+test("PCM frames keep sending when SocketTask omits success callbacks", async () => {
   recorder.reset();
   const sent = [];
   const media = new MiniProgramMediaSession(
@@ -116,10 +115,7 @@ test("PCM frame sends stay serialized until SocketTask confirms the prior frame"
   recorder.frameListener({ frameBuffer: new Uint8Array(64).buffer });
   recorder.frameListener({ frameBuffer: new Uint8Array(64).buffer });
 
-  assert.equal(sent.length, 1);
-  sent[0].success();
   assert.equal(sent.length, 2);
-  sent[1].success();
   assert.equal(media.sequence, 2);
   await media.close();
 });

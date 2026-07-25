@@ -4,7 +4,6 @@ const { PcmJitterPlayer } = require("./pcm-player");
 const RECORDER_START_TIMEOUT_MS = 2000;
 const FIRST_UPLINK_FRAME_TIMEOUT_MS = 3000;
 const RECORDER_RESTART_DELAY_MS = 120;
-const MAX_QUEUED_UPLINK_FRAMES = 16;
 
 class MiniProgramMediaSession {
   constructor(session, callbacks = {}) {
@@ -24,8 +23,6 @@ class MiniProgramMediaSession {
     this._firstUplinkFrame = false;
     this._recoveryAttempted = false;
     this._uplinkFailed = false;
-    this._sendingUplink = false;
-    this._pendingUplinkFrames = [];
     this._startTimer = null;
     this._firstFrameTimer = null;
     this._restartTimer = null;
@@ -80,7 +77,6 @@ class MiniProgramMediaSession {
     } else if (!enabled && this.recording) {
       this.recorder.pause();
       this.recording = false;
-      this._pendingUplinkFrames = [];
       this._clearRecorderTimers();
     }
   }
@@ -94,8 +90,6 @@ class MiniProgramMediaSession {
       this.recorderStarted = false;
     }
     this.recorderStarting = false;
-    this._pendingUplinkFrames = [];
-    this._sendingUplink = false;
     this.socket?.close({ code: 1000 });
     this.socket = null;
     await this.player.close();
@@ -120,7 +114,12 @@ class MiniProgramMediaSession {
           frame.frameBuffer,
         );
         this.sequence = (this.sequence + 1) >>> 0;
-        this._enqueueUplinkFrame(data);
+        this._firstUplinkFrame = true;
+        this._clearFirstFrameTimer();
+        this.socket.send({
+          data,
+          fail: () => this._failUplink("麦克风音频发送失败，请轻触恢复语音。"),
+        });
       } catch {
         this._failUplink("麦克风音频帧不可用，请轻触恢复语音。");
       }
@@ -209,56 +208,12 @@ class MiniProgramMediaSession {
     }, FIRST_UPLINK_FRAME_TIMEOUT_MS);
   }
 
-  _enqueueUplinkFrame(data) {
-    this._pendingUplinkFrames.push(data);
-    if (this._pendingUplinkFrames.length > MAX_QUEUED_UPLINK_FRAMES) {
-      this._failUplink("麦克风音频发送拥塞，请轻触恢复语音。");
-      return;
-    }
-    this._drainUplinkFrames();
-  }
-
-  _drainUplinkFrames() {
-    if (
-      this._sendingUplink ||
-      this._uplinkFailed ||
-      !this.socket ||
-      this._pendingUplinkFrames.length === 0
-    ) {
-      return;
-    }
-    const data = this._pendingUplinkFrames.shift();
-    this._sendingUplink = true;
-    try {
-      this.socket.send({
-        data,
-        success: () => {
-          this._sendingUplink = false;
-          if (!this._firstUplinkFrame) {
-            this._firstUplinkFrame = true;
-            this._clearFirstFrameTimer();
-          }
-          this._drainUplinkFrames();
-        },
-        fail: () => {
-          this._sendingUplink = false;
-          this._failUplink("麦克风音频发送失败，请轻触恢复语音。");
-        },
-      });
-    } catch {
-      this._sendingUplink = false;
-      this._failUplink("麦克风音频发送失败，请轻触恢复语音。");
-    }
-  }
-
   _recoverRecorder() {
     if (this.intentionalClose || this._uplinkFailed || !this.ready) return;
     this._clearRecorderTimers();
     this.recording = false;
     this.recorderStarted = false;
     this.recorderStarting = false;
-    this._pendingUplinkFrames = [];
-    this._sendingUplink = false;
     if (this._recoveryAttempted) {
       this._failUplink("未收到麦克风音频，请轻触恢复语音。");
       return;
@@ -282,8 +237,6 @@ class MiniProgramMediaSession {
     this.recording = false;
     this.recorderStarted = false;
     this.recorderStarting = false;
-    this._pendingUplinkFrames = [];
-    this._sendingUplink = false;
     this.callbacks.onInterrupted?.(message);
   }
 
