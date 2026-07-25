@@ -817,6 +817,20 @@ class DuplexRuntime:
         self._target_focus_epoch = epoch
         await callback()
 
+    def _request_playback_interrupt(self) -> None:
+        """Confirm one accepted playback candidate through the wired LiveKit stop."""
+        if self._target_focus_epoch == self._speaker_epoch:
+            return
+        callback = self._target_speaker_interrupt
+        if callback is None:
+            return
+        self._target_focus_epoch = self._speaker_epoch
+
+        async def _interrupt() -> None:
+            await callback()
+
+        self._spawn(_interrupt(), name="playback-input-confirmed")
+
     def _publish_speaker_decision(self, epoch: int, decision: SpeakerDecision) -> None:
         if self._evidence_publisher is None:
             return
@@ -2859,6 +2873,12 @@ class DuplexRuntime:
                             )
                         return
                     _set_min_words(base_min_words)
+                    route = self._route_candidate()
+                    if decision is PlaybackInputDecision.ACCEPT and (
+                        final or route.should_interrupt
+                    ):
+                        self._request_playback_interrupt()
+                        return
                 if (
                     final
                     and self._target_speaker_focus_enabled

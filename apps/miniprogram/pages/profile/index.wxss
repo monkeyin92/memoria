@@ -39,9 +39,76 @@
     inset 0 0 24rpx rgba(34, 229, 255, 0.14);
 }
 
-.hero-avatar {
+.profile-mascot-shell {
+  position: relative;
   width: 128rpx;
   height: 128rpx;
+}
+
+.hero-avatar {
+  width: 100%;
+  height: 100%;
+}
+
+.profile-face {
+  position: absolute;
+  pointer-events: none;
+}
+
+.profile-face-eye {
+  position: absolute;
+  top: 24.3%;
+  width: 18.33%;
+  height: 41.43%;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--profile-face-ink);
+  animation: profile-mascot-blink 5.6s ease-in-out infinite;
+}
+
+.profile-face-eye-l {
+  left: 20.84%;
+}
+
+.profile-face-eye-r {
+  left: 60.83%;
+}
+
+.profile-face-iris {
+  position: absolute;
+  left: 6.8%;
+  top: 3.5%;
+  width: 86.4%;
+  height: 89.7%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--profile-eye-top) 0%, var(--profile-eye-top) 52%, var(--profile-eye-bottom) 100%);
+}
+
+.profile-face-shine {
+  position: absolute;
+  left: 22.7%;
+  top: 22.4%;
+  width: 22.7%;
+  height: 17.2%;
+  border-radius: 50%;
+  background: #fffaf0;
+  box-shadow: 0 12rpx 10rpx var(--profile-eye-glow);
+}
+
+.profile-face-mouth {
+  position: absolute;
+  left: 45%;
+  top: 72.5%;
+  width: 10%;
+  height: 7%;
+  box-sizing: border-box;
+  border-bottom: 4rpx solid var(--profile-face-ink);
+  border-radius: 0 0 999rpx 999rpx;
+}
+
+@keyframes profile-mascot-blink {
+  0%, 44%, 48%, 100% { transform: scaleY(1); }
+  46% { transform: scaleY(0.08); }
 }
 
 .hero-copy {

@@ -98,7 +98,7 @@
   <view class="conversation-card card">
     <view class="section-heading">
       <text>实时对话</text>
-      <text class="section-hint">只显示当前会话的 Agent 权威事件</text>
+      <text class="section-hint">仅显示当前发言</text>
     </view>
     <view wx:if="{{!transcript.length}}" class="empty-state">
       <text class="empty-spark">✧</text>

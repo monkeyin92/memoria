@@ -1756,6 +1756,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     await asyncio.sleep(0)
     assert 0 in session.options.interruption.history
     assert session.options.interruption["min_words"] == 0
+    assert session.interrupt_count == 3
     session.output.audio.emit(
         "playback_finished",
         SimpleNamespace(
@@ -1779,7 +1780,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
 
     await runtime.on_turn_committed("会被语音中断")
     await session.interrupt(force=True)
-    assert session.interrupt_count == 3
+    assert session.interrupt_count == 4
     assert runtime.orchestrator.state is ConversationState.USER_SPEAKING
 
     assert len(shutdown_callbacks) == 1

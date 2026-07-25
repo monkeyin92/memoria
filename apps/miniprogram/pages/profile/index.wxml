@@ -6,11 +6,24 @@
   <view class="profile-hero">
     <view class="hero-glow"></view>
     <view class="hero-avatar-ring">
-      <image wx:if="{{profile.companion_id === 'starlight'}}" class="hero-avatar" src="/assets/companions/miniprogram/starlight.png" mode="aspectFit" />
-      <image wx:if="{{profile.companion_id === 'taoxi'}}" class="hero-avatar" src="/assets/companions/miniprogram/taoxi.png" mode="aspectFit" />
-      <image wx:if="{{profile.companion_id === 'mianmian'}}" class="hero-avatar" src="/assets/companions/miniprogram/mianmian.png" mode="aspectFit" />
-      <image wx:if="{{profile.companion_id === 'axu'}}" class="hero-avatar" src="/assets/companions/miniprogram/axu.png" mode="aspectFit" />
-      <image wx:if="{{profile.companion_id === 'xuanmo'}}" class="hero-avatar" src="/assets/companions/miniprogram/xuanmo.png" mode="aspectFit" />
+      <view class="profile-mascot-shell">
+        <image wx:if="{{profile.companion_id === 'starlight'}}" class="hero-avatar" src="/assets/companions/miniprogram/starlight.png" mode="aspectFit" />
+        <image wx:if="{{profile.companion_id === 'taoxi'}}" class="hero-avatar" src="/assets/companions/miniprogram/taoxi.png" mode="aspectFit" />
+        <image wx:if="{{profile.companion_id === 'mianmian'}}" class="hero-avatar" src="/assets/companions/miniprogram/mianmian.png" mode="aspectFit" />
+        <image wx:if="{{profile.companion_id === 'axu'}}" class="hero-avatar" src="/assets/companions/miniprogram/axu.png" mode="aspectFit" />
+        <image wx:if="{{profile.companion_id === 'xuanmo'}}" class="hero-avatar" src="/assets/companions/miniprogram/xuanmo.png" mode="aspectFit" />
+        <view class="profile-face" style="{{profileFaceStyle}}">
+          <view class="profile-face-eye profile-face-eye-l">
+            <view class="profile-face-iris"></view>
+            <view class="profile-face-shine"></view>
+          </view>
+          <view class="profile-face-eye profile-face-eye-r">
+            <view class="profile-face-iris"></view>
+            <view class="profile-face-shine"></view>
+          </view>
+          <view class="profile-face-mouth"></view>
+        </view>
+      </view>
     </view>
     <view class="hero-copy">
       <text class="hero-name">{{profile.display_name || '新朋友'}}</text>

@@ -172,6 +172,51 @@ class _PlaybackSession(_Emitter):
 
 
 @pytest.mark.asyncio
+async def test_explicit_playback_command_interrupts_without_speaker_classifier() -> None:
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    session = _PlaybackSession()
+    stopped = 0
+
+    async def _stop_playback() -> str | None:
+        nonlocal stopped
+        stopped += 1
+        return None
+
+    async def _interrupt() -> None:
+        await runtime.on_real_interrupt(
+            cause="explicit_playback_command",
+            stop_playback=_stop_playback,
+        )
+
+    try:
+        runtime.set_target_speaker_interrupt(_interrupt)
+        runtime.attach_session_events(session)
+        await runtime.orchestrator.ready()
+        await runtime.on_turn_committed("开始播放")
+        runtime.update_pending_assistant_text("我正在回答，请稍等。")
+        await runtime.on_playback_started()
+        before = runtime.fence
+
+        session.emit("user_state_changed", SimpleNamespace(new_state="speaking"))
+        session.emit(
+            "user_input_transcribed",
+            SimpleNamespace(transcript="停一下", is_final=False),
+        )
+        await asyncio.sleep(0.02)
+
+        assert stopped == 1
+        assert not runtime.fence.matches(before)
+        session.emit(
+            "user_input_transcribed",
+            SimpleNamespace(transcript="停一下", is_final=True),
+        )
+        await asyncio.sleep(0)
+        assert stopped == 1
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_playback_candidate_ducks_audio_and_echo_rejection_restores_it() -> None:
     runtime = DuplexRuntime.create(input_guard_enabled=True)
     session = _PlaybackSession()

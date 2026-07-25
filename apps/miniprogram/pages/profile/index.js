@@ -1,5 +1,5 @@
 const api = require("../../utils/api");
-const { companions, defaultCompanionId } = require("../../utils/companions");
+const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
 
 const defaultProfile = {
   display_name: "新朋友",
@@ -12,6 +12,15 @@ const defaultProfile = {
 };
 
 const DELETE_CONFIRMATION_TEXT = "永久删除我的全部数据";
+
+function profileFaceStyleFor(companionId) {
+  const face = companionById(companionId).face;
+  return (
+    `left:${face.left};top:${face.top};width:${face.width};height:${face.height};` +
+    `--profile-face-ink:${face.ink};--profile-eye-top:${face.eyeTop};` +
+    `--profile-eye-bottom:${face.eyeBottom};--profile-eye-glow:${face.glow};`
+  );
+}
 
 function formatDate(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -41,6 +50,7 @@ Page({
   data: {
     identity: null,
     profile: defaultProfile,
+    profileFaceStyle: profileFaceStyleFor(defaultCompanionId),
     companions,
     stats: { totalDays: 0, moments: 0, streak: 0 },
     loading: false,
@@ -69,7 +79,10 @@ Page({
     this.setData({ loading: true, identity, error: "" });
     try {
       const profile = { ...defaultProfile, ...(await api.getProfile(identity.user_id)) };
-      this.setData({ profile });
+      this.setData({
+        profile,
+        profileFaceStyle: profileFaceStyleFor(profile.companion_id),
+      });
     } catch (error) {
       this.setData({ error: error?.message || "个人资料无法加载。" });
     } finally {
@@ -103,7 +116,10 @@ Page({
 
   async chooseCompanion(event) {
     const companionId = event.currentTarget.dataset.id;
-    this.setData({ "profile.companion_id": companionId });
+    this.setData({
+      "profile.companion_id": companionId,
+      profileFaceStyle: profileFaceStyleFor(companionId),
+    });
     await this.saveProfile();
   },
 

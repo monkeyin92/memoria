@@ -292,17 +292,7 @@ Page({
       key,
       id: key || `${Date.now()}-${Math.random()}`,
     };
-    const transcript = [...this.data.transcript];
-    const index = key ? transcript.findIndex((entry) => entry.key === key) : -1;
-    if (index >= 0) {
-      if (transcript[index].source === "authoritative" && next.source !== "authoritative") {
-        return;
-      }
-      transcript[index] = next;
-    } else {
-      transcript.push(next);
-    }
-    this.setData({ transcript: transcript.slice(-24) });
+    this.setData({ transcript: [next] });
     if (
       next.speaker === "user" &&
       next.final &&
