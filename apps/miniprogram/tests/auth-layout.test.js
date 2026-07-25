@@ -12,10 +12,10 @@ const authStyles = fs.readFileSync(
   "utf8",
 );
 
-test("auth introductory copy puts each text segment on its own line", () => {
+test("auth header keeps the brand cue and title on separate lines", () => {
   assert.match(
     authTemplate,
-    /<view class="auth-copy">[\s\S]*?<text class="eyebrow auth-copy-line">[\s\S]*?<text class="page-title auth-copy-line">[\s\S]*?<text class="page-subtitle auth-copy-line">/,
+    /<view class="auth-copy">[\s\S]*?<text class="eyebrow auth-copy-line">[\s\S]*?<text class="page-title auth-copy-line">/,
   );
   assert.match(
     authStyles,
@@ -23,9 +23,7 @@ test("auth introductory copy puts each text segment on its own line", () => {
   );
 });
 
-test("auth mascot has no negative bottom margin that crowds the copy", () => {
-  assert.doesNotMatch(
-    authStyles,
-    /\.brand-mascot\s*\{[\s\S]*?margin:\s*0\s+auto\s+-\d+rpx\s*;/,
-  );
+test("auth header has no unselected mascot placeholder or redundant subtitle", () => {
+  assert.doesNotMatch(authTemplate, /brand-stage|brand-mascot|page-subtitle/);
+  assert.doesNotMatch(authStyles, /\.brand-(?:stage|halo|ring|spark|mascot)\b/);
 });

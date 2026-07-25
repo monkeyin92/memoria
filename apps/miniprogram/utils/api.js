@@ -117,6 +117,21 @@ function logoutLocal() {
   if (app) app.clearAuthenticatedIdentity();
 }
 
+function logoutCurrentDevice() {
+  return rawRequest("/v1/auth/logout", { method: "POST" });
+}
+
+function logoutAllDevices() {
+  return rawRequest("/v1/auth/logout-all", { method: "POST" });
+}
+
+function requestAccountDeletion({ password, confirmation }) {
+  return rawRequest("/v1/archive/deletion-requests", {
+    method: "POST",
+    data: { password, confirmation },
+  });
+}
+
 function createMiniProgramSession({ userId, learningTaskId = null, interactionMode = "companion" }) {
   return rawRequest("/v1/sessions", {
     method: "POST",
@@ -241,6 +256,9 @@ module.exports = {
   registerAccount,
   loginAccount,
   logoutLocal,
+  logoutCurrentDevice,
+  logoutAllDevices,
+  requestAccountDeletion,
   createMiniProgramSession,
   refreshMiniProgramGatewayTicket,
   stopResponse,

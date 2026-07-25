@@ -1,9 +1,14 @@
+<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.webp" mode="widthFix" /></view>
+
 <view class="page-shell">
   <text class="eyebrow">隐私与授权</text>
   <text class="page-title">每一份授权都可撤回</text>
   <text class="page-subtitle">默认不会因为小程序语音会话而自动保存原始音频。</text>
 
-  <view class="card">
+  <view class="card consent-card {{consent ? 'consent-on' : ''}}">
+    <view class="consent-shield">
+      <text class="consent-shield-icon">{{consent ? '✓' : '✧'}}</text>
+    </view>
     <text class="privacy-status">{{consent ? '原始语音归档已授权' : '原始语音归档未授权'}}</text>
     <text wx:if="{{consent}}" class="privacy-detail">授权时间：{{consent.granted_at}}<br />策略：{{consent.retention_policy}}</text>
     <text wx:else class="privacy-detail">实时语音仍会经过现有语音服务完成识别与回应；是否归档原始音频需要单独明确同意。</text>

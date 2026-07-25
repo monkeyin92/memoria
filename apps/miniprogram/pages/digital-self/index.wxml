@@ -1,12 +1,18 @@
+<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.webp" mode="widthFix" /></view>
+
 <view class="page-shell">
   <text class="eyebrow">数字分身成长</text>
   <text class="page-title">由你确认，慢慢成长</text>
   <text class="page-subtitle">这里展示服务端的成长状态；不会把小程序端的临时状态当成你的事实或人格材料。</text>
   <text wx:if="{{error}}" class="error-text">{{error}}</text>
 
-  <view class="card">
+  <view class="card persona-card">
+    <view class="persona-glow"></view>
     <text class="section-title">Persona 学习状态</text>
-    <text class="status-value">{{persona && persona.enabled ? '已启用' : '尚未启用或尚无可用材料'}}</text>
+    <view class="persona-status-row">
+      <view class="persona-beacon {{persona && persona.enabled ? 'persona-beacon-on' : ''}}"></view>
+      <text class="status-value">{{persona && persona.enabled ? '已启用' : '尚未启用或尚无可用材料'}}</text>
+    </view>
     <text class="status-detail">Persona、记忆和数字分身版本继续由现有服务端权限与证据规则决定。</text>
   </view>
 
@@ -25,7 +31,10 @@
       </view>
     </block>
     <block wx:else>
-      <view class="empty-state">还没有可展示的成长维度。</view>
+      <view class="empty-state">
+        <text class="empty-spark">✧</text>
+        <text class="empty-copy">还没有可展示的成长维度。</text>
+      </view>
     </block>
   </view>
 
@@ -33,12 +42,18 @@
     <text class="section-title">版本</text>
     <block wx:if="{{versions.length}}">
       <view wx:for="{{versions}}" wx:key="version_id" class="version-row">
-        <text class="version-name">版本 {{item.version_number || '—'}}</text>
-        <text class="version-detail">{{item.status}} · {{item.manifest_sha256 ? '已绑定资料摘要' : '资料待整理'}}</text>
+        <view class="version-badge">v{{item.version_number || '—'}}</view>
+        <view class="version-copy">
+          <text class="version-name">版本 {{item.version_number || '—'}}</text>
+          <text class="version-detail">{{item.status}} · {{item.manifest_sha256 ? '已绑定资料摘要' : '资料待整理'}}</text>
+        </view>
       </view>
     </block>
     <block wx:else>
-      <view class="empty-state">尚未构建数字分身版本。</view>
+      <view class="empty-state">
+        <text class="empty-spark">✧</text>
+        <text class="empty-copy">尚未构建数字分身版本。</text>
+      </view>
     </block>
   </view>
 

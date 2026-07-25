@@ -1,34 +1,42 @@
+<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.webp" mode="widthFix" /></view>
+
 <view class="page-shell">
   <text class="eyebrow">回顾</text>
   <text class="page-title">把今天慢慢收好</text>
   <text class="page-subtitle">只读取服务端确认可进入个人回顾的内容。</text>
 
   <view class="card summary-action">
-    <text class="summary-action-label">选中的日期：{{selectedDate}}</text>
-    <button class="secondary-button" loading="{{summarizing}}" bindtap="summarizeSelectedDay">生成 / 更新回顾</button>
+    <view class="summary-date-chip">
+      <text class="summary-date-star">✦</text>
+      <text class="summary-action-label">选中的日期：{{selectedDate}}</text>
+    </view>
+    <button class="primary-button summary-button" loading="{{summarizing}}" bindtap="summarizeSelectedDay">生成 / 更新回顾</button>
     <text wx:if="{{error}}" class="error-text">{{error}}</text>
   </view>
 
   <view wx:if="{{loading}}" class="empty-state">正在读取回顾…</view>
-  <view wx:elif="{{!days.length}}" class="card empty-state">还没有可回顾的内容。和伙伴聊一聊，之后再回来看看。</view>
-  <view wx:else>
-    <view
-      wx:for="{{days}}"
-      wx:key="date"
-      class="card day-card {{selectedDate === item.date ? 'day-selected' : ''}}"
-      data-date="{{item.date}}"
-      bindtap="chooseDay"
-    >
-      <view class="day-heading">
-        <text>{{item.date}}</text>
-        <text class="message-count">{{item.count}} 条对话</text>
+  <view wx:elif="{{!days.length}}" class="card empty-state">
+    <text class="empty-spark">✧</text>
+    <text class="empty-copy">还没有可回顾的内容。和伙伴聊一聊，之后再回来看看。</text>
+  </view>
+  <view wx:else class="timeline">
+    <view wx:for="{{days}}" wx:key="date" class="timeline-item">
+      <view class="timeline-rail">
+        <view class="timeline-dot {{selectedDate === item.date ? 'timeline-dot-active' : ''}}"></view>
+        <view class="timeline-line"></view>
       </view>
-      <text class="day-title">{{item.title}}</text>
-      <text class="day-overview">{{item.overview}}</text>
-      <view wx:if="{{item.highlights.length}}" class="highlight-list">
-        <text wx:for="{{item.highlights}}" wx:key="*this" class="highlight">· {{item}}</text>
+      <view class="card day-card {{selectedDate === item.date ? 'day-selected' : ''}}" data-date="{{item.date}}" bindtap="chooseDay">
+        <view class="day-heading">
+          <text class="day-date">{{item.date}}</text>
+          <text class="message-count">{{item.count}} 条对话</text>
+        </view>
+        <text class="day-title">{{item.title}}</text>
+        <text class="day-overview">{{item.overview}}</text>
+        <view wx:if="{{item.highlights.length}}" class="highlight-list">
+          <text wx:for="{{item.highlights}}" wx:key="*this" class="highlight">✦ {{item}}</text>
+        </view>
+        <text wx:if="{{item.suggestion}}" class="day-suggestion">{{item.suggestion}}</text>
       </view>
-      <text wx:if="{{item.suggestion}}" class="day-suggestion">{{item.suggestion}}</text>
     </view>
   </view>
 </view>

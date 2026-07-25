@@ -9,6 +9,38 @@ const defaultProfile = {
   voice_reply: true,
 };
 
+// 与 H5（apps/h5/src/lib/emotion.js）一致：负面声学标签统一表现为关切，
+// 不机械镜像愤怒或厌恶；其余回落 neutral。
+const VOICE_EMOTION_EXPRESSIONS = {
+  happy: "happy",
+  surprised: "curious",
+  sad: "caring",
+  angry: "caring",
+  fearful: "caring",
+  disgusted: "caring",
+};
+const VOICE_EMOTION_LABELS = new Set([
+  "neutral",
+  "happy",
+  "sad",
+  "angry",
+  "fearful",
+  "disgusted",
+  "surprised",
+]);
+
+function mascotAssetsFor(companion) {
+  const face = companion.face || {};
+  return {
+    faceStyle:
+      `left:${face.left};top:${face.top};width:${face.width};height:${face.height};` +
+      `--face-ink:${face.ink};--eye-top:${face.eyeTop};--eye-bottom:${face.eyeBottom};--eye-glow:${face.glow};`,
+    faceTone: face.tone || "light",
+    hasChest: Boolean(companion.chest),
+    chestStyle: companion.chest ? `top:${companion.chest.top};` : "",
+  };
+}
+
 function greeting() {
   const hour = new Date().getHours();
   if (hour < 6) return "夜深了";
@@ -71,6 +103,8 @@ Page({
     sessionId: "",
     connecting: false,
     active: false,
+    expression: "neutral",
+    ...mascotAssetsFor(companionById(defaultCompanionId)),
   },
 
   onShow() {
@@ -82,6 +116,7 @@ Page({
   },
 
   onUnload() {
+    this._resetExpression();
     this._endMediaLocally();
   },
 
@@ -94,9 +129,11 @@ Page({
     if (!identity) return;
     try {
       const profile = { ...defaultProfile, ...(await api.getProfile(identity.user_id)) };
+      const companion = companionById(profile.companion_id);
       this.setData({
         profile,
-        companion: companionById(profile.companion_id),
+        companion,
+        ...mascotAssetsFor(companion),
       });
     } catch (error) {
       this.setData({ error: error?.message || "个人资料暂时无法加载。" });
@@ -120,6 +157,7 @@ Page({
     });
     this._ending = false;
     this._session = null;
+    this._resetExpression();
     try {
       await authorizationForRecord();
       const session = await api.createMiniProgramSession({ userId: identity.user_id });
@@ -184,6 +222,10 @@ Page({
     }
     if (event?.type !== "ui_event") return;
     const payload = event.event || {};
+    if (payload.type === "emotion_observation") {
+      this._onEmotionObservation(payload);
+      return;
+    }
     if (payload.type === "assistant_state") {
       const mapped = {
         ready: "listening",
@@ -221,6 +263,49 @@ Page({
     }
   },
 
+  // 情绪只响应当前会话中已被权威用户终稿确认的 emotion_observation；
+  // 不用助手字幕关键词反向驱动表情（与 H5 约束一致）。
+  _onEmotionObservation(payload) {
+    const label = payload.label;
+    const turnId = payload.turn_id;
+    const generationId = payload.generation_id;
+    const ttl = payload.expires_after_ms;
+    if (typeof label !== "string" || !VOICE_EMOTION_LABELS.has(label)) return;
+    if (payload.persist !== false) return;
+    if (!Number.isInteger(turnId) || !Number.isInteger(generationId)) return;
+    if (!(ttl > 0 && ttl <= 60000)) return;
+    const expression = VOICE_EMOTION_EXPRESSIONS[label] || "neutral";
+    if (this._lastUserTurnId && turnId === this._lastUserTurnId) {
+      this._activateExpression(expression, ttl);
+    } else if (this._lastUserTurnId && turnId === this._lastUserTurnId + 1) {
+      // 目标话轮的权威终稿可能稍后到达，先挂起等 transcript 到达再激活
+      this._pendingExpression = { expression, turnId, ttl };
+    }
+    // 其余迟到 / 乱序事件直接丢弃
+  },
+
+  _activateExpression(expression, ttl) {
+    if (this._expressionTimer) {
+      clearTimeout(this._expressionTimer);
+      this._expressionTimer = null;
+    }
+    this.setData({ expression });
+    this._expressionTimer = setTimeout(() => {
+      this._expressionTimer = null;
+      this.setData({ expression: "neutral" });
+    }, ttl);
+  },
+
+  _resetExpression() {
+    if (this._expressionTimer) {
+      clearTimeout(this._expressionTimer);
+      this._expressionTimer = null;
+    }
+    this._pendingExpression = null;
+    this._lastUserTurnId = 0;
+    this.setData({ expression: "neutral" });
+  },
+
   _appendTranscript(item) {
     const key =
       Number.isInteger(item.turnId) && Number.isInteger(item.generationId)
@@ -242,6 +327,19 @@ Page({
       transcript.push(next);
     }
     this.setData({ transcript: transcript.slice(-24) });
+    if (
+      next.speaker === "user" &&
+      next.final &&
+      next.source === "authoritative" &&
+      Number.isInteger(next.turnId)
+    ) {
+      this._lastUserTurnId = next.turnId;
+      if (this._pendingExpression && this._pendingExpression.turnId === next.turnId) {
+        const pending = this._pendingExpression;
+        this._pendingExpression = null;
+        this._activateExpression(pending.expression, pending.ttl);
+      }
+    }
   },
 
   _setStatus(status) {
@@ -268,6 +366,7 @@ Page({
     }
     await this._endMediaLocally();
     this._session = null;
+    this._resetExpression();
     this.setData({
       active: false,
       sessionId: "",

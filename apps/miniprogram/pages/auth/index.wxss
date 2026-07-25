@@ -1,16 +1,14 @@
 .auth-page {
   display: flex;
   min-height: 100vh;
+  box-sizing: border-box;
   flex-direction: column;
   justify-content: center;
+  /* 不设置背景色：底色由 index.json 的 backgroundColor 承担，
+     避免盖住负 z-index 的 <image class="page-bg"> 背景层 */
 }
 
-.brand-mascot {
-  width: 240rpx;
-  height: 240rpx;
-  margin: 0 auto;
-}
-
+/* ——— 文案区（测试约束：保持 auth-copy-line 块级结构） ——— */
 .auth-copy {
   text-align: center;
 }
@@ -19,58 +17,96 @@
   display: block;
 }
 
+.auth-copy .eyebrow {
+  display: inline-flex;
+}
+
+.auth-copy .page-title {
+  font-size: 46rpx;
+  text-shadow: 0 0 32rpx rgba(34, 229, 255, 0.3);
+}
+
+/* ——— 表单：深色玻璃卡 ——— */
 .auth-card {
-  margin-top: 42rpx;
+  margin-top: 32rpx;
 }
 
 .field-label {
   display: block;
-  margin: 18rpx 0 12rpx;
-  color: #47536e;
-  font-size: 27rpx;
+  margin: 20rpx 0 12rpx;
+  color: #9db4e8;
+  font-size: 26rpx;
   font-weight: 600;
+  letter-spacing: 2rpx;
 }
 
 .field-input {
-  height: 86rpx;
+  height: 88rpx;
   box-sizing: border-box;
-  padding: 0 24rpx;
-  border: 1rpx solid #d7e0f6;
-  border-radius: 18rpx;
-  color: #1b2640;
-  background: #f9fbff;
+  padding: 0 26rpx;
+  border: 1rpx solid rgba(94, 234, 255, 0.26);
+  border-radius: 999rpx;
+  color: #f2f5ff;
+  background: rgba(255, 255, 255, 0.05);
   font-size: 29rpx;
 }
 
+.field-placeholder {
+  color: #5d688f;
+}
+
+.auth-error {
+  color: #ff8ba3;
+}
+
 .auth-submit {
-  margin-top: 32rpx;
+  margin-top: 34rpx;
 }
 
 .auth-switch {
-  margin-top: 12rpx;
-  color: #596cc4;
+  margin-top: 14rpx;
+  color: #7ceaff;
   background: transparent;
   font-size: 27rpx;
+  letter-spacing: 1rpx;
 }
 
+/* ——— 匿名体验 ——— */
 .anonymous-card {
-  margin-top: 24rpx;
-  padding: 24rpx 28rpx;
-  border-radius: 24rpx;
-  background: rgba(232, 238, 255, 0.7);
+  margin-top: 26rpx;
+  padding: 26rpx 30rpx;
+  border: 1rpx solid rgba(123, 92, 255, 0.3);
+  border-radius: 30rpx;
+  background: rgba(123, 92, 255, 0.08);
 }
 
 .anonymous-title {
   display: block;
-  color: #465baf;
+  color: #cdb4ff;
   font-size: 29rpx;
   font-weight: 650;
+  letter-spacing: 1rpx;
 }
 
 .anonymous-copy {
   display: block;
-  margin: 10rpx 0 18rpx;
-  color: #6c7b9e;
+  margin: 10rpx 0 20rpx;
+  color: #8d99c4;
   font-size: 25rpx;
-  line-height: 1.5;
+  line-height: 1.55;
+}
+
+.anonymous-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 84rpx;
+  border: 1rpx solid rgba(123, 92, 255, 0.5);
+  border-radius: 999rpx;
+  color: #cdb4ff;
+  background: rgba(123, 92, 255, 0.14);
+  font-size: 28rpx;
+  font-weight: 600;
+  letter-spacing: 2rpx;
 }

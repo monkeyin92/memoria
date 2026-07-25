@@ -1,20 +1,92 @@
+<template name="openEyes">
+  <view class="eye eye-l">
+    <view class="iris"></view>
+    <view class="eye-glow"></view>
+    <view class="shine shine-main"></view>
+    <view class="shine shine-sub"></view>
+  </view>
+  <view class="eye eye-r">
+    <view class="iris"></view>
+    <view class="eye-glow"></view>
+    <view class="shine shine-main"></view>
+    <view class="shine shine-sub"></view>
+  </view>
+</template>
+
+<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.webp" mode="widthFix" /></view>
+
 <view class="page-shell home-page">
   <view class="home-header">
-    <text class="eyebrow">{{greeting}}，{{profile.display_name || '新朋友'}}</text>
-    <text class="page-title">慢慢说，我会认真听。</text>
-    <text class="page-subtitle">{{companion.name}} · {{companion.tagline}}</text>
+    <text class="hero-greeting">{{greeting}}，{{profile.display_name || '新朋友'}}</text>
+    <text class="hero-title">慢慢说，<text class="hero-title-accent">我会认真听。</text></text>
+    <view class="companion-chip">
+      <image wx:if="{{companion.id === 'starlight'}}" class="companion-chip-img" src="/assets/companions/alpha/starlight.webp" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'taoxi'}}" class="companion-chip-img" src="/assets/companions/alpha/taoxi.webp" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'mianmian'}}" class="companion-chip-img" src="/assets/companions/alpha/mianmian.webp" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'axu'}}" class="companion-chip-img" src="/assets/companions/alpha/axu.webp" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'xuanmo'}}" class="companion-chip-img" src="/assets/companions/alpha/xuanmo.webp" mode="aspectFit" />
+      <text class="companion-chip-text">{{companion.name}} · {{companion.tagline}}</text>
+    </view>
   </view>
 
-  <view class="mascot-card card">
-    <view class="status-pill status-{{status}}">{{statusLabel}}</view>
-    <image class="mascot-image" src="/assets/mascot-v2-neutral.webp" mode="aspectFit" />
+  <view class="stage-wrap mascot-{{status}}">
+    <view class="stage-halo"></view>
+    <view class="stage-ring"></view>
+    <view class="stage-ground"></view>
+    <text class="spark spark-a">✦</text>
+    <text class="spark spark-b">✧</text>
+    <text class="spark spark-c">✦</text>
+
+    <view class="mascot-body-shell">
+      <image wx:if="{{companion.id === 'starlight'}}" class="mascot-body" src="/assets/companions/alpha/starlight.webp" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'taoxi'}}" class="mascot-body" src="/assets/companions/alpha/taoxi.webp" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'mianmian'}}" class="mascot-body" src="/assets/companions/alpha/mianmian.webp" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'axu'}}" class="mascot-body" src="/assets/companions/alpha/axu.webp" mode="aspectFit" />
+      <image wx:if="{{companion.id === 'xuanmo'}}" class="mascot-body" src="/assets/companions/alpha/xuanmo.webp" mode="aspectFit" />
+      <view class="mascot-face tone-{{faceTone}}" style="{{faceStyle}}">
+        <view class="face-expression {{expression === 'neutral' ? 'is-visible' : ''}}">
+          <view class="brow brow-l"></view>
+          <view class="brow brow-r"></view>
+          <template is="openEyes" />
+          <view class="mouth mouth-smile"></view>
+        </view>
+        <view class="face-expression {{expression === 'happy' ? 'is-visible' : ''}}">
+          <view class="brow brow-l"></view>
+          <view class="brow brow-r"></view>
+          <view class="happy-eye happy-eye-l"></view>
+          <view class="happy-eye happy-eye-r"></view>
+          <view class="mouth mouth-open"><view class="tongue"></view></view>
+        </view>
+        <view class="face-expression {{expression === 'curious' ? 'is-visible' : ''}}">
+          <view class="brow brow-l curious-brow-l"></view>
+          <view class="brow brow-r curious-brow-r"></view>
+          <template is="openEyes" />
+          <view class="mouth mouth-o"></view>
+        </view>
+        <view class="face-expression {{expression === 'caring' ? 'is-visible' : ''}}">
+          <view class="brow brow-l caring-brow-l"></view>
+          <view class="brow brow-r caring-brow-r"></view>
+          <template is="openEyes" />
+          <view class="mouth mouth-caring"></view>
+        </view>
+      </view>
+      <view wx:if="{{hasChest}}" class="chest-pulse" style="{{chestStyle}}"></view>
+    </view>
+
+    <view class="status-pill status-{{status}}">
+      <view class="status-dot"></view>
+      <text>{{statusLabel}}</text>
+    </view>
+  </view>
+
+  <view class="control-deck">
     <text class="mascot-caption">{{active ? '语音正在通过安全媒体网关接入既有陪伴服务。' : companion.description}}</text>
     <button
       wx:if="{{!active}}"
       class="primary-button start-button"
       loading="{{connecting}}"
       bindtap="startVoice"
-    >开始语音陪伴</button>
+    ><text class="start-button-spark">✦</text>开始语音陪伴</button>
     <view wx:else class="voice-controls">
       <button class="secondary-button" bindtap="toggleMic">{{micEnabled ? '静音麦克风' : '打开麦克风'}}</button>
       <button class="danger-button" bindtap="stopVoice">结束</button>
@@ -28,7 +100,10 @@
       <text>实时对话</text>
       <text class="section-hint">只显示当前会话的 Agent 权威事件</text>
     </view>
-    <view wx:if="{{!transcript.length}}" class="empty-state">开始后，这里会显示已确认的对话内容。</view>
+    <view wx:if="{{!transcript.length}}" class="empty-state">
+      <text class="empty-spark">✧</text>
+      <text class="empty-copy">开始后，这里会显示已确认的对话内容。</text>
+    </view>
     <view wx:for="{{transcript}}" wx:key="id" class="bubble-row bubble-{{item.speaker}}">
       <view class="bubble">
         <text class="bubble-speaker">{{item.speaker === 'user' ? '你' : companion.name}}</text>

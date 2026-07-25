@@ -11,14 +11,47 @@ const defaultProfile = {
   companion_id: defaultCompanionId,
 };
 
+const DELETE_CONFIRMATION_TEXT = "永久删除我的全部数据";
+
+function formatDate(date) {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function computeStats(items) {
+  const days = (items || []).map((item) => ({
+    date: item.day || item.date || "",
+    count: item.message_count || 0,
+  }));
+  const totalDays = days.length;
+  const moments = days.reduce((sum, item) => sum + item.count, 0);
+  const dates = new Set(days.map((item) => item.date));
+  const cursor = new Date();
+  if (!dates.has(formatDate(cursor))) cursor.setDate(cursor.getDate() - 1);
+  let streak = 0;
+  while (dates.has(formatDate(cursor))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return { totalDays, moments, streak };
+}
+
 Page({
   data: {
     identity: null,
     profile: defaultProfile,
     companions,
+    stats: { totalDays: 0, moments: 0, streak: 0 },
     loading: false,
     saving: false,
     error: "",
+    showDelete: false,
+    deletePassword: "",
+    deleteConfirmation: "",
+    deleting: false,
+    deleteError: "",
+    deleteConfirmText: DELETE_CONFIRMATION_TEXT,
   },
 
   onShow() {
@@ -27,6 +60,7 @@ Page({
       return;
     }
     this.loadProfile();
+    this.loadStats();
   },
 
   async loadProfile() {
@@ -40,6 +74,17 @@ Page({
       this.setData({ error: error?.message || "个人资料无法加载。" });
     } finally {
       this.setData({ loading: false });
+    }
+  },
+
+  async loadStats() {
+    const identity = api.currentIdentity();
+    if (!identity) return;
+    try {
+      const result = await api.getMemoryDays(identity.user_id, 30);
+      this.setData({ stats: computeStats(result.items) });
+    } catch {
+      // 统计只作展示，失败时保持默认值，不打断页面。
     }
   },
 
@@ -85,8 +130,87 @@ Page({
     wx.navigateTo({ url: "/pages/privacy/index" });
   },
 
-  logout() {
+  async _finishLogout() {
     api.logoutLocal();
     wx.reLaunch({ url: "/pages/auth/index?mode=login" });
+  },
+
+  async logout() {
+    try {
+      await api.logoutCurrentDevice();
+    } catch {
+      // 服务端登出失败时仍清理本地会话，保证可以重新登录。
+    }
+    await this._finishLogout();
+  },
+
+  logoutAll() {
+    wx.showModal({
+      title: "退出所有设备",
+      content: "确定要结束所有设备上的登录吗？其他设备需要重新登录。",
+      confirmText: "全部退出",
+      confirmColor: "#ff6b8a",
+      success: async (result) => {
+        if (!result.confirm) return;
+        try {
+          await api.logoutAllDevices();
+        } catch {
+          // 同上，失败也继续清理本地会话。
+        }
+        await this._finishLogout();
+      },
+    });
+  },
+
+  openDeleteModal() {
+    this.setData({
+      showDelete: true,
+      deletePassword: "",
+      deleteConfirmation: "",
+      deleteError: "",
+    });
+  },
+
+  closeDeleteModal() {
+    if (this.data.deleting) return;
+    this.setData({ showDelete: false });
+  },
+
+  noop() {},
+
+  onDeletePassword(event) {
+    this.setData({ deletePassword: event.detail.value });
+  },
+
+  onDeleteConfirmation(event) {
+    this.setData({ deleteConfirmation: event.detail.value });
+  },
+
+  async confirmDelete() {
+    const { deletePassword, deleteConfirmation, deleting } = this.data;
+    if (deleting) return;
+    if (!deletePassword) {
+      this.setData({ deleteError: "请输入账号密码。" });
+      return;
+    }
+    if (deleteConfirmation !== DELETE_CONFIRMATION_TEXT) {
+      this.setData({ deleteError: `请完整输入「${DELETE_CONFIRMATION_TEXT}」。` });
+      return;
+    }
+    this.setData({ deleting: true, deleteError: "" });
+    try {
+      await api.requestAccountDeletion({
+        password: deletePassword,
+        confirmation: deleteConfirmation,
+      });
+      this.setData({ showDelete: false, deleting: false });
+      wx.showToast({ title: "注销申请已提交", icon: "success" });
+      await this._finishLogout();
+    } catch (error) {
+      this.setData({
+        deleting: false,
+        deleteError: error?.message || "注销申请失败，请稍后重试。",
+      });
+    }
   },
 });

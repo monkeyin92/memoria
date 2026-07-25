@@ -1,46 +1,489 @@
 .home-page {
-  padding-bottom: 72rpx;
+  padding-bottom: 80rpx;
 }
 
-.mascot-card {
-  overflow: hidden;
-  text-align: center;
+.home-header {
+  padding: 12rpx 4rpx 0;
 }
 
-.status-pill {
+.hero-greeting {
+  display: block;
+  color: #8d99c4;
+  font-size: 26rpx;
+  letter-spacing: 1rpx;
+}
+
+.hero-title {
+  display: block;
+  margin-top: 12rpx;
+  color: #f2f5ff;
+  font-size: 54rpx;
+  font-weight: 800;
+  line-height: 1.24;
+  letter-spacing: 1rpx;
+}
+
+.hero-title-accent {
+  background: linear-gradient(120deg, #22e5ff 0%, #7b5cff 55%, #ff4ddb 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.companion-chip {
   display: inline-flex;
-  padding: 9rpx 20rpx;
-  border-radius: 28rpx;
-  color: #55637f;
-  background: #edf1fc;
+  align-items: center;
+  margin-top: 22rpx;
+  padding: 8rpx 26rpx 8rpx 12rpx;
+  border: 1rpx solid rgba(94, 234, 255, 0.28);
+  border-radius: 999rpx;
+  background: rgba(16, 23, 52, 0.66);
+  box-shadow: 0 0 24rpx rgba(34, 229, 255, 0.12);
+}
+
+.companion-chip-img {
+  width: 52rpx;
+  height: 52rpx;
+}
+
+.companion-chip-text {
+  margin-left: 14rpx;
+  color: #9db4e8;
   font-size: 24rpx;
+  font-weight: 600;
+  letter-spacing: 1rpx;
+}
+
+/* ——— 吉祥物舞台：霓虹光环 + 机身与背景相融 ——— */
+.stage-wrap {
+  position: relative;
+  margin-top: 20rpx;
+  height: 620rpx;
+}
+
+.stage-halo {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 560rpx;
+  height: 560rpx;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(34, 229, 255, 0.16) 0%, rgba(123, 92, 255, 0.12) 44%, rgba(123, 92, 255, 0) 70%);
+  transform: translate(-50%, -50%);
+  animation: halo-breathe 4.2s ease-in-out infinite;
+}
+
+.stage-ring {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 500rpx;
+  height: 500rpx;
+  box-sizing: border-box;
+  border: 2rpx dashed rgba(94, 234, 255, 0.3);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  animation: ring-spin 26s linear infinite;
+}
+
+.stage-ground {
+  position: absolute;
+  left: 50%;
+  bottom: 64rpx;
+  width: 340rpx;
+  height: 72rpx;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(34, 229, 255, 0.32) 0%, rgba(123, 92, 255, 0.16) 52%, rgba(123, 92, 255, 0) 76%);
+  transform: translateX(-50%);
+  animation: ground-pulse 3.4s ease-in-out infinite;
+}
+
+.spark {
+  position: absolute;
+  color: rgba(140, 240, 255, 0.85);
+  text-shadow: 0 0 14rpx rgba(34, 229, 255, 0.8);
+  animation: spark-float 3.6s ease-in-out infinite;
+}
+
+.spark-a {
+  left: 96rpx;
+  top: 96rpx;
+  font-size: 34rpx;
+}
+
+.spark-b {
+  right: 110rpx;
+  top: 150rpx;
+  color: rgba(255, 150, 235, 0.8);
+  font-size: 28rpx;
+  text-shadow: 0 0 14rpx rgba(255, 77, 219, 0.75);
+  animation-delay: 0.9s;
+}
+
+.spark-c {
+  right: 150rpx;
+  bottom: 170rpx;
+  font-size: 24rpx;
+  animation-delay: 1.8s;
+}
+
+.mascot-body-shell {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 470rpx;
+  height: 470rpx;
+  transform: translate(-50%, -50%);
+  transform-origin: 50% 78%;
+  animation: mascot-breathe 4.8s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+}
+
+.mascot-body {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 状态全身动效（与 H5 keyframes 对齐） */
+.mascot-listening .mascot-body-shell,
+.mascot-idle .mascot-body-shell {
+  animation-name: mascot-listen;
+  animation-duration: 3.2s;
+}
+
+.mascot-speaking .mascot-body-shell {
+  animation-name: mascot-speak;
+  animation-duration: 1.65s;
+}
+
+.mascot-thinking .mascot-body-shell {
+  animation-name: mascot-think;
+  animation-duration: 3.6s;
+}
+
+.mascot-connecting .mascot-body-shell,
+.mascot-reconnecting .mascot-body-shell {
+  animation: none;
+}
+
+/* ——— 表情骨架（CSS 复刻 H5 内联 SVG，viewBox 240×140 → 脸屏百分比） ——— */
+.mascot-face {
+  position: absolute;
+  pointer-events: none;
+}
+
+.mascot-face.tone-dark {
+  filter: drop-shadow(0 0 6rpx rgba(140, 230, 255, 0.45));
+}
+
+.face-expression {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  opacity: 0;
+  transform: translateY(2rpx) scale(0.985);
+  transition: opacity 0.18s ease-in, transform 0.18s ease-in;
+}
+
+.face-expression.is-visible {
+  opacity: 1;
+  transform: none;
+  transition: opacity 0.24s ease-out, transform 0.24s ease-out;
+}
+
+/* 睁眼：眼眶 = ink 椭圆，内部眼球渐变 + 辉光 + 双高光 */
+.eye {
+  position: absolute;
+  top: 24.3%;
+  width: 18.33%;
+  height: 41.43%;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--face-ink);
+  animation: mascot-blink 5.6s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.eye-l {
+  left: 20.84%;
+}
+
+.eye-r {
+  left: 60.83%;
+}
+
+.iris {
+  position: absolute;
+  left: 6.8%;
+  top: 3.5%;
+  width: 86.4%;
+  height: 89.7%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--eye-top) 0%, var(--eye-top) 52%, var(--eye-bottom) 100%);
+}
+
+.eye-glow {
+  position: absolute;
+  left: 22.7%;
+  top: 69%;
+  width: 54.5%;
+  height: 17.2%;
+  border-radius: 50%;
+  background: var(--eye-glow);
+}
+
+.shine {
+  position: absolute;
+  border-radius: 50%;
+  background: #fffaf0;
+}
+
+.shine-main {
+  left: 22.7%;
+  top: 22.4%;
+  width: 22.7%;
+  height: 17.2%;
+}
+
+.shine-sub {
+  left: 60.5%;
+  top: 47.6%;
+  width: 10.9%;
+  height: 8.3%;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+/* 笑眼（happy）：只露下弧的圆环 */
+.happy-eye {
+  position: absolute;
+  top: 33.6%;
+  width: 17.5%;
+  height: 15.7%;
+  box-sizing: border-box;
+  border: 5rpx solid transparent;
+  border-bottom-color: var(--face-ink);
+  border-radius: 50%;
+}
+
+.happy-eye-l {
+  left: 21.25%;
+}
+
+.happy-eye-r {
+  left: 61.25%;
+}
+
+/* 眉毛：圆角棒，按表情旋转 */
+.brow {
+  position: absolute;
+  top: 15.7%;
+  width: 15.5%;
+  height: 5rpx;
+  min-height: 4rpx;
+  border-radius: 999rpx;
+  background: var(--face-ink);
+  opacity: 0.85;
+}
+
+.brow-l {
+  left: 22.3%;
+  transform: rotate(-6deg);
+}
+
+.brow-r {
+  left: 62.2%;
+  transform: rotate(6deg);
+}
+
+.curious-brow-l {
+  top: 12.9%;
+  transform: rotate(-13deg);
+}
+
+.curious-brow-r {
+  top: 18.2%;
+  transform: rotate(3deg);
+}
+
+.caring-brow-l {
+  top: 18%;
+  transform: rotate(17deg);
+}
+
+.caring-brow-r {
+  top: 18%;
+  transform: rotate(-17deg);
+}
+
+/* 嘴 */
+.mouth {
+  position: absolute;
+}
+
+.mouth-smile {
+  left: 45%;
+  top: 72.5%;
+  width: 10%;
+  height: 7%;
+  box-sizing: border-box;
+  border-bottom: 5rpx solid var(--face-ink);
+  border-radius: 0 0 999rpx 999rpx;
+}
+
+.mouth-open {
+  left: 42.5%;
+  top: 66.4%;
+  width: 15%;
+  height: 20.7%;
+  overflow: hidden;
+  border-radius: 48%;
+  background: var(--face-ink);
+}
+
+.tongue {
+  position: absolute;
+  left: 17%;
+  bottom: 4%;
+  width: 66%;
+  height: 36%;
+  border-radius: 50% 50% 46% 46%;
+  background: #f18d86;
+}
+
+.mouth-o {
+  left: 47.9%;
+  top: 72.9%;
+  width: 4.2%;
+  height: 10%;
+  border-radius: 50%;
+  background: var(--face-ink);
+}
+
+.mouth-caring {
+  left: 45%;
+  top: 68.5%;
+  width: 10%;
+  height: 7%;
+  box-sizing: border-box;
+  border-top: 5rpx solid var(--face-ink);
+  border-radius: 999rpx 999rpx 0 0;
+}
+
+/* 说话时嘴形缩放 */
+.mascot-speaking .face-expression.is-visible .mouth {
+  animation: mascot-talk 340ms ease-in-out infinite alternate;
+  transform-origin: center 30%;
+}
+
+/* ——— 胸灯（星澜 / 玄墨） ——— */
+.chest-pulse {
+  position: absolute;
+  left: 50%;
+  width: 48rpx;
+  height: 48rpx;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 19rpx 6rpx rgba(80, 181, 143, 0.2);
+}
+
+.mascot-listening .chest-pulse,
+.mascot-idle .chest-pulse {
+  box-shadow: 0 0 19rpx 6rpx rgba(80, 181, 143, 0.2);
+  animation: chest-listen 2.4s ease-in-out infinite;
+}
+
+.mascot-thinking .chest-pulse,
+.mascot-connecting .chest-pulse,
+.mascot-reconnecting .chest-pulse {
+  box-shadow: 0 0 20rpx 7rpx rgba(135, 111, 205, 0.22);
+  animation: chest-think 1.45s ease-in-out infinite;
+}
+
+.mascot-speaking .chest-pulse {
+  box-shadow: 0 0 22rpx 8rpx rgba(76, 143, 235, 0.26);
+  animation: chest-speak 720ms ease-in-out infinite alternate;
+}
+
+/* ——— 状态胶囊 ——— */
+.status-pill {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 10rpx 30rpx;
+  border: 1rpx solid rgba(94, 234, 255, 0.24);
+  border-radius: 999rpx;
+  color: #9db4e8;
+  background: rgba(16, 23, 52, 0.72);
+  box-shadow: 0 0 24rpx rgba(34, 229, 255, 0.1);
+  font-size: 24rpx;
+  font-weight: 600;
+  letter-spacing: 2rpx;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 12rpx;
+  height: 12rpx;
+  margin-right: 12rpx;
+  border-radius: 50%;
+  background: #5d688f;
 }
 
 .status-listening {
-  color: #3a7590;
-  background: #e1f7fa;
+  color: #7ceaff;
+  border-color: rgba(94, 234, 255, 0.45);
+  box-shadow: 0 0 28rpx rgba(34, 229, 255, 0.22);
+}
+
+.status-listening .status-dot {
+  background: #22e5ff;
+  box-shadow: 0 0 12rpx rgba(34, 229, 255, 0.9);
+  animation: status-pulse 1.6s ease-in-out infinite;
 }
 
 .status-speaking {
-  color: #6a4fab;
-  background: #eee7ff;
+  color: #f0a6ff;
+  border-color: rgba(255, 77, 219, 0.4);
+  box-shadow: 0 0 28rpx rgba(255, 77, 219, 0.2);
+}
+
+.status-speaking .status-dot {
+  background: #ff4ddb;
+  box-shadow: 0 0 12rpx rgba(255, 77, 219, 0.9);
+  animation: status-pulse 1.2s ease-in-out infinite;
+}
+
+.status-connecting .status-dot,
+.status-thinking .status-dot {
+  background: #a08cff;
+  box-shadow: 0 0 12rpx rgba(123, 92, 255, 0.9);
+  animation: status-pulse 1.2s ease-in-out infinite;
 }
 
 .status-reconnecting {
-  color: #a06b2e;
-  background: #fff3dc;
+  color: #ffcf8a;
+  border-color: rgba(255, 190, 90, 0.4);
 }
 
-.mascot-image {
-  display: block;
-  width: 310rpx;
-  height: 310rpx;
-  margin: 8rpx auto -12rpx;
+.status-reconnecting .status-dot {
+  background: #ffbe5a;
+  box-shadow: 0 0 12rpx rgba(255, 190, 90, 0.9);
+}
+
+/* ——— 控制区 ——— */
+.control-deck {
+  margin-top: 8rpx;
+  text-align: center;
 }
 
 .mascot-caption {
   display: block;
-  color: #6c7894;
+  color: #8d99c4;
   font-size: 26rpx;
   line-height: 1.6;
 }
@@ -49,9 +492,14 @@
   margin-top: 26rpx;
 }
 
+.start-button-spark {
+  margin-right: 12rpx;
+  font-size: 26rpx;
+}
+
 .voice-controls {
   display: flex;
-  gap: 14rpx;
+  gap: 16rpx;
   margin-top: 26rpx;
 }
 
@@ -60,9 +508,10 @@
 }
 
 .retry-button {
-  margin-top: 16rpx;
+  margin-top: 18rpx;
 }
 
+/* ——— 实时对话 ——— */
 .conversation-card {
   min-height: 280rpx;
 }
@@ -71,14 +520,15 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  color: #28334e;
+  color: #e6ecff;
   font-size: 31rpx;
   font-weight: 700;
+  letter-spacing: 1rpx;
 }
 
 .section-hint {
   max-width: 350rpx;
-  color: #8c98b0;
+  color: #5d688f;
   font-size: 20rpx;
   font-weight: 400;
   text-align: right;
@@ -86,7 +536,7 @@
 
 .bubble-row {
   display: flex;
-  margin-top: 20rpx;
+  margin-top: 24rpx;
 }
 
 .bubble-user {
@@ -94,15 +544,22 @@
 }
 
 .bubble {
-  max-width: 82%;
-  padding: 18rpx 20rpx;
-  border-radius: 20rpx;
-  background: #f1f4fc;
+  max-width: 80%;
+  padding: 20rpx 24rpx;
+  border: 1rpx solid rgba(94, 234, 255, 0.16);
+  border-radius: 28rpx;
+  border-top-left-radius: 8rpx;
+  background: rgba(22, 31, 66, 0.85);
+  box-shadow: 0 6rpx 20rpx rgba(0, 0, 0, 0.28);
 }
 
 .bubble-user .bubble {
+  border: none;
+  border-radius: 28rpx;
+  border-top-right-radius: 8rpx;
   color: #fff;
-  background: linear-gradient(135deg, #637bdc, #8c73da);
+  background: linear-gradient(135deg, #19b8d8 0%, #7b5cff 55%, #c44de0 100%);
+  box-shadow: 0 10rpx 28rpx rgba(104, 92, 255, 0.36);
 }
 
 .bubble-speaker,
@@ -112,8 +569,9 @@
 
 .bubble-speaker {
   margin-bottom: 6rpx;
-  color: #7f8ca8;
+  color: #6b7699;
   font-size: 21rpx;
+  letter-spacing: 1rpx;
 }
 
 .bubble-user .bubble-speaker {
@@ -121,6 +579,161 @@
 }
 
 .bubble-text {
+  color: #dfe7ff;
   font-size: 28rpx;
   line-height: 1.55;
+}
+
+.bubble-user .bubble-text {
+  color: #fff;
+}
+
+/* ——— keyframes（与 H5 对齐） ——— */
+@keyframes mascot-breathe {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) translateY(0) scale(1);
+  }
+  50% {
+    transform: translate(-50%, -50%) translateY(-6rpx) scale(1.006);
+  }
+}
+
+@keyframes mascot-listen {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) translateY(0) scale(1);
+  }
+  50% {
+    transform: translate(-50%, -50%) translateY(-8rpx) scale(1.008);
+  }
+}
+
+@keyframes mascot-speak {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) translateY(0) scale(1);
+  }
+  45% {
+    transform: translate(-50%, -50%) translateY(-4rpx) scale(1.005);
+  }
+}
+
+@keyframes mascot-think {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(-50%, -50%) translate(4rpx, -6rpx) scale(1.004);
+  }
+}
+
+@keyframes mascot-blink {
+  0%,
+  43%,
+  47%,
+  100% {
+    transform: scaleY(1);
+  }
+  45% {
+    transform: scaleY(0.08);
+  }
+}
+
+@keyframes mascot-talk {
+  from {
+    transform: scaleY(0.7);
+  }
+  to {
+    transform: scaleY(1.12);
+  }
+}
+
+@keyframes chest-listen {
+  0%,
+  100% {
+    opacity: 0.42;
+  }
+  50% {
+    opacity: 0.74;
+  }
+}
+
+@keyframes chest-think {
+  0%,
+  100% {
+    opacity: 0.34;
+  }
+  50% {
+    opacity: 0.78;
+  }
+}
+
+@keyframes chest-speak {
+  from {
+    opacity: 0.46;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+  to {
+    opacity: 0.86;
+    transform: translate(-50%, -50%) scale(1.08);
+  }
+}
+
+@keyframes halo-breathe {
+  0%,
+  100% {
+    opacity: 0.85;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.06);
+  }
+}
+
+@keyframes ring-spin {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@keyframes ground-pulse {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: translateX(-50%) scaleX(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(-50%) scaleX(1.08);
+  }
+}
+
+@keyframes spark-float {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-14rpx);
+  }
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.75);
+  }
 }

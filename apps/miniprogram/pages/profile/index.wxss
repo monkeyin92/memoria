@@ -1,18 +1,156 @@
+/* ——— 资料 Hero ——— */
+.profile-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-top: 24rpx;
+  padding: 32rpx;
+  overflow: hidden;
+  border: 1rpx solid rgba(94, 234, 255, 0.22);
+  border-radius: 40rpx;
+  background: linear-gradient(135deg, rgba(20, 30, 66, 0.9) 0%, rgba(36, 24, 70, 0.88) 100%);
+  box-shadow:
+    0 20rpx 52rpx rgba(0, 0, 0, 0.42),
+    0 0 40rpx rgba(34, 229, 255, 0.1);
+}
+
+.hero-glow {
+  position: absolute;
+  top: -140rpx;
+  right: -100rpx;
+  width: 340rpx;
+  height: 340rpx;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 77, 219, 0.18) 0%, rgba(255, 77, 219, 0) 68%);
+}
+
+.hero-avatar-ring {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 156rpx;
+  height: 156rpx;
+  border: 2rpx solid rgba(94, 234, 255, 0.5);
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, rgba(34, 229, 255, 0.16), rgba(16, 23, 52, 0.9));
+  box-shadow:
+    0 0 32rpx rgba(34, 229, 255, 0.3),
+    inset 0 0 24rpx rgba(34, 229, 255, 0.14);
+}
+
+.hero-avatar {
+  width: 128rpx;
+  height: 128rpx;
+}
+
+.hero-copy {
+  flex: 1;
+  margin-left: 26rpx;
+}
+
+.hero-name,
+.hero-bio,
+.hero-account {
+  display: block;
+}
+
+.hero-name {
+  color: #f2f5ff;
+  font-size: 40rpx;
+  font-weight: 800;
+  letter-spacing: 1rpx;
+}
+
+.hero-bio {
+  margin-top: 8rpx;
+  color: #9aa6cf;
+  font-size: 25rpx;
+  line-height: 1.5;
+}
+
+.hero-account {
+  margin-top: 12rpx;
+  color: #6b7699;
+  font-size: 21rpx;
+  letter-spacing: 1rpx;
+}
+
+/* ——— 陪伴统计 ——— */
+.stats-grid {
+  display: flex;
+  gap: 18rpx;
+  margin-top: 24rpx;
+}
+
+.stat-cell {
+  flex: 1;
+  padding: 24rpx 12rpx;
+  border: 1rpx solid rgba(94, 234, 255, 0.14);
+  border-radius: 28rpx;
+  background: rgba(16, 23, 52, 0.72);
+  box-shadow: 0 12rpx 32rpx rgba(0, 0, 0, 0.3);
+  text-align: center;
+}
+
+.stat-value {
+  display: block;
+  background: linear-gradient(120deg, #22e5ff, #a06bff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-size: 44rpx;
+  font-weight: 800;
+}
+
+.stat-label {
+  display: block;
+  margin-top: 6rpx;
+  color: #8d99c4;
+  font-size: 22rpx;
+  letter-spacing: 2rpx;
+}
+
+/* ——— 表单 ——— */
+.field-label {
+  display: block;
+  margin: 20rpx 0 12rpx;
+  color: #9db4e8;
+  font-size: 26rpx;
+  font-weight: 600;
+  letter-spacing: 2rpx;
+}
+
+.field-input {
+  height: 88rpx;
+  box-sizing: border-box;
+  padding: 0 26rpx;
+  border: 1rpx solid rgba(94, 234, 255, 0.22);
+  border-radius: 999rpx;
+  color: #f2f5ff;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 29rpx;
+}
+
+.field-placeholder {
+  color: #5d688f;
+}
+
 .bio-input {
   width: 100%;
   min-height: 150rpx;
   box-sizing: border-box;
-  padding: 20rpx 24rpx;
-  border: 1rpx solid #d7e0f6;
-  border-radius: 18rpx;
-  background: #f9fbff;
-  color: #1b2640;
+  padding: 22rpx 26rpx;
+  border: 1rpx solid rgba(94, 234, 255, 0.22);
+  border-radius: 26rpx;
+  background: rgba(255, 255, 255, 0.05);
+  color: #f2f5ff;
   font-size: 29rpx;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .save-button {
-  margin-top: 26rpx;
+  margin-top: 28rpx;
 }
 
 .settings-title,
@@ -22,32 +160,39 @@
 }
 
 .settings-title {
-  color: #2b3652;
+  color: #e6ecff;
   font-size: 31rpx;
   font-weight: 700;
+  letter-spacing: 1rpx;
 }
 
+/* ——— 伙伴选择 ——— */
 .companion-row {
   display: flex;
   align-items: center;
-  min-height: 112rpx;
-  margin-top: 14rpx;
-  padding: 10rpx 12rpx;
-  border-radius: 20rpx;
+  min-height: 128rpx;
+  margin-top: 16rpx;
+  padding: 12rpx 18rpx;
+  border: 1rpx solid transparent;
+  border-radius: 26rpx;
+  transition: border-color 0.2s ease, background 0.2s ease;
 }
 
 .companion-selected {
-  background: #eff3ff;
+  border-color: rgba(94, 234, 255, 0.55);
+  background: linear-gradient(120deg, rgba(34, 229, 255, 0.1), rgba(123, 92, 255, 0.12));
+  box-shadow: 0 0 28rpx rgba(34, 229, 255, 0.14);
 }
 
 .companion-image {
+  flex: none;
   width: 96rpx;
   height: 96rpx;
 }
 
 .companion-copy {
   flex: 1;
-  margin-left: 14rpx;
+  margin-left: 20rpx;
 }
 
 .companion-name,
@@ -56,42 +201,65 @@
 }
 
 .companion-name {
-  color: #25304b;
+  color: #e6ecff;
   font-size: 29rpx;
-  font-weight: 650;
+  font-weight: 700;
+  letter-spacing: 1rpx;
 }
 
 .companion-tagline,
 .setting-desc {
   margin-top: 4rpx;
-  color: #8390a9;
+  color: #6b7699;
   font-size: 23rpx;
-  line-height: 1.4;
+  line-height: 1.45;
 }
 
 .companion-check {
-  color: #566fd2;
-  font-size: 22rpx;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40rpx;
+  height: 40rpx;
+  margin-right: 6rpx;
+  border: 2rpx solid rgba(94, 234, 255, 0.3);
+  border-radius: 50%;
+  color: #fff;
+  font-size: 24rpx;
 }
 
+.companion-check-on {
+  border: none;
+  background: linear-gradient(135deg, #19b8d8, #7b5cff);
+  box-shadow: 0 0 16rpx rgba(34, 229, 255, 0.55);
+}
+
+/* ——— 偏好设置 ——— */
 .setting-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 22rpx 0;
-  border-bottom: 1rpx solid #edf0f8;
+  padding: 24rpx 0;
+  border-bottom: 1rpx solid rgba(94, 234, 255, 0.08);
 }
 
 .setting-row:last-child {
   border-bottom: none;
 }
 
-.setting-name {
-  color: #3c4865;
-  font-size: 28rpx;
-  font-weight: 600;
+.setting-disabled {
+  opacity: 0.55;
 }
 
+.setting-name {
+  color: #c4cfef;
+  font-size: 28rpx;
+  font-weight: 600;
+  letter-spacing: 1rpx;
+}
+
+/* ——— 导航卡 ——— */
 .nav-card {
   display: flex;
   align-items: center;
@@ -99,11 +267,125 @@
 }
 
 .nav-arrow {
-  color: #8493c1;
-  font-size: 52rpx;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 56rpx;
+  height: 56rpx;
+  margin-left: 20rpx;
+  border: 1rpx solid rgba(94, 234, 255, 0.3);
+  border-radius: 50%;
+  background: rgba(34, 229, 255, 0.08);
+}
+
+.nav-arrow-icon {
+  margin-top: -6rpx;
+  color: #7ceaff;
+  font-size: 40rpx;
   font-weight: 300;
 }
 
-.logout-button {
-  margin-top: 24rpx;
+/* ——— 账户与设备 ——— */
+.account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx 0;
+  border-bottom: 1rpx solid rgba(94, 234, 255, 0.08);
+}
+
+.account-row:last-child {
+  border-bottom: none;
+}
+
+.account-action {
+  flex: none;
+  margin-left: 20rpx;
+  padding: 10rpx 28rpx;
+  border: 1rpx solid rgba(94, 234, 255, 0.35);
+  border-radius: 999rpx;
+  color: #7ceaff;
+  background: rgba(34, 229, 255, 0.08);
+  font-size: 24rpx;
+}
+
+.account-action-danger {
+  border-color: rgba(255, 110, 140, 0.42);
+  color: #ff8ba3;
+  background: rgba(255, 77, 109, 0.1);
+}
+
+/* ——— 注销入口 ——— */
+.delete-entry {
+  margin-top: 36rpx;
+  text-align: center;
+}
+
+.delete-entry-text {
+  color: #ff8ba3;
+  font-size: 26rpx;
+  letter-spacing: 1rpx;
+}
+
+.delete-entry-desc {
+  display: block;
+  margin-top: 6rpx;
+  color: #5d688f;
+  font-size: 21rpx;
+}
+
+/* ——— 注销弹窗 ——— */
+.modal-mask {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 99;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 7, 18, 0.72);
+  backdrop-filter: blur(8rpx);
+}
+
+.modal-card {
+  width: 600rpx;
+  box-sizing: border-box;
+  padding: 40rpx 36rpx;
+  border: 1rpx solid rgba(255, 110, 140, 0.3);
+  border-radius: 36rpx;
+  background: rgba(16, 23, 52, 0.96);
+  box-shadow: 0 24rpx 64rpx rgba(0, 0, 0, 0.5);
+}
+
+.modal-title {
+  display: block;
+  color: #ff8ba3;
+  font-size: 34rpx;
+  font-weight: 800;
+  letter-spacing: 1rpx;
+}
+
+.modal-desc {
+  display: block;
+  margin-top: 14rpx;
+  color: #9aa6cf;
+  font-size: 25rpx;
+  line-height: 1.65;
+}
+
+.modal-input {
+  margin-top: 22rpx;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 18rpx;
+  margin-top: 30rpx;
+}
+
+.modal-button {
+  flex: 1;
 }

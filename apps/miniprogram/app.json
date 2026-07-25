@@ -8,17 +8,17 @@
     "pages/privacy/index"
   ],
   "window": {
-    "backgroundColor": "#f7f9ff",
-    "backgroundTextStyle": "light",
-    "navigationBarBackgroundColor": "#f7f9ff",
-    "navigationBarTextStyle": "black",
+    "backgroundColor": "#070b1a",
+    "backgroundTextStyle": "dark",
+    "navigationBarBackgroundColor": "#070b1a",
+    "navigationBarTextStyle": "white",
     "navigationBarTitleText": "Memoria"
   },
   "tabBar": {
-    "color": "#7b8496",
-    "selectedColor": "#4b68d7",
-    "backgroundColor": "#ffffff",
-    "borderStyle": "white",
+    "color": "#5d688f",
+    "selectedColor": "#22e5ff",
+    "backgroundColor": "#0b1026",
+    "borderStyle": "black",
     "list": [
       {
         "pagePath": "pages/home/index",
