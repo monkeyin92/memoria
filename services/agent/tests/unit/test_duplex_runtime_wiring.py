@@ -168,7 +168,10 @@ async def test_playback_end_clears_unanchored_echo_before_the_next_vad() -> None
 
 
 @pytest.mark.asyncio
-async def test_trusted_aec_pure_interrupt_can_stop_without_a_vad_start() -> None:
+@pytest.mark.parametrize("transcript", ["等一下", "等下。"])
+async def test_trusted_aec_pure_interrupt_can_stop_without_a_vad_start(
+    transcript: str,
+) -> None:
     interrupted: list[str] = []
     interrupted_event = asyncio.Event()
 
@@ -195,13 +198,54 @@ async def test_trusted_aec_pure_interrupt_can_stop_without_a_vad_start() -> None
 
     session.emit(
         "user_input_transcribed",
-        SimpleNamespace(transcript="等一下", is_final=False),
+        SimpleNamespace(transcript=transcript, is_final=False),
     )
     await asyncio.wait_for(interrupted_event.wait(), timeout=1)
 
     assert interrupted == ["interrupt"]
     assert runtime.input_guard.candidate_decision.value == "accept"
     assert runtime._trusted_unanchored_control_epoch == runtime._speaker_epoch
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_trusted_aec_wait_alias_interim_and_final_interrupt_only_once() -> None:
+    interrupted: list[str] = []
+    interrupted_event = asyncio.Event()
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return _speaker_decision()
+
+    async def interrupt() -> None:
+        interrupted.append("interrupt")
+        interrupted_event.set()
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.set_target_speaker_focus(True)
+    runtime.set_target_speaker_interrupt(interrupt)
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("我正在讲一个很长的故事。")
+    runtime.feed_speaker_pcm(b"\x00\x20" * 16_000)
+    session = _SessionEmitter()
+    runtime.attach_session_events(session)
+
+    session.emit(
+        "user_input_transcribed",
+        SimpleNamespace(transcript="等下", is_final=False),
+    )
+    await asyncio.wait_for(interrupted_event.wait(), timeout=1)
+    session.emit(
+        "user_input_transcribed",
+        SimpleNamespace(transcript="等下。", is_final=True),
+    )
+    await asyncio.sleep(0)
+
+    assert interrupted == ["interrupt"]
+    assert runtime.accept_user_turn("等下。") == (False, "interrupt_command_only")
     await runtime.close()
 
 
@@ -266,7 +310,10 @@ async def test_trusted_aec_voiced_anchor_expires_before_a_late_control() -> None
 
 
 @pytest.mark.asyncio
-async def test_trusted_unanchored_interrupt_reclassifies_the_current_pcm_epoch() -> None:
+@pytest.mark.parametrize("transcript", ["等一下", "等下。"])
+async def test_trusted_unanchored_interrupt_reclassifies_the_current_pcm_epoch(
+    transcript: str,
+) -> None:
     interrupted: list[str] = []
     decisions = iter((_speaker_decision(), _guest_speaker_decision()))
     guest_classified = asyncio.Event()
@@ -302,7 +349,7 @@ async def test_trusted_unanchored_interrupt_reclassifies_the_current_pcm_epoch()
 
     session.emit(
         "user_input_transcribed",
-        SimpleNamespace(transcript="等一下", is_final=False),
+        SimpleNamespace(transcript=transcript, is_final=False),
     )
     await asyncio.wait_for(guest_classified.wait(), timeout=1)
     current_classification = runtime._speaker_classification_task

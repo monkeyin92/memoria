@@ -67,6 +67,15 @@ from services.agent.src.orchestration.utterance_router import (
             "interrupt_command_only",
         ),
         (
+            "等下。",
+            SpeakerGateState.ENROLLED,
+            UtteranceIntent.INTERRUPT_COMMAND,
+            False,
+            True,
+            True,
+            "interrupt_command_only",
+        ),
+        (
             "停一下",
             SpeakerGateState.UNAVAILABLE,
             UtteranceIntent.INTERRUPT_COMMAND,
@@ -104,6 +113,15 @@ from services.agent.src.orchestration.utterance_router import (
             "interrupt_then_chat",
         ),
         (
+            "等下我想问下周三",
+            SpeakerGateState.ENROLLED,
+            UtteranceIntent.CHAT,
+            True,
+            False,
+            False,
+            "chat",
+        ),
+        (
             "不是这个意思",
             None,
             UtteranceIntent.INTERRUPT_THEN_CHAT,
@@ -115,6 +133,24 @@ from services.agent.src.orchestration.utterance_router import (
         # 5) normal chat
         (
             "今天天气怎么样",
+            SpeakerGateState.ENROLLED,
+            UtteranceIntent.CHAT,
+            True,
+            False,
+            False,
+            "chat",
+        ),
+        (
+            "我等下再说",
+            SpeakerGateState.ENROLLED,
+            UtteranceIntent.CHAT,
+            True,
+            False,
+            False,
+            "chat",
+        ),
+        (
+            "等下我",
             SpeakerGateState.ENROLLED,
             UtteranceIntent.CHAT,
             True,

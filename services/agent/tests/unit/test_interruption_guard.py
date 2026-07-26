@@ -31,6 +31,7 @@ def test_interrupt_ack_phrase_by_semantics() -> None:
 
     assert interrupt_ack_phrase("停一下") == "嗯，你说。"
     assert interrupt_ack_phrase("等等") == "嗯，你说。"
+    assert interrupt_ack_phrase("等下。") == "嗯，你说。"
     assert interrupt_ack_phrase("等一下我问你") == "嗯，你说。"
     assert interrupt_ack_phrase("听我说") == "嗯，你说。"
     assert interrupt_ack_phrase("别说了") == "好的。"
@@ -42,8 +43,13 @@ def test_interrupt_ack_phrase_by_semantics() -> None:
     assert is_interrupt_command_only("等等") is True
     assert is_interrupt_command_only("嗯，等等，等等。") is True
     assert is_interrupt_command_only("等一下") is True
+    assert is_interrupt_command_only("等下。") is True
     assert is_interrupt_command_only("别说了") is True
     assert is_interrupt_command_only("等一下我想问下周三") is False
+    assert is_interrupt_command_only("等下我想问下周三") is False
+    assert is_interrupt_command_only("我等下") is False
+    assert is_interrupt_command_only("等下我") is False
+    assert is_interrupt_command_only("我们等下") is False
     assert is_interrupt_command_only("今天天气怎么样") is False
 
 

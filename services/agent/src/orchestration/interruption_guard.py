@@ -87,6 +87,7 @@ _STOP_TALKING_PHRASES = (
 _YIELD_FLOOR_PHRASES = (
     "停一下",
     "等一下",
+    "等下",
     "等等",
     "你听我说",
     "听我说",
@@ -193,6 +194,8 @@ def is_interrupt_command_only(text: str) -> bool:
          「等一下我想问下周三」→ False (has content beyond the command)
     """
     t = normalize_short(text)
+    if t == "等下":
+        return True
     if not t or not is_explicit_interrupt(t):
         return False
     remainder = t
