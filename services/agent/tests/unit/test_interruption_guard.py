@@ -117,3 +117,21 @@ def test_unanchored_playback_transcript_cannot_bypass_echo_guard_as_interrupt() 
 
     assert decision is PlaybackInputDecision.IGNORE
     assert guard.candidate_reason == "unanchored_playback_transcript"
+
+
+def test_wait_alias_cannot_bypass_assistant_echo_guard() -> None:
+    guard = PlaybackInputGuard(enabled=True)
+
+    for text, assistant_text in (
+        ("等下。", "你先等一下，我马上说完。"),
+        ("等 下", "你先等下，我马上说完。"),
+        ("等下", "请等一下。"),
+    ):
+        assert (
+            guard.guarded_reason(
+                text,
+                duration_ms=900,
+                assistant_text=assistant_text,
+            )
+            == "assistant_echo"
+        )

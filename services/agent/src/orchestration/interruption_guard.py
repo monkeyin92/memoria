@@ -249,6 +249,8 @@ def _is_short_non_target(text: str) -> bool:
 def _looks_like_assistant_echo(text: str, assistant_text: str) -> bool:
     content = _content(text)
     spoken = _content(assistant_text)
+    if content == "等下" and ("等下" in spoken or "等一下" in spoken):
+        return True
     if len(content) < 4 or not spoken:
         return False
     if content in spoken:

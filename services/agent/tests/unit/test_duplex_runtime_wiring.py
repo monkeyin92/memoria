@@ -647,6 +647,7 @@ async def test_trusted_interrupt_serializes_stop_with_the_next_playback() -> Non
         (True, "我想问个问题", "我正在讲一个很长的故事。"),
         (True, "等一下，我想问个问题", "我正在讲一个很长的故事。"),
         (True, "等一下", "你先等一下，我马上说完。"),
+        (True, "等下。", "你先等一下，我马上说完。"),
     ],
 )
 def test_unanchored_playback_text_stays_guarded_without_trusted_pure_control(
