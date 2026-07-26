@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
+const innerAudioOptions = [];
 const recorder = {
   startCalls: [],
   stopCalls: 0,
@@ -40,6 +41,7 @@ const recorder = {
 
 global.wx = {
   getRecorderManager: () => recorder,
+  setInnerAudioOption: (options) => innerAudioOptions.push(options),
   createWebAudioContext: () => {
     const gain = { value: 1 };
     return {
@@ -240,7 +242,7 @@ test("assistant audio controls immediately duck and restore Mini Program playbac
     }),
   });
 
-  assert.deepEqual(gains, [0.25, 1]);
+  assert.deepEqual(gains, [0, 1]);
 });
 
 test("PCM player applies gain through one shared WebAudio node", async () => {
@@ -252,4 +254,45 @@ test("PCM player applies gain through one shared WebAudio node", async () => {
 
   assert.equal(player.gain, 0.25);
   assert.equal(player.gainNode.gain.value, 0.25);
+});
+
+test("PCM player routes active voice playback to the receiver and restores speaker output", async () => {
+  innerAudioOptions.length = 0;
+  const player = new PcmJitterPlayer();
+
+  await player.resume();
+  assert.equal(innerAudioOptions.at(-1).speakerOn, false);
+
+  await player.close();
+  assert.equal(innerAudioOptions.at(-1).speakerOn, true);
+});
+
+test("PCM player rebases an underflow instead of scheduling a late frame in the past", () => {
+  let startedAt = null;
+  const player = new PcmJitterPlayer({ sampleRate: 24000, minLeadSeconds: 0.08 });
+  player.context = {
+    state: "running",
+    currentTime: 1,
+    destination: {},
+    createBuffer(_channels, length, sampleRate) {
+      return {
+        duration: length / sampleRate,
+        getChannelData: () => new Float32Array(length),
+      };
+    },
+    createBufferSource() {
+      return {
+        buffer: null,
+        connect() {},
+        start(at) {
+          startedAt = at;
+        },
+      };
+    },
+  };
+  player.nextStartAt = 0.99;
+
+  player.enqueue(new Int16Array([1, 2, 3, 4]).buffer);
+
+  assert.equal(startedAt, 1.08);
 });
