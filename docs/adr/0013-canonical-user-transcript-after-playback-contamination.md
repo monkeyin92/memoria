@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-07-21
+amended_by: 0021-wechat-miniprogram-media-gateway
 ---
 
 # 在播放污染后重建权威用户话轮
@@ -21,6 +22,11 @@ FunASR 的多轮 `input.context` 会提高历史内容的识别偏置。它不�
 
 - 播放期间没有新 VAD/PCM 锚点的转写一律不可信，interim 只等待，final 直接隔离；
   不能仅凭“不是”“我问的是”“停一下”等文本关键词放行。
+- 原生小程序只允许一个窄例外：媒体网关启动时已证明 AEC 可用、运行期健康尚未被
+  单向撤销、最近 900 ms 的 AEC 后 PCM 至少有 160 ms voiced、同一当前播放实例内
+  `UtteranceRouter` 判定为纯控制命令，且未命中助手回声/语言/backchannel 门禁时，
+  可把这段 PCM 作为声学锚点交给 TargetSpeakerFocus。该命令只能停止当前播放，不能进入
+  chat、历史、记忆或权限平面；普通 H5、普通聊天与 interrupt+chat 不走此例外。
 - `DuplexRuntime` 按 VAD speech epoch 累积 `ACCEPT` 的 final，并记录是否出现过被隔离的
   final；endpoint 完成时把 canonical snapshot 冻结进 FIFO。`on_user_turn_completed` 必须在
   任何 `await` 之前消费最老 snapshot，只用该 epoch 的已接受片段重建 canonical text；
@@ -51,7 +57,8 @@ FunASR 的多轮 `input.context` 会提高历史内容的识别偏置。它不�
 - 快速连续话轮即使 completed hook 排队，也按冻结的 FIFO snapshot 隔离；旧控制回调不会
   误清下一 speech epoch。
 - 极端情况下，若真实讲话在播放期完全没有 VAD/PCM 锚点，也会被安全丢弃。实体停止按钮
-  仍可立即停止；语音控制必须先有声学锚点。
+  仍可立即停止；语音控制必须先有声学锚点。小程序的 AEC 后 voiced PCM 是上述窄例外的
+  锚点，但 AEC 运行期失效、健康撤销 ACK 超时或播放 epoch 已变化时仍按无锚点隔离。
 - 运维需同时观察 AEC、VAD/final 时序、`unanchored_playback_transcript` 指标和
   `canonical_user_turn_rebuilt` 日志，不能用关键词补丁掩盖设备回声。
 

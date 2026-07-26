@@ -317,6 +317,7 @@ class Orchestrator:
         cause: str = "adaptive_interruption",
         *,
         stop_playback: Callable[[], Awaitable[str | None]] | None = None,
+        precondition: Callable[[], bool] | None = None,
         create_user_turn: bool = True,
         synchronized_transcript: str | None = None,
         force_generation_bump: bool = False,
@@ -325,6 +326,8 @@ class Orchestrator:
         assert self.state_machine is not None
         assert self.fence_gate is not None
         async with self._state_lock:
+            if precondition is not None and not precondition():
+                return self.fence
             interruptible_states = {
                 ConversationState.THINKING,
                 ConversationState.SPEAKING,

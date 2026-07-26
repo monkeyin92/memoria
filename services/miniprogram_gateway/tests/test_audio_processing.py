@@ -174,6 +174,37 @@ def test_apm_leaves_uplink_unchanged_without_recent_playback() -> None:
     assert processor.process_uplink(microphone) == microphone
 
 
+def test_apm_invalid_frame_revokes_runtime_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeApm:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def set_stream_delay_ms(self, _delay_ms: int) -> None:
+            pass
+
+        def process_reverse_stream(self, _frame: rtc.AudioFrame) -> None:
+            pass
+
+        def process_stream(self, _frame: rtc.AudioFrame) -> None:
+            pass
+
+    monkeypatch.setattr(audio_processing_module.rtc, "AudioProcessingModule", FakeApm)
+    processor = MiniProgramAudioProcessor(
+        enabled=True,
+        downlink_sample_rate=24_000,
+        uplink_sample_rate=16_000,
+        stream_delay_ms=120,
+        active_window_ms=750,
+    )
+    assert processor.aec_ready is True
+
+    processor.observe_downlink(b"\x00\x00")
+
+    assert processor.aec_ready is False
+
+
 def test_apm_reset_forgets_unsent_reverse_audio() -> None:
     now = 100.0
     processor = MiniProgramAudioProcessor(

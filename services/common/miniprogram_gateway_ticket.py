@@ -13,6 +13,10 @@ GATEWAY_TICKET_AUDIENCE: Final = "memoria-miniprogram-media-gateway"
 GATEWAY_TICKET_ISSUER: Final = "memoria-control-api"
 GATEWAY_TICKET_TYPE: Final = "memoria_miniprogram_gateway"
 MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA: Final = "memoria.miniprogram.aec.v1"
+MINIPROGRAM_AEC_HEALTH_TOPIC: Final = "voice-agent.gateway-health"
+MINIPROGRAM_AEC_HEALTH_ACK_TOPIC: Final = "voice-agent.gateway-health.ack"
+MINIPROGRAM_AEC_FAILED: Final = "miniprogram_aec_failed"
+MINIPROGRAM_AEC_FAILED_ACK: Final = "miniprogram_aec_failed_ack"
 
 
 class GatewayTicketError(ValueError):

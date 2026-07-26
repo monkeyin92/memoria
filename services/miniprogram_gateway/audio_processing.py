@@ -127,8 +127,9 @@ class MiniProgramAudioProcessor:
         samples_per_chunk = sample_rate // 100
         bytes_per_chunk = samples_per_chunk * 2
         if not payload or len(payload) % bytes_per_chunk:
+            self._apm = None
             logger.warning(
-                "Mini Program APM received non-10ms PCM; using unprocessed PCM direction=%s bytes=%s",
+                "Mini Program APM received non-10ms PCM; disabling it direction=%s bytes=%s",
                 "downlink" if reverse else "uplink",
                 len(payload),
             )

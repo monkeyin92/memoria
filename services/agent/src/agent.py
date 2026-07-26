@@ -32,7 +32,13 @@ from services.agent.src.response_planner_client import (
 )
 from services.agent.src.voice_profile_client import VoiceProfileClient, VoiceRuntimeProfile
 from services.common.companions import DESIGNED_VOICE_MODEL, companion_definition
-from services.common.miniprogram_gateway_ticket import MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA
+from services.common.miniprogram_gateway_ticket import (
+    MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
+    MINIPROGRAM_AEC_FAILED,
+    MINIPROGRAM_AEC_FAILED_ACK,
+    MINIPROGRAM_AEC_HEALTH_ACK_TOPIC,
+    MINIPROGRAM_AEC_HEALTH_TOPIC,
+)
 
 if TYPE_CHECKING:
     pass
@@ -102,10 +108,14 @@ def apply_miniprogram_session_audio_policy(
     dispatch_metadata: object,
 ) -> bool:
     """Disable LiveKit's warmup only when this job has gateway AEC."""
-    if dispatch_metadata != MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA:
+    if not is_miniprogram_aec_session(dispatch_metadata):
         return False
     session_kwargs["aec_warmup_duration"] = None
     return True
+
+
+def is_miniprogram_aec_session(dispatch_metadata: object) -> bool:
+    return dispatch_metadata == MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA
 
 
 def _chunk_text(chunk: Any) -> str:
@@ -1555,6 +1565,7 @@ async def entrypoint(ctx: Any) -> None:
 
     profile = os.getenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     offline = os.getenv("OFFLINE_MOCK", "false").lower() == "true"
+    miniprogram_aec_session = is_miniprogram_aec_session(dispatch_metadata)
 
     room_name = str(ctx.room.name)
     runtime_session_id = (
@@ -1577,6 +1588,7 @@ async def entrypoint(ctx: Any) -> None:
         session_id=runtime_session_id,
         tts=tts_plugin,
         input_guard_enabled=profile == "cn_self_hosted",
+        trusted_aec_playback_control=miniprogram_aec_session,
         listener_cues_enabled=cues_on,
         use_paralinguistic_tags=False,
         speaker_verifier=speaker_verifier,
@@ -1969,6 +1981,40 @@ async def entrypoint(ctx: Any) -> None:
 
     def _on_control_packet(packet: Any) -> None:
         topic = getattr(packet, "topic", None)
+        if topic == MINIPROGRAM_AEC_HEALTH_TOPIC:
+            if not miniprogram_aec_session or getattr(packet, "participant", None) is None:
+                return
+            try:
+                event = json.loads(bytes(packet.data).decode("utf-8"))
+            except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+                return
+            failure_id = event.get("failure_id") if isinstance(event, dict) else None
+            if (
+                not isinstance(event, dict)
+                or event.get("type") != MINIPROGRAM_AEC_FAILED
+                or event.get("session_id") != runtime.session_id
+                or not isinstance(failure_id, str)
+                or not 1 <= len(failure_id) <= 64
+            ):
+                return
+            runtime.revoke_trusted_aec_playback_control(cause="gateway_apm_failed")
+
+            async def _ack_aec_failure() -> None:
+                await ctx.room.local_participant.publish_data(
+                    json.dumps(
+                        {
+                            "type": MINIPROGRAM_AEC_FAILED_ACK,
+                            "session_id": runtime.session_id,
+                            "failure_id": failure_id,
+                        },
+                        separators=(",", ":"),
+                    ),
+                    reliable=True,
+                    topic=MINIPROGRAM_AEC_HEALTH_ACK_TOPIC,
+                )
+
+            runtime._spawn(_ack_aec_failure(), name="miniprogram-aec-failed-ack")
+            return
         if topic == TELEMETRY_TOPIC:
             if getattr(packet, "participant", None) is None:
                 return

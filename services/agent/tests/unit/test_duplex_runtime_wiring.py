@@ -6,6 +6,8 @@ import asyncio
 import gc
 import logging
 import warnings
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from livekit.agents import llm
@@ -51,6 +53,19 @@ def _shadow_speaker_decision(*, profile_id: str) -> SpeakerDecision:
     )
 
 
+def _guest_speaker_decision(*, profile_id: str = "profile-guest-001") -> SpeakerDecision:
+    return SpeakerDecision(
+        classification="guest",
+        score=0.15,
+        quality_score=0.9,
+        reason_code="owner_mismatch",
+        model_version="campplus-test",
+        template_version=1,
+        profile_id=profile_id,
+        permissions=permissions_for_speaker("guest"),
+    )
+
+
 async def _classify_speaker(runtime: DuplexRuntime, decision: SpeakerDecision) -> None:
     async def _classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
         return decision
@@ -60,6 +75,24 @@ async def _classify_speaker(runtime: DuplexRuntime, decision: SpeakerDecision) -
     runtime.feed_speaker_pcm(b"\x01\x00" * 800)
     runtime.on_user_voice_stopped()
     assert await runtime.await_speaker_classification() is decision
+
+
+class _SessionEmitter:
+    def __init__(self) -> None:
+        self.handlers: dict[str, list[Any]] = {}
+        self.options = SimpleNamespace(
+            interruption={"min_words": 0, "false_interruption_timeout": 1.2}
+        )
+
+    def on(self, name: str, handler: Any) -> None:
+        self.handlers.setdefault(name, []).append(handler)
+
+    def off(self, name: str, handler: Any) -> None:
+        self.handlers[name].remove(handler)
+
+    def emit(self, name: str, event: Any) -> None:
+        for handler in tuple(self.handlers.get(name, ())):
+            handler(event)
 
 
 @pytest.mark.asyncio
@@ -128,6 +161,395 @@ async def test_playback_end_clears_unanchored_echo_before_the_next_vad() -> None
     assert runtime._user_transcript_contaminated is False
     assert runtime._suspected_playback_prefixes == []
     await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_trusted_aec_pure_interrupt_can_stop_without_a_vad_start() -> None:
+    interrupted: list[str] = []
+    interrupted_event = asyncio.Event()
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        assert _pcm
+        return _speaker_decision()
+
+    async def interrupt() -> None:
+        interrupted.append("interrupt")
+        interrupted_event.set()
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.set_target_speaker_focus(True)
+    runtime.set_target_speaker_interrupt(interrupt)
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("我正在讲一个很长的故事。")
+    runtime.feed_speaker_pcm(b"\x00\x20" * 16_000)
+    session = _SessionEmitter()
+    runtime.attach_session_events(session)
+
+    session.emit(
+        "user_input_transcribed",
+        SimpleNamespace(transcript="等一下", is_final=False),
+    )
+    await asyncio.wait_for(interrupted_event.wait(), timeout=1)
+
+    assert interrupted == ["interrupt"]
+    assert runtime.input_guard.candidate_decision.value == "accept"
+    assert runtime._trusted_unanchored_control_epoch == runtime._speaker_epoch
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_trusted_unanchored_interrupt_reclassifies_the_current_pcm_epoch() -> None:
+    interrupted: list[str] = []
+    decisions = iter((_speaker_decision(), _guest_speaker_decision()))
+    guest_classified = asyncio.Event()
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        assert _pcm
+        decision = next(decisions)
+        if decision.classification == "guest":
+            guest_classified.set()
+        return decision
+
+    async def interrupt() -> None:
+        interrupted.append("interrupt")
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.set_target_speaker_focus(True)
+    runtime.set_target_speaker_interrupt(interrupt)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x01\x00" * 16_000)
+    runtime.on_user_voice_stopped()
+    assert await runtime.await_speaker_classification() == _speaker_decision()
+    assert runtime.accept_user_turn("上一轮真实用户话轮") == (True, None)
+
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("我正在讲一个很长的故事。")
+    runtime.feed_speaker_pcm(b"\x00\x20" * 16_000)
+    session = _SessionEmitter()
+    runtime.attach_session_events(session)
+
+    session.emit(
+        "user_input_transcribed",
+        SimpleNamespace(transcript="等一下", is_final=False),
+    )
+    await asyncio.wait_for(guest_classified.wait(), timeout=1)
+    current_classification = runtime._speaker_classification_task
+    assert current_classification is not None
+    await current_classification
+
+    assert interrupted == []
+    assert runtime._speaker_decision == _guest_speaker_decision()
+    assert runtime.input_guard.candidate_decision.value == "ignore"
+    await runtime.close()
+
+
+@pytest.mark.parametrize(
+    "pcm",
+    [
+        b"\x00\x00" * 16_000,
+        b"\x01\x00" * 16_000,
+        b"\x00\x00" * (16_000 - 2_240) + b"\x00\x20" * 2_240,
+    ],
+)
+def test_trusted_unanchored_control_requires_recent_voiced_pcm(pcm: bytes) -> None:
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("我正在讲一个很长的故事。")
+    runtime.feed_speaker_pcm(pcm)
+
+    assert runtime.observe_user_transcript("等一下", final=False).value == "wait"
+    assert runtime._trusted_unanchored_control_epoch is None
+
+
+@pytest.mark.asyncio
+async def test_trusted_aec_single_stop_can_use_a_short_voiced_anchor() -> None:
+    interrupted: list[str] = []
+    interrupted_event = asyncio.Event()
+
+    async def interrupt() -> None:
+        interrupted.append("interrupt")
+        interrupted_event.set()
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_target_speaker_interrupt(interrupt)
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("我正在讲一个很长的故事。")
+    runtime.feed_speaker_pcm(
+        b"\x00\x00" * 11_840 + b"\x00\x20" * 2_560
+    )
+    session = _SessionEmitter()
+    runtime.attach_session_events(session)
+
+    session.emit(
+        "user_input_transcribed",
+        SimpleNamespace(transcript="停", is_final=False),
+    )
+    await asyncio.wait_for(interrupted_event.wait(), timeout=1)
+
+    assert interrupted == ["interrupt"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_revoking_aec_trust_cancels_an_inflight_unanchored_interrupt() -> None:
+    classification_started = asyncio.Event()
+    release_classification = asyncio.Event()
+    interrupted: list[str] = []
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        classification_started.set()
+        await release_classification.wait()
+        return _speaker_decision()
+
+    async def interrupt() -> None:
+        interrupted.append("interrupt")
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.set_target_speaker_focus(True)
+    runtime.set_target_speaker_interrupt(interrupt)
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("我正在讲一个很长的故事。")
+    runtime.feed_speaker_pcm(b"\x00\x20" * 16_000)
+    session = _SessionEmitter()
+    runtime.attach_session_events(session)
+    session.emit(
+        "user_input_transcribed",
+        SimpleNamespace(transcript="等一下", is_final=False),
+    )
+    await asyncio.wait_for(classification_started.wait(), timeout=1)
+    trusted_epoch = runtime._speaker_epoch
+
+    assert runtime.revoke_trusted_aec_playback_control(cause="gateway_apm_failed") is True
+    release_classification.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert interrupted == []
+    assert runtime.trusted_aec_playback_control is False
+    assert runtime._speaker_epoch == trusted_epoch + 1
+    assert runtime._trusted_playback_pcm == bytearray()
+    assert runtime.input_guard.candidate_decision.value == "ignore"
+    assert runtime.revoke_trusted_aec_playback_control(cause="duplicate") is False
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_late_trusted_control_cannot_interrupt_the_next_playback() -> None:
+    classification_started = asyncio.Event()
+    release_classification = asyncio.Event()
+    interrupted: list[str] = []
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        classification_started.set()
+        await release_classification.wait()
+        return _speaker_decision()
+
+    async def interrupt() -> None:
+        interrupted.append("interrupt")
+        await runtime.on_real_interrupt(cause="late_trusted_control")
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.set_target_speaker_focus(True)
+    runtime.set_target_speaker_interrupt(interrupt)
+    runtime.update_pending_assistant_text("播放 A 的很长内容。")
+    await runtime.on_playback_started()
+    runtime.feed_speaker_pcm(b"\x00\x20" * 16_000)
+    session = _SessionEmitter()
+    runtime.attach_session_events(session)
+    session.emit(
+        "user_input_transcribed",
+        SimpleNamespace(transcript="等一下", is_final=False),
+    )
+    await asyncio.wait_for(classification_started.wait(), timeout=1)
+
+    await runtime.on_playback_finished(
+        playback_position_s=1.0,
+        interrupted=False,
+        synchronized_transcript="播放 A 的很长内容。",
+    )
+    runtime.update_pending_assistant_text("播放 B 的很长内容。")
+    await runtime.on_playback_started()
+    fence_before_release = runtime.fence
+    release_classification.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert interrupted == []
+    assert runtime.fence.matches(fence_before_release)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_trusted_control_rechecks_playback_epoch_inside_interruption_lock() -> None:
+    interrupt_requested = asyncio.Event()
+    interrupt_completed = asyncio.Event()
+    stopped_playback_epochs: list[int] = []
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return _speaker_decision()
+
+    async def interrupt() -> None:
+        interrupt_requested.set()
+
+        async def stop_playback() -> str | None:
+            stopped_playback_epochs.append(runtime._playback_epoch)
+            return None
+
+        await runtime.on_real_interrupt(
+            cause="target_speaker_confirmed",
+            stop_playback=stop_playback,
+        )
+        interrupt_completed.set()
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.set_target_speaker_focus(True)
+    runtime.set_target_speaker_interrupt(interrupt)
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("请讲一个故事")
+    runtime.update_pending_assistant_text("播放 A 的很长内容。")
+    await runtime.on_playback_started()
+    playback_a_epoch = runtime._playback_epoch
+    runtime.feed_speaker_pcm(b"\x00\x20" * 16_000)
+    session = _SessionEmitter()
+    runtime.attach_session_events(session)
+
+    state_lock = runtime.orchestrator._state_lock
+    await state_lock.acquire()
+    try:
+        session.emit(
+            "user_input_transcribed",
+            SimpleNamespace(transcript="等一下", is_final=False),
+        )
+        await asyncio.wait_for(interrupt_requested.wait(), timeout=1)
+        await asyncio.sleep(0)
+
+        runtime.update_pending_assistant_text("播放 B 的很长内容。")
+        start_playback_b = asyncio.create_task(runtime.on_playback_started())
+        await asyncio.sleep(0)
+        assert start_playback_b.done() is False
+    finally:
+        state_lock.release()
+
+    await asyncio.wait_for(interrupt_completed.wait(), timeout=1)
+    await asyncio.wait_for(start_playback_b, timeout=1)
+
+    assert stopped_playback_epochs == [playback_a_epoch]
+    assert runtime._playback_epoch == playback_a_epoch + 1
+    assert runtime._was_speaking is True
+    assert runtime._pending_assistant_text == "播放 B 的很长内容。"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_trusted_interrupt_serializes_stop_with_the_next_playback() -> None:
+    stop_entered = asyncio.Event()
+    release_stop = asyncio.Event()
+    interrupt_completed = asyncio.Event()
+    stopped_playback_epochs: list[int] = []
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return _speaker_decision()
+
+    async def interrupt() -> None:
+        async def stop_playback() -> str | None:
+            stop_entered.set()
+            await release_stop.wait()
+            stopped_playback_epochs.append(runtime._playback_epoch)
+            return None
+
+        await runtime.on_real_interrupt(
+            cause="target_speaker_confirmed",
+            stop_playback=stop_playback,
+        )
+        interrupt_completed.set()
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.set_target_speaker_focus(True)
+    runtime.set_target_speaker_interrupt(interrupt)
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("请讲一个故事")
+    runtime.update_pending_assistant_text("播放 A 的很长内容。")
+    await runtime.on_playback_started()
+    playback_a_epoch = runtime._playback_epoch
+    runtime.feed_speaker_pcm(b"\x00\x20" * 16_000)
+    session = _SessionEmitter()
+    runtime.attach_session_events(session)
+
+    session.emit(
+        "user_input_transcribed",
+        SimpleNamespace(transcript="等一下", is_final=False),
+    )
+    await asyncio.wait_for(stop_entered.wait(), timeout=1)
+
+    runtime.update_pending_assistant_text("播放 B 的很长内容。")
+    start_playback_b = asyncio.create_task(runtime.on_playback_started())
+    await asyncio.sleep(0)
+    assert start_playback_b.done() is False
+
+    release_stop.set()
+    await asyncio.wait_for(interrupt_completed.wait(), timeout=1)
+    await asyncio.wait_for(start_playback_b, timeout=1)
+
+    assert stopped_playback_epochs == [playback_a_epoch]
+    assert runtime._playback_epoch == playback_a_epoch + 1
+    assert runtime._was_speaking is True
+    assert runtime._pending_assistant_text == "播放 B 的很长内容。"
+    await runtime.close()
+
+
+@pytest.mark.parametrize(
+    ("trusted_aec", "text", "assistant_text"),
+    [
+        (False, "等一下", "我正在讲一个很长的故事。"),
+        (True, "我想问个问题", "我正在讲一个很长的故事。"),
+        (True, "等一下", "你先等一下，我马上说完。"),
+    ],
+)
+def test_unanchored_playback_text_stays_guarded_without_trusted_pure_control(
+    trusted_aec: bool,
+    text: str,
+    assistant_text: str,
+) -> None:
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=trusted_aec,
+    )
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text(assistant_text)
+    runtime.feed_speaker_pcm(b"\x00\x20" * 16_000)
+
+    assert runtime.observe_user_transcript(text, final=True).value == "ignore"
+    assert runtime._trusted_unanchored_control_epoch is None
 
 
 @pytest.mark.asyncio

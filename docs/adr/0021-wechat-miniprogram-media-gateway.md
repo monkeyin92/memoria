@@ -23,6 +23,8 @@ Memoria 的当前正式语音主链是 Cascade：`FunASR Realtime → Qwen → D
 - 媒体 WebSocket 只额外接受无文本、无业务权限的 `playout_reset / playout_interrupt` 事实，用于关联客户端已停止排程音频的时刻；停止回答仍调用既有 Control API，客户端遥测不能直接控制 Agent。
 - AI 播放期间提供本地优先的显式打断：小程序先停止当前 generation 的 WebAudio source 并拒绝迟到帧，再调用既有 `stop-response`。语音打断继续复用 FunASR partial、TargetSpeakerFocus 与 `UtteranceRouter`。
 - gateway ticket 可由已认证且仍拥有会话的用户刷新，用于 WebSocket 断线重连；刷新不会重建业务 session，也不会改变其已冻结的 mode、版本、关系或授权。
+- 网关只有在 APM 初始化与静音自检成功时才通过 job metadata 声明初始 AEC 能力。真实帧处理期间一旦 APM 从 ready 变为 failed，网关必须先隔离当前及后续原始上行，通过 LiveKit reliable data 单向通知 Agent 撤销该能力；Agent 清理滚动 PCM、在飞说话人分类与播放 epoch 后 ACK，网关收到 ACK 才能恢复普通原始 PCM。该会话不得动态重新开启特权路径；通知/ACK 丢失或超时必须保持 fail-closed，而不能把未处理 PCM 送给仍处于 trusted 状态的 Agent。
+- 无 VAD 的小程序语音只对“当前播放实例中的纯打断命令”开放窄通道：要求最近 AEC 后 PCM 有最小 voiced 锚点、排除助手原文/回声与 backchannel，并复用 TargetSpeakerFocus 和 `UtteranceRouter`。迟到分类、静音/底噪、普通聊天、interrupt+chat、旧播放实例及 H5 均不得使用这条通道。
 - 小程序初版仅支持 `cascade`；Qwen Omni 仍维持既有 H5 隔离 A/B 边界。
 - H5 文件和 H5 会话响应保持不变；所有新增 response shape 仅在小程序 platform 分支返回。
 
@@ -33,6 +35,7 @@ Memoria 的当前正式语音主链是 Cascade：`FunASR Realtime → Qwen → D
 - 小程序录音/播放期没有和浏览器等价的 AEC 控制，播放回灌是最大风险。Android 可优先请求 `voice_communication` 音频源；iOS 采用 `auto`，两者都不得把“接口调用成功”当作 AEC 通过。
 - 网关侧 APM 只有服务端原始下行参考，不掌握手机真实渲染时刻、音量、路由与非线性失真；它是可校准的回声缓解层，不等价于终端系统 AEC，也不能替代真机双讲验收。
 - generation barrier 只清理过期 reference 时序，不反复销毁同一媒体会话内 APM 已学习的声学路径；路由/设备真正变化时仍需重新建立媒体会话。
+- LiveKit reliable data 是有序重传的 best-effort 信令，不是持久消息队列；因此运行期 AEC 降级采用显式 ACK。ACK 前不转发原始上行，超时关闭当前媒体桥，避免跨 data/audio 通道的到达顺序影响安全边界。
 - 发布工件增加网关镜像和最小权限 gateway env；release manifest、Nginx、Compose 和生产运行手册必须同步更新。
 - 即使所有代码和 mock 测试通过，未经 iOS/Android、扬声器/听筒/蓝牙、弱网与后台切换的实机证据，不得对外宣传“全双工原生小程序已验收”。
 
@@ -45,6 +48,7 @@ Memoria 的当前正式语音主链是 Cascade：`FunASR Realtime → Qwen → D
 
 ## References
 
+- [LiveKit data packets：reliable 为有序重传的 best-effort，离线不缓冲](https://docs.livekit.io/transport/data/packets/)
 - [`../research/livekit_wechat_miniprogram_client_research_zh.md`](../research/livekit_wechat_miniprogram_client_research_zh.md)
 - [`0020-legacy-access-and-frozen-core.md`](0020-legacy-access-and-frozen-core.md)
 - [`../production-deployment.md`](../production-deployment.md)

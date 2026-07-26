@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import uuid
 from collections.abc import Coroutine
 from dataclasses import dataclass
 from datetime import timedelta
@@ -16,6 +17,10 @@ from livekit.api import AccessToken, RoomAgentDispatch, RoomConfiguration, Video
 
 from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
+    MINIPROGRAM_AEC_FAILED,
+    MINIPROGRAM_AEC_FAILED_ACK,
+    MINIPROGRAM_AEC_HEALTH_ACK_TOPIC,
+    MINIPROGRAM_AEC_HEALTH_TOPIC,
     GatewayTicketClaims,
 )
 from services.miniprogram_gateway.audio_processing import MiniProgramAudioProcessor
@@ -115,6 +120,11 @@ class MiniProgramLiveKitBridge:
             stream_delay_ms=settings.miniprogram_gateway_aec_stream_delay_ms,
             active_window_ms=settings.miniprogram_gateway_aec_active_window_ms,
         )
+        self._aec_dispatched_ready = self._audio_processor.aec_ready
+        self._aec_failure_id: str | None = None
+        self._aec_failure_sent = False
+        self._aec_failure_ack = asyncio.Event()
+        self._aec_failure_lock = asyncio.Lock()
         self._audio_messages: asyncio.Queue[GatewayOutboundMessage] = asyncio.Queue(
             maxsize=settings.miniprogram_gateway_audio_queue_frames
         )
@@ -191,8 +201,21 @@ class MiniProgramLiveKitBridge:
         self._uplink_payload_bytes += len(frame.payload)
         if self._uplink_message_count == 1:
             logger.info("mini_program_uplink_started payload_bytes=%s", len(frame.payload))
+        await self._await_aec_failure_ack()
         for pcm in self._uplink.feed(frame.payload):
-            pcm = self._audio_processor.process_uplink(pcm)
+            aec_ready_before = self._audio_processor.aec_ready
+            processed_pcm = self._audio_processor.process_uplink(pcm)
+            if (
+                self._aec_dispatched_ready
+                and aec_ready_before
+                and not self._audio_processor.aec_ready
+            ):
+                self._mark_aec_failed()
+                await self._await_aec_failure_ack()
+                # Cross-channel ordering is not guaranteed. Drop the frame that
+                # failed APM; only forward raw PCM after the Agent has revoked trust.
+                continue
+            pcm = processed_pcm
             audio_frame = rtc.AudioFrame(
                 data=pcm,
                 sample_rate=self._settings.miniprogram_gateway_uplink_sample_rate,
@@ -222,9 +245,59 @@ class MiniProgramLiveKitBridge:
     def outbound_sent(self, message: GatewayOutboundMessage) -> None:
         """Advance AEC only for bytes/control barriers accepted by the WebSocket."""
         if message.audio_reference is not None:
+            aec_ready_before = self._audio_processor.aec_ready
             self._audio_processor.observe_downlink(message.audio_reference)
+            if (
+                self._aec_dispatched_ready
+                and aec_ready_before
+                and not self._audio_processor.aec_ready
+            ):
+                self._mark_aec_failed()
         if message.event is not None and message.event.get("type") == "audio_reset":
             self._audio_processor.reset()
+
+    def _mark_aec_failed(self) -> None:
+        if not self._aec_dispatched_ready or self._aec_failure_id is not None:
+            return
+        self._aec_failure_id = uuid.uuid4().hex
+        self._aec_failure_ack.clear()
+        logger.warning(
+            "mini_program_aec_runtime_failed session_id=%s failure_id=%s",
+            self._claims.session_id,
+            self._aec_failure_id,
+        )
+
+    async def _await_aec_failure_ack(self) -> None:
+        failure_id = self._aec_failure_id
+        if failure_id is None or self._aec_failure_ack.is_set():
+            return
+        try:
+            async with asyncio.timeout(
+                self._settings.miniprogram_gateway_handshake_timeout_s
+            ):
+                async with self._aec_failure_lock:
+                    if self._aec_failure_ack.is_set():
+                        return
+                    room = self._room
+                    if room is None:
+                        raise GatewayMediaError("AEC trust could not be revoked")
+                    if not self._aec_failure_sent:
+                        await room.local_participant.publish_data(
+                            json.dumps(
+                                {
+                                    "type": MINIPROGRAM_AEC_FAILED,
+                                    "session_id": self._claims.session_id,
+                                    "failure_id": failure_id,
+                                },
+                                separators=(",", ":"),
+                            ),
+                            reliable=True,
+                            topic=MINIPROGRAM_AEC_HEALTH_TOPIC,
+                        )
+                        self._aec_failure_sent = True
+                    await self._aec_failure_ack.wait()
+        except TimeoutError as exc:
+            raise GatewayMediaError("AEC trust revocation timed out") from exc
 
     def accept_transport_event(self, event: dict[str, object]) -> None:
         """Record bounded client playout facts without accepting business commands."""
@@ -402,6 +475,22 @@ class MiniProgramLiveKitBridge:
 
     def _on_data_received(self, packet: Any) -> None:
         if self._closed or not self._is_agent(getattr(packet, "participant", None)):
+            return
+        if getattr(packet, "topic", None) == MINIPROGRAM_AEC_HEALTH_ACK_TOPIC:
+            data = getattr(packet, "data", b"")
+            if not isinstance(data, bytes) or len(data) > 1_024:
+                return
+            try:
+                ack = json.loads(data.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return
+            if (
+                isinstance(ack, dict)
+                and ack.get("type") == MINIPROGRAM_AEC_FAILED_ACK
+                and ack.get("session_id") == self._claims.session_id
+                and ack.get("failure_id") == self._aec_failure_id
+            ):
+                self._aec_failure_ack.set()
             return
         if getattr(packet, "topic", None) != UI_TOPIC:
             return

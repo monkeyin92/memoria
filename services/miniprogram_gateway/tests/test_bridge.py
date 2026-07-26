@@ -117,6 +117,251 @@ def test_gateway_dispatch_disables_agent_warmup_only_when_aec_is_ready(
     assert agent_dispatch.get("metadata") == expected_metadata
 
 
+@pytest.mark.asyncio
+async def test_runtime_aec_failure_waits_for_agent_ack_before_raw_uplink() -> None:
+    published: list[tuple[dict[str, object], str]] = []
+    captured: list[bytes] = []
+
+    class Participant:
+        async def publish_data(self, payload: str, *, reliable: bool, topic: str) -> None:
+            assert reliable is True
+            published.append((json.loads(payload), topic))
+
+    class Source:
+        async def capture_frame(self, frame: rtc.AudioFrame) -> None:
+            captured.append(bytes(frame.data))
+
+    class Processor:
+        aec_ready = True
+
+        def process_uplink(self, payload: bytes) -> bytes:
+            self.aec_ready = False
+            return payload
+
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(miniprogram_gateway_aec_enabled=True),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._audio_processor = Processor()  # type: ignore[assignment]
+    bridge._aec_dispatched_ready = True
+    bridge._room = SimpleNamespace(local_participant=Participant())
+    bridge._audio_source = Source()
+
+    first = asyncio.create_task(
+        bridge.accept_uplink(
+            PcmFrame(
+                frame_type=FrameType.UPLINK_AUDIO,
+                sequence=0,
+                timestamp_ms=0,
+                payload=b"\x01\x00" * 320,
+            )
+        )
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert captured == []
+    assert len(published) == 1
+    failure, topic = published[0]
+    assert topic == "voice-agent.gateway-health"
+    assert failure["type"] == "miniprogram_aec_failed"
+    assert failure["session_id"] == "session-1"
+    failure_id = failure["failure_id"]
+    assert isinstance(failure_id, str) and failure_id
+
+    bridge._on_data_received(
+        SimpleNamespace(
+            participant=SimpleNamespace(
+                kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
+            ),
+            topic="voice-agent.gateway-health.ack",
+            data=json.dumps(
+                {
+                    "type": "miniprogram_aec_failed_ack",
+                    "session_id": "session-1",
+                    "failure_id": failure_id,
+                }
+            ).encode(),
+        )
+    )
+    await first
+    assert captured == []
+
+    await bridge.accept_uplink(
+        PcmFrame(
+            frame_type=FrameType.UPLINK_AUDIO,
+            sequence=1,
+            timestamp_ms=20,
+            payload=b"\x02\x00" * 320,
+        )
+    )
+    assert captured == [b"\x02\x00" * 320]
+    assert len(published) == 1
+
+
+@pytest.mark.parametrize("publish_hangs", [False, True])
+@pytest.mark.asyncio
+async def test_runtime_aec_failure_timeout_never_forwards_raw_uplink(
+    publish_hangs: bool,
+) -> None:
+    captured: list[bytes] = []
+
+    class Participant:
+        async def publish_data(self, _payload: str, *, reliable: bool, topic: str) -> None:
+            assert reliable is True
+            assert topic == "voice-agent.gateway-health"
+            if publish_hangs:
+                await asyncio.Event().wait()
+
+    class Source:
+        async def capture_frame(self, frame: rtc.AudioFrame) -> None:
+            captured.append(bytes(frame.data))
+
+    class Processor:
+        aec_ready = True
+
+        def process_uplink(self, payload: bytes) -> bytes:
+            self.aec_ready = False
+            return payload
+
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(miniprogram_gateway_aec_enabled=True),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._settings.miniprogram_gateway_handshake_timeout_s = 0.01
+    bridge._audio_processor = Processor()  # type: ignore[assignment]
+    bridge._aec_dispatched_ready = True
+    bridge._room = SimpleNamespace(local_participant=Participant())
+    bridge._audio_source = Source()
+
+    with pytest.raises(GatewayMediaError, match="revocation timed out"):
+        await bridge.accept_uplink(
+            PcmFrame(
+                frame_type=FrameType.UPLINK_AUDIO,
+                sequence=0,
+                timestamp_ms=0,
+                payload=b"\x01\x00" * 320,
+            )
+        )
+
+    assert captured == []
+
+
+@pytest.mark.asyncio
+async def test_downlink_aec_failure_revokes_trust_before_the_next_uplink() -> None:
+    published: list[dict[str, object]] = []
+    captured: list[bytes] = []
+
+    class Participant:
+        async def publish_data(self, payload: str, *, reliable: bool, topic: str) -> None:
+            assert reliable is True
+            assert topic == "voice-agent.gateway-health"
+            published.append(json.loads(payload))
+
+    class Source:
+        async def capture_frame(self, frame: rtc.AudioFrame) -> None:
+            captured.append(bytes(frame.data))
+
+    class Processor:
+        aec_ready = True
+
+        def observe_downlink(self, _payload: bytes) -> None:
+            self.aec_ready = False
+
+        def process_uplink(self, payload: bytes) -> bytes:
+            return payload
+
+        def reset(self) -> None:
+            self.aec_ready = True
+
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(miniprogram_gateway_aec_enabled=True),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._audio_processor = Processor()  # type: ignore[assignment]
+    bridge._aec_dispatched_ready = True
+    bridge._room = SimpleNamespace(local_participant=Participant())
+    bridge._audio_source = Source()
+    bridge.outbound_sent(
+        GatewayOutboundMessage(binary=b"audio", audio_reference=b"\x00" * 960)
+    )
+
+    uplink = asyncio.create_task(
+        bridge.accept_uplink(
+            PcmFrame(
+                frame_type=FrameType.UPLINK_AUDIO,
+                sequence=0,
+                timestamp_ms=0,
+                payload=b"\x01\x00" * 320,
+            )
+        )
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert captured == []
+    assert len(published) == 1
+
+    failure = published[0]
+    bridge._on_data_received(
+        SimpleNamespace(
+            participant=SimpleNamespace(
+                kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
+            ),
+            topic="voice-agent.gateway-health.ack",
+            data=json.dumps(
+                {
+                    "type": "miniprogram_aec_failed_ack",
+                    "session_id": "session-1",
+                    "failure_id": failure["failure_id"],
+                }
+            ).encode(),
+        )
+    )
+    await uplink
+    assert captured == [b"\x01\x00" * 320]
+
+    bridge._audio_processor.reset()
+    await bridge.accept_uplink(
+        PcmFrame(
+            frame_type=FrameType.UPLINK_AUDIO,
+            sequence=1,
+            timestamp_ms=20,
+            payload=b"\x02\x00" * 320,
+        )
+    )
+    assert len(published) == 1
+
+
 def test_production_rejects_downlink_queue_over_400_ms() -> None:
     settings = MiniProgramGatewaySettings(
         environment="production",

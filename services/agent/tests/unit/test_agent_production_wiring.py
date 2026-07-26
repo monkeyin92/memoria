@@ -1667,6 +1667,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     await asyncio.sleep(0)
     runtime: DuplexRuntime = ctx.proc.userdata["duplex_runtime"]
     assert runtime.session_id == "public-session"
+    assert runtime.trusted_aec_playback_control is True
     runtime._clear_control_user_turn(cause="production_wiring_test")
     assert session.clear_user_turn_count == 1
 
@@ -1804,6 +1805,49 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     await session.interrupt(force=True)
     assert session.interrupt_count == 4
     assert runtime.orchestrator.state is ConversationState.USER_SPEAKING
+
+    room.emit(
+        "data_received",
+        SimpleNamespace(
+            topic="voice-agent.gateway-health",
+            participant=object(),
+            data=json.dumps(
+                {
+                    "type": "miniprogram_aec_ready",
+                    "session_id": "public-session",
+                    "failure_id": "not-a-disable",
+                }
+            ).encode(),
+        ),
+    )
+    assert runtime.trusted_aec_playback_control is True
+
+    room.emit(
+        "data_received",
+        SimpleNamespace(
+            topic="voice-agent.gateway-health",
+            participant=object(),
+            data=json.dumps(
+                {
+                    "type": "miniprogram_aec_failed",
+                    "session_id": "public-session",
+                    "failure_id": "failure-1",
+                }
+            ).encode(),
+        ),
+    )
+    await asyncio.sleep(0)
+    assert runtime.trusted_aec_playback_control is False
+    assert any(
+        event == {
+            "type": "miniprogram_aec_failed_ack",
+            "session_id": "public-session",
+            "failure_id": "failure-1",
+        }
+        and topic == "voice-agent.gateway-health.ack"
+        for event, reliable, topic in room.local_participant.published
+        if reliable
+    )
 
     assert len(shutdown_callbacks) == 1
     await shutdown_callbacks[0]()
