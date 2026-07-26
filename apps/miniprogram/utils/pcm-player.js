@@ -11,7 +11,6 @@ class PcmJitterPlayer {
   }
 
   async resume() {
-    this._setSpeakerRoute(false);
     if (!this.context) {
       this.context = wx.createWebAudioContext();
       if (typeof this.context.createGain === "function") {
@@ -68,25 +67,10 @@ class PcmJitterPlayer {
 
   async close() {
     this.reset();
-    try {
-      if (this.context) await this.context.close();
-    } finally {
+    if (this.context) {
+      await this.context.close();
       this.context = null;
       this.gainNode = null;
-      this._setSpeakerRoute(true);
-    }
-  }
-
-  _setSpeakerRoute(speakerOn) {
-    if (typeof wx.setInnerAudioOption !== "function") return;
-    try {
-      wx.setInnerAudioOption({
-        mixWithOther: false,
-        obeyMuteSwitch: false,
-        speakerOn,
-      });
-    } catch {
-      // Unsupported route options must not prevent the voice session.
     }
   }
 }

@@ -1,7 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const innerAudioOptions = [];
 const recorder = {
   startCalls: [],
   stopCalls: 0,
@@ -41,7 +40,6 @@ const recorder = {
 
 global.wx = {
   getRecorderManager: () => recorder,
-  setInnerAudioOption: (options) => innerAudioOptions.push(options),
   createWebAudioContext: () => {
     const gain = { value: 1 };
     return {
@@ -242,7 +240,7 @@ test("assistant audio controls immediately duck and restore Mini Program playbac
     }),
   });
 
-  assert.deepEqual(gains, [0, 1]);
+  assert.deepEqual(gains, [0.25, 1]);
 });
 
 test("PCM player applies gain through one shared WebAudio node", async () => {
@@ -254,17 +252,6 @@ test("PCM player applies gain through one shared WebAudio node", async () => {
 
   assert.equal(player.gain, 0.25);
   assert.equal(player.gainNode.gain.value, 0.25);
-});
-
-test("PCM player routes active voice playback to the receiver and restores speaker output", async () => {
-  innerAudioOptions.length = 0;
-  const player = new PcmJitterPlayer();
-
-  await player.resume();
-  assert.equal(innerAudioOptions.at(-1).speakerOn, false);
-
-  await player.close();
-  assert.equal(innerAudioOptions.at(-1).speakerOn, true);
 });
 
 test("PCM player rebases an underflow instead of scheduling a late frame in the past", () => {

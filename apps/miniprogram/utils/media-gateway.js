@@ -170,7 +170,7 @@ class MiniProgramMediaSession {
           (event.event.action === "duck" || event.event.action === "restore") &&
           typeof event.event.gain === "number"
         ) {
-          this.player.setGain(event.event.action === "duck" ? 0 : event.event.gain);
+          this.player.setGain(event.event.gain);
         }
         this.callbacks.onEvent?.(event);
       } catch {
