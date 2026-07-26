@@ -3,7 +3,7 @@
 ## 当前目标
 
 - 收尾仓库、发布工件与 Docker 清理。
-- 修复并验收微信小程序在 AI 播放期间说“等一下 / 等下”无法打断的问题。
+- 修复并验收微信小程序打断后重复上一问题、缺确认音和话轮等待偏长的问题。
 - 当前不扩展新功能；历史路线、架构决策和发布过程分别保留在
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与 `docs/releases/`。
 
@@ -11,6 +11,8 @@
 
 - 当前生产 source commit / annotated tag：
   `7edd751500a14290d24f6cb799a07e426877121c / 20260726-215154`。
+- 待提交候选：`20260726-233337`。它在统一 `UtteranceRouter` 中识别打断后旧话轮
+  重放，并把自建 endpointing 目标统一为 `0.90 / 1.50 / 1.70`。
 - `a0308a4` 在统一 `UtteranceRouter` 中把规范化后完全等于“等下”的文本识别为纯打断，
   同时保持“我等下再说 / 等下我想问……”为普通聊天。
 - 本版本在共享回声门禁中补充“助手说等一下 / ASR 缩成等下”的同义拒绝，防止助手回声
@@ -68,6 +70,19 @@
   `MiniProgramAudioProcessor.observe_downlink/process_uplink`；Router/mock FunASR
   只能覆盖控制面，不能证明 APM 后词形仍可识别。
 
+## 本次真机新增结论
+
+- 会话 `c67bc334-6ba9-428c-a76c-7bc67e86427d` 没有旧 generation 复活或双 TTS；
+  gen4 被打断后，相同“你叫什么名字？”再次作为用户话轮提交并创建 gen6。
+- sticky `interrupt_then_chat` 遇到只重放上一问题的 endpoint final 时，旧实现会继续
+  进入 chat，且 route 没有确认音。本候选以 `interrupt_replay` 控制意图收口。
+- `TurnDetector v1-mini` 负责语义 EOU，不负责 stop/chat 路由。Git 历史没有 LLM
+  intent classifier；本候选没有新增停词，而是在统一 Router 中使用 speech epoch 上下文。
+- 真机多次 `end_of_turn_delay=2.200s`，生产旧 env 为 `1.50 / 2.20 / 1.70`；
+  代码、模板、生成器和启动校验现统一为 `0.90 / 1.50 / 1.70`。
+- 本地门禁：定向 `188 passed`，Python 全量 `1248 passed, 27 skipped`，Ruff、
+  strict mypy 与 `git diff --check` 通过。
+
 ## 清理结果
 
 - 当前保留主工作树与 `memoria-interrupt-echo-guard` hotfix worktree；真机验收后再清理后者。
@@ -105,15 +120,14 @@
 
 ## 未闭环与下一步
 
-1. 用户在真实手机外放状态、AI 播放约 0.6 秒后说“等一下”和“等下”。
-2. 同一会话确认：
-   `trusted_unanchored_interrupt_cmd → explicit_interrupt_cmd → interrupted → audio_reset`，
-   并以实际扬声器立即停播为最终结果。
-3. 任一信号缺失，先导出候选容器日志再回滚到 `20260726-133033`；不要继续放宽 Router
-   或把 raw PCM 混回 trusted AEC 通道。
-4. 若真机仍失败，在网关 APM seam 增加短 onset 回归：先做时间对齐，再断言
-   correlation、SI-SDR、voiced-ms 与纯回声衰减。真人样本只从外部只读路径加载，
-   不进仓库、不复制、不发送外部 ASR；采集或使用前先取得用户确认。
+1. 提交并构建 runtime 候选 `20260726-233337`，保留 `20260726-215154` 及旧 Agent
+   env 为直接回滚。
+2. 发布时只切 runtime 和三个非敏感 endpointing 值；H5、小程序、数据服务与 LiveKit
+   不切换。
+3. 真机确认：立即停播、只说一次“嗯，你说。”、不重复上一回答；再测正常新问题、
+   慢语速、长句和 1–2 秒句中停顿。
+4. 任一基础门禁或真机结果失败，先导出候选 Agent/Gateway/Control 日志，再同时恢复
+   `20260726-215154` 与旧 Agent env。
 
 ## 用户工作区边界
 

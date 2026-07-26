@@ -9,7 +9,7 @@ this module owns *priority* and the resulting side-effect policy flags.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Literal
 
@@ -32,6 +32,8 @@ class UtteranceIntent(StrEnum):
     INTERRUPT_COMMAND = "interrupt_command"
     # Explicit interrupt wording plus real content (等一下我想问…) — interrupt then chat.
     INTERRUPT_THEN_CHAT = "interrupt_then_chat"
+    # A sticky interrupt whose endpoint final only replays the prior user turn.
+    INTERRUPT_REPLAY = "interrupt_replay"
     # Continue the answer that the user explicitly paused.
     RESUME = "resume"
     # Normal conversational turn.
@@ -163,16 +165,20 @@ def route_utterance(
     *,
     speaker_state: SpeakerGateState | str | None = None,
     resumable_reply: bool = False,
+    sticky_interrupt_route: UtteranceRoute | None = None,
+    previous_committed_text_normalized: str = "",
 ) -> UtteranceRoute:
     """Classify one utterance. First matching rule wins (see tests for the table).
 
     Priority (high → low):
       1. speaker PENDING → enroll (blocks all chat, including stop phrases)
-      2. empty text → empty
-      3. resume command while a reply is paused → resume
-      4. interrupt-command-only → interrupt_command (no chat, yield/stop ack)
+      2. resume command while a reply is paused → resume
+      3. interrupt-command-only → interrupt_command (no chat, yield/stop ack)
+      4. sticky interrupt exact replay → interrupt_replay
       5. explicit interrupt + content → interrupt_then_chat
-      6. default → chat
+      6. remaining sticky interrupt → monotonic prior route
+      7. empty text → empty
+      8. default → chat
     """
     normalized = normalize_short(text)
     state = _as_speaker_state(speaker_state)
@@ -188,19 +194,7 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 2) Empty
-    if not normalized:
-        return UtteranceRoute(
-            intent=UtteranceIntent.EMPTY,
-            reason="empty",
-            enter_chat=False,
-            should_interrupt=False,
-            speaker_gate_override=False,
-            ack_phrase=None,
-            normalized_text=normalized,
-        )
-
-    # 3) Resume is stateful:「继续」is ordinary chat unless this session owns
+    # 2) Resume is stateful:「继续」is ordinary chat unless this session owns
     # an explicitly paused reply. Ack echo and the pause phrase may be folded
     # into the same ASR final, so match the whole control-only sequence.
     if resumable_reply and is_resume_command_only(text):
@@ -214,7 +208,7 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 4) Pure control phrases — do not let LLM answer「怎么了？」
+    # 3) Pure control phrases — do not let LLM answer「怎么了？」
     if is_interrupt_command_only(text):
         return UtteranceRoute(
             intent=UtteranceIntent.INTERRUPT_COMMAND,
@@ -223,6 +217,25 @@ def route_utterance(
             should_interrupt=True,
             speaker_gate_override=True,
             ack_phrase=interrupt_ack_phrase(text),
+            normalized_text=normalized,
+        )
+
+    # 4) Streaming ASR may first hear「停一下」and later endpoint only the
+    # previous user question after playback contamination. Keep the interrupt
+    # monotonic, but do not create a duplicate LLM turn for that replay.
+    if (
+        sticky_interrupt_route is not None
+        and sticky_interrupt_route.intent is UtteranceIntent.INTERRUPT_THEN_CHAT
+        and bool(previous_committed_text_normalized)
+        and normalized == previous_committed_text_normalized
+    ):
+        return UtteranceRoute(
+            intent=UtteranceIntent.INTERRUPT_REPLAY,
+            reason="interrupt_replayed_previous_turn",
+            enter_chat=False,
+            should_interrupt=True,
+            speaker_gate_override=True,
+            ack_phrase="嗯，你说。",
             normalized_text=normalized,
         )
 
@@ -238,7 +251,23 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 6) Normal chat
+    # 6) Preserve any remaining accepted interrupt across ASR revisions.
+    if sticky_interrupt_route is not None and sticky_interrupt_route.should_interrupt:
+        return replace(sticky_interrupt_route, normalized_text=normalized)
+
+    # 7) Empty
+    if not normalized:
+        return UtteranceRoute(
+            intent=UtteranceIntent.EMPTY,
+            reason="empty",
+            enter_chat=False,
+            should_interrupt=False,
+            speaker_gate_override=False,
+            ack_phrase=None,
+            normalized_text=normalized,
+        )
+
+    # 8) Normal chat
     return UtteranceRoute(
         intent=UtteranceIntent.CHAT,
         reason="chat",

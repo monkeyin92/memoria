@@ -44,6 +44,16 @@ def test_environment_reuses_agent_settings_invariants(monkeypatch: pytest.Monkey
     assert "LISTENER_CUE_PLAYBACK must be main_track or background" in errors
 
 
+def test_environment_rejects_invalid_turn_timing(monkeypatch: pytest.MonkeyPatch) -> None:
+    _online_env(monkeypatch)
+    monkeypatch.setenv("ENDPOINTING_MIN_DELAY_S", "2.20")
+    monkeypatch.setenv("ENDPOINTING_MAX_DELAY_S", "1.50")
+
+    errors, _, _ = verify_env._validate_environment()
+
+    assert errors == ["ENDPOINTING_MIN_DELAY_S must be <= ENDPOINTING_MAX_DELAY_S"]
+
+
 def test_mark_uses_selected_llm_provider_without_exposing_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

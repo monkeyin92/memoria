@@ -5,8 +5,10 @@
 - H5：`https://122.51.108.140:8443/`
 - H5 兼容路径：`https://122.51.108.140:8443/memoria-h5/`
 - Control API：`https://122.51.108.140:8443/memoria-api/`
-- 当前正式 runtime release：`20260721-224804`
-- 当前 H5 release：`20260721-224804`
+- 正式 runtime release：发布前以
+  `basename "$(readlink -f /opt/memoria/current)"` 为准
+- 正式 H5 release：发布前以
+  `basename "$(readlink -f /var/www/memoria-h5)"` 为准
 - Control API 上游：`127.0.0.1:8791`
 - LiveKit：自建 `livekit/livekit-server:v1.13.3`，位于 `/opt/livekit`，Compose project 为 `memoria-livekit`
 - LiveKit 信令：`wss://122.51.108.140:8443`，经 Nginx `/rtc`、`/agent` 转发到 `127.0.0.1:7880`
@@ -20,11 +22,11 @@
 - 原生小程序候选入口：WSS `/memoria-mini-media/v1/mini-program/media`，loopback 上游
   `127.0.0.1:8792`；只有包含网关镜像和 gateway env 的新 release 才会启用。
 
-Memoria 使用独立静态资源/API 路径、回环端口、Compose project 和限流 zone。新服务器的 443 继续由既有 WMS 虚拟主机占用；8443 由 Nginx stream 预读协议，TLS 流量转到 `127.0.0.1:9443` 的 Memoria HTTPS server，原生 ICE/TCP 转到 `127.0.0.1:8444` 后进入 LiveKit 容器的 8443。当前公网正式入口是 8443。公网 `/memoria-api/internal/` 固定返回 404；WMS 的 `/wms/` 路由与既有数据保留且服务保持 active。当前生产证据见 `docs/releases/20260721-224804.md`，历史迁移与热修证据保留在 `docs/releases/`。
+Memoria 使用独立静态资源/API 路径、回环端口、Compose project 和限流 zone。新服务器的 443 继续由既有 WMS 虚拟主机占用；8443 由 Nginx stream 预读协议，TLS 流量转到 `127.0.0.1:9443` 的 Memoria HTTPS server，原生 ICE/TCP 转到 `127.0.0.1:8444` 后进入 LiveKit 容器的 8443。当前公网正式入口是 8443。公网 `/memoria-api/internal/` 固定返回 404；WMS 的 `/wms/` 路由与既有数据保留且服务保持 active。当前生产版本与验收结论见 `HANDOFF.md`，历史迁移与热修证据保留在 `docs/releases/`。
 
 终身档案迁移到 PostgreSQL + 对象存储后的备份、PITR、对象清单与联合恢复门禁见 [`archive-backup-restore-runbook.md`](./archive-backup-restore-runbook.md)。现有 SQLite 发布快照只覆盖旧主库，不得被描述为终身档案生产恢复方案。
 
-> P0.5、P1-P6 的稳定账号、终身记忆、Persona、SpeakerAuthority、VoiceProfile 与账户治理底座随 `20260720-140053` 部署，当前 runtime/H5 为 `20260721-224804`。CAM++ 仍为 shadow-only，正式声纹/复刻声音不得在真人授权与盲测前激活。当前 PostgreSQL、WAL archive、MinIO 和备份均同机，没有异地副本/KMS/PITR，不能承诺“永不丢失”。
+> P0.5、P1-P6 的稳定账号、终身记忆、Persona、SpeakerAuthority、VoiceProfile 与账户治理底座随 `20260720-140053` 部署。当前 runtime/H5 以 `HANDOFF.md` 和服务器软链为准。CAM++ 仍为 shadow-only，正式声纹/复刻声音不得在真人授权与盲测前激活。当前 PostgreSQL、WAL archive、MinIO 和备份均同机，没有异地副本/KMS/PITR，不能承诺“永不丢失”。
 
 ## TLS 与自动续期
 
@@ -46,7 +48,9 @@ sudo sha256sum /etc/letsencrypt/renewal-hooks/deploy/50-memoria-reload-nginx
 生产 secret 按最小权限拆分到服务器 `/etc/memoria-control-api.env`、
 `/etc/memoria-agent.env`、`/etc/memoria-speaker-model.env` 和
 `/etc/memoria-miniprogram-gateway.env`，四者权限都必须是 `root:root 0600`。使用
-`scripts/split_production_env.py` 从 root-only 运维源生成候选文件；
+`scripts/split_production_env.py` 从 root-only 运维源生成候选文件；该脚本只分流已有值，
+不会应用默认值。首次 P0-P6 升级应使用 `scripts/prepare_production_upgrade_env.py`，
+普通发布则必须从当前 root-only env 复制并显式核对本文列出的 endpointing 值；
 仓库、H5 bundle、发布清单、日志和本文档都不得出现源文件或 secret 值。gateway env 只包含
 LiveKit 接入凭据、gateway ticket 签名材料和媒体适配配置；它不包含 `MEMORIA_AUTH_SECRET`、
 档案对象存储密钥、DASHSCOPE 或 Agent capability token。
@@ -131,8 +135,8 @@ MEMORIA_AUTH_REFRESH_TTL_S=2592000
 MEMORIA_REFRESH_COOKIE_NAME=memoria_refresh
 MEMORIA_LEGACY_AUTH_COMPAT_UNTIL=
 MEMORIA_MESSAGE_IDEMPOTENCY_SECRET=
-ENDPOINTING_MIN_DELAY_S=1.50
-ENDPOINTING_MAX_DELAY_S=2.20
+ENDPOINTING_MIN_DELAY_S=0.90
+ENDPOINTING_MAX_DELAY_S=1.50
 ENDPOINTING_ALPHA=0.85
 INTERRUPTION_MIN_DURATION_S=0.45
 FALSE_INTERRUPTION_TIMEOUT_S=1.70
@@ -173,7 +177,7 @@ Agent 的注册探针绑定当前固定版本 `livekit-agents==1.6.5` 的私有�
 
 ## P0.5、P1～P6 上线状态与后续门槛
 
-1. `20260720-140053` 已在新服务器部署 pgvector、FORCE RLS、MinIO 版本控制、能力级 token、独立 SpeakerAuthority token、迁移/联合恢复、core readiness 和真实 Provider smoke；当前 runtime/H5 为 `20260721-224804`。
+1. `20260720-140053` 已在新服务器部署 pgvector、FORCE RLS、MinIO 版本控制、能力级 token、独立 SpeakerAuthority token、迁移/联合恢复、core readiness 和真实 Provider smoke；当前 runtime/H5 以 `HANDOFF.md` 和服务器软链为准。
 2. 当前低成本底座为同机 PostgreSQL、WAL archive、MinIO 和备份；PITR、异地副本与 KMS 仍是下一阶段可靠性门槛，不能把同机恢复演练描述为异地容灾。
 3. 使用授权样本完成 SpeakerAuthority 指标报告和历史 CosyVoice 复刻声音真人盲测前，不得激活正式声纹模板或复刻声音；当前豆包主链只使用已审核的原生 TTS 2.0 音色。
 4. 账户删除 worker、LiveKit 房间删除权限、对象全版本删除权限和供应商声音删除权限必须同时具备；缺任一权限时删除只能保持 `deleting`，不得伪报完成。
@@ -183,7 +187,7 @@ Agent 的注册探针绑定当前固定版本 `livekit-agents==1.6.5` 的私有�
 
 H5 必须最后激活。标准顺序是：本机构建并校验工件 → 暂存 release 与 H5 → 创建并验证数据快照 → 服务器导入镜像 → 原子切 runtime → 容器/Provider/readiness 门禁 → Nginx 与证书检查 → 最后原子切 H5 → 公网验收。这样既避免小内存服务器构建卡死，也避免新 H5 连接尚未 ready 的 runtime。
 
-下面命令沿用已验证的生产目录布局；当前线上 runtime/H5 为 `20260721-224804`。执行前必须在 shell 显式设置一个非空、唯一、不可复用的新 `RELEASE_TAG`，示例块会在缺失时立即失败。
+下面命令沿用已验证的生产目录布局。执行前必须读取并记录当前 runtime/H5 软链，再在 shell 显式设置一个非空、唯一、不可复用的新 `RELEASE_TAG`；示例块会在缺失时立即失败。
 
 ```bash
 : "${RELEASE_TAG:?set a new unique RELEASE_TAG, for example YYYYMMDD-HHMMSS}"
@@ -506,6 +510,9 @@ sudo test "$(stat -c '%U:%G:%a' "$CONTROL_ENV_CANDIDATE")" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' "$AGENT_ENV_CANDIDATE")" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' "$SPEAKER_MODEL_ENV_CANDIDATE")" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' "$GATEWAY_ENV_CANDIDATE")" = "root:root:600"
+sudo grep -qx 'ENDPOINTING_MIN_DELAY_S=0.90' "$AGENT_ENV_CANDIDATE"
+sudo grep -qx 'ENDPOINTING_MAX_DELAY_S=1.50' "$AGENT_ENV_CANDIDATE"
+sudo grep -qx 'FALSE_INTERRUPTION_TIMEOUT_S=1.70' "$AGENT_ENV_CANDIDATE"
 for current_env in "$CONTROL_ENV" "$AGENT_ENV" "$SPEAKER_MODEL_ENV"; do
   sudo test -e "$current_env"
   sudo test "$(stat -c '%U:%G:%a' "$current_env")" = "root:root:600"
@@ -527,7 +534,7 @@ sudo install -o root -g root -m 0600 "$SPEAKER_MODEL_ENV_CANDIDATE" "$SPEAKER_MO
 sudo install -o root -g root -m 0600 "$GATEWAY_ENV_CANDIDATE" "$GATEWAY_ENV"
 ```
 
-保护副本放在 root-only `/var/backups/memoria`，避免与容器 bind 目录共享暴露面；`/var/lib/memoria` 中的原始快照继续保留，作为独立的第二份回滚副本。先在可信运维环境用 `scripts/split_production_env.py` 生成 Control API、Agent、Speaker Model 与 gateway 四份候选 env，再执行上述“校验候选 → 备份已有 env → 安装候选”顺序。前三份旧 env 是既有 runtime 的强制前提；gateway 只在首次接入小程序前不存在，因此它单独条件备份。数据库、候选 env 和已有 env 备份都必须为 `root:root 0600`，不得为了容器读取而放宽权限。
+保护副本放在 root-only `/var/backups/memoria`，避免与容器 bind 目录共享暴露面；`/var/lib/memoria` 中的原始快照继续保留，作为独立的第二份回滚副本。先在可信运维环境生成 Control API、Agent、Speaker Model 与 gateway 四份候选 env；`split_production_env.py` 只做最小权限分流，不能替代 endpointing 精确值门禁。再执行上述“校验候选 → 备份已有 env → 安装候选”顺序。前三份旧 env 是既有 runtime 的强制前提；gateway 只在首次接入小程序前不存在，因此它单独条件备份。数据库、候选 env 和已有 env 备份都必须为 `root:root 0600`，不得为了容器读取而放宽权限。
 
 ### 4. 原子激活 runtime
 

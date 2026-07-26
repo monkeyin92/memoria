@@ -10,7 +10,13 @@ from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from services.agent.src.config import AgentSettings, validate_doubao_auth
+from services.agent.src.config import (
+    SELF_HOSTED_ENDPOINTING_MAX_DELAY_S,
+    SELF_HOSTED_ENDPOINTING_MIN_DELAY_S,
+    SELF_HOSTED_FALSE_INTERRUPTION_TIMEOUT_S,
+    AgentSettings,
+    validate_doubao_auth,
+)
 from services.control_api.app.config import ControlSettings
 from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 
@@ -200,9 +206,11 @@ def prepare(
             "LIVEKIT_ADAPTIVE_INTERRUPTION": "false",
             "PREEMPTIVE_GENERATION": "false",
             "PREEMPTIVE_TTS": "false",
-            "ENDPOINTING_MIN_DELAY_S": "1.50",
-            "ENDPOINTING_MAX_DELAY_S": "2.20",
-            "FALSE_INTERRUPTION_TIMEOUT_S": "1.70",
+            "ENDPOINTING_MIN_DELAY_S": f"{SELF_HOSTED_ENDPOINTING_MIN_DELAY_S:.2f}",
+            "ENDPOINTING_MAX_DELAY_S": f"{SELF_HOSTED_ENDPOINTING_MAX_DELAY_S:.2f}",
+            "FALSE_INTERRUPTION_TIMEOUT_S": (
+                f"{SELF_HOSTED_FALSE_INTERRUPTION_TIMEOUT_S:.2f}"
+            ),
         }
     )
     values.pop("MEMORIA_ARCHIVE_INTERNAL_TOKEN", None)

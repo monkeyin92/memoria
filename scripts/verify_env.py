@@ -12,7 +12,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from pydantic import ValidationError
-from services.agent.src.config import load_settings
+from services.agent.src.config import load_settings, load_turn_timing
 from services.agent.src.contracts.errors import ConfigValidationError
 
 
@@ -40,6 +40,10 @@ def _validate_environment() -> tuple[list[str], bool, str]:
     except ValidationError as exc:
         return _validation_messages(exc), offline, profile
     except ConfigValidationError as exc:
+        return [str(exc)], offline, profile
+    try:
+        load_turn_timing(settings.deployment_profile)
+    except ValueError as exc:
         return [str(exc)], offline, profile
     return [], settings.offline_mock, settings.deployment_profile
 

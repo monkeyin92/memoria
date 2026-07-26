@@ -26,6 +26,7 @@ from services.agent.src.orchestration.speaker_verify import (
     voiced_stats_from_pcm,
 )
 from services.agent.src.orchestration.state_machine import ConversationState
+from services.agent.src.orchestration.utterance_router import UtteranceIntent
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSTT
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
@@ -246,6 +247,162 @@ async def test_trusted_aec_wait_alias_interim_and_final_interrupt_only_once() ->
 
     assert interrupted == ["interrupt"]
     assert runtime.accept_user_turn("等下。") == (False, "interrupt_command_only")
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_sticky_interrupt_drops_final_that_replays_previous_user_turn() -> None:
+    said: list[str] = []
+    cleared: list[str] = []
+    published: list[dict[str, object]] = []
+
+    async def _yield(phrase: str) -> None:
+        said.append(phrase)
+
+    async def _publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    runtime.set_interrupt_yield(_yield)
+    runtime.set_event_publisher(_publish)
+    runtime.set_user_turn_clearer(lambda: cleared.append("cleared"))
+    runtime._speaker_class = "owner"
+    runtime._speaker_decision = _speaker_decision()
+    previous_fence = await runtime.on_turn_committed("你叫什么名字？")
+    await runtime.on_assistant_speaking("我是你的记忆助手。")
+    runtime.on_user_voice_started()
+
+    assert (
+        runtime.observe_user_transcript(
+            "停一下，你叫什么名字？",
+            final=False,
+        ).value
+        == "accept"
+    )
+    assert (
+        runtime.observe_user_transcript(
+            "你叫什么名字？",
+            final=True,
+        ).value
+        == "accept"
+    )
+    interrupted_fence = await runtime.on_real_interrupt(
+        cause="livekit_playback_interrupted"
+    )
+
+    accepted, reason = runtime.accept_user_turn(
+        "你叫什么名字？",
+        speech_anchored=True,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+    await asyncio.sleep(0.01)
+
+    assert accepted is False
+    assert reason == "interrupt_replayed_previous_turn"
+    assert interrupted_fence.turn_id == previous_fence.turn_id
+    assert interrupted_fence.generation_id == previous_fence.generation_id + 1
+    assert runtime.fence.matches(interrupted_fence)
+    assert said == ["嗯，你说。"]
+    assert cleared == ["cleared"]
+    assert runtime._paused_reply_available is True
+    suppressed = next(
+        event
+        for event in published
+        if event.get("type") == "audio_trace"
+        and event.get("name") == "interrupt_command_turn_suppressed"
+    )
+    detail = suppressed["detail"]
+    assert isinstance(detail, dict)
+    assert detail["intent"] == UtteranceIntent.INTERRUPT_REPLAY
+    assert detail["reason"] == "interrupt_replayed_previous_turn"
+    assert detail["ack_len"] == len("嗯，你说。")
+    yield_started = next(
+        event
+        for event in published
+        if event.get("type") == "audio_trace"
+        and event.get("name") == "interrupt_yield_started"
+    )
+    yield_detail = yield_started["detail"]
+    assert isinstance(yield_detail, dict)
+    assert yield_detail["intent"] == UtteranceIntent.INTERRUPT_REPLAY
+    assert yield_detail["reason"] == "interrupt_replayed_previous_turn"
+    assert yield_detail["ack_len"] == len("嗯，你说。")
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_repeated_previous_user_turn_without_sticky_interrupt_remains_chat() -> None:
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    await runtime.on_turn_committed("你叫什么名字？")
+
+    accepted, reason = runtime.accept_user_turn("你叫什么名字？")
+
+    assert accepted is True
+    assert reason is None
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_sticky_interrupt_keeps_final_with_different_content_as_chat() -> None:
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    previous_fence = await runtime.on_turn_committed("你叫什么名字？")
+    await runtime.on_assistant_speaking("我是你的记忆助手。")
+    runtime.on_user_voice_started()
+    assert (
+        runtime.observe_user_transcript(
+            "停一下，你叫什么名字？",
+            final=False,
+        ).value
+        == "accept"
+    )
+    assert (
+        runtime.observe_user_transcript(
+            "你今天过得怎么样？",
+            final=True,
+        ).value
+        == "accept"
+    )
+
+    accepted, reason = runtime.accept_user_turn(
+        "你今天过得怎么样？",
+        speech_anchored=True,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+    assert accepted is True
+    assert reason is None
+    new_fence = await runtime.on_turn_committed("你今天过得怎么样？")
+    assert new_fence.turn_id == previous_fence.turn_id + 1
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_sticky_repeat_outside_playback_remains_chat() -> None:
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    await runtime.on_turn_committed("你叫什么名字？")
+    runtime.on_user_voice_started()
+    assert (
+        runtime.observe_user_transcript(
+            "停一下，你叫什么名字？",
+            final=False,
+        ).value
+        == "accept"
+    )
+    assert (
+        runtime.observe_user_transcript(
+            "你叫什么名字？",
+            final=True,
+        ).value
+        == "accept"
+    )
+
+    accepted, reason = runtime.accept_user_turn(
+        "你叫什么名字？",
+        speech_anchored=True,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+
+    assert accepted is True
+    assert reason is None
     await runtime.close()
 
 

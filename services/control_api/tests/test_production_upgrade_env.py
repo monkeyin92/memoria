@@ -9,6 +9,16 @@ from cryptography.fernet import Fernet
 from scripts.prepare_production_upgrade_env import main, prepare
 
 
+def _env_values(path: Path) -> dict[str, str]:
+    return {
+        key.strip(): value.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+        for key, separator, value in (line.partition("="),)
+        if separator
+    }
+
+
 def _upgrade_inputs(
     auth: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
@@ -27,6 +37,9 @@ def _upgrade_inputs(
         "DASHSCOPE_BASE_URL": "https://dashscope.example/v1",
         "FUNASR_MODEL": "fun-asr-realtime",
         "FUNASR_SAMPLE_RATE": "16000",
+        "ENDPOINTING_MIN_DELAY_S": "1.50",
+        "ENDPOINTING_MAX_DELAY_S": "2.20",
+        "FALSE_INTERRUPTION_TIMEOUT_S": "1.70",
         "TTS_PROVIDER": "doubao",
         "DOUBAO_TTS_RESOURCE_ID": "seed-tts-2.0",
         "DOUBAO_TTS_SAMPLE_RATE": "24000",
@@ -54,6 +67,19 @@ def _upgrade_inputs(
     return legacy, postgres, minio
 
 
+def test_endpointing_defaults_match_operator_templates() -> None:
+    root = Path(__file__).resolve().parents[3]
+    expected = {
+        "ENDPOINTING_MIN_DELAY_S": "0.90",
+        "ENDPOINTING_MAX_DELAY_S": "1.50",
+        "FALSE_INTERRUPTION_TIMEOUT_S": "1.70",
+    }
+
+    for relative in (".env.example", "infra/memoria.env.production.example"):
+        values = _env_values(root / relative)
+        assert {key: values[key] for key in expected} == expected
+
+
 def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent() -> None:
     legacy, postgres, minio = _upgrade_inputs()
     legacy["DOUBAO_TTS_SECRET_KEY"] = "not-a-websocket-credential"
@@ -79,6 +105,9 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert agent["MEMORIA_MEMORY_CONTEXT_ENABLED"] == "true"
     assert agent["MEMORIA_PERSONA_ENABLED"] == "true"
     assert agent["MEMORIA_VOICE_PROFILE_ENABLED"] == "true"
+    assert agent["ENDPOINTING_MIN_DELAY_S"] == "0.90"
+    assert agent["ENDPOINTING_MAX_DELAY_S"] == "1.50"
+    assert agent["FALSE_INTERRUPTION_TIMEOUT_S"] == "1.70"
     assert agent["DOUBAO_TTS_APP_ID"] == "doubao-app-id"
     assert agent["DOUBAO_TTS_ACCESS_TOKEN"] == "doubao-access-token"
     assert "DOUBAO_TTS_APP_ID" not in control

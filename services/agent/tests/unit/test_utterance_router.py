@@ -216,6 +216,92 @@ def test_interrupt_then_chat_has_no_control_ack() -> None:
     assert route.enter_chat is True
 
 
+def test_sticky_interrupt_replay_is_control_not_a_second_chat_turn() -> None:
+    sticky = route_utterance("停一下，你叫什么名字？")
+
+    route = route_utterance(
+        "你叫什么名字。",
+        sticky_interrupt_route=sticky,
+        previous_committed_text_normalized="你叫什么名字",
+    )
+
+    assert route.intent is UtteranceIntent.INTERRUPT_REPLAY
+    assert route.reason == "interrupt_replayed_previous_turn"
+    assert route.enter_chat is False
+    assert route.should_interrupt is True
+    assert route.ack_phrase == "嗯，你说。"
+
+
+def test_sticky_replay_wins_when_previous_turn_starts_with_interrupt_wording() -> None:
+    sticky = route_utterance("停一下，不是这个意思，我重新说")
+
+    route = route_utterance(
+        "不是这个意思，我重新说",
+        sticky_interrupt_route=sticky,
+        previous_committed_text_normalized="不是这个意思，我重新说",
+    )
+
+    assert route.intent is UtteranceIntent.INTERRUPT_REPLAY
+    assert route.enter_chat is False
+
+
+def test_repeated_previous_turn_without_sticky_interrupt_remains_chat() -> None:
+    route = route_utterance(
+        "你叫什么名字？",
+        previous_committed_text_normalized="你叫什么名字",
+    )
+
+    assert route.intent is UtteranceIntent.CHAT
+    assert route.enter_chat is True
+
+
+def test_sticky_interrupt_keeps_different_final_as_interrupt_then_chat() -> None:
+    sticky = route_utterance("停一下，你叫什么名字？")
+
+    route = route_utterance(
+        "你今天过得怎么样？",
+        sticky_interrupt_route=sticky,
+        previous_committed_text_normalized="你叫什么名字",
+    )
+
+    assert route.intent is UtteranceIntent.INTERRUPT_THEN_CHAT
+    assert route.enter_chat is True
+    assert route.normalized_text == "你今天过得怎么样"
+
+
+def test_sticky_interrupt_does_not_override_enrollment_or_new_pure_control() -> None:
+    sticky = route_utterance("停一下，你叫什么名字？")
+
+    enroll = route_utterance(
+        "你叫什么名字？",
+        speaker_state=SpeakerGateState.PENDING,
+        sticky_interrupt_route=sticky,
+        previous_committed_text_normalized="你叫什么名字",
+    )
+    stop = route_utterance(
+        "别说了",
+        sticky_interrupt_route=sticky,
+        previous_committed_text_normalized="你叫什么名字",
+    )
+
+    assert enroll.intent is UtteranceIntent.ENROLL
+    assert stop.intent is UtteranceIntent.INTERRUPT_COMMAND
+    assert stop.ack_phrase == "好的。"
+
+
+def test_sticky_pure_interrupt_survives_empty_final_revision() -> None:
+    sticky = route_utterance("停一下")
+
+    route = route_utterance(
+        "",
+        sticky_interrupt_route=sticky,
+        previous_committed_text_normalized="你叫什么名字",
+    )
+
+    assert route.intent is UtteranceIntent.INTERRUPT_COMMAND
+    assert route.reason == "interrupt_command_only"
+
+
 def test_paused_reply_resume_trace_routes_back_to_the_interrupted_answer() -> None:
     """Regression from production: TTS ack + pause + resume may share one ASR final."""
 

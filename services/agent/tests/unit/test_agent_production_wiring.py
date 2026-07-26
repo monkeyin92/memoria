@@ -1408,7 +1408,7 @@ def test_self_hosted_turn_handling_filters_short_echoes_and_reads_timing_env(
     }
     assert options["interruption"]["min_duration"] == 0.55
     assert options["interruption"]["min_words"] == 0
-    assert options["interruption"]["false_interruption_timeout"] == 1.50
+    assert options["interruption"]["false_interruption_timeout"] == 1.70
     assert (
         options["interruption"]["false_interruption_timeout"] >= options["endpointing"]["min_delay"]
     )

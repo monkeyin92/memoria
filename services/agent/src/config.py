@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import os
+from collections.abc import Mapping
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -14,6 +16,50 @@ from services.agent.src.contracts.errors import ConfigValidationError
 DeploymentProfile = Literal["livekit_cloud", "cn_self_hosted"]
 LLMProvider = Literal["qwen", "deepseek"]
 TTSProvider = Literal["doubao"]
+
+SELF_HOSTED_ENDPOINTING_MIN_DELAY_S = 0.90
+SELF_HOSTED_ENDPOINTING_MAX_DELAY_S = 1.50
+SELF_HOSTED_FALSE_INTERRUPTION_TIMEOUT_S = 1.70
+
+
+def load_turn_timing(
+    profile: DeploymentProfile | str,
+    env: Mapping[str, str] | None = None,
+) -> tuple[float, float, float]:
+    """Read and validate the turn timing values used by LiveKit."""
+
+    values = os.environ if env is None else env
+    self_hosted = profile == "cn_self_hosted"
+    defaults = (
+        (
+            SELF_HOSTED_ENDPOINTING_MIN_DELAY_S,
+            SELF_HOSTED_ENDPOINTING_MAX_DELAY_S,
+            SELF_HOSTED_FALSE_INTERRUPTION_TIMEOUT_S,
+        )
+        if self_hosted
+        else (0.30, 2.00, 1.20)
+    )
+    try:
+        min_delay = float(values.get("ENDPOINTING_MIN_DELAY_S", str(defaults[0])))
+        max_delay = float(values.get("ENDPOINTING_MAX_DELAY_S", str(defaults[1])))
+        false_timeout = float(
+            values.get("FALSE_INTERRUPTION_TIMEOUT_S", str(defaults[2]))
+        )
+    except ValueError as exc:
+        raise ValueError("turn timing values must be finite numbers") from exc
+    if not all(math.isfinite(value) and value > 0 for value in (
+        min_delay,
+        max_delay,
+        false_timeout,
+    )):
+        raise ValueError("turn timing values must be finite positive numbers")
+    if min_delay > max_delay:
+        raise ValueError("ENDPOINTING_MIN_DELAY_S must be <= ENDPOINTING_MAX_DELAY_S")
+    if false_timeout < min_delay:
+        raise ValueError(
+            "FALSE_INTERRUPTION_TIMEOUT_S must be >= ENDPOINTING_MIN_DELAY_S"
+        )
+    return min_delay, max_delay, false_timeout
 
 
 def _secure_internal_url(value: str) -> bool:

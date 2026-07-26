@@ -277,6 +277,7 @@ class DuplexRuntime:
     _target_speaker_interrupt: Callable[[], Awaitable[None]] | None = None
     _sticky_interrupt_epoch: int | None = None
     _sticky_interrupt_route: UtteranceRoute | None = None
+    _last_committed_user_text_normalized: str = ""
     _trusted_unanchored_control_epoch: int | None = None
     _trusted_unanchored_playback_epoch: int | None = None
     _result_speaker: Callable[[str], Any] | None = None
@@ -1066,7 +1067,12 @@ class DuplexRuntime:
 
     def _route_candidate(self, text: str | None = None) -> UtteranceRoute:
         """Classify utterance via the shared control-plane router."""
-        route = route_utterance(
+        sticky_route = (
+            self._sticky_interrupt_route
+            if self._sticky_interrupt_epoch == self._speaker_epoch
+            else None
+        )
+        return route_utterance(
             text if text is not None else self._interrupt_candidate_text(),
             speaker_state=self.speaker_verifier.state,
             resumable_reply=(
@@ -1074,12 +1080,13 @@ class DuplexRuntime:
                 and self._paused_reply_binding is not None
                 and self._paused_reply_binding == self._current_resume_speaker_binding()
             ),
+            sticky_interrupt_route=sticky_route,
+            previous_committed_text_normalized=(
+                self._last_committed_user_text_normalized
+                if self.input_guard.candidate_during_playback
+                else ""
+            ),
         )
-        if route.should_interrupt or route.intent is UtteranceIntent.RESUME:
-            return route
-        if self._sticky_interrupt_epoch == self._speaker_epoch:
-            return self._sticky_interrupt_route or route
-        return route
 
     def _is_explicit_owner_interrupt_cmd(self) -> bool:
         """True when ASR heard stop/yield phrases like「停一下」「等等」."""
@@ -2226,9 +2233,8 @@ class DuplexRuntime:
         if not target_route.allow_input:
             self._reject_target_speaker(context="turn_commit", route=target_route)
             return False, target_route.reason
-        if route.intent is UtteranceIntent.INTERRUPT_COMMAND:
-            # 「等等」「停一下」「别说了」are control phrases, not chat questions.
-            # If we let them through, the LLM answers「怎么了？」and covers the yield ack.
+        if route.should_interrupt and not route.enter_chat:
+            # Control-plane routes never become LLM user turns.
             self.input_guard.candidate_text = text
             self.orchestrator.metrics.inc_guarded_user_input(route.reason)
             logger.info(
@@ -2243,6 +2249,7 @@ class DuplexRuntime:
                 detail={
                     "text_len": len(text),
                     "intent": route.intent,
+                    "reason": route.reason,
                     "ack_len": len(route.ack_phrase or ""),
                 },
             )
@@ -2347,6 +2354,7 @@ class DuplexRuntime:
             await self.orchestrator.bump_tool_epoch_on_condition_change()
         await self.orchestrator.on_vad_start()
         fence = await self.orchestrator.commit_turn(user_text)
+        self._last_committed_user_text_normalized = normalize_short(user_text)
         self._bind_mode_policy(fence)
         self._bind_history_eligibility(fence, history_eligible)
         self._bind_owner_projection_eligibility(
@@ -2559,6 +2567,7 @@ class DuplexRuntime:
                 "ack_len": len(phrase),
                 "candidate_len": len(candidate),
                 "intent": route.intent,
+                "reason": route.reason,
             },
         )
         try:
@@ -2621,6 +2630,7 @@ class DuplexRuntime:
         expected_pending_text_epoch: int | None,
     ) -> GenerationFence:
         owner_cmd = barge_route.speaker_gate_override
+        control_only = barge_route.should_interrupt and not barge_route.enter_chat
 
         def _record_explicit_interrupt() -> None:
             logger.info(
@@ -2666,7 +2676,7 @@ class DuplexRuntime:
             _record_explicit_interrupt()
         self._bind_mode_policy(new_fence)
         self.publish_assistant_audio("restore", gain=1.0)
-        if create_user_turn and barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND:
+        if create_user_turn and control_only:
             self._clear_control_user_turn(cause=f"interrupt:{cause}")
         self._was_speaking = False
         self._last_playback_completed_ns = None
@@ -2683,7 +2693,7 @@ class DuplexRuntime:
             if (
                 create_user_turn
                 and mid_reply
-                and barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND
+                and control_only
             ):
                 self._paused_reply_binding = self._reply_speaker_binding
                 self._paused_reply_available = self._paused_reply_binding is not None
@@ -2698,7 +2708,7 @@ class DuplexRuntime:
             if (
                 create_user_turn
                 and mid_reply
-                and barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND
+                and control_only
                 and cause
                 not in {
                     "user_button",
