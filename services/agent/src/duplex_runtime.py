@@ -75,6 +75,7 @@ PLAYBACK_INPUT_BLOCK_MIN_WORDS = 1000
 TRUSTED_PLAYBACK_PCM_MS = 2_000
 TRUSTED_PLAYBACK_VOICE_WINDOW_MS = 900
 TRUSTED_PLAYBACK_MIN_VOICED_MS = 160
+TRUSTED_PLAYBACK_VOICE_WITNESS_MS = 2_500
 TARGET_SPEAKER_MIN_PCM_MS = 600
 HISTORY_ELIGIBILITY_MAX_FENCES = 32
 RESPONSE_PROVENANCE_MAX_BYTES = 16 * 1024
@@ -251,6 +252,8 @@ class DuplexRuntime:
     _speaker_epoch: int = 0
     _speaker_pcm: bytearray = field(default_factory=bytearray)
     _trusted_playback_pcm: bytearray = field(default_factory=bytearray)
+    _trusted_playback_witness_pcm: bytes = b""
+    _trusted_playback_witness_ns: int | None = None
     _speaker_collecting: bool = False
     _speaker_classification_task: asyncio.Task[Any] | None = None
     _playback_epoch: int = 0
@@ -691,12 +694,32 @@ class DuplexRuntime:
             # because the cache is empty, while the conversation remains live.
             logger.warning("voice profile refresh failed", exc_info=True)
 
-    def feed_speaker_pcm(self, pcm: bytes) -> None:
+    def feed_speaker_pcm(self, pcm: bytes, *, now_ns: int | None = None) -> None:
         if self.trusted_aec_playback_control and self._was_speaking and pcm:
             self._trusted_playback_pcm.extend(pcm)
             max_bytes = self._speaker_sample_rate * 2 * TRUSTED_PLAYBACK_PCM_MS // 1_000
             if len(self._trusted_playback_pcm) > max_bytes:
                 del self._trusted_playback_pcm[: len(self._trusted_playback_pcm) - max_bytes]
+            window_bytes = (
+                self._speaker_sample_rate * 2 * TRUSTED_PLAYBACK_VOICE_WINDOW_MS // 1_000
+            )
+            recent_pcm = bytes(self._trusted_playback_pcm[-window_bytes:])
+            if (
+                voiced_stats_from_pcm(
+                    pcm,
+                    sample_rate=self._speaker_sample_rate,
+                )["speech_ms"]
+                > 0
+                and voiced_stats_from_pcm(
+                    recent_pcm,
+                    sample_rate=self._speaker_sample_rate,
+                )["speech_ms"]
+                >= TRUSTED_PLAYBACK_MIN_VOICED_MS
+            ):
+                self._trusted_playback_witness_pcm = recent_pcm
+                self._trusted_playback_witness_ns = (
+                    now_ns if now_ns is not None else time.monotonic_ns()
+                )
         if self._speaker_collecting and pcm:
             self._speaker_pcm.extend(pcm)
             if len(self._speaker_pcm) > 4 * 1024 * 1024:
@@ -712,17 +735,19 @@ class DuplexRuntime:
             return
         self.speaker_verifier.feed_pcm(pcm)
 
-    def _trusted_playback_has_voice(self) -> bool:
-        window_bytes = (
-            self._speaker_sample_rate * 2 * TRUSTED_PLAYBACK_VOICE_WINDOW_MS // 1_000
-        )
-        recent_pcm = bytes(self._trusted_playback_pcm[-window_bytes:])
+    def _clear_trusted_playback_audio(self) -> None:
+        self._trusted_playback_pcm.clear()
+        self._trusted_playback_witness_pcm = b""
+        self._trusted_playback_witness_ns = None
+
+    def _trusted_playback_has_voice(self, *, now_ns: int | None = None) -> bool:
+        witnessed_at = self._trusted_playback_witness_ns
+        if witnessed_at is None or not self._trusted_playback_witness_pcm:
+            return False
+        now = now_ns if now_ns is not None else time.monotonic_ns()
+        age_ms = (now - witnessed_at) // 1_000_000
         return (
-            voiced_stats_from_pcm(
-                recent_pcm,
-                sample_rate=self._speaker_sample_rate,
-            )["speech_ms"]
-            >= TRUSTED_PLAYBACK_MIN_VOICED_MS
+            0 <= age_ms <= TRUSTED_PLAYBACK_VOICE_WITNESS_MS
         )
 
     def on_user_voice_stopped(self) -> None:
@@ -756,7 +781,7 @@ class DuplexRuntime:
         trusted_epoch = self._trusted_unanchored_control_epoch
         self._trusted_unanchored_control_epoch = None
         self._trusted_unanchored_playback_epoch = None
-        self._trusted_playback_pcm.clear()
+        self._clear_trusted_playback_audio()
         if trusted_epoch is None:
             return
         if self._sticky_interrupt_epoch == trusted_epoch:
@@ -1923,7 +1948,7 @@ class DuplexRuntime:
         self._sticky_interrupt_route = None
         self._trusted_unanchored_control_epoch = None
         self._trusted_unanchored_playback_epoch = None
-        self._trusted_playback_pcm.clear()
+        self._clear_trusted_playback_audio()
         self._speaker_class = "uncertain"
         self._speaker_decision = self._uncertain_speaker_decision("classification_pending")
         self._speaker_pcm.clear()
@@ -1983,7 +2008,7 @@ class DuplexRuntime:
             and self.input_guard.candidate_during_playback
             and not self.input_guard.candidate_vad_anchored
             and raw_route.intent is UtteranceIntent.INTERRUPT_COMMAND
-            and self._trusted_playback_has_voice()
+            and self._trusted_playback_has_voice(now_ns=now_ns)
             and raw_route.normalized_text
             not in normalize_short(self._pending_assistant_text or self._played_assistant_text)
             and self.input_guard.guarded_reason(
@@ -2005,7 +2030,7 @@ class DuplexRuntime:
                 self._speaker_decision = self._uncertain_speaker_decision(
                     "trusted_aec_unanchored_control"
                 )
-                self._speaker_pcm = bytearray(self._trusted_playback_pcm)
+                self._speaker_pcm = bytearray(self._trusted_playback_witness_pcm)
                 self._speaker_collecting = False
                 self._fresh_user_speech = False
                 self._trusted_unanchored_control_epoch = self._speaker_epoch
@@ -2135,7 +2160,7 @@ class DuplexRuntime:
         self._reset_canonical_speech_epoch()
         self._trusted_unanchored_control_epoch = None
         self._trusted_unanchored_playback_epoch = None
-        self._trusted_playback_pcm.clear()
+        self._clear_trusted_playback_audio()
 
     def _clear_unanchored_playback_transcript(self) -> None:
         """Reset LiveKit STT after echo-only playback input, before the next VAD."""
@@ -2854,7 +2879,6 @@ class DuplexRuntime:
                 self._set_interruption_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
             self._last_playback_completed_ns = None
             self._playback_started_ns = time.monotonic_ns()
-            self._trusted_playback_pcm.clear()
             if self._playback_fence is None or not self._playback_fence.matches(self.fence):
                 self._playback_fence = self.fence
                 self._played_assistant_text = ""

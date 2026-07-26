@@ -24,7 +24,12 @@ Memoria 的当前正式语音主链是 Cascade：`FunASR Realtime → Qwen → D
 - AI 播放期间提供本地优先的显式打断：小程序先停止当前 generation 的 WebAudio source 并拒绝迟到帧，再调用既有 `stop-response`。语音打断继续复用 FunASR partial、TargetSpeakerFocus 与 `UtteranceRouter`。
 - gateway ticket 可由已认证且仍拥有会话的用户刷新，用于 WebSocket 断线重连；刷新不会重建业务 session，也不会改变其已冻结的 mode、版本、关系或授权。
 - 网关只有在 APM 初始化与静音自检成功时才通过 job metadata 声明初始 AEC 能力。真实帧处理期间一旦 APM 从 ready 变为 failed，网关必须先隔离当前及后续原始上行，通过 LiveKit reliable data 单向通知 Agent 撤销该能力；Agent 清理滚动 PCM、在飞说话人分类与播放 epoch 后 ACK，网关收到 ACK 才能恢复普通原始 PCM。该会话不得动态重新开启特权路径；通知/ACK 丢失或超时必须保持 fail-closed，而不能把未处理 PCM 送给仍处于 trusted 状态的 Agent。
-- 无 VAD 的小程序语音只对“当前播放实例中的纯打断命令”开放窄通道：要求最近 AEC 后 PCM 有最小 voiced 锚点、排除助手原文/回声与 backchannel，并复用 TargetSpeakerFocus 和 `UtteranceRouter`。迟到分类、静音/底噪、普通聊天、interrupt+chat、旧播放实例及 H5 均不得使用这条通道。
+- 无 VAD 的小程序语音只对“当前播放实例中的纯打断命令”开放窄通道：当前播放实例内
+  900 ms AEC 后 PCM 窗口至少包含 160 ms voiced 时，冻结该窗口为短期声学 witness；
+  FunASR 转写须在 2500 ms 内到达，且继续排除助手原文/回声与 backchannel，并复用
+  TargetSpeakerFocus 和 `UtteranceRouter`。VAD start、播放替换/结束、AEC 撤销都会清除
+  witness；迟到分类、过期 witness、静音/底噪、普通聊天、interrupt+chat、旧播放实例及
+  H5 均不得使用这条通道。
 - 小程序初版仅支持 `cascade`；Qwen Omni 仍维持既有 H5 隔离 A/B 边界。
 - H5 文件和 H5 会话响应保持不变；所有新增 response shape 仅在小程序 platform 分支返回。
 

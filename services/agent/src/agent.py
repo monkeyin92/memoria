@@ -1587,7 +1587,7 @@ async def entrypoint(ctx: Any) -> None:
     runtime = DuplexRuntime.create(
         session_id=runtime_session_id,
         tts=tts_plugin,
-        input_guard_enabled=profile == "cn_self_hosted",
+        input_guard_enabled=profile == "cn_self_hosted" or miniprogram_aec_session,
         trusted_aec_playback_control=miniprogram_aec_session,
         listener_cues_enabled=cues_on,
         use_paralinguistic_tags=False,

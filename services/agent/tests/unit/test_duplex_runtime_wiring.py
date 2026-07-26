@@ -20,7 +20,11 @@ from services.agent.src.agent import (
 )
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
-from services.agent.src.orchestration.speaker_verify import SpeakerGateState, SpeakerVerifier
+from services.agent.src.orchestration.speaker_verify import (
+    SpeakerGateState,
+    SpeakerVerifier,
+    voiced_stats_from_pcm,
+)
 from services.agent.src.orchestration.state_machine import ConversationState
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSTT
@@ -202,6 +206,66 @@ async def test_trusted_aec_pure_interrupt_can_stop_without_a_vad_start() -> None
 
 
 @pytest.mark.asyncio
+async def test_trusted_aec_pure_interrupt_keeps_voiced_anchor_for_late_asr() -> None:
+    now_ns = 1_000_000_000
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("我正在讲一个很长的故事。")
+    for _ in range(3):
+        runtime.feed_speaker_pcm(b"\x00\x20" * 1_280, now_ns=now_ns)
+        now_ns += 80_000_000
+    for _ in range(15):
+        runtime.feed_speaker_pcm(b"\x00\x00" * 1_280, now_ns=now_ns)
+        now_ns += 80_000_000
+
+    assert runtime.observe_user_transcript(
+        "等一下",
+        final=False,
+        now_ns=now_ns,
+    ).value == "accept"
+    assert runtime._trusted_unanchored_control_epoch == runtime._speaker_epoch
+    assert (
+        voiced_stats_from_pcm(
+            bytes(runtime._speaker_pcm),
+            sample_rate=16_000,
+        )["speech_ms"]
+        >= 160
+    )
+    runtime.on_user_voice_started(now_ns=now_ns + 100_000_000)
+    assert runtime._trusted_playback_witness_pcm == b""
+    assert runtime._trusted_playback_witness_ns is None
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_trusted_aec_voiced_anchor_expires_before_a_late_control() -> None:
+    now_ns = 1_000_000_000
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("我正在讲一个很长的故事。")
+    for _ in range(3):
+        runtime.feed_speaker_pcm(b"\x00\x20" * 1_280, now_ns=now_ns)
+        now_ns += 80_000_000
+    for _ in range(33):
+        runtime.feed_speaker_pcm(b"\x00\x00" * 1_280, now_ns=now_ns)
+        now_ns += 80_000_000
+
+    assert runtime.observe_user_transcript(
+        "等一下",
+        final=False,
+        now_ns=now_ns,
+    ).value == "wait"
+    assert runtime._trusted_unanchored_control_epoch is None
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_trusted_unanchored_interrupt_reclassifies_the_current_pcm_epoch() -> None:
     interrupted: list[str] = []
     decisions = iter((_speaker_decision(), _guest_speaker_decision()))
@@ -346,6 +410,8 @@ async def test_revoking_aec_trust_cancels_an_inflight_unanchored_interrupt() -> 
     assert runtime.trusted_aec_playback_control is False
     assert runtime._speaker_epoch == trusted_epoch + 1
     assert runtime._trusted_playback_pcm == bytearray()
+    assert runtime._trusted_playback_witness_pcm == b""
+    assert runtime._trusted_playback_witness_ns is None
     assert runtime.input_guard.candidate_decision.value == "ignore"
     assert runtime.revoke_trusted_aec_playback_control(cause="duplicate") is False
     await runtime.close()
@@ -532,6 +598,7 @@ async def test_trusted_interrupt_serializes_stop_with_the_next_playback() -> Non
     [
         (False, "等一下", "我正在讲一个很长的故事。"),
         (True, "我想问个问题", "我正在讲一个很长的故事。"),
+        (True, "等一下，我想问个问题", "我正在讲一个很长的故事。"),
         (True, "等一下", "你先等一下，我马上说完。"),
     ],
 )

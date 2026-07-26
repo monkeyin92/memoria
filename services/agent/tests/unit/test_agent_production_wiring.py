@@ -1584,7 +1584,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     from services.agent.src.providers import deepseek, doubao_tts, funasr_stt
 
     fake_tts = _FakeTTS()
-    monkeypatch.setenv("DEPLOYMENT_PROFILE", "cn_self_hosted")
+    monkeypatch.setenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     monkeypatch.setenv("SPEAKER_VERIFY_ENABLED", "false")
     monkeypatch.setenv(
         "MEMORIA_INTERACTION_POLICY_TOKEN",
@@ -1667,6 +1667,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     await asyncio.sleep(0)
     runtime: DuplexRuntime = ctx.proc.userdata["duplex_runtime"]
     assert runtime.session_id == "public-session"
+    assert runtime.input_guard.enabled is True
     assert runtime.trusted_aec_playback_control is True
     runtime._clear_control_user_turn(cause="production_wiring_test")
     assert session.clear_user_turn_count == 1

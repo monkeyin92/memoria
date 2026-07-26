@@ -23,10 +23,12 @@ FunASR 的多轮 `input.context` 会提高历史内容的识别偏置。它不�
 - 播放期间没有新 VAD/PCM 锚点的转写一律不可信，interim 只等待，final 直接隔离；
   不能仅凭“不是”“我问的是”“停一下”等文本关键词放行。
 - 原生小程序只允许一个窄例外：媒体网关启动时已证明 AEC 可用、运行期健康尚未被
-  单向撤销、最近 900 ms 的 AEC 后 PCM 至少有 160 ms voiced、同一当前播放实例内
-  `UtteranceRouter` 判定为纯控制命令，且未命中助手回声/语言/backchannel 门禁时，
-  可把这段 PCM 作为声学锚点交给 TargetSpeakerFocus。该命令只能停止当前播放，不能进入
-  chat、历史、记忆或权限平面；普通 H5、普通聊天与 interrupt+chat 不走此例外。
+  单向撤销、当前播放实例内曾有一个 900 ms 的 AEC 后 PCM 窗口至少包含 160 ms voiced，
+  并且冻结的声学 witness 距转写到达不超过 2500 ms 时，才允许 `UtteranceRouter`
+  判定为纯控制命令的转写继续进入 TargetSpeakerFocus。witness 保存对应的有声窗口，
+  不能用转写到达时已经被静音覆盖的 PCM 尾窗替代；VAD start、播放替换/结束或 AEC 撤销
+  都会清除它。命令还必须未命中助手回声/语言/backchannel 门禁，只能停止当前播放，
+  不能进入 chat、历史、记忆或权限平面；普通 H5、普通聊天与 interrupt+chat 不走此例外。
 - `DuplexRuntime` 按 VAD speech epoch 累积 `ACCEPT` 的 final，并记录是否出现过被隔离的
   final；endpoint 完成时把 canonical snapshot 冻结进 FIFO。`on_user_turn_completed` 必须在
   任何 `await` 之前消费最老 snapshot，只用该 epoch 的已接受片段重建 canonical text；
