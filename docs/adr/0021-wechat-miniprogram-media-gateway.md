@@ -18,7 +18,10 @@ Memoria 的当前正式语音主链是 Cascade：`FunASR Realtime → Qwen → D
 - gateway ticket 是短期、带 `issuer`、`audience`、`type`、会话、房间、用户 identity、agent name 和 `cascade` backend 的独立 HMAC JWT。ticket 不携带 LiveKit participant token，不写入 URL、access log 或应用日志。
 - 网关以自身最小权限环境变量保留 LiveKit API key/secret，用 ticket 中经过验证的 room/identity 重新铸造短期 LiveKit participant token。小程序不能看到 LiveKit secret 或 participant token。
 - 网关只桥接 `PCM16LE / 16 kHz / mono` 上行和 `PCM16LE / 24 kHz / mono` 下行；上行按 20 ms 重分帧，下行在小程序经 WebAudio 的有界 jitter buffer 播放。
+- 网关可以只对小程序会话启用 LiveKit WebRTC Audio Processing Module：24 kHz 下行作为 reverse reference，16 kHz 上行清理后再发布；处理失败必须旁路原始上行，且不得改变 H5 或 Agent 主链。
 - 网关只把 Agent `voice-agent.ui` data topic 和 LiveKit transcription 转发给小程序。它不接受小程序定义的 speaker/history/mode/generation/权限事件，也不创建第二套 Agent、ASR 或对话状态机。
+- 媒体 WebSocket 只额外接受无文本、无业务权限的 `playout_reset / playout_interrupt` 事实，用于关联客户端已停止排程音频的时刻；停止回答仍调用既有 Control API，客户端遥测不能直接控制 Agent。
+- AI 播放期间提供本地优先的显式打断：小程序先停止当前 generation 的 WebAudio source 并拒绝迟到帧，再调用既有 `stop-response`。语音打断继续复用 FunASR partial、TargetSpeakerFocus 与 `UtteranceRouter`。
 - gateway ticket 可由已认证且仍拥有会话的用户刷新，用于 WebSocket 断线重连；刷新不会重建业务 session，也不会改变其已冻结的 mode、版本、关系或授权。
 - 小程序初版仅支持 `cascade`；Qwen Omni 仍维持既有 H5 隔离 A/B 边界。
 - H5 文件和 H5 会话响应保持不变；所有新增 response shape 仅在小程序 platform 分支返回。
@@ -28,6 +31,8 @@ Memoria 的当前正式语音主链是 Cascade：`FunASR Realtime → Qwen → D
 - 语音业务后端和 LiveKit room 继续共用，避免复制 FunASR/Qwen/Doubao、UtteranceRouter、speaker policy 或 archive 历史逻辑。
 - 增加一个媒体 hop，首音与端到端延迟会高于 H5 的直连 WebRTC 路径；必须在真机验收中量测。
 - 小程序录音/播放期没有和浏览器等价的 AEC 控制，播放回灌是最大风险。Android 可优先请求 `voice_communication` 音频源；iOS 采用 `auto`，两者都不得把“接口调用成功”当作 AEC 通过。
+- 网关侧 APM 只有服务端原始下行参考，不掌握手机真实渲染时刻、音量、路由与非线性失真；它是可校准的回声缓解层，不等价于终端系统 AEC，也不能替代真机双讲验收。
+- generation barrier 只清理过期 reference 时序，不反复销毁同一媒体会话内 APM 已学习的声学路径；路由/设备真正变化时仍需重新建立媒体会话。
 - 发布工件增加网关镜像和最小权限 gateway env；release manifest、Nginx、Compose 和生产运行手册必须同步更新。
 - 即使所有代码和 mock 测试通过，未经 iOS/Android、扬声器/听筒/蓝牙、弱网与后台切换的实机证据，不得对外宣传“全双工原生小程序已验收”。
 

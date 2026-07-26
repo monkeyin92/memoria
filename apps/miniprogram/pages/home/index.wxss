@@ -507,6 +507,22 @@
   flex: 1;
 }
 
+.interrupt-button {
+  border-color: rgba(255, 77, 219, 0.5);
+  color: #fff;
+  background: linear-gradient(
+    120deg,
+    rgba(25, 184, 216, 0.88) 0%,
+    rgba(123, 92, 255, 0.92) 55%,
+    rgba(196, 77, 224, 0.9) 100%
+  );
+  box-shadow: 0 8rpx 24rpx rgba(123, 92, 255, 0.3);
+}
+
+.interrupt-button-active {
+  opacity: 0.78;
+}
+
 .retry-button {
   margin-top: 18rpx;
 }

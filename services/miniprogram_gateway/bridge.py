@@ -15,11 +15,13 @@ from livekit import rtc
 from livekit.api import AccessToken, RoomAgentDispatch, RoomConfiguration, VideoGrants
 
 from services.common.miniprogram_gateway_ticket import GatewayTicketClaims
+from services.miniprogram_gateway.audio_processing import MiniProgramAudioProcessor
 from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 from services.miniprogram_gateway.protocol import FrameType, PcmFrame, encode_pcm_frame
 
 logger = logging.getLogger(__name__)
 UI_TOPIC = "voice-agent.ui"
+CONTROL_ACK_TRACK_NAME = "memoria-ack"
 
 
 class GatewayMediaError(ValueError):
@@ -30,10 +32,13 @@ class GatewayMediaError(ValueError):
 class GatewayOutboundMessage:
     binary: bytes | None = None
     event: dict[str, object] | None = None
+    audio_reference: bytes | None = None
 
     def __post_init__(self) -> None:
         if (self.binary is None) == (self.event is None):
             raise ValueError("an outbound gateway message must contain exactly one payload")
+        if self.audio_reference is not None and self.binary is None:
+            raise ValueError("an outbound audio reference requires a binary payload")
 
 
 class PcmFrameAccumulator:
@@ -90,11 +95,22 @@ class MiniProgramLiveKitBridge:
         self._uplink_message_count = 0
         self._uplink_payload_bytes = 0
         self._uplink_livekit_frame_count = 0
+        self._downlink_drop_count = 0
         self._turn_id: int | None = None
         self._generation_id: int | None = None
+        self._audio_generation_id: int | None = None
+        self._downlink_generation_protocol = False
+        self._downlink_quarantine_until = 0.0
         self._uplink = PcmFrameAccumulator(
             sample_rate=settings.miniprogram_gateway_uplink_sample_rate,
             frame_ms=settings.miniprogram_gateway_frame_ms,
+        )
+        self._audio_processor = MiniProgramAudioProcessor(
+            enabled=settings.miniprogram_gateway_aec_enabled,
+            downlink_sample_rate=settings.miniprogram_gateway_downlink_sample_rate,
+            uplink_sample_rate=settings.miniprogram_gateway_uplink_sample_rate,
+            stream_delay_ms=settings.miniprogram_gateway_aec_stream_delay_ms,
+            active_window_ms=settings.miniprogram_gateway_aec_active_window_ms,
         )
         self._audio_messages: asyncio.Queue[GatewayOutboundMessage] = asyncio.Queue(
             maxsize=settings.miniprogram_gateway_audio_queue_frames
@@ -119,8 +135,14 @@ class MiniProgramLiveKitBridge:
                 "channels": 1,
                 "sample_format": "s16le",
                 "frame_ms": self._settings.miniprogram_gateway_frame_ms,
+                "frame_protocol_version": (
+                    2 if self._downlink_generation_protocol else 1
+                ),
             },
         }
+
+    def set_downlink_generation_protocol(self, enabled: bool) -> None:
+        self._downlink_generation_protocol = enabled
 
     async def connect(self) -> None:
         if self._closed:
@@ -155,6 +177,8 @@ class MiniProgramLiveKitBridge:
             raise GatewayMediaError("media bridge is not connected")
         if frame.frame_type is not FrameType.UPLINK_AUDIO:
             raise GatewayMediaError("media bridge received a non-uplink frame")
+        if frame.generation_id is not None:
+            raise GatewayMediaError("PCM uplink must not define a generation")
         if self._last_uplink_sequence is not None:
             expected = (self._last_uplink_sequence + 1) & 0xFFFFFFFF
             if frame.sequence != expected:
@@ -165,6 +189,7 @@ class MiniProgramLiveKitBridge:
         if self._uplink_message_count == 1:
             logger.info("mini_program_uplink_started payload_bytes=%s", len(frame.payload))
         for pcm in self._uplink.feed(frame.payload):
+            pcm = self._audio_processor.process_uplink(pcm)
             audio_frame = rtc.AudioFrame(
                 data=pcm,
                 sample_rate=self._settings.miniprogram_gateway_uplink_sample_rate,
@@ -190,6 +215,25 @@ class MiniProgramLiveKitBridge:
                 self._outbound_ready.set()
                 continue
             await self._outbound_ready.wait()
+
+    def outbound_sent(self, message: GatewayOutboundMessage) -> None:
+        """Advance AEC only for bytes/control barriers accepted by the WebSocket."""
+        if message.audio_reference is not None:
+            self._audio_processor.observe_downlink(message.audio_reference)
+        if message.event is not None and message.event.get("type") == "audio_reset":
+            self._audio_processor.reset()
+
+    def accept_transport_event(self, event: dict[str, object]) -> None:
+        """Record bounded client playout facts without accepting business commands."""
+        logger.info(
+            "mini_program_playout_event type=%s generation_id=%s "
+            "barrier_sequence=%s client_timestamp_ms=%s session_id=%s",
+            event.get("type"),
+            event.get("generation_id"),
+            event.get("barrier_sequence"),
+            event.get("client_timestamp_ms"),
+            self._claims.session_id,
+        )
 
     async def wait_for_room_disconnect(self) -> None:
         await self._room_disconnected.wait()
@@ -219,10 +263,12 @@ class MiniProgramLiveKitBridge:
             with contextlib.suppress(Exception):
                 await room.disconnect()
             logger.info(
-                "mini_program_uplink_summary messages=%s payload_bytes=%s livekit_frames=%s",
+                "mini_program_media_summary uplink_messages=%s payload_bytes=%s "
+                "livekit_frames=%s downlink_drops=%s",
                 self._uplink_message_count,
                 self._uplink_payload_bytes,
                 self._uplink_livekit_frame_count,
+                self._downlink_drop_count,
             )
         self._room_disconnected.set()
 
@@ -263,7 +309,7 @@ class MiniProgramLiveKitBridge:
                 if track is not None:
                     self._on_track_subscribed(track, publication, participant)
 
-    def _on_track_subscribed(self, track: Any, _publication: Any, participant: Any) -> None:
+    def _on_track_subscribed(self, track: Any, publication: Any, participant: Any) -> None:
         if self._closed or not self._is_agent(participant):
             return
         if getattr(track, "kind", None) != rtc.TrackKind.KIND_AUDIO:
@@ -273,14 +319,27 @@ class MiniProgramLiveKitBridge:
             return
         if any(task.get_name() == f"mini-program-audio-{sid}" for task in self._background_tasks):
             return
+        track_name = str(
+            getattr(publication, "name", "")
+            or getattr(track, "name", "")
+        )
         self._spawn(
-            self._pump_downlink_track(track),
+            self._pump_downlink_track(
+                track,
+                control_track=track_name == CONTROL_ACK_TRACK_NAME,
+            ),
             name=f"mini-program-audio-{sid}",
         )
 
-    async def _pump_downlink_track(self, track: Any) -> None:
+    async def _pump_downlink_track(
+        self,
+        track: Any,
+        *,
+        control_track: bool = False,
+    ) -> None:
         stream = rtc.AudioStream.from_track(
             track=track,
+            capacity=1,
             sample_rate=self._settings.miniprogram_gateway_downlink_sample_rate,
             num_channels=1,
             frame_size_ms=self._settings.miniprogram_gateway_frame_ms,
@@ -293,17 +352,35 @@ class MiniProgramLiveKitBridge:
                 pcm = bytes(event.frame.data)
                 if not pcm:
                     continue
+                sequence = self._downlink_sequence
+                self._downlink_sequence = (self._downlink_sequence + 1) & 0xFFFFFFFF
+                audio_generation_id = (
+                    self._generation_id if control_track else self._audio_generation_id
+                )
+                if audio_generation_id is None:
+                    continue
+                if not control_track:
+                    if (
+                        asyncio.get_running_loop().time()
+                        < self._downlink_quarantine_until
+                    ):
+                        continue
                 self._enqueue_audio(
                     GatewayOutboundMessage(
                         binary=encode_pcm_frame(
                             FrameType.DOWNLINK_AUDIO,
-                            sequence=self._downlink_sequence,
+                            sequence=sequence,
+                            generation_id=(
+                                audio_generation_id
+                                if self._downlink_generation_protocol
+                                else None
+                            ),
                             timestamp_ms=int(asyncio.get_running_loop().time() * 1_000),
                             payload=pcm,
-                        )
+                        ),
+                        audio_reference=pcm,
                     )
                 )
-                self._downlink_sequence = (self._downlink_sequence + 1) & 0xFFFFFFFF
         finally:
             self._audio_streams.discard(stream)
             with contextlib.suppress(Exception):
@@ -324,6 +401,8 @@ class MiniProgramLiveKitBridge:
         if not isinstance(parsed, dict) or not isinstance(parsed.get("type"), str):
             return
         generation_id = parsed.get("generation_id")
+        generation_changed = False
+        first_generation = self._generation_id is None
         if (
             isinstance(generation_id, int)
             and not isinstance(generation_id, bool)
@@ -331,16 +410,43 @@ class MiniProgramLiveKitBridge:
         ):
             if self._generation_id is None:
                 self._generation_id = generation_id
+                generation_changed = True
             elif generation_id < self._generation_id:
                 return
             elif generation_id > self._generation_id:
                 self._generation_id = generation_id
+                generation_changed = True
+            if generation_changed:
+                self._audio_generation_id = None
+                self._downlink_quarantine_until = (
+                    0.0
+                    if first_generation
+                    else (
+                        asyncio.get_running_loop().time()
+                        + self._settings.miniprogram_gateway_generation_quarantine_ms
+                        / 1_000
+                    )
+                )
+                barrier_sequence = self._downlink_sequence
                 self._clear_queued_audio()
                 self._enqueue_event(
                     GatewayOutboundMessage(
-                        event={"type": "audio_reset", "generation_id": generation_id}
+                        event={
+                            "type": "audio_reset",
+                            "generation_id": generation_id,
+                            "barrier_sequence": barrier_sequence,
+                        }
                     )
                 )
+            if (
+                parsed.get("type") == "assistant_state"
+                and generation_id == self._generation_id
+            ):
+                if parsed.get("state") == "speaking":
+                    self._audio_generation_id = generation_id
+                    self._downlink_quarantine_until = 0.0
+                elif self._audio_generation_id == generation_id:
+                    self._audio_generation_id = None
         turn_id = parsed.get("turn_id")
         if isinstance(turn_id, int) and not isinstance(turn_id, bool) and turn_id >= 0:
             self._turn_id = turn_id
@@ -419,6 +525,12 @@ class MiniProgramLiveKitBridge:
         if self._audio_messages.full():
             with contextlib.suppress(asyncio.QueueEmpty):
                 self._audio_messages.get_nowait()
+                self._downlink_drop_count += 1
+                if self._downlink_drop_count == 1 or self._downlink_drop_count % 25 == 0:
+                    logger.warning(
+                        "mini_program_downlink_drop count=%s",
+                        self._downlink_drop_count,
+                    )
         self._audio_messages.put_nowait(message)
         self._outbound_ready.set()
 

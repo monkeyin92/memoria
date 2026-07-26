@@ -64,8 +64,12 @@ def create_app(
         await websocket.accept()
         bridge: MiniProgramLiveKitBridge | None = None
         try:
-            claims = await _receive_hello(websocket, configured)
+            claims, downlink_generation_protocol = await _receive_hello(
+                websocket,
+                configured,
+            )
             bridge = bridge_factory(configured, claims)
+            bridge.set_downlink_generation_protocol(downlink_generation_protocol)
             await bridge.connect()
             await websocket.send_json(bridge.ready_event)
             sender = asyncio.create_task(
@@ -114,7 +118,7 @@ def create_app(
 async def _receive_hello(
     websocket: WebSocket,
     settings: MiniProgramGatewaySettings,
-) -> GatewayTicketClaims:
+) -> tuple[GatewayTicketClaims, bool]:
     hello = await asyncio.wait_for(
         websocket.receive_json(),
         timeout=settings.miniprogram_gateway_handshake_timeout_s,
@@ -126,10 +130,18 @@ async def _receive_hello(
     ticket = hello.get("ticket")
     if not isinstance(ticket, str):
         raise GatewayTicketError("missing gateway ticket")
-    return verify_gateway_ticket(
-        ticket,
-        secret=settings.memoria_miniprogram_gateway_ticket_secret.get_secret_value(),
-        max_ttl_s=settings.miniprogram_gateway_ticket_max_ttl_s,
+    capabilities = hello.get("capabilities")
+    downlink_generation_protocol = (
+        isinstance(capabilities, dict)
+        and capabilities.get("downlink_generation") == 2
+    )
+    return (
+        verify_gateway_ticket(
+            ticket,
+            secret=settings.memoria_miniprogram_gateway_ticket_secret.get_secret_value(),
+            max_ttl_s=settings.miniprogram_gateway_ticket_max_ttl_s,
+        ),
+        downlink_generation_protocol,
     )
 
 
@@ -146,20 +158,45 @@ async def _receive_media(websocket: WebSocket, bridge: MiniProgramLiveKitBridge)
         text = message.get("text")
         if text is None:
             raise ProtocolError("unsupported gateway WebSocket message")
-        _validate_control_text(text)
+        bridge.accept_transport_event(_validate_control_text(text))
 
 
-def _validate_control_text(text: Any) -> None:
+def _validate_control_text(text: Any) -> dict[str, object]:
     if not isinstance(text, str) or len(text) > 1_024:
         raise ProtocolError("invalid gateway control message")
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ProtocolError("invalid gateway control JSON") from exc
-    # WebSocket transport control deliberately has no business-command surface.
-    # Existing stop/recovery actions remain authenticated Control API calls.
-    if not isinstance(parsed, dict) or parsed.get("type") != "ping" or len(parsed) != 1:
+    if not isinstance(parsed, dict):
         raise ProtocolError("unsupported gateway control message")
+    if parsed.get("type") == "ping" and len(parsed) == 1:
+        return {"type": "ping"}
+    event_type = parsed.get("type")
+    if not isinstance(event_type, str):
+        raise ProtocolError("unsupported gateway control message")
+    required_keys = {
+        "playout_interrupt": {"type", "generation_id", "client_timestamp_ms"},
+        "playout_reset": {
+            "type",
+            "generation_id",
+            "barrier_sequence",
+            "client_timestamp_ms",
+        },
+    }.get(event_type)
+    if required_keys is None:
+        raise ProtocolError("unsupported gateway control message")
+    if set(parsed) != required_keys:
+        raise ProtocolError("invalid gateway playout event")
+    for key in required_keys - {"type"}:
+        value = parsed.get(key)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 0 <= value <= 0xFFFFFFFFFFFFFFFF
+        ):
+            raise ProtocolError("invalid gateway playout event")
+    return {key: parsed[key] for key in required_keys}
 
 
 async def _send_outbound(websocket: WebSocket, bridge: MiniProgramLiveKitBridge) -> None:
@@ -167,8 +204,10 @@ async def _send_outbound(websocket: WebSocket, bridge: MiniProgramLiveKitBridge)
         message = await bridge.next_outbound()
         if message.binary is not None:
             await websocket.send_bytes(message.binary)
+            bridge.outbound_sent(message)
         elif message.event is not None:
             await websocket.send_json(message.event)
+            bridge.outbound_sent(message)
         else:  # pragma: no cover - dataclass invariant
             raise RuntimeError("invalid outbound media message")
 

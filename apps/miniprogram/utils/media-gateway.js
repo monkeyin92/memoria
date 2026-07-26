@@ -19,6 +19,14 @@ function socketConnectionErrorMessage(error) {
   return detail ? `语音网络连接失败：${detail.slice(0, 120)}` : "语音网络连接失败。";
 }
 
+function gatewayEventGenerationId(event) {
+  const generationId =
+    event?.type === "ui_event"
+      ? event.event?.generation_id
+      : event?.generation_id;
+  return Number.isInteger(generationId) ? generationId : null;
+}
+
 class MiniProgramMediaSession {
   constructor(session, callbacks = {}) {
     this.session = session;
@@ -29,6 +37,7 @@ class MiniProgramMediaSession {
       sampleRate: session.media_gateway?.audio?.sample_rate || 24000,
     });
     this.sequence = 0;
+    this.playbackGenerationId = null;
     this.ready = false;
     this.recording = false;
     this.recorderStarted = false;
@@ -64,6 +73,9 @@ class MiniProgramMediaSession {
           type: "hello",
           protocol_version: 1,
           ticket: this.session.media_gateway.ticket,
+          capabilities: {
+            downlink_generation: 2,
+          },
         }),
       });
     });
@@ -72,6 +84,7 @@ class MiniProgramMediaSession {
       this._rejectReady(new Error(socketConnectionErrorMessage(error)));
     });
     this.socket.onClose(() => {
+      this.playbackGenerationId = null;
       this.player.reset();
       this._rejectReady(new Error("语音连接已关闭。"));
       if (!this.intentionalClose) this.callbacks.onClose?.();
@@ -94,6 +107,24 @@ class MiniProgramMediaSession {
       this.recorder.pause();
       this.recording = false;
       this._clearRecorderTimers();
+    }
+  }
+
+  interruptPlayback() {
+    const interruptedGenerationId = this.playbackGenerationId;
+    const nextGenerationId =
+      Number.isInteger(interruptedGenerationId) && interruptedGenerationId >= 0
+        ? interruptedGenerationId + 1
+        : null;
+    this.playbackGenerationId = nextGenerationId;
+    this.player.setGain(1);
+    this.player.reset(nextGenerationId);
+    if (Number.isInteger(interruptedGenerationId)) {
+      this._sendTransportEvent({
+        type: "playout_interrupt",
+        generation_id: interruptedGenerationId,
+        client_timestamp_ms: Date.now(),
+      });
     }
   }
 
@@ -152,6 +183,14 @@ class MiniProgramMediaSession {
     if (typeof message.data === "string") {
       try {
         const event = JSON.parse(message.data);
+        const eventGenerationId = gatewayEventGenerationId(event);
+        if (
+          this.playbackGenerationId !== null &&
+          eventGenerationId !== null &&
+          eventGenerationId < this.playbackGenerationId
+        ) {
+          return;
+        }
         if (event.type === "ready") {
           this.ready = true;
           this._startRecording();
@@ -161,8 +200,32 @@ class MiniProgramMediaSession {
           resolve?.();
         }
         if (event.type === "audio_reset") {
-          this.player.setGain(1);
-          this.player.reset();
+          const barrierSequence = Number.isInteger(event.barrier_sequence)
+            ? event.barrier_sequence
+            : null;
+          const generationId = Number.isInteger(event.generation_id)
+            ? event.generation_id
+            : null;
+          const staleReset =
+            this.playbackGenerationId !== null &&
+            generationId !== null &&
+            generationId < this.playbackGenerationId;
+          if (!staleReset) {
+            this.playbackGenerationId = generationId;
+            this.player.setGain(1);
+            this.player.reset(
+              this.playbackGenerationId,
+              barrierSequence,
+            );
+          }
+          if (!staleReset && this.playbackGenerationId !== null && barrierSequence !== null) {
+            this._sendTransportEvent({
+              type: "playout_reset",
+              generation_id: this.playbackGenerationId,
+              barrier_sequence: barrierSequence,
+              client_timestamp_ms: Date.now(),
+            });
+          }
         }
         if (
           event.type === "ui_event" &&
@@ -180,9 +243,25 @@ class MiniProgramMediaSession {
     }
     try {
       const frame = decodePcmFrame(message.data, FRAME_TYPE.DOWNLINK_AUDIO);
-      this.player.enqueue(frame.payload);
+      this.player.enqueue(frame.payload, {
+        sequence: frame.sequence,
+        generationId: Number.isInteger(frame.generationId)
+          ? frame.generationId
+          : this.playbackGenerationId,
+      });
     } catch {
       this.callbacks.onError?.("收到的语音播放帧无效。");
+    }
+  }
+
+  _sendTransportEvent(event) {
+    if (!this.socket) return;
+    try {
+      this.socket.send({
+        data: JSON.stringify(event),
+      });
+    } catch {
+      // Telemetry must never interrupt the media path.
     }
   }
 

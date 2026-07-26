@@ -20,6 +20,10 @@ token、LiveKit API secret 或其他服务端密钥。
 小程序只把身份快照放入本地存储；access token 仅保留在进程内。因此完全退出后需要重新
 登录或开始匿名体验。这是有意保守的首版边界，不把长效 refresh token 写入小程序存储。
 
+AI 正在讲话时会显示“轻触打断”。该按钮先在本机停止并隔离当前 generation 的已排程
+WebAudio，再调用既有 `stop-response`；即使语音回声消除尚未适配某台设备，也有不等待
+VAD/ASR 的确定性让出路径。口头“等一下/停一下”仍走现有 FunASR 与 `UtteranceRouter`。
+
 ## 本地检查
 
 ```bash
@@ -32,6 +36,8 @@ find apps/miniprogram -name '*.js' -not -path '*/node_modules/*' -print0 \
 
 - iOS 与 Android 各至少一台；听筒、扬声器、蓝牙耳机分别验证。
 - 验证播放期间录音不会把 Agent 音频回灌为用户输入或错误打断。
+- 验证口头“等一下”以及“轻触打断”两条路径；后者从点击到本机静音应立即完成，并在
+  网关日志出现对应 `playout_interrupt`。
 - 验证首次连接、长时间连续播放、弱网、网络切换、前后台、来电/微信语音打断与 ticket
   刷新重连。
 - 在真实设备上确认 request/socket 合法域名、TLS、隐私声明和麦克风授权均通过。

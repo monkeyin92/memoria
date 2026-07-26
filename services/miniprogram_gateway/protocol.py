@@ -8,9 +8,12 @@ from enum import IntEnum
 from typing import Final
 
 PROTOCOL_VERSION: Final = 1
+GENERATION_PROTOCOL_VERSION: Final = 2
 HEADER_SIZE: Final = 20
+GENERATION_HEADER_SIZE: Final = 24
 MAX_AUDIO_PAYLOAD_BYTES: Final = 64 * 1024
 _HEADER: Final = struct.Struct("!BBHIQI")
+_GENERATION_HEADER: Final = struct.Struct("!BBHIIQI")
 
 
 class ProtocolError(ValueError):
@@ -28,6 +31,7 @@ class PcmFrame:
     sequence: int
     timestamp_ms: int
     payload: bytes
+    generation_id: int | None = None
 
 
 def encode_pcm_frame(
@@ -36,6 +40,7 @@ def encode_pcm_frame(
     sequence: int,
     timestamp_ms: int,
     payload: bytes,
+    generation_id: int | None = None,
 ) -> bytes:
     """Encode a PCM frame with a strict network-byte-order header."""
     _validate_fields(
@@ -43,7 +48,18 @@ def encode_pcm_frame(
         sequence=sequence,
         timestamp_ms=timestamp_ms,
         payload=payload,
+        generation_id=generation_id,
     )
+    if generation_id is not None:
+        return _GENERATION_HEADER.pack(
+            int(frame_type),
+            GENERATION_PROTOCOL_VERSION,
+            0,
+            sequence,
+            generation_id,
+            timestamp_ms,
+            len(payload),
+        ) + payload
     return _HEADER.pack(
         int(frame_type),
         PROTOCOL_VERSION,
@@ -63,10 +79,28 @@ def decode_pcm_frame(
     data = bytes(raw)
     if len(data) < HEADER_SIZE:
         raise ProtocolError("PCM frame header is incomplete")
-    type_value, version, flags, sequence, timestamp_ms, payload_length = _HEADER.unpack(
-        data[:HEADER_SIZE]
-    )
-    if version != PROTOCOL_VERSION:
+    version = data[1]
+    generation_id: int | None
+    if version == PROTOCOL_VERSION:
+        type_value, version, flags, sequence, timestamp_ms, payload_length = _HEADER.unpack(
+            data[:HEADER_SIZE]
+        )
+        generation_id = None
+        header_size = HEADER_SIZE
+    elif version == GENERATION_PROTOCOL_VERSION:
+        if len(data) < GENERATION_HEADER_SIZE:
+            raise ProtocolError("PCM frame generation header is incomplete")
+        (
+            type_value,
+            version,
+            flags,
+            sequence,
+            generation_id,
+            timestamp_ms,
+            payload_length,
+        ) = _GENERATION_HEADER.unpack(data[:GENERATION_HEADER_SIZE])
+        header_size = GENERATION_HEADER_SIZE
+    else:
         raise ProtocolError("unsupported PCM protocol version")
     if flags != 0:
         raise ProtocolError("PCM frame flags must be zero")
@@ -76,7 +110,7 @@ def decode_pcm_frame(
         raise ProtocolError("unsupported PCM frame type") from exc
     if expected_type is not None and frame_type is not expected_type:
         raise ProtocolError("unexpected PCM frame direction")
-    payload = data[HEADER_SIZE:]
+    payload = data[header_size:]
     if payload_length != len(payload):
         raise ProtocolError("PCM frame payload length does not match header")
     _validate_fields(
@@ -84,12 +118,14 @@ def decode_pcm_frame(
         sequence=sequence,
         timestamp_ms=timestamp_ms,
         payload=payload,
+        generation_id=generation_id,
     )
     return PcmFrame(
         frame_type=frame_type,
         sequence=sequence,
         timestamp_ms=timestamp_ms,
         payload=payload,
+        generation_id=generation_id,
     )
 
 
@@ -99,6 +135,7 @@ def _validate_fields(
     sequence: int,
     timestamp_ms: int,
     payload: bytes,
+    generation_id: int | None = None,
 ) -> None:
     if not isinstance(frame_type, FrameType):
         raise ProtocolError("unsupported PCM frame type")
@@ -110,5 +147,11 @@ def _validate_fields(
         or not 0 <= timestamp_ms <= 0xFFFFFFFFFFFFFFFF
     ):
         raise ProtocolError("invalid PCM frame timestamp")
+    if generation_id is not None and (
+        isinstance(generation_id, bool)
+        or not isinstance(generation_id, int)
+        or not 0 <= generation_id <= 0xFFFFFFFF
+    ):
+        raise ProtocolError("invalid PCM frame generation")
     if not payload or len(payload) > MAX_AUDIO_PAYLOAD_BYTES:
         raise ProtocolError("invalid PCM frame payload length")

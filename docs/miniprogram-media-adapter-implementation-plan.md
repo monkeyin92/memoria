@@ -71,13 +71,14 @@ ticket 不放入 URL 或日志；无效、过期、错误 audience 或非 cascad
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | type | `u8` | `1` 上行音频；`2` 下行音频 |
-| version | `u8` | 协议版本，当前为 `1` |
+| version | `u8` | `1` 为上行/旧下行；`2` 为携带 generation 的新下行 |
 | flags | `u16` | 保留，必须为 `0` |
 | sequence | `u32` | 每方向单调递增帧序号 |
+| generation_id | `u32` | 仅 version `2`；绑定 Agent generation |
 | timestamp_ms | `u64` | 发送端单调毫秒时间 |
 | payload_length | `u32` | 后续 PCM payload 长度 |
 
-上行是 `PCM16LE / 16 kHz / mono`，网关重分帧为 20 ms 后发布 LiveKit local audio track。下行是 `PCM16LE / 24 kHz / mono / 20 ms`，网关由 Agent remote track 导出后下发给小程序 WebAudio jitter buffer。
+上行是 `PCM16LE / 16 kHz / mono`，网关重分帧为 20 ms 后发布 LiveKit local audio track。下行是 `PCM16LE / 24 kHz / mono / 20 ms`，网关由 Agent remote track 导出后下发给小程序；客户端按 80 ms 聚合排程，小缺包有界补偿，generation/barrier 或大缺口才硬清旧 source。
 
 ### 4.3 权威事件
 
@@ -85,9 +86,10 @@ ticket 不放入 URL 或日志；无效、过期、错误 audience 或非 cascad
 
 1. `voice-agent.ui` topic 内的 Agent UI 事件；
 2. LiveKit transcription segments；
-3. 网关自身不含文本/音频内容的连接状态与安全错误码。
+3. 网关自身不含文本/音频内容的连接状态与安全错误码；
+4. 客户端回传的 `playout_reset / playout_interrupt` 非权威播放事实。
 
-小程序不得通过媒体 WebSocket 发送 `voice-agent.control`、speaker 判定、history eligibility 或 mode 更新。停止回答、RTC 恢复等现有业务控制仍调用已有 Control API 会话接口。
+小程序不得通过媒体 WebSocket 发送 `voice-agent.control`、speaker 判定、history eligibility 或 mode 更新。播放事实只用于日志关联，不能控制 Agent；停止回答、RTC 恢复等现有业务控制仍调用已有 Control API 会话接口。
 
 ## 5. 阶段与验收
 

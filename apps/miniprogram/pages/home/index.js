@@ -103,6 +103,7 @@ Page({
     micEnabled: true,
     sessionId: "",
     connecting: false,
+    interrupting: false,
     active: false,
     expression: "neutral",
     ...mascotAssetsFor(companionById(defaultCompanionId)),
@@ -320,6 +321,31 @@ Page({
       this.setData({ micEnabled: next });
     } catch (error) {
       this.setData({ error: error?.message || "麦克风状态切换失败。" });
+    }
+  },
+
+  async interruptVoice() {
+    if (
+      !this.data.active ||
+      !this._media ||
+      !this._session?.session_id ||
+      this._interrupting
+    ) {
+      return;
+    }
+    this._interrupting = true;
+    this.setData({ interrupting: true, error: "" });
+    try {
+      this._media.interruptPlayback();
+      this._setStatus("listening");
+      await api.stopResponse(this._session.session_id);
+    } catch (error) {
+      this.setData({
+        error: error?.message || "已在本机停止播放，服务端打断同步失败。",
+      });
+    } finally {
+      this._interrupting = false;
+      this.setData({ interrupting: false });
     }
   },
 

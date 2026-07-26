@@ -50,8 +50,30 @@ class MiniProgramGatewaySettings(BaseSettings):
         default=20,
         alias="MINIPROGRAM_GATEWAY_FRAME_MS",
     )
+    miniprogram_gateway_aec_enabled: bool = Field(
+        default=False,
+        alias="MINIPROGRAM_GATEWAY_AEC_ENABLED",
+    )
+    miniprogram_gateway_aec_stream_delay_ms: int = Field(
+        default=120,
+        ge=0,
+        le=500,
+        alias="MINIPROGRAM_GATEWAY_AEC_STREAM_DELAY_MS",
+    )
+    miniprogram_gateway_aec_active_window_ms: int = Field(
+        default=750,
+        ge=100,
+        le=5_000,
+        alias="MINIPROGRAM_GATEWAY_AEC_ACTIVE_WINDOW_MS",
+    )
+    miniprogram_gateway_generation_quarantine_ms: int = Field(
+        default=400,
+        ge=20,
+        le=1_000,
+        alias="MINIPROGRAM_GATEWAY_GENERATION_QUARANTINE_MS",
+    )
     miniprogram_gateway_audio_queue_frames: int = Field(
-        default=100,
+        default=20,
         ge=10,
         le=500,
         alias="MINIPROGRAM_GATEWAY_AUDIO_QUEUE_FRAMES",
@@ -85,3 +107,17 @@ class MiniProgramGatewaySettings(BaseSettings):
             raise ValueError("Mini Program gateway downlink must be PCM16/24 kHz")
         if self.miniprogram_gateway_frame_ms != 20:
             raise ValueError("Mini Program gateway frame duration must be 20 ms")
+        if (
+            self.miniprogram_gateway_audio_queue_frames
+            * self.miniprogram_gateway_frame_ms
+            > 400
+        ):
+            raise ValueError("Mini Program gateway downlink queue must not exceed 400 ms")
+        if (
+            self.miniprogram_gateway_generation_quarantine_ms
+            < self.miniprogram_gateway_audio_queue_frames
+            * self.miniprogram_gateway_frame_ms
+        ):
+            raise ValueError(
+                "Mini Program generation quarantine must cover the downlink queue"
+            )

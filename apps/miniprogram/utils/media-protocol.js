@@ -1,5 +1,7 @@
 const PROTOCOL_VERSION = 1;
+const GENERATION_PROTOCOL_VERSION = 2;
 const HEADER_SIZE = 20;
+const GENERATION_HEADER_SIZE = 24;
 const FRAME_TYPE = Object.freeze({
   UPLINK_AUDIO: 1,
   DOWNLINK_AUDIO: 2,
@@ -62,25 +64,43 @@ function decodePcmFrame(frame, expectedType) {
   const version = view.getUint8(1);
   const flags = view.getUint16(2);
   const sequence = view.getUint32(4);
-  const timestampMs = readUint64(view, 8);
-  const payloadLength = view.getUint32(16);
-  if (version !== PROTOCOL_VERSION || flags !== 0) throw new Error("PCM frame header is invalid");
+  let generationId = null;
+  let timestampOffset = 8;
+  let payloadLengthOffset = 16;
+  let headerSize = HEADER_SIZE;
+  if (version === GENERATION_PROTOCOL_VERSION) {
+    if (data.byteLength < GENERATION_HEADER_SIZE) {
+      throw new Error("PCM frame generation header is incomplete");
+    }
+    generationId = view.getUint32(8);
+    timestampOffset = 12;
+    payloadLengthOffset = 20;
+    headerSize = GENERATION_HEADER_SIZE;
+  } else if (version !== PROTOCOL_VERSION) {
+    throw new Error("PCM frame version is invalid");
+  }
+  const timestampMs = readUint64(view, timestampOffset);
+  const payloadLength = view.getUint32(payloadLengthOffset);
+  if (flags !== 0) throw new Error("PCM frame header is invalid");
   if (!Object.values(FRAME_TYPE).includes(type)) throw new Error("PCM frame type is invalid");
   if (expectedType !== undefined && type !== expectedType) throw new Error("PCM frame direction is invalid");
-  if (!payloadLength || payloadLength !== data.byteLength - HEADER_SIZE) {
+  if (!payloadLength || payloadLength !== data.byteLength - headerSize) {
     throw new Error("PCM frame payload length is invalid");
   }
   return {
     type,
     sequence,
+    generationId,
     timestampMs,
-    payload: data.slice(HEADER_SIZE),
+    payload: data.slice(headerSize),
   };
 }
 
 module.exports = {
   PROTOCOL_VERSION,
+  GENERATION_PROTOCOL_VERSION,
   HEADER_SIZE,
+  GENERATION_HEADER_SIZE,
   FRAME_TYPE,
   encodePcmFrame,
   decodePcmFrame,
