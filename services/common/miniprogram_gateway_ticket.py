@@ -12,6 +12,7 @@ import jwt
 GATEWAY_TICKET_AUDIENCE: Final = "memoria-miniprogram-media-gateway"
 GATEWAY_TICKET_ISSUER: Final = "memoria-control-api"
 GATEWAY_TICKET_TYPE: Final = "memoria_miniprogram_gateway"
+MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA: Final = "memoria.miniprogram.aec.v1"
 
 
 class GatewayTicketError(ValueError):

@@ -15,6 +15,7 @@ from livekit.agents.types import TimedString
 from services.agent.src import agent as agent_mod
 from services.agent.src.agent import (
     DuplexVoiceAgent,
+    apply_miniprogram_session_audio_policy,
     should_enable_legacy_speaker_verifier,
 )
 from services.agent.src.contracts.ids import GenerationFence
@@ -28,6 +29,7 @@ from services.agent.src.response_planner_client import (
     ResponseProvenance,
     ResponseVoiceTarget,
 )
+from services.common.miniprogram_gateway_ticket import MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -96,6 +98,22 @@ def test_formal_speaker_authority_disables_legacy_session_enrollment() -> None:
         offline=False,
     )
     assert not should_enable_legacy_speaker_verifier(settings, offline=True)
+
+
+def test_miniprogram_audio_policy_disables_only_the_gateway_warmup() -> None:
+    web_kwargs: dict[str, Any] = {}
+    miniprogram_kwargs: dict[str, Any] = {}
+
+    assert not apply_miniprogram_session_audio_policy(web_kwargs, "")
+    assert "aec_warmup_duration" not in web_kwargs
+    assert not apply_miniprogram_session_audio_policy(web_kwargs, "memoria.miniprogram.aec.v2")
+    assert apply_miniprogram_session_audio_policy(
+        miniprogram_kwargs,
+        MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
+    )
+    assert miniprogram_kwargs["aec_warmup_duration"] is None
+    assert agent_mod.AgentSession(**web_kwargs)._aec_warmup_remaining == 3.0
+    assert agent_mod.AgentSession(**miniprogram_kwargs)._aec_warmup_remaining == 0.0
 
 
 @pytest.mark.asyncio
@@ -1630,6 +1648,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     shutdown_callbacks: list[Any] = []
     ctx = SimpleNamespace(
         room=room,
+        job=SimpleNamespace(metadata=MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA),
         proc=SimpleNamespace(userdata={"vad": "vad"}),
         connect=lambda: asyncio.sleep(0),
         add_shutdown_callback=shutdown_callbacks.append,
@@ -1637,6 +1656,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     await agent_mod.entrypoint(ctx)
     session = _FakeSession.last
     assert session is not None and session.started is not None
+    assert session.kwargs["aec_warmup_duration"] is None
     assert session.generated == []
     assert session.said == ["嗨，我在呢。想聊什么就直接说吧。"]
     assert any(event[0].get("state") == "ready" for event in room.local_participant.published)

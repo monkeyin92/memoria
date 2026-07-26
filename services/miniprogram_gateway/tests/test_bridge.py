@@ -4,9 +4,13 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import jwt
 import pytest
 from livekit import rtc
-from services.common.miniprogram_gateway_ticket import GatewayTicketClaims
+from services.common.miniprogram_gateway_ticket import (
+    MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
+    GatewayTicketClaims,
+)
 from services.miniprogram_gateway import audio_processing as audio_processing_module
 from services.miniprogram_gateway import bridge as bridge_module
 from services.miniprogram_gateway.bridge import (
@@ -47,6 +51,70 @@ def test_default_downlink_queue_is_bounded_to_400_ms() -> None:
         * settings.miniprogram_gateway_frame_ms
         == 400
     )
+
+
+@pytest.mark.parametrize(
+    ("aec_enabled", "apm_state", "expected_metadata"),
+    [
+        (True, "ready", MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA),
+        (False, "disabled", None),
+        (True, "init_failed", None),
+        (True, "process_failed", None),
+    ],
+)
+def test_gateway_dispatch_disables_agent_warmup_only_when_aec_is_ready(
+    monkeypatch: pytest.MonkeyPatch,
+    aec_enabled: bool,
+    apm_state: str,
+    expected_metadata: str | None,
+) -> None:
+    class FakeApm:
+        def __init__(self, **_kwargs: object) -> None:
+            if apm_state == "init_failed":
+                raise RuntimeError("APM unavailable")
+
+        def set_stream_delay_ms(self, _delay_ms: int) -> None:
+            pass
+
+        def process_reverse_stream(self, _frame: rtc.AudioFrame) -> None:
+            if apm_state == "process_failed":
+                raise RuntimeError("APM reverse processing unavailable")
+
+        def process_stream(self, _frame: rtc.AudioFrame) -> None:
+            if apm_state == "process_failed":
+                raise RuntimeError("APM capture processing unavailable")
+
+    monkeypatch.setattr(audio_processing_module.rtc, "AudioProcessingModule", FakeApm)
+    secret = "livekit-secret-that-is-long-enough"
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(
+            livekit_api_key="livekit-key",
+            livekit_api_secret=secret,
+            miniprogram_gateway_aec_enabled=aec_enabled,
+        ),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+
+    claims = jwt.decode(
+        bridge._mint_livekit_token(),
+        secret,
+        algorithms=["HS256"],
+        options={"verify_aud": False},
+    )
+
+    agent_dispatch = claims["roomConfig"]["agents"][0]
+    assert agent_dispatch["agentName"] == "duplex-zh-agent"
+    assert agent_dispatch.get("metadata") == expected_metadata
 
 
 def test_production_rejects_downlink_queue_over_400_ms() -> None:
@@ -154,6 +222,11 @@ async def test_bridge_feeds_downlink_reference_before_processing_uplink(
     bridge.set_downlink_generation_protocol(True)
     bridge._generation_id = 0
     bridge._audio_generation_id = 0
+    probe_calls = [
+        ("reverse", 24_000, 240),
+        ("capture", 16_000, 160),
+    ]
+    assert calls == probe_calls
 
     await bridge._pump_downlink_track(object())
     outbound = await bridge.next_outbound()
@@ -161,7 +234,7 @@ async def test_bridge_feeds_downlink_reference_before_processing_uplink(
     decoded = decode_pcm_frame(outbound.binary)
     assert decoded.payload == downlink
     assert decoded.generation_id == 0
-    assert calls == []
+    assert calls == probe_calls
     bridge.outbound_sent(outbound)
 
     captured: list[bytes] = []
@@ -181,6 +254,8 @@ async def test_bridge_feeds_downlink_reference_before_processing_uplink(
     )
 
     assert calls == [
+        ("reverse", 24_000, 240),
+        ("capture", 16_000, 160),
         ("reverse", 24_000, 240),
         ("reverse", 24_000, 240),
         ("capture", 16_000, 160),

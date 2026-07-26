@@ -45,6 +45,10 @@ class MiniProgramAudioProcessor:
         self._apm: rtc.AudioProcessingModule | None = None
         self._initialize()
 
+    @property
+    def aec_ready(self) -> bool:
+        return self._apm is not None
+
     def _initialize(self) -> None:
         if not self._configured_enabled:
             return
@@ -52,6 +56,21 @@ class MiniProgramAudioProcessor:
             apm = rtc.AudioProcessingModule(echo_cancellation=True)
             apm.set_stream_delay_ms(self._stream_delay_ms)
             self._apm = apm
+            if (
+                self._process(
+                    bytes(self._downlink_sample_rate // 50),
+                    sample_rate=self._downlink_sample_rate,
+                    reverse=True,
+                )
+                is None
+                or self._process(
+                    bytes(self._uplink_sample_rate // 50),
+                    sample_rate=self._uplink_sample_rate,
+                    reverse=False,
+                )
+                is None
+            ):
+                return
             logger.info(
                 "mini_program_aec_ready stream_delay_ms=%s active_window_ms=%s",
                 self._stream_delay_ms,

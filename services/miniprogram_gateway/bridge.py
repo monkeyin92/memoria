@@ -14,7 +14,10 @@ from typing import Any
 from livekit import rtc
 from livekit.api import AccessToken, RoomAgentDispatch, RoomConfiguration, VideoGrants
 
-from services.common.miniprogram_gateway_ticket import GatewayTicketClaims
+from services.common.miniprogram_gateway_ticket import (
+    MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
+    GatewayTicketClaims,
+)
 from services.miniprogram_gateway.audio_processing import MiniProgramAudioProcessor
 from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 from services.miniprogram_gateway.protocol import FrameType, PcmFrame, encode_pcm_frame
@@ -288,7 +291,18 @@ class MiniProgramLiveKitBridge:
             .with_ttl(timedelta(seconds=self._settings.miniprogram_gateway_livekit_token_ttl_s))
         )
         access_token.with_room_config(
-            RoomConfiguration(agents=[RoomAgentDispatch(agent_name=self._claims.agent_name)])
+            RoomConfiguration(
+                agents=[
+                    RoomAgentDispatch(
+                        agent_name=self._claims.agent_name,
+                        metadata=(
+                            MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA
+                            if self._audio_processor.aec_ready
+                            else ""
+                        ),
+                    )
+                ]
+            )
         )
         return str(access_token.to_jwt())
 

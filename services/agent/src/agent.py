@@ -32,6 +32,7 @@ from services.agent.src.response_planner_client import (
 )
 from services.agent.src.voice_profile_client import VoiceProfileClient, VoiceRuntimeProfile
 from services.common.companions import DESIGNED_VOICE_MODEL, companion_definition
+from services.common.miniprogram_gateway_ticket import MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA
 
 if TYPE_CHECKING:
     pass
@@ -94,6 +95,17 @@ def build_cascade_audio_output_options() -> Any:
         num_channels=1,
         track_publish_options=publish_options,
     )
+
+
+def apply_miniprogram_session_audio_policy(
+    session_kwargs: dict[str, Any],
+    dispatch_metadata: object,
+) -> bool:
+    """Disable LiveKit's warmup only when this job has gateway AEC."""
+    if dispatch_metadata != MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA:
+        return False
+    session_kwargs["aec_warmup_duration"] = None
+    return True
 
 
 def _chunk_text(chunk: Any) -> str:
@@ -1505,6 +1517,7 @@ async def entrypoint(ctx: Any) -> None:
     if not _HAS_LIVEKIT:
         raise RuntimeError("livekit-agents not installed")
 
+    dispatch_metadata = getattr(getattr(ctx, "job", None), "metadata", "")
     await ctx.connect()
 
     from services.agent.src.config import AgentSettings
@@ -1792,6 +1805,12 @@ async def entrypoint(ctx: Any) -> None:
         offline=offline,
     )
     session_kwargs.pop("turn_handling_config", None)
+    if apply_miniprogram_session_audio_policy(session_kwargs, dispatch_metadata):
+        logger.info(
+            "mini_program_session_audio_policy aec_warmup_duration=disabled "
+            "session_id=%s",
+            runtime_session_id,
+        )
 
     session = AgentSession(**session_kwargs)
     runtime.set_user_turn_clearer(session.clear_user_turn)
