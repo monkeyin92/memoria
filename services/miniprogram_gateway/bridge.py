@@ -30,7 +30,9 @@ from services.miniprogram_gateway.protocol import FrameType, PcmFrame, encode_pc
 
 logger = logging.getLogger(__name__)
 UI_TOPIC = "voice-agent.ui"
+TELEMETRY_TOPIC = "voice-agent.telemetry"
 CONTROL_ACK_TRACK_NAME = "memoria-ack"
+CLIENT_AUDIO_TRACE_MIN_INTERVAL_S = 0.5
 
 
 class GatewayMediaError(ValueError):
@@ -113,6 +115,7 @@ class MiniProgramLiveKitBridge:
         self._uplink_payload_bytes = 0
         self._uplink_livekit_frame_count = 0
         self._downlink_drop_count = 0
+        self._client_audio_trace_last_at: dict[str, float] = {}
         self._turn_id: int | None = None
         self._generation_id: int | None = None
         self._audio_generation_id: int | None = None
@@ -166,9 +169,7 @@ class MiniProgramLiveKitBridge:
                 "channels": 1,
                 "sample_format": "s16le",
                 "frame_ms": self._settings.miniprogram_gateway_frame_ms,
-                "frame_protocol_version": (
-                    2 if self._downlink_generation_protocol else 1
-                ),
+                "frame_protocol_version": (2 if self._downlink_generation_protocol else 1),
             },
         }
 
@@ -305,9 +306,7 @@ class MiniProgramLiveKitBridge:
         if failure_id is None or self._aec_failure_ack.is_set():
             return
         try:
-            async with asyncio.timeout(
-                self._settings.miniprogram_gateway_handshake_timeout_s
-            ):
+            async with asyncio.timeout(self._settings.miniprogram_gateway_handshake_timeout_s):
                 async with self._aec_failure_lock:
                     if self._aec_failure_ack.is_set():
                         return
@@ -334,6 +333,46 @@ class MiniProgramLiveKitBridge:
 
     def accept_transport_event(self, event: dict[str, object]) -> None:
         """Record bounded client playout facts without accepting business commands."""
+        if event.get("type") == "client_audio_trace":
+            name = str(event["name"])
+            now = asyncio.get_running_loop().time()
+            last_at = self._client_audio_trace_last_at.get(name)
+            if last_at is not None and now - last_at < CLIENT_AUDIO_TRACE_MIN_INTERVAL_S:
+                return
+            self._client_audio_trace_last_at[name] = now
+            logger.info(
+                "mini_program_client_audio_trace name=%s generation_id=%s "
+                "client_timestamp_ms=%s metrics=%s session_id=%s",
+                name,
+                event.get("generation_id"),
+                event.get("client_timestamp_ms"),
+                event.get("detail"),
+                self._claims.session_id,
+            )
+            room = self._room
+            if room is not None:
+                self._spawn(
+                    room.local_participant.publish_data(
+                        json.dumps(
+                            {
+                                "type": "audio_trace",
+                                "source": "miniprogram",
+                                "session_id": self._claims.session_id,
+                                "name": event["name"],
+                                "status": "ok",
+                                "turn_id": self._turn_id or 0,
+                                "generation_id": event["generation_id"],
+                                "client_timestamp_ms": event["client_timestamp_ms"],
+                                "detail": event["detail"],
+                            },
+                            separators=(",", ":"),
+                        ),
+                        reliable=False,
+                        topic=TELEMETRY_TOPIC,
+                    ),
+                    name=f"mini-program-client-trace-{name}",
+                )
+            return
         logger.info(
             "mini_program_playout_event type=%s generation_id=%s "
             "barrier_sequence=%s client_timestamp_ms=%s session_id=%s",
@@ -461,10 +500,7 @@ class MiniProgramLiveKitBridge:
             return
         if any(task.get_name() == f"mini-program-audio-{sid}" for task in self._background_tasks):
             return
-        track_name = str(
-            getattr(publication, "name", "")
-            or getattr(track, "name", "")
-        )
+        track_name = str(getattr(publication, "name", "") or getattr(track, "name", ""))
         self._spawn(
             self._pump_downlink_track(
                 track,
@@ -515,10 +551,7 @@ class MiniProgramLiveKitBridge:
                 if audio_generation_id is None:
                     continue
                 if not control_track:
-                    if (
-                        asyncio.get_running_loop().time()
-                        < self._downlink_quarantine_until
-                    ):
+                    if asyncio.get_running_loop().time() < self._downlink_quarantine_until:
                         continue
                 self._enqueue_audio(
                     GatewayOutboundMessage(
@@ -526,9 +559,7 @@ class MiniProgramLiveKitBridge:
                             FrameType.DOWNLINK_AUDIO,
                             sequence=sequence,
                             generation_id=(
-                                audio_generation_id
-                                if self._downlink_generation_protocol
-                                else None
+                                audio_generation_id if self._downlink_generation_protocol else None
                             ),
                             timestamp_ms=int(asyncio.get_running_loop().time() * 1_000),
                             payload=pcm,
@@ -595,8 +626,7 @@ class MiniProgramLiveKitBridge:
                     if first_generation
                     else (
                         asyncio.get_running_loop().time()
-                        + self._settings.miniprogram_gateway_generation_quarantine_ms
-                        / 1_000
+                        + self._settings.miniprogram_gateway_generation_quarantine_ms / 1_000
                     )
                 )
                 barrier_sequence = self._downlink_sequence
@@ -610,10 +640,7 @@ class MiniProgramLiveKitBridge:
                         }
                     )
                 )
-            if (
-                parsed.get("type") == "assistant_state"
-                and generation_id == self._generation_id
-            ):
+            if parsed.get("type") == "assistant_state" and generation_id == self._generation_id:
                 if parsed.get("state") == "speaking":
                     self._audio_generation_id = generation_id
                     self._downlink_quarantine_until = 0.0
@@ -665,17 +692,17 @@ class MiniProgramLiveKitBridge:
                 event["turn_id"] = self._turn_id
             if self._generation_id is not None:
                 event["generation_id"] = self._generation_id
-            self._enqueue_event(
-                GatewayOutboundMessage(
-                    event=event
-                )
-            )
+            self._enqueue_event(GatewayOutboundMessage(event=event))
 
     def _on_room_reconnecting(self) -> None:
-        self._enqueue_event(GatewayOutboundMessage(event={"type": "transport_state", "state": "reconnecting"}))
+        self._enqueue_event(
+            GatewayOutboundMessage(event={"type": "transport_state", "state": "reconnecting"})
+        )
 
     def _on_room_reconnected(self) -> None:
-        self._enqueue_event(GatewayOutboundMessage(event={"type": "transport_state", "state": "reconnected"}))
+        self._enqueue_event(
+            GatewayOutboundMessage(event={"type": "transport_state", "state": "reconnected"})
+        )
 
     def _on_room_disconnected(self, _reason: Any) -> None:
         if not self._closed:

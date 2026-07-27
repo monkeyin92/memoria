@@ -23,6 +23,8 @@ from services.miniprogram_gateway.bridge import (
 )
 from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 from services.miniprogram_gateway.protocol import (
+    CLIENT_AUDIO_TRACE_DETAIL_FIELDS,
+    CLIENT_AUDIO_TRACE_NAMES,
     FrameType,
     ProtocolError,
     decode_pcm_frame,
@@ -30,7 +32,9 @@ from services.miniprogram_gateway.protocol import (
 
 logger = logging.getLogger(__name__)
 MEDIA_PATH = "/v1/mini-program/media"
-BridgeFactory = Callable[[MiniProgramGatewaySettings, GatewayTicketClaims], MiniProgramLiveKitBridge]
+BridgeFactory = Callable[
+    [MiniProgramGatewaySettings, GatewayTicketClaims], MiniProgramLiveKitBridge
+]
 
 
 def _default_bridge_factory(
@@ -132,8 +136,7 @@ async def _receive_hello(
         raise GatewayTicketError("missing gateway ticket")
     capabilities = hello.get("capabilities")
     downlink_generation_protocol = (
-        isinstance(capabilities, dict)
-        and capabilities.get("downlink_generation") == 2
+        isinstance(capabilities, dict) and capabilities.get("downlink_generation") == 2
     )
     return (
         verify_gateway_ticket(
@@ -175,6 +178,42 @@ def _validate_control_text(text: Any) -> dict[str, object]:
     event_type = parsed.get("type")
     if not isinstance(event_type, str):
         raise ProtocolError("unsupported gateway control message")
+    if event_type == "client_audio_trace":
+        trace_required_keys = {
+            "type",
+            "name",
+            "generation_id",
+            "client_timestamp_ms",
+            "detail",
+        }
+        detail = parsed.get("detail")
+        if (
+            set(parsed) != trace_required_keys
+            or parsed.get("name") not in CLIENT_AUDIO_TRACE_NAMES
+            or isinstance(parsed.get("generation_id"), bool)
+            or not isinstance(parsed.get("generation_id"), int)
+            or not 0 <= parsed["generation_id"] <= 0xFFFFFFFF
+            or isinstance(parsed.get("client_timestamp_ms"), bool)
+            or not isinstance(parsed.get("client_timestamp_ms"), int)
+            or not 0 <= parsed["client_timestamp_ms"] <= 0xFFFFFFFFFFFFFFFF
+            or not isinstance(detail, dict)
+            or not detail
+            or not set(detail).issubset(CLIENT_AUDIO_TRACE_DETAIL_FIELDS)
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 0 <= value <= 0xFFFFFFFF
+                for value in detail.values()
+            )
+        ):
+            raise ProtocolError("invalid client audio trace")
+        return {
+            "type": event_type,
+            "name": parsed["name"],
+            "generation_id": parsed["generation_id"],
+            "client_timestamp_ms": parsed["client_timestamp_ms"],
+            "detail": dict(detail),
+        }
     required_keys = {
         "playout_interrupt": {"type", "generation_id", "client_timestamp_ms"},
         "playout_reset": {

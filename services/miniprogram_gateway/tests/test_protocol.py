@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 from services.miniprogram_gateway.protocol import (
+    CLIENT_AUDIO_TRACE_DETAIL_FIELDS,
+    CLIENT_AUDIO_TRACE_NAMES,
     GENERATION_HEADER_SIZE,
     GENERATION_PROTOCOL_VERSION,
     HEADER_SIZE,
@@ -17,12 +19,9 @@ from services.miniprogram_gateway.protocol import (
 )
 
 CONTRACT = json.loads(
-    (
-        Path(__file__).parents[3]
-        / "packages"
-        / "contracts"
-        / "miniprogram-media.json"
-    ).read_text(encoding="utf-8")
+    (Path(__file__).parents[3] / "packages" / "contracts" / "miniprogram-media.json").read_text(
+        encoding="utf-8"
+    )
 )
 
 
@@ -36,13 +35,14 @@ def test_pcm_media_constants_match_shared_contract() -> None:
     assert MAX_AUDIO_PAYLOAD_BYTES == binary["max_audio_payload_bytes"]
     assert int(FrameType.UPLINK_AUDIO) == binary["frame_types"]["uplink_audio"]
     assert int(FrameType.DOWNLINK_AUDIO) == binary["frame_types"]["downlink_audio"]
+    client_trace = CONTRACT["control_events"]["client_audio_trace"]
+    assert CLIENT_AUDIO_TRACE_NAMES == frozenset(client_trace["names"])
+    assert CLIENT_AUDIO_TRACE_DETAIL_FIELDS == frozenset(client_trace["detail_fields"])
 
 
 @pytest.mark.parametrize("vector", CONTRACT["golden_frames"], ids=lambda value: value["name"])
 def test_pcm_media_golden_frames_stay_compatible(vector: dict[str, object]) -> None:
-    frame_type = FrameType[
-        str(vector["frame_type"]).upper()
-    ]
+    frame_type = FrameType[str(vector["frame_type"]).upper()]
     raw = bytes.fromhex(str(vector["frame_hex"]))
 
     frame = decode_pcm_frame(raw, expected_type=frame_type)

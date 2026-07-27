@@ -48,9 +48,7 @@ def test_production_control_disables_query_bearing_uvicorn_access_logs() -> None
 
 def test_miniprogram_gateway_is_isolated_and_only_exposes_loopback_wss_upstream() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
-    dockerfile = (ROOT / "infra" / "Dockerfile.miniprogram-gateway").read_text(
-        encoding="utf-8"
-    )
+    dockerfile = (ROOT / "infra" / "Dockerfile.miniprogram-gateway").read_text(encoding="utf-8")
     nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
     limits = (ROOT / "infra" / "nginx-memoria-limits.conf").read_text(encoding="utf-8")
     loopback_limits = (ROOT / "infra" / "nginx-memoria-loopback-smoke.conf").read_text(
@@ -61,7 +59,7 @@ def test_miniprogram_gateway_is_isolated_and_only_exposes_loopback_wss_upstream(
     assert "memoria-miniprogram-gateway:${MEMORIA_RELEASE_TAG" in gateway
     assert "dockerfile: infra/Dockerfile.miniprogram-gateway" in gateway
     assert "/etc/memoria-miniprogram-gateway.env" in gateway
-    assert '127.0.0.1:8792:8010' in gateway
+    assert "127.0.0.1:8792:8010" in gateway
     assert "read_only: true" in gateway
     assert "no-new-privileges:true" in gateway
     assert "cap_drop:" in gateway
@@ -73,7 +71,9 @@ def test_miniprogram_gateway_is_isolated_and_only_exposes_loopback_wss_upstream(
     assert "access_log off;" in nginx
     assert "limit_req zone=memoria_media burst=6 nodelay;" in nginx
     assert "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in limits
-    assert "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in loopback_limits
+    assert (
+        "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in loopback_limits
+    )
 
 
 def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> None:
@@ -283,6 +283,8 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
             "DOUBAO_TTS_CONNECT_TIMEOUT_S": "5",
             "FUNASR_MODEL": "fun-asr-realtime",
             "FUNASR_CONTEXT_ENABLED": "false",
+            "FUNASR_VOCABULARY_ID": "vocab-control-commands",
+            "FUNASR_SPEECH_NOISE_THRESHOLD": "-0.1",
         }
     )
 
@@ -316,6 +318,8 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
         assert disabled_capability not in agent
     assert agent["FUNASR_MODEL"] == "fun-asr-realtime"
     assert agent["FUNASR_CONTEXT_ENABLED"] == "false"
+    assert agent["FUNASR_VOCABULARY_ID"] == "vocab-control-commands"
+    assert agent["FUNASR_SPEECH_NOISE_THRESHOLD"] == "-0.1"
     for forbidden in (
         "MEMORIA_AUTH_SECRET",
         "MEMORIA_ARCHIVE_DATABASE_URL",

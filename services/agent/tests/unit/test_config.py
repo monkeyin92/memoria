@@ -29,6 +29,8 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     s = AgentSettings()
     assert s.funasr_sample_rate == 16000
     assert s.funasr_context_enabled is False
+    assert s.funasr_vocabulary_id == ""
+    assert s.funasr_speech_noise_threshold is None
     assert s.doubao_tts_sample_rate == 24000
     assert s.tts_provider == "doubao"
     assert s.listener_cues_enabled is False
@@ -43,6 +45,18 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.interrupt_semantic_model == "qwen-flash"
     assert s.interrupt_semantic_timeout_s == 0.6
     assert s.miniprogram_kws_enabled is False
+
+
+def test_funasr_vocabulary_and_noise_threshold_are_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FUNASR_VOCABULARY_ID", "vocab-control-commands")
+    monkeypatch.setenv("FUNASR_SPEECH_NOISE_THRESHOLD", "-0.1")
+
+    settings = AgentSettings()
+
+    assert settings.funasr_vocabulary_id == "vocab-control-commands"
+    assert settings.funasr_speech_noise_threshold == pytest.approx(-0.1)
 
 
 def test_miniprogram_kws_settings_keep_model_and_calibration_explicit(

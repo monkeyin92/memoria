@@ -42,23 +42,22 @@ def load_turn_timing(
     try:
         min_delay = float(values.get("ENDPOINTING_MIN_DELAY_S", str(defaults[0])))
         max_delay = float(values.get("ENDPOINTING_MAX_DELAY_S", str(defaults[1])))
-        false_timeout = float(
-            values.get("FALSE_INTERRUPTION_TIMEOUT_S", str(defaults[2]))
-        )
+        false_timeout = float(values.get("FALSE_INTERRUPTION_TIMEOUT_S", str(defaults[2])))
     except ValueError as exc:
         raise ValueError("turn timing values must be finite numbers") from exc
-    if not all(math.isfinite(value) and value > 0 for value in (
-        min_delay,
-        max_delay,
-        false_timeout,
-    )):
+    if not all(
+        math.isfinite(value) and value > 0
+        for value in (
+            min_delay,
+            max_delay,
+            false_timeout,
+        )
+    ):
         raise ValueError("turn timing values must be finite positive numbers")
     if min_delay > max_delay:
         raise ValueError("ENDPOINTING_MIN_DELAY_S must be <= ENDPOINTING_MAX_DELAY_S")
     if false_timeout < min_delay:
-        raise ValueError(
-            "FALSE_INTERRUPTION_TIMEOUT_S must be >= ENDPOINTING_MIN_DELAY_S"
-        )
+        raise ValueError("FALSE_INTERRUPTION_TIMEOUT_S must be >= ENDPOINTING_MIN_DELAY_S")
     return min_delay, max_delay, false_timeout
 
 
@@ -178,6 +177,13 @@ class AgentSettings(BaseSettings):
     funasr_sample_rate: int = Field(default=16000, alias="FUNASR_SAMPLE_RATE")
     funasr_max_sentence_silence_ms: int = Field(default=550, alias="FUNASR_MAX_SENTENCE_SILENCE_MS")
     funasr_context_enabled: bool = Field(default=False, alias="FUNASR_CONTEXT_ENABLED")
+    funasr_vocabulary_id: str = Field(default="", alias="FUNASR_VOCABULARY_ID")
+    funasr_speech_noise_threshold: float | None = Field(
+        default=None,
+        ge=-1.0,
+        le=1.0,
+        alias="FUNASR_SPEECH_NOISE_THRESHOLD",
+    )
 
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")

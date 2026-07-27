@@ -24,6 +24,8 @@ def test_funasr_config_from_env() -> None:
             "FUNASR_RECONNECT_AUDIO_MS": "1200",
             "FUNASR_CONNECT_TIMEOUT_S": "2",
             "FUNASR_RESULT_TIMEOUT_S": "4",
+            "FUNASR_VOCABULARY_ID": "vocab-control-commands",
+            "FUNASR_SPEECH_NOISE_THRESHOLD": "-0.1",
         }
     )
     assert cfg.sample_rate == 8000
@@ -31,11 +33,26 @@ def test_funasr_config_from_env() -> None:
     assert cfg.semantic_punctuation
     assert not cfg.heartbeat
     assert cfg.reconnect_audio_ms == 1200
+    assert cfg.vocabulary_id == "vocab-control-commands"
+    assert cfg.speech_noise_threshold == -0.1
 
 
 def test_funasr_default_sentence_silence_matches_turn_endpointing() -> None:
     cfg = FunASRConfig.from_env({"DASHSCOPE_API_KEY": "key"})
     assert cfg.max_sentence_silence_ms == 550
+    assert cfg.vocabulary_id is None
+    assert cfg.speech_noise_threshold is None
+
+
+@pytest.mark.parametrize("value", ["-1.1", "1.1", "nan"])
+def test_funasr_rejects_invalid_speech_noise_threshold(value: str) -> None:
+    with pytest.raises(ValueError, match="speech noise threshold"):
+        FunASRConfig.from_env(
+            {
+                "DASHSCOPE_API_KEY": "key",
+                "FUNASR_SPEECH_NOISE_THRESHOLD": value,
+            }
+        )
 
 
 def test_doubao_config_uses_approved_profile_and_old_console_auth() -> None:

@@ -1,7 +1,7 @@
 # 微信小程序原生客户端与 LiveKit 媒体接入适配器实施计划
 
 > 日期：2026-07-24
-> 状态：IMPLEMENTED_NOT_DEPLOYED
+> 状态：DEPLOYED_PARTIAL_REAL_DEVICE
 > 基线：Cascade `FunASR Realtime → Qwen → Doubao Seed-TTS 2.0 → LiveKit`；现有 H5 保持不改
 > 前置调研：[LiveKit 微信小程序客户端可用性调研](./research/livekit_wechat_miniprogram_client_research_zh.md)
 
@@ -21,12 +21,12 @@
 
 | 交付物 | 责任边界 | 状态 |
 | --- | --- | --- |
-| `apps/miniprogram/` | 原生微信小程序页面、账户入口、PCM 录放、现有 REST API 调用 | 已完成，未提交 AppID |
-| `services/miniprogram_gateway/` | WSS 媒体接入、LiveKit participant、PCM 帧桥接、权威事件转发 | 已完成，未部署 |
+| `apps/miniprogram/` | 原生微信小程序页面、账户入口、PCM 录放、现有 REST API 调用 | 已部署体验版；真实设备声学验收未完成 |
+| `services/miniprogram_gateway/` | WSS 媒体接入、LiveKit participant、PCM 帧桥接、权威事件转发 | 已部署 |
 | `/v1/sessions` 小程序响应 | 创建原有 cascade session 后仅返回网关地址与短期 gateway ticket | 已完成 |
 | gateway ticket 刷新接口 | 已有会话在断线后重新取得短票据，不新建业务会话 | 已完成 |
-| 部署与 Nginx 配置 | 新容器、最小权限环境文件、仅公开 WSS 路由 | 已完成，未部署 |
-| 单元/合同测试 | ticket、帧协议、Control API、小程序纯逻辑、Compose/H5 无回归 | 已完成；真机门禁未完成 |
+| 部署与 Nginx 配置 | 新容器、最小权限环境文件、仅公开 WSS 路由 | 已部署 |
+| 单元/合同测试 | ticket、帧协议、Control API、小程序纯逻辑、Compose/H5 无回归 | 已完成；真机声学门禁未完成 |
 
 ## 3. 目标拓扑
 

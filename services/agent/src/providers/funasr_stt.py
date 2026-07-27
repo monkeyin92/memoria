@@ -8,6 +8,7 @@ import collections
 import contextlib
 import json
 import logging
+import math
 import weakref
 from collections import deque
 from collections.abc import Callable
@@ -58,12 +59,21 @@ class FunASRConfig:
     connect_timeout_s: float = 5.0
     result_timeout_s: float = 8.0
     conversation_context_enabled: bool = False
+    vocabulary_id: str | None = None
+    speech_noise_threshold: float | None = None
+
+    def __post_init__(self) -> None:
+        threshold = self.speech_noise_threshold
+        if threshold is not None and (not math.isfinite(threshold) or not -1.0 <= threshold <= 1.0):
+            raise ValueError("FunASR speech noise threshold must be between -1 and 1")
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> FunASRConfig:
         import os
 
         e = env or dict(os.environ)
+        vocabulary_id = e.get("FUNASR_VOCABULARY_ID", "").strip() or None
+        threshold_raw = e.get("FUNASR_SPEECH_NOISE_THRESHOLD", "").strip()
         return cls(
             api_key=e.get("DASHSCOPE_API_KEY", ""),
             ws_url=e.get("FUNASR_MOCK_WS_URL") or e.get("DASHSCOPE_WS_URL", ""),
@@ -80,6 +90,8 @@ class FunASRConfig:
             conversation_context_enabled=(
                 e.get("FUNASR_CONTEXT_ENABLED", "false").lower() == "true"
             ),
+            vocabulary_id=vocabulary_id,
+            speech_noise_threshold=(float(threshold_raw) if threshold_raw else None),
         )
 
 
@@ -147,13 +159,13 @@ class FunASRSession:
                 max_sentence_silence_ms=self.config.max_sentence_silence_ms,
                 heartbeat=self.config.heartbeat,
                 context=list(self._context),
+                vocabulary_id=self.config.vocabulary_id,
+                speech_noise_threshold=self.config.speech_noise_threshold,
             )
             task_id = str(run["header"]["task_id"])
             await ws.send(json.dumps(run, ensure_ascii=False))
             while True:
-                message = await asyncio.wait_for(
-                    ws.recv(), timeout=self.config.connect_timeout_s
-                )
+                message = await asyncio.wait_for(ws.recv(), timeout=self.config.connect_timeout_s)
                 if isinstance(message, bytes):
                     continue
                 ev = parse_server_message(message)

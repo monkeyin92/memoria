@@ -89,6 +89,28 @@
       "type",
       "next_sequence",
       "client_timestamp_ms"
-    ]
+    ],
+    "client_audio_trace": {
+      "required_fields": [
+        "type",
+        "name",
+        "generation_id",
+        "client_timestamp_ms",
+        "detail"
+      ],
+      "names": [
+        "first_playback",
+        "miniprogram_playback_underrun",
+        "miniprogram_playback_hard_reset",
+        "miniprogram_gap_concealed"
+      ],
+      "detail_fields": [
+        "queue_lead_ms",
+        "pending_audio_ms",
+        "missing_frames",
+        "scheduled_sources",
+        "clock_ahead_ms"
+      ]
+    }
   }
 }

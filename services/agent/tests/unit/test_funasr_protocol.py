@@ -17,7 +17,20 @@ def test_run_task_shape() -> None:
     assert msg["payload"]["model"] == "fun-asr-realtime"
     assert msg["payload"]["parameters"]["sample_rate"] == 16000
     assert msg["payload"]["parameters"]["semantic_punctuation_enabled"] is False
+    assert "vocabulary_id" not in msg["payload"]["parameters"]
+    assert "speech_noise_threshold" not in msg["payload"]["parameters"]
     assert msg["payload"]["input"] == {}
+
+
+def test_run_task_adds_optional_vocabulary_and_noise_threshold() -> None:
+    msg = build_run_task(
+        task_id="t1",
+        vocabulary_id="vocab-control-commands",
+        speech_noise_threshold=-0.1,
+    )
+
+    assert msg["payload"]["parameters"]["vocabulary_id"] == "vocab-control-commands"
+    assert msg["payload"]["parameters"]["speech_noise_threshold"] == -0.1
 
 
 def test_parse_result_generated() -> None:
@@ -62,9 +75,9 @@ def test_control_messages_and_server_event_branches() -> None:
     finish = build_finish_task("t")
     assert finish["header"]["action"] == "finish-task"
     assert finish["payload"]["input"] == {}
-    assert build_continue_task_context("t", [{"role": "user", "text": "x"}])[
-        "payload"
-    ]["input"]["context"]
+    assert build_continue_task_context("t", [{"role": "user", "text": "x"}])["payload"]["input"][
+        "context"
+    ]
     for event in ("task-started", "task-finished", "task-failed", "future-event"):
         parsed = parse_server_message(
             {
@@ -75,9 +88,7 @@ def test_control_messages_and_server_event_branches() -> None:
         assert parsed.event == (event if event != "future-event" else "unknown")
         if event == "task-failed":
             assert parsed.error_message == "bad"
-    parsed_bytes = parse_server_message(
-        b'{"header":{"event":"task-started","task_id":"t"}}'
-    )
+    parsed_bytes = parse_server_message(b'{"header":{"event":"task-started","task_id":"t"}}')
     assert parsed_bytes.event == "task-started"
 
 

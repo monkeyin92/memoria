@@ -49,8 +49,22 @@ def build_run_task(
     max_sentence_silence_ms: int = 650,
     heartbeat: bool = True,
     context: list[dict[str, object]] | None = None,
+    vocabulary_id: str | None = None,
+    speech_noise_threshold: float | None = None,
 ) -> dict[str, Any]:
     tid = task_id or str(uuid.uuid4())
+    parameters: dict[str, object] = {
+        "format": "pcm",
+        "sample_rate": sample_rate,
+        "language_hints": language_hints or ["zh"],
+        "semantic_punctuation_enabled": semantic_punctuation_enabled,
+        "max_sentence_silence": max_sentence_silence_ms,
+        "heartbeat": heartbeat,
+    }
+    if vocabulary_id:
+        parameters["vocabulary_id"] = vocabulary_id
+    if speech_noise_threshold is not None:
+        parameters["speech_noise_threshold"] = speech_noise_threshold
     return {
         "header": {
             "action": "run-task",
@@ -62,14 +76,7 @@ def build_run_task(
             "task": "asr",
             "function": "recognition",
             "model": model,
-            "parameters": {
-                "format": "pcm",
-                "sample_rate": sample_rate,
-                "language_hints": language_hints or ["zh"],
-                "semantic_punctuation_enabled": semantic_punctuation_enabled,
-                "max_sentence_silence": max_sentence_silence_ms,
-                "heartbeat": heartbeat,
-            },
+            "parameters": parameters,
             "input": {"context": context} if context else {},
         },
     }

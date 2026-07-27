@@ -36,6 +36,7 @@ class MiniProgramMediaSession {
     this.player = new PcmJitterPlayer({
       sampleRate: session.media_gateway?.audio?.sample_rate || 24000,
       frameMilliseconds: session.media_gateway?.audio?.frame_ms || 20,
+      onTrace: (trace) => this._sendClientAudioTrace(trace),
     });
     this.sequence = 0;
     this.playbackGenerationId = null;
@@ -316,6 +317,32 @@ class MiniProgramMediaSession {
       // Telemetry must never interrupt the media path.
       return false;
     }
+  }
+
+  _sendClientAudioTrace(trace) {
+    if (
+      !this.ready ||
+      !this.socket ||
+      typeof trace?.name !== "string" ||
+      !Number.isInteger(trace.generationId) ||
+      trace.generationId < 0 ||
+      !trace.detail ||
+      typeof trace.detail !== "object"
+    ) {
+      return false;
+    }
+    const detail = {};
+    for (const [key, value] of Object.entries(trace.detail)) {
+      if (Number.isFinite(value) && value >= 0) detail[key] = Math.round(value);
+    }
+    if (!Object.keys(detail).length) return false;
+    return this._sendTransportEvent({
+      type: "client_audio_trace",
+      name: trace.name,
+      generation_id: trace.generationId,
+      client_timestamp_ms: Date.now(),
+      detail,
+    });
   }
 
   _acceptReadyAudioContract(event) {

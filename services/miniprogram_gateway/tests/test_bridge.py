@@ -24,12 +24,9 @@ from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 from services.miniprogram_gateway.protocol import FrameType, PcmFrame, decode_pcm_frame
 
 CONTRACT = json.loads(
-    (
-        Path(__file__).parents[3]
-        / "packages"
-        / "contracts"
-        / "miniprogram-media.json"
-    ).read_text(encoding="utf-8")
+    (Path(__file__).parents[3] / "packages" / "contracts" / "miniprogram-media.json").read_text(
+        encoding="utf-8"
+    )
 )
 
 
@@ -63,9 +60,7 @@ def test_gateway_ready_event_matches_shared_contract() -> None:
         "channels": CONTRACT["audio"]["channels"],
         "sample_format": CONTRACT["audio"]["sample_format"],
         "frame_ms": CONTRACT["audio"]["frame_ms"],
-        "frame_protocol_version": CONTRACT["audio"][
-            "downlink_frame_protocol_versions"
-        ][1],
+        "frame_protocol_version": CONTRACT["audio"]["downlink_frame_protocol_versions"][1],
     }
 
 
@@ -102,8 +97,7 @@ def test_default_downlink_queue_is_bounded_to_400_ms() -> None:
     settings = MiniProgramGatewaySettings()
 
     assert (
-        settings.miniprogram_gateway_audio_queue_frames
-        * settings.miniprogram_gateway_frame_ms
+        settings.miniprogram_gateway_audio_queue_frames * settings.miniprogram_gateway_frame_ms
         == 400
     )
 
@@ -236,9 +230,7 @@ async def test_runtime_aec_failure_waits_for_agent_ack_before_raw_uplink() -> No
 
     bridge._on_data_received(
         SimpleNamespace(
-            participant=SimpleNamespace(
-                kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
-            ),
+            participant=SimpleNamespace(kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT),
             topic="voice-agent.gateway-health.ack",
             data=json.dumps(
                 {
@@ -367,9 +359,7 @@ async def test_downlink_aec_failure_revokes_trust_before_the_next_uplink() -> No
     bridge._aec_dispatched_ready = True
     bridge._room = SimpleNamespace(local_participant=Participant())
     bridge._audio_source = Source()
-    bridge.outbound_sent(
-        GatewayOutboundMessage(binary=b"audio", audio_reference=b"\x00" * 960)
-    )
+    bridge.outbound_sent(GatewayOutboundMessage(binary=b"audio", audio_reference=b"\x00" * 960))
 
     uplink = asyncio.create_task(
         bridge.accept_uplink(
@@ -389,9 +379,7 @@ async def test_downlink_aec_failure_revokes_trust_before_the_next_uplink() -> No
     failure = published[0]
     bridge._on_data_received(
         SimpleNamespace(
-            participant=SimpleNamespace(
-                kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
-            ),
+            participant=SimpleNamespace(kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT),
             topic="voice-agent.gateway-health.ack",
             data=json.dumps(
                 {
@@ -423,9 +411,7 @@ def test_production_rejects_downlink_queue_over_400_ms() -> None:
         livekit_url="wss://livekit.example.com",
         livekit_api_key="livekit-key",
         livekit_api_secret="livekit-secret-that-is-long-enough",
-        memoria_miniprogram_gateway_ticket_secret=(
-            "gateway-ticket-secret-that-is-long-enough"
-        ),
+        memoria_miniprogram_gateway_ticket_secret=("gateway-ticket-secret-that-is-long-enough"),
         miniprogram_gateway_audio_queue_frames=21,
     )
 
@@ -656,6 +642,83 @@ def test_stale_or_unknown_playout_interrupt_does_not_suppress_current_reference(
     )
 
     assert observed == [b"reference"]
+
+
+@pytest.mark.asyncio
+async def test_client_audio_trace_is_forwarded_to_the_agent_without_text() -> None:
+    published: list[tuple[dict[str, object], bool, str]] = []
+
+    class Participant:
+        async def publish_data(self, payload: str, *, reliable: bool, topic: str) -> None:
+            published.append((json.loads(payload), reliable, topic))
+
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._room = SimpleNamespace(local_participant=Participant())
+    bridge._turn_id = 4
+
+    bridge.accept_transport_event(
+        {
+            "type": "client_audio_trace",
+            "name": "miniprogram_playback_underrun",
+            "generation_id": 8,
+            "client_timestamp_ms": 126,
+            "detail": {
+                "queue_lead_ms": 0,
+                "pending_audio_ms": 80,
+                "scheduled_sources": 1,
+            },
+        }
+    )
+    bridge.accept_transport_event(
+        {
+            "type": "client_audio_trace",
+            "name": "miniprogram_playback_underrun",
+            "generation_id": 8,
+            "client_timestamp_ms": 127,
+            "detail": {
+                "queue_lead_ms": 0,
+                "pending_audio_ms": 80,
+                "scheduled_sources": 1,
+            },
+        }
+    )
+    await asyncio.sleep(0.01)
+
+    assert published == [
+        (
+            {
+                "type": "audio_trace",
+                "source": "miniprogram",
+                "session_id": "session-1",
+                "name": "miniprogram_playback_underrun",
+                "status": "ok",
+                "turn_id": 4,
+                "generation_id": 8,
+                "client_timestamp_ms": 126,
+                "detail": {
+                    "queue_lead_ms": 0,
+                    "pending_audio_ms": 80,
+                    "scheduled_sources": 1,
+                },
+            },
+            False,
+            "voice-agent.telemetry",
+        )
+    ]
+    await bridge.close()
 
 
 @pytest.mark.asyncio

@@ -19,12 +19,9 @@ from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 from services.miniprogram_gateway.protocol import FrameType, ProtocolError, encode_pcm_frame
 
 CONTRACT = json.loads(
-    (
-        Path(__file__).parents[3]
-        / "packages"
-        / "contracts"
-        / "miniprogram-media.json"
-    ).read_text(encoding="utf-8")
+    (Path(__file__).parents[3] / "packages" / "contracts" / "miniprogram-media.json").read_text(
+        encoding="utf-8"
+    )
 )
 
 
@@ -145,8 +142,7 @@ async def test_legacy_gateway_hello_keeps_v1_downlink_frames() -> None:
 def test_gateway_text_channel_only_allows_transport_ping() -> None:
     assert _validate_control_text('{"type":"ping"}') == {"type": "ping"}
     playout_reset = _validate_control_text(
-        '{"type":"playout_reset","generation_id":3,'
-        '"barrier_sequence":7,"client_timestamp_ms":123}'
+        '{"type":"playout_reset","generation_id":3,"barrier_sequence":7,"client_timestamp_ms":123}'
     )
     assert playout_reset == {
         "type": "playout_reset",
@@ -163,20 +159,35 @@ def test_gateway_text_channel_only_allows_transport_ping() -> None:
         "generation_id": 3,
         "client_timestamp_ms": 124,
     }
-    assert set(playout_interrupt) == set(
-        CONTRACT["control_events"]["playout_interrupt"]
-    )
+    assert set(playout_interrupt) == set(CONTRACT["control_events"]["playout_interrupt"])
     uplink_discontinuity = _validate_control_text(
-        '{"type":"uplink_discontinuity","next_sequence":9,'
-        '"client_timestamp_ms":125}'
+        '{"type":"uplink_discontinuity","next_sequence":9,"client_timestamp_ms":125}'
     )
     assert uplink_discontinuity == {
         "type": "uplink_discontinuity",
         "next_sequence": 9,
         "client_timestamp_ms": 125,
     }
-    assert set(uplink_discontinuity) == set(
-        CONTRACT["control_events"]["uplink_discontinuity"]
+    assert set(uplink_discontinuity) == set(CONTRACT["control_events"]["uplink_discontinuity"])
+    client_audio_trace = _validate_control_text(
+        '{"type":"client_audio_trace","name":"miniprogram_playback_underrun",'
+        '"generation_id":3,"client_timestamp_ms":126,'
+        '"detail":{"queue_lead_ms":0,"pending_audio_ms":80,'
+        '"scheduled_sources":1}}'
+    )
+    assert client_audio_trace == {
+        "type": "client_audio_trace",
+        "name": "miniprogram_playback_underrun",
+        "generation_id": 3,
+        "client_timestamp_ms": 126,
+        "detail": {
+            "queue_lead_ms": 0,
+            "pending_audio_ms": 80,
+            "scheduled_sources": 1,
+        },
+    }
+    assert set(client_audio_trace) == set(
+        CONTRACT["control_events"]["client_audio_trace"]["required_fields"]
     )
 
     with pytest.raises(ProtocolError, match="unsupported gateway control message"):
@@ -188,8 +199,13 @@ def test_gateway_text_channel_only_allows_transport_ping() -> None:
         )
     with pytest.raises(ProtocolError, match="invalid gateway playout event"):
         _validate_control_text(
-            '{"type":"uplink_discontinuity","next_sequence":4294967296,'
-            '"client_timestamp_ms":125}'
+            '{"type":"uplink_discontinuity","next_sequence":4294967296,"client_timestamp_ms":125}'
+        )
+    with pytest.raises(ProtocolError, match="invalid client audio trace"):
+        _validate_control_text(
+            '{"type":"client_audio_trace","name":"miniprogram_playback_underrun",'
+            '"generation_id":3,"client_timestamp_ms":126,'
+            '"detail":{"transcript":"must-not-enter-logs"}}'
         )
 
 
@@ -227,9 +243,7 @@ class FakeBridge:
     async def accept_uplink(self, frame: object) -> None:
         self.frames.append(frame)
         await self._messages.put(
-            GatewayOutboundMessage(
-                event={"type": "accepted", "sequence": frame.sequence}
-            )
+            GatewayOutboundMessage(event={"type": "accepted", "sequence": frame.sequence})
         )
 
     def accept_transport_event(self, event: dict[str, object]) -> None:

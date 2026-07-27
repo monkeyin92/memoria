@@ -484,9 +484,7 @@ async def test_sticky_interrupt_drops_final_that_replays_previous_user_turn() ->
         ).value
         == "accept"
     )
-    interrupted_fence = await runtime.on_real_interrupt(
-        cause="livekit_playback_interrupted"
-    )
+    interrupted_fence = await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
 
     accepted, reason = runtime.accept_user_turn(
         "你叫什么名字？",
@@ -517,8 +515,7 @@ async def test_sticky_interrupt_drops_final_that_replays_previous_user_turn() ->
     yield_started = next(
         event
         for event in published
-        if event.get("type") == "audio_trace"
-        and event.get("name") == "interrupt_yield_started"
+        if event.get("type") == "audio_trace" and event.get("name") == "interrupt_yield_started"
     )
     yield_detail = yield_started["detail"]
     assert isinstance(yield_detail, dict)
@@ -642,8 +639,7 @@ async def test_ambiguous_sticky_final_uses_frozen_barge_evidence_and_stays_out_o
     yield_event = next(
         event
         for event in published
-        if event.get("type") == "audio_trace"
-        and event.get("name") == "interrupt_yield_started"
+        if event.get("type") == "audio_trace" and event.get("name") == "interrupt_yield_started"
     )
     assert yield_event["detail"]["reason"] == "interrupt_semantic_control_only"  # type: ignore[index]
     await runtime.close()
@@ -819,11 +815,14 @@ async def test_trusted_aec_pure_interrupt_keeps_voiced_anchor_for_late_asr() -> 
         runtime.feed_speaker_pcm(b"\x00\x00" * 1_280, now_ns=now_ns)
         now_ns += 80_000_000
 
-    assert runtime.observe_user_transcript(
-        "等一下",
-        final=False,
-        now_ns=now_ns,
-    ).value == "accept"
+    assert (
+        runtime.observe_user_transcript(
+            "等一下",
+            final=False,
+            now_ns=now_ns,
+        ).value
+        == "accept"
+    )
     assert runtime._trusted_unanchored_control_epoch == runtime._speaker_epoch
     assert (
         voiced_stats_from_pcm(
@@ -854,11 +853,14 @@ async def test_trusted_aec_voiced_anchor_expires_before_a_late_control() -> None
         runtime.feed_speaker_pcm(b"\x00\x00" * 1_280, now_ns=now_ns)
         now_ns += 80_000_000
 
-    assert runtime.observe_user_transcript(
-        "等一下",
-        final=False,
-        now_ns=now_ns,
-    ).value == "wait"
+    assert (
+        runtime.observe_user_transcript(
+            "等一下",
+            final=False,
+            now_ns=now_ns,
+        ).value
+        == "wait"
+    )
     assert runtime._trusted_unanchored_control_epoch is None
     await runtime.close()
 
@@ -953,9 +955,7 @@ async def test_trusted_aec_single_stop_can_use_a_short_voiced_anchor() -> None:
     runtime.set_target_speaker_interrupt(interrupt)
     runtime._was_speaking = True
     runtime.update_pending_assistant_text("我正在讲一个很长的故事。")
-    runtime.feed_speaker_pcm(
-        b"\x00\x00" * 11_840 + b"\x00\x20" * 2_560
-    )
+    runtime.feed_speaker_pcm(b"\x00\x00" * 11_840 + b"\x00\x20" * 2_560)
     session = _SessionEmitter()
     runtime.attach_session_events(session)
 
@@ -1289,6 +1289,50 @@ async def test_pause_clears_livekit_turn_before_ack_and_marks_the_next_resume() 
     resumed = await runtime.on_turn_committed("好的，好的。 等一下。 继续。")
     assert resumed.turn_id == first.turn_id + 1
     assert runtime.is_resume_generation(resumed)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_late_control_final_does_not_repeat_ack_for_same_speech_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A delayed ASR final must not replay the ack after the cooldown expires."""
+
+    now_ns = 1_000_000_000
+    monkeypatch.setattr(
+        "services.agent.src.duplex_runtime.time.monotonic_ns",
+        lambda: now_ns,
+    )
+    said: list[str] = []
+
+    async def _yield(phrase: str) -> None:
+        said.append(phrase)
+
+    runtime = DuplexRuntime.create(session_id="late-control-final")
+    runtime.set_interrupt_yield(_yield)
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("讲个故事")
+    await runtime.on_assistant_speaking("这是一个还没有播放完的回答。")
+    runtime._was_speaking = True
+    runtime.on_user_voice_started(now_ns=now_ns)
+    runtime.input_guard.candidate_text = "停一下"
+
+    await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+    await asyncio.sleep(0.01)
+    assert said == ["嗯，你说。"]
+
+    now_ns += 4_100_000_000
+    accepted, reason = runtime.accept_user_turn(
+        "停一下",
+        speech_anchored=True,
+        canonical_speech_epoch=None,
+    )
+    runtime.on_user_voice_started(now_ns=now_ns + 1)
+    await asyncio.sleep(0.01)
+
+    assert accepted is False
+    assert reason == "interrupt_command_only"
+    assert said == ["嗯，你说。"]
     await runtime.close()
 
 
@@ -1666,6 +1710,7 @@ async def test_stop_talking_phrase_acks_quietly() -> None:
     await runtime.on_turn_committed("讲故事")
     await runtime.on_assistant_speaking("故事开始")
     runtime._was_speaking = True
+    runtime.on_user_voice_started()
     runtime.input_guard.candidate_text = "别说了"
     await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
     await asyncio.sleep(0.1)
@@ -1676,6 +1721,7 @@ async def test_stop_talking_phrase_acks_quietly() -> None:
     await runtime.on_turn_committed("再讲讲")
     await runtime.on_assistant_speaking("第二段故事")
     runtime._was_speaking = True
+    runtime.on_user_voice_started()
     runtime.input_guard.candidate_text = "暂停"
     await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
     await asyncio.sleep(0.1)
@@ -1957,6 +2003,34 @@ def test_runtime_accepts_only_numeric_allowlisted_webrtc_metrics(
 
     assert runtime.observe_client_audio_trace(event) is True
     assert "total_samples_received" in caplog.text
+
+    event["detail"] = {"transcript": "must-not-enter-logs"}
+    assert runtime.observe_client_audio_trace(event) is False
+    assert "must-not-enter-logs" not in caplog.text
+
+
+def test_runtime_accepts_only_bounded_miniprogram_playback_metrics(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="mini-stats-session")
+    caplog.set_level("INFO", logger="services.agent.src.duplex_runtime")
+    event = {
+        "type": "audio_trace",
+        "source": "miniprogram",
+        "session_id": "mini-stats-session",
+        "name": "miniprogram_playback_underrun",
+        "status": "ok",
+        "turn_id": 4,
+        "generation_id": 8,
+        "detail": {
+            "queue_lead_ms": 0,
+            "pending_audio_ms": 80,
+            "scheduled_sources": 1,
+        },
+    }
+
+    assert runtime.observe_client_audio_trace(event) is True
+    assert "pending_audio_ms" in caplog.text
 
     event["detail"] = {"transcript": "must-not-enter-logs"}
     assert runtime.observe_client_audio_trace(event) is False

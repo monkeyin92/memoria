@@ -808,9 +808,70 @@ test("PCM player applies gain through one shared WebAudio node", async () => {
   assert.equal(player.gainNode.gain.value, 0.25);
 });
 
+test("media session sends bounded first-playback telemetry to the gateway", () => {
+  recorder.reset();
+  const sent = [];
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    {},
+  );
+  media.ready = true;
+  media.socket = {
+    send(options) {
+      sent.push(options.data);
+    },
+    close() {},
+  };
+  media.player.context = {
+    state: "running",
+    currentTime: 1,
+    destination: {},
+    createBuffer(_channels, length, sampleRate) {
+      return {
+        duration: length / sampleRate,
+        getChannelData: () => new Float32Array(length),
+      };
+    },
+    createBufferSource() {
+      return {
+        buffer: null,
+        connect() {},
+        start() {},
+      };
+    },
+  };
+  const frame = new Int16Array(480).buffer;
+
+  for (let sequence = 0; sequence < 4; sequence += 1) {
+    media.player.enqueue(frame, { sequence, generationId: 7 });
+  }
+
+  const trace = sent
+    .filter((data) => typeof data === "string")
+    .map((data) => JSON.parse(data))
+    .find((event) => event.type === "client_audio_trace");
+  assert.equal(trace.name, "first_playback");
+  assert.equal(trace.generation_id, 7);
+  assert.equal(Number.isInteger(trace.client_timestamp_ms), true);
+  assert.deepEqual(
+    Object.keys(trace).sort(),
+    [...contract.control_events.client_audio_trace.required_fields].sort(),
+  );
+  assert.deepEqual(
+    Object.keys(trace.detail).sort(),
+    ["pending_audio_ms", "queue_lead_ms", "scheduled_sources"],
+  );
+});
+
 test("PCM player rebases an underflow instead of scheduling a late frame in the past", () => {
   let startedAt = null;
-  const player = new PcmJitterPlayer({ sampleRate: 24000, minLeadSeconds: 0.08 });
+  let existingStopped = 0;
+  const traces = [];
+  const player = new PcmJitterPlayer({
+    sampleRate: 24000,
+    minLeadSeconds: 0.08,
+    onTrace: (event) => traces.push(event),
+  });
   player.context = {
     state: "running",
     currentTime: 1,
@@ -832,6 +893,11 @@ test("PCM player rebases an underflow instead of scheduling a late frame in the 
     },
   };
   player.nextStartAt = 0.99;
+  player.sources.add({
+    stop() {
+      existingStopped += 1;
+    },
+  });
 
   const frame = new Int16Array(480).buffer;
   for (let sequence = 0; sequence < 4; sequence += 1) {
@@ -839,6 +905,10 @@ test("PCM player rebases an underflow instead of scheduling a late frame in the 
   }
 
   assert.equal(startedAt, 1.08);
+  assert.equal(existingStopped, 0);
+  assert.equal(traces[0].name, "miniprogram_playback_underrun");
+  assert.equal(traces[0].generationId, 1);
+  assert.equal(traces[1].name, "first_playback");
 });
 
 test("PCM player batches four continuous 20ms frames into one 80ms source", () => {
@@ -1014,8 +1084,11 @@ test("PCM player conceals small sequence gaps but still stops old generations", 
 
 test("PCM player hard-resets after a sequence gap exceeds bounded concealment", () => {
   const started = [];
+  const traces = [];
   let stopped = 0;
-  const player = new PcmJitterPlayer();
+  const player = new PcmJitterPlayer({
+    onTrace: (event) => traces.push(event),
+  });
   player.context = {
     state: "running",
     currentTime: 1,
@@ -1050,6 +1123,10 @@ test("PCM player hard-resets after a sequence gap exceeds bounded concealment", 
 
   assert.equal(stopped, 1);
   assert.equal(started.length, 2);
+  const hardReset = traces.find(
+    ({ name }) => name === "miniprogram_playback_hard_reset",
+  );
+  assert.equal(hardReset.detail.missing_frames, 16);
 });
 
 test("PCM player rejects old generations and sequences below a reset barrier", () => {

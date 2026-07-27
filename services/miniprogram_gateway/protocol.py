@@ -12,6 +12,23 @@ GENERATION_PROTOCOL_VERSION: Final = 2
 HEADER_SIZE: Final = 20
 GENERATION_HEADER_SIZE: Final = 24
 MAX_AUDIO_PAYLOAD_BYTES: Final = 64 * 1024
+CLIENT_AUDIO_TRACE_NAMES: Final = frozenset(
+    {
+        "first_playback",
+        "miniprogram_playback_underrun",
+        "miniprogram_playback_hard_reset",
+        "miniprogram_gap_concealed",
+    }
+)
+CLIENT_AUDIO_TRACE_DETAIL_FIELDS: Final = frozenset(
+    {
+        "queue_lead_ms",
+        "pending_audio_ms",
+        "missing_frames",
+        "scheduled_sources",
+        "clock_ahead_ms",
+    }
+)
 _HEADER: Final = struct.Struct("!BBHIQI")
 _GENERATION_HEADER: Final = struct.Struct("!BBHIIQI")
 
@@ -51,23 +68,29 @@ def encode_pcm_frame(
         generation_id=generation_id,
     )
     if generation_id is not None:
-        return _GENERATION_HEADER.pack(
+        return (
+            _GENERATION_HEADER.pack(
+                int(frame_type),
+                GENERATION_PROTOCOL_VERSION,
+                0,
+                sequence,
+                generation_id,
+                timestamp_ms,
+                len(payload),
+            )
+            + payload
+        )
+    return (
+        _HEADER.pack(
             int(frame_type),
-            GENERATION_PROTOCOL_VERSION,
+            PROTOCOL_VERSION,
             0,
             sequence,
-            generation_id,
             timestamp_ms,
             len(payload),
-        ) + payload
-    return _HEADER.pack(
-        int(frame_type),
-        PROTOCOL_VERSION,
-        0,
-        sequence,
-        timestamp_ms,
-        len(payload),
-    ) + payload
+        )
+        + payload
+    )
 
 
 def decode_pcm_frame(
@@ -139,7 +162,11 @@ def _validate_fields(
 ) -> None:
     if not isinstance(frame_type, FrameType):
         raise ProtocolError("unsupported PCM frame type")
-    if isinstance(sequence, bool) or not isinstance(sequence, int) or not 0 <= sequence <= 0xFFFFFFFF:
+    if (
+        isinstance(sequence, bool)
+        or not isinstance(sequence, int)
+        or not 0 <= sequence <= 0xFFFFFFFF
+    ):
         raise ProtocolError("invalid PCM frame sequence")
     if (
         isinstance(timestamp_ms, bool)

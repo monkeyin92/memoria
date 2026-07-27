@@ -6,6 +6,7 @@ class PcmJitterPlayer {
     bufferMilliseconds = 80,
     frameMilliseconds = 20,
     maxConcealFrames = 3,
+    onTrace = null,
   } = {}) {
     if (
       sampleRate <= 0 ||
@@ -21,6 +22,7 @@ class PcmJitterPlayer {
     this.frameBytes = this.frameSamples * 2;
     this.bufferSamples = Math.round((sampleRate * bufferMilliseconds) / 1000);
     this.maxConcealFrames = maxConcealFrames;
+    this.onTrace = onTrace;
     this.context = null;
     this.nextStartAt = 0;
     this.sources = new Set();
@@ -33,6 +35,7 @@ class PcmJitterPlayer {
     this.lastSample = 0;
     this.gain = 1;
     this.gainNode = null;
+    this.firstPlaybackGenerationId = null;
   }
 
   async resume() {
@@ -66,8 +69,14 @@ class PcmJitterPlayer {
         const distance = (sequence - this.expectedSequence) >>> 0;
         if (distance >= 0x80000000) return;
         if (distance <= this.maxConcealFrames) {
+          this._trace("miniprogram_gap_concealed", {
+            missing_frames: distance,
+          });
           input = this._concealGap(distance, input);
         } else {
+          this._trace("miniprogram_playback_hard_reset", {
+            missing_frames: distance,
+          });
           this._clearPlayback();
         }
       }
@@ -129,7 +138,19 @@ class PcmJitterPlayer {
       samples[index] = input[index] / 32768;
     }
     const now = this.context.currentTime;
-    if (this.nextStartAt <= now || this.nextStartAt > now + this.maxLeadSeconds) {
+    const pendingAudioMs = Math.round((input.length / this.sampleRate) * 1000);
+    if (this.nextStartAt <= now) {
+      if (this.nextStartAt > 0) {
+        this._trace("miniprogram_playback_underrun", {
+          pending_audio_ms: pendingAudioMs,
+        });
+      }
+      this.nextStartAt = now + this.minLeadSeconds;
+      this.fadeInPending = true;
+    } else if (this.nextStartAt > now + this.maxLeadSeconds) {
+      this._trace("miniprogram_playback_hard_reset", {
+        clock_ahead_ms: Math.round((this.nextStartAt - now) * 1000),
+      });
       this._clearPlayback();
     }
     const source = this.context.createBufferSource();
@@ -139,7 +160,36 @@ class PcmJitterPlayer {
     source.onended = () => this.sources.delete(source);
     this._scheduleFadeIn(this.nextStartAt);
     source.start(this.nextStartAt);
+    if (
+      Number.isInteger(this.generationId) &&
+      this.firstPlaybackGenerationId !== this.generationId
+    ) {
+      this.firstPlaybackGenerationId = this.generationId;
+      this._trace("first_playback", {
+        pending_audio_ms: pendingAudioMs,
+      });
+    }
     this.nextStartAt += buffer.duration;
+  }
+
+  _trace(name, detail = {}) {
+    if (typeof this.onTrace !== "function") return;
+    const now = this.context?.currentTime || 0;
+    const metrics = {
+      queue_lead_ms: Math.round(Math.max(0, this.nextStartAt - now) * 1000),
+      pending_audio_ms: Math.round((this.pendingSamples / this.sampleRate) * 1000),
+      scheduled_sources: this.sources.size,
+      ...detail,
+    };
+    try {
+      this.onTrace({
+        name,
+        generationId: this.generationId,
+        detail: metrics,
+      });
+    } catch {
+      // Diagnostics must never interrupt playout.
+    }
   }
 
   setGain(value) {

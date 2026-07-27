@@ -111,6 +111,9 @@ CLIENT_AUDIO_TRACE_NAMES = frozenset(
         "first_playback",
         "media_error",
         "webrtc_inbound_audio",
+        "miniprogram_playback_underrun",
+        "miniprogram_playback_hard_reset",
+        "miniprogram_gap_concealed",
     }
 )
 CLIENT_AUDIO_METRIC_NAMES = frozenset(
@@ -142,6 +145,11 @@ CLIENT_AUDIO_METRIC_NAMES = frozenset(
         "encoded_audio_bitrate_kbps",
         "inserted_samples_for_deceleration",
         "removed_samples_for_acceleration",
+        "queue_lead_ms",
+        "pending_audio_ms",
+        "missing_frames",
+        "scheduled_sources",
+        "clock_ahead_ms",
     }
 )
 
@@ -315,6 +323,7 @@ class DuplexRuntime:
     _resume_pending: bool = False
     _resume_fence: GenerationFence | None = None
     _last_interrupt_yield_ns: int | None = None
+    _last_interrupt_yield_speech_epoch: int | None = None
     _last_false_recover_ns: int | None = None
     _last_listen_restore_ns: int | None = None
     _playback_started_ns: int | None = None
@@ -334,9 +343,7 @@ class DuplexRuntime:
     _listener_cue_candidate_task: asyncio.Task[Any] | None = None
     _listener_cue_aec_healthy: bool = False
     _emotion_turn_observer: Callable[[int], None] | None = None
-    _keyword_spotter_finalizer: (
-        Callable[[KeywordSpotterBinding | None], None] | None
-    ) = None
+    _keyword_spotter_finalizer: Callable[[KeywordSpotterBinding | None], None] | None = None
     _emotion_by_turn: dict[int, EmotionObservation] = field(default_factory=dict)
     _voice_profile_refresher: Callable[[], Coroutine[Any, Any, Any]] | None = None
     _voice_profile_refresh_task: asyncio.Task[Any] | None = None
@@ -734,9 +741,7 @@ class DuplexRuntime:
             max_bytes = self._speaker_sample_rate * 2 * TRUSTED_PLAYBACK_PCM_MS // 1_000
             if len(self._trusted_playback_pcm) > max_bytes:
                 del self._trusted_playback_pcm[: len(self._trusted_playback_pcm) - max_bytes]
-            window_bytes = (
-                self._speaker_sample_rate * 2 * TRUSTED_PLAYBACK_VOICE_WINDOW_MS // 1_000
-            )
+            window_bytes = self._speaker_sample_rate * 2 * TRUSTED_PLAYBACK_VOICE_WINDOW_MS // 1_000
             recent_pcm = bytes(self._trusted_playback_pcm[-window_bytes:])
             if (
                 voiced_stats_from_pcm(
@@ -798,9 +803,7 @@ class DuplexRuntime:
             return False
         if not require_pcm:
             return True
-        minimum_bytes = (
-            self._speaker_sample_rate * 2 * KEYWORD_SPOTTER_MIN_PCM_MS // 1_000
-        )
+        minimum_bytes = self._speaker_sample_rate * 2 * KEYWORD_SPOTTER_MIN_PCM_MS // 1_000
         return len(self._speaker_pcm) >= minimum_bytes
 
     def observe_keyword_spotter_hit(
@@ -894,9 +897,7 @@ class DuplexRuntime:
             return False
         now = now_ns if now_ns is not None else time.monotonic_ns()
         age_ms = (now - witnessed_at) // 1_000_000
-        return (
-            0 <= age_ms <= TRUSTED_PLAYBACK_VOICE_WITNESS_MS
-        )
+        return 0 <= age_ms <= TRUSTED_PLAYBACK_VOICE_WITNESS_MS
 
     def on_user_voice_stopped(self) -> None:
         keyword_binding = self.keyword_spotter_binding()
@@ -1667,7 +1668,13 @@ class DuplexRuntime:
         ):
             return False
         metrics: dict[str, int | float] = {}
-        if event["name"] == "webrtc_inbound_audio":
+        miniprogram_trace = event.get("source") == "miniprogram" and event["name"] in {
+            "first_playback",
+            "miniprogram_playback_underrun",
+            "miniprogram_playback_hard_reset",
+            "miniprogram_gap_concealed",
+        }
+        if event["name"] == "webrtc_inbound_audio" or miniprogram_trace:
             detail = event.get("detail")
             if not isinstance(detail, dict) or not detail:
                 return False
@@ -2395,10 +2402,7 @@ class DuplexRuntime:
         if self.mode_policy_enforced and not self._mode_policy.allows_conversation():
             self.orchestrator.metrics.inc_guarded_user_input("interaction_mode_blocked")
             return False, "interaction_mode_blocked"
-        if (
-            semantic_verdict is not None
-            and canonical_speech_epoch != self._speaker_epoch
-        ):
+        if semantic_verdict is not None and canonical_speech_epoch != self._speaker_epoch:
             self.orchestrator.metrics.inc_guarded_user_input("stale_interrupt_semantic")
             self.mark_audio_event(
                 "interrupt_semantic_stale",
@@ -2484,6 +2488,11 @@ class DuplexRuntime:
                 self._maybe_say_interrupt_yield(
                     cause="interrupt_command_turn",
                     route=route,
+                    speech_epoch=(
+                        canonical_speech_epoch
+                        if canonical_speech_epoch is not None
+                        else self._speaker_epoch
+                    ),
                 ),
                 name="interrupt-cmd-yield",
             )
@@ -2858,11 +2867,24 @@ class DuplexRuntime:
         *,
         cause: str,
         route: UtteranceRoute | None = None,
+        speech_epoch: int | None = None,
     ) -> None:
         """Short ack after mid-reply stop so users know we yielded, not crashed."""
         if self._interrupt_yield is None:
             return
         if cause in {"user_button", "stop_response", "rtc_recovered"}:
+            return
+        yield_speech_epoch = self._speaker_epoch if speech_epoch is None else speech_epoch
+        if self._last_interrupt_yield_speech_epoch == yield_speech_epoch:
+            self.mark_audio_event(
+                "interrupt_yield_duplicate",
+                status="ignored",
+                detail={
+                    "cause": cause,
+                    "speech_epoch": yield_speech_epoch,
+                },
+            )
+            self._restore_listen_after_control(cause=f"yield_duplicate:{cause}")
             return
         now = time.monotonic_ns()
         if (
@@ -2874,6 +2896,7 @@ class DuplexRuntime:
             self._restore_listen_after_control(cause=f"yield_cooldown:{cause}")
             return
         self._last_interrupt_yield_ns = now
+        self._last_interrupt_yield_speech_epoch = yield_speech_epoch
         candidate = self._interrupt_candidate_text()
         final_route = route or self._route_candidate(candidate)
         phrase = final_route.ack_phrase or interrupt_ack_phrase(candidate)
@@ -3007,11 +3030,7 @@ class DuplexRuntime:
         if self.tts is not None:
             self.tts.bind_fence(new_fence)
         if not new_fence.matches(old_fence):
-            if (
-                create_user_turn
-                and mid_reply
-                and control_only
-            ):
+            if create_user_turn and mid_reply and control_only:
                 self._paused_reply_binding = self._reply_speaker_binding
                 self._paused_reply_available = self._paused_reply_binding is not None
                 self._pending_semantic_pause_epoch = None
@@ -3047,7 +3066,14 @@ class DuplexRuntime:
                 }
             ):
                 self._spawn(
-                    self._maybe_say_interrupt_yield(cause=cause),
+                    self._maybe_say_interrupt_yield(
+                        cause=cause,
+                        speech_epoch=(
+                            expected_speaker_epoch
+                            if expected_speaker_epoch is not None
+                            else self._speaker_epoch
+                        ),
+                    ),
                     name="interrupt-yield",
                 )
             else:
@@ -3068,10 +3094,7 @@ class DuplexRuntime:
         expected_speaker_epoch: int | None
         expected_playback_epoch: int | None
         expected_playback_fence: GenerationFence | None
-        if (
-            keyword_binding is not None
-            and keyword_binding.speaker_epoch == self._speaker_epoch
-        ):
+        if keyword_binding is not None and keyword_binding.speaker_epoch == self._speaker_epoch:
             expected_speaker_epoch = keyword_binding.speaker_epoch
             expected_playback_epoch = keyword_binding.playback_epoch
             expected_playback_fence = keyword_binding.fence
@@ -3091,9 +3114,7 @@ class DuplexRuntime:
                 self._playback_fence if expected_playback_epoch is not None else None
             )
         expected_pending_text_epoch = (
-            self._pending_assistant_text_epoch
-            if expected_playback_epoch is not None
-            else None
+            self._pending_assistant_text_epoch if expected_playback_epoch is not None else None
         )
         admission_state = [expected_playback_epoch is None]
 
@@ -3109,10 +3130,8 @@ class DuplexRuntime:
                     )
                     or (
                         keyword_binding is None
-                        and self._trusted_unanchored_control_epoch
-                        == expected_speaker_epoch
-                        and self._trusted_unanchored_playback_epoch
-                        == expected_playback_epoch
+                        and self._trusted_unanchored_control_epoch == expected_speaker_epoch
+                        and self._trusted_unanchored_playback_epoch == expected_playback_epoch
                     )
                 )
                 and self._playback_epoch == expected_playback_epoch
@@ -3213,6 +3232,7 @@ class DuplexRuntime:
                     name="false-interrupt-recover",
                 )
             return self.fence
+
         async def _apply() -> GenerationFence:
             return await self._apply_real_interrupt(
                 cause=cause,
@@ -3451,9 +3471,7 @@ class DuplexRuntime:
                     _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
                     self.publish_assistant_audio(
                         "duck",
-                        gain=0.0
-                        if self.trusted_aec_playback_control
-                        else PLAYBACK_DUCK_GAIN,
+                        gain=0.0 if self.trusted_aec_playback_control else PLAYBACK_DUCK_GAIN,
                     )
                     self.mark_audio_event("barge_in_detected")
                 else:
@@ -3533,8 +3551,7 @@ class DuplexRuntime:
                             and route.should_interrupt
                             and (
                                 self._speaker_pcm
-                                or self._trusted_unanchored_control_epoch
-                                == self._speaker_epoch
+                                or self._trusted_unanchored_control_epoch == self._speaker_epoch
                             )
                         ):
                             # Verify a router-confirmed control phrase as soon
@@ -3545,9 +3562,7 @@ class DuplexRuntime:
                             # clear non-owner before the stop bridge runs.
                             self._start_speaker_classification()
                             self._spawn(
-                                self._confirm_target_speaker_interrupt(
-                                    self._speaker_epoch
-                                ),
+                                self._confirm_target_speaker_interrupt(self._speaker_epoch),
                                 name="target-speaker-explicit-partial",
                             )
                             return
@@ -3559,9 +3574,11 @@ class DuplexRuntime:
                                 name="target-speaker-playback-focus",
                             )
                         return
-                    if decision is PlaybackInputDecision.ACCEPT and (
-                        final or route.should_interrupt
-                    ) and self._request_playback_interrupt():
+                    if (
+                        decision is PlaybackInputDecision.ACCEPT
+                        and (final or route.should_interrupt)
+                        and self._request_playback_interrupt()
+                    ):
                         return
                     _set_min_words(base_min_words)
                 if (
