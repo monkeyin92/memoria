@@ -4,6 +4,21 @@ const { PcmJitterPlayer } = require("./pcm-player");
 const RECORDER_START_TIMEOUT_MS = 2000;
 const FIRST_UPLINK_FRAME_TIMEOUT_MS = 3000;
 const RECORDER_RESTART_DELAY_MS = 120;
+const ASSISTANT_INPUT_BLOCKING_STATES = new Set([
+  "thinking",
+  "thinking_silent",
+  "tool_waiting",
+  "speaking",
+  "interruption_pending",
+  "recovering",
+]);
+const ASSISTANT_INPUT_RELEASE_STATES = new Set([
+  "ready",
+  "listening",
+  "user_speaking",
+  "eot_pending",
+  "interrupted",
+]);
 
 function socketConnectionErrorMessage(error) {
   const detail = typeof error?.errMsg === "string" ? error.errMsg.trim() : "";
@@ -37,6 +52,10 @@ class MiniProgramMediaSession {
       sampleRate: session.media_gateway?.audio?.sample_rate || 24000,
       frameMilliseconds: session.media_gateway?.audio?.frame_ms || 20,
       onTrace: (trace) => this._sendClientAudioTrace(trace),
+      onPlaybackStateChange: (active) => {
+        this.playbackActive = active;
+        this._syncRecordingState();
+      },
     });
     this.sequence = 0;
     this.playbackGenerationId = null;
@@ -45,6 +64,8 @@ class MiniProgramMediaSession {
     this.recorderStarted = false;
     this.recorderStarting = false;
     this.microphoneEnabled = true;
+    this.assistantResponseActive = false;
+    this.playbackActive = false;
     this.systemInterrupted = false;
     this._uplinkDiscontinuityPending = false;
     this.intentionalClose = false;
@@ -97,21 +118,26 @@ class MiniProgramMediaSession {
 
   async setMicrophoneEnabled(enabled) {
     this.microphoneEnabled = Boolean(enabled);
+    this._syncRecordingState();
+  }
+
+  _syncRecordingState() {
     if (!this.ready || this.systemInterrupted) return;
-    if (this.microphoneEnabled && this._uplinkDiscontinuityPending) {
+    const captureEnabled = this._microphoneCaptureEnabled();
+    if (captureEnabled && this._uplinkDiscontinuityPending) {
       this._resumeAfterSystemInterruption();
       return;
     }
-    if (this.microphoneEnabled && this.recorderStarted && !this.recording) {
+    if (captureEnabled && this.recorderStarted && !this.recording) {
       this._recoveryAttempted = false;
       this._firstUplinkFrame = false;
       this.recorder.resume();
       this.recording = true;
       this._armFirstFrameTimeout();
-    } else if (this.microphoneEnabled && !this.recording) {
+    } else if (captureEnabled && !this.recording) {
       this._recoveryAttempted = false;
       this._startRecording();
-    } else if (!this.microphoneEnabled && this.recorderStarting) {
+    } else if (!captureEnabled && this.recorderStarting) {
       this._clearRecorderTimers();
       this.recorderStarting = false;
       try {
@@ -119,29 +145,19 @@ class MiniProgramMediaSession {
       } catch {
         // The delayed onStart handler is fenced by recorderStarting.
       }
-    } else if (!this.microphoneEnabled && this.recording) {
+    } else if (!captureEnabled && this.recording) {
       this.recorder.pause();
       this.recording = false;
       this._clearRecorderTimers();
     }
   }
 
-  interruptPlayback() {
-    const interruptedGenerationId = this.playbackGenerationId;
-    const nextGenerationId =
-      Number.isInteger(interruptedGenerationId) && interruptedGenerationId >= 0
-        ? interruptedGenerationId + 1
-        : null;
-    this.playbackGenerationId = nextGenerationId;
-    this.player.setGain(1);
-    this.player.reset(nextGenerationId);
-    if (Number.isInteger(interruptedGenerationId)) {
-      this._sendTransportEvent({
-        type: "playout_interrupt",
-        generation_id: interruptedGenerationId,
-        client_timestamp_ms: Date.now(),
-      });
-    }
+  _microphoneCaptureEnabled() {
+    return (
+      this.microphoneEnabled &&
+      !this.assistantResponseActive &&
+      !this.playbackActive
+    );
   }
 
   async close() {
@@ -160,7 +176,7 @@ class MiniProgramMediaSession {
       typeof this.recorder.onInterruptionEnd === "function";
     this.recorder.onStart(() => {
       if (this.intentionalClose || this.systemInterrupted || !this.recorderStarting) return;
-      if (!this.microphoneEnabled) {
+      if (!this._microphoneCaptureEnabled()) {
         this.recorderStarting = false;
         try {
           this.recorder.stop();
@@ -176,7 +192,15 @@ class MiniProgramMediaSession {
       this._armFirstFrameTimeout();
     });
     this.recorder.onFrameRecorded((frame) => {
-      if (!this.ready || !this.recording || !this.socket || this._uplinkFailed) return;
+      if (
+        !this.ready ||
+        !this.recording ||
+        !this._microphoneCaptureEnabled() ||
+        !this.socket ||
+        this._uplinkFailed
+      ) {
+        return;
+      }
       const sequence = this.sequence;
       let data;
       try {
@@ -277,6 +301,12 @@ class MiniProgramMediaSession {
         }
         if (
           event.type === "ui_event" &&
+          event.event?.type === "assistant_state"
+        ) {
+          this._observeAssistantState(event.event.state);
+        }
+        if (
+          event.type === "ui_event" &&
           event.event?.type === "assistant_audio" &&
           (event.event.action === "duck" || event.event.action === "restore") &&
           typeof event.event.gain === "number"
@@ -317,6 +347,17 @@ class MiniProgramMediaSession {
       // Telemetry must never interrupt the media path.
       return false;
     }
+  }
+
+  _observeAssistantState(state) {
+    if (ASSISTANT_INPUT_BLOCKING_STATES.has(state)) {
+      this.assistantResponseActive = true;
+    } else if (ASSISTANT_INPUT_RELEASE_STATES.has(state)) {
+      this.assistantResponseActive = false;
+    } else {
+      return;
+    }
+    this._syncRecordingState();
   }
 
   _sendClientAudioTrace(trace) {
@@ -366,7 +407,7 @@ class MiniProgramMediaSession {
 
   _startRecording() {
     if (
-      !this.microphoneEnabled ||
+      !this._microphoneCaptureEnabled() ||
       this.systemInterrupted ||
       this.recording ||
       this.recorderStarting ||
@@ -415,7 +456,7 @@ class MiniProgramMediaSession {
       this.intentionalClose ||
       this._uplinkFailed ||
       !this.ready ||
-      !this.microphoneEnabled ||
+      !this._microphoneCaptureEnabled() ||
       this.systemInterrupted
     ) {
       return;
@@ -452,7 +493,7 @@ class MiniProgramMediaSession {
     if (
       !this._uplinkDiscontinuityPending ||
       this.systemInterrupted ||
-      !this.microphoneEnabled ||
+      !this._microphoneCaptureEnabled() ||
       this.intentionalClose ||
       this._uplinkFailed ||
       !this.ready ||
@@ -477,8 +518,8 @@ class MiniProgramMediaSession {
 
   _handleSocketClose() {
     this.playbackGenerationId = null;
-    this.player.reset();
     this.ready = false;
+    this.player.reset();
     this._uplinkFailed = true;
     this.systemInterrupted = false;
     this._uplinkDiscontinuityPending = false;

@@ -10,6 +10,7 @@ import pytest
 from livekit import rtc
 from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
+    MINIPROGRAM_AGENT_DISPATCH_METADATA,
     GatewayTicketClaims,
 )
 from services.miniprogram_gateway import audio_processing as audio_processing_module
@@ -106,12 +107,12 @@ def test_default_downlink_queue_is_bounded_to_400_ms() -> None:
     ("aec_enabled", "apm_state", "expected_metadata"),
     [
         (True, "ready", MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA),
-        (False, "disabled", None),
-        (True, "init_failed", None),
-        (True, "process_failed", None),
+        (False, "disabled", MINIPROGRAM_AGENT_DISPATCH_METADATA),
+        (True, "init_failed", MINIPROGRAM_AGENT_DISPATCH_METADATA),
+        (True, "process_failed", MINIPROGRAM_AGENT_DISPATCH_METADATA),
     ],
 )
-def test_gateway_dispatch_disables_agent_warmup_only_when_aec_is_ready(
+def test_gateway_dispatch_always_identifies_miniprogram_and_marks_ready_aec(
     monkeypatch: pytest.MonkeyPatch,
     aec_enabled: bool,
     apm_state: str,

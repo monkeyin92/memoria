@@ -103,7 +103,6 @@ Page({
     micEnabled: true,
     sessionId: "",
     connecting: false,
-    interrupting: false,
     active: false,
     expression: "neutral",
     ...mascotAssetsFor(companionById(defaultCompanionId)),
@@ -324,31 +323,6 @@ Page({
     }
   },
 
-  async interruptVoice() {
-    if (
-      !this.data.active ||
-      !this._media ||
-      !this._session?.session_id ||
-      this._interrupting
-    ) {
-      return;
-    }
-    this._interrupting = true;
-    this.setData({ interrupting: true, error: "" });
-    try {
-      this._media.interruptPlayback();
-      this._setStatus("listening");
-      await api.stopResponse(this._session.session_id);
-    } catch (error) {
-      this.setData({
-        error: error?.message || "已在本机停止播放，服务端打断同步失败。",
-      });
-    } finally {
-      this._interrupting = false;
-      this.setData({ interrupting: false });
-    }
-  },
-
   async stopVoice() {
     this._ending = true;
     try {
@@ -406,8 +380,8 @@ Page({
   },
 
   async _onMediaInterrupted(message) {
-    if (this._ending || this._interrupting) return;
-    this._interrupting = true;
+    if (this._ending || this._handlingMediaInterruption) return;
+    this._handlingMediaInterruption = true;
     try {
       await this._endMediaLocally();
       this.setData({
@@ -418,7 +392,7 @@ Page({
         error: message || "录音被系统中断，请轻触恢复语音。",
       });
     } finally {
-      this._interrupting = false;
+      this._handlingMediaInterruption = false;
     }
   },
 

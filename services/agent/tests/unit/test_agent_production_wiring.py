@@ -17,6 +17,7 @@ from services.agent.src.agent import (
     DuplexVoiceAgent,
     apply_miniprogram_session_audio_policy,
     build_keyword_spotter_pcm_observer,
+    is_miniprogram_session,
     should_enable_legacy_speaker_verifier,
 )
 from services.agent.src.contracts.ids import GenerationFence
@@ -31,7 +32,10 @@ from services.agent.src.response_planner_client import (
     ResponseProvenance,
     ResponseVoiceTarget,
 )
-from services.common.miniprogram_gateway_ticket import MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA
+from services.common.miniprogram_gateway_ticket import (
+    MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
+    MINIPROGRAM_AGENT_DISPATCH_METADATA,
+)
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -102,10 +106,14 @@ def test_formal_speaker_authority_disables_legacy_session_enrollment() -> None:
     assert not should_enable_legacy_speaker_verifier(settings, offline=True)
 
 
-def test_miniprogram_audio_policy_disables_only_the_gateway_warmup() -> None:
+def test_miniprogram_audio_policy_identifies_plain_and_aec_sessions() -> None:
     web_kwargs: dict[str, Any] = {}
     miniprogram_kwargs: dict[str, Any] = {}
 
+    assert is_miniprogram_session(MINIPROGRAM_AGENT_DISPATCH_METADATA)
+    assert is_miniprogram_session(MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA)
+    assert not is_miniprogram_session("")
+    assert not is_miniprogram_session("memoria.miniprogram.aec.v2")
     assert not apply_miniprogram_session_audio_policy(web_kwargs, "")
     assert "aec_warmup_duration" not in web_kwargs
     assert not apply_miniprogram_session_audio_policy(web_kwargs, "memoria.miniprogram.aec.v2")
@@ -116,6 +124,17 @@ def test_miniprogram_audio_policy_disables_only_the_gateway_warmup() -> None:
     assert miniprogram_kwargs["aec_warmup_duration"] is None
     assert agent_mod.AgentSession(**web_kwargs)._aec_warmup_remaining == 3.0
     assert agent_mod.AgentSession(**miniprogram_kwargs)._aec_warmup_remaining == 0.0
+
+
+def test_miniprogram_turn_handling_disables_barge_in_without_changing_h5() -> None:
+    h5 = agent_mod.build_turn_handling_config("cn_self_hosted")
+    miniprogram = agent_mod.build_turn_handling_config(
+        "cn_self_hosted",
+        interruptions_enabled=False,
+    )
+
+    assert h5["interruption"]["enabled"] is True
+    assert miniprogram["interruption"]["enabled"] is False
 
 
 def test_keyword_spotter_waits_for_vad_final_before_forwarding_hit() -> None:
@@ -1148,9 +1167,7 @@ async def test_agent_semantic_review_suppresses_polluted_sticky_final() -> None:
     with pytest.raises(StopResponse):
         await agent.on_user_turn_completed(llm.ChatContext.empty(), Message(final_text))
 
-    assert resolved == [
-        (final_text, "停一下，你叫什么名字", "根据提供的数据和指示来协助。")
-    ]
+    assert resolved == [(final_text, "停一下，你叫什么名字", "根据提供的数据和指示来协助。")]
     assert runtime.orchestrator.context.turns == []
     await runtime.close()
 
@@ -1468,7 +1485,12 @@ def test_agent_helpers_prewarm_and_turn_handling_fallback(
         agent_mod.build_turn_handling_config("cn_self_hosted")["interruption"]["mode"] == "adaptive"
     )
 
-    def fail_options(_profile: str) -> Any:
+    def fail_options(
+        _profile: str,
+        *,
+        interruptions_enabled: bool = True,
+    ) -> Any:
+        _ = interruptions_enabled
         raise ValueError("bad api")
 
     monkeypatch.setattr(agent_mod, "build_turn_handling_options", fail_options)
@@ -1774,11 +1796,13 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     monkeypatch.setattr(mode_policy_client, "ModePolicyClient", FakeModePolicyClient)
     monkeypatch.setattr(agent_mod.openai, "LLM", lambda **kwargs: SimpleNamespace(**kwargs))
     monkeypatch.setattr(agent_mod, "AgentSession", _FakeSession)
-    monkeypatch.setattr(
-        agent_mod,
-        "build_session_kwargs",
-        lambda **kwargs: {"turn_handling_config": {}, **kwargs},
-    )
+    session_builds: list[dict[str, Any]] = []
+
+    def _build_session_kwargs(**kwargs: Any) -> dict[str, Any]:
+        session_builds.append(kwargs)
+        return {key: kwargs[key] for key in ("vad", "stt", "llm", "tts")}
+
+    monkeypatch.setattr(agent_mod, "build_session_kwargs", _build_session_kwargs)
 
     room = _FakeRoom()
     shutdown_callbacks: list[Any] = []
@@ -1792,6 +1816,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     await agent_mod.entrypoint(ctx)
     session = _FakeSession.last
     assert session is not None and session.started is not None
+    assert session_builds[0]["interruptions_enabled"] is False
     assert session.kwargs["aec_warmup_duration"] is None
     assert session.generated == []
     assert session.said == ["嗨，我在呢。想聊什么就直接说吧。"]
@@ -1805,8 +1830,9 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     assert runtime.session_id == "public-session"
     assert runtime.input_guard.enabled is True
     assert runtime.trusted_aec_playback_control is True
-    assert runtime._interrupt_semantic_resolver is not None
-    assert FakeKeywordSpotter.config.enabled is True
+    assert runtime.barge_in_enabled is False
+    assert runtime._interrupt_semantic_resolver is None
+    assert FakeKeywordSpotter.config is None
     assert callable(fake_stt.pcm_observer)
     runtime._clear_control_user_turn(cause="production_wiring_test")
     assert session.clear_user_turn_count == 1
@@ -1882,9 +1908,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     await asyncio.sleep(0.02)
     assert session.options.interruption["min_words"] == 1000
     audio_event_count = sum(
-        1
-        for event in room.local_participant.published
-        if event[0].get("type") == "assistant_audio"
+        1 for event in room.local_participant.published if event[0].get("type") == "assistant_audio"
     )
     session.emit(
         "user_state_changed",
@@ -1902,8 +1926,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
         for event in room.local_participant.published
         if event[0].get("type") == "assistant_audio"
     ][audio_event_count:]
-    assert [event.get("action") for event in new_audio_events] == ["duck", "restore"]
-    assert [event.get("gain") for event in new_audio_events] == [0.0, 1.0]
+    assert new_audio_events == []
     assert 1000 in session.options.interruption.history
     assert session.options.interruption["min_words"] == 1000
     session.emit(
@@ -1915,9 +1938,8 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
         SimpleNamespace(transcript="等等", is_final=True),
     )
     await asyncio.sleep(0.02)
-    assert 0 in session.options.interruption.history
-    assert session.options.interruption["min_words"] == 0
-    assert session.interrupt_count == 3
+    assert session.options.interruption["min_words"] == 1000
+    assert session.interrupt_count == 2
     session.output.audio.emit(
         "playback_finished",
         SimpleNamespace(
@@ -1937,13 +1959,11 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
         ),
     )
     await asyncio.sleep(0.02)
-    # The accepted control command advanced the fence, so a late completion
-    # cannot overwrite the already-heard, truncated assistant text.
-    assert runtime.orchestrator.context.turns[-1].content == "播放"
+    assert runtime.orchestrator.context.turns[-1].content == "播放内容"
 
     await runtime.on_turn_committed("会被语音中断")
     await session.interrupt(force=True)
-    assert session.interrupt_count == 4
+    assert session.interrupt_count == 3
     assert runtime.orchestrator.state is ConversationState.USER_SPEAKING
 
     room.emit(
@@ -1979,7 +1999,8 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     await asyncio.sleep(0)
     assert runtime.trusted_aec_playback_control is False
     assert any(
-        event == {
+        event
+        == {
             "type": "miniprogram_aec_failed_ack",
             "session_id": "public-session",
             "failure_id": "failure-1",

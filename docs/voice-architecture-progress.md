@@ -9,9 +9,11 @@
 - H5 继续使用 LiveKit/WebRTC，媒体路线不变。
 - 小程序当前正式链路仍是
   `RecorderManager → PCM/WSS → 服务端 APM → LiveKit Agent → PCM/WSS → WebAudio`。
+- 下一发布候选将小程序交互改为受控话轮：AI 思考/播放期间暂停录音上行，本地尾音结束后
+  再恢复，不再提供语音或按钮打断。
+- H5 保持原有可打断能力；“等等、等一下、停一下、先别说”等按控制语意处理。
 - TRTC/Agora 尚未接入；它们仍是替换小程序媒体面的候选，不是当前生产事实。
-- 本阶段先修复真实会话中已复现的重复确认语，并补齐客户端播放证据；没有在缺少腾讯
-  RTC 权限、凭据和服务端媒体桥时伪造 TRTC 已完成。
+- 当前产品不要求小程序外放全双工，因此 TRTC/Agora 不是本阶段功能前置。
 
 ## 2. 已完成
 
@@ -34,8 +36,20 @@
 - 客户端将首播、underflow、hard reset 和 conceal 的有界数值指标经网关转发到既有
   `voice-agent.telemetry`，不上传音频、转写、token 或任意文本。
 - 小程序 CI、JavaScript syntax check、协议 golden tests 和播放器行为测试。
+- AI 响应期暂停录音；权威完成后仍等待本地播放 drain，用户手动静音优先。
+- 删除小程序打断按钮、本地 generation interrupt 和口头打断入口。
+- Gateway 始终标记小程序平台；Agent 对该平台关闭 LiveKit interruption、KWS、歧义
+  语意复核和播放期转写接纳。
 
-### 2.3 后端与发布
+### 2.3 H5 打断
+
+- H5 的 `barge_in_enabled` 默认保持开启。
+- Cascade 继续由 `UtteranceRouter` 按控制语意区分纯打断、打断后继续提问和普通聊天；
+  覆盖“等等、等一下、停一下、先别说”等同类表达。
+- Qwen Omni 备选 transport 的 intent classifier 保持同类回归，但当前生产 H5 仍是
+  Cascade。
+
+### 2.4 后端与发布
 
 - 独立 MiniProgramMediaGateway、短期 gateway ticket、最小权限 LiveKit participant。
 - AEC 运行期 fail-closed 撤权与 Agent ACK。
@@ -58,7 +72,8 @@
 
 ## 4. 未完成
 
-- TRTC 或 Agora 小程序媒体 PoC、服务端媒体桥和生产迁移。
+- TRTC 或 Agora 小程序媒体 PoC、服务端媒体桥和生产迁移；仅在产品重新要求小程序随时
+  打断时启动。
 - iOS/Android 外放、听筒、蓝牙、弱网、前后台和系统录音中断完整矩阵。
 - 客户端实际硬件播放时间与 AEC 前后音频的四路时间戳闭环。
 - FunASR 生产热词表和噪声阈值校准。
@@ -78,15 +93,16 @@ LiveKit、权限、记忆和归档时，还需要一个可双向取送音频的 
 - 可把 TRTC 远端音频交给现有 Agent、并把 Agent PCM 发布回 TRTC 的服务端桥；
 - 真机 AEC/ANS/AGC、弱网和音频路由对照数据。
 
-因此下一步只能在取得上述外部条件后建立独立 PoC，不得直接把生产会话切到一个只能进房、
-不能接入现有 Agent 的半成品。相关平台约束和候选路线见
+因此当前受控话轮不依赖 TRTC。若未来恢复小程序外放全双工，只能在取得上述外部条件后建立
+独立 PoC，不得直接把生产会话切到一个只能进房、不能接入现有 Agent 的半成品。相关平台
+约束和候选路线见
 `docs/research/wechat_miniprogram_duplex_audio_20260726.md`。
 
 ## 6. 下一阶段顺序
 
-1. 用新遥测复测真机会话，确认重复确认语为 0，并取得 underflow/hard reset/lead 证据。
-2. 为失败 session 定向开启 AEC 前后采样，区分采集、AEC 和 ASR 错误。
-3. 基于录音集创建 FunASR 热词表并校准噪声阈值，不直接在生产猜参数。
+1. 真机验证 AI 思考/播放期间上行 PCM 为零、本地尾音后恢复，以及手动静音优先。
+2. 继续采集 underflow/hard reset/lead 指标，定位剩余卡顿和滋滋声。
+3. 使用非播放期真机录音集校准 FunASR 热词表和噪声阈值，不直接在生产猜参数。
 4. 完成上行单写入者队列和协议 v3。
-5. 取得腾讯 RTC 外部条件后做独立 TRTC PoC；对照通过后再决定媒体迁移。
-6. 小程序媒体闭环后，再推进 H5 状态机/API 拆分和后端目录重组。
+5. 产品重新要求小程序随时打断时，再取得 RTC 外部条件并做独立 PoC。
+6. 小程序受控话轮闭环后，再推进 H5 状态机/API 拆分和后端目录重组。

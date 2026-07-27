@@ -12,6 +12,7 @@ import jwt
 GATEWAY_TICKET_AUDIENCE: Final = "memoria-miniprogram-media-gateway"
 GATEWAY_TICKET_ISSUER: Final = "memoria-control-api"
 GATEWAY_TICKET_TYPE: Final = "memoria_miniprogram_gateway"
+MINIPROGRAM_AGENT_DISPATCH_METADATA: Final = "memoria.miniprogram.v1"
 MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA: Final = "memoria.miniprogram.aec.v1"
 MINIPROGRAM_AEC_HEALTH_TOPIC: Final = "voice-agent.gateway-health"
 MINIPROGRAM_AEC_HEALTH_ACK_TOPIC: Final = "voice-agent.gateway-health.ack"

@@ -7,6 +7,7 @@ class PcmJitterPlayer {
     frameMilliseconds = 20,
     maxConcealFrames = 3,
     onTrace = null,
+    onPlaybackStateChange = null,
   } = {}) {
     if (
       sampleRate <= 0 ||
@@ -23,6 +24,7 @@ class PcmJitterPlayer {
     this.bufferSamples = Math.round((sampleRate * bufferMilliseconds) / 1000);
     this.maxConcealFrames = maxConcealFrames;
     this.onTrace = onTrace;
+    this.onPlaybackStateChange = onPlaybackStateChange;
     this.context = null;
     this.nextStartAt = 0;
     this.sources = new Set();
@@ -36,6 +38,7 @@ class PcmJitterPlayer {
     this.gain = 1;
     this.gainNode = null;
     this.firstPlaybackGenerationId = null;
+    this.playbackActive = false;
   }
 
   async resume() {
@@ -87,6 +90,7 @@ class PcmJitterPlayer {
   }
 
   _appendPending(input) {
+    this._setPlaybackActive(true);
     this.pending.push(input);
     this.pendingSamples += input.length;
     clearTimeout(this.flushTimer);
@@ -157,7 +161,12 @@ class PcmJitterPlayer {
     source.buffer = buffer;
     source.connect(this.gainNode || this.context.destination);
     this.sources.add(source);
-    source.onended = () => this.sources.delete(source);
+    source.onended = () => {
+      this.sources.delete(source);
+      if (!this.sources.size && !this.pendingSamples) {
+        this._setPlaybackActive(false);
+      }
+    };
     this._scheduleFadeIn(this.nextStartAt);
     source.start(this.nextStartAt);
     if (
@@ -189,6 +198,17 @@ class PcmJitterPlayer {
       });
     } catch {
       // Diagnostics must never interrupt playout.
+    }
+  }
+
+  _setPlaybackActive(active) {
+    const next = Boolean(active);
+    if (this.playbackActive === next) return;
+    this.playbackActive = next;
+    try {
+      this.onPlaybackStateChange?.(next);
+    } catch {
+      // Playback policy callbacks must never interrupt audio rendering.
     }
   }
 
@@ -284,6 +304,7 @@ class PcmJitterPlayer {
 
   reset(generationId, barrierSequence = null) {
     this._clearPlayback();
+    this._setPlaybackActive(false);
     this.generationId = Number.isInteger(generationId) && generationId >= 0 ? generationId : null;
     this.expectedSequence =
       Number.isInteger(barrierSequence) && barrierSequence >= 0

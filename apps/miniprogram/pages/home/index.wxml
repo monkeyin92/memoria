@@ -89,13 +89,10 @@
     ><text class="start-button-spark">✦</text>开始语音陪伴</button>
     <view wx:else class="voice-controls">
       <button
-        wx:if="{{status === 'speaking'}}"
-        class="secondary-button interrupt-button"
-        hover-class="interrupt-button-active"
-        loading="{{interrupting}}"
-        disabled="{{interrupting}}"
-        bindtap="interruptVoice"
-      >轻触打断</button>
+        wx:if="{{status === 'thinking' || status === 'speaking'}}"
+        class="secondary-button"
+        disabled
+      >请等回应结束</button>
       <button wx:else class="secondary-button" bindtap="toggleMic">{{micEnabled ? '静音麦克风' : '打开麦克风'}}</button>
       <button class="danger-button" bindtap="stopVoice">结束</button>
     </view>

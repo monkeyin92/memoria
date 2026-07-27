@@ -20,6 +20,7 @@ from services.agent.src.agent import (
 )
 from services.agent.src.duplex_runtime import DuplexRuntime, KeywordSpotterBinding
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
 from services.agent.src.orchestration.speaker_verify import (
     SpeakerGateState,
     SpeakerVerifier,
@@ -2343,6 +2344,33 @@ def test_cn_self_hosted_turn_config() -> None:
     cfg = build_turn_handling_config("cn_self_hosted")
     assert cfg["turn_detection"]["version"] == "v1-mini"
     assert cfg["interruption"]["mode"] == "vad"
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    ["等等", "等一下", "停一下", "你先别说", "你可以先听我说吗"],
+)
+def test_h5_default_keeps_semantic_barge_in(transcript: str) -> None:
+    h5 = DuplexRuntime.create(input_guard_enabled=True)
+    h5._was_speaking = True
+
+    assert h5.barge_in_enabled is True
+    assert h5.on_user_voice_started() is PlaybackInputDecision.WAIT
+    assert h5.observe_user_transcript(transcript, final=True) is PlaybackInputDecision.ACCEPT
+    assert h5._route_candidate().should_interrupt is True
+
+
+def test_runtime_can_disable_barge_in_for_entire_miniprogram_response() -> None:
+    miniprogram = DuplexRuntime.create(barge_in_enabled=False)
+    assert miniprogram.orchestrator.state_machine is not None
+    miniprogram.orchestrator.state_machine.state = ConversationState.THINKING
+
+    assert miniprogram.on_user_voice_started() is PlaybackInputDecision.IGNORE
+    # A final can arrive after the response itself has completed. It still
+    # belongs to the blocked VAD epoch and must not become the next user turn.
+    miniprogram.orchestrator.state_machine.state = ConversationState.LISTENING
+    assert miniprogram.observe_user_transcript("等等", final=True) is PlaybackInputDecision.IGNORE
+    assert miniprogram.consume_canonical_user_turn("等等") is None
 
 
 @pytest.mark.asyncio

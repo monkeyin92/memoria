@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { QwenOmniWebRTCTransport } from "./QwenOmniWebRTCTransport.js";
+import {
+  classifyOmniControlUtterance,
+  QwenOmniWebRTCTransport,
+} from "./QwenOmniWebRTCTransport.js";
 import {
   addInboundAudioDeltas,
   extractInboundAudioStats,
@@ -112,6 +115,16 @@ describe("QwenOmniWebRTCTransport", () => {
     peerConnections.length = 0;
     vi.stubGlobal("RTCPeerConnection", FakePeerConnection);
   });
+
+  it.each(["等等", "等一下", "停一下", "你先别说"])(
+    "keeps semantic H5 interruption for %s",
+    (text) => {
+      expect(classifyOmniControlUtterance(text)).toEqual({
+        kind: "interrupt_only",
+        ack: expect.any(String),
+      });
+    },
+  );
 
   it("keeps only allowlisted numeric inbound audio metrics", () => {
     const report = new Map([

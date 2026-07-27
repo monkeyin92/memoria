@@ -21,6 +21,7 @@ from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AEC_FAILED_ACK,
     MINIPROGRAM_AEC_HEALTH_ACK_TOPIC,
     MINIPROGRAM_AEC_HEALTH_TOPIC,
+    MINIPROGRAM_AGENT_DISPATCH_METADATA,
     GatewayTicketClaims,
 )
 from services.miniprogram_gateway.audio_diagnostics import AecPcmCapture
@@ -465,7 +466,7 @@ class MiniProgramLiveKitBridge:
                         metadata=(
                             MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA
                             if self._audio_processor.aec_ready
-                            else ""
+                            else MINIPROGRAM_AGENT_DISPATCH_METADATA
                         ),
                     )
                 ]

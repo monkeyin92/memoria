@@ -1,9 +1,13 @@
 # 微信小程序原生客户端与 LiveKit 媒体接入适配器实施计划
 
 > 日期：2026-07-24
-> 状态：DEPLOYED_PARTIAL_REAL_DEVICE
+> 状态：CONTROLLED_TURN_RELEASE_CANDIDATE
 > 基线：Cascade `FunASR Realtime → Qwen → Doubao Seed-TTS 2.0 → LiveKit`；现有 H5 保持不改
 > 前置调研：[LiveKit 微信小程序客户端可用性调研](./research/livekit_wechat_miniprogram_client_research_zh.md)
+
+> 2026-07-27 产品决策：小程序不再承担外放全双工打断。AI 思考/播放期间暂停麦克风上行，
+> 本地播放完全结束后再恢复；H5 继续保留语意打断。原因与边界见
+> [`ADR-0025`](./adr/0025-controlled-miniprogram-turns-and-h5-semantic-barge-in.md)。
 
 ## 1. 目标与硬边界
 
@@ -115,6 +119,9 @@ ticket 不放入 URL 或日志；无效、过期、错误 audience 或非 cascad
 - [x] 回顾与个人资料/伙伴偏好页面；
 - [x] 原生 `RecorderManager(format: "PCM")` 和 WebAudio PCM 播放；
 - [x] 断线后通过会话 ticket 刷新重连，不创建第二个业务会话。
+- [x] AI 响应期间暂停录音上行，本地最后一个播放 source 结束后才恢复；
+- [x] 用户手动静音优先，不由自动恢复覆盖；
+- [x] 删除小程序打断按钮和语音打断入口，服务端同时关闭该平台的 barge-in。
 
 ### P3：部署与不回归
 
@@ -137,12 +144,13 @@ ticket 不放入 URL 或日志；无效、过期、错误 audience 或非 cascad
 
 ## 7. 非代码准入门槛
 
-代码通过后，仍不能声称小程序全双工已在生产可用。必须在已备案 AppID 和真实设备验证：
+代码通过后，仍不能声称小程序受控话轮已在生产可用。必须在已备案 AppID 和真实设备验证：
 
 1. iOS、Android 各至少一台，听筒、扬声器、蓝牙耳机分别测试；
-2. 播放时持续录音是否将 Agent 声音回灌并触发错误打断；
+2. AI 思考/播放期间上行 PCM 必须为零，播放结束后录音自动恢复且不吞首字；
 3. 前后台、来电/微信语音打断、弱网、WSS 重连、网络切换；
 4. WebSocket 合法域名、HTTPS request 合法域名、downloadFile/media 相关域名和隐私声明均已配置；
 5. 首音、连续播放、时钟漂移、丢帧和 AEC 指标有真实设备证据。
 
-若 AEC 或连续 PCM 播放无法达到可接受体验，停止扩大 UI 复刻范围，改为“文字 + 按住说话”宣传入口或评估具备小程序 SDK 的 RTC 厂商桥接；不要向 raw PCM 路径继续堆客户端规则。
+如果未来重新要求小程序在外放时随时插话，必须重新评估具备设备侧 AEC/ANS/AGC 的 RTC
+媒体面与服务端桥；不要重新向 raw PCM 路径堆叠打断规则。

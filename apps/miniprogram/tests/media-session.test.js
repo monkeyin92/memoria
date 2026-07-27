@@ -79,7 +79,7 @@ global.wx = {
 };
 
 const { MiniProgramMediaSession } = require("../utils/media-gateway");
-const { FRAME_TYPE } = require("../utils/media-protocol");
+const { FRAME_TYPE, encodePcmFrame } = require("../utils/media-protocol");
 const { PcmJitterPlayer } = require("../utils/pcm-player");
 
 test("gateway hello and ready messages match the shared contract", async () => {
@@ -251,6 +251,129 @@ test("microphone disable wins over a pending RecorderManager start", async () =>
 
   assert.equal(sent.length, 1);
   assert.equal(media.sequence, 1);
+  await media.close();
+});
+
+test("assistant response pauses uplink until authoritative completion and local playout drain", async () => {
+  recorder.reset();
+  const originalCreateWebAudioContext = global.wx.createWebAudioContext;
+  let scheduledSource = null;
+  global.wx.createWebAudioContext = () => ({
+    state: "running",
+    currentTime: 1,
+    destination: {},
+    createGain: () => ({
+      gain: { value: 1 },
+      connect() {},
+    }),
+    createBuffer(_channels, length, sampleRate) {
+      return {
+        duration: length / sampleRate,
+        getChannelData: () => new Float32Array(length),
+      };
+    },
+    createBufferSource() {
+      scheduledSource = {
+        buffer: null,
+        onended: null,
+        connect() {},
+        start() {},
+        stop() {},
+      };
+      return scheduledSource;
+    },
+    resume: async () => {},
+    close: async () => {},
+  });
+  const sent = [];
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    {},
+  );
+  media.ready = true;
+  media.socket = {
+    send(options) {
+      sent.push(options.data);
+    },
+    close() {},
+  };
+
+  try {
+    await media.player.resume();
+    media._startRecording();
+    recorder.startListener();
+    assert.equal(media.recording, true);
+
+    media._onMessage({
+      data: JSON.stringify({
+        type: "ui_event",
+        event: { type: "assistant_state", state: "thinking", generation_id: 1 },
+      }),
+    });
+    assert.equal(media.recording, false);
+    assert.equal(recorder.pauseCalls, 1);
+
+    recorder.frameListener({ frameBuffer: new Uint8Array(64).buffer });
+    assert.equal(sent.filter((item) => item instanceof ArrayBuffer).length, 0);
+
+    const frame = new Int16Array(480).buffer;
+    for (let sequence = 0; sequence < 4; sequence += 1) {
+      media._onMessage({
+        data: encodePcmFrame(
+          FRAME_TYPE.DOWNLINK_AUDIO,
+          sequence,
+          Date.now(),
+          frame,
+        ),
+      });
+    }
+    assert.ok(scheduledSource);
+
+    media._onMessage({
+      data: JSON.stringify({
+        type: "ui_event",
+        event: { type: "assistant_state", state: "listening", generation_id: 1 },
+      }),
+    });
+    assert.equal(media.recording, false);
+    assert.equal(recorder.resumeCalls, 0);
+
+    scheduledSource.onended();
+    assert.equal(media.recording, true);
+    assert.equal(recorder.resumeCalls, 1);
+  } finally {
+    await media.close();
+    global.wx.createWebAudioContext = originalCreateWebAudioContext;
+  }
+});
+
+test("assistant completion never overrides an explicit microphone mute", async () => {
+  recorder.reset();
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    {},
+  );
+  media.ready = true;
+
+  media._startRecording();
+  recorder.startListener();
+  await media.setMicrophoneEnabled(false);
+  media._onMessage({
+    data: JSON.stringify({
+      type: "ui_event",
+      event: { type: "assistant_state", state: "thinking", generation_id: 1 },
+    }),
+  });
+  media._onMessage({
+    data: JSON.stringify({
+      type: "ui_event",
+      event: { type: "assistant_state", state: "listening", generation_id: 1 },
+    }),
+  });
+
+  assert.equal(media.microphoneEnabled, false);
+  assert.equal(media.recording, false);
+  assert.equal(recorder.resumeCalls, 0);
   await media.close();
 });
 
@@ -741,62 +864,6 @@ test("media session forwards downlink sequence and reset generation to the PCM p
   assert.equal(Number.isInteger(JSON.parse(sent[0]).client_timestamp_ms), true);
 });
 
-test("media session locally fences the active generation before a server interrupt", () => {
-  recorder.reset();
-  const resets = [];
-  const gains = [];
-  const sent = [];
-  const events = [];
-  const media = new MiniProgramMediaSession(
-    { media_gateway: { audio: { sample_rate: 24000 } } },
-    { onEvent: (event) => events.push(event) },
-  );
-  media.playbackGenerationId = 7;
-  media.socket = {
-    send(message) {
-      sent.push(message.data);
-    },
-  };
-  media.player = {
-    setGain(value) {
-      gains.push(value);
-    },
-    reset(generationId) {
-      resets.push(generationId);
-    },
-  };
-
-  media.interruptPlayback();
-  media._onMessage({
-    data: JSON.stringify({
-      type: "audio_reset",
-      generation_id: 7,
-      barrier_sequence: 99,
-    }),
-  });
-  media._onMessage({
-    data: JSON.stringify({
-      type: "ui_event",
-      event: {
-        type: "assistant_state",
-        state: "speaking",
-        generation_id: 7,
-      },
-    }),
-  });
-
-  assert.equal(media.playbackGenerationId, 8);
-  assert.deepEqual(gains, [1]);
-  assert.deepEqual(resets, [8]);
-  assert.equal(JSON.parse(sent[0]).type, "playout_interrupt");
-  assert.equal(JSON.parse(sent[0]).generation_id, 7);
-  assert.deepEqual(
-    Object.keys(JSON.parse(sent[0])).sort(),
-    [...contract.control_events.playout_interrupt].sort(),
-  );
-  assert.deepEqual(events, []);
-});
-
 test("PCM player applies gain through one shared WebAudio node", async () => {
   recorder.reset();
   const player = new PcmJitterPlayer();
@@ -941,6 +1008,44 @@ test("PCM player batches four continuous 20ms frames into one 80ms source", () =
   }
 
   assert.deepEqual(started, [{ at: 1.08, duration: 0.08 }]);
+});
+
+test("PCM player reports active playback until every scheduled source ends", () => {
+  const states = [];
+  let source = null;
+  const player = new PcmJitterPlayer({
+    onPlaybackStateChange: (active) => states.push(active),
+  });
+  player.context = {
+    state: "running",
+    currentTime: 1,
+    destination: {},
+    createBuffer(_channels, length, sampleRate) {
+      return {
+        duration: length / sampleRate,
+        getChannelData: () => new Float32Array(length),
+      };
+    },
+    createBufferSource() {
+      source = {
+        buffer: null,
+        onended: null,
+        connect() {},
+        start() {},
+        stop() {},
+      };
+      return source;
+    },
+  };
+  const frame = new Int16Array(480).buffer;
+
+  for (let sequence = 0; sequence < 4; sequence += 1) {
+    player.enqueue(frame, { sequence, generationId: 1 });
+  }
+
+  assert.deepEqual(states, [true]);
+  source.onended();
+  assert.deepEqual(states, [true, false]);
 });
 
 test("PCM player rejects payloads that are not one fixed PCM16/20ms frame", () => {

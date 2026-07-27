@@ -48,6 +48,7 @@ from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AEC_FAILED_ACK,
     MINIPROGRAM_AEC_HEALTH_ACK_TOPIC,
     MINIPROGRAM_AEC_HEALTH_TOPIC,
+    MINIPROGRAM_AGENT_DISPATCH_METADATA,
 )
 
 if TYPE_CHECKING:
@@ -126,6 +127,13 @@ def apply_miniprogram_session_audio_policy(
 
 def is_miniprogram_aec_session(dispatch_metadata: object) -> bool:
     return dispatch_metadata == MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA
+
+
+def is_miniprogram_session(dispatch_metadata: object) -> bool:
+    return isinstance(dispatch_metadata, str) and dispatch_metadata in {
+        MINIPROGRAM_AGENT_DISPATCH_METADATA,
+        MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
+    }
 
 
 def build_keyword_spotter_pcm_observer(
@@ -1538,11 +1546,18 @@ def prewarm(proc: Any) -> None:
     )
 
 
-def build_turn_handling_options(profile: str) -> Any:
+def build_turn_handling_options(
+    profile: str,
+    *,
+    interruptions_enabled: bool = True,
+) -> Any:
     """Build TurnHandlingOptions; raises on API mismatch (no silent swallow)."""
     from livekit.agents import TurnHandlingOptions, inference
 
-    config = build_turn_handling_config(profile)
+    config = build_turn_handling_config(
+        profile,
+        interruptions_enabled=interruptions_enabled,
+    )
     turn_detector_version = cast(Literal["v1", "v1-mini"], config["turn_detection"]["version"])
     return TurnHandlingOptions(
         turn_detection=inference.TurnDetector(version=turn_detector_version),
@@ -1560,6 +1575,7 @@ def build_session_kwargs(
     tts: Any,
     profile: str,
     offline: bool,
+    interruptions_enabled: bool = True,
 ) -> dict[str, Any]:
     _ = offline
     session_kwargs: dict[str, Any] = {
@@ -1569,14 +1585,20 @@ def build_session_kwargs(
         "tts": tts,
     }
     try:
-        session_kwargs["turn_handling"] = build_turn_handling_options(profile)
+        session_kwargs["turn_handling"] = build_turn_handling_options(
+            profile,
+            interruptions_enabled=interruptions_enabled,
+        )
     except Exception as exc:
         logger.error(
             "TurnHandlingOptions construction failed; using config fallback: %s",
             exc,
             exc_info=True,
         )
-        session_kwargs["turn_handling_config"] = build_turn_handling_config(profile)
+        session_kwargs["turn_handling_config"] = build_turn_handling_config(
+            profile,
+            interruptions_enabled=interruptions_enabled,
+        )
         if os.getenv("ENVIRONMENT", "development") == "production":
             raise
     return session_kwargs
@@ -1629,6 +1651,7 @@ async def entrypoint(ctx: Any) -> None:
 
     profile = os.getenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     offline = os.getenv("OFFLINE_MOCK", "false").lower() == "true"
+    miniprogram_session = is_miniprogram_session(dispatch_metadata)
     miniprogram_aec_session = is_miniprogram_aec_session(dispatch_metadata)
 
     room_name = str(ctx.room.name)
@@ -1653,6 +1676,7 @@ async def entrypoint(ctx: Any) -> None:
         tts=tts_plugin,
         input_guard_enabled=profile == "cn_self_hosted" or miniprogram_aec_session,
         trusted_aec_playback_control=miniprogram_aec_session,
+        barge_in_enabled=not miniprogram_session,
         listener_cues_enabled=cues_on,
         use_paralinguistic_tags=False,
         speaker_verifier=speaker_verifier,
@@ -1660,6 +1684,7 @@ async def entrypoint(ctx: Any) -> None:
     interrupt_semantic_classifier: InterruptSemanticClassifier | None = None
     if (
         miniprogram_aec_session
+        and runtime.barge_in_enabled
         and runtime_settings.interrupt_semantic_enabled
         and not offline
     ):
@@ -1890,6 +1915,7 @@ async def entrypoint(ctx: Any) -> None:
     keyword_spotter: VoskKeywordSpotter | None = None
     if (
         miniprogram_aec_session
+        and runtime.barge_in_enabled
         and runtime_settings.miniprogram_kws_enabled
         and hasattr(stt_plugin, "set_pcm_observer")
     ):
@@ -1897,9 +1923,7 @@ async def entrypoint(ctx: Any) -> None:
             VoskKeywordSpotterConfig.from_settings(runtime_settings)
         )
         if keyword_spotter is not None:
-            pcm_observers.append(
-                build_keyword_spotter_pcm_observer(runtime, keyword_spotter)
-            )
+            pcm_observers.append(build_keyword_spotter_pcm_observer(runtime, keyword_spotter))
             runtime.mark_audio_event("keyword_spotter_ready")
         else:
             runtime.mark_audio_event("keyword_spotter_ready", status="error")
@@ -1923,12 +1947,12 @@ async def entrypoint(ctx: Any) -> None:
         tts=tts_plugin,
         profile=profile,
         offline=offline,
+        interruptions_enabled=not miniprogram_session,
     )
     session_kwargs.pop("turn_handling_config", None)
     if apply_miniprogram_session_audio_policy(session_kwargs, dispatch_metadata):
         logger.info(
-            "mini_program_session_audio_policy aec_warmup_duration=disabled "
-            "session_id=%s",
+            "mini_program_session_audio_policy aec_warmup_duration=disabled session_id=%s",
             runtime_session_id,
         )
 
@@ -2320,11 +2344,15 @@ async def entrypoint(ctx: Any) -> None:
         )
 
 
-def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]:
+def build_turn_handling_config(
+    profile: str = "livekit_cloud",
+    *,
+    interruptions_enabled: bool = True,
+) -> dict[str, Any]:
     """Pure config dict for tests without LiveKit types."""
     self_hosted = profile == "cn_self_hosted"
-    endpointing_min_delay, endpointing_max_delay, false_interruption_timeout = (
-        load_turn_timing(profile)
+    endpointing_min_delay, endpointing_max_delay, false_interruption_timeout = load_turn_timing(
+        profile
     )
     turn_version = "v1-mini" if self_hosted else "v1"
     env_version = os.getenv("LIVEKIT_TURN_DETECTOR_VERSION")
@@ -2356,7 +2384,7 @@ def build_turn_handling_config(profile: str = "livekit_cloud") -> dict[str, Any]
             "alpha": float(os.getenv("ENDPOINTING_ALPHA", "0.85")),
         },
         "interruption": {
-            "enabled": True,
+            "enabled": interruptions_enabled,
             "mode": interruption_mode,
             # Slightly longer on self-hosted: short noise/echo was cancelling
             # mid-reply creative TTS (user hears "突然不说了").

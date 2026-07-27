@@ -232,6 +232,7 @@ class DuplexRuntime:
     session_id: str = field(default_factory=new_session_id)
     input_guard: PlaybackInputGuard = field(default_factory=PlaybackInputGuard)
     trusted_aec_playback_control: bool = False
+    barge_in_enabled: bool = True
     latency_trace: LatencyTrace = field(default_factory=LatencyTrace)
     cue_scheduler: CueScheduler = field(default_factory=CueScheduler)
     emotion_smoother: EmotionSmoother = field(default_factory=EmotionSmoother)
@@ -356,6 +357,7 @@ class DuplexRuntime:
         tts: Any | None = None,
         input_guard_enabled: bool = False,
         trusted_aec_playback_control: bool = False,
+        barge_in_enabled: bool = True,
         listener_cues_enabled: bool = False,
         use_paralinguistic_tags: bool = False,
         speaker_verifier: SpeakerVerifier | None = None,
@@ -370,6 +372,7 @@ class DuplexRuntime:
             session_id=sid,
             input_guard=PlaybackInputGuard(enabled=input_guard_enabled),
             trusted_aec_playback_control=trusted_aec_playback_control,
+            barge_in_enabled=barge_in_enabled,
             cue_scheduler=CueScheduler(enabled=listener_cues_enabled),
             use_paralinguistic_tags=use_paralinguistic_tags,
             speaker_verifier=speaker_verifier
@@ -777,7 +780,8 @@ class DuplexRuntime:
     def keyword_spotter_binding(self) -> KeywordSpotterBinding | None:
         playback_fence = self._playback_fence
         if (
-            not self.trusted_aec_playback_control
+            not self.barge_in_enabled
+            or not self.trusted_aec_playback_control
             or not self._was_speaking
             or not self.input_guard.candidate_active
             or not self.input_guard.candidate_during_playback
@@ -2122,7 +2126,21 @@ class DuplexRuntime:
         self._pending_assistant_text_epoch += 1
         self.orchestrator.heard_tracker.set_full_text(text)
 
+    def _assistant_response_blocks_barge_in(self) -> bool:
+        return not self.barge_in_enabled and (
+            self._was_speaking
+            or self.orchestrator.state
+            in {
+                ConversationState.THINKING,
+                ConversationState.SPEAKING,
+                ConversationState.INTERRUPTION_PENDING,
+                ConversationState.TOOL_WAITING,
+                ConversationState.RECOVERING,
+            }
+        )
+
     def on_user_voice_started(self, *, now_ns: int | None = None) -> PlaybackInputDecision:
+        assistant_response_blocked = self._assistant_response_blocks_barge_in()
         interrupted_assistant_text = (
             (self._pending_assistant_text or self._played_assistant_text)
             if self._was_speaking
@@ -2159,12 +2177,27 @@ class DuplexRuntime:
         self._reset_speaker_classification_task()
         self._fresh_user_speech = True
         self.speaker_verifier.mark_utterance_start()
+        self.input_guard.start(
+            during_playback=self._was_speaking or assistant_response_blocked,
+            now_ns=now_ns,
+        )
+        if assistant_response_blocked:
+            self.input_guard.candidate_during_playback = True
+            self._fresh_user_speech = False
+            self._speaker_collecting = False
+            self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE
+            self.input_guard.candidate_reason = "barge_in_disabled"
+            self.mark_audio_event(
+                "barge_in_ignored",
+                status="ignored",
+                detail={"reason": "disabled"},
+            )
+            return PlaybackInputDecision.IGNORE
         if not self._was_speaking:
             self.set_interaction_phase(
                 InteractionPhase.USER_SPEAKING,
                 cause="vad_start",
             )
-        self.input_guard.start(during_playback=self._was_speaking, now_ns=now_ns)
         pending_turn_id = self.fence.turn_id + 1
         if self._emotion_turn_observer is not None:
             self._emotion_turn_observer(pending_turn_id)
@@ -2199,6 +2232,26 @@ class DuplexRuntime:
         now_ns: int | None = None,
     ) -> PlaybackInputDecision:
         raw_route = route_utterance(text, speaker_state=self.speaker_verifier.state)
+        barge_in_blocked = not self.barge_in_enabled and (
+            self._assistant_response_blocks_barge_in()
+            or self.input_guard.candidate_reason == "barge_in_disabled"
+        )
+        if barge_in_blocked:
+            if not self.input_guard.candidate_active:
+                self.input_guard.start(
+                    during_playback=True,
+                    now_ns=now_ns,
+                    vad_anchored=False,
+                )
+            self.input_guard.candidate_text = text
+            self.input_guard.candidate_during_playback = True
+            self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE
+            self.input_guard.candidate_reason = "barge_in_disabled"
+            if final:
+                self._canonical_final_observed = True
+                self._user_transcript_contaminated = True
+                self.orchestrator.metrics.inc_guarded_user_input("barge_in_disabled")
+            return PlaybackInputDecision.IGNORE
         decision = self.input_guard.observe(
             text,
             final=final,
@@ -3540,7 +3593,8 @@ class DuplexRuntime:
                             "playback_input_ignored reason=%s",
                             self.input_guard.candidate_reason or "playback_noise",
                         )
-                        self.publish_assistant_audio("restore", gain=1.0)
+                        if self.barge_in_enabled:
+                            self.publish_assistant_audio("restore", gain=1.0)
                         _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
                         return
                     route = self._route_candidate()
