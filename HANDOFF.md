@@ -2,17 +2,17 @@
 
 ## 当前状态
 
-- 下一阶段 KWS/AEC 诊断候选已在工作区实现，尚未提交、推送或发布；当前 Git HEAD 仍为
-  `4c9365abd3ae1d7a690be9b3a8ee0d0979fbd925`。
-- 生产 runtime：`20260727-170628`，source commit
-  `8ef285ab4f6cc522974ed666d2781d877dd72dd7`，于
-  `2026-07-27 17:47:06 CST` 激活。
+- KWS/AEC 诊断 source commit / annotated tag：
+  `d2d35ba52181e18068d8df074f3e515f406b4710 / 20260727-204609`。
+- 生产 runtime：`20260727-204609`，于 `2026-07-27 21:07:40 CST` 开始切换，
+  `21:10:43 CST` 完成全部生产门禁。
 - 生产 H5：`20260723-192611`，本轮 runtime 发布没有切换 H5。
 - 微信小程序体验版：`0.8.51`，于 `2026-07-27 17:48:27 CST` 上传，
-  包体 `607,643` 字节；未提交审核、未正式发布。
+  包体 `607,643` 字节；本轮没有客户端变更，因此没有重复上传、提交审核或正式发布。
 - 当前交付客户端为 `apps/h5` 与 `apps/miniprogram`；legacy Web 与原生 iOS 源码已移除。
 - 历史路线、架构决策和发布证据分别保留在
-  `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与 `docs/releases/`。
+  `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
+  `docs/releases/20260727-204609.md`。
 
 ## 最新实现
 
@@ -40,26 +40,32 @@
 
 - `agent / control-api / speaker-model / miniprogram-gateway` 四容器均为
   `healthy`、restart 0。
-- readiness 为 `ready / 20260727-170628`；9/9 core checks、Agent heartbeat、
+- readiness 为 `ready / 20260727-204609`；9/9 core checks、Agent heartbeat、
   LiveKit、FunASR、Qwen、Doubao 与 InterruptSemantic 均通过。
+- 生产 Agent one-off 使用正式 env 与宿主机只读模型成功构造
+  `VoskKeywordSpotter`；四个 runtime 容器最近十分钟未出现 traceback、
+  `keyword spotter unavailable` 或 `keyword_spotter_ready=error`。
 - 公网根 H5、兼容 H5、SPA、API live/ready 与 WMS 为 200；
   `/memoria-api/internal/` 为 404。
+- 小程序公网 WSS 成功升级，缺少 ticket 的 hello 按协议关闭为 `4401`。
+- Nginx 配置、WMS、readiness timer 与 certbot timer 正常；IP 证书有效至
+  `2026-08-03 01:40:00 UTC`，域名证书有效至 `2026-10-18 03:59:59 UTC`。
 - PostgreSQL、MinIO、LiveKit、WMS、数据库快照与 Docker 数据卷未在清理中修改。
 
 ## 保留版本与回滚
 
-- 当前 runtime：`20260727-170628`。
-- 直接回滚 runtime：`20260727-120448`。
+- 当前 runtime：`20260727-204609`。
+- 直接回滚 runtime：`20260727-170628`。
 - 固定 H5：`20260723-192611`。
 - 本机和生产均只保留当前与直接回滚两套 runtime 的四角色 Docker tag。
-- 生产 source release 只保留 `20260727-170628` 与 `20260727-120448`；
+- 生产 source release 只保留 `20260727-204609` 与 `20260727-170628`；
   H5 release 只保留 `20260723-192611`。
 - 回滚证据：
-  `/var/backups/memoria/runtime-switch-20260727-170628-from-20260727-120448-20260727-174310/`。
+  `/var/backups/memoria/runtime-switch-20260727-204609-from-20260727-170628-20260727-210538/`。
 - SQLite 快照 SHA-256：
-  `50900119d0238b0cea55ceec182382ed841eaa1434c96e675f7daa43d2ff5430`。
+  `3ffd8c2e199ee2b829f72b6b2d2165e8e6e5e9f6e291bee3dad06802fd7db72b`。
 - PostgreSQL custom dump SHA-256：
-  `edba17f5e9ee7882d1966c7005c105f0923bb6aa047936602a55f051eb0e52db`。
+  `17e46eae072bb185844549d774e37b722726878e58a7bdd3456bdcf3471ff5e3`。
 - runtime 回滚不自动恢复数据库；只有数据迁移或数据异常时才使用快照。
 
 ## 2026-07-27 清理结果
@@ -72,6 +78,11 @@
   backup、旧 runtime-switch 目录和退出的 MinIO 初始化容器；文件系统回收约 `16.9 GiB`。
 - 生产根分区约 `28 GiB` 已用、`86 GiB` 可用，使用率 `25%`。
 - 本机和生产各删除五套旧 runtime 的 20 个 Memoria Docker tag。
+- 本次发布后进一步删除服务器 `2.2 GiB` incoming、未激活的 `204609` H5 候选、
+  临时候选 env、旧 runtime `120448` 及其四个镜像 tag，并移除退出的 MinIO provision
+  容器；服务器根分区约 `31 GiB` 已用、`83 GiB` 可用。
+- 本机删除 `204609` 临时 worktree、约 `2.1 GiB` 发布工件、`120448` 四个旧镜像 tag
+  与 KWS smoke tag；Data 卷约 `294 GiB` 可用。
 - 没有运行 `docker system prune -a`；没有删除卷、数据库、其他项目镜像或跨项目构建缓存。
 
 ## 验证
@@ -87,16 +98,20 @@
 - `vosk-model-small-cn-0.22` 官方模型页标记 Apache-2.0；归档 SHA-256 为
   `3af8b0e7e0f835ae9d414ce5df580237a3cfb08d586c9fbbb0f7ff29ad5b14ba`。
   成品 Linux/amd64 Agent 镜像实测“停一下”命中、“等一下我想问……”拒绝。
-  模型未进入仓库、镜像或发布包。
+  模型未进入仓库、镜像或发布包；生产安装路径为
+  `/var/lib/memoria-agent/models/vosk-model-small-cn-0.22`，目录/文件权限为
+  `0750/0640`，owner/group 为 `65532:65532`。
+- 候选 env、commit-bound manifest/verifier、镜像导入、候选 H5/API/SQLite restart
+  server smoke、生产 Provider/readiness、公网 H5/API/WMS/TLS/WSS 均通过。
 - 关键覆盖率子门槛：Agent orchestration `92%`、provider protocols `92%`。
 - 既有全 `services` 覆盖率门槛仍未闭环：实测 `81.54%`，低于 CI 配置的 `85%`；
   本轮没有降低门槛或伪报通过。
 
 ## 未闭环与下一步
 
-1. 提交、推送并发布当前 Vosk KWS/AEC 诊断候选；服务器模型放在
-   `/var/lib/memoria-agent/models/vosk-model-small-cn-0.22`，不打进镜像。
-2. 下一次真机测试前只为目标 session 开启
+1. 当前自动化与生产模型加载不能替代 iOS/Android 外放、听筒、蓝牙、系统录音中断和
+   弱网下的真机声学验收，不能宣称高质量全双工已闭环。
+2. 下一次真机测试前先取得目标 session ID，只为该 session 开启
    `MINIPROGRAM_GATEWAY_AEC_CAPTURE_SESSION_ID`，测试后立即导出 pre/post WAV 到
    root-only 备份并关闭开关。
 3. 重点验证“等一下”“停一下”、控制词后跟内容、噪声/助手原声误触发、访客声音、
