@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -66,6 +68,20 @@ class MiniProgramGatewaySettings(BaseSettings):
         le=5_000,
         alias="MINIPROGRAM_GATEWAY_AEC_ACTIVE_WINDOW_MS",
     )
+    miniprogram_gateway_aec_capture_session_id: str = Field(
+        default="",
+        alias="MINIPROGRAM_GATEWAY_AEC_CAPTURE_SESSION_ID",
+    )
+    miniprogram_gateway_aec_capture_dir: Path = Field(
+        default=Path("/tmp/memoria-aec-diagnostics"),
+        alias="MINIPROGRAM_GATEWAY_AEC_CAPTURE_DIR",
+    )
+    miniprogram_gateway_aec_capture_max_ms: int = Field(
+        default=5_000,
+        ge=500,
+        le=15_000,
+        alias="MINIPROGRAM_GATEWAY_AEC_CAPTURE_MAX_MS",
+    )
     miniprogram_gateway_generation_quarantine_ms: int = Field(
         default=400,
         ge=20,
@@ -121,3 +137,8 @@ class MiniProgramGatewaySettings(BaseSettings):
             raise ValueError(
                 "Mini Program generation quarantine must cover the downlink queue"
             )
+        if (
+            self.miniprogram_gateway_aec_capture_session_id
+            and not self.miniprogram_gateway_aec_capture_dir.is_absolute()
+        ):
+            raise ValueError("AEC diagnostic capture directory must be absolute")

@@ -23,6 +23,7 @@ from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AEC_HEALTH_TOPIC,
     GatewayTicketClaims,
 )
+from services.miniprogram_gateway.audio_diagnostics import AecPcmCapture
 from services.miniprogram_gateway.audio_processing import MiniProgramAudioProcessor
 from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 from services.miniprogram_gateway.protocol import FrameType, PcmFrame, encode_pcm_frame
@@ -128,6 +129,13 @@ class MiniProgramLiveKitBridge:
             stream_delay_ms=settings.miniprogram_gateway_aec_stream_delay_ms,
             active_window_ms=settings.miniprogram_gateway_aec_active_window_ms,
         )
+        self._aec_capture = AecPcmCapture.try_create(
+            directory=settings.miniprogram_gateway_aec_capture_dir,
+            session_id=claims.session_id,
+            capture_session_id=settings.miniprogram_gateway_aec_capture_session_id,
+            sample_rate=settings.miniprogram_gateway_uplink_sample_rate,
+            max_ms=settings.miniprogram_gateway_aec_capture_max_ms,
+        )
         self._aec_dispatched_ready = self._audio_processor.aec_ready
         self._aec_failure_id: str | None = None
         self._aec_failure_sent = False
@@ -214,7 +222,10 @@ class MiniProgramLiveKitBridge:
         await self._await_aec_failure_ack()
         for pcm in self._uplink.feed(frame.payload):
             aec_ready_before = self._audio_processor.aec_ready
-            processed_pcm = self._audio_processor.process_uplink(pcm)
+            raw_pcm = pcm
+            processed_pcm = self._audio_processor.process_uplink(raw_pcm)
+            if self._aec_capture is not None:
+                self._aec_capture.write(raw_pcm, processed_pcm)
             if (
                 self._aec_dispatched_ready
                 and aec_ready_before
@@ -360,6 +371,8 @@ class MiniProgramLiveKitBridge:
         if self._closed:
             return
         self._closed = True
+        if self._aec_capture is not None:
+            self._aec_capture.close()
         for task in tuple(self._background_tasks):
             task.cancel()
         if self._background_tasks:

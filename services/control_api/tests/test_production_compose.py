@@ -206,6 +206,12 @@ def test_runtime_images_include_voice_registries_needed_by_agent_and_legacy_prev
     assert delta_builder.count(cosyvoice_registry) == 2
 
 
+def test_agent_image_installs_the_optional_keyword_spotter_runtime() -> None:
+    agent_dockerfile = (ROOT / "infra" / "Dockerfile.agent").read_text(encoding="utf-8")
+
+    assert "uv export --frozen --no-dev --extra kws" in agent_dockerfile
+
+
 def test_nginx_bounds_raw_voice_upload_without_raising_all_api_body_limits() -> None:
     nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
 

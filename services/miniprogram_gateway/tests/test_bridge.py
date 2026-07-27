@@ -831,6 +831,72 @@ async def test_bridge_feeds_downlink_reference_before_processing_uplink(
 
 
 @pytest.mark.asyncio
+async def test_bridge_captures_aligned_aec_input_and_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writes: list[tuple[bytes, bytes]] = []
+    closed: list[bool] = []
+
+    class FakeCapture:
+        def write(self, pre_aec: bytes, post_aec: bytes) -> None:
+            writes.append((pre_aec, post_aec))
+
+        def close(self) -> None:
+            closed.append(True)
+
+    fake_capture = FakeCapture()
+    monkeypatch.setattr(
+        bridge_module.AecPcmCapture,
+        "try_create",
+        lambda **_kwargs: fake_capture,
+    )
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(
+            miniprogram_gateway_aec_capture_session_id="session-1",
+        ),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+
+    class FakeProcessor:
+        aec_ready = False
+
+        def process_uplink(self, payload: bytes) -> bytes:
+            return b"\x03\x00" * (len(payload) // 2)
+
+    captured: list[bytes] = []
+
+    class FakeAudioSource:
+        async def capture_frame(self, frame: rtc.AudioFrame) -> None:
+            captured.append(bytes(frame.data))
+
+    bridge._audio_processor = FakeProcessor()  # type: ignore[assignment]
+    bridge._audio_source = FakeAudioSource()
+    await bridge.accept_uplink(
+        PcmFrame(
+            frame_type=FrameType.UPLINK_AUDIO,
+            sequence=0,
+            timestamp_ms=0,
+            payload=b"\x02\x00" * 320,
+        )
+    )
+    await bridge.close()
+
+    assert writes == [(b"\x02\x00" * 320, b"\x03\x00" * 320)]
+    assert captured == [b"\x03\x00" * 320]
+    assert closed == [True]
+
+
+@pytest.mark.asyncio
 async def test_bridge_drops_downlink_frames_that_break_the_pcm_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -18,7 +18,7 @@ from services.agent.src.agent import (
     build_turn_handling_config,
     create_runtime_for_tests,
 )
-from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.duplex_runtime import DuplexRuntime, KeywordSpotterBinding
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.speaker_verify import (
     SpeakerGateState,
@@ -284,6 +284,168 @@ async def test_trusted_aec_wait_alias_interim_and_final_interrupt_only_once() ->
     assert interrupted == ["interrupt"]
     assert runtime.accept_user_turn("等下。") == (False, "interrupt_command_only")
     await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_keyword_hit_stops_once_when_asr_final_loses_the_control_word() -> None:
+    interrupted: list[str] = []
+    interrupted_event = asyncio.Event()
+    cleared: list[str] = []
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_user_turn_clearer(lambda: cleared.append("clear"))
+    await runtime.orchestrator.ready()
+    playback_fence = await runtime.on_turn_committed("请继续讲故事")
+    runtime.update_pending_assistant_text("我正在讲一段还没有结束的内容。")
+    await runtime.on_playback_started()
+
+    async def interrupt() -> None:
+        interrupted.append("interrupt")
+        await runtime.on_real_interrupt(
+            cause="keyword_spotter",
+            stop_playback=lambda: asyncio.sleep(0, result="我正在讲"),
+        )
+        interrupted_event.set()
+
+    runtime.set_target_speaker_interrupt(interrupt)
+    assert runtime.on_user_voice_started().value == "wait"
+    runtime.feed_speaker_pcm(b"\x00\x20" * 2_560)
+    finalized_bindings: list[KeywordSpotterBinding | None] = []
+    runtime.set_keyword_spotter_finalizer(finalized_bindings.append)
+    runtime.on_user_voice_stopped()
+    binding = runtime.keyword_spotter_binding()
+
+    assert binding is not None
+    assert finalized_bindings == [binding]
+    assert runtime.observe_keyword_spotter_hit("停一下", binding=binding) is True
+    await asyncio.wait_for(interrupted_event.wait(), timeout=1)
+    stopped_fence = runtime.fence
+
+    # The real handset trace ended with this wrong FunASR final. The accepted
+    # KWS control evidence must keep it out of chat instead of creating a turn.
+    runtime.observe_user_transcript("他。", final=True)
+    canonical = runtime.consume_canonical_user_turn("他。") or "他。"
+    accepted, reason = runtime.accept_user_turn(
+        canonical,
+        speech_anchored=True,
+        canonical_speech_epoch=runtime.consumed_canonical_speech_epoch,
+    )
+
+    assert interrupted == ["interrupt"]
+    assert stopped_fence.generation_id == playback_fence.generation_id + 1
+    assert runtime.fence.matches(stopped_fence)
+    assert accepted is False
+    assert reason == "interrupt_command_only"
+    assert cleared
+    assert all(turn.content != "他。" for turn in runtime.orchestrator.context.turns)
+    assert runtime._pending_keyword_interrupt_binding is None
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_late_keyword_hit_cannot_stop_the_next_playback() -> None:
+    interrupted: list[str] = []
+
+    async def interrupt() -> None:
+        interrupted.append("interrupt")
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_target_speaker_interrupt(interrupt)
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("请讲故事")
+    runtime.update_pending_assistant_text("播放 A。")
+    await runtime.on_playback_started()
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x00\x20" * 2_560)
+    stale_binding = runtime.keyword_spotter_binding()
+    assert stale_binding is not None
+
+    await runtime.on_playback_finished(
+        playback_position_s=1.0,
+        interrupted=False,
+        synchronized_transcript="播放 A。",
+    )
+    runtime.update_pending_assistant_text("播放 B。")
+    await runtime.on_playback_started()
+
+    assert runtime.observe_keyword_spotter_hit("停一下", binding=stale_binding) is False
+    await asyncio.sleep(0)
+
+    assert interrupted == []
+    assert runtime._was_speaking is True
+    assert runtime._pending_assistant_text == "播放 B。"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_keyword_hit_keeps_target_speaker_rejection() -> None:
+    interrupted: list[str] = []
+    classified = asyncio.Event()
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        classified.set()
+        return _guest_speaker_decision()
+
+    async def interrupt() -> None:
+        interrupted.append("interrupt")
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.set_target_speaker_focus(True)
+    runtime.set_target_speaker_interrupt(interrupt)
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("请继续")
+    runtime.update_pending_assistant_text("我正在继续回答。")
+    await runtime.on_playback_started()
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x00\x20" * 2_560)
+    runtime.on_user_voice_stopped()
+    binding = runtime.keyword_spotter_binding()
+
+    assert binding is not None
+    assert runtime.observe_keyword_spotter_hit("停一下", binding=binding) is True
+    await asyncio.wait_for(classified.wait(), timeout=1)
+    task = runtime._speaker_classification_task
+    assert task is not None
+    await task
+    await asyncio.sleep(0)
+
+    assert interrupted == []
+    assert runtime.input_guard.candidate_decision.value == "ignore"
+    assert runtime._was_speaking is True
+    assert runtime._pending_keyword_interrupt_binding is None
+    await runtime.close()
+
+
+def test_keyword_spotter_rejects_non_control_router_results() -> None:
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime._was_speaking = True
+    runtime._playback_fence = runtime.fence
+    runtime._playback_epoch = 1
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x00\x20" * 2_560)
+    binding = runtime.keyword_spotter_binding()
+
+    assert binding is not None
+    assert (
+        runtime.observe_keyword_spotter_hit(
+            "停一下，我还有问题",
+            binding=binding,
+        )
+        is False
+    )
 
 
 @pytest.mark.asyncio

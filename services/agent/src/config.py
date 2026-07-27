@@ -153,6 +153,26 @@ class AgentSettings(BaseSettings):
         le=2.0,
         alias="INTERRUPT_SEMANTIC_TIMEOUT_S",
     )
+    miniprogram_kws_enabled: bool = Field(
+        default=False,
+        alias="MINIPROGRAM_KWS_ENABLED",
+    )
+    miniprogram_kws_model_dir: str = Field(
+        default="/data/models/vosk-model-small-cn-0.22",
+        min_length=1,
+        alias="MINIPROGRAM_KWS_MODEL_DIR",
+    )
+    miniprogram_kws_keywords_file: str = Field(
+        default="/app/infra/kws/keywords.txt",
+        min_length=1,
+        alias="MINIPROGRAM_KWS_KEYWORDS_FILE",
+    )
+    miniprogram_kws_min_confidence: float = Field(
+        default=0.65,
+        ge=0.0,
+        le=1.0,
+        alias="MINIPROGRAM_KWS_MIN_CONFIDENCE",
+    )
 
     funasr_model: str = Field(default="fun-asr-realtime", alias="FUNASR_MODEL")
     funasr_sample_rate: int = Field(default=16000, alias="FUNASR_SAMPLE_RATE")

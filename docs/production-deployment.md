@@ -113,6 +113,10 @@ QWEN_DEEP_MODEL=qwen-plus
 INTERRUPT_SEMANTIC_ENABLED=true
 INTERRUPT_SEMANTIC_MODEL=qwen-flash
 INTERRUPT_SEMANTIC_TIMEOUT_S=0.6
+MINIPROGRAM_KWS_ENABLED=false
+MINIPROGRAM_KWS_MODEL_DIR=/data/models/vosk-model-small-cn-0.22
+MINIPROGRAM_KWS_KEYWORDS_FILE=/app/infra/kws/keywords.txt
+MINIPROGRAM_KWS_MIN_CONFIDENCE=0.65
 DASHSCOPE_SUMMARY_MODEL=qwen-plus
 FUNASR_MODEL=fun-asr-realtime
 FUNASR_SAMPLE_RATE=16000
@@ -127,6 +131,9 @@ DOUBAO_TTS_POOL_SIZE=4
 MINIPROGRAM_GATEWAY_AEC_ENABLED=true
 MINIPROGRAM_GATEWAY_AEC_STREAM_DELAY_MS=120
 MINIPROGRAM_GATEWAY_AEC_ACTIVE_WINDOW_MS=750
+MINIPROGRAM_GATEWAY_AEC_CAPTURE_SESSION_ID=
+MINIPROGRAM_GATEWAY_AEC_CAPTURE_DIR=/tmp/memoria-aec-diagnostics
+MINIPROGRAM_GATEWAY_AEC_CAPTURE_MAX_MS=5000
 MINIPROGRAM_GATEWAY_GENERATION_QUARANTINE_MS=400
 MINIPROGRAM_GATEWAY_AUDIO_QUEUE_FRAMES=20
 
@@ -145,6 +152,64 @@ INTERRUPTION_MIN_DURATION_S=0.45
 FALSE_INTERRUPTION_TIMEOUT_S=1.70
 MEMORIA_SPEAKER_GUEST_THRESHOLD=0.40
 ```
+
+### 小程序短命令 KWS 模型
+
+`MINIPROGRAM_KWS_ENABLED` 默认关闭。当前候选使用官方
+`vosk-model-small-cn-0.22`，仅在可信小程序 AEC 会话、助手播放期和当前 VAD speech
+epoch 内解码。VAD 开始负责立即 duck；VAD 结束后只有完整结果精确等于纯控制词、不含
+`[unk]` 且达到平均置信度门槛时，才把它交给 `UtteranceRouter`。partial 不能执行停止，
+否则“等一下我想问……”会被过早吞成纯中断。
+
+生产 Compose 已把宿主机 `/var/lib/memoria-agent` 映射为 Agent `/data`。模型只安装到宿主机，
+不进入 Git、发布包或 Docker 镜像：
+
+```bash
+tmp_dir="$(mktemp -d)"
+curl -fL --retry 3 \
+  -o "$tmp_dir/vosk-model-small-cn-0.22.zip" \
+  https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip
+printf '%s  %s\n' \
+  '3af8b0e7e0f835ae9d414ce5df580237a3cfb08d586c9fbbb0f7ff29ad5b14ba' \
+  "$tmp_dir/vosk-model-small-cn-0.22.zip" | sha256sum -c -
+unzip -q "$tmp_dir/vosk-model-small-cn-0.22.zip" -d "$tmp_dir"
+sudo install -d -o 65532 -g 65532 -m 0750 \
+  /var/lib/memoria-agent/models/vosk-model-small-cn-0.22
+sudo cp -a "$tmp_dir/vosk-model-small-cn-0.22/." \
+  /var/lib/memoria-agent/models/vosk-model-small-cn-0.22/
+sudo chown -R 65532:65532 \
+  /var/lib/memoria-agent/models/vosk-model-small-cn-0.22
+sudo find /var/lib/memoria-agent/models/vosk-model-small-cn-0.22 \
+  -type d -exec chmod 0750 {} +
+sudo find /var/lib/memoria-agent/models/vosk-model-small-cn-0.22 \
+  -type f -exec chmod 0640 {} +
+rm -rf "$tmp_dir"
+```
+
+控制词随 Agent 镜像保存在 `/app/infra/kws/keywords.txt`，只包含“停一下、等一下、等下、
+等等、别说了、暂停、先别说、停下”等纯控制词。不要加入普通聊天短语。
+
+`vosk==0.3.45` 固定在 lock 中并继续受 `--require-hashes` 门禁。Vosk 代码与官方模型表均
+标记为 Apache-2.0；模型 zip 本身没有附带独立 LICENSE/NOTICE，所以当前仍不随 Memoria
+制品再分发。许可、Python 3.12/Linux amd64 smoke、归档校验和正负例见
+[`2026-07-27-vosk-chinese-kws.md`](research/2026-07-27-vosk-chinese-kws.md)。
+
+### 单会话 AEC 前后音频采样
+
+诊断默认关闭。只在下一次真机复测前，把
+`MINIPROGRAM_GATEWAY_AEC_CAPTURE_SESSION_ID` 设置为目标 session ID 并重启 gateway。
+该 session 最多保存 `MINIPROGRAM_GATEWAY_AEC_CAPTURE_MAX_MS` 的 16 kHz 单声道 WAV：
+
+```text
+aec-<UTC>-<session-hash>-pre.wav
+aec-<UTC>-<session-hash>-post.wav
+aec-<UTC>-<session-hash>.json
+```
+
+目录权限为 `0700`，文件为 `0600`，文件名和 manifest 不保存原始 session ID、转写或用户
+身份。采样位于 gateway 容器 tmpfs，测试后使用 `docker cp` 导出到 root-only 备份目录，
+随即清空 `MINIPROGRAM_GATEWAY_AEC_CAPTURE_SESSION_ID` 并重启 gateway；容器替换会丢失
+未导出的采样。
 
 生产默认 LLM 和每日回顾均使用百炼 Qwen。账号版本发布后，浏览器只接收注册账号 Bearer token 和短期 LiveKit participant token；`/v1/auth/anonymous` 仅用于兼容旧身份并在注册时原地升级。服务端在持久化消息、Profile 或向 Agent/FunASR 传递上下文前统一做 PII 脱敏，所有 memory/session route 均校验 token subject 与资源所有权。账号登录不等于当前说话人是主人，私人档案权限仍需结合 `owner / guest / uncertain` 判定。
 

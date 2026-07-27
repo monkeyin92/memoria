@@ -42,6 +42,23 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.interrupt_semantic_enabled is True
     assert s.interrupt_semantic_model == "qwen-flash"
     assert s.interrupt_semantic_timeout_s == 0.6
+    assert s.miniprogram_kws_enabled is False
+
+
+def test_miniprogram_kws_settings_keep_model_and_calibration_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MINIPROGRAM_KWS_ENABLED", "true")
+    monkeypatch.setenv("MINIPROGRAM_KWS_MODEL_DIR", "/tmp/kws-model")
+    monkeypatch.setenv("MINIPROGRAM_KWS_KEYWORDS_FILE", "/tmp/kws-keywords.txt")
+    monkeypatch.setenv("MINIPROGRAM_KWS_MIN_CONFIDENCE", "0.72")
+
+    settings = AgentSettings()
+
+    assert settings.miniprogram_kws_enabled is True
+    assert settings.miniprogram_kws_model_dir == "/tmp/kws-model"
+    assert settings.miniprogram_kws_keywords_file == "/tmp/kws-keywords.txt"
+    assert settings.miniprogram_kws_min_confidence == pytest.approx(0.72)
 
 
 def test_interrupt_semantic_settings_are_overridable(

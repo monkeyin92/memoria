@@ -8,7 +8,7 @@ import hashlib
 import json
 import logging
 import os
-from collections.abc import AsyncGenerator, AsyncIterable
+from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -19,7 +19,11 @@ from services.agent.src.context_assembler import (
 )
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.duplex_runtime import DuplexRuntime, GenerationVoiceSnapshot
+from services.agent.src.duplex_runtime import (
+    DuplexRuntime,
+    GenerationVoiceSnapshot,
+    KeywordSpotterBinding,
+)
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
 from services.agent.src.prompts import VOICE_SYSTEM_PROMPT
@@ -122,6 +126,45 @@ def apply_miniprogram_session_audio_policy(
 
 def is_miniprogram_aec_session(dispatch_metadata: object) -> bool:
     return dispatch_metadata == MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA
+
+
+def build_keyword_spotter_pcm_observer(
+    runtime: DuplexRuntime,
+    spotter: Any,
+) -> Callable[[bytes], None]:
+    """Decode one fenced VAD epoch and accept only its complete result."""
+
+    active_binding: KeywordSpotterBinding | None = None
+    closed_binding: KeywordSpotterBinding | None = None
+
+    def _observe(pcm: bytes) -> None:
+        nonlocal active_binding, closed_binding
+        binding = runtime.keyword_spotter_binding()
+        if binding == closed_binding:
+            return
+        if binding != active_binding:
+            spotter.reset()
+            active_binding = binding
+            closed_binding = None
+        if binding is None:
+            return
+        spotter.feed_pcm(pcm)
+
+    def _finalize(binding: KeywordSpotterBinding | None) -> None:
+        nonlocal active_binding, closed_binding
+        if binding is None or binding != active_binding:
+            spotter.reset()
+            active_binding = None
+            closed_binding = None
+            return
+        keyword = spotter.finish_utterance()
+        active_binding = None
+        closed_binding = binding
+        if keyword:
+            runtime.observe_keyword_spotter_hit(keyword, binding=binding)
+
+    runtime.set_keyword_spotter_finalizer(_finalize)
+    return _observe
 
 
 def _chunk_text(chunk: Any) -> str:
@@ -1554,6 +1597,10 @@ async def entrypoint(ctx: Any) -> None:
         QwenEmotionConfig,
         QwenEmotionSidecar,
     )
+    from services.agent.src.providers.vosk_kws import (
+        VoskKeywordSpotter,
+        VoskKeywordSpotterConfig,
+    )
 
     stt_plugin = FunASRSTT.from_env()
     tts_plugin = DoubaoTTS.from_env()
@@ -1840,6 +1887,22 @@ async def entrypoint(ctx: Any) -> None:
         else:
             emotion_sidecar = None
             runtime.mark_audio_event("emotion_sidecar_ready", status="error")
+    keyword_spotter: VoskKeywordSpotter | None = None
+    if (
+        miniprogram_aec_session
+        and runtime_settings.miniprogram_kws_enabled
+        and hasattr(stt_plugin, "set_pcm_observer")
+    ):
+        keyword_spotter = VoskKeywordSpotter.try_create(
+            VoskKeywordSpotterConfig.from_settings(runtime_settings)
+        )
+        if keyword_spotter is not None:
+            pcm_observers.append(
+                build_keyword_spotter_pcm_observer(runtime, keyword_spotter)
+            )
+            runtime.mark_audio_event("keyword_spotter_ready")
+        else:
+            runtime.mark_audio_event("keyword_spotter_ready", status="error")
     if hasattr(stt_plugin, "set_pcm_observer"):
 
         def _fanout_pcm(pcm: bytes) -> None:
@@ -2154,8 +2217,9 @@ async def entrypoint(ctx: Any) -> None:
                 logger.error("shutdown component failed component=%s", label, exc_info=True)
                 shutdown_errors.append(exc)
 
-        if emotion_sidecar is not None:
+        if hasattr(stt_plugin, "set_pcm_observer"):
             stt_plugin.set_pcm_observer(None)
+        if emotion_sidecar is not None:
             await _close_component("emotion_sidecar", emotion_sidecar.aclose())
         await _close_component("runtime", runtime.close())
         if interrupt_semantic_classifier is not None:

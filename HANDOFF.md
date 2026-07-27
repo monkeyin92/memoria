@@ -2,6 +2,8 @@
 
 ## 当前状态
 
+- 下一阶段 KWS/AEC 诊断候选已在工作区实现，尚未提交、推送或发布；当前 Git HEAD 仍为
+  `4c9365abd3ae1d7a690be9b3a8ee0d0979fbd925`。
 - 生产 runtime：`20260727-170628`，source commit
   `8ef285ab4f6cc522974ed666d2781d877dd72dd7`，于
   `2026-07-27 17:47:06 CST` 激活。
@@ -15,6 +17,16 @@
 ## 最新实现
 
 - `UtteranceRouter` 仍是 enroll、纯打断、打断后继续提问和普通聊天的唯一副作用入口。
+- Agent 新增可选 Vosk 受限词表识别：只消费可信小程序 AEC 后 PCM，仅在助手播放期、
+  VAD speech epoch 和至少 80 ms PCM witness 下运行；VAD 结束后完整结果必须精确等于
+  纯控制词、不含 `[unk]` 且达到平均置信度门槛，命中仍经过 Router、
+  TargetSpeakerFocus、playback epoch 与 generation fence。
+- partial 不执行停止；Linux/amd64 实测证明“等一下我想问……”和“别说了这个词……”
+  都会先出现纯控制词 partial，必须等完整话轮才能保住后续用户内容。
+- 已固定真机失败回归：FunASR final 错成“他。”但 KWS 命中“停一下”时，generation
+  只前移一次，旧播放停止，错误 final 不进入 chat/history。
+- Gateway 新增精确 session、默认 5 秒、最大 15 秒的 AEC 前后 WAV 采样；默认关闭，
+  文件/目录权限为 `0600/0700`，只记录 session hash 和音频参数。
 - 小程序媒体契约由 `packages/contracts/miniprogram-media.json` 同时约束 Python 与
   JavaScript，固定下行 `24 kHz / mono / s16le / 20 ms / 960 bytes`。
 - Socket 断开立即停止录音；mic 关闭压过迟到的 `RecorderManager.onStart`；同步发送失败
@@ -65,22 +77,30 @@
 ## 验证
 
 - Ruff：通过。
-- `mypy services --strict`：158 个 source files 无问题。
-- Python：`1282 passed, 27 skipped`。
+- `mypy services --strict`：160 个 source files 无问题。
+- Python：`1295 passed, 27 skipped`。
 - H5：`232/232`，production build 通过。
 - 微信小程序：`46/46`，全部 JavaScript syntax check 通过。
 - `scripts/run_e2e.py --profile offline`：通过。
+- Agent Linux/amd64 镜像以 `--require-hashes` 成功构建；`vosk==0.3.45` 和控制词文件
+  均进入镜像，官方模型通过宿主机只读挂载。
+- `vosk-model-small-cn-0.22` 官方模型页标记 Apache-2.0；归档 SHA-256 为
+  `3af8b0e7e0f835ae9d414ce5df580237a3cfb08d586c9fbbb0f7ff29ad5b14ba`。
+  成品 Linux/amd64 Agent 镜像实测“停一下”命中、“等一下我想问……”拒绝。
+  模型未进入仓库、镜像或发布包。
 - 关键覆盖率子门槛：Agent orchestration `92%`、provider protocols `92%`。
-- 既有全 `services` 覆盖率门槛仍未闭环：实测 `81.40%`，低于 CI 配置的 `85%`；
+- 既有全 `services` 覆盖率门槛仍未闭环：实测 `81.54%`，低于 CI 配置的 `85%`；
   本轮没有降低门槛或伪报通过。
 
 ## 未闭环与下一步
 
-1. 用 `0.8.51` 在 iOS/Android 外放、听筒、蓝牙、系统录音中断和弱网下做真实声学验收。
-2. 重点验证“等一下”“停一下，你叫什么名字？”、引用助手原话、噪声误触发、
-   中断后“继续”和 1–2 秒句中停顿。
-3. 若失败，先导出同一会话的 Agent/Gateway/Control 脱敏日志，再决定修复或回滚到
-   `20260727-120448`。
+1. 提交、推送并发布当前 Vosk KWS/AEC 诊断候选；服务器模型放在
+   `/var/lib/memoria-agent/models/vosk-model-small-cn-0.22`，不打进镜像。
+2. 下一次真机测试前只为目标 session 开启
+   `MINIPROGRAM_GATEWAY_AEC_CAPTURE_SESSION_ID`，测试后立即导出 pre/post WAV 到
+   root-only 备份并关闭开关。
+3. 重点验证“等一下”“停一下”、控制词后跟内容、噪声/助手原声误触发、访客声音、
+   迟到结果和下一段播放。
 4. 单独处理全仓覆盖率门槛：优先补齐 PostgreSQL/外部边界测试，不通过降低标准换绿。
 
 ## 用户工作区边界

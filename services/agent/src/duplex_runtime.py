@@ -77,6 +77,7 @@ TRUSTED_PLAYBACK_PCM_MS = 2_000
 TRUSTED_PLAYBACK_VOICE_WINDOW_MS = 900
 TRUSTED_PLAYBACK_MIN_VOICED_MS = 160
 TRUSTED_PLAYBACK_VOICE_WITNESS_MS = 2_500
+KEYWORD_SPOTTER_MIN_PCM_MS = 80
 TARGET_SPEAKER_MIN_PCM_MS = 600
 HISTORY_ELIGIBILITY_MAX_FENCES = 32
 RESPONSE_PROVENANCE_MAX_BYTES = 16 * 1024
@@ -175,6 +176,15 @@ class CanonicalUserTurnSnapshot:
     accepted_finals: tuple[str, ...]
     contaminated: bool
     suspected_playback_prefixes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class KeywordSpotterBinding:
+    """Playback and speech epochs frozen when KWS starts decoding."""
+
+    speaker_epoch: int
+    playback_epoch: int
+    fence: GenerationFence
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,6 +301,7 @@ class DuplexRuntime:
     _last_committed_user_text_normalized: str = ""
     _trusted_unanchored_control_epoch: int | None = None
     _trusted_unanchored_playback_epoch: int | None = None
+    _pending_keyword_interrupt_binding: KeywordSpotterBinding | None = None
     _result_speaker: Callable[[str], Any] | None = None
     _interrupt_yield: Callable[[str], Awaitable[None]] | None = None
     _false_interrupt_recover: Callable[[], Awaitable[None]] | None = None
@@ -323,6 +334,9 @@ class DuplexRuntime:
     _listener_cue_candidate_task: asyncio.Task[Any] | None = None
     _listener_cue_aec_healthy: bool = False
     _emotion_turn_observer: Callable[[int], None] | None = None
+    _keyword_spotter_finalizer: (
+        Callable[[KeywordSpotterBinding | None], None] | None
+    ) = None
     _emotion_by_turn: dict[int, EmotionObservation] = field(default_factory=dict)
     _voice_profile_refresher: Callable[[], Coroutine[Any, Any, Any]] | None = None
     _voice_profile_refresh_task: asyncio.Task[Any] | None = None
@@ -672,6 +686,12 @@ class DuplexRuntime:
     def set_emotion_turn_observer(self, observer: Callable[[int], None]) -> None:
         self._emotion_turn_observer = observer
 
+    def set_keyword_spotter_finalizer(
+        self,
+        finalizer: Callable[[KeywordSpotterBinding | None], None],
+    ) -> None:
+        self._keyword_spotter_finalizer = finalizer
+
     def set_voice_profile_refresher(
         self,
         refresher: Callable[[], Coroutine[Any, Any, Any]],
@@ -749,6 +769,120 @@ class DuplexRuntime:
             return
         self.speaker_verifier.feed_pcm(pcm)
 
+    def keyword_spotter_binding(self) -> KeywordSpotterBinding | None:
+        playback_fence = self._playback_fence
+        if (
+            not self.trusted_aec_playback_control
+            or not self._was_speaking
+            or not self.input_guard.candidate_active
+            or not self.input_guard.candidate_during_playback
+            or not self.input_guard.candidate_vad_anchored
+            or playback_fence is None
+            or not playback_fence.matches(self.fence)
+        ):
+            return None
+        return KeywordSpotterBinding(
+            speaker_epoch=self._speaker_epoch,
+            playback_epoch=self._playback_epoch,
+            fence=playback_fence,
+        )
+
+    def _keyword_spotter_binding_is_current(
+        self,
+        binding: KeywordSpotterBinding,
+        *,
+        require_pcm: bool,
+    ) -> bool:
+        current = self.keyword_spotter_binding()
+        if current != binding:
+            return False
+        if not require_pcm:
+            return True
+        minimum_bytes = (
+            self._speaker_sample_rate * 2 * KEYWORD_SPOTTER_MIN_PCM_MS // 1_000
+        )
+        return len(self._speaker_pcm) >= minimum_bytes
+
+    def observe_keyword_spotter_hit(
+        self,
+        keyword: str,
+        *,
+        binding: KeywordSpotterBinding,
+    ) -> bool:
+        route = route_utterance(keyword, speaker_state=self.speaker_verifier.state)
+        if (
+            not self._keyword_spotter_binding_is_current(binding, require_pcm=True)
+            or route.intent is not UtteranceIntent.INTERRUPT_COMMAND
+            or not route.should_interrupt
+            or route.enter_chat
+            or self._pending_keyword_interrupt_binding == binding
+            or (
+                self._sticky_interrupt_epoch == binding.speaker_epoch
+                and self._sticky_interrupt_route is not None
+                and self._sticky_interrupt_route.should_interrupt
+            )
+        ):
+            return False
+        self._sticky_interrupt_epoch = binding.speaker_epoch
+        self._sticky_interrupt_route = route
+        self._sticky_interrupt_text = route.normalized_text
+        self._pending_keyword_interrupt_binding = binding
+        self.input_guard.candidate_text = route.normalized_text
+        self.input_guard.candidate_decision = PlaybackInputDecision.ACCEPT
+        self.input_guard.candidate_reason = None
+        self.mark_audio_event(
+            "keyword_spotter_hit",
+            detail={
+                "keyword_len": len(route.normalized_text),
+                "speaker_epoch": binding.speaker_epoch,
+                "playback_epoch": binding.playback_epoch,
+            },
+        )
+        self._spawn(
+            self._confirm_keyword_spotter_interrupt(binding),
+            name=f"keyword-spotter-interrupt-{binding.speaker_epoch}",
+        )
+        return True
+
+    async def _confirm_keyword_spotter_interrupt(
+        self,
+        binding: KeywordSpotterBinding,
+    ) -> None:
+        try:
+            if not self._keyword_spotter_binding_is_current(binding, require_pcm=True):
+                return
+            if self._target_speaker_focus_enabled and self._speaker_classifier is not None:
+                self._start_speaker_classification()
+                try:
+                    await self.await_speaker_classification()
+                except asyncio.CancelledError:
+                    return
+                if not self._keyword_spotter_binding_is_current(binding, require_pcm=True):
+                    return
+                target_route = self._target_speaker_route(
+                    context="interrupt",
+                    explicit_interrupt=True,
+                )
+                if not target_route.allow_input:
+                    self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE
+                    self._reject_target_speaker(
+                        context="keyword_spotter",
+                        route=target_route,
+                    )
+                    self.publish_assistant_audio("restore", gain=1.0)
+                    return
+            callback = self._target_speaker_interrupt
+            if callback is None:
+                self.publish_assistant_audio("restore", gain=1.0)
+                return
+            if not self._keyword_spotter_binding_is_current(binding, require_pcm=True):
+                return
+            self._target_focus_epoch = binding.speaker_epoch
+            await callback()
+        finally:
+            if self._pending_keyword_interrupt_binding == binding:
+                self._pending_keyword_interrupt_binding = None
+
     def _clear_trusted_playback_audio(self) -> None:
         self._trusted_playback_pcm.clear()
         self._trusted_playback_witness_pcm = b""
@@ -765,11 +899,20 @@ class DuplexRuntime:
         )
 
     def on_user_voice_stopped(self) -> None:
+        keyword_binding = self.keyword_spotter_binding()
         if self._speaker_collecting:
             self.mark_audio_event("last_user_audio")
         self._speaker_collecting = False
         self.speaker_verifier.mark_utterance_end()
         self._start_speaker_classification()
+        if self._keyword_spotter_finalizer is not None:
+            try:
+                self._keyword_spotter_finalizer(keyword_binding)
+            except Exception:
+                logger.warning(
+                    "keyword spotter finalization failed; ordinary ASR remains active",
+                    exc_info=True,
+                )
 
     def _start_speaker_classification(self) -> None:
         if (
@@ -827,6 +970,7 @@ class DuplexRuntime:
         if not self.trusted_aec_playback_control:
             return False
         self.trusted_aec_playback_control = False
+        self._pending_keyword_interrupt_binding = None
         self._invalidate_trusted_unanchored_control(reason="aec_trust_revoked")
         self.mark_audio_event(
             "trusted_aec_playback_control_revoked",
@@ -1999,6 +2143,7 @@ class DuplexRuntime:
         self._pending_semantic_pause_binding = None
         self._trusted_unanchored_control_epoch = None
         self._trusted_unanchored_playback_epoch = None
+        self._pending_keyword_interrupt_binding = None
         self._clear_trusted_playback_audio()
         self._speaker_class = "uncertain"
         self._speaker_decision = self._uncertain_speaker_decision("classification_pending")
@@ -2919,19 +3064,32 @@ class DuplexRuntime:
         force_generation_bump: bool = False,
     ) -> GenerationFence:
         self.cancel_listener_cue()
-        expected_speaker_epoch = (
-            self._speaker_epoch
-            if self._trusted_unanchored_control_epoch == self._speaker_epoch
-            else None
-        )
-        expected_playback_epoch = (
-            self._trusted_unanchored_playback_epoch
-            if expected_speaker_epoch is not None
-            else None
-        )
-        expected_playback_fence = (
-            self._playback_fence if expected_playback_epoch is not None else None
-        )
+        keyword_binding = self._pending_keyword_interrupt_binding
+        expected_speaker_epoch: int | None
+        expected_playback_epoch: int | None
+        expected_playback_fence: GenerationFence | None
+        if (
+            keyword_binding is not None
+            and keyword_binding.speaker_epoch == self._speaker_epoch
+        ):
+            expected_speaker_epoch = keyword_binding.speaker_epoch
+            expected_playback_epoch = keyword_binding.playback_epoch
+            expected_playback_fence = keyword_binding.fence
+        else:
+            keyword_binding = None
+            expected_speaker_epoch = (
+                self._speaker_epoch
+                if self._trusted_unanchored_control_epoch == self._speaker_epoch
+                else None
+            )
+            expected_playback_epoch = (
+                self._trusted_unanchored_playback_epoch
+                if expected_speaker_epoch is not None
+                else None
+            )
+            expected_playback_fence = (
+                self._playback_fence if expected_playback_epoch is not None else None
+            )
         expected_pending_text_epoch = (
             self._pending_assistant_text_epoch
             if expected_playback_epoch is not None
@@ -2944,8 +3102,19 @@ class DuplexRuntime:
                 self.trusted_aec_playback_control
                 and expected_speaker_epoch is not None
                 and self._speaker_epoch == expected_speaker_epoch
-                and self._trusted_unanchored_control_epoch == expected_speaker_epoch
-                and self._trusted_unanchored_playback_epoch == expected_playback_epoch
+                and (
+                    (
+                        keyword_binding is not None
+                        and self._pending_keyword_interrupt_binding == keyword_binding
+                    )
+                    or (
+                        keyword_binding is None
+                        and self._trusted_unanchored_control_epoch
+                        == expected_speaker_epoch
+                        and self._trusted_unanchored_playback_epoch
+                        == expected_playback_epoch
+                    )
+                )
                 and self._playback_epoch == expected_playback_epoch
                 and self._was_speaking
                 and (
@@ -3069,6 +3238,7 @@ class DuplexRuntime:
     async def on_playback_started(self) -> None:
         async with self._playback_control_lock:
             self._invalidate_trusted_unanchored_control(reason="playback_replaced")
+            self._pending_keyword_interrupt_binding = None
             self._playback_epoch += 1
             if self._set_interruption_min_words is not None:
                 self._set_interruption_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
@@ -3109,6 +3279,7 @@ class DuplexRuntime:
         interrupted: bool,
         synchronized_transcript: str | None,
     ) -> None:
+        self._pending_keyword_interrupt_binding = None
         self._invalidate_trusted_unanchored_control(reason="playback_finished")
         self.publish_assistant_audio("restore", gain=1.0)
         if interrupted:

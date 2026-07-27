@@ -16,10 +16,11 @@ from services.agent.src import agent as agent_mod
 from services.agent.src.agent import (
     DuplexVoiceAgent,
     apply_miniprogram_session_audio_policy,
+    build_keyword_spotter_pcm_observer,
     should_enable_legacy_speaker_verifier,
 )
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.duplex_runtime import DuplexRuntime, KeywordSpotterBinding
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.state_machine import ConversationState
 from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
@@ -115,6 +116,73 @@ def test_miniprogram_audio_policy_disables_only_the_gateway_warmup() -> None:
     assert miniprogram_kwargs["aec_warmup_duration"] is None
     assert agent_mod.AgentSession(**web_kwargs)._aec_warmup_remaining == 3.0
     assert agent_mod.AgentSession(**miniprogram_kwargs)._aec_warmup_remaining == 0.0
+
+
+def test_keyword_spotter_waits_for_vad_final_before_forwarding_hit() -> None:
+    binding = KeywordSpotterBinding(
+        speaker_epoch=3,
+        playback_epoch=4,
+        fence=GenerationFence(
+            session_id="session-kws",
+            turn_id=1,
+            generation_id=2,
+            tool_epoch=0,
+        ),
+    )
+
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self.binding: KeywordSpotterBinding | None = binding
+            self.finalizer: Any = None
+            self.hits: list[tuple[str, KeywordSpotterBinding]] = []
+
+        def keyword_spotter_binding(self) -> KeywordSpotterBinding | None:
+            return self.binding
+
+        def set_keyword_spotter_finalizer(self, finalizer: Any) -> None:
+            self.finalizer = finalizer
+
+        def observe_keyword_spotter_hit(
+            self,
+            keyword: str,
+            *,
+            binding: KeywordSpotterBinding,
+        ) -> None:
+            self.hits.append((keyword, binding))
+
+    class FakeSpotter:
+        def __init__(self) -> None:
+            self.reset_count = 0
+            self.pcm: list[bytes] = []
+            self.finish_count = 0
+
+        def reset(self) -> None:
+            self.reset_count += 1
+
+        def feed_pcm(self, pcm: bytes) -> None:
+            self.pcm.append(pcm)
+
+        def finish_utterance(self) -> str:
+            self.finish_count += 1
+            return "停一下"
+
+    runtime = FakeRuntime()
+    spotter = FakeSpotter()
+    observer = build_keyword_spotter_pcm_observer(runtime, spotter)  # type: ignore[arg-type]
+
+    observer(b"\x00\x20" * 320)
+    assert runtime.hits == []
+
+    runtime.finalizer(binding)
+
+    assert runtime.hits == [("停一下", binding)]
+    assert spotter.finish_count == 1
+    assert spotter.pcm
+
+    # Post-VAD PCM belongs to the closed epoch and cannot start a second decode.
+    observer(b"\x00\x00" * 320)
+    assert spotter.finish_count == 1
+    assert len(spotter.pcm) == 1
 
 
 @pytest.mark.asyncio
@@ -1628,12 +1696,19 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
 ) -> None:
     from services.agent.src import mode_policy_client
     from services.agent.src.mode_policy_client import ModePolicy
-    from services.agent.src.providers import deepseek, doubao_tts, funasr_stt
+    from services.agent.src.providers import deepseek, doubao_tts, funasr_stt, vosk_kws
 
     fake_tts = _FakeTTS()
+    fake_stt = SimpleNamespace(pcm_observer=None)
+
+    def _set_pcm_observer(observer: Any) -> None:
+        fake_stt.pcm_observer = observer
+
+    fake_stt.set_pcm_observer = _set_pcm_observer
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     monkeypatch.setenv("SPEAKER_VERIFY_ENABLED", "false")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
+    monkeypatch.setenv("MINIPROGRAM_KWS_ENABLED", "true")
     monkeypatch.setenv(
         "MEMORIA_INTERACTION_POLICY_TOKEN",
         "interaction-policy-material-that-is-long-enough",
@@ -1646,8 +1721,20 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
 
     class FakeFun:
         @classmethod
-        def from_env(cls) -> str:
-            return "stt"
+        def from_env(cls) -> Any:
+            return fake_stt
+
+    class FakeKeywordSpotter:
+        config: Any = None
+
+        @classmethod
+        def try_create(cls, config: Any) -> Any:
+            cls.config = config
+            return SimpleNamespace(
+                reset=lambda: None,
+                feed_pcm=lambda _pcm: None,
+                finish_utterance=lambda: None,
+            )
 
     class FakeDeepConfig:
         def __init__(self, **kwargs: Any) -> None:
@@ -1681,6 +1768,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
 
     monkeypatch.setattr(doubao_tts, "DoubaoTTS", FakeDoubao)
     monkeypatch.setattr(funasr_stt, "FunASRSTT", FakeFun)
+    monkeypatch.setattr(vosk_kws, "VoskKeywordSpotter", FakeKeywordSpotter)
     monkeypatch.setattr(deepseek, "DeepSeekConfig", FakeDeepConfig)
     monkeypatch.setattr(deepseek, "DeepSeekClient", FakeDeepClient)
     monkeypatch.setattr(mode_policy_client, "ModePolicyClient", FakeModePolicyClient)
@@ -1718,6 +1806,8 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     assert runtime.input_guard.enabled is True
     assert runtime.trusted_aec_playback_control is True
     assert runtime._interrupt_semantic_resolver is not None
+    assert FakeKeywordSpotter.config.enabled is True
+    assert callable(fake_stt.pcm_observer)
     runtime._clear_control_user_turn(cause="production_wiring_test")
     assert session.clear_user_turn_count == 1
 
