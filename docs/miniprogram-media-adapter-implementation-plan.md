@@ -1,7 +1,7 @@
 # 微信小程序原生客户端与 LiveKit 媒体接入适配器实施计划
 
 > 日期：2026-07-24
-> 状态：CONTROLLED_TURN_RELEASE_CANDIDATE
+> 状态：CONTROLLED_TURN_TEST_BUILD_DEPLOYED
 > 基线：Cascade `FunASR Realtime → Qwen → Doubao Seed-TTS 2.0 → LiveKit`；现有 H5 保持不改
 > 前置调研：[LiveKit 微信小程序客户端可用性调研](./research/livekit_wechat_miniprogram_client_research_zh.md)
 
@@ -15,7 +15,8 @@
 
 本轮硬边界：
 
-1. 不修改 `apps/h5/**`，不改变 H5 的构建、静态发布路径、接口响应或 LiveKit 直连链路。
+1. 不改变 H5 的生产实现、构建、静态发布路径、接口响应或 LiveKit 直连链路；
+   只补充语意打断回归测试。
 2. 小程序不持有 LiveKit API secret，也不直接拿到 LiveKit participant token。
 3. 小程序不在客户端复刻 speaker、history eligibility、mode、generation 或权限决策；所有权威事件仍由 Agent/Control API 发出。
 4. 原生小程序只支持审计过的 `cascade` 后端；不为小程序接入 Qwen Omni。
@@ -25,7 +26,7 @@
 
 | 交付物 | 责任边界 | 状态 |
 | --- | --- | --- |
-| `apps/miniprogram/` | 原生微信小程序页面、账户入口、PCM 录放、现有 REST API 调用 | 已部署体验版；真实设备声学验收未完成 |
+| `apps/miniprogram/` | 原生微信小程序页面、账户入口、PCM 录放、现有 REST API 调用 | `0.8.53` 已部署体验版；真实设备声学验收未完成 |
 | `services/miniprogram_gateway/` | WSS 媒体接入、LiveKit participant、PCM 帧桥接、权威事件转发 | 已部署 |
 | `/v1/sessions` 小程序响应 | 创建原有 cascade session 后仅返回网关地址与短期 gateway ticket | 已完成 |
 | gateway ticket 刷新接口 | 已有会话在断线后重新取得短票据，不新建业务会话 | 已完成 |
@@ -128,14 +129,14 @@ ticket 不放入 URL 或日志；无效、过期、错误 audience 或非 cascad
 - [x] 增加网关镜像、Compose service、最小权限环境文件和 Nginx WSS route；
 - [x] 发布清单和 release verifier 纳入第四个 runtime 镜像；
 - [x] 运行 Python / 小程序纯逻辑 / Compose / H5 全量测试和 H5 build；
-- [x] 逐文件确认 `apps/h5/**` 无 diff。
+- [x] 确认 H5 生产代码与构建路径未改变，仅补充语意打断回归测试。
 
 ## 6. 本次代码验证
 
-- Python：`uv run pytest` 为 `1176 passed, 27 skipped`。
-- H5：`npm --prefix apps/h5 test` 为 `19 files / 232 tests passed`，production build 通过；
-  `git diff -- apps/h5` 为空。
-- 小程序：3 个纯逻辑测试、全部 JavaScript `node --check`、JSON 配置检查通过。
+- Python：`uv run pytest` 为 `1310 passed, 27 skipped`。
+- H5：`npm --prefix apps/h5 test -- --run` 为 `19 files / 236 tests passed`，
+  production build 通过；H5 生产代码与发布版本保持不变。
+- 小程序：`48/48`，全部 JavaScript `node --check`、JSON 配置检查通过。
 - 服务端：gateway/ticket/session/Compose/release verifier 定向测试、Ruff、strict mypy、
   Shell 语法与 `git diff --check` 通过。
 
@@ -144,7 +145,8 @@ ticket 不放入 URL 或日志；无效、过期、错误 audience 或非 cascad
 
 ## 7. 非代码准入门槛
 
-代码通过后，仍不能声称小程序受控话轮已在生产可用。必须在已备案 AppID 和真实设备验证：
+代码、后端发布和体验版上传通过后，仍不能声称小程序受控话轮已完成真机验收。
+必须在已备案 AppID 和真实设备验证：
 
 1. iOS、Android 各至少一台，听筒、扬声器、蓝牙耳机分别测试；
 2. AI 思考/播放期间上行 PCM 必须为零，播放结束后录音自动恢复且不吞首字；
