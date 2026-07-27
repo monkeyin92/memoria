@@ -1,6 +1,6 @@
 # Shared contracts
 
-Executable contracts shared by the Agent, H5, legacy Web, and Mini Program media gateway.
+Executable contracts shared by the Agent, H5, and Mini Program media gateway.
 
 - `events.schema.json` defines Agent-authoritative UI events. Clients **must**
   drop events with a smaller `generation_id` than the latest accepted one.

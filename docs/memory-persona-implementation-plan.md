@@ -1,7 +1,7 @@
 # Memoria 终身记忆、人格复刻与声纹系统实施计划
 
-> 更新时间：2026-07-21
-> 当前阶段：唯一客户端为 `apps/h5`；P0.5、P1～P6 已部署；授权真人样本、真实手机矩阵和异地容灾仍待完成
+> 更新时间：2026-07-27
+> 当前阶段：交付客户端为 `apps/h5` 与 `apps/miniprogram`；P0.5、P1～P6 已部署；授权真人样本、真实手机矩阵和异地容灾仍待完成
 > 原则：每阶段都是可运行的纵向切片；完成后更新本文件与 `HANDOFF.md`，运行该阶段门禁，再向产品负责人报告。
 
 ## 1. 最终完成定义
@@ -50,7 +50,7 @@
 | P4 人格复刻 | **COMPLETED（2026-07-19，本地工程）** | 风格/价值观版本化；PersonaCapsule 接入实时 Qwen；豆包当前不发送会破坏字幕对齐的 `context_texts` |
 | P5 声音复刻治理 | **COMPLETED（2026-07-19，本地工程）** | CosyVoice 3.5 登记、授权、版本、激活、撤销和 H5 管理 |
 | P6 全链收口 | **COMPLETED（2026-07-19，本地工程）** | P6.1～P6.4 本地工程门禁完成；真实 Provider、真人样本、生产基础设施和设备验收待外部条件 |
-| 生产平台发布 | **DEPLOYED（首次平台版 `20260719-215553`；当前版本见 `HANDOFF.md`）** | H5-only、PostgreSQL/pgvector、MinIO、CAM++、Provider/readiness、公网与回滚门禁通过；真人/异地门槛未完成 |
+| 生产平台发布 | **DEPLOYED（首次平台版 `20260719-215553`；当前版本见 `HANDOFF.md`）** | H5 与微信小程序共用后端、PostgreSQL/pgvector、MinIO、CAM++、Provider/readiness、公网与回滚门禁通过；真人/异地门槛未完成 |
 
 ## 4. P0：领域、架构与契约
 
@@ -367,7 +367,8 @@
 **状态：COMPLETED（2026-07-19，本地工程）**
 
 - [x] Python 全量 pytest、Ruff、strict mypy。
-- [x] H5 全量测试、production build 与 390×844 真实浏览器验收；原生 iOS 已移除，legacy Web 不在交付范围。
+- [x] H5 全量测试、production build 与 390×844 真实浏览器验收；原生 iOS 与 legacy Web
+  客户端源码均已移除。
 - [x] Control API 与 Agent 最终镜像构建、源码 secret 模式扫描、构建上下文隐私合同和 `git diff --check`；正式镜像扫描留到部署流水线。
 - [x] 原始主人语音使用独立、可撤销授权；H5 可管理授权，Agent 仅上传 owner WAV，Control API 复核 grant，撤销删除音频但保留转写与结构化记忆。
 - [x] 转写与原始音频复用同一个加密 `ArchiveSink` spool，以 `target=event|raw_audio` 分流；满盘时转写可驱逐旧音频，音频永久或临时失败都不能阻塞后续/新转写。

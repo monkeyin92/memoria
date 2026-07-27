@@ -1,11 +1,11 @@
 # 中文全双工级联语音 Agent：可实施架构与工程设计规范
 
-> **版本**：1.2.0
-> **基准日期**：2026-07-21
+> **版本**：1.3.0
+> **基准日期**：2026-07-27
 > **目标技术栈**：FunASR Realtime API + 百炼 Qwen LLM + 豆包 TTS 2.0 双向流式 API + LiveKit Agents
 > **部署前提**：无 GPU；只使用第三方模型 API；允许使用普通 CPU 云主机或托管 Agent 运行时
 > **目标语言**：普通话为主，兼容少量中英混说
-> **唯一客户端**：`apps/h5`；原生 iOS 已从仓库移除，legacy `apps/web` 只保留历史源码，不进入实现、CI、部署或验收
+> **交付客户端**：`apps/h5` 与 `apps/miniprogram`；原生 iOS 与 legacy Web 客户端源码均已移除
 > **文档性质**：规范性设计文档。文中的 **MUST / MUST NOT / SHOULD / MAY** 分别表示必须、禁止、建议、可选。
 
 > [!IMPORTANT]
@@ -64,7 +64,8 @@
 | 短期状态 | 进程内内存；多实例时 Redis | 实时关键路径不得等待数据库 |
 | 长期存储 | PostgreSQL，异步写入 | 对话、指标、业务事件和审计 |
 | 可观测性 | OpenTelemetry + Prometheus/Grafana + Sentry | 跟踪分段延迟、失败与异常 |
-| 唯一客户端 | `apps/h5`：React 19 + Vite + LiveKit Client | 移动浏览器 WebRTC、字幕、记忆与数字心智管理；原生 iOS 已移除，不交付 legacy Web |
+| H5 客户端 | `apps/h5`：React 19 + Vite + LiveKit Client | 移动浏览器 WebRTC、字幕、记忆与数字心智管理 |
+| 微信小程序客户端 | `apps/miniprogram` + `services/miniprogram_gateway` | 通过固定 PCM/WSS 契约复用同一 Agent；客户端负责录放生命周期与 generation fence |
 
 ### 1.2 两种部署档案
 
@@ -347,7 +348,7 @@ assert major == 2 and minor >= 36, "openai must be >=2.36,<3"
 ```
 
 
-### 5.2 H5
+### 5.2 客户端
 
 H5 已位于 `apps/h5`，依赖由 `apps/h5/package-lock.json` 固定。开发、测试与部署 MUST 使用同一锁文件：
 
@@ -357,7 +358,11 @@ npm --prefix apps/h5 test
 npm --prefix apps/h5 run build
 ```
 
-原生 iOS 已从仓库移除；`apps/web` 仅保留为历史源码，不进入当前交付、CI 或 Definition of Done。
+微信小程序位于 `apps/miniprogram`，共享媒体契约位于
+`packages/contracts/miniprogram-media.json`。每次修改媒体协议、录音生命周期或播放器 MUST
+运行小程序单测与全部 JavaScript 语法检查。
+
+原生 iOS 与 legacy Web 客户端源码均已从仓库移除；历史实现仍可从 Git 与 release 记录追溯。
 
 ---
 

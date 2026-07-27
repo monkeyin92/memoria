@@ -38,8 +38,7 @@
 | 消息、Profile 与 Agent 上下文统一 PII 脱敏；FunASR 历史 context 仅保留显式实验入口且生产默认关闭 | `services/common/redaction.py`, `routes/memory.py`, `context_manager.py`, `funasr_protocol.py`, `funasr_stt.py` | `test_memory_api.py`, `test_orchestration_edges.py`, `test_funasr_protocol.py`, `test_funasr_recognize_stream.py` | PASS |
 | SQLite 持久化会话控制与 release-bound readiness evidence | `control_api/app/database.py`, `routes/session.py`, `routes/readiness.py` | `test_session_api.py` | PASS |
 | RTC 恢复两端原子前移 generation | `rtc-recovered` route, `agent.py`, `apps/h5/src/hooks/useVoiceSession.js` | Python/H5 recovery tests | PASS |
-| legacy Web session store / generation 丢弃 | `apps/web/src/state/sessionStore.ts` | 历史 Web tests | HISTORICAL-NOT-IN-SCOPE |
-| legacy Web 远端音频、字幕、设备与重连 | `apps/web/` | 历史 Web tests | HISTORICAL-NOT-IN-SCOPE |
+| legacy Web 客户端 | 源码已移除；历史行为保留在 Git 与 release 记录 | 无当前门禁 | REMOVED |
 | 原生 iOS 会话与同步播放 | 已从仓库移除 | 历史构建记录 | REMOVED |
 | H5 五伙伴正面机身、四种 SVG 表情与权威语音情绪驱动 | `apps/h5/src/components/Mascot.jsx`, `apps/h5/src/lib/companions.js`, `apps/h5/public/assets/companions/` | `apps/h5/src/components/Mascot.test.jsx`, `apps/h5/src/hooks/useVoiceSession.test.jsx`, 浏览器交互 QA | PASS-LOCAL |
 | 注册后选择陪伴方式、表情/设计音色试听与三段 shadow 声纹登记；陪伴方式只影响助手工作风格，不定义数字分身 | `CompanionOnboarding.jsx`, `companions.js`, `services/common/companions.py`, `routes/memory.py`, `routes/speaker.py`, `routes/voice.py` | `CompanionOnboarding.test.jsx`, `App.test.jsx`, `test_memory_api.py`, `test_voice_profile_api.py`；生产一次性账号验证混合方案与双视口 | PASS-PROD-BROWSER / VOICE-ENROLLMENT-NOT-EXECUTED |
@@ -88,16 +87,16 @@
 | 可观测性 registry/结构化日志/追踪；输入守卫按原因计数；生产未启动或对外暴露 Prometheus endpoint | `observability/*`, `duplex_runtime.py` | `test_metrics_exporter.py`, `test_duplex_runtime_wiring.py` | PASS-INTERNAL |
 | Python 质量门 | `pyproject.toml`, `.github/workflows/ci.yml` | Ruff、mypy strict、全量 pytest | PASS-LOCAL |
 | H5 质量门 | `apps/h5/package.json`, `apps/h5/src/**/*.test.*` | 全量测试、production build、移动端浏览器与 console 回归 | PASS-LOCAL |
-| legacy Web/iOS 质量门 | Web 保留历史源码；原生 iOS 已移除 | Web 不进入当前 CI/DoD；iOS 无构建门 | HISTORICAL-NOT-IN-SCOPE / REMOVED |
+| legacy Web/iOS 质量门 | 两端源码均已移除 | 无当前构建门 | REMOVED |
 | 200 条真实中文录音、AEC 设备矩阵、第 21 章 SLO | 需外部测试数据与设备 | 尚未执行 | NOT-VALIDATED |
 
 ## 当前发布结论
 
-当前已发布生产基线为 runtime/H5 `20260723-192611`，默认主链为 FunASR + Qwen +
+当前已发布生产基线为 runtime `20260727-170628`、H5 `20260723-192611`，默认主链为 FunASR + Qwen +
 豆包 Seed-TTS 2.0 双向流式。S1–S9 的四模式、DigitalSelfVersion、成长地图、
 认知/关系、统一回答规划、Self Preview、个人声音安全门禁与 Legacy runtime 均已部署；
 生产 Provider/readiness、能力令牌负向门禁、混合陪伴方案浏览器、证书、WMS 和
 15 分钟观察通过。真实家庭关系正向 Legacy 会话、本人声音样本/盲测与真实设备矩阵
 仍未执行，不能用部署成功代替这些外部验收。
 
-200 条明确授权真人录音、完整 AEC/噪声/重叠/回放设备矩阵、真人 Persona/声音盲测、生产 PostgreSQL/S3/KMS 联合恢复与真实手机 H5 验收仍为 **NOT-VALIDATED**。原生 iOS 已从仓库移除，legacy Web 不属于当前产品范围。
+200 条明确授权真人录音、完整 AEC/噪声/重叠/回放设备矩阵、真人 Persona/声音盲测、生产 PostgreSQL/S3/KMS 联合恢复与真实手机 H5 验收仍为 **NOT-VALIDATED**。原生 iOS 与 legacy Web 客户端源码均已移除。

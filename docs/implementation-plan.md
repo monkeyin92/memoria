@@ -1,6 +1,6 @@
 # 全双工语音 Agent、情绪与 Omni A/B 实施计划
 
-> **历史计划（已被替代）**：本文记录 2026-07-17 以前包含 Web/iOS/Omni A/B 的历史实施过程。当前唯一交付客户端为 `apps/h5`，主链固定为 FunASR Realtime + Qwen + 豆包 Seed-TTS 2.0；当前范围、状态与门禁以 [`memory-persona-implementation-plan.md`](./memory-persona-implementation-plan.md) 和根目录 [`HANDOFF.md`](../HANDOFF.md) 为准。原生 iOS 与 legacy `apps/web` 不再进入实现、CI、部署或验收。
+> **历史计划（已被替代）**：本文记录 2026-07-17 以前包含 Web/iOS/Omni A/B 的历史实施过程。当前交付客户端为 `apps/h5` 与 `apps/miniprogram`，主链固定为 FunASR Realtime + Qwen + 豆包 Seed-TTS 2.0；当前范围、状态与门禁以 [`memory-persona-implementation-plan.md`](./memory-persona-implementation-plan.md) 和根目录 [`HANDOFF.md`](../HANDOFF.md) 为准。原生 iOS 与 legacy Web 客户端源码均已移除。
 
 ## 成功标准
 

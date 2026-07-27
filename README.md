@@ -52,7 +52,8 @@ uv run python -m services.agent.src.main dev
 npm --prefix apps/h5 run dev -- --host 0.0.0.0
 ```
 
-或使用 `make dev-api` / `make dev-agent` / `make dev-h5`。当前唯一客户端交付端是 H5；legacy Web 不参与当前开发、CI 或验收门禁，原生 iOS 客户端源码已移除。
+或使用 `make dev-api` / `make dev-agent` / `make dev-h5`。当前交付客户端为 H5 与微信小程序；
+Web 端只保留 `apps/h5`，legacy Web 与原生 iOS 客户端源码均已移除。
 
 ### H5
 
@@ -67,9 +68,24 @@ npm --prefix apps/h5 run build
 
 本地默认使用 `/memoria-h5/` base path；生产 Control API 通过同源 `/memoria-api` 访问，永久密钥不会进入浏览器 bundle。H5 通过 `/v1/auth/me` 恢复稳定账号身份；只有服务端返回 401/403 才清理失效身份，临时网络故障不会切换用户数据归属。
 
-当前本地交付已通过 H5 138 项测试、production build 和移动端浏览器回归；注册后选角、表情与设计音色试听、三段声纹登记、匿名注册原地升级、跨账号 Profile 隔离、默认“过滤明显旁人（实验）”、主人历史 fail-closed、无横向溢出和 console 0 warning/error 均已验收。声纹登记仍为 shadow-only，不代表已启用强身份认证。
+当前本地交付已通过 H5 232 项测试、production build 和移动端浏览器回归；注册后选角、
+表情与设计音色试听、三段声纹登记、匿名注册原地升级、跨账号 Profile 隔离、默认
+“过滤明显旁人（实验）”、主人历史 fail-closed、无横向溢出和 console 0 warning/error
+均已验收。声纹登记仍为 shadow-only，不代表已启用强身份认证。
 
 会话只有收到当前 Agent 在 `voice-agent.ui` topic 发布的显式 `assistant_state: ready` 后才进入可用态；LiveKit transport 已连接但 45 秒内未收到该事件时，H5 会断开并恢复为可重试状态。Agent 在音频输出与 UI publisher 就绪后先发布并等待 `ready`，随后才生成首次欢迎语，避免欢迎语先于客户端可用态。
+
+### 微信小程序
+
+微信小程序位于 `apps/miniprogram`，媒体面通过
+`RecorderManager → PCM/WSS → MiniProgramMediaGateway → LiveKit Agent` 接入同一业务与智能链路。
+共享媒体契约位于 `packages/contracts/miniprogram-media.json`：
+
+```bash
+npm --prefix apps/miniprogram test
+find apps/miniprogram -type f -name '*.js' ! -path '*/node_modules/*' -print0 \
+  | xargs -0 -n1 node --check
+```
 
 ### 离线质量门（无需供应商密钥）
 
@@ -79,6 +95,7 @@ uv run mypy services --strict
 uv run pytest
 npm --prefix apps/h5 test
 npm --prefix apps/h5 run build
+npm --prefix apps/miniprogram test
 uv run python scripts/run_e2e.py --profile offline
 uv run python scripts/provider_smoke_test.py   # 缺密钥时 SKIP 并打印变量名
 ```
@@ -87,7 +104,7 @@ uv run python scripts/provider_smoke_test.py   # 缺密钥时 SKIP 并打印变�
 
 ```bash
 docker compose up -d postgres redis
-# 仅在本地开发机执行；当前 Compose 只构建后端，不构建历史 apps/web
+# 仅在本地开发机执行；当前 Compose 只构建后端
 docker compose build control-api agent
 # H5 使用唯一锁文件单独生成静态产物
 npm --prefix apps/h5 ci
@@ -124,7 +141,7 @@ API secret 永远只放控制 API 与 Agent 服务端；H5 只接收短期 parti
 | `services/agent/src/providers/` | FunASR / 豆包 TTS / OpenAI-compatible LLM 协议与适配；CosyVoice 仅保留历史兼容代码 |
 | `services/control_api/` | 账号、会话、档案、人格、声纹、声音、导出/删除与 health |
 | `apps/h5/` | 面向移动浏览器的 Memoria 三页产品 |
-| `apps/web/` | 历史 Web 客户端源码；不属于当前 H5-only 交付与门禁 |
+| `apps/miniprogram/` | 微信小程序 UI、媒体会话、PCM 播放器与体验版配置 |
 | `docs/requirements_traceability_matrix.md` | MUST → 代码 → 测试 |
 
 ## 部署档案
@@ -132,7 +149,11 @@ API secret 永远只放控制 API 与 Agent 服务端；H5 只接收短期 parti
 - `DEPLOYMENT_PROFILE=livekit_cloud`：Adaptive Interruption + Turn Detector `v1`
 - `DEPLOYMENT_PROFILE=cn_self_hosted`：Turn Detector `v1-mini` + `ChineseInterruptionGuard`
 
-H5 的生产 Compose、自建 LiveKit、IP TLS、Nginx 路由、Provider 门禁、备份和回滚步骤见 `docs/production-deployment.md`。`https://122.51.108.140:8443/` 直接交付 H5；同一端口还通过 Nginx stream 复用为 LiveKit RTC/TCP 回退，`/wms/` 保留给既有 WMS。静态资源与 API 继续使用 `/memoria-h5/`、`/memoria-api/` 独立路径。当前生产证据见 `docs/releases/20260721-224804.md`；历史迁移、热修与回滚证据保留在 `docs/releases/`。
+H5 的生产 Compose、自建 LiveKit、IP TLS、Nginx 路由、Provider 门禁、备份和回滚步骤见
+`docs/production-deployment.md`。`https://122.51.108.140:8443/` 直接交付 H5；同一端口还通过
+Nginx stream 复用为 LiveKit RTC/TCP 回退，`/wms/` 保留给既有 WMS。静态资源与 API 继续
+使用 `/memoria-h5/`、`/memoria-api/` 独立路径。当前生产证据见
+`docs/releases/20260727-170628.md`；历史迁移、热修与回滚证据保留在 `docs/releases/`。
 
 ## 实现偏差
 

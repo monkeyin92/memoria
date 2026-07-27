@@ -31,8 +31,6 @@ venv/
 
 # Node
 node_modules/
-apps/web/dist/
-apps/web/coverage/
 *.tsbuildinfo
 
 # IDE / OS

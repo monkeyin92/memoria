@@ -13,5 +13,4 @@
 **/.npm-cache
 **/dist
 data
-apps/web
 apps/h5/qa
