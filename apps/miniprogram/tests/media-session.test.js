@@ -1,13 +1,25 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
+
+const contract = JSON.parse(
+  fs.readFileSync(
+    path.join(__dirname, "../../../packages/contracts/miniprogram-media.json"),
+    "utf8",
+  ),
+);
 
 const recorder = {
   startCalls: [],
   stopCalls: 0,
+  pauseCalls: 0,
+  resumeCalls: 0,
   frameListener: null,
   startListener: null,
   errorListener: null,
   interruptionListener: null,
+  interruptionEndListener: null,
   onFrameRecorded(listener) {
     this.frameListener = listener;
   },
@@ -20,21 +32,31 @@ const recorder = {
   onInterruptionBegin(listener) {
     this.interruptionListener = listener;
   },
+  onInterruptionEnd(listener) {
+    this.interruptionEndListener = listener;
+  },
   start(options) {
     this.startCalls.push(options);
   },
   stop() {
     this.stopCalls += 1;
   },
-  pause() {},
-  resume() {},
+  pause() {
+    this.pauseCalls += 1;
+  },
+  resume() {
+    this.resumeCalls += 1;
+  },
   reset() {
     this.startCalls = [];
     this.stopCalls = 0;
+    this.pauseCalls = 0;
+    this.resumeCalls = 0;
     this.frameListener = null;
     this.startListener = null;
     this.errorListener = null;
     this.interruptionListener = null;
+    this.interruptionEndListener = null;
   },
 };
 
@@ -59,6 +81,83 @@ global.wx = {
 const { MiniProgramMediaSession } = require("../utils/media-gateway");
 const { FRAME_TYPE } = require("../utils/media-protocol");
 const { PcmJitterPlayer } = require("../utils/pcm-player");
+
+test("gateway hello and ready messages match the shared contract", async () => {
+  recorder.reset();
+  const sent = [];
+  const socket = {
+    onOpen(listener) {
+      this.openListener = listener;
+    },
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    send(options) {
+      sent.push(options.data);
+    },
+    close() {},
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    {
+      media_gateway: {
+        websocket_url: "wss://voice.example.com/media",
+        ticket: "ticket",
+        audio: {
+          sample_rate: contract.audio.downlink_sample_rate,
+          channels: contract.audio.channels,
+          sample_format: contract.audio.sample_format,
+          frame_ms: contract.audio.frame_ms,
+        },
+      },
+    },
+    {},
+  );
+
+  const connecting = media.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.openListener();
+
+  const hello = JSON.parse(sent[0]);
+  assert.deepEqual(
+    Object.keys(hello).sort(),
+    [...contract.hello.required_fields].sort(),
+  );
+  assert.equal(hello.type, contract.hello.type);
+  assert.equal(hello.protocol_version, contract.hello.protocol_version);
+  assert.deepEqual(hello.capabilities, contract.hello.capabilities);
+
+  const ready = {
+    type: contract.ready.type,
+    protocol_version: contract.ready.protocol_version,
+    session_id: "session-1",
+    audio: {
+      sample_rate: contract.audio.downlink_sample_rate,
+      channels: contract.audio.channels,
+      sample_format: contract.audio.sample_format,
+      frame_ms: contract.audio.frame_ms,
+      frame_protocol_version: contract.audio.downlink_frame_protocol_versions[1],
+    },
+  };
+  assert.deepEqual(
+    Object.keys(ready).sort(),
+    [...contract.ready.required_fields].sort(),
+  );
+  assert.deepEqual(
+    Object.keys(ready.audio).sort(),
+    [...contract.ready.audio_required_fields].sort(),
+  );
+  socket.messageListener({ data: JSON.stringify(ready) });
+
+  await connecting;
+  await media.close();
+});
 
 test("microphone state waits for RecorderManager.onStart before sending PCM", async () => {
   recorder.reset();
@@ -121,6 +220,68 @@ test("PCM frames keep sending when SocketTask omits success callbacks", async ()
   await media.close();
 });
 
+test("microphone disable wins over a pending RecorderManager start", async () => {
+  recorder.reset();
+  const sent = [];
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    {},
+  );
+  media.ready = true;
+  media.socket = {
+    send(options) {
+      sent.push(options);
+    },
+    close() {},
+  };
+
+  media._startRecording();
+  await media.setMicrophoneEnabled(false);
+  recorder.startListener();
+  recorder.frameListener({ frameBuffer: new Uint8Array(64).buffer });
+
+  assert.equal(recorder.stopCalls, 1);
+  assert.equal(media.recording, false);
+  assert.equal(sent.length, 0);
+
+  await media.setMicrophoneEnabled(true);
+  assert.equal(recorder.startCalls.length, 2);
+  recorder.startListener();
+  recorder.frameListener({ frameBuffer: new Uint8Array(64).buffer });
+
+  assert.equal(sent.length, 1);
+  assert.equal(media.sequence, 1);
+  await media.close();
+});
+
+test("synchronous SocketTask send failure does not commit the PCM sequence", async () => {
+  recorder.reset();
+  const interruptions = [];
+  let attempts = 0;
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    { onInterrupted: (message) => interruptions.push(message) },
+  );
+  media.ready = true;
+  media.socket = {
+    send() {
+      attempts += 1;
+      throw new Error("socket closed");
+    },
+    close() {},
+  };
+
+  media._startRecording();
+  recorder.startListener();
+  recorder.frameListener({ frameBuffer: new Uint8Array(64).buffer });
+  recorder.frameListener({ frameBuffer: new Uint8Array(64).buffer });
+
+  assert.equal(attempts, 1);
+  assert.equal(media.sequence, 0);
+  assert.deepEqual(interruptions, ["麦克风音频发送失败，请轻触恢复语音。"]);
+  await media.close();
+});
+
 test("SocketTask PCM send failure is surfaced instead of being silently ignored", async () => {
   recorder.reset();
   const interruptions = [];
@@ -143,6 +304,280 @@ test("SocketTask PCM send failure is surfaced instead of being silently ignored"
   sendOptions.fail();
 
   assert.deepEqual(interruptions, ["麦克风音频发送失败，请轻触恢复语音。"]);
+  await media.close();
+});
+
+test("unexpected socket close terminalizes local recording before notifying the page", async () => {
+  recorder.reset();
+  const sent = [];
+  const closes = [];
+  const socket = {
+    onOpen(listener) {
+      this.openListener = listener;
+    },
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    send(options) {
+      sent.push(options);
+    },
+    close() {},
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    {
+      media_gateway: {
+        websocket_url: "wss://voice.example.com/media",
+        ticket: "ticket",
+        audio: {
+          sample_rate: 24000,
+          channels: 1,
+          sample_format: "s16le",
+          frame_ms: 20,
+        },
+      },
+    },
+    { onClose: () => closes.push("closed") },
+  );
+
+  const connecting = media.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.openListener();
+  socket.messageListener({
+    data: JSON.stringify({
+      type: "ready",
+      protocol_version: 1,
+      session_id: "session-1",
+      audio: {
+        sample_rate: 24000,
+        channels: 1,
+        sample_format: "s16le",
+        frame_ms: 20,
+        frame_protocol_version: 2,
+      },
+    }),
+  });
+  await connecting;
+  recorder.startListener();
+
+  socket.closeListener();
+  recorder.frameListener({ frameBuffer: new Uint8Array(64).buffer });
+  socket.closeListener();
+
+  assert.equal(media.ready, false);
+  assert.equal(media.recording, false);
+  assert.equal(media.recorderStarted, false);
+  assert.equal(media.socket, null);
+  assert.equal(recorder.stopCalls, 1);
+  assert.deepEqual(closes, ["closed"]);
+  assert.equal(sent.filter((item) => item.data instanceof ArrayBuffer).length, 0);
+  await media.close();
+});
+
+test("gateway ready rejects an incompatible downlink audio contract", async () => {
+  recorder.reset();
+  let closed = 0;
+  const socket = {
+    onOpen(listener) {
+      this.openListener = listener;
+    },
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    send() {},
+    close() {
+      closed += 1;
+    },
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    {
+      media_gateway: {
+        websocket_url: "wss://voice.example.com/media",
+        ticket: "ticket",
+        audio: {
+          sample_rate: 24000,
+          channels: 1,
+          sample_format: "s16le",
+          frame_ms: 20,
+        },
+      },
+    },
+    {},
+  );
+
+  const connecting = media.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.openListener();
+  socket.messageListener({
+    data: JSON.stringify({
+      type: "ready",
+      protocol_version: 1,
+      session_id: "session-1",
+      audio: {
+        sample_rate: 24000,
+        channels: 1,
+        sample_format: "s16le",
+        frame_ms: 40,
+        frame_protocol_version: 2,
+      },
+    }),
+  });
+
+  await assert.rejects(connecting, /音频格式不兼容/);
+  assert.equal(media.ready, false);
+  assert.equal(recorder.startCalls.length, 0);
+  assert.equal(closed, 1);
+  await media.close();
+});
+
+test("system recorder interruption resumes with an explicit media discontinuity", async () => {
+  recorder.reset();
+  const sent = [];
+  const states = [];
+  const interruptions = [];
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    {
+      onEvent: (event) => states.push(event),
+      onInterrupted: (message) => interruptions.push(message),
+    },
+  );
+  media.ready = true;
+  media.socket = {
+    send(options) {
+      sent.push(options.data);
+    },
+    close() {},
+  };
+
+  media._startRecording();
+  recorder.startListener();
+  recorder.frameListener({ frameBuffer: new Uint8Array(64).buffer });
+  assert.equal(media.sequence, 1);
+
+  recorder.interruptionListener();
+  recorder.frameListener({ frameBuffer: new Uint8Array(64).buffer });
+  assert.equal(media.recording, false);
+  assert.equal(recorder.stopCalls, 1);
+  assert.equal(media.sequence, 1);
+
+  recorder.interruptionEndListener();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const discontinuity = sent
+    .filter((data) => typeof data === "string")
+    .map((data) => JSON.parse(data))
+    .find((event) => event.type === "uplink_discontinuity");
+  assert.deepEqual(discontinuity, {
+    type: "uplink_discontinuity",
+    next_sequence: 1,
+    client_timestamp_ms: discontinuity.client_timestamp_ms,
+  });
+  assert.deepEqual(
+    Object.keys(discontinuity).sort(),
+    [...contract.control_events.uplink_discontinuity].sort(),
+  );
+  assert.equal(Number.isInteger(discontinuity.client_timestamp_ms), true);
+  assert.equal(recorder.startCalls.length, 2);
+
+  recorder.startListener();
+  recorder.frameListener({ frameBuffer: new Uint8Array(64).buffer });
+  assert.equal(media.sequence, 2);
+  assert.deepEqual(states, [
+    { type: "recorder_state", state: "interrupted" },
+    { type: "recorder_state", state: "resumed" },
+  ]);
+  assert.deepEqual(interruptions, []);
+  await media.close();
+});
+
+test("system interruption fences microphone toggles until interruption end", async () => {
+  recorder.reset();
+  const sent = [];
+  const states = [];
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    { onEvent: (event) => states.push(event) },
+  );
+  media.ready = true;
+  media.socket = {
+    send(options) {
+      sent.push(options.data);
+    },
+    close() {},
+  };
+
+  media._startRecording();
+  recorder.startListener();
+  recorder.interruptionListener();
+  await media.setMicrophoneEnabled(false);
+  await media.setMicrophoneEnabled(true);
+
+  assert.equal(media.recording, false);
+  assert.equal(recorder.startCalls.length, 1);
+  assert.equal(recorder.resumeCalls, 0);
+  assert.equal(sent.length, 0);
+
+  recorder.interruptionEndListener();
+
+  assert.equal(recorder.startCalls.length, 2);
+  assert.deepEqual(states, [
+    { type: "recorder_state", state: "interrupted" },
+    { type: "recorder_state", state: "resumed" },
+  ]);
+  assert.equal(JSON.parse(sent[0]).type, "uplink_discontinuity");
+  await media.close();
+});
+
+test("interruption end while muted waits to synchronize and report resumed", async () => {
+  recorder.reset();
+  const sent = [];
+  const states = [];
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    { onEvent: (event) => states.push(event) },
+  );
+  media.ready = true;
+  media.socket = {
+    send(options) {
+      sent.push(options.data);
+    },
+    close() {},
+  };
+
+  media._startRecording();
+  recorder.startListener();
+  recorder.interruptionListener();
+  await media.setMicrophoneEnabled(false);
+  recorder.interruptionEndListener();
+
+  assert.equal(recorder.startCalls.length, 1);
+  assert.equal(sent.length, 0);
+  assert.deepEqual(states, [
+    { type: "recorder_state", state: "interrupted" },
+  ]);
+
+  await media.setMicrophoneEnabled(true);
+
+  assert.equal(recorder.startCalls.length, 2);
+  assert.equal(JSON.parse(sent[0]).type, "uplink_discontinuity");
+  assert.deepEqual(states, [
+    { type: "recorder_state", state: "interrupted" },
+    { type: "recorder_state", state: "resumed" },
+  ]);
   await media.close();
 });
 
@@ -299,6 +734,10 @@ test("media session forwards downlink sequence and reset generation to the PCM p
     barrier_sequence: 7,
     client_timestamp_ms: JSON.parse(sent[0]).client_timestamp_ms,
   });
+  assert.deepEqual(
+    Object.keys(JSON.parse(sent[0])).sort(),
+    [...contract.control_events.playout_reset].sort(),
+  );
   assert.equal(Number.isInteger(JSON.parse(sent[0]).client_timestamp_ms), true);
 });
 
@@ -351,6 +790,10 @@ test("media session locally fences the active generation before a server interru
   assert.deepEqual(resets, [8]);
   assert.equal(JSON.parse(sent[0]).type, "playout_interrupt");
   assert.equal(JSON.parse(sent[0]).generation_id, 7);
+  assert.deepEqual(
+    Object.keys(JSON.parse(sent[0])).sort(),
+    [...contract.control_events.playout_interrupt].sort(),
+  );
   assert.deepEqual(events, []);
 });
 
@@ -390,7 +833,10 @@ test("PCM player rebases an underflow instead of scheduling a late frame in the 
   };
   player.nextStartAt = 0.99;
 
-  player.enqueue(new Int16Array(1920).buffer);
+  const frame = new Int16Array(480).buffer;
+  for (let sequence = 0; sequence < 4; sequence += 1) {
+    player.enqueue(frame, { sequence, generationId: 1 });
+  }
 
   assert.equal(startedAt, 1.08);
 });
@@ -425,6 +871,93 @@ test("PCM player batches four continuous 20ms frames into one 80ms source", () =
   }
 
   assert.deepEqual(started, [{ at: 1.08, duration: 0.08 }]);
+});
+
+test("PCM player rejects payloads that are not one fixed PCM16/20ms frame", () => {
+  const player = new PcmJitterPlayer({ sampleRate: 24000 });
+  player.context = { state: "running" };
+
+  assert.throws(
+    () => player.enqueue(new ArrayBuffer(959), { sequence: 0, generationId: 1 }),
+    /960-byte/,
+  );
+  assert.throws(
+    () => player.enqueue(new ArrayBuffer(962), { sequence: 0, generationId: 1 }),
+    /960-byte/,
+  );
+});
+
+test("PCM player keeps the prior batch tail when concealing the next sequence gap", () => {
+  const rendered = [];
+  const player = new PcmJitterPlayer();
+  player.context = {
+    state: "running",
+    currentTime: 1,
+    destination: {},
+    createBuffer(_channels, length, sampleRate) {
+      const channel = new Float32Array(length);
+      rendered.push(channel);
+      return {
+        duration: length / sampleRate,
+        getChannelData: () => channel,
+      };
+    },
+    createBufferSource() {
+      return {
+        buffer: null,
+        connect() {},
+        start() {},
+        stop() {},
+      };
+    },
+  };
+  const first = new Int16Array(480);
+  first.fill(16000);
+  const next = new Int16Array(480);
+  next.fill(8000);
+
+  for (let sequence = 0; sequence < 4; sequence += 1) {
+    player.enqueue(first.buffer, { sequence, generationId: 1 });
+  }
+  for (const sequence of [5, 6, 7]) {
+    player.enqueue(next.buffer, { sequence, generationId: 1 });
+  }
+
+  assert.equal(rendered.length, 2);
+  assert.ok(rendered[1][0] > 0.45);
+  assert.equal(rendered[1][479], 0);
+});
+
+test("PCM player schedules its first batch with the configured lead at time zero", () => {
+  let startedAt = null;
+  const player = new PcmJitterPlayer({ minLeadSeconds: 0.08 });
+  player.context = {
+    state: "running",
+    currentTime: 0,
+    destination: {},
+    createBuffer(_channels, length, sampleRate) {
+      return {
+        duration: length / sampleRate,
+        getChannelData: () => new Float32Array(length),
+      };
+    },
+    createBufferSource() {
+      return {
+        buffer: null,
+        connect() {},
+        start(at) {
+          startedAt = at;
+        },
+      };
+    },
+  };
+  const frame = new Int16Array(480).buffer;
+
+  for (let sequence = 0; sequence < 4; sequence += 1) {
+    player.enqueue(frame, { sequence, generationId: 1 });
+  }
+
+  assert.equal(startedAt, 0.08);
 });
 
 test("PCM player conceals small sequence gaps but still stops old generations", () => {
@@ -598,7 +1131,7 @@ test("PCM player fades an interrupted source before stopping it", () => {
   ]);
 });
 
-test("PCM player gain updates cancel pending fade automation", () => {
+test("PCM player gain updates use a short ramp when WebAudio automation is available", () => {
   const automation = [];
   const player = new PcmJitterPlayer();
   player.context = { currentTime: 3 };
@@ -608,11 +1141,21 @@ test("PCM player gain updates cancel pending fade automation", () => {
       cancelScheduledValues(at) {
         automation.push(["cancel", at]);
       },
+      setValueAtTime(value, at) {
+        automation.push(["set", value, at]);
+      },
+      linearRampToValueAtTime(value, at) {
+        automation.push(["ramp", value, at]);
+      },
     },
   };
 
   player.setGain(0.25);
 
-  assert.equal(player.gainNode.gain.value, 0.25);
-  assert.deepEqual(automation, [["cancel", 3]]);
+  assert.equal(player.gain, 0.25);
+  assert.deepEqual(automation, [
+    ["cancel", 3],
+    ["set", 1, 3],
+    ["ramp", 0.25, 3.01],
+  ]);
 });

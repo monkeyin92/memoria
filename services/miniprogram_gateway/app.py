@@ -183,6 +183,11 @@ def _validate_control_text(text: Any) -> dict[str, object]:
             "barrier_sequence",
             "client_timestamp_ms",
         },
+        "uplink_discontinuity": {
+            "type",
+            "next_sequence",
+            "client_timestamp_ms",
+        },
     }.get(event_type)
     if required_keys is None:
         raise ProtocolError("unsupported gateway control message")
@@ -196,6 +201,8 @@ def _validate_control_text(text: Any) -> dict[str, object]:
             or not 0 <= value <= 0xFFFFFFFFFFFFFFFF
         ):
             raise ProtocolError("invalid gateway playout event")
+    if event_type == "uplink_discontinuity" and parsed["next_sequence"] > 0xFFFFFFFF:
+        raise ProtocolError("invalid gateway playout event")
     return {key: parsed[key] for key in required_keys}
 
 

@@ -16,9 +16,14 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.common.companions import DEFAULT_COMPANION_ID, companion_definition
-from services.common.miniprogram_gateway_ticket import issue_gateway_ticket
 from services.control_api.app.account_gate import require_writable_account
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.miniprogram_gateway_session import (
+    CreateMiniProgramSessionResponse,
+    MiniProgramMediaGateway,
+    build_gateway_ticket,
+    require_gateway_url,
+)
 from services.control_api.app.mode_policy import FrozenMode, ModePolicy
 from services.control_api.app.security import (
     AuthenticatedUser,
@@ -250,32 +255,6 @@ class CreateSessionResponse(BaseModel):
     learning_task_id: str | None = None
 
 
-class MiniProgramAudioFormat(BaseModel):
-    sample_rate: Literal[24000] = 24000
-    channels: Literal[1] = 1
-    sample_format: Literal["s16le"] = "s16le"
-    frame_ms: Literal[20] = 20
-
-
-class MiniProgramMediaGateway(BaseModel):
-    websocket_url: str
-    ticket: str
-    expires_in: int
-    protocol_version: Literal[1] = 1
-    audio: MiniProgramAudioFormat = Field(default_factory=MiniProgramAudioFormat)
-
-
-class CreateMiniProgramSessionResponse(BaseModel):
-    """A Mini Program session never receives a direct LiveKit participant token."""
-
-    session_id: str
-    voice_backend: Literal["cascade"] = "cascade"
-    config: dict[str, Any]
-    interaction: dict[str, Any]
-    learning_task_id: str | None = None
-    media_gateway: MiniProgramMediaGateway
-
-
 class CreateOmniSessionResponse(BaseModel):
     session_id: str
     voice_backend: Literal["qwen_omni"] = "qwen_omni"
@@ -404,7 +383,7 @@ async def create_session(
             detail={"code": "miniprogram_requires_cascade"},
         )
     if mini_program:
-        _miniprogram_gateway_url(settings)
+        require_gateway_url(settings)
     if body.interaction_mode in {"self_preview", "legacy"} and body.voice_backend != "cascade":
         raise HTTPException(
             status_code=409,
@@ -826,7 +805,7 @@ async def create_session(
             },
             interaction=_frozen_values(frozen),
             learning_task_id=learning_task_id,
-            media_gateway=_mint_miniprogram_gateway_ticket(
+            media_gateway=build_gateway_ticket(
                 settings,
                 session_id=session_id,
                 user_id=user_id,
@@ -858,41 +837,6 @@ async def create_session(
     )
 
 
-def _mint_miniprogram_gateway_ticket(
-    settings: Any,
-    *,
-    session_id: str,
-    user_id: str,
-    room_name: str,
-    identity: str,
-) -> MiniProgramMediaGateway:
-    websocket_url = _miniprogram_gateway_url(settings)
-    ticket, ttl = issue_gateway_ticket(
-        secret=settings.memoria_miniprogram_gateway_ticket_secret.get_secret_value(),
-        session_id=session_id,
-        user_id=user_id,
-        room_name=room_name,
-        identity=identity,
-        agent_name=settings.livekit_agent_name,
-        ttl_s=settings.miniprogram_gateway_ticket_ttl_s,
-    )
-    return MiniProgramMediaGateway(
-        websocket_url=websocket_url,
-        ticket=ticket,
-        expires_in=ttl,
-    )
-
-
-def _miniprogram_gateway_url(settings: Any) -> str:
-    websocket_url = str(settings.miniprogram_media_gateway_url).strip()
-    if not websocket_url:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "miniprogram_media_gateway_unavailable"},
-        )
-    return websocket_url
-
-
 def _frozen_values(frozen: FrozenMode) -> dict[str, Any]:
     return ModePolicy.session_context(frozen)
 
@@ -917,7 +861,7 @@ async def refresh_miniprogram_gateway_ticket(
             detail={"code": "miniprogram_requires_cascade"},
         )
     settings = request.app.state.settings
-    return _mint_miniprogram_gateway_ticket(
+    return build_gateway_ticket(
         settings,
         session_id=session_id,
         user_id=user.user_id,

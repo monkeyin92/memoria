@@ -21,6 +21,17 @@ Memoria 的当前正式语音主链是 Cascade：`FunASR Realtime → Qwen → D
 - 网关可以只对小程序会话启用 LiveKit WebRTC Audio Processing Module：24 kHz 下行作为 reverse reference，16 kHz 上行清理后再发布；处理失败必须旁路原始上行，且不得改变 H5 或 Agent 主链。
 - 网关只把 Agent `voice-agent.ui` data topic 和 LiveKit transcription 转发给小程序。它不接受小程序定义的 speaker/history/mode/generation/权限事件，也不创建第二套 Agent、ASR 或对话状态机。
 - 媒体 WebSocket 只额外接受无文本、无业务权限的 `playout_reset / playout_interrupt` 事实，用于关联客户端已停止排程音频的时刻；停止回答仍调用既有 Control API，客户端遥测不能直接控制 Agent。
+- `audio_reset` 是 generation 的媒体 barrier，网关将它与可丢弃的 UI/transcription
+  通知分离，并按 `barrier → audio → best-effort event` 出站。任意数量的普通事件都不能挤掉
+  barrier 或饿死下行音频。
+- 匹配当前 generation 的 `playout_interrupt` 只重置 APM 时序并抑制该 generation 的
+  反向参考，直到下一条已实际发送的 `audio_reset` 建立新 epoch；它不能停止 Agent、改变
+  generation 或绕过 `UtteranceRouter`。
+- 下行每一帧必须是 `24 kHz / mono / PCM16LE / 20 ms`，即 480 samples、960 bytes。
+  网关先丢弃错误长度的 LiveKit 输出，客户端再次硬校验，禁止把格式异常扩散为持续播放噪声。
+- 系统录音中断开始时客户端停止 PCM 上行；中断结束后发送
+  `uplink_discontinuity(next_sequence)`，网关清空上行半帧、重置 APM 时序并以声明的连续
+  sequence 恢复。该事实不创建用户话轮、不改变权限或 Agent 状态。
 - AI 播放期间提供本地优先的显式打断：小程序先停止当前 generation 的 WebAudio source 并拒绝迟到帧，再调用既有 `stop-response`。语音打断继续复用 FunASR partial、TargetSpeakerFocus 与 `UtteranceRouter`。
 - gateway ticket 可由已认证且仍拥有会话的用户刷新，用于 WebSocket 断线重连；刷新不会重建业务 session，也不会改变其已冻结的 mode、版本、关系或授权。
 - 网关只有在 APM 初始化与静音自检成功时才通过 job metadata 声明初始 AEC 能力。真实帧处理期间一旦 APM 从 ready 变为 failed，网关必须先隔离当前及后续原始上行，通过 LiveKit reliable data 单向通知 Agent 撤销该能力；Agent 清理滚动 PCM、在飞说话人分类与播放 epoch 后 ACK，网关收到 ACK 才能恢复普通原始 PCM。该会话不得动态重新开启特权路径；通知/ACK 丢失或超时必须保持 fail-closed，而不能把未处理 PCM 送给仍处于 trusted 状态的 Agent。
@@ -40,6 +51,8 @@ Memoria 的当前正式语音主链是 Cascade：`FunASR Realtime → Qwen → D
 - 小程序录音/播放期没有和浏览器等价的 AEC 控制，播放回灌是最大风险。Android 可优先请求 `voice_communication` 音频源；iOS 采用 `auto`，两者都不得把“接口调用成功”当作 AEC 通过。
 - 网关侧 APM 只有服务端原始下行参考，不掌握手机真实渲染时刻、音量、路由与非线性失真；它是可校准的回声缓解层，不等价于终端系统 AEC，也不能替代真机双讲验收。
 - generation barrier 只清理过期 reference 时序，不反复销毁同一媒体会话内 APM 已学习的声学路径；路由/设备真正变化时仍需重新建立媒体会话。
+- 录音中断恢复保持同一业务会话和 ticket，但仍必须由真机验证来电、微信语音、前后台、
+  蓝牙切换等系统行为；自动化只证明其 sequence、半帧和 AEC 清理语义。
 - LiveKit reliable data 是有序重传的 best-effort 信令，不是持久消息队列；因此运行期 AEC 降级采用显式 ACK。ACK 前不转发原始上行，超时关闭当前媒体桥，避免跨 data/audio 通道的到达顺序影响安全边界。
 - 发布工件增加网关镜像和最小权限 gateway env；release manifest、Nginx、Compose 和生产运行手册必须同步更新。
 - 即使所有代码和 mock 测试通过，未经 iOS/Android、扬声器/听筒/蓝牙、弱网与后台切换的实机证据，不得对外宣传“全双工原生小程序已验收”。

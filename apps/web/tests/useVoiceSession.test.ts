@@ -45,6 +45,7 @@ describe("useVoiceSession", () => {
           type: "assistant_state",
           session_id: session.session_id,
           state: "speaking",
+          phase: "speaking",
           turn_id: 1,
           generation_id: 2,
           at: "2026-07-15T00:00:00Z",
@@ -53,12 +54,15 @@ describe("useVoiceSession", () => {
       result.current.handleData(
         encode({
           type: "transcript_delta",
+          session_id: session.session_id,
           speaker: "assistant",
           text: "服务端已听文本",
           final: true,
           heard: true,
+          history_eligible: true,
           turn_id: 1,
           generation_id: 2,
+          tool_epoch: 0,
         }),
       );
     });
@@ -79,14 +83,30 @@ describe("useVoiceSession", () => {
           type: "assistant_state",
           session_id: "another-session",
           state: "speaking",
+          phase: "speaking",
           turn_id: 1,
           generation_id: 9,
           at: "2026-07-15T00:00:00Z",
         }),
       );
+      result.current.handleData(
+        encode({
+          type: "transcript_delta",
+          session_id: "another-session",
+          speaker: "assistant",
+          text: "不应跨会话显示",
+          final: true,
+          heard: true,
+          history_eligible: true,
+          turn_id: 1,
+          generation_id: 9,
+          tool_epoch: 0,
+        }),
+      );
     });
     expect(result.current.uiState).toBe("ready");
     expect(useSessionStore.getState().generationId).toBe(0);
+    expect(result.current.transcripts).toEqual([]);
   });
 
   it("does not locally truncate assistant text after stop", async () => {
@@ -120,6 +140,7 @@ describe("useVoiceSession", () => {
           type: "assistant_state",
           session_id: session.session_id,
           state: "speaking",
+          phase: "speaking",
           turn_id: 3,
           generation_id: 4,
           at: "2026-07-15T00:00:00Z",

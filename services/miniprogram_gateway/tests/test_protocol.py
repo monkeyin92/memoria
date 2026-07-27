@@ -1,12 +1,66 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 from services.miniprogram_gateway.protocol import (
+    GENERATION_HEADER_SIZE,
+    GENERATION_PROTOCOL_VERSION,
+    HEADER_SIZE,
+    MAX_AUDIO_PAYLOAD_BYTES,
+    PROTOCOL_VERSION,
     FrameType,
     ProtocolError,
     decode_pcm_frame,
     encode_pcm_frame,
 )
+
+CONTRACT = json.loads(
+    (
+        Path(__file__).parents[3]
+        / "packages"
+        / "contracts"
+        / "miniprogram-media.json"
+    ).read_text(encoding="utf-8")
+)
+
+
+def test_pcm_media_constants_match_shared_contract() -> None:
+    binary = CONTRACT["binary"]
+
+    assert PROTOCOL_VERSION == binary["protocol_version"]
+    assert GENERATION_PROTOCOL_VERSION == binary["generation_protocol_version"]
+    assert HEADER_SIZE == binary["header_size"]
+    assert GENERATION_HEADER_SIZE == binary["generation_header_size"]
+    assert MAX_AUDIO_PAYLOAD_BYTES == binary["max_audio_payload_bytes"]
+    assert int(FrameType.UPLINK_AUDIO) == binary["frame_types"]["uplink_audio"]
+    assert int(FrameType.DOWNLINK_AUDIO) == binary["frame_types"]["downlink_audio"]
+
+
+@pytest.mark.parametrize("vector", CONTRACT["golden_frames"], ids=lambda value: value["name"])
+def test_pcm_media_golden_frames_stay_compatible(vector: dict[str, object]) -> None:
+    frame_type = FrameType[
+        str(vector["frame_type"]).upper()
+    ]
+    raw = bytes.fromhex(str(vector["frame_hex"]))
+
+    frame = decode_pcm_frame(raw, expected_type=frame_type)
+
+    assert frame.sequence == vector["sequence"]
+    assert frame.timestamp_ms == vector["timestamp_ms"]
+    assert frame.generation_id == vector["generation_id"]
+    assert frame.payload.hex() == vector["payload_hex"]
+    assert (
+        encode_pcm_frame(
+            frame.frame_type,
+            sequence=frame.sequence,
+            timestamp_ms=frame.timestamp_ms,
+            generation_id=frame.generation_id,
+            payload=frame.payload,
+        )
+        == raw
+    )
 
 
 def test_pcm_frame_round_trip_uses_explicit_direction_and_sequence() -> None:

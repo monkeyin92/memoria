@@ -8,7 +8,7 @@
       "required": ["type", "session_id", "state", "phase", "turn_id", "generation_id", "at"],
       "properties": {
         "type": { "const": "assistant_state" },
-        "session_id": { "type": "string" },
+        "session_id": { "type": "string", "minLength": 1 },
         "state": { "type": "string" },
         "phase": { "type": "string" },
         "turn_id": { "type": "integer" },
@@ -20,9 +20,10 @@
     },
     {
       "type": "object",
-      "required": ["type", "speaker", "text", "final", "turn_id", "generation_id", "history_eligible"],
+      "required": ["type", "session_id", "speaker", "text", "final", "turn_id", "generation_id", "history_eligible"],
       "properties": {
         "type": { "const": "transcript_delta" },
+        "session_id": { "type": "string", "minLength": 1 },
         "speaker": { "enum": ["user", "assistant"] },
         "text": { "type": "string" },
         "final": { "type": "boolean" },

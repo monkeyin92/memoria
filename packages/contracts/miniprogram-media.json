@@ -1,0 +1,94 @@
+{
+  "hello": {
+    "type": "hello",
+    "protocol_version": 1,
+    "required_fields": [
+      "type",
+      "protocol_version",
+      "ticket",
+      "capabilities"
+    ],
+    "capabilities": {
+      "downlink_generation": 2
+    }
+  },
+  "ready": {
+    "type": "ready",
+    "protocol_version": 1,
+    "required_fields": [
+      "type",
+      "protocol_version",
+      "session_id",
+      "audio"
+    ],
+    "audio_required_fields": [
+      "sample_rate",
+      "channels",
+      "sample_format",
+      "frame_ms",
+      "frame_protocol_version"
+    ]
+  },
+  "binary": {
+    "protocol_version": 1,
+    "generation_protocol_version": 2,
+    "header_size": 20,
+    "generation_header_size": 24,
+    "max_audio_payload_bytes": 65536,
+    "frame_types": {
+      "uplink_audio": 1,
+      "downlink_audio": 2
+    }
+  },
+  "audio": {
+    "uplink_sample_rate": 16000,
+    "downlink_sample_rate": 24000,
+    "channels": 1,
+    "sample_format": "s16le",
+    "frame_ms": 20,
+    "downlink_frame_protocol_versions": [
+      1,
+      2
+    ],
+    "downlink_frame_samples": 480,
+    "downlink_frame_bytes": 960
+  },
+  "golden_frames": [
+    {
+      "name": "uplink-v1",
+      "frame_type": "uplink_audio",
+      "sequence": 7,
+      "timestamp_ms": 123456,
+      "generation_id": null,
+      "payload_hex": "00010203",
+      "frame_hex": "0101000000000007000000000001e2400000000400010203"
+    },
+    {
+      "name": "downlink-v2",
+      "frame_type": "downlink_audio",
+      "sequence": 8,
+      "timestamp_ms": 123456,
+      "generation_id": 3,
+      "payload_hex": "0405",
+      "frame_hex": "020200000000000800000003000000000001e240000000020405"
+    }
+  ],
+  "control_events": {
+    "playout_interrupt": [
+      "type",
+      "generation_id",
+      "client_timestamp_ms"
+    ],
+    "playout_reset": [
+      "type",
+      "generation_id",
+      "barrier_sequence",
+      "client_timestamp_ms"
+    ],
+    "uplink_discontinuity": [
+      "type",
+      "next_sequence",
+      "client_timestamp_ms"
+    ]
+  }
+}

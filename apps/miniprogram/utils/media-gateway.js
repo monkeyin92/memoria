@@ -35,6 +35,7 @@ class MiniProgramMediaSession {
     this.recorder = wx.getRecorderManager();
     this.player = new PcmJitterPlayer({
       sampleRate: session.media_gateway?.audio?.sample_rate || 24000,
+      frameMilliseconds: session.media_gateway?.audio?.frame_ms || 20,
     });
     this.sequence = 0;
     this.playbackGenerationId = null;
@@ -42,6 +43,9 @@ class MiniProgramMediaSession {
     this.recording = false;
     this.recorderStarted = false;
     this.recorderStarting = false;
+    this.microphoneEnabled = true;
+    this.systemInterrupted = false;
+    this._uplinkDiscontinuityPending = false;
     this.intentionalClose = false;
     this._firstUplinkFrame = false;
     this._recoveryAttempted = false;
@@ -51,6 +55,7 @@ class MiniProgramMediaSession {
     this._restartTimer = null;
     this._readyResolve = null;
     this._readyReject = null;
+    this._closeNotified = false;
     this._bindRecorder();
   }
 
@@ -84,26 +89,36 @@ class MiniProgramMediaSession {
       this._rejectReady(new Error(socketConnectionErrorMessage(error)));
     });
     this.socket.onClose(() => {
-      this.playbackGenerationId = null;
-      this.player.reset();
-      this._rejectReady(new Error("语音连接已关闭。"));
-      if (!this.intentionalClose) this.callbacks.onClose?.();
+      this._handleSocketClose();
     });
     await ready;
   }
 
   async setMicrophoneEnabled(enabled) {
-    if (!this.ready) return;
-    if (enabled && this.recorderStarted && !this.recording) {
+    this.microphoneEnabled = Boolean(enabled);
+    if (!this.ready || this.systemInterrupted) return;
+    if (this.microphoneEnabled && this._uplinkDiscontinuityPending) {
+      this._resumeAfterSystemInterruption();
+      return;
+    }
+    if (this.microphoneEnabled && this.recorderStarted && !this.recording) {
       this._recoveryAttempted = false;
       this._firstUplinkFrame = false;
       this.recorder.resume();
       this.recording = true;
       this._armFirstFrameTimeout();
-    } else if (enabled && !this.recording) {
+    } else if (this.microphoneEnabled && !this.recording) {
       this._recoveryAttempted = false;
       this._startRecording();
-    } else if (!enabled && this.recording) {
+    } else if (!this.microphoneEnabled && this.recorderStarting) {
+      this._clearRecorderTimers();
+      this.recorderStarting = false;
+      try {
+        this.recorder.stop();
+      } catch {
+        // The delayed onStart handler is fenced by recorderStarting.
+      }
+    } else if (!this.microphoneEnabled && this.recording) {
       this.recorder.pause();
       this.recording = false;
       this._clearRecorderTimers();
@@ -130,21 +145,29 @@ class MiniProgramMediaSession {
 
   async close() {
     this.intentionalClose = true;
-    this._clearRecorderTimers();
-    if (this.recorderStarted) {
-      this.recorder.stop();
-      this.recording = false;
-      this.recorderStarted = false;
-    }
-    this.recorderStarting = false;
-    this.socket?.close({ code: 1000 });
+    this.ready = false;
+    this._uplinkFailed = true;
+    this._stopRecorder();
+    const socket = this.socket;
     this.socket = null;
+    socket?.close({ code: 1000 });
     await this.player.close();
   }
 
   _bindRecorder() {
+    const supportsInterruptionResume =
+      typeof this.recorder.onInterruptionEnd === "function";
     this.recorder.onStart(() => {
-      if (this.intentionalClose || !this.recorderStarting) return;
+      if (this.intentionalClose || this.systemInterrupted || !this.recorderStarting) return;
+      if (!this.microphoneEnabled) {
+        this.recorderStarting = false;
+        try {
+          this.recorder.stop();
+        } catch {
+          // The disabled microphone intent wins even if onStart arrives late.
+        }
+        return;
+      }
       this.recorderStarting = false;
       this.recorderStarted = true;
       this.recording = true;
@@ -153,30 +176,53 @@ class MiniProgramMediaSession {
     });
     this.recorder.onFrameRecorded((frame) => {
       if (!this.ready || !this.recording || !this.socket || this._uplinkFailed) return;
+      const sequence = this.sequence;
+      let data;
       try {
-        const data = encodePcmFrame(
+        data = encodePcmFrame(
           FRAME_TYPE.UPLINK_AUDIO,
-          this.sequence,
+          sequence,
           Date.now(),
           frame.frameBuffer,
         );
-        this.sequence = (this.sequence + 1) >>> 0;
-        this._firstUplinkFrame = true;
-        this._clearFirstFrameTimer();
+      } catch {
+        this._failUplink("麦克风音频帧不可用，请轻触恢复语音。");
+        return;
+      }
+      try {
         this.socket.send({
           data,
           fail: () => this._failUplink("麦克风音频发送失败，请轻触恢复语音。"),
         });
+        this.sequence = (sequence + 1) >>> 0;
+        this._firstUplinkFrame = true;
+        this._clearFirstFrameTimer();
       } catch {
-        this._failUplink("麦克风音频帧不可用，请轻触恢复语音。");
+        this._failUplink("麦克风音频发送失败，请轻触恢复语音。");
       }
     });
     this.recorder.onError(() => {
+      if (this.systemInterrupted) return;
       this._failUplink("麦克风录音失败，请轻触恢复语音。");
     });
     this.recorder.onInterruptionBegin(() => {
-      this._failUplink("录音被系统中断，请轻触恢复语音。");
+      if (!supportsInterruptionResume) {
+        this._failUplink("录音被系统中断，请轻触恢复语音。");
+        return;
+      }
+      if (this.intentionalClose || this._uplinkFailed || this.systemInterrupted) return;
+      this.systemInterrupted = true;
+      this._uplinkDiscontinuityPending = true;
+      this._stopRecorder();
+      this.callbacks.onEvent?.({ type: "recorder_state", state: "interrupted" });
     });
+    if (supportsInterruptionResume) {
+      this.recorder.onInterruptionEnd(() => {
+        if (!this.systemInterrupted) return;
+        this.systemInterrupted = false;
+        this._resumeAfterSystemInterruption();
+      });
+    }
   }
 
   _onMessage(message) {
@@ -192,6 +238,7 @@ class MiniProgramMediaSession {
           return;
         }
         if (event.type === "ready") {
+          if (!this._acceptReadyAudioContract(event)) return;
           this.ready = true;
           this._startRecording();
           const resolve = this._readyResolve;
@@ -255,18 +302,51 @@ class MiniProgramMediaSession {
   }
 
   _sendTransportEvent(event) {
-    if (!this.socket) return;
+    if (!this.socket) return false;
     try {
       this.socket.send({
         data: JSON.stringify(event),
+        fail:
+          event.type === "uplink_discontinuity"
+            ? () => this._failUplink("录音恢复同步失败，请轻触恢复语音。")
+            : undefined,
       });
+      return true;
     } catch {
       // Telemetry must never interrupt the media path.
+      return false;
     }
   }
 
+  _acceptReadyAudioContract(event) {
+    const audio = event?.audio;
+    const supported =
+      event?.protocol_version === 1 &&
+      audio?.sample_rate === this.player.sampleRate &&
+      audio?.channels === 1 &&
+      audio?.sample_format === "s16le" &&
+      audio?.frame_ms === 20 &&
+      [1, 2].includes(audio?.frame_protocol_version);
+    if (supported) return true;
+    this.ready = false;
+    this._uplinkFailed = true;
+    this._rejectReady(new Error("语音服务音频格式不兼容，请更新后重试。"));
+    const socket = this.socket;
+    this.socket = null;
+    socket?.close({ code: 1002 });
+    return false;
+  }
+
   _startRecording() {
-    if (this.recording || this.recorderStarting || this._uplinkFailed) return;
+    if (
+      !this.microphoneEnabled ||
+      this.systemInterrupted ||
+      this.recording ||
+      this.recorderStarting ||
+      this._uplinkFailed
+    ) {
+      return;
+    }
     let platform = "";
     try {
       platform = typeof wx.getDeviceInfo === "function" ? wx.getDeviceInfo().platform : "";
@@ -304,7 +384,15 @@ class MiniProgramMediaSession {
   }
 
   _recoverRecorder() {
-    if (this.intentionalClose || this._uplinkFailed || !this.ready) return;
+    if (
+      this.intentionalClose ||
+      this._uplinkFailed ||
+      !this.ready ||
+      !this.microphoneEnabled ||
+      this.systemInterrupted
+    ) {
+      return;
+    }
     this._clearRecorderTimers();
     this.recording = false;
     this.recorderStarted = false;
@@ -328,11 +416,68 @@ class MiniProgramMediaSession {
   _failUplink(message) {
     if (this.intentionalClose || this._uplinkFailed) return;
     this._uplinkFailed = true;
+    this._uplinkDiscontinuityPending = false;
+    this._stopRecorder();
+    this.callbacks.onInterrupted?.(message);
+  }
+
+  _resumeAfterSystemInterruption() {
+    if (
+      !this._uplinkDiscontinuityPending ||
+      this.systemInterrupted ||
+      !this.microphoneEnabled ||
+      this.intentionalClose ||
+      this._uplinkFailed ||
+      !this.ready ||
+      !this.socket
+    ) {
+      return;
+    }
+    const sent = this._sendTransportEvent({
+      type: "uplink_discontinuity",
+      next_sequence: this.sequence,
+      client_timestamp_ms: Date.now(),
+    });
+    if (!sent) {
+      this._failUplink("录音恢复同步失败，请轻触恢复语音。");
+      return;
+    }
+    this._uplinkDiscontinuityPending = false;
+    this._recoveryAttempted = false;
+    this.callbacks.onEvent?.({ type: "recorder_state", state: "resumed" });
+    this._startRecording();
+  }
+
+  _handleSocketClose() {
+    this.playbackGenerationId = null;
+    this.player.reset();
+    this.ready = false;
+    this._uplinkFailed = true;
+    this.systemInterrupted = false;
+    this._uplinkDiscontinuityPending = false;
+    this._stopRecorder();
+    this.socket = null;
+    this._rejectReady(new Error("语音连接已关闭。"));
+    if (!this.intentionalClose && !this._closeNotified) {
+      this._closeNotified = true;
+      this.callbacks.onClose?.();
+    }
+  }
+
+  _stopRecorder() {
+    const shouldStop =
+      this.recording || this.recorderStarted || this.recorderStarting;
     this._clearRecorderTimers();
     this.recording = false;
     this.recorderStarted = false;
     this.recorderStarting = false;
-    this.callbacks.onInterrupted?.(message);
+    this._firstUplinkFrame = false;
+    if (!shouldStop) return;
+    try {
+      this.recorder.stop();
+    } catch {
+      // RecorderManager may already have stopped during a platform interruption.
+    }
   }
 
   _clearRecorderTimers() {

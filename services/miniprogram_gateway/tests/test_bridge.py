@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import jwt
@@ -22,6 +23,51 @@ from services.miniprogram_gateway.bridge import (
 from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 from services.miniprogram_gateway.protocol import FrameType, PcmFrame, decode_pcm_frame
 
+CONTRACT = json.loads(
+    (
+        Path(__file__).parents[3]
+        / "packages"
+        / "contracts"
+        / "miniprogram-media.json"
+    ).read_text(encoding="utf-8")
+)
+
+
+def test_gateway_ready_event_matches_shared_contract() -> None:
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge.set_downlink_generation_protocol(True)
+
+    ready = bridge.ready_event
+
+    assert set(ready) == set(CONTRACT["ready"]["required_fields"])
+    assert ready["type"] == CONTRACT["ready"]["type"]
+    assert ready["protocol_version"] == CONTRACT["ready"]["protocol_version"]
+    audio = ready["audio"]
+    assert isinstance(audio, dict)
+    assert set(audio) == set(CONTRACT["ready"]["audio_required_fields"])
+    assert audio == {
+        "sample_rate": CONTRACT["audio"]["downlink_sample_rate"],
+        "channels": CONTRACT["audio"]["channels"],
+        "sample_format": CONTRACT["audio"]["sample_format"],
+        "frame_ms": CONTRACT["audio"]["frame_ms"],
+        "frame_protocol_version": CONTRACT["audio"][
+            "downlink_frame_protocol_versions"
+        ][1],
+    }
+
 
 def test_pcm_accumulator_reframes_recorder_chunks_without_losing_tail() -> None:
     accumulator = PcmFrameAccumulator(sample_rate=16_000, frame_ms=20)
@@ -41,6 +87,15 @@ def test_pcm_accumulator_rejects_partial_sample_and_unbounded_buffer() -> None:
         accumulator.feed(b"\x00")
     with pytest.raises(GatewayMediaError, match="buffer exceeded"):
         accumulator.feed(b"\x00\x00" * 321)
+
+
+def test_pcm_accumulator_reset_discards_a_partial_recorder_chunk() -> None:
+    accumulator = PcmFrameAccumulator(sample_rate=16_000, frame_ms=20)
+
+    assert accumulator.feed(b"\x01\x00" * 100) == ()
+    accumulator.reset()
+
+    assert accumulator.feed(b"\x02\x00" * 320) == (b"\x02\x00" * 320,)
 
 
 def test_default_downlink_queue_is_bounded_to_400_ms() -> None:
@@ -403,6 +458,271 @@ def test_downlink_queue_drop_is_counted_and_keeps_latest_audio() -> None:
 
 
 @pytest.mark.asyncio
+async def test_audio_reset_barrier_survives_a_full_best_effort_event_queue() -> None:
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(miniprogram_gateway_event_queue_size=8),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    agent = SimpleNamespace(kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT)
+
+    for index in range(8):
+        bridge._enqueue_event(
+            GatewayOutboundMessage(event={"type": "transcription", "index": index})
+        )
+    bridge._on_data_received(
+        SimpleNamespace(
+            participant=agent,
+            topic="voice-agent.ui",
+            data=json.dumps(
+                {
+                    "type": "assistant_state",
+                    "turn_id": 1,
+                    "generation_id": 1,
+                    "state": "speaking",
+                }
+            ).encode(),
+        )
+    )
+
+    assert (await bridge.next_outbound()).event == {
+        "type": "audio_reset",
+        "generation_id": 1,
+        "barrier_sequence": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_next_outbound_does_not_starve_audio_behind_best_effort_events() -> None:
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._enqueue_audio(GatewayOutboundMessage(binary=b"audio"))
+    for index in range(3):
+        bridge._enqueue_event(
+            GatewayOutboundMessage(event={"type": "transcription", "index": index})
+        )
+
+    assert (await bridge.next_outbound()).binary == b"audio"
+
+
+@pytest.mark.asyncio
+async def test_matching_playout_interrupt_suppresses_its_generation_reference_until_reset() -> None:
+    observed: list[bytes] = []
+    resets = 0
+
+    class Processor:
+        aec_ready = True
+
+        def observe_downlink(self, payload: bytes) -> None:
+            observed.append(payload)
+
+        def reset(self) -> None:
+            nonlocal resets
+            resets += 1
+
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._audio_processor = Processor()  # type: ignore[assignment]
+    bridge._generation_id = 7
+
+    bridge.accept_transport_event(
+        {"type": "playout_interrupt", "generation_id": 7, "client_timestamp_ms": 1}
+    )
+    bridge.outbound_sent(
+        GatewayOutboundMessage(
+            binary=b"audio",
+            audio_reference=b"reference",
+            generation_id=7,
+        )
+    )
+
+    assert observed == []
+    assert resets == 1
+    bridge._on_data_received(
+        SimpleNamespace(
+            participant=SimpleNamespace(kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT),
+            topic="voice-agent.ui",
+            data=json.dumps(
+                {
+                    "type": "assistant_state",
+                    "turn_id": 2,
+                    "generation_id": 8,
+                    "state": "thinking",
+                }
+            ).encode(),
+        )
+    )
+    bridge.outbound_sent(
+        GatewayOutboundMessage(
+            binary=b"in-flight-old-audio",
+            audio_reference=b"old-reference",
+            generation_id=7,
+        )
+    )
+    assert observed == []
+
+    reset = await bridge.next_outbound()
+    assert reset.event == {
+        "type": "audio_reset",
+        "generation_id": 8,
+        "barrier_sequence": 0,
+    }
+    bridge.outbound_sent(reset)
+    bridge.outbound_sent(
+        GatewayOutboundMessage(
+            binary=b"new-audio",
+            audio_reference=b"new-reference",
+            generation_id=8,
+        )
+    )
+    assert observed == [b"new-reference"]
+    assert resets == 2
+
+
+@pytest.mark.parametrize("generation_id", [6, 8])
+def test_stale_or_unknown_playout_interrupt_does_not_suppress_current_reference(
+    generation_id: int,
+) -> None:
+    observed: list[bytes] = []
+
+    class Processor:
+        aec_ready = True
+
+        def observe_downlink(self, payload: bytes) -> None:
+            observed.append(payload)
+
+        def reset(self) -> None:
+            pass
+
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._audio_processor = Processor()  # type: ignore[assignment]
+    bridge._generation_id = 7
+
+    bridge.accept_transport_event(
+        {"type": "playout_interrupt", "generation_id": generation_id, "client_timestamp_ms": 1}
+    )
+    bridge.outbound_sent(
+        GatewayOutboundMessage(
+            binary=b"audio",
+            audio_reference=b"reference",
+            generation_id=7,
+        )
+    )
+
+    assert observed == [b"reference"]
+
+
+@pytest.mark.asyncio
+async def test_uplink_discontinuity_resets_partial_pcm_and_accepts_declared_sequence() -> None:
+    captured: list[bytes] = []
+    resets = 0
+
+    class Source:
+        async def capture_frame(self, frame: rtc.AudioFrame) -> None:
+            captured.append(bytes(frame.data))
+
+    class Processor:
+        aec_ready = False
+
+        def process_uplink(self, payload: bytes) -> bytes:
+            return payload
+
+        def reset(self) -> None:
+            nonlocal resets
+            resets += 1
+
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._audio_source = Source()
+    bridge._audio_processor = Processor()  # type: ignore[assignment]
+
+    await bridge.accept_uplink(
+        PcmFrame(
+            frame_type=FrameType.UPLINK_AUDIO,
+            sequence=0,
+            timestamp_ms=0,
+            payload=b"\x01\x00" * 100,
+        )
+    )
+    bridge.accept_transport_event(
+        {
+            "type": "uplink_discontinuity",
+            "next_sequence": 1,
+            "client_timestamp_ms": 20,
+        }
+    )
+    await bridge.accept_uplink(
+        PcmFrame(
+            frame_type=FrameType.UPLINK_AUDIO,
+            sequence=1,
+            timestamp_ms=20,
+            payload=b"\x02\x00" * 320,
+        )
+    )
+
+    assert captured == [b"\x02\x00" * 320]
+    assert resets == 1
+
+
+@pytest.mark.asyncio
 async def test_bridge_feeds_downlink_reference_before_processing_uplink(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -479,6 +799,7 @@ async def test_bridge_feeds_downlink_reference_before_processing_uplink(
     decoded = decode_pcm_frame(outbound.binary)
     assert decoded.payload == downlink
     assert decoded.generation_id == 0
+    assert outbound.generation_id == 0
     assert calls == probe_calls
     bridge.outbound_sent(outbound)
 
@@ -507,6 +828,51 @@ async def test_bridge_feeds_downlink_reference_before_processing_uplink(
         ("capture", 16_000, 160),
     ]
     assert captured == [bytes(640)]
+
+
+@pytest.mark.asyncio
+async def test_bridge_drops_downlink_frames_that_break_the_pcm_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeAudioStream:
+        @classmethod
+        def from_track(cls, **_kwargs: object) -> FakeAudioStream:
+            return cls()
+
+        def __aiter__(self) -> FakeAudioStream:
+            return self
+
+        async def __anext__(self) -> SimpleNamespace:
+            if hasattr(self, "sent"):
+                raise StopAsyncIteration
+            self.sent = True
+            return SimpleNamespace(frame=SimpleNamespace(data=bytes(958)))
+
+        async def aclose(self) -> None:
+            pass
+
+    monkeypatch.setattr(bridge_module.rtc, "AudioStream", FakeAudioStream)
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._generation_id = 0
+    bridge._audio_generation_id = 0
+
+    await bridge._pump_downlink_track(object())
+
+    assert bridge._downlink_sequence == 0
+    assert bridge._audio_messages.empty()
 
 
 @pytest.mark.asyncio

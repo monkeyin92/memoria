@@ -41,12 +41,17 @@ class GatewayOutboundMessage:
     binary: bytes | None = None
     event: dict[str, object] | None = None
     audio_reference: bytes | None = None
+    generation_id: int | None = None
 
     def __post_init__(self) -> None:
         if (self.binary is None) == (self.event is None):
             raise ValueError("an outbound gateway message must contain exactly one payload")
         if self.audio_reference is not None and self.binary is None:
             raise ValueError("an outbound audio reference requires a binary payload")
+        if self.generation_id is not None and (
+            self.binary is None or isinstance(self.generation_id, bool) or self.generation_id < 0
+        ):
+            raise ValueError("an outbound audio generation requires a binary payload")
 
 
 class PcmFrameAccumulator:
@@ -78,6 +83,9 @@ class PcmFrameAccumulator:
             frames.append(bytes(self._pending[: self.bytes_per_frame]))
             del self._pending[: self.bytes_per_frame]
         return tuple(frames)
+
+    def reset(self) -> None:
+        self._pending.clear()
 
 
 class MiniProgramLiveKitBridge:
@@ -131,6 +139,8 @@ class MiniProgramLiveKitBridge:
         self._event_messages: asyncio.Queue[GatewayOutboundMessage] = asyncio.Queue(
             maxsize=settings.miniprogram_gateway_event_queue_size
         )
+        self._control_message: GatewayOutboundMessage | None = None
+        self._aec_suppressed_generation_id: int | None = None
         self._outbound_ready = asyncio.Event()
         self._room_disconnected = asyncio.Event()
         self._audio_streams: set[Any] = set()
@@ -226,25 +236,39 @@ class MiniProgramLiveKitBridge:
             self._uplink_livekit_frame_count += 1
 
     async def next_outbound(self) -> GatewayOutboundMessage:
-        """Prioritize Agent UI/transcription events without blocking audio when idle."""
+        """Send reset barriers, then audio, before best-effort UI/transcription events."""
         while True:
-            try:
-                return self._event_messages.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
+            if self._control_message is not None:
+                message = self._control_message
+                self._control_message = None
+                return message
             try:
                 return self._audio_messages.get_nowait()
             except asyncio.QueueEmpty:
                 pass
+            try:
+                return self._event_messages.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
             self._outbound_ready.clear()
-            if not self._event_messages.empty() or not self._audio_messages.empty():
+            if (
+                self._control_message is not None
+                or not self._audio_messages.empty()
+                or not self._event_messages.empty()
+            ):
                 self._outbound_ready.set()
                 continue
             await self._outbound_ready.wait()
 
     def outbound_sent(self, message: GatewayOutboundMessage) -> None:
         """Advance AEC only for bytes/control barriers accepted by the WebSocket."""
-        if message.audio_reference is not None:
+        if message.event is not None and message.event.get("type") == "audio_reset":
+            self._audio_processor.reset()
+            self._aec_suppressed_generation_id = None
+        if message.audio_reference is not None and (
+            self._aec_suppressed_generation_id is None
+            or message.generation_id != self._aec_suppressed_generation_id
+        ):
             aec_ready_before = self._audio_processor.aec_ready
             self._audio_processor.observe_downlink(message.audio_reference)
             if (
@@ -253,8 +277,6 @@ class MiniProgramLiveKitBridge:
                 and not self._audio_processor.aec_ready
             ):
                 self._mark_aec_failed()
-        if message.event is not None and message.event.get("type") == "audio_reset":
-            self._audio_processor.reset()
 
     def _mark_aec_failed(self) -> None:
         if not self._aec_dispatched_ready or self._aec_failure_id is not None:
@@ -310,6 +332,26 @@ class MiniProgramLiveKitBridge:
             event.get("client_timestamp_ms"),
             self._claims.session_id,
         )
+        if event.get("type") == "uplink_discontinuity":
+            next_sequence = event.get("next_sequence")
+            if (
+                isinstance(next_sequence, int)
+                and not isinstance(next_sequence, bool)
+                and 0 <= next_sequence <= 0xFFFFFFFF
+            ):
+                self._uplink.reset()
+                self._audio_processor.reset()
+                self._last_uplink_sequence = (next_sequence - 1) & 0xFFFFFFFF
+            return
+        generation_id = event.get("generation_id")
+        if (
+            event.get("type") == "playout_interrupt"
+            and isinstance(generation_id, int)
+            and not isinstance(generation_id, bool)
+            and generation_id == self._generation_id
+        ):
+            self._audio_processor.reset()
+            self._aec_suppressed_generation_id = generation_id
 
     async def wait_for_room_disconnect(self) -> None:
         await self._room_disconnected.wait()
@@ -431,6 +473,12 @@ class MiniProgramLiveKitBridge:
             num_channels=1,
             frame_size_ms=self._settings.miniprogram_gateway_frame_ms,
         )
+        expected_pcm_bytes = (
+            self._settings.miniprogram_gateway_downlink_sample_rate
+            * self._settings.miniprogram_gateway_frame_ms
+            // 1_000
+            * 2
+        )
         self._audio_streams.add(stream)
         try:
             async for event in stream:
@@ -438,6 +486,13 @@ class MiniProgramLiveKitBridge:
                     return
                 pcm = bytes(event.frame.data)
                 if not pcm:
+                    continue
+                if len(pcm) != expected_pcm_bytes:
+                    logger.warning(
+                        "mini_program_invalid_downlink_frame expected_bytes=%s actual_bytes=%s",
+                        expected_pcm_bytes,
+                        len(pcm),
+                    )
                     continue
                 sequence = self._downlink_sequence
                 self._downlink_sequence = (self._downlink_sequence + 1) & 0xFFFFFFFF
@@ -466,6 +521,7 @@ class MiniProgramLiveKitBridge:
                             payload=pcm,
                         ),
                         audio_reference=pcm,
+                        generation_id=audio_generation_id,
                     )
                 )
         finally:
@@ -532,7 +588,7 @@ class MiniProgramLiveKitBridge:
                 )
                 barrier_sequence = self._downlink_sequence
                 self._clear_queued_audio()
-                self._enqueue_event(
+                self._enqueue_control(
                     GatewayOutboundMessage(
                         event={
                             "type": "audio_reset",
@@ -643,6 +699,10 @@ class MiniProgramLiveKitBridge:
                 self._audio_messages.get_nowait()
             except asyncio.QueueEmpty:
                 return
+
+    def _enqueue_control(self, message: GatewayOutboundMessage) -> None:
+        self._control_message = message
+        self._outbound_ready.set()
 
     def _enqueue_event(self, message: GatewayOutboundMessage) -> None:
         if self._event_messages.full():

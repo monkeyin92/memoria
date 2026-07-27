@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -19,9 +20,11 @@ def test_runtime_ui_event_schema_covers_all_published_event_shapes() -> None:
 
     assert set(variants) == UI_EVENT_TYPES
     assert {"phase", "tool_epoch"} <= set(variants["assistant_state"]["properties"])
-    assert {"heard", "history_eligible", "tool_epoch"} <= set(
+    assert {"session_id", "heard", "history_eligible", "tool_epoch"} <= set(
         variants["transcript_delta"]["properties"]
     )
+    assert "session_id" in variants["transcript_delta"]["required"]
+    assert variants["transcript_delta"]["properties"]["session_id"]["minLength"] == 1
     for event_type in ("audio_trace", "assistant_audio", "emotion_observation"):
         assert "tool_epoch" in variants[event_type]["properties"]
     assert set(variants["speaker_enroll_progress"]["required"]) >= {
@@ -52,3 +55,31 @@ def test_runtime_rejects_ui_event_types_missing_from_the_contract() -> None:
 
     with pytest.raises(ValueError, match="unsupported voice-agent.ui event type"):
         runtime._publish({"type": "undeclared_event"})
+
+
+@pytest.mark.asyncio
+async def test_runtime_transcript_event_carries_the_session_contract() -> None:
+    runtime = DuplexRuntime.create(session_id="ui-contract-test")
+    published: list[dict[str, object]] = []
+
+    async def capture(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime.set_event_publisher(capture)
+    runtime.publish_transcript(speaker="user", text="当前问题", final=False)
+    await asyncio.sleep(0)
+
+    assert published == [
+        {
+            "type": "transcript_delta",
+            "session_id": "ui-contract-test",
+            "speaker": "user",
+            "text": "当前问题",
+            "final": False,
+            "turn_id": 0,
+            "generation_id": 0,
+            "tool_epoch": 0,
+            "history_eligible": False,
+        }
+    ]
+    await runtime.close()

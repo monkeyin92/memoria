@@ -16,6 +16,7 @@ describe("LiveKit data events", () => {
           type: "assistant_state",
           session_id: "s",
           state: "speaking",
+          phase: "speaking",
           turn_id: 2,
           generation_id: 3,
           at: "2026-07-15T00:00:00Z",
@@ -27,12 +28,15 @@ describe("LiveKit data events", () => {
       parseLiveKitDataEvent(
         encode({
           type: "transcript_delta",
+          session_id: "s",
           speaker: "assistant",
           text: "你好",
           final: false,
           heard: true,
+          history_eligible: false,
           turn_id: 2,
           generation_id: 3,
+          tool_epoch: 0,
         }),
       ),
     ).toMatchObject({ type: "transcript_delta", text: "你好" });
@@ -49,6 +53,7 @@ describe("LiveKit data events", () => {
       parseLiveKitDataEvent(
         encode({
           type: "transcript_delta",
+          session_id: "s",
           speaker: "user",
           text: "bad generation",
           final: true,

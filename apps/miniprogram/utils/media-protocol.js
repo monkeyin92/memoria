@@ -2,6 +2,7 @@ const PROTOCOL_VERSION = 1;
 const GENERATION_PROTOCOL_VERSION = 2;
 const HEADER_SIZE = 20;
 const GENERATION_HEADER_SIZE = 24;
+const MAX_AUDIO_PAYLOAD_BYTES = 64 * 1024;
 const FRAME_TYPE = Object.freeze({
   UPLINK_AUDIO: 1,
   DOWNLINK_AUDIO: 2,
@@ -41,7 +42,7 @@ function encodePcmFrame(type, sequence, timestampMs, payload) {
     throw new RangeError("invalid PCM sequence");
   }
   const pcm = asArrayBuffer(payload);
-  if (!pcm.byteLength || pcm.byteLength > 64 * 1024) {
+  if (!pcm.byteLength || pcm.byteLength > MAX_AUDIO_PAYLOAD_BYTES) {
     throw new RangeError("invalid PCM payload length");
   }
   const frame = new ArrayBuffer(HEADER_SIZE + pcm.byteLength);
@@ -101,6 +102,7 @@ module.exports = {
   GENERATION_PROTOCOL_VERSION,
   HEADER_SIZE,
   GENERATION_HEADER_SIZE,
+  MAX_AUDIO_PAYLOAD_BYTES,
   FRAME_TYPE,
   encodePcmFrame,
   decodePcmFrame,

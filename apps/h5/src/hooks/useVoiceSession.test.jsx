@@ -91,13 +91,7 @@ vi.mock("../voice/QwenOmniWebRTCTransport.js", () => ({
 import { useVoiceSession } from "./useVoiceSession.js";
 
 function encodeEvent(event) {
-  return new TextEncoder().encode(
-    JSON.stringify(
-      event.type === "transcript_delta" && !event.session_id
-        ? { ...event, session_id: "session-1" }
-        : event,
-    ),
-  );
+  return new TextEncoder().encode(JSON.stringify(event));
 }
 
 function deferred() {
@@ -704,6 +698,7 @@ describe("useVoiceSession production edges", () => {
       oldData(
         encodeEvent({
           type: "transcript_delta",
+          session_id: "session-1",
           speaker: "assistant",
           text: "旧会话字幕",
           final: true,
@@ -771,6 +766,7 @@ describe("useVoiceSession production edges", () => {
         liveKit.RoomEvent.DataReceived,
         encodeEvent({
           type: "transcript_delta",
+          session_id: "session-1",
           speaker: "assistant",
           text: "恢复后的回答",
           final: true,
@@ -861,6 +857,7 @@ describe("useVoiceSession production edges", () => {
         liveKit.RoomEvent.DataReceived,
         encodeEvent({
           type: "transcript_delta",
+          session_id: "session-1",
           speaker: "user",
           text: "主人问题",
           final: true,
@@ -880,6 +877,7 @@ describe("useVoiceSession production edges", () => {
         liveKit.RoomEvent.DataReceived,
         encodeEvent({
           type: "transcript_delta",
+          session_id: "session-1",
           speaker: "assistant",
           text: "权威回答",
           final: true,
@@ -904,6 +902,7 @@ describe("useVoiceSession production edges", () => {
         liveKit.RoomEvent.DataReceived,
         encodeEvent({
           type: "transcript_delta",
+          session_id: "session-1",
           speaker: "assistant",
           text: "同一代修订后的最终稿",
           final: true,
@@ -975,6 +974,7 @@ describe("useVoiceSession production edges", () => {
           liveKit.RoomEvent.DataReceived,
           encodeEvent({
             type: "transcript_delta",
+            session_id: "session-1",
             ...event,
           }),
           agent,
@@ -1000,6 +1000,7 @@ describe("useVoiceSession production edges", () => {
         liveKit.RoomEvent.DataReceived,
         encodeEvent({
           type: "transcript_delta",
+          session_id: "session-1",
           speaker: "assistant",
           text: "旧账号最后一句",
           final: true,
@@ -1055,6 +1056,7 @@ describe("useVoiceSession production edges", () => {
         liveKit.RoomEvent.DataReceived,
         encodeEvent({
           type: "transcript_delta",
+          session_id: "session-1",
           speaker: "user",
           text: "我今天真的很开心",
           final: true,
@@ -1100,6 +1102,7 @@ describe("useVoiceSession production edges", () => {
       });
       emit({
         type: "transcript_delta",
+        session_id: "session-1",
         speaker: "user",
         text: "这是新一代话轮",
         final: true,
@@ -1135,6 +1138,7 @@ describe("useVoiceSession production edges", () => {
       });
       emit({
         type: "transcript_delta",
+        session_id: "session-1",
         speaker: "user",
         text: "最近有点累",
         final: true,
@@ -1147,6 +1151,7 @@ describe("useVoiceSession production edges", () => {
     act(() => {
       emit({
         type: "transcript_delta",
+        session_id: "session-1",
         speaker: "user",
         text: "我们聊点别的",
         final: true,
@@ -1180,6 +1185,7 @@ describe("useVoiceSession production edges", () => {
         liveKit.RoomEvent.DataReceived,
         encodeEvent({
           type: "transcript_delta",
+          session_id: "session-1",
           speaker: "user",
           text: "It's",
           final: false,
@@ -1200,6 +1206,7 @@ describe("useVoiceSession production edges", () => {
         liveKit.RoomEvent.DataReceived,
         encodeEvent({
           type: "transcript_delta",
+          session_id: "session-1",
           speaker: "user",
           text: "你好。",
           final: true,

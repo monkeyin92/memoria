@@ -64,6 +64,7 @@ export function useVoiceSession() {
       state.applyAssistantState(event.generation_id, event.state, event.turn_id);
       return;
     }
+    if (event.session_id !== state.session?.session_id) return;
     state.applyTranscript({
       speaker: event.speaker,
       text: event.text,

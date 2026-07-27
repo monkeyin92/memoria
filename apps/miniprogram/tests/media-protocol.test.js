@@ -1,11 +1,71 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 
 const {
+  GENERATION_HEADER_SIZE,
+  GENERATION_PROTOCOL_VERSION,
+  HEADER_SIZE,
+  MAX_AUDIO_PAYLOAD_BYTES,
+  PROTOCOL_VERSION,
   FRAME_TYPE,
   decodePcmFrame,
   encodePcmFrame,
 } = require("../utils/media-protocol");
+
+const contract = JSON.parse(
+  fs.readFileSync(
+    path.join(__dirname, "../../../packages/contracts/miniprogram-media.json"),
+    "utf8",
+  ),
+);
+
+test("PCM media constants match the shared contract", () => {
+  assert.equal(PROTOCOL_VERSION, contract.binary.protocol_version);
+  assert.equal(
+    GENERATION_PROTOCOL_VERSION,
+    contract.binary.generation_protocol_version,
+  );
+  assert.equal(HEADER_SIZE, contract.binary.header_size);
+  assert.equal(GENERATION_HEADER_SIZE, contract.binary.generation_header_size);
+  assert.equal(
+    MAX_AUDIO_PAYLOAD_BYTES,
+    contract.binary.max_audio_payload_bytes,
+  );
+  assert.deepEqual(FRAME_TYPE, {
+    UPLINK_AUDIO: contract.binary.frame_types.uplink_audio,
+    DOWNLINK_AUDIO: contract.binary.frame_types.downlink_audio,
+  });
+});
+
+for (const vector of contract.golden_frames) {
+  test(`PCM media golden frame stays compatible: ${vector.name}`, () => {
+    const type = FRAME_TYPE[vector.frame_type.toUpperCase()];
+    const encoded =
+      vector.generation_id === null
+        ? encodePcmFrame(
+            type,
+            vector.sequence,
+            vector.timestamp_ms,
+            Buffer.from(vector.payload_hex, "hex"),
+          )
+        : Buffer.from(vector.frame_hex, "hex");
+
+    assert.equal(Buffer.from(encoded).toString("hex"), vector.frame_hex);
+    const decoded = decodePcmFrame(
+      Buffer.from(vector.frame_hex, "hex"),
+      type,
+    );
+    assert.equal(decoded.sequence, vector.sequence);
+    assert.equal(decoded.timestampMs, vector.timestamp_ms);
+    assert.equal(decoded.generationId, vector.generation_id);
+    assert.equal(
+      Buffer.from(decoded.payload).toString("hex"),
+      vector.payload_hex,
+    );
+  });
+}
 
 test("PCM media frame round-trips with a versioned binary header", () => {
   const payload = new Uint8Array([0, 1, 2, 3]).buffer;

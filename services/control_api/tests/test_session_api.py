@@ -177,11 +177,11 @@ async def test_miniprogram_session_uses_gateway_ticket_not_livekit_participant_t
     assert first_claims.user_id == user_id
     assert refreshed.status_code == 200
     refreshed_data = refreshed.json()
+    assert "participant_token" not in refreshed_data
     assert refreshed_data["ticket"] != data["media_gateway"]["ticket"]
-    assert (
-        verify_gateway_ticket(refreshed_data["ticket"], secret=ticket_secret).session_id
-        == data["session_id"]
-    )
+    refreshed_claims = verify_gateway_ticket(refreshed_data["ticket"], secret=ticket_secret)
+    assert refreshed_claims.session_id == first_claims.session_id == data["session_id"]
+    assert refreshed_claims.user_id == first_claims.user_id == user_id
 
 
 @pytest.mark.asyncio

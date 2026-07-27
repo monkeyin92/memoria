@@ -22,17 +22,49 @@
   `db07f8a11fb08ee9282a4530ebf2394d50280104 / 20260727-120448`。
 - 当前版本在统一 `UtteranceRouter` 中识别打断后旧话轮重放，并把自建 endpointing
   目标统一为 `0.90 / 1.50 / 1.70`。
-- 本地 `main` 尚未推送；`origin/main` 仍为 `cb2ce2d`。是否推送仍由用户明确决定。
+- 本轮媒体改造开始前，`main` 与 `origin/main` 基线均为 `489800a`；本轮 source 变化
+  尚未提交、推送或部署。
 - `a0308a4` 在统一 `UtteranceRouter` 中把规范化后完全等于“等下”的文本识别为纯打断，
   同时保持“我等下再说 / 等下我想问……”为普通聊天。
 - 本版本在共享回声门禁中补充“助手说等一下 / ASR 缩成等下”的同义拒绝，防止助手回声
   自己触发纯打断。不要把临时 DEBUG 取证重新带入后续候选。
 
+## 2026-07-27 本地架构与小程序媒体改造（未发布）
+
+- Agent `transcript_delta` 已补齐 `session_id`；共享 Schema、H5、legacy Web 和对应
+  回归测试均按真实权威载荷对齐，避免 H5/旧 Web 严格解析丢弃终稿或跨会话混入。
+- 新增 `packages/contracts/miniprogram-media.json`：Python/JavaScript 共用 PCM
+  golden frames、固定 `20 ms / 960 bytes` 下行契约和控制字段；小程序测试、JS 语法检查
+  已加入 CI。
+- Control API 的小程序 URL/ticket/响应模型已从大 `session.py` 收口到
+  `services/control_api/app/miniprogram_gateway_session.py`，创建与刷新路径、权限、JWT
+  claims 和不泄露 LiveKit token 的行为保持不变。
+- 小程序媒体会话现在在 Socket 断开时立即停录并终止本地上传；mic 关闭压过迟到
+  `RecorderManager.onStart`；同步发送失败不提交 sequence；播放器硬校验固定 PCM 帧，
+  首批使用 lead，gain duck/restore 使用 10 ms ramp。
+- 系统录音中断在支持 `onInterruptionEnd` 时同一 WSS 会话恢复：发送
+  `uplink_discontinuity(next_sequence)`，网关清空半帧并重置 AEC 时序；不支持该回调时
+  仍 fail closed，提示用户手动恢复。网关把 `audio_reset` 作为不可丢失 barrier，匹配当前
+  generation 的 `playout_interrupt` 只抑制对应 reverse reference，且丢弃错误长度下行帧。
+- 共享媒体契约已由 JavaScript/Python 测试共同约束 hello、ready、控制事件与 PCM
+  golden frames；系统中断期间 mic 切换受 `systemInterrupted` fence 约束，静音状态不会
+  提前发送 discontinuity 或伪报 resumed。
+- 本地门禁：Python `1282 passed, 27 skipped`，Ruff、strict mypy、H5 `232/232` 与
+  production build、legacy Web `28/28`、lint/build、小程序 `46/46`、JS syntax、
+  `run_e2e --profile offline` 通过；Provider smoke 因本机缺少 `DASHSCOPE_API_KEY`、
+  `DOUBAO_TTS_AUTH` 仅 SKIP。
+- 上述 source 变化尚未部署 runtime、H5 或重新上传小程序体验版；当前已上传的
+  `0.8.50` 不包含本轮改造。未做真实手机声学验收，不能据此宣称“全双工已完成”。
+
 ## 当前生产
 
 - runtime：`20260727-120448`，于 2026-07-27 12:23:59 CST 原子激活。
 - H5：`20260723-192611`。
-- 小程序体验版仍为 `0.8.49`；`0.8.50` 待本机微信开发者工具桌面解锁后上传，不提交审核或正式发布。
+- 小程序体验版 `0.8.50` 已于 2026-07-27 15:16:19 CST 通过 `wechatide upload`
+  上传成功，包体 `603,490` 字节；未提交审核或正式发布。
+- 本机微信开发者工具已更新为 Nightly `2.02.2607252`，agent 侧
+  `wechatide-skill` 已从工具内置版本单向同步至 `0.3.4`；`Codex` CLI 授权有效且
+  `tokenRequired=false`。
 - `agent / control-api / speaker-model / miniprogram-gateway` 四个容器均为
   `healthy`、restart 0；readiness 为 `ready / 20260727-120448`，Agent、
   9/9 core checks、LiveKit、FunASR、Qwen、Doubao 与 `InterruptSemantic` 正常。
@@ -160,14 +192,13 @@
 
 ## 未闭环与下一步
 
-1. 解锁本机微信开发者工具，上传体验版 `0.8.50`（不提交审核或正式发布）。
-2. 在新体验版完全退出并重新打开后，AI 播放约 0.6 秒时依次测试：“等一下”、“停一下，你叫什么名字？”、
+1. 在新体验版完全退出并重新打开后，AI 播放约 0.6 秒时依次测试：“等一下”、“停一下，你叫什么名字？”、
    引用助手原话的追问、纯噪声/误触发和分类超时恢复。
-3. 验收 0–700 ms 内静音、纯控制只确认一次且不进 chat、真实问题不丢失、“继续”恢复原回答，
+2. 验收 0–700 ms 内静音、纯控制只确认一次且不进 chat、真实问题不丢失、“继续”恢复原回答，
    并补测正常短句、长句、慢语速和 1–2 秒句中停顿。
-4. 任一结果失败，先冻结同一会话的 Agent/Gateway/Control 脱敏日志，再恢复
+3. 任一结果失败，先冻结同一会话的 Agent/Gateway/Control 脱敏日志，再恢复
    `20260726-233337` 及本轮四份旧 env。
-5. 真机通过后清理 hotfix worktree、多余旧镜像和不再需要的本地 artifacts；不运行
+4. 真机通过后清理 hotfix worktree、多余旧镜像和不再需要的本地 artifacts；不运行
    `docker system prune -a`，不删除卷或其他项目镜像。
 
 ## 用户工作区边界

@@ -1564,6 +1564,7 @@ class DuplexRuntime:
         archive_fence = archive_fence or fence
         event: dict[str, Any] = {
             "type": "transcript_delta",
+            "session_id": self.session_id,
             "speaker": speaker,
             "text": text,
             "final": final,

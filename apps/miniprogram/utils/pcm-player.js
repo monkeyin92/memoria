@@ -4,11 +4,21 @@ class PcmJitterPlayer {
     minLeadSeconds = 0.08,
     maxLeadSeconds = 0.45,
     bufferMilliseconds = 80,
+    frameMilliseconds = 20,
     maxConcealFrames = 3,
   } = {}) {
+    if (
+      sampleRate <= 0 ||
+      frameMilliseconds <= 0 ||
+      (sampleRate * frameMilliseconds) % 1000 !== 0
+    ) {
+      throw new RangeError("invalid PCM player audio contract");
+    }
     this.sampleRate = sampleRate;
     this.minLeadSeconds = minLeadSeconds;
     this.maxLeadSeconds = maxLeadSeconds;
+    this.frameSamples = (sampleRate * frameMilliseconds) / 1000;
+    this.frameBytes = this.frameSamples * 2;
     this.bufferSamples = Math.round((sampleRate * bufferMilliseconds) / 1000);
     this.maxConcealFrames = maxConcealFrames;
     this.context = null;
@@ -39,6 +49,11 @@ class PcmJitterPlayer {
 
   enqueue(pcm, { sequence, generationId } = {}) {
     if (!this.context || this.context.state !== "running") return;
+    if (!pcm || pcm.byteLength !== this.frameBytes) {
+      throw new RangeError(
+        `PCM frame must be one ${this.frameBytes}-byte PCM16/20ms frame`,
+      );
+    }
     let input = new Int16Array(pcm);
     if (!input.length) return;
     const hasGeneration = Number.isInteger(generationId) && generationId >= 0;
@@ -77,7 +92,7 @@ class PcmJitterPlayer {
   _concealGap(missingFrames, input) {
     const fadeSamples = Math.min(Math.round(this.sampleRate * 0.005), input.length);
     for (let frameIndex = 0; frameIndex < missingFrames; frameIndex += 1) {
-      const concealed = new Int16Array(input.length);
+      const concealed = new Int16Array(this.frameSamples);
       if (frameIndex === 0 && this.lastSample && fadeSamples) {
         for (let index = 0; index < fadeSamples; index += 1) {
           concealed[index] = Math.round(
@@ -114,10 +129,7 @@ class PcmJitterPlayer {
       samples[index] = input[index] / 32768;
     }
     const now = this.context.currentTime;
-    if (
-      this.nextStartAt < now ||
-      this.nextStartAt > now + this.maxLeadSeconds
-    ) {
+    if (this.nextStartAt <= now || this.nextStartAt > now + this.maxLeadSeconds) {
       this._clearPlayback();
     }
     const source = this.context.createBufferSource();
@@ -132,18 +144,29 @@ class PcmJitterPlayer {
 
   setGain(value) {
     if (typeof value !== "number" || !Number.isFinite(value)) return;
-    this.gain = Math.min(1, Math.max(0, value));
+    const target = Math.min(1, Math.max(0, value));
+    this.gain = target;
     const gainParam = this.gainNode?.gain;
     if (gainParam) {
       const now = this.context?.currentTime || 0;
-      if (typeof gainParam.cancelScheduledValues === "function") {
+      if (
+        typeof gainParam.cancelScheduledValues === "function" &&
+        typeof gainParam.setValueAtTime === "function" &&
+        typeof gainParam.linearRampToValueAtTime === "function"
+      ) {
         try {
           gainParam.cancelScheduledValues(now);
+          gainParam.setValueAtTime(
+            typeof gainParam.value === "number" ? gainParam.value : target,
+            now,
+          );
+          gainParam.linearRampToValueAtTime(target, now + 0.01);
+          return;
         } catch {
           // Direct value assignment below remains the compatibility fallback.
         }
       }
-      gainParam.value = this.gain;
+      gainParam.value = target;
     }
   }
 

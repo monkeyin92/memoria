@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +17,15 @@ from services.miniprogram_gateway.app import (
 from services.miniprogram_gateway.bridge import GatewayOutboundMessage
 from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 from services.miniprogram_gateway.protocol import FrameType, ProtocolError, encode_pcm_frame
+
+CONTRACT = json.loads(
+    (
+        Path(__file__).parents[3]
+        / "packages"
+        / "contracts"
+        / "miniprogram-media.json"
+    ).read_text(encoding="utf-8")
+)
 
 
 @pytest.mark.asyncio
@@ -54,15 +65,24 @@ def test_gateway_accepts_ticket_then_only_pcm_uplink_frames() -> None:
 
     with TestClient(create_app(settings=settings, bridge_factory=factory)) as client:
         with client.websocket_connect(MEDIA_PATH) as websocket:
+            hello_contract = CONTRACT["hello"]
             websocket.send_json(
                 {
-                    "type": "hello",
-                    "protocol_version": 1,
+                    "type": hello_contract["type"],
+                    "protocol_version": hello_contract["protocol_version"],
                     "ticket": ticket,
-                    "capabilities": {"downlink_generation": 2},
+                    "capabilities": hello_contract["capabilities"],
                 }
             )
-            assert websocket.receive_json()["type"] == "ready"
+            ready = websocket.receive_json()
+            assert set(ready) == set(CONTRACT["ready"]["required_fields"])
+            assert ready["type"] == CONTRACT["ready"]["type"]
+            assert ready["protocol_version"] == CONTRACT["ready"]["protocol_version"]
+            assert set(ready["audio"]) == set(CONTRACT["ready"]["audio_required_fields"])
+            assert (
+                ready["audio"]["frame_protocol_version"]
+                == CONTRACT["audio"]["downlink_frame_protocol_versions"][1]
+            )
             websocket.send_bytes(
                 encode_pcm_frame(
                     FrameType.UPLINK_AUDIO,
@@ -124,22 +144,40 @@ async def test_legacy_gateway_hello_keeps_v1_downlink_frames() -> None:
 
 def test_gateway_text_channel_only_allows_transport_ping() -> None:
     assert _validate_control_text('{"type":"ping"}') == {"type": "ping"}
-    assert _validate_control_text(
+    playout_reset = _validate_control_text(
         '{"type":"playout_reset","generation_id":3,'
         '"barrier_sequence":7,"client_timestamp_ms":123}'
-    ) == {
+    )
+    assert playout_reset == {
         "type": "playout_reset",
         "generation_id": 3,
         "barrier_sequence": 7,
         "client_timestamp_ms": 123,
     }
-    assert _validate_control_text(
+    assert set(playout_reset) == set(CONTRACT["control_events"]["playout_reset"])
+    playout_interrupt = _validate_control_text(
         '{"type":"playout_interrupt","generation_id":3,"client_timestamp_ms":124}'
-    ) == {
+    )
+    assert playout_interrupt == {
         "type": "playout_interrupt",
         "generation_id": 3,
         "client_timestamp_ms": 124,
     }
+    assert set(playout_interrupt) == set(
+        CONTRACT["control_events"]["playout_interrupt"]
+    )
+    uplink_discontinuity = _validate_control_text(
+        '{"type":"uplink_discontinuity","next_sequence":9,'
+        '"client_timestamp_ms":125}'
+    )
+    assert uplink_discontinuity == {
+        "type": "uplink_discontinuity",
+        "next_sequence": 9,
+        "client_timestamp_ms": 125,
+    }
+    assert set(uplink_discontinuity) == set(
+        CONTRACT["control_events"]["uplink_discontinuity"]
+    )
 
     with pytest.raises(ProtocolError, match="unsupported gateway control message"):
         _validate_control_text('{"type":"voice-agent.control","action":"stop"}')
@@ -147,6 +185,11 @@ def test_gateway_text_channel_only_allows_transport_ping() -> None:
         _validate_control_text(
             '{"type":"playout_interrupt","generation_id":3,'
             '"client_timestamp_ms":124,"action":"stop"}'
+        )
+    with pytest.raises(ProtocolError, match="invalid gateway playout event"):
+        _validate_control_text(
+            '{"type":"uplink_discontinuity","next_sequence":4294967296,'
+            '"client_timestamp_ms":125}'
         )
 
 
@@ -161,6 +204,7 @@ class FakeBridge:
                 "channels": 1,
                 "sample_format": "s16le",
                 "frame_ms": 20,
+                "frame_protocol_version": 1,
             },
         }
         self.frames: list[object] = []
@@ -176,6 +220,9 @@ class FakeBridge:
 
     def set_downlink_generation_protocol(self, enabled: bool) -> None:
         self.downlink_generation_protocol = enabled
+        audio = self.ready_event["audio"]
+        assert isinstance(audio, dict)
+        audio["frame_protocol_version"] = 2 if enabled else 1
 
     async def accept_uplink(self, frame: object) -> None:
         self.frames.append(frame)

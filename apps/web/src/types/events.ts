@@ -28,21 +28,27 @@ export const UI_STATE_LABELS: Record<UiState, string> = {
 
 export const AssistantStateEventSchema = z.object({
   type: z.literal("assistant_state"),
-  session_id: z.string(),
+  session_id: z.string().min(1),
   state: z.string(),
+  phase: z.string(),
   turn_id: z.number().int().nonnegative(),
   generation_id: z.number().int().nonnegative(),
+  tool_epoch: z.number().int().nonnegative().optional(),
   at: z.string().datetime({ offset: true }),
 }).strict();
 
 export const TranscriptDeltaEventSchema = z.object({
   type: z.literal("transcript_delta"),
+  session_id: z.string().min(1),
   speaker: z.enum(["user", "assistant"]),
   text: z.string(),
   final: z.boolean(),
   heard: z.boolean().optional(),
+  history_eligible: z.boolean(),
   turn_id: z.number().int().nonnegative(),
   generation_id: z.number().int().nonnegative(),
+  tool_epoch: z.number().int().nonnegative().optional(),
+  preview_provenance: z.unknown().nullable().optional(),
 }).strict();
 
 export const LiveKitDataEventSchema = z.discriminatedUnion("type", [

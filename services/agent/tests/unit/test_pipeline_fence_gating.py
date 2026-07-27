@@ -152,6 +152,7 @@ async def test_livekit_playback_fact_commits_and_publishes_only_heard_text() -> 
     assert assistant_events == [
         {
             "type": "transcript_delta",
+            "session_id": "session-public",
             "speaker": "assistant",
             "text": "已经听到，",
             "final": False,
@@ -163,6 +164,7 @@ async def test_livekit_playback_fact_commits_and_publishes_only_heard_text() -> 
         },
         {
             "type": "transcript_delta",
+            "session_id": "session-public",
             "speaker": "assistant",
             "text": "已经听到，",
             "final": True,
