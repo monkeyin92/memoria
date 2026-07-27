@@ -138,6 +138,21 @@ class AgentSettings(BaseSettings):
     )
     qwen_fast_model: str = Field(default="qwen-turbo", alias="QWEN_FAST_MODEL")
     qwen_deep_model: str = Field(default="qwen-plus", alias="QWEN_DEEP_MODEL")
+    interrupt_semantic_enabled: bool = Field(
+        default=True,
+        alias="INTERRUPT_SEMANTIC_ENABLED",
+    )
+    interrupt_semantic_model: str = Field(
+        default="qwen-flash",
+        min_length=1,
+        alias="INTERRUPT_SEMANTIC_MODEL",
+    )
+    interrupt_semantic_timeout_s: float = Field(
+        default=0.6,
+        ge=0.1,
+        le=2.0,
+        alias="INTERRUPT_SEMANTIC_TIMEOUT_S",
+    )
 
     funasr_model: str = Field(default="fun-asr-realtime", alias="FUNASR_MODEL")
     funasr_sample_rate: int = Field(default=16000, alias="FUNASR_SAMPLE_RATE")

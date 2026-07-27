@@ -96,10 +96,21 @@ async def test_provider_smoke_runs_doubao_funasr_and_llm_without_network(
         calls.append("llm")
         return "Qwen"
 
+    async def fake_interrupt_semantic() -> None:
+        calls.append("interrupt-semantic")
+
     monkeypatch.setattr(provider_smoke_test, "smoke_doubao", fake_doubao)
     monkeypatch.setattr(provider_smoke_test, "smoke_funasr", fake_funasr)
     monkeypatch.setattr(provider_smoke_test, "smoke_llm", fake_llm)
+    monkeypatch.setattr(
+        provider_smoke_test,
+        "smoke_interrupt_semantic",
+        fake_interrupt_semantic,
+    )
 
     assert await provider_smoke_test.main() == 0
-    assert calls == ["doubao", "funasr", "llm"]
-    assert "provider_smoke_test PASS: FunASR, Qwen, Doubao" in capsys.readouterr().out
+    assert calls == ["doubao", "funasr", "llm", "interrupt-semantic"]
+    assert (
+        "provider_smoke_test PASS: FunASR, Qwen, Doubao, InterruptSemantic"
+        in capsys.readouterr().out
+    )

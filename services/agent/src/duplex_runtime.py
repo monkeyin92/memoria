@@ -48,6 +48,7 @@ from services.agent.src.orchestration.speaker_verify import (
 )
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
 from services.agent.src.orchestration.utterance_router import (
+    InterruptSemanticVerdict,
     TargetSpeakerRoute,
     UtteranceIntent,
     UtteranceRoute,
@@ -277,6 +278,16 @@ class DuplexRuntime:
     _target_speaker_interrupt: Callable[[], Awaitable[None]] | None = None
     _sticky_interrupt_epoch: int | None = None
     _sticky_interrupt_route: UtteranceRoute | None = None
+    _sticky_interrupt_text: str = ""
+    _interrupt_semantic_resolver: (
+        Callable[[str, str, str], Awaitable[InterruptSemanticVerdict]] | None
+    ) = None
+    _interrupt_semantic_speech_epoch: int | None = None
+    _interrupt_semantic_playback_epoch: int | None = None
+    _interrupt_semantic_assistant_text: str = ""
+    _interrupt_semantic_result_epoch: int | None = None
+    _interrupt_semantic_result_fence: GenerationFence | None = None
+    _interrupt_semantic_result: InterruptSemanticVerdict | None = None
     _last_committed_user_text_normalized: str = ""
     _trusted_unanchored_control_epoch: int | None = None
     _trusted_unanchored_playback_epoch: int | None = None
@@ -288,6 +299,8 @@ class DuplexRuntime:
     _paused_reply_available: bool = False
     _reply_speaker_binding: ResumeSpeakerBinding | None = None
     _paused_reply_binding: ResumeSpeakerBinding | None = None
+    _pending_semantic_pause_epoch: int | None = None
+    _pending_semantic_pause_binding: ResumeSpeakerBinding | None = None
     _resume_pending: bool = False
     _resume_fence: GenerationFence | None = None
     _last_interrupt_yield_ns: int | None = None
@@ -788,6 +801,7 @@ class DuplexRuntime:
         if self._sticky_interrupt_epoch == trusted_epoch:
             self._sticky_interrupt_epoch = None
             self._sticky_interrupt_route = None
+            self._sticky_interrupt_text = ""
         if trusted_epoch != self._speaker_epoch:
             return
         self._reset_speaker_classification_task()
@@ -800,6 +814,12 @@ class DuplexRuntime:
         self._speaker_pcm.clear()
         self._speaker_collecting = False
         self._fresh_user_speech = False
+        self._interrupt_semantic_speech_epoch = None
+        self._interrupt_semantic_playback_epoch = None
+        self._interrupt_semantic_assistant_text = ""
+        self._interrupt_semantic_result_epoch = None
+        self._interrupt_semantic_result_fence = None
+        self._interrupt_semantic_result = None
         self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE
         self.input_guard.candidate_reason = reason
 
@@ -1065,7 +1085,12 @@ class DuplexRuntime:
     def _interrupt_candidate_text(self) -> str:
         return (getattr(self.input_guard, "candidate_text", None) or "").strip()
 
-    def _route_candidate(self, text: str | None = None) -> UtteranceRoute:
+    def _route_candidate(
+        self,
+        text: str | None = None,
+        *,
+        semantic_verdict: InterruptSemanticVerdict | None = None,
+    ) -> UtteranceRoute:
         """Classify utterance via the shared control-plane router."""
         sticky_route = (
             self._sticky_interrupt_route
@@ -1086,6 +1111,7 @@ class DuplexRuntime:
                 if self.input_guard.candidate_during_playback
                 else ""
             ),
+            semantic_verdict=semantic_verdict,
         )
 
     def _is_explicit_owner_interrupt_cmd(self) -> bool:
@@ -1945,6 +1971,12 @@ class DuplexRuntime:
         self.orchestrator.heard_tracker.set_full_text(text)
 
     def on_user_voice_started(self, *, now_ns: int | None = None) -> PlaybackInputDecision:
+        interrupted_assistant_text = (
+            (self._pending_assistant_text or self._played_assistant_text)
+            if self._was_speaking
+            else ""
+        )
+        interrupted_playback_epoch = self._playback_epoch if self._was_speaking else None
         self.refresh_voice_profile()
         self._seal_canonical_speech_epoch()
         self._speaker_epoch += 1
@@ -1953,6 +1985,17 @@ class DuplexRuntime:
         self._target_focus_pending_epoch = None
         self._sticky_interrupt_epoch = None
         self._sticky_interrupt_route = None
+        self._sticky_interrupt_text = ""
+        self._interrupt_semantic_speech_epoch = (
+            self._speaker_epoch if interrupted_assistant_text else None
+        )
+        self._interrupt_semantic_playback_epoch = interrupted_playback_epoch
+        self._interrupt_semantic_assistant_text = interrupted_assistant_text
+        self._interrupt_semantic_result_epoch = None
+        self._interrupt_semantic_result_fence = None
+        self._interrupt_semantic_result = None
+        self._pending_semantic_pause_epoch = None
+        self._pending_semantic_pause_binding = None
         self._trusted_unanchored_control_epoch = None
         self._trusted_unanchored_playback_epoch = None
         self._clear_trusted_playback_audio()
@@ -2072,6 +2115,8 @@ class DuplexRuntime:
             # FunASR may revise a clear interim「等一下」into a nearby final
             # homophone while TTS is also reaching the microphone. Keep the
             # accepted control intent monotonic for this VAD epoch.
+            if self._sticky_interrupt_epoch != self._speaker_epoch:
+                self._sticky_interrupt_text = raw_route.normalized_text
             self._sticky_interrupt_epoch = self._speaker_epoch
             self._sticky_interrupt_route = raw_route
         if final:
@@ -2197,16 +2242,31 @@ class DuplexRuntime:
         *,
         speech_anchored: bool | None = None,
         canonical_speech_epoch: int | None = None,
+        semantic_verdict: InterruptSemanticVerdict | None = None,
     ) -> tuple[bool, str | None]:
         self.speaker_verifier.mark_utterance_end()
         self._persona_evidence_eligible = False
         if self.mode_policy_enforced and not self._mode_policy.allows_conversation():
             self.orchestrator.metrics.inc_guarded_user_input("interaction_mode_blocked")
             return False, "interaction_mode_blocked"
+        if (
+            semantic_verdict is not None
+            and canonical_speech_epoch != self._speaker_epoch
+        ):
+            self.orchestrator.metrics.inc_guarded_user_input("stale_interrupt_semantic")
+            self.mark_audio_event(
+                "interrupt_semantic_stale",
+                status="ignored",
+                detail={
+                    "request_speech_epoch": canonical_speech_epoch,
+                    "current_speech_epoch": self._speaker_epoch,
+                },
+            )
+            return False, "stale_interrupt_semantic"
         # Single control-plane decision: enroll / pure interrupt / chat.
         # Side effects (early enroll finalize, yield ack) stay here; intent is
         # owned by utterance_router so barge-in and turn-commit cannot diverge.
-        route = self._route_candidate(text)
+        route = self._route_candidate(text, semantic_verdict=semantic_verdict)
         if route.intent is UtteranceIntent.ENROLL:
             # User finished an enroll utterance — try finalize immediately so
             # we do not wait the full wall timeout after they already spoke.
@@ -2236,6 +2296,19 @@ class DuplexRuntime:
         if route.should_interrupt and not route.enter_chat:
             # Control-plane routes never become LLM user turns.
             self.input_guard.candidate_text = text
+            if (
+                route.reason
+                in {
+                    "interrupt_semantic_control_only",
+                    "interrupt_semantic_unsure",
+                }
+                and canonical_speech_epoch == self._pending_semantic_pause_epoch
+                and self._pending_semantic_pause_binding is not None
+            ):
+                self._paused_reply_binding = self._pending_semantic_pause_binding
+                self._paused_reply_available = True
+            self._pending_semantic_pause_epoch = None
+            self._pending_semantic_pause_binding = None
             self.orchestrator.metrics.inc_guarded_user_input(route.reason)
             logger.info(
                 "user_turn_ignored reason=%s intent=%s text_len=%s session_id=%s",
@@ -2262,7 +2335,10 @@ class DuplexRuntime:
             self._restore_listen_after_control(cause="interrupt_command_turn")
             # Ensure semantic ack (cooldown skips if interrupt path already said it).
             self._spawn(
-                self._maybe_say_interrupt_yield(cause="interrupt_command_turn"),
+                self._maybe_say_interrupt_yield(
+                    cause="interrupt_command_turn",
+                    route=route,
+                ),
                 name="interrupt-cmd-yield",
             )
             return False, route.reason
@@ -2340,6 +2416,8 @@ class DuplexRuntime:
             if route.enter_chat:
                 self._paused_reply_available = False
                 self._paused_reply_binding = None
+                self._pending_semantic_pause_epoch = None
+                self._pending_semantic_pause_binding = None
         return accepted, reason
 
     async def on_turn_committed(self, user_text: str) -> GenerationFence:
@@ -2409,6 +2487,94 @@ class DuplexRuntime:
     def set_interrupt_yield(self, speaker: Callable[[str], Awaitable[None]] | None) -> None:
         """speaker(phrase) — phrase is chosen from interrupt semantics."""
         self._interrupt_yield = speaker
+
+    def set_interrupt_semantic_resolver(
+        self,
+        resolver: Callable[[str, str, str], Awaitable[InterruptSemanticVerdict]] | None,
+    ) -> None:
+        """Inject the small-model evidence adapter; the Router still owns policy."""
+
+        self._interrupt_semantic_resolver = resolver
+
+    async def resolve_interrupt_semantic(
+        self,
+        text: str,
+        *,
+        canonical_speech_epoch: int | None,
+    ) -> InterruptSemanticVerdict | None:
+        """Review only one playback-bound ambiguous final for the current epoch."""
+
+        resolver = self._interrupt_semantic_resolver
+        sticky = (
+            self._sticky_interrupt_route
+            if self._sticky_interrupt_epoch == self._speaker_epoch
+            else None
+        )
+        if (
+            resolver is None
+            or canonical_speech_epoch is None
+            or canonical_speech_epoch != self._speaker_epoch
+            or self._interrupt_semantic_speech_epoch != canonical_speech_epoch
+            or self._interrupt_semantic_playback_epoch is None
+            or sticky is None
+            or sticky.intent is not UtteranceIntent.INTERRUPT_THEN_CHAT
+            or self._route_candidate(text).intent is not UtteranceIntent.INTERRUPT_THEN_CHAT
+        ):
+            return None
+        if (
+            self._interrupt_semantic_result_epoch == canonical_speech_epoch
+            and self._interrupt_semantic_result_fence is not None
+            and self._interrupt_semantic_result_fence.matches(self.fence)
+            and self._interrupt_semantic_result is not None
+        ):
+            return self._interrupt_semantic_result
+
+        request_fence = self.fence
+        request_playback_epoch = self._interrupt_semantic_playback_epoch
+        try:
+            verdict = await resolver(
+                text,
+                self._sticky_interrupt_text or sticky.normalized_text,
+                self._interrupt_semantic_assistant_text,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("interrupt semantic resolver unavailable", exc_info=True)
+            verdict = InterruptSemanticVerdict.UNSURE
+        if not isinstance(verdict, InterruptSemanticVerdict):
+            verdict = InterruptSemanticVerdict.UNSURE
+        if (
+            canonical_speech_epoch != self._speaker_epoch
+            or self._interrupt_semantic_speech_epoch != canonical_speech_epoch
+            or request_playback_epoch != self._interrupt_semantic_playback_epoch
+            or not request_fence.matches(self.fence)
+        ):
+            self.mark_audio_event(
+                "interrupt_semantic_stale",
+                status="ignored",
+                detail={
+                    "request_speech_epoch": canonical_speech_epoch,
+                    "current_speech_epoch": self._speaker_epoch,
+                    "request_playback_epoch": request_playback_epoch,
+                    "current_playback_epoch": self._interrupt_semantic_playback_epoch,
+                },
+            )
+            return InterruptSemanticVerdict.UNSURE
+
+        self._interrupt_semantic_result_epoch = canonical_speech_epoch
+        self._interrupt_semantic_result_fence = request_fence
+        self._interrupt_semantic_result = verdict
+        self.mark_audio_event(
+            "interrupt_semantic_resolved",
+            status="degraded" if verdict is InterruptSemanticVerdict.UNSURE else "ok",
+            detail={
+                "verdict": verdict,
+                "speech_epoch": canonical_speech_epoch,
+                "playback_epoch": request_playback_epoch,
+            },
+        )
+        return verdict
 
     def set_false_interrupt_recover(self, recover: Callable[[], Awaitable[None]] | None) -> None:
         """Called when LiveKit already stopped audio but speaker gate rejected barge-in."""
@@ -2541,7 +2707,12 @@ class DuplexRuntime:
             },
         )
 
-    async def _maybe_say_interrupt_yield(self, *, cause: str) -> None:
+    async def _maybe_say_interrupt_yield(
+        self,
+        *,
+        cause: str,
+        route: UtteranceRoute | None = None,
+    ) -> None:
         """Short ack after mid-reply stop so users know we yielded, not crashed."""
         if self._interrupt_yield is None:
             return
@@ -2558,16 +2729,16 @@ class DuplexRuntime:
             return
         self._last_interrupt_yield_ns = now
         candidate = self._interrupt_candidate_text()
-        route = self._route_candidate(candidate)
-        phrase = route.ack_phrase or interrupt_ack_phrase(candidate)
+        final_route = route or self._route_candidate(candidate)
+        phrase = final_route.ack_phrase or interrupt_ack_phrase(candidate)
         self.mark_audio_event(
             "interrupt_yield_started",
             detail={
                 "cause": cause,
                 "ack_len": len(phrase),
                 "candidate_len": len(candidate),
-                "intent": route.intent,
-                "reason": route.reason,
+                "intent": final_route.intent,
+                "reason": final_route.reason,
             },
         )
         try:
@@ -2697,9 +2868,22 @@ class DuplexRuntime:
             ):
                 self._paused_reply_binding = self._reply_speaker_binding
                 self._paused_reply_available = self._paused_reply_binding is not None
+                self._pending_semantic_pause_epoch = None
+                self._pending_semantic_pause_binding = None
+            elif (
+                create_user_turn
+                and mid_reply
+                and barge_route.intent is UtteranceIntent.INTERRUPT_THEN_CHAT
+            ):
+                self._pending_semantic_pause_epoch = self._speaker_epoch
+                self._pending_semantic_pause_binding = self._reply_speaker_binding
+                self._paused_reply_available = False
+                self._paused_reply_binding = None
             elif create_user_turn:
                 self._paused_reply_available = False
                 self._paused_reply_binding = None
+                self._pending_semantic_pause_epoch = None
+                self._pending_semantic_pause_binding = None
             self.publish_assistant_state("interrupted")
             self.set_interaction_phase(
                 InteractionPhase.INTERRUPTED,
@@ -3093,7 +3277,12 @@ class DuplexRuntime:
                 decision = self.on_user_voice_started()
                 if decision is PlaybackInputDecision.WAIT:
                     _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
-                    self.publish_assistant_audio("duck", gain=PLAYBACK_DUCK_GAIN)
+                    self.publish_assistant_audio(
+                        "duck",
+                        gain=0.0
+                        if self.trusted_aec_playback_control
+                        else PLAYBACK_DUCK_GAIN,
+                    )
                     self.mark_audio_event("barge_in_detected")
                 else:
                     _set_min_words(base_min_words)

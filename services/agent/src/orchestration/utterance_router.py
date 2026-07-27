@@ -42,6 +42,14 @@ class UtteranceIntent(StrEnum):
     EMPTY = "empty"
 
 
+class InterruptSemanticVerdict(StrEnum):
+    """Narrow evidence returned by the ambiguous-interrupt classifier."""
+
+    CONTROL_ONLY = "CONTROL_ONLY"
+    HAS_USER_CONTENT = "HAS_USER_CONTENT"
+    UNSURE = "UNSURE"
+
+
 @dataclass(frozen=True)
 class SpeakerGateRoute:
     """Control-plane outcome for the legacy acoustic guard.
@@ -167,6 +175,7 @@ def route_utterance(
     resumable_reply: bool = False,
     sticky_interrupt_route: UtteranceRoute | None = None,
     previous_committed_text_normalized: str = "",
+    semantic_verdict: InterruptSemanticVerdict | None = None,
 ) -> UtteranceRoute:
     """Classify one utterance. First matching rule wins (see tests for the table).
 
@@ -175,10 +184,11 @@ def route_utterance(
       2. resume command while a reply is paused → resume
       3. interrupt-command-only → interrupt_command (no chat, yield/stop ack)
       4. sticky interrupt exact replay → interrupt_replay
-      5. explicit interrupt + content → interrupt_then_chat
-      6. remaining sticky interrupt → monotonic prior route
-      7. empty text → empty
-      8. default → chat
+      5. semantic control-only evidence → interrupt_command
+      6. explicit interrupt + content → interrupt_then_chat
+      7. remaining sticky interrupt → monotonic prior route
+      8. empty text → empty
+      9. default → chat
     """
     normalized = normalize_short(text)
     state = _as_speaker_state(speaker_state)
@@ -239,7 +249,37 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 5) Interrupt wording with real content → barge-in then chat
+    # 5) A small model may only provide evidence for an already-ambiguous
+    # sticky interrupt. The Router remains the sole owner of side effects.
+    if (
+        sticky_interrupt_route is not None
+        and sticky_interrupt_route.intent is UtteranceIntent.INTERRUPT_THEN_CHAT
+        and semantic_verdict
+        in {
+            InterruptSemanticVerdict.CONTROL_ONLY,
+            InterruptSemanticVerdict.UNSURE,
+        }
+    ):
+        unsure = semantic_verdict is InterruptSemanticVerdict.UNSURE
+        return UtteranceRoute(
+            intent=UtteranceIntent.INTERRUPT_COMMAND,
+            reason=(
+                "interrupt_semantic_unsure"
+                if unsure
+                else "interrupt_semantic_control_only"
+            ),
+            enter_chat=False,
+            should_interrupt=True,
+            speaker_gate_override=True,
+            ack_phrase=(
+                "刚才没听清，你再说一遍。"
+                if unsure
+                else "嗯，你说。"
+            ),
+            normalized_text=normalized,
+        )
+
+    # 6) Interrupt wording with real content → barge-in then chat
     if is_explicit_interrupt(text):
         return UtteranceRoute(
             intent=UtteranceIntent.INTERRUPT_THEN_CHAT,
@@ -251,11 +291,11 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 6) Preserve any remaining accepted interrupt across ASR revisions.
+    # 7) Preserve any remaining accepted interrupt across ASR revisions.
     if sticky_interrupt_route is not None and sticky_interrupt_route.should_interrupt:
         return replace(sticky_interrupt_route, normalized_text=normalized)
 
-    # 7) Empty
+    # 8) Empty
     if not normalized:
         return UtteranceRoute(
             intent=UtteranceIntent.EMPTY,
@@ -267,7 +307,7 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 8) Normal chat
+    # 9) Normal chat
     return UtteranceRoute(
         intent=UtteranceIntent.CHAT,
         reason="chat",

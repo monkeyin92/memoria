@@ -9,6 +9,17 @@
 
 ## 当前代码
 
+- 2026-07-27 本地正在形成未发布候选：可信小程序 AEC barge-in 首事件改为
+  `assistant_audio duck/gain=0.0`；歧义 sticky `interrupt_then_chat` final 仅调用
+  `qwen-flash` 做严格三态复核，`UtteranceRouter` 仍是唯一副作用策略入口。
+- 新复核输入只含 final、首个 sticky 文本和 barge-in 冻结助手文本；结果绑定 speech epoch、
+  playback epoch 和 generation fence。分类与 SpeakerAuthority 并行，超时/异常/非法输出
+  fail closed 并提示重说；确认后的纯控制仍保留原回答供“继续”。
+- 本地门禁已通过：Python `1269 passed, 27 skipped`，Ruff、strict mypy、
+  H5 `232/232`、小程序 `32/32` 与 `git diff --check`。本机没有
+  `DASHSCOPE_API_KEY`，因此当前候选的真实 `qwen-flash` Provider smoke 仍须在发布环境执行。
+- 本候选尚未推送或发布；本地 checkpoint/tag 会作为构建不可变 runtime 工件的必要发布步骤，
+  当前生产仍保持 `20260726-233337`。
 - 当前生产 source commit / annotated tag：
   `8176c91dcadcecd02a7af37f7876a360aba5eee6 / 20260726-233337`。
 - 当前版本在统一 `UtteranceRouter` 中识别打断后旧话轮重放，并把自建 endpointing
@@ -142,14 +153,16 @@
 
 ## 未闭环与下一步
 
-1. 用户完全退出并重新打开小程序体验版 `0.8.49`，在 AI 播放约 0.6 秒后说“停一下”。
-2. 确认立即停播、只播放一次“嗯，你说。”、不重复上一问题；随后提出新问题必须正常回答。
-3. 补测正常短句、长句、慢语速和 1–2 秒句中停顿，确认 `0.90 / 1.50`
-   没有引入错误拆轮。
-4. 任一结果失败，先冻结同一会话的 Agent/Gateway/Control 脱敏日志，再同时恢复
-   `20260726-215154` 和旧 Agent env。
-5. 真机通过后清理 `memoria-interrupt-echo-guard` worktree、多余旧镜像和不再需要的
-   本地 artifacts；不运行 `docker system prune -a`，不删除卷或其他项目镜像。
+1. 获得明确发布授权后，为新候选生成 release/tag、备份旧 Agent env，并让 Provider smoke
+   通过 `FunASR, Qwen, Doubao, InterruptSemantic`。
+2. 发布后在 AI 播放约 0.6 秒时依次测试：“等一下”、“停一下，你叫什么名字？”、
+   引用助手原话的追问、纯噪声/误触发和分类超时恢复。
+3. 验收 0–700 ms 内静音、纯控制只确认一次且不进 chat、真实问题不丢失、“继续”恢复原回答，
+   并补测正常短句、长句、慢语速和 1–2 秒句中停顿。
+4. 任一结果失败，先冻结同一会话的 Agent/Gateway/Control 脱敏日志，再恢复
+   `20260726-233337` 及其旧 Agent env。
+5. 真机通过后清理 hotfix worktree、多余旧镜像和不再需要的本地 artifacts；不运行
+   `docker system prune -a`，不删除卷或其他项目镜像。
 
 ## 用户工作区边界
 

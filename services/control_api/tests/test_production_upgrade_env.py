@@ -73,6 +73,9 @@ def test_endpointing_defaults_match_operator_templates() -> None:
         "ENDPOINTING_MIN_DELAY_S": "0.90",
         "ENDPOINTING_MAX_DELAY_S": "1.50",
         "FALSE_INTERRUPTION_TIMEOUT_S": "1.70",
+        "INTERRUPT_SEMANTIC_ENABLED": "true",
+        "INTERRUPT_SEMANTIC_MODEL": "qwen-flash",
+        "INTERRUPT_SEMANTIC_TIMEOUT_S": "0.6",
     }
 
     for relative in (".env.example", "infra/memoria.env.production.example"):
@@ -108,6 +111,9 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert agent["ENDPOINTING_MIN_DELAY_S"] == "0.90"
     assert agent["ENDPOINTING_MAX_DELAY_S"] == "1.50"
     assert agent["FALSE_INTERRUPTION_TIMEOUT_S"] == "1.70"
+    assert agent["INTERRUPT_SEMANTIC_ENABLED"] == "true"
+    assert agent["INTERRUPT_SEMANTIC_MODEL"] == "qwen-flash"
+    assert agent["INTERRUPT_SEMANTIC_TIMEOUT_S"] == "0.6"
     assert agent["DOUBAO_TTS_APP_ID"] == "doubao-app-id"
     assert agent["DOUBAO_TTS_ACCESS_TOKEN"] == "doubao-access-token"
     assert "DOUBAO_TTS_APP_ID" not in control

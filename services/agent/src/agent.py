@@ -21,8 +21,13 @@ from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime, GenerationVoiceSnapshot
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
 from services.agent.src.prompts import VOICE_SYSTEM_PROMPT
 from services.agent.src.providers.doubao_voice_catalog import resolve_approved_voice
+from services.agent.src.providers.interrupt_semantic_classifier import (
+    InterruptSemanticClassifier,
+    InterruptSemanticClassifierConfig,
+)
 from services.agent.src.response_planner_client import (
     CANONICAL_PLANNER_POLICY_VERSION,
     Disclosure,
@@ -904,7 +909,13 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 metrics.get("transcription_delay"),
                 metrics.get("end_of_turn_delay"),
             )
-            speaker = await self._runtime.await_speaker_classification()
+            speaker, semantic_verdict = await asyncio.gather(
+                self._runtime.await_speaker_classification(),
+                self._runtime.resolve_interrupt_semantic(
+                    text.strip(),
+                    canonical_speech_epoch=canonical_speech_epoch,
+                ),
+            )
             logger.info(
                 "speaker_authority classification=%s reason=%s model=%s "
                 "template_version=%s session_id=%s",
@@ -918,6 +929,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 text.strip(),
                 speech_anchored=speech_anchored,
                 canonical_speech_epoch=canonical_speech_epoch,
+                semantic_verdict=semantic_verdict,
             )
             if not accepted:
                 logger.info(
@@ -932,6 +944,9 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                             "speaker_mismatch",
                             "interrupt_command_only",
                             "interrupt_replayed_previous_turn",
+                            "interrupt_semantic_control_only",
+                            "interrupt_semantic_unsure",
+                            "stale_interrupt_semantic",
                             "target_non_owner",
                             "target_insufficient_speech",
                             "target_unconfirmed",
@@ -1595,6 +1610,34 @@ async def entrypoint(ctx: Any) -> None:
         use_paralinguistic_tags=False,
         speaker_verifier=speaker_verifier,
     )
+    interrupt_semantic_classifier: InterruptSemanticClassifier | None = None
+    if (
+        miniprogram_aec_session
+        and runtime_settings.interrupt_semantic_enabled
+        and not offline
+    ):
+        interrupt_semantic_classifier = InterruptSemanticClassifier(
+            InterruptSemanticClassifierConfig(
+                api_key=runtime_settings.dashscope_api_key,
+                base_url=runtime_settings.dashscope_compatible_base_url,
+                model=runtime_settings.interrupt_semantic_model,
+                timeout_s=runtime_settings.interrupt_semantic_timeout_s,
+            )
+        )
+
+        async def _resolve_interrupt_semantic(
+            final_text: str,
+            sticky_text: str,
+            assistant_text: str,
+        ) -> InterruptSemanticVerdict:
+            assert interrupt_semantic_classifier is not None
+            return await interrupt_semantic_classifier.classify(
+                final_text=final_text,
+                sticky_text=sticky_text,
+                assistant_text=assistant_text,
+            )
+
+        runtime.set_interrupt_semantic_resolver(_resolve_interrupt_semantic)
     mode_policy_client = None
     interaction_policy_token = runtime_settings.internal_token("interaction_policy")
     if interaction_policy_token and not offline:
@@ -2115,6 +2158,11 @@ async def entrypoint(ctx: Any) -> None:
             stt_plugin.set_pcm_observer(None)
             await _close_component("emotion_sidecar", emotion_sidecar.aclose())
         await _close_component("runtime", runtime.close())
+        if interrupt_semantic_classifier is not None:
+            await _close_component(
+                "interrupt_semantic_classifier",
+                interrupt_semantic_classifier.aclose(),
+            )
         await _close_component("tts", tts_plugin.aclose())
         if response_planner_client is not None:
             await _close_component("response_planner_client", response_planner_client.aclose())

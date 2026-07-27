@@ -39,6 +39,23 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.voice_profile_enabled is False
     assert s.response_plan_url.endswith("/v1/interaction/response-plan")
     assert s.response_plan_timeout_s == 0.8
+    assert s.interrupt_semantic_enabled is True
+    assert s.interrupt_semantic_model == "qwen-flash"
+    assert s.interrupt_semantic_timeout_s == 0.6
+
+
+def test_interrupt_semantic_settings_are_overridable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("INTERRUPT_SEMANTIC_ENABLED", "false")
+    monkeypatch.setenv("INTERRUPT_SEMANTIC_MODEL", "qwen-turbo")
+    monkeypatch.setenv("INTERRUPT_SEMANTIC_TIMEOUT_S", "0.4")
+
+    settings = AgentSettings()
+
+    assert settings.interrupt_semantic_enabled is False
+    assert settings.interrupt_semantic_model == "qwen-turbo"
+    assert settings.interrupt_semantic_timeout_s == 0.4
 
 
 def test_cn_self_hosted_forces_v1_mini(monkeypatch: pytest.MonkeyPatch) -> None:

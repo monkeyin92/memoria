@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from services.agent.src.orchestration.speaker_verify import SpeakerGateState
 from services.agent.src.orchestration.utterance_router import (
+    InterruptSemanticVerdict,
     UtteranceIntent,
     route_speaker_gate,
     route_target_speaker,
@@ -267,6 +268,52 @@ def test_sticky_interrupt_keeps_different_final_as_interrupt_then_chat() -> None
     assert route.intent is UtteranceIntent.INTERRUPT_THEN_CHAT
     assert route.enter_chat is True
     assert route.normalized_text == "你今天过得怎么样"
+
+
+def test_semantic_control_only_collapses_polluted_sticky_final_to_control() -> None:
+    sticky = route_utterance("停一下，你叫什么名字？")
+
+    route = route_utterance(
+        "份停听一下能是据提供的数据和指示来协助。",
+        sticky_interrupt_route=sticky,
+        semantic_verdict=InterruptSemanticVerdict.CONTROL_ONLY,
+    )
+
+    assert route.intent is UtteranceIntent.INTERRUPT_COMMAND
+    assert route.reason == "interrupt_semantic_control_only"
+    assert route.enter_chat is False
+    assert route.should_interrupt is True
+    assert route.ack_phrase == "嗯，你说。"
+
+
+def test_semantic_user_content_preserves_sticky_chat() -> None:
+    sticky = route_utterance("停一下，你叫什么名字？")
+
+    route = route_utterance(
+        "停一下，你叫什么名字？",
+        sticky_interrupt_route=sticky,
+        semantic_verdict=InterruptSemanticVerdict.HAS_USER_CONTENT,
+    )
+
+    assert route.intent is UtteranceIntent.INTERRUPT_THEN_CHAT
+    assert route.reason == "interrupt_then_chat"
+    assert route.enter_chat is True
+
+
+def test_semantic_unsure_fails_closed_and_asks_for_repetition() -> None:
+    sticky = route_utterance("停一下，你叫什么名字？")
+
+    route = route_utterance(
+        "停听一下",
+        sticky_interrupt_route=sticky,
+        semantic_verdict=InterruptSemanticVerdict.UNSURE,
+    )
+
+    assert route.intent is UtteranceIntent.INTERRUPT_COMMAND
+    assert route.reason == "interrupt_semantic_unsure"
+    assert route.enter_chat is False
+    assert route.should_interrupt is True
+    assert route.ack_phrase == "刚才没听清，你再说一遍。"
 
 
 def test_sticky_interrupt_does_not_override_enrollment_or_new_pure_control() -> None:

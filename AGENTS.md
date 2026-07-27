@@ -28,6 +28,11 @@ Durable instructions for anyone (human or AI) working on Memoria. Update this fi
 - 用户资料中的 `reject_non_owner_voice` 是 TargetSpeakerFocus 的实验性产品策略开关，默认开启；开启时只拒绝 formal `guest/owner_mismatch` 与明确的 `shadow_guest_candidate`。shadow/formal ambiguous 为避免误静音主人仍可普通对话，但保持 non-owner/uncertain，不能进入主人历史、私人记忆、工具或敏感权限；关闭后访客可以对话，但不得因此升级 `owner` 权限。
 - H5 长期历史只能消费 Agent 权威终稿中的 `history_eligible=true`；访客、ambiguous、无档案或 authority 不可用的话轮及其对应 AI 回复不得落入主人的回顾/自动摘要。资格必须按 generation fence 绑定，不能读取“当前最新说话人”代替原话轮归属。
 - **修打断/门禁类 bug 时，优先改 Router 规则表 + 单测**，不要在 `duplex_runtime` 再开平行 if。
+- 播放期歧义 final 只允许小模型提供
+  `CONTROL_ONLY / HAS_USER_CONTENT / UNSURE` 证据；确定性规则优先，模型不得直接执行
+  stop/chat/ack/clear。调用仅限当前 speech epoch 的 sticky `interrupt_then_chat`，输入只含
+  final、首个 sticky 文本和冻结助手文本；超时、非法输出或迟到结果 fail closed，并受
+  playback/generation fence 约束。详见 ADR-0022。
 - 播放期 noise / backchannel / echo 仍由 `PlaybackInputGuard` 处理；若与 Router 意图冲突，再考虑并入（举一反三）。
 
 ## 其他

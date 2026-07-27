@@ -26,7 +26,10 @@ from services.agent.src.orchestration.speaker_verify import (
     voiced_stats_from_pcm,
 )
 from services.agent.src.orchestration.state_machine import ConversationState
-from services.agent.src.orchestration.utterance_router import UtteranceIntent
+from services.agent.src.orchestration.utterance_router import (
+    InterruptSemanticVerdict,
+    UtteranceIntent,
+)
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSTT
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
@@ -98,6 +101,39 @@ class _SessionEmitter:
     def emit(self, name: str, event: Any) -> None:
         for handler in tuple(self.handlers.get(name, ())):
             handler(event)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("trusted_aec", "expected_gain"),
+    [(True, 0.0), (False, 0.25)],
+)
+async def test_barge_in_duck_gain_is_zero_only_for_trusted_miniprogram_aec(
+    trusted_aec: bool,
+    expected_gain: float,
+) -> None:
+    published: list[dict[str, object]] = []
+
+    async def _publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=trusted_aec,
+    )
+    runtime.set_event_publisher(_publish)
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("我正在说一段还没有结束的话。")
+    session = _SessionEmitter()
+    runtime.attach_session_events(session)
+
+    session.emit("user_state_changed", SimpleNamespace(new_state="speaking"))
+    await asyncio.sleep(0)
+
+    first_audio = next(event for event in published if event.get("type") == "assistant_audio")
+    assert first_audio["action"] == "duck"
+    assert first_audio["gain"] == expected_gain
+    await runtime.close()
 
 
 @pytest.mark.asyncio
@@ -372,6 +408,205 @@ async def test_sticky_interrupt_keeps_final_with_different_content_as_chat() -> 
     assert reason is None
     new_fence = await runtime.on_turn_committed("你今天过得怎么样？")
     assert new_fence.turn_id == previous_fence.turn_id + 1
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_sticky_final_uses_frozen_barge_evidence_and_stays_out_of_chat() -> None:
+    resolved: list[tuple[str, str, str]] = []
+    said: list[str] = []
+    cleared: list[str] = []
+    published: list[dict[str, object]] = []
+
+    async def _resolve(
+        final_text: str,
+        sticky_text: str,
+        assistant_text: str,
+    ) -> InterruptSemanticVerdict:
+        resolved.append((final_text, sticky_text, assistant_text))
+        return InterruptSemanticVerdict.CONTROL_ONLY
+
+    async def _yield(phrase: str) -> None:
+        said.append(phrase)
+
+    async def _publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_interrupt_semantic_resolver(_resolve)
+    runtime.set_interrupt_yield(_yield)
+    runtime.set_event_publisher(_publish)
+    runtime.set_user_turn_clearer(lambda: cleared.append("cleared"))
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("根据提供的数据和指示来协助。")
+    runtime.on_user_voice_started()
+    assert (
+        runtime.observe_user_transcript(
+            "停一下，你叫什么名字？",
+            final=False,
+        ).value
+        == "accept"
+    )
+    runtime.update_pending_assistant_text("这段晚到的新助手文本不能进入旧话轮复核。")
+
+    final_text = "份停听一下能是据提供的数据和指示来协助。"
+    verdict = await runtime.resolve_interrupt_semantic(
+        final_text,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+    accepted, reason = runtime.accept_user_turn(
+        final_text,
+        speech_anchored=True,
+        canonical_speech_epoch=runtime._speaker_epoch,
+        semantic_verdict=verdict,
+    )
+    await asyncio.sleep(0.01)
+
+    assert resolved == [
+        (
+            final_text,
+            "停一下，你叫什么名字",
+            "根据提供的数据和指示来协助。",
+        )
+    ]
+    assert verdict is InterruptSemanticVerdict.CONTROL_ONLY
+    assert accepted is False
+    assert reason == "interrupt_semantic_control_only"
+    assert cleared == ["cleared"]
+    assert said == ["嗯，你说。"]
+    yield_event = next(
+        event
+        for event in published
+        if event.get("type") == "audio_trace"
+        and event.get("name") == "interrupt_yield_started"
+    )
+    assert yield_event["detail"]["reason"] == "interrupt_semantic_control_only"  # type: ignore[index]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_semantic_control_only_preserves_the_interrupted_reply_for_resume() -> None:
+    async def _resolve(
+        _final_text: str,
+        _sticky_text: str,
+        _assistant_text: str,
+    ) -> InterruptSemanticVerdict:
+        return InterruptSemanticVerdict.CONTROL_ONLY
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_interrupt_semantic_resolver(_resolve)
+    runtime._speaker_class = "owner"
+    runtime._speaker_decision = _speaker_decision()
+    await runtime.on_turn_committed("请继续介绍这个方案。")
+    await runtime.on_assistant_speaking("根据提供的数据和指示来协助。")
+    runtime.on_user_voice_started()
+    runtime.observe_user_transcript("停一下，你叫什么名字？", final=False)
+    await runtime.on_real_interrupt(cause="livekit_playback_interrupted")
+
+    final_text = "份停听一下能是据提供的数据和指示来协助。"
+    verdict = await runtime.resolve_interrupt_semantic(
+        final_text,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+    accepted, reason = runtime.accept_user_turn(
+        final_text,
+        speech_anchored=True,
+        canonical_speech_epoch=runtime._speaker_epoch,
+        semantic_verdict=verdict,
+    )
+
+    assert accepted is False
+    assert reason == "interrupt_semantic_control_only"
+    assert runtime._paused_reply_available is True
+    assert runtime._paused_reply_binding == (
+        "owner",
+        "profile-owner-001",
+        1,
+        "owner",
+    )
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_semantic_result_is_discarded_after_speech_epoch_changes() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _resolve(
+        _final_text: str,
+        _sticky_text: str,
+        _assistant_text: str,
+    ) -> InterruptSemanticVerdict:
+        started.set()
+        await release.wait()
+        return InterruptSemanticVerdict.CONTROL_ONLY
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_interrupt_semantic_resolver(_resolve)
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("旧助手文本")
+    runtime.on_user_voice_started()
+    runtime.observe_user_transcript("停一下，你叫什么名字？", final=False)
+    old_epoch = runtime._speaker_epoch
+
+    task = asyncio.create_task(
+        runtime.resolve_interrupt_semantic(
+            "停听一下",
+            canonical_speech_epoch=old_epoch,
+        )
+    )
+    await started.wait()
+    runtime._was_speaking = False
+    runtime.on_user_voice_started()
+    release.set()
+
+    verdict = await task
+    accepted, reason = runtime.accept_user_turn(
+        "停听一下",
+        speech_anchored=True,
+        canonical_speech_epoch=old_epoch,
+        semantic_verdict=verdict,
+    )
+
+    assert verdict is InterruptSemanticVerdict.UNSURE
+    assert accepted is False
+    assert reason == "stale_interrupt_semantic"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_clean_or_non_sticky_final_skips_semantic_model() -> None:
+    calls = 0
+
+    async def _resolve(
+        _final_text: str,
+        _sticky_text: str,
+        _assistant_text: str,
+    ) -> InterruptSemanticVerdict:
+        nonlocal calls
+        calls += 1
+        return InterruptSemanticVerdict.CONTROL_ONLY
+
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    runtime.set_interrupt_semantic_resolver(_resolve)
+    runtime.on_user_voice_started()
+
+    verdict = await runtime.resolve_interrupt_semantic(
+        "介绍一下南京。",
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+
+    assert verdict is None
+    assert calls == 0
     await runtime.close()
 
 

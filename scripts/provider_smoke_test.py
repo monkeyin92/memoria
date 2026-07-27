@@ -12,6 +12,7 @@ import sys
 from services.agent.src.config import AgentSettings
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
 from services.agent.src.providers.deepseek import (
     DeepSeekClient,
     DeepSeekConfig,
@@ -21,6 +22,10 @@ from services.agent.src.providers.doubao_protocol import pcm_duration_ms
 from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
 from services.agent.src.providers.funasr_protocol import timestamps_monotonic
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
+from services.agent.src.providers.interrupt_semantic_classifier import (
+    InterruptSemanticClassifier,
+    InterruptSemanticClassifierConfig,
+)
 
 DEFAULT_DASHSCOPE_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
 
@@ -214,6 +219,69 @@ async def smoke_llm() -> str:
     return label
 
 
+async def smoke_interrupt_semantic() -> None:
+    settings = AgentSettings()
+    if not settings.interrupt_semantic_enabled:
+        raise AssertionError("interrupt semantic classifier is disabled")
+    classifier = InterruptSemanticClassifier(
+        InterruptSemanticClassifierConfig(
+            api_key=settings.dashscope_api_key,
+            base_url=settings.dashscope_compatible_base_url,
+            model=settings.interrupt_semantic_model,
+            timeout_s=settings.interrupt_semantic_timeout_s,
+        )
+    )
+    cases = (
+        (
+            "份停听一下能是据提供的数据和指示来协助。",
+            "停一下",
+            "根据提供的数据和指示来协助。",
+            InterruptSemanticVerdict.CONTROL_ONLY,
+        ),
+        (
+            "等一下，我想问下周三有什么安排？",
+            "等一下",
+            "我正在介绍今天的数据。",
+            InterruptSemanticVerdict.HAS_USER_CONTENT,
+        ),
+        (
+            "不是，你说的“根据提供的数据”是什么意思？",
+            "不是",
+            "根据提供的数据和指示来协助。",
+            InterruptSemanticVerdict.HAS_USER_CONTENT,
+        ),
+        (
+            "停一下，你叫什么名字？",
+            "停一下",
+            "我正在介绍自己。",
+            InterruptSemanticVerdict.HAS_USER_CONTENT,
+        ),
+        (
+            "停一下根据提供的数据和指示来协助。",
+            "停一下",
+            "根据提供的数据和指示来协助。",
+            InterruptSemanticVerdict.CONTROL_ONLY,
+        ),
+    )
+    try:
+        for final_text, sticky_text, assistant_text, expected in cases:
+            actual = await classifier.classify(
+                final_text=final_text,
+                sticky_text=sticky_text,
+                assistant_text=assistant_text,
+            )
+            if actual is not expected:
+                raise AssertionError(
+                    f"interrupt semantic mismatch expected={expected} actual={actual}"
+                )
+    finally:
+        await classifier.aclose()
+    print(
+        "Interrupt semantic smoke: PASS "
+        f"(model={settings.interrupt_semantic_model}; {len(cases)} cases)"
+    )
+
+
 async def main() -> int:
     required = os.getenv("MEMORIA_PROVIDER_SMOKE_REQUIRED", "false").lower() == "true"
     if os.getenv("OFFLINE_MOCK", "false").lower() == "true":
@@ -237,10 +305,14 @@ async def main() -> int:
         pcm_16k = await smoke_doubao()
         await smoke_funasr(pcm_16k)
         llm_label = await smoke_llm()
+        await smoke_interrupt_semantic()
     except Exception as exc:
         print(f"provider_smoke_test FAIL: {type(exc).__name__}: {exc}")
         return 1
-    print(f"provider_smoke_test PASS: FunASR, {llm_label}, Doubao")
+    print(
+        f"provider_smoke_test PASS: FunASR, {llm_label}, "
+        "Doubao, InterruptSemantic"
+    )
     return 0
 
 

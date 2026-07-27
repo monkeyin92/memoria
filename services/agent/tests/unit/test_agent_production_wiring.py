@@ -22,6 +22,7 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.state_machine import ConversationState
+from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
 from services.agent.src.response_planner_client import (
     ResponseGroundedItem,
     ResponsePlan,
@@ -1041,6 +1042,52 @@ async def test_queued_control_turn_cannot_clear_the_following_speech_epoch() -> 
 
 
 @pytest.mark.asyncio
+async def test_agent_semantic_review_suppresses_polluted_sticky_final() -> None:
+    resolved: list[tuple[str, str, str]] = []
+
+    async def _resolve(
+        final_text: str,
+        sticky_text: str,
+        assistant_text: str,
+    ) -> InterruptSemanticVerdict:
+        resolved.append((final_text, sticky_text, assistant_text))
+        return InterruptSemanticVerdict.CONTROL_ONLY
+
+    runtime = DuplexRuntime.create(
+        input_guard_enabled=True,
+        trusted_aec_playback_control=True,
+    )
+    runtime.set_interrupt_semantic_resolver(_resolve)
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("根据提供的数据和指示来协助。")
+    runtime.on_user_voice_started()
+    runtime.observe_user_transcript("停一下，你叫什么名字？", final=False)
+
+    class Message:
+        def __init__(self, text: str) -> None:
+            self.content = [text]
+            self.metrics = {
+                "started_speaking_at": 1.0,
+                "stopped_speaking_at": 2.0,
+            }
+
+        def text_content(self) -> str:
+            return "".join(self.content)
+
+    final_text = "份停听一下能是据提供的数据和指示来协助。"
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+
+    with pytest.raises(StopResponse):
+        await agent.on_user_turn_completed(llm.ChatContext.empty(), Message(final_text))
+
+    assert resolved == [
+        (final_text, "停一下，你叫什么名字", "根据提供的数据和指示来协助。")
+    ]
+    assert runtime.orchestrator.context.turns == []
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_playback_echo_interim_is_removed_from_a_later_cumulative_final() -> None:
     published: list[dict[str, object]] = []
 
@@ -1586,6 +1633,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     fake_tts = _FakeTTS()
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     monkeypatch.setenv("SPEAKER_VERIFY_ENABLED", "false")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
     monkeypatch.setenv(
         "MEMORIA_INTERACTION_POLICY_TOKEN",
         "interaction-policy-material-that-is-long-enough",
@@ -1669,6 +1717,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     assert runtime.session_id == "public-session"
     assert runtime.input_guard.enabled is True
     assert runtime.trusted_aec_playback_control is True
+    assert runtime._interrupt_semantic_resolver is not None
     runtime._clear_control_user_turn(cause="production_wiring_test")
     assert session.clear_user_turn_count == 1
 
@@ -1764,7 +1813,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
         if event[0].get("type") == "assistant_audio"
     ][audio_event_count:]
     assert [event.get("action") for event in new_audio_events] == ["duck", "restore"]
-    assert [event.get("gain") for event in new_audio_events] == [0.25, 1.0]
+    assert [event.get("gain") for event in new_audio_events] == [0.0, 1.0]
     assert 1000 in session.options.interruption.history
     assert session.options.interruption["min_words"] == 1000
     session.emit(

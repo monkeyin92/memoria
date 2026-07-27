@@ -145,6 +145,7 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
 
     assert "-e MEMORIA_PROVIDER_SMOKE_REQUIRED=true" in script
     assert 'provider_output="$(run_required_provider_smoke 2>&1)"' in script
+    assert "Doubao, InterruptSemantic" in script
     assert 'agent_env="${MEMORIA_AGENT_ENV:-/etc/memoria-agent.env}"' in script
     assert '"$agent_env"' in script
     assert "run_agent -m scripts.verify_env" in script

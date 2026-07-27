@@ -110,6 +110,9 @@ DASHSCOPE_COMPATIBLE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_FAST_MODEL=qwen-turbo
 QWEN_DEEP_MODEL=qwen-plus
+INTERRUPT_SEMANTIC_ENABLED=true
+INTERRUPT_SEMANTIC_MODEL=qwen-flash
+INTERRUPT_SEMANTIC_TIMEOUT_S=0.6
 DASHSCOPE_SUMMARY_MODEL=qwen-plus
 FUNASR_MODEL=fun-asr-realtime
 FUNASR_SAMPLE_RATE=16000
@@ -513,6 +516,9 @@ sudo test "$(stat -c '%U:%G:%a' "$GATEWAY_ENV_CANDIDATE")" = "root:root:600"
 sudo grep -qx 'ENDPOINTING_MIN_DELAY_S=0.90' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'ENDPOINTING_MAX_DELAY_S=1.50' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'FALSE_INTERRUPTION_TIMEOUT_S=1.70' "$AGENT_ENV_CANDIDATE"
+sudo grep -qx 'INTERRUPT_SEMANTIC_ENABLED=true' "$AGENT_ENV_CANDIDATE"
+sudo grep -qx 'INTERRUPT_SEMANTIC_MODEL=qwen-flash' "$AGENT_ENV_CANDIDATE"
+sudo grep -qx 'INTERRUPT_SEMANTIC_TIMEOUT_S=0.6' "$AGENT_ENV_CANDIDATE"
 for current_env in "$CONTROL_ENV" "$AGENT_ENV" "$SPEAKER_MODEL_ENV"; do
   sudo test -e "$current_env"
   sudo test "$(stat -c '%U:%G:%a' "$current_env")" = "root:root:600"
@@ -586,13 +592,16 @@ curl -fsS http://127.0.0.1:8791/health/ready
 
 ```text
 livekit_smoke_test PASS: authenticated room-service access
-provider_smoke_test PASS: FunASR, Qwen, Doubao
+provider_smoke_test PASS: FunASR, Qwen, Doubao, InterruptSemantic
 readiness refresh PASS: $RELEASE_TAG (qwen)
 ```
 
 `Doubao` 通过必须同时满足：双向增量文本合成返回非空 24 kHz、单声道、
 PCM signed 16-bit little-endian 音频，字级时间戳非空且单调，并将同一段合成音频降采样后
 送入 FunASR，最终文本命中测试语义。任何一项失败都不能写入 readiness evidence。
+`InterruptSemantic` 还必须用 `qwen-flash` 通过五类严格枚举样本：真实污染、
+控制词+真实内容、引用助手原话的追问、明确问题，以及控制词+助手回声；任一返回
+`UNSURE`、非法枚举或与预期不符均不得写入 readiness evidence。
 
 `SKIP`、只验证变量存在或单独 HTTP 200 均不算通过。readiness evidence 写入 SQLite，绑定 release、provider 与 UTC 时间；同 release 重启保持，新 release 必须重跑，24 小时后过期。刷新 timer 每 12 小时执行：
 

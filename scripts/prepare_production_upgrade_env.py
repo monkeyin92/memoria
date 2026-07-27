@@ -113,6 +113,9 @@ def prepare(
             "ENVIRONMENT": "production",
             "OFFLINE_MOCK": "false",
             "LLM_PROVIDER": "qwen",
+            "INTERRUPT_SEMANTIC_ENABLED": "true",
+            "INTERRUPT_SEMANTIC_MODEL": "qwen-flash",
+            "INTERRUPT_SEMANTIC_TIMEOUT_S": "0.6",
             "MEMORIA_RELEASE_TAG": release_tag,
             "MEMORIA_ARCHIVE_DATABASE_URL": _postgres_dsn(
                 user="memoria_app", password=app_password
