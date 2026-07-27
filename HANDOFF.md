@@ -9,7 +9,7 @@
 
 ## 当前代码
 
-- 2026-07-27 本地正在形成未发布候选：可信小程序 AEC barge-in 首事件改为
+- 2026-07-27 已发布 runtime `20260727-120448`：可信小程序 AEC barge-in 首事件改为
   `assistant_audio duck/gain=0.0`；歧义 sticky `interrupt_then_chat` final 仅调用
   `qwen-flash` 做严格三态复核，`UtteranceRouter` 仍是唯一副作用策略入口。
 - 新复核输入只含 final、首个 sticky 文本和 barge-in 冻结助手文本；结果绑定 speech epoch、
@@ -17,15 +17,12 @@
   fail closed 并提示重说；确认后的纯控制仍保留原回答供“继续”。
 - 本地门禁已通过：Python `1269 passed, 27 skipped`，Ruff、strict mypy、
   H5 `232/232`、小程序 `32/32` 与 `git diff --check`。本机没有
-  `DASHSCOPE_API_KEY`，因此当前候选的真实 `qwen-flash` Provider smoke 仍须在发布环境执行。
-- 本候选尚未推送或发布；本地 checkpoint/tag 会作为构建不可变 runtime 工件的必要发布步骤，
-  当前生产仍保持 `20260726-233337`。
-- 当前生产 source commit / annotated tag：
-  `8176c91dcadcecd02a7af37f7876a360aba5eee6 / 20260726-233337`。
+  `DASHSCOPE_API_KEY`；真实 `qwen-flash` Provider smoke 已在候选生产 Agent 容器通过五个严格样本。
+- source commit / annotated tag：
+  `db07f8a11fb08ee9282a4530ebf2394d50280104 / 20260727-120448`。
 - 当前版本在统一 `UtteranceRouter` 中识别打断后旧话轮重放，并把自建 endpointing
   目标统一为 `0.90 / 1.50 / 1.70`。
-- 本地 `main` 尚未推送；`origin/main` 仍为 `cb2ce2d`，远端尚无
-  `20260726-233337` tag。是否推送仍由用户明确决定。
+- 本地 `main` 尚未推送；`origin/main` 仍为 `cb2ce2d`。是否推送仍由用户明确决定。
 - `a0308a4` 在统一 `UtteranceRouter` 中把规范化后完全等于“等下”的文本识别为纯打断，
   同时保持“我等下再说 / 等下我想问……”为普通聊天。
 - 本版本在共享回声门禁中补充“助手说等一下 / ASR 缩成等下”的同义拒绝，防止助手回声
@@ -33,13 +30,16 @@
 
 ## 当前生产
 
-- runtime：`20260726-233337`，于 2026-07-26 16:03:34 UTC 第二次原子激活。
+- runtime：`20260727-120448`，于 2026-07-27 12:23:59 CST 原子激活。
 - H5：`20260723-192611`。
-- 小程序体验版：`0.8.49`。
+- 小程序体验版仍为 `0.8.49`；`0.8.50` 待本机微信开发者工具桌面解锁后上传，不提交审核或正式发布。
 - `agent / control-api / speaker-model / miniprogram-gateway` 四个容器均为
-  `healthy`、restart 0；readiness 为 `ready / 20260726-233337`，Agent、
-  9/9 core checks、LiveKit、FunASR、Qwen 与 Doubao 正常。
+  `healthy`、restart 0；readiness 为 `ready / 20260727-120448`，Agent、
+  9/9 core checks、LiveKit、FunASR、Qwen、Doubao 与 `InterruptSemantic` 正常。
 - Agent 文件 env、容器 env 和运行时配置均为 `0.90 / 1.50 / 1.70`。
+- 新增 Agent env 已精确生效：
+  `INTERRUPT_SEMANTIC_ENABLED=true / INTERRUPT_SEMANTIC_MODEL=qwen-flash /
+  INTERRUPT_SEMANTIC_TIMEOUT_S=0.6`。
 - 固定语音链路：
   `小程序 PCM → MiniProgramMediaGateway APM → LiveKit → FunASR → Qwen → Doubao → 小程序`。
 - PostgreSQL、MinIO、LiveKit 与 WMS 未在本轮清理或诊断中修改。
@@ -47,9 +47,9 @@
 
 ## 保留版本与回滚
 
-- 当前版本：`20260726-233337`。
-- 直接回滚：`20260726-215154`，必须同时恢复其旧 Agent env。
-- 次级回滚：`20260726-133033`；`20260726-181813` 保留为 Router 修复证据版本，
+- 当前版本：`20260727-120448`。
+- 直接回滚：`20260726-233337`，必须同时恢复本轮备份的四份 env。
+- 次级回滚：`20260726-215154`；`20260726-133033`、`20260726-181813` 保留为 Router 修复证据版本，
   `20260726-111550` 保留为更早稳定点。
 - H5 固定保留：`20260723-192611`。
 - 本机与生产均保留上述五套 runtime 的四角色镜像，共 20 个 tag；服务器正式 release
@@ -128,6 +128,13 @@
 
 ## 生产取证
 
+- 本轮 root-only 证据目录：
+  `/var/backups/memoria/runtime-switch-20260727-120448-from-20260726-233337-20260727-122225/`。
+  SQLite 双副本 SHA-256 一致、PostgreSQL custom dump 可由 `pg_restore --list` 读取，四份
+  env、前后状态、容器脱敏日志与激活时间均为 `0600`；完整 env/inspect 快照不得复制到普通
+  文档、聊天或 issue。
+- 本地 source/image/H5 manifest 三件套、服务器二次 verifier、隔离 server smoke、LiveKit、
+  FunASR、Qwen、Doubao、`qwen-flash` 五样本 smoke、readiness 与公网 H5/API/WMS 均通过。
 - 本轮两次切换共用 root-only 证据目录：
   `/var/backups/memoria/runtime-switch-20260726-233337-from-20260726-215154-20260726-235734/`。
 - 第一次候选服务已通过 Provider/readiness，但发布侧 JSON 断言读到空 stdin；
@@ -153,14 +160,13 @@
 
 ## 未闭环与下一步
 
-1. 获得明确发布授权后，为新候选生成 release/tag、备份旧 Agent env，并让 Provider smoke
-   通过 `FunASR, Qwen, Doubao, InterruptSemantic`。
-2. 发布后在 AI 播放约 0.6 秒时依次测试：“等一下”、“停一下，你叫什么名字？”、
+1. 解锁本机微信开发者工具，上传体验版 `0.8.50`（不提交审核或正式发布）。
+2. 在新体验版完全退出并重新打开后，AI 播放约 0.6 秒时依次测试：“等一下”、“停一下，你叫什么名字？”、
    引用助手原话的追问、纯噪声/误触发和分类超时恢复。
 3. 验收 0–700 ms 内静音、纯控制只确认一次且不进 chat、真实问题不丢失、“继续”恢复原回答，
    并补测正常短句、长句、慢语速和 1–2 秒句中停顿。
 4. 任一结果失败，先冻结同一会话的 Agent/Gateway/Control 脱敏日志，再恢复
-   `20260726-233337` 及其旧 Agent env。
+   `20260726-233337` 及本轮四份旧 env。
 5. 真机通过后清理 hotfix worktree、多余旧镜像和不再需要的本地 artifacts；不运行
    `docker system prune -a`，不删除卷或其他项目镜像。
 
