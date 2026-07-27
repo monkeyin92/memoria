@@ -2,17 +2,17 @@
 
 ## 当前状态
 
-- KWS/AEC 诊断 source commit / annotated tag：
-  `d2d35ba52181e18068d8df074f3e515f406b4710 / 20260727-204609`。
-- 生产 runtime：`20260727-204609`，于 `2026-07-27 21:07:40 CST` 开始切换，
-  `21:10:43 CST` 完成全部生产门禁。
+- 当前 source commit / annotated tag：
+  `5134830364ff0d44317ebad8821baf2582bb7c3d / 20260727-221555`。
+- 生产 runtime：`20260727-221555`，于 `2026-07-27 22:41:40 CST` 开始切换，
+  `22:45:39 CST` 完成切换后证据。
 - 生产 H5：`20260723-192611`，本轮 runtime 发布没有切换 H5。
-- 微信小程序体验版：`0.8.51`，于 `2026-07-27 17:48:27 CST` 上传，
-  包体 `607,643` 字节；本轮没有客户端变更，因此没有重复上传、提交审核或正式发布。
+- 微信小程序体验版：`0.8.52`，于 `2026-07-27 22:52:15 CST` 上传成功，
+  包体 `609,716` 字节；未提交审核或正式发布。
 - 当前交付客户端为 `apps/h5` 与 `apps/miniprogram`；legacy Web 与原生 iOS 源码已移除。
 - 历史路线、架构决策和发布证据分别保留在
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
-  `docs/releases/20260727-204609.md`。
+  `docs/releases/20260727-221555.md`。
 
 ## 最新实现
 
@@ -35,12 +35,18 @@
 - 系统录音中断结束后发送 `uplink_discontinuity(next_sequence)`，同一 WSS 会话重置
   半帧、sequence 与 AEC 时序后恢复。
 - Agent、H5 与小程序只消费带有效 `session_id`、generation 与权威来源的会话事件。
+- 同一 `speech_epoch` 的打断确认语最多播放一次；迟到 ASR 终稿和下一次 VAD
+  不再重复发布确认音频。
+- 小程序回传首播、underflow、hard reset 和 conceal 的有界数值遥测；
+  Gateway 白名单校验并限速，不接受文本、音频、token 或 cookie。
+- 播放 underflow 只重建后续排程，不再硬停仍登记中的旧 source。
+- FunASR 已支持可选热词表 ID 和噪声阈值，但生产没有录音校准证据，当前保持未配置。
 
 ## 生产健康
 
 - `agent / control-api / speaker-model / miniprogram-gateway` 四容器均为
   `healthy`、restart 0。
-- readiness 为 `ready / 20260727-204609`；9/9 core checks、Agent heartbeat、
+- readiness 为 `ready / 20260727-221555`；9/9 core checks、Agent heartbeat、
   LiveKit、FunASR、Qwen、Doubao 与 InterruptSemantic 均通过。
 - 生产 Agent one-off 使用正式 env 与宿主机只读模型成功构造
   `VoskKeywordSpotter`；四个 runtime 容器最近十分钟未出现 traceback、
@@ -54,18 +60,18 @@
 
 ## 保留版本与回滚
 
-- 当前 runtime：`20260727-204609`。
-- 直接回滚 runtime：`20260727-170628`。
+- 当前 runtime：`20260727-221555`。
+- 直接回滚 runtime：`20260727-204609`。
 - 固定 H5：`20260723-192611`。
 - 本机和生产均只保留当前与直接回滚两套 runtime 的四角色 Docker tag。
-- 生产 source release 只保留 `20260727-204609` 与 `20260727-170628`；
+- 生产 source release 只保留 `20260727-221555` 与 `20260727-204609`；
   H5 release 只保留 `20260723-192611`。
 - 回滚证据：
-  `/var/backups/memoria/runtime-switch-20260727-204609-from-20260727-170628-20260727-210538/`。
+  `/var/backups/memoria/runtime-switch-20260727-221555-from-20260727-204609-20260727-224140/`。
 - SQLite 快照 SHA-256：
-  `3ffd8c2e199ee2b829f72b6b2d2165e8e6e5e9f6e291bee3dad06802fd7db72b`。
+  `091bc6f2b1b9a903a8a28c48ae9a4a1b5549b49bc8cef27195a49155942a9ab4`。
 - PostgreSQL custom dump SHA-256：
-  `17e46eae072bb185844549d774e37b722726878e58a7bdd3456bdcf3471ff5e3`。
+  `d822c22a11cf03670af342c9d344d0930ee84fdb4eff1c646750a862025e6825`。
 - runtime 回滚不自动恢复数据库；只有数据迁移或数据异常时才使用快照。
 
 ## 2026-07-27 清理结果
@@ -83,15 +89,20 @@
   容器；服务器根分区约 `31 GiB` 已用、`83 GiB` 可用。
 - 本机删除 `204609` 临时 worktree、约 `2.1 GiB` 发布工件、`120448` 四个旧镜像 tag
   与 KWS smoke tag；Data 卷约 `294 GiB` 可用。
+- 本次发布后生产删除旧 runtime/source/image `20260727-170628`、`2.2 GiB`
+  incoming、未激活 H5 候选、临时候选 env 和退出的 MinIO provision 容器；
+  根分区约 `30 GiB` 已用、`84 GiB` 可用。
+- 本机删除本轮临时 worktree、约 `2.1 GiB` 发布工件和旧
+  `20260727-170628` 四角色镜像标签；Data 卷可用约 `291 GiB`。
 - 没有运行 `docker system prune -a`；没有删除卷、数据库、其他项目镜像或跨项目构建缓存。
 
 ## 验证
 
 - Ruff：通过。
 - `mypy services --strict`：160 个 source files 无问题。
-- Python：`1295 passed, 27 skipped`。
+- Python：`1303 passed, 27 skipped`。
 - H5：`232/232`，production build 通过。
-- 微信小程序：`46/46`，全部 JavaScript syntax check 通过。
+- 微信小程序：`47/47`，全部 JavaScript syntax check 通过。
 - `scripts/run_e2e.py --profile offline`：通过。
 - Agent Linux/amd64 镜像以 `--require-hashes` 成功构建；`vosk==0.3.45` 和控制词文件
   均进入镜像，官方模型通过宿主机只读挂载。
@@ -103,6 +114,8 @@
   `0750/0640`，owner/group 为 `65532:65532`。
 - 候选 env、commit-bound manifest/verifier、镜像导入、候选 H5/API/SQLite restart
   server smoke、生产 Provider/readiness、公网 H5/API/WMS/TLS/WSS 均通过。
+- 本次工件 SHA-256、镜像 ID、备份和生产验收见
+  `docs/releases/20260727-221555.md`。
 - 关键覆盖率子门槛：Agent orchestration `92%`、provider protocols `92%`。
 - 既有全 `services` 覆盖率门槛仍未闭环：实测 `81.54%`，低于 CI 配置的 `85%`；
   本轮没有降低门槛或伪报通过。
