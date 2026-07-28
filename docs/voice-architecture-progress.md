@@ -1,8 +1,8 @@
 # 语音架构优化完成度
 
 > 更新日期：2026-07-28
-> 当前生产基线：runtime `20260727-235959`、H5 `20260723-192611`、小程序体验版 `0.8.54`；
-> 真机证据显示 WSS 已 Upgrade 到网关但没有首条 `hello`，header 握手兼容修复待部署/上传
+> 当前生产基线：runtime `20260728-103318`、H5 `20260723-192611`、小程序体验版 `0.8.55`；
+> header 握手兼容修复已部署并上传，真机业务验收仍待同一 iPhone 实际收到 `ready`
 > 说明：本文件记录工程完成度；真实手机声学验收、外部账号权限和供应商控制台资源不以代码测试代替。
 
 ## 1. 总体结论
@@ -42,6 +42,8 @@
 - 删除小程序打断按钮、本地 generation interrupt 和口头打断入口。
 - Gateway 始终标记小程序平台；Agent 对该平台关闭 LiveKit interruption、KWS、歧义
   语意复核和播放期转写接纳。
+- 新客户端在 TLS Upgrade header 提交短期 signed gateway ticket；Gateway 优先完成该认证并
+  发送 `ready`，旧客户端 JSON `hello` 保持回退。ticket 不进入 URL 或 access log。
 
 ### 2.3 H5 打断
 
@@ -57,8 +59,9 @@
 - AEC 运行期 fail-closed 撤权与 Agent ACK。
 - 指定单 session 的 AEC 前后 WAV 有界采样，默认关闭。
 - 四角色 runtime 镜像、备份、回滚、readiness、Provider smoke 和发布清理流程。
-- runtime `20260727-235959` 已完成生产部署；小程序受控话轮和 H5 语意打断分流已上线。
-- 小程序体验版 `0.8.53` 已上传；未提交审核或正式发布。
+- runtime `20260728-103318` 已完成生产部署；小程序受控话轮、H5 语意打断分流和 WSS header
+  握手已上线。
+- 小程序体验版 `0.8.55` 已上传；未提交审核或正式发布。
 
 ## 3. 部分完成
 
@@ -69,7 +72,7 @@
 | 上行可靠性 | 同步 send 失败不提交 sequence；中断恢复有 discontinuity | 单写入者有界队列、异步成功提交、队列溢出后的保会话恢复 |
 | FunASR | 支持可选 `vocabulary_id` 与 `speech_noise_threshold` | 创建生产热词表、使用真机录音集校准后才能启用 |
 | 协议 | v1 上行、generation v2 下行、共享 JSON 合同 | stream epoch、统一全局 sequence、route-change 等 v3 字段 |
-| 真机 WSS 可达性 | iPhone 已实证 TCP/TLS/Upgrade 与 8792 网关转发成功；定位为 `SocketTask.onOpen → hello` 首包缺失 | 先部署 TLS Upgrade header 握手回退，再上传 0.8.55 用同一 iPhone 验收；随后补 iOS/Android 网络矩阵 |
+| 真机 WSS 可达性 | header 握手已部署；无效 header 经公网同链路返回 `4401`，`0.8.55` 已上传 | 同一 iPhone 实际收到 `ready`，随后补 iOS/Android 网络矩阵 |
 | H5 | LiveKit/WebRTC 稳定并有测试 | 状态机、统一 transport、TypeScript strict、API 分域拆分 |
 | 后端目录 | 领域模块和部署服务均可运行 | deployable apps 与 reusable packages 尚未物理重组 |
 | 契约 | 小程序媒体合同已共享 | REST/UI/错误事件仍未全部从 Schema 生成 |
