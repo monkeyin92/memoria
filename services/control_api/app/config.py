@@ -57,6 +57,12 @@ class ControlSettings(BaseSettings):
         le=300,
         alias="MINIPROGRAM_GATEWAY_TICKET_TTL_S",
     )
+    miniprogram_post_playout_guard_ms: int = Field(
+        default=150,
+        ge=0,
+        le=2_000,
+        alias="MINIPROGRAM_POST_PLAYOUT_GUARD_MS",
+    )
     memoria_miniprogram_gateway_ticket_secret: SecretStr = Field(
         default=SecretStr(DEV_MINIPROGRAM_GATEWAY_TICKET_SECRET),
         alias="MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET",

@@ -1,9 +1,12 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   classifyOmniControlUtterance,
   QwenOmniWebRTCTransport,
-} from "./QwenOmniWebRTCTransport.js";
+} from "./experimental/QwenOmniWebRTCTransport.js";
 import {
   addInboundAudioDeltas,
   extractInboundAudioStats,
@@ -97,6 +100,12 @@ class FakePeerConnection {
 }
 
 const peerConnections = [];
+const interruptionCorpus = JSON.parse(
+  readFileSync(
+    resolve(process.cwd(), "../../packages/contracts/h5-interruption-corpus.json"),
+    "utf8",
+  ),
+);
 
 function callbacks() {
   return {
@@ -116,15 +125,27 @@ describe("QwenOmniWebRTCTransport", () => {
     vi.stubGlobal("RTCPeerConnection", FakePeerConnection);
   });
 
-  it.each(["等等", "等一下", "停一下", "你先别说"])(
-    "keeps semantic H5 interruption for %s",
-    (text) => {
-      expect(classifyOmniControlUtterance(text)).toEqual({
+  it("matches the shared H5 positive and negative interruption corpus", () => {
+    expect(interruptionCorpus.schema_version).toBe("h5-interruption-corpus-v1");
+    for (const text of interruptionCorpus.interrupt_only) {
+      expect(classifyOmniControlUtterance(text), text).toEqual({
         kind: "interrupt_only",
         ack: expect.any(String),
       });
-    },
-  );
+    }
+    for (const text of interruptionCorpus.interrupt_then_chat) {
+      expect(classifyOmniControlUtterance(text), text).toEqual({
+        kind: "interrupt_then_chat",
+        ack: null,
+      });
+    }
+    for (const text of interruptionCorpus.chat) {
+      expect(classifyOmniControlUtterance(text), text).toEqual({
+        kind: "chat",
+        ack: null,
+      });
+    }
+  });
 
   it("keeps only allowlisted numeric inbound audio metrics", () => {
     const report = new Map([
@@ -723,7 +744,9 @@ describe("QwenOmniWebRTCTransport", () => {
   });
 
   it("computes a shorter feedback guard on clean RTP and longer on dirty path", async () => {
-    const { computeFeedbackGuardMs } = await import("./QwenOmniWebRTCTransport.js");
+    const { computeFeedbackGuardMs } = await import(
+      "./experimental/QwenOmniWebRTCTransport.js"
+    );
     expect(
       computeFeedbackGuardMs({
         non_silent_concealment_ratio: 0,

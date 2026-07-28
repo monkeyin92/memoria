@@ -48,6 +48,40 @@ class GenerationFence:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CancellationContext:
+    """Immutable provider context backed by the existing generation fence."""
+
+    fence: GenerationFence
+
+    @classmethod
+    def capture(cls, fence: GenerationFence) -> CancellationContext:
+        return cls(fence=fence)
+
+    @property
+    def session_id(self) -> str:
+        return self.fence.session_id
+
+    @property
+    def turn_id(self) -> int:
+        return self.fence.turn_id
+
+    @property
+    def generation_id(self) -> int:
+        return self.fence.generation_id
+
+    @property
+    def tool_epoch(self) -> int:
+        return self.fence.tool_epoch
+
+    def is_current(self, current: GenerationFence | CancellationContext) -> bool:
+        other = current.fence if isinstance(current, CancellationContext) else current
+        return self.fence.matches(other)
+
+    def is_stale(self, current: GenerationFence | CancellationContext) -> bool:
+        return not self.is_current(current)
+
+
 def new_session_id() -> str:
     return str(uuid4())
 

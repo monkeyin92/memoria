@@ -20,7 +20,7 @@
     },
     {
       "type": "object",
-      "required": ["type", "session_id", "speaker", "text", "final", "turn_id", "generation_id", "history_eligible"],
+      "required": ["type", "session_id", "speaker", "text", "final", "turn_id", "generation_id", "turn_revision", "history_eligible"],
       "properties": {
         "type": { "const": "transcript_delta" },
         "session_id": { "type": "string", "minLength": 1 },
@@ -31,6 +31,7 @@
         "history_eligible": { "type": "boolean" },
         "turn_id": { "type": "integer" },
         "generation_id": { "type": "integer" },
+        "turn_revision": { "type": "integer", "minimum": 1 },
         "tool_epoch": { "type": "integer", "minimum": 0 },
         "preview_provenance": {
           "type": ["object", "null"],
@@ -79,6 +80,21 @@
           },
           "additionalProperties": false
         }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "session_id", "capture_allowed", "policy_epoch", "reason", "turn_id", "generation_id", "at"],
+      "properties": {
+        "type": { "const": "input_policy" },
+        "session_id": { "type": "string", "minLength": 1 },
+        "capture_allowed": { "type": "boolean" },
+        "policy_epoch": { "type": "integer", "minimum": 1 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "turn_id": { "type": "integer", "minimum": 0 },
+        "generation_id": { "type": "integer", "minimum": 0 },
+        "at": { "type": "string", "format": "date-time" }
       },
       "additionalProperties": false
     },

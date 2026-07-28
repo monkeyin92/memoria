@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -56,6 +58,10 @@ class MiniProgramGatewaySettings(BaseSettings):
         default=False,
         alias="MINIPROGRAM_GATEWAY_AEC_ENABLED",
     )
+    miniprogram_gateway_aec_mode: Literal["off", "on", "alternating"] = Field(
+        default="off",
+        alias="MINIPROGRAM_GATEWAY_AEC_MODE",
+    )
     miniprogram_gateway_aec_stream_delay_ms: int = Field(
         default=120,
         ge=0,
@@ -100,6 +106,22 @@ class MiniProgramGatewaySettings(BaseSettings):
         le=256,
         alias="MINIPROGRAM_GATEWAY_EVENT_QUEUE_SIZE",
     )
+
+    def aec_variant(self, session_id: str) -> Literal["control", "aec"]:
+        if not session_id:
+            raise ValueError("AEC experiment requires a session id")
+        mode = self.miniprogram_gateway_aec_mode
+        if mode == "off" and self.miniprogram_gateway_aec_enabled:
+            mode = "on"
+        if mode == "on":
+            return "aec"
+        if mode == "alternating":
+            return (
+                "aec"
+                if hashlib.sha256(session_id.encode("utf-8")).digest()[0] & 1
+                else "control"
+            )
+        return "control"
 
     def validate_production(self) -> None:
         if self.environment != "production":

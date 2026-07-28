@@ -1,5 +1,6 @@
-import { createSpeakerGatedStream } from "./speakerGate.js";
-import { extractInboundAudioStats } from "./webrtcStats.js";
+import { createSpeakerGatedStream } from "../speakerGate.js";
+import { VoiceTransport } from "../VoiceTransport.js";
+import { extractInboundAudioStats } from "../webrtcStats.js";
 
 const ICE_GATHERING_TIMEOUT_MS = 10_000;
 const RTC_STATS_INTERVAL_MS = 5_000;
@@ -67,6 +68,119 @@ export function isOmniWaitMishear(text) {
   return false;
 }
 
+const OMNI_INTERRUPT_PREFIXES = [
+  "你可以先听我说",
+  "你先别说",
+  "不要说了",
+  "你听我说",
+  "我的意思是",
+  "我问的是",
+  "等一下",
+  "停一下",
+  "别说了",
+  "别讲了",
+  "先别说",
+  "你先停",
+  "听我说",
+  "换一个",
+  "等等",
+  "等下",
+  "停下",
+  "暂停",
+  "先停",
+  "闭嘴",
+  "安静",
+  "不是",
+  "不对",
+  "先别",
+];
+const OMNI_LEADING_FILLERS = [
+  "那个",
+  "就是",
+  "嗯",
+  "啊",
+  "呃",
+  "哦",
+  "额",
+  "哎",
+  "喂",
+  "唉",
+  "欸",
+];
+const OMNI_NEGATED_PROPOSITION_PREFIXES = [
+  "不是所有",
+  "不是每",
+  "不是任何",
+  "不是因为",
+  "不是由于",
+  "不是为了",
+  "不是说",
+  "不对称",
+  "不对等",
+];
+const OMNI_TRAILING_CONTROL_PARTICLES = [
+  "可以吗",
+  "好吗",
+  "好吧",
+  "好的",
+  "吗",
+  "嘛",
+  "呢",
+  "吧",
+  "呀",
+  "啊",
+  "哦",
+  "好",
+];
+const OMNI_STOP_PREFIXES = new Set([
+  "不要说了",
+  "你先别说",
+  "别说了",
+  "别讲了",
+  "先别说",
+  "你先停",
+  "停下",
+  "暂停",
+  "先停",
+  "闭嘴",
+  "安静",
+  "先别",
+]);
+
+function stripOmniLeadingFillers(text) {
+  let remainder = text;
+  while (remainder) {
+    const filler = OMNI_LEADING_FILLERS.find((item) =>
+      remainder.startsWith(item));
+    if (!filler) return remainder;
+    remainder = remainder.slice(filler.length);
+  }
+  return remainder;
+}
+
+function omniInterruptPrefix(text) {
+  const normalized = stripOmniLeadingFillers(text);
+  if (!normalized) return "";
+  if (normalized === "停") return "停";
+  if (OMNI_NEGATED_PROPOSITION_PREFIXES.some((prefix) =>
+    normalized.startsWith(prefix))) {
+    return "";
+  }
+  return OMNI_INTERRUPT_PREFIXES.find((prefix) =>
+    normalized.startsWith(prefix)) || "";
+}
+
+function stripOmniTrailingControlParticles(text) {
+  let remainder = text;
+  while (remainder) {
+    const particle = OMNI_TRAILING_CONTROL_PARTICLES.find((item) =>
+      remainder.endsWith(item));
+    if (!particle) return remainder;
+    remainder = remainder.slice(0, -particle.length);
+  }
+  return remainder;
+}
+
 export function classifyOmniControlUtterance(text) {
   const raw = String(text || "").trim();
   if (!raw) return { kind: "empty", ack: null };
@@ -77,33 +191,33 @@ export function classifyOmniControlUtterance(text) {
   }
 
   const compact = raw.replace(/[。.!！?？,，、\s「」""''…·~～]/g, "");
-
-  // Broad wait/stop intent cues (semantic family, not one fixed sentence).
-  // Also allow truncated ASR like「哎，等。」「嗯停」when the whole utterance is short.
-  const waitCue =
-    /等一下|等下|等等|稍等|等我|你等|停一下|停下|先停|别说了|先别说|暂停|不要说了|别讲了|打住|让我说|听我说|先别讲|你先别|等一等|等会儿|等会/;
+  let remainder = stripOmniLeadingFillers(compact);
+  let prefix = omniInterruptPrefix(remainder);
   const shortTruncatedWait =
-    compact.length <= 6 &&
-    /[等停]/.test(compact) &&
-    !/[吗呢么嘛]/.test(compact);
+    /^[等停]{1,3}$/.test(remainder) &&
+    !/[吗呢么嘛]/.test(remainder);
 
-  if (!waitCue.test(compact) && !waitCue.test(raw) && !shortTruncatedWait) {
+  if (!prefix && !shortTruncatedWait) {
     return { kind: "chat", ack: null };
   }
-
-  let residual = compact
-    .replace(/^(嗯+|啊+|呃+|哦+|额+|哎+|喂+|那个+|就是+|唉+|欸+)+/g, "")
-    .replace(
-      /等一下|等下|等等|稍等一下|稍等|等我一下|等我说完|等我说|等我|停一下|停下|先停一下|先停|别说了|先别说|暂停一下|暂停|你等一下|你等等|你等|让我说|听我说|你先别说|先别说|不要说了|别讲了|打住|先等等|等一等|等会儿|等会|先别讲/g,
-      "",
-    )
-    // Lone truncated 等/停 left after fillers (prod:「哎，等。」).
-    .replace(/^[等停]{1,3}$/g, "")
-    .replace(/[的了呢吧呀啊哦嗯哈哟唉欸]+/g, "");
+  if (shortTruncatedWait && !prefix) {
+    prefix = remainder;
+    remainder = "";
+  } else {
+    while (prefix) {
+      remainder = remainder.slice(prefix.length);
+      const betweenCommands = stripOmniLeadingFillers(remainder);
+      const nextPrefix = omniInterruptPrefix(betweenCommands);
+      if (!nextPrefix) break;
+      remainder = betweenCommands;
+      prefix = nextPrefix;
+    }
+  }
+  const residual = stripOmniTrailingControlParticles(remainder);
 
   // Almost only wait intent left → pure control ack (cascade interrupt_command).
-  if (residual.length <= 4) {
-    const hardStop = /别说了|暂停|不要说|别讲|先别说|打住|先别讲/.test(compact);
+  if (!residual) {
+    const hardStop = OMNI_STOP_PREFIXES.has(prefix);
     return {
       kind: "interrupt_only",
       ack: hardStop ? "好的。" : "嗯，你说。",
@@ -185,7 +299,7 @@ function sessionUpdate(config = {}) {
   };
 }
 
-export class QwenOmniWebRTCTransport {
+export class QwenOmniWebRTCTransport extends VoiceTransport {
   constructor({
     exchangeSdp,
     onState = () => undefined,
@@ -199,6 +313,7 @@ export class QwenOmniWebRTCTransport {
     onSpeakerEnrolled = () => undefined,
     onSpeakerReject = () => undefined,
   }) {
+    super();
     this.exchangeSdp = exchangeSdp;
     this.onState = onState;
     this.onTranscript = onTranscript;
@@ -383,6 +498,10 @@ export class QwenOmniWebRTCTransport {
       this.responseSuperseded = true;
     }
     this.onState("interrupted");
+  }
+
+  stopAssistant() {
+    this.cancelResponse();
   }
 
   close() {

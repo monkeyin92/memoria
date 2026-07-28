@@ -92,8 +92,8 @@
       <button
         wx:if="{{status === 'thinking' || status === 'speaking'}}"
         class="secondary-button"
-        disabled
-      >请等回应结束</button>
+        bindtap="stopPlayback"
+      >停止播放</button>
       <button wx:else class="secondary-button" bindtap="toggleMic">{{micEnabled ? '静音麦克风' : '打开麦克风'}}</button>
       <button class="danger-button" bindtap="stopVoice">结束</button>
     </view>

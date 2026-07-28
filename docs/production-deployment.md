@@ -19,10 +19,20 @@
 - 对象存储：独立同机 MinIO，档案/声音两个 bucket 分权并启用版本控制，无公网端口
 - Runtime：版本目录位于 `/opt/memoria/releases/`，`/opt/memoria/current` 原子软链指向当前 release
 - H5：版本目录位于 `/var/www/memoria-releases/`，`/var/www/memoria-h5` 原子软链指向当前 release
-- 原生小程序候选入口：WSS `/memoria-mini-media/v1/mini-program/media`，loopback 上游
-  `127.0.0.1:8792`；只有包含网关镜像和 gateway env 的新 release 才会启用。
+- 原生小程序当前媒体入口：
+  `wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media`。标准 `443` 保留同路径
+  精确路由，但当前中国大陆无 VPN 网络在 TLS ClientHello 后重置连接，未解决前不由 Control API
+  下发；两者的 loopback 上游均为 `127.0.0.1:8792`。
 
-Memoria 使用独立静态资源/API 路径、回环端口、Compose project 和限流 zone。新服务器的 443 继续由既有 WMS 虚拟主机占用；8443 由 Nginx stream 预读协议，TLS 流量转到 `127.0.0.1:9443` 的 Memoria HTTPS server，原生 ICE/TCP 转到 `127.0.0.1:8444` 后进入 LiveKit 容器的 8443。当前公网正式入口是 8443。公网 `/memoria-api/internal/` 固定返回 404；WMS 的 `/wms/` 路由与既有数据保留且服务保持 active。当前生产版本与验收结论见 `HANDOFF.md`，历史迁移与热修证据保留在 `docs/releases/`。
+Memoria 使用独立静态资源/API 路径、回环端口、Compose project 和限流 zone。新服务器的
+443 仍由既有 WMS 虚拟主机拥有，只额外 include
+`/etc/nginx/snippets/memoria-miniprogram-media.conf` 暴露精确的小程序媒体 WSS；WMS 根路径、
+`/wms/` 和其他 404 边界保持不变。8443 继续由 Nginx stream 预读协议，TLS 流量转到
+`127.0.0.1:9443` 的 Memoria HTTPS server，原生 ICE/TCP 转到 `127.0.0.1:8444` 后进入
+LiveKit 容器的 8443；H5、Control API 与 LiveKit 正式入口仍为 8443。公网
+`/memoria-api/internal/` 固定返回 404；WMS 数据与配置必须保留，服务可在明确授权的资源让渡期
+保持 `inactive / enabled`。当前生产版本与验收结论见
+`HANDOFF.md`，历史迁移与热修证据保留在 `docs/releases/`。
 
 终身档案迁移到 PostgreSQL + 对象存储后的备份、PITR、对象清单与联合恢复门禁见 [`archive-backup-restore-runbook.md`](./archive-backup-restore-runbook.md)。现有 SQLite 发布快照只覆盖旧主库，不得被描述为终身档案生产恢复方案。
 
@@ -130,7 +140,9 @@ DOUBAO_TTS_VOICE_PROFILE=warm_companion
 DOUBAO_TTS_VOICE_REGISTRY=infra/voices/doubao_voice_ids.json
 DOUBAO_TTS_SAMPLE_RATE=24000
 DOUBAO_TTS_POOL_SIZE=4
-MINIPROGRAM_GATEWAY_AEC_ENABLED=true
+MINIPROGRAM_POST_PLAYOUT_GUARD_MS=150
+MINIPROGRAM_GATEWAY_AEC_ENABLED=false
+MINIPROGRAM_GATEWAY_AEC_MODE=off
 MINIPROGRAM_GATEWAY_AEC_STREAM_DELAY_MS=120
 MINIPROGRAM_GATEWAY_AEC_ACTIVE_WINDOW_MS=750
 MINIPROGRAM_GATEWAY_AEC_CAPTURE_SESSION_ID=
@@ -199,7 +211,12 @@ rm -rf "$tmp_dir"
 
 ### 单会话 AEC 前后音频采样
 
-诊断默认关闭。只在下一次真机复测前，把
+正常半双工流量保持 `MINIPROGRAM_GATEWAY_AEC_MODE=off`。需要做 A/B 时，在明确的真机
+验收窗口将它临时设为 `alternating`；Gateway 按 `session_id` 稳定分配 `control/aec`
+组，并在 `mini_program_aec_variant` 日志和 `ready.aec` 中输出分组及实际 APM 状态。
+旧的 `MINIPROGRAM_GATEWAY_AEC_ENABLED=true` 仍兼容为全量 `on`，但不用于日常生产。
+
+诊断采样默认关闭。只在下一次真机复测前，把
 `MINIPROGRAM_GATEWAY_AEC_CAPTURE_SESSION_ID` 设置为目标 session ID 并重启 gateway。
 该 session 最多保存 `MINIPROGRAM_GATEWAY_AEC_CAPTURE_MAX_MS` 的 16 kHz 单声道 WAV：
 
@@ -713,6 +730,7 @@ sudo docker logs --since 5m memoria-livekit-livekit-1 2>&1 | wc -l
 - `/etc/nginx/conf.d/memoria-limits.conf`
 - `/etc/nginx/snippets/memoria-http.conf`
 - `/etc/nginx/snippets/memoria-https.conf`
+- `/etc/nginx/snippets/memoria-miniprogram-media.conf`
 - `/etc/nginx/snippets/memoria-livekit.conf`
 - `/etc/nginx/snippets/memoria-site-common.conf`
 - `/etc/nginx/sites-enabled/memoria`
@@ -721,7 +739,32 @@ sudo docker logs --since 5m memoria-livekit-livekit-1 2>&1 | wc -l
 - `/etc/nginx/modules-enabled/50-mod-stream.conf`（由 `libnginx-mod-stream` 提供）
 - `/etc/letsencrypt/renewal-hooks/deploy/50-memoria-reload-nginx`
 
-`memoria` 与 `wms` 都是 sites-enabled 下的 root-owned 0644 常规文件，不是软链。8443 的 stream mux 依赖 `libnginx-mod-stream`；`memoria` 中必须保留 `127.0.0.1:9443 ssl` 的 IP 默认虚拟主机和域名 SNI 虚拟主机，LiveKit Compose 必须把容器 8443 只映射到主机 `127.0.0.1:8444`。`/rtc`、`/agent` 与 `/twirp/` 必须关闭 access log，避免短期 participant JWT 进入 query-string 日志。若本次配置有变化，先备份到不会被 Nginx include 的 root-only 目录，安装新文件后执行：
+`memoria` 是 sites-enabled 下的 root-owned 0644 常规文件；`wms` 是指向
+`/etc/nginx/sites-available/wms` 的软链，备份时必须使用 `cp -L` 解引用真实配置。8443 的
+stream mux 依赖 `libnginx-mod-stream`；`memoria` 中必须保留 `127.0.0.1:9443 ssl` 的 IP
+默认虚拟主机和域名 SNI 虚拟主机，LiveKit Compose 必须把容器 8443 只映射到主机
+`127.0.0.1:8444`。`/rtc`、`/agent` 与 `/twirp/` 必须关闭 access log，避免短期 participant
+JWT 进入 query-string 日志。
+
+小程序媒体的标准 443 入口必须复用仓库
+`infra/nginx-memoria-miniprogram-media.conf`：先将其安装为
+`/etc/nginx/snippets/memoria-miniprogram-media.conf`，再仅在 WMS 的 443 `server` 内、
+最终 `location / { return 404; }` 之前增加：
+
+```nginx
+include /etc/nginx/snippets/memoria-miniprogram-media.conf;
+```
+
+不得 include 完整的 `memoria-https.conf`，否则会把 H5、Control API 等额外路由一并迁入
+WMS 443。443 路由只作为备案/网络放行后的候选；当前生产
+`MINIPROGRAM_MEDIA_GATEWAY_URL` 保持：
+
+```text
+wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media
+```
+
+先备份 `/etc/nginx/sites-enabled/wms`、共享 snippet 与
+`/etc/memoria-control-api.env` 到 root-only 回滚目录。安装新文件后执行：
 
 注册和登录必须分别命中精确 location：`/memoria-api/v1/auth/register`、`/memoria-api/v1/auth/login`，两者均使用 `client_max_body_size 4k` 与 `limit_req zone=memoria_session burst=3 nodelay`。`20260716-225754` 的真实 Omni SDP 只属于历史兼容/A-B 证据；当前 H5 不暴露 Omni 入口。若后续恢复该隔离能力，应用层仍须执行 64 KiB、所有权和每会话两次交换限制。安装任何 `/memoria-api/v1/sessions/` 专用块仍须按本节先备份、`nginx -t`，成功后才 reload。
 
@@ -739,11 +782,18 @@ openssl s_client -connect 122.51.108.140:8443 \
   | openssl x509 -noout -dates -ext subjectAltName
 ```
 
-只有 `nginx -t` 成功才允许 reload。此阶段仍不切 H5 公网软链。
+只有 `nginx -t` 成功才允许 reload。随后只重建 Control API 以读取新的媒体 URL，不切 H5
+公网软链，不重启 Gateway/Agent/WMS。回滚时恢复 WMS 配置和 Control API env、运行
+`nginx -t` 后 reload，并只重建 Control API。
 
 ### 既有服务边界
 
-新服务器保留既有 WMS：`wms.service` 为 active/enabled，`/wms/` 与 `/wms/api/` 路由继续由原服务提供。PocketSparks、Goods Invoice 与 MySQL 未作为 Memoria 依赖启动；若旧目录或容器存在，只能保留数据，禁止顺手删除。Nginx 的 Memoria server 不得覆盖 WMS 路由。不得执行 `docker compose down -v`，不得删除 `/opt/wms` 或任何既有数据目录。
+新服务器保留既有 WMS 数据、配置和 `enabled` 状态。默认运行时可为 `active / enabled`；
+产品负责人明确授权把资源暂时留给 Memoria 时，只允许执行 `systemctl stop wms.service`，
+保持 `inactive / enabled`，不得 disable、删除 `/opt/wms` 或清理任何 WMS 数据。Nginx 的
+WMS 静态路由和 443 server 仍保留。PocketSparks、Goods Invoice 与 MySQL 未作为 Memoria
+依赖启动；若旧目录或容器存在，只能保留数据，禁止顺手删除。不得执行
+`docker compose down -v`。
 
 只读状态检查：
 
@@ -811,9 +861,15 @@ curl -sS -o /dev/null -w '%{http_code}\n' \
 curl -sS -o /dev/null -w '%{http_code}\n' \
   https://122.51.108.140:8443/goods-invoice/
 curl -fsS https://122.51.108.140:8443/wms/
+curl -fsS https://aigcnice.com/wms/
 ```
 
-验收标准：公网 8443 的根 H5、兼容 H5、SPA、live、ready 和 WMS 均为 200；ready 的 release 必须等于本次唯一 `RELEASE_TAG`、LLM 为 `qwen`、TTS 为 `doubao` 且 9 项 core check 全 ready；internal、PocketSparks 与 Goods Invoice 原路径为 404；IP 证书 SAN 必须精确包含 `122.51.108.140`，域名 SNI 必须返回包含 `aigcnice.com` 与 `www.aigcnice.com` 的域名证书。`/rtc`、`/agent`、`/twirp/` 必须命中自建 LiveKit，真实浏览器 participant 必须为 `active` 且 `connectionType=tcp` 或 `udp`，不能是 `unknown`。服务器本机用 SNI/loopback 额外确认 443 根路径仍由 WMS 提供。另需确认 `wms.service` 为 active/enabled，Memoria 不得改动其目录或数据。
+验收标准：公网 8443 的根 H5、兼容 H5、SPA、live、ready 和 WMS 静态页均为 200；ready 的 release 必须等于本次唯一 `RELEASE_TAG`、LLM 为 `qwen`、TTS 为 `doubao` 且 9 项 core check 全 ready；internal、PocketSparks 与 Goods Invoice 原路径为 404；IP 证书 SAN 必须精确包含 `122.51.108.140`，域名 SNI 必须返回包含 `aigcnice.com` 与 `www.aigcnice.com` 的域名证书。`/rtc`、`/agent`、`/twirp/` 必须命中自建 LiveKit，真实浏览器 participant 必须为 `active` 且 `connectionType=tcp` 或 `udp`，不能是 `unknown`。服务器本机用 SNI/loopback 额外确认 443 根路径仍由 WMS 虚拟主机提供。WMS 应为 `enabled`；服务在正常运行期为 `active`，明确的资源让渡期允许为 `inactive`，但 Memoria 不得改动其目录或数据。
+
+标准 443 候选路由仍须使用无效 header ticket 完成 WebSocket Upgrade，并由 Gateway 按协议
+关闭为 `4401`；HTTP `404` 表示 WMS 443 未安装精确媒体路由。它只有在同一真机关闭 VPN 后
+完成 `ack_sent → ready_sent → first_playback → listening`，才允许替代当前 8443 下发地址；
+自动 smoke 不得替代。
 
 ### 身份、隔离与持久化
 
@@ -923,7 +979,9 @@ SQLite、PostgreSQL 或 MinIO；只有数据格式确实不兼容时，才在另
 ## 日常运维
 
 - 每日监控 API live/ready、`memoria-readiness-refresh.timer` 和 `snap.certbot.renew.timer`。
-- 每日确认 WMS 仍为 active/enabled，Memoria 只使用 8443；确认旧项目没有被意外启动并占用 Memoria 端口。
+- 每日确认 WMS 保持 `enabled`，其 active/inactive 状态符合当前资源分配决策；确认小程序当前
+  8443 媒体入口可用，443 候选路由不被误设为生产下发地址，旧项目没有被意外启动并占用
+  Memoria 端口。
 - 证书续期后验证 SAN、有效期、deploy hook 和 Nginx reload 日志。
 - 每次发布记录 release tag、镜像 ID、H5/Nginx SHA-256、证书指纹、两份 SQLite 快照 SHA-256、四份 env 备份 SHA-256、完整性与 foreign-key 检查、激活时间和回滚点；不得记录 secret。
 - 200 条真实中文录音、AEC 设备矩阵和第 21 章 SLO 是规模化上线门禁，不阻塞当前 H5 成品交付。

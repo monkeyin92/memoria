@@ -2,12 +2,21 @@
 
 ## 当前状态
 
-- 当前功能基线 / 生产 runtime source / annotated tag：
-  `e7230236ddff0d64f602e38487387e614d2fb515 / 20260728-170236`。
-- 生产 runtime：`20260728-170236`，已完成原子切换、生产门禁和公网验收；直接回滚点为
-  `20260728-123528`。
+- 当前仓库代码基线：本文件所在 `main` 提交，包含三阶段语音架构收口；已同步
+  `origin/main`。生产 runtime/H5 尚未切到该仓库 checkpoint。
+- 生产 runtime source / annotated tag：
+  `e7230236ddff0d64f602e38487387e614d2fb515 / 20260728-170236`，直接回滚点为
+  `20260728-123528`；该版本已完成原子切换、生产门禁和公网验收。
 - 生产 H5：`20260723-192611`，本轮 runtime 发布没有切换 H5。
-- 微信小程序体验版：`0.8.58` 已上传成功（`631,692` 字节）；未提交审核或正式发布。
+- 微信小程序开发测试版：`0.8.59` 已上传成功（`636,385` 字节），但真机已确认欢迎语首播后
+  因遥测契约不兼容断开；修复后的 `0.8.60` 已通过 CLI 上传开发测试版（`637,083` 字节），
+  开 VPN 可完整聊天。诊断版 `0.8.61` 已上传（`637,237` 字节）；真机和 Safari 均确认标准 443
+  在当前无 VPN 网络不可达，生产已按用户决定回切
+  `wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media`。443 精确路由保留但不下发。
+  用户已确认回切后页面与语音连接恢复可用。小程序未提审或正式发布；完整 iPhone/Android、
+  音频路由、弱网和 AEC A/B 真机矩阵仍待完成。
+- 本轮开发测试版均通过已登录的微信开发者工具 `upload` 完成，只上传开发版本，不提审、不正式发布。
+  本机未跟踪的上传私钥、辅助脚本和 lockfile 不属于仓库交付，路径和值不得写入本文或提交。
 - 当前交付客户端为 `apps/h5` 与 `apps/miniprogram`；legacy Web 与原生 iOS 源码已移除。
 - 历史路线、架构决策和发布证据分别保留在
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
@@ -19,8 +28,9 @@
 - 小程序改为受控话轮：AI 处于 thinking、tool waiting、speaking、recovering 等响应状态时
   暂停 `RecorderManager` 上行；Agent 回到 listening 后仍等待本地 pending PCM 和全部
   WebAudio source 结束，才恢复录音。
-- 用户主动静音优先，回答结束不会擅自重新开麦；小程序“轻触打断”和本地
-  `interruptPlayback` 路径已删除，播放期口头控制词不会停止回答或进入下一轮。
+- 用户主动静音优先，回答结束不会擅自重新开麦；小程序播放期录音、口头打断和旧的
+  `interruptPlayback` 话轮入口已删除。当前本地候选保留独立“停止播放”按钮，但它不会
+  同时开麦或恢复全双工。
 - Gateway 无论 AEC 是否可用都标记小程序平台；Agent 对该平台关闭 LiveKit interruption、
   KWS、歧义语意复核和播放期转写接纳，迟到终稿按原 speech epoch 丢弃。
 - H5 的 `barge_in_enabled` 默认保持开启；Cascade `UtteranceRouter` 与 Omni 备用
@@ -43,6 +53,113 @@
   Gateway 白名单校验并限速，不接受文本、音频、token 或 cookie。
 - 播放 underflow 只重建后续排程，不再硬停仍登记中的旧 source。
 - FunASR 已支持可选热词表 ID 和噪声阈值，但生产没有录音校准证据，当前保持未配置。
+
+## 2026-07-28：语音架构最终收口（仓库 checkpoint，runtime/H5 未部署）
+
+- 小程序新增默认 150 ms、可配置的播放尾音保护；播放 lead 在 100–180 ms 间自适应；
+  `input_policy/policy_epoch` 成为服务端录音权威，用户静音和本地播放器仍是客户端安全门。
+- Gateway AEC 支持 `off/on/alternating`，正常半双工默认关闭；A/B 分组按 session 稳定，
+  `ready.aec` 返回 variant 与实际 APM 状态。真机结果记录模板见
+  `docs/acceptance/miniprogram-half-duplex-device-matrix.md`，当前全部仍为待验收。
+- 小程序保留独立“停止播放”按钮：本地平滑清空后调用既有 stop-response 推进 generation；
+  不恢复播放期录音或语音打断。普通半双工回答限制为 3 句/120 字，明确长内容请求保留
+  长回复预算。
+- H5 已抽出 `VoiceTransport`、`LiveKitCascadeTransport` 与 `voiceSessionReducer`；
+  Omni 移入 `voice/experimental/`；回顾页、资料页、偏好行和 14 个领域 API 模块已拆出，
+  旧 `api.js` 只保留兼容导出。
+- H5 与 Cascade 共用 `packages/contracts/h5-interruption-corpus.json`，句首控制意图不会再
+  误伤“我等一下再说”“这个站不是终点”“不是所有人……”。
+- 后端新增包装现有 `GenerationFence` 的不可变 `CancellationContext`、provider Handler
+  seam、单调 `turn_revision` 和最小 Realtime-style facade；facade 只支持文本映射与取消，
+  音频仍由 LiveKit/MiniProgramMediaGateway 承载，没有第二套 runtime。
+- ASR 保持 LiveKit `STT` adapter，并由统一构造 seam 隔离供应商初始化；编排层直接调用的
+  LLM/TTS 使用窄 Handler/Protocol。首个用户权威 final 或助手 actual-heard final 会关闭
+  对应 fenced turn 的修订流，避免 UI 终稿和长期历史分叉。
+- HF `speech-to-speech` 只作为 Handler、取消、revision 和协议设计参考；不引入其 runtime、
+  本地 STT/TTS 模型或 WebRTC。决策见
+  `docs/adr/0027-hf-speech-to-speech-as-design-reference.md`。
+- 本地门禁：Python `1345 passed, 27 skipped`；Ruff；165 个 strict mypy source；
+  H5 `241/241` 与 production build；小程序 `76/76`、JavaScript syntax、共享 JSON；
+  离线 E2E 与 `git diff --check` 全部通过。
+- 现有 Chrome 已验证首页、回顾页、个人页、编辑弹层和偏好保存/恢复，console 无
+  warning/error；未触发真实麦克风权限或设备语音链路。
+- 微信开发者工具 skill `0.3.5` 与当前工具版本一致、登录有效；小程序首页 WXML/WXSS
+  编译成功，`pages/home/index` 整页编译打开，console 的 error/warn/fail/exception
+  过滤为空，模拟器截图无白屏、遮挡或明显布局回归。
+- `0.8.59`、`0.8.60` 与 `0.8.61` 均由已登录的微信开发者工具官方 CLI 上传开发测试版；
+  最新 `0.8.61` task 为 `confirmation_upload_3e652991-38c2-4c75-ae65-d16433d1f3a5`，
+  返回 `status=success / execution_success`，总包 `637,237` 字节。未提审或正式发布。
+- 三阶段代码已提交并推送仓库；生产 runtime/H5 仍是本文件“当前状态”所列版本。
+
+## 2026-07-28：`0.8.59` 首播后断开与向后兼容修复
+
+- 真机点击开始语音后，生产 Gateway 均先完成 `ack_sent` 与 `ready_sent`，随后分别在约
+  `1503 ms`、`1558 ms` 进入 `protocol_error`；Agent 已加入房间并开始欢迎语，因此不是公网、
+  ticket、LiveKit 或 Provider 启动失败。
+- 根因是 `0.8.59` 的 `first_playback` 遥测新增 `target_lead_ms`、`underflow_count`，而生产
+  `20260728-170236` 仍使用旧的严格字段白名单。将真实首播形状送入该生产版本校验器可稳定复现
+  `invalid client audio trace`；去掉两个新字段后立即通过。
+- 客户端遥测出口现默认使用 v1 名称与字段；只有 Gateway 在 `ready` 中明确广告
+  `client_audio_trace_version >= 2`，才发送 `miniprogram_playback_lead_adjusted` 及两个新字段。
+  新 Gateway 广告 v2，未来版本仍可保留完整自适应播放指标；旧 Gateway 无需先部署即可兼容新客户端。
+- 修复后跨版本反馈环已验证：当前客户端生成的 `first_playback` payload 可被生产
+  `20260728-170236` 校验器接受。小程序 `75/75`、Gateway 全套测试、共享契约测试、Ruff、
+  strict mypy 165 个 source、JavaScript syntax、JSON 与 `git diff --check` 通过。
+- `0.8.60` 上传 `--dry-run` 已通过；随后经用户确认，由微信开发者工具 CLI `upload` 成功上传，
+  task `confirmation_upload_64566f4f-070a-4d1f-a788-5da39349889b` 返回
+  `status=success / execution_success`，总包 `637,083` 字节。未提审或正式发布；立即恢复真机连接
+  不要求先切换生产 Gateway。
+
+## 2026-07-28：无 VPN 网络诊断、标准 443 尝试与回切 8443
+
+- 同一 iPhone 的 `0.8.60` 开 VPN 后，session `9477a320-7a46-495f-b263-629859105ea0`
+  完成 Gateway `ack_sent/ready_sent`、欢迎语、用户 VAD/ASR、LLM、TTS、首播遥测和按钮停止，
+  证明客户端协议修复与完整语音链路有效。
+- 关 VPN 后，多次点击仍能通过 HTTPS 创建 session 并重取 gateway ticket，例如
+  `2568674a-4544-4bab-bf2d-5e05eb2ce602`、`23636276-2b7d-4f12-b758-94f3a91eb2f4`、
+  `47d7e7f9-f949-459c-b570-3da96c706fd4`，但 Gateway 完全没有 WebSocket
+  `connection open/ack_sent`。
+- 针对手机公网来源 `222.94.122.53` 的双向抓包确认：到达服务器的普通 8443 HTTPS
+  请求均完成 TCP 三次握手、TLS 双向传输和正常 FIN，服务器没有 RST、限流或防火墙拒绝；
+  这些连接与 Nginx 中的 profile/session/ticket API 一一对应，没有独立
+  `wx.connectSocket` Upgrade。阿里、腾讯、Cloudflare、Google DNS 均只返回同一 IPv4
+  `122.51.108.140`，没有 AAAA 分流。
+- 结论：connection refused 发生在手机当前 Wi-Fi/无 VPN 的非标准端口 Socket 直连路径，
+  不是 Gateway、Nginx、TLS、DNS、ticket 或应用协议错误。切换前生产 443 的同一 Upgrade
+  探针稳定返回 `404`，形成可执行的红色反馈环。
+- 本地候选新增单一共享 `infra/nginx-memoria-miniprogram-media.conf`，只包含精确媒体 WSS
+  location；8443 Memoria server 与未来 WMS 443 server 复用该 snippet。Control API 示例 URL
+  改为 `wss://aigcnice.com/memoria-mini-media/v1/mini-program/media`。没有迁移 H5、Control API、
+  LiveKit 或 WMS 根路径。
+- 生产配置/升级环境测试 `39/39`、Ruff、Bash syntax 与 `git diff --check` 通过。生产已安装
+  443 snippet、更新 Control API env、reload Nginx，并只重建 Control API；首次 readiness
+  `503` 明确为等待 Agent 新心跳，14 秒后自然恢复 `ready / 9/9 core`。
+- 用户授权暂时停止 WMS 并将资源留给 Memoria：`wms.service` 当前为 `inactive / enabled`，
+  8090 已关闭，WMS 数据和配置未删除。root-only 回滚目录为
+  `/var/backups/memoria/miniprogram-443-20260728-214525`；WMS 配置按真实软链解引用备份。
+- 443 与 8443 的无效票据 Upgrade 均返回 `101`，443 根仍为 `302`、未知路径仍为 `404`；
+  独立公网主机已直连 443 获得 `101`。同一 iPhone 关闭 VPN 的
+  `ack_sent → ready_sent → first_playback → listening` 仍是最终验收。
+- 真机首次切到 443 后页面显示“证书校验失败”，但 443/8443 实际下发同一张
+  `aigcnice.com` 证书和三证书链；独立公网 OpenSSL 与 macOS Apple 信任库均验证成功，
+  SAN、CT 和 Certum 交叉签发链正常。根因是客户端把任何包含 `handshake` 的原始错误都误分类为
+  certificate，当前文案不能证明 TLS 证书失败。
+- `0.8.61` 已将 SSL/TLS/certificate 与普通 WebSocket handshake 分开，后者保留
+  截断后的原始 `errMsg`；回归测试先红后绿，小程序 `76/76`、JavaScript syntax、
+  `git diff --check` 和上传 `--dry-run` 均通过。用户确认后由微信开发者工具上传成功，
+  task `confirmation_upload_3e652991-38c2-4c75-ae65-d16433d1f3a5` 返回
+  `status=success / execution_success`，总包 `637,237` 字节；未提审或正式发布。
+- `0.8.61` 真机在 443 仍返回 SSL/TLS 错误；同期抓包显示手机完成 TCP 三次握手并发送约
+  517 字节 TLS ClientHello，随后手机或当前网络在确认服务器 TLS 数据前发送 RST，Gateway
+  和 Nginx HTTP 层均未收到请求。同一 iPhone 关闭 VPN 后用 Safari 打开 443 也失败，证明问题
+  不属于 `wx.connectSocket`、票据或 Gateway。
+- 用户决定继续使用 8443。生产 `MINIPROGRAM_MEDIA_GATEWAY_URL` 已回切
+  `wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media`，仅重建 Control API；
+  readiness 首次因等待 Agent 心跳返回 503，14 秒后恢复 `ready / 9/9 core`。回切前 env 备份为
+  `/var/backups/memoria/miniprogram-media-url-8443-20260728-222317`。WMS 继续
+  `inactive / enabled`，8090 关闭；443 Nginx 精确路由保留但当前不下发。
+- 回切后用户已确认页面与语音连接恢复可用；该确认关闭 8443 主链连通性故障，但不替代
+  外放/听筒/蓝牙、弱网、前后台、系统录音中断和 AEC A/B 的完整声学矩阵。
 
 ## 2026-07-28：游客浏览与微信身份（已发布，真机验收待完成）
 
@@ -92,11 +209,12 @@
   LiveKit、FunASR、Qwen、Doubao 与 InterruptSemantic 均通过。
 - 四个 runtime 容器最近十五分钟未出现 traceback、关键 provider、provenance、
   archive durable/spool 或连接拒绝错误。
-- 公网根 H5、兼容 H5、SPA、API live/ready 与 WMS 为 200；
+- 公网根 H5、兼容 H5、SPA、API live/ready 与 WMS 静态页为 200；
   `/memoria-api/internal/` 为 404。
-- 小程序公网 WSS 成功升级；带无效 TLS Upgrade header ticket 的真实 `8443 → 9443 → 8792`
-  smoke 按协议关闭为 `4401`，证明请求头已透传至 Gateway。
-- Nginx 配置、WMS、readiness timer 与 certbot timer 正常；IP 证书有效至
+- 小程序公网 WSS 在标准 443 和回滚 8443 均成功升级；无效 TLS Upgrade header ticket
+  按协议关闭为 `4401`，证明请求头已透传至 Gateway。
+- Nginx 配置、readiness timer 与 certbot timer 正常；WMS 暂时为 `inactive / enabled`，
+  8090 已释放。IP 证书有效至
   `2026-08-03 01:40:00 UTC`，域名证书有效至 `2026-10-18 03:59:59 UTC`。
 - PostgreSQL、MinIO、LiveKit、WMS、数据库快照与 Docker 数据卷未在清理中修改。
 
@@ -238,11 +356,14 @@
 ## 验证
 
 - Ruff：通过。
-- `mypy services --strict`：161 个 source files 无问题。
-- Python：`1324 passed, 27 skipped`。
-- H5：`236/236`，production build 通过。
-- 微信小程序：`66/66`，全部 JavaScript syntax check 和 JSON 配置检查通过；开发者工具中
-  三个游客 Tab 与登录页均已实际打开，未见 console 异常。
+- `mypy services --strict`：165 个 source files 无问题。
+- Python：`1345 passed, 27 skipped`。
+- H5：`241/241`，production build 通过；现有 Chrome 的首页、回顾、个人、编辑和偏好交互
+  已通过，未见 console warning/error。
+- 微信小程序：`76/76`，全部 JavaScript syntax check 和共享 JSON 契约解析通过；此前
+  开发者工具中的三个游客 Tab 与登录页已打开且无 console 异常；当前候选首页 WXML/WXSS
+  及整页编译也已通过。`0.8.59` 已确认存在首播遥测兼容故障；诊断后的 `0.8.61` 已上传，
+  生产回切 8443 后用户确认连接恢复。
 - `scripts/run_e2e.py --profile offline`：通过。
 - Agent Linux/amd64 镜像以 `--require-hashes` 成功构建；`vosk==0.3.45` 和控制词文件
   均进入镜像，官方模型通过宿主机只读挂载。
@@ -262,14 +383,19 @@
 
 ## 未闭环与下一步
 
-1. 使用已上传的 `0.8.58` 真机验证游客三页、首次手机号授权、昵称/头像、静默恢复、退出清理与
-   登录后语音；语音仍需确认 `handshake_ack`/`ready`、Wi-Fi/移动网络、前后台和系统录音中断恢复。
-   若失败，保留 session/timestamp，并按同一窗口抓取脱敏连接证据。
-2. H5 仍需真实浏览器和设备验证“等等、等一下、停一下、先别说”等语意打断，
+1. 8443 回切后的主链已获用户确认；继续按
+   `docs/acceptance/miniprogram-half-duplex-device-matrix.md` 完成 iPhone/Android、
+   外放/听筒/蓝牙、Wi-Fi/移动网络/弱网、前后台和系统录音中断矩阵；上传成功不得冒充
+   完整真机通过。后续每次记录 `ack_sent → ready_sent → first_playback → listening`
+   的 session/timestamp，并复核游客三页、手机号、昵称/头像、静默恢复、退出清理与登录后语音。
+2. 在明确测试窗口将 Gateway 临时设为 `MINIPROGRAM_GATEWAY_AEC_MODE=alternating`，记录
+   `ready.aec` 分组、首字丢失、尾音误转写、失真、underflow 与 hard reset；结束后恢复
+   `off`，没有真实 A/B 数据前不启用生产 AEC。
+3. H5 仍需真实浏览器和设备验证“等等、等一下、停一下、先别说”等语意打断，
    同时覆盖“我等一下再说”等非打断语句，避免误触发。
-3. 继续观察小程序 underflow、hard reset、lead 指标；只有需要定位非播放期噪声时才为
+4. 继续观察小程序 underflow、hard reset、lead 指标；只有需要定位非播放期噪声时才为
    单一 session 开启有界 AEC pre/post 采样，测试后立即关闭。
-4. 单独处理全仓覆盖率门槛：优先补齐 PostgreSQL/外部边界测试，不通过降低标准换绿。
+5. 单独处理全仓覆盖率门槛：优先补齐 PostgreSQL/外部边界测试，不通过降低标准换绿。
 
 ## 用户工作区边界
 
@@ -279,3 +405,6 @@
 - `apps/miniprogram/assets/bg/aurora-light.webp`
 - `apps/miniprogram/assets/mascot-alpha.webp`
 - `apps/miniprogram/design-preview/`
+- `apps/miniprogram/package-lock.json`
+- `apps/miniprogram/package.json`（仅本机上传辅助命令与依赖）
+- `scripts/upload_miniprogram_test.js`

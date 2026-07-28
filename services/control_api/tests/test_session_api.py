@@ -169,6 +169,9 @@ async def test_miniprogram_session_uses_gateway_ticket_not_livekit_participant_t
         "sample_format": "s16le",
         "frame_ms": 20,
     }
+    assert data["media_gateway"]["playout"] == {
+        "post_playout_guard_ms": 150,
+    }
     first_claims = verify_gateway_ticket(
         data["media_gateway"]["ticket"],
         secret=ticket_secret,
@@ -179,6 +182,7 @@ async def test_miniprogram_session_uses_gateway_ticket_not_livekit_participant_t
     refreshed_data = refreshed.json()
     assert "participant_token" not in refreshed_data
     assert refreshed_data["ticket"] != data["media_gateway"]["ticket"]
+    assert refreshed_data["playout"] == data["media_gateway"]["playout"]
     refreshed_claims = verify_gateway_ticket(refreshed_data["ticket"], secret=ticket_secret)
     assert refreshed_claims.session_id == first_claims.session_id == data["session_id"]
     assert refreshed_claims.user_id == first_claims.user_id == user_id

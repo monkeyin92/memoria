@@ -20,10 +20,16 @@ def test_runtime_ui_event_schema_covers_all_published_event_shapes() -> None:
 
     assert set(variants) == UI_EVENT_TYPES
     assert {"phase", "tool_epoch"} <= set(variants["assistant_state"]["properties"])
-    assert {"session_id", "heard", "history_eligible", "tool_epoch"} <= set(
-        variants["transcript_delta"]["properties"]
+    assert {
+        "session_id",
+        "heard",
+        "history_eligible",
+        "tool_epoch",
+        "turn_revision",
+    } <= set(variants["transcript_delta"]["properties"])
+    assert {"session_id", "turn_revision"} <= set(
+        variants["transcript_delta"]["required"]
     )
-    assert "session_id" in variants["transcript_delta"]["required"]
     assert variants["transcript_delta"]["properties"]["session_id"]["minLength"] == 1
     for event_type in ("audio_trace", "assistant_audio", "emotion_observation"):
         assert "tool_epoch" in variants[event_type]["properties"]
@@ -78,6 +84,7 @@ async def test_runtime_transcript_event_carries_the_session_contract() -> None:
             "final": False,
             "turn_id": 0,
             "generation_id": 0,
+            "turn_revision": 1,
             "tool_epoch": 0,
             "history_eligible": False,
         }

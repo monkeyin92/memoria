@@ -1344,6 +1344,29 @@ async def test_reply_budget_stops_after_three_spoken_sentences(
 
 
 @pytest.mark.asyncio
+async def test_controlled_turn_reply_budget_stops_after_three_sentences(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(barge_in_enabled=False)
+    await runtime.on_turn_committed("介绍一下")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="简洁介绍。",
+    )
+
+    async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
+        for sentence in ("第一句。", "第二句。", "第三句。", "第四句。"):
+            yield sentence
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+
+    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+
+    assert output == ["第一句。", "第二句。", "第三句。"]
+
+
+@pytest.mark.asyncio
 async def test_reply_budget_truncates_an_oversized_first_segment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

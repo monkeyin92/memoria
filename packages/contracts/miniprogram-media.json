@@ -41,12 +41,20 @@
       "session_id",
       "audio"
     ],
+    "optional_fields": [
+      "aec",
+      "client_audio_trace_version"
+    ],
     "audio_required_fields": [
       "sample_rate",
       "channels",
       "sample_format",
       "frame_ms",
       "frame_protocol_version"
+    ],
+    "aec_required_fields": [
+      "variant",
+      "active"
     ]
   },
   "binary": {
@@ -111,6 +119,7 @@
       "client_timestamp_ms"
     ],
     "client_audio_trace": {
+      "protocol_version": 2,
       "required_fields": [
         "type",
         "name",
@@ -122,14 +131,17 @@
         "first_playback",
         "miniprogram_playback_underrun",
         "miniprogram_playback_hard_reset",
-        "miniprogram_gap_concealed"
+        "miniprogram_gap_concealed",
+        "miniprogram_playback_lead_adjusted"
       ],
       "detail_fields": [
         "queue_lead_ms",
         "pending_audio_ms",
         "missing_frames",
         "scheduled_sources",
-        "clock_ahead_ms"
+        "clock_ahead_ms",
+        "target_lead_ms",
+        "underflow_count"
       ]
     }
   }

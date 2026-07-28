@@ -50,7 +50,9 @@ def test_gateway_ready_event_matches_shared_contract() -> None:
 
     ready = bridge.ready_event
 
-    assert set(ready) == set(CONTRACT["ready"]["required_fields"])
+    assert set(ready) == set(CONTRACT["ready"]["required_fields"]) | set(
+        CONTRACT["ready"]["optional_fields"]
+    )
     assert ready["type"] == CONTRACT["ready"]["type"]
     assert ready["protocol_version"] == CONTRACT["ready"]["protocol_version"]
     audio = ready["audio"]
@@ -63,6 +65,14 @@ def test_gateway_ready_event_matches_shared_contract() -> None:
         "frame_ms": CONTRACT["audio"]["frame_ms"],
         "frame_protocol_version": CONTRACT["audio"]["downlink_frame_protocol_versions"][1],
     }
+    aec = ready["aec"]
+    assert isinstance(aec, dict)
+    assert set(aec) == set(CONTRACT["ready"]["aec_required_fields"])
+    assert aec == {"variant": "control", "active": False}
+    assert (
+        ready["client_audio_trace_version"]
+        == CONTRACT["control_events"]["client_audio_trace"]["protocol_version"]
+    )
 
 
 def test_pcm_accumulator_reframes_recorder_chunks_without_losing_tail() -> None:
@@ -101,6 +111,52 @@ def test_default_downlink_queue_is_bounded_to_400_ms() -> None:
         settings.miniprogram_gateway_audio_queue_frames * settings.miniprogram_gateway_frame_ms
         == 400
     )
+
+
+def test_alternating_aec_mode_assigns_a_stable_session_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeApm:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def set_stream_delay_ms(self, _delay_ms: int) -> None:
+            pass
+
+        def process_reverse_stream(self, _frame: rtc.AudioFrame) -> None:
+            pass
+
+        def process_stream(self, _frame: rtc.AudioFrame) -> None:
+            pass
+
+    monkeypatch.setattr(audio_processing_module.rtc, "AudioProcessingModule", FakeApm)
+    settings = MiniProgramGatewaySettings(
+        miniprogram_gateway_aec_mode="alternating",
+    )
+
+    assert settings.aec_variant("aec-1") == "aec"
+    assert settings.aec_variant("aec-1") == "aec"
+    assert settings.aec_variant("aec-2") == "control"
+
+    bridge = MiniProgramLiveKitBridge(
+        settings=settings,
+        claims=GatewayTicketClaims(
+            session_id="aec-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+
+    assert bridge.ready_event["aec"] == {
+        "variant": "aec",
+        "active": True,
+    }
 
 
 @pytest.mark.parametrize(

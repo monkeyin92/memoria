@@ -27,7 +27,12 @@ from services.common.miniprogram_gateway_ticket import (
 from services.miniprogram_gateway.audio_diagnostics import AecPcmCapture
 from services.miniprogram_gateway.audio_processing import MiniProgramAudioProcessor
 from services.miniprogram_gateway.config import MiniProgramGatewaySettings
-from services.miniprogram_gateway.protocol import FrameType, PcmFrame, encode_pcm_frame
+from services.miniprogram_gateway.protocol import (
+    CLIENT_AUDIO_TRACE_PROTOCOL_VERSION,
+    FrameType,
+    PcmFrame,
+    encode_pcm_frame,
+)
 
 logger = logging.getLogger(__name__)
 UI_TOPIC = "voice-agent.ui"
@@ -126,8 +131,9 @@ class MiniProgramLiveKitBridge:
             sample_rate=settings.miniprogram_gateway_uplink_sample_rate,
             frame_ms=settings.miniprogram_gateway_frame_ms,
         )
+        self._aec_variant = settings.aec_variant(claims.session_id)
         self._audio_processor = MiniProgramAudioProcessor(
-            enabled=settings.miniprogram_gateway_aec_enabled,
+            enabled=self._aec_variant == "aec",
             downlink_sample_rate=settings.miniprogram_gateway_downlink_sample_rate,
             uplink_sample_rate=settings.miniprogram_gateway_uplink_sample_rate,
             stream_delay_ms=settings.miniprogram_gateway_aec_stream_delay_ms,
@@ -158,6 +164,12 @@ class MiniProgramLiveKitBridge:
         self._audio_streams: set[Any] = set()
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._closed = False
+        logger.info(
+            "mini_program_aec_variant variant=%s active=%s session_id=%s",
+            self._aec_variant,
+            self._audio_processor.aec_ready,
+            self._claims.session_id,
+        )
 
     @property
     def ready_event(self) -> dict[str, object]:
@@ -172,6 +184,11 @@ class MiniProgramLiveKitBridge:
                 "frame_ms": self._settings.miniprogram_gateway_frame_ms,
                 "frame_protocol_version": (2 if self._downlink_generation_protocol else 1),
             },
+            "aec": {
+                "variant": self._aec_variant,
+                "active": self._audio_processor.aec_ready,
+            },
+            "client_audio_trace_version": CLIENT_AUDIO_TRACE_PROTOCOL_VERSION,
         }
 
     def set_downlink_generation_protocol(self, enabled: bool) -> None:

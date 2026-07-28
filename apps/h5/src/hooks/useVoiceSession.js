@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Room, RoomEvent } from "livekit-client";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import {
   createSession,
@@ -8,11 +7,16 @@ import {
   notifyRtcRecovered,
   stopResponse,
 } from "../api.js";
-import { QwenOmniWebRTCTransport } from "../voice/QwenOmniWebRTCTransport.js";
+import { LiveKitCascadeTransport } from "../voice/LiveKitCascadeTransport.js";
+import { QwenOmniWebRTCTransport } from "../voice/experimental/QwenOmniWebRTCTransport.js";
 import {
   addInboundAudioDeltas,
   extractInboundAudioStats,
 } from "../voice/webrtcStats.js";
+import {
+  initialVoiceSessionState,
+  voiceSessionReducer,
+} from "../voice/voiceSessionState.js";
 
 const UI_TOPIC = "voice-agent.ui";
 const TELEMETRY_TOPIC = "voice-agent.telemetry";
@@ -171,7 +175,9 @@ function parseEvent(payload) {
         typeof event.text !== "string" ||
         typeof event.final !== "boolean" ||
         !Number.isInteger(event.turn_id) ||
-        !Number.isInteger(event.generation_id)
+        !Number.isInteger(event.generation_id) ||
+        (event.turn_revision !== undefined &&
+          (!Number.isInteger(event.turn_revision) || event.turn_revision < 1))
       ) {
         return null;
       }
@@ -244,7 +250,11 @@ export function useVoiceSession({
   legacyGrantId = null,
 }) {
   const [session, setSession] = useState(null);
-  const [uiState, setUiState] = useState("idle");
+  const [voiceSessionState, dispatchVoiceSession] = useReducer(
+    voiceSessionReducer,
+    initialVoiceSessionState,
+  );
+  const uiState = voiceSessionState.status;
   const [micEnabled, setMicEnabledState] = useState(true);
   const [transcripts, setTranscripts] = useState([]);
   const [error, setError] = useState("");
@@ -252,8 +262,8 @@ export function useVoiceSession({
   const [audioDiagnostics, setAudioDiagnostics] = useState([]);
   const [emotionHint, setEmotionHint] = useState(null);
   const roomRef = useRef(null);
+  const cascadeTransportRef = useRef(null);
   const omniTransportRef = useRef(null);
-  const roomHandlersRef = useRef(null);
   const audioContainerRef = useRef(null);
   const sessionRef = useRef(null);
   const attemptRef = useRef(0);
@@ -269,6 +279,7 @@ export function useVoiceSession({
   const agentReadyTimerRef = useRef(null);
   const intentionalEndRef = useRef(false);
   const persistedRef = useRef(new Set());
+  const transcriptRevisionRef = useRef(new Map());
   const finalTranscriptRef = useRef(onFinalTranscript);
   const audioDiagnosticsRef = useRef([]);
   const traceStartedAtRef = useRef(0);
@@ -282,6 +293,17 @@ export function useVoiceSession({
   const pendingEmotionRef = useRef(new Map());
   const latestAcceptedUserTurnRef = useRef(0);
   const emotionTimerRef = useRef(null);
+  const setUiState = useCallback((status, options = {}) => {
+    dispatchVoiceSession({
+      type: "transition",
+      status,
+      attempt: options.attempt ?? attemptRef.current,
+      generation: options.generation ?? generationRef.current,
+    });
+  }, []);
+  const resetUiState = useCallback((attempt) => {
+    dispatchVoiceSession({ type: "reset", attempt });
+  }, []);
 
   useEffect(() => {
     finalTranscriptRef.current = onFinalTranscript;
@@ -327,6 +349,20 @@ export function useVoiceSession({
 
   const applyTranscript = useCallback((line, { authoritative = true } = {}) => {
     if (line.generation_id < generationRef.current) return;
+    const key = `${line.speaker}:${line.turn_id}:${line.generation_id}`;
+    const revision =
+      Number.isInteger(line.turn_revision) && line.turn_revision >= 1
+      ? line.turn_revision
+      : null;
+    if (authoritative) {
+      const latestRevision = transcriptRevisionRef.current.get(key);
+      if (revision === null) {
+        if (latestRevision !== undefined) return;
+      } else {
+        if (latestRevision !== undefined && revision <= latestRevision) return;
+        transcriptRevisionRef.current.set(key, revision);
+      }
+    }
     generationRef.current = Math.max(
       generationRef.current,
       line.generation_id,
@@ -355,7 +391,6 @@ export function useVoiceSession({
     }
 
     setTranscripts((current) => {
-      const key = `${line.speaker}:${line.turn_id}:${line.generation_id}`;
       const index = current.findIndex((item) => item.key === key);
       if (index >= 0 && !authoritative && current[index].authoritative) {
         return current;
@@ -368,6 +403,7 @@ export function useVoiceSession({
         heard: line.heard,
         turnId: line.turn_id,
         generationId: line.generation_id,
+        turnRevision: revision,
         toolEpoch: Number.isInteger(line.tool_epoch)
           ? line.tool_epoch
           : line.preview_provenance?.tool_epoch ?? null,
@@ -637,15 +673,15 @@ export function useVoiceSession({
       return;
     }
     const isCurrent = roomRef.current === room;
-    const handlers = roomHandlersRef.current;
-    if (handlers?.room === room) {
-      handlers.cleanup();
-      roomHandlersRef.current = null;
-    }
+    const transport =
+      cascadeTransportRef.current?.room === room
+        ? cascadeTransportRef.current
+        : null;
     if (isCurrent) {
       clearReconnectTimer();
       clearAgentReadyTimer();
       roomRef.current = null;
+      cascadeTransportRef.current = null;
       initialReadyRef.current = false;
       recoveryInFlightRef.current = false;
       recoveryEpochRef.current += 1;
@@ -656,7 +692,8 @@ export function useVoiceSession({
       setAudioBlocked(false);
     }
     try {
-      await room.disconnect();
+      if (transport) await transport.close();
+      else await room.disconnect();
     } catch {
       // The local refs are already cleared, so the user can always retry.
     }
@@ -715,16 +752,17 @@ export function useVoiceSession({
 
   const resumeAudio = useCallback((enabled = voiceReplyEnabledRef.current) => {
     voiceReplyEnabledRef.current = enabled;
-    const room = roomRef.current;
+    const cascadeTransport = cascadeTransportRef.current;
+    const room = cascadeTransport?.room || null;
     const omniTransport = omniTransportRef.current;
     const isCurrent = () =>
-      room
-        ? roomRef.current === room
+      cascadeTransport
+        ? cascadeTransportRef.current === cascadeTransport
         : omniTransportRef.current === omniTransport;
     let unlockPromise = Promise.resolve();
-    if (enabled && room) {
+    if (enabled && cascadeTransport) {
       try {
-        unlockPromise = room.startAudio();
+        unlockPromise = cascadeTransport.resumeAudio();
       } catch {
         unlockPromise = Promise.reject(new Error("audio unlock failed"));
       }
@@ -757,7 +795,7 @@ export function useVoiceSession({
   }, [recordAudioDiagnostic]);
 
   const start = useCallback((overrides = {}) => {
-    if (roomRef.current || omniTransportRef.current) return null;
+    if (cascadeTransportRef.current || omniTransportRef.current) return null;
     if (!userId) {
       setError("匿名身份尚未就绪，请稍后再试");
       return null;
@@ -772,13 +810,14 @@ export function useVoiceSession({
     resetEmotionState();
     setError("");
     setAudioBlocked(false);
-    setUiState("connecting");
+    setUiState("connecting", { attempt, generation: 0 });
     setTranscripts([]);
     generationRef.current = 0;
     turnRef.current = 0;
     micEnabledRef.current = true;
     setMicEnabledState(true);
     persistedRef.current.clear();
+    transcriptRevisionRef.current.clear();
     traceStartedAtRef.current = performance.now();
     firstPlaybackRef.current = false;
     audioGainRef.current = 1;
@@ -940,24 +979,214 @@ export function useVoiceSession({
       })();
     }
 
-    const room = new Room({
-      adaptiveStream: true,
-      dynacast: true,
-      audioCaptureDefaults: {
-        autoGainControl: true,
-        echoCancellation: true,
-        noiseSuppression: true,
-        channelCount: 1,
-      },
-    });
-    roomRef.current = room;
+    let created = null;
+    let transport;
     const isCurrent = () =>
-      attemptRef.current === attempt && roomRef.current === room;
+      attemptRef.current === attempt &&
+      cascadeTransportRef.current === transport;
+    const onTrackSubscribed = (track) => {
+      if (!isCurrent()) return;
+      if (track.kind === "audio") {
+        recordAudioDiagnostic("track_subscribed");
+      }
+      attachAudio(track, isCurrent);
+      if (track.kind === "audio") startStatsSampling(track, isCurrent);
+    };
+    const onTrackUnsubscribed = (track) => {
+      if (!isCurrent()) return;
+      const key = cascadeAudioTrackKey(track);
+      const element = cascadeAudioElementsRef.current.get(key);
+      cascadeAudioElementsRef.current.delete(key);
+      track.detach().forEach((detached) => detached.remove());
+      element?.remove();
+      if (statsTrackRef.current === track) stopStatsSampling();
+    };
+    const onDataReceived = (payload, participant, _kind, topic) => {
+      if (!isCurrent() || !participant?.isAgent || topic !== UI_TOPIC) return;
+      const event = parseEvent(payload);
+      if (!event) return;
+      if (event.type === "audio_trace") {
+        if (event.session_id !== sessionRef.current?.session_id) return;
+        if (event.generation_id < generationRef.current) return;
+        audioDiagnosticsRef.current = [
+          ...audioDiagnosticsRef.current.slice(-49),
+          { ...event, source: event.source || "agent" },
+        ];
+        setAudioDiagnostics(audioDiagnosticsRef.current);
+        if (
+          event.name === "target_speaker_rejected" &&
+          event.detail?.reason === "target_non_owner"
+        ) {
+          setError(SPEAKER_REJECT_MESSAGE);
+        }
+        return;
+      }
+      if (event.type === "assistant_audio") {
+        if (event.session_id !== sessionRef.current?.session_id) return;
+        if (event.generation_id < generationRef.current) return;
+        audioGainRef.current = Math.min(1, Math.max(0, event.gain));
+        const elements =
+          audioContainerRef.current?.querySelectorAll("audio") || [];
+        elements.forEach((element) => {
+          element.volume = audioGainRef.current;
+        });
+        recordAudioDiagnostic(
+          event.action === "duck" ? "playback_ducked" : "playback_restored",
+          "ok",
+          { gain: audioGainRef.current },
+        );
+        return;
+      }
+      if (event.type === "emotion_observation") {
+        if (!initialReadyRef.current) return;
+        if (event.session_id !== sessionRef.current?.session_id) return;
+        if (event.generation_id < generationRef.current) return;
+        const acceptedTurn = latestAcceptedUserTurnRef.current;
+        if (event.turn_id < acceptedTurn || event.turn_id > acceptedTurn + 1) {
+          return;
+        }
+        if (event.turn_id === acceptedTurn && acceptedTurn > 0) {
+          activateEmotionHint(event);
+        } else {
+          pendingEmotionRef.current.set(event.turn_id, event);
+        }
+        return;
+      }
+      if (event.type === "assistant_state") {
+        if (event.session_id !== sessionRef.current?.session_id) return;
+        if (event.generation_id < generationRef.current) return;
+        const mappedState = mapServerState(event.state);
+        if (!mappedState) return;
+        if (!initialReadyRef.current) {
+          if (event.state !== "ready" && event.state !== "speaker_enroll") {
+            return;
+          }
+          initialReadyRef.current = true;
+          recordAudioDiagnostic("agent_ready");
+        }
+        clearAgentReadyTimer();
+        clearReconnectTimer();
+        generationRef.current = event.generation_id;
+        turnRef.current = event.turn_id;
+        setUiState(mappedState);
+        return;
+      }
+      if (!initialReadyRef.current) return;
+      if (event.speaker === "user" && !event.final) return;
+      if (event.session_id !== sessionRef.current?.session_id) return;
+      applyTranscript(event, { authoritative: true });
+    };
+    const onTranscriptionReceived = (segments, participant) => {
+      if (!isCurrent() || !initialReadyRef.current) return;
+      if (
+        sessionRef.current?.interaction?.interaction_mode ===
+        "self_preview"
+      ) {
+        return;
+      }
+      if (!participant?.isAgent || !segments.length) return;
+      const text = segments.map((segment) => segment.text).join("");
+      if (!text) return;
+      applyTranscript(
+        {
+          speaker: "assistant",
+          text,
+          final: segments.every((segment) => segment.final),
+          heard: true,
+          turn_id: turnRef.current,
+          generation_id: generationRef.current,
+        },
+        { authoritative: false },
+      );
+    };
+    const onReconnecting = () => {
+      if (!isCurrent()) return;
+      recoveryEpochRef.current += 1;
+      recoveryInFlightRef.current = false;
+      roomConnectedRef.current = false;
+      if (!initialReadyRef.current) {
+        setUiState("connecting");
+        return;
+      }
+      setUiState("reconnecting");
+      clearReconnectTimer();
+      reconnectTimerRef.current = window.setTimeout(() => {
+        void failReconnect(transport.room, "重新连接超时，请轻触吉祥物再试");
+      }, 10_000);
+    };
+    const onReconnected = () => {
+      if (!isCurrent() || !created) return;
+      roomConnectedRef.current = true;
+      if (!initialReadyRef.current || recoveryInFlightRef.current) return;
+      recoveryInFlightRef.current = true;
+      const recoveryEpoch = recoveryEpochRef.current;
+      const isRecoveryCurrent = () =>
+        isCurrent() && recoveryEpochRef.current === recoveryEpoch;
+      reconnectTimerRef.current ||= window.setTimeout(() => {
+        void failReconnect(transport.room, "重新连接超时，请轻触吉祥物再试");
+      }, 10_000);
+      generationRef.current += 1;
+      void (async () => {
+        try {
+          await notifyRtcRecovered(created.session_id);
+          if (!isRecoveryCurrent()) return;
+          let appliedMicState = micEnabledRef.current;
+          await transport.setMicrophoneEnabled(appliedMicState);
+          if (!isRecoveryCurrent()) return;
+          if (appliedMicState !== micEnabledRef.current) {
+            appliedMicState = micEnabledRef.current;
+            await transport.setMicrophoneEnabled(appliedMicState);
+            if (!isRecoveryCurrent()) return;
+          }
+          if (voiceReplyEnabledRef.current) {
+            try {
+              await transport.resumeAudio();
+              if (!isRecoveryCurrent()) return;
+            } catch {
+              if (isRecoveryCurrent()) setAudioBlocked(true);
+            }
+          }
+        } catch {
+          if (isRecoveryCurrent()) {
+            await failReconnect(
+              transport.room,
+              "重新连接失败，请轻触吉祥物再试",
+            );
+          }
+        }
+      })();
+    };
+    const onDisconnected = () => {
+      if (!isCurrent()) return;
+      attemptRef.current += 1;
+      const wasIntentional = intentionalEndRef.current;
+      void disconnectRoom(transport.room);
+      resetEmotionState();
+      if (!wasIntentional) {
+        setError("连接已经断开，轻触吉祥物可以重新开始");
+      }
+      setSession(null);
+      sessionRef.current = null;
+      setUiState("closed");
+    };
+    transport = new LiveKitCascadeTransport({
+      stopResponse,
+      onTrackSubscribed,
+      onTrackUnsubscribed,
+      onDataReceived,
+      onTranscriptionReceived,
+      onReconnecting,
+      onReconnected,
+      onDisconnected,
+    });
+    cascadeTransportRef.current = transport;
+    const room = transport.room;
+    roomRef.current = room;
     let liveKitUnlockPromise = Promise.resolve();
     if (voiceReplyEnabledRef.current) {
       try {
-        liveKitUnlockPromise = room
-          .startAudio()
+        liveKitUnlockPromise = transport
+          .prepare({ unlockAudio: true })
           .then(() => {
             if (isCurrent()) {
               recordAudioDiagnostic("audio_unlock", "ok", {
@@ -979,7 +1208,7 @@ export function useVoiceSession({
     }
     return (async () => {
       try {
-        const created = await (sessionOptions
+        created = await (sessionOptions
           ? createSession(
               userId,
               selectedBackend,
@@ -994,222 +1223,10 @@ export function useVoiceSession({
         sessionRef.current = created;
         setSession(created);
         recordAudioDiagnostic("session_created");
-
-        const onTrackSubscribed = (track) => {
-          if (!isCurrent()) return;
-          if (track.kind === "audio") {
-            recordAudioDiagnostic("track_subscribed");
-          }
-          attachAudio(track, isCurrent);
-          if (track.kind === "audio") startStatsSampling(track, isCurrent);
-        };
-        const onTrackUnsubscribed = (track) => {
-          if (!isCurrent()) return;
-          const key = cascadeAudioTrackKey(track);
-          const element = cascadeAudioElementsRef.current.get(key);
-          cascadeAudioElementsRef.current.delete(key);
-          track.detach().forEach((element) => element.remove());
-          element?.remove();
-          if (statsTrackRef.current === track) stopStatsSampling();
-        };
-        const onDataReceived = (payload, participant, _kind, topic) => {
-          if (!isCurrent()) return;
-          if (!participant?.isAgent || topic !== UI_TOPIC) return;
-          const event = parseEvent(payload);
-          if (!event) return;
-          if (event.type === "audio_trace") {
-            if (event.session_id !== sessionRef.current?.session_id) return;
-            if (event.generation_id < generationRef.current) return;
-            audioDiagnosticsRef.current = [
-              ...audioDiagnosticsRef.current.slice(-49),
-              { ...event, source: event.source || "agent" },
-            ];
-            setAudioDiagnostics(audioDiagnosticsRef.current);
-            if (
-              event.name === "target_speaker_rejected" &&
-              event.detail?.reason === "target_non_owner"
-            ) {
-              setError(SPEAKER_REJECT_MESSAGE);
-            }
-            return;
-          }
-          if (event.type === "assistant_audio") {
-            if (event.session_id !== sessionRef.current?.session_id) return;
-            if (event.generation_id < generationRef.current) return;
-            audioGainRef.current = Math.min(1, Math.max(0, event.gain));
-            const elements =
-              audioContainerRef.current?.querySelectorAll("audio") || [];
-            elements.forEach((element) => {
-              element.volume = audioGainRef.current;
-            });
-            recordAudioDiagnostic(
-              event.action === "duck" ? "playback_ducked" : "playback_restored",
-              "ok",
-              { gain: audioGainRef.current },
-            );
-            return;
-          }
-          if (event.type === "emotion_observation") {
-            if (!initialReadyRef.current) return;
-            if (event.session_id !== sessionRef.current?.session_id) return;
-            if (event.generation_id < generationRef.current) return;
-            const acceptedTurn = latestAcceptedUserTurnRef.current;
-            if (event.turn_id < acceptedTurn || event.turn_id > acceptedTurn + 1) {
-              return;
-            }
-            if (event.turn_id === acceptedTurn && acceptedTurn > 0) {
-              activateEmotionHint(event);
-            } else {
-              pendingEmotionRef.current.set(event.turn_id, event);
-            }
-            return;
-          }
-          if (event.type === "assistant_state") {
-            if (event.session_id !== sessionRef.current?.session_id) return;
-            if (event.generation_id < generationRef.current) return;
-            const mappedState = mapServerState(event.state);
-            if (!mappedState) return;
-            if (!initialReadyRef.current) {
-              // ready starts the session; speaker_enroll may be the first
-              // post-connect interactive state for voiceprint registration.
-              if (
-                event.state !== "ready" &&
-                event.state !== "speaker_enroll"
-              ) {
-                return;
-              }
-              initialReadyRef.current = true;
-              recordAudioDiagnostic("agent_ready");
-            }
-            clearAgentReadyTimer();
-            clearReconnectTimer();
-            generationRef.current = event.generation_id;
-            turnRef.current = event.turn_id;
-            setUiState(mappedState);
-            return;
-          }
-          if (!initialReadyRef.current) return;
-          if (event.speaker === "user" && !event.final) return;
-          if (event.session_id !== sessionRef.current?.session_id) return;
-          applyTranscript(event, { authoritative: true });
-        };
-        const onTranscriptionReceived = (segments, participant) => {
-          if (!isCurrent() || !initialReadyRef.current) return;
-          if (
-            sessionRef.current?.interaction?.interaction_mode ===
-            "self_preview"
-          ) {
-            return;
-          }
-          if (!participant?.isAgent || !segments.length) return;
-          const text = segments.map((segment) => segment.text).join("");
-          if (!text) return;
-          applyTranscript(
-            {
-              speaker: "assistant",
-              text,
-              final: segments.every((segment) => segment.final),
-              heard: true,
-              turn_id: turnRef.current,
-              generation_id: generationRef.current,
-            },
-            { authoritative: false },
-          );
-        };
-        const onReconnecting = () => {
-          if (!isCurrent()) return;
-          recoveryEpochRef.current += 1;
-          recoveryInFlightRef.current = false;
-          roomConnectedRef.current = false;
-          if (!initialReadyRef.current) {
-            setUiState("connecting");
-            return;
-          }
-          setUiState("reconnecting");
-          clearReconnectTimer();
-          reconnectTimerRef.current = window.setTimeout(() => {
-            void failReconnect(room, "重新连接超时，请轻触吉祥物再试");
-          }, 10_000);
-        };
-        const onReconnected = () => {
-          if (!isCurrent()) return;
-          roomConnectedRef.current = true;
-          if (!initialReadyRef.current) return;
-          if (recoveryInFlightRef.current) return;
-          recoveryInFlightRef.current = true;
-          const recoveryEpoch = recoveryEpochRef.current;
-          const isRecoveryCurrent = () =>
-            isCurrent() && recoveryEpochRef.current === recoveryEpoch;
-          reconnectTimerRef.current ||= window.setTimeout(() => {
-            void failReconnect(room, "重新连接超时，请轻触吉祥物再试");
-          }, 10_000);
-          generationRef.current += 1;
-          void (async () => {
-            try {
-              await notifyRtcRecovered(created.session_id);
-              if (!isRecoveryCurrent()) return;
-              let appliedMicState = micEnabledRef.current;
-              await room.localParticipant.setMicrophoneEnabled(appliedMicState);
-              if (!isRecoveryCurrent()) return;
-              if (appliedMicState !== micEnabledRef.current) {
-                appliedMicState = micEnabledRef.current;
-                await room.localParticipant.setMicrophoneEnabled(
-                  appliedMicState,
-                );
-                if (!isRecoveryCurrent()) return;
-              }
-              if (voiceReplyEnabledRef.current) {
-                try {
-                  await room.startAudio();
-                  if (!isRecoveryCurrent()) return;
-                } catch {
-                  if (isRecoveryCurrent()) setAudioBlocked(true);
-                }
-              }
-            } catch {
-              if (isRecoveryCurrent()) {
-                await failReconnect(room, "重新连接失败，请轻触吉祥物再试");
-              }
-            }
-          })();
-        };
-        const onDisconnected = () => {
-          if (!isCurrent()) return;
-          attemptRef.current += 1;
-          const wasIntentional = intentionalEndRef.current;
-          void disconnectRoom(room);
-          resetEmotionState();
-          if (!wasIntentional) {
-            setError("连接已经断开，轻触吉祥物可以重新开始");
-          }
-          setSession(null);
-          sessionRef.current = null;
-          setUiState("closed");
-        };
-        const handlers = [
-          [RoomEvent.TrackSubscribed, onTrackSubscribed],
-          [RoomEvent.TrackUnsubscribed, onTrackUnsubscribed],
-          [RoomEvent.DataReceived, onDataReceived],
-          [RoomEvent.TranscriptionReceived, onTranscriptionReceived],
-          [RoomEvent.Reconnecting, onReconnecting],
-          [RoomEvent.Reconnected, onReconnected],
-          [RoomEvent.Disconnected, onDisconnected],
-        ];
-        handlers.forEach(([event, handler]) => room.on(event, handler));
-        roomHandlersRef.current = {
-          room,
-          cleanup: () => {
-            handlers.forEach(([event, handler]) => room.off(event, handler));
-          },
-        };
-
-        const devices = await Room.getLocalDevices("audioinput", true);
-        if (!isCurrent()) {
-          await disconnectRoom(room);
-          return;
-        }
-        if (!devices.length) throw new Error("没有找到可用的麦克风");
-        await room.connect(created.livekit_url, created.participant_token);
+        await transport.connect(created, {
+          getMicrophoneEnabled: () => micEnabledRef.current,
+          isCurrent,
+        });
         if (!isCurrent()) {
           await disconnectRoom(room);
           return;
@@ -1228,20 +1245,6 @@ export function useVoiceSession({
             void failReconnect(room, "连接超时，请轻触吉祥物再试");
           }, AGENT_READY_TIMEOUT_MS);
         }
-        let appliedMicState = micEnabledRef.current;
-        await room.localParticipant.setMicrophoneEnabled(appliedMicState);
-        if (!isCurrent()) {
-          await disconnectRoom(room);
-          return;
-        }
-        if (appliedMicState !== micEnabledRef.current) {
-          appliedMicState = micEnabledRef.current;
-          await room.localParticipant.setMicrophoneEnabled(appliedMicState);
-          if (!isCurrent()) {
-            await disconnectRoom(room);
-            return;
-          }
-        }
         await liveKitUnlockPromise;
         if (!isCurrent()) {
           await disconnectRoom(room);
@@ -1249,7 +1252,7 @@ export function useVoiceSession({
         }
         if (voiceReplyEnabledRef.current) {
           try {
-            await room.startAudio();
+            await transport.resumeAudio();
             if (isCurrent()) {
               setAudioBlocked(false);
               recordAudioDiagnostic("audio_unlock", "ok", {
@@ -1313,9 +1316,9 @@ export function useVoiceSession({
   ]);
 
   const toggleMic = useCallback(async () => {
-    const room = roomRef.current;
+    const cascadeTransport = cascadeTransportRef.current;
     const omniTransport = omniTransportRef.current;
-    if (!room && !omniTransport) return;
+    if (!cascadeTransport && !omniTransport) return;
     const next = !micEnabledRef.current;
     micEnabledRef.current = next;
     setMicEnabledState(next);
@@ -1333,9 +1336,9 @@ export function useVoiceSession({
     }
     if (!roomConnectedRef.current) return;
     try {
-      await room.localParticipant.setMicrophoneEnabled(next);
+      await cascadeTransport.setMicrophoneEnabled(next);
     } catch {
-      if (roomRef.current === room) {
+      if (cascadeTransportRef.current === cascadeTransport) {
         micEnabledRef.current = !next;
         setMicEnabledState(!next);
         setError("麦克风切换失败");
@@ -1344,21 +1347,21 @@ export function useVoiceSession({
   }, []);
 
   const stopAssistant = useCallback(async () => {
-    const room = roomRef.current;
+    const cascadeTransport = cascadeTransportRef.current;
     const omniTransport = omniTransportRef.current;
     const sessionId = sessionRef.current?.session_id;
-    if ((!room && !omniTransport) || !sessionId) return;
+    if ((!cascadeTransport && !omniTransport) || !sessionId) return;
     try {
       if (omniTransport) {
-        omniTransport.cancelResponse();
+        omniTransport.stopAssistant();
         return;
       }
-      await stopResponse(sessionId);
+      await cascadeTransport.stopAssistant();
     } catch {
       if (
         (omniTransport
           ? omniTransportRef.current === omniTransport
-          : roomRef.current === room) &&
+          : cascadeTransportRef.current === cascadeTransport) &&
         sessionRef.current?.session_id === sessionId
       ) {
         setError("暂时无法停止回答");
@@ -1393,7 +1396,7 @@ export function useVoiceSession({
     persistedRef.current.clear();
     audioDiagnosticsRef.current = [];
     setSession(null);
-    setUiState("idle");
+    resetUiState(attemptRef.current);
     setMicEnabledState(true);
     setTranscripts([]);
     setError("");
@@ -1401,7 +1404,7 @@ export function useVoiceSession({
     setAudioDiagnostics([]);
     disconnectOmni(omniTransport);
     await disconnectRoom(room);
-  }, [disconnectOmni, disconnectRoom, resetEmotionState]);
+  }, [disconnectOmni, disconnectRoom, resetEmotionState, resetUiState]);
 
   useEffect(
     () => () => {

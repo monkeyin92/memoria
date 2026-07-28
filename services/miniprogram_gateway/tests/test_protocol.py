@@ -7,6 +7,7 @@ import pytest
 from services.miniprogram_gateway.protocol import (
     CLIENT_AUDIO_TRACE_DETAIL_FIELDS,
     CLIENT_AUDIO_TRACE_NAMES,
+    CLIENT_AUDIO_TRACE_PROTOCOL_VERSION,
     GENERATION_HEADER_SIZE,
     GENERATION_PROTOCOL_VERSION,
     HEADER_SIZE,
@@ -36,6 +37,7 @@ def test_pcm_media_constants_match_shared_contract() -> None:
     assert int(FrameType.UPLINK_AUDIO) == binary["frame_types"]["uplink_audio"]
     assert int(FrameType.DOWNLINK_AUDIO) == binary["frame_types"]["downlink_audio"]
     client_trace = CONTRACT["control_events"]["client_audio_trace"]
+    assert CLIENT_AUDIO_TRACE_PROTOCOL_VERSION == client_trace["protocol_version"]
     assert CLIENT_AUDIO_TRACE_NAMES == frozenset(client_trace["names"])
     assert CLIENT_AUDIO_TRACE_DETAIL_FIELDS == frozenset(client_trace["detail_fields"])
 

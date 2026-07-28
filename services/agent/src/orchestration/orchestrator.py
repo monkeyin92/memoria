@@ -6,15 +6,25 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from services.agent.src.contracts.events import TimedWord
-from services.agent.src.contracts.ids import GenerationFence, new_session_id
+from services.agent.src.contracts.ids import (
+    CancellationContext,
+    GenerationFence,
+    new_session_id,
+)
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.context_manager import ChatMessage, ContextManager
 from services.agent.src.orchestration.generation_fence import FenceGate
+from services.agent.src.orchestration.handlers import (
+    LanguageModelHandler,
+    LanguageModelRequest,
+    SpeechSynthesisHandler,
+    SpeechSynthesisRequest,
+)
 from services.agent.src.orchestration.heard_text_tracker import HeardTextTracker
 from services.agent.src.orchestration.interruption_guard import (
     ChineseInterruptionGuard,
@@ -213,12 +223,41 @@ class Orchestrator:
                 return True
             return False
 
-    def gate_llm_token(self, fence: GenerationFence, token: str) -> str | None:
-        assert self.fence_gate is not None
-        return self.fence_gate.gate(fence, token, source="llm")
+    def cancellation_context(
+        self,
+        fence: GenerationFence | None = None,
+    ) -> CancellationContext:
+        return CancellationContext.capture(fence or self.fence)
 
-    def gate_tts_audio(self, fence: GenerationFence, pcm: bytes) -> bytes | None:
+    @staticmethod
+    def _generation_fence(
+        cancellation: GenerationFence | CancellationContext,
+    ) -> GenerationFence:
+        return (
+            cancellation.fence
+            if isinstance(cancellation, CancellationContext)
+            else cancellation
+        )
+
+    def gate_llm_token(
+        self,
+        cancellation: GenerationFence | CancellationContext,
+        token: str,
+    ) -> str | None:
         assert self.fence_gate is not None
+        return self.fence_gate.gate(
+            self._generation_fence(cancellation),
+            token,
+            source="llm",
+        )
+
+    def gate_tts_audio(
+        self,
+        cancellation: GenerationFence | CancellationContext,
+        pcm: bytes,
+    ) -> bytes | None:
+        assert self.fence_gate is not None
+        fence = self._generation_fence(cancellation)
         out = self.fence_gate.gate(fence, pcm, source="tts")
         if out is None:
             self.stale_audio_outputs += 1
@@ -226,10 +265,18 @@ class Orchestrator:
         self.published_audio_generations.append(fence.generation_id)
         return out
 
-    def gate_tool_result(self, fence: GenerationFence, payload: Any) -> Any | None:
+    def gate_tool_result(
+        self,
+        cancellation: GenerationFence | CancellationContext,
+        payload: Any,
+    ) -> Any | None:
         assert self.fence_gate is not None
         # Full fence including tool_epoch
-        return self.fence_gate.gate(fence, payload, source="tool")
+        return self.fence_gate.gate(
+            self._generation_fence(cancellation),
+            payload,
+            source="tool",
+        )
 
     def set_active_llm_task(self, task: asyncio.Task[Any] | None) -> None:
         """Register the in-flight LLM generation task for atomic interrupt cancel."""
@@ -522,8 +569,8 @@ class OfflinePipeline:
 
     orchestrator: Orchestrator
     asr_final_text: str = ""
-    llm_stream: Callable[[str, GenerationFence], AsyncIterator[str]] | None = None
-    tts_synth: Callable[[list[str], GenerationFence, asyncio.Event], Any] | None = None
+    llm_handler: LanguageModelHandler | None = None
+    tts_handler: SpeechSynthesisHandler | None = None
 
     async def run_turn(self, user_text: str) -> dict[str, Any]:
         orch = self.orchestrator
@@ -531,14 +578,19 @@ class OfflinePipeline:
             await orch.ready()
         await orch.on_vad_start()
         fence = await orch.commit_turn(user_text)
+        cancellation = orch.cancellation_context(fence)
 
         full_content = ""
         assert orch.segmenter is not None
         phrases: list[str] = []
 
-        if self.llm_stream is not None:
-            async for token in self.llm_stream(user_text, fence):
-                gated = orch.gate_llm_token(fence, token)
+        if self.llm_handler is not None:
+            request = LanguageModelRequest(
+                user_text=user_text,
+                cancellation=cancellation,
+            )
+            async for token in self.llm_handler.stream(request):
+                gated = orch.gate_llm_token(cancellation, token)
                 if gated is None:
                     continue
                 full_content += gated
@@ -554,10 +606,16 @@ class OfflinePipeline:
         await orch.begin_speaking(words, full_content)
 
         pcm_total = bytearray()
-        if self.tts_synth is not None:
-            result = await self.tts_synth(phrases, fence, orch._tts_cancel)
+        if self.tts_handler is not None:
+            result = await self.tts_handler.synthesize(
+                SpeechSynthesisRequest(
+                    phrases=tuple(phrases),
+                    cancellation=cancellation,
+                    cancel_event=orch.tts_cancel_event(),
+                )
+            )
             pcm = getattr(result, "pcm", b"") or b""
-            if orch.publish_audio_if_current(fence, pcm):
+            if orch.publish_audio_if_current(cancellation.fence, pcm):
                 pcm_total.extend(pcm)
             w = getattr(result, "words", ())
             if w:

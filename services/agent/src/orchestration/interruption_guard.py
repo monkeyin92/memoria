@@ -47,7 +47,7 @@ BACKCHANNEL_WHITELIST = frozenset(
 INTERRUPT_PREFIXES = (
     "等等",
     "等一下",
-    "停",
+    "等下",
     "停一下",
     "停下",
     "暂停",
@@ -67,7 +67,52 @@ INTERRUPT_PREFIXES = (
     "我的意思是",
     "我问的是",
     "换一个",
+    "你先别说",
+    "你可以先听我说",
 )
+
+_LEADING_INTERRUPT_FILLERS = (
+    "嗯",
+    "啊",
+    "呃",
+    "哦",
+    "额",
+    "哎",
+    "喂",
+    "那个",
+    "就是",
+    "唉",
+    "欸",
+)
+
+_NEGATED_PROPOSITION_PREFIXES = (
+    "不是所有",
+    "不是每",
+    "不是任何",
+    "不是因为",
+    "不是由于",
+    "不是为了",
+    "不是说",
+    "不对称",
+    "不对等",
+)
+
+_TRAILING_CONTROL_PARTICLES = (
+    "好吗",
+    "可以吗",
+    "好吧",
+    "吗",
+    "嘛",
+    "呢",
+    "吧",
+    "呀",
+    "啊",
+    "哦",
+    "好",
+    "好的",
+)
+
+_INTERRUPT_PUNCTUATION = re.compile(r"""[\s。！？.!?，,；;：:"'“”‘’（）()【】[\]…·~～]""")
 
 # Semantic ack after interrupt (order: longer / stop-intent first).
 # stop_talking → AI should just acknowledge and stay quiet ("好的。")
@@ -127,10 +172,55 @@ def is_backchannel(text: str, *, duration_ms: int) -> bool:
 
 
 def is_explicit_interrupt(text: str) -> bool:
-    t = normalize_short(text)
-    if not t:
-        return False
-    return any(t.startswith(p) or p in t for p in INTERRUPT_PREFIXES)
+    return _interrupt_prefix(text) is not None
+
+
+def _strip_leading_interrupt_fillers(text: str) -> str:
+    remainder = text
+    while remainder:
+        matched = next(
+            (
+                filler
+                for filler in sorted(
+                    _LEADING_INTERRUPT_FILLERS,
+                    key=len,
+                    reverse=True,
+                )
+                if remainder.startswith(filler)
+            ),
+            None,
+        )
+        if matched is None:
+            return remainder
+        remainder = remainder[len(matched) :]
+    return remainder
+
+
+def _compact_interrupt_text(text: str) -> str:
+    return _INTERRUPT_PUNCTUATION.sub("", text)
+
+
+def _interrupt_prefix(text: str) -> str | None:
+    normalized = _strip_leading_interrupt_fillers(_compact_interrupt_text(text))
+    if not normalized:
+        return None
+    if normalized in {"等下我", "等下你"}:
+        return None
+    if normalized == "停":
+        return "停"
+    if any(
+        normalized.startswith(prefix)
+        for prefix in _NEGATED_PROPOSITION_PREFIXES
+    ):
+        return None
+    return next(
+        (
+            prefix
+            for prefix in sorted(INTERRUPT_PREFIXES, key=len, reverse=True)
+            if normalized.startswith(prefix)
+        ),
+        None,
+    )
 
 
 def interrupt_ack_phrase(text: str) -> str:
@@ -193,19 +283,36 @@ def is_interrupt_command_only(text: str) -> bool:
     e.g. 「等等」「嗯，等等，等等。」「等一下」→ True
          「等一下我想问下周三」→ False (has content beyond the command)
     """
-    t = normalize_short(text)
-    if t == "等下":
-        return True
-    if not t or not is_explicit_interrupt(t):
+    remainder = _strip_leading_interrupt_fillers(_compact_interrupt_text(text))
+    if not remainder or _interrupt_prefix(remainder) is None:
         return False
-    remainder = t
-    for p in sorted(INTERRUPT_PREFIXES, key=len, reverse=True):
-        remainder = remainder.replace(p, "")
-    for filler in sorted(_CONTROL_ACK_FILLERS, key=len, reverse=True):
-        remainder = remainder.replace(filler, "")
-    remainder = normalize_short(remainder)
-    # Allow at most one leftover char (noise from ASR)
-    return len(remainder) <= 1
+    while remainder:
+        prefix = _interrupt_prefix(remainder)
+        if prefix is None:
+            break
+        remainder = remainder[len(prefix) :]
+        between_commands = _strip_leading_interrupt_fillers(remainder)
+        if _interrupt_prefix(between_commands) is None:
+            break
+        remainder = between_commands
+    remainder = _compact_interrupt_text(remainder)
+    while remainder:
+        particle = next(
+            (
+                candidate
+                for candidate in sorted(
+                    _TRAILING_CONTROL_PARTICLES,
+                    key=len,
+                    reverse=True,
+                )
+                if remainder.endswith(candidate)
+            ),
+            None,
+        )
+        if particle is None:
+            break
+        remainder = remainder[: -len(particle)]
+    return not _compact_interrupt_text(remainder)
 
 
 def is_resume_command_only(text: str) -> bool:

@@ -13,6 +13,7 @@ UI_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "assistant_state",
         "audio_trace",
         "emotion_observation",
+        "input_policy",
         "listener_cue",
         "speaker_enroll_progress",
         "speaker_enroll_result",
@@ -76,6 +77,7 @@ class TranscriptEvent(BasePipelineEvent):
     ]
     text: str
     sentence_id: int
+    turn_revision: int = Field(default=1, ge=1)
     begin_ms: int
     end_ms: int | None
     is_final: bool

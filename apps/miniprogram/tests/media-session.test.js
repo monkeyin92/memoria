@@ -550,7 +550,12 @@ test("microphone disable wins over a pending RecorderManager start", async () =>
   recorder.reset();
   const sent = [];
   const media = new MiniProgramMediaSession(
-    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    {
+      media_gateway: {
+        audio: { sample_rate: 24000, frame_ms: 20 },
+        playout: { post_playout_guard_ms: 0 },
+      },
+    },
     {},
   );
   media.ready = true;
@@ -613,7 +618,12 @@ test("assistant response pauses uplink until authoritative completion and local 
   });
   const sent = [];
   const media = new MiniProgramMediaSession(
-    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    {
+      media_gateway: {
+        audio: { sample_rate: 24000, frame_ms: 20 },
+        playout: { post_playout_guard_ms: 0 },
+      },
+    },
     {},
   );
   media.ready = true;
@@ -673,6 +683,89 @@ test("assistant response pauses uplink until authoritative completion and local 
   }
 });
 
+test("capture waits for the configured post-playout guard after the last source ends", async () => {
+  recorder.reset();
+  const originalCreateWebAudioContext = global.wx.createWebAudioContext;
+  let scheduledSource = null;
+  global.wx.createWebAudioContext = () => ({
+    state: "running",
+    currentTime: 1,
+    destination: {},
+    createGain: () => ({
+      gain: { value: 1 },
+      connect() {},
+    }),
+    createBuffer(_channels, length, sampleRate) {
+      return {
+        duration: length / sampleRate,
+        getChannelData: () => new Float32Array(length),
+      };
+    },
+    createBufferSource() {
+      scheduledSource = {
+        buffer: null,
+        onended: null,
+        connect() {},
+        start() {},
+        stop() {},
+      };
+      return scheduledSource;
+    },
+    resume: async () => {},
+    close: async () => {},
+  });
+  const media = new MiniProgramMediaSession(
+    {
+      media_gateway: {
+        audio: { sample_rate: 24000, frame_ms: 20 },
+        playout: { post_playout_guard_ms: 15 },
+      },
+    },
+    {},
+  );
+  media.ready = true;
+
+  try {
+    await media.player.resume();
+    media._startRecording();
+    recorder.startListener();
+    media._onMessage({
+      data: JSON.stringify({
+        type: "ui_event",
+        event: { type: "assistant_state", state: "thinking", generation_id: 1 },
+      }),
+    });
+    const frame = new Int16Array(480).buffer;
+    for (let sequence = 0; sequence < 4; sequence += 1) {
+      media._onMessage({
+        data: encodePcmFrame(
+          FRAME_TYPE.DOWNLINK_AUDIO,
+          sequence,
+          Date.now(),
+          frame,
+        ),
+      });
+    }
+    media._onMessage({
+      data: JSON.stringify({
+        type: "ui_event",
+        event: { type: "assistant_state", state: "listening", generation_id: 1 },
+      }),
+    });
+
+    scheduledSource.onended();
+    assert.equal(media.recording, false);
+    assert.equal(recorder.resumeCalls, 0);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(media.recording, true);
+    assert.equal(recorder.resumeCalls, 1);
+  } finally {
+    await media.close();
+    global.wx.createWebAudioContext = originalCreateWebAudioContext;
+  }
+});
+
 test("assistant completion never overrides an explicit microphone mute", async () => {
   recorder.reset();
   const media = new MiniProgramMediaSession(
@@ -700,6 +793,99 @@ test("assistant completion never overrides an explicit microphone mute", async (
   assert.equal(media.microphoneEnabled, false);
   assert.equal(media.recording, false);
   assert.equal(recorder.resumeCalls, 0);
+  await media.close();
+});
+
+test("explicit input policy outranks assistant state strings and rejects stale epochs", async () => {
+  recorder.reset();
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    {},
+  );
+  media.ready = true;
+
+  media._startRecording();
+  recorder.startListener();
+  assert.equal(media.recording, true);
+
+  media._onMessage({
+    data: JSON.stringify({
+      type: "ui_event",
+      event: {
+        type: "input_policy",
+        capture_allowed: false,
+        policy_epoch: 2,
+        reason: "assistant_speaking",
+        generation_id: 1,
+      },
+    }),
+  });
+  assert.equal(media.recording, false);
+  assert.equal(recorder.pauseCalls, 1);
+
+  media._onMessage({
+    data: JSON.stringify({
+      type: "ui_event",
+      event: { type: "assistant_state", state: "listening", generation_id: 1 },
+    }),
+  });
+  media._onMessage({
+    data: JSON.stringify({
+      type: "ui_event",
+      event: {
+        type: "input_policy",
+        capture_allowed: true,
+        policy_epoch: 1,
+        reason: "assistant_listening",
+        generation_id: 1,
+      },
+    }),
+  });
+  assert.equal(media.recording, false);
+  assert.equal(recorder.resumeCalls, 0);
+
+  media._onMessage({
+    data: JSON.stringify({
+      type: "ui_event",
+      event: {
+        type: "input_policy",
+        capture_allowed: true,
+        policy_epoch: 3,
+        reason: "assistant_listening",
+        generation_id: 1,
+      },
+    }),
+  });
+  assert.equal(media.recording, true);
+  assert.equal(recorder.resumeCalls, 1);
+  await media.close();
+});
+
+test("input policy rejects the reserved zero epoch", async () => {
+  recorder.reset();
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    {},
+  );
+  media.ready = true;
+  media._startRecording();
+  recorder.startListener();
+
+  media._onMessage({
+    data: JSON.stringify({
+      type: "ui_event",
+      event: {
+        type: "input_policy",
+        capture_allowed: false,
+        policy_epoch: 0,
+        reason: "invalid_epoch",
+        generation_id: 1,
+      },
+    }),
+  });
+
+  assert.equal(media.inputPolicyReceived, false);
+  assert.equal(media.recording, true);
   await media.close();
 });
 
@@ -1064,6 +1250,48 @@ test("SocketTask connection failures retain the actionable platform error", asyn
   await media.close();
 });
 
+test("WebSocket handshake failures are not misreported as certificate errors", async () => {
+  recorder.reset();
+  const socket = {
+    onOpen(listener) {
+      this.openListener = listener;
+    },
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    close() {},
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    {
+      media_gateway: {
+        websocket_url: "wss://voice.example.com/media",
+        ticket: "ticket",
+      },
+    },
+    {},
+  );
+
+  const connecting = media.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.errorListener({ errMsg: "connectSocket:fail WebSocket handshake failed" });
+
+  await assert.rejects(
+    connecting,
+    (error) =>
+      /WebSocket 握手失败/.test(error.message) &&
+      /handshake failed/i.test(error.message) &&
+      !/证书/.test(error.message),
+  );
+  await media.close();
+});
+
 test("SocketTask connection refused points to the device network path", async () => {
   recorder.reset();
   const socket = {
@@ -1204,6 +1432,41 @@ test("assistant audio controls immediately duck and restore Mini Program playbac
   assert.deepEqual(gains, [0.25, 1]);
 });
 
+test("button stop flushes local playback and reports the current generation", () => {
+  recorder.reset();
+  const sent = [];
+  let interrupted = 0;
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    {},
+  );
+  media.ready = true;
+  media.inputPolicyReceived = true;
+  media.serverCaptureAllowed = false;
+  media.playbackGenerationId = 4;
+  media.player = {
+    generationId: 4,
+    interrupt() {
+      interrupted += 1;
+    },
+  };
+  media.socket = {
+    send(options) {
+      sent.push(options.data);
+    },
+  };
+
+  media.stopAssistantPlayback();
+
+  assert.equal(interrupted, 1);
+  assert.equal(media._microphoneCaptureEnabled(), false);
+  assert.deepEqual(JSON.parse(sent[0]), {
+    type: "playout_interrupt",
+    generation_id: 4,
+    client_timestamp_ms: JSON.parse(sent[0]).client_timestamp_ms,
+  });
+});
+
 test("media session forwards downlink sequence and reset generation to the PCM player", () => {
   recorder.reset();
   const resets = [];
@@ -1277,7 +1540,7 @@ test("PCM player applies gain through one shared WebAudio node", async () => {
   assert.equal(player.gainNode.gain.value, 0.25);
 });
 
-test("media session sends bounded first-playback telemetry to the gateway", () => {
+test("media session keeps first-playback telemetry compatible with a legacy gateway", () => {
   recorder.reset();
   const sent = [];
   const media = new MiniProgramMediaSession(
@@ -1328,8 +1591,69 @@ test("media session sends bounded first-playback telemetry to the gateway", () =
   );
   assert.deepEqual(
     Object.keys(trace.detail).sort(),
-    ["pending_audio_ms", "queue_lead_ms", "scheduled_sources"],
+    [
+      "pending_audio_ms",
+      "queue_lead_ms",
+      "scheduled_sources",
+    ],
   );
+});
+
+test("media session enables adaptive playback telemetry after a v2 ready advertisement", () => {
+  recorder.reset();
+  const sent = [];
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { audio: { sample_rate: 24000, frame_ms: 20 } } },
+    {},
+  );
+  assert.equal(
+    media._acceptReadyAudioContract({
+      protocol_version: 1,
+      audio: {
+        sample_rate: 24000,
+        channels: 1,
+        sample_format: "s16le",
+        frame_ms: 20,
+        frame_protocol_version: 2,
+      },
+      client_audio_trace_version:
+        contract.control_events.client_audio_trace.protocol_version,
+    }),
+    true,
+  );
+  media.ready = true;
+  media.socket = {
+    send(options) {
+      sent.push(JSON.parse(options.data));
+    },
+    close() {},
+  };
+
+  assert.equal(
+    media._sendClientAudioTrace({
+      name: "miniprogram_playback_lead_adjusted",
+      generationId: 7,
+      detail: {
+        queue_lead_ms: 120,
+        target_lead_ms: 120,
+        underflow_count: 1,
+      },
+    }),
+    true,
+  );
+  assert.deepEqual(sent, [
+    {
+      type: "client_audio_trace",
+      name: "miniprogram_playback_lead_adjusted",
+      generation_id: 7,
+      client_timestamp_ms: sent[0].client_timestamp_ms,
+      detail: {
+        queue_lead_ms: 120,
+        target_lead_ms: 120,
+        underflow_count: 1,
+      },
+    },
+  ]);
 });
 
 test("PCM player rebases an underflow instead of scheduling a late frame in the past", () => {
@@ -1373,11 +1697,67 @@ test("PCM player rebases an underflow instead of scheduling a late frame in the 
     player.enqueue(frame, { sequence, generationId: 1 });
   }
 
-  assert.equal(startedAt, 1.08);
+  assert.equal(startedAt, 1.1);
   assert.equal(existingStopped, 0);
   assert.equal(traces[0].name, "miniprogram_playback_underrun");
   assert.equal(traces[0].generationId, 1);
-  assert.equal(traces[1].name, "first_playback");
+  assert.ok(traces.some(({ name }) => name === "first_playback"));
+});
+
+test("PCM player raises target lead after underflow and decays it after a stable window", () => {
+  const started = [];
+  const traces = [];
+  const player = new PcmJitterPlayer({
+    minLeadSeconds: 0.1,
+    maxAdaptiveLeadSeconds: 0.18,
+    leadStepSeconds: 0.02,
+    leadStableSeconds: 30,
+    onTrace: (event) => traces.push(event),
+  });
+  player.context = {
+    state: "running",
+    currentTime: 1,
+    destination: {},
+    createBuffer(_channels, length, sampleRate) {
+      return {
+        duration: length / sampleRate,
+        getChannelData: () => new Float32Array(length),
+      };
+    },
+    createBufferSource() {
+      return {
+        buffer: null,
+        connect() {},
+        start(at) {
+          started.push(at);
+        },
+      };
+    },
+  };
+  player.nextStartAt = 0.99;
+  const frame = new Int16Array(480).buffer;
+
+  for (let sequence = 0; sequence < 4; sequence += 1) {
+    player.enqueue(frame, { sequence, generationId: 1 });
+  }
+
+  assert.equal(player.targetLeadSeconds, 0.12);
+  assert.equal(started[0], 1.12);
+
+  player.context.currentTime = 32;
+  player.nextStartAt = 32.2;
+  for (let sequence = 4; sequence < 8; sequence += 1) {
+    player.enqueue(frame, { sequence, generationId: 1 });
+  }
+
+  assert.equal(player.targetLeadSeconds, 0.1);
+  const leadChanges = traces.filter(
+    ({ name }) => name === "miniprogram_playback_lead_adjusted",
+  );
+  assert.deepEqual(
+    leadChanges.map(({ detail }) => detail.target_lead_ms),
+    [120, 100],
+  );
 });
 
 test("PCM player batches four continuous 20ms frames into one 80ms source", () => {

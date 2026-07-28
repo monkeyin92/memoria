@@ -5,6 +5,7 @@ const RECORDER_START_TIMEOUT_MS = 2000;
 const FIRST_UPLINK_FRAME_TIMEOUT_MS = 3000;
 const RECORDER_RESTART_DELAY_MS = 120;
 const GATEWAY_READY_TIMEOUT_MS = 10000;
+const DEFAULT_POST_PLAYOUT_GUARD_MS = 150;
 // WeChat can emit a generic onError just before a close that carries the useful
 // gateway code, so let the close callback settle the initial connection first.
 const SOCKET_CLOSE_PRIORITY_DELAY_MS = 100;
@@ -28,13 +29,38 @@ const ASSISTANT_INPUT_RELEASE_STATES = new Set([
   "eot_pending",
   "interrupted",
 ]);
+const CLIENT_AUDIO_TRACE_V1_NAMES = new Set([
+  "first_playback",
+  "miniprogram_playback_underrun",
+  "miniprogram_playback_hard_reset",
+  "miniprogram_gap_concealed",
+]);
+const CLIENT_AUDIO_TRACE_V1_DETAIL_FIELDS = new Set([
+  "queue_lead_ms",
+  "pending_audio_ms",
+  "missing_frames",
+  "scheduled_sources",
+  "clock_ahead_ms",
+]);
+const CLIENT_AUDIO_TRACE_V2_NAMES = new Set([
+  ...CLIENT_AUDIO_TRACE_V1_NAMES,
+  "miniprogram_playback_lead_adjusted",
+]);
+const CLIENT_AUDIO_TRACE_V2_DETAIL_FIELDS = new Set([
+  ...CLIENT_AUDIO_TRACE_V1_DETAIL_FIELDS,
+  "target_lead_ms",
+  "underflow_count",
+]);
 
 function socketConnectionErrorKind(detail) {
   if (/domain list|合法域名/i.test(detail)) {
     return "domain";
   }
-  if (/certificate|ssl|tls|handshake/i.test(detail)) {
+  if (/certificate|ssl|tls/i.test(detail)) {
     return "certificate";
+  }
+  if (/handshake/i.test(detail)) {
+    return "websocket_handshake";
   }
   if (/timeout|timed out/i.test(detail)) {
     return "timeout";
@@ -53,6 +79,11 @@ function socketConnectionErrorMessage(error) {
   }
   if (kind === "certificate") {
     return "语音网络证书校验失败，请检查 Socket 域名证书。";
+  }
+  if (kind === "websocket_handshake") {
+    return detail
+      ? `语音 WebSocket 握手失败：${detail.slice(0, 120)}`
+      : "语音 WebSocket 握手失败。";
   }
   if (kind === "timeout") {
     return "语音网络连接超时，请检查网络后重试。";
@@ -99,13 +130,28 @@ class MiniProgramMediaSession {
     this.callbacks = callbacks;
     this.socket = null;
     this.recorder = wx.getRecorderManager();
+    const configuredPostPlayoutGuardMs =
+      session.media_gateway?.playout?.post_playout_guard_ms;
+    this.postPlayoutGuardMs =
+      Number.isInteger(configuredPostPlayoutGuardMs) &&
+      configuredPostPlayoutGuardMs >= 0 &&
+      configuredPostPlayoutGuardMs <= 2000
+        ? configuredPostPlayoutGuardMs
+        : DEFAULT_POST_PLAYOUT_GUARD_MS;
     this.player = new PcmJitterPlayer({
       sampleRate: session.media_gateway?.audio?.sample_rate || 24000,
       frameMilliseconds: session.media_gateway?.audio?.frame_ms || 20,
       onTrace: (trace) => this._sendClientAudioTrace(trace),
       onPlaybackStateChange: (active) => {
+        const wasActive = this.playbackActive;
         this.playbackActive = active;
-        this._syncRecordingState();
+        if (active) {
+          this._clearPostPlayoutGuard();
+        } else if (wasActive) {
+          this._startPostPlayoutGuard();
+        } else {
+          this._syncRecordingState();
+        }
       },
     });
     this.sequence = 0;
@@ -116,7 +162,14 @@ class MiniProgramMediaSession {
     this.recorderStarting = false;
     this.microphoneEnabled = true;
     this.assistantResponseActive = false;
+    this.serverCaptureAllowed = true;
+    this.inputPolicyEpoch = -1;
+    this.inputPolicyReceived = false;
+    this.aecVariant = "unknown";
+    this.aecActive = false;
+    this.clientAudioTraceVersion = 1;
     this.playbackActive = false;
+    this.playoutGuardActive = false;
     this.systemInterrupted = false;
     this._uplinkDiscontinuityPending = false;
     this.intentionalClose = false;
@@ -131,6 +184,7 @@ class MiniProgramMediaSession {
     this._pendingSocketErrorTimer = null;
     this._pendingSocketError = null;
     this._gatewayReadyTimer = null;
+    this._playoutGuardTimer = null;
     this._gatewayAcknowledged = false;
     this._readyTerminal = false;
     this._closeNotified = false;
@@ -143,6 +197,7 @@ class MiniProgramMediaSession {
     }
     this._gatewayAcknowledged = false;
     this._readyTerminal = false;
+    this.clientAudioTraceVersion = 1;
     this._clearGatewayReadyTimeout();
     await this.player.resume();
     const ready = new Promise((resolve, reject) => {
@@ -174,6 +229,19 @@ class MiniProgramMediaSession {
   async setMicrophoneEnabled(enabled) {
     this.microphoneEnabled = Boolean(enabled);
     this._syncRecordingState();
+  }
+
+  stopAssistantPlayback() {
+    const generationId = Number.isInteger(this.playbackGenerationId)
+      ? this.playbackGenerationId
+      : this.player.generationId;
+    this.player.interrupt();
+    if (!Number.isInteger(generationId) || generationId < 0) return;
+    this._sendTransportEvent({
+      type: "playout_interrupt",
+      generation_id: generationId,
+      client_timestamp_ms: Date.now(),
+    });
   }
 
   _syncRecordingState() {
@@ -210,8 +278,11 @@ class MiniProgramMediaSession {
   _microphoneCaptureEnabled() {
     return (
       this.microphoneEnabled &&
-      !this.assistantResponseActive &&
-      !this.playbackActive
+      (this.inputPolicyReceived
+        ? this.serverCaptureAllowed
+        : !this.assistantResponseActive) &&
+      !this.playbackActive &&
+      !this.playoutGuardActive
     );
   }
 
@@ -220,6 +291,7 @@ class MiniProgramMediaSession {
     this._readyTerminal = true;
     this._clearPendingSocketError();
     this._clearGatewayReadyTimeout();
+    this._clearPostPlayoutGuard();
     this.ready = false;
     this._uplinkFailed = true;
     this._stopRecorder();
@@ -227,6 +299,29 @@ class MiniProgramMediaSession {
     this.socket = null;
     socket?.close({ code: 1000 });
     await this.player.close();
+  }
+
+  _startPostPlayoutGuard() {
+    this._clearPostPlayoutGuard();
+    if (!this.postPlayoutGuardMs) {
+      this._syncRecordingState();
+      return;
+    }
+    this.playoutGuardActive = true;
+    this._syncRecordingState();
+    this._playoutGuardTimer = setTimeout(() => {
+      this._playoutGuardTimer = null;
+      this.playoutGuardActive = false;
+      this._syncRecordingState();
+    }, this.postPlayoutGuardMs);
+  }
+
+  _clearPostPlayoutGuard() {
+    if (this._playoutGuardTimer !== null) {
+      clearTimeout(this._playoutGuardTimer);
+      this._playoutGuardTimer = null;
+    }
+    this.playoutGuardActive = false;
   }
 
   _bindRecorder() {
@@ -377,6 +472,12 @@ class MiniProgramMediaSession {
         }
         if (
           event.type === "ui_event" &&
+          event.event?.type === "input_policy"
+        ) {
+          this._observeInputPolicy(event.event);
+        }
+        if (
+          event.type === "ui_event" &&
           event.event?.type === "assistant_state"
         ) {
           this._observeAssistantState(event.event.state);
@@ -453,11 +554,36 @@ class MiniProgramMediaSession {
     this._syncRecordingState();
   }
 
+  _observeInputPolicy(policy) {
+    if (
+      typeof policy?.capture_allowed !== "boolean" ||
+      !Number.isInteger(policy.policy_epoch) ||
+      policy.policy_epoch < 1 ||
+      policy.policy_epoch <= this.inputPolicyEpoch ||
+      typeof policy.reason !== "string" ||
+      !policy.reason
+    ) {
+      return;
+    }
+    this.inputPolicyReceived = true;
+    this.inputPolicyEpoch = policy.policy_epoch;
+    this.serverCaptureAllowed = policy.capture_allowed;
+    this._syncRecordingState();
+  }
+
   _sendClientAudioTrace(trace) {
+    const supportsV2 = this.clientAudioTraceVersion >= 2;
+    const allowedNames = supportsV2
+      ? CLIENT_AUDIO_TRACE_V2_NAMES
+      : CLIENT_AUDIO_TRACE_V1_NAMES;
+    const allowedDetailFields = supportsV2
+      ? CLIENT_AUDIO_TRACE_V2_DETAIL_FIELDS
+      : CLIENT_AUDIO_TRACE_V1_DETAIL_FIELDS;
     if (
       !this.ready ||
       !this.socket ||
       typeof trace?.name !== "string" ||
+      !allowedNames.has(trace.name) ||
       !Number.isInteger(trace.generationId) ||
       trace.generationId < 0 ||
       !trace.detail ||
@@ -467,7 +593,13 @@ class MiniProgramMediaSession {
     }
     const detail = {};
     for (const [key, value] of Object.entries(trace.detail)) {
-      if (Number.isFinite(value) && value >= 0) detail[key] = Math.round(value);
+      if (
+        allowedDetailFields.has(key) &&
+        Number.isFinite(value) &&
+        value >= 0
+      ) {
+        detail[key] = Math.round(value);
+      }
     }
     if (!Object.keys(detail).length) return false;
     return this._sendTransportEvent({
@@ -481,14 +613,32 @@ class MiniProgramMediaSession {
 
   _acceptReadyAudioContract(event) {
     const audio = event?.audio;
+    const aec = event?.aec;
+    const clientAudioTraceVersion = event?.client_audio_trace_version;
     const supported =
       event?.protocol_version === 1 &&
       audio?.sample_rate === this.player.sampleRate &&
       audio?.channels === 1 &&
       audio?.sample_format === "s16le" &&
       audio?.frame_ms === 20 &&
-      [1, 2].includes(audio?.frame_protocol_version);
-    if (supported) return true;
+      [1, 2].includes(audio?.frame_protocol_version) &&
+      (aec === undefined ||
+        (["control", "aec"].includes(aec?.variant) &&
+          typeof aec?.active === "boolean")) &&
+      (clientAudioTraceVersion === undefined ||
+        (Number.isInteger(clientAudioTraceVersion) &&
+          clientAudioTraceVersion >= 1));
+    if (supported) {
+      this.clientAudioTraceVersion =
+        clientAudioTraceVersion === undefined
+          ? 1
+          : Math.min(clientAudioTraceVersion, 2);
+      if (aec !== undefined) {
+        this.aecVariant = aec.variant;
+        this.aecActive = aec.active;
+      }
+      return true;
+    }
     this.ready = false;
     this._uplinkFailed = true;
     this._rejectReady(new Error("语音服务音频格式不兼容，请更新后重试。"));
@@ -613,6 +763,7 @@ class MiniProgramMediaSession {
     const pendingSocketError = this._takePendingSocketError();
     this.playbackGenerationId = null;
     this.ready = false;
+    this._clearPostPlayoutGuard();
     this.player.reset();
     this._uplinkFailed = true;
     this.systemInterrupted = false;

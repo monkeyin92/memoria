@@ -18,7 +18,11 @@ from datetime import UTC, datetime
 from typing import Any, Literal, Protocol, cast
 
 from services.agent.src.contracts.events import UI_EVENT_TYPES, TimedWord
-from services.agent.src.contracts.ids import GenerationFence, new_session_id
+from services.agent.src.contracts.ids import (
+    CancellationContext,
+    GenerationFence,
+    new_session_id,
+)
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.observability.tracing import LatencyTrace
 from services.agent.src.orchestration.cue_scheduler import CueScheduler, ListenerCue
@@ -47,6 +51,7 @@ from services.agent.src.orchestration.speaker_verify import (
     voiced_stats_from_pcm,
 )
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
+from services.agent.src.orchestration.turn_revision import TurnRevisionTracker
 from services.agent.src.orchestration.utterance_router import (
     InterruptSemanticVerdict,
     TargetSpeakerRoute,
@@ -114,6 +119,7 @@ CLIENT_AUDIO_TRACE_NAMES = frozenset(
         "miniprogram_playback_underrun",
         "miniprogram_playback_hard_reset",
         "miniprogram_gap_concealed",
+        "miniprogram_playback_lead_adjusted",
     }
 )
 CLIENT_AUDIO_METRIC_NAMES = frozenset(
@@ -150,6 +156,8 @@ CLIENT_AUDIO_METRIC_NAMES = frozenset(
         "missing_frames",
         "scheduled_sources",
         "clock_ahead_ms",
+        "target_lead_ms",
+        "underflow_count",
     }
 )
 
@@ -244,6 +252,10 @@ class DuplexRuntime:
     _was_speaking: bool = False
     _pending_assistant_text: str = ""
     _pending_assistant_text_epoch: int = 0
+    _input_policy_epoch: int = 0
+    _transcript_revisions: TurnRevisionTracker = field(
+        default_factory=TurnRevisionTracker
+    )
     _played_assistant_text: str = ""
     _next_user_prompt_kind: str = "spontaneous"
     _fresh_user_speech: bool = False
@@ -384,6 +396,12 @@ class DuplexRuntime:
     def fence(self) -> GenerationFence:
         return self.orchestrator.fence
 
+    def cancellation_context(
+        self,
+        fence: GenerationFence | None = None,
+    ) -> CancellationContext:
+        return self.orchestrator.cancellation_context(fence)
+
     @property
     def heard_tracker(self) -> HeardTextTracker:
         return self.orchestrator.heard_tracker
@@ -392,14 +410,26 @@ class DuplexRuntime:
     def segmenter(self) -> PhraseSegmenter | None:
         return self.orchestrator.segmenter
 
-    def gate_llm_token(self, fence: GenerationFence, token: str) -> str | None:
-        return self.orchestrator.gate_llm_token(fence, token)
+    def gate_llm_token(
+        self,
+        cancellation: GenerationFence | CancellationContext,
+        token: str,
+    ) -> str | None:
+        return self.orchestrator.gate_llm_token(cancellation, token)
 
-    def gate_tts_audio(self, fence: GenerationFence, pcm: bytes) -> bytes | None:
-        return self.orchestrator.gate_tts_audio(fence, pcm)
+    def gate_tts_audio(
+        self,
+        cancellation: GenerationFence | CancellationContext,
+        pcm: bytes,
+    ) -> bytes | None:
+        return self.orchestrator.gate_tts_audio(cancellation, pcm)
 
-    def gate_tool_result(self, fence: GenerationFence, payload: Any) -> Any | None:
-        return self.orchestrator.gate_tool_result(fence, payload)
+    def gate_tool_result(
+        self,
+        cancellation: GenerationFence | CancellationContext,
+        payload: Any,
+    ) -> Any | None:
+        return self.orchestrator.gate_tool_result(cancellation, payload)
 
     def set_event_publisher(
         self,
@@ -1572,7 +1602,7 @@ class DuplexRuntime:
                 fence.turn_id,
                 fence.generation_id,
             )
-        return self._publish(
+        state_task = self._publish(
             {
                 "type": "assistant_state",
                 "session_id": self.session_id,
@@ -1583,6 +1613,59 @@ class DuplexRuntime:
                 "at": datetime.now(UTC).isoformat(),
             }
         )
+        if self.barge_in_enabled:
+            return state_task
+        policy = self._input_policy_for_state(state)
+        if policy is None:
+            return state_task
+        capture_allowed, reason = policy
+        return self.publish_input_policy(
+            capture_allowed=capture_allowed,
+            reason=reason,
+        )
+
+    def publish_input_policy(
+        self,
+        *,
+        capture_allowed: bool,
+        reason: str,
+    ) -> asyncio.Task[Any] | None:
+        if not reason:
+            raise ValueError("input policy reason is required")
+        self._input_policy_epoch += 1
+        fence = self.fence
+        return self._publish(
+            {
+                "type": "input_policy",
+                "session_id": self.session_id,
+                "capture_allowed": capture_allowed,
+                "policy_epoch": self._input_policy_epoch,
+                "reason": reason,
+                "turn_id": fence.turn_id,
+                "generation_id": fence.generation_id,
+                "at": datetime.now(UTC).isoformat(),
+            }
+        )
+
+    @staticmethod
+    def _input_policy_for_state(state: str) -> tuple[bool, str] | None:
+        if state in {"ready", "speaker_enroll", "listening", "user_speaking", "eot_pending"}:
+            return True, f"assistant_{state}"
+        if state == "backchannel":
+            return True, "user_holds_floor"
+        if state in {"thinking", "thinking_silent"}:
+            return False, "assistant_thinking"
+        if state == "tool_waiting":
+            return False, "assistant_tool_waiting"
+        if state == "speaking":
+            return False, "assistant_speaking"
+        if state in {"interrupted", "interruption_pending"}:
+            return False, "assistant_stopping"
+        if state == "recovering":
+            return False, "transport_recovering"
+        if state in {"connecting", "closed"}:
+            return False, f"session_{state}"
+        return None
 
     @staticmethod
     def _phase_for_published_state(state: str) -> InteractionPhase | None:
@@ -1677,6 +1760,7 @@ class DuplexRuntime:
             "miniprogram_playback_underrun",
             "miniprogram_playback_hard_reset",
             "miniprogram_gap_concealed",
+            "miniprogram_playback_lead_adjusted",
         }
         if event["name"] == "webrtc_inbound_audio" or miniprogram_trace:
             detail = event.get("detail")
@@ -1714,9 +1798,18 @@ class DuplexRuntime:
         heard: bool | None = None,
         fence: GenerationFence | None = None,
         archive_fence: GenerationFence | None = None,
-    ) -> None:
+        turn_revision: int | None = None,
+    ) -> bool:
         fence = fence or self.fence
         archive_fence = archive_fence or fence
+        revision = self._transcript_revisions.issue(
+            speaker=speaker,
+            fence=fence,
+            requested=turn_revision,
+            final=bool(final and (speaker == "user" or heard is True)),
+        )
+        if revision is None:
+            return False
         event: dict[str, Any] = {
             "type": "transcript_delta",
             "session_id": self.session_id,
@@ -1725,6 +1818,7 @@ class DuplexRuntime:
             "final": final,
             "turn_id": fence.turn_id,
             "generation_id": fence.generation_id,
+            "turn_revision": revision,
             "tool_epoch": fence.tool_epoch,
             "history_eligible": bool(final and self._history_eligible(fence)),
         }
@@ -1782,7 +1876,7 @@ class DuplexRuntime:
                 }
         self._publish(event)
         if not final or not text.strip():
-            return
+            return True
         archive_text = redact_pii(text.strip())
         if speaker == "user":
             event_type = "speech.utterance_finalized"
@@ -1804,7 +1898,7 @@ class DuplexRuntime:
                 payload["response_provenance"] = response_provenance
             self._next_user_prompt_kind = classify_prompt_kind(archive_text)
         else:
-            return
+            return True
         payload.update(
             self._mode_policy_provenance(
                 archive_fence,
@@ -1856,6 +1950,7 @@ class DuplexRuntime:
                 name=f"duplex-evidence-{event_type.replace('.', '-')}",
                 durable=True,
             )
+        return True
 
     def _speaker_persona_provenance(self) -> dict[str, Any]:
         """Bind Persona eligibility to the decision for this exact speech epoch."""
@@ -2628,6 +2723,11 @@ class DuplexRuntime:
                 self._pending_semantic_pause_binding = None
         return accepted, reason
 
+    def route_user_turn(self, text: str) -> UtteranceRoute:
+        """Expose the single Router decision to protocol facades."""
+
+        return self._route_candidate(text)
+
     async def on_turn_committed(self, user_text: str) -> GenerationFence:
         history_eligible = self._current_history_eligible()
         owner_projection_eligible = self._current_owner_projection_eligible()
@@ -3141,6 +3241,8 @@ class DuplexRuntime:
         create_user_turn: bool = True,
         synchronized_transcript: str | None = None,
         force_generation_bump: bool = False,
+        candidate_text: str | None = None,
+        utterance_route: UtteranceRoute | None = None,
     ) -> GenerationFence:
         self.cancel_listener_cue()
         keyword_binding = self._pending_keyword_interrupt_binding
@@ -3204,10 +3306,14 @@ class DuplexRuntime:
         )
         was_speaking = self._was_speaking
         mid_reply = self._assistant_was_mid_reply(was_speaking=was_speaking)
-        candidate = self._interrupt_candidate_text()
+        candidate = (
+            candidate_text.strip()
+            if candidate_text is not None
+            else self._interrupt_candidate_text()
+        )
         # Barge-in uses the same router as turn-commit so speaker-reject recover
         # cannot fire on pure「停一下」while accept_user_turn treats it as control.
-        barge_route = self._route_candidate(candidate)
+        barge_route = utterance_route or self._route_candidate(candidate)
         owner_cmd = barge_route.speaker_gate_override
         if (
             create_user_turn

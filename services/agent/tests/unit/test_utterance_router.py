@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 from services.agent.src.orchestration.speaker_verify import SpeakerGateState
 from services.agent.src.orchestration.utterance_router import (
@@ -10,6 +13,15 @@ from services.agent.src.orchestration.utterance_router import (
     route_speaker_gate,
     route_target_speaker,
     route_utterance,
+)
+
+_INTERRUPTION_CORPUS = json.loads(
+    (
+        Path(__file__).resolve().parents[4]
+        / "packages"
+        / "contracts"
+        / "h5-interruption-corpus.json"
+    ).read_text(encoding="utf-8")
 )
 
 
@@ -116,11 +128,11 @@ from services.agent.src.orchestration.utterance_router import (
         (
             "等下我想问下周三",
             SpeakerGateState.ENROLLED,
-            UtteranceIntent.CHAT,
+            UtteranceIntent.INTERRUPT_THEN_CHAT,
             True,
-            False,
-            False,
-            "chat",
+            True,
+            True,
+            "interrupt_then_chat",
         ),
         (
             "不是这个意思",
@@ -194,6 +206,23 @@ def test_route_table(
     assert route.should_interrupt is should_interrupt
     assert route.speaker_gate_override is override
     assert route.reason == reason
+
+
+@pytest.mark.parametrize(
+    ("corpus_key", "intent"),
+    [
+        ("interrupt_only", UtteranceIntent.INTERRUPT_COMMAND),
+        ("interrupt_then_chat", UtteranceIntent.INTERRUPT_THEN_CHAT),
+        ("chat", UtteranceIntent.CHAT),
+    ],
+)
+def test_h5_interruption_acceptance_corpus(
+    corpus_key: str,
+    intent: UtteranceIntent,
+) -> None:
+    assert _INTERRUPTION_CORPUS["schema_version"] == "h5-interruption-corpus-v1"
+    for text in _INTERRUPTION_CORPUS[corpus_key]:
+        assert route_utterance(text).intent is intent, text
 
 
 def test_interrupt_command_ack_phrases() -> None:

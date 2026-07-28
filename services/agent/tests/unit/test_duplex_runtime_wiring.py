@@ -2374,6 +2374,33 @@ def test_runtime_can_disable_barge_in_for_entire_miniprogram_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_controlled_turn_runtime_publishes_monotonic_input_policy() -> None:
+    runtime = DuplexRuntime.create(session_id="mini-input-policy", barge_in_enabled=False)
+    published: list[dict[str, Any]] = []
+
+    async def publish(event: dict[str, Any]) -> None:
+        published.append(event)
+
+    runtime.set_event_publisher(publish)
+    for state in ("thinking", "speaking", "listening"):
+        task = runtime.publish_assistant_state(state)
+        assert task is not None
+        await task
+
+    policies = [event for event in published if event["type"] == "input_policy"]
+    assert [
+        (event["capture_allowed"], event["policy_epoch"], event["reason"])
+        for event in policies
+    ] == [
+        (False, 1, "assistant_thinking"),
+        (False, 2, "assistant_speaking"),
+        (True, 3, "assistant_listening"),
+    ]
+    assert all(event["session_id"] == runtime.session_id for event in policies)
+    assert all(event["generation_id"] == runtime.fence.generation_id for event in policies)
+
+
+@pytest.mark.asyncio
 async def test_interrupt_discards_cosy_pool_binding() -> None:
     tts = CosyVoiceTTS(CosyVoiceConfig(api_key="t", ws_url="ws://127.0.0.1:9", pool_size=0))
     runtime = create_runtime_for_tests(tts=tts)

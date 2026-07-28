@@ -59,6 +59,8 @@ logger = logging.getLogger(__name__)
 # Voice replies stay shorter than chat, but 96/3 cut creative answers mid-stream.
 MAX_VOICE_REPLY_SENTENCES = 8
 MAX_VOICE_REPLY_CHARS = 320
+MAX_CONTROLLED_VOICE_REPLY_SENTENCES = 3
+MAX_CONTROLLED_VOICE_REPLY_CHARS = 120
 # Longer budget when user asks for writing / plans / multi-step content.
 MAX_VOICE_REPLY_CHARS_LONGFORM = 560
 MAX_VOICE_REPLY_SENTENCES_LONGFORM = 12
@@ -1155,7 +1157,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             return
             yield  # pragma: no cover  # make this an async generator
 
-        fence = self._runtime.fence
+        cancellation = self._runtime.cancellation_context()
+        fence = cancellation.fence
         policy = self._runtime.mode_policy_for_fence(fence)
         if self._runtime.mode_policy_enforced and not policy.allows_conversation(
             self._runtime.current_speaker_class
@@ -1260,10 +1263,15 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         longform = any(hint in last_user for hint in _LONGFORM_HINTS) or (
             self._runtime.speech_plan.delivery_mode in {"deliberative", "supportive"}
         )
-        max_chars = MAX_VOICE_REPLY_CHARS_LONGFORM if longform else MAX_VOICE_REPLY_CHARS
-        max_sentences = (
-            MAX_VOICE_REPLY_SENTENCES_LONGFORM if longform else MAX_VOICE_REPLY_SENTENCES
-        )
+        if longform:
+            max_chars = MAX_VOICE_REPLY_CHARS_LONGFORM
+            max_sentences = MAX_VOICE_REPLY_SENTENCES_LONGFORM
+        elif not self._runtime.barge_in_enabled:
+            max_chars = MAX_CONTROLLED_VOICE_REPLY_CHARS
+            max_sentences = MAX_CONTROLLED_VOICE_REPLY_SENTENCES
+        else:
+            max_chars = MAX_VOICE_REPLY_CHARS
+            max_sentences = MAX_VOICE_REPLY_SENTENCES
 
         def _accept_segment(text: str) -> str | None:
             nonlocal reply_chars, reply_sentences, reply_budget_exhausted
@@ -1303,7 +1311,10 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             self._runtime.mark_audio_event("llm_request_started")
             if response_plan.direct_text is not None:
                 self._runtime.mark_audio_event("llm_first_content_token")
-                gated = self._runtime.gate_llm_token(fence, response_plan.direct_text)
+                gated = self._runtime.gate_llm_token(
+                    cancellation,
+                    response_plan.direct_text,
+                )
                 if gated is not None:
                     self._llm_text_buf += gated
                     for segment in segmenter.push_token(gated):
@@ -1320,7 +1331,10 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                             )
                             first_phrase_marked = True
                         yield accepted_segment
-                    if fence.matches(self._runtime.fence) and not reply_budget_exhausted:
+                    if (
+                        cancellation.is_current(self._runtime.fence)
+                        and not reply_budget_exhausted
+                    ):
                         for segment in segmenter.flush(end_of_stream=True):
                             accepted_segment = _accept_segment(segment.text)
                             if accepted_segment is None:
@@ -1357,7 +1371,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     if not first_content_marked:
                         self._runtime.mark_audio_event("llm_first_content_token")
                         first_content_marked = True
-                    gated = self._runtime.gate_llm_token(fence, text)
+                    gated = self._runtime.gate_llm_token(cancellation, text)
                     if gated is None:
                         # Stale generation — stop yielding into TTS pipeline.
                         logger.info(
@@ -1397,7 +1411,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                             )
                     continue
                 yield chunk
-            if fence.matches(self._runtime.fence) and not reply_budget_exhausted:
+            if cancellation.is_current(self._runtime.fence) and not reply_budget_exhausted:
                 for segment in segmenter.flush(end_of_stream=True):
                     accepted_segment = _accept_segment(segment.text)
                     if accepted_segment is None:
@@ -1439,7 +1453,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
 
         from services.agent.src.orchestration.prosody import prepare_tts_text
 
-        fence = self._runtime.fence
+        cancellation = self._runtime.cancellation_context()
+        fence = cancellation.fence
         self._runtime.heard_tracker.expect_utterance(fence)
         if self._runtime.tts is not None:
             self._runtime.tts.bind_fence(fence)
@@ -1484,7 +1499,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                             detail={"pcm_bytes": len(pcm)},
                         )
                         first_audio_marked = True
-                    gated = self._runtime.gate_tts_audio(fence, pcm)
+                    gated = self._runtime.gate_tts_audio(cancellation, pcm)
                     if gated is None:
                         logger.info(
                             "stale tts audio dropped generation_id=%s",
@@ -1613,8 +1628,7 @@ async def entrypoint(ctx: Any) -> None:
     await ctx.connect()
 
     from services.agent.src.config import AgentSettings
-    from services.agent.src.providers.doubao_tts import DoubaoTTS
-    from services.agent.src.providers.funasr_stt import FunASRSTT
+    from services.agent.src.providers.handlers import build_voice_provider_handlers
     from services.agent.src.providers.qwen_emotion_asr import (
         QwenEmotionConfig,
         QwenEmotionSidecar,
@@ -1624,30 +1638,14 @@ async def entrypoint(ctx: Any) -> None:
         VoskKeywordSpotterConfig,
     )
 
-    stt_plugin = FunASRSTT.from_env()
-    tts_plugin = DoubaoTTS.from_env()
-    try:
-        await tts_plugin.pool.warm()
-    except Exception as exc:
-        logger.warning("Doubao TTS pool warm failed (will open on demand): %s", exc)
-
-    import httpx
-
     runtime_settings = AgentSettings()
-
-    llm_plugin = openai.LLM(
-        model=runtime_settings.llm_fast_model,
-        api_key=runtime_settings.llm_api_key,
-        base_url=runtime_settings.llm_base_url,
-        temperature=float(os.getenv("DEEPSEEK_FAST_TEMPERATURE", "0.45")),
-        tool_choice="auto",
-        max_retries=0,
-        timeout=httpx.Timeout(connect=3.0, read=12.0, write=5.0, pool=3.0),
-        extra_body={
-            "thinking": {"type": "disabled"},
-            "max_tokens": int(os.getenv("DEEPSEEK_FAST_MAX_TOKENS", "240")),
-        },
+    provider_handlers = await build_voice_provider_handlers(
+        settings=runtime_settings,
+        llm_factory=openai.LLM,
     )
+    stt_plugin = provider_handlers.asr
+    llm_plugin = provider_handlers.language_model
+    tts_plugin = provider_handlers.speech_synthesis
 
     profile = os.getenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     offline = os.getenv("OFFLINE_MOCK", "false").lower() == "true"
@@ -2196,8 +2194,14 @@ async def entrypoint(ctx: Any) -> None:
 
     ctx.room.on("data_received", _on_control_packet)
 
+    agent_instructions = VOICE_SYSTEM_PROMPT
+    if miniprogram_session:
+        agent_instructions += (
+            "\n\n当前客户端是受控半双工小程序。普通回答只说一到三句，"
+            "优先先给结论；只有用户明确要求故事、朗读、详细方案或继续时才展开。"
+        )
     agent = DuplexVoiceAgent(
-        instructions=VOICE_SYSTEM_PROMPT,
+        instructions=agent_instructions,
         runtime=runtime,
         voice_profile_client=voice_profile_client,
         response_planner_client=response_planner_client,

@@ -1,7 +1,10 @@
 class PcmJitterPlayer {
   constructor({
     sampleRate = 24000,
-    minLeadSeconds = 0.08,
+    minLeadSeconds = 0.1,
+    maxAdaptiveLeadSeconds = 0.18,
+    leadStepSeconds = 0.02,
+    leadStableSeconds = 30,
     maxLeadSeconds = 0.45,
     bufferMilliseconds = 80,
     frameMilliseconds = 20,
@@ -12,12 +15,21 @@ class PcmJitterPlayer {
     if (
       sampleRate <= 0 ||
       frameMilliseconds <= 0 ||
-      (sampleRate * frameMilliseconds) % 1000 !== 0
+      (sampleRate * frameMilliseconds) % 1000 !== 0 ||
+      minLeadSeconds <= 0 ||
+      maxAdaptiveLeadSeconds < minLeadSeconds ||
+      leadStepSeconds <= 0 ||
+      leadStableSeconds <= 0 ||
+      maxLeadSeconds < maxAdaptiveLeadSeconds
     ) {
       throw new RangeError("invalid PCM player audio contract");
     }
     this.sampleRate = sampleRate;
     this.minLeadSeconds = minLeadSeconds;
+    this.targetLeadSeconds = minLeadSeconds;
+    this.maxAdaptiveLeadSeconds = maxAdaptiveLeadSeconds;
+    this.leadStepSeconds = leadStepSeconds;
+    this.leadStableSeconds = leadStableSeconds;
     this.maxLeadSeconds = maxLeadSeconds;
     this.frameSamples = (sampleRate * frameMilliseconds) / 1000;
     this.frameBytes = this.frameSamples * 2;
@@ -39,6 +51,8 @@ class PcmJitterPlayer {
     this.gainNode = null;
     this.firstPlaybackGenerationId = null;
     this.playbackActive = false;
+    this.lastLeadAdjustmentAtSeconds = null;
+    this.underflowCount = 0;
   }
 
   async resume() {
@@ -145,17 +159,27 @@ class PcmJitterPlayer {
     const pendingAudioMs = Math.round((input.length / this.sampleRate) * 1000);
     if (this.nextStartAt <= now) {
       if (this.nextStartAt > 0) {
+        const raisedLead = Math.min(
+          this.maxAdaptiveLeadSeconds,
+          this.targetLeadSeconds + this.leadStepSeconds,
+        );
+        this.underflowCount += 1;
         this._trace("miniprogram_playback_underrun", {
           pending_audio_ms: pendingAudioMs,
+          target_lead_ms: Math.round(raisedLead * 1000),
+          underflow_count: this.underflowCount,
         });
+        this._setTargetLead(raisedLead, now);
       }
-      this.nextStartAt = now + this.minLeadSeconds;
+      this.nextStartAt = now + this.targetLeadSeconds;
       this.fadeInPending = true;
     } else if (this.nextStartAt > now + this.maxLeadSeconds) {
       this._trace("miniprogram_playback_hard_reset", {
         clock_ahead_ms: Math.round((this.nextStartAt - now) * 1000),
       });
       this._clearPlayback();
+    } else {
+      this._decayTargetLead(now);
     }
     const source = this.context.createBufferSource();
     source.buffer = buffer;
@@ -188,6 +212,8 @@ class PcmJitterPlayer {
       queue_lead_ms: Math.round(Math.max(0, this.nextStartAt - now) * 1000),
       pending_audio_ms: Math.round((this.pendingSamples / this.sampleRate) * 1000),
       scheduled_sources: this.sources.size,
+      target_lead_ms: Math.round(this.targetLeadSeconds * 1000),
+      underflow_count: this.underflowCount,
       ...detail,
     };
     try {
@@ -210,6 +236,37 @@ class PcmJitterPlayer {
     } catch {
       // Playback policy callbacks must never interrupt audio rendering.
     }
+  }
+
+  _setTargetLead(target, now) {
+    const bounded = Math.min(
+      this.maxAdaptiveLeadSeconds,
+      Math.max(this.minLeadSeconds, target),
+    );
+    const rounded = Math.round(bounded * 1000) / 1000;
+    if (rounded === this.targetLeadSeconds) {
+      this.lastLeadAdjustmentAtSeconds = now;
+      return;
+    }
+    this.targetLeadSeconds = rounded;
+    this.lastLeadAdjustmentAtSeconds = now;
+    this._trace("miniprogram_playback_lead_adjusted", {
+      target_lead_ms: Math.round(rounded * 1000),
+      underflow_count: this.underflowCount,
+    });
+  }
+
+  _decayTargetLead(now) {
+    if (this.targetLeadSeconds <= this.minLeadSeconds) return;
+    if (this.lastLeadAdjustmentAtSeconds === null) {
+      this.lastLeadAdjustmentAtSeconds = now;
+      return;
+    }
+    if (now - this.lastLeadAdjustmentAtSeconds < this.leadStableSeconds) return;
+    this._setTargetLead(
+      this.targetLeadSeconds - this.leadStepSeconds,
+      now,
+    );
   }
 
   setGain(value) {
@@ -299,7 +356,7 @@ class PcmJitterPlayer {
       }
     }
     this.sources.clear();
-    this.nextStartAt = this.context ? now + this.minLeadSeconds : 0;
+    this.nextStartAt = this.context ? now + this.targetLeadSeconds : 0;
   }
 
   reset(generationId, barrierSequence = null) {
@@ -310,6 +367,11 @@ class PcmJitterPlayer {
       Number.isInteger(barrierSequence) && barrierSequence >= 0
         ? barrierSequence >>> 0
         : null;
+  }
+
+  interrupt() {
+    this._clearPlayback();
+    this._setPlaybackActive(false);
   }
 
   async close() {

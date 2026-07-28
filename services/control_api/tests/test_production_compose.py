@@ -50,6 +50,9 @@ def test_miniprogram_gateway_is_isolated_and_only_exposes_loopback_wss_upstream(
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
     dockerfile = (ROOT / "infra" / "Dockerfile.miniprogram-gateway").read_text(encoding="utf-8")
     nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
+    media = (ROOT / "infra" / "nginx-memoria-miniprogram-media.conf").read_text(
+        encoding="utf-8"
+    )
     limits = (ROOT / "infra" / "nginx-memoria-limits.conf").read_text(encoding="utf-8")
     loopback_limits = (ROOT / "infra" / "nginx-memoria-loopback-smoke.conf").read_text(
         encoding="utf-8"
@@ -66,16 +69,42 @@ def test_miniprogram_gateway_is_isolated_and_only_exposes_loopback_wss_upstream(
     assert "--no-access-log" in gateway
     assert '"--no-access-log"' in dockerfile
     assert "USER 65532:65532" in dockerfile
-    assert "location = /memoria-mini-media/v1/mini-program/media {" in nginx
-    assert "proxy_pass http://127.0.0.1:8792/v1/mini-program/media;" in nginx
-    assert "access_log off;" in nginx
-    assert "limit_req zone=memoria_media burst=6 nodelay;" in nginx
+    assert "include /etc/nginx/snippets/memoria-miniprogram-media.conf;" in nginx
+    assert "location = /memoria-mini-media/v1/mini-program/media {" in media
+    assert "proxy_pass http://127.0.0.1:8792/v1/mini-program/media;" in media
+    assert "access_log off;" in media
+    assert "limit_req zone=memoria_media burst=6 nodelay;" in media
     assert "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in limits
     session = nginx.split("location = /memoria-api/v1/sessions {", 1)[1].split("}", 1)[0]
     assert "limit_req zone=memoria_session burst=6 nodelay;" in session
     assert (
         "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in loopback_limits
     )
+
+
+def test_miniprogram_media_keeps_443_route_with_8443_as_the_active_url() -> None:
+    media_path = ROOT / "infra" / "nginx-memoria-miniprogram-media.conf"
+    assert media_path.is_file()
+    media = media_path.read_text(encoding="utf-8")
+    https = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
+    smoke = (ROOT / "scripts" / "smoke_server_deployment.sh").read_text(encoding="utf-8")
+    example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
+    runbook = (ROOT / "docs" / "production-deployment.md").read_text(encoding="utf-8")
+
+    assert media.count("location = /memoria-mini-media/v1/mini-program/media {") == 1
+    assert "proxy_pass http://127.0.0.1:8792/v1/mini-program/media;" in media
+    assert "access_log off;" in media
+    assert "limit_req zone=memoria_media burst=6 nodelay;" in media
+    include = "include /etc/nginx/snippets/memoria-miniprogram-media.conf;"
+    assert include in https
+    assert "location = /memoria-mini-media/v1/mini-program/media {" not in https
+    assert "/etc/nginx/snippets/memoria-miniprogram-media.conf;" in smoke
+    assert include in runbook
+    assert (
+        "MINIPROGRAM_MEDIA_GATEWAY_URL="
+        "wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media"
+    ) in example
+    assert "wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media" in runbook
 
 
 def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> None:

@@ -12,12 +12,14 @@ GENERATION_PROTOCOL_VERSION: Final = 2
 HEADER_SIZE: Final = 20
 GENERATION_HEADER_SIZE: Final = 24
 MAX_AUDIO_PAYLOAD_BYTES: Final = 64 * 1024
+CLIENT_AUDIO_TRACE_PROTOCOL_VERSION: Final = 2
 CLIENT_AUDIO_TRACE_NAMES: Final = frozenset(
     {
         "first_playback",
         "miniprogram_playback_underrun",
         "miniprogram_playback_hard_reset",
         "miniprogram_gap_concealed",
+        "miniprogram_playback_lead_adjusted",
     }
 )
 CLIENT_AUDIO_TRACE_DETAIL_FIELDS: Final = frozenset(
@@ -27,6 +29,8 @@ CLIENT_AUDIO_TRACE_DETAIL_FIELDS: Final = frozenset(
         "missing_frames",
         "scheduled_sources",
         "clock_ahead_ms",
+        "target_lead_ms",
+        "underflow_count",
     }
 )
 _HEADER: Final = struct.Struct("!BBHIQI")

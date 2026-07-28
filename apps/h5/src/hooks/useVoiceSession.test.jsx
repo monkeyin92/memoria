@@ -74,7 +74,7 @@ vi.mock("../api.js", () => ({
   stopResponse: api.stopResponse,
 }));
 
-vi.mock("../voice/QwenOmniWebRTCTransport.js", () => ({
+vi.mock("../voice/experimental/QwenOmniWebRTCTransport.js", () => ({
   QwenOmniWebRTCTransport: class {
     constructor(callbacks) {
       this.callbacks = callbacks;
@@ -82,6 +82,7 @@ vi.mock("../voice/QwenOmniWebRTCTransport.js", () => ({
       this.connect = vi.fn(async () => callbacks.onState("ready"));
       this.setMicrophoneEnabled = vi.fn().mockResolvedValue(undefined);
       this.cancelResponse = vi.fn(() => callbacks.onState("interrupted"));
+      this.stopAssistant = this.cancelResponse;
       this.close = vi.fn();
       omni.instances.push(this);
     }
@@ -864,6 +865,7 @@ describe("useVoiceSession production edges", () => {
           history_eligible: true,
           turn_id: 1,
           generation_id: 1,
+          turn_revision: 1,
         }),
         agent,
         null,
@@ -885,6 +887,7 @@ describe("useVoiceSession production edges", () => {
           history_eligible: true,
           turn_id: 1,
           generation_id: 1,
+          turn_revision: 1,
         }),
         agent,
         null,
@@ -910,6 +913,7 @@ describe("useVoiceSession production edges", () => {
           history_eligible: true,
           turn_id: 1,
           generation_id: 1,
+          turn_revision: 2,
         }),
         agent,
         null,
@@ -921,6 +925,28 @@ describe("useVoiceSession production edges", () => {
 
     act(() => {
       room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "transcript_delta",
+          session_id: "session-1",
+          speaker: "assistant",
+          text: "迟到的旧修订",
+          final: true,
+          heard: true,
+          history_eligible: true,
+          turn_id: 1,
+          generation_id: 1,
+          turn_revision: 1,
+        }),
+        agent,
+        null,
+        "voice-agent.ui",
+      );
+    });
+    expect(result.current.latestTranscript.text).toBe("同一代修订后的最终稿");
+
+    act(() => {
+      room.emit(
         liveKit.RoomEvent.TranscriptionReceived,
         [{ text: "迟到的回退文本", final: true }],
         agent,
@@ -928,6 +954,37 @@ describe("useVoiceSession production edges", () => {
     });
     expect(result.current.latestTranscript.text).toBe("同一代修订后的最终稿");
     expect(onFinalTranscript).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps legacy unrevisioned transcript updates compatible during rollout", async () => {
+    const { result, room } = await renderStartedHook();
+    const agent = { isAgent: true };
+    const publishLegacyTranscript = (text) => {
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "transcript_delta",
+          session_id: "session-1",
+          speaker: "assistant",
+          text,
+          final: false,
+          heard: true,
+          history_eligible: false,
+          turn_id: 1,
+          generation_id: 1,
+        }),
+        agent,
+        null,
+        "voice-agent.ui",
+      );
+    };
+
+    act(() => publishLegacyTranscript("旧 runtime 第一版字幕"));
+    act(() => publishLegacyTranscript("旧 runtime 后续修订字幕"));
+
+    expect(result.current.latestTranscript.text).toBe(
+      "旧 runtime 后续修订字幕",
+    );
   });
 
   it("shows history-ineligible transcripts but never persists them", async () => {

@@ -17,12 +17,17 @@ class MiniProgramAudioFormat(BaseModel):
     frame_ms: Literal[20] = 20
 
 
+class MiniProgramPlayoutPolicy(BaseModel):
+    post_playout_guard_ms: int = Field(default=150, ge=0, le=2_000)
+
+
 class MiniProgramMediaGateway(BaseModel):
     websocket_url: str
     ticket: str
     expires_in: int
     protocol_version: Literal[1] = 1
     audio: MiniProgramAudioFormat = Field(default_factory=MiniProgramAudioFormat)
+    playout: MiniProgramPlayoutPolicy = Field(default_factory=MiniProgramPlayoutPolicy)
 
 
 class CreateMiniProgramSessionResponse(BaseModel):
@@ -68,4 +73,7 @@ def build_gateway_ticket(
         websocket_url=websocket_url,
         ticket=ticket,
         expires_in=ttl,
+        playout=MiniProgramPlayoutPolicy(
+            post_playout_guard_ms=settings.miniprogram_post_playout_guard_ms,
+        ),
     )

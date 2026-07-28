@@ -1,7 +1,10 @@
 const api = require("../../utils/api");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { MiniProgramMediaSession } = require("../../utils/media-gateway");
-const { authoritativeTranscript } = require("../../utils/transcript-events");
+const {
+  acceptTranscriptRevision,
+  authoritativeTranscript,
+} = require("../../utils/transcript-events");
 const { requireLogin } = require("../../utils/auth-gate");
 
 const CONNECTION_REFUSED_RETRY_DELAY_MS = 400;
@@ -201,6 +204,7 @@ Page({
     this._ending = false;
     this._session = null;
     this._resetExpression();
+    this._transcriptRevisionByTurn = new Map();
     try {
       await authorizationForRecord();
       if (!this._isVoiceAttemptCurrent(attemptId)) return;
@@ -246,6 +250,7 @@ Page({
     this._session = null;
     this._endMediaLocally().catch(() => {});
     this._resetExpression();
+    this._transcriptRevisionByTurn = new Map();
     const companion = companionById(defaultCompanionId);
     this.setData({
       authenticated: false,
@@ -396,6 +401,13 @@ Page({
   },
 
   _appendTranscript(item) {
+    this._transcriptRevisionByTurn ||= new Map();
+    if (
+      item.source === "authoritative" &&
+      !acceptTranscriptRevision(this._transcriptRevisionByTurn, item)
+    ) {
+      return;
+    }
     const key =
       Number.isInteger(item.turnId) && Number.isInteger(item.generationId)
         ? `${item.speaker}:${item.turnId}:${item.generationId}`
@@ -433,6 +445,16 @@ Page({
       this.setData({ micEnabled: next });
     } catch (error) {
       this.setData({ error: error?.message || "麦克风状态切换失败。" });
+    }
+  },
+
+  async stopPlayback() {
+    if (!this._media || !this.data.active || !this._session?.session_id) return;
+    this._media.stopAssistantPlayback();
+    try {
+      await api.stopResponse(this._session.session_id);
+    } catch (error) {
+      this.setData({ error: error?.message || "暂时无法停止播放。" });
     }
   },
 

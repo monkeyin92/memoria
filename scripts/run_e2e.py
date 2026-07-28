@@ -12,6 +12,10 @@ from typing import Any
 
 async def run_offline() -> dict[str, Any]:
     from services.agent.src.contracts.ids import GenerationFence
+    from services.agent.src.orchestration.handlers import (
+        CallableLanguageModelHandler,
+        CallableSpeechSynthesisHandler,
+    )
     from services.agent.src.orchestration.orchestrator import OfflinePipeline, Orchestrator
     from services.agent.src.providers.deepseek import (
         DeepSeekClient,
@@ -78,7 +82,11 @@ async def run_offline() -> dict[str, Any]:
         ) -> Any:
             return await tts.synthesize_stream_text(phrases, fence=fence, cancel_event=cancel)
 
-        pipe = OfflinePipeline(orchestrator=orch, llm_stream=llm_stream, tts_synth=tts_synth)
+        pipe = OfflinePipeline(
+            orchestrator=orch,
+            llm_handler=CallableLanguageModelHandler(llm_stream),
+            tts_handler=CallableSpeechSynthesisHandler(tts_synth),
+        )
         result = await pipe.run_turn(user_text)
         await ds.aclose()
         await tts.aclose()

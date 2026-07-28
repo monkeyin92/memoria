@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 import pytest
-from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.contracts.ids import CancellationContext, GenerationFence
 from services.agent.src.orchestration.generation_fence import FenceGate, StaleFenceError
 
 
 def _fence(g: int = 1, e: int = 0) -> GenerationFence:
     return GenerationFence(session_id="s", turn_id=1, generation_id=g, tool_epoch=e)
+
+
+def test_cancellation_context_reuses_the_complete_generation_fence() -> None:
+    fence = _fence(2, e=3)
+    context = CancellationContext.capture(fence)
+
+    assert context.fence is fence
+    assert context.session_id == "s"
+    assert context.turn_id == 1
+    assert context.generation_id == 2
+    assert context.tool_epoch == 3
+    assert context.is_current(fence)
+    assert context.is_stale(fence.bump_generation())
 
 
 def test_accept_matching_fence() -> None:

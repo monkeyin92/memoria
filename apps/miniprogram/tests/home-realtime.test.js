@@ -44,7 +44,7 @@ test("realtime panel replaces the previous speaker instead of accumulating rows"
   assert.equal(data.transcript[0].text, "这是当前这一句");
 });
 
-test("assistant response states wait for completion instead of exposing an interrupt", () => {
+test("assistant response states expose button stop without restoring voice barge-in", () => {
   const wxml = fs.readFileSync(
     path.join(__dirname, "../pages/home/index.wxml"),
     "utf8",
@@ -52,9 +52,38 @@ test("assistant response states wait for completion instead of exposing an inter
 
   assert.match(
     wxml,
-    /status === 'thinking' \|\| status === 'speaking'[\s\S]*disabled[\s\S]*请等回应结束/,
+    /status === 'thinking' \|\| status === 'speaking'[\s\S]*bindtap="stopPlayback"[\s\S]*停止播放/,
   );
   assert.doesNotMatch(wxml, /bindtap="interruptVoice"|轻触打断/);
+});
+
+test("button stop clears local audio before requesting the server generation cancel", async () => {
+  const originalStopResponse = api.stopResponse;
+  const order = [];
+  api.stopResponse = async (sessionId) => {
+    order.push(`server:${sessionId}`);
+  };
+  const data = { active: true, error: "" };
+  const instance = {
+    data,
+    _session: { session_id: "session-1" },
+    _media: {
+      stopAssistantPlayback() {
+        order.push("local");
+      },
+    },
+    setData(update) {
+      Object.assign(this.data, update);
+    },
+  };
+
+  try {
+    await page.stopPlayback.call(instance);
+    assert.deepEqual(order, ["local", "server:session-1"]);
+    assert.equal(data.error, "");
+  } finally {
+    api.stopResponse = originalStopResponse;
+  }
 });
 
 test("initial connection retries once with a fresh ticket after connection refused", async () => {

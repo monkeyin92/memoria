@@ -1,0 +1,26 @@
+{
+  "schema_version": "memoria-realtime-facade-v1",
+  "client_events": [
+    "session.update",
+    "conversation.item.create",
+    "response.cancel"
+  ],
+  "server_events": [
+    "session.updated",
+    "conversation.item.created",
+    "conversation.item.input_audio_transcription.completed",
+    "response.created",
+    "response.audio_transcript.delta",
+    "response.audio_transcript.done",
+    "response.done"
+  ],
+  "unsupported_client_events": [
+    "input_audio_buffer.append",
+    "input_audio_buffer.commit"
+  ],
+  "runtime_owner": "DuplexRuntime",
+  "intent_owner": "UtteranceRouter",
+  "transport_exposed": false,
+  "protocol_modalities": ["text"],
+  "audio_transport": "external"
+}

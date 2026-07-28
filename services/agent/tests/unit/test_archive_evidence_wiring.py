@@ -164,8 +164,20 @@ async def test_actual_heard_assistant_prompt_kind_is_consumed_by_next_user_turn(
         final=True,
         heard=True,
     )
-    runtime.publish_transcript(speaker="user", text="是的。", final=True)
-    runtime.publish_transcript(speaker="user", text="另外一件事。", final=True)
+    first_user_fence = runtime.fence.bump_turn()
+    second_user_fence = first_user_fence.bump_turn()
+    runtime.publish_transcript(
+        speaker="user",
+        text="是的。",
+        final=True,
+        fence=first_user_fence,
+    )
+    runtime.publish_transcript(
+        speaker="user",
+        text="另外一件事。",
+        final=True,
+        fence=second_user_fence,
+    )
     await asyncio.sleep(0)
 
     user_payloads = [
