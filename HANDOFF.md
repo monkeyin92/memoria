@@ -2,16 +2,16 @@
 
 ## 当前状态
 
-- 当前仓库 `main / origin/main`：`941fd02`；生产 runtime source / annotated tag：
-  `33a741b3e8eb6a760b1dabe71df18e38ba135e40 / 20260728-123528`。
-- 生产 runtime：`20260728-123528`，已完成原子切换、生产门禁和公网验收；直接回滚点为
-  `20260728-114049`。
+- 当前功能基线 / 生产 runtime source / annotated tag：
+  `e7230236ddff0d64f602e38487387e614d2fb515 / 20260728-170236`。
+- 生产 runtime：`20260728-170236`，已完成原子切换、生产门禁和公网验收；直接回滚点为
+  `20260728-123528`。
 - 生产 H5：`20260723-192611`，本轮 runtime 发布没有切换 H5。
-- 微信小程序体验版：`0.8.57` 已上传成功（约 600 KB）；未提交审核或正式发布。
+- 微信小程序体验版：`0.8.58` 已上传成功（`631,692` 字节）；未提交审核或正式发布。
 - 当前交付客户端为 `apps/h5` 与 `apps/miniprogram`；legacy Web 与原生 iOS 源码已移除。
 - 历史路线、架构决策和发布证据分别保留在
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
-  `docs/releases/20260728-123528.md`。
+  `docs/releases/20260728-170236.md`。
 
 ## 最新实现
 
@@ -44,7 +44,7 @@
 - 播放 underflow 只重建后续排程，不再硬停仍登记中的旧 source。
 - FunASR 已支持可选热词表 ID 和噪声阈值，但生产没有录音校准证据，当前保持未配置。
 
-## 2026-07-28：游客浏览、微信身份与 EchoLife 迁移候选（未提交、未部署）
+## 2026-07-28：游客浏览与微信身份（已发布，真机验收待完成）
 
 - 三个主 Tab 未登录可浏览，不再启动即跳登录。游客态不创建服务端匿名账号；回顾页不读取
   或展示历史，“我的”页不读取资料和统计。
@@ -71,23 +71,24 @@
   当前旧主机、现存服务器备份及 Memoria 冻结快照均不含 EchoLife 数据。若需恢复正式旧用户，
   只能从腾讯云实例 `ins-d5nngvzh` 在删除前的云硬盘快照提取；禁止在仍运行其他生产服务的
   ext4 根盘上直接执行 undelete。
-- 当前生产 Memoria SQLite 有 96 个 profile、4 个注册账号、0 个 `wx_` profile，尚未执行旧用户
-  迁移。不能把本机仅含 1 个开发身份的备份冒充正式迁移。
+- 当前生产 Memoria SQLite 有 96 个 profile、4 个注册账号、0 个 external identity、0 个 avatar，
+  尚未执行旧用户迁移。不能把本机仅含 1 个开发身份的备份冒充正式迁移。
 - AppID 已确认是 `wx20a3a044b52fcbb7`；产品负责人已重新提供现有
   `WECHAT_MINIPROGRAM_APPSECRET`，只允许写入 Memoria 生产服务器的 root-only env，不得进入命令
   输出、仓库或文档。该值曾出现在历史自动化命令记录中，体验版闭环后应在微信公众平台重置。
   `MEMORIA_WECHAT_IDENTITY_SECRET` 必须独立生成，不能复用 AppSecret 或其他认证密钥。
 - 微信开发者工具已验证陪伴、回顾、“我的”三个游客页可直接渲染，页面数据均为
   `authenticated=false`，且 console 无异常；点击“开始语音陪伴”会进入带返回路径的登录页。
-  当前生产尚未部署 `/v1/auth/wechat-login`，因此端到端微信登录实测返回 404；这不是候选
-  前端跳转失败，必须先配置 AppSecret 并部署本候选后再验手机号、昵称和头像。
-- 当前改动仍在工作区：未提交、未推送、未部署后端、未上传新小程序体验版。
+  生产微信登录与头像路由已上线，微信官方 access token 接口验证通过；手机号、昵称、头像、
+  静默恢复和登录后语音仍需在 `0.8.58` 真机验收。
+- `e723023` / tag `20260728-170236` 已提交、推送并部署；小程序体验版 `0.8.58`
+  已经微信开发者工具确认上传，包体 `631,692` 字节，未提审、未正式发布。
 
 ## 生产健康
 
 - `agent / control-api / speaker-model / miniprogram-gateway` 四容器均为
   `healthy`、restart 0。
-- readiness 为 `ready / 20260728-123528`；9/9 core checks、Agent heartbeat、
+- readiness 为 `ready / 20260728-170236`；9/9 core checks、Agent heartbeat、
   LiveKit、FunASR、Qwen、Doubao 与 InterruptSemantic 均通过。
 - 四个 runtime 容器最近十五分钟未出现 traceback、关键 provider、provenance、
   archive durable/spool 或连接拒绝错误。
@@ -179,17 +180,20 @@
 
 ## 保留版本与回滚
 
-- 当前 runtime：`20260728-123528`。
-- 直接回滚 runtime：`20260728-114049`。
+- 当前 runtime：`20260728-170236`。
+- 直接回滚 runtime：`20260728-123528`。
 - 固定 H5：`20260723-192611`。
 - 本机和生产均只保留当前与直接回滚两套 runtime 的四角色 Docker tag。
-- 生产 source release 将保留 `20260728-123528` 与 `20260728-114049`；
+- 生产 source release 保留 `20260728-170236` 与 `20260728-123528`；
   H5 release 只保留 `20260723-192611`。
 - 本 release 的 SQLite 双备份 SHA-256：
+  `6b9fc7f7ead2aca3e47837a97d827de0b407fbd81a1ba784e14f48bf53d6cbd0`；
+  四份 env 与 Nginx 回滚副本均为 root-only。
+- 上一 runtime release 的 SQLite 双备份 SHA-256：
   `ca973329eb36519494d22076739cf4c32c102ccf2e04d5cca9c5faa423775382`
   （`/var/lib/memoria` 与 root-only `/var/backups/memoria` 一致）；四份 env 与两份 Nginx
   回滚副本均为 root-only。
-- SQLite 快照 SHA-256：
+- 更早 SQLite 快照 SHA-256：
   `9676292067df01121a7568b37b5f9ef5486296b7bd69703f7cbcdf76203ec006`
   （`/var/lib/memoria` 与 root-only `/var/backups/memoria` 两份一致）。
 - runtime 回滚不自动恢复数据库；只有数据迁移或数据异常时才使用快照。
@@ -220,6 +224,17 @@
   未跟踪文件；没有执行 `docker system prune`。本机其余 `7.0 GiB` Docker volumes 和约 `21.4 GiB`
   build cache 未逐项归属，明确保留，避免影响其他项目。
 
+## 2026-07-28：`20260728-170236` 发布与精确清理
+
+- runtime 已切换至 `20260728-170236`；H5 保持 `20260723-192611`，直接回滚 runtime 为
+  `20260728-123528`。四容器、readiness、Provider、公网 API/H5/WMS、微信登录/头像路由及
+  WSS 无效 ticket `4401` 验收通过。
+- 发布前已创建 SQLite 双备份、四份 env 与 Nginx 配置备份；微信 AppSecret 只写入 root-only
+  生产 env，独立身份 HMAC secret 已生成，secret 值未进入仓库或本文。
+- 本机与服务器已删除本次临时 artifact/incoming、第三旧版本 source/image tag 和明确无用发布包；
+  未运行 broad Docker prune，未删除 volumes、数据库、其他项目镜像或用户未跟踪文件。
+- 小程序 `0.8.58` 已上传开发版本；手机号、昵称、头像、静默恢复、退出清理和登录后语音仍待真机验收。
+
 ## 验证
 
 - Ruff：通过。
@@ -240,16 +255,16 @@
 - commit-bound manifest/verifier、镜像导入、候选 H5/API/SQLite restart server smoke、SQLite
   双副本、四份 env 回滚、生产 Provider/readiness、公网 H5/API/WMS/TLS/WSS header smoke 均通过。
 - 本次工件 SHA-256、镜像 ID、备份和生产验收见
-  `docs/releases/20260728-103318.md`。
+  `docs/releases/20260728-170236.md`。
 - 关键覆盖率子门槛：Agent orchestration `92%`、provider protocols `92%`。
 - 既有全 `services` 覆盖率门槛仍未闭环：实测 `81.54%`，低于 CI 配置的 `85%`；
   本轮没有降低门槛或伪报通过。
 
 ## 未闭环与下一步
 
-1. 于同一 iPhone 使用已上传的 `0.8.57` 点击“开始语音陪伴”，确认收到
-   `handshake_ack`/`ready`、不再显示网络拒绝；再分别覆盖 Wi-Fi、移动网络、前后台和系统录音中断恢复。
-   真实设备若仍失败，先保留 session/timestamp，再按同一窗口抓取脱敏连接证据。
+1. 使用已上传的 `0.8.58` 真机验证游客三页、首次手机号授权、昵称/头像、静默恢复、退出清理与
+   登录后语音；语音仍需确认 `handshake_ack`/`ready`、Wi-Fi/移动网络、前后台和系统录音中断恢复。
+   若失败，保留 session/timestamp，并按同一窗口抓取脱敏连接证据。
 2. H5 仍需真实浏览器和设备验证“等等、等一下、停一下、先别说”等语意打断，
    同时覆盖“我等一下再说”等非打断语句，避免误触发。
 3. 继续观察小程序 underflow、hard reset、lead 指标；只有需要定位非播放期噪声时才为
