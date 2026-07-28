@@ -3,15 +3,15 @@
 ## 当前状态
 
 - 当前 source commit / annotated tag：
-  `57eefdc533ffac459bfbeb76ce84370f4335ae52 / 20260728-114049`。
-- 生产 runtime：`20260728-114049`，已完成原子切换、生产门禁和公网验收；直接回滚点为
-  `20260728-103318`。
+  `33a741b3e8eb6a760b1dabe71df18e38ba135e40 / 20260728-123528`。
+- 生产 runtime：`20260728-123528`，已完成原子切换、生产门禁和公网验收；直接回滚点为
+  `20260728-114049`。
 - 生产 H5：`20260723-192611`，本轮 runtime 发布没有切换 H5。
 - 微信小程序体验版：`0.8.56` 已上传成功（约 599 KB）；未提交审核或正式发布。
 - 当前交付客户端为 `apps/h5` 与 `apps/miniprogram`；legacy Web 与原生 iOS 源码已移除。
 - 历史路线、架构决策和发布证据分别保留在
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
-  `docs/releases/20260728-114049.md`。
+  `docs/releases/20260728-123528.md`。
 
 ## 最新实现
 
@@ -48,7 +48,7 @@
 
 - `agent / control-api / speaker-model / miniprogram-gateway` 四容器均为
   `healthy`、restart 0。
-- readiness 为 `ready / 20260728-114049`；9/9 core checks、Agent heartbeat、
+- readiness 为 `ready / 20260728-123528`；9/9 core checks、Agent heartbeat、
   LiveKit、FunASR、Qwen、Doubao 与 InterruptSemantic 均通过。
 - 四个 runtime 容器最近十五分钟未出现 traceback、关键 provider、provenance、
   archive durable/spool 或连接拒绝错误。
@@ -59,6 +59,25 @@
 - Nginx 配置、WMS、readiness timer 与 certbot timer 正常；IP 证书有效至
   `2026-08-03 01:40:00 UTC`，域名证书有效至 `2026-10-18 03:59:59 UTC`。
 - PostgreSQL、MinIO、LiveKit、WMS、数据库快照与 Docker 数据卷未在清理中修改。
+
+## 2026-07-28：Gateway 握手验收日志上线（真机无 VPN 复测待完成）
+
+- `33a741b` / tag `20260728-123528` 已推送并原子切换 runtime；本轮只让 Gateway 的脱敏
+  `ack_sent` / `ready_sent` 等 `INFO` 日志走 Uvicorn 的 `uvicorn.error` handler，不改协议、
+  小程序包、H5、Nginx、数据库或 provider 配置。新增回归测试断言 header 握手日志恰有两条且不含 ticket。
+- source、四个 linux/amd64 镜像、H5 artifact 的 manifest/verifier、服务器导入校验与隔离
+  H5/API/SQLite restart smoke 均通过；SQLite 双副本 SHA-256 为
+  `a285511d8e26413263e792b9312ad4a0304e7f098b3d7d9acf3f2477a309176f`，四份 root-only env
+  回滚副本已创建。
+- 四容器 healthy，ready 绑定 `20260728-123528`；LiveKit、FunASR、Qwen、Doubao 和 5 条
+  InterruptSemantic smoke 最终通过。首次 refresh 的语意分类请求在 0.6 秒上限内瞬时超时，立即重试
+  已通过；需继续观察，不把一次超时写成代码回归。
+- 发布后用无效 ticket WSS smoke 验证 `close_code=4401`，容器日志可见
+  `mini_program_gateway_handshake ... phase=ticket_rejected`，证明新增 `INFO` 输出已经生效。
+- 用户关闭 VPN 的实时取证显示 TCP SYN 到达服务器，且其中两次已进入 Gateway；独立宽带的
+  `8443` TLS/WSS 也获得 `101`。因此不能把当前现象归因为“8443 全局被封”。443 外部 TLS 尚有
+  ClientHello 后断开证据，未迁移入口，避免影响 WMS；下一步只以同一 iPhone 无 VPN 的
+  `ack_sent` / `ready_sent` 日志定性。
 
 ## 2026-07-28：小程序 WSS 首包缺失与 header 握手修复
 
@@ -109,11 +128,11 @@
 
 ## 保留版本与回滚
 
-- 当前 runtime：`20260728-114049`。
-- 直接回滚 runtime：`20260728-103318`。
+- 当前 runtime：`20260728-123528`。
+- 直接回滚 runtime：`20260728-114049`。
 - 固定 H5：`20260723-192611`。
 - 本机和生产均只保留当前与直接回滚两套 runtime 的四角色 Docker tag。
-- 生产 source release 将保留 `20260728-114049` 与 `20260728-103318`；
+- 生产 source release 将保留 `20260728-123528` 与 `20260728-114049`；
   H5 release 只保留 `20260723-192611`。
 - 本 release 的 SQLite 双备份 SHA-256：
   `ca973329eb36519494d22076739cf4c32c102ccf2e04d5cca9c5faa423775382`
