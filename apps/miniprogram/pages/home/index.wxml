@@ -87,6 +87,7 @@
       loading="{{connecting}}"
       bindtap="startVoice"
     ><text class="start-button-spark">✦</text>开始语音陪伴</button>
+    <text wx:if="{{!authenticated && !active}}" class="guest-action-hint">可以先浏览，开始对话时再使用微信登录。</text>
     <view wx:else class="voice-controls">
       <button
         wx:if="{{status === 'thinking' || status === 'speaking'}}"

@@ -127,6 +127,7 @@ class ProfileRecord(BaseModel):
     display_name: str
     bio: str
     avatar_url: str
+    phone_number_masked: str
     companion_id: str | None
     timezone: str
     auto_summary: bool

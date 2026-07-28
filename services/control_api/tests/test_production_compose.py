@@ -228,6 +228,29 @@ def test_nginx_bounds_raw_voice_upload_without_raising_all_api_body_limits() -> 
     assert "client_max_body_size 4m;" not in generic
 
 
+def test_nginx_bounds_wechat_avatar_upload_without_raising_all_auth_routes() -> None:
+    nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
+
+    exact = "location = /memoria-api/v1/auth/wechat-avatar {"
+    assert nginx.count(exact) == 1
+    block = nginx.split(exact, 1)[1].split("}", 1)[0]
+    assert "client_max_body_size 4m;" in block
+    assert "limit_req zone=memoria_api burst=3 nodelay;" in block
+    assert "proxy_pass http://127.0.0.1:8791/v1/auth/wechat-avatar;" in block
+    login = nginx.split(
+        "location = /memoria-api/v1/auth/wechat-login {",
+        1,
+    )[1].split("}", 1)[0]
+    assert "client_max_body_size 4k;" in login
+    assert "limit_req zone=memoria_session burst=6 nodelay;" in login
+    avatars = nginx.split(
+        "location ^~ /memoria-api/v1/auth/wechat-avatars/ {",
+        1,
+    )[1].split("}", 1)[0]
+    assert "access_log off;" in avatars
+    assert "proxy_pass http://127.0.0.1:8791/v1/auth/wechat-avatars/;" in avatars
+
+
 def test_nginx_protects_h5_with_csp_and_hides_signed_sample_tokens_from_access_logs() -> None:
     nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
 
@@ -254,6 +277,9 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     control, agent, speaker_model, gateway = split_env(
         {
             "MEMORIA_AUTH_SECRET": "auth",
+            "WECHAT_MINIPROGRAM_APPID": "wx-test",
+            "WECHAT_MINIPROGRAM_APPSECRET": "wechat-secret",
+            "MEMORIA_WECHAT_IDENTITY_SECRET": "wechat-identity-secret",
             "MEMORIA_ARCHIVE_DATABASE_URL": "postgresql://db/memoria",
             "MEMORIA_ARCHIVE_COMPILER_DATABASE_URL": "postgresql://compiler@db/memoria",
             "MEMORIA_MEMORY_EMBEDDING_API_KEY": "memory-embedding-key",
@@ -291,6 +317,9 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     )
 
     assert control["MEMORIA_AUTH_SECRET"] == "auth"
+    assert control["WECHAT_MINIPROGRAM_APPID"] == "wx-test"
+    assert control["WECHAT_MINIPROGRAM_APPSECRET"] == "wechat-secret"
+    assert control["MEMORIA_WECHAT_IDENTITY_SECRET"] == "wechat-identity-secret"
     assert control["MEMORIA_SPEAKER_EMBEDDING_TOKEN"] == "speaker-model-token"
     assert control["TTS_PROVIDER"] == "doubao"
     assert agent["TTS_PROVIDER"] == "doubao"
@@ -324,6 +353,9 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     assert agent["FUNASR_SPEECH_NOISE_THRESHOLD"] == "-0.1"
     for forbidden in (
         "MEMORIA_AUTH_SECRET",
+        "WECHAT_MINIPROGRAM_APPID",
+        "WECHAT_MINIPROGRAM_APPSECRET",
+        "MEMORIA_WECHAT_IDENTITY_SECRET",
         "MEMORIA_ARCHIVE_DATABASE_URL",
         "MEMORIA_ARCHIVE_COMPILER_DATABASE_URL",
         "MEMORIA_MEMORY_EMBEDDING_API_KEY",

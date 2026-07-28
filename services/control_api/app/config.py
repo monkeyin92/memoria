@@ -429,6 +429,46 @@ class ControlSettings(BaseSettings):
         pattern=r"^[A-Za-z0-9_-]+$",
         alias="MEMORIA_REFRESH_COOKIE_NAME",
     )
+    wechat_miniprogram_appid: str = Field(
+        default="",
+        alias="WECHAT_MINIPROGRAM_APPID",
+    )
+    wechat_miniprogram_appsecret: SecretStr = Field(
+        default=SecretStr(""),
+        alias="WECHAT_MINIPROGRAM_APPSECRET",
+    )
+    memoria_wechat_identity_secret: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_WECHAT_IDENTITY_SECRET",
+    )
+    wechat_jscode2session_endpoint: str = Field(
+        default="https://api.weixin.qq.com/sns/jscode2session",
+        alias="WECHAT_JSCODE2SESSION_ENDPOINT",
+    )
+    wechat_access_token_endpoint: str = Field(
+        default="https://api.weixin.qq.com/cgi-bin/token",
+        alias="WECHAT_ACCESS_TOKEN_ENDPOINT",
+    )
+    wechat_phone_number_endpoint: str = Field(
+        default="https://api.weixin.qq.com/wxa/business/getuserphonenumber",
+        alias="WECHAT_PHONE_NUMBER_ENDPOINT",
+    )
+    wechat_auth_timeout_s: float = Field(
+        default=8.0,
+        ge=1.0,
+        le=30.0,
+        alias="WECHAT_AUTH_TIMEOUT_S",
+    )
+    wechat_avatar_max_bytes: int = Field(
+        default=2 * 1024 * 1024,
+        ge=1024,
+        le=4 * 1024 * 1024,
+        alias="WECHAT_AVATAR_MAX_BYTES",
+    )
+    wechat_avatar_public_base_url: str = Field(
+        default="",
+        alias="WECHAT_AVATAR_PUBLIC_BASE_URL",
+    )
     legacy_auth_compat_until: datetime | None = Field(
         default=None,
         alias="MEMORIA_LEGACY_AUTH_COMPAT_UNTIL",
@@ -471,6 +511,17 @@ class ControlSettings(BaseSettings):
         cutoff = self.legacy_auth_compat_until
         current = now or datetime.now(UTC)
         return cutoff is not None and current < cutoff
+
+    def wechat_identity_secret(self) -> str:
+        configured = self.memoria_wechat_identity_secret.get_secret_value().strip()
+        if configured:
+            return configured
+        return self.memoria_auth_secret.get_secret_value()
+
+    def wechat_avatar_base_url(self) -> str:
+        return (
+            self.wechat_avatar_public_base_url.strip() or self.public_base_url
+        ).rstrip("/")
 
     def archive_object_read_key_map(self) -> dict[str, str]:
         return _read_key_map(
@@ -527,6 +578,31 @@ class ControlSettings(BaseSettings):
             raise ValueError("production requires an independent MEMORIA_AUTH_SECRET (>=32 chars)")
         if auth_secret == self.livekit_api_secret:
             raise ValueError("MEMORIA_AUTH_SECRET must differ from LIVEKIT_API_SECRET")
+        if self.miniprogram_media_gateway_url.strip() and (
+            not self.wechat_miniprogram_appid.strip()
+            or not self.wechat_miniprogram_appsecret.get_secret_value().strip()
+        ):
+            raise ValueError(
+                "production Mini Program requires WECHAT_MINIPROGRAM_APPID "
+                "and WECHAT_MINIPROGRAM_APPSECRET"
+            )
+        if (
+            self.miniprogram_media_gateway_url.strip()
+            and not self.wechat_avatar_base_url().startswith("https://")
+        ):
+            raise ValueError(
+                "production Mini Program requires an HTTPS "
+                "WECHAT_AVATAR_PUBLIC_BASE_URL or PUBLIC_BASE_URL"
+            )
+        wechat_identity_secret = self.memoria_wechat_identity_secret.get_secret_value().strip()
+        if self.miniprogram_media_gateway_url.strip() and (
+            len(wechat_identity_secret) < 32
+            or wechat_identity_secret in {auth_secret, self.livekit_api_secret}
+        ):
+            raise ValueError(
+                "production Mini Program requires an independent "
+                "MEMORIA_WECHAT_IDENTITY_SECRET (>=32 chars)"
+            )
         gateway_url = self.miniprogram_media_gateway_url.strip()
         gateway_ticket_secret = self.memoria_miniprogram_gateway_ticket_secret.get_secret_value()
         if gateway_url:
@@ -560,6 +636,13 @@ class ControlSettings(BaseSettings):
             raise ValueError(
                 "Mini Program gateway ticket secret must differ from internal capability tokens"
             )
+        if wechat_identity_secret and (
+            wechat_identity_secret in capability_tokens.values()
+            or wechat_identity_secret == gateway_ticket_secret
+        ):
+            raise ValueError(
+                "WeChat identity secret must differ from gateway and capability tokens"
+            )
         message_idempotency_secret = self.memoria_message_idempotency_secret.get_secret_value()
         if (
             message_idempotency_secret == DEV_MESSAGE_IDEMPOTENCY_SECRET
@@ -567,6 +650,7 @@ class ControlSettings(BaseSettings):
             or message_idempotency_secret
             in {
                 auth_secret,
+                wechat_identity_secret,
                 self.livekit_api_secret,
                 *capability_tokens.values(),
             }

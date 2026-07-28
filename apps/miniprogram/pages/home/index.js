@@ -2,6 +2,7 @@ const api = require("../../utils/api");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { MiniProgramMediaSession } = require("../../utils/media-gateway");
 const { authoritativeTranscript } = require("../../utils/transcript-events");
+const { requireLogin } = require("../../utils/auth-gate");
 
 const CONNECTION_REFUSED_RETRY_DELAY_MS = 400;
 
@@ -110,32 +111,53 @@ Page({
     sessionId: "",
     connecting: false,
     active: false,
+    authenticated: false,
     expression: "neutral",
     ...mascotAssetsFor(companionById(defaultCompanionId)),
   },
 
+  onLoad() {
+    const app = getApp();
+    if (typeof app?.subscribeAuthCleared === "function") {
+      this._unsubscribeAuthCleared = app.subscribeAuthCleared(() => this._enterGuestState());
+    }
+  },
+
   onShow() {
-    if (!api.currentAccessToken()) {
-      wx.navigateTo({ url: "/pages/auth/index" });
+    const authenticated = api.hasAuthenticatedSession();
+    this.setData({ authenticated });
+    if (!authenticated) {
+      this._enterGuestState();
       return;
     }
     this.loadProfile();
   },
 
   onUnload() {
+    this._invalidateVoiceAttempt();
+    if (this._unsubscribeAuthCleared) {
+      this._unsubscribeAuthCleared();
+      this._unsubscribeAuthCleared = null;
+    }
     this._resetExpression();
     this._endMediaLocally();
   },
 
   onPullDownRefresh() {
+    if (!api.hasAuthenticatedSession()) {
+      wx.stopPullDownRefresh();
+      return;
+    }
     this.loadProfile().finally(() => wx.stopPullDownRefresh());
   },
 
   async loadProfile() {
     const identity = api.currentIdentity();
     if (!identity) return;
+    const authEpoch = api.currentAuthEpoch();
     try {
       const profile = { ...defaultProfile, ...(await api.getProfile(identity.user_id)) };
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
       const companion = companionById(profile.companion_id);
       this.setData({
         profile,
@@ -143,6 +165,7 @@ Page({
         ...mascotAssetsFor(companion),
       });
     } catch (error) {
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: error?.message || "个人资料暂时无法加载。" });
     }
   },
@@ -150,20 +173,23 @@ Page({
   startVoice() {
     if (this._startVoicePromise) return this._startVoicePromise;
     if (this.data.connecting || this.data.active) return Promise.resolve();
+    const attemptId = this._invalidateVoiceAttempt();
     let attempt;
-    attempt = this._startVoiceOnce().finally(() => {
+    attempt = this._startVoiceOnce(attemptId).finally(() => {
       if (this._startVoicePromise === attempt) this._startVoicePromise = null;
     });
     this._startVoicePromise = attempt;
     return attempt;
   },
 
-  async _startVoiceOnce() {
+  async _startVoiceOnce(attemptId) {
+    if (!(await requireLogin({ reason: "start_voice" }))) return;
+    if (!this._isVoiceAttemptCurrent(attemptId)) return;
+    this.setData({ authenticated: true });
     const identity = api.currentIdentity();
-    if (!identity) {
-      wx.navigateTo({ url: "/pages/auth/index" });
-      return;
-    }
+    if (!identity) return;
+    await this.loadProfile();
+    if (!this._isVoiceAttemptCurrent(attemptId)) return;
     this.setData({
       connecting: true,
       status: "connecting",
@@ -177,15 +203,22 @@ Page({
     this._resetExpression();
     try {
       await authorizationForRecord();
+      if (!this._isVoiceAttemptCurrent(attemptId)) return;
       const session = await api.createMiniProgramSession({ userId: identity.user_id });
+      if (!this._isVoiceAttemptCurrent(attemptId)) return;
       this._session = session;
       this.setData({ sessionId: session.session_id });
       this._session = await this._connectInitialMedia(session);
+      if (!this._isVoiceAttemptCurrent(attemptId)) {
+        await this._endMediaLocally();
+        return;
+      }
       this.setData({
         active: true,
       });
     } catch (error) {
       await this._endMediaLocally();
+      if (!this._isVoiceAttemptCurrent(attemptId)) return;
       const canRetry = Boolean(this._session?.session_id);
       this.setData({
         active: false,
@@ -196,6 +229,38 @@ Page({
     } finally {
       this.setData({ connecting: false });
     }
+  },
+
+  _invalidateVoiceAttempt() {
+    this._voiceAttemptId = (this._voiceAttemptId || 0) + 1;
+    return this._voiceAttemptId;
+  },
+
+  _isVoiceAttemptCurrent(attemptId) {
+    return attemptId === this._voiceAttemptId && api.hasAuthenticatedSession();
+  },
+
+  _enterGuestState() {
+    this._invalidateVoiceAttempt();
+    this._ending = true;
+    this._session = null;
+    this._endMediaLocally().catch(() => {});
+    this._resetExpression();
+    const companion = companionById(defaultCompanionId);
+    this.setData({
+      authenticated: false,
+      profile: defaultProfile,
+      companion,
+      ...mascotAssetsFor(companion),
+      status: "idle",
+      statusLabel: stateLabel("idle"),
+      error: "",
+      transcript: [],
+      micEnabled: true,
+      sessionId: "",
+      connecting: false,
+      active: false,
+    });
   },
 
   async _connectInitialMedia(session) {

@@ -1,4 +1,5 @@
 const api = require("../../utils/api");
+const { requireLogin } = require("../../utils/auth-gate");
 
 Page({
   data: {
@@ -8,23 +9,55 @@ Page({
     consent: null,
   },
 
-  onShow() {
-    if (!api.currentAccessToken()) {
-      wx.redirectTo({ url: "/pages/auth/index?mode=login" });
-      return;
+  onLoad() {
+    const app = getApp();
+    if (typeof app?.subscribeAuthCleared === "function") {
+      this._unsubscribeAuthCleared = app.subscribeAuthCleared(() => this._clearPrivateState());
     }
+  },
+
+  async onShow() {
+    if (
+      !(await requireLogin({
+        reason: "manage_privacy",
+        redirect: "/pages/privacy/index",
+      }))
+    ) return;
     this.loadConsent();
   },
 
+  onUnload() {
+    if (this._unsubscribeAuthCleared) {
+      this._unsubscribeAuthCleared();
+      this._unsubscribeAuthCleared = null;
+    }
+  },
+
+  _clearPrivateState() {
+    this.setData({
+      loading: false,
+      acting: false,
+      error: "",
+      consent: null,
+    });
+  },
+
   async loadConsent() {
+    if (!api.hasAuthenticatedSession()) {
+      this._clearPrivateState();
+      return;
+    }
+    const authEpoch = api.currentAuthEpoch();
     this.setData({ loading: true, error: "" });
     try {
       const result = await api.getRawVoiceConsent();
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ consent: result.consent || null });
     } catch (error) {
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: error?.message || "授权状态无法加载。" });
     } finally {
-      this.setData({ loading: false });
+      if (api.isAuthEpochCurrent(authEpoch)) this.setData({ loading: false });
     }
   },
 
@@ -37,15 +70,18 @@ Page({
       });
     });
     if (!confirmed) return;
+    const authEpoch = api.currentAuthEpoch();
     this.setData({ acting: true, error: "" });
     try {
       const consent = await api.grantRawVoiceConsent();
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ consent });
       wx.showToast({ title: "授权已记录", icon: "success" });
     } catch (error) {
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: error?.message || "授权未完成。" });
     } finally {
-      this.setData({ acting: false });
+      if (api.isAuthEpochCurrent(authEpoch)) this.setData({ acting: false });
     }
   },
 
@@ -59,15 +95,18 @@ Page({
       });
     });
     if (!confirmed) return;
+    const authEpoch = api.currentAuthEpoch();
     this.setData({ acting: true, error: "" });
     try {
       await api.revokeRawVoiceConsent();
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ consent: null });
       wx.showToast({ title: "已撤回授权", icon: "success" });
     } catch (error) {
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: error?.message || "撤回未完成，请稍后重试。" });
     } finally {
-      this.setData({ acting: false });
+      if (api.isAuthEpochCurrent(authEpoch)) this.setData({ acting: false });
     }
   },
 });

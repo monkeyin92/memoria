@@ -44,6 +44,8 @@ def _upgrade_inputs(
         "DOUBAO_TTS_RESOURCE_ID": "seed-tts-2.0",
         "DOUBAO_TTS_SAMPLE_RATE": "24000",
         "MEMORIA_AUTH_SECRET": "auth-secret-material-that-is-long-enough",
+        "WECHAT_MINIPROGRAM_APPID": "wx-test",
+        "WECHAT_MINIPROGRAM_APPSECRET": "wechat-secret",
         "QWEN_OMNI_PLUS_VAD_THRESHOLD": "ignored-legacy-key",
     }
     legacy.update(
@@ -99,6 +101,9 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     )
 
     assert control["MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY"] == "archive-access"
+    assert control["WECHAT_MINIPROGRAM_APPID"] == "wx-test"
+    assert control["WECHAT_MINIPROGRAM_APPSECRET"] == "wechat-secret"
+    assert len(control["MEMORIA_WECHAT_IDENTITY_SECRET"]) >= 32
     assert control["MEMORIA_VOICE_OBJECT_ACCESS_KEY"] == "voice-access"
     assert control["MEMORIA_ARCHIVE_OBJECT_READ_KEYS"] == json.dumps(archive_read_keys)
     assert control["MEMORIA_VOICE_SAMPLE_READ_KEYS"] == json.dumps(voice_read_keys)
@@ -166,6 +171,7 @@ def test_upgrade_env_preserves_existing_encryption_keys_versions_and_read_keyrin
     legacy, postgres, minio = _upgrade_inputs()
     preserved = {
         "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET": "preserved-message-idempotency-secret-material",
+        "MEMORIA_WECHAT_IDENTITY_SECRET": "preserved-wechat-identity-secret-material",
         "MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY": Fernet.generate_key().decode("ascii"),
         "MEMORIA_ARCHIVE_OBJECT_KEY_VERSION": "archive-object-v7",
         "MEMORIA_ARCHIVE_OBJECT_READ_KEYS": json.dumps(
@@ -205,6 +211,7 @@ def test_upgrade_env_generates_only_missing_encryption_keys() -> None:
 
     generated = (
         control["MEMORIA_MESSAGE_IDEMPOTENCY_SECRET"],
+        control["MEMORIA_WECHAT_IDENTITY_SECRET"],
         control["MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY"],
         control["MEMORIA_VOICE_SAMPLE_ENCRYPTION_KEY"],
         control["MEMORIA_SPEAKER_TEMPLATE_KEY"],
@@ -212,11 +219,13 @@ def test_upgrade_env_generates_only_missing_encryption_keys() -> None:
     )
     for key in generated:
         assert len(key) >= 32
-    for key in generated[1:]:
+    for key in generated[2:]:
         Fernet(key.encode("ascii"))
     assert len(set(generated)) == len(generated)
     assert control["MEMORIA_MESSAGE_IDEMPOTENCY_SECRET"] != control["MEMORIA_AUTH_SECRET"]
+    assert control["MEMORIA_WECHAT_IDENTITY_SECRET"] != control["MEMORIA_AUTH_SECRET"]
     assert "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET" not in agent
+    assert "MEMORIA_WECHAT_IDENTITY_SECRET" not in agent
     assert control["MEMORIA_ARCHIVE_OBJECT_KEY_VERSION"] == "archive-object-v1"
     assert control["MEMORIA_VOICE_SAMPLE_KEY_VERSION"] == "voice-sample-v1"
 

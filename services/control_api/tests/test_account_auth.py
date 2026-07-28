@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import sqlite3
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import jwt
 import pytest
 from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
+from services.control_api.app import wechat_auth
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import auth as auth_routes
@@ -76,6 +80,167 @@ def test_legacy_auth_compat_cutoff_is_absolute_utc_and_closes_at_the_boundary() 
         ControlSettings(_env_file=None, MEMORIA_AUTH_TOKEN_TTL_S=599)
     with pytest.raises(ValidationError):
         ControlSettings(_env_file=None, MEMORIA_AUTH_TOKEN_TTL_S=901)
+
+
+def test_production_miniprogram_requires_wechat_credentials_and_independent_identity_key() -> None:
+    common = {
+        "ENVIRONMENT": "production",
+        "PUBLIC_BASE_URL": "https://voice.example.com",
+        "ALLOWED_ORIGINS": "https://voice.example.com",
+        "LIVEKIT_URL": "wss://livekit.example.com",
+        "LIVEKIT_API_KEY": "key",
+        "LIVEKIT_API_SECRET": "test-livekit-material-long-enough",
+        "MEMORIA_AUTH_SECRET": "test-auth-material-that-is-long-enough",
+        "MINIPROGRAM_MEDIA_GATEWAY_URL": "wss://voice.example.com/media",
+    }
+    with pytest.raises(ValueError, match="WECHAT_MINIPROGRAM_APPID"):
+        ControlSettings(_env_file=None, **common).validate_production()
+    with pytest.raises(ValueError, match="MEMORIA_WECHAT_IDENTITY_SECRET"):
+        ControlSettings(
+            _env_file=None,
+            **common,
+            WECHAT_MINIPROGRAM_APPID="wx-test",
+            WECHAT_MINIPROGRAM_APPSECRET="wechat-secret",
+        ).validate_production()
+    with pytest.raises(ValueError, match="MEMORIA_WECHAT_IDENTITY_SECRET"):
+        ControlSettings(
+            _env_file=None,
+            **common,
+            WECHAT_MINIPROGRAM_APPID="wx-test",
+            WECHAT_MINIPROGRAM_APPSECRET="wechat-secret",
+            MEMORIA_WECHAT_IDENTITY_SECRET=common["MEMORIA_AUTH_SECRET"],
+        ).validate_production()
+
+
+@pytest.mark.asyncio
+async def test_wechat_phone_exchange_reuses_the_app_access_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeResponse:
+        is_error = False
+
+        def __init__(self, payload: dict[str, object]) -> None:
+            self._payload = payload
+
+        def json(self) -> dict[str, object]:
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *, timeout: float) -> None:
+            _ = timeout
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            _ = args
+
+        async def get(self, url: str, **kwargs: object) -> FakeResponse:
+            _ = kwargs
+            calls.append(("GET", url))
+            return FakeResponse({"access_token": "cached-token", "expires_in": 7200})
+
+        async def post(self, url: str, **kwargs: object) -> FakeResponse:
+            _ = kwargs
+            calls.append(("POST", url))
+            return FakeResponse(
+                {
+                    "phone_info": {
+                        "purePhoneNumber": "18100008880",
+                        "countryCode": "86",
+                    }
+                }
+            )
+
+    monkeypatch.setattr(wechat_auth.httpx, "AsyncClient", FakeClient)
+    wechat_auth._ACCESS_TOKEN_CACHE.clear()
+    settings = ControlSettings(
+        _env_file=None,
+        OFFLINE_MOCK=False,
+        WECHAT_MINIPROGRAM_APPID="wx-test",
+        WECHAT_MINIPROGRAM_APPSECRET="wechat-secret",
+        WECHAT_ACCESS_TOKEN_ENDPOINT="https://wechat.example/token",
+        WECHAT_PHONE_NUMBER_ENDPOINT="https://wechat.example/phone",
+    )
+
+    first = await wechat_auth.code_to_phone(settings, "phone-code-1")
+    second = await wechat_auth.code_to_phone(settings, "phone-code-2")
+
+    assert first.phone_number == second.phone_number == "18100008880"
+    assert calls.count(("GET", "https://wechat.example/token")) == 1
+    assert calls.count(("POST", "https://wechat.example/phone")) == 2
+    wechat_auth._ACCESS_TOKEN_CACHE.clear()
+
+
+@pytest.mark.asyncio
+async def test_wechat_phone_exchange_refreshes_an_expired_cached_access_token_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    token_responses = iter(("stale-token", "fresh-token"))
+    phone_calls = 0
+
+    class FakeResponse:
+        is_error = False
+
+        def __init__(self, payload: dict[str, object]) -> None:
+            self._payload = payload
+
+        def json(self) -> dict[str, object]:
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *, timeout: float) -> None:
+            _ = timeout
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            _ = args
+
+        async def get(self, url: str, **kwargs: object) -> FakeResponse:
+            _ = kwargs
+            calls.append(("GET", url))
+            return FakeResponse(
+                {"access_token": next(token_responses), "expires_in": 7200}
+            )
+
+        async def post(self, url: str, **kwargs: object) -> FakeResponse:
+            nonlocal phone_calls
+            calls.append(("POST", url))
+            token = str((kwargs.get("params") or {}).get("access_token"))
+            phone_calls += 1
+            if token == "stale-token":
+                return FakeResponse({"errcode": 42001, "errmsg": "access_token expired"})
+            return FakeResponse(
+                {
+                    "phone_info": {
+                        "purePhoneNumber": "18100008880",
+                        "countryCode": "86",
+                    }
+                }
+            )
+
+    monkeypatch.setattr(wechat_auth.httpx, "AsyncClient", FakeClient)
+    wechat_auth._ACCESS_TOKEN_CACHE.clear()
+    settings = ControlSettings(
+        _env_file=None,
+        OFFLINE_MOCK=False,
+        WECHAT_MINIPROGRAM_APPID="wx-test",
+        WECHAT_MINIPROGRAM_APPSECRET="wechat-secret",
+        WECHAT_ACCESS_TOKEN_ENDPOINT="https://wechat.example/token",
+        WECHAT_PHONE_NUMBER_ENDPOINT="https://wechat.example/phone",
+    )
+
+    phone = await wechat_auth.code_to_phone(settings, "phone-code")
+
+    assert phone.phone_number == "18100008880"
+    assert calls.count(("GET", "https://wechat.example/token")) == 2
+    assert phone_calls == 2
+    wechat_auth._ACCESS_TOKEN_CACHE.clear()
 
 
 @pytest.mark.asyncio
@@ -362,6 +527,468 @@ async def test_registered_account_can_log_back_into_the_same_identity(
         "username": "MemoriaOwner",
         "account_type": "registered",
     }
+
+
+@pytest.mark.asyncio
+async def test_wechat_phone_login_creates_one_stable_registered_identity_and_restores_silently(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_test_app(monkeypatch, tmp_path)
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        unknown = await client.post(
+            "/v1/auth/wechat-login",
+            json={"login_code": "dev-wechat-owner"},
+        )
+        first = await client.post(
+            "/v1/auth/wechat-login",
+            json={
+                "login_code": "dev-wechat-owner",
+                "phone_code": "dev-phone-owner",
+                "display_name": "小林",
+            },
+        )
+        restored = await client.post(
+            "/v1/auth/wechat-login",
+            json={"login_code": "dev-wechat-owner"},
+        )
+        current = await client.get(
+            "/v1/auth/me",
+            headers={"Authorization": f"Bearer {restored.json()['access_token']}"},
+        )
+        profile = await client.get(
+            f"/v1/memory/profile/{restored.json()['user_id']}",
+            headers={"Authorization": f"Bearer {restored.json()['access_token']}"},
+        )
+
+    assert unknown.status_code == 428
+    assert unknown.json()["detail"]["code"] == "phone_authorization_required"
+    assert first.status_code == 200
+    assert first.json()["user_id"].startswith("wx_")
+    assert first.json()["account_type"] == "registered"
+    assert first.json()["display_name"] == "小林"
+    assert first.json()["phone_number_masked"] == "181****8880"
+    assert restored.status_code == 200
+    assert restored.json()["user_id"] == first.json()["user_id"]
+    assert current.json() == {
+        "user_id": first.json()["user_id"],
+        "username": None,
+        "account_type": "registered",
+    }
+    assert profile.json()["display_name"] == "小林"
+    assert profile.json()["phone_number_masked"] == "181****8880"
+
+
+@pytest.mark.asyncio
+async def test_wechat_phone_identity_cannot_be_claimed_by_another_openid(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_test_app(monkeypatch, tmp_path)
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        owner = await client.post(
+            "/v1/auth/wechat-login",
+            json={
+                "login_code": "dev-wechat-phone-owner",
+                "phone_code": "dev-phone-shared",
+            },
+        )
+        attempted_takeover = await client.post(
+            "/v1/auth/wechat-login",
+            json={
+                "login_code": "dev-wechat-phone-attacker",
+                "phone_code": "dev-phone-shared",
+            },
+        )
+
+    assert owner.status_code == 200
+    assert attempted_takeover.status_code == 409
+    assert attempted_takeover.json()["detail"] == {
+        "code": "wechat_identity_conflict"
+    }
+
+
+@pytest.mark.asyncio
+async def test_wechat_avatar_upload_persists_profile_image_without_a_local_wx_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_test_app(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "WECHAT_AVATAR_PUBLIC_BASE_URL",
+        "https://mini.example.com/memoria-api",
+    )
+    app = create_app()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+        "YAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        login = await client.post(
+            "/v1/auth/wechat-login",
+            json={
+                "login_code": "dev-wechat-avatar",
+                "phone_code": "dev-phone-avatar",
+                "display_name": "头像用户",
+            },
+        )
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        uploaded = await client.post(
+            "/v1/auth/wechat-avatar",
+            headers=headers,
+            json={
+                "file_base64": base64.b64encode(png).decode("ascii"),
+                "content_type": "image/png",
+            },
+        )
+        avatar_path = urlsplit(uploaded.json()["avatar_url"]).path.removeprefix(
+            "/memoria-api"
+        )
+        downloaded = await client.get(avatar_path)
+        profile = await client.get(
+            f"/v1/memory/profile/{login.json()['user_id']}",
+            headers=headers,
+        )
+
+    assert uploaded.status_code == 200
+    assert uploaded.json()["size"] == len(png)
+    assert uploaded.json()["avatar_url"].startswith(
+        "https://mini.example.com/memoria-api/v1/auth/wechat-avatars/"
+    )
+    assert "wxfile:" not in uploaded.json()["avatar_url"]
+    assert downloaded.status_code == 200
+    assert downloaded.headers["content-type"] == "image/png"
+    assert downloaded.headers["cache-control"] == "private, no-store"
+    assert downloaded.headers["x-content-type-options"] == "nosniff"
+    assert downloaded.content == png
+    assert profile.json()["avatar_url"] == uploaded.json()["avatar_url"]
+
+
+@pytest.mark.asyncio
+async def test_wechat_account_deletion_requires_a_fresh_matching_login_code(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_test_app(monkeypatch, tmp_path)
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        login = await client.post(
+            "/v1/auth/wechat-login",
+            json={
+                "login_code": "dev-wechat-delete",
+                "phone_code": "dev-phone-delete",
+            },
+        )
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        wrong = await client.post(
+            "/v1/archive/deletion-requests",
+            headers=headers,
+            json={
+                "wechat_login_code": "dev-wechat-someone-else",
+                "confirmation": "永久删除我的全部数据",
+            },
+        )
+        deleted = await client.post(
+            "/v1/archive/deletion-requests",
+            headers=headers,
+            json={
+                "wechat_login_code": "dev-wechat-delete",
+                "confirmation": "永久删除我的全部数据",
+            },
+        )
+        current = await client.get("/v1/auth/me", headers=headers)
+        replacement = await client.post(
+            "/v1/auth/wechat-login",
+            json={
+                "login_code": "dev-wechat-delete",
+                "phone_code": "dev-phone-delete",
+            },
+        )
+        replacement_current = await client.get(
+            "/v1/auth/me",
+            headers={"Authorization": f"Bearer {replacement.json()['access_token']}"},
+        )
+
+    assert wrong.status_code == 403
+    assert deleted.status_code == 200
+    assert current.status_code == 401
+    assert replacement.status_code == 200
+    assert replacement.json()["user_id"] != login.json()["user_id"]
+    assert replacement_current.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_wechat_login_rejects_an_identity_while_account_deletion_is_pending(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_test_app(monkeypatch, tmp_path)
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        login = await client.post(
+            "/v1/auth/wechat-login",
+            json={
+                "login_code": "dev-wechat-pending-delete",
+                "phone_code": "dev-phone-pending-delete",
+            },
+        )
+        user_id = login.json()["user_id"]
+        app.state.memory_store.begin_account_deletion(
+            user_id=user_id,
+            started_at=datetime.now(UTC).isoformat(),
+        )
+
+        repeated = await client.post(
+            "/v1/auth/wechat-login",
+            json={"login_code": "dev-wechat-pending-delete"},
+        )
+
+    assert repeated.status_code == 409
+    assert repeated.json()["detail"] == {"code": "account_deletion_in_progress"}
+
+
+def test_echolife_identity_profile_import_is_idempotent_and_keeps_conversations_unfabricated(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_test_app(monkeypatch, tmp_path)
+    source = tmp_path / "echolife-sessions"
+    source.mkdir()
+    (source / "ECHOLIFE_SESSION_V2_user_wx_legacyhash.json").write_text(
+        json.dumps(
+            {
+                "auth": {
+                    "status": "authenticated",
+                    "wechatOpenidHash": "aaaaaaaaaaaaaaaaaaaaaaaa",
+                    "user": {
+                        "id": "wx_aaaaaaaaaaaaaaaaaaaaaaaa",
+                        "nickname": "旧用户",
+                        "avatarUrl": "",
+                        "phoneNumberMasked": "139****5678",
+                    },
+                },
+                "storyFragments": [{"id": "story-1", "text": "旧故事只保留在源数据"}],
+                "timeline": [{"id": "timeline-1", "title": "旧时间线"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    target = tmp_path / "memoria.sqlite3"
+
+    from scripts.migrate_echolife_users import migrate_echolife_users
+
+    first = migrate_echolife_users(source=source, target_db=target, dry_run=False)
+    second = migrate_echolife_users(source=source, target_db=target, dry_run=False)
+
+    assert first == {
+        "files_scanned": 1,
+        "users_discovered": 1,
+        "users_imported": 1,
+        "users_unchanged": 0,
+        "conflicts": 0,
+        "legacy_content_deferred": 1,
+        "avatars_imported": 0,
+        "avatars_deferred": 0,
+    }
+    assert second == {
+        "files_scanned": 1,
+        "users_discovered": 1,
+        "users_imported": 0,
+        "users_unchanged": 1,
+        "conflicts": 0,
+        "legacy_content_deferred": 1,
+        "avatars_imported": 0,
+        "avatars_deferred": 0,
+    }
+    backups = list(tmp_path.glob("memoria.sqlite3.pre-echolife-*.bak"))
+    assert len(backups) == 1
+    assert backups[0].stat().st_mode & 0o777 == 0o600
+    with sqlite3.connect(target) as connection:
+        profile = connection.execute(
+            "SELECT display_name, phone_number_masked FROM profiles WHERE user_id = ?",
+            ("wx_aaaaaaaaaaaaaaaaaaaaaaaa",),
+        ).fetchone()
+        messages = connection.execute("SELECT COUNT(*) FROM messages").fetchone()
+        summaries = connection.execute("SELECT COUNT(*) FROM daily_summaries").fetchone()
+    assert profile == ("旧用户", "139****5678")
+    assert messages == (0,)
+    assert summaries == (0,)
+
+
+def test_echolife_sqlite_import_reads_real_store_and_copies_server_avatar(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_test_app(monkeypatch, tmp_path)
+    source = tmp_path / "echolife.sqlite"
+    avatar_root = tmp_path / "avatars"
+    avatar_root.mkdir()
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+        "YAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+    )
+    (avatar_root / "avatar-legacy.png").write_bytes(png)
+    payload = {
+        "auth": {
+            "status": "authenticated",
+            "wechatOpenidHash": "bbbbbbbbbbbbbbbbbbbbbbbb",
+            "user": {
+                "id": "wx_bbbbbbbbbbbbbbbbbbbbbbbb",
+                "nickname": "SQLite 旧用户",
+                "avatarUrl": "https://old.example/profile/avatars/avatar-legacy.png",
+                "phoneNumberMasked": "139****5678",
+            },
+        },
+        "storyFragments": [{"id": "legacy-story"}],
+    }
+    with sqlite3.connect(source) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE app_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                open_id TEXT,
+                nickname TEXT NOT NULL,
+                avatar_url TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE story_fragments (id TEXT PRIMARY KEY);
+            """
+        )
+        connection.execute(
+            "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, ?)",
+            ("ECHOLIFE_SESSION_V2", json.dumps(payload, ensure_ascii=False), 1),
+        )
+        connection.execute(
+            "INSERT INTO users (id, open_id, nickname, avatar_url) VALUES (?, ?, ?, ?)",
+            (
+                "wx_bbbbbbbbbbbbbbbbbbbbbbbb",
+                "",
+                "SQLite 旧用户",
+                "https://old.example/profile/avatars/avatar-legacy.png",
+            ),
+        )
+        connection.execute("INSERT INTO story_fragments (id) VALUES (?)", ("legacy-story",))
+    target = tmp_path / "memoria.sqlite3"
+
+    from scripts.migrate_echolife_users import migrate_echolife_users
+
+    first = migrate_echolife_users(
+        source=source,
+        target_db=target,
+        dry_run=False,
+        avatar_root=avatar_root,
+        public_base_url="https://aigcnice.com:8443/memoria-api",
+    )
+    second = migrate_echolife_users(
+        source=source,
+        target_db=target,
+        dry_run=False,
+        avatar_root=avatar_root,
+        public_base_url="https://aigcnice.com:8443/memoria-api",
+    )
+
+    assert first == {
+        "files_scanned": 1,
+        "users_discovered": 1,
+        "users_imported": 1,
+        "users_unchanged": 0,
+        "conflicts": 0,
+        "legacy_content_deferred": 2,
+        "avatars_imported": 1,
+        "avatars_deferred": 0,
+    }
+    assert second == {
+        "files_scanned": 1,
+        "users_discovered": 1,
+        "users_imported": 0,
+        "users_unchanged": 1,
+        "conflicts": 0,
+        "legacy_content_deferred": 2,
+        "avatars_imported": 0,
+        "avatars_deferred": 0,
+    }
+    with sqlite3.connect(target) as connection:
+        profile = connection.execute(
+            "SELECT display_name, phone_number_masked, avatar_url FROM profiles WHERE user_id = ?",
+            ("wx_bbbbbbbbbbbbbbbbbbbbbbbb",),
+        ).fetchone()
+        avatar = connection.execute(
+            "SELECT content_type, content, sha256 FROM profile_avatars WHERE user_id = ?",
+            ("wx_bbbbbbbbbbbbbbbbbbbbbbbb",),
+        ).fetchone()
+    assert profile is not None
+    assert profile[:2] == ("SQLite 旧用户", "139****5678")
+    assert str(profile[2]).startswith(
+        "https://aigcnice.com:8443/memoria-api/v1/auth/wechat-avatars/"
+    )
+    assert avatar == ("image/png", png, hashlib.sha256(png).hexdigest())
+
+
+def test_echolife_import_does_not_resurrect_a_deleted_wechat_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_test_app(monkeypatch, tmp_path)
+    source = tmp_path / "echolife"
+    source.mkdir()
+    subject_hash = "cccccccccccccccccccccccc"
+    (source / "session.json").write_text(
+        json.dumps(
+            {
+                "auth": {
+                    "status": "authenticated",
+                    "wechatOpenidHash": subject_hash,
+                    "user": {
+                        "id": f"wx_{subject_hash}",
+                        "nickname": "已注销用户",
+                    },
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    target = tmp_path / "memoria.sqlite3"
+
+    from scripts.migrate_echolife_users import migrate_echolife_users
+    from services.control_api.app.database import MemoryStore
+
+    store = MemoryStore(str(target))
+    store.initialize()
+    store.begin_account_deletion(
+        user_id=f"wx_{subject_hash}",
+        started_at=datetime.now(UTC).isoformat(),
+    )
+    result = migrate_echolife_users(source=source, target_db=target, dry_run=False)
+
+    assert result == {
+        "files_scanned": 1,
+        "users_discovered": 1,
+        "users_imported": 0,
+        "users_unchanged": 0,
+        "conflicts": 1,
+        "legacy_content_deferred": 0,
+        "avatars_imported": 0,
+        "avatars_deferred": 0,
+    }
+    with sqlite3.connect(target) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM external_identities").fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM profiles WHERE user_id = ?",
+            (f"wx_{subject_hash}",),
+        ).fetchone() == (0,)
 
 
 @pytest.mark.asyncio

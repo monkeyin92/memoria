@@ -3,10 +3,25 @@
 <view class="page-shell">
   <text class="eyebrow">你的陪伴空间</text>
 
+  <view wx:if="{{!authenticated}}" class="card guest-profile">
+    <text class="guest-profile-badge">游客浏览模式</text>
+    <text class="guest-profile-title">先看看，再决定什么时候开始</text>
+    <text class="guest-profile-copy">未登录时不会读取你的资料、统计或回顾。点击下方按钮后再使用微信登录。</text>
+    <button class="primary-button guest-profile-button" bindtap="loginFromProfile">微信登录</button>
+  </view>
+
+  <block wx:else>
   <view class="profile-hero">
     <view class="hero-glow"></view>
     <view class="hero-avatar-ring">
-      <view class="profile-mascot-shell">
+      <image
+        wx:if="{{profile.avatar_url}}"
+        class="user-avatar"
+        src="{{profile.avatar_url}}"
+        mode="aspectFill"
+        aria-label="微信头像"
+      />
+      <view wx:else class="profile-mascot-shell">
         <image wx:if="{{profile.companion_id === 'starlight'}}" class="hero-avatar" src="/assets/companions/miniprogram/starlight.png" mode="aspectFit" />
         <image wx:if="{{profile.companion_id === 'taoxi'}}" class="hero-avatar" src="/assets/companions/miniprogram/taoxi.png" mode="aspectFit" />
         <image wx:if="{{profile.companion_id === 'mianmian'}}" class="hero-avatar" src="/assets/companions/miniprogram/mianmian.png" mode="aspectFit" />
@@ -28,7 +43,7 @@
     <view class="hero-copy">
       <text class="hero-name">{{profile.display_name || '新朋友'}}</text>
       <text class="hero-bio">{{profile.bio || '慢慢说，我会认真听。'}}</text>
-      <text class="hero-account">{{identity.account_type === 'anonymous' ? '匿名体验身份 · 仅在当前运行期有效' : '账号由服务端安全保护'}}</text>
+      <text class="hero-account">微信账号已安全登录</text>
     </view>
   </view>
 
@@ -124,8 +139,7 @@
   <view wx:if="{{showDelete}}" class="modal-mask" bindtap="closeDeleteModal">
     <view class="modal-card" catchtap="noop">
       <text class="modal-title">注销账号</text>
-      <text class="modal-desc">注销将永久删除账号及全部数据，且不可恢复。请输入密码并完整输入「{{deleteConfirmText}}」确认。</text>
-      <input class="field-input modal-input" password value="{{deletePassword}}" placeholder="账号密码" placeholder-class="field-placeholder" bindinput="onDeletePassword" />
+      <text class="modal-desc">注销将永久删除账号及全部数据，且不可恢复。提交时会重新校验当前微信身份，请完整输入「{{deleteConfirmText}}」确认。</text>
       <input class="field-input modal-input" value="{{deleteConfirmation}}" placeholder="{{deleteConfirmText}}" placeholder-class="field-placeholder" bindinput="onDeleteConfirmation" />
       <text wx:if="{{deleteError}}" class="error-text">{{deleteError}}</text>
       <view class="modal-actions">
@@ -134,4 +148,5 @@
       </view>
     </view>
   </view>
+  </block>
 </view>

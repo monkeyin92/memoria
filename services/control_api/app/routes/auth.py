@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import secrets
 import sqlite3
 import unicodedata
 from datetime import UTC, datetime, timedelta
@@ -14,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 from services.control_api.app.database import (
     AUTH_REFRESH_CONCURRENT_RETRY_AFTER_S,
     AuthSessionRotationStatus,
+    ExternalIdentityConflictError,
     MemoryStore,
 )
 from services.control_api.app.security import (
@@ -31,6 +36,15 @@ from services.control_api.app.security import (
     require_authenticated_user,
     verify_password,
 )
+from services.control_api.app.wechat_auth import (
+    WechatAuthError,
+    code_to_phone,
+    code_to_session,
+    mask_phone_number,
+    openid_hash,
+    phone_subject_hash,
+    wechat_user_id,
+)
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 _DUMMY_PASSWORD_HASH = (
@@ -46,6 +60,9 @@ class AuthTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+    display_name: str | None = None
+    phone_number_masked: str | None = None
+    avatar_url: str | None = None
 
 
 class CurrentUserResponse(BaseModel):
@@ -69,8 +86,49 @@ class AccountCredentials(BaseModel):
         return username
 
 
+class WechatLoginRequest(BaseModel):
+    login_code: str = Field(min_length=1, max_length=256)
+    phone_code: str | None = Field(default=None, min_length=1, max_length=256)
+    display_name: str | None = Field(default=None, max_length=64)
+
+
+class WechatAvatarRequest(BaseModel):
+    file_base64: str = Field(min_length=1, max_length=6_000_000)
+    content_type: Literal["image/png", "image/jpeg", "image/webp"]
+
+
+class WechatAvatarResponse(BaseModel):
+    avatar_url: str
+    size: int
+    sha256: str
+
+
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _account_username(account: dict[str, object] | None) -> str | None:
+    if account is None:
+        return None
+    username = account.get("username")
+    return username if isinstance(username, str) and username else None
+
+
+def _wechat_error(exc: WechatAuthError) -> HTTPException:
+    status_code = (
+        status.HTTP_503_SERVICE_UNAVAILABLE
+        if exc.code == "wechat_credentials_missing"
+        else status.HTTP_502_BAD_GATEWAY
+    )
+    return HTTPException(status_code=status_code, detail={"code": exc.code})
+
+
+def _valid_avatar_content(content_type: str, content: bytes) -> bool:
+    if content_type == "image/png":
+        return content.startswith(b"\x89PNG\r\n\x1a\n")
+    if content_type == "image/jpeg":
+        return content.startswith(b"\xff\xd8\xff")
+    return len(content) >= 12 and content.startswith(b"RIFF") and content[8:12] == b"WEBP"
 
 
 def _refresh_cookie_path(request: Request) -> str:
@@ -217,6 +275,145 @@ def login_account(body: AccountCredentials, request: Request, response: Response
     )
 
 
+@router.post("/wechat-login", response_model=AuthTokenResponse)
+async def login_wechat(
+    body: WechatLoginRequest,
+    request: Request,
+    response: Response,
+) -> AuthTokenResponse:
+    settings = request.app.state.settings
+    store = cast(MemoryStore, request.app.state.memory_store)
+    try:
+        session = await code_to_session(settings, body.login_code)
+    except WechatAuthError as exc:
+        raise _wechat_error(exc) from exc
+    openid_subject = openid_hash(session.openid)
+    existing_user_id = store.external_identity_user(
+        provider="wechat_openid",
+        subject_hash=openid_subject,
+    )
+    if existing_user_id is not None and store.is_account_unavailable(
+        user_id=existing_user_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "account_deletion_in_progress"},
+        )
+    if existing_user_id is None and body.phone_code is None:
+        raise HTTPException(
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+            detail={"code": "phone_authorization_required"},
+        )
+
+    identities = {"wechat_openid": openid_subject}
+    masked_phone: str | None = None
+    if body.phone_code is not None:
+        try:
+            phone = await code_to_phone(settings, body.phone_code)
+        except WechatAuthError as exc:
+            raise _wechat_error(exc) from exc
+        identities["wechat_phone"] = phone_subject_hash(settings, phone)
+        try:
+            masked_phone = mask_phone_number(phone.phone_number)
+        except WechatAuthError as exc:
+            raise _wechat_error(exc) from exc
+    preferred_user_id = existing_user_id or wechat_user_id(session.openid)
+    if existing_user_id is None and store.is_account_unavailable(user_id=preferred_user_id):
+        preferred_user_id = f"{preferred_user_id}-{secrets.token_hex(6)}"
+    try:
+        user_id, _ = store.bind_external_identities(
+            preferred_user_id=preferred_user_id,
+            identities=identities,
+            now=_utc_now(),
+        )
+    except ExternalIdentityConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "wechat_identity_conflict"},
+        ) from exc
+    profile = store.update_external_profile(
+        user_id=user_id,
+        display_name=body.display_name,
+        phone_number_masked=masked_phone,
+        now=_utc_now(),
+    )
+    issued = _issue_session(request=request, response=response, user_id=user_id)
+    assert issued is not None
+    token, ttl = issued
+    return AuthTokenResponse(
+        user_id=user_id,
+        account_type="registered",
+        access_token=token,
+        expires_in=ttl,
+        display_name=str(profile["display_name"]),
+        phone_number_masked=str(profile["phone_number_masked"]),
+        avatar_url=str(profile["avatar_url"]),
+    )
+
+
+@router.post("/wechat-avatar", response_model=WechatAvatarResponse)
+def upload_wechat_avatar(
+    body: WechatAvatarRequest,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> WechatAvatarResponse:
+    settings = request.app.state.settings
+    try:
+        content = base64.b64decode(body.file_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "wechat_avatar_invalid"},
+        ) from exc
+    if not content or len(content) > settings.wechat_avatar_max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={"code": "wechat_avatar_too_large"},
+        )
+    if not _valid_avatar_content(body.content_type, content):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "wechat_avatar_content_mismatch"},
+        )
+    public_id = secrets.token_urlsafe(24)
+    avatar_url = f"{settings.wechat_avatar_base_url()}/v1/auth/wechat-avatars/{public_id}"
+    digest = hashlib.sha256(content).hexdigest()
+    cast(MemoryStore, request.app.state.memory_store).save_profile_avatar(
+        user_id=user.user_id,
+        public_id=public_id,
+        content_type=body.content_type,
+        content=content,
+        sha256=digest,
+        avatar_url=avatar_url,
+        now=_utc_now(),
+    )
+    return WechatAvatarResponse(
+        avatar_url=avatar_url,
+        size=len(content),
+        sha256=digest,
+    )
+
+
+@router.get("/wechat-avatars/{public_id}")
+def get_wechat_avatar(public_id: str, request: Request) -> Response:
+    if len(public_id) < 20 or len(public_id) > 64:
+        raise HTTPException(status_code=404, detail="avatar not found")
+    avatar = cast(MemoryStore, request.app.state.memory_store).get_profile_avatar(
+        public_id=public_id
+    )
+    if avatar is None:
+        raise HTTPException(status_code=404, detail="avatar not found")
+    return Response(
+        content=bytes(avatar["content"]),
+        media_type=str(avatar["content_type"]),
+        headers={
+            "Cache-Control": "private, no-store",
+            "ETag": f'"{avatar["sha256"]}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.post("/refresh", response_model=AuthTokenResponse)
 def refresh_access_token(request: Request, response: Response) -> AuthTokenResponse:
     settings = request.app.state.settings
@@ -251,7 +448,7 @@ def refresh_access_token(request: Request, response: Response) -> AuthTokenRespo
     account = cast(MemoryStore, request.app.state.memory_store).get_account(user_id=user_id)
     return AuthTokenResponse(
         user_id=user_id,
-        username=str(account["username"]) if account is not None else None,
+        username=_account_username(account),
         account_type="registered" if account is not None else "anonymous",
         access_token=token,
         expires_in=ttl,
@@ -335,7 +532,7 @@ def upgrade_legacy_access_token(
     account = store.get_account(user_id=user_id)
     return AuthTokenResponse(
         user_id=user_id,
-        username=str(account["username"]) if account is not None else None,
+        username=_account_username(account),
         account_type="registered" if account is not None else "anonymous",
         access_token=access,
         expires_in=ttl,
@@ -351,6 +548,6 @@ def current_user(
     account = store.get_account(user_id=user.user_id)
     return CurrentUserResponse(
         user_id=user.user_id,
-        username=str(account["username"]) if account is not None else None,
+        username=_account_username(account),
         account_type="registered" if account is not None else "anonymous",
     )

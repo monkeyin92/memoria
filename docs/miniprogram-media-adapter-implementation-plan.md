@@ -115,7 +115,7 @@ ticket 不放入 URL 或日志；无效、过期、错误 audience 或非 cascad
 
 ### P2：原生小程序
 
-- [x] 账户登录、注册、匿名体验入口；
+- [x] 三个主 Tab 游客浏览、受保护操作统一微信登录入口；
 - [x] 陪伴主页面、实时字幕、麦克风/挂断状态；
 - [x] 回顾与个人资料/伙伴偏好页面；
 - [x] 原生 `RecorderManager(format: "PCM")` 和 WebAudio PCM 播放；

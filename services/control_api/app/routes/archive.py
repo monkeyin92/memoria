@@ -57,6 +57,7 @@ from services.control_api.app.security import (
     require_authenticated_user,
     verify_password,
 )
+from services.control_api.app.wechat_auth import WechatAuthError, code_to_session, openid_hash
 from services.digital_self.domain import (
     CognitiveClaimManifestEntry,
     DecisionCaseManifestEntry,
@@ -1996,8 +1997,18 @@ class ArchiveExportBody(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
-class ArchiveDeletionBody(ArchiveExportBody):
+class ArchiveDeletionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    password: str | None = Field(default=None, min_length=8, max_length=128)
+    wechat_login_code: str | None = Field(default=None, min_length=1, max_length=256)
     confirmation: Literal["永久删除我的全部数据"]
+
+    @model_validator(mode="after")
+    def require_one_step_up_method(self) -> ArchiveDeletionBody:
+        if (self.password is None) == (self.wechat_login_code is None):
+            raise ValueError("provide exactly one account verification method")
+        return self
 
 
 def _verify_sensitive_action(
@@ -2010,6 +2021,36 @@ def _verify_sensitive_action(
         raise HTTPException(status_code=409, detail="请先注册账户再执行该操作")
     if not verify_password(password, str(account["password_hash"])):
         raise HTTPException(status_code=403, detail="密码验证失败")
+
+
+async def _verify_deletion_action(
+    request: Request,
+    user: AuthenticatedUser,
+    body: ArchiveDeletionBody,
+) -> None:
+    if body.password is not None:
+        _verify_sensitive_action(request, user, body.password)
+        return
+    assert body.wechat_login_code is not None
+    try:
+        session = await code_to_session(
+            cast(ControlSettings, request.app.state.settings),
+            body.wechat_login_code,
+        )
+    except WechatAuthError as exc:
+        status_code = (
+            503 if exc.code == "wechat_credentials_missing" else 502
+        )
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": exc.code},
+        ) from exc
+    account_id = _store(request).external_identity_user(
+        provider="wechat_openid",
+        subject_hash=openid_hash(session.openid),
+    )
+    if account_id != user.user_id:
+        raise HTTPException(status_code=403, detail="微信身份验证失败")
 
 
 def _account_audit_hash(account_id: str) -> str:
@@ -2044,7 +2085,7 @@ async def delete_archive(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
-    _verify_sensitive_action(request, user, body.password)
+    await _verify_deletion_action(request, user, body)
     try:
         result = await _governance(request).delete_account(user.user_id)
     except AccountDeletionIncompleteError as exc:

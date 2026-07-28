@@ -492,6 +492,14 @@
   margin-top: 26rpx;
 }
 
+.guest-action-hint {
+  display: block;
+  margin-top: 18rpx;
+  color: #8d99c4;
+  font-size: 24rpx;
+  line-height: 1.55;
+}
+
 .start-button-spark {
   margin-right: 12rpx;
   font-size: 26rpx;

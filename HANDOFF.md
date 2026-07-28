@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 当前 source commit / annotated tag：
+- 当前仓库 `main / origin/main`：`941fd02`；生产 runtime source / annotated tag：
   `33a741b3e8eb6a760b1dabe71df18e38ba135e40 / 20260728-123528`。
 - 生产 runtime：`20260728-123528`，已完成原子切换、生产门禁和公网验收；直接回滚点为
   `20260728-114049`。
@@ -43,6 +43,45 @@
   Gateway 白名单校验并限速，不接受文本、音频、token 或 cookie。
 - 播放 underflow 只重建后续排程，不再硬停仍登记中的旧 source。
 - FunASR 已支持可选热词表 ID 和噪声阈值，但生产没有录音校准证据，当前保持未配置。
+
+## 2026-07-28：游客浏览、微信身份与 EchoLife 迁移候选（未提交、未部署）
+
+- 三个主 Tab 未登录可浏览，不再启动即跳登录。游客态不创建服务端匿名账号；回顾页不读取
+  或展示历史，“我的”页不读取资料和统计。
+- 对话、生成回顾、修改资料、数字分身与语音授权统一经过 `utils/auth-gate.js`，并保留登录
+  返回路径。登录页使用 `wx.login`、手机号授权、微信昵称、微信头像和平台隐私保护指引。
+- 退出或清除身份会广播到隐藏的陪伴 Tab，立即作废仍在等待中的语音启动、关闭媒体并清空
+  当前字幕；首次手机号登录前的 openid 探测命中 `phone_authorization_required` 后不在登录页
+  重复请求。
+- 认证状态使用单调 `authEpoch` 约束所有私有异步回调；退出、401 或重新登录后，迟到的回顾、
+  资料、统计、隐私授权和数字分身响应不得重新写回游客页。
+- 短期 access token、到期时间和最小身份快照可本地恢复；token 失效后，已存在的 openid
+  身份通过 `wx.login` 静默换取新会话，首次身份才要求手机号；微信平台
+  `40014/42001` 会清除服务端 access token 缓存并只重取一次。
+- Control API 新增微信登录、头像上传/读取和微信注销复核。`openid` 沿用 EchoLife 的
+  `wx_<sha256(openid)[:24]>`，手机号只保存独立 HMAC 与脱敏值；H5 用户名密码入口保留。
+- `scripts/migrate_echolife_users.py` 已支持 EchoLife JSON、备份和 SQLite，支持 dry-run、
+  目标 SQLite 在线备份、幂等身份导入和可选本地头像复制；旧故事/时间线不写成 Memoria
+  对话。
+- 本机真实目录 dry-run：扫描 4 个源文件，发现 1 个旧身份、0 冲突；该身份来自开发备份，
+  头像为不可迁的 `wxfile` 路径，4 份旧内容源保持 deferred，因此未正式写入本机或生产。
+- EchoLife 旧生产主机是 `110.42.235.198`，Memoria 当前生产主机是
+  `122.51.108.140`，两者不得混用。2026-07-25 17:00 UTC 清理旧主机前曾把完整
+  `/opt/echolife` 打成 39 MiB 的 root-only 回滚归档；约 4 分钟后该唯一归档也被永久删除。
+  当前旧主机、现存服务器备份及 Memoria 冻结快照均不含 EchoLife 数据。若需恢复正式旧用户，
+  只能从腾讯云实例 `ins-d5nngvzh` 在删除前的云硬盘快照提取；禁止在仍运行其他生产服务的
+  ext4 根盘上直接执行 undelete。
+- 当前生产 Memoria SQLite 有 96 个 profile、4 个注册账号、0 个 `wx_` profile，尚未执行旧用户
+  迁移。不能把本机仅含 1 个开发身份的备份冒充正式迁移。
+- AppID 已确认是 `wx20a3a044b52fcbb7`；产品负责人已重新提供现有
+  `WECHAT_MINIPROGRAM_APPSECRET`，只允许写入 Memoria 生产服务器的 root-only env，不得进入命令
+  输出、仓库或文档。该值曾出现在历史自动化命令记录中，体验版闭环后应在微信公众平台重置。
+  `MEMORIA_WECHAT_IDENTITY_SECRET` 必须独立生成，不能复用 AppSecret 或其他认证密钥。
+- 微信开发者工具已验证陪伴、回顾、“我的”三个游客页可直接渲染，页面数据均为
+  `authenticated=false`，且 console 无异常；点击“开始语音陪伴”会进入带返回路径的登录页。
+  当前生产尚未部署 `/v1/auth/wechat-login`，因此端到端微信登录实测返回 404；这不是候选
+  前端跳转失败，必须先配置 AppSecret 并部署本候选后再验手机号、昵称和头像。
+- 当前改动仍在工作区：未提交、未推送、未部署后端、未上传新小程序体验版。
 
 ## 生产健康
 
@@ -184,10 +223,11 @@
 ## 验证
 
 - Ruff：通过。
-- `mypy services --strict`：160 个 source files 无问题。
-- Python：`1310 passed, 27 skipped`。
+- `mypy services --strict`：161 个 source files 无问题。
+- Python：`1324 passed, 27 skipped`。
 - H5：`236/236`，production build 通过。
-- 微信小程序：`51/51`，全部 JavaScript syntax check 和 JSON 配置检查通过。
+- 微信小程序：`66/66`，全部 JavaScript syntax check 和 JSON 配置检查通过；开发者工具中
+  三个游客 Tab 与登录页均已实际打开，未见 console 异常。
 - `scripts/run_e2e.py --profile offline`：通过。
 - Agent Linux/amd64 镜像以 `--require-hashes` 成功构建；`vosk==0.3.45` 和控制词文件
   均进入镜像，官方模型通过宿主机只读挂载。

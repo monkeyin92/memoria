@@ -1,4 +1,5 @@
 const api = require("../../utils/api");
+const { requireLogin } = require("../../utils/auth-gate");
 
 function dimensionsOf(result) {
   return Array.isArray(result?.dimensions) ? result.dimensions : [];
@@ -17,25 +18,61 @@ Page({
     versions: [],
   },
 
-  onShow() {
-    if (!api.currentAccessToken()) {
-      wx.redirectTo({ url: "/pages/auth/index?mode=login" });
-      return;
+  onLoad() {
+    const app = getApp();
+    if (typeof app?.subscribeAuthCleared === "function") {
+      this._unsubscribeAuthCleared = app.subscribeAuthCleared(() => this._clearPrivateState());
     }
+  },
+
+  async onShow() {
+    if (
+      !(await requireLogin({
+        reason: "view_digital_self",
+        redirect: "/pages/digital-self/index",
+      }))
+    ) return;
     this.loadOverview();
   },
 
+  onUnload() {
+    if (this._unsubscribeAuthCleared) {
+      this._unsubscribeAuthCleared();
+      this._unsubscribeAuthCleared = null;
+    }
+  },
+
+  _clearPrivateState() {
+    this.setData({
+      loading: false,
+      error: "",
+      persona: null,
+      dimensions: [],
+      versions: [],
+    });
+  },
+
   onPullDownRefresh() {
+    if (!api.hasAuthenticatedSession()) {
+      wx.stopPullDownRefresh();
+      return;
+    }
     this.loadOverview().finally(() => wx.stopPullDownRefresh());
   },
 
   async loadOverview() {
+    if (!api.hasAuthenticatedSession()) {
+      this._clearPrivateState();
+      return;
+    }
+    const authEpoch = api.currentAuthEpoch();
     this.setData({ loading: true, error: "" });
     const [growth, persona, versions] = await Promise.allSettled([
       api.getGrowthOverview(),
       api.getPersonaStatus(),
       api.getDigitalSelfVersions(),
     ]);
+    if (!api.isAuthEpochCurrent(authEpoch)) return;
     const errors = [growth, persona, versions]
       .filter((result) => result.status === "rejected")
       .map((result) => result.reason?.message)

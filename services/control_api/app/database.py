@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     display_name TEXT NOT NULL DEFAULT '朋友',
     bio TEXT NOT NULL DEFAULT '',
     avatar_url TEXT NOT NULL DEFAULT '',
+    phone_number_masked TEXT NOT NULL DEFAULT '',
     companion_id TEXT CHECK (
         companion_id IS NULL OR companion_id IN (
             'starlight', 'taoxi', 'mianmian', 'axu', 'xuanmo'
@@ -42,6 +43,32 @@ CREATE TABLE IF NOT EXISTS accounts (
     username_normalized TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES profiles(user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS external_identities (
+    provider TEXT NOT NULL CHECK (provider IN ('wechat_openid', 'wechat_phone')),
+    subject_hash TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (provider, subject_hash),
+    UNIQUE (provider, user_id),
+    FOREIGN KEY (user_id) REFERENCES profiles(user_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_external_identities_user
+ON external_identities(user_id, provider);
+
+CREATE TABLE IF NOT EXISTS profile_avatars (
+    user_id TEXT PRIMARY KEY,
+    public_id TEXT NOT NULL UNIQUE,
+    content_type TEXT NOT NULL CHECK (
+        content_type IN ('image/png', 'image/jpeg', 'image/webp')
+    ),
+    content BLOB NOT NULL,
+    sha256 CHAR(64) NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES profiles(user_id) ON DELETE CASCADE
 );
@@ -202,6 +229,10 @@ class MessageIdempotencyConflictError(ValueError):
     pass
 
 
+class ExternalIdentityConflictError(ValueError):
+    pass
+
+
 AUTH_REFRESH_REPLAY_GRACE_S = 5
 AUTH_REFRESH_CONCURRENT_RETRY_AFTER_S = 1
 
@@ -275,6 +306,11 @@ class MemoryStore:
                 existing_columns = {
                     str(row[1]) for row in connection.execute("PRAGMA table_info(profiles)")
                 }
+                if "phone_number_masked" not in existing_columns:
+                    connection.execute(
+                        "ALTER TABLE profiles ADD COLUMN "
+                        "phone_number_masked TEXT NOT NULL DEFAULT ''"
+                    )
                 for name, definition in _PROFILE_BOOLEAN_COLUMNS.items():
                     if name not in existing_columns:
                         connection.execute(f"ALTER TABLE profiles ADD COLUMN {name} {definition}")
@@ -633,6 +669,197 @@ class MemoryStore:
                 """,
                 (user_id,),
             ).fetchone()
+            if row is None:
+                row = connection.execute(
+                    """
+                    SELECT profiles.user_id, NULL AS username,
+                           NULL AS username_normalized, '' AS password_hash,
+                           MIN(external_identities.created_at) AS created_at,
+                           MAX(external_identities.updated_at) AS updated_at
+                    FROM profiles
+                    JOIN external_identities
+                      ON external_identities.user_id = profiles.user_id
+                    WHERE profiles.user_id = ?
+                    GROUP BY profiles.user_id
+                    """,
+                    (user_id,),
+                ).fetchone()
+        return dict(row) if row is not None else None
+
+    def external_identity_user(
+        self,
+        *,
+        provider: str,
+        subject_hash: str,
+    ) -> str | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT user_id FROM external_identities
+                WHERE provider = ? AND subject_hash = ?
+                """,
+                (provider, subject_hash),
+            ).fetchone()
+        return str(row["user_id"]) if row is not None else None
+
+    def bind_external_identities(
+        self,
+        *,
+        preferred_user_id: str,
+        identities: Mapping[str, str],
+        now: str,
+    ) -> tuple[str, bool]:
+        clean = {
+            str(provider): str(subject_hash)
+            for provider, subject_hash in identities.items()
+            if str(provider) and str(subject_hash)
+        }
+        if not clean:
+            raise ValueError("at least one external identity is required")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            placeholders = ",".join("(?, ?)" for _ in clean)
+            parameters: list[str] = []
+            for provider, subject_hash in clean.items():
+                parameters.extend((provider, subject_hash))
+            rows = connection.execute(
+                f"""
+                SELECT provider, subject_hash, user_id
+                FROM external_identities
+                WHERE (provider, subject_hash) IN ({placeholders})
+                """,
+                parameters,
+            ).fetchall()
+            resolved_users = {str(row["user_id"]) for row in rows}
+            if len(resolved_users) > 1:
+                raise ExternalIdentityConflictError("external identities belong to different users")
+            user_id = next(iter(resolved_users), preferred_user_id)
+            self._ensure_profile(connection, user_id, now)
+            changed = False
+            for provider, subject_hash in clean.items():
+                existing_for_user = connection.execute(
+                    """
+                    SELECT subject_hash FROM external_identities
+                    WHERE provider = ? AND user_id = ?
+                    """,
+                    (provider, user_id),
+                ).fetchone()
+                if (
+                    existing_for_user is not None
+                    and str(existing_for_user["subject_hash"]) != subject_hash
+                ):
+                    raise ExternalIdentityConflictError(
+                        f"user already has a different {provider} identity"
+                    )
+                existing_subject = connection.execute(
+                    """
+                    SELECT user_id FROM external_identities
+                    WHERE provider = ? AND subject_hash = ?
+                    """,
+                    (provider, subject_hash),
+                ).fetchone()
+                if existing_subject is not None:
+                    if str(existing_subject["user_id"]) != user_id:
+                        raise ExternalIdentityConflictError(
+                            f"{provider} identity belongs to another user"
+                        )
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO external_identities (
+                        provider, subject_hash, user_id, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (provider, subject_hash, user_id, now, now),
+                )
+                changed = True
+        return user_id, changed
+
+    def update_external_profile(
+        self,
+        *,
+        user_id: str,
+        display_name: str | None,
+        phone_number_masked: str | None,
+        now: str,
+    ) -> dict[str, Any]:
+        with self._connection() as connection:
+            self._ensure_profile(connection, user_id, now)
+            current = connection.execute(
+                """
+                SELECT display_name, phone_number_masked
+                FROM profiles WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if current is None:  # pragma: no cover
+                raise RuntimeError("profile initialization failed")
+            next_display_name = (
+                display_name.strip()
+                if display_name is not None and display_name.strip()
+                else str(current["display_name"])
+            )
+            next_phone = (
+                phone_number_masked.strip()
+                if phone_number_masked is not None and phone_number_masked.strip()
+                else str(current["phone_number_masked"])
+            )
+            connection.execute(
+                """
+                UPDATE profiles
+                SET display_name = ?, phone_number_masked = ?, updated_at = ?
+                WHERE user_id = ?
+                """,
+                (next_display_name, next_phone, now, user_id),
+            )
+        return self.get_profile(user_id=user_id, now=now)
+
+    def save_profile_avatar(
+        self,
+        *,
+        user_id: str,
+        public_id: str,
+        content_type: str,
+        content: bytes,
+        sha256: str,
+        avatar_url: str,
+        now: str,
+    ) -> dict[str, Any]:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._ensure_profile(connection, user_id, now)
+            connection.execute(
+                """
+                INSERT INTO profile_avatars (
+                    user_id, public_id, content_type, content, sha256, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    public_id = excluded.public_id,
+                    content_type = excluded.content_type,
+                    content = excluded.content,
+                    sha256 = excluded.sha256,
+                    updated_at = excluded.updated_at
+                """,
+                (user_id, public_id, content_type, content, sha256, now),
+            )
+            connection.execute(
+                "UPDATE profiles SET avatar_url = ?, updated_at = ? WHERE user_id = ?",
+                (avatar_url, now, user_id),
+            )
+        avatar = self.get_profile_avatar(public_id=public_id)
+        if avatar is None:  # pragma: no cover
+            raise RuntimeError("profile avatar persistence failed")
+        return avatar
+
+    def get_profile_avatar(self, *, public_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT user_id, public_id, content_type, content, sha256, updated_at
+                FROM profile_avatars WHERE public_id = ?
+                """,
+                (public_id,),
+            ).fetchone()
         return dict(row) if row is not None else None
 
     def create_auth_session(
@@ -966,7 +1193,8 @@ class MemoryStore:
         with self._connection() as connection:
             profile = connection.execute(
                 """
-                SELECT user_id, display_name, bio, avatar_url, companion_id, timezone,
+                SELECT user_id, display_name, bio, avatar_url, phone_number_masked,
+                       companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
@@ -1648,7 +1876,8 @@ class MemoryStore:
             self._ensure_profile(connection, user_id, now)
             row = connection.execute(
                 """
-                SELECT user_id, display_name, bio, avatar_url, companion_id, timezone,
+                SELECT user_id, display_name, bio, avatar_url, phone_number_masked,
+                       companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
@@ -1703,7 +1932,8 @@ class MemoryStore:
             )
             row = connection.execute(
                 """
-                SELECT user_id, display_name, bio, avatar_url, companion_id, timezone,
+                SELECT user_id, display_name, bio, avatar_url, phone_number_masked,
+                       companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?

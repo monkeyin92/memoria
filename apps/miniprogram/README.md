@@ -11,14 +11,18 @@ token、LiveKit API secret 或其他服务端密钥。
    替换为已备案的小程序 AppID；不要提交真实 AppID、密钥或证书。
 3. 按环境调整 `config.js` 的 Control API HTTPS 地址。服务端生成的 gateway WSS 地址来自
    `MINIPROGRAM_MEDIA_GATEWAY_URL`，不是由小程序拼接。
-4. 在微信公众平台配置请求合法域名和 socket 合法域名。当前生产候选分别是
-   `https://aigcnice.com:8443` 与
+4. 在微信公众平台配置 request、downloadFile/media 和 socket 合法域名。当前生产候选分别是
+   `https://aigcnice.com:8443`（请求和头像）与
    `wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media`；以实际备案域名、
    TLS 证书和后台审核结果为准。
 5. 在开发者工具的隐私与权限配置中声明麦克风用途，并在真机允许 `scope.record`。
 
-小程序只把身份快照放入本地存储；access token 仅保留在进程内。因此完全退出后需要重新
-登录或开始匿名体验。这是有意保守的首版边界，不把长效 refresh token 写入小程序存储。
+小程序启动后不强制登录：陪伴、回顾和“我的”三个 Tab 均可先浏览。游客态不创建服务端
+匿名账号，也不读取个人资料、统计或回顾；开始对话、生成回顾或修改资料时才进入微信登录。
+
+本地只保存短期 access token、到期时间和最小身份快照，不保存长效 refresh token。token
+到期后，已建立过身份的用户通过 `wx.login` 静默恢复；首次登录使用微信手机号授权，并可
+主动选择微信昵称和头像。退出登录会同时终止隐藏陪伴页的媒体连接并清空当前字幕。
 
 小程序采用受控话轮：AI 思考或播放期间暂停 `RecorderManager` 上行，并显示“请等回应结束”；
 不提供按钮或口头打断。只有 Agent 已进入可听状态、且本地最后一段 WebAudio 已实际结束后，
@@ -39,6 +43,20 @@ npm --prefix apps/miniprogram test
 find apps/miniprogram -name '*.js' -not -path '*/node_modules/*' -print0 \
   | xargs -0 -n1 node --check
 ```
+
+EchoLife 用户迁移先执行只读 dry-run：
+
+```bash
+uv run python scripts/migrate_echolife_users.py \
+  --source /path/to/echolife/server/data \
+  --target-db /path/to/memoria.sqlite3 \
+  --avatar-root /path/to/echolife/server/uploads/avatars \
+  --public-base-url https://example.com/memoria-api \
+  --dry-run
+```
+
+脚本兼容 EchoLife JSON 会话、备份和 `echolife.sqlite`，正式写入前会备份现有目标 SQLite。
+旧故事、时间线和访谈记录只统计为 deferred，不会伪造成 Memoria 对话。
 
 ## 发布前真机门禁
 

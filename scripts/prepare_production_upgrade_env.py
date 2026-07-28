@@ -90,6 +90,8 @@ def prepare(
         required=True,
     )
     dashscope_key = _required(values, "DASHSCOPE_API_KEY")
+    _required(values, "WECHAT_MINIPROGRAM_APPID")
+    _required(values, "WECHAT_MINIPROGRAM_APPSECRET")
     app_password = _required(postgres, "MEMORIA_DB_APP_PASSWORD")
     compiler_password = _required(postgres, "MEMORIA_DB_COMPILER_PASSWORD")
     archive_access = _required(minio, "MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY")
@@ -127,6 +129,9 @@ def prepare(
             "MEMORIA_ARCHIVE_WRITE_TOKEN": _token(),
             "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET": _keep_or_create(
                 values, "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET", _token
+            ),
+            "MEMORIA_WECHAT_IDENTITY_SECRET": _keep_or_create(
+                values, "MEMORIA_WECHAT_IDENTITY_SECRET", _token
             ),
             "MEMORIA_AGENT_HEARTBEAT_TOKEN": _token(),
             "MEMORIA_MEMORY_READ_TOKEN": _token(),

@@ -103,6 +103,7 @@ test("initial connection retries once with a fresh ticket after connection refus
 
 test("voice start is single-flight before setData reflects connecting", async () => {
   const originalIdentity = api.currentIdentity;
+  const originalHasAuthenticatedSession = api.hasAuthenticatedSession;
   const originalCreate = api.createMiniProgramSession;
   const originalWx = global.wx;
   let releaseSession;
@@ -111,6 +112,7 @@ test("voice start is single-flight before setData reflects connecting", async ()
     releaseSession = resolve;
   });
   api.currentIdentity = () => ({ user_id: "user-1" });
+  api.hasAuthenticatedSession = () => true;
   api.createMiniProgramSession = async () => {
     createCalls += 1;
     await sessionReady;
@@ -125,7 +127,11 @@ test("voice start is single-flight before setData reflects connecting", async ()
     data: { connecting: false, active: false },
     setData() {},
     _resetExpression() {},
+    _voiceAttemptId: 0,
+    _invalidateVoiceAttempt: page._invalidateVoiceAttempt,
+    _isVoiceAttemptCurrent: page._isVoiceAttemptCurrent,
     _startVoiceOnce: page._startVoiceOnce,
+    async loadProfile() {},
     async _connectInitialMedia(session) {
       return session;
     },
@@ -143,7 +149,41 @@ test("voice start is single-flight before setData reflects connecting", async ()
     assert.equal(createCalls, 2);
   } finally {
     api.currentIdentity = originalIdentity;
+    api.hasAuthenticatedSession = originalHasAuthenticatedSession;
     api.createMiniProgramSession = originalCreate;
     global.wx = originalWx;
   }
+});
+
+test("guest transition fences a late voice start and clears private transcript state", async () => {
+  let mediaClosed = 0;
+  const data = {
+    authenticated: true,
+    active: true,
+    connecting: true,
+    transcript: [{ speaker: "user", text: "私密内容" }],
+  };
+  const instance = {
+    data,
+    _voiceAttemptId: 1,
+    _session: { session_id: "session-1" },
+    setData(update) {
+      Object.assign(this.data, update);
+    },
+    _invalidateVoiceAttempt: page._invalidateVoiceAttempt,
+    _resetExpression() {},
+    async _endMediaLocally() {
+      mediaClosed += 1;
+    },
+  };
+
+  page._enterGuestState.call(instance);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(instance._voiceAttemptId, 2);
+  assert.equal(instance._session, null);
+  assert.equal(mediaClosed, 1);
+  assert.equal(data.authenticated, false);
+  assert.equal(data.active, false);
+  assert.deepEqual(data.transcript, []);
 });
