@@ -3,15 +3,16 @@
 ## 当前状态
 
 - 当前 source commit / annotated tag：
-  `42ad362ef8e6ade4ab1440a01465cf1103408d0a / 20260728-103318`。
-- 生产 runtime：`20260728-103318`，已完成原子切换、生产门禁和清理后复验。
+  `57eefdc533ffac459bfbeb76ce84370f4335ae52 / 20260728-114049`。
+- 生产 runtime：`20260728-114049`，已完成原子切换、生产门禁和公网验收；直接回滚点为
+  `20260728-103318`。
 - 生产 H5：`20260723-192611`，本轮 runtime 发布没有切换 H5。
-- 微信小程序体验版：`0.8.55`，上传成功，包体 `610,994` 字节；
+- 微信小程序体验版：`0.8.56` 已提交到微信开发者工具确认队列，等待用户在工具中确认上传；
   未提交审核或正式发布。
 - 当前交付客户端为 `apps/h5` 与 `apps/miniprogram`；legacy Web 与原生 iOS 源码已移除。
 - 历史路线、架构决策和发布证据分别保留在
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
-  `docs/releases/20260728-103318.md`。
+  `docs/releases/20260728-114049.md`。
 
 ## 最新实现
 
@@ -48,7 +49,7 @@
 
 - `agent / control-api / speaker-model / miniprogram-gateway` 四容器均为
   `healthy`、restart 0。
-- readiness 为 `ready / 20260728-103318`；9/9 core checks、Agent heartbeat、
+- readiness 为 `ready / 20260728-114049`；9/9 core checks、Agent heartbeat、
   LiveKit、FunASR、Qwen、Doubao 与 InterruptSemantic 均通过。
 - 四个 runtime 容器最近十五分钟未出现 traceback、关键 provider、provenance、
   archive durable/spool 或连接拒绝错误。
@@ -78,7 +79,7 @@
 - 尚未完成：同一 iPhone 使用 `0.8.55` 实际点击“开始语音陪伴”并确认收到 `ready`、不再显示网络
   拒绝；这项真实设备验收不能由上传成功或无效 ticket smoke 替代。
 
-## 2026-07-28：`0.8.55` 仍显示连接拒绝的候选修复（未发布）
+## 2026-07-28：`0.8.55` 仍显示连接拒绝的二次修复（已上线，真机待验收）
 
 - 同一 iPhone 的后续点击仍显示泛化的“connection refused”。Nginx 时间线同时显示同一设备在短时间内
   重复创建会话，并在第四次 `POST /memoria-api/v1/sessions` 命中 `429`。由于 `8443 → 9443` 的
@@ -99,20 +100,25 @@
 - 候选本地门禁：小程序 `56/56`；Gateway 与生产 Nginx 契约 Python `81/81`；Ruff、严格 mypy、JS syntax、
   JSON 解析和 `git diff --check` 均通过。Python 开发环境已由锁定的 `uv` 重新创建为 CPython `3.12.13`，
   原 `.venv` 指向已删除的 Homebrew Python 3.12，未使用系统 Python 3.13 代替。
-- 下一步：提交并推送候选，按现有 runtime 回滚流程部署（H5 不切换），备份/reload Nginx 后上传新的体验版；
-  真机验收必须观察 `ack_sent` 与 `ready_sent`，再确认页面进入 listening。若仍失败，按同一时间窗口取
-  Gateway 脱敏日志和设备原始 `errMsg`，不再猜测网络问题。
+- 已完成：`57eefdc` 与 tag `20260728-114049` 已推送；commit-bound source、四镜像和 H5 artifact
+  均在服务器 manifest 校验、隔离 smoke、SQLite 双备份、四份 env 备份后原子切 runtime。新 runtime
+  的四容器 healthy，9/9 readiness、LiveKit、FunASR、Qwen、Doubao 与 InterruptSemantic 均通过；
+  Nginx 精确 session `burst=6` 已 reload，公网 H5/API/WMS 为 200，WSS 无效 ticket 为 `101 → 4401`。
+- 小程序 `0.8.56` 已进入上传确认队列；确认后，真机验收必须观察 Gateway `ack_sent` 与 `ready_sent`，并确认
+  页面进入 listening。若仍失败，按同一时间窗口取 Gateway 脱敏日志和设备原始 `errMsg`，不再猜测网络问题。
 
 ## 保留版本与回滚
 
-- 当前 runtime：`20260728-103318`。
-- 直接回滚 runtime：`20260727-235959`。
+- 当前 runtime：`20260728-114049`。
+- 直接回滚 runtime：`20260728-103318`。
 - 固定 H5：`20260723-192611`。
 - 本机和生产均只保留当前与直接回滚两套 runtime 的四角色 Docker tag。
-- 生产 source release 只保留 `20260728-103318` 与 `20260727-235959`；
+- 生产 source release 将保留 `20260728-114049` 与 `20260728-103318`；
   H5 release 只保留 `20260723-192611`。
-- 回滚证据：
-  `/var/backups/memoria/runtime-switch-20260728-103318-from-20260727-235959-20260728-105656/`。
+- 本 release 的 SQLite 双备份 SHA-256：
+  `ca973329eb36519494d22076739cf4c32c102ccf2e04d5cca9c5faa423775382`
+  （`/var/lib/memoria` 与 root-only `/var/backups/memoria` 一致）；四份 env 与两份 Nginx
+  回滚副本均为 root-only。
 - SQLite 快照 SHA-256：
   `9676292067df01121a7568b37b5f9ef5486296b7bd69703f7cbcdf76203ec006`
   （`/var/lib/memoria` 与 root-only `/var/backups/memoria` 两份一致）。
@@ -158,9 +164,9 @@
 
 ## 未闭环与下一步
 
-1. 在同一 iPhone 的 `0.8.55` 体验版点击“开始语音陪伴”，确认收到 `ready`、不再显示网络
-   拒绝；再分别覆盖 Wi-Fi、移动网络、前后台和系统录音中断恢复。真实设备若仍失败，先保留
-   session/timestamp，再按同一窗口抓取脱敏连接证据。
+1. 在微信开发者工具确认上传 `0.8.56` 后，于同一 iPhone 点击“开始语音陪伴”，确认收到
+   `handshake_ack`/`ready`、不再显示网络拒绝；再分别覆盖 Wi-Fi、移动网络、前后台和系统录音中断恢复。
+   真实设备若仍失败，先保留 session/timestamp，再按同一窗口抓取脱敏连接证据。
 2. H5 仍需真实浏览器和设备验证“等等、等一下、停一下、先别说”等语意打断，
    同时覆盖“我等一下再说”等非打断语句，避免误触发。
 3. 继续观察小程序 underflow、hard reset、lead 指标；只有需要定位非播放期噪声时才为
