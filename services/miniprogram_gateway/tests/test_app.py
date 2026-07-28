@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -121,7 +122,9 @@ def test_gateway_accepts_ticket_then_only_pcm_uplink_frames() -> None:
     assert bridges[0].closed is True
 
 
-def test_gateway_accepts_ticket_from_protected_handshake_header() -> None:
+def test_gateway_accepts_ticket_from_protected_handshake_header(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     secret = "gateway-ticket-secret-that-is-long-enough"
     settings = MiniProgramGatewaySettings(
         livekit_url="wss://livekit.example.com",
@@ -150,6 +153,7 @@ def test_gateway_accepts_ticket_from_protected_handshake_header() -> None:
         HEADER_HANDSHAKE_TICKET: ticket,
         HEADER_HANDSHAKE_DOWNLINK_GENERATION: "2",
     }
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
     with TestClient(create_app(settings=settings, bridge_factory=factory)) as client:
         with client.websocket_connect(MEDIA_PATH, headers=headers) as websocket:
             acknowledgement = websocket.receive_json()
@@ -184,6 +188,16 @@ def test_gateway_accepts_ticket_from_protected_handshake_header() -> None:
     assert len(bridges) == 1
     assert bridges[0].transport_events == [{"type": "ping"}]
     assert bridges[0].closed is True
+    handshake_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "uvicorn.error"
+        and record.getMessage().startswith("mini_program_gateway_handshake")
+    ]
+    assert len(handshake_logs) == 2
+    assert any("transport=header phase=ack_sent" in message for message in handshake_logs)
+    assert any("transport=header phase=ready_sent" in message for message in handshake_logs)
+    assert ticket not in caplog.text
 
 
 def test_gateway_rejects_an_invalid_protected_handshake_header() -> None:

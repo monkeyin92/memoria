@@ -31,7 +31,10 @@ from services.miniprogram_gateway.protocol import (
     decode_pcm_frame,
 )
 
-logger = logging.getLogger(__name__)
+# The production command invokes Uvicorn directly, so its configured INFO
+# handler lives on ``uvicorn.error`` rather than the root logger.  Keep the
+# handshake milestones observable without changing global logging policy.
+logger = logging.getLogger("uvicorn.error")
 MEDIA_PATH = "/v1/mini-program/media"
 HEADER_HANDSHAKE_PROTOCOL = "x-memoria-gateway-protocol"
 HEADER_HANDSHAKE_TICKET = "x-memoria-gateway-ticket"
