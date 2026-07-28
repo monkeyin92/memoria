@@ -7,8 +7,7 @@
 - 生产 runtime：`20260728-114049`，已完成原子切换、生产门禁和公网验收；直接回滚点为
   `20260728-103318`。
 - 生产 H5：`20260723-192611`，本轮 runtime 发布没有切换 H5。
-- 微信小程序体验版：`0.8.56` 已提交到微信开发者工具确认队列，等待用户在工具中确认上传；
-  未提交审核或正式发布。
+- 微信小程序体验版：`0.8.56` 已上传成功（约 599 KB）；未提交审核或正式发布。
 - 当前交付客户端为 `apps/h5` 与 `apps/miniprogram`；legacy Web 与原生 iOS 源码已移除。
 - 历史路线、架构决策和发布证据分别保留在
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
@@ -104,8 +103,9 @@
   均在服务器 manifest 校验、隔离 smoke、SQLite 双备份、四份 env 备份后原子切 runtime。新 runtime
   的四容器 healthy，9/9 readiness、LiveKit、FunASR、Qwen、Doubao 与 InterruptSemantic 均通过；
   Nginx 精确 session `burst=6` 已 reload，公网 H5/API/WMS 为 200，WSS 无效 ticket 为 `101 → 4401`。
-- 小程序 `0.8.56` 已进入上传确认队列；确认后，真机验收必须观察 Gateway `ack_sent` 与 `ready_sent`，并确认
-  页面进入 listening。若仍失败，按同一时间窗口取 Gateway 脱敏日志和设备原始 `errMsg`，不再猜测网络问题。
+- 小程序 `0.8.56` 已于微信开发者工具确认后上传成功（约 599 KB）；真机验收仍必须观察 Gateway
+  `ack_sent` 与 `ready_sent`，并确认页面进入 listening。若仍失败，按同一时间窗口取 Gateway 脱敏日志和设备
+  原始 `errMsg`，不再猜测网络问题。
 
 ## 保留版本与回滚
 
@@ -164,7 +164,7 @@
 
 ## 未闭环与下一步
 
-1. 在微信开发者工具确认上传 `0.8.56` 后，于同一 iPhone 点击“开始语音陪伴”，确认收到
+1. 于同一 iPhone 使用已上传的 `0.8.56` 点击“开始语音陪伴”，确认收到
    `handshake_ack`/`ready`、不再显示网络拒绝；再分别覆盖 Wi-Fi、移动网络、前后台和系统录音中断恢复。
    真实设备若仍失败，先保留 session/timestamp，再按同一窗口抓取脱敏连接证据。
 2. H5 仍需真实浏览器和设备验证“等等、等一下、停一下、先别说”等语意打断，
