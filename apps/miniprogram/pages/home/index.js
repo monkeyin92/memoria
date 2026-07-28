@@ -3,6 +3,8 @@ const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { MiniProgramMediaSession } = require("../../utils/media-gateway");
 const { authoritativeTranscript } = require("../../utils/transcript-events");
 
+const CONNECTION_REFUSED_RETRY_DELAY_MS = 400;
+
 const defaultProfile = {
   display_name: "新朋友",
   bio: "慢慢说，我会认真听。",
@@ -91,6 +93,10 @@ function authorizationForRecord() {
   });
 }
 
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 Page({
   data: {
     greeting: greeting(),
@@ -164,7 +170,7 @@ Page({
       const session = await api.createMiniProgramSession({ userId: identity.user_id });
       this._session = session;
       this.setData({ sessionId: session.session_id });
-      await this._connectMedia(session);
+      this._session = await this._connectInitialMedia(session);
       this.setData({
         active: true,
       });
@@ -182,12 +188,44 @@ Page({
     }
   },
 
+  async _connectInitialMedia(session) {
+    try {
+      await this._connectMedia(session);
+      return session;
+    } catch (error) {
+      await this._endMediaLocally();
+      if (error?.code !== "socket_connection_refused") throw error;
+      this.setData({
+        status: "reconnecting",
+        statusLabel: stateLabel("reconnecting"),
+        error: "网络连接暂时被拒绝，正在重试一次。",
+      });
+      await wait(CONNECTION_REFUSED_RETRY_DELAY_MS);
+      const mediaGateway = await api.refreshMiniProgramGatewayTicket(session.session_id);
+      const recovered = {
+        ...session,
+        media_gateway: mediaGateway,
+      };
+      await this._connectMedia(recovered);
+      return recovered;
+    }
+  },
+
   async _connectMedia(session) {
-    const media = new MiniProgramMediaSession(session, {
-      onEvent: (event) => this._onGatewayEvent(event),
-      onClose: () => this._onMediaClosed(),
-      onError: (message) => this.setData({ error: message }),
-      onInterrupted: (message) => this._onMediaInterrupted(message),
+    let media;
+    media = new MiniProgramMediaSession(session, {
+      onEvent: (event) => {
+        if (this._media === media) this._onGatewayEvent(event);
+      },
+      onClose: () => {
+        if (this._media === media) this._onMediaClosed();
+      },
+      onError: (message) => {
+        if (this._media === media) this.setData({ error: message });
+      },
+      onInterrupted: (message) => {
+        if (this._media === media) this._onMediaInterrupted(message);
+      },
     });
     this._media = media;
     await media.connect();

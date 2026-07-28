@@ -740,6 +740,47 @@ test("SocketTask connection failures retain the actionable platform error", asyn
   await media.close();
 });
 
+test("SocketTask connection refused points to the device network path", async () => {
+  recorder.reset();
+  const socket = {
+    onOpen(listener) {
+      this.openListener = listener;
+    },
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    close() {},
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    {
+      media_gateway: {
+        websocket_url: "wss://voice.example.com/media",
+        ticket: "ticket",
+      },
+    },
+    {},
+  );
+
+  const connecting = media.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.errorListener({ errMsg: "connectSocket:fail connection refused" });
+
+  await assert.rejects(
+    connecting,
+    (error) =>
+      error?.code === "socket_connection_refused" &&
+      /VPN\/代理.*Wi‑Fi\/移动网络/.test(error.message),
+  );
+  await media.close();
+});
+
 test("a recorder without frames is restarted once before the user is notified", async () => {
   recorder.reset();
   const interruptions = [];

@@ -56,3 +56,47 @@ test("assistant response states wait for completion instead of exposing an inter
   );
   assert.doesNotMatch(wxml, /bindtap="interruptVoice"|轻触打断/);
 });
+
+test("initial connection retries once with a fresh ticket after connection refused", async () => {
+  const originalRefresh = api.refreshMiniProgramGatewayTicket;
+  const session = {
+    session_id: "session-1",
+    media_gateway: { websocket_url: "wss://voice.example.com/media", ticket: "old" },
+  };
+  const updates = [];
+  let attempts = 0;
+  const instance = {
+    _session: session,
+    _media: null,
+    data: {},
+    setData(update) {
+      updates.push(update);
+      Object.assign(this.data, update);
+    },
+    async _endMediaLocally() {
+      this._media = null;
+    },
+    async _connectMedia(nextSession) {
+      attempts += 1;
+      if (attempts === 1) {
+        const error = new Error("connection refused");
+        error.code = "socket_connection_refused";
+        throw error;
+      }
+      this._media = { session: nextSession };
+    },
+  };
+  api.refreshMiniProgramGatewayTicket = async (sessionId) => {
+    assert.equal(sessionId, session.session_id);
+    return { websocket_url: "wss://voice.example.com/media", ticket: "fresh" };
+  };
+
+  try {
+    const connected = await page._connectInitialMedia.call(instance, session);
+    assert.equal(attempts, 2);
+    assert.equal(connected.media_gateway.ticket, "fresh");
+    assert.equal(updates[0].status, "reconnecting");
+  } finally {
+    api.refreshMiniProgramGatewayTicket = originalRefresh;
+  }
+});

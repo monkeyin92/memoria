@@ -59,6 +59,24 @@
   `2026-08-03 01:40:00 UTC`，域名证书有效至 `2026-10-18 03:59:59 UTC`。
 - PostgreSQL、MinIO、LiveKit、WMS、数据库快照与 Docker 数据卷未在清理中修改。
 
+## 2026-07-28：小程序 `connection refused` 诊断与待上传修复
+
+- 真机报错发生在 `wx.connectSocket` 的 TCP/TLS 建连之前；不属于 FunASR、Agent、ticket 或
+  播放器路径。开发者工具对当前生产
+  `wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media` 已完成
+  `open → hello → ready`；生产网关 healthy，公网 WSS Upgrade 也返回 `101`。
+- 当前网络出口直连 `8443` 的 TLS/WSS 成功。尝试把媒体路径迁移到 443 后，服务端实际发送
+  TLS ServerHello/证书，而同一出口客户端立即 RST；该路线不能解决此设备网络，已完全回撤。
+  生产 Control API 仍下发 `wss://aigcnice.com:8443/...`，Nginx active、runtime readiness 为
+  `ready`。候选 443 Nginx 文件只保留在 root-only 运维备份中，未对外生效。
+- 工作区待上传的小程序修复：仅当原始 SocketTask 错误为 `connection refused` 时，关闭旧
+  socket、刷新同一 session 的短期 ticket 后自动重连一次；其余域名、证书、超时和鉴权错误不
+  重试。第二次仍失败时提示关闭 VPN/代理或切换 Wi-Fi/移动网络。媒体回调按当前实例 fence，
+  防止旧 socket 的迟到 close 覆盖新连接。
+- 已完成定向测试与语法检查；尚未上传新的体验版。真机验收仍需在同一手机分别关闭 VPN/代理、
+  切换 Wi-Fi/移动网络后复测；若仍失败，复现同时抓取 8443 的 SYN/TLS 包，区分设备侧拒绝、
+  运营商路径和主机来源规则。
+
 ## 保留版本与回滚
 
 - 当前 runtime：`20260727-235959`。
@@ -116,8 +134,9 @@
 
 ## 未闭环与下一步
 
-1. 小程序仍需在 iOS/Android 真机验证：AI 思考/播放期上行 PCM 为零、本地尾音结束后
-   自动恢复、不吞首字、手动静音优先，以及弱网/前后台/系统录音中断恢复。
+1. 上传 `connection refused` 单次重连候选体验版，并在 iOS/Android 真机验证：先关闭
+   VPN/代理，再分别使用 Wi-Fi 与移动网络；同时验证 AI 思考/播放期上行 PCM 为零、本地尾音
+   结束后自动恢复、不吞首字、手动静音优先，以及弱网/前后台/系统录音中断恢复。
 2. H5 仍需真实浏览器和设备验证“等等、等一下、停一下、先别说”等语意打断，
    同时覆盖“我等一下再说”等非打断语句，避免误触发。
 3. 继续观察小程序 underflow、hard reset、lead 指标；只有需要定位非播放期噪声时才为

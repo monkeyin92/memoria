@@ -31,7 +31,19 @@ function socketConnectionErrorMessage(error) {
   if (/timeout|timed out/i.test(detail)) {
     return "语音网络连接超时，请检查网络后重试。";
   }
+  if (/connection refused/i.test(detail)) {
+    return "语音网络连接被当前网络拒绝（connection refused），请关闭 VPN/代理后重试，或切换 Wi‑Fi/移动网络。";
+  }
   return detail ? `语音网络连接失败：${detail.slice(0, 120)}` : "语音网络连接失败。";
+}
+
+function socketConnectionError(error) {
+  const detail = typeof error?.errMsg === "string" ? error.errMsg.trim() : "";
+  const connectionError = new Error(socketConnectionErrorMessage(error));
+  if (/connection refused/i.test(detail)) {
+    connectionError.code = "socket_connection_refused";
+  }
+  return connectionError;
 }
 
 function gatewayEventGenerationId(event) {
@@ -108,7 +120,7 @@ class MiniProgramMediaSession {
     });
     this.socket.onMessage((message) => this._onMessage(message));
     this.socket.onError((error) => {
-      this._rejectReady(new Error(socketConnectionErrorMessage(error)));
+      this._rejectReady(socketConnectionError(error));
     });
     this.socket.onClose(() => {
       this._handleSocketClose();
