@@ -7,7 +7,7 @@
 - 生产 runtime：`20260728-123528`，已完成原子切换、生产门禁和公网验收；直接回滚点为
   `20260728-114049`。
 - 生产 H5：`20260723-192611`，本轮 runtime 发布没有切换 H5。
-- 微信小程序体验版：`0.8.56` 已上传成功（约 599 KB）；未提交审核或正式发布。
+- 微信小程序体验版：`0.8.57` 已上传成功（约 600 KB）；未提交审核或正式发布。
 - 当前交付客户端为 `apps/h5` 与 `apps/miniprogram`；legacy Web 与原生 iOS 源码已移除。
 - 历史路线、架构决策和发布证据分别保留在
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
@@ -78,6 +78,18 @@
   `8443` TLS/WSS 也获得 `101`。因此不能把当前现象归因为“8443 全局被封”。443 外部 TLS 尚有
   ClientHello 后断开证据，未迁移入口，避免影响 WMS；下一步只以同一 iPhone 无 VPN 的
   `ack_sent` / `ready_sent` 日志定性。
+
+## 2026-07-28：小程序 handshake acknowledgement 竞态修复（体验版已上传，真机待验收）
+
+- `569e225` / tag `20260728-131612` 已推送。客户端现将有效 `handshake_ack` 视为已认证传输确认：
+  取消此前泛化 `SocketTask.onError`，等待严格校验后的 `ready`；ack 后的泛化 error 不再覆盖具体
+  close code。
+- 新增 10 秒 bridge-ready deadline；超时返回 `gateway_ready_timeout` 并关闭 socket。失败、关闭或显式
+  停止后，迟到 `ready` 不得重新启动录音。
+- 小程序完整测试 `58/58`、JavaScript syntax check 和 `git diff --check` 已通过；独立复核未发现
+  P0/P1。体验版 `0.8.57` 已在微信开发者工具确认后上传成功（约 600 KB），无需重新部署服务端。
+- 尚未完成：同一 iPhone 关闭 VPN、完全退出后重新进入 `0.8.57`，单次点击“开始语音陪伴”验证
+  Gateway `ack_sent → ready_sent` 和页面 listening；这项真实验收不能由上传成功替代。
 
 ## 2026-07-28：小程序 WSS 首包缺失与 header 握手修复
 
@@ -195,7 +207,7 @@
 
 ## 未闭环与下一步
 
-1. 于同一 iPhone 使用已上传的 `0.8.56` 点击“开始语音陪伴”，确认收到
+1. 于同一 iPhone 使用已上传的 `0.8.57` 点击“开始语音陪伴”，确认收到
    `handshake_ack`/`ready`、不再显示网络拒绝；再分别覆盖 Wi-Fi、移动网络、前后台和系统录音中断恢复。
    真实设备若仍失败，先保留 session/timestamp，再按同一窗口抓取脱敏连接证据。
 2. H5 仍需真实浏览器和设备验证“等等、等一下、停一下、先别说”等语意打断，
