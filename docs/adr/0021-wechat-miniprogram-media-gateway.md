@@ -15,7 +15,7 @@ Memoria 的当前正式语音主链是 Cascade：`FunASR Realtime → Qwen → D
 
 - 新增独立 `MiniProgramMediaGateway`：小程序通过 TLS WebSocket 发送/接收受限 PCM 帧；网关作为 LiveKit room 内的用户 participant 发布和订阅音频。
 - Control API 对 `client.platform == "miniprogram"` 保持原有 session 冻结、账户与 ModePolicy 流程，但不返回 LiveKit URL/participant token；改为返回短期 gateway ticket 和 WSS 地址。
-- gateway ticket 是短期、带 `issuer`、`audience`、`type`、会话、房间、用户 identity、agent name 和 `cascade` backend 的独立 HMAC JWT。ticket 不携带 LiveKit participant token，不写入 URL、access log 或应用日志。
+- gateway ticket 是短期、带 `issuer`、`audience`、`type`、会话、房间、用户 identity、agent name 和 `cascade` backend 的独立 HMAC JWT。新小程序优先在 TLS 保护的 WebSocket Upgrade 请求头携带 ticket 与下行 generation 能力，使网关可在 `SocketTask.onOpen` 回调缺失时直接认证并发送 `ready`；旧客户端仍可在首条 JSON `hello` 发送相同 ticket 作为回退。ticket 不携带 LiveKit participant token，不写入 URL、access log 或应用日志。
 - 网关以自身最小权限环境变量保留 LiveKit API key/secret，用 ticket 中经过验证的 room/identity 重新铸造短期 LiveKit participant token。小程序不能看到 LiveKit secret 或 participant token。
 - 网关只桥接 `PCM16LE / 16 kHz / mono` 上行和 `PCM16LE / 24 kHz / mono` 下行；上行按 20 ms 重分帧，下行在小程序经 WebAudio 的有界 jitter buffer 播放。
 - 网关可以只对小程序会话启用 LiveKit WebRTC Audio Processing Module：24 kHz 下行作为 reverse reference，16 kHz 上行清理后再发布；处理失败必须旁路原始上行，且不得改变 H5 或 Agent 主链。

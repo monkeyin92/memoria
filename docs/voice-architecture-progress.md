@@ -1,8 +1,8 @@
 # 语音架构优化完成度
 
 > 更新日期：2026-07-28
-> 当前生产基线：runtime `20260727-235959`、H5 `20260723-192611`、小程序体验版 `0.8.53`；
-> `connection refused` 单次重连修复待上传候选包
+> 当前生产基线：runtime `20260727-235959`、H5 `20260723-192611`、小程序体验版 `0.8.54`；
+> 真机证据显示 WSS 已 Upgrade 到网关但没有首条 `hello`，header 握手兼容修复待部署/上传
 > 说明：本文件记录工程完成度；真实手机声学验收、外部账号权限和供应商控制台资源不以代码测试代替。
 
 ## 1. 总体结论
@@ -69,7 +69,7 @@
 | 上行可靠性 | 同步 send 失败不提交 sequence；中断恢复有 discontinuity | 单写入者有界队列、异步成功提交、队列溢出后的保会话恢复 |
 | FunASR | 支持可选 `vocabulary_id` 与 `speech_noise_threshold` | 创建生产热词表、使用真机录音集校准后才能启用 |
 | 协议 | v1 上行、generation v2 下行、共享 JSON 合同 | stream epoch、统一全局 sequence、route-change 等 v3 字段 |
-| 真机 WSS 可达性 | 开发者工具、生产网关和公网 8443 Upgrade 均已验证；候选包对 `connection refused` 刷新 ticket 后自动重连一次 | 用真实 iOS/Android 分别关闭 VPN/代理、切换 Wi-Fi/移动网络验收；仍失败时同窗抓取 8443 SYN/TLS |
+| 真机 WSS 可达性 | iPhone 已实证 TCP/TLS/Upgrade 与 8792 网关转发成功；定位为 `SocketTask.onOpen → hello` 首包缺失 | 先部署 TLS Upgrade header 握手回退，再上传 0.8.55 用同一 iPhone 验收；随后补 iOS/Android 网络矩阵 |
 | H5 | LiveKit/WebRTC 稳定并有测试 | 状态机、统一 transport、TypeScript strict、API 分域拆分 |
 | 后端目录 | 领域模块和部署服务均可运行 | deployable apps 与 reusable packages 尚未物理重组 |
 | 契约 | 小程序媒体合同已共享 | REST/UI/错误事件仍未全部从 Schema 生成 |

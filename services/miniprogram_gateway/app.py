@@ -32,6 +32,9 @@ from services.miniprogram_gateway.protocol import (
 
 logger = logging.getLogger(__name__)
 MEDIA_PATH = "/v1/mini-program/media"
+HEADER_HANDSHAKE_PROTOCOL = "x-memoria-gateway-protocol"
+HEADER_HANDSHAKE_TICKET = "x-memoria-gateway-ticket"
+HEADER_HANDSHAKE_DOWNLINK_GENERATION = "x-memoria-downlink-generation"
 BridgeFactory = Callable[
     [MiniProgramGatewaySettings, GatewayTicketClaims], MiniProgramLiveKitBridge
 ]
@@ -65,13 +68,17 @@ def create_app(
 
     @app.websocket(MEDIA_PATH)
     async def media_socket(websocket: WebSocket) -> None:
-        await websocket.accept()
         bridge: MiniProgramLiveKitBridge | None = None
         try:
-            claims, downlink_generation_protocol = await _receive_hello(
-                websocket,
-                configured,
-            )
+            await websocket.accept()
+            header_handshake = _read_header_handshake(websocket, configured)
+            if header_handshake is None:
+                claims, downlink_generation_protocol = await _receive_hello(
+                    websocket,
+                    configured,
+                )
+            else:
+                claims, downlink_generation_protocol = header_handshake
             bridge = bridge_factory(configured, claims)
             bridge.set_downlink_generation_protocol(downlink_generation_protocol)
             await bridge.connect()
@@ -117,6 +124,36 @@ def create_app(
                 await bridge.close()
 
     return app
+
+
+def _read_header_handshake(
+    websocket: WebSocket,
+    settings: MiniProgramGatewaySettings,
+) -> tuple[GatewayTicketClaims, bool] | None:
+    """Authenticate the native client before its first SocketTask callback.
+
+    iOS can complete the WebSocket HTTP Upgrade before delivering a SocketTask
+    ``onOpen`` callback.  The same short-lived signed ticket is therefore
+    accepted in TLS-protected handshake headers, while older clients keep using
+    the first text ``hello`` message below.  The ticket never appears in the URL.
+    """
+
+    ticket = websocket.headers.get(HEADER_HANDSHAKE_TICKET)
+    if ticket is None:
+        return None
+    if websocket.headers.get(HEADER_HANDSHAKE_PROTOCOL) != "1":
+        raise GatewayTicketError("invalid gateway header handshake")
+    downlink_generation_protocol = (
+        websocket.headers.get(HEADER_HANDSHAKE_DOWNLINK_GENERATION) == "2"
+    )
+    return (
+        verify_gateway_ticket(
+            ticket,
+            secret=settings.memoria_miniprogram_gateway_ticket_secret.get_secret_value(),
+            max_ttl_s=settings.miniprogram_gateway_ticket_max_ttl_s,
+        ),
+        downlink_generation_protocol,
+    )
 
 
 async def _receive_hello(

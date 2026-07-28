@@ -12,6 +12,13 @@
       "downlink_generation": 2
     }
   },
+  "header_handshake": {
+    "protocol_header": "X-Memoria-Gateway-Protocol",
+    "protocol_version": "1",
+    "ticket_header": "X-Memoria-Gateway-Ticket",
+    "downlink_generation_header": "X-Memoria-Downlink-Generation",
+    "downlink_generation_value": "2"
+  },
   "ready": {
     "type": "ready",
     "protocol_version": 1,

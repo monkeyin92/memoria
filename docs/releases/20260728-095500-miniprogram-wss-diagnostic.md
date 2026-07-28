@@ -41,3 +41,14 @@ ticket 会在握手后按协议关闭为 `4401`。因此 `connection refused` �
   切换。小程序体验版回滚即重新上传/指定前一体验版 `0.8.53`。
 - 443 试验的 Nginx 与 Control API 环境文件均有 root-only 备份；生产最终配置已恢复到 8443，
   Nginx active、Control API readiness `ready`。
+
+## 后续真机证据修订（2026-07-28）
+
+同一 iPhone 的定向抓包已证明此前“业务协议之前被网络拒绝”的判断不成立：客户端已完成
+`8443` 的 TCP/TLS 与 WebSocket Upgrade，Nginx 也已将该请求转到 loopback `8792` 的媒体网关。
+Upgrade 后约 2.9 秒内没有收到客户端的首条 JSON `hello`，随后客户端主动发送 close/FIN；网关的
+首包超时为 10 秒，未主动关闭该连接。
+
+因此候选修复改为：新小程序在 TLS Upgrade header 发送同一短期、签名 gateway ticket，网关直接
+认证并发送 `ready`；旧版首条 JSON `hello` 保持回退。ticket 不进入 URL 或 access log。发布顺序必须
+先部署兼容两种握手的网关，再上传新的小程序体验版。

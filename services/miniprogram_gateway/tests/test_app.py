@@ -7,9 +7,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
-from services.common.miniprogram_gateway_ticket import issue_gateway_ticket
+from services.common.miniprogram_gateway_ticket import GatewayTicketError, issue_gateway_ticket
 from services.miniprogram_gateway.app import (
+    HEADER_HANDSHAKE_DOWNLINK_GENERATION,
+    HEADER_HANDSHAKE_PROTOCOL,
+    HEADER_HANDSHAKE_TICKET,
     MEDIA_PATH,
+    _read_header_handshake,
     _receive_hello,
     _validate_control_text,
     create_app,
@@ -109,6 +113,61 @@ def test_gateway_accepts_ticket_then_only_pcm_uplink_frames() -> None:
     ]
     assert bridges[0].downlink_generation_protocol is True
     assert bridges[0].closed is True
+
+
+def test_gateway_accepts_ticket_from_protected_handshake_header() -> None:
+    secret = "gateway-ticket-secret-that-is-long-enough"
+    settings = MiniProgramGatewaySettings(
+        livekit_url="wss://livekit.example.com",
+        livekit_api_key="livekit-key",
+        livekit_api_secret="livekit-secret",
+        memoria_miniprogram_gateway_ticket_secret=secret,
+    )
+    ticket, _ = issue_gateway_ticket(
+        secret=secret,
+        session_id="session-header",
+        user_id="account-1",
+        room_name="voice-session-header",
+        identity="user-account-1-session-header",
+        agent_name="duplex-zh-agent",
+        ttl_s=90,
+    )
+    bridges: list[FakeBridge] = []
+
+    def factory(_: MiniProgramGatewaySettings, __: object) -> FakeBridge:
+        bridge = FakeBridge()
+        bridges.append(bridge)
+        return bridge
+
+    headers = {
+        HEADER_HANDSHAKE_PROTOCOL: "1",
+        HEADER_HANDSHAKE_TICKET: ticket,
+        HEADER_HANDSHAKE_DOWNLINK_GENERATION: "2",
+    }
+    with TestClient(create_app(settings=settings, bridge_factory=factory)) as client:
+        with client.websocket_connect(MEDIA_PATH, headers=headers) as websocket:
+            ready = websocket.receive_json()
+            assert ready["type"] == "ready"
+            assert ready["audio"]["frame_protocol_version"] == 2
+            websocket.close()
+
+    assert len(bridges) == 1
+    assert bridges[0].closed is True
+
+
+def test_gateway_rejects_an_invalid_protected_handshake_header() -> None:
+    settings = MiniProgramGatewaySettings(
+        memoria_miniprogram_gateway_ticket_secret="gateway-ticket-secret-that-is-long-enough",
+    )
+
+    class FakeWebSocket:
+        headers = {
+            HEADER_HANDSHAKE_PROTOCOL: "1",
+            HEADER_HANDSHAKE_TICKET: "not-a-ticket",
+        }
+
+    with pytest.raises(GatewayTicketError):
+        _read_header_handshake(FakeWebSocket(), settings)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

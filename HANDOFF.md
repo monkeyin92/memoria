@@ -6,7 +6,7 @@
   `a8d953f3c9a333659400f84653f75d3325797fa3 / 20260727-235959`。
 - 生产 runtime：`20260727-235959`，已完成原子切换、生产门禁和清理后复验。
 - 生产 H5：`20260723-192611`，本轮 runtime 发布没有切换 H5。
-- 微信小程序体验版：`0.8.53`，上传成功，包体 `609,479` 字节；
+- 微信小程序体验版：`0.8.54`，上传成功，包体 `610,718` 字节；
   未提交审核或正式发布。
 - 当前交付客户端为 `apps/h5` 与 `apps/miniprogram`；legacy Web 与原生 iOS 源码已移除。
 - 历史路线、架构决策和发布证据分别保留在
@@ -59,23 +59,21 @@
   `2026-08-03 01:40:00 UTC`，域名证书有效至 `2026-10-18 03:59:59 UTC`。
 - PostgreSQL、MinIO、LiveKit、WMS、数据库快照与 Docker 数据卷未在清理中修改。
 
-## 2026-07-28：小程序 `connection refused` 诊断与待上传修复
+## 2026-07-28：小程序 WSS 首包缺失与 header 握手候选修复
 
-- 真机报错发生在 `wx.connectSocket` 的 TCP/TLS 建连之前；不属于 FunASR、Agent、ticket 或
-  播放器路径。开发者工具对当前生产
-  `wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media` 已完成
-  `open → hello → ready`；生产网关 healthy，公网 WSS Upgrade 也返回 `101`。
-- 当前网络出口直连 `8443` 的 TLS/WSS 成功。尝试把媒体路径迁移到 443 后，服务端实际发送
-  TLS ServerHello/证书，而同一出口客户端立即 RST；该路线不能解决此设备网络，已完全回撤。
-  生产 Control API 仍下发 `wss://aigcnice.com:8443/...`，Nginx active、runtime readiness 为
-  `ready`。候选 443 Nginx 文件只保留在 root-only 运维备份中，未对外生效。
-- 工作区待上传的小程序修复：仅当原始 SocketTask 错误为 `connection refused` 时，关闭旧
-  socket、刷新同一 session 的短期 ticket 后自动重连一次；其余域名、证书、超时和鉴权错误不
-  重试。第二次仍失败时提示关闭 VPN/代理或切换 Wi-Fi/移动网络。媒体回调按当前实例 fence，
-  防止旧 socket 的迟到 close 覆盖新连接。
-- 已完成定向测试与语法检查；尚未上传新的体验版。真机验收仍需在同一手机分别关闭 VPN/代理、
-  切换 Wi-Fi/移动网络后复测；若仍失败，复现同时抓取 8443 的 SYN/TLS 包，区分设备侧拒绝、
-  运营商路径和主机来源规则。
+- 体验版 `0.8.54` 已上传成功，但同一 iPhone 仍报“connection refused”。真实抓包已证明：手机
+  已完成 `8443` TCP/TLS 和 WebSocket Upgrade，Nginx 已转发至 loopback `8792`；随后约 2.9 秒
+  没有任何客户端 WebSocket 数据（未发送首条 JSON `hello`），客户端才发送 close/FIN。网关首包
+  超时为 10 秒且没有主动关闭。根因不在网络、证书、Nginx、Agent 或 ticket，而是原生
+  `SocketTask.onOpen → hello` 握手路径在真机上未可靠执行。
+- 候选修复：新客户端把同一短期、签名 gateway ticket 与 generation 能力放入 TLS Upgrade header；
+  网关在 Upgrade 后直接验证并发送 `ready`。旧客户端的首条 JSON `hello` 仍保持回退，ticket 不进
+  URL、access log 或应用日志。纯 `connection refused` 才触发一次 ticket 刷新；混合 timeout/refused
+  不再被误归类重试。
+- 已完成：网关单测 `6/6`、小程序 `51/51`、Ruff、mypy、JS syntax 与 diff check。待执行：先部署
+ 兼容两种握手的 runtime，再上传小程序 `0.8.55` 并以同一 iPhone 复测；发布后用无效 header 的
+ WSS smoke 证明 Nginx 正确透传 header，随后删除服务器 `/tmp` 临时抓包。体验版 `0.8.54` 已确认
+ 上传成功，但不包含这一 header 握手修复。
 
 ## 保留版本与回滚
 

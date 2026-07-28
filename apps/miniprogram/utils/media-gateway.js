@@ -4,6 +4,11 @@ const { PcmJitterPlayer } = require("./pcm-player");
 const RECORDER_START_TIMEOUT_MS = 2000;
 const FIRST_UPLINK_FRAME_TIMEOUT_MS = 3000;
 const RECORDER_RESTART_DELAY_MS = 120;
+const GATEWAY_HEADER_HANDSHAKE = Object.freeze({
+  protocol: "X-Memoria-Gateway-Protocol",
+  ticket: "X-Memoria-Gateway-Ticket",
+  downlinkGeneration: "X-Memoria-Downlink-Generation",
+});
 const ASSISTANT_INPUT_BLOCKING_STATES = new Set([
   "thinking",
   "thinking_silent",
@@ -20,18 +25,35 @@ const ASSISTANT_INPUT_RELEASE_STATES = new Set([
   "interrupted",
 ]);
 
-function socketConnectionErrorMessage(error) {
-  const detail = typeof error?.errMsg === "string" ? error.errMsg.trim() : "";
+function socketConnectionErrorKind(detail) {
   if (/domain list|合法域名/i.test(detail)) {
-    return "小程序 Socket 合法域名未生效，请检查 wss 域名配置。";
+    return "domain";
   }
   if (/certificate|ssl|tls|handshake/i.test(detail)) {
-    return "语音网络证书校验失败，请检查 Socket 域名证书。";
+    return "certificate";
   }
   if (/timeout|timed out/i.test(detail)) {
-    return "语音网络连接超时，请检查网络后重试。";
+    return "timeout";
   }
   if (/connection refused/i.test(detail)) {
+    return "connection_refused";
+  }
+  return "unknown";
+}
+
+function socketConnectionErrorMessage(error) {
+  const detail = typeof error?.errMsg === "string" ? error.errMsg.trim() : "";
+  const kind = socketConnectionErrorKind(detail);
+  if (kind === "domain") {
+    return "小程序 Socket 合法域名未生效，请检查 wss 域名配置。";
+  }
+  if (kind === "certificate") {
+    return "语音网络证书校验失败，请检查 Socket 域名证书。";
+  }
+  if (kind === "timeout") {
+    return "语音网络连接超时，请检查网络后重试。";
+  }
+  if (kind === "connection_refused") {
     return "语音网络连接被当前网络拒绝（connection refused），请关闭 VPN/代理后重试，或切换 Wi‑Fi/移动网络。";
   }
   return detail ? `语音网络连接失败：${detail.slice(0, 120)}` : "语音网络连接失败。";
@@ -40,7 +62,7 @@ function socketConnectionErrorMessage(error) {
 function socketConnectionError(error) {
   const detail = typeof error?.errMsg === "string" ? error.errMsg.trim() : "";
   const connectionError = new Error(socketConnectionErrorMessage(error));
-  if (/connection refused/i.test(detail)) {
+  if (socketConnectionErrorKind(detail) === "connection_refused") {
     connectionError.code = "socket_connection_refused";
   }
   return connectionError;
@@ -104,19 +126,12 @@ class MiniProgramMediaSession {
     });
     this.socket = wx.connectSocket({
       url: this.session.media_gateway.websocket_url,
+      header: {
+        [GATEWAY_HEADER_HANDSHAKE.protocol]: "1",
+        [GATEWAY_HEADER_HANDSHAKE.ticket]: this.session.media_gateway.ticket,
+        [GATEWAY_HEADER_HANDSHAKE.downlinkGeneration]: "2",
+      },
       timeout: 10000,
-    });
-    this.socket.onOpen(() => {
-      this.socket.send({
-        data: JSON.stringify({
-          type: "hello",
-          protocol_version: 1,
-          ticket: this.session.media_gateway.ticket,
-          capabilities: {
-            downlink_generation: 2,
-          },
-        }),
-      });
     });
     this.socket.onMessage((message) => this._onMessage(message));
     this.socket.onError((error) => {

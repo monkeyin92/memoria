@@ -82,9 +82,10 @@ const { MiniProgramMediaSession } = require("../utils/media-gateway");
 const { FRAME_TYPE, encodePcmFrame } = require("../utils/media-protocol");
 const { PcmJitterPlayer } = require("../utils/pcm-player");
 
-test("gateway hello and ready messages match the shared contract", async () => {
+test("gateway header handshake and ready messages match the shared contract", async () => {
   recorder.reset();
   const sent = [];
+  let connectOptions = null;
   const socket = {
     onOpen(listener) {
       this.openListener = listener;
@@ -103,7 +104,10 @@ test("gateway hello and ready messages match the shared contract", async () => {
     },
     close() {},
   };
-  global.wx.connectSocket = () => socket;
+  global.wx.connectSocket = (options) => {
+    connectOptions = options;
+    return socket;
+  };
   const media = new MiniProgramMediaSession(
     {
       media_gateway: {
@@ -122,16 +126,18 @@ test("gateway hello and ready messages match the shared contract", async () => {
 
   const connecting = media.connect();
   await new Promise((resolve) => setImmediate(resolve));
-  socket.openListener();
-
-  const hello = JSON.parse(sent[0]);
+  const handshake = connectOptions.header;
   assert.deepEqual(
-    Object.keys(hello).sort(),
-    [...contract.hello.required_fields].sort(),
+    handshake,
+    {
+      [contract.header_handshake.protocol_header]: contract.header_handshake.protocol_version,
+      [contract.header_handshake.ticket_header]: "ticket",
+      [contract.header_handshake.downlink_generation_header]:
+        contract.header_handshake.downlink_generation_value,
+    },
   );
-  assert.equal(hello.type, contract.hello.type);
-  assert.equal(hello.protocol_version, contract.hello.protocol_version);
-  assert.deepEqual(hello.capabilities, contract.hello.capabilities);
+  assert.equal(connectOptions.url.includes("ticket"), false);
+  assert.deepEqual(sent, []);
 
   const ready = {
     type: contract.ready.type,
@@ -471,7 +477,6 @@ test("unexpected socket close terminalizes local recording before notifying the 
 
   const connecting = media.connect();
   await new Promise((resolve) => setImmediate(resolve));
-  socket.openListener();
   socket.messageListener({
     data: JSON.stringify({
       type: "ready",
@@ -543,7 +548,6 @@ test("gateway ready rejects an incompatible downlink audio contract", async () =
 
   const connecting = media.connect();
   await new Promise((resolve) => setImmediate(resolve));
-  socket.openListener();
   socket.messageListener({
     data: JSON.stringify({
       type: "ready",
@@ -777,6 +781,43 @@ test("SocketTask connection refused points to the device network path", async ()
     (error) =>
       error?.code === "socket_connection_refused" &&
       /VPN\/代理.*Wi‑Fi\/移动网络/.test(error.message),
+  );
+  await media.close();
+});
+
+test("SocketTask timeout mentioning refusal does not trigger the refusal recovery path", async () => {
+  recorder.reset();
+  const socket = {
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    close() {},
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    {
+      media_gateway: {
+        websocket_url: "wss://voice.example.com/media",
+        ticket: "ticket",
+      },
+    },
+    {},
+  );
+
+  const connecting = media.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.errorListener({ errMsg: "connectSocket:fail timeout after connection refused" });
+
+  await assert.rejects(
+    connecting,
+    (error) =>
+      error?.code !== "socket_connection_refused" && /语音网络连接超时/.test(error.message),
   );
   await media.close();
 });
