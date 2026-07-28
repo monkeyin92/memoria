@@ -82,7 +82,7 @@ const { MiniProgramMediaSession } = require("../utils/media-gateway");
 const { FRAME_TYPE, encodePcmFrame } = require("../utils/media-protocol");
 const { PcmJitterPlayer } = require("../utils/pcm-player");
 
-test("gateway header handshake and ready messages match the shared contract", async () => {
+test("gateway header handshake keeps a legacy hello fallback until acknowledged", async () => {
   recorder.reset();
   const sent = [];
   let connectOptions = null;
@@ -137,7 +137,25 @@ test("gateway header handshake and ready messages match the shared contract", as
     },
   );
   assert.equal(connectOptions.url.includes("ticket"), false);
-  assert.deepEqual(sent, []);
+  socket.openListener();
+  assert.deepEqual(JSON.parse(sent[0]), {
+    type: contract.hello.type,
+    protocol_version: contract.hello.protocol_version,
+    ticket: "ticket",
+    capabilities: contract.hello.capabilities,
+  });
+
+  const acknowledgement = {
+    type: contract.handshake_ack.type,
+    protocol_version: contract.handshake_ack.protocol_version,
+    transport: "header",
+  };
+  assert.deepEqual(
+    Object.keys(acknowledgement).sort(),
+    [...contract.handshake_ack.required_fields].sort(),
+  );
+  socket.messageListener({ data: JSON.stringify(acknowledgement) });
+  assert.equal(media.ready, false);
 
   const ready = {
     type: contract.ready.type,
@@ -162,6 +180,169 @@ test("gateway header handshake and ready messages match the shared contract", as
   socket.messageListener({ data: JSON.stringify(ready) });
 
   await connecting;
+  await media.close();
+});
+
+test("gateway close exposes ticket rejection instead of a generic network close", async () => {
+  recorder.reset();
+  const socket = {
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    close() {},
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    {
+      media_gateway: {
+        websocket_url: "wss://voice.example.com/media",
+        ticket: "ticket",
+      },
+    },
+    {},
+  );
+
+  const connecting = media.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.closeListener({ code: 4401 });
+
+  await assert.rejects(
+    connecting,
+    (error) =>
+      error?.code === "gateway_ticket_rejected" && /凭据已失效/.test(error.message),
+  );
+  await media.close();
+});
+
+test("gateway close code wins when SocketTask error fires first", async () => {
+  recorder.reset();
+  const socket = {
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    close() {},
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { websocket_url: "wss://voice.example.com/media", ticket: "ticket" } },
+    {},
+  );
+
+  const connecting = media.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.errorListener({ errMsg: "connectSocket:fail connection refused" });
+  socket.closeListener({ code: 4401 });
+
+  await assert.rejects(
+    connecting,
+    (error) =>
+      error?.code === "gateway_ticket_rejected" && /凭据已失效/.test(error.message),
+  );
+  await media.close();
+});
+
+test("a generic SocketTask close preserves the prior actionable connection error", async () => {
+  recorder.reset();
+  const socket = {
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    close() {},
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    { media_gateway: { websocket_url: "wss://voice.example.com/media", ticket: "ticket" } },
+    {},
+  );
+
+  const connecting = media.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.errorListener({ errMsg: "connectSocket:fail connection refused" });
+  socket.closeListener({ code: 1006 });
+
+  await assert.rejects(
+    connecting,
+    (error) => error?.code === "socket_connection_refused",
+  );
+  await media.close();
+});
+
+test("a late SocketTask onOpen does not send hello after header-authenticated ready", async () => {
+  recorder.reset();
+  const sent = [];
+  const socket = {
+    onOpen(listener) {
+      this.openListener = listener;
+    },
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    send(options) {
+      sent.push(options.data);
+    },
+    close() {},
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    {
+      media_gateway: {
+        websocket_url: "wss://voice.example.com/media",
+        ticket: "ticket",
+        audio: {
+          sample_rate: contract.audio.downlink_sample_rate,
+          channels: contract.audio.channels,
+          sample_format: contract.audio.sample_format,
+          frame_ms: contract.audio.frame_ms,
+        },
+      },
+    },
+    {},
+  );
+
+  const connecting = media.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.messageListener({
+    data: JSON.stringify({
+      type: contract.ready.type,
+      protocol_version: contract.ready.protocol_version,
+      session_id: "session-1",
+      audio: {
+        sample_rate: contract.audio.downlink_sample_rate,
+        channels: contract.audio.channels,
+        sample_format: contract.audio.sample_format,
+        frame_ms: contract.audio.frame_ms,
+        frame_protocol_version: contract.audio.downlink_frame_protocol_versions[1],
+      },
+    }),
+  });
+  await connecting;
+  socket.openListener();
+
+  assert.deepEqual(sent, []);
   await media.close();
 });
 

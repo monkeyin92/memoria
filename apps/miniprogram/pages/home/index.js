@@ -147,8 +147,18 @@ Page({
     }
   },
 
-  async startVoice() {
-    if (this.data.connecting || this.data.active) return;
+  startVoice() {
+    if (this._startVoicePromise) return this._startVoicePromise;
+    if (this.data.connecting || this.data.active) return Promise.resolve();
+    let attempt;
+    attempt = this._startVoiceOnce().finally(() => {
+      if (this._startVoicePromise === attempt) this._startVoicePromise = null;
+    });
+    this._startVoicePromise = attempt;
+    return attempt;
+  },
+
+  async _startVoiceOnce() {
     const identity = api.currentIdentity();
     if (!identity) {
       wx.navigateTo({ url: "/pages/auth/index" });

@@ -78,6 +78,31 @@
 - 尚未完成：同一 iPhone 使用 `0.8.55` 实际点击“开始语音陪伴”并确认收到 `ready`、不再显示网络
   拒绝；这项真实设备验收不能由上传成功或无效 ticket smoke 替代。
 
+## 2026-07-28：`0.8.55` 仍显示连接拒绝的候选修复（未发布）
+
+- 同一 iPhone 的后续点击仍显示泛化的“connection refused”。Nginx 时间线同时显示同一设备在短时间内
+  重复创建会话，并在第四次 `POST /memoria-api/v1/sessions` 命中 `429`。由于 `8443 → 9443` 的
+  stream 转发让内层 HTTP 看见 loopback 地址，旧 `burst=3` 会放大重复启动；这不是唯一根因，不能只靠
+  放宽限流掩盖问题。
+- 候选修复把 `startVoice()` 改为脱离 `setData` 异步刷新的单飞 Promise，避免一次点击或紧邻点击创建多
+  个 session；精确会话路由仅将安全的 `burst` 从 `3` 提到 `6`，保留相同 `10r/m` 限速。没有把未验证的
+  `Authorization` header 用作 Nginx 限流身份；那会允许伪造不同 header 绕过桶。真正的按账号限流应在
+  Control API 完成 JWT 校验之后再单独实现。
+- 新客户端继续发送 TLS Upgrade header，同时在 `SocketTask.onOpen` 发送既有 JSON `hello` 回退；Gateway
+  无论 header 或 hello 验证成功，都会先回无敏感数据的 `handshake_ack`，再等待 LiveKit bridge 并发送
+  `ready`。旧客户端和旧 Gateway 均保持互操作，ticket 不进入 URL、access log 或应用日志。
+- 处理两个真机时序：`ready` 后不再补发 hello；header 认证的服务端只忽略一次精确的迟到 v1 hello，即使
+  首个 PCM 已到达。`SocketTask.onError` 先到时会给 `onClose` 100 ms 传递 `4400/4401/1011` 的机会，避免
+  有意义的 gateway 拒绝码被泛化成“connection refused”。
+- Gateway 只新增脱敏的 `transport=header|hello`、`ack_sent|ready_sent`、耗时日志，用于下一次真机验收；
+  不记录 ticket、PCM、用户文本或 cookie。
+- 候选本地门禁：小程序 `56/56`；Gateway 与生产 Nginx 契约 Python `81/81`；Ruff、严格 mypy、JS syntax、
+  JSON 解析和 `git diff --check` 均通过。Python 开发环境已由锁定的 `uv` 重新创建为 CPython `3.12.13`，
+  原 `.venv` 指向已删除的 Homebrew Python 3.12，未使用系统 Python 3.13 代替。
+- 下一步：提交并推送候选，按现有 runtime 回滚流程部署（H5 不切换），备份/reload Nginx 后上传新的体验版；
+  真机验收必须观察 `ack_sent` 与 `ready_sent`，再确认页面进入 listening。若仍失败，按同一时间窗口取
+  Gateway 脱敏日志和设备原始 `errMsg`，不再猜测网络问题。
+
 ## 保留版本与回滚
 
 - 当前 runtime：`20260728-103318`。

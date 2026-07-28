@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -69,6 +70,8 @@ def create_app(
     @app.websocket(MEDIA_PATH)
     async def media_socket(websocket: WebSocket) -> None:
         bridge: MiniProgramLiveKitBridge | None = None
+        handshake_started = time.monotonic()
+        handshake_transport = "unknown"
         try:
             await websocket.accept()
             header_handshake = _read_header_handshake(websocket, configured)
@@ -77,18 +80,35 @@ def create_app(
                     websocket,
                     configured,
                 )
+                handshake_transport = "hello"
             else:
                 claims, downlink_generation_protocol = header_handshake
+                handshake_transport = "header"
+            await websocket.send_json(_handshake_ack(handshake_transport))
+            logger.info(
+                "mini_program_gateway_handshake transport=%s phase=ack_sent elapsed_ms=%d",
+                handshake_transport,
+                _elapsed_ms(handshake_started),
+            )
             bridge = bridge_factory(configured, claims)
             bridge.set_downlink_generation_protocol(downlink_generation_protocol)
             await bridge.connect()
             await websocket.send_json(bridge.ready_event)
+            logger.info(
+                "mini_program_gateway_handshake transport=%s phase=ready_sent elapsed_ms=%d",
+                handshake_transport,
+                _elapsed_ms(handshake_started),
+            )
             sender = asyncio.create_task(
                 _send_outbound(websocket, bridge),
                 name="mini-program-media-sender",
             )
             receiver = asyncio.create_task(
-                _receive_media(websocket, bridge),
+                _receive_media(
+                    websocket,
+                    bridge,
+                    ignore_first_duplicate_hello=handshake_transport == "header",
+                ),
                 name="mini-program-media-receiver",
             )
             room_disconnect = asyncio.create_task(
@@ -111,10 +131,25 @@ def create_app(
         except WebSocketDisconnect:
             pass
         except GatewayTicketError:
+            logger.info(
+                "mini_program_gateway_handshake transport=%s phase=ticket_rejected elapsed_ms=%d",
+                handshake_transport,
+                _elapsed_ms(handshake_started),
+            )
             await _close_safely(websocket, 4401)
         except (GatewayMediaError, ProtocolError):
+            logger.info(
+                "mini_program_gateway_handshake transport=%s phase=protocol_error elapsed_ms=%d",
+                handshake_transport,
+                _elapsed_ms(handshake_started),
+            )
             await _close_safely(websocket, 4400)
         except (TimeoutError, json.JSONDecodeError, TypeError, ValueError):
+            logger.info(
+                "mini_program_gateway_handshake transport=%s phase=invalid_handshake elapsed_ms=%d",
+                handshake_transport,
+                _elapsed_ms(handshake_started),
+            )
             await _close_safely(websocket, 4400)
         except Exception:
             logger.exception("Mini Program media socket failed without logging client payload")
@@ -124,6 +159,14 @@ def create_app(
                 await bridge.close()
 
     return app
+
+
+def _elapsed_ms(started: float) -> int:
+    return round((time.monotonic() - started) * 1000)
+
+
+def _handshake_ack(transport: str) -> dict[str, object]:
+    return {"type": "handshake_ack", "protocol_version": 1, "transport": transport}
 
 
 def _read_header_handshake(
@@ -185,7 +228,12 @@ async def _receive_hello(
     )
 
 
-async def _receive_media(websocket: WebSocket, bridge: MiniProgramLiveKitBridge) -> None:
+async def _receive_media(
+    websocket: WebSocket,
+    bridge: MiniProgramLiveKitBridge,
+    *,
+    ignore_first_duplicate_hello: bool = False,
+) -> None:
     while True:
         message = await websocket.receive()
         if message["type"] == "websocket.disconnect":
@@ -198,7 +246,30 @@ async def _receive_media(websocket: WebSocket, bridge: MiniProgramLiveKitBridge)
         text = message.get("text")
         if text is None:
             raise ProtocolError("unsupported gateway WebSocket message")
+        if ignore_first_duplicate_hello:
+            # A native SocketTask can report onOpen after header authentication
+            # and even after its first PCM frame. Consume only that exact v1
+            # fallback hello; every subsequent text frame remains strict.
+            ignore_first_duplicate_hello = False
+            if _is_duplicate_hello(text):
+                continue
         bridge.accept_transport_event(_validate_control_text(text))
+
+
+def _is_duplicate_hello(text: Any) -> bool:
+    if not isinstance(text, str) or len(text) > 1_024:
+        return False
+    with contextlib.suppress(json.JSONDecodeError):
+        parsed = json.loads(text)
+        return (
+            isinstance(parsed, dict)
+            and set(parsed) == {"type", "protocol_version", "ticket", "capabilities"}
+            and parsed.get("type") == "hello"
+            and parsed.get("protocol_version") == 1
+            and isinstance(parsed.get("ticket"), str)
+            and parsed.get("capabilities") == {"downlink_generation": 2}
+        )
+    return False
 
 
 def _validate_control_text(text: Any) -> dict[str, object]:

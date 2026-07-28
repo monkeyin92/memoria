@@ -19,6 +19,19 @@
     "downlink_generation_header": "X-Memoria-Downlink-Generation",
     "downlink_generation_value": "2"
   },
+  "handshake_ack": {
+    "type": "handshake_ack",
+    "protocol_version": 1,
+    "required_fields": [
+      "type",
+      "protocol_version",
+      "transport"
+    ],
+    "transports": [
+      "header",
+      "hello"
+    ]
+  },
   "ready": {
     "type": "ready",
     "protocol_version": 1,

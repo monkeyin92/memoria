@@ -75,6 +75,12 @@ def test_gateway_accepts_ticket_then_only_pcm_uplink_frames() -> None:
                     "capabilities": hello_contract["capabilities"],
                 }
             )
+            acknowledgement = websocket.receive_json()
+            assert acknowledgement == {
+                "type": CONTRACT["handshake_ack"]["type"],
+                "protocol_version": CONTRACT["handshake_ack"]["protocol_version"],
+                "transport": "hello",
+            }
             ready = websocket.receive_json()
             assert set(ready) == set(CONTRACT["ready"]["required_fields"])
             assert ready["type"] == CONTRACT["ready"]["type"]
@@ -146,12 +152,37 @@ def test_gateway_accepts_ticket_from_protected_handshake_header() -> None:
     }
     with TestClient(create_app(settings=settings, bridge_factory=factory)) as client:
         with client.websocket_connect(MEDIA_PATH, headers=headers) as websocket:
+            acknowledgement = websocket.receive_json()
+            assert acknowledgement == {
+                "type": CONTRACT["handshake_ack"]["type"],
+                "protocol_version": CONTRACT["handshake_ack"]["protocol_version"],
+                "transport": "header",
+            }
             ready = websocket.receive_json()
             assert ready["type"] == "ready"
             assert ready["audio"]["frame_protocol_version"] == 2
+            websocket.send_bytes(
+                encode_pcm_frame(
+                    FrameType.UPLINK_AUDIO,
+                    sequence=0,
+                    timestamp_ms=1,
+                    payload=b"\x00\x00",
+                )
+            )
+            assert websocket.receive_json() == {"type": "accepted", "sequence": 0}
+            websocket.send_json(
+                {
+                    "type": CONTRACT["hello"]["type"],
+                    "protocol_version": CONTRACT["hello"]["protocol_version"],
+                    "ticket": ticket,
+                    "capabilities": CONTRACT["hello"]["capabilities"],
+                }
+            )
+            websocket.send_json({"type": "ping"})
             websocket.close()
 
     assert len(bridges) == 1
+    assert bridges[0].transport_events == [{"type": "ping"}]
     assert bridges[0].closed is True
 
 

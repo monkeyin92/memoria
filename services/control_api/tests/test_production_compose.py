@@ -71,6 +71,8 @@ def test_miniprogram_gateway_is_isolated_and_only_exposes_loopback_wss_upstream(
     assert "access_log off;" in nginx
     assert "limit_req zone=memoria_media burst=6 nodelay;" in nginx
     assert "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in limits
+    session = nginx.split("location = /memoria-api/v1/sessions {", 1)[1].split("}", 1)[0]
+    assert "limit_req zone=memoria_session burst=6 nodelay;" in session
     assert (
         "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in loopback_limits
     )

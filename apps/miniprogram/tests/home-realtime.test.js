@@ -100,3 +100,50 @@ test("initial connection retries once with a fresh ticket after connection refus
     api.refreshMiniProgramGatewayTicket = originalRefresh;
   }
 });
+
+test("voice start is single-flight before setData reflects connecting", async () => {
+  const originalIdentity = api.currentIdentity;
+  const originalCreate = api.createMiniProgramSession;
+  const originalWx = global.wx;
+  let releaseSession;
+  let createCalls = 0;
+  const sessionReady = new Promise((resolve) => {
+    releaseSession = resolve;
+  });
+  api.currentIdentity = () => ({ user_id: "user-1" });
+  api.createMiniProgramSession = async () => {
+    createCalls += 1;
+    await sessionReady;
+    return { session_id: "session-1", media_gateway: {} };
+  };
+  global.wx = {
+    authorize({ success }) {
+      success();
+    },
+  };
+  const instance = {
+    data: { connecting: false, active: false },
+    setData() {},
+    _resetExpression() {},
+    _startVoiceOnce: page._startVoiceOnce,
+    async _connectInitialMedia(session) {
+      return session;
+    },
+    async _endMediaLocally() {},
+  };
+
+  try {
+    const first = page.startVoice.call(instance);
+    const second = page.startVoice.call(instance);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(createCalls, 1);
+    releaseSession();
+    await Promise.all([first, second]);
+    await page.startVoice.call(instance);
+    assert.equal(createCalls, 2);
+  } finally {
+    api.currentIdentity = originalIdentity;
+    api.createMiniProgramSession = originalCreate;
+    global.wx = originalWx;
+  }
+});

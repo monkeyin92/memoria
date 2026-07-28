@@ -4,6 +4,9 @@ const { PcmJitterPlayer } = require("./pcm-player");
 const RECORDER_START_TIMEOUT_MS = 2000;
 const FIRST_UPLINK_FRAME_TIMEOUT_MS = 3000;
 const RECORDER_RESTART_DELAY_MS = 120;
+// WeChat can emit a generic onError just before a close that carries the useful
+// gateway code, so let the close callback settle the initial connection first.
+const SOCKET_CLOSE_PRIORITY_DELAY_MS = 100;
 const GATEWAY_HEADER_HANDSHAKE = Object.freeze({
   protocol: "X-Memoria-Gateway-Protocol",
   ticket: "X-Memoria-Gateway-Ticket",
@@ -68,6 +71,19 @@ function socketConnectionError(error) {
   return connectionError;
 }
 
+function socketCloseError(event) {
+  const code = Number.isInteger(event?.code) ? event.code : null;
+  const details = {
+    4400: ["gateway_protocol_error", "语音网关协议不兼容，请更新后重试。"],
+    4401: ["gateway_ticket_rejected", "语音网关凭据已失效，请重新开始语音。"],
+    1011: ["gateway_unavailable", "语音服务暂时不可用，请稍后重试。"],
+  }[code];
+  if (!details) return null;
+  const error = new Error(details[1]);
+  error.code = details[0];
+  return error;
+}
+
 function gatewayEventGenerationId(event) {
   const generationId =
     event?.type === "ui_event"
@@ -111,6 +127,8 @@ class MiniProgramMediaSession {
     this._restartTimer = null;
     this._readyResolve = null;
     this._readyReject = null;
+    this._pendingSocketErrorTimer = null;
+    this._pendingSocketError = null;
     this._closeNotified = false;
     this._bindRecorder();
   }
@@ -133,12 +151,15 @@ class MiniProgramMediaSession {
       },
       timeout: 10000,
     });
+    this.socket.onOpen?.(() => {
+      this._sendLegacyHello();
+    });
     this.socket.onMessage((message) => this._onMessage(message));
     this.socket.onError((error) => {
-      this._rejectReady(socketConnectionError(error));
+      this._deferSocketError(error);
     });
-    this.socket.onClose(() => {
-      this._handleSocketClose();
+    this.socket.onClose((event) => {
+      this._handleSocketClose(event);
     });
     await ready;
   }
@@ -189,6 +210,7 @@ class MiniProgramMediaSession {
 
   async close() {
     this.intentionalClose = true;
+    this._clearPendingSocketError();
     this.ready = false;
     this._uplinkFailed = true;
     this._stopRecorder();
@@ -289,8 +311,20 @@ class MiniProgramMediaSession {
         ) {
           return;
         }
+        if (event.type === "handshake_ack") {
+          if (
+            event.protocol_version !== 1 ||
+            !["header", "hello"].includes(event.transport)
+          ) {
+            this._rejectReady(new Error("语音握手响应无效，请重新开始语音。"));
+            return;
+          }
+          this.callbacks.onEvent?.(event);
+          return;
+        }
         if (event.type === "ready") {
           if (!this._acceptReadyAudioContract(event)) return;
+          this._clearPendingSocketError();
           this.ready = true;
           this._startRecording();
           const resolve = this._readyResolve;
@@ -373,6 +407,23 @@ class MiniProgramMediaSession {
     } catch {
       // Telemetry must never interrupt the media path.
       return false;
+    }
+  }
+
+  _sendLegacyHello() {
+    if (!this.socket || this.ready) return;
+    try {
+      this.socket.send({
+        data: JSON.stringify({
+          type: "hello",
+          protocol_version: 1,
+          ticket: this.session.media_gateway.ticket,
+          capabilities: { downlink_generation: 2 },
+        }),
+        fail: (error) => this._deferSocketError(error),
+      });
+    } catch {
+      this._deferSocketError({ errMsg: "sendSocketMessage:fail" });
     }
   }
 
@@ -543,7 +594,8 @@ class MiniProgramMediaSession {
     this._startRecording();
   }
 
-  _handleSocketClose() {
+  _handleSocketClose(event) {
+    const pendingSocketError = this._takePendingSocketError();
     this.playbackGenerationId = null;
     this.ready = false;
     this.player.reset();
@@ -552,7 +604,9 @@ class MiniProgramMediaSession {
     this._uplinkDiscontinuityPending = false;
     this._stopRecorder();
     this.socket = null;
-    this._rejectReady(new Error("语音连接已关闭。"));
+    this._rejectReady(
+      socketCloseError(event) || pendingSocketError || new Error("语音连接已关闭。"),
+    );
     if (!this.intentionalClose && !this._closeNotified) {
       this._closeNotified = true;
       this.callbacks.onClose?.();
@@ -598,7 +652,33 @@ class MiniProgramMediaSession {
     }
   }
 
+  _deferSocketError(error) {
+    if (!this._readyReject || this._pendingSocketError !== null) return;
+    this._pendingSocketError = socketConnectionError(error);
+    this._pendingSocketErrorTimer = setTimeout(() => {
+      const pendingSocketError = this._pendingSocketError;
+      this._pendingSocketErrorTimer = null;
+      this._pendingSocketError = null;
+      if (pendingSocketError) this._rejectReady(pendingSocketError);
+    }, SOCKET_CLOSE_PRIORITY_DELAY_MS);
+  }
+
+  _clearPendingSocketError() {
+    if (this._pendingSocketErrorTimer !== null) {
+      clearTimeout(this._pendingSocketErrorTimer);
+    }
+    this._pendingSocketErrorTimer = null;
+    this._pendingSocketError = null;
+  }
+
+  _takePendingSocketError() {
+    const pendingSocketError = this._pendingSocketError;
+    this._clearPendingSocketError();
+    return pendingSocketError;
+  }
+
   _rejectReady(error) {
+    this._clearPendingSocketError();
     if (!this._readyReject) return;
     const reject = this._readyReject;
     this._readyReject = null;
