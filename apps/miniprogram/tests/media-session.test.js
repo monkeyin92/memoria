@@ -183,6 +183,145 @@ test("gateway header handshake keeps a legacy hello fallback until acknowledged"
   await media.close();
 });
 
+test("gateway acknowledgement fences generic SocketTask errors while bridge becomes ready", async () => {
+  recorder.reset();
+  const socket = {
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    close() {},
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    {
+      media_gateway: {
+        websocket_url: "wss://voice.example.com/media",
+        ticket: "ticket",
+        audio: {
+          sample_rate: contract.audio.downlink_sample_rate,
+          channels: contract.audio.channels,
+          sample_format: contract.audio.sample_format,
+          frame_ms: contract.audio.frame_ms,
+        },
+      },
+    },
+    {},
+  );
+
+  const connecting = media.connect();
+  const connectionResult = connecting.then(
+    () => null,
+    (error) => error,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.errorListener({ errMsg: "connectSocket:fail connection refused" });
+  socket.messageListener({
+    data: JSON.stringify({
+      type: contract.handshake_ack.type,
+      protocol_version: contract.handshake_ack.protocol_version,
+      transport: "header",
+    }),
+  });
+  socket.errorListener({ errMsg: "connectSocket:fail connection refused" });
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  socket.messageListener({
+    data: JSON.stringify({
+      type: contract.ready.type,
+      protocol_version: contract.ready.protocol_version,
+      session_id: "session-1",
+      audio: {
+        sample_rate: contract.audio.downlink_sample_rate,
+        channels: contract.audio.channels,
+        sample_format: contract.audio.sample_format,
+        frame_ms: contract.audio.frame_ms,
+        frame_protocol_version: contract.audio.downlink_frame_protocol_versions[1],
+      },
+    }),
+  });
+
+  assert.equal(await connectionResult, null);
+  assert.equal(media.ready, true);
+  await media.close();
+});
+
+test("gateway acknowledgement has a bounded ready wait and fences a late ready", async () => {
+  recorder.reset();
+  let closeCalls = 0;
+  const socket = {
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    close() {
+      closeCalls += 1;
+    },
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    {
+      media_gateway: {
+        websocket_url: "wss://voice.example.com/media",
+        ticket: "ticket",
+        audio: {
+          sample_rate: contract.audio.downlink_sample_rate,
+          channels: contract.audio.channels,
+          sample_format: contract.audio.sample_format,
+          frame_ms: contract.audio.frame_ms,
+        },
+      },
+    },
+    {},
+  );
+
+  const connecting = media.connect();
+  const connectionResult = connecting.then(
+    () => null,
+    (error) => error,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.messageListener({
+    data: JSON.stringify({
+      type: contract.handshake_ack.type,
+      protocol_version: contract.handshake_ack.protocol_version,
+      transport: "header",
+    }),
+  });
+  assert.notEqual(media._gatewayReadyTimer, null);
+  media._rejectGatewayReadyTimeout();
+
+  const error = await connectionResult;
+  assert.equal(error?.code, "gateway_ready_timeout");
+  assert.equal(closeCalls, 1);
+  socket.messageListener({
+    data: JSON.stringify({
+      type: contract.ready.type,
+      protocol_version: contract.ready.protocol_version,
+      session_id: "session-1",
+      audio: {
+        sample_rate: contract.audio.downlink_sample_rate,
+        channels: contract.audio.channels,
+        sample_format: contract.audio.sample_format,
+        frame_ms: contract.audio.frame_ms,
+        frame_protocol_version: contract.audio.downlink_frame_protocol_versions[1],
+      },
+    }),
+  });
+  assert.equal(media.ready, false);
+  assert.equal(recorder.startCalls.length, 0);
+  await media.close();
+});
+
 test("gateway close exposes ticket rejection instead of a generic network close", async () => {
   recorder.reset();
   const socket = {
@@ -961,7 +1100,7 @@ test("SocketTask connection refused points to the device network path", async ()
     connecting,
     (error) =>
       error?.code === "socket_connection_refused" &&
-      /VPN\/代理.*Wi‑Fi\/移动网络/.test(error.message),
+      /Wi‑Fi\/移动网络.*VPN\/代理/.test(error.message),
   );
   await media.close();
 });

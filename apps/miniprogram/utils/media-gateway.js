@@ -4,6 +4,7 @@ const { PcmJitterPlayer } = require("./pcm-player");
 const RECORDER_START_TIMEOUT_MS = 2000;
 const FIRST_UPLINK_FRAME_TIMEOUT_MS = 3000;
 const RECORDER_RESTART_DELAY_MS = 120;
+const GATEWAY_READY_TIMEOUT_MS = 10000;
 // WeChat can emit a generic onError just before a close that carries the useful
 // gateway code, so let the close callback settle the initial connection first.
 const SOCKET_CLOSE_PRIORITY_DELAY_MS = 100;
@@ -57,7 +58,7 @@ function socketConnectionErrorMessage(error) {
     return "语音网络连接超时，请检查网络后重试。";
   }
   if (kind === "connection_refused") {
-    return "语音网络连接被当前网络拒绝（connection refused），请关闭 VPN/代理后重试，或切换 Wi‑Fi/移动网络。";
+    return "语音网络连接被当前网络拒绝（connection refused），请切换 Wi‑Fi/移动网络后重试；若使用 VPN/代理，请分别尝试开启或关闭后再试。";
   }
   return detail ? `语音网络连接失败：${detail.slice(0, 120)}` : "语音网络连接失败。";
 }
@@ -129,6 +130,9 @@ class MiniProgramMediaSession {
     this._readyReject = null;
     this._pendingSocketErrorTimer = null;
     this._pendingSocketError = null;
+    this._gatewayReadyTimer = null;
+    this._gatewayAcknowledged = false;
+    this._readyTerminal = false;
     this._closeNotified = false;
     this._bindRecorder();
   }
@@ -137,6 +141,9 @@ class MiniProgramMediaSession {
     if (!this.session?.media_gateway?.websocket_url || !this.session?.media_gateway?.ticket) {
       throw new Error("缺少小程序媒体网关会话。");
     }
+    this._gatewayAcknowledged = false;
+    this._readyTerminal = false;
+    this._clearGatewayReadyTimeout();
     await this.player.resume();
     const ready = new Promise((resolve, reject) => {
       this._readyResolve = resolve;
@@ -210,7 +217,9 @@ class MiniProgramMediaSession {
 
   async close() {
     this.intentionalClose = true;
+    this._readyTerminal = true;
     this._clearPendingSocketError();
+    this._clearGatewayReadyTimeout();
     this.ready = false;
     this._uplinkFailed = true;
     this._stopRecorder();
@@ -319,12 +328,18 @@ class MiniProgramMediaSession {
             this._rejectReady(new Error("语音握手响应无效，请重新开始语音。"));
             return;
           }
+          if (this._readyTerminal) return;
+          this._gatewayAcknowledged = true;
+          this._clearPendingSocketError();
+          this._armGatewayReadyTimeout();
           this.callbacks.onEvent?.(event);
           return;
         }
         if (event.type === "ready") {
+          if (this._readyTerminal || !this._readyResolve) return;
           if (!this._acceptReadyAudioContract(event)) return;
           this._clearPendingSocketError();
+          this._clearGatewayReadyTimeout();
           this.ready = true;
           this._startRecording();
           const resolve = this._readyResolve;
@@ -653,7 +668,14 @@ class MiniProgramMediaSession {
   }
 
   _deferSocketError(error) {
-    if (!this._readyReject || this._pendingSocketError !== null) return;
+    if (
+      this._readyTerminal ||
+      this._gatewayAcknowledged ||
+      !this._readyReject ||
+      this._pendingSocketError !== null
+    ) {
+      return;
+    }
     this._pendingSocketError = socketConnectionError(error);
     this._pendingSocketErrorTimer = setTimeout(() => {
       const pendingSocketError = this._pendingSocketError;
@@ -671,6 +693,31 @@ class MiniProgramMediaSession {
     this._pendingSocketError = null;
   }
 
+  _armGatewayReadyTimeout() {
+    this._clearGatewayReadyTimeout();
+    this._gatewayReadyTimer = setTimeout(() => {
+      this._gatewayReadyTimer = null;
+      this._rejectGatewayReadyTimeout();
+    }, GATEWAY_READY_TIMEOUT_MS);
+  }
+
+  _rejectGatewayReadyTimeout() {
+    if (this.ready || this._readyTerminal || !this._gatewayAcknowledged) return;
+    const error = new Error("语音服务启动超时，请重新开始语音。");
+    error.code = "gateway_ready_timeout";
+    this._rejectReady(error);
+    const socket = this.socket;
+    this.socket = null;
+    socket?.close({ code: 1000 });
+  }
+
+  _clearGatewayReadyTimeout() {
+    if (this._gatewayReadyTimer !== null) {
+      clearTimeout(this._gatewayReadyTimer);
+    }
+    this._gatewayReadyTimer = null;
+  }
+
   _takePendingSocketError() {
     const pendingSocketError = this._pendingSocketError;
     this._clearPendingSocketError();
@@ -678,7 +725,9 @@ class MiniProgramMediaSession {
   }
 
   _rejectReady(error) {
+    this._readyTerminal = true;
     this._clearPendingSocketError();
+    this._clearGatewayReadyTimeout();
     if (!this._readyReject) return;
     const reject = this._readyReject;
     this._readyReject = null;
