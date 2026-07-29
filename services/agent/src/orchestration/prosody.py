@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Literal
 
-CosyVoiceEmotion = Literal[
+VoiceEmotion = Literal[
     "neutral",
     "happy",
     "sad",
@@ -17,6 +17,8 @@ CosyVoiceEmotion = Literal[
     "disgusted",
 ]
 DeliveryMode = Literal["direct", "deliberative", "light_laughter", "supportive"]
+VoiceDialect = Literal["standard", "sichuan", "beijing"]
+VoiceTone = Literal["natural", "coquettish", "intimate", "argumentative", "sweet"]
 MascotExpression = Literal["neutral", "happy", "curious", "caring"]
 
 _LAUGHTER_MARKERS = ("哈哈", "呵呵", "嘿嘿")
@@ -90,17 +92,26 @@ _ASSISTANT_CARING_MARKERS = (
     "先照顾好自己",
     "注意安全",
 )
+_NATURAL_DIRECT_INSTRUCTION = (
+    "用自然口语回答，像熟人面对面聊天；句子长短有变化，允许自然停顿，"
+    "不要使用播报腔、客服套话或公文式编号。"
+)
 
 
 @dataclass(frozen=True)
 class SpeechPlan:
-    voice_emotion: CosyVoiceEmotion
+    voice_emotion: VoiceEmotion
     rate: float
     delivery_mode: DeliveryMode = "direct"
     llm_instruction: str = ""
     # Injected once at the head of the first TTS segment (not into chat history).
     tts_prefix: str = ""
     strip_paralinguistic: bool = False
+    dialect: VoiceDialect = "standard"
+    tone: VoiceTone = "natural"
+    pitch: int = 0
+    # Trusted provider instruction assembled only from the whitelist above.
+    tts_instruction: str = ""
 
     @property
     def instruction(self) -> str:
@@ -179,18 +190,31 @@ def prepare_tts_text(
 def speech_plan_for_emotion(label: str) -> SpeechPlan:
     """Map input observation to the deliberately smaller safe output subset.
 
-    Rate is fixed at 1.0: CosyVoice rate + emotion swings were perceived as
-    random loudness / "awkward vs standard Mandarin" quality jumps.
-    Non-happy emotions use neutral instruct — sad/surprised instruct often
-    muddies longanyang and lowers volume inconsistently.
+    Output labels stay conservative; only small rate changes and provider-neutral
+    delivery instructions vary within one generation.
     """
     if label == "happy":
-        return SpeechPlan("happy", 1.0)
-    # sad / surprised / angry / … → neutral voice + fixed rate
-    return SpeechPlan("neutral", 1.0)
+        return SpeechPlan(
+            "happy",
+            1.02,
+            llm_instruction=(
+                "用轻松、有笑意的自然口语回答，像熟人分享好消息；"
+                "不要夸张，不要连续发笑，也不要使用播报腔。"
+            ),
+        )
+    if label == "surprised":
+        return SpeechPlan(
+            "neutral",
+            1.01,
+            llm_instruction=(
+                "用自然、略带好奇的口语承接，像熟人听到意外消息；不要夸张或使用播报腔。"
+            ),
+        )
+    # sad / angry / fearful / disgusted are handled by the supportive mode below.
+    return SpeechPlan("neutral", 1.0, llm_instruction=_NATURAL_DIRECT_INSTRUCTION)
 
 
-def speech_plan_for_turn(
+def _semantic_speech_plan_for_turn(
     *,
     label: str,
     provider_label: str,
@@ -199,17 +223,21 @@ def speech_plan_for_turn(
     use_markup_tags: bool = False,
 ) -> SpeechPlan:
     """Choose one conservative delivery style for the current spoken turn."""
-    base = speech_plan_for_emotion(label)
+    delivery_label = label if label != "neutral" else provider_label
+    base = speech_plan_for_emotion(delivery_label)
     has_laughter = any(marker in text for marker in _LAUGHTER_MARKERS)
-    serious = label in {"sad", "angry", "fearful", "disgusted"} or any(
-        marker in text for marker in _SERIOUS_CONTEXT_MARKERS
+    serious = (
+        label in {"sad", "angry", "fearful", "disgusted"}
+        or provider_label in {"sad", "angry", "fearful", "disgusted"}
+        or any(marker in text for marker in _SERIOUS_CONTEXT_MARKERS)
     )
     if serious:
         return SpeechPlan(
             "neutral",
-            1.0,
+            0.98,
             "supportive",
-            "本轮语境严肃。直接、温和地承接用户，绝对不要笑、咳嗽、吸气戏或使用轻佻的思考填充词。"
+            "本轮语境严肃。像熟人一样直接、温和地承接，语气关切但不要客服腔。"
+            "绝对不要笑、咳嗽、吸气戏或使用轻佻的思考填充词。"
             "禁止输出 [laughter]/[breath]/[inhale]/<strong> 等副语言/强调标签。",
             strip_paralinguistic=True,
         )
@@ -222,7 +250,7 @@ def speech_plan_for_turn(
         )
         return SpeechPlan(
             "happy",
-            1.0,
+            1.02,
             "light_laughter",
             "本轮是轻松且声学上明确的笑声。"
             f"{laugh_hint}"
@@ -233,23 +261,20 @@ def speech_plan_for_turn(
         deliberative_prefix = breath_prefix(use_markup_tags=use_markup_tags)
         emphasis_hint = ""
         if use_markup_tags and _HAS_DIGIT.search(text):
-            emphasis_hint = (
-                "若出现关键数字或时间点，可用一次 <strong>…</strong> 做轻强调，勿滥用。"
-            )
+            emphasis_hint = "若出现关键数字或时间点，可用一次 <strong>…</strong> 做轻强调，勿滥用。"
         breath_hint = (
-            "衔接前允许一次 [breath] 短吸气（系统也可能已注入），"
-            if use_markup_tags
-            else ""
+            "衔接前允许一次 [breath] 短吸气（系统也可能已注入），" if use_markup_tags else ""
         )
         return SpeechPlan(
             base.voice_emotion,
-            1.0,
+            0.99,
             "deliberative",
             "本轮需要安排或组织内容。"
             f"{breath_hint}"
             "先用四到十二个字的自然短衔接（可含一个“嗯”“好”或“可以”），"
             "该小段以逗号结束，再继续同一段正文；整轮只生成一次，"
-            f"不要拆成两段回答，不要披露推理或照抄固定模板。{emphasis_hint}",
+            "不要拆成两段回答，不要披露推理或照抄固定模板。"
+            f"整体像熟人边想边说，不要播报腔。{emphasis_hint}",
             tts_prefix=deliberative_prefix,
         )
     # Non-serious short happy turns may lightly emphasize digits once.
@@ -261,12 +286,199 @@ def speech_plan_for_turn(
     ):
         return SpeechPlan(
             "happy",
-            1.0,
+            base.rate,
             "direct",
             "语气轻松。若有关键数字可用一次 <strong>…</strong> 强调；"
             "不要笑、不要吸气戏、不要旁白。",
         )
     return base
+
+
+def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
+    return any(marker in text for marker in markers)
+
+
+def _tts_instruction_for_plan(plan: SpeechPlan) -> str:
+    emotion = {
+        "neutral": "情绪自然平和",
+        "happy": "情绪轻松愉快，带一点自然笑意",
+        "sad": "整体带悲伤和低落感，但吐字清楚",
+        "surprised": "略带自然惊讶，不要夸张",
+        "angry": "整体带生气和不满，但不要吼叫或辱骂",
+        "fearful": "略带紧张不安，但保持清楚",
+        "disgusted": "带克制的反感，不要夸张",
+    }[plan.voice_emotion]
+    if plan.tone == "argumentative" and plan.voice_emotion == "neutral":
+        emotion = "情绪带克制的不满"
+    dialect = {
+        "standard": "",
+        "sichuan": "，使用自然四川话",
+        "beijing": "，使用自然北京话",
+    }[plan.dialect]
+    tone = {
+        "natural": "",
+        "coquettish": "，语气撒娇但不过分做作",
+        "intimate": "，语气暧昧亲近但保持边界",
+        "argumentative": "，像有火气地争辩，但不辱骂、不威胁",
+        "sweet": "，使用自然夹子音，不幼态化、不夸张",
+    }[plan.tone]
+    delivery = {
+        "direct": "，像熟人面对面自然聊天，不要播报腔或客服腔",
+        "deliberative": "，边想边自然说，允许短暂停顿，不要播报腔",
+        "light_laughter": "，只轻笑一次，不要连续发笑",
+        "supportive": "，温和关切地承接，不要笑，不要客服腔",
+    }[plan.delivery_mode]
+    # Rate and pitch use provider numeric fields; duplicating them here can conflict.
+    return f"{emotion}{dialect}{tone}{delivery}。"[:240]
+
+
+def _style_command_body(text: str) -> str | None:
+    normalized = text.strip(" ，,。！？!?；;")
+    for _ in range(3):
+        prefix = next(
+            (
+                candidate
+                for candidate in ("请", "麻烦", "你", "给我", "能不能", "可以", "接下来", "以后")
+                if normalized.startswith(candidate)
+            ),
+            None,
+        )
+        if prefix is None:
+            break
+        normalized = normalized[len(prefix) :].lstrip(" ，,：:")
+    style_prefixes = (
+        "用悲伤",
+        "用生气",
+        "用四川话",
+        "用北京话",
+        "用撒娇",
+        "用暧昧",
+        "用吵架",
+        "用争吵",
+        "用夹子音",
+        "用ASMR",
+        "悲伤一点说",
+        "生气一点说",
+        "四川话说",
+        "北京话说",
+        "撒娇一点说",
+        "暧昧一点说",
+        "夹子音说",
+        "说四川话",
+        "说北京话",
+        "说快",
+        "说慢",
+        "语速快",
+        "语速慢",
+        "快一点说",
+        "慢一点说",
+        "把语速",
+        "把音调",
+        "把声音",
+        "语速调",
+        "音调调",
+        "声音调",
+        "都用",
+    )
+    if normalized.startswith(style_prefixes):
+        return normalized
+    if normalized.startswith(("讲", "读", "回答", "告诉", "解释", "继续", "接着")):
+        return next(
+            (
+                clause.strip()
+                for clause in re.split(r"[，,；;]", normalized)[1:]
+                if clause.strip().startswith(style_prefixes)
+            ),
+            None,
+        )
+    return None
+
+
+def _apply_explicit_voice_style(plan: SpeechPlan, text: str) -> SpeechPlan:
+    command = _style_command_body(text)
+    if command is None:
+        return replace(plan, tts_instruction=_tts_instruction_for_plan(plan))
+
+    emotion = plan.voice_emotion
+    dialect: VoiceDialect = "standard"
+    tone: VoiceTone = "natural"
+    rate = plan.rate
+    pitch = 0
+    explicit_emotion = False
+
+    if _contains_any(command, ("用悲伤的语气", "用悲伤语气", "悲伤一点说", "语气悲伤一点")):
+        emotion = "sad"
+        explicit_emotion = True
+    elif _contains_any(command, ("用生气的语气", "用生气语气", "生气一点说", "语气生气一点")):
+        emotion = "angry"
+        explicit_emotion = True
+
+    if _contains_any(command, ("用四川话", "四川话说", "说四川话")):
+        dialect = "sichuan"
+    elif _contains_any(command, ("用北京话", "北京话说", "说北京话")):
+        dialect = "beijing"
+
+    if _contains_any(command, ("用撒娇的语气", "撒娇一点说", "语气撒娇")):
+        tone = "coquettish"
+    elif _contains_any(command, ("用暧昧的语气", "暧昧一点说", "用ASMR", "用asmr")):
+        tone = "intimate"
+    elif _contains_any(command, ("用吵架的语气", "像吵架一样说", "用争吵的语气")):
+        tone = "argumentative"
+    elif _contains_any(command, ("用夹子音", "夹子音说")):
+        tone = "sweet"
+
+    if _contains_any(
+        command,
+        ("快一点说", "说快点", "说快一点", "语速调快", "把语速调快", "语速快一些", "说得快一点"),
+    ):
+        rate = 1.10
+    elif _contains_any(
+        command,
+        ("慢一点说", "说慢点", "说慢一点", "语速调慢", "把语速调慢", "语速慢一些", "说得慢一点"),
+    ):
+        rate = 0.90
+
+    if _contains_any(
+        command,
+        ("音调调高", "音调提高", "音调高一点", "声音调高", "声音提高", "声音高一点"),
+    ):
+        pitch = 2
+    elif _contains_any(
+        command,
+        ("音调调低", "音调降低", "音调低一点", "声音调低", "声音降低", "声音低一点"),
+    ):
+        pitch = -2
+
+    styled = replace(
+        plan,
+        voice_emotion=emotion,
+        delivery_mode="direct" if explicit_emotion else plan.delivery_mode,
+        strip_paralinguistic=False if explicit_emotion else plan.strip_paralinguistic,
+        dialect=dialect,
+        tone=tone,
+        rate=1.0 if explicit_emotion and rate == plan.rate else rate,
+        pitch=pitch,
+    )
+    return replace(styled, tts_instruction=_tts_instruction_for_plan(styled))
+
+
+def speech_plan_for_turn(
+    *,
+    label: str,
+    provider_label: str,
+    text: str,
+    evidence: tuple[str, ...] = (),
+    use_markup_tags: bool = False,
+) -> SpeechPlan:
+    """Choose one bounded provider-neutral style, including explicit requests."""
+    plan = _semantic_speech_plan_for_turn(
+        label=label,
+        provider_label=provider_label,
+        text=text,
+        evidence=evidence,
+        use_markup_tags=use_markup_tags,
+    )
+    return _apply_explicit_voice_style(plan, text)
 
 
 def mascot_expression_for_reply(

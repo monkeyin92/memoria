@@ -62,6 +62,40 @@ async def test_incremental_tasks_and_two_sessions_reuse_one_connection() -> None
 
 
 @pytest.mark.asyncio
+async def test_style_and_reference_are_session_context_not_synthesized_text() -> None:
+    server = MockDoubaoServer()
+    server.start()
+    tts = DoubaoTTS(_config(server, style_control_enabled=True))
+    try:
+        tts.apply_speech_plan(
+            emotion="sad",
+            rate=0.9,
+            instruction="整体带悲伤和低落感，但吐字清楚。",
+            pitch=-2,
+            reference_contexts=("用户：我今天有点难过。",),
+        )
+        result = await tts.synthesize_stream_text(
+            ["我在这里陪着你。"],
+            fence=GenerationFence("style-context", 1, 1, 0),
+        )
+
+        assert result.pcm and result.words
+        params = server.start_session_params[0]
+        assert params["context_texts"] == [
+            "语音要求：整体带悲伤和低落感，但吐字清楚。\n"
+            "引用上文（只理解语境和承接情绪，不要朗读）："
+            "用户：我今天有点难过。"
+        ]
+        assert params["audio_params"]["speech_rate"] == -10
+        assert params["post_process"] == {"pitch": -2}
+        assert server.task_requests == [["我在这里陪着你。"]]
+        assert "我今天有点难过" not in server.task_requests[0][0]
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
 async def test_first_audio_timeout_retries_with_a_fresh_connection() -> None:
     server = MockDoubaoServer(scenario="slow_once")
     server.start()
@@ -145,6 +179,44 @@ async def test_provider_smoke_synthesizes_then_cancels_an_active_session(
         assert len(server.canceled_sessions) == 1
     finally:
         server.stop()
+
+
+@pytest.mark.asyncio
+async def test_provider_smoke_gates_enabled_style_context_on_raw_alignment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = MockDoubaoServer(scenario="slow_after_sixth")
+    server.start()
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("DOUBAO_TTS_MOCK_WS_URL", server.ws_url)
+    monkeypatch.setenv("DOUBAO_TTS_API_KEY", "test")
+    monkeypatch.setenv("DOUBAO_TTS_VOICE_PROFILE", "warm_companion")
+    monkeypatch.setenv("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "true")
+    try:
+        pcm_16k = await provider_smoke_test.smoke_doubao()
+
+        assert pcm_16k
+        assert server.sessions == 7
+        assert all(params["context_texts"] for params in server.start_session_params[1:6])
+        assert len(pcm_16k) == 6
+        assert len(server.canceled_sessions) == 1
+    finally:
+        server.stop()
+
+
+@pytest.mark.asyncio
+async def test_required_provider_smoke_fails_when_style_control_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("MEMORIA_PROVIDER_SMOKE_REQUIRED", "true")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test")
+    monkeypatch.setenv("DOUBAO_TTS_API_KEY", "test")
+    monkeypatch.delenv("DOUBAO_TTS_STYLE_CONTROL_ENABLED", raising=False)
+
+    assert await provider_smoke_test.main() == 1
+    assert "style control is required but disabled" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""Delivery-mode TTS rewrites for CosyVoice (P0)."""
+"""Provider-neutral delivery-mode TTS rewrites."""
 
 from __future__ import annotations
 

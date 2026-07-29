@@ -9,6 +9,7 @@ import inspect
 import json
 import logging
 import uuid
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -93,11 +94,15 @@ class QwenEmotionSidecar:
     ) -> None:
         self.config = config
         self._on_observation = on_observation
-        self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=config.queue_chunks)
+        self._queue: asyncio.Queue[tuple[int | None, bytes]] = asyncio.Queue(
+            maxsize=config.queue_chunks
+        )
         self._task: asyncio.Task[None] | None = None
         self._closing = False
         self._active_turn_id: int | None = None
-        self._provider_turn_id: int | None = None
+        self._sent_samples = 0
+        self._sent_turn_intervals: deque[tuple[int, int, int | None]] = deque()
+        self._provider_item_turns: dict[str, int | None] = {}
         self.dropped_chunks = 0
 
     @property
@@ -112,7 +117,7 @@ class QwenEmotionSidecar:
                 self._queue.get_nowait()
                 self.dropped_chunks += 1
         with contextlib.suppress(asyncio.QueueFull):
-            self._queue.put_nowait(pcm)
+            self._queue.put_nowait((self._active_turn_id, pcm))
 
     def start_turn(self, turn_id: int) -> None:
         self._active_turn_id = turn_id
@@ -135,7 +140,9 @@ class QwenEmotionSidecar:
                 await asyncio.sleep(self.config.reconnect_delay_s)
 
     async def _run_connection(self) -> None:
-        self._provider_turn_id = None
+        self._sent_samples = 0
+        self._sent_turn_intervals.clear()
+        self._provider_item_turns.clear()
         async with websockets.connect(
             self.config.ws_url,
             additional_headers={
@@ -180,7 +187,8 @@ class QwenEmotionSidecar:
 
     async def _send_loop(self, ws: Any) -> None:
         while not self._closing:
-            pcm = await self._queue.get()
+            turn_id, pcm = await self._queue.get()
+            self._record_sent_audio(turn_id, pcm)
             await ws.send(
                 json.dumps(
                     {
@@ -190,6 +198,32 @@ class QwenEmotionSidecar:
                     }
                 )
             )
+
+    def _record_sent_audio(self, turn_id: int | None, pcm: bytes) -> None:
+        start = self._sent_samples
+        self._sent_samples += len(pcm) // 2
+        if self._sent_turn_intervals and self._sent_turn_intervals[-1][2] == turn_id:
+            previous_start, _, _ = self._sent_turn_intervals.pop()
+            self._sent_turn_intervals.append((previous_start, self._sent_samples, turn_id))
+        else:
+            self._sent_turn_intervals.append((start, self._sent_samples, turn_id))
+
+    def _turn_for_audio_start(self, audio_start_ms: object) -> int | None:
+        if not isinstance(audio_start_ms, int) or audio_start_ms < 0:
+            return None
+        start_sample = audio_start_ms * self.config.sample_rate // 1000
+        while (
+            len(self._sent_turn_intervals) > 1 and self._sent_turn_intervals[0][1] <= start_sample
+        ):
+            self._sent_turn_intervals.popleft()
+        return next(
+            (
+                turn_id
+                for begin, end, turn_id in self._sent_turn_intervals
+                if begin <= start_sample < end
+            ),
+            None,
+        )
 
     async def _receive_loop(self, ws: Any) -> None:
         async for raw in ws:
@@ -202,12 +236,21 @@ class QwenEmotionSidecar:
             if not isinstance(event, dict):
                 continue
             if event.get("type") == "input_audio_buffer.speech_started":
-                self._provider_turn_id = self._active_turn_id
+                item_id = event.get("item_id")
+                if isinstance(item_id, str) and item_id:
+                    self._provider_item_turns[item_id] = self._turn_for_audio_start(
+                        event.get("audio_start_ms")
+                    )
                 continue
-            result = parse_emotion_event(event, turn_id=self._provider_turn_id)
+            if event.get("type") != "conversation.item.input_audio_transcription.completed":
+                continue
+            item_id = event.get("item_id")
+            turn_id = (
+                self._provider_item_turns.pop(item_id, None) if isinstance(item_id, str) else None
+            )
+            result = parse_emotion_event(event, turn_id=turn_id)
             if result is None:
                 continue
-            self._provider_turn_id = None
             callback_result = self._on_observation(result)
             if inspect.isawaitable(callback_result):
                 await callback_result

@@ -81,15 +81,23 @@ async def test_provider_smoke_runs_doubao_funasr_and_llm_without_network(
     monkeypatch.setenv("OFFLINE_MOCK", "false")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
     monkeypatch.setenv("DOUBAO_TTS_API_KEY", "test-doubao-key")
+    monkeypatch.setenv("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "true")
     monkeypatch.setenv("LLM_PROVIDER", "qwen")
     calls: list[str] = []
 
-    async def fake_doubao() -> bytes:
+    async def fake_doubao() -> list[tuple[bytes, tuple[str, ...], tuple[str, ...]]]:
         calls.append("doubao")
-        return b"\x00\x00"
+        return [(b"\x00\x00", ("测试",), ())]
 
-    async def fake_funasr(pcm: bytes) -> None:
+    async def fake_funasr(
+        pcm: bytes,
+        *,
+        expected_markers: tuple[str, ...],
+        forbidden_markers: tuple[str, ...],
+    ) -> None:
         assert pcm == b"\x00\x00"
+        assert expected_markers == ("测试",)
+        assert forbidden_markers == ()
         calls.append("funasr")
 
     async def fake_llm() -> str:

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from typing import Any
 
+from services.agent.src.orchestration.context_manager import ChatMessage, SpeakerScope
 from services.agent.src.response_planner_client import ResponsePlan
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,31 @@ def current_user_only_chat_context(chat_ctx: Any) -> Any:
     for item in items:
         if item is not current_user:
             safe.remove(item)
+    return safe
+
+
+def scoped_working_chat_context(
+    chat_ctx: Any,
+    session_turns: Sequence[ChatMessage],
+    *,
+    speaker_scope: SpeakerScope,
+) -> Any:
+    """Keep only the trailing same-scope working context for this room."""
+
+    trailing: list[ChatMessage] = []
+    for turn in reversed(session_turns):
+        if turn.speaker_scope != speaker_scope:
+            break
+        trailing.append(turn)
+    trailing.reverse()
+    if not trailing or trailing[-1].role != "user":
+        return current_user_only_chat_context(chat_ctx)
+
+    safe = chat_ctx.copy()
+    for item in list(safe.items):
+        safe.remove(item)
+    for turn in trailing:
+        safe.add_message(role=turn.role, content=turn.content)
     return safe
 
 
@@ -120,6 +147,8 @@ class ContextAssembler:
         owner_salutation: str | None = None,
         resume_interrupted_reply: bool = False,
         force_current_user_only: bool = False,
+        session_turns: Sequence[ChatMessage] = (),
+        delivery_instruction: str = "",
     ) -> Any:
         if force_current_user_only:
             safe = current_user_only_chat_context(chat_ctx)
@@ -133,13 +162,18 @@ class ContextAssembler:
             safe = (
                 heard_only_chat_context(chat_ctx, heard_assistant)
                 if speaker_class == "owner"
-                else current_user_only_chat_context(chat_ctx)
+                else scoped_working_chat_context(
+                    chat_ctx,
+                    session_turns,
+                    speaker_scope="public",
+                )
             )
         safe.add_message(
             role="system",
             content=self._response_plan_block(
                 response_plan,
                 resume_interrupted_reply=resume_interrupted_reply,
+                delivery_instruction=delivery_instruction,
             ),
         )
         if speaker_class == "owner" and _safe_salutation(owner_salutation):
@@ -164,8 +198,11 @@ class ContextAssembler:
         response_plan: ResponsePlan,
         *,
         resume_interrupted_reply: bool,
+        delivery_instruction: str,
     ) -> str:
         instructions = response_plan.instructions
+        if delivery_instruction.strip():
+            instructions += "\n表达方式：" + delivery_instruction.strip()
         if resume_interrupted_reply:
             instructions += (
                 "\n恢复规则：用户当前是在恢复刚才由其主动暂停的同一条回答；"

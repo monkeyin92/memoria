@@ -58,11 +58,11 @@ def test_context_redaction_summary_trim_and_asr_items() -> None:
         for marker in ("[手机号]", "[身份证]", "[银行卡]", "[邮箱]", "[密钥]", "[地址]")
     )
     ctx = ContextManager(system_prompt="system", business_summary="业" * 700, max_turns=2)
-    ctx.commit_assistant_heard("  ")
+    ctx.commit_assistant_heard("  ", speaker_scope="public")
     ctx.add_user("旧消息")
-    ctx.commit_interrupted_assistant_text("旧回复")
+    ctx.commit_interrupted_assistant_text("旧回复", speaker_scope="public")
     ctx.add_user("新消息")
-    ctx.commit_assistant_heard("新回复")
+    ctx.commit_assistant_heard("新回复", speaker_scope="public")
     messages = ctx.build_messages(current_user_final="13800138000", tools=[{}])
     assert messages[1]["content"] == "当前业务状态摘要：" + "业" * 600
     assert [message["content"] for message in messages[-3:]] == [
@@ -74,6 +74,40 @@ def test_context_redaction_summary_trim_and_asr_items() -> None:
         {"role": "user", "text": "新"},
         {"role": "assistant", "text": "新"},
     ]
+
+
+def test_tts_reference_context_is_actual_heard_redacted_and_scope_bounded() -> None:
+    ctx = ContextManager(system_prompt="system")
+    ctx.add_user("主人说了私密安排", speaker_scope="owner")
+    ctx.commit_assistant_heard("主人专属回复", speaker_scope="owner")
+    ctx.add_user("公开聊咖啡", speaker_scope="public")
+    ctx.commit_assistant_heard("可以先选拿铁", speaker_scope="public")
+
+    reference = ctx.tts_reference_context(
+        current_user_final="我的手机号是13800138000，今天好冷",
+        speaker_scope="public",
+    )
+
+    assert reference == (
+        "用户：公开聊咖啡\n助手：可以先选拿铁\n用户：我的手机号是[手机号]，今天好冷",
+    )
+    assert "主人" not in reference[0]
+
+
+def test_tts_reference_context_keeps_current_user_when_prior_turns_are_long() -> None:
+    ctx = ContextManager(system_prompt="system")
+    ctx.add_user("甲" * 240, speaker_scope="public")
+    ctx.commit_assistant_heard("乙" * 240, speaker_scope="public")
+    ctx.add_user("丙" * 240, speaker_scope="public")
+    ctx.commit_assistant_heard("丁" * 240, speaker_scope="public")
+
+    reference = ctx.tts_reference_context(
+        current_user_final="如何用英语点一杯拿铁",
+        speaker_scope="public",
+    )
+
+    assert len(reference[0]) <= 320
+    assert reference[0].endswith("用户：如何用英语点一杯拿铁")
 
 
 def test_heard_tracker_edge_fallbacks() -> None:
@@ -353,6 +387,29 @@ async def test_orchestrator_background_result_and_actual_playback_edges() -> Non
     accepted = await orch.accept_background_result(fence, {"summary": "完成"})
     assert accepted == {"summary": "完成"}
     assert orch.state is ConversationState.THINKING
+
+
+@pytest.mark.asyncio
+async def test_late_owner_playback_keeps_the_originating_fence_scope() -> None:
+    orch = Orchestrator()
+    await orch.ready()
+    owner_fence = await orch.commit_turn("主人的私密问题", speaker_scope="owner")
+    await orch.commit_turn("随后开始的公开问题", speaker_scope="public")
+
+    assert orch.state_machine is not None
+    orch.state_machine.state = ConversationState.SPEAKING
+    await orch.finish_livekit_playback(
+        playback_position_s=0.2,
+        synchronized_transcript="这是主人专属的迟到回复",
+        reply_fence=owner_fence,
+    )
+
+    assistant = orch.context.turns[-1]
+    assert (assistant.role, assistant.speaker_scope) == ("assistant", "owner")
+    assert orch.context.tts_reference_context(
+        current_user_final="继续公开问题",
+        speaker_scope="public",
+    ) == ("用户：继续公开问题",)
 
 
 @pytest.mark.asyncio

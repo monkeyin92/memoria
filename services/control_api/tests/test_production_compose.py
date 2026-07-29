@@ -50,9 +50,7 @@ def test_miniprogram_gateway_is_isolated_and_only_exposes_loopback_wss_upstream(
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
     dockerfile = (ROOT / "infra" / "Dockerfile.miniprogram-gateway").read_text(encoding="utf-8")
     nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
-    media = (ROOT / "infra" / "nginx-memoria-miniprogram-media.conf").read_text(
-        encoding="utf-8"
-    )
+    media = (ROOT / "infra" / "nginx-memoria-miniprogram-media.conf").read_text(encoding="utf-8")
     limits = (ROOT / "infra" / "nginx-memoria-limits.conf").read_text(encoding="utf-8")
     loopback_limits = (ROOT / "infra" / "nginx-memoria-loopback-smoke.conf").read_text(
         encoding="utf-8"
@@ -338,6 +336,7 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
             "DOUBAO_TTS_APP_ID": "doubao-app-id",
             "DOUBAO_TTS_ACCESS_TOKEN": "doubao-access-token",
             "DOUBAO_TTS_CONNECT_TIMEOUT_S": "5",
+            "DOUBAO_TTS_STYLE_CONTROL_ENABLED": "true",
             "FUNASR_MODEL": "fun-asr-realtime",
             "FUNASR_CONTEXT_ENABLED": "false",
             "FUNASR_VOCABULARY_ID": "vocab-control-commands",
@@ -356,6 +355,7 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     assert agent["DOUBAO_TTS_APP_ID"] == "doubao-app-id"
     assert agent["DOUBAO_TTS_ACCESS_TOKEN"] == "doubao-access-token"
     assert agent["DOUBAO_TTS_CONNECT_TIMEOUT_S"] == "5"
+    assert agent["DOUBAO_TTS_STYLE_CONTROL_ENABLED"] == "true"
     assert "DOUBAO_TTS_APP_ID" not in control
     assert "DOUBAO_TTS_ACCESS_TOKEN" not in control
     assert "DOUBAO_TTS_API_KEY" not in control

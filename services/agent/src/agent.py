@@ -457,6 +457,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             )
         except (TypeError, ValueError):
             return False
+        self._runtime.apply_speech_plan_to_tts(fence)
         return self._bind_current_tts_voice(fence) and self._generation_voice_matches_target(
             self._runtime.generation_voice_for(fence), plan.voice_target
         )
@@ -832,12 +833,18 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             if mode == "legacy"
             else ("privacy_refusal", "unknown")
         )
-        instructions = (
-            "仅依据当前用户这一轮内容回答。不得读取、引用或推断历史对话、"
-            "账户主人的私人记忆、人格、关系或工具结果；不确定时明确说明。"
-            if companion
-            else _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
-        )
+        instructions = _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
+        if companion and speaker_class == "owner":
+            instructions = (
+                "仅依据当前用户这一轮内容回答。不得读取、引用或推断历史对话、"
+                "账户主人的私人记忆、人格、关系或工具结果；不确定时明确说明。"
+            )
+        elif companion:
+            instructions = (
+                "仅依据当前用户这一轮及本次会话内标记为公开的工作记忆回答。"
+                "不得读取、引用或推断账户主人的持久历史、私人记忆、人格、关系或"
+                "工具结果；不确定时明确说明。"
+            )
         if companion and policy.companion_style_prompt is not None:
             instructions += "\n" + policy.companion_style_prompt
         return ResponsePlan(
@@ -1188,6 +1195,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
 
         cancellation = self._runtime.cancellation_context()
         fence = cancellation.fence
+        speech_plan = self._runtime.speech_plan_for_fence(fence)
         policy = self._runtime.mode_policy_for_fence(fence)
         if self._runtime.mode_policy_enforced and not policy.allows_conversation(
             self._runtime.current_speaker_class
@@ -1329,10 +1337,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                             )
                             first_phrase_marked = True
                         yield accepted_segment
-                    if (
-                        cancellation.is_current(self._runtime.fence)
-                        and not reply_budget_exhausted
-                    ):
+                    if cancellation.is_current(self._runtime.fence) and not reply_budget_exhausted:
                         for segment in segmenter.flush(end_of_stream=True):
                             accepted_segment = _accept_segment(segment.text)
                             if accepted_segment is None:
@@ -1361,7 +1366,12 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 response_plan=response_plan,
                 owner_salutation=owner_salutation,
                 resume_interrupted_reply=resume_interrupted_reply,
-                force_current_user_only=self._is_local_safe_plan(response_plan),
+                force_current_user_only=(
+                    self._is_local_safe_plan(response_plan)
+                    and (speaker_class == "owner" or resume_interrupted_reply)
+                ),
+                session_turns=self._runtime.orchestrator.context.turns,
+                delivery_instruction=speech_plan.llm_instruction,
             )
             user_turns = [
                 turn.content
@@ -1376,13 +1386,11 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 else ""
             )
             longform_hints = (
-                _LONGFORM_HINTS
-                if self._runtime.barge_in_enabled
-                else _CONTROLLED_LONGFORM_HINTS
+                _LONGFORM_HINTS if self._runtime.barge_in_enabled else _CONTROLLED_LONGFORM_HINTS
             )
             longform = any(hint in last_user for hint in longform_hints) or (
                 self._runtime.barge_in_enabled
-                and self._runtime.speech_plan.delivery_mode in {"deliberative", "supportive"}
+                and speech_plan.delivery_mode in {"deliberative", "supportive"}
             )
             if longform:
                 max_chars = MAX_VOICE_REPLY_CHARS_LONGFORM
@@ -1492,6 +1500,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
 
         cancellation = self._runtime.cancellation_context()
         fence = cancellation.fence
+        speech_plan = self._runtime.speech_plan_for_fence(fence)
         self._runtime.heard_tracker.expect_utterance(fence)
         if self._runtime.tts is not None:
             self._runtime.tts.bind_fence(fence)
@@ -1506,7 +1515,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             async for part in text:
                 rewritten = prepare_tts_text(
                     part,
-                    self._runtime.speech_plan,
+                    speech_plan,
                     is_first_segment=first_segment,
                     use_markup_tags=self._runtime.use_paralinguistic_tags,
                 )
@@ -2080,18 +2089,30 @@ async def entrypoint(ctx: Any) -> None:
         playback_started; wait_for_playout returned in ~200ms with no audible audio.
         """
         phrase = (text or "").strip() or "嗯，你说。"
+        ack_fence = runtime.fence
         await asyncio.sleep(0.12)
+        if not ack_fence.matches(runtime.fence):
+            runtime.mark_audio_event(
+                "control_ack_played",
+                status="ignored",
+                detail={"reason": "stale_fence"},
+            )
+            return
         sample_rate = int(runtime_settings.doubao_tts_sample_rate or 24000)
         played = False
         if hasattr(tts_plugin, "synthesize_stream_text"):
             try:
                 if hasattr(tts_plugin, "apply_speech_plan"):
-                    tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
+                    tts_plugin.apply_speech_plan(
+                        emotion="neutral",
+                        rate=1.0,
+                        fence=ack_fence,
+                    )
                 if hasattr(tts_plugin, "bind_fence"):
-                    tts_plugin.bind_fence(runtime.fence)
+                    tts_plugin.bind_fence(ack_fence)
                 result = await tts_plugin.synthesize_stream_text(
                     [phrase],
-                    fence=runtime.fence,
+                    fence=ack_fence,
                 )
                 if result.pcm and not result.discarded:
                     await _play_pcm_via_room_track(
@@ -2113,7 +2134,11 @@ async def entrypoint(ctx: Any) -> None:
             return
         # Last resort: session.say (often silent after barge-in).
         if hasattr(tts_plugin, "apply_speech_plan"):
-            tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
+            tts_plugin.apply_speech_plan(
+                emotion="neutral",
+                rate=1.0,
+                fence=ack_fence,
+            )
         handle = session.say(
             phrase,
             allow_interruptions=False,

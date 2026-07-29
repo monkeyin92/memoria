@@ -29,7 +29,7 @@ from services.agent.src.orchestration.cue_scheduler import CueScheduler, Listene
 from services.agent.src.orchestration.emotion import (
     EmotionObservation,
     EmotionSmoother,
-    neutral_observation,
+    aggregate_acoustic_segments,
 )
 from services.agent.src.orchestration.heard_text_tracker import HeardTextTracker
 from services.agent.src.orchestration.interruption_guard import (
@@ -246,6 +246,8 @@ class DuplexRuntime:
     cue_scheduler: CueScheduler = field(default_factory=CueScheduler)
     emotion_smoother: EmotionSmoother = field(default_factory=EmotionSmoother)
     speech_plan: SpeechPlan = field(default_factory=lambda: speech_plan_for_emotion("neutral"))
+    _speech_plans_by_fence: dict[GenerationFence, SpeechPlan] = field(default_factory=dict)
+    _tts_references_by_fence: dict[GenerationFence, tuple[str, ...]] = field(default_factory=dict)
     interaction_phase: InteractionPhase = InteractionPhase.CONNECTING
     use_paralinguistic_tags: bool = False
     speaker_verifier: SpeakerVerifier = field(default_factory=SpeakerVerifier)
@@ -254,9 +256,7 @@ class DuplexRuntime:
     _pending_assistant_text: str = ""
     _pending_assistant_text_epoch: int = 0
     _input_policy_epoch: int = 0
-    _transcript_revisions: TurnRevisionTracker = field(
-        default_factory=TurnRevisionTracker
-    )
+    _transcript_revisions: TurnRevisionTracker = field(default_factory=TurnRevisionTracker)
     _played_assistant_text: str = ""
     _next_user_prompt_kind: str = "spontaneous"
     _fresh_user_speech: bool = False
@@ -359,7 +359,7 @@ class DuplexRuntime:
     _listener_cue_aec_healthy: bool = False
     _emotion_turn_observer: Callable[[int], None] | None = None
     _keyword_spotter_finalizer: Callable[[KeywordSpotterBinding | None], None] | None = None
-    _emotion_by_turn: dict[int, EmotionObservation] = field(default_factory=dict)
+    _emotion_segments_by_turn: dict[int, list[tuple[str, str]]] = field(default_factory=dict)
     _voice_profile_refresher: Callable[[], Coroutine[Any, Any, Any]] | None = None
     _voice_profile_refresh_task: asyncio.Task[Any] | None = None
 
@@ -403,6 +403,35 @@ class DuplexRuntime:
         fence: GenerationFence | None = None,
     ) -> CancellationContext:
         return self.orchestrator.cancellation_context(fence)
+
+    def speech_plan_for_fence(self, fence: GenerationFence) -> SpeechPlan:
+        exact = self._speech_plans_by_fence.get(fence)
+        if exact is not None:
+            return exact
+        return next(
+            (
+                plan
+                for bound_fence, plan in reversed(self._speech_plans_by_fence.items())
+                if bound_fence.turn_id == fence.turn_id
+            ),
+            self.speech_plan,
+        )
+
+    def apply_speech_plan_to_tts(self, fence: GenerationFence) -> None:
+        if self.tts is None:
+            return
+        plan = self.speech_plan_for_fence(fence)
+        self.tts.bind_fence(fence)
+        apply_plan = getattr(self.tts, "apply_speech_plan", None)
+        if callable(apply_plan):
+            apply_plan(
+                emotion=plan.voice_emotion,
+                rate=plan.rate,
+                instruction=plan.tts_instruction,
+                pitch=plan.pitch,
+                reference_contexts=self._tts_references_by_fence.get(fence, ()),
+                fence=fence,
+            )
 
     @property
     def heard_tracker(self) -> HeardTextTracker:
@@ -2042,15 +2071,25 @@ class DuplexRuntime:
         *,
         text: str = "",
         turn_id: int | None = None,
-    ) -> EmotionObservation:
+    ) -> None:
         current_turn_id = self.fence.turn_id
-        if turn_id is None or turn_id < current_turn_id or turn_id > current_turn_id + 1:
-            return neutral_observation(time.monotonic_ns(), self.emotion_smoother.ttl_ms)
-        observation = self.emotion_smoother.observe_acoustic(
-            provider_label,
-            text=text,
-            turn_id=turn_id,
-        )
+        if turn_id is None or turn_id <= current_turn_id or turn_id > current_turn_id + 1:
+            return
+        segments = self._emotion_segments_by_turn.setdefault(turn_id, [])
+        if len(segments) < 8:
+            segments.append((provider_label, text[:512]))
+        self._emotion_segments_by_turn = {
+            key: value
+            for key, value in self._emotion_segments_by_turn.items()
+            if key > current_turn_id
+        }
+
+    def _publish_emotion_observation(
+        self,
+        observation: EmotionObservation,
+        *,
+        turn_id: int,
+    ) -> None:
         logger.info(
             "emotion_observation label=%s provider_label=%s evidence=%s turn_id=%s",
             observation.label,
@@ -2058,10 +2097,6 @@ class DuplexRuntime:
             ",".join(observation.evidence),
             turn_id,
         )
-        self._emotion_by_turn[turn_id] = observation
-        self._emotion_by_turn = {
-            key: value for key, value in self._emotion_by_turn.items() if key >= current_turn_id
-        }
         fence = self.fence
         target_generation_id = fence.generation_id + int(turn_id > fence.turn_id)
         self._publish(
@@ -2079,14 +2114,28 @@ class DuplexRuntime:
                 "at": datetime.now(UTC).isoformat(),
             }
         )
-        return observation
 
-    def _apply_speech_plan(self, user_text: str, *, turn_id: int) -> SpeechPlan:
-        acoustic = self._emotion_by_turn.pop(turn_id, None)
-        self._emotion_by_turn = {
-            key: value for key, value in self._emotion_by_turn.items() if key > turn_id
+    def _apply_speech_plan(
+        self,
+        user_text: str,
+        *,
+        turn_id: int,
+        fence: GenerationFence,
+    ) -> SpeechPlan:
+        segments = self._emotion_segments_by_turn.pop(turn_id, [])
+        self._emotion_segments_by_turn = {
+            key: value for key, value in self._emotion_segments_by_turn.items() if key > turn_id
         }
+        acoustic = None
+        if segments:
+            provider_label, acoustic_text = aggregate_acoustic_segments(segments)
+            acoustic = self.emotion_smoother.observe_acoustic(
+                provider_label,
+                text=acoustic_text,
+                turn_id=turn_id,
+            )
         observation = self.emotion_smoother.observe_text(user_text, acoustic=acoustic)
+        self._publish_emotion_observation(observation, turn_id=turn_id)
         self.speech_plan = speech_plan_for_turn(
             label=observation.label,
             provider_label=observation.provider_label,
@@ -2094,17 +2143,30 @@ class DuplexRuntime:
             evidence=observation.evidence,
             use_markup_tags=self.use_paralinguistic_tags,
         )
+        self._speech_plans_by_fence[fence] = self.speech_plan
+        while len(self._speech_plans_by_fence) > 16:
+            self._speech_plans_by_fence.pop(next(iter(self._speech_plans_by_fence)))
         apply_plan = getattr(self.tts, "apply_speech_plan", None)
         if callable(apply_plan):
-            apply_plan(
-                emotion=self.speech_plan.voice_emotion,
-                rate=self.speech_plan.rate,
+            speaker_scope: Literal["owner", "public"] = (
+                "owner" if self._speaker_class == "owner" else "public"
             )
+            reference_contexts = self.orchestrator.context.tts_reference_context(
+                current_user_final=user_text,
+                speaker_scope=speaker_scope,
+            )
+            self._tts_references_by_fence[fence] = reference_contexts
+            while len(self._tts_references_by_fence) > 16:
+                self._tts_references_by_fence.pop(next(iter(self._tts_references_by_fence)))
+            self.apply_speech_plan_to_tts(fence)
         logger.info(
-            "speech_plan_selected emotion=%s rate=%.2f delivery=%s "
-            "tts_prefix=%s strip=%s turn_id=%s",
+            "speech_plan_selected emotion=%s dialect=%s tone=%s rate=%.2f pitch=%s "
+            "delivery=%s tts_prefix=%s strip=%s turn_id=%s",
             self.speech_plan.voice_emotion,
+            self.speech_plan.dialect,
+            self.speech_plan.tone,
             self.speech_plan.rate,
+            self.speech_plan.pitch,
             self.speech_plan.delivery_mode,
             self.speech_plan.tts_prefix or "-",
             self.speech_plan.strip_paralinguistic,
@@ -2734,14 +2796,17 @@ class DuplexRuntime:
         history_eligible = self._current_history_eligible()
         owner_projection_eligible = self._current_owner_projection_eligible()
         self.cancel_listener_cue()
-        self._apply_speech_plan(user_text, turn_id=self.fence.turn_id + 1)
         self._last_playback_completed_ns = None
         if self.orchestrator.state is ConversationState.CONNECTING:
             await self.orchestrator.ready()
         if self.orchestrator.state is ConversationState.TOOL_WAITING:
             await self.orchestrator.bump_tool_epoch_on_condition_change()
         await self.orchestrator.on_vad_start()
-        fence = await self.orchestrator.commit_turn(user_text)
+        fence = await self.orchestrator.commit_turn(
+            user_text,
+            speaker_scope="owner" if self._speaker_class == "owner" else "public",
+        )
+        self._apply_speech_plan(user_text, turn_id=fence.turn_id, fence=fence)
         self._last_committed_user_text_normalized = normalize_short(user_text)
         self._bind_mode_policy(fence)
         self._bind_history_eligibility(fence, history_eligible)
@@ -2761,8 +2826,6 @@ class DuplexRuntime:
         self._played_assistant_text = ""
         self._playback_fence = None
         self._assistant_expression_fence = None
-        if self.tts is not None:
-            self.tts.bind_fence(fence)
         return fence
 
     async def on_assistant_speaking(
@@ -2798,7 +2861,7 @@ class DuplexRuntime:
                 "type": "assistant_expression",
                 "session_id": self.session_id,
                 "expression": mascot_expression_for_reply(
-                    plan=self.speech_plan,
+                    plan=self.speech_plan_for_fence(fence),
                     text=full_text,
                 ),
                 "turn_id": fence.turn_id,
@@ -3556,6 +3619,7 @@ class DuplexRuntime:
         heard = await self.orchestrator.finish_livekit_playback(
             tools_active=self._pending_tool_results > 0,
             synchronized_transcript=heard,
+            reply_fence=reply_fence,
         )
         self._was_speaking = False
         self._pending_assistant_text = ""

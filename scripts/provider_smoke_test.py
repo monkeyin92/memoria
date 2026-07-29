@@ -20,6 +20,10 @@ from services.agent.src.providers.deepseek import (
 )
 from services.agent.src.providers.doubao_protocol import pcm_duration_ms
 from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
+from services.agent.src.providers.doubao_voice_catalog import (
+    DOUBAO_TTS_MODEL,
+    DOUBAO_VOICE_CATALOG,
+)
 from services.agent.src.providers.funasr_protocol import timestamps_monotonic
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
 from services.agent.src.providers.interrupt_semantic_classifier import (
@@ -69,7 +73,7 @@ def _validate_doubao_result(
         )
 
 
-async def smoke_doubao() -> bytes:
+async def smoke_doubao() -> list[tuple[bytes, tuple[str, ...], tuple[str, ...]]]:
     cfg = DoubaoTTSConfig.from_env({**os.environ, "DOUBAO_TTS_POOL_SIZE": "1"})
     tts = DoubaoTTS(cfg)
     try:
@@ -86,6 +90,49 @@ async def smoke_doubao() -> bytes:
             alignment_status=result.alignment_status,
         )
 
+        samples = [(result.pcm, ("实时语音测试",), ())]
+        if cfg.style_control_enabled:
+            styled_text = "我在这里，慢慢说就好。"
+            reference_markers = ("今天有点难过", "想找人聊聊")
+            for index, voice in enumerate(DOUBAO_VOICE_CATALOG, 2):
+                fence = GenerationFence(
+                    f"provider-smoke-doubao-style-{voice.profile_id}",
+                    index,
+                    index,
+                    0,
+                )
+                tts.apply_voice_profile(
+                    model=DOUBAO_TTS_MODEL,
+                    resource_id=DOUBAO_TTS_MODEL,
+                    voice=voice.speaker_id,
+                    profile_id=voice.profile_id,
+                    provider="volcengine_doubao",
+                    voice_kind="designed",
+                )
+                tts.bind_fence(fence)
+                tts.apply_speech_plan(
+                    emotion="sad",
+                    rate=0.95,
+                    instruction="温柔关切地承接，略带伤感，但不要播报腔。",
+                    pitch=-1,
+                    reference_contexts=("用户：今天有点难过，想找人聊聊。",),
+                    fence=fence,
+                )
+                styled = await tts.synthesize_stream_text([styled_text], fence=fence)
+                _validate_doubao_result(
+                    styled.pcm,
+                    styled.words,
+                    sample_rate=cfg.sample_rate,
+                    num_channels=1,
+                    alignment_status=styled.alignment_status,
+                )
+                if styled.alignment_status != "ok":
+                    raise AssertionError(
+                        "Doubao style context requires raw word timestamp alignment=ok, "
+                        f"profile={voice.profile_id} got {styled.alignment_status}"
+                    )
+                samples.append((styled.pcm, ("在这里", "慢慢说"), reference_markers))
+
         session_started = asyncio.Event()
         tts.set_trace_callback(
             lambda name, _status, _detail: (
@@ -93,7 +140,7 @@ async def smoke_doubao() -> bytes:
             )
         )
         cancel = asyncio.Event()
-        cancel_fence = GenerationFence("provider-smoke-doubao-cancel", 2, 2, 0)
+        cancel_fence = GenerationFence("provider-smoke-doubao-cancel", 8, 8, 0)
         cancel_count = tts.pool.metrics.get(
             "tts_connections_discarded_total",
             {"reason": "cancel"},
@@ -144,15 +191,24 @@ async def smoke_doubao() -> bytes:
         await tts.aclose()
     print(
         f"Doubao smoke: PASS (model={cfg.resource_id} voice={cfg.speaker} "
-        "pcm_s16le/24000Hz/mono + timestamps + CancelSession/eviction)"
+        "pcm_s16le/24000Hz/mono + timestamps + CancelSession/eviction"
+        f" + style_context={'all_5_voices' if cfg.style_control_enabled else 'off'})"
     )
-    pcm_16k = audioop.ratecv(result.pcm, 2, 1, cfg.sample_rate, 16000, None)[0]
-    if len(pcm_16k) % 2:
-        raise AssertionError("Doubao resampled PCM is not frame-aligned signed 16-bit")
-    return pcm_16k
+    resampled = []
+    for pcm, expected_markers, forbidden_markers in samples:
+        pcm_16k = audioop.ratecv(pcm, 2, 1, cfg.sample_rate, 16000, None)[0]
+        if len(pcm_16k) % 2:
+            raise AssertionError("Doubao resampled PCM is not frame-aligned signed 16-bit")
+        resampled.append((pcm_16k, expected_markers, forbidden_markers))
+    return resampled
 
 
-async def smoke_funasr(pcm_16k: bytes) -> None:
+async def smoke_funasr(
+    pcm_16k: bytes,
+    *,
+    expected_markers: tuple[str, ...],
+    forbidden_markers: tuple[str, ...] = (),
+) -> None:
     cfg = FunASRConfig(
         api_key=os.environ["DASHSCOPE_API_KEY"],
         ws_url=_dashscope_ws_url(),
@@ -186,8 +242,10 @@ async def smoke_funasr(pcm_16k: bytes) -> None:
         await session.aclose()
     if not interim:
         raise AssertionError("FunASR returned no interim transcript")
-    if final is None or "实时语音测试" not in final.text:
+    if final is None or not all(marker in final.text for marker in expected_markers):
         raise AssertionError(f"FunASR final mismatch: {getattr(final, 'text', '')!r}")
+    if any(marker in final.text for marker in forbidden_markers):
+        raise AssertionError(f"FunASR unexpectedly transcribed reference context: {final.text!r}")
     if not final.words or not timestamps_monotonic(final.words):
         raise AssertionError("FunASR final word timestamps are empty or non-monotonic")
     if not finished:
@@ -301,18 +359,23 @@ async def main() -> int:
         message = "provider_smoke_test SKIP: missing " + ", ".join(missing)
         print(message)
         return 1 if required else 0
+    if required and os.getenv("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "false").lower() != "true":
+        print("provider_smoke_test FAIL: Doubao style control is required but disabled")
+        return 1
     try:
-        pcm_16k = await smoke_doubao()
-        await smoke_funasr(pcm_16k)
+        samples = await smoke_doubao()
+        for pcm_16k, expected_markers, forbidden_markers in samples:
+            await smoke_funasr(
+                pcm_16k,
+                expected_markers=expected_markers,
+                forbidden_markers=forbidden_markers,
+            )
         llm_label = await smoke_llm()
         await smoke_interrupt_semantic()
     except Exception as exc:
         print(f"provider_smoke_test FAIL: {type(exc).__name__}: {exc}")
         return 1
-    print(
-        f"provider_smoke_test PASS: FunASR, {llm_label}, "
-        "Doubao, InterruptSemantic"
-    )
+    print(f"provider_smoke_test PASS: FunASR, {llm_label}, Doubao, InterruptSemantic")
     return 0
 
 

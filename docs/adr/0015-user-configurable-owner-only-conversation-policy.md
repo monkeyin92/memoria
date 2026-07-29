@@ -41,6 +41,11 @@ ADR 0011 为避免未校准的 shadow 声纹误静音主人，曾让 shadow
   终稿及其对应的 actual-heard AI 终稿上；后续说话人的分类不得改写旧 generation。
 - H5 只保存 `history_eligible=true` 的权威终稿。字段缺失、访客、ambiguous、无档案或
   authority 不可用时均不写入消息表、离线重试队列和自动摘要输入。
+- `history_eligible=false` 只禁止写入或读取账户主人的持久历史，不等于实时对话失忆。
+  Agent 可为 `guest / uncertain` 保留同一房间内有界、仅含 actual-heard 的公开工作记忆；
+  每条用户/助手消息绑定 `owner / public` scope，公开上下文只能取当前末尾连续的
+  `public` 段，一遇 `owner` scope 立即截断。该工作记忆不得进入回顾、自动摘要、Persona、
+  私人记忆或工具权限。
 - 对非正式 owner 的 LLM 上下文明确说明“身份未确认”，不得因为称呼或对话内容假定
   对方就是账户主人，也不得扮演其父母或其他亲属。
 

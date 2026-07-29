@@ -19,7 +19,7 @@
 - GitHub Actions 已在 `f6a9580` 的 run `30416225947` 全绿：Python job 运行真实
   PostgreSQL/pgvector 合同测试，总覆盖率恢复至 `89%`，未降低既有 `85%` 门槛。
 - 当前已部署源码基线：`56e83b5`，annotated tag `20260729-171002` 精确指向该提交；部署记录
-  已作为本地 `423ae46` 文档提交保存。本次未推送，`origin/main` 仍停在此前 `25e1f36` 基线。
+  已作为本地 `423ae46` 文档提交保存。本次未推送，`origin/main` 当前为 `f54eb76`。
 - 生产 runtime source / annotated tag：
   `56e83b5a3d0ecf8be073db571031505168bdf23e / 20260729-171002`，已完成原子切换、
   Provider/readiness/Nginx 与公网验收；直接 runtime 回滚点为 `20260729-113831`，H5 本轮未
@@ -55,13 +55,28 @@
 - Qwen 情绪 sidecar 的同一话轮多段结果不再逐条覆盖。Agent 最多缓存 8 段、按 turn
   聚合后只在提交时发布一个 fenced `emotion_observation`；单一稳定非中性标签可控制本轮
   `supportive / happy / curious` 表达，但不升级为持久情绪事实，迟到结果不能污染下一轮。
-- Provider-neutral Delivery Plan 已合并进唯一的 LLM 控制响应块；默认使用熟人对话式自然口语，
-  关切、轻松、思考场景采用有界语速差异。豆包 `context_texts` 仍按 ADR-0012 关闭，因为历史
-  真实探针曾产生超过 1.4 秒字幕偏移；`[laughter]` 也不是当前双向 WS 的官方能力，不能把
-  文本“呵，”称为确定性真笑。
-- 本地门禁：完整 `.venv/bin/pytest -q`、Agent unit/integration、Ruff、strict mypy
-  `176 source files` 与 `git diff --check` 全部通过。当前改动未提交、未推送、未部署；生产仍为
-  `20260729-113831`。
+- Qwen sidecar 的 PCM 队列现携带采集时的话轮 epoch，provider 的迟到 `speech_started`
+  按已发送 PCM 顺序绑定，不再读取最新 active turn。助手 actual-heard scope、`SpeechPlan`、
+  TTS 引用上文与 session config 也按原始 turn/generation 冻结；迟到控制确认音不会覆盖新回答。
+- Provider-neutral `SpeechPlan` 已合并进唯一的 LLM/TTS 控制面：默认使用熟人对话式自然
+  口语，关切、轻松、思考场景采用有界语速差异；明确的用户命令可选择悲伤、生气、四川话、
+  北京话、撒娇、暧昧、争辩、夹子音、快慢与音调高低。命令解析只消费白名单结构，叙述
+  “她在撒娇/他们在吵架”不会误改助手声音。
+- 豆包 `context_texts` 已按 2026-07-29 官方双向 WS 文档重新接线，但受
+  `DOUBAO_TTS_STYLE_CONTROL_ENABLED=false` 默认门禁保护：仅 `seed-tts-2.0` 预置音色可用，
+  个人复刻无条件清空。语速走 `audio_params.speech_rate`，音调走 `post_process.pitch`；
+  风格和上文合并成一条短 `context_texts`，真实朗读内容仍只在 `TaskRequest.text`。
+- 引用上文只取当前 `owner/public` scope 尾部连续的已提交用户 final 与 actual-heard 助手文本，
+  当前用户 final 先脱敏且始终保留；遇到 scope 边界立即停止。不启用 provider `section_id`，
+  不发送 SSML 或未公开的 `[laughter]`/`[laugh]` 标签。真实笑声仍是软能力，不能把文本
+  “呵，”称为确定性真笑。
+- 开关开启时 Provider smoke 会额外验证风格+引用上文，并硬要求原始
+  `alignment_status=ok`，不接受 `scaled`；required smoke 会遍历五个批准音色，并分别用
+  FunASR 回识别目标正文、拒绝引用上文关键词。开关缺失或关闭时门禁 fail closed。
+  本机没有豆包凭据，真实声学 canary 将在生产候选镜像、切流前执行。完整 `pytest -q`、
+  Ruff、strict mypy `176 source files`、离线 E2E、H5 `242/242` 与 production build 已通过；
+  本节源码仍未提交、未推送、未部署，候选 tag 为 `20260729-185111`，当前生产 runtime
+  仍为 `20260729-171002`。
 
 ## 2026-07-29：注册称呼与语义表情（已提交、推送、部署与体验版上传）
 

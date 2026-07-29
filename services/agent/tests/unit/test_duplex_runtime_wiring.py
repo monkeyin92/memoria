@@ -32,6 +32,8 @@ from services.agent.src.orchestration.utterance_router import (
     UtteranceIntent,
 )
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
+from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
+from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSTT
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
@@ -1946,9 +1948,7 @@ async def test_runtime_publishes_one_fence_bound_assistant_expression() -> None:
     await runtime.on_assistant_speaking("太好了，这真值得庆祝！")
     await asyncio.sleep(0)
 
-    expressions = [
-        event for event in published if event.get("type") == "assistant_expression"
-    ]
+    expressions = [event for event in published if event.get("type") == "assistant_expression"]
     assert len(expressions) == 1
     assert expressions[0] | {"at": ""} == {
         "type": "assistant_expression",
@@ -2158,7 +2158,7 @@ async def test_listener_cue_waits_for_a_micro_pause_and_final_cancels_candidate(
 
 
 @pytest.mark.asyncio
-async def test_runtime_applies_ephemeral_emotion_to_the_next_cosyvoice_generation(
+async def test_runtime_applies_one_ephemeral_emotion_decision_per_generation(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.INFO)
@@ -2172,24 +2172,61 @@ async def test_runtime_applies_ephemeral_emotion_to_the_next_cosyvoice_generatio
     runtime.set_event_publisher(publish)
     await runtime.orchestrator.ready()
 
-    first = runtime.observe_acoustic_emotion("sad", text="最近有点累", turn_id=1)
+    runtime.observe_acoustic_emotion("sad", text="最近有点累", turn_id=1)
+    assert not [event for event in published if event["type"] == "emotion_observation"]
+    await runtime.on_turn_committed("第一轮")
     await asyncio.sleep(0)
     first_event = next(event for event in published if event["type"] == "emotion_observation")
     assert first_event["turn_id"] == 1
     assert first_event["generation_id"] == 1
-    await runtime.on_turn_committed("第一轮")
-    second = runtime.observe_acoustic_emotion("sad", text="还是很低落", turn_id=2)
+    assert first_event["label"] == "neutral"
+    runtime.observe_acoustic_emotion("sad", text="还是很低落", turn_id=2)
     await runtime.on_turn_committed("第二轮")
+    await asyncio.sleep(0)
 
-    assert first.label == "neutral"
-    assert second.label == "sad"
-    # Acoustic sad still observed, but TTS stays neutral @ rate 1.0 for stability.
+    observations = [event for event in published if event["type"] == "emotion_observation"]
+    assert [event["label"] for event in observations] == ["neutral", "sad"]
+    # The user-facing label stays conservative; delivery can still become supportive.
     assert tts.current_instruction == "你正在进行闲聊互动，你说话的情感是neutral。"
-    assert tts.current_rate == 1.0
+    assert tts.current_rate == 0.98
     assert all(turn.role != "emotion" for turn in runtime.orchestrator.context.turns)
     assert "emotion_observation label=sad provider_label=sad" in caplog.text
-    assert "speech_plan_selected emotion=neutral rate=1.00" in caplog.text
+    assert (
+        "speech_plan_selected emotion=neutral dialect=standard tone=natural "
+        "rate=0.98 pitch=0 delivery=supportive"
+    ) in caplog.text
     assert "最近有点累" not in caplog.text
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_passes_only_same_scope_actual_heard_context_to_doubao() -> None:
+    tts = DoubaoTTS(
+        DoubaoTTSConfig(
+            api_key="test",
+            speaker=catalog_by_id()["warm_companion"].speaker_id,
+            style_control_enabled=True,
+            pool_size=0,
+        )
+    )
+    runtime = DuplexRuntime.create(session_id="tts-context-session", tts=tts)
+    context = runtime.orchestrator.context
+    context.add_user("主人说了私密安排", speaker_scope="owner")
+    context.commit_assistant_heard("主人专属回复", speaker_scope="owner")
+    context.add_user("我们刚才在聊咖啡", speaker_scope="public")
+    context.commit_assistant_heard("你想学点咖啡可以说哪一种", speaker_scope="public")
+    await runtime.orchestrator.ready()
+
+    await runtime.on_turn_committed("如何用英语点一杯拿铁")
+
+    assert len(tts.current_context_texts) == 1
+    reference = tts.current_context_texts[0]
+    assert "语音要求：" in reference
+    assert "用户：我们刚才在聊咖啡" in reference
+    assert "助手：你想学点咖啡可以说哪一种" in reference
+    assert "用户：如何用英语点一杯拿铁" in reference
+    assert "主人说了私密安排" not in reference
+    assert "主人专属回复" not in reference
     await runtime.close()
 
 
@@ -2218,6 +2255,30 @@ async def test_runtime_uses_happy_delivery_only_for_safe_laughter_context() -> N
 
     assert runtime.speech_plan.delivery_mode == "supportive"
     assert tts.current_instruction == "你正在进行闲聊互动，你说话的情感是neutral。"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_aggregates_same_turn_emotion_segments_before_delivery() -> None:
+    published: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime = DuplexRuntime.create(session_id="emotion-segment-session")
+    runtime.set_event_publisher(publish)
+    await runtime.orchestrator.ready()
+
+    runtime.observe_acoustic_emotion("neutral", text="我最近", turn_id=1)
+    runtime.observe_acoustic_emotion("sad", text="我最近有点累", turn_id=1)
+    runtime.observe_acoustic_emotion("neutral", text="有点累", turn_id=1)
+    await runtime.on_turn_committed("我最近有点累")
+    await asyncio.sleep(0)
+
+    observations = [event for event in published if event.get("type") == "emotion_observation"]
+    assert len(observations) == 1
+    assert observations[0]["provider_label"] == "sad"
+    assert runtime.speech_plan.delivery_mode == "supportive"
     await runtime.close()
 
 
@@ -2421,8 +2482,7 @@ async def test_controlled_turn_runtime_publishes_monotonic_input_policy() -> Non
 
     policies = [event for event in published if event["type"] == "input_policy"]
     assert [
-        (event["capture_allowed"], event["policy_epoch"], event["reason"])
-        for event in policies
+        (event["capture_allowed"], event["policy_epoch"], event["reason"]) for event in policies
     ] == [
         (False, 1, "assistant_thinking"),
         (False, 2, "assistant_speaking"),

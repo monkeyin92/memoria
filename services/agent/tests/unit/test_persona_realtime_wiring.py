@@ -167,6 +167,7 @@ async def test_legacy_persona_client_is_ignored_by_realtime_agent(
     assert [message.text_content for message in chat_ctx.messages()] == ["说说你的看法"]
     await runtime.close()
 
+
 @pytest.mark.asyncio
 async def test_legacy_memory_context_client_is_ignored_by_realtime_agent(
     monkeypatch: pytest.MonkeyPatch,
@@ -289,6 +290,14 @@ async def test_guest_context_cannot_see_owner_turns_or_use_tools(
 
     runtime = DuplexRuntime.create(session_id="session-owner-then-guest")
     await runtime.orchestrator.ready()
+    runtime.orchestrator.context.add_user(
+        "主人刚才说了一个私人家庭故事。",
+        speaker_scope="owner",
+    )
+    runtime.orchestrator.context.commit_assistant_heard(
+        "我已经记住这个私人故事。",
+        speaker_scope="owner",
+    )
     await _prepare_speaker(runtime, "guest")
     agent = DuplexVoiceAgent(
         instructions="test",
@@ -313,10 +322,95 @@ async def test_guest_context_cannot_see_owner_turns_or_use_tools(
     system_text = "\n".join(
         message.text_content for message in captured["ctx"].messages() if message.role == "system"
     )
-    assert "仅依据当前用户这一轮内容回答" in system_text
-    assert "账户主人的私人记忆" in system_text
+    assert "标记为公开的工作记忆" in system_text
+    assert "账户主人的持久历史" in system_text
+    assert "私人记忆" in system_text
     assert captured["tools"] == []
     await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("previous_user", "previous_assistant", "current_user"),
+    (
+        ("讲个笑话", "为什么鸡要过马路？", "好冷啊"),
+        ("我想学英语", "你想学什么场景？", "如何点咖啡"),
+    ),
+)
+async def test_uncertain_same_session_keeps_safe_followup_context(
+    monkeypatch: pytest.MonkeyPatch,
+    previous_user: str,
+    previous_assistant: str,
+    current_user: str,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_llm_node(
+        _agent: Any,
+        safe_ctx: Any,
+        _tools: list[Any],
+        _settings: Any,
+    ) -> AsyncIterator[str]:
+        captured["ctx"] = safe_ctx
+        yield "是笑话太冷，不是天气冷。"
+
+    runtime = DuplexRuntime.create(session_id="session-uncertain-followup")
+    await runtime.orchestrator.ready()
+    runtime.orchestrator.context.add_user(previous_user, speaker_scope="public")
+    runtime.orchestrator.context.commit_assistant_heard(
+        previous_assistant,
+        speaker_scope="public",
+    )
+    await _prepare_speaker(runtime, "uncertain")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content=previous_user)
+    chat_ctx.add_message(role="assistant", content=previous_assistant)
+    chat_ctx.add_message(role="user", content=current_user)
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+
+    await agent.on_user_turn_completed(chat_ctx, Message(current_user))
+    assert [item async for item in agent.llm_node(chat_ctx, [], None)]
+
+    conversation = [
+        (message.role, message.text_content)
+        for message in captured["ctx"].messages()
+        if message.role in {"user", "assistant"}
+    ]
+    assert conversation == [
+        ("user", previous_user),
+        ("assistant", previous_assistant),
+        ("user", current_user),
+    ]
+    await runtime.close()
+
+
+def test_public_working_context_stops_at_owner_scope_boundary() -> None:
+    runtime = DuplexRuntime.create(session_id="session-owner-public-boundary")
+    runtime.orchestrator.context.add_user("主人刚才说了隐私", speaker_scope="owner")
+    runtime.orchestrator.context.commit_assistant_heard(
+        "这是主人的私人回答",
+        speaker_scope="owner",
+    )
+    runtime.orchestrator.context.add_user("现在能聊什么", speaker_scope="public")
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="主人刚才说了隐私")
+    chat_ctx.add_message(role="assistant", content="这是主人的私人回答")
+    chat_ctx.add_message(role="user", content="现在能聊什么")
+
+    safe = ContextAssembler().assemble(
+        chat_ctx=chat_ctx,
+        heard_assistant=["这是主人的私人回答"],
+        speaker_class="uncertain",
+        response_plan=_response_plan(runtime),
+        session_turns=runtime.orchestrator.context.turns,
+    )
+
+    assert [
+        (message.role, message.text_content)
+        for message in safe.messages()
+        if message.role in {"user", "assistant"}
+    ] == [("user", "现在能聊什么")]
 
 
 @pytest.mark.asyncio
@@ -385,7 +479,7 @@ async def test_uncertain_uses_generic_chat_without_private_history_memory_or_too
     )
     assert conversation == [("user", "怎么开始？")]
     assert "已确认表达风格 v1" not in system_text
-    assert "仅依据当前用户这一轮内容回答" in system_text
+    assert "标记为公开的工作记忆" in system_text
     assert captured["tools"] == []
     assert refresh_calls == []
     await runtime.close()

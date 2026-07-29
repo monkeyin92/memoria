@@ -21,9 +21,7 @@ _LOOPBACK_CLIENT_HOST = "localhost"  # Keep mock traffic out of system proxies.
 class MockFunASRServer:
     host: str = "127.0.0.1"
     port: int = 0
-    scenario: str = (
-        "happy"  # happy|context_leak|interim_rewrite|duplicate_final|heartbeat|missing_ts|fail|disconnect_once
-    )
+    scenario: str = "happy"  # happy|context_leak|interim_rewrite|duplicate_final|heartbeat|missing_ts|fail|disconnect_once
     connections_closed: int = 0
     tasks_started: list[str] = field(default_factory=list)
     pcm_by_connection: list[int] = field(default_factory=list)
@@ -512,10 +510,11 @@ def _parse_doubao_client_frame(data: bytes) -> tuple[EventType, str, dict[str, A
 class MockDoubaoServer:
     host: str = "127.0.0.1"
     port: int = 0
-    scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|slow|slow_once|slow_after_first|empty_ts|scaled_ts
+    scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|slow|slow_once|slow_after_first|slow_after_second|slow_after_sixth|empty_ts|scaled_ts
     connections: int = 0
     sessions: int = 0
     task_requests: list[list[str]] = field(default_factory=list)
+    start_session_params: list[dict[str, Any]] = field(default_factory=list)
     speakers: list[str] = field(default_factory=list)
     canceled_sessions: list[str] = field(default_factory=list)
     request_headers: list[dict[str, str]] = field(default_factory=list)
@@ -596,6 +595,7 @@ class MockDoubaoServer:
                     self.sessions += 1
                     self.task_requests.append(active_texts)
                     req_params = payload.get("req_params", {})
+                    self.start_session_params.append(dict(req_params))
                     self.speakers.append(str(req_params.get("speaker") or ""))
                     await ws.send(
                         _doubao_server_frame(
@@ -615,8 +615,11 @@ class MockDoubaoServer:
                         )
                     )
                 elif event == EventType.FINISH_SESSION and active_texts is not None:
-                    if self.scenario == "slow" or (
-                        self.scenario == "slow_after_first" and self.sessions > 1
+                    if (
+                        self.scenario == "slow"
+                        or (self.scenario == "slow_after_first" and self.sessions > 1)
+                        or (self.scenario == "slow_after_second" and self.sessions > 2)
+                        or (self.scenario == "slow_after_sixth" and self.sessions > 6)
                     ):
                         continue
                     if self.scenario == "slow_once" and connection_index == 0:

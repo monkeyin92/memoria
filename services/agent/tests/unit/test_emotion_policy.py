@@ -12,9 +12,7 @@ from services.agent.src.orchestration.prosody import (
 def test_acoustic_emotion_requires_repetition_and_never_claims_provider_confidence() -> None:
     smoother = EmotionSmoother(ttl_ms=30_000)
 
-    first = smoother.observe_acoustic(
-        "sad", text="最近有点累", turn_id=1, now_ns=1_000_000_000
-    )
+    first = smoother.observe_acoustic("sad", text="最近有点累", turn_id=1, now_ns=1_000_000_000)
     second = smoother.observe_acoustic(
         "sad", text="还是提不起精神", turn_id=2, now_ns=2_000_000_000
     )
@@ -127,14 +125,14 @@ def test_explicit_self_report_ignores_quoted_or_reported_other_people() -> None:
     assert reported.label == "neutral"
 
 
-def test_speech_plan_only_uses_cosyvoice_supported_safe_output_emotions() -> None:
+def test_speech_plan_uses_safe_output_emotions_with_bounded_rate_changes() -> None:
     sad = speech_plan_for_emotion("sad")
     happy = speech_plan_for_emotion("happy")
     angry = speech_plan_for_emotion("angry")
 
-    # Non-happy emotions lock to neutral instruct + rate 1.0 for stable timbre/loudness.
+    # Non-happy emotions keep neutral synthesis; happy uses only a small rate lift.
     assert (sad.voice_emotion, sad.rate) == ("neutral", 1.0)
-    assert (happy.voice_emotion, happy.rate) == ("happy", 1.0)
+    assert (happy.voice_emotion, happy.rate) == ("happy", 1.02)
     assert angry.voice_emotion == "neutral"
     assert angry.rate == 1.0
     assert sad.instruction == "你正在进行闲聊互动，你说话的情感是neutral。"
@@ -153,19 +151,22 @@ def test_multi_step_request_gets_deliberative_delivery_without_affecting_direct_
     )
 
     assert deliberative.delivery_mode == "deliberative"
-    # Rate is fixed at 1.0 for consistent CosyVoice loudness; style differs via LLM only.
-    assert deliberative.rate == direct.rate == 1.0
+    assert deliberative.rate == 0.99
+    assert direct.rate == 1.0
     assert "四到十二个字" in deliberative.llm_instruction
     assert "以逗号结束" in deliberative.llm_instruction
     assert deliberative.tts_prefix == ""
-    assert speech_plan_for_turn(
-        label="neutral",
-        provider_label="neutral",
-        text="帮我安排一个十五分钟的英语口语训练",
-        use_markup_tags=True,
-    ).tts_prefix == "[breath]"
+    assert (
+        speech_plan_for_turn(
+            label="neutral",
+            provider_label="neutral",
+            text="帮我安排一个十五分钟的英语口语训练",
+            use_markup_tags=True,
+        ).tts_prefix
+        == "[breath]"
+    )
     assert direct.delivery_mode == "direct"
-    assert direct.llm_instruction == ""
+    assert "自然口语" in direct.llm_instruction
 
 
 def test_safe_acoustic_laughter_gets_one_warm_laugh_but_serious_context_never_does() -> None:
@@ -256,3 +257,90 @@ def test_transcribed_acoustic_laughter_can_drive_delivery_without_claiming_happy
     assert observation.label == "neutral"
     assert plan.delivery_mode == "light_laughter"
     assert plan.voice_emotion == "happy"
+
+
+@pytest.mark.parametrize(
+    (
+        "text",
+        "emotion",
+        "dialect",
+        "tone",
+        "rate",
+        "pitch",
+        "instruction_marker",
+    ),
+    (
+        ("请用悲伤的语气慢一点说", "sad", "standard", "natural", 0.90, 0, "悲伤"),
+        ("请用生气的语气说", "angry", "standard", "natural", 1.0, 0, "生气"),
+        ("请用四川话说", "neutral", "sichuan", "natural", 1.0, 0, "四川话"),
+        ("请用北京话快一点说", "neutral", "beijing", "natural", 1.10, 0, "北京话"),
+        ("请用撒娇的语气说", "neutral", "standard", "coquettish", 1.0, 0, "撒娇"),
+        ("请暧昧一点说", "neutral", "standard", "intimate", 1.0, 0, "暧昧"),
+        ("请用吵架的语气说", "neutral", "standard", "argumentative", 1.0, 0, "争辩"),
+        ("请用夹子音说", "neutral", "standard", "sweet", 1.0, 0, "夹子音"),
+        ("请把音调调高一点", "neutral", "standard", "natural", 1.0, 2, "熟人"),
+        ("请把音调调低一点", "neutral", "standard", "natural", 1.0, -2, "熟人"),
+        ("可以说慢一点吗", "neutral", "standard", "natural", 0.90, 0, "熟人"),
+        ("语速快一些", "neutral", "standard", "natural", 1.10, 0, "熟人"),
+        ("把音调降低一点", "neutral", "standard", "natural", 1.0, -2, "熟人"),
+        ("请用四川话说慢一点", "neutral", "sichuan", "natural", 0.90, 0, "四川话"),
+        ("讲故事，用悲伤语气", "sad", "standard", "natural", 1.0, 0, "悲伤"),
+    ),
+)
+def test_explicit_voice_style_requests_map_to_a_bounded_speech_plan(
+    text: str,
+    emotion: str,
+    dialect: str,
+    tone: str,
+    rate: float,
+    pitch: int,
+    instruction_marker: str,
+) -> None:
+    plan = speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text=text,
+    )
+
+    assert plan.voice_emotion == emotion
+    assert plan.dialect == dialect
+    assert plan.tone == tone
+    assert plan.rate == rate
+    assert plan.pitch == pitch
+    assert instruction_marker in plan.tts_instruction
+    assert len(plan.tts_instruction) <= 240
+
+
+def test_argumentative_style_does_not_pair_with_a_calm_emotion_instruction() -> None:
+    plan = speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text="请用吵架的语气说",
+    )
+
+    assert "克制的不满" in plan.tts_instruction
+    assert "自然平和" not in plan.tts_instruction
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "她平时用四川话和我模拟吵架",
+        "这个主播说话语速快，音调高一点",
+        "孩子会撒娇，也有人说她是夹子音",
+        "请解释她为什么用四川话说这个故事",
+        "请给我讲一个她撒娇的故事",
+    ),
+)
+def test_reported_style_words_do_not_change_the_assistant_voice(text: str) -> None:
+    plan = speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text=text,
+    )
+
+    assert plan.voice_emotion == "neutral"
+    assert plan.dialect == "standard"
+    assert plan.tone == "natural"
+    assert plan.rate == 1.0
+    assert plan.pitch == 0

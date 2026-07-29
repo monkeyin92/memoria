@@ -624,7 +624,17 @@ class CosyVoiceTTS(tts.TTS[Any]):
         except Exception:
             logger.warning("CosyVoice alignment callback failed", exc_info=True)
 
-    def apply_speech_plan(self, *, emotion: str, rate: float) -> None:
+    def apply_speech_plan(
+        self,
+        *,
+        emotion: str,
+        rate: float,
+        instruction: str = "",
+        pitch: int = 0,
+        reference_contexts: tuple[str, ...] = (),
+        fence: GenerationFence | None = None,
+    ) -> None:
+        del instruction, pitch, reference_contexts, fence
         if emotion not in COSYVOICE_EMOTIONS:
             emotion = "neutral"
         self._config.instruction = cosyvoice_instruction(

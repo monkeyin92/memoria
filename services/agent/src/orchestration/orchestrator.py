@@ -17,7 +17,11 @@ from services.agent.src.contracts.ids import (
     new_session_id,
 )
 from services.agent.src.observability.metrics import MetricsRegistry
-from services.agent.src.orchestration.context_manager import ChatMessage, ContextManager
+from services.agent.src.orchestration.context_manager import (
+    ChatMessage,
+    ContextManager,
+    SpeakerScope,
+)
 from services.agent.src.orchestration.generation_fence import FenceGate
 from services.agent.src.orchestration.handlers import (
     LanguageModelHandler,
@@ -113,6 +117,7 @@ class Orchestrator:
     _pending_interrupted_from: GenerationFence | None = None
     _pending_interrupted_to: GenerationFence | None = None
     _pending_interrupted_message: ChatMessage | None = None
+    _speaker_scope_by_turn: dict[int, SpeakerScope] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         fence = GenerationFence(
@@ -142,6 +147,10 @@ class Orchestrator:
         assert self.state_machine is not None
         return self.state_machine.fence
 
+    def speaker_scope_for_fence(self, fence: GenerationFence) -> SpeakerScope:
+        """Resolve scope from the originating turn, never from the latest speaker."""
+        return self._speaker_scope_by_turn.get(fence.turn_id, "public")
+
     async def ready(self) -> None:
         assert self.state_machine is not None
         async with self._state_lock:
@@ -157,7 +166,12 @@ class Orchestrator:
             elif self.state is ConversationState.SPEAKING:
                 self.state_machine.apply(TransitionEvent.USER_VOICE_WHILE_SPEAKING)
 
-    async def commit_turn(self, user_text: str) -> GenerationFence:
+    async def commit_turn(
+        self,
+        user_text: str,
+        *,
+        speaker_scope: SpeakerScope = "public",
+    ) -> GenerationFence:
         assert self.state_machine is not None
         assert self.fence_gate is not None
         assert self.segmenter is not None
@@ -205,7 +219,10 @@ class Orchestrator:
             self.fence_gate.update(new_fence)
             self.segmenter.reset(new_fence)
             self.heard_tracker.reset()
-            self.context.add_user(user_text)
+            self.context.add_user(user_text, speaker_scope=speaker_scope)
+            self._speaker_scope_by_turn[new_fence.turn_id] = speaker_scope
+            while len(self._speaker_scope_by_turn) > self.context.max_turns:
+                self._speaker_scope_by_turn.pop(next(iter(self._speaker_scope_by_turn)))
             self._tts_cancel = asyncio.Event()
             return new_fence
 
@@ -233,11 +250,7 @@ class Orchestrator:
     def _generation_fence(
         cancellation: GenerationFence | CancellationContext,
     ) -> GenerationFence:
-        return (
-            cancellation.fence
-            if isinstance(cancellation, CancellationContext)
-            else cancellation
-        )
+        return cancellation.fence if isinstance(cancellation, CancellationContext) else cancellation
 
     def gate_llm_token(
         self,
@@ -329,9 +342,11 @@ class Orchestrator:
         tools_active: bool = False,
         playback_position_s: float | None = None,
         synchronized_transcript: str | None = None,
+        reply_fence: GenerationFence | None = None,
     ) -> str:
         """Commit a completed LiveKit playout, never TTS production completion."""
         assert self.state_machine is not None
+        committed_fence = reply_fence or self.fence
         if playback_position_s is None:
             await self.playback.stop_and_flush()
             stopped_ns = self.playback.stopped_mono_ns
@@ -350,7 +365,10 @@ class Orchestrator:
             if synchronized_transcript is not None
             else self.heard_tracker.snapshot()
         )
-        self.context.commit_assistant_heard(heard)
+        self.context.commit_assistant_heard(
+            heard,
+            speaker_scope=self.speaker_scope_for_fence(committed_fence),
+        )
         async with self._state_lock:
             if self.state is ConversationState.SPEAKING:
                 if tools_active:
@@ -422,7 +440,10 @@ class Orchestrator:
             await cancel_and_wait(self._active_tts_task)
             await self.tts_pool.discard_active_connection(old)
             await self.task_manager.cancel_cancellable(old)
-            interrupted_message = self.context.commit_interrupted_assistant_text(heard_text)
+            interrupted_message = self.context.commit_interrupted_assistant_text(
+                heard_text,
+                speaker_scope=self.speaker_scope_for_fence(old),
+            )
             self._pending_interrupted_from = old
             self._pending_interrupted_to = new_fence
             self._pending_interrupted_message = interrupted_message
@@ -482,6 +503,7 @@ class Orchestrator:
                 message = self.context.refine_assistant_heard(
                     message,
                     synchronized_transcript,
+                    speaker_scope=self.speaker_scope_for_fence(interrupted_from),
                 )
             heard = message.content if message is not None else ""
             fence = self._pending_interrupted_to

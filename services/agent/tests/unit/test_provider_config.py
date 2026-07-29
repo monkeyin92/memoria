@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoiceTTS
 from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
 from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
@@ -99,7 +100,7 @@ def test_doubao_config_requires_exactly_one_complete_auth_mode(
         )
 
 
-def test_doubao_speech_plan_keeps_alignment_safe_and_clamps_rate() -> None:
+def test_doubao_speech_plan_keeps_context_instruction_disabled_and_clamps_rate() -> None:
     config = DoubaoTTSConfig(
         api_key="test",
         speaker=catalog_by_id()["warm_companion"].speaker_id,
@@ -111,6 +112,107 @@ def test_doubao_speech_plan_keeps_alignment_safe_and_clamps_rate() -> None:
     tts.apply_speech_plan(emotion="happy", rate=1.2)
 
     assert tts.current_instruction is None
+    assert tts.current_rate == 1.05
+
+
+def test_doubao_style_control_is_opt_in() -> None:
+    common = {
+        "DOUBAO_TTS_MOCK_WS_URL": "ws://mock",
+        "DOUBAO_TTS_VOICE_PROFILE": "warm_companion",
+    }
+
+    assert not DoubaoTTSConfig.from_env(common).style_control_enabled
+    assert DoubaoTTSConfig.from_env(
+        {**common, "DOUBAO_TTS_STYLE_CONTROL_ENABLED": "true"}
+    ).style_control_enabled
+
+
+def test_doubao_speech_plan_applies_bounded_style_and_reference_context() -> None:
+    config = DoubaoTTSConfig(
+        api_key="test",
+        speaker=catalog_by_id()["warm_companion"].speaker_id,
+        style_control_enabled=True,
+        pool_size=0,
+    )
+    tts = DoubaoTTS(config)
+
+    tts.apply_speech_plan(
+        emotion="angry",
+        rate=1.2,
+        instruction="整体带生气和不满，但不要吼叫。",
+        pitch=2,
+        reference_contexts=("用户：今天真是太气人了。\n助手：我听着呢。",),
+    )
+
+    assert tts.current_instruction == "整体带生气和不满，但不要吼叫。"
+    assert tts.current_rate == 1.2
+    assert tts.current_pitch == 2
+    assert tts.current_context_texts == (
+        "语音要求：整体带生气和不满，但不要吼叫。\n"
+        "引用上文（只理解语境和承接情绪，不要朗读）："
+        "用户：今天真是太气人了。\n助手：我听着呢。",
+    )
+
+
+def test_late_old_generation_plan_cannot_overwrite_the_new_generation() -> None:
+    tts = DoubaoTTS(
+        DoubaoTTSConfig(
+            api_key="test",
+            speaker=catalog_by_id()["warm_companion"].speaker_id,
+            style_control_enabled=True,
+            pool_size=0,
+        )
+    )
+    old_fence = GenerationFence("style-fence", 1, 1, 0)
+    new_fence = GenerationFence("style-fence", 2, 2, 0)
+    tts.bind_fence(new_fence)
+    tts.apply_speech_plan(
+        emotion="sad",
+        rate=0.9,
+        instruction="使用四川话，温柔承接。",
+        pitch=-2,
+        reference_contexts=("用户：新话轮上文。",),
+        fence=new_fence,
+    )
+
+    tts.apply_speech_plan(emotion="neutral", rate=1.0, fence=old_fence)
+    tts.bind_fence(new_fence)
+
+    assert tts.current_instruction == "使用四川话，温柔承接。"
+    assert tts.current_rate == 0.9
+    assert tts.current_pitch == -2
+    assert "新话轮上文" in tts.current_context_texts[0]
+
+
+def test_doubao_personal_voice_never_receives_context_texts() -> None:
+    tts = DoubaoTTS(
+        DoubaoTTSConfig(
+            api_key="test",
+            speaker=catalog_by_id()["warm_companion"].speaker_id,
+            style_control_enabled=True,
+            pool_size=0,
+        )
+    )
+    tts.apply_voice_profile(
+        model="seed-icl-2.0",
+        resource_id="seed-icl-2.0",
+        voice="S_personal_synth_ready",
+        profile_id="voice-profile-personal",
+        provider="volcengine_doubao",
+        voice_kind="personal",
+    )
+
+    tts.apply_speech_plan(
+        emotion="happy",
+        rate=1.2,
+        instruction="轻松愉快地说。",
+        pitch=2,
+        reference_contexts=("用户：这是私密上文。",),
+    )
+
+    assert tts.current_context_texts == ()
+    assert tts.current_instruction is None
+    assert tts.current_pitch == 0
     assert tts.current_rate == 1.05
 
 

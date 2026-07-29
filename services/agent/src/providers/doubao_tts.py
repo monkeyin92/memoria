@@ -82,6 +82,8 @@ class DoubaoTTSConfig:
     first_audio_timeout_s: float = 1.5
     total_timeout_s: float = 20.0
     instruction: str | None = None
+    reference_contexts: tuple[str, ...] = ()
+    style_control_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not _valid_websocket_url(self.ws_url, require_tls=False):
@@ -149,6 +151,9 @@ class DoubaoTTSConfig:
             connect_timeout_s=float(values.get("DOUBAO_TTS_CONNECT_TIMEOUT_S", "5")),
             first_audio_timeout_s=float(values.get("DOUBAO_TTS_FIRST_AUDIO_TIMEOUT_S", "1.5")),
             total_timeout_s=float(values.get("DOUBAO_TTS_TOTAL_TIMEOUT_S", "20")),
+            style_control_enabled=(
+                values.get("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "false").strip().lower() == "true"
+            ),
         )
 
     def auth_headers(self, *, connect_id: str) -> dict[str, str]:
@@ -205,6 +210,28 @@ class DoubaoTimestampError(RuntimeError):
 
 class DoubaoPCMContinuityError(ValueError):
     pass
+
+
+def _session_context_texts(config: DoubaoTTSConfig) -> tuple[str, ...]:
+    """Build bounded StartSession context; TaskRequest remains synthesis-only."""
+    if not config.style_control_enabled or config.resource_id != DOUBAO_TTS_MODEL:
+        return ()
+    instruction = ""
+    if config.instruction and (instruction := config.instruction.strip()):
+        instruction = instruction[:200]
+    reference = next(
+        (value.strip()[:320] for value in reversed(config.reference_contexts) if value.strip()),
+        "",
+    )
+    parts: list[str] = []
+    if instruction:
+        parts.append(f"语音要求：{instruction}")
+    if reference:
+        parts.append(f"引用上文（只理解语境和承接情绪，不要朗读）：{reference}")
+    # The public API exposes one context_texts array without role/order semantics.
+    # Keep the first version to one short, explicit item until acoustic canaries pass.
+    combined = "\n".join(parts)
+    return (combined,) if combined else ()
 
 
 class _PcmContinuityGuard:
@@ -636,7 +663,7 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
                         speech_rate=config.speech_rate,
                         loudness_rate=config.loudness_rate,
                         pitch=config.pitch,
-                        context_texts=(config.instruction,) if config.instruction else (),
+                        context_texts=_session_context_texts(config),
                         uid=str(uuid.uuid4()),
                     ),
                 )
@@ -823,6 +850,7 @@ class DoubaoTTS(tts.TTS[Any]):
         baseline_pool = pool or DoubaoTTSPool(replace(baseline_config))
         self._pools = DoubaoTTSPoolRouter(baseline_config, baseline_pool)
         self._active_fence: GenerationFence | None = None
+        self._speech_configs_by_fence: dict[GenerationFence, DoubaoTTSConfig] = {}
         self._trace_callback: Callable[[str, str, dict[str, Any] | None], None] | None = None
         self._alignment_callback: Callable[[GenerationFence, str, str], None] | None = None
         self._voice_fallback_callback: (
@@ -848,6 +876,11 @@ class DoubaoTTS(tts.TTS[Any]):
 
     def bind_fence(self, fence: GenerationFence) -> None:
         self._active_fence = fence
+
+    def _config_for_fence(self, fence: GenerationFence | None) -> DoubaoTTSConfig:
+        if fence is None:
+            return self._config
+        return self._speech_configs_by_fence.get(fence, self._config)
 
     def set_trace_callback(
         self,
@@ -880,13 +913,36 @@ class DoubaoTTS(tts.TTS[Any]):
         except Exception:
             logger.warning("Doubao alignment callback failed", exc_info=True)
 
-    def apply_speech_plan(self, *, emotion: str, rate: float) -> None:
-        # Real TTS 2.0 probes showed context_texts could shift subtitle timing by
-        # more than 1.4 s. Ignore emotion instructions for now and keep reliable
-        # alignment; the reviewed native timbre carries the companion character.
-        self._config.instruction = None
-        clamped = min(1.05, max(0.95, rate))
-        self._config.speech_rate = round((clamped - 1.0) * 100)
+    def apply_speech_plan(
+        self,
+        *,
+        emotion: str,
+        rate: float,
+        instruction: str = "",
+        pitch: int = 0,
+        reference_contexts: tuple[str, ...] = (),
+        fence: GenerationFence | None = None,
+    ) -> None:
+        del emotion  # Doubao uses a bounded natural-language instruction instead.
+        config = replace(self._config)
+        if not config.style_control_enabled or self._voice_kind != "designed":
+            config.instruction = None
+            config.reference_contexts = ()
+            config.pitch = 0
+            clamped = min(1.05, max(0.95, rate))
+        else:
+            cleaned_instruction = instruction.strip()
+            config.instruction = cleaned_instruction[:240] or None
+            config.reference_contexts = tuple(reference_contexts[-2:])
+            config.pitch = min(3, max(-3, int(pitch)))
+            clamped = min(1.20, max(0.85, rate))
+        config.speech_rate = round((clamped - 1.0) * 100)
+        if fence is None:
+            self._config = config
+            return
+        self._speech_configs_by_fence[fence] = config
+        while len(self._speech_configs_by_fence) > 16:
+            self._speech_configs_by_fence.pop(next(iter(self._speech_configs_by_fence)))
 
     def apply_voice_profile(
         self,
@@ -915,6 +971,7 @@ class DoubaoTTS(tts.TTS[Any]):
             self._config.voice_profile = profile_id
             self._config.speaker = voice
             self._config.instruction = None
+            self._config.reference_contexts = ()
             self._voice_kind = "personal"
             return
         spec = next(
@@ -933,6 +990,8 @@ class DoubaoTTS(tts.TTS[Any]):
         self._config.resource_id = model
         self._config.voice_profile = spec.profile_id
         self._config.speaker = voice
+        self._config.instruction = None
+        self._config.reference_contexts = ()
         self._voice_kind = "designed"
 
     def configure_personal_fallback(
@@ -959,6 +1018,7 @@ class DoubaoTTS(tts.TTS[Any]):
             voice_profile=profile_id,
             speaker=voice,
             instruction=None,
+            reference_contexts=(),
         )
 
     def clear_personal_fallback(self) -> None:
@@ -969,6 +1029,7 @@ class DoubaoTTS(tts.TTS[Any]):
         self._config.voice_profile = self._baseline_profile
         self._config.speaker = self._baseline_speaker
         self._config.instruction = None
+        self._config.reference_contexts = ()
         self._voice_kind = "designed"
 
     @property
@@ -989,12 +1050,20 @@ class DoubaoTTS(tts.TTS[Any]):
 
     @property
     def current_instruction(self) -> str | None:
-        return self._config.instruction
+        return self._config_for_fence(self._active_fence).instruction
 
     @property
     def current_rate(self) -> float:
-        rate = self._config.speech_rate
+        rate = self._config_for_fence(self._active_fence).speech_rate
         return 1.0 + rate / 100
+
+    @property
+    def current_pitch(self) -> int:
+        return self._config_for_fence(self._active_fence).pitch
+
+    @property
+    def current_context_texts(self) -> tuple[str, ...]:
+        return _session_context_texts(self._config_for_fence(self._active_fence))
 
     def trace(
         self,
@@ -1018,7 +1087,7 @@ class DoubaoTTS(tts.TTS[Any]):
         *,
         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
     ) -> DoubaoSynthesizeStream:
-        config = replace(self._config)
+        config = replace(self._config_for_fence(self._active_fence))
         personal = config.resource_id == DOUBAO_PERSONAL_VOICE_MODEL
         fallback_config = self._personal_fallback_or_baseline_config() if personal else None
         return DoubaoSynthesizeStream(
@@ -1076,7 +1145,7 @@ class DoubaoTTS(tts.TTS[Any]):
         fence: GenerationFence,
         cancel_event: asyncio.Event | None = None,
     ) -> SynthesizeResult:
-        config = replace(self._config)
+        config = replace(self._config_for_fence(fence))
         pool = self._pools.for_config(config)
         for attempt in range(2):
             try:
@@ -1152,7 +1221,7 @@ class DoubaoTTS(tts.TTS[Any]):
                         speech_rate=config.speech_rate,
                         loudness_rate=config.loudness_rate,
                         pitch=config.pitch,
-                        context_texts=(config.instruction,) if config.instruction else (),
+                        context_texts=_session_context_texts(config),
                         uid=str(uuid.uuid4()),
                     ),
                 )

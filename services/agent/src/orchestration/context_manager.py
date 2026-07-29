@@ -8,11 +8,14 @@ from typing import Any, Literal
 from services.common.redaction import redact_pii
 
 Role = Literal["system", "user", "assistant"]
+SpeakerScope = Literal["owner", "public"]
+
 
 @dataclass
 class ChatMessage:
     role: Role
     content: str
+    speaker_scope: SpeakerScope = "public"
 
 
 @dataclass
@@ -22,27 +25,49 @@ class ContextManager:
     turns: list[ChatMessage] = field(default_factory=list)
     max_turns: int = 16  # 8 user + 8 assistant pairs ≈ 16 messages
 
-    def add_user(self, text: str) -> None:
-        self.turns.append(ChatMessage(role="user", content=redact_pii(text.strip())))
+    def add_user(self, text: str, *, speaker_scope: SpeakerScope = "public") -> None:
+        self.turns.append(
+            ChatMessage(
+                role="user",
+                content=redact_pii(text.strip()),
+                speaker_scope=speaker_scope,
+            )
+        )
         self._trim()
 
-    def commit_assistant_heard(self, heard_text: str) -> ChatMessage | None:
+    def commit_assistant_heard(
+        self,
+        heard_text: str,
+        *,
+        speaker_scope: SpeakerScope,
+    ) -> ChatMessage | None:
         text = redact_pii(heard_text.strip())
         if not text:
             return None
-        message = ChatMessage(role="assistant", content=text)
+        message = ChatMessage(
+            role="assistant",
+            content=text,
+            speaker_scope=speaker_scope,
+        )
         self.turns.append(message)
         self._trim()
         return message
 
-    def commit_interrupted_assistant_text(self, heard_text: str) -> ChatMessage | None:
+    def commit_interrupted_assistant_text(
+        self,
+        heard_text: str,
+        *,
+        speaker_scope: SpeakerScope,
+    ) -> ChatMessage | None:
         """History must not contain unheard suffix."""
-        return self.commit_assistant_heard(heard_text)
+        return self.commit_assistant_heard(heard_text, speaker_scope=speaker_scope)
 
     def refine_assistant_heard(
         self,
         message: ChatMessage | None,
         heard_text: str,
+        *,
+        speaker_scope: SpeakerScope,
     ) -> ChatMessage | None:
         """Replace a conservative interrupt snapshot with a playout fact."""
         text = redact_pii(heard_text.strip())
@@ -59,7 +84,7 @@ class ContextManager:
                 return None
         if not text:
             return None
-        return self.commit_assistant_heard(text)
+        return self.commit_assistant_heard(text, speaker_scope=speaker_scope)
 
     def _trim(self) -> None:
         if len(self.turns) > self.max_turns:
@@ -96,3 +121,42 @@ class ContextManager:
         for m in users + assts:
             items.append({"role": m.role, "text": m.content[:max_chars]})
         return items
+
+    def tts_reference_context(
+        self,
+        *,
+        current_user_final: str,
+        speaker_scope: SpeakerScope,
+        max_prior_messages: int = 3,
+        max_each_chars: int = 160,
+        max_total_chars: int = 320,
+    ) -> tuple[str, ...]:
+        """Return bounded actual-heard context without crossing a speaker boundary."""
+        trailing: list[ChatMessage] = []
+        for message in reversed(self.turns):
+            if message.speaker_scope != speaker_scope:
+                break
+            trailing.append(message)
+            if len(trailing) >= max_prior_messages:
+                break
+        current = redact_pii(current_user_final.strip())[:max_each_chars]
+        current_line = f"用户：{current}" if current else ""
+        remaining = max_total_chars - len(current_line)
+        prior_lines: list[str] = []
+        for message in trailing:
+            if message.role not in {"user", "assistant"} or not message.content:
+                continue
+            prefix = "用户：" if message.role == "user" else "助手："
+            separator_cost = int(bool(prior_lines or current_line))
+            available = min(
+                max_each_chars,
+                remaining - len(prefix) - separator_cost,
+            )
+            if available <= 0:
+                continue
+            prior_lines.append(f"{prefix}{message.content[:available]}")
+            remaining -= len(prior_lines[-1]) + separator_cost
+        prior_lines.reverse()
+        lines = [*prior_lines, *([current_line] if current_line else [])]
+        reference = "\n".join(lines)
+        return (reference,) if reference else ()

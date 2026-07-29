@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import time
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 EMOTION_LABELS = frozenset(
@@ -39,6 +40,18 @@ _REPORTED_SPEECH_PREFIXES = (
 
 def _contains_unquoted_laughter(text: str) -> bool:
     return _LAUGHTER.search(_QUOTED_SPEECH.sub("", text)) is not None
+
+
+def aggregate_acoustic_segments(
+    segments: Sequence[tuple[str, str]],
+) -> tuple[str, str]:
+    """Collapse one provider turn into one conservative acoustic observation."""
+
+    labels = [label if label in EMOTION_LABELS else "neutral" for label, _ in segments]
+    non_neutral = {label for label in labels if label != "neutral"}
+    provider_label = next(iter(non_neutral)) if len(non_neutral) == 1 else "neutral"
+    texts = list(dict.fromkeys(text.strip() for _, text in segments if text.strip()))
+    return provider_label, " ".join(texts)
 
 
 @dataclass(frozen=True)

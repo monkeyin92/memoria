@@ -211,7 +211,10 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
 ) -> None:
     runtime = DuplexRuntime.create()
     await runtime.on_turn_committed("当前问题")
-    runtime.orchestrator.context.commit_assistant_heard("实际听到的旧回复")
+    runtime.orchestrator.context.commit_assistant_heard(
+        "实际听到的旧回复",
+        speaker_scope="public",
+    )
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
     agent._current_speaker_class = "owner"
     agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
@@ -764,6 +767,7 @@ async def test_agent_adds_only_the_canonical_response_plan_system_block(
     ]
     assert len(system_messages) == 1
     assert "只回答当前训练安排" in system_messages[0].text_content
+    assert "四到十二个字" in system_messages[0].text_content
     assert "short" not in system_messages[0].text_content.lower()
     assert [message.text_content for message in chat_ctx.messages()] == [
         "帮我安排一个十五分钟的英语口语训练"
