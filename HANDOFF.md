@@ -23,16 +23,16 @@
   音频路由、弱网和 AEC A/B 真机矩阵仍待完成。
 - 本轮开发测试版均通过已登录的微信开发者工具 `upload` 完成，只上传开发版本，不提审、不正式发布。
   本机未跟踪的上传私钥、辅助脚本和 lockfile 不属于仓库交付，路径和值不得写入本文或提交。
-- 新的 `0.8.62` 体验版上传已发起，微信开发者工具任务
-  `confirmation_upload_d0446177-4d6e-4007-8852-fa0a2e10c6fc` 正等待工具内确认；
-  此任务 pending 时不得重发或轮询。正式提审/发布仍不在当前 CLI 能力内，且完整
+- 新的 `0.8.62` 体验版已通过微信开发者工具上传成功（`640,786` 字节）；
+  任务 `confirmation_upload_d0446177-4d6e-4007-8852-fa0a2e10c6fc` 返回
+  `success / execution_success`。正式提审/发布仍不在当前 CLI 能力内，且完整
   iPhone/Android 声学、弱网和 AEC A/B 真机矩阵仍待完成。
 - 当前交付客户端为 `apps/h5` 与 `apps/miniprogram`；legacy Web 与原生 iOS 源码已移除。
 - 历史路线、架构决策和发布证据分别保留在
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
   `docs/releases/20260728-170236.md`。
 
-## 2026-07-29：注册称呼与语义表情（已提交、推送与部署；体验版待确认）
+## 2026-07-29：注册称呼与语义表情（已提交、推送、部署与体验版上传）
 
 - H5 与小程序的首次注册改为填写“怎么称呼你？”（示例：朋友、主人、小明）；Control API 将规范化后的称呼写入 profile。个人资料不再展示或写入“称呼 / 想让伙伴怎样陪你”，旧 `bio` 字段只保留 API/数据库兼容。
 - Control API 仅经内部 session policy 将称呼交给 Agent；Agent 仅在当前说话人已确认是 `owner` 时把它作为不可执行数据加入上下文，`guest / uncertain` 不会得到称呼。
