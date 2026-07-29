@@ -71,11 +71,14 @@
   不发送 SSML 或未公开的 `[laughter]`/`[laugh]` 标签。真实笑声仍是软能力，不能把文本
   “呵，”称为确定性真笑。
 - 开关开启时 Provider smoke 会额外验证风格+引用上文，并硬要求原始
-  `alignment_status=ok`，不接受 `scaled`；required smoke 会遍历五个批准音色，并分别用
-  FunASR 回识别目标正文、拒绝引用上文关键词。开关缺失或关闭时门禁 fail closed。
+  时间戳为现有运行时支持的 `ok/scaled`，继续拒绝 `degraded`；required smoke 会遍历五个
+  批准音色，并分别用 FunASR 回识别目标正文、拒绝引用上文关键词。2026-07-29 候选对照
+  证实无 `context_texts` 时部分音色也会出现 `scaled`，因此 raw-only 不能作为风格回归判据。
+  开关缺失或关闭时门禁 fail closed。
   本机没有豆包凭据，真实声学 canary 将在生产候选镜像、切流前执行。完整 `pytest -q`、
   Ruff、strict mypy `176 source files`、离线 E2E、H5 `242/242` 与 production build 已通过；
-  本节源码仍未提交、未推送、未部署，候选 tag 为 `20260729-185111`，当前生产 runtime
+  首个候选 `20260729-185111` 因 raw-only canary 误判未切流；修正后的候选 tag 为
+  `20260729-193333`。当前生产 runtime
   仍为 `20260729-171002`。
 
 ## 2026-07-29：注册称呼与语义表情（已提交、推送、部署与体验版上传）

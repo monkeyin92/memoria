@@ -87,9 +87,11 @@ PCM 偏移超过 1.4 秒，破坏打断后的实际已听文本计算。2026-07-
 - provider smoke 必须用增量 `TaskRequest` 验证真实 PCM 与字级时间戳；只检查
   WebSocket 建连或 HTTP 状态不算通过。
 - 当风格开关开启时，provider smoke 额外发送白名单指令与引用上文，并要求原始
-  `alignment_status=ok`；`scaled` 即视为风格门禁失败。门禁必须遍历当前批准目录中的
-  五个预置音色，并把每段风格音频交给 FunASR 回识别目标正文、拒绝引用上文关键词；
-  开关缺失或关闭时 required smoke 必须失败，不能通过 readiness。
+  时间戳为 `alignment_status=ok` 或现有播放链已支持的 `scaled`；`degraded` 仍直接失败。
+  2026-07-29 生产候选对照中，无 `context_texts` 的 `calm_guide/low_magnetic` 同样出现
+  `scaled`，因此 raw-only 不是有效的风格回归判据。门禁必须遍历当前批准目录中的五个
+  预置音色，并把每段风格音频交给 FunASR 回识别目标正文、拒绝引用上文关键词；开关
+  缺失或关闭时 required smoke 必须失败，不能通过 readiness。
 - `SpeechPlan`、引用上文和 provider session 配置必须按 generation fence 冻结。控制确认音、
   迟到回调或后续话轮不得覆写当前回答；self-preview/legacy 最终修正 voice target 后必须对
   同一 fence 重应用冻结计划。
