@@ -2,6 +2,14 @@
 
 ## 当前状态
 
+- `20260729-193333` 已于 `2026-07-29T12:28:16Z` 原子切换 runtime：未确认说话人现在可承接
+  本次会话末尾连续的 public 工作上下文，但主人私人历史、记忆、Persona、工具与
+  `history_eligible` 仍隔离；Qwen 多段情绪按 PCM sample 区间、provider `audio_start_ms`
+  与 `item_id` 绑定原话轮；自然表达和豆包情绪/方言/语气/语速/音调/引用上文控制已启用。
+- required Provider/readiness 两轮均遍历五个批准音色，六段 FunASR 回识别、Qwen、LiveKit、
+  Interrupt Semantic 与取消门禁全过；未出现 `degraded`。四容器均 healthy/restart=0，公网
+  8443 H5/API/WMS、Nginx、SQLite 完整性和 9 项 core readiness 通过。H5 未切换，仍为
+  `20260729-113831`；真机自然度、方言准确度、情绪强度和真实笑声仍需主观声学验收。
 - `20260729-171002` 已于 `2026-07-29T09:35:05Z` 原子切换 runtime：陪伴模式只以当前选定
   机器人名称和对应风格对外回应；身份/模型追问与显式违禁请求在 Control API 或其 Agent
   降级路径直接返回固定短句，不读取私人记忆、persona 或调用 LLM。Qwen 兼容接口启用原生
@@ -18,13 +26,13 @@
   权威证据账本不变，工作记忆仍只按话轮动态组装。
 - GitHub Actions 已在 `f6a9580` 的 run `30416225947` 全绿：Python job 运行真实
   PostgreSQL/pgvector 合同测试，总覆盖率恢复至 `89%`，未降低既有 `85%` 门槛。
-- 当前已部署源码基线：`56e83b5`，annotated tag `20260729-171002` 精确指向该提交；部署记录
-  已作为本地 `423ae46` 文档提交保存。本次未推送，`origin/main` 当前为 `f54eb76`。
+- 当前已部署源码基线：`c9cf96e`，annotated tag `20260729-193333` 精确指向该提交；
+  `origin/main` 已同步到该提交。
 - 生产 runtime source / annotated tag：
-  `56e83b5a3d0ecf8be073db571031505168bdf23e / 20260729-171002`，已完成原子切换、
-  Provider/readiness/Nginx 与公网验收；直接 runtime 回滚点为 `20260729-113831`，H5 本轮未
+  `c9cf96e32d0a71c8ee11651e6949c8de0e1a7205 / 20260729-193333`，已完成原子切换、
+  Provider/readiness/Nginx 与公网验收；直接 runtime 回滚点为 `20260729-171002`，H5 本轮未
   切换，仍为 `20260729-113831`。root-only SQLite、PostgreSQL 与四份 env 备份位于
-  `/var/backups/memoria/runtime-switch-20260729-171002-from-20260729-113831-20260729T093036Z/`。
+  `/var/backups/memoria/runtime-switch-20260729-193333-from-20260729-171002-20260729T122724Z/`。
 - 微信小程序开发测试版：`0.8.59` 已上传成功（`636,385` 字节），但真机已确认欢迎语首播后
   因遥测契约不兼容断开；修复后的 `0.8.60` 已通过 CLI 上传开发测试版（`637,083` 字节），
   开 VPN 可完整聊天。诊断版 `0.8.61` 已上传（`637,237` 字节）；真机和 Safari 均确认标准 443
@@ -43,7 +51,7 @@
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
   `docs/releases/20260728-170236.md`。
 
-## 2026-07-29：短期上下文与自然表达修复（本地候选，未发布）
+## 2026-07-29：短期上下文与自然表达修复（已提交、推送并部署）
 
 - 生产证据确认，同一语音会话内“讲笑话 → 好冷啊”和“学英语 → 咖啡店场景 → 如何点咖啡”
   的权威 ASR 均正确，但说话人是 `uncertain / no_active_profile`；旧 `ContextAssembler`
@@ -65,7 +73,8 @@
 - 豆包 `context_texts` 已按 2026-07-29 官方双向 WS 文档重新接线，但受
   `DOUBAO_TTS_STYLE_CONTROL_ENABLED=false` 默认门禁保护：仅 `seed-tts-2.0` 预置音色可用，
   个人复刻无条件清空。语速走 `audio_params.speech_rate`，音调走 `post_process.pitch`；
-  风格和上文合并成一条短 `context_texts`，真实朗读内容仍只在 `TaskRequest.text`。
+  风格和上文合并成一条短 `context_texts`，真实朗读内容仍只在 `TaskRequest.text`。生产
+  `/etc/memoria-agent.env` 已在通过五音色 canary 后显式设为 `true`。
 - 引用上文只取当前 `owner/public` scope 尾部连续的已提交用户 final 与 actual-heard 助手文本，
   当前用户 final 先脱敏且始终保留；遇到 scope 边界立即停止。不启用 provider `section_id`，
   不发送 SSML 或未公开的 `[laughter]`/`[laugh]` 标签。真实笑声仍是软能力，不能把文本
@@ -75,11 +84,10 @@
   批准音色，并分别用 FunASR 回识别目标正文、拒绝引用上文关键词。2026-07-29 候选对照
   证实无 `context_texts` 时部分音色也会出现 `scaled`，因此 raw-only 不能作为风格回归判据。
   开关缺失或关闭时门禁 fail closed。
-  本机没有豆包凭据，真实声学 canary 将在生产候选镜像、切流前执行。完整 `pytest -q`、
-  Ruff、strict mypy `176 source files`、离线 E2E、H5 `242/242` 与 production build 已通过；
-  首个候选 `20260729-185111` 因 raw-only canary 误判未切流；修正后的候选 tag 为
-  `20260729-193333`。当前生产 runtime
-  仍为 `20260729-171002`。
+  完整 `pytest -q`、Ruff、strict mypy `176 source files`、离线 E2E、H5 `242/242` 与
+  production build 已通过；首个候选 `20260729-185111` 因 raw-only canary 误判未切流。
+  修正后的 `20260729-193333` 已通过切流前和 readiness 两轮真实五音色 canary，并已部署；
+  回滚点为 `20260729-171002`。
 
 ## 2026-07-29：注册称呼与语义表情（已提交、推送、部署与体验版上传）
 
