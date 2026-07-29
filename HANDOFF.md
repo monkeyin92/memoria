@@ -18,8 +18,8 @@
   权威证据账本不变，工作记忆仍只按话轮动态组装。
 - GitHub Actions 已在 `f6a9580` 的 run `30416225947` 全绿：Python job 运行真实
   PostgreSQL/pgvector 合同测试，总覆盖率恢复至 `89%`，未降低既有 `85%` 门槛。
-- 当前本地仓库代码基线：`56e83b5`，annotated tag `20260729-171002` 精确指向该提交；本次
-  未推送，`origin/main` 仍停在此前 `25e1f36` 基线。
+- 当前已部署源码基线：`56e83b5`，annotated tag `20260729-171002` 精确指向该提交；部署记录
+  已作为本地 `423ae46` 文档提交保存。本次未推送，`origin/main` 仍停在此前 `25e1f36` 基线。
 - 生产 runtime source / annotated tag：
   `56e83b5a3d0ecf8be073db571031505168bdf23e / 20260729-171002`，已完成原子切换、
   Provider/readiness/Nginx 与公网验收；直接 runtime 回滚点为 `20260729-113831`，H5 本轮未
