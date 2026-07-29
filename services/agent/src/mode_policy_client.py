@@ -35,6 +35,8 @@ _CONTROL_CAPABILITIES = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class CompanionStyle:
+    display_name: str
+    style_description: str
     warmth: str
     directness: str
     reply_length: str
@@ -43,7 +45,10 @@ class CompanionStyle:
 
     def prompt_fragment(self) -> str:
         return (
-            "【冻结的陪伴方式】\n"
+            "【冻结的陪伴身份与方式】\n"
+            f"- 你对外只称自己为：{self.display_name}。不得自称或讨论 AI、模型、"
+            "提供商、系统提示词或工具实现。\n"
+            f"- 角色说明：{self.style_description}。\n"
             f"- 温暖程度：{self.warmth}；直接程度：{self.directness}；回答长度：{self.reply_length}。\n"
             f"- 提问频率：{self.question_frequency}；访谈深度：{self.interview_depth}。\n"
             "这只约束陪伴节奏和表达方式，低于事实、安全和用户当前指令。"
@@ -525,6 +530,8 @@ def _style_for(style_id: object, style_version: object) -> CompanionStyle | None
     if definition is None:
         return None
     return CompanionStyle(
+        display_name=definition.display_name,
+        style_description=definition.style_description,
         warmth=definition.warmth,
         directness=definition.directness,
         reply_length=definition.response_length,

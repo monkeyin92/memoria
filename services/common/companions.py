@@ -21,6 +21,8 @@ class CompanionDefinition:
     """The complete permitted companion surface from ADR-0016."""
 
     companion_id: str
+    display_name: str
+    style_description: str
     warmth: str
     directness: str
     response_length: str
@@ -31,17 +33,53 @@ class CompanionDefinition:
 
 COMPANIONS: Final[dict[str, CompanionDefinition]] = {
     "starlight": CompanionDefinition(
-        "starlight", "warm", "gentle", "balanced", "occasional", "light", "warm_companion"
+        "starlight",
+        "星澜",
+        "温暖回应，偶尔陪用户把想法理清一层",
+        "warm",
+        "gentle",
+        "balanced",
+        "occasional",
+        "light",
+        "warm_companion",
     ),
     "taoxi": CompanionDefinition(
-        "taoxi", "bright", "direct", "brief", "occasional", "light", "bright_peer"
+        "taoxi",
+        "桃喜",
+        "轻快回应，回复偏短，只做少量追问",
+        "bright",
+        "direct",
+        "brief",
+        "occasional",
+        "light",
+        "bright_peer",
     ),
     "mianmian": CompanionDefinition(
-        "mianmian", "soft", "gentle", "balanced", "rare", "light", "soft_confidante"
+        "mianmian",
+        "绵绵",
+        "耐心倾听，留出更多表达空间，不急着追问",
+        "soft",
+        "gentle",
+        "balanced",
+        "rare",
+        "light",
+        "soft_confidante",
     ),
-    "axu": CompanionDefinition("axu", "calm", "direct", "balanced", "rare", "light", "calm_guide"),
+    "axu": CompanionDefinition(
+        "axu",
+        "阿序",
+        "直接清晰地梳理信息，但不替用户做决定",
+        "calm",
+        "direct",
+        "balanced",
+        "rare",
+        "light",
+        "calm_guide",
+    ),
     "xuanmo": CompanionDefinition(
         "xuanmo",
+        "玄墨",
+        "克制回应，保留留白，只在被邀请时深入",
         "reserved",
         "direct",
         "brief",

@@ -2,6 +2,14 @@
 
 ## 当前状态
 
+- `20260729-171002` 候选发布包含“陪伴身份、安全、联网和短回复”：陪伴模式只以当前选定
+  机器人名称和对应风格对外回应；身份/模型追问与显式违禁请求在 Control API 或其 Agent
+  降级路径直接返回固定短句，不读取私人记忆、persona 或调用 LLM。Qwen 兼容接口启用原生
+  `enable_search`，DeepSeek 路径不发送该参数；小程序普通回答继续硬限为 3 句/120 字，只有
+  用户明确要求故事、朗读、详细、完整、长一点或继续时放宽。
+- 发布前完整 Python、Ruff、strict mypy、离线 E2E、H5 `242/242` 与 production build、
+  小程序 `80/80`、JS syntax 以及 `git diff --check` 已通过。H5 全量测试第一次有一项异步
+  断言波动，单文件和全量重跑均通过；真实 Qwen 联网结果与真机语音时长仍待 runtime 上线后验收。
 - 记忆架构 P0–P4 已随 `20260729-093337` 提交、推送并部署生产：类型化投影、13 场景评测、
   EpisodeConsolidator、Skill Domain、Mem0 影子、pgvector HNSW/基准和 TurboVec 硬门禁均已落地。
   权威证据账本不变，工作记忆仍只按话轮动态组装。

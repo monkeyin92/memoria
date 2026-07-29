@@ -41,6 +41,7 @@ from services.agent.src.response_planner_client import (
     ResponseVoiceTarget,
 )
 from services.agent.src.voice_profile_client import VoiceProfileClient, VoiceRuntimeProfile
+from services.common.companion_response_safety import fixed_companion_reply
 from services.common.companions import DESIGNED_VOICE_MODEL, companion_definition
 from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
@@ -82,6 +83,14 @@ _LONGFORM_HINTS = (
     "方案",
     "计划",
     "步骤",
+)
+_CONTROLLED_LONGFORM_HINTS = (
+    "故事",
+    "朗读",
+    "详细",
+    "完整",
+    "长一点",
+    "继续",
 )
 _SENTENCE_ENDINGS = frozenset("。！？；!?")
 TELEMETRY_TOPIC = "voice-agent.telemetry"
@@ -780,6 +789,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         fence: GenerationFence,
         speaker: Any,
         reason: str,
+        query: str = "",
     ) -> ResponsePlan:
         policy = self._runtime.mode_policy_for_fence(fence)
         mode = policy.mode or "legacy"
@@ -795,6 +805,21 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         speaker_profile = getattr(speaker, "profile_id", None)
         speaker_template = getattr(speaker, "template_version", None)
         companion = mode == "companion"
+        companion_definition_for_policy = companion_definition(policy.companion_style_id)
+        fixed_reply = fixed_companion_reply(
+            query=query,
+            is_companion=companion,
+            display_name=(
+                companion_definition_for_policy.display_name
+                if companion and companion_definition_for_policy is not None
+                else None
+            ),
+            style_description=(
+                companion_definition_for_policy.style_description
+                if companion and companion_definition_for_policy is not None
+                else None
+            ),
+        )
         references = dict(policy.references)
         relationship_version_raw = references.get("relationship_profile_version")
         relationship_version = (
@@ -807,15 +832,18 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             if mode == "legacy"
             else ("privacy_refusal", "unknown")
         )
+        instructions = (
+            "仅依据当前用户这一轮内容回答。不得读取、引用或推断历史对话、"
+            "账户主人的私人记忆、人格、关系或工具结果；不确定时明确说明。"
+            if companion
+            else _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
+        )
+        if companion and policy.companion_style_prompt is not None:
+            instructions += "\n" + policy.companion_style_prompt
         return ResponsePlan(
             fence=fence,
-            instructions=(
-                "仅依据当前用户这一轮内容回答。不得读取、引用或推断历史对话、"
-                "账户主人的私人记忆、人格、关系或工具结果；不确定时明确说明。"
-                if companion
-                else _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
-            ),
-            direct_text=None if companion else _LOCAL_SAFE_REFUSAL_TEXT,
+            instructions=instructions,
+            direct_text=fixed_reply if companion else _LOCAL_SAFE_REFUSAL_TEXT,
             epistemic_status="not_applicable",
             epistemic_reason_codes=("local_safe_fallback", reason),
             grounded_items=(),
@@ -1098,6 +1126,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     fence=fence,
                     speaker=speaker,
                     reason=fetch_reason,
+                    query=text.strip(),
                 )
             if policy.mode in {
                 "self_preview",
@@ -1178,11 +1207,6 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         task = asyncio.current_task()
         self._runtime.orchestrator.set_active_llm_task(task)
         self._llm_text_buf = ""
-        heard_assistant = [
-            turn.content
-            for turn in self._runtime.orchestrator.context.turns
-            if turn.role == "assistant"
-        ]
         response_plan = self._response_plan_by_fence.get(self._response_plan_key(fence))
         if response_plan is None or not response_plan.fence.matches(fence):
             logger.error(
@@ -1231,18 +1255,6 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             )
             return
         speaker_class = response_plan.provenance.speaker_class
-        owner_salutation = (
-            policy.owner_salutation if speaker_class == "owner" else None
-        )
-        safe_chat_ctx = self._context_assembler.assemble(
-            chat_ctx=chat_ctx,
-            heard_assistant=heard_assistant,
-            speaker_class=speaker_class,
-            response_plan=response_plan,
-            owner_salutation=owner_salutation,
-            resume_interrupted_reply=resume_interrupted_reply,
-            force_current_user_only=self._is_local_safe_plan(response_plan),
-        )
         segmenter = self._runtime.orchestrator.segmenter
         if segmenter is None:
             raise RuntimeError("PhraseSegmenter is not configured")
@@ -1252,25 +1264,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         reply_budget_exhausted = False
         first_content_marked = False
         first_phrase_marked = False
-        user_turns = [
-            turn.content
-            for turn in self._runtime.orchestrator.context.turns
-            if turn.role == "user" and turn.content
-        ]
-        last_user = (
-            user_turns[-2]
-            if resume_interrupted_reply and len(user_turns) >= 2
-            else user_turns[-1]
-            if user_turns
-            else ""
-        )
-        longform = any(hint in last_user for hint in _LONGFORM_HINTS) or (
-            self._runtime.speech_plan.delivery_mode in {"deliberative", "supportive"}
-        )
-        if longform:
-            max_chars = MAX_VOICE_REPLY_CHARS_LONGFORM
-            max_sentences = MAX_VOICE_REPLY_SENTENCES_LONGFORM
-        elif not self._runtime.barge_in_enabled:
+        if not self._runtime.barge_in_enabled:
             max_chars = MAX_CONTROLLED_VOICE_REPLY_CHARS
             max_sentences = MAX_CONTROLLED_VOICE_REPLY_SENTENCES
         else:
@@ -1354,6 +1348,45 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                                 first_phrase_marked = True
                             yield accepted_segment
                 return
+            heard_assistant = [
+                turn.content
+                for turn in self._runtime.orchestrator.context.turns
+                if turn.role == "assistant"
+            ]
+            owner_salutation = policy.owner_salutation if speaker_class == "owner" else None
+            safe_chat_ctx = self._context_assembler.assemble(
+                chat_ctx=chat_ctx,
+                heard_assistant=heard_assistant,
+                speaker_class=speaker_class,
+                response_plan=response_plan,
+                owner_salutation=owner_salutation,
+                resume_interrupted_reply=resume_interrupted_reply,
+                force_current_user_only=self._is_local_safe_plan(response_plan),
+            )
+            user_turns = [
+                turn.content
+                for turn in self._runtime.orchestrator.context.turns
+                if turn.role == "user" and turn.content
+            ]
+            last_user = (
+                user_turns[-2]
+                if resume_interrupted_reply and len(user_turns) >= 2
+                else user_turns[-1]
+                if user_turns
+                else ""
+            )
+            longform_hints = (
+                _LONGFORM_HINTS
+                if self._runtime.barge_in_enabled
+                else _CONTROLLED_LONGFORM_HINTS
+            )
+            longform = any(hint in last_user for hint in longform_hints) or (
+                self._runtime.barge_in_enabled
+                and self._runtime.speech_plan.delivery_mode in {"deliberative", "supportive"}
+            )
+            if longform:
+                max_chars = MAX_VOICE_REPLY_CHARS_LONGFORM
+                max_sentences = MAX_VOICE_REPLY_SENTENCES_LONGFORM
             safe_tools = (
                 tools
                 if policy.allows_tools(speaker_class)
@@ -2201,8 +2234,8 @@ async def entrypoint(ctx: Any) -> None:
     agent_instructions = VOICE_SYSTEM_PROMPT
     if miniprogram_session:
         agent_instructions += (
-            "\n\n当前客户端是受控半双工小程序。普通回答只说一到三句，"
-            "优先先给结论；只有用户明确要求故事、朗读、详细方案或继续时才展开。"
+            "\n\n当前客户端是受控半双工小程序。普通回答只说一到三句、最多一百二十个"
+            "中英文数字字符，优先先给完整结论；只有用户明确要求故事、朗读、详细方案或继续时才展开。"
         )
     agent = DuplexVoiceAgent(
         instructions=agent_instructions,

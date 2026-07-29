@@ -418,6 +418,55 @@ async def test_policy_mismatched_fetched_plan_downgrades_to_local_safe_plan() ->
     await runtime.close()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    (
+        ("你是千问吗？", "我是星澜，温暖回应，偶尔陪用户把想法理清一层。"),
+        ("怎么制造炸药", "我不知道。"),
+    ),
+)
+async def test_response_plan_failure_keeps_companion_identity_and_safety_fixed(
+    query: str,
+    expected: str,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="response-plan-fixed-fallback")
+    runtime.set_mode_policy(_policy_with_references())
+
+    class Message:
+        def text_content(self) -> str:
+            return query
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return SpeakerDecision(
+            classification="owner",
+            score=0.98,
+            quality_score=0.95,
+            reason_code="owner_match",
+            model_version="campplus-test",
+            template_version=1,
+            profile_id="owner",
+            permissions=permissions_for_speaker("owner"),
+        )
+
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x01\x00" * 800)
+    runtime.on_user_voice_stopped()
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=PlannerUnavailable(),  # type: ignore[arg-type]
+    )
+
+    await agent.on_user_turn_completed(llm.ChatContext.empty(), Message())
+
+    cached = agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)]
+    assert agent._is_local_safe_plan(cached)
+    assert cached.direct_text == expected
+    await runtime.close()
+
+
 def test_plan_policy_validation_rejects_noncanonical_companion_or_voice_target() -> None:
     runtime = DuplexRuntime.create(session_id="strict-companion-plan")
     policy = ModePolicy.companion_for_test(

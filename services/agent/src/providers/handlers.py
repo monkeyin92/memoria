@@ -52,6 +52,14 @@ async def build_voice_provider_handlers(
         except Exception as exc:
             logger.warning("Doubao TTS pool warm failed (will open on demand): %s", exc)
 
+    extra_body: dict[str, Any] = {
+        "thinking": {"type": "disabled"},
+        "max_tokens": int(os.getenv("DEEPSEEK_FAST_MAX_TOKENS", "240")),
+    }
+    if getattr(settings, "llm_provider", "qwen") == "qwen":
+        # DashScope's OpenAI-compatible Chat Completions API lets the model search
+        # only when the current question needs fresh information.
+        extra_body["enable_search"] = True
     language_model = llm_factory(
         model=settings.llm_fast_model,
         api_key=settings.llm_api_key,
@@ -60,10 +68,7 @@ async def build_voice_provider_handlers(
         tool_choice="auto",
         max_retries=0,
         timeout=httpx.Timeout(connect=3.0, read=12.0, write=5.0, pool=3.0),
-        extra_body={
-            "thinking": {"type": "disabled"},
-            "max_tokens": int(os.getenv("DEEPSEEK_FAST_MAX_TOKENS", "240")),
-        },
+        extra_body=extra_body,
     )
     return VoiceProviderHandlers(
         asr=asr,

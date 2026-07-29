@@ -29,6 +29,7 @@ async def test_provider_handlers_hide_vendor_construction_behind_one_seam(
 
     handlers = await build_voice_provider_handlers(
         settings=SimpleNamespace(
+            llm_provider="qwen",
             llm_fast_model="qwen-fast",
             llm_api_key="secret",
             llm_base_url="https://llm.example.com/v1",
@@ -53,6 +54,29 @@ async def test_provider_handlers_hide_vendor_construction_behind_one_seam(
             "extra_body": {
                 "thinking": {"type": "disabled"},
                 "max_tokens": 180,
+                "enable_search": True,
             },
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_provider_handlers_do_not_send_dashscope_search_options_to_deepseek() -> None:
+    calls: list[dict[str, Any]] = []
+
+    await build_voice_provider_handlers(
+        settings=SimpleNamespace(
+            llm_provider="deepseek",
+            llm_fast_model="deepseek-fast",
+            llm_api_key="secret",
+            llm_base_url="https://deepseek.example.com/v1",
+        ),
+        llm_factory=lambda **kwargs: calls.append(kwargs) or object(),
+        asr_factory=object,
+        tts_factory=object,
+    )
+
+    assert calls[0]["extra_body"] == {
+        "thinking": {"type": "disabled"},
+        "max_tokens": 240,
+    }

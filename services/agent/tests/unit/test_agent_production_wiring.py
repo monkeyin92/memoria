@@ -23,6 +23,7 @@ from services.agent.src.agent import (
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime, KeywordSpotterBinding
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.orchestration.prosody import SpeechPlan
 from services.agent.src.orchestration.state_machine import ConversationState
 from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
 from services.agent.src.response_planner_client import (
@@ -563,6 +564,10 @@ async def test_planner_failure_fallback_is_current_turn_only_and_disables_tools(
 async def test_agent_uses_direct_response_text_without_calling_llm(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class UnreadableContext:
+        def copy(self) -> None:
+            raise AssertionError("direct response must not assemble chat history")
+
     runtime = DuplexRuntime.create()
     await runtime.on_turn_committed("直接回答")
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
@@ -580,7 +585,7 @@ async def test_agent_uses_direct_response_text_without_calling_llm(
 
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 
-    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    output = [item async for item in agent.llm_node(UnreadableContext(), [], None)]
 
     assert called is False
     assert "".join(str(item) for item in output) == "可以，直接说这一句。"
@@ -1364,6 +1369,84 @@ async def test_controlled_turn_reply_budget_stops_after_three_sentences(
     output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
 
     assert output == ["第一句。", "第二句。", "第三句。"]
+
+
+@pytest.mark.asyncio
+async def test_controlled_turn_keeps_short_budget_for_supportive_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(barge_in_enabled=False)
+    runtime.speech_plan = SpeechPlan(
+        voice_emotion="neutral",
+        rate=1.0,
+        delivery_mode="supportive",
+    )
+    await runtime.on_turn_committed("介绍一下")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="简洁介绍。",
+    )
+
+    async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
+        for sentence in ("第一句。", "第二句。", "第三句。", "第四句。"):
+            yield sentence
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+
+    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+
+    assert output == ["第一句。", "第二句。", "第三句。"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user_text", ("给我一个方案", "给我一份计划", "列出步骤"))
+async def test_controlled_turn_keeps_short_budget_for_ordinary_planning_terms(
+    monkeypatch: pytest.MonkeyPatch,
+    user_text: str,
+) -> None:
+    runtime = DuplexRuntime.create(barge_in_enabled=False)
+    await runtime.on_turn_committed(user_text)
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="简洁回答。",
+    )
+
+    async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
+        for sentence in ("第一句。", "第二句。", "第三句。", "第四句。"):
+            yield sentence
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+
+    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+
+    assert output == ["第一句。", "第二句。", "第三句。"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user_text", ("给我详细方案", "请朗读这段", "请继续"))
+async def test_controlled_turn_allows_explicit_longform_requests(
+    monkeypatch: pytest.MonkeyPatch,
+    user_text: str,
+) -> None:
+    runtime = DuplexRuntime.create(barge_in_enabled=False)
+    await runtime.on_turn_committed(user_text)
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="按用户要求展开。",
+    )
+
+    async def fake_llm_node(*_args: Any) -> AsyncIterator[Any]:
+        for sentence in ("第一句。", "第二句。", "第三句。", "第四句。"):
+            yield sentence
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+
+    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+
+    assert output == ["第一句。", "第二句。", "第三句。", "第四句。"]
 
 
 @pytest.mark.asyncio
