@@ -18,3 +18,13 @@ test("profile hero keeps a visible default mascot face overlay", () => {
   assert.match(styles, /\.profile-face-mouth\s*\{/);
   assert.match(styles, /\.user-avatar\s*\{[^}]*border-radius:\s*50%/s);
 });
+
+test("every companion option keeps a visible face instead of a blank body image", () => {
+  assert.match(template, /class="companion-mascot-shell"/);
+  assert.match(template, /class="companion-face \{\{profile\.companion_id === item\.id/);
+  assert.match(template, /class="companion-face-eye companion-face-eye-l"/);
+  assert.match(template, /class="companion-face-mouth"/);
+  assert.match(styles, /\.companion-face\s*\{[^}]*position:\s*absolute/s);
+  assert.match(styles, /\.companion-face-eye\s*\{/);
+  assert.match(styles, /\.companion-face-happy \.companion-face-mouth\s*\{/);
+});

@@ -4,7 +4,6 @@ const { requireLogin } = require("../../utils/auth-gate");
 
 const defaultProfile = {
   display_name: "新朋友",
-  bio: "慢慢说，我会认真听。",
   auto_summary: true,
   voice_reply: true,
   gentle_reminders: false,
@@ -22,6 +21,20 @@ function profileFaceStyleFor(companionId) {
     `--profile-eye-bottom:${face.eyeBottom};--profile-eye-glow:${face.glow};`
   );
 }
+
+function companionFaceStyleFor(companion) {
+  const face = companion.face;
+  return (
+    `left:${face.left};top:${face.top};width:${face.width};height:${face.height};` +
+    `--companion-face-ink:${face.ink};--companion-eye-top:${face.eyeTop};` +
+    `--companion-eye-bottom:${face.eyeBottom};--companion-eye-glow:${face.glow};`
+  );
+}
+
+const companionCards = companions.map((companion) => ({
+  ...companion,
+  faceStyle: companionFaceStyleFor(companion),
+}));
 
 function formatDate(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -52,7 +65,7 @@ Page({
     identity: null,
     profile: defaultProfile,
     profileFaceStyle: profileFaceStyleFor(defaultCompanionId),
-    companions,
+    companions: companionCards,
     stats: { totalDays: 0, moments: 0, streak: 0 },
     loading: false,
     saving: false,
@@ -137,14 +150,6 @@ Page({
     } catch {
       // 统计只作展示，失败时保持默认值，不打断页面。
     }
-  },
-
-  onNameInput(event) {
-    this.setData({ "profile.display_name": event.detail.value });
-  },
-
-  onBioInput(event) {
-    this.setData({ "profile.bio": event.detail.value });
   },
 
   onSwitch(event) {

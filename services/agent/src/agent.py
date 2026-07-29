@@ -1231,11 +1231,15 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             )
             return
         speaker_class = response_plan.provenance.speaker_class
+        owner_salutation = (
+            policy.owner_salutation if speaker_class == "owner" else None
+        )
         safe_chat_ctx = self._context_assembler.assemble(
             chat_ctx=chat_ctx,
             heard_assistant=heard_assistant,
             speaker_class=speaker_class,
             response_plan=response_plan,
+            owner_salutation=owner_salutation,
             resume_interrupted_reply=resume_interrupted_reply,
             force_current_user_only=self._is_local_safe_plan(response_plan),
         )

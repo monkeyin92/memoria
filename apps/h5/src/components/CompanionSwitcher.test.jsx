@@ -28,6 +28,8 @@ describe("CompanionSwitcher", () => {
 
     expect(screen.getByText(/不需要重录声纹，也不会改变数字分身/)).toBeInTheDocument();
     expect(screen.getByText("当前会话不变；保存后从下一次会话生效。")).toBeInTheDocument();
+    expect(document.querySelectorAll(".companion-switcher-mascot")).toHaveLength(5);
+    expect(document.querySelector(".companion-switcher-mascot[data-expression='happy']")).toBeTruthy();
     fireEvent.click(
       screen.getByRole("radio", { name: "选择玄墨，克制回应 · 很少追问 · 1–2 句" }),
     );

@@ -1233,6 +1233,83 @@ describe("useVoiceSession production edges", () => {
     expect(result.current.emotionHint).toBeNull();
   });
 
+  it("uses a fence-bound assistant expression only while that reply is speaking", async () => {
+    const { result, room } = await renderStartedHook();
+    const agent = { isAgent: true };
+    const emit = (event) =>
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent(event),
+        agent,
+        null,
+        "voice-agent.ui",
+      );
+
+    act(() => {
+      emit({
+        type: "assistant_expression",
+        session_id: "session-1",
+        expression: "caring",
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 0,
+      });
+      expect(result.current.assistantExpression).toBeNull();
+      emit({
+        type: "assistant_state",
+        session_id: "session-1",
+        state: "speaking",
+        turn_id: 1,
+        generation_id: 1,
+      });
+    });
+    expect(result.current.uiState).toBe("speaking");
+    expect(result.current.assistantExpression).toEqual({
+      expression: "caring",
+      turnId: 1,
+      generationId: 1,
+      toolEpoch: 0,
+    });
+
+    act(() => {
+      emit({
+        type: "assistant_state",
+        session_id: "session-1",
+        state: "listening",
+        turn_id: 1,
+        generation_id: 1,
+      });
+      emit({
+        type: "assistant_expression",
+        session_id: "session-1",
+        expression: "happy",
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 0,
+      });
+    });
+    expect(result.current.assistantExpression).toBeNull();
+
+    act(() => {
+      emit({
+        type: "assistant_state",
+        session_id: "session-1",
+        state: "speaking",
+        turn_id: 2,
+        generation_id: 2,
+      });
+      emit({
+        type: "assistant_expression",
+        session_id: "session-1",
+        expression: "happy",
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 0,
+      });
+    });
+    expect(result.current.assistantExpression).toBeNull();
+  });
+
   it("does not show unstable user interim transcripts", async () => {
     const { result, room, onFinalTranscript } = await renderStartedHook();
     const agent = { isAgent: true };

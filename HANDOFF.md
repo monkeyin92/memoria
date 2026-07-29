@@ -26,6 +26,16 @@
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
   `docs/releases/20260728-170236.md`。
 
+## 2026-07-29：注册称呼与语义表情（本地候选，未提交/未部署）
+
+- H5 与小程序的首次注册改为填写“怎么称呼你？”（示例：朋友、主人、小明）；Control API 将规范化后的称呼写入 profile。个人资料不再展示或写入“称呼 / 想让伙伴怎样陪你”，旧 `bio` 字段只保留 API/数据库兼容。
+- Control API 仅经内部 session policy 将称呼交给 Agent；Agent 仅在当前说话人已确认是 `owner` 时把它作为不可执行数据加入上下文，`guest / uncertain` 不会得到称呼。
+- Agent 在实际播放开始前按 delivery plan 与回复语义发布一次带
+  `session_id / turn_id / generation_id / tool_epoch` 的 `assistant_expression`
+  （`neutral / happy / curious / caring`）。H5 与小程序都缓存乱序事件、只在匹配的 speaking fence 内显示，并在结束、断线或系统中断时清除；小程序 Gateway 已有定向转发回归。
+- H5 伙伴切换列表和小程序五个陪伴方式缩略图都使用表情骨架，避免只有无脸机身。H5 本地预览已验证注册、选角、首页称呼与伙伴切换；微信开发者工具已编译 auth/home/profile WXML/WXSS，首页和“我的”模拟器画面正常、console 的 error/warn/fail/exception 过滤为空。
+- 本地门禁：H5 `242/242`、production build；小程序 `80/80`、相关 JS syntax、`git diff --check`；Control API/Agent/Gateway 定向 pytest 全部通过。未提交、未上传体验版、未部署。
+
 ## 最新实现
 
 - 长期记忆新增独立的 `memory_kind / domain_category / item_kind`，搜索投影携带实体、

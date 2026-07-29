@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from services.agent.src.orchestration.emotion import EmotionSmoother
 from services.agent.src.orchestration.prosody import (
+    mascot_expression_for_reply,
     speech_plan_for_emotion,
     speech_plan_for_turn,
 )
@@ -201,6 +202,34 @@ def test_safe_acoustic_laughter_gets_one_warm_laugh_but_serious_context_never_do
         text="帮我安排一下葬礼",
     )
     assert serious_plan.delivery_mode == "supportive"
+
+
+def test_assistant_reply_expression_follows_safe_delivery_semantics() -> None:
+    caring = speech_plan_for_turn(
+        label="sad",
+        provider_label="sad",
+        text="我最近真的很难过。",
+    )
+    happy = speech_plan_for_turn(
+        label="neutral",
+        provider_label="happy",
+        text="哈哈，我刚才把单词读错得太离谱了",
+    )
+    curious = speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text="帮我安排一个十五分钟的英语口语训练",
+    )
+    direct = speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text="今天星期几",
+    )
+
+    assert mascot_expression_for_reply(plan=caring, text="我会陪着你。") == "caring"
+    assert mascot_expression_for_reply(plan=happy, text="太好了！") == "happy"
+    assert mascot_expression_for_reply(plan=curious, text="可以，先从第一步开始。") == "curious"
+    assert mascot_expression_for_reply(plan=direct, text="今天星期三。") == "neutral"
 
 
 def test_transcribed_acoustic_laughter_can_drive_delivery_without_claiming_happy() -> None:

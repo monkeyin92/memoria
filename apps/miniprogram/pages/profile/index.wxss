@@ -158,7 +158,6 @@
 }
 
 .hero-name,
-.hero-bio,
 .hero-account {
   display: block;
 }
@@ -168,13 +167,6 @@
   font-size: 40rpx;
   font-weight: 800;
   letter-spacing: 1rpx;
-}
-
-.hero-bio {
-  margin-top: 8rpx;
-  color: #9aa6cf;
-  font-size: 25rpx;
-  line-height: 1.5;
 }
 
 .hero-account {
@@ -244,19 +236,6 @@
   color: #5d688f;
 }
 
-.bio-input {
-  width: 100%;
-  min-height: 150rpx;
-  box-sizing: border-box;
-  padding: 22rpx 26rpx;
-  border: 1rpx solid rgba(94, 234, 255, 0.22);
-  border-radius: 26rpx;
-  background: rgba(255, 255, 255, 0.05);
-  color: #f2f5ff;
-  font-size: 29rpx;
-  line-height: 1.55;
-}
-
 .save-button {
   margin-top: 28rpx;
 }
@@ -292,10 +271,81 @@
   box-shadow: 0 0 28rpx rgba(34, 229, 255, 0.14);
 }
 
-.companion-image {
+.companion-mascot-shell {
+  position: relative;
   flex: none;
   width: 96rpx;
   height: 96rpx;
+}
+
+.companion-image {
+  width: 100%;
+  height: 100%;
+}
+
+.companion-face {
+  position: absolute;
+  pointer-events: none;
+}
+
+.companion-face-eye {
+  position: absolute;
+  top: 24.3%;
+  width: 18.33%;
+  height: 41.43%;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--companion-face-ink);
+  animation: companion-mascot-blink 5.6s ease-in-out infinite;
+}
+
+.companion-face-eye-l { left: 20.84%; }
+.companion-face-eye-r { left: 60.83%; }
+
+.companion-face-iris {
+  position: absolute;
+  left: 6.8%;
+  top: 3.5%;
+  width: 86.4%;
+  height: 89.7%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--companion-eye-top) 0%, var(--companion-eye-top) 52%, var(--companion-eye-bottom) 100%);
+}
+
+.companion-face-shine {
+  position: absolute;
+  left: 22.7%;
+  top: 22.4%;
+  width: 22.7%;
+  height: 17.2%;
+  border-radius: 50%;
+  background: #fffaf0;
+  box-shadow: 0 8rpx 8rpx var(--companion-eye-glow);
+}
+
+.companion-face-mouth {
+  position: absolute;
+  left: 45%;
+  top: 72.5%;
+  width: 10%;
+  height: 7%;
+  box-sizing: border-box;
+  border-bottom: 3rpx solid var(--companion-face-ink);
+  border-radius: 0 0 999rpx 999rpx;
+  transition: width 0.2s ease, height 0.2s ease;
+}
+
+.companion-face-happy .companion-face-mouth {
+  left: 42%;
+  top: 70%;
+  width: 16%;
+  height: 12%;
+  border-bottom-width: 4rpx;
+}
+
+@keyframes companion-mascot-blink {
+  0%, 44%, 48%, 100% { transform: scaleY(1); }
+  46% { transform: scaleY(0.08); }
 }
 
 .companion-copy {

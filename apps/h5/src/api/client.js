@@ -275,12 +275,16 @@ export function bootstrapIdentity() {
   return identityPromise;
 }
 
-export async function registerAccount(username, password) {
+export async function registerAccount(username, password, displayName) {
   const identity = await request(
     "/v1/auth/register",
     {
       method: "POST",
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({
+        username,
+        password,
+        display_name: displayName,
+      }),
     },
     { authenticated: Boolean(activeIdentity?.access_token) },
   );

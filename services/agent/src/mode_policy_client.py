@@ -74,6 +74,14 @@ class ModePolicy:
             return self.companion_style.prompt_fragment()
         return None
 
+    @property
+    def owner_salutation(self) -> str | None:
+        """The internal-only account-owner name; never use it for visitors."""
+        value = dict(self.references).get("owner_display_name")
+        if self.mode != "companion" or not _optional_bounded_string(value):
+            return None
+        return value if isinstance(value, str) else None
+
     def capability(self, name: str) -> bool:
         return self.available and dict(self.capabilities).get(name, False)
 
@@ -299,6 +307,7 @@ class ModePolicyClient:
                 "fallback_voice_provider",
                 "fallback_voice_model",
                 "fallback_voice_resource_id",
+                "owner_display_name",
             )
         }
         references["voice_profile_version"] = voice_profile_version
@@ -419,7 +428,14 @@ class ModePolicyClient:
             or voice_profile_version_invalid
             or relationship_profile_version_invalid
             or not voice_contract_valid
-            or (mode == "companion" and any(value is not None for value in references.values()))
+            or (
+                mode == "companion"
+                and any(
+                    value is not None
+                    for key, value in references.items()
+                    if key != "owner_display_name"
+                )
+            )
             or (
                 mode == "self_preview"
                 and (
@@ -452,6 +468,7 @@ class ModePolicyClient:
                     )
                 )
             )
+            or (mode != "companion" and references["owner_display_name"] is not None)
             or (mode != "companion" and (style_id is not None or style_version is not None))
         ):
             return ModePolicy.unavailable("payload_invalid")

@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field, field_validator
 
+from services.common.redaction import redact_pii
 from services.control_api.app.database import (
     AUTH_REFRESH_CONCURRENT_RETRY_AFTER_S,
     AuthSessionRotationStatus,
@@ -74,6 +75,7 @@ class CurrentUserResponse(BaseModel):
 class AccountCredentials(BaseModel):
     username: str = Field(min_length=2, max_length=32)
     password: str = Field(min_length=8, max_length=128)
+    display_name: str | None = Field(default=None, max_length=64)
 
     @field_validator("username")
     @classmethod
@@ -84,6 +86,14 @@ class AccountCredentials(BaseModel):
         if any(not (character.isalnum() or character in "._-") for character in username):
             raise ValueError("用户名只能包含文字、数字、点、下划线或短横线")
         return username
+
+    @field_validator("display_name")
+    @classmethod
+    def normalize_display_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        display_name = unicodedata.normalize("NFKC", value).strip()
+        return redact_pii(display_name) if display_name else None
 
 
 class WechatLoginRequest(BaseModel):
@@ -229,6 +239,7 @@ def register_account(
             username=body.username,
             username_normalized=body.username.casefold(),
             password_hash=hash_password(body.password),
+            display_name=body.display_name,
             now=_utc_now(),
         )
     except sqlite3.IntegrityError as exc:
@@ -241,12 +252,14 @@ def register_account(
     )
     assert issued is not None
     token, ttl = issued
+    profile = store.get_profile(user_id=user_id, now=_utc_now())
     return AuthTokenResponse(
         user_id=user_id,
         username=str(account["username"]),
         account_type="registered",
         access_token=token,
         expires_in=ttl,
+        display_name=str(profile["display_name"]),
     )
 
 

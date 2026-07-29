@@ -172,6 +172,7 @@ async def test_internal_policy_uses_its_own_capability_and_returns_frozen_sessio
     assert policy["digital_self_version_id"] is None
     assert policy["relationship_profile_id"] is None
     assert policy["legacy_grant_id"] is None
+    assert policy["owner_display_name"] == "朋友"
 
 
 def _response_plan_body(session_id: str, *, classification: str = "owner") -> dict[str, Any]:

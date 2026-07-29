@@ -2053,7 +2053,7 @@ body {
 .companion-switcher-list { display: grid; gap: 9px; margin-top: 15px; }
 .companion-switcher-option {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -2069,6 +2069,7 @@ body {
   border-color: #6f8db9;
   box-shadow: 0 6px 17px rgba(43, 71, 111, 0.11);
 }
+.companion-switcher-mascot { width: 56px; height: 56px; }
 .companion-switcher-option strong,
 .companion-switcher-option small,
 .companion-switcher-option em { display: block; }

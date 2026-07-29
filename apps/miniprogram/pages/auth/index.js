@@ -27,6 +27,7 @@ Page({
     error: "",
     redirect: "/pages/home/index",
     reasonHint: "",
+    needsSalutation: false,
   },
 
   onLoad(options) {
@@ -37,6 +38,7 @@ Page({
     this.setData({
       redirect,
       reasonHint: reasonText(options.reason),
+      needsSalutation: options.skip_restore === "1",
     });
     this._restoreAttempted = options.skip_restore === "1";
   },
@@ -56,7 +58,9 @@ Page({
       await api.restoreWechatIdentity();
       this.finishLogin();
     } catch (error) {
-      if (error?.code !== "phone_authorization_required") {
+      if (error?.code === "phone_authorization_required") {
+        this.setData({ needsSalutation: true });
+      } else {
         this.setData({ error: error?.message || "暂时无法恢复微信登录。" });
       }
     }
@@ -108,11 +112,16 @@ Page({
       this.setData({ error: "需要手机号授权才能完成首次登录。" });
       return;
     }
+    const displayName = this.data.nickname.trim();
+    if (this.data.needsSalutation && !displayName) {
+      this.setData({ error: "先告诉我怎么称呼你吧。" });
+      return;
+    }
     this.setData({ loading: true, error: "" });
     try {
       await api.loginWithWechat({
         phoneCode,
-        displayName: this.data.nickname,
+        displayName,
       });
       if (this.data.avatarPath) {
         try {

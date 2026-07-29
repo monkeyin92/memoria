@@ -65,7 +65,6 @@ const tabs = [
 
 const defaultProfile = {
   display_name: "新朋友",
-  bio: "慢慢说，我会认真听。",
   auto_summary: true,
   voice_reply: true,
   gentle_reminders: false,
@@ -196,8 +195,6 @@ export function App() {
   const [activeTab, setActiveTab] = useState("home");
   const [profile, setProfile] = useState(defaultProfile);
   const [profileReady, setProfileReady] = useState(false);
-  const [draftProfile, setDraftProfile] = useState(defaultProfile);
-  const [editingProfile, setEditingProfile] = useState(false);
   const [digitalSelfOpen, setDigitalSelfOpen] = useState(false);
   const [companionSwitchOpen, setCompanionSwitchOpen] = useState(false);
   const [privacyDataOpen, setPrivacyDataOpen] = useState(false);
@@ -430,7 +427,6 @@ export function App() {
     setPreferenceError("");
     setProfileReady(false);
     setProfile(defaultProfile);
-    setDraftProfile(defaultProfile);
     void (async () => {
       let local = null;
       try {
@@ -451,23 +447,19 @@ export function App() {
           ...defaultProfile,
           ...(local || {}),
           ...result,
-          bio: result.bio || defaultProfile.bio,
           companion_id: hasCompanionSelection
             ? result.companion_id
             : "starlight",
         };
         setProfile(next);
-        setDraftProfile(next);
       } catch {
         if (activeUserIdRef.current !== requestedUserId) return;
         if (local) {
           const next = { ...defaultProfile, ...local };
           setProfile(next);
-          setDraftProfile(next);
         } else if (identity?.account_type === "registered") {
           const next = { ...defaultProfile, companion_id: "starlight" };
           setProfile(next);
-          setDraftProfile(next);
         }
       } finally {
         if (activeUserIdRef.current === requestedUserId) setProfileReady(true);
@@ -493,6 +485,10 @@ export function App() {
     activeLegacy?.status === "starting" ||
     activeLegacy?.status === "running" ||
     voice.session?.interaction?.interaction_mode === "legacy";
+  const mascotEmotion =
+    voice.uiState === "speaking"
+      ? voice.assistantExpression?.expression || "neutral"
+      : emotionFromVoice(voice.emotionHint?.label);
 
   const runSummary = async () => {
     setSummaryRunning(true);
@@ -850,26 +846,6 @@ export function App() {
     }
   };
 
-  const saveProfile = async () => {
-    const next = {
-      ...draftProfile,
-      display_name: draftProfile.display_name.trim() || "新朋友",
-      bio: draftProfile.bio.trim().slice(0, 80),
-    };
-    setProfile(next);
-    setDraftProfile(next);
-    window.localStorage.setItem(
-      profileStorageKey(userId),
-      JSON.stringify(next),
-    );
-    setEditingProfile(false);
-    try {
-      await updateProfile(userId, next);
-    } catch {
-      // Local profile remains usable and will be retried on a later edit.
-    }
-  };
-
   const togglePreference = async (field) => {
     if (preferenceSaving) return;
     const requestedUserId = userId;
@@ -881,7 +857,6 @@ export function App() {
       if (activeUserIdRef.current !== requestedUserId) return;
       const confirmed = saved ? { ...next, ...saved } : next;
       setProfile(confirmed);
-      setDraftProfile(confirmed);
       window.localStorage.setItem(
         profileStorageKey(requestedUserId),
         JSON.stringify(confirmed),
@@ -904,7 +879,6 @@ export function App() {
     setCurrentIdentity(null);
     setIdentityError("");
     setProfile(defaultProfile);
-    setDraftProfile(defaultProfile);
     setProfileReady(false);
     setMemoryDays([]);
     setSelectedDay(today());
@@ -922,7 +896,6 @@ export function App() {
     setFidelityEvaluations([]);
     setFidelityFocusVersionId("");
     growthCompletionIdsRef.current = {};
-    setEditingProfile(false);
     setDigitalSelfOpen(false);
     setCompanionSwitchOpen(false);
     setPrivacyDataOpen(false);
@@ -980,8 +953,8 @@ export function App() {
           setProfileReady((ready) => ready && account.user_id === userId);
           setCurrentIdentity(account);
         }}
-        onRegister={async (username, password) => {
-          const account = await registerAccount(username, password);
+        onRegister={async (username, password, displayName) => {
+          const account = await registerAccount(username, password, displayName);
           setProfileReady((ready) => ready && account.user_id === userId);
           setCurrentIdentity(account);
         }}
@@ -998,7 +971,6 @@ export function App() {
             onComplete={(savedProfile) => {
               const next = { ...profile, ...savedProfile };
               setProfile(next);
-              setDraftProfile(next);
               window.localStorage.setItem(
                 profileStorageKey(userId),
                 JSON.stringify(next),
@@ -1039,7 +1011,7 @@ export function App() {
               >
                 <MascotVisual
                   companionId={sessionCompanion.id}
-                  emotion="neutral"
+                  emotion={mascotEmotion}
                   className="avatar-mascot"
                 />
               </button>
@@ -1084,7 +1056,7 @@ export function App() {
 
             <div className="mascot-wrap">
               <Mascot
-                emotion={emotionFromVoice(voice.emotionHint?.label)}
+                emotion={mascotEmotion}
                 uiState={voice.uiState}
                 companionId={sessionCompanion.id}
                 active={Boolean(voice.session)}
@@ -1266,7 +1238,6 @@ export function App() {
             onComplete={(savedProfile) => {
               const next = { ...profile, ...savedProfile };
               setProfile(next);
-              setDraftProfile(next);
               window.localStorage.setItem(profileStorageKey(userId), JSON.stringify(next));
               setCompanionSwitchOpen(false);
               setDigitalSelfOpen(true);
@@ -1292,12 +1263,7 @@ export function App() {
         {activeTab === "profile" && !digitalSelfOpen && !companionSwitchOpen && !privacyDataOpen && (
           <ProfileScreen
             profile={profile}
-            draftProfile={draftProfile}
-            setDraftProfile={setDraftProfile}
             memoryDays={memoryDays}
-            editing={editingProfile}
-            setEditing={setEditingProfile}
-            onSave={saveProfile}
             onToggle={togglePreference}
             preferenceSaving={preferenceSaving}
             preferenceError={preferenceError}

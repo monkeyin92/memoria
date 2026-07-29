@@ -3,6 +3,7 @@ import { ArrowLeft, Check } from "@phosphor-icons/react";
 
 import { updateProfile } from "../api.js";
 import { companions } from "../lib/companions.js";
+import { MascotVisual } from "./Mascot.jsx";
 
 export function CompanionSwitcher({ userId, currentCompanionId, onBack, onComplete }) {
   const [selectedId, setSelectedId] = useState(currentCompanionId);
@@ -58,6 +59,11 @@ export function CompanionSwitcher({ userId, currentCompanionId, onBack, onComple
                 key={companion.id}
                 onClick={() => setSelectedId(companion.id)}
               >
+                <MascotVisual
+                  companionId={companion.id}
+                  emotion={selected ? "happy" : "neutral"}
+                  className="companion-switcher-mascot"
+                />
                 <span>
                   <strong>{companion.name}</strong>
                   <small>{companion.tagline}</small>

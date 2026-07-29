@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { Eye, EyeSlash, ShieldCheck } from "@phosphor-icons/react";
 
+import { MascotVisual } from "./Mascot.jsx";
+
 export function AuthScreen({ onLogin, onRegister, preservesExistingData = false }) {
   const [mode, setMode] = useState("register");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -14,7 +17,11 @@ export function AuthScreen({ onLogin, onRegister, preservesExistingData = false 
     setError("");
     setSubmitting(true);
     try {
-      await (mode === "register" ? onRegister : onLogin)(username, password);
+      await (
+        mode === "register"
+          ? onRegister(username, password, displayName)
+          : onLogin(username, password)
+      );
     } catch (requestError) {
       setError(requestError?.message || "暂时无法创建账号，请稍后重试。");
     } finally {
@@ -30,10 +37,7 @@ export function AuthScreen({ onLogin, onRegister, preservesExistingData = false 
           aria-label={mode === "register" ? "账号注册" : "账号登录"}
         >
           <div className="auth-brand" aria-hidden="true">
-            <img
-              src={`${import.meta.env.BASE_URL}assets/mascot-v2-neutral.webp`}
-              alt=""
-            />
+            <MascotVisual companionId="starlight" emotion="happy" />
           </div>
           <div className="auth-copy">
             <p className="eyebrow">让每次回来都还是你</p>
@@ -69,6 +73,26 @@ export function AuthScreen({ onLogin, onRegister, preservesExistingData = false 
               aria-describedby="username-help"
             />
             <small id="username-help">2–32 个文字、数字、点、下划线或短横线</small>
+
+            {mode === "register" && (
+              <>
+                <label htmlFor="account-display-name">怎么称呼你？</label>
+                <input
+                  id="account-display-name"
+                  name="display_name"
+                  autoComplete="nickname"
+                  maxLength={64}
+                  required
+                  value={displayName}
+                  placeholder="例如：朋友、主人、小明"
+                  onChange={(event) => setDisplayName(event.target.value)}
+                  aria-describedby="display-name-help"
+                />
+                <small id="display-name-help">
+                  我会在自然的对话里这样称呼你。
+                </small>
+              </>
+            )}
 
             <label htmlFor="account-password">密码</label>
             <div className="password-field">

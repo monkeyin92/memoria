@@ -27,3 +27,11 @@ test("auth header has no unselected mascot placeholder or redundant subtitle", (
   assert.doesNotMatch(authTemplate, /brand-stage|brand-mascot|page-subtitle/);
   assert.doesNotMatch(authStyles, /\.brand-(?:stage|halo|ring|spark|mascot)\b/);
 });
+
+test("first registration asks how to address the user and explains the effect", () => {
+  assert.match(
+    authTemplate,
+    /怎么称呼你？\{\{needsSalutation \? ' \*' : ''\}\}[\s\S]*placeholder="例如：朋友、主人、小明"/,
+  );
+  assert.match(authTemplate, /首次注册后，我会在自然的对话里这样称呼你。/);
+});

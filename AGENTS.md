@@ -37,6 +37,8 @@ Durable instructions for anyone (human or AI) working on Memoria. Update this fi
 
 ## 其他
 
+- 称呼只在首次注册 UI 中设置：H5 使用“怎么称呼你？”（示例：朋友、主人、小明），小程序在首次微信手机号授权时要求填写；“我的/个人信息”不再提供称呼或“想让伙伴怎样陪你”的编辑入口。兼容 API/数据库字段可以保留，但不能重新把它们作为常规资料编辑项暴露。
+- 吉祥物的用户情绪仍只消费权威 `emotion_observation`。助手实际说话期间，Agent 以当前 `session_id + turn_id + generation_id + tool_epoch` 发布单个 `assistant_expression`（`neutral / happy / curious / caring`）；H5 和小程序只能在匹配的 speaking fence 内展示，回答结束、断线或中断时清除。客户端不得从助手字幕自行猜词切换表情。
 - H5 原型视觉约定见 `apps/h5/AGENTS.md`。
 - 发布、回滚、线上状态见 `HANDOFF.md` 与 `docs/releases/`。
 - 架构规范见 `full_duplex_voice_agent_architecture_zh.md`。

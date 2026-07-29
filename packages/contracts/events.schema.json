@@ -151,6 +151,20 @@
     },
     {
       "type": "object",
+      "required": ["type", "session_id", "expression", "turn_id", "generation_id", "tool_epoch", "at"],
+      "properties": {
+        "type": { "const": "assistant_expression" },
+        "session_id": { "type": "string", "minLength": 1 },
+        "expression": { "enum": ["neutral", "happy", "curious", "caring"] },
+        "turn_id": { "type": "integer", "minimum": 0 },
+        "generation_id": { "type": "integer", "minimum": 0 },
+        "tool_epoch": { "type": "integer", "minimum": 0 },
+        "at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
       "required": ["type", "session_id", "state", "speech_ms", "target_ms", "elapsed_ms", "at"],
       "properties": {
         "type": { "const": "speaker_enroll_progress" },

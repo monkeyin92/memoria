@@ -1460,3 +1460,52 @@ async def test_new_generation_discards_buffered_audio_before_forwarding_ui_event
     )
     assert bridge._generation_id == 2
     assert bridge._event_messages.empty()
+
+
+@pytest.mark.asyncio
+async def test_gateway_forwards_fence_bound_assistant_expression() -> None:
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    expression = {
+        "type": "assistant_expression",
+        "session_id": "session-1",
+        "expression": "caring",
+        "turn_id": 1,
+        "generation_id": 1,
+        "tool_epoch": 0,
+        "at": "2026-07-29T00:00:00Z",
+    }
+
+    bridge._on_data_received(
+        SimpleNamespace(
+            participant=SimpleNamespace(
+                kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
+            ),
+            topic="voice-agent.ui",
+            data=json.dumps(expression).encode(),
+        )
+    )
+
+    assert (await bridge.next_outbound()).event == {
+        "type": "audio_reset",
+        "generation_id": 1,
+        "barrier_sequence": 0,
+    }
+    assert (await bridge.next_outbound()).event == {
+        "type": "ui_event",
+        "topic": "voice-agent.ui",
+        "event": expression,
+    }
+    assert bridge._audio_generation_id is None

@@ -1932,6 +1932,38 @@ async def test_runtime_commit_and_interrupt_bumps_fence() -> None:
 
 
 @pytest.mark.asyncio
+async def test_runtime_publishes_one_fence_bound_assistant_expression() -> None:
+    runtime = DuplexRuntime.create(session_id="expression-session")
+    published: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime.set_event_publisher(publish)
+    await runtime.orchestrator.ready()
+    fence = await runtime.on_turn_committed("今天有个好消息")
+    await runtime.on_assistant_speaking("太好了，这真值得庆祝！")
+    await runtime.on_assistant_speaking("太好了，这真值得庆祝！")
+    await asyncio.sleep(0)
+
+    expressions = [
+        event for event in published if event.get("type") == "assistant_expression"
+    ]
+    assert len(expressions) == 1
+    assert expressions[0] | {"at": ""} == {
+        "type": "assistant_expression",
+        "session_id": "expression-session",
+        "expression": "happy",
+        "turn_id": fence.turn_id,
+        "generation_id": fence.generation_id,
+        "tool_epoch": fence.tool_epoch,
+        "at": "",
+    }
+    assert isinstance(expressions[0]["at"], str)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_runtime_publishes_and_correlates_first_audio_trace() -> None:
     runtime = DuplexRuntime.create(session_id="trace-session")
     published: list[dict[str, object]] = []

@@ -17,6 +17,7 @@ CosyVoiceEmotion = Literal[
     "disgusted",
 ]
 DeliveryMode = Literal["direct", "deliberative", "light_laughter", "supportive"]
+MascotExpression = Literal["neutral", "happy", "curious", "caring"]
 
 _LAUGHTER_MARKERS = ("哈哈", "呵呵", "嘿嘿")
 _MARKUP_TAG = re.compile(
@@ -67,6 +68,27 @@ _DELIBERATIVE_MARKERS = (
     "学习方案",
     "行程",
     "步骤",
+)
+_ASSISTANT_HAPPY_MARKERS = (
+    "太好了",
+    "真好",
+    "恭喜",
+    "好消息",
+    "值得庆祝",
+    "开心",
+    "高兴",
+)
+_ASSISTANT_CARING_MARKERS = (
+    "听起来",
+    "不容易",
+    "辛苦",
+    "难过",
+    "心疼",
+    "理解你",
+    "陪着你",
+    "担心",
+    "先照顾好自己",
+    "注意安全",
 )
 
 
@@ -245,6 +267,29 @@ def speech_plan_for_turn(
             "不要笑、不要吸气戏、不要旁白。",
         )
     return base
+
+
+def mascot_expression_for_reply(
+    *,
+    plan: SpeechPlan,
+    text: str,
+) -> MascotExpression:
+    """Resolve one small, safe face state from the assistant's delivery and reply."""
+    if plan.delivery_mode == "supportive":
+        return "caring"
+    if plan.delivery_mode == "light_laughter":
+        return "happy"
+    if plan.delivery_mode == "deliberative":
+        return "curious"
+
+    spoken = strip_paralinguistic_markup(text)
+    if any(marker in spoken for marker in _ASSISTANT_CARING_MARKERS):
+        return "caring"
+    if any(marker in spoken for marker in _ASSISTANT_HAPPY_MARKERS):
+        return "happy"
+    if "？" in spoken or "?" in spoken:
+        return "curious"
+    return "neutral"
 
 
 class SpeakingStyle(StrEnum):

@@ -91,6 +91,14 @@ async def test_fetch_freezes_companion_policy_from_the_authoritative_session_res
     assert "价值观" in policy.companion_style_prompt
 
 
+def test_owner_salutation_is_only_available_from_a_valid_companion_policy() -> None:
+    companion = ModePolicyClient._parse(_payload(owner_display_name="主人"))
+
+    assert companion.available is True
+    assert companion.owner_salutation == "主人"
+    assert not ModePolicyClient._parse(_payload(owner_display_name=True)).available
+
+
 @pytest.mark.parametrize(
     ("companion_id", "question_frequency", "interview_depth"),
     [
@@ -199,6 +207,7 @@ def test_self_preview_freezes_an_exact_personal_voice_contract() -> None:
         "legacy_shell_id": None,
         "legacy_voice_allowed": None,
         "manifest_sha256": "a" * 64,
+        "owner_display_name": None,
         "perspective": "owner",
         "preview_grant_id": "grant-001",
         "relationship_profile_id": None,

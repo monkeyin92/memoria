@@ -195,6 +195,7 @@ function voiceState() {
     latestTranscript: null,
     transcripts: [],
     emotionHint: null,
+    assistantExpression: null,
     error: "",
     audioBlocked: false,
     audioContainerRef: { current: null },
@@ -377,6 +378,9 @@ describe("App identity and profile preferences", () => {
     fireEvent.change(screen.getByLabelText("用户名"), {
       target: { value: "memorykeeper" },
     });
+    fireEvent.change(screen.getByLabelText("怎么称呼你？"), {
+      target: { value: "朋友" },
+    });
     fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "safe-passphrase" },
     });
@@ -386,6 +390,7 @@ describe("App identity and profile preferences", () => {
       expect(mocks.registerAccount).toHaveBeenCalledWith(
         "memorykeeper",
         "safe-passphrase",
+        "朋友",
       );
     });
     expect(
@@ -419,6 +424,9 @@ describe("App identity and profile preferences", () => {
     await screen.findByRole("heading", { name: "创建你的 Memoria 账号" });
     fireEvent.change(screen.getByLabelText("用户名"), {
       target: { value: "memorykeeper" },
+    });
+    fireEvent.change(screen.getByLabelText("怎么称呼你？"), {
+      target: { value: "朋友" },
     });
     fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "safe-passphrase" },
@@ -569,6 +577,9 @@ describe("App identity and profile preferences", () => {
     fireEvent.change(screen.getByLabelText("用户名"), {
       target: { value: "memorykeeper" },
     });
+    fireEvent.change(screen.getByLabelText("怎么称呼你？"), {
+      target: { value: "朋友" },
+    });
     fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "safe-passphrase" },
     });
@@ -715,6 +726,9 @@ describe("App identity and profile preferences", () => {
 
     fireEvent.change(screen.getByLabelText("用户名"), {
       target: { value: "new-account" },
+    });
+    fireEvent.change(screen.getByLabelText("怎么称呼你？"), {
+      target: { value: "朋友" },
     });
     fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "safe-passphrase" },
@@ -1282,6 +1296,9 @@ describe("App identity and profile preferences", () => {
     await screen.findByRole("heading", { name: "创建你的 Memoria 账号" });
     fireEvent.change(screen.getByLabelText("用户名"), {
       target: { value: "memorykeeper" },
+    });
+    fireEvent.change(screen.getByLabelText("怎么称呼你？"), {
+      target: { value: "朋友" },
     });
     fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "safe-passphrase" },

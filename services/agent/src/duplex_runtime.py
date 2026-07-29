@@ -42,6 +42,7 @@ from services.agent.src.orchestration.orchestrator import Orchestrator, TTSPoolH
 from services.agent.src.orchestration.phrase_segmenter import PhraseSegmenter
 from services.agent.src.orchestration.prosody import (
     SpeechPlan,
+    mascot_expression_for_reply,
     speech_plan_for_emotion,
     speech_plan_for_turn,
 )
@@ -302,6 +303,7 @@ class DuplexRuntime:
         tuple[int, int, int],
         GenerationVoiceSnapshot,
     ] = field(default_factory=dict)
+    _assistant_expression_fence: tuple[int, int, int] | None = None
     _target_speaker_focus_enabled: bool = False
     _reject_non_owner_voice: bool = True
     _target_focus_epoch: int | None = None
@@ -2758,6 +2760,7 @@ class DuplexRuntime:
         self._pending_assistant_text = ""
         self._played_assistant_text = ""
         self._playback_fence = None
+        self._assistant_expression_fence = None
         if self.tts is not None:
             self.tts.bind_fence(fence)
         return fence
@@ -2782,6 +2785,28 @@ class DuplexRuntime:
             self.orchestrator.heard_tracker.set_full_text(full_text)
             if w:
                 self.orchestrator.heard_tracker.add_words(w)
+        self._publish_assistant_expression(full_text)
+
+    def _publish_assistant_expression(self, full_text: str) -> None:
+        fence = self.fence
+        key = (fence.turn_id, fence.generation_id, fence.tool_epoch)
+        if self._assistant_expression_fence == key:
+            return
+        self._assistant_expression_fence = key
+        self._publish(
+            {
+                "type": "assistant_expression",
+                "session_id": self.session_id,
+                "expression": mascot_expression_for_reply(
+                    plan=self.speech_plan,
+                    text=full_text,
+                ),
+                "turn_id": fence.turn_id,
+                "generation_id": fence.generation_id,
+                "tool_epoch": fence.tool_epoch,
+                "at": datetime.now(UTC).isoformat(),
+            }
+        )
 
     async def on_playback_done(self, *, tools_active: bool = False) -> None:
         self._was_speaking = False

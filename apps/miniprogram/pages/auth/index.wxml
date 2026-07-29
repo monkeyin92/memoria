@@ -21,17 +21,18 @@
     </button>
     <text class="field-help">头像可选，登录成功后会安全保存到 Memoria。</text>
 
-    <text class="field-label">微信昵称</text>
+    <text class="field-label">怎么称呼你？{{needsSalutation ? ' *' : ''}}</text>
     <input
       class="field-input"
       type="nickname"
       value="{{nickname}}"
       maxlength="24"
-      placeholder="点击填写微信昵称（可选）"
+      placeholder="例如：朋友、主人、小明"
       placeholder-class="field-placeholder"
       bindinput="onNicknameInput"
       disabled="{{loading}}"
     />
+    <text class="field-help">首次注册后，我会在自然的对话里这样称呼你。</text>
 
     <checkbox-group class="consent-row" bindchange="onConsentChange">
       <label class="consent-label">

@@ -622,10 +622,20 @@ class MemoryStore:
         username: str,
         username_normalized: str,
         password_hash: str,
+        display_name: str | None = None,
         now: str,
     ) -> dict[str, Any]:
         with self._connection() as connection:
             self._ensure_profile(connection, user_id, now)
+            if display_name:
+                connection.execute(
+                    """
+                    UPDATE profiles
+                    SET display_name = ?, updated_at = ?
+                    WHERE user_id = ?
+                    """,
+                    (display_name, now, user_id),
+                )
             connection.execute(
                 """
                 INSERT INTO accounts (

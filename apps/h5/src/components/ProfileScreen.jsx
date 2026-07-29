@@ -3,9 +3,7 @@ import {
   Bell,
   Brain,
   CaretRight,
-  Check,
   Fingerprint,
-  PencilSimple,
   ShieldCheck,
   SignOut,
   Trash,
@@ -20,12 +18,7 @@ import { PreferenceRow } from "./PreferenceRow.jsx";
 
 export function ProfileScreen({
   profile,
-  draftProfile,
-  setDraftProfile,
   memoryDays,
-  editing,
-  setEditing,
-  onSave,
   onToggle,
   preferenceSaving,
   preferenceError,
@@ -60,7 +53,7 @@ export function ProfileScreen({
   };
   return (
     <section
-      className={`screen profile-screen ${editing || accountDeletionOpen ? "sheet-open" : ""}`}
+      className={`screen profile-screen ${accountDeletionOpen ? "sheet-open" : ""}`}
       aria-label="个人信息"
     >
       <header
@@ -72,14 +65,6 @@ export function ProfileScreen({
           <p className="eyebrow">你的陪伴空间</p>
           <h1>我的</h1>
         </div>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="编辑个人信息"
-          onClick={() => setEditing(true)}
-        >
-          <PencilSimple size={20} weight="bold" />
-        </button>
       </header>
 
       <div
@@ -98,7 +83,6 @@ export function ProfileScreen({
           </div>
           <div>
             <h2>{profile.display_name}</h2>
-            <p>{profile.bio}</p>
           </div>
         </section>
 
@@ -235,61 +219,6 @@ export function ProfileScreen({
           </span>
         </button>
       </div>
-
-      {editing && (
-        <div className="sheet-backdrop" role="presentation">
-          <form
-            className="profile-sheet"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void onSave();
-            }}
-          >
-            <div className="sheet-handle" />
-            <div className="sheet-title">
-              <div><span>个人信息</span><h2>想让我怎么称呼你？</h2></div>
-              <button type="submit" aria-label="保存个人信息">
-                <Check size={22} weight="bold" />
-              </button>
-            </div>
-            <label>
-              称呼
-              <input
-                autoFocus
-                maxLength={30}
-                value={draftProfile.display_name}
-                onChange={(event) =>
-                  setDraftProfile({
-                    ...draftProfile,
-                    display_name: event.target.value,
-                  })
-                }
-              />
-            </label>
-            <label>
-              写给 Memoria 的一句话
-              <textarea
-                rows={3}
-                maxLength={80}
-                value={draftProfile.bio}
-                onChange={(event) =>
-                  setDraftProfile({ ...draftProfile, bio: event.target.value })
-                }
-              />
-            </label>
-            <button
-              type="button"
-              className="sheet-cancel"
-              onClick={() => {
-                setDraftProfile(profile);
-                setEditing(false);
-              }}
-            >
-              取消
-            </button>
-          </form>
-        </div>
-      )}
 
       {accountDeletionOpen && (
         <div className="sheet-backdrop account-delete-backdrop" role="presentation">

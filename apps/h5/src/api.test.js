@@ -56,7 +56,7 @@ describe("authenticated Control API client", () => {
     const { bootstrapIdentity, getProfile, registerAccount } = await import("./api.js");
 
     await expect(bootstrapIdentity()).resolves.toBeNull();
-    await registerAccount("memorykeeper", "safe-passphrase");
+    await registerAccount("memorykeeper", "safe-passphrase", "朋友");
     await getProfile("registered-user");
 
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -72,6 +72,7 @@ describe("authenticated Control API client", () => {
         body: JSON.stringify({
           username: "memorykeeper",
           password: "safe-passphrase",
+          display_name: "朋友",
         }),
         headers: expect.not.objectContaining({ Authorization: expect.anything() }),
       }),

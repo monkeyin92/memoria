@@ -561,6 +561,45 @@ def test_resume_context_without_heard_assistant_keeps_only_current_user() -> Non
     ] == [("user", "继续")]
 
 
+def test_owner_salutation_never_enters_guest_or_uncertain_context() -> None:
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="你好")
+    response_plan = _response_plan(DuplexRuntime.create())
+
+    owner = ContextAssembler().assemble(
+        chat_ctx=chat_ctx,
+        heard_assistant=[],
+        speaker_class="owner",
+        response_plan=response_plan,
+        owner_salutation="主人",
+    )
+    guest = ContextAssembler().assemble(
+        chat_ctx=chat_ctx,
+        heard_assistant=[],
+        speaker_class="guest",
+        response_plan=response_plan,
+        owner_salutation="主人",
+    )
+    uncertain = ContextAssembler().assemble(
+        chat_ctx=chat_ctx,
+        heard_assistant=[],
+        speaker_class="uncertain",
+        response_plan=response_plan,
+        owner_salutation="主人",
+    )
+
+    owner_system = "\n".join(
+        message.text_content for message in owner.messages() if message.role == "system"
+    )
+    assert '"owner_salutation":"主人"' in owner_system
+    for safe in (guest, uncertain):
+        assert all(
+            "owner_salutation" not in message.text_content
+            for message in safe.messages()
+            if message.role == "system"
+        )
+
+
 @pytest.mark.asyncio
 async def test_completed_voice_resolution_is_applied_without_network_wait() -> None:
     applied: list[tuple[str, str]] = []

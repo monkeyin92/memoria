@@ -216,3 +216,74 @@ test("guest transition fences a late voice start and clears private transcript s
   assert.equal(data.active, false);
   assert.deepEqual(data.transcript, []);
 });
+
+test("assistant expression follows the active speaking fence and clears on completion", () => {
+  const data = {
+    status: "thinking",
+    statusLabel: "正在想",
+    expression: "neutral",
+  };
+  const instance = {
+    data,
+    _session: { session_id: "session-1" },
+    _assistantStateFence: { turnId: 1, generationId: 1 },
+    setData(update) {
+      Object.assign(this.data, update);
+    },
+    _activateAssistantExpression: page._activateAssistantExpression,
+    _clearAssistantExpression: page._clearAssistantExpression,
+  };
+
+  page._onAssistantExpression.call(instance, {
+    type: "assistant_expression",
+    session_id: "session-1",
+    expression: "caring",
+    turn_id: 1,
+    generation_id: 1,
+    tool_epoch: 0,
+  });
+  assert.equal(instance._pendingAssistantExpression.expression, "caring");
+
+  page._setStatus.call(instance, "speaking", {
+    turn_id: 1,
+    generation_id: 1,
+  });
+  assert.equal(data.expression, "caring");
+
+  page._setStatus.call(instance, "listening", {
+    turn_id: 1,
+    generation_id: 1,
+  });
+  assert.equal(data.expression, "neutral");
+
+  page._onAssistantExpression.call(instance, {
+    type: "assistant_expression",
+    session_id: "session-1",
+    expression: "happy",
+    turn_id: 1,
+    generation_id: 1,
+    tool_epoch: 0,
+  });
+  assert.equal(instance._pendingAssistantExpression, null);
+});
+
+test("media close and interruption reset a prior assistant expression", async () => {
+  const data = { active: true, status: "speaking", statusLabel: "正在回应", error: "" };
+  let resetCalls = 0;
+  const instance = {
+    data,
+    _ending: false,
+    setData(update) {
+      Object.assign(this.data, update);
+    },
+    _resetExpression() {
+      resetCalls += 1;
+    },
+    async _endMediaLocally() {},
+  };
+
+  page._onMediaClosed.call(instance);
+  assert.equal(resetCalls, 1);
+  await page._onMediaInterrupted.call(instance, "录音被系统中断");
+  assert.equal(resetCalls, 2);
+});

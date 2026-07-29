@@ -32,6 +32,12 @@ const VOICE_EMOTION_LABELS = new Set([
   "disgusted",
   "surprised",
 ]);
+const ASSISTANT_EXPRESSIONS = new Set([
+  "neutral",
+  "happy",
+  "curious",
+  "caring",
+]);
 /** End-to-end realtime backends (not LiveKit cascade). */
 const REALTIME_BACKENDS = new Set(["qwen_omni"]);
 
@@ -233,6 +239,20 @@ function parseEvent(payload) {
       }
       return event;
     }
+    if (event.type === "assistant_expression") {
+      if (
+        typeof event.session_id !== "string" ||
+        !event.session_id ||
+        !ASSISTANT_EXPRESSIONS.has(event.expression) ||
+        !Number.isInteger(event.turn_id) ||
+        !Number.isInteger(event.generation_id) ||
+        !Number.isInteger(event.tool_epoch) ||
+        event.tool_epoch < 0
+      ) {
+        return null;
+      }
+      return event;
+    }
   } catch {
     return null;
   }
@@ -261,6 +281,7 @@ export function useVoiceSession({
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [audioDiagnostics, setAudioDiagnostics] = useState([]);
   const [emotionHint, setEmotionHint] = useState(null);
+  const [assistantExpression, setAssistantExpression] = useState(null);
   const roomRef = useRef(null);
   const cascadeTransportRef = useRef(null);
   const omniTransportRef = useRef(null);
@@ -293,6 +314,9 @@ export function useVoiceSession({
   const pendingEmotionRef = useRef(new Map());
   const latestAcceptedUserTurnRef = useRef(0);
   const emotionTimerRef = useRef(null);
+  const pendingAssistantExpressionRef = useRef(null);
+  const activeAssistantExpressionRef = useRef(null);
+  const assistantStateFenceRef = useRef(null);
   const setUiState = useCallback((status, options = {}) => {
     dispatchVoiceSession({
       type: "transition",
@@ -318,6 +342,42 @@ export function useVoiceSession({
     if (!voiceReplyEnabled) setAudioBlocked(false);
   }, [voiceReplyEnabled]);
 
+  const activateAssistantExpression = useCallback((event) => {
+    const next = {
+      expression: event.expression,
+      turnId: event.turn_id,
+      generationId: event.generation_id,
+      toolEpoch: event.tool_epoch,
+    };
+    activeAssistantExpressionRef.current = next;
+    setAssistantExpression(next);
+  }, []);
+
+  const clearAssistantExpression = useCallback((generationId = null) => {
+    const active = activeAssistantExpressionRef.current;
+    if (
+      active &&
+      (!Number.isInteger(generationId) || generationId >= active.generationId)
+    ) {
+      activeAssistantExpressionRef.current = null;
+      setAssistantExpression(null);
+    }
+    const pending = pendingAssistantExpressionRef.current;
+    if (
+      pending &&
+      (!Number.isInteger(generationId) || generationId >= pending.generationId)
+    ) {
+      pendingAssistantExpressionRef.current = null;
+    }
+  }, []);
+
+  const resetAssistantExpression = useCallback(() => {
+    pendingAssistantExpressionRef.current = null;
+    activeAssistantExpressionRef.current = null;
+    assistantStateFenceRef.current = null;
+    setAssistantExpression(null);
+  }, []);
+
   const clearEmotionHint = useCallback(() => {
     if (emotionTimerRef.current !== null) {
       window.clearTimeout(emotionTimerRef.current);
@@ -330,7 +390,8 @@ export function useVoiceSession({
     clearEmotionHint();
     pendingEmotionRef.current.clear();
     latestAcceptedUserTurnRef.current = 0;
-  }, [clearEmotionHint]);
+    resetAssistantExpression();
+  }, [clearEmotionHint, resetAssistantExpression]);
 
   const activateEmotionHint = useCallback((event) => {
     if (emotionTimerRef.current !== null) {
@@ -1052,6 +1113,37 @@ export function useVoiceSession({
         }
         return;
       }
+      if (event.type === "assistant_expression") {
+        if (!initialReadyRef.current) return;
+        if (event.session_id !== sessionRef.current?.session_id) return;
+        if (event.generation_id < generationRef.current) return;
+        const stateFence = assistantStateFenceRef.current;
+        if (
+          stateFence &&
+          (event.generation_id < stateFence.generationId ||
+            (event.generation_id === stateFence.generationId &&
+              event.turn_id !== stateFence.turnId))
+        ) {
+          return;
+        }
+        if (
+          stateFence?.generationId === event.generation_id &&
+          stateFence.turnId === event.turn_id &&
+          !["thinking", "speaking"].includes(stateFence.state)
+        ) {
+          return;
+        }
+        if (
+          stateFence?.state === "speaking" &&
+          stateFence.turnId === event.turn_id &&
+          stateFence.generationId === event.generation_id
+        ) {
+          activateAssistantExpression(event);
+        } else {
+          pendingAssistantExpressionRef.current = event;
+        }
+        return;
+      }
       if (event.type === "assistant_state") {
         if (event.session_id !== sessionRef.current?.session_id) return;
         if (event.generation_id < generationRef.current) return;
@@ -1068,6 +1160,24 @@ export function useVoiceSession({
         clearReconnectTimer();
         generationRef.current = event.generation_id;
         turnRef.current = event.turn_id;
+        assistantStateFenceRef.current = {
+          state: mappedState,
+          turnId: event.turn_id,
+          generationId: event.generation_id,
+        };
+        if (mappedState === "speaking") {
+          const pending = pendingAssistantExpressionRef.current;
+          if (
+            pending &&
+            pending.turn_id === event.turn_id &&
+            pending.generation_id === event.generation_id
+          ) {
+            pendingAssistantExpressionRef.current = null;
+            activateAssistantExpression(pending);
+          }
+        } else {
+          clearAssistantExpression(event.generation_id);
+        }
         setUiState(mappedState);
         return;
       }
@@ -1293,10 +1403,12 @@ export function useVoiceSession({
     })();
   }, [
     applyTranscript,
+    activateAssistantExpression,
     activateEmotionHint,
     attachAudio,
     attachOmniAudio,
     clearAgentReadyTimer,
+    clearAssistantExpression,
     clearReconnectTimer,
     disconnectOmni,
     disconnectRoom,
@@ -1430,6 +1542,7 @@ export function useVoiceSession({
     audioBlocked,
     audioDiagnostics,
     emotionHint,
+    assistantExpression,
     audioContainerRef,
     start,
     resumeAudio,

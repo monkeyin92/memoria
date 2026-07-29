@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 UI_EVENT_TYPES: Final[frozenset[str]] = frozenset(
     {
         "assistant_audio",
+        "assistant_expression",
         "assistant_state",
         "audio_trace",
         "emotion_observation",

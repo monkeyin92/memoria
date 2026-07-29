@@ -498,7 +498,11 @@ async def test_registered_account_can_log_back_into_the_same_identity(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         registered = await client.post(
             "/v1/auth/register",
-            json={"username": "MemoriaOwner", "password": "safe-passphrase"},
+            json={
+                "username": "MemoriaOwner",
+                "password": "safe-passphrase",
+                "display_name": "主人",
+            },
         )
 
         assert registered.status_code == 201
@@ -506,6 +510,7 @@ async def test_registered_account_can_log_back_into_the_same_identity(
         assert first["username"] == "MemoriaOwner"
         assert first["account_type"] == "registered"
         assert first["access_token"]
+        assert first["display_name"] == "主人"
 
         logged_in = await client.post(
             "/v1/auth/login",
@@ -520,6 +525,10 @@ async def test_registered_account_can_log_back_into_the_same_identity(
             "/v1/auth/me",
             headers={"Authorization": f"Bearer {second['access_token']}"},
         )
+        profile = await client.get(
+            f"/v1/memory/profile/{first['user_id']}",
+            headers={"Authorization": f"Bearer {second['access_token']}"},
+        )
 
     assert current.status_code == 200
     assert current.json() == {
@@ -527,6 +536,8 @@ async def test_registered_account_can_log_back_into_the_same_identity(
         "username": "MemoriaOwner",
         "account_type": "registered",
     }
+    assert profile.status_code == 200
+    assert profile.json()["display_name"] == "主人"
 
 
 @pytest.mark.asyncio

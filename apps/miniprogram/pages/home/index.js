@@ -11,7 +11,6 @@ const CONNECTION_REFUSED_RETRY_DELAY_MS = 400;
 
 const defaultProfile = {
   display_name: "新朋友",
-  bio: "慢慢说，我会认真听。",
   companion_id: defaultCompanionId,
   voice_reply: true,
 };
@@ -34,6 +33,12 @@ const VOICE_EMOTION_LABELS = new Set([
   "fearful",
   "disgusted",
   "surprised",
+]);
+const ASSISTANT_EXPRESSIONS = new Set([
+  "neutral",
+  "happy",
+  "curious",
+  "caring",
 ]);
 
 function mascotAssetsFor(companion) {
@@ -331,6 +336,10 @@ Page({
     }
     if (event?.type !== "ui_event") return;
     const payload = event.event || {};
+    if (payload.type === "assistant_expression") {
+      this._onAssistantExpression(payload);
+      return;
+    }
     if (payload.type === "emotion_observation") {
       this._onEmotionObservation(payload);
       return;
@@ -352,9 +361,79 @@ Page({
         recovering: "reconnecting",
         closed: "closed",
       }[payload.state];
-      if (mapped) this._setStatus(mapped);
+      if (mapped) this._setStatus(mapped, payload);
       return;
     }
+  },
+
+  _onAssistantExpression(payload) {
+    const { expression, session_id: sessionId, turn_id: turnId, generation_id: generationId } = payload;
+    if (sessionId !== this._session?.session_id) return;
+    if (
+      !ASSISTANT_EXPRESSIONS.has(expression) ||
+      !Number.isInteger(turnId) ||
+      !Number.isInteger(generationId) ||
+      !Number.isInteger(payload.tool_epoch) ||
+      payload.tool_epoch < 0
+    ) {
+      return;
+    }
+    const stateFence = this._assistantStateFence;
+    if (
+      stateFence &&
+      (generationId < stateFence.generationId ||
+        (generationId === stateFence.generationId && turnId !== stateFence.turnId))
+    ) {
+      return;
+    }
+    if (
+      stateFence &&
+      generationId === stateFence.generationId &&
+      turnId === stateFence.turnId &&
+      !["thinking", "speaking"].includes(this.data.status)
+    ) {
+      return;
+    }
+    const next = { expression, turnId, generationId };
+    if (
+      this.data.status === "speaking" &&
+      stateFence &&
+      stateFence.turnId === turnId &&
+      stateFence.generationId === generationId
+    ) {
+      this._activateAssistantExpression(next);
+      return;
+    }
+    this._pendingAssistantExpression = next;
+  },
+
+  _activateAssistantExpression(next) {
+    if (this._expressionTimer) {
+      clearTimeout(this._expressionTimer);
+      this._expressionTimer = null;
+    }
+    this._assistantExpression = next;
+    this.setData({ expression: next.expression });
+  },
+
+  _clearAssistantExpression(generationId) {
+    const active = this._assistantExpression;
+    if (
+      active &&
+      Number.isInteger(generationId) &&
+      generationId < active.generationId
+    ) {
+      return;
+    }
+    this._assistantExpression = null;
+    if (
+      this._pendingAssistantExpression &&
+      Number.isInteger(generationId) &&
+      this._pendingAssistantExpression.generationId <= generationId
+    ) {
+      this._pendingAssistantExpression = null;
+    }
+    if (active) this.setData({ expression: "neutral" });
   },
 
   // 情绪只响应当前会话中已被权威用户终稿确认的 emotion_observation；
@@ -386,7 +465,7 @@ Page({
     this.setData({ expression });
     this._expressionTimer = setTimeout(() => {
       this._expressionTimer = null;
-      this.setData({ expression: "neutral" });
+      if (!this._assistantExpression) this.setData({ expression: "neutral" });
     }, ttl);
   },
 
@@ -396,6 +475,9 @@ Page({
       this._expressionTimer = null;
     }
     this._pendingExpression = null;
+    this._pendingAssistantExpression = null;
+    this._assistantExpression = null;
+    this._assistantStateFence = null;
     this._lastUserTurnId = 0;
     this.setData({ expression: "neutral" });
   },
@@ -433,7 +515,23 @@ Page({
     }
   },
 
-  _setStatus(status) {
+  _setStatus(status, event = {}) {
+    const turnId = event.turn_id;
+    const generationId = event.generation_id;
+    if (status === "speaking" && Number.isInteger(turnId) && Number.isInteger(generationId)) {
+      this._assistantStateFence = { turnId, generationId };
+      const pending = this._pendingAssistantExpression;
+      if (
+        pending &&
+        pending.turnId === turnId &&
+        pending.generationId === generationId
+      ) {
+        this._pendingAssistantExpression = null;
+        this._activateAssistantExpression(pending);
+      }
+    } else if (status !== "speaking") {
+      this._clearAssistantExpression(generationId);
+    }
     this.setData({ status, statusLabel: stateLabel(status) });
   },
 
@@ -506,6 +604,7 @@ Page({
 
   _onMediaClosed() {
     if (this._ending) return;
+    this._resetExpression();
     this.setData({
       active: false,
       status: "closed",
@@ -519,6 +618,7 @@ Page({
     this._handlingMediaInterruption = true;
     try {
       await this._endMediaLocally();
+      this._resetExpression();
       this.setData({
         active: false,
         micEnabled: true,

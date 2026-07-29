@@ -296,9 +296,20 @@ async def session_policy(
     request: Request,
     _: Annotated[None, Depends(_require_policy_token)],
 ) -> dict[str, Any]:
-    return ModePolicy.session_context(
-        FrozenMode.from_session(require_active_voice_session(request, body.session_id))
-    )
+    session = require_active_voice_session(request, body.session_id)
+    frozen = FrozenMode.from_session(session)
+    policy = ModePolicy.session_context(frozen)
+    if frozen.interaction_mode == "companion":
+        profile = _store(request).get_profile(
+            user_id=str(session["user_id"]),
+            now=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )
+        display_name = profile.get("display_name")
+        if isinstance(display_name, str) and display_name.strip():
+            # This stays on the internal Agent policy path. The Agent adds it
+            # only after the current speaker is confirmed as the account owner.
+            policy["owner_display_name"] = display_name.strip()
+    return policy
 
 
 class ResponsePlanFence(BaseModel):
