@@ -2,15 +2,13 @@
 
 ## 当前状态
 
-- 记忆架构 P0–P4 发布候选 `20260729-093337` 已完成，正在提交、推送和生产部署：
-  类型化投影、13 场景评测、
+- 记忆架构 P0–P4 已随 `20260729-093337` 提交、推送并部署生产：类型化投影、13 场景评测、
   EpisodeConsolidator、Skill Domain、Mem0 影子、pgvector HNSW/基准和 TurboVec 硬门禁均已落地。
   权威证据账本不变，工作记忆仍只按话轮动态组装。
-- 当前仓库代码基线：本文件所在 `main` 提交，包含三阶段语音架构收口；已同步
-  `origin/main`。生产 runtime/H5 尚未切到该仓库 checkpoint。
+- 当前仓库代码基线：本文件所在 `main` 提交；已同步 `origin/main`。
 - 生产 runtime source / annotated tag：
-  `e7230236ddff0d64f602e38487387e614d2fb515 / 20260728-170236`，直接回滚点为
-  `20260728-123528`；该版本已完成原子切换、生产门禁和公网验收。
+  `1a7051f9e119ebc7fc7471b1904499db200db2f9 / 20260729-093337`，直接回滚点为
+  `20260728-170236`；该版本已完成原子切换、生产门禁、记忆 schema 和公网验收。
 - 生产 H5：`20260723-192611`，本轮 runtime 发布没有切换 H5。
 - 微信小程序开发测试版：`0.8.59` 已上传成功（`636,385` 字节），但真机已确认欢迎语首播后
   因遥测契约不兼容断开；修复后的 `0.8.60` 已通过 CLI 上传开发测试版（`637,083` 字节），
@@ -369,6 +367,19 @@
   未运行 broad Docker prune，未删除 volumes、数据库、其他项目镜像或用户未跟踪文件。
 - 小程序 `0.8.58` 已上传开发版本；手机号、昵称、头像、静默恢复、退出清理和登录后语音仍待真机验收。
 
+## 2026-07-29：`20260729-093337` 记忆架构发布
+
+- runtime 已切换至 `20260729-093337`，H5 保持 `20260723-192611`，直接回滚 runtime 为
+  `20260728-170236`。
+- 四容器 healthy/restart 0；9/9 core readiness、LiveKit、FunASR、Qwen、Doubao、
+  Interrupt Semantic、公网 API/H5/WMS 与 WSS `4401` 门禁通过。
+- 生产 PostgreSQL 已创建 5 张强制 RLS 的 Skill 表、10 个类型化投影字段、多来源表和
+  `text-embedding-v4 / 1024` partial HNSW；当前向量表为空，无历史维度迁移。
+- 发布前 SQLite/PostgreSQL 与四份 env 回滚副本位于 root-only
+  `/var/backups/memoria/runtime-switch-20260729-093337-from-20260728-170236-20260729T014220Z/`。
+  固定工件、镜像 ID、备份哈希和保护性首次尝试见
+  `docs/releases/20260729-093337.md`。
+
 ## 验证
 
 - Ruff：通过。
@@ -397,31 +408,29 @@
 - commit-bound manifest/verifier、镜像导入、候选 H5/API/SQLite restart server smoke、SQLite
   双副本、四份 env 回滚、生产 Provider/readiness、公网 H5/API/WMS/TLS/WSS header smoke 均通过。
 - 本次工件 SHA-256、镜像 ID、备份和生产验收见
-  `docs/releases/20260728-170236.md`。
+  `docs/releases/20260729-093337.md`。
 - 关键覆盖率子门槛：Agent orchestration `92%`、provider protocols `92%`。
 - 既有全 `services` 覆盖率门槛仍未闭环：实测 `81.54%`，低于 CI 配置的 `85%`；
   本轮没有降低门槛或伪报通过。
 
 ## 未闭环与下一步
 
-1. 记忆候选 `20260729-093337` 正在发布。完成前必须按现有发布流程备份 PostgreSQL/SQLite，
-   验证 schema 升级、HNSW 创建耗时和回滚；不得把本地全绿写成生产已生效。
-2. 当前规则检索的中文同义、人物别名和语义召回仍低，先以固定评测集改进 BM25/实体/向量
+1. 当前规则检索的中文同义、人物别名和语义召回仍低，先以固定评测集改进 BM25/实体/向量
    融合，不得因单次演示切换 Mem0 或 TurboVec。Skill 自动执行需先建立安全的跨服务工具注册表，
    统一权限、generation fence、幂等和账户删除门禁。
-3. 8443 回切后的主链已获用户确认；继续按
+2. 8443 回切后的主链已获用户确认；继续按
    `docs/acceptance/miniprogram-half-duplex-device-matrix.md` 完成 iPhone/Android、
    外放/听筒/蓝牙、Wi-Fi/移动网络/弱网、前后台和系统录音中断矩阵；上传成功不得冒充
    完整真机通过。后续每次记录 `ack_sent → ready_sent → first_playback → listening`
    的 session/timestamp，并复核游客三页、手机号、昵称/头像、静默恢复、退出清理与登录后语音。
-4. 在明确测试窗口将 Gateway 临时设为 `MINIPROGRAM_GATEWAY_AEC_MODE=alternating`，记录
+3. 在明确测试窗口将 Gateway 临时设为 `MINIPROGRAM_GATEWAY_AEC_MODE=alternating`，记录
    `ready.aec` 分组、首字丢失、尾音误转写、失真、underflow 与 hard reset；结束后恢复
    `off`，没有真实 A/B 数据前不启用生产 AEC。
-5. H5 仍需真实浏览器和设备验证“等等、等一下、停一下、先别说”等语意打断，
+4. H5 仍需真实浏览器和设备验证“等等、等一下、停一下、先别说”等语意打断，
    同时覆盖“我等一下再说”等非打断语句，避免误触发。
-6. 继续观察小程序 underflow、hard reset、lead 指标；只有需要定位非播放期噪声时才为
+5. 继续观察小程序 underflow、hard reset、lead 指标；只有需要定位非播放期噪声时才为
    单一 session 开启有界 AEC pre/post 采样，测试后立即关闭。
-7. 单独处理全仓覆盖率门槛：优先补齐 PostgreSQL/外部边界测试，不通过降低标准换绿。
+6. 单独处理全仓覆盖率门槛：优先补齐 PostgreSQL/外部边界测试，不通过降低标准换绿。
 
 ## 用户工作区边界
 
