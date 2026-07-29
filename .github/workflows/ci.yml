@@ -24,7 +24,6 @@ jobs:
           --health-retries 10
     env:
       MEMORIA_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/postgres
-      MEMORIA_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -38,6 +37,8 @@ jobs:
         run: uv run mypy services --strict
       - name: Pytest
         run: uv run pytest --cov=services --cov-report=term-missing
+        env:
+          MEMORIA_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
       - name: Coverage gates
         run: |
           uv run coverage report --fail-under=85
