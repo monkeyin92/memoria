@@ -2,26 +2,29 @@
 
 ## 当前状态
 
-- `20260729-171002` 候选发布包含“陪伴身份、安全、联网和短回复”：陪伴模式只以当前选定
+- `20260729-171002` 已于 `2026-07-29T09:35:05Z` 原子切换 runtime：陪伴模式只以当前选定
   机器人名称和对应风格对外回应；身份/模型追问与显式违禁请求在 Control API 或其 Agent
   降级路径直接返回固定短句，不读取私人记忆、persona 或调用 LLM。Qwen 兼容接口启用原生
   `enable_search`，DeepSeek 路径不发送该参数；小程序普通回答继续硬限为 3 句/120 字，只有
   用户明确要求故事、朗读、详细、完整、长一点或继续时放宽。
 - 发布前完整 Python、Ruff、strict mypy、离线 E2E、H5 `242/242` 与 production build、
   小程序 `80/80`、JS syntax 以及 `git diff --check` 已通过。H5 全量测试第一次有一项异步
-  断言波动，单文件和全量重跑均通过；真实 Qwen 联网结果与真机语音时长仍待 runtime 上线后验收。
+  断言波动，单文件和全量重跑均通过；线上四容器均 `running / restart=0`，公网 H5/API 为
+  200，Agent 与 Control API 容器内固定回复断言、真实 Qwen `enable_search` 请求均通过。
+  未接入需额外开通的外部语义内容审核，未命中词表的违禁改写仍依赖模型安全提示；真机语音时长
+  与完整声学矩阵仍待验收。
 - 记忆架构 P0–P4 已随 `20260729-093337` 提交、推送并部署生产：类型化投影、13 场景评测、
   EpisodeConsolidator、Skill Domain、Mem0 影子、pgvector HNSW/基准和 TurboVec 硬门禁均已落地。
   权威证据账本不变，工作记忆仍只按话轮动态组装。
 - GitHub Actions 已在 `f6a9580` 的 run `30416225947` 全绿：Python job 运行真实
   PostgreSQL/pgvector 合同测试，总覆盖率恢复至 `89%`，未降低既有 `85%` 门槛。
-- 当前仓库代码基线：`25e1f36`；`origin/main` 与 annotated tag
-  `20260729-113831` 都精确指向该提交。
+- 当前本地仓库代码基线：`56e83b5`，annotated tag `20260729-171002` 精确指向该提交；本次
+  未推送，`origin/main` 仍停在此前 `25e1f36` 基线。
 - 生产 runtime source / annotated tag：
-  `25e1f36aacfcf148b70e9d312a49897275c317d1 / 20260729-113831`，已完成原子切换、
-  Provider/readiness/Nginx 与公网验收；直接 runtime/H5 回滚点分别为
-  `20260729-093337 / 20260723-192611`。
-- 生产 H5：`20260729-113831`，已在 runtime/readiness 门禁后最后原子切换。
+  `56e83b5a3d0ecf8be073db571031505168bdf23e / 20260729-171002`，已完成原子切换、
+  Provider/readiness/Nginx 与公网验收；直接 runtime 回滚点为 `20260729-113831`，H5 本轮未
+  切换，仍为 `20260729-113831`。root-only SQLite、PostgreSQL 与四份 env 备份位于
+  `/var/backups/memoria/runtime-switch-20260729-171002-from-20260729-113831-20260729T093036Z/`。
 - 微信小程序开发测试版：`0.8.59` 已上传成功（`636,385` 字节），但真机已确认欢迎语首播后
   因遥测契约不兼容断开；修复后的 `0.8.60` 已通过 CLI 上传开发测试版（`637,083` 字节），
   开 VPN 可完整聊天。诊断版 `0.8.61` 已上传（`637,237` 字节）；真机和 Safari 均确认标准 443
@@ -39,6 +42,26 @@
 - 历史路线、架构决策和发布证据分别保留在
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
   `docs/releases/20260728-170236.md`。
+
+## 2026-07-29：短期上下文与自然表达修复（本地候选，未发布）
+
+- 生产证据确认，同一语音会话内“讲笑话 → 好冷啊”和“学英语 → 咖啡店场景 → 如何点咖啡”
+  的权威 ASR 均正确，但说话人是 `uncertain / no_active_profile`；旧 `ContextAssembler`
+  因非 owner 只保留当前用户一句，导致模型把追问当成独立问题。
+- `ContextManager` 现为用户与 actual-heard 助手消息绑定 `owner / public` scope。
+  `guest / uncertain` 可消费末尾连续的公开工作记忆；遇到任何 owner scope 立即截断，
+  仍不能读取主人历史、私人记忆、Persona、工具或获得 `history_eligible`。两条用户原始场景
+  与 owner→public 隔离边界均有回归测试。
+- Qwen 情绪 sidecar 的同一话轮多段结果不再逐条覆盖。Agent 最多缓存 8 段、按 turn
+  聚合后只在提交时发布一个 fenced `emotion_observation`；单一稳定非中性标签可控制本轮
+  `supportive / happy / curious` 表达，但不升级为持久情绪事实，迟到结果不能污染下一轮。
+- Provider-neutral Delivery Plan 已合并进唯一的 LLM 控制响应块；默认使用熟人对话式自然口语，
+  关切、轻松、思考场景采用有界语速差异。豆包 `context_texts` 仍按 ADR-0012 关闭，因为历史
+  真实探针曾产生超过 1.4 秒字幕偏移；`[laughter]` 也不是当前双向 WS 的官方能力，不能把
+  文本“呵，”称为确定性真笑。
+- 本地门禁：完整 `.venv/bin/pytest -q`、Agent unit/integration、Ruff、strict mypy
+  `176 source files` 与 `git diff --check` 全部通过。当前改动未提交、未推送、未部署；生产仍为
+  `20260729-113831`。
 
 ## 2026-07-29：注册称呼与语义表情（已提交、推送、部署与体验版上传）
 
