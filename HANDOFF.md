@@ -5,7 +5,9 @@
 - 记忆架构 P0–P4 已随 `20260729-093337` 提交、推送并部署生产：类型化投影、13 场景评测、
   EpisodeConsolidator、Skill Domain、Mem0 影子、pgvector HNSW/基准和 TurboVec 硬门禁均已落地。
   权威证据账本不变，工作记忆仍只按话轮动态组装。
-- 当前仓库代码基线：本文件所在 `main` 提交；已同步 `origin/main`。
+- GitHub Actions 已在 `f6a9580` 的 run `30416225947` 全绿：Python job 运行真实
+  PostgreSQL/pgvector 合同测试，总覆盖率恢复至 `89%`，未降低既有 `85%` 门槛。
+- 当前仓库代码基线：`f6a9580`；已同步 `origin/main`。
 - 生产 runtime source / annotated tag：
   `1a7051f9e119ebc7fc7471b1904499db200db2f9 / 20260729-093337`，直接回滚点为
   `20260728-170236`；该版本已完成原子切换、生产门禁、记忆 schema 和公网验收。
@@ -409,9 +411,10 @@
   双副本、四份 env 回滚、生产 Provider/readiness、公网 H5/API/WMS/TLS/WSS header smoke 均通过。
 - 本次工件 SHA-256、镜像 ID、备份和生产验收见
   `docs/releases/20260729-093337.md`。
-- 关键覆盖率子门槛：Agent orchestration `92%`、provider protocols `92%`。
-- 既有全 `services` 覆盖率门槛仍未闭环：实测 `81.54%`，低于 CI 配置的 `85%`；
-  本轮没有降低门槛或伪报通过。
+- GitHub Actions run `30416225947`：Python `1421 passed, 2 skipped`、全 `services`
+  覆盖率 `89%`、Agent orchestration `91%`、provider protocols `92%`；H5 与小程序 job
+  亦通过。CI 通过 GitHub service container 提供真实 PostgreSQL/pgvector，容器 ID 仅在
+  Pytest step 注入，避免 job 级表达式解析失败。
 
 ## 未闭环与下一步
 
