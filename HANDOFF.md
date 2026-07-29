@@ -7,11 +7,13 @@
   权威证据账本不变，工作记忆仍只按话轮动态组装。
 - GitHub Actions 已在 `f6a9580` 的 run `30416225947` 全绿：Python job 运行真实
   PostgreSQL/pgvector 合同测试，总覆盖率恢复至 `89%`，未降低既有 `85%` 门槛。
-- 当前仓库代码基线：`f6a9580`；已同步 `origin/main`。
+- 当前仓库代码基线：`25e1f36`；`origin/main` 与 annotated tag
+  `20260729-113831` 都精确指向该提交。
 - 生产 runtime source / annotated tag：
-  `1a7051f9e119ebc7fc7471b1904499db200db2f9 / 20260729-093337`，直接回滚点为
-  `20260728-170236`；该版本已完成原子切换、生产门禁、记忆 schema 和公网验收。
-- 生产 H5：`20260723-192611`，本轮 runtime 发布没有切换 H5。
+  `25e1f36aacfcf148b70e9d312a49897275c317d1 / 20260729-113831`，已完成原子切换、
+  Provider/readiness/Nginx 与公网验收；直接 runtime/H5 回滚点分别为
+  `20260729-093337 / 20260723-192611`。
+- 生产 H5：`20260729-113831`，已在 runtime/readiness 门禁后最后原子切换。
 - 微信小程序开发测试版：`0.8.59` 已上传成功（`636,385` 字节），但真机已确认欢迎语首播后
   因遥测契约不兼容断开；修复后的 `0.8.60` 已通过 CLI 上传开发测试版（`637,083` 字节），
   开 VPN 可完整聊天。诊断版 `0.8.61` 已上传（`637,237` 字节）；真机和 Safari 均确认标准 443
@@ -21,12 +23,16 @@
   音频路由、弱网和 AEC A/B 真机矩阵仍待完成。
 - 本轮开发测试版均通过已登录的微信开发者工具 `upload` 完成，只上传开发版本，不提审、不正式发布。
   本机未跟踪的上传私钥、辅助脚本和 lockfile 不属于仓库交付，路径和值不得写入本文或提交。
+- 新的 `0.8.62` 体验版上传已发起，微信开发者工具任务
+  `confirmation_upload_d0446177-4d6e-4007-8852-fa0a2e10c6fc` 正等待工具内确认；
+  此任务 pending 时不得重发或轮询。正式提审/发布仍不在当前 CLI 能力内，且完整
+  iPhone/Android 声学、弱网和 AEC A/B 真机矩阵仍待完成。
 - 当前交付客户端为 `apps/h5` 与 `apps/miniprogram`；legacy Web 与原生 iOS 源码已移除。
 - 历史路线、架构决策和发布证据分别保留在
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
   `docs/releases/20260728-170236.md`。
 
-## 2026-07-29：注册称呼与语义表情（本地候选，未提交/未部署）
+## 2026-07-29：注册称呼与语义表情（已提交、推送与部署；体验版待确认）
 
 - H5 与小程序的首次注册改为填写“怎么称呼你？”（示例：朋友、主人、小明）；Control API 将规范化后的称呼写入 profile。个人资料不再展示或写入“称呼 / 想让伙伴怎样陪你”，旧 `bio` 字段只保留 API/数据库兼容。
 - Control API 仅经内部 session policy 将称呼交给 Agent；Agent 仅在当前说话人已确认是 `owner` 时把它作为不可执行数据加入上下文，`guest / uncertain` 不会得到称呼。
@@ -34,7 +40,16 @@
   `session_id / turn_id / generation_id / tool_epoch` 的 `assistant_expression`
   （`neutral / happy / curious / caring`）。H5 与小程序都缓存乱序事件、只在匹配的 speaking fence 内显示，并在结束、断线或系统中断时清除；小程序 Gateway 已有定向转发回归。
 - H5 伙伴切换列表和小程序五个陪伴方式缩略图都使用表情骨架，避免只有无脸机身。H5 本地预览已验证注册、选角、首页称呼与伙伴切换；微信开发者工具已编译 auth/home/profile WXML/WXSS，首页和“我的”模拟器画面正常、console 的 error/warn/fail/exception 过滤为空。
-- 本地门禁：H5 `242/242`、production build；小程序 `80/80`、相关 JS syntax、`git diff --check`；Control API/Agent/Gateway 定向 pytest 全部通过。未提交、未上传体验版、未部署。
+- 本地门禁：H5 `242/242`、production build；小程序 `80/80`、相关 JS syntax、
+  `git diff --check`；Control API/Agent/Gateway 定向 pytest `217 passed`。commit-bound
+  source/H5/四个 `linux/amd64` 镜像/manifest 在本机和服务器均复验通过。
+- 生产 `20260729-113831` 已通过隔离 H5/SPA/API/SQLite restart smoke、LiveKit、Doubao、
+  FunASR、Qwen、Interrupt Semantic、readiness 与 Nginx 门禁；四个 runtime 容器 healthy，
+  公网 H5/API 均为 200。现有 Chrome 已验证注册页实际渲染“怎么称呼你？”及示例占位符，
+  console 无 warning/error。
+- 切换前 SQLite 一致快照、PostgreSQL custom dump 和四份 root-only env 备份位于
+  `/var/backups/memoria/runtime-switch-20260729-113831-from-20260729-093337-20260729T040304Z/`；
+  不自动回滚数据。
 
 ## 最新实现
 
