@@ -2,6 +2,10 @@
 
 ## 当前状态
 
+- 记忆架构 P0–P4 发布候选 `20260729-093337` 已完成，正在提交、推送和生产部署：
+  类型化投影、13 场景评测、
+  EpisodeConsolidator、Skill Domain、Mem0 影子、pgvector HNSW/基准和 TurboVec 硬门禁均已落地。
+  权威证据账本不变，工作记忆仍只按话轮动态组装。
 - 当前仓库代码基线：本文件所在 `main` 提交，包含三阶段语音架构收口；已同步
   `origin/main`。生产 runtime/H5 尚未切到该仓库 checkpoint。
 - 生产 runtime source / annotated tag：
@@ -24,6 +28,18 @@
 
 ## 最新实现
 
+- 长期记忆新增独立的 `memory_kind / domain_category / item_kind`，搜索投影携带实体、
+  有效期、观察时间、稳定度、重要度、敏感度、冲突状态、检索分数和全部来源。
+- EpisodeConsolidator 可跨会话合并同一现实事件，同时保留独立 timeline/evidence；
+  canonical key 按主题领域隔离，明确不相交实体与不同事件保守分开。
+- 程序技能具备候选、版本、主人审批、单次运行确认、严格 JSON Schema 子集、工具白名单、
+  顺序步骤、完整运行审计和逆序补偿。Skill definition/version/run 是持久业务状态；
+  只有统一搜索文档可重建。尚未自动接入实时 Agent 工具链。
+- Mem0 只运行隔离影子评测，TurboVec 只作为可选实验索引；二者均不写权威记忆。
+  pgvector 按 embedding model/dimensions 隔离并建立 partial HNSW，维度漂移 fail closed。
+- 账户导出、删除、PostgreSQL dump/restore 与投影重建已覆盖 Skill 状态和搜索文档。
+  设计与边界见 `docs/adr/0028-typed-memory-projections-and-derived-experiments.md` 和
+  `docs/implementation-plan-20260728-memory-architecture.md`。
 - `UtteranceRouter` 仍是 enroll、纯打断、打断后继续提问和普通聊天的唯一副作用入口。
 - 小程序改为受控话轮：AI 处于 thinking、tool waiting、speaking、recovering 等响应状态时
   暂停 `RecorderManager` 上行；Agent 回到 listening 后仍等待本地 pending PCM 和全部
@@ -356,8 +372,13 @@
 ## 验证
 
 - Ruff：通过。
-- `mypy services --strict`：165 个 source files 无问题。
-- Python：`1345 passed, 27 skipped`。
+- `mypy services --strict`：175 个 source files 无问题。
+- Python（含真实 PostgreSQL/pgvector、RLS、Skill、账户治理和恢复演练）：
+  `1421 passed, 2 skipped`。
+- 固定中文记忆评测集覆盖 13 类场景且无失败。当前规则基线：
+  Extraction Precision `0.3947`、Recall `1.0000`、Recall@5/10 `0.1538`、
+  nDCG@10 `0.1538`、Temporal Accuracy `1.0000`、Source Attribution `0.9333`、
+  Cross-account/Candidate/Contradiction Leakage 均为 `0`。
 - H5：`241/241`，production build 通过；现有 Chrome 的首页、回顾、个人、编辑和偏好交互
   已通过，未见 console warning/error。
 - 微信小程序：`76/76`，全部 JavaScript syntax check 和共享 JSON 契约解析通过；此前
@@ -383,19 +404,24 @@
 
 ## 未闭环与下一步
 
-1. 8443 回切后的主链已获用户确认；继续按
+1. 记忆候选 `20260729-093337` 正在发布。完成前必须按现有发布流程备份 PostgreSQL/SQLite，
+   验证 schema 升级、HNSW 创建耗时和回滚；不得把本地全绿写成生产已生效。
+2. 当前规则检索的中文同义、人物别名和语义召回仍低，先以固定评测集改进 BM25/实体/向量
+   融合，不得因单次演示切换 Mem0 或 TurboVec。Skill 自动执行需先建立安全的跨服务工具注册表，
+   统一权限、generation fence、幂等和账户删除门禁。
+3. 8443 回切后的主链已获用户确认；继续按
    `docs/acceptance/miniprogram-half-duplex-device-matrix.md` 完成 iPhone/Android、
    外放/听筒/蓝牙、Wi-Fi/移动网络/弱网、前后台和系统录音中断矩阵；上传成功不得冒充
    完整真机通过。后续每次记录 `ack_sent → ready_sent → first_playback → listening`
    的 session/timestamp，并复核游客三页、手机号、昵称/头像、静默恢复、退出清理与登录后语音。
-2. 在明确测试窗口将 Gateway 临时设为 `MINIPROGRAM_GATEWAY_AEC_MODE=alternating`，记录
+4. 在明确测试窗口将 Gateway 临时设为 `MINIPROGRAM_GATEWAY_AEC_MODE=alternating`，记录
    `ready.aec` 分组、首字丢失、尾音误转写、失真、underflow 与 hard reset；结束后恢复
    `off`，没有真实 A/B 数据前不启用生产 AEC。
-3. H5 仍需真实浏览器和设备验证“等等、等一下、停一下、先别说”等语意打断，
+5. H5 仍需真实浏览器和设备验证“等等、等一下、停一下、先别说”等语意打断，
    同时覆盖“我等一下再说”等非打断语句，避免误触发。
-4. 继续观察小程序 underflow、hard reset、lead 指标；只有需要定位非播放期噪声时才为
+6. 继续观察小程序 underflow、hard reset、lead 指标；只有需要定位非播放期噪声时才为
    单一 session 开启有界 AEC pre/post 采样，测试后立即关闭。
-5. 单独处理全仓覆盖率门槛：优先补齐 PostgreSQL/外部边界测试，不通过降低标准换绿。
+7. 单独处理全仓覆盖率门槛：优先补齐 PostgreSQL/外部边界测试，不通过降低标准换绿。
 
 ## 用户工作区边界
 

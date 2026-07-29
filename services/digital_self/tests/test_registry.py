@@ -82,11 +82,14 @@ async def _seed_sources(path: Path, *, account_id: str = "owner-account") -> Non
             connection.execute(
                 """
                 INSERT INTO memory_claims (
-                    claim_id, account_id, category, subject_key, predicate,
+                    claim_id, account_id, category, domain_category,
+                    subject_key, predicate,
                     value, confidence, status, sensitive_domain,
-                    extractor_version, source_event_id, valid_at, created_at
-                ) VALUES (?, ?, 'life_story', 'owner', 'preference', ?, 0.9,
-                          'confirmed', 'personal', 'extractor-v1', ?, ?, ?)
+                    extractor_version, source_event_id, valid_at, observed_at,
+                    created_at
+                ) VALUES (?, ?, 'life_story', 'life_story', 'owner',
+                          'preference', ?, 0.9, 'confirmed', 'personal',
+                          'extractor-v1', ?, ?, ?, ?)
                 """,
                 (
                     f"00000000-0000-0000-0000-00000000000{index}",
@@ -95,31 +98,38 @@ async def _seed_sources(path: Path, *, account_id: str = "owner-account") -> Non
                     f"{account_id}-{speaker_class}-source",
                     now,
                     now,
+                    now,
                 ),
             )
         connection.execute(
             """
             INSERT INTO memory_claims (
-                claim_id, account_id, category, subject_key, predicate,
+                claim_id, account_id, category, domain_category,
+                subject_key, predicate,
                 value, confidence, status, sensitive_domain,
-                extractor_version, source_event_id, valid_at, created_at
-            ) VALUES ('00000000-0000-0000-0000-000000000099', ?, 'daily_life',
-                      'owner', 'candidate', 'not confirmed', 0.7, 'candidate',
-                      'personal', 'extractor-v1', ?, ?, ?)
+                extractor_version, source_event_id, valid_at, observed_at,
+                created_at
+            ) VALUES ('00000000-0000-0000-0000-000000000099', ?,
+                      'daily_life', 'daily_life', 'owner', 'candidate',
+                      'not confirmed', 0.7, 'candidate', 'personal',
+                      'extractor-v1', ?, ?, ?, ?)
             """,
-            (account_id, f"{account_id}-owner-source", now, now),
+            (account_id, f"{account_id}-owner-source", now, now, now),
         )
         connection.execute(
             """
             INSERT INTO memory_claims (
-                claim_id, account_id, category, subject_key, predicate,
+                claim_id, account_id, category, domain_category,
+                subject_key, predicate,
                 value, confidence, status, sensitive_domain,
-                extractor_version, source_event_id, valid_at, created_at
-            ) VALUES ('00000000-0000-0000-0000-000000000098', ?, 'daily_life',
-                      'owner', 'companion', 'misclassified companion memory', 0.9,
-                      'confirmed', 'personal', 'extractor-v1', ?, ?, ?)
+                extractor_version, source_event_id, valid_at, observed_at,
+                created_at
+            ) VALUES ('00000000-0000-0000-0000-000000000098', ?,
+                      'daily_life', 'daily_life', 'owner', 'companion',
+                      'misclassified companion memory', 0.9, 'confirmed',
+                      'personal', 'extractor-v1', ?, ?, ?, ?)
             """,
-            (account_id, f"{account_id}-companion-source", now, now),
+            (account_id, f"{account_id}-companion-source", now, now, now),
         )
 
         snapshot: list[dict[str, object]] = []

@@ -51,6 +51,30 @@ _ARCHIVE_EXPORT_TABLES = (
     TableSpec("timeline_entries"),
     TableSpec("knowledge_items"),
     TableSpec("memory_search_documents"),
+    TableSpec("memory_search_document_sources"),
+    TableSpec("skill_definitions"),
+    TableSpec(
+        "skill_versions",
+        json_columns=frozenset(
+            {
+                "trigger_phrases_json",
+                "input_schema_json",
+                "output_schema_json",
+                "output_template_json",
+                "allowed_tools_json",
+                "steps_json",
+            }
+        ),
+    ),
+    TableSpec("skill_version_evidence"),
+    TableSpec(
+        "skill_runs",
+        json_columns=frozenset({"input_json", "output_json"}),
+    ),
+    TableSpec(
+        "skill_run_steps",
+        json_columns=frozenset({"arguments_json", "output_json"}),
+    ),
     TableSpec("persona_traits"),
     TableSpec("persona_evidence"),
     TableSpec("speech_style_stats", json_columns=frozenset({"tic_counts_json"})),
@@ -114,7 +138,13 @@ _ARCHIVE_DELETE_ORDER = (
     "persona_versions",
     "persona_traits",
     "persona_learning_consents",
+    "skill_run_steps",
+    "skill_runs",
+    "skill_version_evidence",
+    "skill_versions",
+    "skill_definitions",
     "memory_vector_documents",
+    "memory_search_document_sources",
     "memory_search_documents",
     "timeline_entries",
     "episode_evidence",
@@ -161,6 +191,30 @@ _POSTGRES_ARCHIVE_EXPORT_TABLES = (
     TableSpec("episode_evidence"),
     TableSpec("knowledge_items"),
     TableSpec("memory_search_documents", excluded_columns=frozenset({"search_vector"})),
+    TableSpec("memory_search_document_sources"),
+    TableSpec("skill_definitions"),
+    TableSpec(
+        "skill_versions",
+        json_columns=frozenset(
+            {
+                "trigger_phrases",
+                "input_schema",
+                "output_schema",
+                "output_template",
+                "allowed_tools",
+                "steps",
+            }
+        ),
+    ),
+    TableSpec("skill_version_evidence"),
+    TableSpec(
+        "skill_runs",
+        json_columns=frozenset({"input_json", "output_json"}),
+    ),
+    TableSpec(
+        "skill_run_steps",
+        json_columns=frozenset({"arguments_json", "output_json"}),
+    ),
     TableSpec("persona_traits"),
     TableSpec("persona_evidence"),
     TableSpec("speech_style_stats", json_columns=frozenset({"tic_counts"})),

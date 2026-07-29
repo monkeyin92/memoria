@@ -1,0 +1,493 @@
+{
+  "version": "memory-eval-zh-v1",
+  "cases": [
+    {
+      "case_id": "exact-fact-hangzhou",
+      "scenario": "exact_fact",
+      "evidence": [
+        {
+          "event_id": "eval-exact-001",
+          "account_id": "eval-owner-a",
+          "text": "我在杭州读过大学。",
+          "occurred_at": "2026-07-01T09:00:00+08:00"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "eval-exact-001", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "exact-hangzhou",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["杭州", "大学"],
+          "source_event_ids": ["eval-exact-001"],
+          "valid_from": "2026-07-01T09:00:00+08:00"
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "exact-query",
+          "account_id": "eval-owner-a",
+          "text": "我在哪里读过大学？",
+          "mode": "context",
+          "relevance": {"exact-hangzhou": 3}
+        }
+      ]
+    },
+    {
+      "case_id": "paraphrase-food-preference",
+      "scenario": "paraphrase",
+      "evidence": [
+        {
+          "event_id": "eval-paraphrase-001",
+          "account_id": "eval-owner-a",
+          "text": "我吃饭时不喜欢香菜。",
+          "occurred_at": "2026-07-02T12:00:00+08:00"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "eval-paraphrase-001", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "avoid-coriander",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["不喜欢", "香菜"],
+          "source_event_ids": ["eval-paraphrase-001"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "paraphrase-query",
+          "account_id": "eval-owner-a",
+          "text": "点菜时有哪些东西要帮我避开？",
+          "mode": "context",
+          "relevance": {"avoid-coriander": 3}
+        }
+      ]
+    },
+    {
+      "case_id": "person-alias-mother",
+      "scenario": "person_alias",
+      "evidence": [
+        {
+          "event_id": "eval-alias-001",
+          "account_id": "eval-owner-a",
+          "text": "我妈妈叫李梅，家里人也叫她阿梅。",
+          "occurred_at": "2026-07-03T18:00:00+08:00"
+        }
+      ],
+      "expected_memories": [
+        {
+          "key": "mother-li-mei",
+          "account_id": "eval-owner-a",
+          "kind": "person",
+          "memory_kind": "relationship",
+          "match_all": ["李梅", "妈妈"],
+          "source_event_ids": ["eval-alias-001"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "alias-query",
+          "account_id": "eval-owner-a",
+          "text": "阿梅是谁？",
+          "mode": "search",
+          "relevance": {"mother-li-mei": 3}
+        }
+      ]
+    },
+    {
+      "case_id": "temporal-hospital-followup",
+      "scenario": "temporal_question",
+      "evidence": [
+        {
+          "event_id": "eval-time-001",
+          "account_id": "eval-owner-a",
+          "text": "7月18日我要陪妈妈去医院复诊。",
+          "occurred_at": "2026-07-10T10:00:00+08:00"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "eval-time-001", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "hospital-followup",
+          "account_id": "eval-owner-a",
+          "kind": "episode",
+          "memory_kind": "episodic",
+          "match_all": ["妈妈", "医院", "复诊"],
+          "source_event_ids": ["eval-time-001"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "time-query",
+          "account_id": "eval-owner-a",
+          "text": "我什么时候陪妈妈复诊？",
+          "mode": "context",
+          "relevance": {"hospital-followup": 3}
+        }
+      ]
+    },
+    {
+      "case_id": "current-and-historical-city",
+      "scenario": "current_vs_historical",
+      "evidence": [
+        {
+          "event_id": "eval-city-old",
+          "account_id": "eval-owner-a",
+          "text": "2024年我住在苏州。",
+          "occurred_at": "2024-06-01T09:00:00+08:00"
+        },
+        {
+          "event_id": "eval-city-current",
+          "account_id": "eval-owner-a",
+          "text": "我现在住在杭州。",
+          "occurred_at": "2026-07-11T09:00:00+08:00"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "eval-city-old", "action": "confirm"},
+        {"source_event_id": "eval-city-current", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "historical-suzhou",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["2024", "苏州"],
+          "source_event_ids": ["eval-city-old"],
+          "valid_from": "2024-06-01T09:00:00+08:00"
+        },
+        {
+          "key": "current-hangzhou",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["现在", "杭州"],
+          "source_event_ids": ["eval-city-current"],
+          "valid_from": "2026-07-11T09:00:00+08:00"
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "current-city-query",
+          "account_id": "eval-owner-a",
+          "text": "我现在住在哪里？",
+          "mode": "context",
+          "valid_at": "2026-07-28T12:00:00+08:00",
+          "relevance": {"current-hangzhou": 3, "historical-suzhou": 1}
+        }
+      ]
+    },
+    {
+      "case_id": "episodic-project-acceptance",
+      "scenario": "episodic_recall",
+      "evidence": [
+        {
+          "event_id": "eval-episode-001",
+          "account_id": "eval-owner-a",
+          "text": "上周五的项目验收很紧张，不过最后顺利通过了。",
+          "occurred_at": "2026-07-17T20:00:00+08:00"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "eval-episode-001", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "project-acceptance",
+          "account_id": "eval-owner-a",
+          "kind": "episode",
+          "memory_kind": "episodic",
+          "match_all": ["项目", "验收", "通过"],
+          "source_event_ids": ["eval-episode-001"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "episode-query",
+          "account_id": "eval-owner-a",
+          "text": "最近那个让我紧张的工作后来怎么样了？",
+          "mode": "context",
+          "relevance": {"project-acceptance": 3}
+        }
+      ]
+    },
+    {
+      "case_id": "repeated-episode-campus-startup",
+      "scenario": "repeated_episode",
+      "evidence": [
+        {
+          "event_id": "eval-repeat-001",
+          "account_id": "eval-owner-a",
+          "text": "大学时我和老王做过校园外卖创业。",
+          "occurred_at": "2026-07-12T10:00:00+08:00",
+          "session_id": "eval-repeat-session-a"
+        },
+        {
+          "event_id": "eval-repeat-002",
+          "account_id": "eval-owner-a",
+          "text": "那次校园外卖项目后来失败了，让我很重视现金流。",
+          "occurred_at": "2026-07-20T10:00:00+08:00",
+          "session_id": "eval-repeat-session-b"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "eval-repeat-001", "action": "confirm"},
+        {"source_event_id": "eval-repeat-002", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "campus-startup-episode",
+          "account_id": "eval-owner-a",
+          "kind": "episode",
+          "memory_kind": "episodic",
+          "match_all": ["校园外卖", "创业"],
+          "source_event_ids": ["eval-repeat-001", "eval-repeat-002"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "repeat-query",
+          "account_id": "eval-owner-a",
+          "text": "我为什么这么看重现金流？",
+          "mode": "context",
+          "relevance": {"campus-startup-episode": 3}
+        }
+      ]
+    },
+    {
+      "case_id": "conflicting-mother-age",
+      "scenario": "conflicting_fact",
+      "evidence": [
+        {
+          "event_id": "eval-conflict-001",
+          "account_id": "eval-owner-a",
+          "text": "我妈妈叫李梅，今年60岁。",
+          "occurred_at": "2026-07-20T09:00:00+08:00"
+        },
+        {
+          "event_id": "eval-conflict-002",
+          "account_id": "eval-owner-a",
+          "text": "我母亲李梅今年61岁了。",
+          "occurred_at": "2026-07-21T09:00:00+08:00"
+        }
+      ],
+      "expected_memories": [
+        {
+          "key": "mother-age-60",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["60"],
+          "source_event_ids": ["eval-conflict-001"]
+        },
+        {
+          "key": "mother-age-61",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["61"],
+          "source_event_ids": ["eval-conflict-002"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "conflict-query",
+          "account_id": "eval-owner-a",
+          "text": "我妈妈现在多少岁？",
+          "mode": "context",
+          "relevance": {}
+        }
+      ]
+    },
+    {
+      "case_id": "user-corrected-decision-rule",
+      "scenario": "user_correction",
+      "evidence": [
+        {
+          "event_id": "eval-correction-001",
+          "account_id": "eval-owner-a",
+          "text": "我认为做重大决定前应该等一天。",
+          "occurred_at": "2026-07-22T09:00:00+08:00"
+        }
+      ],
+      "reviews": [
+        {
+          "source_event_id": "eval-correction-001",
+          "action": "correct",
+          "corrected_value": "我认为做重大决定前应该等两天。"
+        }
+      ],
+      "expected_memories": [
+        {
+          "key": "corrected-two-days",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["重大决定", "两天"],
+          "source_event_ids": ["eval-correction-001"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "correction-query",
+          "account_id": "eval-owner-a",
+          "text": "重大决定前我要等多久？",
+          "mode": "context",
+          "relevance": {"corrected-two-days": 3}
+        }
+      ]
+    },
+    {
+      "case_id": "retracted-food-allergy",
+      "scenario": "retracted_memory",
+      "evidence": [
+        {
+          "event_id": "eval-retract-001",
+          "account_id": "eval-owner-a",
+          "text": "我对花生过敏。",
+          "occurred_at": "2026-07-22T10:00:00+08:00"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "eval-retract-001", "action": "retract"}
+      ],
+      "expected_memories": [],
+      "queries": [
+        {
+          "query_id": "retract-query",
+          "account_id": "eval-owner-a",
+          "text": "我对花生过敏吗？",
+          "mode": "context",
+          "relevance": {}
+        }
+      ]
+    },
+    {
+      "case_id": "procedural-project-retro",
+      "scenario": "procedural_knowledge",
+      "evidence": [
+        {
+          "event_id": "eval-procedure-001",
+          "account_id": "eval-owner-a",
+          "text": "做项目复盘时，我习惯先找事实，再讨论责任。",
+          "occurred_at": "2026-07-23T09:00:00+08:00"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "eval-procedure-001", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "retro-procedure",
+          "account_id": "eval-owner-a",
+          "kind": "knowledge",
+          "memory_kind": "procedural",
+          "match_all": ["复盘", "先找事实", "讨论责任"],
+          "source_event_ids": ["eval-procedure-001"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "procedure-query",
+          "account_id": "eval-owner-a",
+          "text": "我通常怎么做项目复盘？",
+          "mode": "context",
+          "relevance": {"retro-procedure": 3}
+        }
+      ]
+    },
+    {
+      "case_id": "relationship-medical-boundary",
+      "scenario": "relationship_boundary",
+      "evidence": [
+        {
+          "event_id": "eval-boundary-001",
+          "account_id": "eval-owner-a",
+          "text": "同事王强的病情不要向其他人提起。",
+          "occurred_at": "2026-07-24T09:00:00+08:00"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "eval-boundary-001", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "wang-qiang-boundary",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["王强", "病情", "不要"],
+          "source_event_ids": ["eval-boundary-001"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "boundary-owner-query",
+          "account_id": "eval-owner-a",
+          "text": "王强的事情有什么分享边界？",
+          "mode": "context",
+          "relevance": {"wang-qiang-boundary": 3}
+        }
+      ]
+    },
+    {
+      "case_id": "cross-account-private-city",
+      "scenario": "cross_account_isolation",
+      "evidence": [
+        {
+          "event_id": "eval-isolation-a",
+          "account_id": "eval-owner-a",
+          "text": "我的秘密旅行目的地是大理。",
+          "occurred_at": "2026-07-25T09:00:00+08:00"
+        },
+        {
+          "event_id": "eval-isolation-b",
+          "account_id": "eval-owner-b",
+          "text": "我的秘密旅行目的地是拉萨。",
+          "occurred_at": "2026-07-25T09:05:00+08:00"
+        }
+      ],
+      "reviews": [
+        {"source_event_id": "eval-isolation-a", "action": "confirm"},
+        {"source_event_id": "eval-isolation-b", "action": "confirm"}
+      ],
+      "expected_memories": [
+        {
+          "key": "owner-a-dali",
+          "account_id": "eval-owner-a",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["秘密", "大理"],
+          "source_event_ids": ["eval-isolation-a"]
+        },
+        {
+          "key": "owner-b-lhasa",
+          "account_id": "eval-owner-b",
+          "kind": "claim",
+          "memory_kind": "semantic",
+          "match_all": ["秘密", "拉萨"],
+          "source_event_ids": ["eval-isolation-b"]
+        }
+      ],
+      "queries": [
+        {
+          "query_id": "isolation-query-a",
+          "account_id": "eval-owner-a",
+          "text": "我的秘密旅行目的地是哪里？",
+          "mode": "context",
+          "relevance": {"owner-a-dali": 3}
+        }
+      ]
+    }
+  ]
+}

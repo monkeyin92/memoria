@@ -140,11 +140,14 @@ async def test_postgres_registry_enforces_rls_crud_immutability_and_governance()
                     await connection.execute(
                         """
                         INSERT INTO memory_claims (
-                            claim_id, account_id, category, subject_key, predicate,
+                            claim_id, account_id, category, domain_category,
+                            subject_key, predicate,
                             value, confidence, status, sensitive_domain,
-                            extractor_version, source_event_id, valid_at
-                        ) VALUES ($1, $2, 'life_story', 'owner', 'preference', $3,
-                                  0.9, 'confirmed', 'personal', 'extractor-v1', $4, $5)
+                            extractor_version, source_event_id, valid_at,
+                            observed_at
+                        ) VALUES ($1, $2, 'life_story', 'life_story', 'owner',
+                                  'preference', $3, 0.9, 'confirmed',
+                                  'personal', 'extractor-v1', $4, $5, $5)
                         """,
                         uuid.uuid4(),
                         account_id,

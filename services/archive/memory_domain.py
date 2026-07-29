@@ -7,10 +7,11 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, Protocol
+from uuid import UUID
 
 from services.archive.domain import EvidenceEvent, SpeakerClass
 
-MemoryCategory = Literal[
+DomainCategory = Literal[
     "life_story",
     "work_experience",
     "family_principle",
@@ -18,6 +19,11 @@ MemoryCategory = Literal[
     "life_wisdom",
     "daily_life",
 ]
+MemoryCategory = DomainCategory
+MemoryKind = Literal["semantic", "episodic", "procedural", "relationship"]
+MemoryItemKind = Literal["claim", "episode", "knowledge", "skill"]
+MemorySensitivity = Literal["public", "personal", "sensitive", "highly_sensitive"]
+ConflictState = Literal["none", "potential", "active", "resolved"]
 MemoryStatus = Literal["candidate", "confirmed", "disputed", "retracted"]
 AccountWriteGuard = Callable[[str], AbstractAsyncContextManager[None]]
 
@@ -28,12 +34,21 @@ class AccountWriteRejectedError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class ExtractedClaim:
-    category: MemoryCategory
+    domain_category: DomainCategory
     subject_key: str
     predicate: str
     value: str
     confidence: float
     sensitive_domain: str = "personal"
+    entity_keys: tuple[str, ...] = ()
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    salience: float = 0.5
+
+    @property
+    def category(self) -> DomainCategory:
+        """Legacy read alias; new code must use domain_category."""
+        return self.domain_category
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,19 +68,46 @@ class ExtractedRelationship:
 @dataclass(frozen=True, slots=True)
 class ExtractedTimeline:
     title: str
-    category: MemoryCategory
+    domain_category: DomainCategory
     event_start: datetime
     event_end: datetime | None = None
     time_precision: str = "conversation_time"
+    canonical_key: str = ""
+    participant_keys: tuple[str, ...] = ()
+    salience: float = 0.6
+    sensitivity: MemorySensitivity = "personal"
+
+    @property
+    def category(self) -> DomainCategory:
+        """Legacy read alias; new code must use domain_category."""
+        return self.domain_category
 
 
 @dataclass(frozen=True, slots=True)
 class ExtractedKnowledge:
-    category: MemoryCategory
+    domain_category: DomainCategory
     question: str
     answer: str
     applicability: str = ""
     counterexample: str = ""
+    entity_keys: tuple[str, ...] = ()
+    salience: float = 0.55
+    sensitivity: MemorySensitivity = "personal"
+
+    @property
+    def category(self) -> DomainCategory:
+        """Legacy read alias; new code must use domain_category."""
+        return self.domain_category
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractionUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +118,7 @@ class MemoryExtraction:
     timeline: tuple[ExtractedTimeline, ...] = ()
     knowledge: tuple[ExtractedKnowledge, ...] = ()
     extractor_version: str = ""
+    usage: ExtractionUsage = ExtractionUsage()
 
 
 class MemoryExtractor(Protocol):
@@ -86,6 +129,7 @@ class MemoryExtractor(Protocol):
 
 class MemoryEmbedder(Protocol):
     model: str
+    dimensions: int
 
     async def embed(self, text: str) -> tuple[float, ...]: ...
 
@@ -133,8 +177,14 @@ class MemorySearchQuery:
     speaker_class: SpeakerClass
     text: str = ""
     kinds: tuple[str, ...] = ()
+    memory_kinds: tuple[MemoryKind, ...] = ()
+    domain_categories: tuple[DomainCategory, ...] = ()
     categories: tuple[MemoryCategory, ...] = ()
     include_candidates: bool = True
+    entity_ids: tuple[str, ...] = ()
+    valid_at: datetime | None = None
+    sensitivities: tuple[MemorySensitivity, ...] = ()
+    conflict_states: tuple[ConflictState, ...] = ()
     occurred_after: datetime | None = None
     occurred_before: datetime | None = None
     limit: int = 20
@@ -142,9 +192,24 @@ class MemorySearchQuery:
     def __post_init__(self) -> None:
         if not self.account_id.strip() or not 1 <= self.limit <= 100:
             raise ValueError("memory search requires account_id and limit 1..100")
-        for value in (self.occurred_after, self.occurred_before):
+        if self.categories and self.domain_categories:
+            raise ValueError("use domain_categories or legacy categories, not both")
+        if self.categories:
+            object.__setattr__(self, "domain_categories", self.categories)
+        for value in (self.valid_at, self.occurred_after, self.occurred_before):
             if value is not None and value.tzinfo is None:
                 raise ValueError("memory search timestamps must include timezone")
+        if (
+            self.occurred_after is not None
+            and self.occurred_before is not None
+            and self.occurred_after > self.occurred_before
+        ):
+            raise ValueError("occurred_after must not follow occurred_before")
+        try:
+            for entity_id in self.entity_ids:
+                UUID(entity_id)
+        except ValueError as exc:
+            raise ValueError("memory search entity_ids must be UUID values") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +223,25 @@ class MemorySearchItem:
     source_event_id: str
     occurred_at: datetime
     score: float
+    memory_kind: MemoryKind = "semantic"
+    domain_category: DomainCategory = "daily_life"
+    entity_ids: tuple[str, ...] = ()
+    source_event_ids: tuple[str, ...] = ()
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    observed_at: datetime | None = None
+    stability: float = 0.0
+    salience: float = 0.0
+    sensitivity: MemorySensitivity = "personal"
+    conflict_state: ConflictState = "none"
+
+    def __post_init__(self) -> None:
+        if self.domain_category == "daily_life" and self.category != "daily_life":
+            object.__setattr__(self, "domain_category", self.category)
+        if not self.source_event_ids and self.source_event_id:
+            object.__setattr__(self, "source_event_ids", (self.source_event_id,))
+        if self.observed_at is None:
+            object.__setattr__(self, "observed_at", self.occurred_at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +260,14 @@ class TimelineItem:
     time_precision: str
     source_event_id: str
     episode_id: str
+    domain_category: DomainCategory = "daily_life"
+    source_event_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.domain_category == "daily_life" and self.category != "daily_life":
+            object.__setattr__(self, "domain_category", self.category)
+        if not self.source_event_ids:
+            object.__setattr__(self, "source_event_ids", (self.source_event_id,))
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +289,13 @@ class ReviewQueueItem:
     status: MemoryStatus
     reason: str
     source_event_id: str
+    memory_kind: MemoryKind = "semantic"
+    domain_category: DomainCategory = "daily_life"
+    conflict_state: ConflictState = "none"
+
+    def __post_init__(self) -> None:
+        if self.domain_category == "daily_life" and self.category != "daily_life":
+            object.__setattr__(self, "domain_category", self.category)
 
 
 @dataclass(frozen=True, slots=True)

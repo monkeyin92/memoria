@@ -67,13 +67,15 @@ async def _seed_confirmed_owner_memory(
         connection.execute(
             """
             INSERT INTO memory_claims (
-                claim_id, account_id, category, subject_key, predicate, value,
+                claim_id, account_id, category, domain_category,
+                subject_key, predicate, value,
                 confidence, status, sensitive_domain, extractor_version,
-                source_event_id, valid_at, created_at
-            ) VALUES (?, ?, 'daily_life', 'owner', 'preference', ?, 0.9,
-                      'confirmed', 'personal', 'test-v1', ?, ?, ?)
+                source_event_id, valid_at, observed_at, created_at
+            ) VALUES (?, ?, 'daily_life', 'daily_life', 'owner',
+                      'preference', ?, 0.9, 'confirmed', 'personal',
+                      'test-v1', ?, ?, ?, ?)
             """,
-            (claim_id, account_id, value, event_id, now, now),
+            (claim_id, account_id, value, event_id, now, now, now),
         )
     return claim_id
 

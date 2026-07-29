@@ -71,13 +71,29 @@ async def test_postgres_reader_matches_sqlite_semantics_and_respects_force_rls()
                 first_claim_id = uuid.uuid4()
                 second_claim_id = uuid.uuid4()
                 await connection.execute(
-                    """INSERT INTO memory_claims (claim_id, account_id, category, subject_key, predicate, value, confidence, status, sensitive_domain, extractor_version, source_event_id, valid_at)
-                       VALUES ($1, $2, 'life_story', 'self', 'education', '杭州读书', .9, 'confirmed', 'personal', 'test', 'growth-source', $3)""",
+                    """INSERT INTO memory_claims (
+                           claim_id, account_id, category, domain_category,
+                           subject_key, predicate, value, confidence, status,
+                           sensitive_domain, extractor_version, source_event_id,
+                           valid_at, observed_at
+                       ) VALUES (
+                           $1, $2, 'life_story', 'life_story', 'self',
+                           'education', '杭州读书', .9, 'confirmed', 'personal',
+                           'test', 'growth-source', $3, $3
+                       )""",
                     first_claim_id, account_a, datetime(2026, 7, 22, tzinfo=UTC),
                 )
                 await connection.execute(
-                    """INSERT INTO memory_claims (claim_id, account_id, category, subject_key, predicate, value, confidence, status, sensitive_domain, extractor_version, source_event_id, valid_at)
-                       VALUES ($1, $2, 'life_story', 'self', 'city', '住在杭州', .9, 'confirmed', 'personal', 'test', 'growth-source', $3)""",
+                    """INSERT INTO memory_claims (
+                           claim_id, account_id, category, domain_category,
+                           subject_key, predicate, value, confidence, status,
+                           sensitive_domain, extractor_version, source_event_id,
+                           valid_at, observed_at
+                       ) VALUES (
+                           $1, $2, 'life_story', 'life_story', 'self', 'city',
+                           '住在杭州', .9, 'confirmed', 'personal', 'test',
+                           'growth-source', $3, $3
+                       )""",
                     second_claim_id, account_a, datetime(2026, 7, 22, tzinfo=UTC),
                 )
                 await connection.execute(
@@ -136,13 +152,26 @@ async def test_postgres_reader_matches_sqlite_semantics_and_respects_force_rls()
                     datetime(2026, 7, 22, tzinfo=UTC),
                 )
                 await connection.execute(
-                    """INSERT INTO life_episodes (episode_id, account_id, title, category, status, event_start, source_event_id)
-                       VALUES ($1, $2, '一段经历', 'life_story', 'confirmed', $3, 'growth-ineligible')""",
+                    """INSERT INTO life_episodes (
+                           episode_id, account_id, title, category,
+                           domain_category, consolidation_key, status,
+                           event_start, observed_at, source_event_id
+                       ) VALUES (
+                           $1, $2, '一段经历', 'life_story', 'life_story',
+                           'test:growth-ineligible', 'confirmed', $3, $3,
+                           'growth-ineligible'
+                       )""",
                     episode_id, account_a, datetime(2026, 7, 22, tzinfo=UTC),
                 )
                 await connection.execute(
-                    """INSERT INTO timeline_entries (timeline_id, account_id, episode_id, title, category, status, event_start, time_precision, source_event_id)
-                       VALUES ($1, $2, $3, '一段经历', 'life_story', 'confirmed', $4, 'day', 'growth-ineligible')""",
+                    """INSERT INTO timeline_entries (
+                           timeline_id, account_id, episode_id, title, category,
+                           domain_category, status, event_start, time_precision,
+                           observed_at, source_event_id
+                       ) VALUES (
+                           $1, $2, $3, '一段经历', 'life_story', 'life_story',
+                           'confirmed', $4, 'day', $4, 'growth-ineligible'
+                       )""",
                     uuid.uuid4(), account_a, episode_id, datetime(2026, 7, 22, tzinfo=UTC),
                 )
             assert await connection.fetchval("SELECT count(*) FROM memory_claims") == 0

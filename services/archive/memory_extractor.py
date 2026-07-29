@@ -6,12 +6,12 @@ import re
 
 from services.archive.domain import EvidenceEvent
 from services.archive.memory_domain import (
+    DomainCategory,
     ExtractedClaim,
     ExtractedKnowledge,
     ExtractedPerson,
     ExtractedRelationship,
     ExtractedTimeline,
-    MemoryCategory,
     MemoryExtraction,
 )
 
@@ -34,7 +34,7 @@ _PERSON = re.compile(
 _AGE = re.compile(r"(?:今年)?(?P<age>\d{1,3})岁")
 
 
-def _category(text: str) -> MemoryCategory:
+def _category(text: str) -> DomainCategory:
     if any(word in text for word in ("家训", "家风", "我们家", "做人要")):
         return "family_principle"
     if any(word in text for word in ("育儿", "孩子", "教育孩子", "当父母")):
@@ -60,11 +60,12 @@ class RuleBasedMemoryExtractor:
         relationships: list[ExtractedRelationship] = []
         claims: list[ExtractedClaim] = [
             ExtractedClaim(
-                category=category,
+                domain_category=category,
                 subject_key="self",
                 predicate=category,
                 value=text,
                 confidence=0.62,
+                valid_from=event.occurred_at,
             )
         ]
         for match in _PERSON.finditer(text):
@@ -90,18 +91,22 @@ class RuleBasedMemoryExtractor:
             if age is not None:
                 claims.append(
                     ExtractedClaim(
-                        category="life_story",
+                        domain_category="life_story",
                         subject_key=canonical_key,
                         predicate="age",
                         value=age.group("age"),
                         confidence=0.9,
+                        entity_keys=(canonical_key,),
+                        valid_from=event.occurred_at,
+                        salience=0.7,
                     )
                 )
         knowledge = (
             ExtractedKnowledge(
-                category=category,
+                domain_category=category,
                 question="这段经历或原则是什么？",
                 answer=text,
+                entity_keys=tuple(person.canonical_key for person in people),
             ),
         ) if category != "daily_life" else ()
         return MemoryExtraction(
@@ -111,8 +116,9 @@ class RuleBasedMemoryExtractor:
             timeline=(
                 ExtractedTimeline(
                     title=text[:60],
-                    category=category,
+                    domain_category=category,
                     event_start=event.occurred_at,
+                    participant_keys=tuple(person.canonical_key for person in people),
                 ),
             ),
             knowledge=knowledge,

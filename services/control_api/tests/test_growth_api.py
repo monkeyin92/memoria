@@ -570,12 +570,20 @@ async def test_negative_feedback_vetoes_a_claim_and_retraction_immediately_lower
             connection.execute(
                 """
                 INSERT INTO memory_claims (
-                    claim_id, account_id, category, subject_key, predicate, value, confidence,
-                    status, sensitive_domain, extractor_version, source_event_id, valid_at, created_at
-                ) VALUES ('growth-claim', ?, 'life_story', 'self', 'education', '杭州读书', .9,
-                    'confirmed', 'personal', 'test', 'growth-confirmed-source', ?, ?)
+                    claim_id, account_id, category, domain_category,
+                    subject_key, predicate, value, confidence, status,
+                    sensitive_domain, extractor_version, source_event_id,
+                    valid_at, observed_at, created_at
+                ) VALUES ('growth-claim', ?, 'life_story', 'life_story',
+                    'self', 'education', '杭州读书', .9, 'confirmed',
+                    'personal', 'test', 'growth-confirmed-source', ?, ?, ?)
                 """,
-                (owner["user_id"], datetime.now(UTC).isoformat(), datetime.now(UTC).isoformat()),
+                (
+                    owner["user_id"],
+                    datetime.now(UTC).isoformat(),
+                    datetime.now(UTC).isoformat(),
+                    datetime.now(UTC).isoformat(),
+                ),
             )
         before = await client.get("/v1/growth/overview", headers=headers)
         feedback = await client.post(

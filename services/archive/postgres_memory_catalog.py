@@ -8,6 +8,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,19 +16,28 @@ import asyncpg
 import httpx
 
 from services.archive.domain import EvidenceEvent, EvidenceNotFoundError
+from services.archive.episode_consolidator import (
+    EpisodeCandidate,
+    EpisodeConsolidator,
+    ExistingEpisode,
+)
 from services.archive.memory_domain import (
     AccountWriteGuard,
     AccountWriteRejectedError,
     CompileReport,
+    ConflictState,
+    DomainCategory,
     MemoryCategory,
     MemoryClaimReview,
     MemoryEmbedder,
     MemoryEmbeddingUnavailableError,
     MemoryExtraction,
     MemoryExtractor,
+    MemoryKind,
     MemorySearchItem,
     MemorySearchQuery,
     MemorySearchResult,
+    MemorySensitivity,
     MemoryStatus,
     PersonItem,
     ReviewedClaim,
@@ -51,10 +61,16 @@ _SOURCE_STATUS_TABLES = (
     "person_entities",
     "person_aliases",
     "relationships",
-    "life_episodes",
     "timeline_entries",
+    "episode_evidence",
     "knowledge_items",
 )
+_SENSITIVITY_ORDER: dict[MemorySensitivity, int] = {
+    "public": 0,
+    "personal": 1,
+    "sensitive": 2,
+    "highly_sensitive": 3,
+}
 
 
 @asynccontextmanager
@@ -67,6 +83,17 @@ def _stable_uuid(kind: str, *values: object) -> uuid.UUID:
     return uuid.uuid5(uuid.NAMESPACE_URL, f"memoria:{kind}:{key}")
 
 
+def _sensitivity(value: str) -> MemorySensitivity:
+    normalized = value.strip().casefold()
+    if normalized == "public":
+        return "public"
+    if normalized in {"health", "finance", "legal", "biometric", "highly_sensitive"}:
+        return "highly_sensitive"
+    if normalized in {"relationship", "private", "sensitive"}:
+        return "sensitive"
+    return "personal"
+
+
 class QwenMemoryEmbedder:
     def __init__(
         self,
@@ -74,16 +101,20 @@ class QwenMemoryEmbedder:
         endpoint: str,
         api_key: str,
         model: str,
+        dimensions: int,
         timeout_s: float = 5.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not endpoint.startswith(("http://", "https://")):
             raise ValueError("memory embedding endpoint must use HTTP(S)")
-        if not api_key or not model.strip() or timeout_s <= 0:
-            raise ValueError("memory embedding API key, model and timeout are required")
+        if not api_key or not model.strip() or timeout_s <= 0 or not 1 <= dimensions <= 2000:
+            raise ValueError(
+                "memory embedding API key, model, dimensions 1..2000 and timeout are required"
+            )
         self._endpoint = endpoint
         self._api_key = api_key
         self.model = model.strip()
+        self.dimensions = dimensions
         self._timeout_s = timeout_s
         self._transport = transport
 
@@ -98,7 +129,12 @@ class QwenMemoryEmbedder:
                 response = await client.post(
                     self._endpoint,
                     headers={"Authorization": f"Bearer {self._api_key}"},
-                    json={"model": self.model, "input": text, "encoding_format": "float"},
+                    json={
+                        "model": self.model,
+                        "input": text,
+                        "encoding_format": "float",
+                        "dimensions": self.dimensions,
+                    },
                 )
                 response.raise_for_status()
                 values = response.json()["data"][0]["embedding"]
@@ -107,9 +143,12 @@ class QwenMemoryEmbedder:
             raise MemoryEmbeddingUnavailableError(
                 "memory embedding service returned an invalid response"
             ) from exc
-        if not embedding or any(not math.isfinite(value) for value in embedding):
+        if (
+            len(embedding) != self.dimensions
+            or any(not math.isfinite(value) for value in embedding)
+        ):
             raise MemoryEmbeddingUnavailableError(
-                "memory embedding service returned an invalid vector"
+                "memory embedding service returned an invalid vector dimension"
             )
         return embedding
 
@@ -125,6 +164,7 @@ class PostgresMemoryCatalog:
         account_guard: AccountWriteGuard | None = None,
         embedder: MemoryEmbedder | None = None,
         require_vector: bool = False,
+        episode_consolidator: EpisodeConsolidator | None = None,
     ) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("memory catalog DSN must use PostgreSQL")
@@ -141,6 +181,7 @@ class PostgresMemoryCatalog:
         self._account_guard = account_guard or _allow_account_write
         self._embedder = embedder
         self._require_vector = require_vector
+        self._episode_consolidator = episode_consolidator or EpisodeConsolidator()
         self._vector_enabled = False
         self._pool: asyncpg.Pool | None = None
         self._compiler_pool: asyncpg.Pool | None = None
@@ -163,6 +204,8 @@ class PostgresMemoryCatalog:
                     "SELECT to_regclass('memory_vector_documents') IS NOT NULL"
                 )
             )
+            if self._vector_enabled and self._embedder is not None:
+                await self._ensure_vector_index(connection)
         if self._require_vector and (not self._vector_enabled or self._embedder is None):
             await pool.close()
             raise RuntimeError("production memory catalog requires pgvector and an embedder")
@@ -205,6 +248,25 @@ class PostgresMemoryCatalog:
                 await pool.close()
                 raise
             self._compiler_pool = compiler_pool
+
+    async def _ensure_vector_index(self, connection: asyncpg.Connection) -> None:
+        if self._embedder is None:
+            return
+        digest = sha256(
+            f"{self._embedder.model}:{self._embedder.dimensions}".encode()
+        ).hexdigest()[:12]
+        index_name = f"idx_memory_vector_hnsw_{digest}"
+        model = self._embedder.model.replace("'", "''")
+        dimensions = self._embedder.dimensions
+        await connection.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS {index_name}
+            ON memory_vector_documents
+            USING hnsw ((embedding::vector({dimensions})) vector_cosine_ops)
+            WHERE embedding_model = '{model}'
+              AND embedding_dimensions = {dimensions}
+            """
+        )
 
     async def _ready_pool(self) -> asyncpg.Pool:
         await self.initialize()
@@ -408,69 +470,139 @@ class PostgresMemoryCatalog:
 
         for index, claim in enumerate(extraction.claims):
             claim_id = _stable_uuid("claim", event.event_id, index)
+            confidence = min(1.0, claim.confidence * contribution_for(event).factor)
+            valid_from = claim.valid_from or event.occurred_at
+            entity_keys = set(claim.entity_keys)
+            if claim.subject_key != "self":
+                entity_keys.add(claim.subject_key)
+            entity_ids = tuple(
+                person_ids.get(key) or _stable_uuid("person", event.account_id, key)
+                for key in sorted(entity_keys)
+            )
+            sensitivity = _sensitivity(claim.sensitive_domain)
             await connection.execute(
                 """
                 INSERT INTO memory_claims (
-                    claim_id, account_id, category, subject_key, predicate,
-                    value, confidence, sensitive_domain, extractor_version,
-                    source_event_id, valid_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    claim_id, account_id, category, domain_category, memory_kind,
+                    subject_key, predicate, value, confidence, sensitive_domain,
+                    entity_ids, extractor_version, source_event_id, valid_at,
+                    valid_from, valid_to, observed_at, stability, salience,
+                    sensitivity, conflict_state
+                ) VALUES (
+                    $1, $2, $3, $4, 'semantic', $5, $6, $7, $8, $9, $10,
+                    $11, $12, $13, $14, $15, $16, $17, $18, $19, 'none'
+                )
                 ON CONFLICT DO NOTHING
                 """,
                 claim_id,
                 event.account_id,
-                claim.category,
+                claim.domain_category,
+                claim.domain_category,
                 claim.subject_key,
                 claim.predicate,
                 claim.value,
-                    min(1.0, claim.confidence * contribution_for(event).factor),
+                confidence,
                 claim.sensitive_domain,
+                list(entity_ids),
                 extraction.extractor_version or self._extractor.version,
                 event.event_id,
+                valid_from,
+                valid_from,
+                claim.valid_to,
                 event.occurred_at,
+                confidence,
+                claim.salience,
+                sensitivity,
             )
             await self._insert_search_document(
                 connection,
                 account_id=event.account_id,
                 item_id=claim_id,
                 kind="claim",
+                memory_kind="semantic",
                 title=claim.value[:80],
                 body=claim.value,
-                category=claim.category,
-                source_event_id=event.event_id,
+                domain_category=claim.domain_category,
+                entity_ids=entity_ids,
+                source_event_ids=(event.event_id,),
+                valid_from=valid_from,
+                valid_to=claim.valid_to,
                 occurred_at=event.occurred_at,
+                observed_at=event.occurred_at,
+                stability=confidence,
+                salience=claim.salience,
+                sensitivity=sensitivity,
+                conflict_state="none",
+            )
+            await self._refresh_claim_conflicts(
+                connection,
+                account_id=event.account_id,
+                subject_key=claim.subject_key,
+                predicate=claim.predicate,
             )
 
         for index, timeline in enumerate(extraction.timeline):
-            episode_id = _stable_uuid(
-                "episode",
-                event.account_id,
-                event.session_id or event.event_id,
-                timeline.category,
-                timeline.event_start.date(),
-                index,
+            entity_ids = tuple(
+                person_ids.get(key) or _stable_uuid("person", event.account_id, key)
+                for key in sorted(set(timeline.participant_keys))
+            )
+            candidate = EpisodeCandidate(
+                account_id=event.account_id,
+                source_event_id=event.event_id,
+                session_id=event.session_id,
+                title=timeline.title,
+                domain_category=timeline.domain_category,
+                event_start=timeline.event_start,
+                event_end=timeline.event_end,
+                canonical_key=timeline.canonical_key,
+                entity_ids=tuple(str(value) for value in entity_ids),
+                salience=timeline.salience,
+                sensitivity=timeline.sensitivity,
+            )
+            existing = await self._episode_candidates(
+                connection,
+                account_id=event.account_id,
+                domain_category=timeline.domain_category,
+            )
+            selected = self._episode_consolidator.choose(candidate, existing)
+            episode_id = (
+                uuid.UUID(selected.episode_id)
+                if selected is not None
+                else _stable_uuid("episode", event.account_id, candidate.fallback_key)
             )
             timeline_id = _stable_uuid("timeline", event.event_id, index)
             await connection.execute(
                 """
                 INSERT INTO life_episodes (
-                    episode_id, account_id, title, category, event_start,
-                    event_end, source_event_id
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    episode_id, account_id, title, category, domain_category,
+                    memory_kind, consolidation_key, entity_ids, event_start,
+                    event_end, observed_at, stability, salience, sensitivity,
+                    conflict_state, evidence_count, source_event_id
+                ) VALUES (
+                    $1, $2, $3, $4, $5, 'episodic', $6, $7, $8, $9, $10,
+                    0.5, $11, $12, 'none', 1, $13
+                )
                 ON CONFLICT DO NOTHING
                 """,
                 episode_id,
                 event.account_id,
                 timeline.title,
-                timeline.category,
+                timeline.domain_category,
+                timeline.domain_category,
+                candidate.fallback_key,
+                list(entity_ids),
                 timeline.event_start,
                 timeline.event_end,
+                event.occurred_at,
+                timeline.salience,
+                timeline.sensitivity,
                 event.event_id,
             )
             await connection.execute(
                 """
-                INSERT INTO episode_evidence (episode_id, account_id, source_event_id)
-                VALUES ($1, $2, $3)
+                INSERT INTO episode_evidence (
+                    episode_id, account_id, source_event_id, status
+                ) VALUES ($1, $2, $3, 'candidate')
                 ON CONFLICT DO NOTHING
                 """,
                 episode_id,
@@ -481,51 +613,67 @@ class PostgresMemoryCatalog:
                 """
                 INSERT INTO timeline_entries (
                     timeline_id, account_id, episode_id, title, category,
-                    event_start, event_end, time_precision, source_event_id
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    domain_category, memory_kind, entity_ids, event_start,
+                    event_end, time_precision, observed_at, salience, sensitivity,
+                    conflict_state, source_event_id
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, 'episodic', $7, $8, $9, $10,
+                    $11, $12, $13, 'none', $14
+                )
                 ON CONFLICT DO NOTHING
                 """,
                 timeline_id,
                 event.account_id,
                 episode_id,
                 timeline.title,
-                timeline.category,
+                timeline.domain_category,
+                timeline.domain_category,
+                list(entity_ids),
                 timeline.event_start,
                 timeline.event_end,
                 timeline.time_precision,
+                event.occurred_at,
+                timeline.salience,
+                timeline.sensitivity,
                 event.event_id,
             )
-            await self._insert_search_document(
-                connection,
-                account_id=event.account_id,
-                item_id=timeline_id,
-                kind="timeline",
-                title=timeline.title,
-                body=timeline.title,
-                category=timeline.category,
-                source_event_id=event.event_id,
-                occurred_at=timeline.event_start,
-            )
+            await self._refresh_episode_projection(connection, episode_id=episode_id)
 
         for index, knowledge in enumerate(extraction.knowledge):
             knowledge_id = _stable_uuid("knowledge", event.event_id, index)
+            entity_ids = tuple(
+                person_ids.get(key) or _stable_uuid("person", event.account_id, key)
+                for key in sorted(set(knowledge.entity_keys))
+            )
             await connection.execute(
                 """
                 INSERT INTO knowledge_items (
-                    knowledge_id, account_id, category, question, answer,
-                    applicability, counterexample, source_event_id, occurred_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    knowledge_id, account_id, category, domain_category,
+                    memory_kind, entity_ids, question, answer, applicability,
+                    counterexample, source_event_id, occurred_at, valid_from,
+                    valid_to, observed_at, stability, salience, sensitivity,
+                    conflict_state
+                ) VALUES (
+                    $1, $2, $3, $4, 'procedural', $5, $6, $7, $8, $9, $10,
+                    $11, $12, NULL, $13, 0.5, $14, $15, 'none'
+                )
                 ON CONFLICT DO NOTHING
                 """,
                 knowledge_id,
                 event.account_id,
-                knowledge.category,
+                knowledge.domain_category,
+                knowledge.domain_category,
+                list(entity_ids),
                 knowledge.question,
                 knowledge.answer,
                 knowledge.applicability,
                 knowledge.counterexample,
                 event.event_id,
                 event.occurred_at,
+                event.occurred_at,
+                event.occurred_at,
+                knowledge.salience,
+                knowledge.sensitivity,
             )
             body = " ".join(
                 part
@@ -541,12 +689,250 @@ class PostgresMemoryCatalog:
                 account_id=event.account_id,
                 item_id=knowledge_id,
                 kind="knowledge",
+                memory_kind="procedural",
                 title=knowledge.question,
                 body=body,
-                category=knowledge.category,
-                source_event_id=event.event_id,
+                domain_category=knowledge.domain_category,
+                entity_ids=entity_ids,
+                source_event_ids=(event.event_id,),
+                valid_from=event.occurred_at,
+                valid_to=None,
                 occurred_at=event.occurred_at,
+                observed_at=event.occurred_at,
+                stability=0.5,
+                salience=knowledge.salience,
+                sensitivity=knowledge.sensitivity,
+                conflict_state="none",
             )
+
+    @staticmethod
+    async def _episode_candidates(
+        connection: asyncpg.Connection,
+        *,
+        account_id: str,
+        domain_category: DomainCategory,
+    ) -> tuple[ExistingEpisode, ...]:
+        rows = await connection.fetch(
+            """
+            SELECT episode_id, consolidation_key, title, domain_category,
+                   event_start, event_end, entity_ids
+            FROM life_episodes
+            WHERE account_id = $1 AND domain_category = $2 AND status != 'retracted'
+            ORDER BY observed_at DESC, episode_id
+            LIMIT 200
+            """,
+            account_id,
+            domain_category,
+        )
+        return tuple(
+            ExistingEpisode(
+                episode_id=str(row["episode_id"]),
+                consolidation_key=str(row["consolidation_key"]),
+                title=str(row["title"]),
+                domain_category=cast(DomainCategory, row["domain_category"]),
+                event_start=cast(datetime, row["event_start"]),
+                event_end=cast(datetime | None, row["event_end"]),
+                entity_ids=tuple(str(value) for value in row["entity_ids"]),
+            )
+            for row in rows
+        )
+
+    @staticmethod
+    async def _refresh_claim_conflicts(
+        connection: asyncpg.Connection,
+        *,
+        account_id: str,
+        subject_key: str,
+        predicate: str,
+    ) -> None:
+        values = await connection.fetch(
+            """
+            SELECT value FROM memory_claims
+            WHERE account_id = $1 AND subject_key = $2 AND predicate = $3
+              AND status != 'retracted'
+            """,
+            account_id,
+            subject_key,
+            predicate,
+        )
+        state: ConflictState = (
+            "active"
+            if predicate in _SINGLE_VALUE_PREDICATES
+            and len({str(row["value"]) for row in values}) > 1
+            else "none"
+        )
+        await connection.execute(
+            """
+            UPDATE memory_claims
+            SET conflict_state = $1
+            WHERE account_id = $2 AND subject_key = $3 AND predicate = $4
+            """,
+            state,
+            account_id,
+            subject_key,
+            predicate,
+        )
+        await connection.execute(
+            """
+            UPDATE memory_search_documents document
+            SET conflict_state = $1
+            WHERE document.account_id = $2 AND document.kind = 'claim'
+              AND document.item_id IN (
+                  SELECT claim_id FROM memory_claims
+                  WHERE account_id = $2 AND subject_key = $3 AND predicate = $4
+              )
+            """,
+            state,
+            account_id,
+            subject_key,
+            predicate,
+        )
+
+    async def _refresh_episode_projection(
+        self,
+        connection: asyncpg.Connection,
+        *,
+        episode_id: uuid.UUID,
+    ) -> None:
+        episode = await connection.fetchrow(
+            "SELECT * FROM life_episodes WHERE episode_id = $1",
+            episode_id,
+        )
+        if episode is None:
+            raise EvidenceNotFoundError(str(episode_id))
+        timelines = await connection.fetch(
+            """
+            SELECT * FROM timeline_entries
+            WHERE episode_id = $1
+            ORDER BY event_start, timeline_id
+            """,
+            episode_id,
+        )
+        evidence = await connection.fetch(
+            """
+            SELECT source_event_id, status
+            FROM episode_evidence
+            WHERE episode_id = $1
+            ORDER BY source_event_id
+            """,
+            episode_id,
+        )
+        if not timelines or not evidence:
+            return
+        statuses = [cast(MemoryStatus, str(row["status"])) for row in evidence]
+        status: MemoryStatus
+        if "confirmed" in statuses:
+            status = "confirmed"
+        elif "candidate" in statuses:
+            status = "candidate"
+        elif "disputed" in statuses:
+            status = "disputed"
+        else:
+            status = "retracted"
+        active_source_event_ids = tuple(
+            str(row["source_event_id"])
+            for row in evidence
+            if str(row["status"]) != "retracted"
+        )
+        retracted_source_event_ids = tuple(
+            str(row["source_event_id"])
+            for row in evidence
+            if str(row["status"]) == "retracted"
+        )
+        source_event_ids = (
+            *active_source_event_ids,
+            *retracted_source_event_ids,
+        )
+        active_timelines = [
+            row for row in timelines if str(row["status"]) != "retracted"
+        ]
+        surfaced_timelines = active_timelines or list(timelines)
+        titles = tuple(
+            dict.fromkeys(str(row["title"]) for row in surfaced_timelines)
+        )
+        title = max(titles, key=lambda value: (len(value), value))
+        body = "；".join(titles)[:8000]
+        starts = [cast(datetime, row["event_start"]) for row in surfaced_timelines]
+        ends = [
+            cast(datetime, row["event_end"])
+            for row in surfaced_timelines
+            if row["event_end"] is not None
+        ]
+        observations = [
+            cast(datetime, row["observed_at"]) for row in surfaced_timelines
+        ]
+        entity_ids = tuple(
+            sorted(
+                {
+                    cast(uuid.UUID, entity_id)
+                    for row in surfaced_timelines
+                    for entity_id in row["entity_ids"]
+                },
+                key=str,
+            )
+        )
+        sensitivities = [
+            cast(MemorySensitivity, str(row["sensitivity"]))
+            for row in surfaced_timelines
+        ]
+        sensitivity = max(
+            sensitivities,
+            key=lambda value: _SENSITIVITY_ORDER[value],
+        )
+        evidence_count = len(source_event_ids)
+        active_evidence_count = len(active_source_event_ids)
+        stability = (
+            min(0.95, 0.5 + 0.1 * (active_evidence_count - 1))
+            if active_evidence_count
+            else 0.0
+        )
+        salience = max(float(row["salience"]) for row in surfaced_timelines)
+        event_start = min(starts)
+        event_end = max(ends) if ends else None
+        observed_at = max(observations)
+        await connection.execute(
+            """
+            UPDATE life_episodes
+            SET title = $1, category = domain_category, entity_ids = $2,
+                status = $3, event_start = $4, event_end = $5, observed_at = $6,
+                stability = $7, salience = $8, sensitivity = $9,
+                evidence_count = $10, source_event_id = $11
+            WHERE episode_id = $12
+            """,
+            title,
+            list(entity_ids),
+            status,
+            event_start,
+            event_end,
+            observed_at,
+            stability,
+            salience,
+            sensitivity,
+            evidence_count,
+            source_event_ids[0],
+            episode_id,
+        )
+        await self._insert_search_document(
+            connection,
+            account_id=str(episode["account_id"]),
+            item_id=episode_id,
+            kind="episode",
+            memory_kind="episodic",
+            title=title,
+            body=body,
+            domain_category=cast(DomainCategory, str(episode["domain_category"])),
+            entity_ids=entity_ids,
+            source_event_ids=source_event_ids,
+            valid_from=event_start,
+            valid_to=event_end,
+            occurred_at=event_start,
+            observed_at=observed_at,
+            stability=stability,
+            salience=salience,
+            sensitivity=sensitivity,
+            conflict_state="none",
+            status=status,
+        )
 
     async def _insert_search_document(
         self,
@@ -555,29 +941,85 @@ class PostgresMemoryCatalog:
         account_id: str,
         item_id: uuid.UUID,
         kind: str,
+        memory_kind: MemoryKind,
         title: str,
         body: str,
-        category: MemoryCategory,
-        source_event_id: str,
+        domain_category: DomainCategory,
+        entity_ids: tuple[uuid.UUID, ...],
+        source_event_ids: tuple[str, ...],
+        valid_from: datetime | None,
+        valid_to: datetime | None,
         occurred_at: datetime,
+        observed_at: datetime,
+        stability: float,
+        salience: float,
+        sensitivity: MemorySensitivity,
+        conflict_state: ConflictState,
+        status: MemoryStatus = "candidate",
     ) -> None:
+        if not source_event_ids:
+            raise ValueError("memory search projection requires evidence")
+        document_id = _stable_uuid("search", kind, item_id)
         await connection.execute(
             """
             INSERT INTO memory_search_documents (
-                document_id, account_id, item_id, kind, title, body,
-                category, status, source_event_id, occurred_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'candidate', $8, $9)
-            ON CONFLICT DO NOTHING
+                document_id, account_id, item_id, kind, memory_kind, title, body,
+                category, domain_category, entity_ids, status, source_event_id,
+                occurred_at, valid_from, valid_to, observed_at, stability, salience,
+                sensitivity, conflict_state
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                $14, $15, $16, $17, $18, $19, $20
+            )
+            ON CONFLICT (kind, item_id) DO UPDATE SET
+                title = EXCLUDED.title,
+                body = EXCLUDED.body,
+                memory_kind = EXCLUDED.memory_kind,
+                category = EXCLUDED.category,
+                domain_category = EXCLUDED.domain_category,
+                entity_ids = EXCLUDED.entity_ids,
+                status = EXCLUDED.status,
+                occurred_at = EXCLUDED.occurred_at,
+                valid_from = EXCLUDED.valid_from,
+                valid_to = EXCLUDED.valid_to,
+                observed_at = EXCLUDED.observed_at,
+                stability = EXCLUDED.stability,
+                salience = EXCLUDED.salience,
+                sensitivity = EXCLUDED.sensitivity,
+                conflict_state = EXCLUDED.conflict_state
             """,
-            _stable_uuid("search", kind, item_id),
+            document_id,
             account_id,
             item_id,
             kind,
+            memory_kind,
             title,
             body,
-            category,
-            source_event_id,
+            domain_category,
+            domain_category,
+            list(entity_ids),
+            status,
+            source_event_ids[0],
             occurred_at,
+            valid_from,
+            valid_to,
+            observed_at,
+            stability,
+            salience,
+            sensitivity,
+            conflict_state,
+        )
+        await connection.executemany(
+            """
+            INSERT INTO memory_search_document_sources (
+                document_id, account_id, source_event_id
+            ) VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+            """,
+            [
+                (document_id, account_id, source_event_id)
+                for source_event_id in source_event_ids
+            ],
         )
         if self._vector_enabled and self._embedder is not None:
             try:
@@ -589,28 +1031,32 @@ class PostgresMemoryCatalog:
                     """
                     DELETE FROM memory_vector_documents
                     WHERE item_id = $1 AND account_id = $2
+                      AND embedding_model = $3 AND embedding_dimensions = $4
                     """,
                     item_id,
                     account_id,
+                    self._embedder.model,
+                    self._embedder.dimensions,
                 )
                 return
             vector = json.dumps(embedding, separators=(",", ":"))
             await connection.execute(
                 """
                 INSERT INTO memory_vector_documents (
-                    item_id, account_id, embedding_model, embedding, source_event_id
-                ) VALUES ($1, $2, $3, $4::vector, $5)
-                ON CONFLICT (item_id) DO UPDATE
-                SET embedding_model = EXCLUDED.embedding_model,
-                    embedding = EXCLUDED.embedding,
+                    item_id, account_id, embedding_model, embedding_dimensions,
+                    embedding, source_event_id
+                ) VALUES ($1, $2, $3, $4, $5::vector, $6)
+                ON CONFLICT (item_id, embedding_model, embedding_dimensions) DO UPDATE
+                SET embedding = EXCLUDED.embedding,
                     source_event_id = EXCLUDED.source_event_id,
                     created_at = now()
                 """,
                 item_id,
                 account_id,
                 self._embedder.model,
+                self._embedder.dimensions,
                 vector,
-                source_event_id,
+                source_event_ids[0],
             )
 
     async def _record_receipt(
@@ -666,9 +1112,13 @@ class PostgresMemoryCatalog:
         parameters: list[Any] = [query.account_id]
         if confirmed_only or not query.include_candidates:
             clauses.append("document.status = 'confirmed'")
+            if confirmed_only:
+                clauses.append("document.conflict_state != 'active'")
         else:
             clauses.append("document.status != 'retracted'")
-        score_expression = "1.0::double precision"
+        metadata_score = "(0.35 * document.stability + 0.65 * document.salience)"
+        score_expression = f"{metadata_score}::double precision"
+        semantic_cte = ""
         semantic_join = ""
         if query.text.strip():
             parameters.append(query.text.strip())
@@ -693,21 +1143,44 @@ class PostgresMemoryCatalog:
                     embedding = await self._embedder.embed(query.text.strip())
                 except MemoryEmbeddingUnavailableError:
                     clauses.append(text_match)
-                    score_expression = f"{text_score}::double precision"
+                    score_expression = (
+                        f"(0.8 * {text_score} + 0.2 * {metadata_score})"
+                        "::double precision"
+                    )
                 else:
                     parameters.append(self._embedder.model)
                     model_index = len(parameters)
+                    parameters.append(self._embedder.dimensions)
+                    dimensions_index = len(parameters)
                     parameters.append(json.dumps(embedding, separators=(",", ":")))
                     vector_index = len(parameters)
-                    semantic_join = (
-                        "LEFT JOIN memory_vector_documents semantic "
-                        "ON semantic.item_id = document.item_id "
-                        "AND semantic.account_id = document.account_id "
-                        f"AND semantic.embedding_model = ${model_index}"
+                    parameters.append(min(800, max(50, query.limit * 8)))
+                    semantic_limit_index = len(parameters)
+                    dimensions = self._embedder.dimensions
+                    semantic_cte = (
+                        "WITH semantic_candidates AS ("
+                        "SELECT item_id, GREATEST("
+                        f"1.0 - (embedding::vector({dimensions}) <=> "
+                        f"${vector_index}::vector({dimensions})), 0.0"
+                        ") AS semantic_score "
+                        "FROM memory_vector_documents "
+                        "WHERE account_id = $1 "
+                        f"AND embedding_model = ${model_index} "
+                        f"AND embedding_dimensions = ${dimensions_index} "
+                        f"ORDER BY embedding::vector({dimensions}) <=> "
+                        f"${vector_index}::vector({dimensions}) "
+                        f"LIMIT ${semantic_limit_index}"
+                        ")"
                     )
+                    semantic_join = (
+                        "LEFT JOIN semantic_candidates semantic "
+                        "ON semantic.item_id = document.item_id "
+                    )
+                    clauses.append(f"({text_match} OR semantic.item_id IS NOT NULL)")
                     score_expression = (
-                        f"(0.45 * {text_score} + 0.55 * GREATEST("
-                        f"1.0 - (semantic.embedding <=> ${vector_index}::vector), 0.0))"
+                        f"(0.35 * {text_score} + "
+                        "0.45 * COALESCE(semantic.semantic_score, 0.0) + "
+                        f"0.2 * {metadata_score})"
                         "::double precision"
                     )
             else:
@@ -716,9 +1189,32 @@ class PostgresMemoryCatalog:
         if query.kinds:
             parameters.append(list(query.kinds))
             clauses.append(f"document.kind = ANY(${len(parameters)}::text[])")
-        if query.categories:
-            parameters.append(list(query.categories))
-            clauses.append(f"document.category = ANY(${len(parameters)}::text[])")
+        if query.memory_kinds:
+            parameters.append(list(query.memory_kinds))
+            clauses.append(f"document.memory_kind = ANY(${len(parameters)}::text[])")
+        if query.domain_categories:
+            parameters.append(list(query.domain_categories))
+            clauses.append(f"document.domain_category = ANY(${len(parameters)}::text[])")
+        if query.entity_ids:
+            try:
+                entity_ids = [uuid.UUID(value) for value in query.entity_ids]
+            except ValueError as exc:
+                raise ValueError("memory search entity_ids must be UUID values") from exc
+            parameters.append(entity_ids)
+            clauses.append(f"document.entity_ids && ${len(parameters)}::uuid[]")
+        if query.valid_at is not None:
+            parameters.append(query.valid_at)
+            valid_index = len(parameters)
+            clauses.append(
+                f"(document.valid_from IS NULL OR document.valid_from <= ${valid_index}) "
+                f"AND (document.valid_to IS NULL OR document.valid_to >= ${valid_index})"
+            )
+        if query.sensitivities:
+            parameters.append(list(query.sensitivities))
+            clauses.append(f"document.sensitivity = ANY(${len(parameters)}::text[])")
+        if query.conflict_states:
+            parameters.append(list(query.conflict_states))
+            clauses.append(f"document.conflict_state = ANY(${len(parameters)}::text[])")
         if query.occurred_after is not None:
             parameters.append(query.occurred_after)
             clauses.append(f"document.occurred_at >= ${len(parameters)}")
@@ -731,12 +1227,19 @@ class PostgresMemoryCatalog:
             await self._scope(connection, query.account_id)
             rows = await connection.fetch(
                 f"""
-                SELECT document.*, {score_expression} AS score
+                {semantic_cte}
+                SELECT document.*, {score_expression} AS score,
+                       ARRAY(
+                           SELECT source.source_event_id
+                           FROM memory_search_document_sources source
+                           WHERE source.document_id = document.document_id
+                           ORDER BY source.source_event_id
+                       ) AS source_event_ids
                 FROM memory_search_documents document
                 {semantic_join}
                 WHERE {" AND ".join(clauses)}
                 ORDER BY CASE document.status WHEN 'confirmed' THEN 0 ELSE 1 END,
-                         score DESC, document.occurred_at DESC, document.document_id
+                         score DESC, document.observed_at DESC, document.document_id
                 LIMIT ${len(parameters)}
                 """,
                 *parameters,
@@ -751,9 +1254,16 @@ class PostgresMemoryCatalog:
             await self._scope(connection, account_id)
             rows = await connection.fetch(
                 """
-                SELECT * FROM timeline_entries
-                WHERE account_id = $1 AND status != 'retracted'
-                ORDER BY event_start DESC, timeline_id
+                SELECT timeline.*,
+                       ARRAY(
+                           SELECT evidence.source_event_id
+                           FROM episode_evidence evidence
+                           WHERE evidence.episode_id = timeline.episode_id
+                           ORDER BY evidence.source_event_id
+                       ) AS source_event_ids
+                FROM timeline_entries timeline
+                WHERE timeline.account_id = $1 AND timeline.status != 'retracted'
+                ORDER BY timeline.event_start DESC, timeline.timeline_id
                 LIMIT $2
                 """,
                 account_id,
@@ -770,6 +1280,8 @@ class PostgresMemoryCatalog:
                 time_precision=str(row["time_precision"]),
                 source_event_id=str(row["source_event_id"]),
                 episode_id=str(row["episode_id"]),
+                domain_category=cast(DomainCategory, row["domain_category"]),
+                source_event_ids=tuple(str(value) for value in row["source_event_ids"]),
             )
             for row in rows
         )
@@ -849,6 +1361,9 @@ class PostgresMemoryCatalog:
                     else "pending_confirmation"
                 ),
                 source_event_id=str(row["source_event_id"]),
+                memory_kind="semantic",
+                domain_category=cast(DomainCategory, row["domain_category"]),
+                conflict_state=cast(ConflictState, row["conflict_state"]),
             )
             for row in rows
         )
@@ -946,8 +1461,8 @@ class PostgresMemoryCatalog:
             review_event_id=event.event_id,
         )
 
-    @staticmethod
     async def _write_review_projection(
+        self,
         connection: asyncpg.Connection,
         *,
         account_id: str,
@@ -958,20 +1473,36 @@ class PostgresMemoryCatalog:
         value: str,
         review_event_id: str,
     ) -> None:
-        source_event_id = await connection.fetchval(
+        source = await connection.fetchrow(
             """
-            SELECT source_event_id FROM memory_claims
+            SELECT source_event_id, subject_key, predicate FROM memory_claims
             WHERE claim_id = $1 AND account_id = $2
             """,
             claim_id,
             account_id,
         )
-        if source_event_id is None:
+        if source is None:
             raise EvidenceNotFoundError(str(claim_id))
+        source_event_id = str(source["source_event_id"])
+        subject_key = str(source["subject_key"])
+        predicate = str(source["predicate"])
+        episode_ids = await connection.fetch(
+            """
+            SELECT episode_id FROM episode_evidence
+            WHERE account_id = $1 AND source_event_id = $2
+            """,
+            account_id,
+            source_event_id,
+        )
         await connection.execute(
             """
             UPDATE memory_claims
-            SET status = $1, value = $2, review_event_id = $3
+            SET status = $1, value = $2, review_event_id = $3,
+                stability = CASE
+                    WHEN $1 = 'confirmed' THEN GREATEST(stability, 0.9)
+                    WHEN $1 = 'retracted' THEN 0
+                    ELSE stability
+                END
             WHERE claim_id = $4 AND account_id = $5
             """,
             status,
@@ -991,7 +1522,11 @@ class PostgresMemoryCatalog:
             """
             UPDATE memory_search_documents
             SET status = $1
-            WHERE kind != 'claim' AND account_id = $2 AND source_event_id = $3
+            WHERE kind NOT IN ('claim', 'episode') AND account_id = $2
+              AND document_id IN (
+                  SELECT document_id FROM memory_search_document_sources
+                  WHERE account_id = $2 AND source_event_id = $3
+              )
             """,
             projection_status,
             account_id,
@@ -1000,7 +1535,12 @@ class PostgresMemoryCatalog:
         await connection.execute(
             """
             UPDATE memory_search_documents
-            SET status = $1, title = $2, body = $3
+            SET status = $1, title = $2, body = $3,
+                stability = CASE
+                    WHEN $1 = 'confirmed' THEN GREATEST(stability, 0.9)
+                    WHEN $1 = 'retracted' THEN 0
+                    ELSE stability
+                END
             WHERE kind = 'claim' AND item_id = $4 AND account_id = $5
             """,
             status,
@@ -1008,6 +1548,17 @@ class PostgresMemoryCatalog:
             value,
             claim_id,
             account_id,
+        )
+        for episode in episode_ids:
+            await self._refresh_episode_projection(
+                connection,
+                episode_id=cast(uuid.UUID, episode["episode_id"]),
+            )
+        await self._refresh_claim_conflicts(
+            connection,
+            account_id=account_id,
+            subject_key=subject_key,
+            predicate=predicate,
         )
 
     @staticmethod
@@ -1088,6 +1639,17 @@ class PostgresMemoryCatalog:
             source_event_id=str(row["source_event_id"]),
             occurred_at=cast(datetime, row["occurred_at"]),
             score=float(row["score"]),
+            memory_kind=cast(MemoryKind, row["memory_kind"]),
+            domain_category=cast(DomainCategory, row["domain_category"]),
+            entity_ids=tuple(str(value) for value in row["entity_ids"]),
+            source_event_ids=tuple(str(value) for value in row["source_event_ids"]),
+            valid_from=cast(datetime | None, row["valid_from"]),
+            valid_to=cast(datetime | None, row["valid_to"]),
+            observed_at=cast(datetime, row["observed_at"]),
+            stability=float(row["stability"]),
+            salience=float(row["salience"]),
+            sensitivity=cast(MemorySensitivity, row["sensitivity"]),
+            conflict_state=cast(ConflictState, row["conflict_state"]),
         )
 
     async def close(self) -> None:

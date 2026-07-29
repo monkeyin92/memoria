@@ -2345,6 +2345,35 @@ async def test_archive_memory_routes_never_accept_an_account_id_from_the_client(
 
 
 @pytest.mark.asyncio
+async def test_archive_search_rejects_invalid_typed_filters_as_422(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        identity = (await client.post("/v1/auth/anonymous")).json()
+        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+
+        invalid_entity = await client.get(
+            "/v1/archive/search?entity_id=not-a-uuid",
+            headers=headers,
+        )
+        invalid_range = await client.get(
+            "/v1/archive/search"
+            "?occurred_after=2026-07-20T00%3A00%3A00%2B00%3A00"
+            "&occurred_before=2026-07-19T00%3A00%3A00%2B00%3A00",
+            headers=headers,
+        )
+
+    assert invalid_entity.status_code == 422
+    assert invalid_range.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_agent_gets_only_confirmed_owner_memory_from_the_session_account(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -2451,7 +2480,7 @@ async def test_agent_gets_only_confirmed_owner_memory_from_the_session_account(
     } == {
         ("claim", "first-confirmed", "confirmed"),
         ("knowledge", "first-confirmed", "confirmed"),
-        ("timeline", "first-confirmed", "confirmed"),
+        ("episode", "first-confirmed", "confirmed"),
     }
     assert guest.json() == {"items": []}
     assert injected_account.status_code == 422

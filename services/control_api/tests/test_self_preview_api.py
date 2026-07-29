@@ -62,17 +62,19 @@ async def _approved_version(
         connection.execute(
             """
             INSERT INTO memory_claims (
-                claim_id, account_id, category, subject_key, predicate, value,
+                claim_id, account_id, category, domain_category,
+                subject_key, predicate, value,
                 confidence, status, sensitive_domain, extractor_version,
-                source_event_id, valid_at, created_at
-            ) VALUES (?, ?, 'daily_life', 'owner', 'preference',
+                source_event_id, valid_at, observed_at, created_at
+            ) VALUES (?, ?, 'daily_life', 'daily_life', 'owner', 'preference',
                       '我喜欢在雨天散步。', 0.9, 'confirmed', 'personal',
-                      'test-v1', ?, ?, ?)
+                      'test-v1', ?, ?, ?, ?)
             """,
             (
                 "00000000-0000-0000-0000-000000000071",
                 owner["user_id"],
                 event_id,
+                occurred_at.isoformat(),
                 occurred_at.isoformat(),
                 occurred_at.isoformat(),
             ),

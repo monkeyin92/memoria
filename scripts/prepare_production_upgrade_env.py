@@ -196,6 +196,7 @@ def prepare(
             ),
             "MEMORIA_MEMORY_EMBEDDING_API_KEY": dashscope_key,
             "MEMORIA_MEMORY_EMBEDDING_MODEL": "text-embedding-v4",
+            "MEMORIA_MEMORY_EMBEDDING_DIMENSIONS": "1024",
             "MEMORIA_ARCHIVE_SINK_ENABLED": "true",
             "MEMORIA_ARCHIVE_SESSION_EVENTS_URL": (
                 "http://control-api:8000/v1/archive/session-events"

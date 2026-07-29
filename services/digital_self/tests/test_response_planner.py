@@ -16,8 +16,10 @@ from services.digital_self.domain import (
 )
 from services.digital_self.response_planner import (
     DigitalSelfResponsePlanner,
+    GroundedItem,
     PlannerActor,
     PlannerSpeakerDecision,
+    SourceRef,
 )
 
 
@@ -270,6 +272,36 @@ def test_companion_uses_only_current_items_explicitly_supplied_by_control() -> N
     assert plan.grounded_items[0].content == "prefers: coffee"
     assert plan.provenance.digital_self_version_id is None
     assert plan.provenance.source_refs[0].source_event_ids == ("source-memory-1",)
+
+
+def test_companion_preserves_retriever_rank_without_reapplying_lexical_filter() -> None:
+    first = GroundedItem(
+        item_id="memory-first",
+        kind="memory_claim",
+        content="妈妈下周要复诊。",
+        source_refs=(SourceRef("memory_claim", "memory-first", ("source-first",)),),
+    )
+    second = GroundedItem(
+        item_id="memory-second",
+        kind="memory_claim",
+        content="最近在准备项目验收。",
+        source_refs=(SourceRef("memory_claim", "memory-second", ("source-second",)),),
+    )
+
+    plan = DigitalSelfResponsePlanner.plan(
+        mode="companion",
+        actor=_actor(),
+        version=None,
+        query="这几天心里不太踏实",
+        relationship_id=None,
+        speaker_decision=_owner(),
+        companion_items=(first, second),
+    )
+
+    assert [item.item_id for item in plan.grounded_items] == [
+        "memory-first",
+        "memory-second",
+    ]
 
 
 def test_shadow_owner_candidate_can_receive_only_explicit_low_sensitivity_style() -> None:

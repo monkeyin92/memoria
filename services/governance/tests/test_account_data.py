@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -13,6 +14,15 @@ from services.archive.life_archive import LifeArchive
 from services.archive.memory_catalog import MemoryCatalog
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.object_store import EncryptedLocalObjectStore
+from services.archive.skill_catalog import SkillCatalog
+from services.archive.skill_domain import (
+    SkillApproval,
+    SkillProposal,
+    SkillRunRequest,
+    SkillStepDefinition,
+    skill_input_sha256,
+)
+from services.archive.skill_executor import SkillExecutor
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.security import hash_password
 from services.digital_self.compiler import build_manifest
@@ -103,6 +113,113 @@ class SessionTerminatorStub:
         if self.release is not None:
             await self.release.wait()
         return 1
+
+
+class SkillToolStub:
+    async def invoke(
+        self,
+        *,
+        account_id: str,
+        run_id: str,
+        step_id: str,
+        tool_name: str,
+        arguments: Mapping[str, object],
+        compensation: bool,
+    ) -> object:
+        del account_id, run_id, step_id, tool_name, arguments, compensation
+        return {"ok": True}
+
+
+async def _seed_skill(path: Path, archive: LifeArchive, account_id: str) -> None:
+    instruction_id = "governance-skill-instruction"
+    await archive.record(
+        EvidenceEvent(
+            event_id=instruction_id,
+            account_id=account_id,
+            event_type="speech.utterance_finalized",
+            occurred_at=datetime.now(UTC),
+            speaker_class="owner",
+            source="governance-skill-test",
+            payload={"text": "以后我说晚安，就执行睡前流程。"},
+        )
+    )
+    catalog = SkillCatalog.sqlite(path)
+    candidate = await catalog.propose(
+        SkillProposal(
+            account_id=account_id,
+            name="睡前流程",
+            description="关闭床头灯。",
+            trigger_phrases=("晚安",),
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+            output_schema={
+                "type": "object",
+                "properties": {"ok": {"type": "boolean"}},
+                "required": ["ok"],
+                "additionalProperties": False,
+            },
+            output_template={"ok": "$steps.light.output.ok"},
+            allowed_tools=("set_light",),
+            steps=(
+                SkillStepDefinition(
+                    step_id="light",
+                    tool_name="set_light",
+                    arguments={"brightness": 0},
+                ),
+            ),
+            source_kind="explicit_instruction",
+            source_event_ids=(instruction_id,),
+        )
+    )
+    approval_id = "governance-skill-approval"
+    await archive.record(
+        EvidenceEvent(
+            event_id=approval_id,
+            account_id=account_id,
+            event_type="skill.approved",
+            occurred_at=datetime.now(UTC),
+            speaker_class="owner",
+            source="governance-skill-test",
+            payload={"skill_id": candidate.skill_id, "version": candidate.version},
+        )
+    )
+    await catalog.approve(
+        SkillApproval(
+            account_id=account_id,
+            skill_id=candidate.skill_id,
+            version=candidate.version,
+            approval_event_id=approval_id,
+        )
+    )
+    inputs: dict[str, object] = {}
+    confirmation_id = "governance-skill-confirmation"
+    await archive.record(
+        EvidenceEvent(
+            event_id=confirmation_id,
+            account_id=account_id,
+            event_type="skill.run_confirmed",
+            occurred_at=datetime.now(UTC),
+            speaker_class="owner",
+            source="governance-skill-test",
+            payload={
+                "skill_id": candidate.skill_id,
+                "version": candidate.version,
+                "input_sha256": skill_input_sha256(inputs),
+            },
+        )
+    )
+    await SkillExecutor(catalog=catalog, tools=SkillToolStub()).execute(
+        SkillRunRequest(
+            account_id=account_id,
+            skill_id=candidate.skill_id,
+            version=candidate.version,
+            confirmation_event_id=confirmation_id,
+            inputs=inputs,
+        )
+    )
 
 
 class LateArchiveWriteRepository:
@@ -596,6 +713,7 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
         archive_objects,
         archive_reference,
     ) = await _fixture(tmp_path)
+    await _seed_skill(store.path, archive, "account-governance")
 
     exported = await governance.export_account("account-governance")
     serialized = str(exported)
@@ -607,6 +725,14 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
     assert "encryption_key_version" not in serialized
     assert "object_backend" not in serialized
     assert "episode_evidence" in exported["sections"]["archive"]
+    for table in (
+        "skill_definitions",
+        "skill_versions",
+        "skill_version_evidence",
+        "skill_runs",
+        "skill_run_steps",
+    ):
+        assert exported["sections"]["archive"][table]
     assert "删除账户时，认知模型也必须完整清除。" in serialized
     assert "是否完整删除数字自我数据" in serialized
     assert "温和坦诚" in serialized
@@ -628,6 +754,20 @@ async def test_account_deletion_propagates_to_objects_provider_and_biometrics(
     assert store.get_account(user_id="account-governance") is None
     assert store.is_account_deleted(user_id="account-governance") is True
     with sqlite3.connect(store.path) as connection:
+        for table in (
+            "skill_definitions",
+            "skill_versions",
+            "skill_version_evidence",
+            "skill_runs",
+            "skill_run_steps",
+        ):
+            assert (
+                connection.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE account_id = ?",
+                    ("account-governance",),
+                ).fetchone()[0]
+                == 0
+            )
         for table in (
             "digital_self_preview_grants",
             "digital_self_preview_feedback",

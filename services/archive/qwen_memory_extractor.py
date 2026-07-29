@@ -7,18 +7,20 @@ from datetime import datetime
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from services.archive.domain import EvidenceEvent
 from services.archive.memory_domain import (
+    DomainCategory,
     ExtractedClaim,
     ExtractedKnowledge,
     ExtractedPerson,
     ExtractedRelationship,
     ExtractedTimeline,
-    MemoryCategory,
+    ExtractionUsage,
     MemoryExtraction,
     MemoryExtractor,
+    MemorySensitivity,
 )
 
 
@@ -29,12 +31,27 @@ class MemoryExtractionError(RuntimeError):
 class _ClaimPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    category: MemoryCategory
+    domain_category: DomainCategory = Field(
+        validation_alias=AliasChoices("domain_category", "category")
+    )
     subject_key: str = Field(min_length=1, max_length=128)
     predicate: str = Field(min_length=1, max_length=128)
     value: str = Field(min_length=1, max_length=8000)
     confidence: float = Field(ge=0, le=1)
     sensitive_domain: str = Field(default="personal", min_length=1, max_length=64)
+    entity_keys: list[str] = Field(default_factory=list, max_length=20)
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    salience: float = Field(default=0.5, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> _ClaimPayload:
+        for value in (self.valid_from, self.valid_to):
+            if value is not None and value.tzinfo is None:
+                raise ValueError("claim timestamps must include timezone")
+        if self.valid_from and self.valid_to and self.valid_to < self.valid_from:
+            raise ValueError("claim valid_to must not precede valid_from")
+        return self
 
 
 class _PersonPayload(BaseModel):
@@ -57,7 +74,9 @@ class _TimelinePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     title: str = Field(min_length=1, max_length=500)
-    category: MemoryCategory
+    domain_category: DomainCategory = Field(
+        validation_alias=AliasChoices("domain_category", "category")
+    )
     event_start: datetime | None = None
     event_end: datetime | None = None
     time_precision: Literal[
@@ -68,6 +87,10 @@ class _TimelinePayload(BaseModel):
         "approximate",
         "conversation_time",
     ] = "conversation_time"
+    canonical_key: str = Field(default="", max_length=200)
+    participant_keys: list[str] = Field(default_factory=list, max_length=20)
+    salience: float = Field(default=0.6, ge=0, le=1)
+    sensitivity: MemorySensitivity = "personal"
 
     @model_validator(mode="after")
     def validate_time_range(self) -> _TimelinePayload:
@@ -82,11 +105,16 @@ class _TimelinePayload(BaseModel):
 class _KnowledgePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    category: MemoryCategory
+    domain_category: DomainCategory = Field(
+        validation_alias=AliasChoices("domain_category", "category")
+    )
     question: str = Field(min_length=1, max_length=500)
     answer: str = Field(min_length=1, max_length=8000)
     applicability: str = Field(default="", max_length=2000)
     counterexample: str = Field(default="", max_length=2000)
+    entity_keys: list[str] = Field(default_factory=list, max_length=20)
+    salience: float = Field(default=0.55, ge=0, le=1)
+    sensitivity: MemorySensitivity = "personal"
 
 
 class _ExtractionPayload(BaseModel):
@@ -108,6 +136,21 @@ class _ExtractionPayload(BaseModel):
         valid_subjects = {"self", *person_keys}
         if any(claim.subject_key not in valid_subjects for claim in self.claims):
             raise ValueError("claim references an unknown subject_key")
+        referenced_keys = {
+            key
+            for claim in self.claims
+            for key in claim.entity_keys
+        } | {
+            key
+            for timeline in self.timeline
+            for key in timeline.participant_keys
+        } | {
+            key
+            for knowledge in self.knowledge
+            for key in knowledge.entity_keys
+        }
+        if not referenced_keys <= person_keys:
+            raise ValueError("memory projection references an unknown person_key")
         return self
 
 
@@ -117,21 +160,27 @@ def _prompt(text: str, occurred_at: datetime) -> str:
 不得补充原话没有的信息；不确定时少提取或返回空数组。人物 canonical_key 使用
 "关系英文:姓名"，主人本人使用 subject_key="self"。所有结论只是 candidate。
 
-分类只能是：life_story、work_experience、family_principle、parenting_principle、
-life_wisdom、daily_life。时间不明确时 event_start 设为 null，time_precision 使用
-conversation_time。适用条件和反例没有证据时必须为空字符串。
+domain_category 只能是：life_story、work_experience、family_principle、
+parenting_principle、life_wisdom、daily_life。它只表示主题，不表示记忆种类。
+时间不明确时 event_start 设为 null，time_precision 使用 conversation_time。
+同一现实事件跨会话再次出现时使用同一个简短 canonical_key；不能确认时留空。
+entity_keys/participant_keys 只能引用本次 people 的 canonical_key。
+适用条件和反例没有证据时必须为空字符串。
 
 严格结构：
 {{
-  "claims": [{{"category":"daily_life","subject_key":"self","predicate":"...",
-    "value":"...","confidence":0.0,"sensitive_domain":"personal"}}],
+  "claims": [{{"domain_category":"daily_life","subject_key":"self","predicate":"...",
+    "value":"...","confidence":0.0,"sensitive_domain":"personal",
+    "entity_keys":[],"valid_from":null,"valid_to":null,"salience":0.5}}],
   "people": [{{"display_name":"...","relationship_to_owner":"mother",
     "canonical_key":"mother:姓名","aliases":["..."]}}],
   "relationships": [{{"person_key":"mother:姓名","relationship_type":"mother"}}],
-  "timeline": [{{"title":"...","category":"daily_life","event_start":null,
-    "event_end":null,"time_precision":"conversation_time"}}],
-  "knowledge": [{{"category":"life_wisdom","question":"...","answer":"...",
-    "applicability":"","counterexample":""}}]
+  "timeline": [{{"title":"...","domain_category":"daily_life","event_start":null,
+    "event_end":null,"time_precision":"conversation_time","canonical_key":"",
+    "participant_keys":[],"salience":0.6,"sensitivity":"personal"}}],
+  "knowledge": [{{"domain_category":"life_wisdom","question":"...","answer":"...",
+    "applicability":"","counterexample":"","entity_keys":[],"salience":0.55,
+    "sensitivity":"personal"}}]
 }}
 
 对话发生时间：{occurred_at.isoformat()}
@@ -196,18 +245,27 @@ class QwenMemoryExtractor:
             if not isinstance(content, str):
                 raise TypeError("Qwen returned non-text extraction content")
             parsed = _ExtractionPayload.model_validate_json(content)
+            raw_usage = body.get("usage") or {}
+            usage = ExtractionUsage(
+                input_tokens=max(0, int(raw_usage.get("prompt_tokens") or 0)),
+                output_tokens=max(0, int(raw_usage.get("completion_tokens") or 0)),
+            )
         except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
             raise MemoryExtractionError("Qwen returned an invalid memory extraction") from exc
 
         return MemoryExtraction(
             claims=tuple(
                 ExtractedClaim(
-                    category=item.category,
+                    domain_category=item.domain_category,
                     subject_key=item.subject_key,
                     predicate=item.predicate,
                     value=item.value,
                     confidence=item.confidence,
                     sensitive_domain=item.sensitive_domain,
+                    entity_keys=tuple(item.entity_keys),
+                    valid_from=item.valid_from,
+                    valid_to=item.valid_to,
+                    salience=item.salience,
                 )
                 for item in parsed.claims
             ),
@@ -230,24 +288,32 @@ class QwenMemoryExtractor:
             timeline=tuple(
                 ExtractedTimeline(
                     title=item.title,
-                    category=item.category,
+                    domain_category=item.domain_category,
                     event_start=item.event_start or event.occurred_at,
                     event_end=item.event_end,
                     time_precision=item.time_precision,
+                    canonical_key=item.canonical_key,
+                    participant_keys=tuple(item.participant_keys),
+                    salience=item.salience,
+                    sensitivity=item.sensitivity,
                 )
                 for item in parsed.timeline
             ),
             knowledge=tuple(
                 ExtractedKnowledge(
-                    category=item.category,
+                    domain_category=item.domain_category,
                     question=item.question,
                     answer=item.answer,
                     applicability=item.applicability,
                     counterexample=item.counterexample,
+                    entity_keys=tuple(item.entity_keys),
+                    salience=item.salience,
+                    sensitivity=item.sensitivity,
                 )
                 for item in parsed.knowledge
             ),
             extractor_version=self.version,
+            usage=usage,
         )
 
 

@@ -42,7 +42,7 @@ class AliasExtractor:
         return MemoryExtraction(
             claims=(
                 ExtractedClaim(
-                    category="daily_life",
+                    domain_category="daily_life",
                     subject_key="mother:李梅",
                     predicate="alias",
                     value=alias,
@@ -178,6 +178,14 @@ async def test_owner_evidence_builds_traceable_timeline_and_knowledge_while_gues
     assert report.compiled_events == 2
     assert report.ignored_events == 1
     assert owner_search.items[0].category == "family_principle"
+    assert owner_search.items[0].domain_category == "family_principle"
+    assert owner_search.items[0].memory_kind in {
+        "semantic",
+        "episodic",
+        "procedural",
+    }
+    assert owner_search.items[0].observed_at is not None
+    assert owner_search.items[0].source_event_ids == ("memory-family-001",)
     assert owner_search.items[0].source_event_id == "memory-family-001"
     assert guest_search.items == ()
     assert {item.source_event_id for item in timeline} == {
@@ -278,7 +286,7 @@ async def test_claim_review_controls_context_and_retraction_propagates_to_search
     assert {(item.kind, item.status) for item in context.items} == {
         ("claim", "confirmed"),
         ("knowledge", "confirmed"),
-        ("timeline", "confirmed"),
+        ("episode", "confirmed"),
     }
     assert after_retract.items == ()
 
@@ -357,7 +365,7 @@ async def test_claim_review_moves_same_event_life_projections_without_promoting_
     } == {
         ("claim", "reviewed-family-001", "confirmed"),
         ("knowledge", "reviewed-family-001", "confirmed"),
-        ("timeline", "reviewed-family-001", "confirmed"),
+        ("episode", "reviewed-family-001", "confirmed"),
     }
     assert {
         (item.source_event_id, item.status) for item in confirmed_timeline
@@ -558,3 +566,15 @@ async def test_related_turns_share_an_episode_but_keep_individual_evidence(
         "episode-work-001",
         "episode-work-002",
     }
+    episode = (
+        await catalog.search(
+            MemorySearchQuery(
+                account_id="account-memory",
+                speaker_class="owner",
+                kinds=("episode",),
+            )
+        )
+    ).items[0]
+    assert episode.memory_kind == "episodic"
+    assert episode.source_event_ids == ("episode-work-001", "episode-work-002")
+    assert episode.stability > 0.5

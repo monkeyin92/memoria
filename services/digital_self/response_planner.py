@@ -282,10 +282,10 @@ class DigitalSelfResponsePlanner:
         matched = [
             _bounded_item(item)
             for item in supplied
-            if item.kind == "memory_claim" and _matches(query, item.content)
+            if item.kind == "memory_claim"
         ]
         matched.extend(cls._items_from_entries(entries, query, allow_all_scopes=True))
-        ordered = cls._bounded_items(matched)
+        ordered = cls._bounded_ranked_items(matched)
         persona_traits = cls._persona_traits(entries) + tuple(
             item.content
             for item in supplied
@@ -496,6 +496,20 @@ class DigitalSelfResponsePlanner:
     def _bounded_items(cls, items: list[GroundedItem] | tuple[GroundedItem, ...]) -> tuple[GroundedItem, ...]:
         ordered = sorted(items, key=lambda item: (item.kind, item.item_id))
         return tuple(ordered[:MAX_GROUNDED_ITEMS])
+
+    @staticmethod
+    def _bounded_ranked_items(items: list[GroundedItem]) -> tuple[GroundedItem, ...]:
+        seen: set[tuple[GroundedItemKind, str]] = set()
+        result: list[GroundedItem] = []
+        for item in items:
+            key = (item.kind, item.item_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(item)
+            if len(result) == MAX_GROUNDED_ITEMS:
+                break
+        return tuple(result)
 
     @classmethod
     def _direct(

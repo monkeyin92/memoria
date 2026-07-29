@@ -22,6 +22,7 @@ from services.archive.postgres_memory_catalog import PostgresMemoryCatalog, Qwen
 
 class SemanticEmbedderStub:
     model = "semantic-test-v1"
+    dimensions = 2
 
     async def embed(self, text: str) -> tuple[float, ...]:
         if "杭州" in text or "城市经历" in text:
@@ -31,6 +32,7 @@ class SemanticEmbedderStub:
 
 class UnavailableEmbedderStub:
     model = "unavailable-test-v1"
+    dimensions = 2
 
     async def embed(self, text: str) -> tuple[float, ...]:
         del text
@@ -39,6 +41,7 @@ class UnavailableEmbedderStub:
 
 class UpgradedEmbedderStub:
     model = "semantic-test-v2"
+    dimensions = 3
 
     async def embed(self, text: str) -> tuple[float, ...]:
         del text
@@ -52,7 +55,7 @@ async def test_qwen_memory_embedder_uses_the_bounded_embeddings_contract() -> No
         assert request.headers["Authorization"] == "Bearer test-key"
         assert request.read() == (
             b'{"model":"text-embedding-v4","input":"\xe5\x9f\x8e\xe5\xb8\x82\xe7\xbb\x8f\xe5\x8e\x86",'
-            b'"encoding_format":"float"}'
+            b'"encoding_format":"float","dimensions":2}'
         )
         return httpx.Response(200, json={"data": [{"embedding": [0.25, 0.75]}]})
 
@@ -60,6 +63,7 @@ async def test_qwen_memory_embedder_uses_the_bounded_embeddings_contract() -> No
         endpoint="https://dashscope.test/compatible-mode/v1/embeddings",
         api_key="test-key",
         model="text-embedding-v4",
+        dimensions=2,
         transport=httpx.MockTransport(handler),
     )
 
@@ -508,7 +512,13 @@ async def test_postgres_memory_catalog_matches_sqlite_contract_and_forces_rls() 
     } == {
         ("claim", "postgres-memory-0", "confirmed"),
         ("knowledge", "postgres-memory-0", "confirmed"),
-        ("timeline", "postgres-memory-0", "confirmed"),
+        ("episode", "postgres-memory-0", "confirmed"),
+    }
+    assert all(item.domain_category == "family_principle" for item in context.items)
+    assert {item.memory_kind for item in context.items} == {
+        "semantic",
+        "episodic",
+        "procedural",
     }
     assert [(item.display_name, item.status) for item in reviewed_people] == [
         ("李梅", "confirmed")

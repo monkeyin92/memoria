@@ -31,7 +31,10 @@ from services.archive.object_store import (
 )
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog, QwenMemoryEmbedder
+from services.archive.postgres_skill_catalog import PostgresSkillCatalog
 from services.archive.qwen_memory_extractor import FallbackMemoryExtractor, QwenMemoryExtractor
+from services.archive.skill_catalog import SkillCatalog
+from services.archive.skill_domain import SkillCatalogPort
 from services.control_api.app.account_gate import AccountDeletingError, AccountOperationGate
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
@@ -47,6 +50,7 @@ from services.control_api.app.routes import readiness as readiness_routes
 from services.control_api.app.routes import self_model as self_model_routes
 from services.control_api.app.routes import self_preview as self_preview_routes
 from services.control_api.app.routes import session as session_routes
+from services.control_api.app.routes import skills as skill_routes
 from services.control_api.app.routes import speaker as speaker_routes
 from services.control_api.app.routes import voice as voice_routes
 from services.control_api.app.session_termination import (
@@ -132,6 +136,7 @@ def _memory_embedder(settings: ControlSettings) -> MemoryEmbedder | None:
         endpoint=settings.memory_embedding_url,
         api_key=api_key,
         model=settings.memory_embedding_model,
+        dimensions=settings.memory_embedding_dimensions,
         timeout_s=settings.memory_embedding_timeout_s,
     )
 
@@ -399,8 +404,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     postgres_growth: PostgresGrowthReader | None = None
     postgres_self_model: PostgresSelfModelRegistry | None = None
     postgres_legacy: PostgresLegacyRegistry | None = None
+    postgres_skills: PostgresSkillCatalog | None = None
     archive: LifeArchivePort
     memory_catalog: MemoryCatalogPort
+    skill_catalog: SkillCatalogPort
     persona_engine: PersonaEnginePort
     extractor = _memory_extractor(settings)
     persona_extractor = _persona_extractor(settings)
@@ -421,6 +428,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         await postgres_catalog.initialize()
         memory_catalog = postgres_catalog
+        postgres_skills = PostgresSkillCatalog(archive_url)
+        await postgres_skills.initialize()
+        skill_catalog = postgres_skills
         postgres_persona = PostgresPersonaEngine(
             archive_url,
             extractor=persona_extractor,
@@ -438,6 +448,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         await to_thread(sqlite_catalog.initialize)
         memory_catalog = sqlite_catalog
+        sqlite_skills = SkillCatalog.sqlite(settings.memoria_db_path)
+        await to_thread(sqlite_skills.initialize)
+        skill_catalog = sqlite_skills
         sqlite_persona = PersonaEngine.sqlite(
             settings.memoria_db_path,
             extractor=persona_extractor,
@@ -446,6 +459,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         persona_engine = sqlite_persona
     app.state.life_archive = archive
     app.state.memory_catalog = memory_catalog
+    app.state.skill_catalog = skill_catalog
     app.state.persona_engine = persona_engine
     digital_self_registry: RegistryPort
     if archive_url:
@@ -557,6 +571,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await postgres_legacy.close()
         if postgres_catalog is not None:
             await postgres_catalog.close()
+        if postgres_skills is not None:
+            await postgres_skills.close()
         if postgres_archive is not None:
             await postgres_archive.close()
         if postgres_speaker is not None:
@@ -594,6 +610,7 @@ def create_app() -> FastAPI:
             app.state.memory_store,
         ),
     )
+    app.state.skill_catalog = SkillCatalog.sqlite(settings.memoria_db_path)
     app.state.persona_engine = PersonaEngine.sqlite(
         settings.memoria_db_path,
         extractor=_persona_extractor(settings),
@@ -637,6 +654,7 @@ def create_app() -> FastAPI:
     app.include_router(legacy_routes.router)
     app.include_router(archive_routes.router)
     app.include_router(session_routes.router)
+    app.include_router(skill_routes.router)
     app.include_router(speaker_routes.router)
     app.include_router(memory_routes.router)
     app.include_router(persona_routes.router)

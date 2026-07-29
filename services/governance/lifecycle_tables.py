@@ -8,6 +8,11 @@ POSTGRES_AUTHORITATIVE_ACCOUNT_TABLES = (
     "archive_processing_outbox",
     "archive_evidence_blobs",
     "archive_transcript_versions",
+    "skill_run_steps",
+    "skill_runs",
+    "skill_version_evidence",
+    "skill_versions",
+    "skill_definitions",
     "persona_traits",
     "persona_evidence",
     "persona_observation_receipts",
@@ -38,6 +43,7 @@ POSTGRES_AUTHORITATIVE_ACCOUNT_TABLES = (
 
 POSTGRES_PROJECTION_ACCOUNT_TABLES = (
     "memory_vector_documents",
+    "memory_search_document_sources",
     "memory_search_documents",
     "episode_evidence",
     "timeline_entries",

@@ -7,7 +7,11 @@ from services.governance.account_data import (
     _POSTGRES_ARCHIVE_DELETE_ORDER,
     _SPEAKER_DELETE_ORDER,
 )
-from services.governance.lifecycle_tables import POSTGRES_ACCOUNT_LIFECYCLE_TABLES
+from services.governance.lifecycle_tables import (
+    POSTGRES_ACCOUNT_LIFECYCLE_TABLES,
+    POSTGRES_AUTHORITATIVE_ACCOUNT_TABLES,
+    POSTGRES_PROJECTION_ACCOUNT_TABLES,
+)
 
 _CREATE_TABLE = re.compile(
     r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((.*?)\);",
@@ -20,6 +24,7 @@ def test_lifecycle_catalog_covers_every_account_scoped_postgres_table() -> None:
     schema_paths = (
         root / "services/archive/postgres_schema.sql",
         root / "services/archive/postgres_memory_schema.sql",
+        root / "services/archive/postgres_skill_schema.sql",
         root / "services/persona/postgres_schema.sql",
         root / "services/digital_self/postgres_schema.sql",
         root / "services/self_model/postgres_schema.sql",
@@ -47,3 +52,16 @@ def test_account_deletion_covers_the_lifecycle_catalog() -> None:
     }
 
     assert deletion_tables == set(POSTGRES_ACCOUNT_LIFECYCLE_TABLES)
+
+
+def test_skill_state_survives_projection_rebuilds() -> None:
+    skill_tables = {
+        "skill_run_steps",
+        "skill_runs",
+        "skill_version_evidence",
+        "skill_versions",
+        "skill_definitions",
+    }
+
+    assert skill_tables <= set(POSTGRES_AUTHORITATIVE_ACCOUNT_TABLES)
+    assert skill_tables.isdisjoint(POSTGRES_PROJECTION_ACCOUNT_TABLES)

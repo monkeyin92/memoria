@@ -50,37 +50,58 @@ async def test_reader_deduplicates_sources_and_counts_ineligible_confirmed_rows(
         connection.executemany(
             """
             INSERT INTO memory_claims (
-                claim_id, account_id, category, subject_key, predicate, value,
+                claim_id, account_id, category, domain_category,
+                subject_key, predicate, value,
                 confidence, status, sensitive_domain, extractor_version,
-                source_event_id, valid_at, created_at
-            ) VALUES (?, ?, 'life_story', 'self', ?, ?, .9, 'confirmed',
-                      'personal', 'test', 'shared-claim-source', ?, ?)
+                source_event_id, valid_at, observed_at, created_at
+            ) VALUES (?, ?, 'life_story', 'life_story', 'self', ?, ?, .9,
+                      'confirmed', 'personal', 'test', 'shared-claim-source',
+                      ?, ?, ?)
             """,
             (
-                ("claim-a", account_id, "education", "杭州读书", now.isoformat(), now.isoformat()),
-                ("claim-b", account_id, "city", "住在杭州", now.isoformat(), now.isoformat()),
+                (
+                    "claim-a",
+                    account_id,
+                    "education",
+                    "杭州读书",
+                    now.isoformat(),
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+                (
+                    "claim-b",
+                    account_id,
+                    "city",
+                    "住在杭州",
+                    now.isoformat(),
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
             ),
         )
         connection.execute(
             """
             INSERT INTO life_episodes (
-                episode_id, account_id, title, category, status, event_start,
+                episode_id, account_id, title, category, domain_category,
+                consolidation_key, status, event_start, observed_at,
                 source_event_id
             ) VALUES ('episode-ineligible', ?, '一段经历', 'life_story',
-                      'confirmed', ?, 'ineligible-projection-source')
+                      'life_story', 'test:episode-ineligible', 'confirmed',
+                      ?, ?, 'ineligible-projection-source')
             """,
-            (account_id, now.isoformat()),
+            (account_id, now.isoformat(), now.isoformat()),
         )
         connection.execute(
             """
             INSERT INTO timeline_entries (
-                timeline_id, account_id, episode_id, title, category, status,
-                event_start, time_precision, source_event_id
+                timeline_id, account_id, episode_id, title, category,
+                domain_category, status, event_start, time_precision,
+                observed_at, source_event_id
             ) VALUES ('timeline-ineligible', ?, 'episode-ineligible', '一段经历',
-                      'life_story', 'confirmed', ?, 'day',
+                      'life_story', 'life_story', 'confirmed', ?, 'day', ?,
                       'ineligible-projection-source')
             """,
-            (account_id, now.isoformat()),
+            (account_id, now.isoformat(), now.isoformat()),
         )
         connection.execute(
             """

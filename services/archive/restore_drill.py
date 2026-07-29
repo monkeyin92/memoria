@@ -22,6 +22,7 @@ import asyncpg
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.object_store import EncryptedLocalObjectStore, ObjectRef
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
+from services.archive.postgres_skill_catalog import PostgresSkillCatalog
 from services.governance.lifecycle_tables import (
     POSTGRES_AUTHORITATIVE_ACCOUNT_TABLES,
     POSTGRES_PROJECTION_ACCOUNT_TABLES,
@@ -68,6 +69,50 @@ _ORPHAN_QUERIES: Mapping[str, tuple[tuple[str, ...], str]] = {
         LEFT JOIN archive_evidence_events event
           ON event.event_id = child.source_event_id
         WHERE episode.episode_id IS NULL OR event.event_id IS NULL
+        """,
+    ),
+    "skill_versions_without_definition": (
+        ("skill_versions", "skill_definitions"),
+        """
+        SELECT count(*) FROM skill_versions child
+        LEFT JOIN skill_definitions parent ON parent.skill_id = child.skill_id
+        WHERE parent.skill_id IS NULL
+        """,
+    ),
+    "skill_evidence_without_version_or_event": (
+        (
+            "skill_version_evidence",
+            "skill_versions",
+            "archive_evidence_events",
+        ),
+        """
+        SELECT count(*) FROM skill_version_evidence child
+        LEFT JOIN skill_versions version
+          ON version.skill_id = child.skill_id
+         AND version.version = child.version
+        LEFT JOIN archive_evidence_events event
+          ON event.event_id = child.source_event_id
+        WHERE version.skill_id IS NULL OR event.event_id IS NULL
+        """,
+    ),
+    "skill_runs_without_version_or_confirmation": (
+        ("skill_runs", "skill_versions", "archive_evidence_events"),
+        """
+        SELECT count(*) FROM skill_runs child
+        LEFT JOIN skill_versions version
+          ON version.skill_id = child.skill_id
+         AND version.version = child.skill_version
+        LEFT JOIN archive_evidence_events event
+          ON event.event_id = child.confirmation_event_id
+        WHERE version.skill_id IS NULL OR event.event_id IS NULL
+        """,
+    ),
+    "skill_steps_without_run": (
+        ("skill_run_steps", "skill_runs"),
+        """
+        SELECT count(*) FROM skill_run_steps child
+        LEFT JOIN skill_runs parent ON parent.run_id = child.run_id
+        WHERE parent.run_id IS NULL
         """,
     ),
     "persona_evidence_without_trait_or_event": (
@@ -193,6 +238,7 @@ class ProjectionRebuildReport:
     compiled_events: int = 0
     ignored_events: int = 0
     failed_events: int = 0
+    skill_documents_rebuilt: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -469,11 +515,19 @@ async def snapshot_postgres(dsn: str) -> PostgresSnapshot:
 
 async def rebuild_postgres_memory_projections(dsn: str) -> ProjectionRebuildReport:
     connection = await asyncpg.connect(dsn)
+    skill_account_ids: tuple[str, ...] = ()
     try:
         present = await _public_tables(connection)
         projections = tuple(table for table in _PROJECTION_TABLES if table in present)
         if not projections or "archive_processing_outbox" not in present:
             raise RuntimeError("memory projection schema is incomplete")
+        if "skill_definitions" in present:
+            skill_account_ids = tuple(
+                str(row["account_id"])
+                for row in await connection.fetch(
+                    "SELECT DISTINCT account_id FROM skill_definitions ORDER BY account_id"
+                )
+            )
         async with connection.transaction():
             await connection.execute(
                 "TRUNCATE TABLE " + ", ".join(_quote_identifier(table) for table in projections)
@@ -503,10 +557,20 @@ async def rebuild_postgres_memory_projections(dsn: str) -> ProjectionRebuildRepo
             raise RuntimeError("projection rebuild exceeded its safety bound")
     finally:
         await catalog.close()
+    skills = PostgresSkillCatalog(dsn)
+    rebuilt_skills = 0
+    try:
+        for account_id in skill_account_ids:
+            rebuilt_skills += await skills.rebuild_search_projections(
+                account_id=account_id
+            )
+    finally:
+        await skills.close()
     return ProjectionRebuildReport(
         compiled_events=compiled,
         ignored_events=ignored,
         failed_events=failed,
+        skill_documents_rebuilt=rebuilt_skills,
     )
 
 

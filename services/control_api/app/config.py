@@ -167,6 +167,12 @@ class ControlSettings(BaseSettings):
         alias="MEMORIA_MEMORY_EMBEDDING_API_KEY",
     )
     memory_embedding_model: str = Field(default="", alias="MEMORIA_MEMORY_EMBEDDING_MODEL")
+    memory_embedding_dimensions: int = Field(
+        default=1024,
+        ge=1,
+        le=2000,
+        alias="MEMORIA_MEMORY_EMBEDDING_DIMENSIONS",
+    )
     memory_embedding_timeout_s: float = Field(
         default=5.0,
         ge=0.1,
@@ -812,8 +818,10 @@ class ControlSettings(BaseSettings):
             not self.memory_embedding_url.startswith(("http://", "https://"))
             or not self.memory_embedding_api_key.get_secret_value()
             or not self.memory_embedding_model.strip()
+            or not 1 <= self.memory_embedding_dimensions <= 2000
         ):
             raise ValueError(
                 "production requires MEMORIA_MEMORY_EMBEDDING_URL, "
-                "MEMORIA_MEMORY_EMBEDDING_API_KEY and MEMORIA_MEMORY_EMBEDDING_MODEL"
+                "MEMORIA_MEMORY_EMBEDDING_API_KEY, MEMORIA_MEMORY_EMBEDDING_MODEL "
+                "and MEMORIA_MEMORY_EMBEDDING_DIMENSIONS"
             )

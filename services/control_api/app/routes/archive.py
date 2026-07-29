@@ -31,10 +31,14 @@ from services.archive.domain import (
     RawVoiceConsentRequiredError,
 )
 from services.archive.memory_domain import (
+    ConflictState,
+    DomainCategory,
     MemoryCatalogPort,
     MemoryCategory,
     MemoryClaimReview,
+    MemoryKind,
     MemorySearchQuery,
+    MemorySensitivity,
 )
 from services.archive.object_store import ObjectRef, ObjectStore
 from services.common.companions import (
@@ -1803,9 +1807,21 @@ async def session_memory_context(
                 "title": item.title,
                 "snippet": item.snippet,
                 "category": item.category,
+                "domain_category": item.domain_category,
+                "memory_kind": item.memory_kind,
+                "entity_ids": list(item.entity_ids),
                 "status": item.status,
                 "source_event_id": item.source_event_id,
+                "source_event_ids": list(item.source_event_ids),
                 "occurred_at": item.occurred_at.isoformat(),
+                "valid_from": item.valid_from.isoformat() if item.valid_from else None,
+                "valid_to": item.valid_to.isoformat() if item.valid_to else None,
+                "observed_at": item.observed_at.isoformat() if item.observed_at else None,
+                "stability": item.stability,
+                "salience": item.salience,
+                "sensitivity": item.sensitivity,
+                "conflict_state": item.conflict_state,
+                "score": item.score,
             }
             for item in result.items
         ]
@@ -1846,9 +1862,20 @@ def _search_item(item: Any) -> dict[str, Any]:
         "title": item.title,
         "snippet": item.snippet,
         "category": item.category,
+        "domain_category": item.domain_category,
+        "memory_kind": item.memory_kind,
+        "entity_ids": list(item.entity_ids),
         "status": item.status,
         "source_event_id": item.source_event_id,
+        "source_event_ids": list(item.source_event_ids),
         "occurred_at": item.occurred_at.isoformat(),
+        "valid_from": item.valid_from.isoformat() if item.valid_from else None,
+        "valid_to": item.valid_to.isoformat() if item.valid_to else None,
+        "observed_at": item.observed_at.isoformat() if item.observed_at else None,
+        "stability": item.stability,
+        "salience": item.salience,
+        "sensitivity": item.sensitivity,
+        "conflict_state": item.conflict_state,
         "score": item.score,
     }
 
@@ -1859,25 +1886,44 @@ async def search_memories(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
     q: Annotated[str, Query(max_length=500)] = "",
     kind: Annotated[list[str] | None, Query()] = None,
+    memory_kind: Annotated[list[MemoryKind] | None, Query()] = None,
+    domain_category: Annotated[list[DomainCategory] | None, Query()] = None,
     category: Annotated[list[MemoryCategory] | None, Query()] = None,
+    entity_id: Annotated[list[str] | None, Query()] = None,
+    valid_at: datetime | None = None,
+    sensitivity: Annotated[list[MemorySensitivity] | None, Query()] = None,
+    conflict_state: Annotated[list[ConflictState] | None, Query()] = None,
     include_candidates: bool = True,
     occurred_after: datetime | None = None,
     occurred_before: datetime | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> dict[str, Any]:
-    result = await _catalog(request).search(
-        MemorySearchQuery(
-            account_id=user.user_id,
-            speaker_class="owner",
-            text=q,
-            kinds=tuple(kind or ()),
-            categories=tuple(category or ()),
-            include_candidates=include_candidates,
-            occurred_after=occurred_after,
-            occurred_before=occurred_before,
-            limit=limit,
+    if category and domain_category:
+        raise HTTPException(
+            status_code=422,
+            detail="use domain_category or legacy category, not both",
         )
-    )
+    try:
+        result = await _catalog(request).search(
+            MemorySearchQuery(
+                account_id=user.user_id,
+                speaker_class="owner",
+                text=q,
+                kinds=tuple(kind or ()),
+                memory_kinds=tuple(memory_kind or ()),
+                domain_categories=tuple(domain_category or category or ()),
+                entity_ids=tuple(entity_id or ()),
+                valid_at=valid_at,
+                sensitivities=tuple(sensitivity or ()),
+                conflict_states=tuple(conflict_state or ()),
+                include_candidates=include_candidates,
+                occurred_after=occurred_after,
+                occurred_before=occurred_before,
+                limit=limit,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"items": [_search_item(item) for item in result.items]}
 
 
@@ -1894,11 +1940,13 @@ async def life_timeline(
                 "timeline_id": item.timeline_id,
                 "title": item.title,
                 "category": item.category,
+                "domain_category": item.domain_category,
                 "status": item.status,
                 "event_start": item.event_start.isoformat(),
                 "event_end": item.event_end.isoformat() if item.event_end else None,
                 "time_precision": item.time_precision,
                 "source_event_id": item.source_event_id,
+                "source_event_ids": list(item.source_event_ids),
                 "episode_id": item.episode_id,
             }
             for item in items
@@ -1940,10 +1988,13 @@ async def review_queue(
                 "item_id": item.item_id,
                 "kind": item.kind,
                 "category": item.category,
+                "domain_category": item.domain_category,
+                "memory_kind": item.memory_kind,
                 "value": item.value,
                 "status": item.status,
                 "reason": item.reason,
                 "source_event_id": item.source_event_id,
+                "conflict_state": item.conflict_state,
             }
             for item in items
         ]

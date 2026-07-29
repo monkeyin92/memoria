@@ -721,7 +721,7 @@ async def _companion_items(
                         SourceRef(
                             "memory_claim",
                             item.item_id,
-                            (item.source_event_id,),
+                            item.source_event_ids,
                         ),
                     ),
                 )
