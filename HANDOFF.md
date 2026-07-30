@@ -2,10 +2,14 @@
 
 ## 当前状态
 
-- `20260730-092236` runtime 发布候选已完成本地门禁：Companion ResponsePlan 统一按
-  “危机支持 > 语言学习 > 引导式学习 > 普通陪伴”选择本轮互动方式；明确自伤危机不再被旧
-  违禁词短路成“我不知道”。本轮没有修改 H5 或小程序交付代码；候选尚未部署或推送，生产
-  runtime 仍是 `20260729-193333`。
+- `20260730-092236` 已于 `2026-07-30T01:59:55Z` 原子切换 runtime 并推送：Companion
+  ResponsePlan 统一按“危机支持 > 语言学习 > 引导式学习 > 普通陪伴”选择当轮互动方式；
+  明确自伤危机不再被旧违禁词短路成“我不知道”。4 容器 healthy/restart=0、9/9 core
+  readiness、真实 Qwen/FunASR/豆包五音色/LiveKit/打断语义、生产五类 ResponsePlan canary、
+  Nginx/TLS/公网 8443/SQLite 与零严重错误日志均通过。H5 未切换，仍为
+  `20260729-113831`；小程序未上传、提审或发布。直接 runtime 回滚点为
+  `20260729-193333`，root-only 备份位于
+  `/var/backups/memoria/runtime-switch-20260730-092236-from-20260729-193333-20260730T015529Z/`。
 - `20260729-193333` 已于 `2026-07-29T12:28:16Z` 原子切换 runtime：未确认说话人现在可承接
   本次会话末尾连续的 public 工作上下文，但主人私人历史、记忆、Persona、工具与
   `history_eligible` 仍隔离；Qwen 多段情绪按 PCM sample 区间、provider `audio_start_ms`
@@ -30,13 +34,13 @@
   权威证据账本不变，工作记忆仍只按话轮动态组装。
 - GitHub Actions 已在 `f6a9580` 的 run `30416225947` 全绿：Python job 运行真实
   PostgreSQL/pgvector 合同测试，总覆盖率恢复至 `89%`，未降低既有 `85%` 门槛。
-- 当前已部署源码基线：`c9cf96e`，annotated tag `20260729-193333` 精确指向该提交；
-  `origin/main` 已同步到该提交。
+- 当前已部署源码基线：`d6295b5`，annotated tag `20260730-092236` 精确指向该提交；
+  `origin/main` 已包含该源码提交及随后的发布证据提交。
 - 生产 runtime source / annotated tag：
-  `c9cf96e32d0a71c8ee11651e6949c8de0e1a7205 / 20260729-193333`，已完成原子切换、
-  Provider/readiness/Nginx 与公网验收；直接 runtime 回滚点为 `20260729-171002`，H5 本轮未
+  `d6295b50039c37efe789e51a6495b938d229701b / 20260730-092236`，已完成原子切换、
+  Provider/readiness/Nginx 与公网验收；直接 runtime 回滚点为 `20260729-193333`，H5 本轮未
   切换，仍为 `20260729-113831`。root-only SQLite、PostgreSQL 与四份 env 备份位于
-  `/var/backups/memoria/runtime-switch-20260729-193333-from-20260729-171002-20260729T122724Z/`。
+  `/var/backups/memoria/runtime-switch-20260730-092236-from-20260729-193333-20260730T015529Z/`。
 - 微信小程序开发测试版：`0.8.59` 已上传成功（`636,385` 字节），但真机已确认欢迎语首播后
   因遥测契约不兼容断开；修复后的 `0.8.60` 已通过 CLI 上传开发测试版（`637,083` 字节），
   开 VPN 可完整聊天。诊断版 `0.8.61` 已上传（`637,237` 字节）；真机和 Safari 均确认标准 443
@@ -55,7 +59,7 @@
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
   `docs/releases/20260728-170236.md`。
 
-## 2026-07-30：当轮语义角色与危机支持（`20260730-092236` 发布候选）
+## 2026-07-30：当轮语义角色与危机支持（已提交、推送并部署）
 
 - 没有新增会话级角色状态或第二套路由。`DigitalSelfResponsePlanner` 的 canonical
   instructions 现携带统一当轮策略：危机支持最高优先；外语学习先复用已知目标、水平与场景，
@@ -68,8 +72,9 @@
 - 明确危机文本同时进入 `supportive` SpeechPlan、禁止笑声和副语言，并关闭“嗯/你继续”等固定
   listener cue；Control 不可用时 Agent 本地安全降级仍复用同一策略和固定危机回复。
 - 本地验证：Python 全量 `1488 passed, 29 skipped`；Ruff、strict mypy `177 source files`、
-  `git diff --check` 与离线 E2E 通过。真实模型语义评测、真机危机话术听感和生产验收仍待本
-  release 完成；只切 runtime，不需要 H5 或小程序发版。
+  `git diff --check`、离线 E2E、H5 `242/242` 与 production build 通过。生产固定危机路由和
+  Provider/readiness 已验收；真实模型对开放式长尾语义的判断、真机危机话术听感仍需
+  人工验收。本轮只切 runtime，不需要 H5 或小程序发版。
 
 ## 2026-07-29：短期上下文与自然表达修复（已提交、推送并部署）
 
