@@ -258,7 +258,7 @@ async def _receive_media(
                 continue
         event = _validate_control_text(text)
         if event["type"] == "text_turn":
-            bridge.accept_text_turn(str(event["text"]))
+            await bridge.accept_text_turn(str(event["text"]))
         else:
             bridge.accept_transport_event(event)
 

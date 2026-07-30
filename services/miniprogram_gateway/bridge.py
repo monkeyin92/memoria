@@ -421,7 +421,7 @@ class MiniProgramLiveKitBridge:
             self._audio_processor.reset()
             self._aec_suppressed_generation_id = generation_id
 
-    def accept_text_turn(self, text: str) -> None:
+    async def accept_text_turn(self, text: str) -> None:
         """Forward one validated text turn as the linked participant's lk.chat stream."""
         room = self._room
         if room is None:
@@ -430,7 +430,7 @@ class MiniProgramLiveKitBridge:
         sender = getattr(participant, "send_text", None)
         if not callable(sender):
             raise GatewayMediaError("LiveKit text input is unavailable")
-        sender(text, topic="lk.chat")
+        await sender(text, topic="lk.chat")
 
     async def wait_for_room_disconnect(self) -> None:
         await self._room_disconnected.wait()

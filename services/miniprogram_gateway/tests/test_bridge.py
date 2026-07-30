@@ -778,11 +778,12 @@ async def test_client_audio_trace_is_forwarded_to_the_agent_without_text() -> No
     await bridge.close()
 
 
-def test_text_turn_uses_the_linked_participant_chat_stream() -> None:
+@pytest.mark.asyncio
+async def test_text_turn_uses_the_linked_participant_chat_stream() -> None:
     sent: list[tuple[str, str]] = []
 
     class Participant:
-        def send_text(self, text: str, *, topic: str) -> None:
+        async def send_text(self, text: str, *, topic: str) -> None:
             sent.append((text, topic))
 
     bridge = MiniProgramLiveKitBridge(
@@ -801,7 +802,7 @@ def test_text_turn_uses_the_linked_participant_chat_stream() -> None:
     )
     bridge._room = SimpleNamespace(local_participant=Participant())
 
-    bridge.accept_text_turn("今天星期几？")
+    await bridge.accept_text_turn("今天星期几？")
 
     assert sent == [("今天星期几？", "lk.chat")]
 
