@@ -2,22 +2,17 @@
 
 ## 当前状态
 
-- `20260730-092236` 已于 `2026-07-30T01:59:55Z` 原子切换 runtime 并推送：Companion
-  ResponsePlan 统一按“危机支持 > 语言学习 > 引导式学习 > 普通陪伴”选择当轮互动方式；
-  明确自伤危机不再被旧违禁词短路成“我不知道”。4 容器 healthy/restart=0、9/9 core
-  readiness、真实 Qwen/FunASR/豆包五音色/LiveKit/打断语义、生产五类 ResponsePlan canary、
-  Nginx/TLS/公网 8443/SQLite 与零严重错误日志均通过。H5 已于
-  `2026-07-30T07:39:41Z` 原子切换至 `20260730-153343`；小程序未上传、提审或发布。
-  直接 runtime/H5 回滚点为 `20260729-193333 / 20260729-113831`，root-only 备份位于
-  `/var/backups/memoria/runtime-switch-20260730-092236-from-20260729-193333-20260730T015529Z/`。
-- 2026-07-30 H5 真人会话确认两个本地待发布修复：shadow 短纯控制只停止播放、不进入聊天或
-  权限面；旧/无快照 speech epoch 的迟到控制终稿不再重复播确认音或串入下一话轮。自建
-  endpoint 候选恢复为 `1.50 / 2.20` 秒以降低句中停顿早提交，但供应商终稿仍可能晚于该窗口，
-  上线后必须按同一会话核对 late-transcript warning、权威归档文本和真人完整句，不能只看测试。
-- 同一工作树新增本地待发布的“我的 → 主人声纹”现场录取：自然、轻声、带笑、认真四种状态
-  按顺序录取，并在同一加密声纹版本内保留为四个独立原型，分类取最高相似度；旧单中心模板
-  继续兼容。新版本仍只进入 shadow，不绕过 200 条正式评估与 FAR/FRR/EER 门禁。尚未提交、
-  推送或部署，真实手机麦克风音质、识别率与误识率仍需设备矩阵验收。
+- `20260730-171321` 已提交、推送并于 `2026-07-30T09:23:46Z` 切换 runtime，H5 于
+  `2026-07-30T09:25:17Z` 原子切换；小程序 `0.8.63` 体验版上传成功（`653,554` 字节），
+  未提审、未正式发布。shadow 短纯控制现在只停止播放、不进入聊天或权限面；旧/无快照
+  speech epoch 的迟到终稿不会重复播确认音或串入下一话轮；自建 endpoint 为 `1.50 / 2.20` 秒。
+- H5 与小程序“我的 → 主人声纹”均可按自然、轻声、带笑、认真四种状态顺序录取；同一加密
+  声纹版本保留四个独立原型并取最高 cosine similarity，旧单中心模板继续兼容。登记仍只进入
+  shadow，不绕过 anti-spoof、200 条评估与 FAR/FRR/EER 门禁。
+- 四容器 healthy/restart=0、9/9 core readiness、真实 LiveKit/Qwen/FunASR/豆包五音色/打断语义、
+  公网 H5/API/WMS、WSS `4401`、TLS、Nginx、1,038 次历史资源检查与零严重错误日志均通过。
+  直接 runtime/H5 回滚点为 `20260730-092236 / 20260730-153343`；root-only 备份位于
+  `/var/backups/memoria/runtime-switch-20260730-171321-from-20260730-092236-20260730T092241Z/`。
 - `20260729-193333` 已于 `2026-07-29T12:28:16Z` 原子切换 runtime：未确认说话人现在可承接
   本次会话末尾连续的 public 工作上下文，但主人私人历史、记忆、Persona、工具与
   `history_eligible` 仍隔离；Qwen 多段情绪按 PCM sample 区间、provider `audio_start_ms`
@@ -42,13 +37,8 @@
   权威证据账本不变，工作记忆仍只按话轮动态组装。
 - GitHub Actions 已在 `f6a9580` 的 run `30416225947` 全绿：Python job 运行真实
   PostgreSQL/pgvector 合同测试，总覆盖率恢复至 `89%`，未降低既有 `85%` 门槛。
-- 当前已部署源码基线：`d6295b5`，annotated tag `20260730-092236` 精确指向该提交；
-  `origin/main` 已包含该源码提交及随后的发布证据提交。
-- 生产 runtime source / annotated tag：
-  `d6295b50039c37efe789e51a6495b938d229701b / 20260730-092236`，已完成原子切换、
-  Provider/readiness/Nginx 与公网验收；直接 runtime 回滚点为 `20260729-193333`，H5 本轮未
-  切换，仍为 `20260729-113831`。root-only SQLite、PostgreSQL 与四份 env 备份位于
-  `/var/backups/memoria/runtime-switch-20260730-092236-from-20260729-193333-20260730T015529Z/`。
+- 当前已部署源码基线：`79f0cb89e1444e9fbdbb014bd66e1d5d58f5626c`，annotated tag
+  `20260730-171321` 精确指向该提交；`origin/main` 已包含源码提交，发布证据提交见本轮后续记录。
 - 微信小程序开发测试版：`0.8.59` 已上传成功（`636,385` 字节），但真机已确认欢迎语首播后
   因遥测契约不兼容断开；修复后的 `0.8.60` 已通过 CLI 上传开发测试版（`637,083` 字节），
   开 VPN 可完整聊天。诊断版 `0.8.61` 已上传（`637,237` 字节）；真机和 Safari 均确认标准 443
@@ -62,12 +52,18 @@
   任务 `confirmation_upload_d0446177-4d6e-4007-8852-fa0a2e10c6fc` 返回
   `success / execution_success`。正式提审/发布仍不在当前 CLI 能力内，且完整
   iPhone/Android 声学、弱网和 AEC A/B 真机矩阵仍待完成。
+- `0.8.63` 先按项目 `upload:test` 走 `miniprogram-ci`：dry-run 通过，Node 24 完整编译 32 个代码
+  文件并确认新声纹页 JS/WXML/WXSS 通过，但实际上传因当前公网 IP 不在微信 CI 白名单而被拒；
+  经用户确认后改用已登录微信开发者工具上传，任务
+  `confirmation_upload_082e65b6-5a92-4560-a3a5-143ee334f477` 返回
+  `success / execution_success`，包体 `653,554` 字节。默认发布策略仍优先项目脚本；本次成功
+  通道是微信开发者工具，不得写成 `miniprogram-ci` 上传成功。
 - 当前交付客户端为 `apps/h5` 与 `apps/miniprogram`；legacy Web 与原生 iOS 源码已移除。
 - 历史路线、架构决策和发布证据分别保留在
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
   `docs/releases/20260728-170236.md`。
 
-## 2026-07-30：H5 主人声纹多原型录取（本地完成，未发布）
+## 2026-07-30：H5 与小程序主人声纹多原型录取（已提交、推送、部署并上传体验版）
 
 - “我的”新增独立“主人声纹”入口，复用既有现场 PCM recorder 与登记 API；四段按
   “自然声线 → 轻声说话 → 带点笑意 → 认真表达”顺序解锁，显示 `0–4` 进度、重录、授权、
@@ -80,10 +76,14 @@
   直接获得主人历史、私人记忆或权限。正式激活继续要求 anti-spoof 可用、至少 200 条评估样本
   以及 FAR/FRR/EER/unknown-rejection 门禁。
 - 本地门禁：全量 Python `1499 passed, 29 skipped`；Ruff、strict mypy `177 source files`、
-  H5 `244/244`、production build、`git diff --check` 通过。现有 Chrome 用隔离本地 API 验证
+  H5 `244/244`、小程序 `82/82`、production build、`git diff --check` 通过。现有 Chrome 用隔离本地 API 验证
   “我的 → 主人声纹 → 返回我的”；`375×812` 与 `812×375` 均无横向溢出，录音按钮
   `44×44`，深色授权文字与横屏居中已实看修正，console warning/error 为空。未自动接受真实
   麦克风权限，真人四种声线的 FAR/FRR、噪声与真机录音质量仍是发布前开放验收项。
+- source commit / annotated tag 为
+  `79f0cb89e1444e9fbdbb014bd66e1d5d58f5626c / 20260730-171321`；runtime、H5 已切换，
+  小程序 `0.8.63` 体验版已上传。工件、备份与线上证据见
+  `docs/releases/20260730-171321.md`。
 
 ## 2026-07-30：当轮语义角色与危机支持（已提交、推送并部署）
 
