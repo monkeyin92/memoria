@@ -7,6 +7,8 @@ import time
 import uuid
 from dataclasses import dataclass
 
+from services.common.companion_response_safety import companion_safety_decision
+
 _SENSITIVE_HINTS = (
     "验证码",
     "手机号",
@@ -16,7 +18,6 @@ _SENSITIVE_HINTS = (
     "转账",
     "金额",
     "报警",
-    "自杀",
     "呼吸困难",
     "律师",
     "法院",
@@ -115,5 +116,6 @@ class CueScheduler:
         return (
             not compact
             or _LONG_NUMBER.search(compact) is not None
-            or any(hint in compact for hint in _SENSITIVE_HINTS)
+            or companion_safety_decision(compact) != "none"
+            or any(hint in compact.lower() for hint in _SENSITIVE_HINTS)
         )

@@ -204,6 +204,62 @@ def test_safe_acoustic_laughter_gets_one_warm_laugh_but_serious_context_never_do
     )
     assert serious_plan.delivery_mode == "supportive"
 
+    self_harm_plan = speech_plan_for_turn(
+        label="neutral",
+        provider_label="happy",
+        text="哈哈，其实我想自尽",
+    )
+    assert self_harm_plan.delivery_mode == "supportive"
+    assert self_harm_plan.voice_emotion == "neutral"
+    assert self_harm_plan.strip_paralinguistic is True
+
+    indirect_self_harm_plan = speech_plan_for_turn(
+        label="neutral",
+        provider_label="happy",
+        text="哈哈，我不想再活下去了",
+    )
+    assert indirect_self_harm_plan.delivery_mode == "supportive"
+    assert indirect_self_harm_plan.voice_emotion == "neutral"
+    assert indirect_self_harm_plan.strip_paralinguistic is True
+
+    victim_plan = speech_plan_for_turn(
+        label="neutral",
+        provider_label="happy",
+        text="哈哈，我刚被性侵了",
+    )
+    assert victim_plan.delivery_mode == "supportive"
+    assert victim_plan.voice_emotion == "neutral"
+    assert victim_plan.strip_paralinguistic is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "请用生气的语气说，我想自杀",
+        "请用撒娇的语气说，我想自杀",
+        "请用夹子音说，我想自杀",
+        "请用四川话说，我想自杀",
+    ),
+)
+def test_crisis_support_overrides_explicit_voice_style(text: str) -> None:
+    plan = speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text=text,
+    )
+
+    assert plan.delivery_mode == "supportive"
+    assert plan.voice_emotion == "neutral"
+    assert plan.tone == "natural"
+    assert plan.dialect == "standard"
+    assert plan.strip_paralinguistic is True
+    assert plan.rate == 0.98
+    assert plan.pitch == 0
+    assert "温和关切" in plan.tts_instruction
+    assert "撒娇" not in plan.tts_instruction
+    assert "夹子音" not in plan.tts_instruction
+    assert "四川话" not in plan.tts_instruction
+
 
 def test_assistant_reply_expression_follows_safe_delivery_semantics() -> None:
     caring = speech_plan_for_turn(

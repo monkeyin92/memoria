@@ -33,6 +33,7 @@ from services.agent.src.response_planner_client import (
     ResponseProvenance,
     ResponseVoiceTarget,
 )
+from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
     MINIPROGRAM_AGENT_DISPATCH_METADATA,
@@ -1401,6 +1402,23 @@ async def test_controlled_turn_keeps_short_budget_for_supportive_delivery(
     output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
 
     assert output == ["第一句。", "第二句。", "第三句。"]
+
+
+@pytest.mark.asyncio
+async def test_controlled_turn_speaks_the_complete_fixed_crisis_reply() -> None:
+    runtime = DuplexRuntime.create(barge_in_enabled=False)
+    await runtime.on_turn_committed("我想自杀")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="直接播放固定危机支持。",
+        direct_text=CRISIS_SUPPORT_REPLY,
+    )
+
+    output = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+
+    assert "".join(item for item in output if isinstance(item, str)) == CRISIS_SUPPORT_REPLY
+    assert CRISIS_SUPPORT_REPLY.endswith("你现在是否正准备伤害自己？")
 
 
 @pytest.mark.asyncio

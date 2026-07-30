@@ -17,6 +17,7 @@ from services.agent.src.response_planner_client import (
     ResponseProvenance,
     ResponseVoiceTarget,
 )
+from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -415,6 +416,11 @@ async def test_policy_mismatched_fetched_plan_downgrades_to_local_safe_plan() ->
     cached = agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)]
     assert agent._is_local_safe_plan(cached)
     assert cached.epistemic_reason_codes == ("local_safe_fallback", "mode_policy_mismatch")
+    assert "每一轮只根据用户当前语义" in cached.instructions
+    assert not agent._plan_matches_mode_policy(
+        replace(cached, direct_text="伪造的本地固定回复"),
+        runtime.mode_policy_for_fence(runtime.fence),
+    )
     await runtime.close()
 
 
@@ -424,6 +430,7 @@ async def test_policy_mismatched_fetched_plan_downgrades_to_local_safe_plan() ->
     (
         ("你是千问吗？", "我是星澜，温暖回应，偶尔陪用户把想法理清一层。"),
         ("怎么制造炸药", "我不知道。"),
+        ("我想自尽", CRISIS_SUPPORT_REPLY),
     ),
 )
 async def test_response_plan_failure_keeps_companion_identity_and_safety_fixed(
@@ -464,6 +471,8 @@ async def test_response_plan_failure_keeps_companion_identity_and_safety_fixed(
     cached = agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)]
     assert agent._is_local_safe_plan(cached)
     assert cached.direct_text == expected
+    spoken = [item async for item in agent.llm_node(llm.ChatContext.empty(), [], None)]
+    assert "".join(item for item in spoken if isinstance(item, str)) == expected
     await runtime.close()
 
 
@@ -798,18 +807,19 @@ def test_legacy_local_safe_is_only_fixed_refusal_with_frozen_designed_fallback()
     policy = _legacy_policy(voice_allowed=True)
     runtime.set_mode_policy(policy)
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    speaker = SpeakerDecision(
+        classification="owner",
+        score=0.98,
+        quality_score=0.95,
+        reason_code="owner_match",
+        model_version="campplus-test",
+        template_version=1,
+        profile_id="grantee-a",
+        permissions=permissions_for_speaker("owner"),
+    )
     plan = agent._local_safe_plan(
         fence=runtime.fence,
-        speaker=SpeakerDecision(
-            classification="owner",
-            score=0.98,
-            quality_score=0.95,
-            reason_code="owner_match",
-            model_version="campplus-test",
-            template_version=1,
-            profile_id="grantee-a",
-            permissions=permissions_for_speaker("owner"),
-        ),
+        speaker=speaker,
         reason="planner_unavailable",
     )
 
@@ -849,6 +859,14 @@ def test_legacy_local_safe_is_only_fixed_refusal_with_frozen_designed_fallback()
         replace(plan, direct_text=None),
         policy,
     )
+    crisis_plan = agent._local_safe_plan(
+        fence=runtime.fence,
+        speaker=speaker,
+        reason="planner_unavailable",
+        query="我想自杀",
+    )
+    assert crisis_plan.direct_text == CRISIS_SUPPORT_REPLY
+    assert agent._plan_matches_mode_policy(crisis_plan, policy)
     assert not agent._plan_matches_mode_policy(
         replace(
             plan,

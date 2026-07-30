@@ -15,3 +15,8 @@ def test_voice_prompt_mirrors_laughter_only_in_safe_contexts() -> None:
     assert "可以先短促、真诚地轻笑一次" in VOICE_SYSTEM_PROMPT
     assert "难过、生气、害怕、求助或涉及严肃风险" in VOICE_SYSTEM_PROMPT
     assert "不要咳嗽" in VOICE_SYSTEM_PROMPT
+
+
+def test_voice_prompt_does_not_turn_self_harm_disclosure_into_unknown_refusal() -> None:
+    assert "自伤、轻生或正在发生的紧迫危险不属于上述固定拒答" in VOICE_SYSTEM_PROMPT
+    assert "不能回答“我不知道。”" in VOICE_SYSTEM_PROMPT

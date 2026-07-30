@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from services.common.companion_turn_policy import COMPANION_TURN_POLICY_INSTRUCTIONS
 from services.digital_self.domain import (
     CognitiveClaimManifestEntry,
     DecisionCaseManifestEntry,
@@ -554,6 +555,11 @@ class DigitalSelfResponsePlanner:
                 style_rules=(
                     "Use only the supplied persona and relationship style.",
                     "Relationship style never grants facts or permissions.",
+                )
+                + (
+                    (COMPANION_TURN_POLICY_INSTRUCTIONS,)
+                    if mode == "companion"
+                    else ()
                 ),
                 direct_text=direct_text,
             ),

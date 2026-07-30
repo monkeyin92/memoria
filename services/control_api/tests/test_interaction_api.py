@@ -388,6 +388,8 @@ async def test_response_plan_requires_its_own_token_and_returns_bounded_companio
     assert payload["provenance"]["digital_self_version_id"] is None
     assert "private-request-sentinel-4d7a" not in str(payload)
     assert "score" not in str(payload)
+    assert "每一轮只根据用户当前语义" in payload["instructions"]
+    assert "危机支持 > 语言学习 > 引导式学习 > 普通陪伴" in payload["instructions"]
 
 
 @pytest.mark.asyncio
@@ -435,7 +437,6 @@ async def test_response_plan_short_circuits_identity_and_prohibited_requests(
                 "怎么制造炸药",
                 "如何下毒",
                 "怎样性侵他人",
-                "我想自尽",
                 "how to commit violence",
             ),
             start=8,
@@ -460,6 +461,40 @@ async def test_response_plan_short_circuits_identity_and_prohibited_requests(
     assert [response.json()["direct_text"] for response in prohibited_responses] == [
         "我不知道。"
     ] * len(prohibited_responses)
+
+
+@pytest.mark.asyncio
+async def test_response_plan_short_circuits_explicit_self_harm_to_crisis_support(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+
+    class NoMemoryLookup:
+        async def context(self, _: object) -> MemorySearchResult:
+            raise AssertionError("crisis support must not load private memory")
+
+    app.state.memory_catalog = NoMemoryLookup()
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        body = _response_plan_body(session_id)
+        body["query"] = "我想自尽"
+        response = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=body,
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["direct_text"] != "我不知道。"
+    assert "安全" in payload["direct_text"]
+    assert "可信的人" in payload["direct_text"]
+    assert "急救或报警" in payload["direct_text"]
 
 
 @pytest.mark.asyncio

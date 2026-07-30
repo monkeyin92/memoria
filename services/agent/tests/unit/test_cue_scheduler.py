@@ -30,6 +30,9 @@ def test_listener_cues_fail_closed_for_sensitive_or_unhealthy_audio() -> None:
         scheduler.observe_partial("验证码是 123456", now_ns=2_000_000_000)
         is None
     )
+    assert scheduler.observe_partial("我想自尽", now_ns=2_050_000_000) is None
+    assert scheduler.observe_partial("我不想再活下去了", now_ns=2_075_000_000) is None
+    assert scheduler.observe_partial("我刚被性侵了", now_ns=2_090_000_000) is None
     assert (
         scheduler.observe_partial(
             "我继续讲",

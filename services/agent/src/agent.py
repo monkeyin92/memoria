@@ -41,7 +41,12 @@ from services.agent.src.response_planner_client import (
     ResponseVoiceTarget,
 )
 from services.agent.src.voice_profile_client import VoiceProfileClient, VoiceRuntimeProfile
-from services.common.companion_response_safety import fixed_companion_reply
+from services.common.companion_response_safety import (
+    CRISIS_SUPPORT_REPLY,
+    SAFE_UNKNOWN_REPLY,
+    fixed_companion_reply,
+)
+from services.common.companion_turn_policy import COMPANION_TURN_POLICY_INSTRUCTIONS
 from services.common.companions import DESIGNED_VOICE_MODEL, companion_definition
 from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
@@ -610,11 +615,29 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         ):
             return False
         if self._is_local_safe_plan(plan):
-            companion_safe = policy.mode == "companion" and plan.direct_text is None
+            companion = companion_definition(policy.companion_style_id)
+            allowed_companion_direct_text = {
+                None,
+                SAFE_UNKNOWN_REPLY,
+                CRISIS_SUPPORT_REPLY,
+            }
+            if companion is not None:
+                allowed_companion_direct_text.add(
+                    f"我是{companion.display_name}，{companion.style_description}。"
+                )
+            companion_safe = (
+                policy.mode == "companion"
+                and companion is not None
+                and plan.direct_text in allowed_companion_direct_text
+                and not plan.grounded_items
+                and not provenance.source_refs
+                and plan.disclosures == ("privacy_refusal", "unknown")
+                and provenance.disclosures == plan.disclosures
+            )
             refusal_safe = (
                 policy.mode in {"self_preview", "legacy"}
                 and plan.instructions == _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
-                and plan.direct_text == _LOCAL_SAFE_REFUSAL_TEXT
+                and plan.direct_text in {_LOCAL_SAFE_REFUSAL_TEXT, CRISIS_SUPPORT_REPLY}
                 and not plan.grounded_items
                 and not plan.provenance.source_refs
                 and plan.disclosures
@@ -845,12 +868,18 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 "不得读取、引用或推断账户主人的持久历史、私人记忆、人格、关系或"
                 "工具结果；不确定时明确说明。"
             )
+        if companion:
+            instructions += "\n" + COMPANION_TURN_POLICY_INSTRUCTIONS
         if companion and policy.companion_style_prompt is not None:
             instructions += "\n" + policy.companion_style_prompt
         return ResponsePlan(
             fence=fence,
             instructions=instructions,
-            direct_text=fixed_reply if companion else _LOCAL_SAFE_REFUSAL_TEXT,
+            direct_text=(
+                fixed_reply
+                if companion or fixed_reply == CRISIS_SUPPORT_REPLY
+                else _LOCAL_SAFE_REFUSAL_TEXT
+            ),
             epistemic_status="not_applicable",
             epistemic_reason_codes=("local_safe_fallback", reason),
             grounded_items=(),

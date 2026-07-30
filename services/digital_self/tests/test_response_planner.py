@@ -255,6 +255,26 @@ def test_companion_without_a_version_returns_only_canonical_safety_and_style() -
     assert "personal facts" in " ".join(plan.instructions.safety_rules)
 
 
+def test_companion_plan_carries_one_dynamic_turn_policy_with_safety_precedence() -> None:
+    plan = DigitalSelfResponsePlanner.plan(
+        mode="companion",
+        actor=_actor(),
+        version=None,
+        query="我想学英语",
+        relationship_id=None,
+        speaker_decision=_owner(),
+    )
+
+    instructions = "\n".join(
+        (*plan.instructions.safety_rules, *plan.instructions.style_rules)
+    )
+    assert "每一轮只根据用户当前语义" in instructions
+    assert "危机支持 > 语言学习 > 引导式学习 > 普通陪伴" in instructions
+    assert "最多追问一到两个最关键的问题" in instructions
+    assert "先给一个线索、思路框架或可执行的下一步" in instructions
+    assert "不得把上一轮的互动策略永久化" in instructions
+
+
 def test_companion_uses_only_current_items_explicitly_supplied_by_control() -> None:
     current_memory = _memory(value="coffee")
 

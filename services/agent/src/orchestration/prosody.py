@@ -7,6 +7,8 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Literal
 
+from services.common.companion_response_safety import companion_safety_decision
+
 VoiceEmotion = Literal[
     "neutral",
     "happy",
@@ -30,6 +32,11 @@ _MARKUP_TAG = re.compile(
 _HAS_DIGIT = re.compile(r"\d")
 _LEADING_LAUGH_TEXT = re.compile(r"^(?:哈{2,}|呵{2,}|嘿{2,}|[（(]笑[)）])[，,、\s]*")
 _SOFT_LAUGH_PREFIXES = ("呵，", "呵,", "呵呵，", "呵呵,", "[laughter]")
+_SUPPORTIVE_LLM_INSTRUCTION = (
+    "本轮语境严肃。像熟人一样直接、温和地承接，语气关切但不要客服腔。"
+    "绝对不要笑、咳嗽、吸气戏或使用轻佻的思考填充词。"
+    "禁止输出 [laughter]/[breath]/[inhale]/<strong> 等副语言/强调标签。"
+)
 _SERIOUS_CONTEXT_MARKERS = (
     "车祸",
     "事故",
@@ -43,8 +50,6 @@ _SERIOUS_CONTEXT_MARKERS = (
     "去世",
     "死亡",
     "葬礼",
-    "自杀",
-    "轻生",
     "被骗",
     "诈骗",
     "钱骗",
@@ -229,16 +234,15 @@ def _semantic_speech_plan_for_turn(
     serious = (
         label in {"sad", "angry", "fearful", "disgusted"}
         or provider_label in {"sad", "angry", "fearful", "disgusted"}
-        or any(marker in text for marker in _SERIOUS_CONTEXT_MARKERS)
+        or companion_safety_decision(text) in {"crisis_self", "support_request"}
+        or any(marker in text.lower() for marker in _SERIOUS_CONTEXT_MARKERS)
     )
     if serious:
         return SpeechPlan(
             "neutral",
             0.98,
             "supportive",
-            "本轮语境严肃。像熟人一样直接、温和地承接，语气关切但不要客服腔。"
-            "绝对不要笑、咳嗽、吸气戏或使用轻佻的思考填充词。"
-            "禁止输出 [laughter]/[breath]/[inhale]/<strong> 等副语言/强调标签。",
+            _SUPPORTIVE_LLM_INSTRUCTION,
             strip_paralinguistic=True,
         )
     acoustic_laughter = "acoustic:qwen3-asr:laughter" in evidence
@@ -478,7 +482,22 @@ def speech_plan_for_turn(
         evidence=evidence,
         use_markup_tags=use_markup_tags,
     )
-    return _apply_explicit_voice_style(plan, text)
+    styled = _apply_explicit_voice_style(plan, text)
+    if companion_safety_decision(text) not in {"crisis_self", "support_request"}:
+        return styled
+    supportive = replace(
+        plan,
+        voice_emotion="neutral",
+        rate=0.98,
+        delivery_mode="supportive",
+        llm_instruction=_SUPPORTIVE_LLM_INSTRUCTION,
+        strip_paralinguistic=True,
+        tts_prefix="",
+        dialect="standard",
+        tone="natural",
+        pitch=0,
+    )
+    return replace(supportive, tts_instruction=_tts_instruction_for_plan(supportive))
 
 
 def mascot_expression_for_reply(
