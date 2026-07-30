@@ -249,6 +249,24 @@ def test_runtime_images_include_voice_registries_needed_by_agent_and_legacy_prev
     assert cosyvoice_registry in agent_dockerfile
     assert cosyvoice_registry in control_dockerfile
     assert delta_builder.count(cosyvoice_registry) == 2
+    assert "COPY infra/kws/keywords.txt ./infra/kws/keywords.txt" in delta_builder
+    assert "COPY services/speaker_model /app/services/speaker_model" in delta_builder
+    for dependency_input in (
+        ".dockerignore",
+        "pyproject.toml",
+        "uv.lock",
+        "infra/Dockerfile.agent",
+        "infra/Dockerfile.control-api",
+        "infra/Dockerfile.miniprogram-gateway",
+        "infra/Dockerfile.speaker-model",
+        "infra/requirements-speaker-model.txt",
+        "infra/patches/3d-speaker-campplus-average-pool.patch",
+        "scripts/export_campplus_onnx.py",
+    ):
+        assert dependency_input in delta_builder
+    assert "base images do not share one release commit" in delta_builder
+    assert delta_builder.count("--network=none") == 4
+    assert delta_builder.count("--pull=false") == 4
 
 
 def test_agent_image_installs_the_optional_keyword_spotter_runtime() -> None:
