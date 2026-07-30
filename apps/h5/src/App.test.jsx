@@ -606,10 +606,20 @@ describe("App identity and profile preferences", () => {
     expect(voiceReply).toHaveAttribute("aria-checked", "true");
     expect(reminders).toBeDisabled();
     expect(screen.getByText(/即将开放/)).toBeInTheDocument();
+    const companionEntry = screen.getByRole("button", {
+      name: "更换陪伴方式，当前是星澜",
+    });
+    expect(companionEntry).toBeInTheDocument();
+    fireEvent.click(companionEntry);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "返回我的" }),
+    );
+    expect(await screen.findByRole("heading", { name: "我的" }))
+      .toBeInTheDocument();
     expect(screen.getByText("专属凭证保护你的对话")).toBeInTheDocument();
     expect(screen.queryByText("你的对话只属于你")).not.toBeInTheDocument();
 
-    fireEvent.click(voiceReply);
+    fireEvent.click(screen.getByRole("switch", { name: /语音回应/ }));
     await waitFor(() => {
       expect(mocks.updateProfile).toHaveBeenLastCalledWith(
         "anonymous-user",

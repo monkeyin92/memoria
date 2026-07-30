@@ -15,6 +15,7 @@ import {
   Notebook,
   PhoneDisconnect,
   ShieldCheck,
+  Sparkle,
   UserCircle,
 } from "@phosphor-icons/react";
 
@@ -50,7 +51,7 @@ import { Mascot, MascotVisual } from "./components/Mascot.jsx";
 import { MemoryScreen } from "./components/MemoryScreen.jsx";
 import { ProfileScreen } from "./components/ProfileScreen.jsx";
 import { useVoiceSession } from "./hooks/useVoiceSession.js";
-import { formatDay, localDateKey } from "./lib/date.js";
+import { localDateKey } from "./lib/date.js";
 import {
   classifyEmotion,
   emotionFromVoice,
@@ -197,6 +198,7 @@ export function App() {
   const [profileReady, setProfileReady] = useState(false);
   const [digitalSelfOpen, setDigitalSelfOpen] = useState(false);
   const [companionSwitchOpen, setCompanionSwitchOpen] = useState(false);
+  const [companionSwitchOrigin, setCompanionSwitchOrigin] = useState("profile");
   const [privacyDataOpen, setPrivacyDataOpen] = useState(false);
   const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
   const [memoryDays, setMemoryDays] = useState([]);
@@ -998,23 +1000,21 @@ export function App() {
       <div className="app-surface">
         {activeTab === "home" && (
           <section className="screen home-screen" aria-label="实时陪伴">
-            <header className="topbar home-topbar">
-              <div>
-                <p className="eyebrow">{formatDay(today())}</p>
-                <h1>{greeting()}，{profile.display_name}</h1>
-              </div>
-              <button
-                type="button"
-                className="avatar-button"
-                aria-label="打开个人信息"
-                onClick={() => setActiveTab("profile")}
-              >
+            <header className="home-header">
+              <h1 className="home-heading">
+                <span className="hero-greeting">{greeting()}，{profile.display_name}</span>
+                <span className="hero-title">
+                  慢慢说，<em>我会认真听。</em>
+                </span>
+              </h1>
+              <div className="companion-chip" aria-label={`当前伙伴：${sessionCompanion.name}`}>
                 <MascotVisual
                   companionId={sessionCompanion.id}
                   emotion={mascotEmotion}
-                  className="avatar-mascot"
+                  className="companion-chip-mascot"
                 />
-              </button>
+                <span>{sessionCompanion.name} · {sessionCompanion.tagline}</span>
+              </div>
             </header>
 
             {selfPreviewSession && (
@@ -1047,13 +1047,6 @@ export function App() {
               </article>
             )}
 
-            <div className="voice-status-row">
-              <div className="status-pill" data-state={voice.uiState} role="status">
-                <span className="status-dot" />
-                {voice.statusLabel}
-              </div>
-            </div>
-
             <div className="mascot-wrap">
               <Mascot
                 emotion={mascotEmotion}
@@ -1069,7 +1062,33 @@ export function App() {
               />
             </div>
 
+            <div className="voice-status-row">
+              <div className="status-pill" data-state={voice.uiState} role="status">
+                <span className="status-dot" />
+                {voice.statusLabel}
+              </div>
+            </div>
+
+            {!voice.session && (
+              <div className="voice-start-panel">
+                <p>{sessionCompanion.description}</p>
+                <button
+                  type="button"
+                  className="start-voice-button"
+                  disabled={voice.uiState === "connecting" || Boolean(previewBusy)}
+                  onClick={() => void voice.start()}
+                >
+                  <Sparkle size={19} weight="fill" aria-hidden="true" />
+                  开始语音陪伴
+                </button>
+              </div>
+            )}
+
             <div className="conversation-area" aria-live="polite">
+              <div className="conversation-heading" aria-hidden="true">
+                <strong>实时对话</strong>
+                <span>仅显示当前发言</span>
+              </div>
               {voice.latestTranscript ? (
                 <div
                   className={`transcript-card ${voice.latestTranscript.speaker}`}
@@ -1220,6 +1239,7 @@ export function App() {
                 setActiveTab("memory");
               }}
               onChangeCompanion={() => {
+                setCompanionSwitchOrigin("digital-self");
                 setDigitalSelfOpen(false);
                 setCompanionSwitchOpen(true);
               }}
@@ -1231,16 +1251,21 @@ export function App() {
           <CompanionSwitcher
             userId={userId}
             currentCompanionId={profile.companion_id}
+            backLabel={companionSwitchOrigin === "digital-self" ? "返回数字心智" : "返回我的"}
             onBack={() => {
               setCompanionSwitchOpen(false);
-              setDigitalSelfOpen(true);
+              if (companionSwitchOrigin === "digital-self") {
+                setDigitalSelfOpen(true);
+              }
             }}
             onComplete={(savedProfile) => {
               const next = { ...profile, ...savedProfile };
               setProfile(next);
               window.localStorage.setItem(profileStorageKey(userId), JSON.stringify(next));
               setCompanionSwitchOpen(false);
-              setDigitalSelfOpen(true);
+              if (companionSwitchOrigin === "digital-self") {
+                setDigitalSelfOpen(true);
+              }
             }}
           />
         )}
@@ -1267,6 +1292,10 @@ export function App() {
             onToggle={togglePreference}
             preferenceSaving={preferenceSaving}
             preferenceError={preferenceError}
+            onChangeCompanion={() => {
+              setCompanionSwitchOrigin("profile");
+              setCompanionSwitchOpen(true);
+            }}
             onOpenDigitalSelf={() => setDigitalSelfOpen(true)}
             onOpenPrivacyData={() => setPrivacyDataOpen(true)}
             onLogoutCurrent={() => handleLogout(false)}

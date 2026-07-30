@@ -22,6 +22,7 @@ export function ProfileScreen({
   onToggle,
   preferenceSaving,
   preferenceError,
+  onChangeCompanion,
   onOpenDigitalSelf,
   onOpenPrivacyData,
   onLogoutCurrent,
@@ -91,6 +92,25 @@ export function ProfileScreen({
           <div><strong>{momentCount}</strong><span>记住的片刻</span></div>
           <div><strong>{Math.min(memoryDays.length, 7)}</strong><span>连续陪伴</span></div>
         </section>
+
+        <button
+          type="button"
+          className="profile-companion-card"
+          aria-label={`更换陪伴方式，当前是${companion.name}`}
+          onClick={onChangeCompanion}
+        >
+          <MascotVisual
+            companionId={companion.id}
+            emotion="happy"
+            className="profile-companion-mascot"
+          />
+          <span>
+            <small>陪伴方式</small>
+            <strong>{companion.name}</strong>
+            <em>{companion.tagline}</em>
+          </span>
+          <CaretRight size={19} weight="bold" aria-hidden="true" />
+        </button>
 
         <section className="settings-card">
           <h3>陪伴偏好</h3>

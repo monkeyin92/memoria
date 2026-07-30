@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "@fontsource-variable/noto-sans-sc";
 import { App } from "./App.jsx";
 import "./styles.css";
+import "./miniprogram-theme.css";
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>

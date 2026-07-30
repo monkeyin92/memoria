@@ -19,7 +19,7 @@ describe("Mascot", () => {
     expect(container.querySelectorAll(".mascot-body")).toHaveLength(1);
     expect(container.querySelector(".mascot-body")).toHaveAttribute(
       "src",
-      expect.stringContaining("companions/starlight.webp"),
+      expect.stringContaining("companions/alpha/starlight.webp"),
     );
     expect(screen.getByRole("button")).toHaveAttribute(
       "data-expression",

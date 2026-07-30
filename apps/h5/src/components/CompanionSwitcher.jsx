@@ -5,7 +5,13 @@ import { updateProfile } from "../api.js";
 import { companions } from "../lib/companions.js";
 import { MascotVisual } from "./Mascot.jsx";
 
-export function CompanionSwitcher({ userId, currentCompanionId, onBack, onComplete }) {
+export function CompanionSwitcher({
+  userId,
+  currentCompanionId,
+  onBack,
+  onComplete,
+  backLabel = "返回数字心智",
+}) {
   const [selectedId, setSelectedId] = useState(currentCompanionId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -28,7 +34,7 @@ export function CompanionSwitcher({ userId, currentCompanionId, onBack, onComple
   return (
     <section className="screen companion-switcher" aria-label="更换陪伴方式">
       <header className="companion-switcher-header">
-        <button type="button" className="icon-button" aria-label="返回数字心智" onClick={onBack}>
+        <button type="button" className="icon-button" aria-label={backLabel} onClick={onBack}>
           <ArrowLeft size={21} weight="bold" />
         </button>
         <div>

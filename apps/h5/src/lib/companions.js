@@ -1,3 +1,9 @@
+import axuImage from "../../../miniprogram/assets/companions/alpha/axu.webp";
+import mianmianImage from "../../../miniprogram/assets/companions/alpha/mianmian.webp";
+import starlightImage from "../../../miniprogram/assets/companions/alpha/starlight.webp";
+import taoxiImage from "../../../miniprogram/assets/companions/alpha/taoxi.webp";
+import xuanmoImage from "../../../miniprogram/assets/companions/alpha/xuanmo.webp";
+
 const asset = (path) => `${import.meta.env.BASE_URL}assets/${path}`;
 
 export const companions = Object.freeze([
@@ -8,7 +14,7 @@ export const companions = Object.freeze([
     description: "回应有温度，也会偶尔追问一层，适合日常聊天和中等深度的梳理。",
     voiceName: "阳光青年 2.0",
     voiceDescription: "明亮、自然，像可靠的同龄朋友",
-    image: asset("companions/starlight.webp"),
+    image: starlightImage,
     voicePreview: asset("voices/starlight-doubao-v1.wav"),
     face: {
       left: "30.3%",
@@ -30,7 +36,7 @@ export const companions = Object.freeze([
     description: "语气更轻快，回复偏短，较少连续追问，适合轻松说说当天的事。",
     voiceName: "甜美桃子 2.0",
     voiceDescription: "清甜、灵动，回应里带一点自然上扬",
-    image: asset("companions/taoxi.webp"),
+    image: taoxiImage,
     voicePreview: asset("voices/taoxi-doubao-v1.wav"),
     face: {
       left: "30.2%",
@@ -51,7 +57,7 @@ export const companions = Object.freeze([
     description: "会留出更多表达空间，追问频率较低；你愿意时，再陪你聊得更深。",
     voiceName: "温柔小雅 2.0",
     voiceDescription: "温柔、细腻，适合慢慢说和认真倾听",
-    image: asset("companions/mianmian.webp"),
+    image: mianmianImage,
     voicePreview: asset("voices/mianmian-doubao-v1.wav"),
     face: {
       left: "30.1%",
@@ -72,7 +78,7 @@ export const companions = Object.freeze([
     description: "表达更直接，擅长把信息整理清楚，但不会替你决定应该成为什么样的人。",
     voiceName: "高冷沉稳 2.0",
     voiceDescription: "沉着、清晰，分析事情利落但不生硬",
-    image: asset("companions/axu.webp"),
+    image: axuImage,
     voicePreview: asset("voices/axu-doubao-v1.wav"),
     face: {
       left: "27.2%",
@@ -93,7 +99,7 @@ export const companions = Object.freeze([
     description: "回复更克制、留白更多，通常不主动深挖；只有你明确邀请时才进入深访。",
     voiceName: "深夜播客 2.0",
     voiceDescription: "低沉、克制，安静里有让人放松的力量",
-    image: asset("companions/xuanmo.webp"),
+    image: xuanmoImage,
     voicePreview: asset("voices/xuanmo-doubao-v1.wav"),
     face: {
       left: "30.1%",

@@ -9,6 +9,9 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     allowedHosts: ["terminal.local"],
+    fs: {
+      allow: [".."],
+    },
     port: 4173,
     warmup: {
       clientFiles: ["./src/main.jsx"],
