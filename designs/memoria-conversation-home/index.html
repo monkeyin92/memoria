@@ -1,0 +1,389 @@
+<!--
+  假设：沿用 Memoria 现有深空霓虹视觉、星澜素材与“只显示当前发言”结构。
+  目标：用一个明确的语音主按钮取代重复入口和三按钮控制；文字模式不申请麦克风、不播放声音。
+  设计理由：吉祥物占据视觉中心，状态通过呼吸、光环、嘴形和胸灯表达；操作退到舞台下方，保证单手可达与读屏语义。
+-->
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Memoria">
+    <link rel="apple-touch-icon" href="icon.png">
+    <link rel="icon" href="icon.png">
+    <title>Memoria 首页对话原型</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #070b1a;
+        --surface: rgba(16, 23, 52, 0.76);
+        --surface-strong: rgba(22, 31, 66, 0.92);
+        --text: #f2f5ff;
+        --muted: #9aa8d3;
+        --tertiary: #68739b;
+        --cyan: #22e5ff;
+        --violet: #7b5cff;
+        --magenta: #ff4ddb;
+        --danger: #ff7088;
+        --ring: rgba(94, 234, 255, 0.4);
+        --primary: linear-gradient(135deg, #19b8d8 0%, #7b5cff 56%, #c44de0 100%);
+        font-family: -apple-system, "SF Pro Text", "PingFang SC", "Noto Sans SC", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; }
+      body {
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        color: var(--text);
+        background: #03050d;
+      }
+      button, textarea { font: inherit; }
+      button { touch-action: manipulation; }
+
+      #app {
+        position: relative;
+        width: 100vw;
+        height: 100dvh;
+        min-height: 620px;
+        overflow: hidden auto;
+        background:
+          linear-gradient(rgba(7, 11, 26, 0.38), rgba(7, 11, 26, 0.94)),
+          url("night-stars.png") center top / cover no-repeat,
+          var(--bg);
+      }
+
+      .screen {
+        min-height: 100%;
+        padding: max(22px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom));
+      }
+
+      .header { display: grid; gap: 11px; }
+      .greeting { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+      h1 { margin: 0; font-size: clamp(26px, 7.4vw, 31px); line-height: 1.23; letter-spacing: -0.035em; }
+      h1 span {
+        color: transparent;
+        background: linear-gradient(120deg, var(--cyan), var(--violet) 56%, var(--magenta));
+        background-clip: text;
+        -webkit-background-clip: text;
+      }
+
+      .companion-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-self: start;
+        min-height: 44px;
+        padding: 5px 14px 5px 6px;
+        border: 1px solid rgba(94, 234, 255, 0.26);
+        border-radius: 999px;
+        color: #adc1ef;
+        background: rgba(16, 23, 52, 0.72);
+        box-shadow: 0 0 18px rgba(34, 229, 255, 0.11);
+        font-size: 12px;
+        font-weight: 650;
+      }
+      .companion-chip img { width: 32px; height: 32px; margin-right: 8px; object-fit: contain; }
+
+      .stage {
+        position: relative;
+        display: grid;
+        place-items: center;
+        height: min(42dvh, 346px);
+        min-height: 286px;
+        isolation: isolate;
+      }
+      .halo, .ring, .ground { position: absolute; z-index: -1; pointer-events: none; }
+      .halo {
+        width: min(74vw, 310px);
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(34, 229, 255, 0.2), rgba(123, 92, 255, 0.12) 45%, transparent 72%);
+        animation: halo 4.2s ease-in-out infinite;
+      }
+      .ring {
+        width: min(64vw, 268px);
+        aspect-ratio: 1;
+        border: 1px dashed var(--ring);
+        border-radius: 50%;
+        animation: spin 28s linear infinite;
+      }
+      .ground {
+        bottom: 22px;
+        width: 190px;
+        height: 46px;
+        border-radius: 50%;
+        background: radial-gradient(ellipse, rgba(34, 229, 255, 0.35), rgba(123, 92, 255, 0.15) 53%, transparent 75%);
+      }
+      .mascot {
+        position: relative;
+        width: min(72vw, 304px);
+        aspect-ratio: 1;
+        animation: breathe 4.8s cubic-bezier(.45, 0, .2, 1) infinite;
+        transform-origin: 50% 78%;
+      }
+      .mascot img { display: block; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 22px 22px rgba(0, 0, 0, 0.28)); }
+      .face {
+        position: absolute;
+        left: 31%;
+        top: 29%;
+        width: 38%;
+        height: 23%;
+        pointer-events: none;
+      }
+      .eyes { display: flex; justify-content: space-between; padding: 8% 10% 0; }
+      .eye {
+        width: 28px;
+        height: 38px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 35% 30%, #fff 0 7%, transparent 8%), linear-gradient(#8ff8ff, #556ef3 72%);
+        box-shadow: 0 0 10px rgba(94, 234, 255, 0.5);
+        animation: blink 5.8s ease-in-out infinite;
+      }
+      .mouth {
+        width: 23px;
+        height: 11px;
+        margin: 11px auto 0;
+        border-bottom: 4px solid #eaf8ff;
+        border-radius: 0 0 20px 20px;
+      }
+      [data-mode="voice"] .mascot { animation: listen 2.8s ease-in-out infinite; }
+      [data-mode="voice"] .mouth { animation: talk 420ms ease-in-out infinite alternate; }
+
+      .status {
+        position: absolute;
+        left: 50%;
+        bottom: 0;
+        display: inline-flex;
+        align-items: center;
+        min-height: 34px;
+        padding: 7px 15px;
+        border: 1px solid rgba(94, 234, 255, 0.3);
+        border-radius: 999px;
+        color: #a9b8df;
+        background: rgba(16, 23, 52, 0.84);
+        box-shadow: 0 0 18px rgba(34, 229, 255, 0.12);
+        font-size: 12px;
+        font-weight: 650;
+        transform: translateX(-50%);
+        white-space: nowrap;
+      }
+      .status::before {
+        width: 7px;
+        height: 7px;
+        margin-right: 8px;
+        border-radius: 50%;
+        background: var(--cyan);
+        box-shadow: 0 0 9px rgba(34, 229, 255, 0.95);
+        content: "";
+      }
+
+      .controls { display: grid; gap: 10px; max-width: 360px; margin: 12px auto 0; }
+      .primary, .secondary, .send, .text-close {
+        min-height: 48px;
+        border-radius: 999px;
+        cursor: pointer;
+        transition: filter 180ms ease, border-color 180ms ease, background 180ms ease;
+      }
+      .primary {
+        border: 0;
+        color: #fff;
+        background: var(--primary);
+        box-shadow: 0 12px 30px rgba(123, 92, 255, 0.36), 0 0 22px rgba(34, 229, 255, 0.18);
+        font-size: 15px;
+        font-weight: 780;
+        letter-spacing: .04em;
+      }
+      [data-mode="voice"] .primary {
+        border: 1px solid rgba(255, 112, 136, 0.5);
+        color: #ffdbe1;
+        background: rgba(255, 73, 105, 0.13);
+        box-shadow: none;
+      }
+      .secondary {
+        border: 1px solid rgba(94, 234, 255, 0.2);
+        color: #b6c6ea;
+        background: rgba(16, 23, 52, 0.64);
+        font-size: 14px;
+      }
+      .primary:focus-visible, .secondary:focus-visible, .send:focus-visible, .text-close:focus-visible, textarea:focus-visible {
+        outline: 3px solid rgba(34, 229, 255, 0.52);
+        outline-offset: 3px;
+      }
+      .primary:active, .secondary:active, .send:active, .text-close:active { filter: brightness(.88); }
+
+      .conversation {
+        max-width: 360px;
+        min-height: 112px;
+        margin: 14px auto 0;
+        padding: 14px;
+        border: 1px solid rgba(94, 234, 255, 0.14);
+        border-radius: 20px;
+        background: var(--surface);
+        box-shadow: 0 16px 38px rgba(0, 0, 0, 0.22);
+        backdrop-filter: blur(16px);
+      }
+      .conversation-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+      .conversation-head strong { font-size: 15px; }
+      .conversation-head span { color: var(--tertiary); font-size: 11px; }
+      .bubble { width: fit-content; max-width: 84%; margin-top: 12px; padding: 10px 13px; border-radius: 15px 15px 15px 5px; background: var(--surface-strong); }
+      .bubble[data-speaker="user"] { margin-left: auto; border-radius: 15px 15px 5px; background: var(--primary); }
+      .bubble small, .bubble p { display: block; margin: 0; }
+      .bubble small { color: #8591b8; font-size: 10px; }
+      .bubble[data-speaker="user"] small { color: rgba(255, 255, 255, 0.72); }
+      .bubble p { margin-top: 4px; font-size: 14px; line-height: 1.65; }
+      .empty { margin: 14px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+
+      .composer { display: none; gap: 10px; max-width: 360px; margin: 12px auto 0; }
+      [data-mode="text"] .controls { display: none; }
+      [data-mode="text"] .composer { display: grid; }
+      .composer label { color: #ced8f4; font-size: 13px; font-weight: 650; }
+      textarea {
+        width: 100%;
+        min-height: 92px;
+        resize: none;
+        border: 1px solid rgba(94, 234, 255, 0.24);
+        border-radius: 18px;
+        padding: 13px 14px;
+        color: var(--text);
+        background: rgba(9, 15, 37, 0.92);
+        font-size: 16px;
+        line-height: 1.65;
+      }
+      textarea::placeholder { color: #68739b; }
+      .composer-actions { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
+      .send { border: 0; color: #fff; background: var(--primary); font-weight: 740; }
+      .text-close { min-width: 96px; border: 1px solid rgba(94, 234, 255, 0.2); color: #b6c6ea; background: transparent; }
+
+      @keyframes halo { 50% { opacity: .9; transform: scale(1.06); } }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes breathe { 50% { transform: translateY(-6px) scale(1.006); } }
+      @keyframes listen { 50% { transform: translateY(-9px) scale(1.01); } }
+      @keyframes blink { 0%, 44%, 48%, 100% { transform: scaleY(1); } 46% { transform: scaleY(.08); } }
+      @keyframes talk { from { transform: scaleY(.55); } to { transform: scaleY(1.15); } }
+
+      @media (min-width: 700px) {
+        #app { width: 390px; height: 844px; border-radius: 44px; box-shadow: 0 32px 90px rgba(0, 0, 0, 0.6); }
+      }
+      @media (max-height: 740px) {
+        .screen { padding-top: max(14px, env(safe-area-inset-top)); }
+        .stage { height: 286px; min-height: 260px; }
+        .mascot { width: min(62vw, 250px); }
+        .conversation { min-height: 96px; }
+      }
+      @media (orientation: landscape) and (max-height: 650px) {
+        #app { overflow: auto; }
+        .screen { display: grid; grid-template-columns: minmax(280px, .92fr) minmax(300px, 1.08fr); gap: 14px 18px; }
+        .header, .controls, .composer, .conversation { grid-column: 1; }
+        .stage { grid-column: 2; grid-row: 1 / span 4; height: calc(100dvh - 40px); }
+        .controls, .composer, .conversation { margin: 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="app" data-mode="idle">
+      <section class="screen" data-screen-label="首页对话">
+        <header class="header">
+          <p class="greeting">晚上好，朋友</p>
+          <h1>慢慢说，<span>我会认真听。</span></h1>
+          <div class="companion-chip" aria-label="当前伙伴：星澜">
+            <img src="mascot.webp" alt="">
+            <span>星澜 · 温柔而坚定</span>
+          </div>
+        </header>
+
+        <div class="stage" aria-label="星澜，会用呼吸、眨眼和说话动作回应你">
+          <div class="halo"></div>
+          <div class="ring"></div>
+          <div class="ground"></div>
+          <div class="mascot" aria-hidden="true">
+            <img src="mascot.webp" alt="">
+            <div class="face">
+              <div class="eyes"><span class="eye"></span><span class="eye"></span></div>
+              <div class="mouth"></div>
+            </div>
+          </div>
+          <div class="status" role="status" aria-live="polite">轻触开始陪伴</div>
+        </div>
+
+        <div class="controls" aria-label="对话方式">
+          <button class="primary" id="voice-toggle" type="button">开始语音对话</button>
+          <button class="secondary" id="text-open" type="button">使用文字对话</button>
+        </div>
+
+        <form class="composer" id="composer">
+          <label for="message">输入你想说的话</label>
+          <textarea id="message" maxlength="500" placeholder="例如：今天发生了一件想和你聊聊的事"></textarea>
+          <div class="composer-actions">
+            <button class="send" type="submit">发送</button>
+            <button class="text-close" id="text-close" type="button">退出文字</button>
+          </div>
+        </form>
+
+        <section class="conversation" aria-live="polite" aria-label="当前对话">
+          <div class="conversation-head"><strong>当前对话</strong><span>文字会保留在这里</span></div>
+          <p class="empty" id="empty">可以语音说，也可以安静地打字。文字模式不会打开麦克风。</p>
+          <div id="messages"></div>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const app = document.querySelector("#app");
+      const voiceToggle = document.querySelector("#voice-toggle");
+      const textOpen = document.querySelector("#text-open");
+      const textClose = document.querySelector("#text-close");
+      const composer = document.querySelector("#composer");
+      const message = document.querySelector("#message");
+      const status = document.querySelector(".status");
+      const messages = document.querySelector("#messages");
+      const empty = document.querySelector("#empty");
+
+      function setMode(mode) {
+        app.dataset.mode = mode;
+        const active = mode === "voice";
+        voiceToggle.textContent = active ? "结束语音对话" : "开始语音对话";
+        status.textContent = active ? "我在听" : mode === "text" ? "文字对话中" : "轻触开始陪伴";
+        if (mode === "text") window.setTimeout(() => message.focus(), 50);
+      }
+
+      function addBubble(speaker, text) {
+        empty.hidden = true;
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        bubble.dataset.speaker = speaker;
+        const who = document.createElement("small");
+        who.textContent = speaker === "user" ? "你" : "星澜";
+        const copy = document.createElement("p");
+        copy.textContent = text;
+        bubble.append(who, copy);
+        messages.replaceChildren(bubble);
+      }
+
+      voiceToggle.addEventListener("click", () => setMode(app.dataset.mode === "voice" ? "idle" : "voice"));
+      textOpen.addEventListener("click", () => setMode("text"));
+      textClose.addEventListener("click", () => setMode("idle"));
+      composer.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const text = message.value.trim();
+        if (!text) {
+          message.focus();
+          return;
+        }
+        addBubble("user", text);
+        message.value = "";
+        status.textContent = "星澜正在想";
+        window.setTimeout(() => {
+          addBubble("assistant", "我看见了。你可以慢慢打字，我会一直在这里认真读。\n");
+          status.textContent = "文字对话中";
+        }, 600);
+      });
+    </script>
+  </body>
+</html>

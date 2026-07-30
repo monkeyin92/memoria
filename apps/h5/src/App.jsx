@@ -8,11 +8,10 @@ import {
   useState,
 } from "react";
 import {
-  HandPalm,
+  ChatText,
   House,
-  Microphone,
-  MicrophoneSlash,
   Notebook,
+  PaperPlaneRight,
   PhoneDisconnect,
   ShieldCheck,
   Sparkle,
@@ -107,6 +106,17 @@ function greeting() {
   if (hour < 14) return "中午好";
   if (hour < 18) return "下午好";
   return "晚上好";
+}
+
+function homeStatusLabel(voice) {
+  if (voice.inputMode !== "text") return voice.statusLabel;
+  return {
+    connecting: "正在打开文字对话",
+    thinking: "正在想",
+    speaking: "正在回复",
+    reconnecting: "正在恢复连接",
+    closed: "文字对话已结束",
+  }[voice.uiState] || "文字对话中";
 }
 
 function normalizeMemoryDay(item) {
@@ -218,6 +228,7 @@ export function App() {
   const [previewBusy, setPreviewBusy] = useState("");
   const [fidelityEvaluations, setFidelityEvaluations] = useState([]);
   const [fidelityFocusVersionId, setFidelityFocusVersionId] = useState("");
+  const [textDraft, setTextDraft] = useState("");
   const activeUserIdRef = useRef("");
   const growthCompletionIdsRef = useRef({});
   const userId = identity?.user_id || "";
@@ -1062,33 +1073,89 @@ export function App() {
                 disabled={
                   voice.uiState === "connecting" || Boolean(previewBusy)
                 }
-                onActivate={() => {
-                  if (!voice.session && !previewBusy) void voice.start();
-                }}
               />
             </div>
 
             <div className="voice-status-row">
               <div className="status-pill" data-state={voice.uiState} role="status">
                 <span className="status-dot" />
-                {voice.statusLabel}
+                {homeStatusLabel(voice)}
               </div>
             </div>
 
-            {!voice.session && (
-              <div className="voice-start-panel">
-                <p>{sessionCompanion.description}</p>
+            <div className="voice-start-panel">
+              {!voice.session && <p>{sessionCompanion.description}</p>}
+              {(!voice.session || voice.inputMode === "voice") && (
                 <button
                   type="button"
                   className="start-voice-button"
                   disabled={voice.uiState === "connecting" || Boolean(previewBusy)}
-                  onClick={() => void voice.start()}
+                  aria-label={voice.session ? "结束对话" : "开始语音对话"}
+                  onClick={() => {
+                    if (voice.session) void finishConversation();
+                    else void voice.start();
+                  }}
                 >
-                  <Sparkle size={19} weight="fill" aria-hidden="true" />
-                  开始语音陪伴
+                  {voice.session ? (
+                    <PhoneDisconnect size={19} weight="fill" aria-hidden="true" />
+                  ) : (
+                    <Sparkle size={19} weight="fill" aria-hidden="true" />
+                  )}
+                  {voice.session ? "结束语音对话" : "开始语音对话"}
                 </button>
-              </div>
-            )}
+              )}
+              {!voice.session && !selfPreviewSession && !legacySession && (
+                <button
+                  type="button"
+                  className="text-mode-button"
+                  disabled={voice.uiState === "connecting" || Boolean(previewBusy)}
+                  onClick={() => void voice.start({ inputMode: "text" })}
+                >
+                  <ChatText size={18} weight="bold" aria-hidden="true" />
+                  使用文字对话
+                </button>
+              )}
+              {voice.session && voice.inputMode === "text" && (
+                <form
+                  className="text-composer"
+                  onSubmit={async (event) => {
+                    event.preventDefault();
+                    const message = textDraft.trim();
+                    if (!message) return;
+                    if (await voice.sendText(message)) setTextDraft("");
+                  }}
+                >
+                  <label htmlFor="home-text-message">输入你想说的话</label>
+                  <div className="text-composer-row">
+                    <textarea
+                      id="home-text-message"
+                      rows={2}
+                      maxLength={500}
+                      value={textDraft}
+                      onChange={(event) => setTextDraft(event.target.value)}
+                      placeholder="例如：今天发生了一件想和你聊聊的事"
+                    />
+                    <button
+                      type="submit"
+                      className="text-send-button"
+                      disabled={!textDraft.trim()}
+                      aria-label="发送文字消息"
+                    >
+                      <PaperPlaneRight size={20} weight="fill" aria-hidden="true" />
+                      <span>发送</span>
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-exit-button"
+                    aria-label="结束对话"
+                    onClick={() => void finishConversation()}
+                  >
+                    退出文字对话
+                  </button>
+                </form>
+              )}
+            </div>
 
             <div className="conversation-area" aria-live="polite">
               <div className="conversation-heading" aria-hidden="true">
@@ -1096,19 +1163,27 @@ export function App() {
                 <span>仅显示当前发言</span>
               </div>
               {voice.latestTranscript ? (
-                <div
-                  className={`transcript-card ${voice.latestTranscript.speaker}`}
-                >
-                  <span>
-                    {voice.latestTranscript.speaker === "assistant"
+                <div className={voice.inputMode === "text" ? "text-thread" : undefined}>
+                  {(voice.inputMode === "text"
+                    ? voice.transcripts
+                    : [voice.latestTranscript]
+                  ).map((line) => (
+                  <div
+                    key={line.key}
+                    className={`transcript-card ${line.speaker}`}
+                  >
+                    <span>
+                    {line.speaker === "assistant"
                       ? selfPreviewSession
                         ? "数字分身"
                         : legacySession
                           ? "冻结数字分身"
-                        : sessionCompanion.name
+                          : sessionCompanion.name
                       : "你"}
-                  </span>
-                  <p>{voice.latestTranscript.text}</p>
+                    </span>
+                    <p>{line.text}</p>
+                  </div>
+                  ))}
                 </div>
               ) : (
                 <div className="welcome-copy">
@@ -1132,7 +1207,7 @@ export function App() {
                           : legacySession
                             ? "回答只使用当前授权范围；没有足够资料时会明确说不知道。"
                           : "不用按住按钮，我会听完再回应。"
-                        : "轻触吉祥物，开始一次实时语音对话。"}
+                        : "可以语音说，也可以安静地打字；文字模式不会打开麦克风。"}
                   </p>
                 </div>
               )}
@@ -1148,38 +1223,6 @@ export function App() {
               )}
             </div>
 
-            {voice.session && (
-              <div className="voice-controls" aria-label="对话控制">
-                <button
-                  type="button"
-                  className="round-control"
-                  aria-label={voice.micEnabled ? "关闭麦克风" : "打开麦克风"}
-                  onClick={() => void voice.toggleMic()}
-                >
-                  {voice.micEnabled ? (
-                    <Microphone size={23} weight="fill" />
-                  ) : (
-                    <MicrophoneSlash size={23} weight="fill" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="round-control stop-control"
-                  aria-label="停止回答"
-                  onClick={() => void voice.stopAssistant()}
-                >
-                  <HandPalm size={24} weight="fill" />
-                </button>
-                <button
-                  type="button"
-                  className="round-control end-control"
-                  aria-label="结束对话"
-                  onClick={() => void finishConversation()}
-                >
-                  <PhoneDisconnect size={24} weight="fill" />
-                </button>
-              </div>
-            )}
           </section>
         )}
 

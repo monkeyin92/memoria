@@ -80,31 +80,47 @@
   </view>
 
   <view class="control-deck">
-    <text class="mascot-caption">{{active ? '语音正在通过安全媒体网关接入既有陪伴服务。' : companion.description}}</text>
-    <button
-      wx:if="{{!active}}"
-      class="primary-button start-button"
-      loading="{{connecting}}"
-      bindtap="startVoice"
-    ><text class="start-button-spark">✦</text>开始语音陪伴</button>
-    <text wx:if="{{!authenticated && !active}}" class="guest-action-hint">可以先浏览，开始对话时再使用微信登录。</text>
-    <view wx:else class="voice-controls">
+    <text class="mascot-caption">{{active ? (inputMode === 'text' ? '不打开麦克风，也不播放声音，只用文字和你聊。' : '正在听你说话；想结束时，再点一次下方按钮。') : companion.description}}</text>
+    <block wx:if="{{!active}}">
       <button
-        wx:if="{{status === 'thinking' || status === 'speaking'}}"
-        class="secondary-button"
-        bindtap="stopPlayback"
-      >停止播放</button>
-      <button wx:else class="secondary-button" bindtap="toggleMic">{{micEnabled ? '静音麦克风' : '打开麦克风'}}</button>
-      <button class="danger-button" bindtap="stopVoice">结束</button>
-    </view>
-    <button wx:if="{{status === 'closed' && sessionId}}" class="secondary-button retry-button" bindtap="retryVoice">恢复语音</button>
+        class="primary-button start-button"
+        loading="{{connecting && inputMode === 'voice'}}"
+        bindtap="startVoice"
+      >开始语音对话</button>
+      <button
+        class="secondary-button text-mode-button"
+        loading="{{connecting && inputMode === 'text'}}"
+        bindtap="startText"
+      >使用文字对话</button>
+      <text wx:if="{{!authenticated}}" class="guest-action-hint">可以先浏览，开始对话时再使用微信登录。</text>
+    </block>
+    <block wx:else>
+      <view wx:if="{{inputMode === 'text'}}" class="text-composer">
+        <textarea
+          class="text-input"
+          value="{{textDraft}}"
+          maxlength="500"
+          auto-height
+          placeholder="输入你想说的话"
+          placeholder-class="text-input-placeholder"
+          bindinput="onTextDraftInput"
+        />
+        <button
+          class="primary-button text-send-button"
+          disabled="{{!textDraft}}"
+          bindtap="sendText"
+        >发送</button>
+      </view>
+      <button class="end-session-button" bindtap="stopVoice">{{inputMode === 'text' ? '退出文字对话' : '结束语音对话'}}</button>
+    </block>
+    <button wx:if="{{status === 'closed' && sessionId}}" class="secondary-button retry-button" bindtap="retryVoice">恢复对话</button>
     <text wx:if="{{error}}" class="error-text">{{error}}</text>
   </view>
 
   <view class="conversation-card card">
     <view class="section-heading">
-      <text>实时对话</text>
-      <text class="section-hint">仅显示当前发言</text>
+      <text>{{inputMode === 'text' ? '文字对话' : '实时对话'}}</text>
+      <text class="section-hint">{{inputMode === 'text' ? '保留本次对话最近 12 条' : '仅显示当前发言'}}</text>
     </view>
     <view wx:if="{{!transcript.length}}" class="empty-state">
       <text class="empty-spark">✧</text>

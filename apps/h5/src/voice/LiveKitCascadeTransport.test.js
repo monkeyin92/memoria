@@ -15,6 +15,7 @@ function fakeRoom() {
     localParticipant: {
       setMicrophoneEnabled: vi.fn(async () => undefined),
       publishData: vi.fn(async () => undefined),
+      sendText: vi.fn(async () => undefined),
     },
   };
 }
@@ -72,5 +73,32 @@ describe("LiveKitCascadeTransport", () => {
         participant_token: "token",
       }),
     ).rejects.toThrow(/麦克风/);
+  });
+
+  it("opens text-only sessions without microphone discovery and sends lk.chat text", async () => {
+    const room = fakeRoom();
+    const getLocalDevices = vi.fn(async () => []);
+    const transport = new LiveKitCascadeTransport({
+      room,
+      getLocalDevices,
+      stopResponse: vi.fn(),
+    });
+
+    await transport.connect(
+      {
+        session_id: "session-text",
+        livekit_url: "wss://livekit.example.com",
+        participant_token: "token",
+      },
+      { getMicrophoneEnabled: () => false },
+    );
+    await transport.sendText("今天星期几？");
+
+    expect(getLocalDevices).not.toHaveBeenCalled();
+    expect(room.localParticipant.setMicrophoneEnabled).toHaveBeenCalledWith(false);
+    expect(room.localParticipant.sendText).toHaveBeenCalledWith(
+      "今天星期几？",
+      { topic: "lk.chat" },
+    );
   });
 });

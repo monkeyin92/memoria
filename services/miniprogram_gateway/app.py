@@ -256,7 +256,11 @@ async def _receive_media(
             ignore_first_duplicate_hello = False
             if _is_duplicate_hello(text):
                 continue
-        bridge.accept_transport_event(_validate_control_text(text))
+        event = _validate_control_text(text)
+        if event["type"] == "text_turn":
+            bridge.accept_text_turn(str(event["text"]))
+        else:
+            bridge.accept_transport_event(event)
 
 
 def _is_duplicate_hello(text: Any) -> bool:
@@ -289,6 +293,16 @@ def _validate_control_text(text: Any) -> dict[str, object]:
     event_type = parsed.get("type")
     if not isinstance(event_type, str):
         raise ProtocolError("unsupported gateway control message")
+    if event_type == "text_turn":
+        value = parsed.get("text")
+        if (
+            set(parsed) != {"type", "text"}
+            or not isinstance(value, str)
+            or not value.strip()
+            or len(value.strip()) > 500
+        ):
+            raise ProtocolError("invalid text turn")
+        return {"type": "text_turn", "text": value.strip()}
     if event_type == "client_audio_trace":
         trace_required_keys = {
             "type",

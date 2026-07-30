@@ -13,6 +13,7 @@ require("../pages/home/index");
 
 test("realtime panel replaces the previous speaker instead of accumulating rows", () => {
   const data = {
+    inputMode: "voice",
     transcript: [
       {
         speaker: "assistant",
@@ -44,32 +45,67 @@ test("realtime panel replaces the previous speaker instead of accumulating rows"
   assert.equal(data.transcript[0].text, "这是当前这一句");
 });
 
-test("assistant response states expose button stop without restoring voice barge-in", () => {
+test("text mode keeps recent turns instead of replacing the conversation", () => {
+  const data = {
+    inputMode: "text",
+    transcript: [
+      {
+        key: "user:1:1",
+        speaker: "user",
+        text: "上一句",
+        source: "authoritative",
+        turnId: 1,
+        generationId: 1,
+      },
+    ],
+  };
+  const instance = {
+    data,
+    setData(update) {
+      Object.assign(this.data, update);
+    },
+  };
+
+  page._appendTranscript.call(instance, {
+    speaker: "assistant",
+    text: "新的回复",
+    final: true,
+    source: "authoritative",
+    turnId: 1,
+    generationId: 1,
+  });
+
+  assert.equal(data.transcript.length, 2);
+  assert.equal(data.transcript[1].text, "新的回复");
+});
+
+test("home exposes one voice start/end action and a separate text alternative", () => {
   const wxml = fs.readFileSync(
     path.join(__dirname, "../pages/home/index.wxml"),
     "utf8",
   );
 
-  assert.match(
-    wxml,
-    /status === 'thinking' \|\| status === 'speaking'[\s\S]*bindtap="stopPlayback"[\s\S]*停止播放/,
-  );
-  assert.doesNotMatch(wxml, /bindtap="interruptVoice"|轻触打断/);
+  assert.equal((wxml.match(/bindtap="startVoice"/g) || []).length, 1);
+  assert.equal((wxml.match(/bindtap="stopVoice"/g) || []).length, 1);
+  assert.match(wxml, /bindtap="startText"[\s\S]*使用文字对话/);
+  assert.match(wxml, /bindinput="onTextDraftInput"/);
+  assert.doesNotMatch(wxml, /bindtap="toggleMic"|bindtap="stopPlayback"/);
 });
 
-test("button stop clears local audio before requesting the server generation cancel", async () => {
-  const originalStopResponse = api.stopResponse;
-  const order = [];
-  api.stopResponse = async (sessionId) => {
-    order.push(`server:${sessionId}`);
+test("text send uses the media gateway without microphone controls", () => {
+  const sent = [];
+  const data = {
+    active: true,
+    inputMode: "text",
+    textDraft: "  今天星期几？  ",
+    error: "",
   };
-  const data = { active: true, error: "" };
   const instance = {
     data,
-    _session: { session_id: "session-1" },
     _media: {
-      stopAssistantPlayback() {
-        order.push("local");
+      sendText(text) {
+        sent.push(text);
+        return true;
       },
     },
     setData(update) {
@@ -77,13 +113,11 @@ test("button stop clears local audio before requesting the server generation can
     },
   };
 
-  try {
-    await page.stopPlayback.call(instance);
-    assert.deepEqual(order, ["local", "server:session-1"]);
-    assert.equal(data.error, "");
-  } finally {
-    api.stopResponse = originalStopResponse;
-  }
+  page.sendText.call(instance);
+
+  assert.deepEqual(sent, ["今天星期几？"]);
+  assert.equal(data.textDraft, "");
+  assert.equal(data.error, "");
 });
 
 test("initial connection retries once with a fresh ticket after connection refused", async () => {
@@ -159,6 +193,7 @@ test("voice start is single-flight before setData reflects connecting", async ()
     _voiceAttemptId: 0,
     _invalidateVoiceAttempt: page._invalidateVoiceAttempt,
     _isVoiceAttemptCurrent: page._isVoiceAttemptCurrent,
+    _startConversation: page._startConversation,
     _startVoiceOnce: page._startVoiceOnce,
     async loadProfile() {},
     async _connectInitialMedia(session) {
@@ -176,6 +211,57 @@ test("voice start is single-flight before setData reflects connecting", async ()
     await Promise.all([first, second]);
     await page.startVoice.call(instance);
     assert.equal(createCalls, 2);
+  } finally {
+    api.currentIdentity = originalIdentity;
+    api.hasAuthenticatedSession = originalHasAuthenticatedSession;
+    api.createMiniProgramSession = originalCreate;
+    global.wx = originalWx;
+  }
+});
+
+test("text start skips microphone authorization", async () => {
+  const originalIdentity = api.currentIdentity;
+  const originalHasAuthenticatedSession = api.hasAuthenticatedSession;
+  const originalCreate = api.createMiniProgramSession;
+  const originalWx = global.wx;
+  let authorizeCalls = 0;
+  api.currentIdentity = () => ({ user_id: "user-1" });
+  api.hasAuthenticatedSession = () => true;
+  api.createMiniProgramSession = async () => ({
+    session_id: "session-text",
+    media_gateway: {},
+  });
+  global.wx = {
+    authorize() {
+      authorizeCalls += 1;
+    },
+  };
+  const data = { connecting: false, active: false, inputMode: "voice" };
+  const instance = {
+    data,
+    setData(update) {
+      Object.assign(this.data, update);
+    },
+    _voiceAttemptId: 0,
+    _invalidateVoiceAttempt: page._invalidateVoiceAttempt,
+    _isVoiceAttemptCurrent: page._isVoiceAttemptCurrent,
+    _startConversation: page._startConversation,
+    _startVoiceOnce: page._startVoiceOnce,
+    _resetExpression() {},
+    async loadProfile() {},
+    async _connectInitialMedia(session, inputMode) {
+      assert.equal(inputMode, "text");
+      return session;
+    },
+    async _endMediaLocally() {},
+  };
+
+  try {
+    await page.startText.call(instance);
+    assert.equal(authorizeCalls, 0);
+    assert.equal(data.inputMode, "text");
+    assert.equal(data.micEnabled, false);
+    assert.equal(data.active, true);
   } finally {
     api.currentIdentity = originalIdentity;
     api.hasAuthenticatedSession = originalHasAuthenticatedSession;

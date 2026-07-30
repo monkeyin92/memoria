@@ -1011,6 +1011,186 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         if self._runtime.fence.matches(fence):
             self._runtime.heard_tracker.observe_alignment(fence, utterance_id, status)
 
+    async def _prepare_committed_turn(
+        self,
+        *,
+        text: str,
+        speaker: Any,
+        input_modality: Literal["audio", "text"],
+    ) -> GenerationFence:
+        policy = self._runtime.mode_policy
+        if (
+            input_modality == "audio"
+            and self._voice_profile_client is not None
+            and self._runtime.tts is not None
+            and (policy.allows_voice_profile() or policy.mode == "legacy")
+        ):
+            await self._runtime.wait_for_voice_profile_refresh()
+            _apply_cached_voice_profile(
+                tts_plugin=self._runtime.tts,
+                client=self._voice_profile_client,
+                session_id=self._runtime.session_id,
+                mode=policy.mode,
+                policy=policy,
+            )
+        fence = await self._runtime.on_turn_committed(
+            text,
+            input_modality=input_modality,
+        )
+        if (
+            input_modality == "audio"
+            and self._runtime.tts is not None
+            and not self._bind_current_tts_voice(fence)
+        ):
+            logger.error(
+                "generation voice binding rejected session_id=%s turn_id=%s generation_id=%s",
+                fence.session_id,
+                fence.turn_id,
+                fence.generation_id,
+            )
+            raise StopResponse()
+        self._runtime.publish_transcript(
+            speaker="user",
+            text=text,
+            final=True,
+            fence=fence,
+        )
+        self._llm_text_buf = ""
+        fetch_reason = "missing_response_planner_client"
+        plan = None
+        if self._response_planner_client is not None:
+            try:
+                fetch = await self._response_planner_client.fetch(
+                    session_id=self._runtime.session_id,
+                    query=text,
+                    fence=fence,
+                    speaker_decision=speaker,
+                )
+                plan = fetch.plan
+                fetch_reason = fetch.reason
+            except Exception:
+                logger.warning(
+                    "response plan fetch failed closed session_id=%s turn_id=%s",
+                    self._runtime.session_id,
+                    fence.turn_id,
+                    exc_info=True,
+                )
+                fetch_reason = "request_exception"
+        if not fence.matches(self._runtime.fence):
+            logger.info(
+                "stale response plan dropped session_id=%s turn_id=%s reason=runtime_fence",
+                self._runtime.session_id,
+                fence.turn_id,
+            )
+            raise StopResponse()
+        if plan is not None and not plan.fence.matches(fence):
+            logger.info(
+                "stale response plan dropped session_id=%s turn_id=%s reason=plan_fence",
+                self._runtime.session_id,
+                fence.turn_id,
+            )
+            raise StopResponse()
+        if plan is None and fetch_reason == "fence_mismatch":
+            logger.info(
+                "stale response plan dropped session_id=%s turn_id=%s reason=fetch_fence",
+                self._runtime.session_id,
+                fence.turn_id,
+            )
+            raise StopResponse()
+        policy = self._runtime.mode_policy_for_fence(fence)
+        if (
+            plan is not None
+            and self._runtime.mode_policy_enforced
+            and not self._plan_matches_mode_policy(plan, policy)
+        ):
+            logger.warning(
+                "response plan dropped for policy mismatch session_id=%s turn_id=%s",
+                self._runtime.session_id,
+                fence.turn_id,
+            )
+            plan = None
+            fetch_reason = "mode_policy_mismatch"
+        if plan is None:
+            plan = self._local_safe_plan(
+                fence=fence,
+                speaker=speaker,
+                reason=fetch_reason,
+                query=text,
+            )
+        if (
+            input_modality == "audio"
+            and policy.mode in {"self_preview", "legacy"}
+            and not self._ensure_generation_voice_matches_plan(fence, plan, policy)
+        ):
+            logger.error(
+                "response plan voice bind failed closed mode=%s fallback=%s "
+                "session_id=%s turn_id=%s generation_id=%s",
+                policy.mode,
+                self._is_local_safe_plan(plan),
+                self._runtime.session_id,
+                fence.turn_id,
+                fence.generation_id,
+            )
+            raise StopResponse()
+        self._cache_response_plan(plan)
+        logger.info(
+            "response_plan_cached reason=%s mode=%s direct_text=%s fallback=%s "
+            "session_id=%s turn_id=%s input_modality=%s",
+            fetch_reason,
+            plan.provenance.interaction_mode,
+            plan.direct_text is not None,
+            self._is_local_safe_plan(plan),
+            self._runtime.session_id,
+            fence.turn_id,
+            input_modality,
+        )
+        logger.info(
+            "turn_committed turn_id=%s generation_id=%s tool_epoch=%s text_len=%s",
+            fence.turn_id,
+            fence.generation_id,
+            fence.tool_epoch,
+            len(text),
+        )
+        return fence
+
+    async def handle_text_input(self, session: Any, event: Any) -> None:
+        text = str(getattr(event, "text", "") or "").strip()
+        participant = getattr(event, "participant", None)
+        if not participant or not text or len(text) > 500:
+            logger.info(
+                "text_input_ignored reason=invalid_input session_id=%s",
+                self._runtime.session_id,
+            )
+            return
+        if self._runtime.mode_policy.mode != "companion":
+            logger.info(
+                "text_input_ignored reason=interaction_mode session_id=%s",
+                self._runtime.session_id,
+            )
+            return
+        async with session._claim_user_turn():
+            await session.interrupt()
+            speaker = self._runtime.authenticate_text_owner()
+            accepted, reason = self._runtime.accept_user_turn(
+                text,
+                input_modality="text",
+            )
+            if not accepted:
+                logger.info(
+                    "text_input_ignored reason=%s session_id=%s",
+                    reason or "guarded",
+                    self._runtime.session_id,
+                )
+                return
+            await self._prepare_committed_turn(
+                text=text,
+                speaker=speaker,
+                input_modality="text",
+            )
+            self._runtime.enable_text_only_delivery()
+            session.output.set_audio_enabled(False)
+            session.generate_reply(user_input=text, input_modality="text")
+
     async def on_user_turn_completed(self, turn_ctx: Any, new_message: Any) -> None:
         raw_text = _message_text(new_message) if new_message is not None else ""
         canonical_text = self._runtime.consume_canonical_user_turn(raw_text)
@@ -1089,128 +1269,10 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     reason,
                 )
                 raise StopResponse()
-            policy = self._runtime.mode_policy
-            if (
-                self._voice_profile_client is not None
-                and self._runtime.tts is not None
-                and (policy.allows_voice_profile() or policy.mode == "legacy")
-            ):
-                await self._runtime.wait_for_voice_profile_refresh()
-                _apply_cached_voice_profile(
-                    tts_plugin=self._runtime.tts,
-                    client=self._voice_profile_client,
-                    session_id=self._runtime.session_id,
-                    mode=policy.mode,
-                    policy=policy,
-                )
-            fence = await self._runtime.on_turn_committed(text.strip())
-            if self._runtime.tts is not None and not self._bind_current_tts_voice(fence):
-                logger.error(
-                    "generation voice binding rejected session_id=%s turn_id=%s generation_id=%s",
-                    fence.session_id,
-                    fence.turn_id,
-                    fence.generation_id,
-                )
-                raise StopResponse()
-            self._runtime.publish_transcript(
-                speaker="user",
+            await self._prepare_committed_turn(
                 text=text.strip(),
-                final=True,
-                fence=fence,
-            )
-            self._llm_text_buf = ""
-            fetch_reason = "missing_response_planner_client"
-            plan = None
-            if self._response_planner_client is not None:
-                try:
-                    fetch = await self._response_planner_client.fetch(
-                        session_id=self._runtime.session_id,
-                        query=text.strip(),
-                        fence=fence,
-                        speaker_decision=speaker,
-                    )
-                    plan = fetch.plan
-                    fetch_reason = fetch.reason
-                except Exception:
-                    logger.warning(
-                        "response plan fetch failed closed session_id=%s turn_id=%s",
-                        self._runtime.session_id,
-                        fence.turn_id,
-                        exc_info=True,
-                    )
-                    fetch_reason = "request_exception"
-            if not fence.matches(self._runtime.fence):
-                logger.info(
-                    "stale response plan dropped session_id=%s turn_id=%s reason=runtime_fence",
-                    self._runtime.session_id,
-                    fence.turn_id,
-                )
-                raise StopResponse()
-            if plan is not None and not plan.fence.matches(fence):
-                logger.info(
-                    "stale response plan dropped session_id=%s turn_id=%s reason=plan_fence",
-                    self._runtime.session_id,
-                    fence.turn_id,
-                )
-                raise StopResponse()
-            if plan is None and fetch_reason == "fence_mismatch":
-                logger.info(
-                    "stale response plan dropped session_id=%s turn_id=%s reason=fetch_fence",
-                    self._runtime.session_id,
-                    fence.turn_id,
-                )
-                raise StopResponse()
-            policy = self._runtime.mode_policy_for_fence(fence)
-            if (
-                plan is not None
-                and self._runtime.mode_policy_enforced
-                and not self._plan_matches_mode_policy(plan, policy)
-            ):
-                logger.warning(
-                    "response plan dropped for policy mismatch session_id=%s turn_id=%s",
-                    self._runtime.session_id,
-                    fence.turn_id,
-                )
-                plan = None
-                fetch_reason = "mode_policy_mismatch"
-            if plan is None:
-                plan = self._local_safe_plan(
-                    fence=fence,
-                    speaker=speaker,
-                    reason=fetch_reason,
-                    query=text.strip(),
-                )
-            if policy.mode in {
-                "self_preview",
-                "legacy",
-            } and not self._ensure_generation_voice_matches_plan(fence, plan, policy):
-                logger.error(
-                    "response plan voice bind failed closed mode=%s fallback=%s "
-                    "session_id=%s turn_id=%s generation_id=%s",
-                    policy.mode,
-                    self._is_local_safe_plan(plan),
-                    self._runtime.session_id,
-                    fence.turn_id,
-                    fence.generation_id,
-                )
-                raise StopResponse()
-            self._cache_response_plan(plan)
-            logger.info(
-                "response_plan_cached reason=%s mode=%s direct_text=%s fallback=%s "
-                "session_id=%s turn_id=%s",
-                fetch_reason,
-                plan.provenance.interaction_mode,
-                plan.direct_text is not None,
-                self._is_local_safe_plan(plan),
-                self._runtime.session_id,
-                fence.turn_id,
-            )
-            logger.info(
-                "turn_committed turn_id=%s generation_id=%s tool_epoch=%s text_len=%s",
-                fence.turn_id,
-                fence.generation_id,
-                fence.tool_epoch,
-                len(text.strip()),
+                speaker=speaker,
+                input_modality="audio",
             )
         parent = getattr(Agent, "on_user_turn_completed", None) if _HAS_LIVEKIT else None
         if parent is not None:
@@ -2318,10 +2380,19 @@ async def entrypoint(ctx: Any) -> None:
         tts_model=runtime_settings.doubao_tts_resource_id,
     )
 
+    async def _handle_text_input(
+        active_session: Any,
+        event: Any,
+    ) -> None:
+        await agent.handle_text_input(active_session, event)
+
     await session.start(
         room=ctx.room,
         agent=agent,
         room_options=room_io.RoomOptions(
+            text_input=room_io.TextInputOptions(
+                text_input_cb=_handle_text_input,
+            ),
             audio_input=room_io.AudioInputOptions(
                 sample_rate=24000,
                 num_channels=1,
@@ -2416,11 +2487,7 @@ async def entrypoint(ctx: Any) -> None:
         await asyncio.sleep(0.2)
 
     companion = companion_definition(runtime.mode_policy.companion_style_id)
-    welcome_text = (
-        companion.welcome_text
-        if companion is not None
-        else "嗨，想聊什么就直接说吧。"
-    )
+    welcome_text = companion.welcome_text if companion is not None else "嗨，想聊什么就直接说吧。"
     welcome_emotion = companion.default_voice_emotion if companion is not None else "neutral"
     welcome_rate = companion.default_voice_rate if companion is not None else 1.0
     welcome_instruction = companion.voice_instruction if companion is not None else ""

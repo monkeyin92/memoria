@@ -64,9 +64,11 @@ export class LiveKitCascadeTransport extends VoiceTransport {
       throw new Error("服务端没有返回可用的 LiveKit 会话");
     }
     const requestedMicrophoneState = Boolean(getMicrophoneEnabled());
-    const devices = await this.getLocalDevices();
-    if (!isCurrent()) return;
-    if (!devices.length) throw new Error("没有找到可用的麦克风");
+    if (requestedMicrophoneState) {
+      const devices = await this.getLocalDevices();
+      if (!isCurrent()) return;
+      if (!devices.length) throw new Error("没有找到可用的麦克风");
+    }
     this.session = session;
     await this.room.connect(session.livekit_url, session.participant_token);
     if (!isCurrent()) return;
@@ -99,6 +101,19 @@ export class LiveKitCascadeTransport extends VoiceTransport {
 
   publishData(payload, options) {
     return this.room.localParticipant.publishData(payload, options);
+  }
+
+  sendText(text) {
+    const normalized = typeof text === "string" ? text.trim() : "";
+    if (!normalized || normalized.length > 500) {
+      return Promise.reject(new Error("文字消息需要在 1 到 500 个字符之间"));
+    }
+    if (!this.session?.session_id) {
+      return Promise.reject(new Error("文字会话尚未连接"));
+    }
+    return this.room.localParticipant.sendText(normalized, {
+      topic: "lk.chat",
+    });
   }
 
   async close() {

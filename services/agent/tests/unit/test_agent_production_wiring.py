@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import logging
@@ -44,6 +45,100 @@ from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 async def _text_source(*parts: str) -> AsyncIterator[str]:
     for part in parts:
         yield part
+
+
+@pytest.mark.asyncio
+async def test_authenticated_text_input_uses_owner_policy_and_disables_audio_output() -> None:
+    runtime = DuplexRuntime.create(session_id="text-session")
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=True,
+            shadow_low_sensitivity_persona=False,
+        )
+    )
+    published: list[dict[str, Any]] = []
+
+    async def publish(event: dict[str, Any]) -> None:
+        published.append(event)
+
+    runtime.set_event_publisher(publish)
+
+    class ResponsePlannerStub:
+        async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
+            speaker = kwargs["speaker_decision"]
+            assert isinstance(speaker, SpeakerDecision)
+            assert speaker.classification == "owner"
+            assert speaker.reason_code == "authenticated_text_input"
+            return ResponsePlanFetch(
+                plan=_plan_for_fence(
+                    kwargs["fence"],  # type: ignore[arg-type]
+                    instructions="按当前伙伴性格回答。",
+                ),
+                reason="ok",
+            )
+
+    class Output:
+        def __init__(self) -> None:
+            self.audio_enabled: list[bool] = []
+
+        def set_audio_enabled(self, enabled: bool) -> None:
+            self.audio_enabled.append(enabled)
+
+    class Session:
+        def __init__(self) -> None:
+            self.output = Output()
+            self.interruptions = 0
+            self.replies: list[dict[str, object]] = []
+
+        @contextlib.asynccontextmanager
+        async def _claim_user_turn(self) -> AsyncIterator[None]:
+            yield
+
+        async def interrupt(self) -> None:
+            self.interruptions += 1
+
+        def generate_reply(self, **kwargs: object) -> None:
+            self.replies.append(dict(kwargs))
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=ResponsePlannerStub(),  # type: ignore[arg-type]
+    )
+    session = Session()
+    event = SimpleNamespace(
+        text=" 今天星期几？ ",
+        participant=SimpleNamespace(identity="user-account-session"),
+    )
+
+    await agent.handle_text_input(session, event)  # type: ignore[arg-type]
+    await asyncio.sleep(0)
+    await runtime.on_assistant_reply_completed("今天星期四。")
+    await asyncio.sleep(0)
+
+    assert session.interruptions == 1
+    assert session.output.audio_enabled == [False]
+    assert session.replies == [{"user_input": "今天星期几？", "input_modality": "text"}]
+    assert runtime.current_speaker_class == "owner"
+    assert any(
+        item.get("type") == "transcript_delta"
+        and item.get("speaker") == "user"
+        and item.get("text") == "今天星期几？"
+        and item.get("history_eligible") is True
+        for item in published
+    )
+    assert any(
+        item.get("type") == "transcript_delta"
+        and item.get("speaker") == "assistant"
+        and item.get("text") == "今天星期四。"
+        and item.get("heard") is False
+        and item.get("text_delivered") is True
+        for item in published
+    )
 
 
 def _plan_for_fence(

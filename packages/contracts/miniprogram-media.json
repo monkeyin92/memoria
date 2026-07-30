@@ -102,6 +102,10 @@
     }
   ],
   "control_events": {
+    "text_turn": [
+      "type",
+      "text"
+    ],
     "playout_interrupt": [
       "type",
       "generation_id",

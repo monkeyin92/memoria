@@ -143,6 +143,26 @@ export function Mascot({
     : active
       ? `${companion.name}正在陪伴`
       : `轻触${companion.name}开始实时对话`;
+  const visual = (
+    <MascotVisual
+      companionId={companionId}
+      emotion={emotion}
+      uiState={uiState}
+    />
+  );
+
+  if (typeof onActivate !== "function") {
+    return (
+      <div
+        className={`mascot-button mascot-${uiState}`}
+        aria-label={`${companion.name}陪伴形象`}
+        role="img"
+        data-expression={expression}
+      >
+        {visual}
+      </div>
+    );
+  }
 
   return (
     <button
@@ -153,11 +173,7 @@ export function Mascot({
       onClick={canActivate ? onActivate : undefined}
       data-expression={expression}
     >
-      <MascotVisual
-        companionId={companionId}
-        emotion={emotion}
-        uiState={uiState}
-      />
+      {visual}
     </button>
   );
 }

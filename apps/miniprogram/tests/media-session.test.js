@@ -82,6 +82,83 @@ const { MiniProgramMediaSession } = require("../utils/media-gateway");
 const { FRAME_TYPE, encodePcmFrame } = require("../utils/media-protocol");
 const { PcmJitterPlayer } = require("../utils/pcm-player");
 
+test("text-only media session never records or plays audio and sends a bounded text turn", async () => {
+  recorder.reset();
+  const sent = [];
+  const socket = {
+    onMessage(listener) {
+      this.messageListener = listener;
+    },
+    onError(listener) {
+      this.errorListener = listener;
+    },
+    onClose(listener) {
+      this.closeListener = listener;
+    },
+    send(options) {
+      sent.push(options.data);
+    },
+    close() {},
+  };
+  global.wx.connectSocket = () => socket;
+  const media = new MiniProgramMediaSession(
+    {
+      media_gateway: {
+        websocket_url: "wss://voice.example.com/media",
+        ticket: "ticket",
+        audio: {
+          sample_rate: contract.audio.downlink_sample_rate,
+          channels: contract.audio.channels,
+          sample_format: contract.audio.sample_format,
+          frame_ms: contract.audio.frame_ms,
+        },
+      },
+    },
+    {
+      microphoneEnabled: false,
+      playbackEnabled: false,
+    },
+  );
+  media.player.enqueue = () => {
+    throw new Error("text mode must discard downlink audio");
+  };
+
+  const connecting = media.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  socket.messageListener({
+    data: JSON.stringify({
+      type: "ready",
+      protocol_version: 1,
+      session_id: "session-text",
+      audio: {
+        sample_rate: contract.audio.downlink_sample_rate,
+        channels: contract.audio.channels,
+        sample_format: contract.audio.sample_format,
+        frame_ms: contract.audio.frame_ms,
+        frame_protocol_version: 2,
+      },
+    }),
+  });
+  await connecting;
+
+  assert.equal(recorder.startCalls.length, 0);
+  assert.equal(media.sendText("今天星期几？"), true);
+  assert.deepEqual(JSON.parse(sent.at(-1)), {
+    type: "text_turn",
+    text: "今天星期几？",
+  });
+
+  const downlink = encodePcmFrame(
+    FRAME_TYPE.DOWNLINK_AUDIO,
+    0,
+    Date.now(),
+    new ArrayBuffer(contract.audio.downlink_frame_bytes),
+    1,
+  );
+  assert.doesNotThrow(() => socket.messageListener({ data: downlink }));
+  await media.close();
+});
+
 test("gateway header handshake keeps a legacy hello fallback until acknowledged", async () => {
   recorder.reset();
   const sent = [];

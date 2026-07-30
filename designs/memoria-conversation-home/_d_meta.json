@@ -1,0 +1,18 @@
+{
+  "type": "design",
+  "designSystems": [],
+  "primaryDesignSystem": null,
+  "assets": {
+    "Memoria 首页对话": {
+      "versions": [
+        {
+          "path": "index.html",
+          "createdAt": "2026-07-30T11:49:01.414Z",
+          "status": "needs-review"
+        }
+      ]
+    }
+  },
+  "createdAt": "2026-07-30T11:49:01.414Z",
+  "updatedAt": "2026-07-30T11:49:01.414Z"
+}

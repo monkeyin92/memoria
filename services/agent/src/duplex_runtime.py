@@ -294,6 +294,8 @@ class DuplexRuntime:
     _playback_control_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _history_eligible_by_fence: dict[tuple[int, int], bool] = field(default_factory=dict)
     _owner_projection_eligible_by_fence: dict[tuple[int, int], bool] = field(default_factory=dict)
+    _input_modality_by_fence: dict[tuple[int, int], str] = field(default_factory=dict)
+    _text_only_delivery: bool = False
     _mode_policy: ModePolicy = field(default_factory=lambda: ModePolicy.unavailable("not_fetched"))
     _mode_policy_by_fence: dict[tuple[int, int], ModePolicy] = field(default_factory=dict)
     _response_provenance_by_fence: dict[
@@ -545,6 +547,31 @@ class DuplexRuntime:
             if self._speaker_class in {"owner", "guest", "uncertain"}
             else "uncertain",
         )
+
+    @property
+    def text_only_delivery(self) -> bool:
+        return self._text_only_delivery
+
+    def enable_text_only_delivery(self) -> None:
+        self._text_only_delivery = True
+
+    def authenticate_text_owner(self) -> SpeakerDecision:
+        """Bind an lk.chat turn from the linked account participant as owner."""
+
+        decision = SpeakerDecision(
+            classification="owner",
+            score=1.0,
+            quality_score=1.0,
+            reason_code="authenticated_text_input",
+            model_version="account-auth-v1",
+            template_version=None,
+            profile_id=None,
+            permissions=permissions_for_speaker("owner"),
+        )
+        self._speaker_class = "owner"
+        self._speaker_decision = decision
+        self._speaker_pcm.clear()
+        return decision
 
     def _bind_mode_policy(self, fence: GenerationFence, policy: ModePolicy | None = None) -> None:
         self._mode_policy_by_fence[(fence.turn_id, fence.generation_id)] = (
@@ -1828,6 +1855,7 @@ class DuplexRuntime:
         text: str,
         final: bool,
         heard: bool | None = None,
+        text_delivered: bool = False,
         fence: GenerationFence | None = None,
         archive_fence: GenerationFence | None = None,
         turn_revision: int | None = None,
@@ -1838,7 +1866,7 @@ class DuplexRuntime:
             speaker=speaker,
             fence=fence,
             requested=turn_revision,
-            final=bool(final and (speaker == "user" or heard is True)),
+            final=bool(final and (speaker == "user" or heard is True or text_delivered)),
         )
         if revision is None:
             return False
@@ -1856,6 +1884,8 @@ class DuplexRuntime:
         }
         if heard is not None:
             event["heard"] = heard
+        if text_delivered:
+            event["text_delivered"] = True
         if (
             speaker == "assistant"
             and final
@@ -1913,11 +1943,17 @@ class DuplexRuntime:
         if speaker == "user":
             event_type = "speech.utterance_finalized"
             speaker_class = self._speaker_class
+            input_modality = self._input_modality_by_fence.get(
+                (archive_fence.turn_id, archive_fence.generation_id),
+                "audio",
+            )
             payload: dict[str, Any] = {
                 "text": archive_text,
                 "persona_eligible": self._persona_evidence_eligible,
                 "prompt_kind": self._next_user_prompt_kind,
             }
+            if input_modality == "text":
+                payload["input_modality"] = "text"
             self._next_user_prompt_kind = "spontaneous"
             payload.update(self._speaker_persona_provenance())
             payload.update(self._owner_acoustic_evidence())
@@ -1955,7 +1991,11 @@ class DuplexRuntime:
             "source": (
                 "generation_fence.actual_heard"
                 if speaker == "assistant"
-                else "funasr.authoritative_final"
+                else (
+                    "authenticated_text_input"
+                    if payload.get("input_modality") == "text"
+                    else "funasr.authoritative_final"
+                )
             ),
             "turn_id": archive_fence.turn_id,
             "generation_id": archive_fence.generation_id,
@@ -2624,6 +2664,7 @@ class DuplexRuntime:
         self,
         text: str,
         *,
+        input_modality: Literal["audio", "text"] = "audio",
         speech_anchored: bool | None = None,
         canonical_speech_epoch: int | None = None,
         canonical_snapshot_bound: bool | None = None,
@@ -2750,7 +2791,7 @@ class DuplexRuntime:
                 name="interrupt-cmd-yield",
             )
             return False, route.reason
-        if self.input_guard.enabled and speech_anchored is not None:
+        if input_modality == "audio" and self.input_guard.enabled and speech_anchored is not None:
             current_vad_has_pcm = (
                 canonical_speech_epoch == self._speaker_epoch
                 and self._fresh_user_speech
@@ -2790,14 +2831,21 @@ class DuplexRuntime:
                     return False, "missing_speech_epoch"
             elif canonical_speech_epoch in {None, self._speaker_epoch}:
                 self._fresh_user_speech = False
-        if self.speaker_verifier.active and not self._speaker_allows_user_input(
-            context="turn_commit"
+        if (
+            input_modality == "audio"
+            and self.speaker_verifier.active
+            and not self._speaker_allows_user_input(context="turn_commit")
         ):
             return False, "speaker_mismatch"
-        post_playback_reason = self.post_playback_guard_reason(text)
+        post_playback_reason = (
+            self.post_playback_guard_reason(text) if input_modality == "audio" else None
+        )
         if post_playback_reason is not None:
             self.orchestrator.metrics.inc_guarded_user_input(post_playback_reason)
             return False, post_playback_reason
+        if input_modality == "text":
+            self.input_guard.candidate_active = False
+            self.input_guard.candidate_decision = PlaybackInputDecision.ACCEPT
         accepted, reason = self.input_guard.accept_turn(text)
         if not accepted:
             self.orchestrator.metrics.inc_guarded_user_input(reason or "unknown")
@@ -2833,7 +2881,12 @@ class DuplexRuntime:
 
         return self._route_candidate(text)
 
-    async def on_turn_committed(self, user_text: str) -> GenerationFence:
+    async def on_turn_committed(
+        self,
+        user_text: str,
+        *,
+        input_modality: Literal["audio", "text"] = "audio",
+    ) -> GenerationFence:
         history_eligible = self._current_history_eligible()
         owner_projection_eligible = self._current_owner_projection_eligible()
         self.cancel_listener_cue()
@@ -2855,6 +2908,10 @@ class DuplexRuntime:
             fence,
             owner_projection_eligible,
         )
+        input_key = (fence.turn_id, fence.generation_id)
+        self._input_modality_by_fence[input_key] = input_modality
+        while len(self._input_modality_by_fence) > HISTORY_ELIGIBILITY_MAX_FENCES:
+            self._input_modality_by_fence.pop(next(iter(self._input_modality_by_fence)))
         self._reply_speaker_binding = self._current_resume_speaker_binding()
         self._resume_fence = fence if self._resume_pending else None
         self._resume_pending = False
@@ -3457,9 +3514,7 @@ class DuplexRuntime:
                 # still waits for endpointed audio below.
                 target_route = self._target_speaker_route(
                     context="interrupt",
-                    explicit_interrupt=(
-                        barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND
-                    ),
+                    explicit_interrupt=(barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND),
                 )
             else:
                 # LiveKit may request an interrupt on VAD start. Do not classify
@@ -3654,9 +3709,13 @@ class DuplexRuntime:
 
     async def on_assistant_reply_completed(self, text: str) -> None:
         """Commit one fully played reply after LiveKit adds its conversation item."""
+        text_delivered = self._text_only_delivery
+        if text_delivered and self.orchestrator.state is ConversationState.THINKING:
+            await self.orchestrator.begin_speaking([], text)
         if self.orchestrator.state is not ConversationState.SPEAKING:
             return
-        # LiveKit emits this item only after uninterrupted playout completes.
+        # Voice items arrive after playout; text-only items arrive after the
+        # complete assistant text has been published to the linked participant.
         heard = text
         reply_fence = self._playback_fence or self.fence
         heard = await self.orchestrator.finish_livekit_playback(
@@ -3678,7 +3737,8 @@ class DuplexRuntime:
                 speaker="assistant",
                 text=heard,
                 final=True,
-                heard=True,
+                heard=not text_delivered,
+                text_delivered=text_delivered,
                 fence=reply_fence,
             )
 

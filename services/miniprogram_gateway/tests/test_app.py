@@ -245,6 +245,9 @@ async def test_legacy_gateway_hello_keeps_v1_downlink_frames() -> None:
 
 def test_gateway_text_channel_only_allows_transport_ping() -> None:
     assert _validate_control_text('{"type":"ping"}') == {"type": "ping"}
+    text_turn = _validate_control_text('{"type":"text_turn","text":"今天星期几？"}')
+    assert text_turn == {"type": "text_turn", "text": "今天星期几？"}
+    assert set(text_turn) == set(CONTRACT["control_events"]["text_turn"])
     playout_reset = _validate_control_text(
         '{"type":"playout_reset","generation_id":3,"barrier_sequence":7,"client_timestamp_ms":123}'
     )
@@ -311,6 +314,10 @@ def test_gateway_text_channel_only_allows_transport_ping() -> None:
             '"generation_id":3,"client_timestamp_ms":126,'
             '"detail":{"transcript":"must-not-enter-logs"}}'
         )
+    with pytest.raises(ProtocolError, match="invalid text turn"):
+        _validate_control_text('{"type":"text_turn","text":"   "}')
+    with pytest.raises(ProtocolError, match="invalid text turn"):
+        _validate_control_text('{"type":"text_turn","text":"' + ("字" * 501) + '"}')
 
 
 class FakeBridge:

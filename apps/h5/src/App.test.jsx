@@ -198,11 +198,13 @@ function voiceState() {
     assistantExpression: null,
     error: "",
     audioBlocked: false,
+    inputMode: "voice",
     audioContainerRef: { current: null },
     start: vi.fn(),
     resumeAudio: mocks.resumeAudio,
     toggleMic: vi.fn(),
     stopAssistant: vi.fn(),
+    sendText: vi.fn(),
     end: mocks.endVoice,
     reset: mocks.resetVoice,
   };
@@ -322,6 +324,58 @@ describe("App identity and profile preferences", () => {
   });
 
   afterEach(cleanup);
+
+  it("uses one voice start/end control and keeps text chat as the accessible alternative", async () => {
+    const start = vi.fn();
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      access_token: "token",
+    });
+    mocks.useVoiceSession.mockImplementation(() => ({
+      ...voiceState(),
+      start,
+    }));
+
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    expect(screen.getAllByRole("button", { name: "开始语音对话" }))
+      .toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /轻触.*开始实时对话/ }))
+      .not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "使用文字对话" }));
+    expect(start).toHaveBeenCalledWith({ inputMode: "text" });
+  });
+
+  it("sends typed text without exposing microphone controls", async () => {
+    const sendText = vi.fn(async () => true);
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      access_token: "token",
+    });
+    mocks.useVoiceSession.mockImplementation(() => ({
+      ...voiceState(),
+      session: { session_id: "text-session" },
+      inputMode: "text",
+      uiState: "listening",
+      sendText,
+    }));
+
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.change(screen.getByLabelText("输入你想说的话"), {
+      target: { value: "今天星期几？" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送文字消息" }));
+
+    await waitFor(() => expect(sendText).toHaveBeenCalledWith("今天星期几？"));
+    expect(screen.queryByRole("button", { name: "关闭麦克风" }))
+      .not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "结束对话" }))
+      .toHaveTextContent("退出文字对话");
+  });
 
   it("does not load user data or expose the app before identity is ready", async () => {
     const identity = deferred();

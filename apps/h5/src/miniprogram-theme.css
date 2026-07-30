@@ -269,6 +269,10 @@ textarea:focus-visible {
   height: 292px;
 }
 
+.mascot-wrap div.mascot-button {
+  cursor: default;
+}
+
 .mascot-wrap .mascot-button::after {
   position: absolute;
   left: 50%;
@@ -371,6 +375,98 @@ textarea:focus-visible {
 
 .start-voice-button:disabled { cursor: wait; opacity: 0.5; box-shadow: none; }
 
+.text-mode-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: min(100%, 340px);
+  min-height: 46px;
+  margin-top: 10px;
+  border: 1px solid rgba(94, 234, 255, 0.2);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: rgba(16, 23, 52, 0.56);
+  cursor: pointer;
+}
+
+.text-mode-button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.text-composer {
+  width: min(100%, 420px);
+  margin: 6px auto 0;
+  text-align: left;
+}
+
+.text-composer > label {
+  display: block;
+  margin: 0 4px 7px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.text-composer-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.text-composer textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: none;
+  border: 1px solid rgba(94, 234, 255, 0.22);
+  border-radius: 16px;
+  padding: 11px 13px;
+  color: var(--ink);
+  background: rgba(11, 17, 40, 0.82);
+  line-height: 1.5;
+}
+
+.text-composer textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.text-send-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 16px;
+  color: #fff;
+  background: var(--neon-gradient);
+  cursor: pointer;
+}
+
+.text-send-button span {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.text-send-button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.text-exit-button {
+  display: block;
+  min-height: 44px;
+  margin: 8px auto 0;
+  border: 0;
+  color: var(--danger);
+  background: transparent;
+  cursor: pointer;
+}
+
 .conversation-area {
   align-items: stretch;
   min-height: 132px;
@@ -381,6 +477,20 @@ textarea:focus-visible {
   background: var(--surface);
   box-shadow: var(--glass-shadow);
   backdrop-filter: blur(16px);
+}
+
+.text-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-height: 260px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.text-thread .transcript-card {
+  min-height: 0;
 }
 
 .conversation-heading {

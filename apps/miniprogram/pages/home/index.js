@@ -62,15 +62,16 @@ function greeting() {
   return "晚上好";
 }
 
-function stateLabel(state) {
+function stateLabel(state, inputMode = "voice") {
+  const textMode = inputMode === "text";
   return {
-    idle: "轻触开始陪伴",
-    connecting: "正在连接",
-    listening: "我在听",
+    idle: "选择一种方式开始",
+    connecting: textMode ? "正在进入文字对话" : "正在连接",
+    listening: textMode ? "文字对话中" : "我在听",
     thinking: "正在想",
-    speaking: "正在回应",
+    speaking: textMode ? "正在回复" : "正在回应",
     reconnecting: "正在恢复连接",
-    closed: "连接已结束",
+    closed: "对话已结束",
   }[state] || "正在准备";
 }
 
@@ -115,6 +116,8 @@ Page({
     statusLabel: stateLabel("idle"),
     error: "",
     transcript: [],
+    inputMode: "voice",
+    textDraft: "",
     micEnabled: true,
     sessionId: "",
     connecting: false,
@@ -179,19 +182,31 @@ Page({
   },
 
   startVoice() {
-    if (this._startVoicePromise) return this._startVoicePromise;
+    return this._startConversation("voice");
+  },
+
+  startText() {
+    return this._startConversation("text");
+  },
+
+  _startConversation(inputMode) {
+    if (this._startConversationPromise) return this._startConversationPromise;
     if (this.data.connecting || this.data.active) return Promise.resolve();
     const attemptId = this._invalidateVoiceAttempt();
     let attempt;
-    attempt = this._startVoiceOnce(attemptId).finally(() => {
-      if (this._startVoicePromise === attempt) this._startVoicePromise = null;
+    attempt = this._startVoiceOnce(attemptId, inputMode).finally(() => {
+      if (this._startConversationPromise === attempt) {
+        this._startConversationPromise = null;
+      }
     });
-    this._startVoicePromise = attempt;
+    this._startConversationPromise = attempt;
     return attempt;
   },
 
-  async _startVoiceOnce(attemptId) {
-    if (!(await requireLogin({ reason: "start_voice" }))) return;
+  async _startVoiceOnce(attemptId, inputMode = "voice") {
+    if (!(await requireLogin({ reason: inputMode === "text" ? "start_text" : "start_voice" }))) {
+      return;
+    }
     if (!this._isVoiceAttemptCurrent(attemptId)) return;
     this.setData({ authenticated: true });
     const identity = api.currentIdentity();
@@ -201,9 +216,12 @@ Page({
     this.setData({
       connecting: true,
       status: "connecting",
-      statusLabel: stateLabel("connecting"),
+      statusLabel: stateLabel("connecting", inputMode),
       error: "",
       transcript: [],
+      inputMode,
+      textDraft: "",
+      micEnabled: inputMode === "voice",
       sessionId: "",
     });
     this._ending = false;
@@ -211,13 +229,15 @@ Page({
     this._resetExpression();
     this._transcriptRevisionByTurn = new Map();
     try {
-      await authorizationForRecord();
-      if (!this._isVoiceAttemptCurrent(attemptId)) return;
+      if (inputMode === "voice") {
+        await authorizationForRecord();
+        if (!this._isVoiceAttemptCurrent(attemptId)) return;
+      }
       const session = await api.createMiniProgramSession({ userId: identity.user_id });
       if (!this._isVoiceAttemptCurrent(attemptId)) return;
       this._session = session;
       this.setData({ sessionId: session.session_id });
-      this._session = await this._connectInitialMedia(session);
+      this._session = await this._connectInitialMedia(session, inputMode);
       if (!this._isVoiceAttemptCurrent(attemptId)) {
         await this._endMediaLocally();
         return;
@@ -233,7 +253,7 @@ Page({
         active: false,
         status: canRetry ? "closed" : "idle",
         statusLabel: stateLabel(canRetry ? "closed" : "idle"),
-        error: error?.message || "语音会话未能开始。",
+        error: error?.message || (inputMode === "text" ? "文字对话未能开始。" : "语音会话未能开始。"),
       });
     } finally {
       this.setData({ connecting: false });
@@ -266,6 +286,8 @@ Page({
       statusLabel: stateLabel("idle"),
       error: "",
       transcript: [],
+      inputMode: "voice",
+      textDraft: "",
       micEnabled: true,
       sessionId: "",
       connecting: false,
@@ -273,9 +295,9 @@ Page({
     });
   },
 
-  async _connectInitialMedia(session) {
+  async _connectInitialMedia(session, inputMode = this.data.inputMode) {
     try {
-      await this._connectMedia(session);
+      await this._connectMedia(session, inputMode);
       return session;
     } catch (error) {
       await this._endMediaLocally();
@@ -291,14 +313,16 @@ Page({
         ...session,
         media_gateway: mediaGateway,
       };
-      await this._connectMedia(recovered);
+      await this._connectMedia(recovered, inputMode);
       return recovered;
     }
   },
 
-  async _connectMedia(session) {
+  async _connectMedia(session, inputMode = this.data.inputMode) {
     let media;
     media = new MiniProgramMediaSession(session, {
+      microphoneEnabled: inputMode === "voice",
+      playbackEnabled: inputMode === "voice",
       onEvent: (event) => {
         if (this._media === media) this._onGatewayEvent(event);
       },
@@ -499,7 +523,11 @@ Page({
       key,
       id: key || `${Date.now()}-${Math.random()}`,
     };
-    this.setData({ transcript: [next] });
+    const transcript =
+      this.data.inputMode === "text"
+        ? [...(this.data.transcript || []).filter((entry) => entry.key !== key), next].slice(-12)
+        : [next];
+    this.setData({ transcript });
     if (
       next.speaker === "user" &&
       next.final &&
@@ -532,27 +560,28 @@ Page({
     } else if (status !== "speaking") {
       this._clearAssistantExpression(generationId);
     }
-    this.setData({ status, statusLabel: stateLabel(status) });
+    this.setData({
+      status,
+      statusLabel: stateLabel(status, this.data.inputMode),
+    });
   },
 
-  async toggleMic() {
-    if (!this._media || !this.data.active) return;
-    const next = !this.data.micEnabled;
-    try {
-      await this._media.setMicrophoneEnabled(next);
-      this.setData({ micEnabled: next });
-    } catch (error) {
-      this.setData({ error: error?.message || "麦克风状态切换失败。" });
+  onTextDraftInput(event) {
+    this.setData({ textDraft: event?.detail?.value || "" });
+  },
+
+  sendText() {
+    const text = String(this.data.textDraft || "").trim();
+    if (!this._media || !this.data.active || this.data.inputMode !== "text" || !text) {
+      return;
     }
-  },
-
-  async stopPlayback() {
-    if (!this._media || !this.data.active || !this._session?.session_id) return;
-    this._media.stopAssistantPlayback();
     try {
-      await api.stopResponse(this._session.session_id);
+      if (!this._media.sendText(text)) {
+        throw new Error("文字连接尚未就绪，请稍后再试。");
+      }
+      this.setData({ textDraft: "", error: "" });
     } catch (error) {
-      this.setData({ error: error?.message || "暂时无法停止播放。" });
+      this.setData({ error: error?.message || "文字消息发送失败。" });
     }
   },
 
@@ -569,6 +598,8 @@ Page({
     this.setData({
       active: false,
       sessionId: "",
+      inputMode: "voice",
+      textDraft: "",
       micEnabled: true,
       status: "closed",
       statusLabel: stateLabel("closed"),
@@ -586,16 +617,19 @@ Page({
         ...this._session,
         media_gateway: gatewayTicket,
       };
-      await this._connectMedia(recovered);
+      await this._connectMedia(recovered, this.data.inputMode);
       await api.notifyRtcRecovered(recovered.session_id);
       this._session = recovered;
-      this.setData({ active: true, micEnabled: true });
+      this.setData({
+        active: true,
+        micEnabled: this.data.inputMode === "voice",
+      });
     } catch (error) {
       this.setData({
         active: false,
         status: "closed",
-        statusLabel: stateLabel("closed"),
-        error: error?.message || "恢复语音连接失败。",
+        statusLabel: stateLabel("closed", this.data.inputMode),
+        error: error?.message || "恢复对话连接失败。",
       });
     } finally {
       this._recovering = false;
@@ -608,8 +642,8 @@ Page({
     this.setData({
       active: false,
       status: "closed",
-      statusLabel: stateLabel("closed"),
-      error: "连接已断开，可轻触“恢复语音”。",
+      statusLabel: stateLabel("closed", this.data.inputMode),
+      error: "连接已断开，可轻触“恢复对话”。",
     });
   },
 
@@ -623,7 +657,7 @@ Page({
         active: false,
         micEnabled: true,
         status: "closed",
-        statusLabel: stateLabel("closed"),
+        statusLabel: stateLabel("closed", this.data.inputMode),
         error: message || "录音被系统中断，请轻触恢复语音。",
       });
     } finally {

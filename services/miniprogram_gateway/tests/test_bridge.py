@@ -778,6 +778,34 @@ async def test_client_audio_trace_is_forwarded_to_the_agent_without_text() -> No
     await bridge.close()
 
 
+def test_text_turn_uses_the_linked_participant_chat_stream() -> None:
+    sent: list[tuple[str, str]] = []
+
+    class Participant:
+        def send_text(self, text: str, *, topic: str) -> None:
+            sent.append((text, topic))
+
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._room = SimpleNamespace(local_participant=Participant())
+
+    bridge.accept_text_turn("今天星期几？")
+
+    assert sent == [("今天星期几？", "lk.chat")]
+
+
 @pytest.mark.asyncio
 async def test_uplink_discontinuity_resets_partial_pcm_and_accepts_declared_sequence() -> None:
     captured: list[bytes] = []
@@ -1490,9 +1518,7 @@ async def test_gateway_forwards_fence_bound_assistant_expression() -> None:
 
     bridge._on_data_received(
         SimpleNamespace(
-            participant=SimpleNamespace(
-                kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
-            ),
+            participant=SimpleNamespace(kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT),
             topic="voice-agent.ui",
             data=json.dumps(expression).encode(),
         )

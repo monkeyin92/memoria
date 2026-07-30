@@ -180,6 +180,8 @@ function parseEvent(payload) {
         !["user", "assistant"].includes(event.speaker) ||
         typeof event.text !== "string" ||
         typeof event.final !== "boolean" ||
+        (event.text_delivered !== undefined &&
+          typeof event.text_delivered !== "boolean") ||
         !Number.isInteger(event.turn_id) ||
         !Number.isInteger(event.generation_id) ||
         (event.turn_revision !== undefined &&
@@ -195,6 +197,7 @@ function parseEvent(payload) {
       return {
         ...event,
         history_eligible: event.history_eligible === true,
+        text_delivered: event.text_delivered === true,
         preview_provenance: previewProvenance,
       };
     }
@@ -282,6 +285,7 @@ export function useVoiceSession({
   const [audioDiagnostics, setAudioDiagnostics] = useState([]);
   const [emotionHint, setEmotionHint] = useState(null);
   const [assistantExpression, setAssistantExpression] = useState(null);
+  const [inputMode, setInputMode] = useState("voice");
   const roomRef = useRef(null);
   const cascadeTransportRef = useRef(null);
   const omniTransportRef = useRef(null);
@@ -296,6 +300,7 @@ export function useVoiceSession({
   const turnRef = useRef(0);
   const micEnabledRef = useRef(true);
   const voiceReplyEnabledRef = useRef(voiceReplyEnabled);
+  const inputModeRef = useRef("voice");
   const reconnectTimerRef = useRef(null);
   const agentReadyTimerRef = useRef(null);
   const intentionalEndRef = useRef(false);
@@ -337,9 +342,12 @@ export function useVoiceSession({
     voiceReplyEnabledRef.current = voiceReplyEnabled;
     const elements = audioContainerRef.current?.querySelectorAll("audio") || [];
     elements.forEach((element) => {
-      element.muted = !voiceReplyEnabled;
+      element.muted =
+        inputModeRef.current === "text" || !voiceReplyEnabled;
     });
-    if (!voiceReplyEnabled) setAudioBlocked(false);
+    if (!voiceReplyEnabled || inputModeRef.current === "text") {
+      setAudioBlocked(false);
+    }
   }, [voiceReplyEnabled]);
 
   const activateAssistantExpression = useCallback((event) => {
@@ -462,6 +470,7 @@ export function useVoiceSession({
         text: line.text,
         final: line.final,
         heard: line.heard,
+        textDelivered: line.text_delivered === true,
         turnId: line.turn_id,
         generationId: line.generation_id,
         turnRevision: revision,
@@ -490,7 +499,11 @@ export function useVoiceSession({
       line.final &&
       line.text.trim() &&
       line.history_eligible === true &&
-      (line.speaker === "user" || line.heard === true);
+      (
+        line.speaker === "user" ||
+        line.heard === true ||
+        line.text_delivered === true
+      );
     const persistKey = `${line.speaker}:${line.turn_id}:${line.generation_id}`;
     if (shouldPersist && !persistedRef.current.has(persistKey)) {
       persistedRef.current.add(persistKey);
@@ -580,7 +593,9 @@ export function useVoiceSession({
       if (!isCurrent() || !audioContainerRef.current) return;
       element.autoplay = true;
       element.playsInline = true;
-      element.muted = !voiceReplyEnabledRef.current;
+      element.muted =
+        inputModeRef.current === "text" ||
+        !voiceReplyEnabledRef.current;
       element.volume = audioGainRef.current;
       audioContainerRef.current.append(element);
       recordAudioDiagnostic("audio_attached", "ok", {
@@ -812,6 +827,7 @@ export function useVoiceSession({
   );
 
   const resumeAudio = useCallback((enabled = voiceReplyEnabledRef.current) => {
+    if (inputModeRef.current === "text") return Promise.resolve(false);
     voiceReplyEnabledRef.current = enabled;
     const cascadeTransport = cascadeTransportRef.current;
     const room = cascadeTransport?.room || null;
@@ -875,8 +891,12 @@ export function useVoiceSession({
     setTranscripts([]);
     generationRef.current = 0;
     turnRef.current = 0;
-    micEnabledRef.current = true;
-    setMicEnabledState(true);
+    const requestedInputMode =
+      overrides.inputMode === "text" ? "text" : "voice";
+    inputModeRef.current = requestedInputMode;
+    setInputMode(requestedInputMode);
+    micEnabledRef.current = requestedInputMode === "voice";
+    setMicEnabledState(requestedInputMode === "voice");
     persistedRef.current.clear();
     transcriptRevisionRef.current.clear();
     traceStartedAtRef.current = performance.now();
@@ -888,7 +908,9 @@ export function useVoiceSession({
     const selectedInteractionMode =
       overrides.interactionMode || interactionMode;
     const selectedBackend =
-      selectedInteractionMode === "companion" && isRealtimeBackend(voiceBackend)
+      requestedInputMode === "voice" &&
+      selectedInteractionMode === "companion" &&
+      isRealtimeBackend(voiceBackend)
         ? voiceBackend
         : "cascade";
     const selectedPreviewGrantId =
@@ -1248,7 +1270,10 @@ export function useVoiceSession({
             await transport.setMicrophoneEnabled(appliedMicState);
             if (!isRecoveryCurrent()) return;
           }
-          if (voiceReplyEnabledRef.current) {
+          if (
+            inputModeRef.current === "voice" &&
+            voiceReplyEnabledRef.current
+          ) {
             try {
               await transport.resumeAudio();
               if (!isRecoveryCurrent()) return;
@@ -1293,7 +1318,10 @@ export function useVoiceSession({
     const room = transport.room;
     roomRef.current = room;
     let liveKitUnlockPromise = Promise.resolve();
-    if (voiceReplyEnabledRef.current) {
+    if (
+      requestedInputMode === "voice" &&
+      voiceReplyEnabledRef.current
+    ) {
       try {
         liveKitUnlockPromise = transport
           .prepare({ unlockAudio: true })
@@ -1360,7 +1388,10 @@ export function useVoiceSession({
           await disconnectRoom(room);
           return;
         }
-        if (voiceReplyEnabledRef.current) {
+        if (
+          inputModeRef.current === "voice" &&
+          voiceReplyEnabledRef.current
+        ) {
           try {
             await transport.resumeAudio();
             if (isCurrent()) {
@@ -1481,6 +1512,32 @@ export function useVoiceSession({
     }
   }, []);
 
+  const sendText = useCallback(async (text) => {
+    const transport = cascadeTransportRef.current;
+    if (
+      inputModeRef.current !== "text" ||
+      !transport ||
+      !roomConnectedRef.current
+    ) {
+      setError("文字会话尚未连接");
+      return false;
+    }
+    try {
+      await transport.sendText(text);
+      setError("");
+      return true;
+    } catch (caught) {
+      if (cascadeTransportRef.current === transport) {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "文字消息暂时无法发送",
+        );
+      }
+      return false;
+    }
+  }, []);
+
   const end = useCallback(async () => {
     attemptRef.current += 1;
     intentionalEndRef.current = true;
@@ -1491,6 +1548,8 @@ export function useVoiceSession({
     setSession(null);
     setAudioBlocked(false);
     setUiState("closed");
+    inputModeRef.current = "voice";
+    setInputMode("voice");
     disconnectOmni(omniTransport);
     await disconnectRoom(room);
   }, [disconnectOmni, disconnectRoom, resetEmotionState]);
@@ -1505,11 +1564,13 @@ export function useVoiceSession({
     generationRef.current = 0;
     turnRef.current = 0;
     micEnabledRef.current = true;
+    inputModeRef.current = "voice";
     persistedRef.current.clear();
     audioDiagnosticsRef.current = [];
     setSession(null);
     resetUiState(attemptRef.current);
     setMicEnabledState(true);
+    setInputMode("voice");
     setTranscripts([]);
     setError("");
     setAudioBlocked(false);
@@ -1543,11 +1604,13 @@ export function useVoiceSession({
     audioDiagnostics,
     emotionHint,
     assistantExpression,
+    inputMode,
     audioContainerRef,
     start,
     resumeAudio,
     toggleMic,
     stopAssistant,
+    sendText,
     end,
     reset,
   };

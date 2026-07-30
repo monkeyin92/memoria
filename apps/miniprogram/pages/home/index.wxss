@@ -492,6 +492,10 @@
   margin-top: 26rpx;
 }
 
+.text-mode-button {
+  margin-top: 18rpx;
+}
+
 .guest-action-hint {
   display: block;
   margin-top: 18rpx;
@@ -500,23 +504,53 @@
   line-height: 1.55;
 }
 
-.start-button-spark {
-  margin-right: 12rpx;
-  font-size: 26rpx;
-}
-
-.voice-controls {
-  display: flex;
-  gap: 16rpx;
-  margin-top: 26rpx;
-}
-
-.voice-controls button {
-  flex: 1;
-}
-
 .retry-button {
   margin-top: 18rpx;
+}
+
+.end-session-button {
+  margin-top: 26rpx;
+  border: 1rpx solid rgba(255, 134, 160, 0.52);
+  color: #ffd7e0;
+  background: rgba(96, 29, 54, 0.54);
+  box-shadow: 0 10rpx 30rpx rgba(32, 8, 22, 0.24);
+}
+
+.text-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 16rpx;
+  margin-top: 26rpx;
+  padding: 14rpx;
+  border: 1rpx solid rgba(94, 234, 255, 0.22);
+  border-radius: 30rpx;
+  background: rgba(16, 23, 52, 0.78);
+  box-shadow: 0 14rpx 34rpx rgba(0, 0, 0, 0.22);
+  text-align: left;
+}
+
+.text-input {
+  flex: 1;
+  min-height: 72rpx;
+  max-height: 210rpx;
+  box-sizing: border-box;
+  padding: 17rpx 18rpx;
+  color: #f2f5ff;
+  font-size: 28rpx;
+  line-height: 1.45;
+}
+
+.text-input-placeholder {
+  color: #69759c;
+}
+
+.text-send-button {
+  flex: none;
+  width: 144rpx;
+  min-height: 72rpx;
+  margin: 0;
+  padding: 0 18rpx;
+  font-size: 27rpx;
 }
 
 /* ——— 实时对话 ——— */

@@ -128,6 +128,7 @@ class MiniProgramMediaSession {
   constructor(session, callbacks = {}) {
     this.session = session;
     this.callbacks = callbacks;
+    this.playbackEnabled = callbacks.playbackEnabled !== false;
     this.socket = null;
     this.recorder = wx.getRecorderManager();
     const configuredPostPlayoutGuardMs =
@@ -160,7 +161,7 @@ class MiniProgramMediaSession {
     this.recording = false;
     this.recorderStarted = false;
     this.recorderStarting = false;
-    this.microphoneEnabled = true;
+    this.microphoneEnabled = callbacks.microphoneEnabled !== false;
     this.assistantResponseActive = false;
     this.serverCaptureAllowed = true;
     this.inputPolicyEpoch = -1;
@@ -199,7 +200,7 @@ class MiniProgramMediaSession {
     this._readyTerminal = false;
     this.clientAudioTraceVersion = 1;
     this._clearGatewayReadyTimeout();
-    await this.player.resume();
+    if (this.playbackEnabled) await this.player.resume();
     const ready = new Promise((resolve, reject) => {
       this._readyResolve = resolve;
       this._readyReject = reject;
@@ -229,6 +230,22 @@ class MiniProgramMediaSession {
   async setMicrophoneEnabled(enabled) {
     this.microphoneEnabled = Boolean(enabled);
     this._syncRecordingState();
+  }
+
+  sendText(text) {
+    const normalized = typeof text === "string" ? text.trim() : "";
+    if (
+      !this.ready ||
+      !this.socket ||
+      !normalized ||
+      normalized.length > 500
+    ) {
+      return false;
+    }
+    return this._sendTransportEvent({
+      type: "text_turn",
+      text: normalized,
+    });
   }
 
   stopAssistantPlayback() {
@@ -436,7 +453,7 @@ class MiniProgramMediaSession {
           this._clearPendingSocketError();
           this._clearGatewayReadyTimeout();
           this.ready = true;
-          this._startRecording();
+          if (this.microphoneEnabled) this._startRecording();
           const resolve = this._readyResolve;
           this._readyResolve = null;
           this._readyReject = null;
@@ -496,6 +513,7 @@ class MiniProgramMediaSession {
       }
       return;
     }
+    if (!this.playbackEnabled) return;
     try {
       const frame = decodePcmFrame(message.data, FRAME_TYPE.DOWNLINK_AUDIO);
       this.player.enqueue(frame.payload, {
