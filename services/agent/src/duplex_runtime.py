@@ -555,6 +555,12 @@ class DuplexRuntime:
     def enable_text_only_delivery(self) -> None:
         self._text_only_delivery = True
 
+    def input_modality_for_fence(self, fence: GenerationFence) -> str:
+        return self._input_modality_by_fence.get(
+            (fence.turn_id, fence.generation_id),
+            "audio",
+        )
+
     def authenticate_text_owner(self) -> SpeakerDecision:
         """Bind an lk.chat turn from the linked account participant as owner."""
 

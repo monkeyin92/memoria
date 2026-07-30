@@ -50,6 +50,7 @@ async def _text_source(*parts: str) -> AsyncIterator[str]:
 @pytest.mark.asyncio
 async def test_authenticated_text_input_uses_owner_policy_and_disables_audio_output() -> None:
     runtime = DuplexRuntime.create(session_id="text-session")
+    runtime.tts = SimpleNamespace()
     runtime.set_mode_policy(
         ModePolicy.companion_for_test(
             policy_version="test-policy",
@@ -117,6 +118,8 @@ async def test_authenticated_text_input_uses_owner_policy_and_disables_audio_out
 
     await agent.handle_text_input(session, event)  # type: ignore[arg-type]
     await asyncio.sleep(0)
+    plan = agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)]
+    assert agent._bind_response_plan_provenance(runtime.fence, plan)
     await runtime.on_assistant_reply_completed("今天星期四。")
     await asyncio.sleep(0)
 

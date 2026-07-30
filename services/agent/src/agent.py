@@ -479,7 +479,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         plan: ResponsePlan,
     ) -> bool:
         voice = self._runtime.generation_voice_for(fence)
-        if self._runtime.tts is not None and voice is None:
+        text_only = self._runtime.input_modality_for_fence(fence) == "text"
+        if self._runtime.tts is not None and voice is None and not text_only:
             return False
         policy = self._runtime.mode_policy_for_fence(fence)
         if (
