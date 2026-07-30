@@ -230,6 +230,7 @@ export function App() {
   const [fidelityEvaluations, setFidelityEvaluations] = useState([]);
   const [fidelityFocusVersionId, setFidelityFocusVersionId] = useState("");
   const [textDraft, setTextDraft] = useState("");
+  const [textTurnPending, setTextTurnPending] = useState(false);
   const activeUserIdRef = useRef("");
   const growthCompletionIdsRef = useRef({});
   const userId = identity?.user_id || "";
@@ -297,6 +298,24 @@ export function App() {
     previewGrantId: activePreview?.grant_id || null,
     legacyGrantId: activeLegacy?.grant_id || null,
   });
+  const textInputReady =
+    voice.uiState === "ready" || voice.uiState === "listening";
+
+  useEffect(() => {
+    if (
+      !voice.session ||
+      voice.inputMode !== "text" ||
+      voice.error ||
+      !textInputReady
+    ) {
+      setTextTurnPending(false);
+    }
+  }, [
+    textInputReady,
+    voice.error,
+    voice.inputMode,
+    voice.session,
+  ]);
 
   const refreshSelfPreviewState = useCallback(async () => {
     if (identity?.account_type !== "registered") {
@@ -1135,8 +1154,13 @@ export function App() {
                   onSubmit={async (event) => {
                     event.preventDefault();
                     const message = textDraft.trim();
-                    if (!message) return;
-                    if (await voice.sendText(message)) setTextDraft("");
+                    if (!message || textTurnPending || !textInputReady) return;
+                    setTextTurnPending(true);
+                    if (await voice.sendText(message)) {
+                      setTextDraft("");
+                    } else {
+                      setTextTurnPending(false);
+                    }
                   }}
                 >
                   <label htmlFor="home-text-message">输入你想说的话</label>
@@ -1152,7 +1176,11 @@ export function App() {
                     <button
                       type="submit"
                       className="text-send-button"
-                      disabled={!textDraft.trim()}
+                      disabled={
+                        !textDraft.trim() ||
+                        textTurnPending ||
+                        !textInputReady
+                      }
                       aria-label="发送文字消息"
                     >
                       <PaperPlaneRight size={20} weight="fill" aria-hidden="true" />
@@ -1162,9 +1190,10 @@ export function App() {
                   <button
                     type="button"
                     className="text-exit-button"
-                    aria-label="结束对话"
+                    aria-label="退出文字对话"
                     onClick={() => void finishConversation()}
                   >
+                    <PhoneDisconnect size={18} weight="fill" aria-hidden="true" />
                     退出文字对话
                   </button>
                 </form>
@@ -1177,27 +1206,19 @@ export function App() {
                 <span>仅显示当前发言</span>
               </div>
               {voice.latestTranscript ? (
-                <div className={voice.inputMode === "text" ? "text-thread" : undefined}>
-                  {(voice.inputMode === "text"
-                    ? voice.transcripts
-                    : [voice.latestTranscript]
-                  ).map((line) => (
-                  <div
-                    key={line.key}
-                    className={`transcript-card ${line.speaker}`}
-                  >
-                    <span>
-                    {line.speaker === "assistant"
-                      ? selfPreviewSession
-                        ? "数字分身"
-                        : legacySession
-                          ? "冻结数字分身"
-                          : sessionCompanion.name
-                      : "你"}
-                    </span>
-                    <p>{line.text}</p>
-                  </div>
-                  ))}
+                <div
+                  className={`transcript-card ${voice.latestTranscript.speaker}`}
+                >
+                  <span>
+                  {voice.latestTranscript.speaker === "assistant"
+                    ? selfPreviewSession
+                      ? "数字分身"
+                      : legacySession
+                        ? "冻结数字分身"
+                        : sessionCompanion.name
+                    : "你"}
+                  </span>
+                  <p>{voice.latestTranscript.text}</p>
                 </div>
               ) : (
                 <div className="welcome-copy">

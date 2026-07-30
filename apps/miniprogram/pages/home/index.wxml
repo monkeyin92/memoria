@@ -107,7 +107,7 @@
         />
         <button
           class="primary-button text-send-button"
-          disabled="{{!textDraft}}"
+          disabled="{{!textDraft || textTurnPending || status !== 'listening'}}"
           bindtap="sendText"
         >发送</button>
       </view>
@@ -120,7 +120,7 @@
   <view class="conversation-card card">
     <view class="section-heading">
       <text>{{inputMode === 'text' ? '文字对话' : '实时对话'}}</text>
-      <text class="section-hint">{{inputMode === 'text' ? '保留本次对话最近 12 条' : '仅显示当前发言'}}</text>
+      <text class="section-hint">仅显示当前发言</text>
     </view>
     <view wx:if="{{!transcript.length}}" class="empty-state">
       <text class="empty-spark">✧</text>

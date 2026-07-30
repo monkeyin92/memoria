@@ -395,10 +395,53 @@ describe("App identity and profile preferences", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送文字消息" }));
 
     await waitFor(() => expect(sendText).toHaveBeenCalledWith("今天星期几？"));
+    fireEvent.change(screen.getByLabelText("输入你想说的话"), {
+      target: { value: "第二条不应连续发送" },
+    });
+    const sendButton = screen.getByRole("button", { name: "发送文字消息" });
+    expect(sendButton).toBeDisabled();
+    fireEvent.click(sendButton);
+    expect(sendText).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("button", { name: "关闭麦克风" }))
       .not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "结束对话" }))
-      .toHaveTextContent("退出文字对话");
+    const exitButton = screen.getByRole("button", { name: "退出文字对话" });
+    expect(exitButton).toHaveTextContent("退出文字对话");
+    expect(exitButton.querySelector("svg")).not.toBeNull();
+  });
+
+  it("shows only the current speaker when the assistant starts streaming", async () => {
+    const userLine = {
+      key: "user:1:1",
+      speaker: "user",
+      text: "这句用户内容随后应被替换",
+      final: true,
+    };
+    const assistantLine = {
+      key: "assistant:1:1",
+      speaker: "assistant",
+      text: "这是助手正在流式回答",
+      final: false,
+    };
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      access_token: "token",
+    });
+    mocks.useVoiceSession.mockImplementation(() => ({
+      ...voiceState(),
+      session: { session_id: "text-session" },
+      inputMode: "text",
+      uiState: "speaking",
+      transcripts: [userLine, assistantLine],
+      latestTranscript: assistantLine,
+    }));
+
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    expect(screen.getByText("这是助手正在流式回答")).toBeInTheDocument();
+    expect(
+      screen.queryByText("这句用户内容随后应被替换"),
+    ).not.toBeInTheDocument();
   });
 
   it("does not load user data or expose the app before identity is ready", async () => {

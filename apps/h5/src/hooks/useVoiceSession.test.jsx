@@ -46,6 +46,7 @@ vi.mock("livekit-client", () => {
         setMicrophoneEnabled: vi.fn(async (enabled) =>
           enabled ? liveKit.microphonePublication : undefined,
         ),
+        sendText: vi.fn().mockResolvedValue(undefined),
       };
       liveKit.instances.push(this);
     }
@@ -108,7 +109,10 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-async function renderStartedHook({ voiceReplyEnabled = true } = {}) {
+async function renderStartedHook({
+  voiceReplyEnabled = true,
+  startOptions,
+} = {}) {
   const onFinalTranscript = vi.fn();
   const rendered = renderHook(
     ({ enabled }) =>
@@ -121,7 +125,7 @@ async function renderStartedHook({ voiceReplyEnabled = true } = {}) {
   );
   rendered.result.current.audioContainerRef.current = document.createElement("div");
   await act(async () => {
-    await rendered.result.current.start();
+    await rendered.result.current.start(startOptions);
   });
   const room = liveKit.instances.at(-1);
   act(() => {
@@ -958,6 +962,47 @@ describe("useVoiceSession production edges", () => {
     });
     expect(result.current.latestTranscript.text).toBe("同一代修订后的最终稿");
     expect(onFinalTranscript).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows sent text immediately and replaces it when the assistant streams", async () => {
+    const pendingSend = deferred();
+    const { result, room, onFinalTranscript } = await renderStartedHook({
+      startOptions: { inputMode: "text" },
+    });
+    room.localParticipant.sendText.mockReturnValueOnce(pendingSend.promise);
+
+    let sending;
+    act(() => {
+      sending = result.current.sendText("你好");
+    });
+
+    expect(result.current.latestTranscript).toEqual(
+      expect.objectContaining({
+        speaker: "user",
+        text: "你好",
+        optimistic: true,
+      }),
+    );
+    expect(onFinalTranscript).not.toHaveBeenCalled();
+
+    await act(async () => {
+      pendingSend.resolve();
+      await sending;
+    });
+    act(() => {
+      room.emit(
+        liveKit.RoomEvent.TranscriptionReceived,
+        [{ id: "assistant-stream", text: "你好呀", final: false }],
+        { isAgent: true },
+      );
+    });
+
+    expect(result.current.latestTranscript).toEqual(
+      expect.objectContaining({
+        speaker: "assistant",
+        text: "你好呀",
+      }),
+    );
   });
 
   it("keeps legacy unrevisioned transcript updates compatible during rollout", async () => {

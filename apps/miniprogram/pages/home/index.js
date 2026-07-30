@@ -3,6 +3,7 @@ const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { MiniProgramMediaSession } = require("../../utils/media-gateway");
 const {
   acceptTranscriptRevision,
+  assistantStreamingTranscript,
   authoritativeTranscript,
 } = require("../../utils/transcript-events");
 const { requireLogin } = require("../../utils/auth-gate");
@@ -118,6 +119,7 @@ Page({
     transcript: [],
     inputMode: "voice",
     textDraft: "",
+    textTurnPending: false,
     micEnabled: true,
     sessionId: "",
     connecting: false,
@@ -221,6 +223,7 @@ Page({
       transcript: [],
       inputMode,
       textDraft: "",
+      textTurnPending: false,
       micEnabled: inputMode === "voice",
       sessionId: "",
     });
@@ -288,6 +291,7 @@ Page({
       transcript: [],
       inputMode: "voice",
       textDraft: "",
+      textTurnPending: false,
       micEnabled: true,
       sessionId: "",
       connecting: false,
@@ -356,6 +360,20 @@ Page({
     const transcript = authoritativeTranscript(event);
     if (transcript) {
       this._appendTranscript(transcript);
+      return;
+    }
+    const assistantStream =
+      this.data.inputMode === "text"
+        ? assistantStreamingTranscript(event)
+        : null;
+    const assistantFence = this._assistantStateFence;
+    if (
+      assistantStream &&
+      this.data.status === "speaking" &&
+      assistantFence?.turnId === assistantStream.turnId &&
+      assistantFence.generationId === assistantStream.generationId
+    ) {
+      this._appendTranscript(assistantStream);
       return;
     }
     if (event?.type !== "ui_event") return;
@@ -514,6 +532,16 @@ Page({
     ) {
       return;
     }
+    const current = this.data.transcript?.[0];
+    if (
+      item.source === "display" &&
+      current?.source === "authoritative" &&
+      current.speaker === "assistant" &&
+      current.turnId === item.turnId &&
+      current.generationId === item.generationId
+    ) {
+      return;
+    }
     const key =
       Number.isInteger(item.turnId) && Number.isInteger(item.generationId)
         ? `${item.speaker}:${item.turnId}:${item.generationId}`
@@ -523,11 +551,7 @@ Page({
       key,
       id: key || `${Date.now()}-${Math.random()}`,
     };
-    const transcript =
-      this.data.inputMode === "text"
-        ? [...(this.data.transcript || []).filter((entry) => entry.key !== key), next].slice(-12)
-        : [next];
-    this.setData({ transcript });
+    this.setData({ transcript: [next] });
     if (
       next.speaker === "user" &&
       next.final &&
@@ -563,6 +587,8 @@ Page({
     this.setData({
       status,
       statusLabel: stateLabel(status, this.data.inputMode),
+      textTurnPending:
+        status === "listening" ? this.data.textTurnPending : false,
     });
   },
 
@@ -572,14 +598,31 @@ Page({
 
   sendText() {
     const text = String(this.data.textDraft || "").trim();
-    if (!this._media || !this.data.active || this.data.inputMode !== "text" || !text) {
+    if (
+      !this._media ||
+      !this.data.active ||
+      this.data.inputMode !== "text" ||
+      this.data.status !== "listening" ||
+      this.data.textTurnPending ||
+      !text
+    ) {
       return;
     }
     try {
       if (!this._media.sendText(text)) {
         throw new Error("文字连接尚未就绪，请稍后再试。");
       }
-      this.setData({ textDraft: "", error: "" });
+      this._appendTranscript({
+        speaker: "user",
+        text,
+        final: false,
+        source: "display",
+      });
+      this.setData({
+        textDraft: "",
+        textTurnPending: true,
+        error: "",
+      });
     } catch (error) {
       this.setData({ error: error?.message || "文字消息发送失败。" });
     }
@@ -600,6 +643,7 @@ Page({
       sessionId: "",
       inputMode: "voice",
       textDraft: "",
+      textTurnPending: false,
       micEnabled: true,
       status: "closed",
       statusLabel: stateLabel("closed"),
@@ -609,7 +653,12 @@ Page({
   async retryVoice() {
     if (!this._session || this._recovering) return;
     this._recovering = true;
-    this.setData({ error: "", status: "reconnecting", statusLabel: stateLabel("reconnecting") });
+    this.setData({
+      error: "",
+      status: "reconnecting",
+      statusLabel: stateLabel("reconnecting"),
+      textTurnPending: false,
+    });
     try {
       const gatewayTicket = await api.refreshMiniProgramGatewayTicket(this._session.session_id);
       await this._endMediaLocally();
@@ -629,6 +678,7 @@ Page({
         active: false,
         status: "closed",
         statusLabel: stateLabel("closed", this.data.inputMode),
+        textTurnPending: false,
         error: error?.message || "恢复对话连接失败。",
       });
     } finally {
@@ -643,6 +693,7 @@ Page({
       active: false,
       status: "closed",
       statusLabel: stateLabel("closed", this.data.inputMode),
+      textTurnPending: false,
       error: "连接已断开，可轻触“恢复对话”。",
     });
   },
@@ -658,6 +709,7 @@ Page({
         micEnabled: true,
         status: "closed",
         statusLabel: stateLabel("closed", this.data.inputMode),
+        textTurnPending: false,
         error: message || "录音被系统中断，请轻触恢复语音。",
       });
     } finally {

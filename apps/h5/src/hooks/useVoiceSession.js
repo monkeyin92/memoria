@@ -455,9 +455,13 @@ export function useVoiceSession({
     }
 
     setTranscripts((current) => {
-      const index = current.findIndex((item) => item.key === key);
-      if (index >= 0 && !authoritative && current[index].authoritative) {
-        return current;
+      const source =
+        authoritative && line.speaker === "user"
+          ? current.filter((item) => !item.optimistic)
+          : current;
+      const index = source.findIndex((item) => item.key === key);
+      if (index >= 0 && !authoritative && source[index].authoritative) {
+        return source;
       }
       const next = {
         key,
@@ -483,8 +487,8 @@ export function useVoiceSession({
           line.preview_provenance?.manifest_sha256 || null,
         authoritative,
       };
-      if (index < 0) return [...current.slice(-11), next];
-      const copy = [...current];
+      if (index < 0) return [...source.slice(-11), next];
+      const copy = [...source];
       copy[index] = next;
       return copy;
     });
@@ -1510,11 +1514,27 @@ export function useVoiceSession({
       setError("文字会话尚未连接");
       return false;
     }
+    const optimisticKey =
+      `user:optimistic:${attemptRef.current}:${Date.now()}`;
+    setTranscripts((current) => [
+      ...current.slice(-11),
+      {
+        key: optimisticKey,
+        speaker: "user",
+        text,
+        final: false,
+        authoritative: false,
+        optimistic: true,
+      },
+    ]);
     try {
       await transport.sendText(text);
       setError("");
       return true;
     } catch (caught) {
+      setTranscripts((current) =>
+        current.filter((item) => item.key !== optimisticKey),
+      );
       if (cascadeTransportRef.current === transport) {
         setError(
           caught instanceof Error

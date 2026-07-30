@@ -45,38 +45,96 @@ test("realtime panel replaces the previous speaker instead of accumulating rows"
   assert.equal(data.transcript[0].text, "这是当前这一句");
 });
 
-test("text mode keeps recent turns instead of replacing the conversation", () => {
+test("text mode replaces the user turn when the assistant starts streaming", () => {
   const data = {
     inputMode: "text",
-    transcript: [
-      {
-        key: "user:1:1",
-        speaker: "user",
-        text: "上一句",
-        source: "authoritative",
-        turnId: 1,
-        generationId: 1,
-      },
-    ],
+    transcript: [],
   };
-  const instance = {
+  const instance = Object.assign(Object.create(page), {
     data,
     setData(update) {
       Object.assign(this.data, update);
     },
-  };
-
-  page._appendTranscript.call(instance, {
-    speaker: "assistant",
-    text: "新的回复",
-    final: true,
-    source: "authoritative",
-    turnId: 1,
-    generationId: 1,
   });
 
-  assert.equal(data.transcript.length, 2);
-  assert.equal(data.transcript[1].text, "新的回复");
+  page._onGatewayEvent.call(instance, {
+    type: "ui_event",
+    event: {
+      type: "transcript_delta",
+      speaker: "user",
+      text: "这句用户内容随后应被替换",
+      final: true,
+      turn_id: 1,
+      generation_id: 1,
+    },
+  });
+  assert.equal(data.transcript.length, 1);
+  assert.equal(data.transcript[0].speaker, "user");
+
+  page._onGatewayEvent.call(instance, {
+    type: "ui_event",
+    event: {
+      type: "assistant_state",
+      state: "speaking",
+      turn_id: 1,
+      generation_id: 1,
+    },
+  });
+  page._onGatewayEvent.call(instance, {
+    type: "transcription",
+    turn_id: 1,
+    generation_id: 1,
+    segments: [{
+      id: "assistant-stream-1",
+      text: "这是助手正在流式回答",
+      final: false,
+    }],
+  });
+
+  assert.equal(data.transcript.length, 1);
+  assert.equal(data.transcript[0].speaker, "assistant");
+  assert.equal(data.transcript[0].text, "这是助手正在流式回答");
+
+  page._onGatewayEvent.call(instance, {
+    type: "transcription",
+    turn_id: 0,
+    generation_id: 0,
+    segments: [{
+      id: "late-assistant-stream",
+      text: "这是迟到的旧回答",
+      final: false,
+    }],
+  });
+  assert.equal(data.transcript[0].text, "这是助手正在流式回答");
+
+  page._onGatewayEvent.call(instance, {
+    type: "ui_event",
+    event: {
+      type: "transcript_delta",
+      speaker: "assistant",
+      text: "这是助手最终确认的回答",
+      final: true,
+      turn_id: 1,
+      generation_id: 1,
+      turn_revision: 1,
+    },
+  });
+
+  assert.equal(data.transcript.length, 1);
+  assert.equal(data.transcript[0].source, "authoritative");
+  assert.equal(data.transcript[0].text, "这是助手最终确认的回答");
+
+  page._onGatewayEvent.call(instance, {
+    type: "transcription",
+    turn_id: 1,
+    generation_id: 1,
+    segments: [{
+      id: "late-current-stream",
+      text: "这是同一回答迟到的半句",
+      final: false,
+    }],
+  });
+  assert.equal(data.transcript[0].text, "这是助手最终确认的回答");
 });
 
 test("home exposes one voice start/end action and a separate text alternative", () => {
@@ -97,10 +155,13 @@ test("text send uses the media gateway without microphone controls", () => {
   const data = {
     active: true,
     inputMode: "text",
+    status: "listening",
     textDraft: "  今天星期几？  ",
+    textTurnPending: false,
+    transcript: [],
     error: "",
   };
-  const instance = {
+  const instance = Object.assign(Object.create(page), {
     data,
     _media: {
       sendText(text) {
@@ -111,13 +172,28 @@ test("text send uses the media gateway without microphone controls", () => {
     setData(update) {
       Object.assign(this.data, update);
     },
-  };
+  });
 
   page.sendText.call(instance);
 
   assert.deepEqual(sent, ["今天星期几？"]);
   assert.equal(data.textDraft, "");
   assert.equal(data.error, "");
+  assert.equal(data.transcript.length, 1);
+  assert.equal(data.transcript[0].speaker, "user");
+  assert.equal(data.transcript[0].text, "今天星期几？");
+  assert.equal(data.transcript[0].source, "display");
+  assert.equal(data.textTurnPending, true);
+
+  data.textDraft = "第二条不应连续发送";
+  page.sendText.call(instance);
+  assert.deepEqual(sent, ["今天星期几？"]);
+
+  page._setStatus.call(instance, "thinking", {
+    turn_id: 1,
+    generation_id: 1,
+  });
+  assert.equal(data.textTurnPending, false);
 });
 
 test("initial connection retries once with a fresh ticket after connection refused", async () => {
