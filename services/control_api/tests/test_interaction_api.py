@@ -3,12 +3,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from services.agent.src.response_planner_client import ResponsePlannerClient
 from services.archive.memory_domain import MemorySearchItem, MemorySearchResult
 from services.control_api.app.main import create_app
+from services.control_api.app.routes import interaction as interaction_routes
 from services.digital_self.domain import (
     DigitalSelfManifest,
     DigitalSelfSourceSummary,
@@ -390,6 +392,49 @@ async def test_response_plan_requires_its_own_token_and_returns_bounded_companio
     assert "score" not in str(payload)
     assert "每一轮只根据用户当前语义" in payload["instructions"]
     assert "危机支持 > 语言学习 > 引导式学习 > 普通陪伴" in payload["instructions"]
+
+
+@pytest.mark.asyncio
+async def test_response_plan_grounds_clock_and_requires_a_city_for_weather(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    fixed_now = datetime(2026, 7, 30, 18, 42, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(interaction_routes, "_local_now", lambda _settings: fixed_now, raising=False)
+    app = create_app()
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        responses = []
+        for turn_id, query in enumerate(
+            ("今天星期几", "现在几点了", "今天天气怎么样", "杭州今天天气怎么样"),
+            start=20,
+        ):
+            body = _response_plan_body(session_id)
+            body["query"] = query
+            body["fence"]["turn_id"] = turn_id
+            responses.append(
+                await client.post(
+                    "/v1/interaction/response-plan",
+                    headers=token,
+                    json=body,
+                )
+            )
+
+    assert all(response.status_code == 200 for response in responses)
+    date_plan, time_plan, missing_city_plan, city_weather_plan = (
+        response.json() for response in responses
+    )
+    assert date_plan["direct_text"] == "今天是2026年7月30日，星期四。"
+    assert time_plan["direct_text"] == "现在是北京时间18点42分。"
+    assert missing_city_plan["direct_text"] == "你想查哪个城市的天气？"
+    assert city_weather_plan["direct_text"] is None
+    assert "2026-07-30 18:42" in city_weather_plan["instructions"]
+    assert "星期四" in city_weather_plan["instructions"]
+    assert "联网查询" in city_weather_plan["instructions"]
 
 
 @pytest.mark.asyncio

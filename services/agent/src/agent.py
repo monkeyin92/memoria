@@ -56,6 +56,12 @@ from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AEC_HEALTH_TOPIC,
     MINIPROGRAM_AGENT_DISPATCH_METADATA,
 )
+from services.common.realtime_information import (
+    current_local_time,
+    fixed_realtime_reply,
+    is_safe_realtime_reply,
+    realtime_instruction,
+)
 
 if TYPE_CHECKING:
     pass
@@ -625,6 +631,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 allowed_companion_direct_text.add(
                     f"我是{companion.display_name}，{companion.style_description}。"
                 )
+            if is_safe_realtime_reply(plan.direct_text):
+                allowed_companion_direct_text.add(plan.direct_text)
             companion_safe = (
                 policy.mode == "companion"
                 and companion is not None
@@ -844,6 +852,9 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 else None
             ),
         )
+        live_now = current_local_time(os.getenv("MEMORIA_TIMEZONE", "Asia/Shanghai"))
+        if fixed_reply is None and companion:
+            fixed_reply = fixed_realtime_reply(query=query, now=live_now)
         references = dict(policy.references)
         relationship_version_raw = references.get("relationship_profile_version")
         relationship_version = (
@@ -872,6 +883,9 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             instructions += "\n" + COMPANION_TURN_POLICY_INSTRUCTIONS
         if companion and policy.companion_style_prompt is not None:
             instructions += "\n" + policy.companion_style_prompt
+        live_instruction = realtime_instruction(query=query, now=live_now)
+        if companion and live_instruction is not None:
+            instructions += "\n" + live_instruction
         return ResponsePlan(
             fence=fence,
             instructions=instructions,
@@ -2369,10 +2383,21 @@ async def entrypoint(ctx: Any) -> None:
         raise RuntimeError("Agent UI publisher was not configured")
     await ready_publish
 
-    async def _say_fixed(text: str, *, interruptible: bool = False) -> None:
+    async def _say_fixed(
+        text: str,
+        *,
+        interruptible: bool = False,
+        emotion: str = "neutral",
+        rate: float = 1.0,
+        instruction: str = "",
+    ) -> None:
         """One TTS stream of fixed text to avoid multi-phrase voice glitches."""
         if hasattr(tts_plugin, "apply_speech_plan"):
-            tts_plugin.apply_speech_plan(emotion="neutral", rate=1.0)
+            tts_plugin.apply_speech_plan(
+                emotion=emotion,
+                rate=rate,
+                instruction=instruction,
+            )
         handle = session.say(
             text,
             allow_interruptions=interruptible,
@@ -2389,6 +2414,16 @@ async def entrypoint(ctx: Any) -> None:
         # Fixed say may not clear speaking via conversation_item path.
         runtime._was_speaking = False
         await asyncio.sleep(0.2)
+
+    companion = companion_definition(runtime.mode_policy.companion_style_id)
+    welcome_text = (
+        companion.welcome_text
+        if companion is not None
+        else "嗨，想聊什么就直接说吧。"
+    )
+    welcome_emotion = companion.default_voice_emotion if companion is not None else "neutral"
+    welcome_rate = companion.default_voice_rate if companion is not None else 1.0
+    welcome_instruction = companion.voice_instruction if companion is not None else ""
 
     if runtime.speaker_verifier.enabled:
         # Fixed single-stream prompt (not generate_reply) so TTS does not
@@ -2423,21 +2458,30 @@ async def entrypoint(ctx: Any) -> None:
         runtime.mark_audio_event("welcome_generation_started")
         if runtime.speaker_verifier.state.value == "enrolled":
             await _say_fixed(
-                "好的，已经记住你的声音了。想聊什么都可以直接说。",
+                f"好的，已经记住你的声音了。{welcome_text}",
                 interruptible=False,
+                emotion=welcome_emotion,
+                rate=welcome_rate,
+                instruction=welcome_instruction,
             )
         else:
             # Fail-open: do not announce "跳过声纹" — it felt like a random extra
             # sentence after the model had already answered enroll speech.
             await _say_fixed(
-                "好的，想聊什么都可以直接说。",
+                f"好的。{welcome_text}",
                 interruptible=False,
+                emotion=welcome_emotion,
+                rate=welcome_rate,
+                instruction=welcome_instruction,
             )
     else:
         runtime.mark_audio_event("welcome_generation_started")
         await _say_fixed(
-            "嗨，我在呢。想聊什么就直接说吧。",
+            welcome_text,
             interruptible=True,
+            emotion=welcome_emotion,
+            rate=welcome_rate,
+            instruction=welcome_instruction,
         )
 
 

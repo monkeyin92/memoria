@@ -2143,6 +2143,7 @@ class DuplexRuntime:
             text=user_text,
             evidence=observation.evidence,
             use_markup_tags=self.use_paralinguistic_tags,
+            companion_id=self.mode_policy.companion_style_id,
         )
         self._speech_plans_by_fence[fence] = self.speech_plan
         while len(self._speech_plans_by_fence) > 16:

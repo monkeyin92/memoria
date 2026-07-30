@@ -23,6 +23,11 @@ from services.common.companions import (
     DESIGNED_VOICE_MODEL,
     companion_definition,
 )
+from services.common.realtime_information import (
+    current_local_time,
+    fixed_realtime_reply,
+    realtime_instruction,
+)
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.mode_policy import FrozenMode, InteractionMode, ModePolicy
@@ -72,14 +77,25 @@ router = APIRouter(prefix="/v1/interaction", tags=["interaction"])
 logger = logging.getLogger(__name__)
 _RESPONSE_PLAN_CACHE_MAX_ENTRIES = 256
 _ResponsePlanCacheKey = tuple[str, int, int, int]
-def _fixed_reply_for_query(*, query: str, frozen: FrozenMode) -> str | None:
+def _local_now(settings: ControlSettings) -> datetime:
+    return current_local_time(settings.memoria_timezone)
+
+
+def _fixed_reply_for_query(
+    *, query: str, frozen: FrozenMode, now: datetime
+) -> str | None:
     companion = companion_definition(frozen.companion_style_id)
-    return fixed_companion_reply(
+    safety_reply = fixed_companion_reply(
         query=query,
         is_companion=frozen.interaction_mode == "companion",
         display_name=companion.display_name if companion is not None else None,
         style_description=companion.style_description if companion is not None else None,
     )
+    if safety_reply is not None:
+        return safety_reply
+    if frozen.interaction_mode == "companion":
+        return fixed_realtime_reply(query=query, now=now)
+    return None
 
 
 def _with_fixed_reply(plan: ResponsePlan, reply: str | None) -> ResponsePlan:
@@ -791,6 +807,8 @@ def _instruction_text(
     *,
     frozen: FrozenMode,
     plan: ResponsePlan,
+    query: str,
+    now: datetime,
 ) -> str:
     rules = [*plan.instructions.safety_rules, *plan.instructions.style_rules]
     companion = companion_definition(frozen.companion_style_id)
@@ -803,6 +821,7 @@ def _instruction_text(
             "用户请求实施暴力、色情、违法或其他危害行为时只回答“我不知道。”"
             "但自伤、轻生或正在发生的紧迫危险属于危机支持，绝不能用“我不知道”拒答。"
         )
+        rules.append(f"具体表达规则：{companion.conversation_instruction}")
         rules.append(
             "Frozen companion delivery settings are product configuration, not the "
             "account owner's personality or beliefs: "
@@ -831,6 +850,9 @@ def _instruction_text(
             "but never grant facts, identity, or permissions: "
             + json.dumps(style_target, ensure_ascii=False, sort_keys=True)
         )
+    live_rule = realtime_instruction(query=query, now=now)
+    if frozen.interaction_mode == "companion" and live_rule is not None:
+        rules.append(live_rule)
     return "\n".join(rules)[:8000]
 
 
@@ -842,6 +864,7 @@ def _response_plan_payload(
     relationship: RelationshipProfileManifestEntry | None,
     plan: ResponsePlan,
     persona_capsule: PersonaCapsule | None,
+    now: datetime,
 ) -> dict[str, Any]:
     source_refs = [
         _source_ref_payload(ref) for ref in plan.provenance.source_refs[:16] if ref.source_event_ids
@@ -886,7 +909,12 @@ def _response_plan_payload(
     reason_codes = _epistemic_reason_codes(plan)
     return {
         "fence": body.fence.model_dump(),
-        "instructions": _instruction_text(frozen=frozen, plan=plan),
+        "instructions": _instruction_text(
+            frozen=frozen,
+            plan=plan,
+            query=body.query,
+            now=now,
+        ),
         "direct_text": plan.direct_text[:8000] if plan.direct_text is not None else None,
         "epistemic_status": plan.epistemic_status,
         "epistemic_reason_codes": reason_codes,
@@ -1069,7 +1097,9 @@ async def response_plan(
         cached = await cache.get(key, fingerprint)
         if cached is not None:
             return cached
-        fixed_reply = _fixed_reply_for_query(query=body.query, frozen=frozen)
+        settings = cast(ControlSettings, request.app.state.settings)
+        now = _local_now(settings)
+        fixed_reply = _fixed_reply_for_query(query=body.query, frozen=frozen, now=now)
         companion_items, persona_capsule = (
             await _companion_items(
                 request=request,
@@ -1120,6 +1150,7 @@ async def response_plan(
             relationship=relationship,
             plan=plan,
             persona_capsule=persona_capsule,
+            now=now,
         )
         if legacy_access is not None:
             await _append_legacy_plan_audit(

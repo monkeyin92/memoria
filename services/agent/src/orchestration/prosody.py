@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import Literal
 
 from services.common.companion_response_safety import companion_safety_decision
+from services.common.companions import companion_definition
 
 VoiceEmotion = Literal[
     "neutral",
@@ -473,6 +474,7 @@ def speech_plan_for_turn(
     text: str,
     evidence: tuple[str, ...] = (),
     use_markup_tags: bool = False,
+    companion_id: str | None = None,
 ) -> SpeechPlan:
     """Choose one bounded provider-neutral style, including explicit requests."""
     plan = _semantic_speech_plan_for_turn(
@@ -484,7 +486,24 @@ def speech_plan_for_turn(
     )
     styled = _apply_explicit_voice_style(plan, text)
     if companion_safety_decision(text) not in {"crisis_self", "support_request"}:
-        return styled
+        companion = companion_definition(companion_id)
+        if companion is None or _style_command_body(text) is not None:
+            return styled
+        if styled.delivery_mode == "direct" and styled.voice_emotion == "neutral":
+            styled = replace(
+                styled,
+                voice_emotion=companion.default_voice_emotion,
+                rate=companion.default_voice_rate,
+            )
+            styled = replace(styled, tts_instruction=_tts_instruction_for_plan(styled))
+        return replace(
+            styled,
+            tts_instruction=(
+                styled.tts_instruction.rstrip("。")
+                + "；"
+                + companion.voice_instruction
+            )[:240],
+        )
     supportive = replace(
         plan,
         voice_emotion="neutral",

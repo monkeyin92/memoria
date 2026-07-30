@@ -1947,7 +1947,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     assert session_builds[0]["interruptions_enabled"] is False
     assert session.kwargs["aec_warmup_duration"] is None
     assert session.generated == []
-    assert session.said == ["嗨，我在呢。想聊什么就直接说吧。"]
+    assert session.said == ["嗨，我是星澜。今天想聊点什么，我陪你慢慢说。"]
     assert any(event[0].get("state") == "ready" for event in room.local_participant.published)
     assert any(
         event[0].get("type") == "audio_trace" and event[0].get("name") == "audio_output_attached"

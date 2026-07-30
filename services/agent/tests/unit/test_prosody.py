@@ -4,6 +4,7 @@ from services.agent.src.orchestration.prosody import (
     ProsodyController,
     ProsodyFeatures,
     SpeakingStyle,
+    speech_plan_for_turn,
 )
 
 
@@ -29,3 +30,32 @@ def test_no_sensitive_labels_in_state() -> None:
     dumped = str(c.state)
     assert "焦虑" not in dumped
     assert "抑郁" not in dumped
+
+
+def test_companion_delivery_changes_neutral_voice_without_overriding_user_request() -> None:
+    bright = speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text="今天想随便聊聊",
+        companion_id="taoxi",
+    )
+    steady = speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text="今天想随便聊聊",
+        companion_id="axu",
+    )
+    explicit = speech_plan_for_turn(
+        label="neutral",
+        provider_label="neutral",
+        text="请说快一点",
+        companion_id="xuanmo",
+    )
+
+    assert bright.voice_emotion == "happy"
+    assert bright.rate == 1.05
+    assert "青春" in bright.tts_instruction
+    assert steady.voice_emotion == "neutral"
+    assert steady.rate == 0.97
+    assert "沉稳" in steady.tts_instruction
+    assert explicit.rate == 1.10

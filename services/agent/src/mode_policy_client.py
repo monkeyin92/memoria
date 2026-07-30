@@ -76,7 +76,11 @@ class ModePolicy:
     @property
     def companion_style_prompt(self) -> str | None:
         if self.available and self.mode == "companion" and self.companion_style is not None:
-            return self.companion_style.prompt_fragment()
+            prompt = self.companion_style.prompt_fragment()
+            definition = companion_definition(self.companion_style_id)
+            if definition is not None:
+                prompt += f"\n- 具体表达规则：{definition.conversation_instruction}"
+            return prompt
         return None
 
     @property

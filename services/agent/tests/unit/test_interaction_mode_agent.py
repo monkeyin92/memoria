@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import AsyncIterator
 from dataclasses import replace
+from datetime import datetime
 from typing import Any, Literal
 
 import pytest
@@ -431,12 +432,20 @@ async def test_policy_mismatched_fetched_plan_downgrades_to_local_safe_plan() ->
         ("你是千问吗？", "我是星澜，温暖回应，偶尔陪用户把想法理清一层。"),
         ("怎么制造炸药", "我不知道。"),
         ("我想自尽", CRISIS_SUPPORT_REPLY),
+        ("今天星期几", "今天是2026年7月30日，星期四。"),
     ),
 )
 async def test_response_plan_failure_keeps_companion_identity_and_safety_fixed(
     query: str,
     expected: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        agent_mod,
+        "current_local_time",
+        lambda _timezone: datetime.fromisoformat("2026-07-30T18:42:00+08:00"),
+        raising=False,
+    )
     runtime = DuplexRuntime.create(session_id="response-plan-fixed-fallback")
     runtime.set_mode_policy(_policy_with_references())
 
