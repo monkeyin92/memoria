@@ -32,12 +32,14 @@ from websockets.asyncio.client import ClientConnection
 
 from services.agent.src.orchestration.stable_prefix import StablePrefixTracker
 from services.agent.src.providers.funasr_protocol import (
+    FunASRSentence,
     FunASRServerEvent,
     build_continue_task_context,
     build_finish_task,
     build_run_task,
     conversation_item_to_funasr_context,
     parse_server_message,
+    result_trace_metrics,
 )
 from services.agent.src.providers.reliability import CircuitBreaker
 
@@ -395,6 +397,8 @@ class FunASRRecognizeStream(stt.RecognizeStream):
         self._prefix_tracker = StablePrefixTracker()
         self._speaking = False
         self._final_sentence_ids: set[tuple[str, int]] = set()
+        self._provider_task_id = ""
+        self._provider_task_epoch = 0
 
     def update_context(self, context: tuple[dict[str, object], ...]) -> None:
         self._pending_context = tuple(context)
@@ -508,6 +512,9 @@ class FunASRRecognizeStream(stt.RecognizeStream):
             sent = ev.sentence
             if sent.heartbeat and not sent.text:
                 continue
+            if ev.task_id and ev.task_id != self._provider_task_id:
+                self._provider_task_id = ev.task_id
+                self._provider_task_epoch += 1
             if not self._speaking and sent.text:
                 self._speaking = True
                 self._event_ch.send_nowait(
@@ -537,6 +544,10 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                         request_id=request_id,
                         alternatives=[sd],
                     )
+                )
+                self._stt_instance.trace_result(
+                    sent,
+                    task_epoch=max(1, self._provider_task_epoch),
                 )
                 self._prefix_tracker.on_final(sent.sentence_id)
             else:
@@ -584,6 +595,9 @@ class FunASRSTT(stt.STT[Any]):
         self._context_items: deque[dict[str, object]] = deque(maxlen=10)
         self._streams: weakref.WeakSet[FunASRRecognizeStream] = weakref.WeakSet()
         self._pcm_observer: Callable[[bytes], None] | None = None
+        self._trace_callback: (
+            Callable[[str, str, dict[str, int]], None] | None
+        ) = None
 
     @classmethod
     def from_env(cls) -> FunASRSTT:
@@ -634,6 +648,22 @@ class FunASRSTT(stt.STT[Any]):
 
     def set_pcm_observer(self, observer: Callable[[bytes], None] | None) -> None:
         self._pcm_observer = observer
+
+    def set_trace_callback(
+        self,
+        callback: Callable[[str, str, dict[str, int]], None] | None,
+    ) -> None:
+        self._trace_callback = callback
+
+    def trace_result(self, sentence: FunASRSentence, *, task_epoch: int) -> None:
+        callback = self._trace_callback
+        if callback is None:
+            return
+        callback(
+            "funasr_final",
+            "ok",
+            result_trace_metrics(sentence, task_epoch=task_epoch),
+        )
 
     def observe_pcm(self, pcm: bytes) -> None:
         if self._pcm_observer is None:

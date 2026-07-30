@@ -107,13 +107,9 @@ class _SessionEmitter:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("trusted_aec", "expected_gain"),
-    [(True, 0.0), (False, 0.25)],
-)
-async def test_barge_in_duck_gain_is_zero_only_for_trusted_miniprogram_aec(
+@pytest.mark.parametrize("trusted_aec", [True, False])
+async def test_barge_in_mutes_playback_before_semantic_confirmation(
     trusted_aec: bool,
-    expected_gain: float,
 ) -> None:
     published: list[dict[str, object]] = []
 
@@ -135,7 +131,34 @@ async def test_barge_in_duck_gain_is_zero_only_for_trusted_miniprogram_aec(
 
     first_audio = next(event for event in published if event.get("type") == "assistant_audio")
     assert first_audio["action"] == "duck"
-    assert first_audio["gain"] == expected_gain
+    assert first_audio["gain"] == 0.0
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_false_barge_in_restores_playback_after_immediate_mute() -> None:
+    published: list[dict[str, object]] = []
+
+    async def _publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    runtime.set_event_publisher(_publish)
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("我正在说一段还没有结束的话。")
+    session = _SessionEmitter()
+    session.options.interruption["false_interruption_timeout"] = 0.01
+    runtime.attach_session_events(session)
+
+    session.emit("user_state_changed", SimpleNamespace(new_state="speaking"))
+    session.emit("user_state_changed", SimpleNamespace(new_state="listening"))
+    await asyncio.sleep(0.02)
+
+    audio = [event for event in published if event.get("type") == "assistant_audio"]
+    assert [(event["action"], event["gain"]) for event in audio] == [
+        ("duck", 0.0),
+        ("restore", 1.0),
+    ]
     await runtime.close()
 
 
@@ -202,8 +225,9 @@ async def test_playback_end_clears_unanchored_echo_before_the_next_vad() -> None
     await runtime.on_assistant_reply_completed("你好呀，很高兴见到你。")
 
     assert cleared == ["clear"]
-    assert runtime._user_transcript_contaminated is False
-    assert runtime._suspected_playback_prefixes == []
+    runtime.on_user_voice_started()
+    runtime.observe_user_transcript("真正的新问题", final=True)
+    assert runtime.consume_canonical_user_turn("真正的新问题") == "真正的新问题"
     await runtime.close()
 
 
@@ -1664,13 +1688,23 @@ async def test_late_control_final_cannot_prefix_the_next_vad_turn() -> None:
     assert runtime.input_guard.candidate_active is False
 
     assert runtime.observe_user_transcript("停一下", final=True).value == "accept"
-    assert runtime._accepted_user_finals == []
-    assert runtime._canonical_speech_epoch is None
 
     runtime.on_user_voice_started()
     runtime.observe_user_transcript("真正的新问题", final=True)
     assert runtime.consume_canonical_user_turn("真正的新问题") == "真正的新问题"
     await runtime.close()
+
+
+def test_late_final_after_next_vad_start_does_not_prefix_current_turn() -> None:
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+
+    runtime.on_user_voice_started()
+    runtime.on_user_voice_started()
+    runtime.observe_user_transcript("这是迟到的旧长句", final=True)
+    runtime.observe_user_transcript("拿", final=True)
+
+    assert runtime.consume_canonical_user_turn("拿。") == "拿"
+    assert runtime.consumed_canonical_speech_epoch == runtime._speaker_epoch
 
 
 @pytest.mark.asyncio
@@ -2140,6 +2174,67 @@ def test_runtime_accepts_only_numeric_allowlisted_webrtc_metrics(
 
     event["detail"] = {"transcript": "must-not-enter-logs"}
     assert runtime.observe_client_audio_trace(event) is False
+    assert "must-not-enter-logs" not in caplog.text
+
+
+def test_runtime_accepts_only_bounded_microphone_settings_and_outbound_metrics(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="uplink-stats-session")
+    caplog.set_level("INFO", logger="services.agent.src.duplex_runtime")
+    settings = {
+        "type": "audio_trace",
+        "session_id": "uplink-stats-session",
+        "name": "webrtc_microphone_settings",
+        "status": "ok",
+        "detail": {
+            "sample_rate": 48_000,
+            "sample_size": 16,
+            "channel_count": 1,
+            "latency_ms": 10.5,
+            "auto_gain_control": True,
+            "echo_cancellation": True,
+            "noise_suppression": False,
+        },
+    }
+    outbound = {
+        **settings,
+        "name": "webrtc_outbound_audio",
+        "detail": {
+            "packets_sent": 100,
+            "packets_sent_delta": 20,
+            "bytes_sent": 32_000,
+            "bytes_sent_delta": 6_400,
+            "retransmitted_packets_sent": 1,
+            "retransmitted_packets_sent_delta": 0,
+            "retransmitted_bytes_sent": 320,
+            "retransmitted_bytes_sent_delta": 0,
+            "nack_count": 1,
+            "total_packet_send_delay": 0.02,
+            "packets_lost": 0,
+            "packets_received": 98,
+            "jitter": 0.004,
+            "round_trip_time": 0.03,
+            "fraction_lost": 0,
+            "audio_level": 0.15,
+            "total_audio_energy": 12.4,
+            "total_samples_duration": 5.0,
+            "echo_return_loss": 18.0,
+            "echo_return_loss_enhancement": 12.0,
+        },
+    }
+
+    assert runtime.observe_client_audio_trace(settings) is True
+    assert runtime.observe_client_audio_trace(outbound) is True
+    assert "auto_gain_control" in caplog.text
+    assert "packets_sent" in caplog.text
+
+    settings["detail"] = {"deviceId": "must-not-enter-logs"}
+    assert runtime.observe_client_audio_trace(settings) is False
+    assert "must-not-enter-logs" not in caplog.text
+
+    outbound["detail"] = {"trackIdentifier": "must-not-enter-logs"}
+    assert runtime.observe_client_audio_trace(outbound) is False
     assert "must-not-enter-logs" not in caplog.text
 
 

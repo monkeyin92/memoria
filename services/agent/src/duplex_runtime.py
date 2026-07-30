@@ -11,7 +11,6 @@ import logging
 import math
 import time
 import uuid
-from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -24,6 +23,7 @@ from services.agent.src.contracts.ids import (
     new_session_id,
 )
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.observability.audio_trace import parse_client_audio_trace
 from services.agent.src.observability.tracing import LatencyTrace
 from services.agent.src.orchestration.cue_scheduler import CueScheduler, ListenerCue
 from services.agent.src.orchestration.emotion import (
@@ -51,6 +51,10 @@ from services.agent.src.orchestration.speaker_verify import (
     SpeakerVerifier,
     voiced_stats_from_pcm,
 )
+from services.agent.src.orchestration.speech_epoch_assembler import (
+    AssembledUserTurn,
+    SpeechEpochAssembler,
+)
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
 from services.agent.src.orchestration.turn_revision import TurnRevisionTracker
 from services.agent.src.orchestration.utterance_router import (
@@ -77,7 +81,6 @@ ResumeSpeakerBinding = tuple[str, str, int | None, str]
 
 POST_PLAYBACK_BACKCHANNEL_GUARD_MS = 800
 POST_PLAYBACK_ECHO_GUARD_MS = 10_000
-PLAYBACK_DUCK_GAIN = 0.25
 PLAYBACK_INPUT_BLOCK_MIN_WORDS = 1000
 TRUSTED_PLAYBACK_PCM_MS = 2_000
 TRUSTED_PLAYBACK_VOICE_WINDOW_MS = 900
@@ -103,98 +106,6 @@ _RESPONSE_PROVENANCE_FORBIDDEN_KEYS = frozenset(
         "cookie",
     }
 )
-CLIENT_AUDIO_TRACE_NAMES = frozenset(
-    {
-        "audio_unlock",
-        "session_created",
-        "room_connected",
-        "agent_ready",
-        "track_subscribed",
-        "audio_attached",
-        "play_resolved",
-        "play_rejected",
-        "playing",
-        "first_playback",
-        "media_error",
-        "webrtc_inbound_audio",
-        "miniprogram_playback_underrun",
-        "miniprogram_playback_hard_reset",
-        "miniprogram_gap_concealed",
-        "miniprogram_playback_lead_adjusted",
-    }
-)
-CLIENT_AUDIO_METRIC_NAMES = frozenset(
-    {
-        "jitter",
-        "packets_lost",
-        "packets_received",
-        "packets_discarded",
-        "packets_lost_delta",
-        "packets_received_delta",
-        "packets_discarded_delta",
-        "bytes_received",
-        "nack_count",
-        "concealed_samples",
-        "concealed_samples_delta",
-        "silent_concealed_samples",
-        "total_samples_received",
-        "total_samples_received_delta",
-        "concealment_events",
-        "concealment_ratio",
-        "non_silent_concealment_ratio",
-        "jitter_buffer_delay",
-        "jitter_buffer_target_delay",
-        "jitter_buffer_minimum_delay",
-        "jitter_buffer_emitted_count",
-        "total_samples_duration",
-        "average_jitter_buffer_delay_ms",
-        "average_jitter_buffer_target_delay_ms",
-        "encoded_audio_bitrate_kbps",
-        "inserted_samples_for_deceleration",
-        "removed_samples_for_acceleration",
-        "queue_lead_ms",
-        "pending_audio_ms",
-        "missing_frames",
-        "scheduled_sources",
-        "clock_ahead_ms",
-        "target_lead_ms",
-        "underflow_count",
-    }
-)
-
-_TRANSCRIPT_BOUNDARY_CHARS = " \t\r\n。！？.!?，,；;：:\"'“”‘’（）()【】[]"
-
-
-def _strip_matching_transcript_prefix(text: str, prefix: str) -> tuple[bool, str]:
-    """Strip a previously observed ASR prefix while tolerating punctuation rewrites."""
-
-    expected = "".join(char.casefold() for char in prefix if char.isalnum())
-    actual = "".join(char.casefold() for char in text if char.isalnum())
-    if len(expected) < 6 or len(actual) <= len(expected):
-        return False, text
-    matched = 0
-    for index, char in enumerate(text):
-        if not char.isalnum():
-            continue
-        folded = char.casefold()
-        if len(folded) != 1 or folded != expected[matched]:
-            return False, text
-        matched += 1
-        if matched == len(expected):
-            return True, text[index + 1 :].lstrip(_TRANSCRIPT_BOUNDARY_CHARS)
-    return False, text
-
-
-@dataclass(frozen=True)
-class CanonicalUserTurnSnapshot:
-    """Transcript decisions frozen at one VAD speech-epoch boundary."""
-
-    speech_epoch: int | None
-    accepted_finals: tuple[str, ...]
-    contaminated: bool
-    suspected_playback_prefixes: tuple[str, ...]
-
-
 @dataclass(frozen=True, slots=True)
 class KeywordSpotterBinding:
     """Playback and speech epochs frozen when KWS starts decoding."""
@@ -260,12 +171,7 @@ class DuplexRuntime:
     _played_assistant_text: str = ""
     _next_user_prompt_kind: str = "spontaneous"
     _fresh_user_speech: bool = False
-    _accepted_user_finals: list[str] = field(default_factory=list)
-    _user_transcript_contaminated: bool = False
-    _suspected_playback_prefixes: list[str] = field(default_factory=list)
-    _canonical_speech_epoch: int | None = None
-    _canonical_final_observed: bool = False
-    _canonical_turn_snapshots: deque[CanonicalUserTurnSnapshot] = field(default_factory=deque)
+    _speech_epoch_assembler: SpeechEpochAssembler = field(default_factory=SpeechEpochAssembler)
     _consumed_canonical_speech_epoch: int | None = None
     _consumed_canonical_snapshot_bound: bool = False
     _persona_evidence_eligible: bool = False
@@ -1049,7 +955,7 @@ class DuplexRuntime:
             return
         self._reset_speaker_classification_task()
         self._speaker_epoch += 1
-        self._reset_canonical_speech_epoch()
+        self._speech_epoch_assembler.discard_current()
         self._target_focus_epoch = None
         self._target_focus_pending_epoch = None
         self._speaker_class = "uncertain"
@@ -1813,44 +1719,18 @@ class DuplexRuntime:
         mono_ns: int | None = None,
     ) -> bool:
         """Accept bounded client playback facts; permanent keys/audio never enter telemetry."""
-        if (
-            event.get("session_id") != self.session_id
-            or event.get("name") not in CLIENT_AUDIO_TRACE_NAMES
-            or event.get("status") not in {"ok", "error"}
-        ):
+        trace = parse_client_audio_trace(event, session_id=self.session_id)
+        if trace is None:
             return False
-        metrics: dict[str, int | float] = {}
-        miniprogram_trace = event.get("source") == "miniprogram" and event["name"] in {
-            "first_playback",
-            "miniprogram_playback_underrun",
-            "miniprogram_playback_hard_reset",
-            "miniprogram_gap_concealed",
-            "miniprogram_playback_lead_adjusted",
-        }
-        if event["name"] == "webrtc_inbound_audio" or miniprogram_trace:
-            detail = event.get("detail")
-            if not isinstance(detail, dict) or not detail:
-                return False
-            if not set(detail).issubset(CLIENT_AUDIO_METRIC_NAMES):
-                return False
-            if any(
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-                or value < 0
-                for value in detail.values()
-            ):
-                return False
-            metrics = {str(key): value for key, value in detail.items()}
-        if event["name"] == "first_playback" and event["status"] == "ok":
+        if trace.name == "first_playback" and trace.status == "ok":
             self.latency_trace.mark("client_first_playback", mono_ns=mono_ns)
         logger.info(
             "client_audio_trace name=%s status=%s turn_id=%s generation_id=%s metrics=%s",
-            event["name"],
-            event["status"],
+            trace.name,
+            trace.status,
             event.get("turn_id"),
             event.get("generation_id"),
-            metrics,
+            trace.metrics,
         )
         return True
 
@@ -2355,9 +2235,8 @@ class DuplexRuntime:
         )
         interrupted_playback_epoch = self._playback_epoch if self._was_speaking else None
         self.refresh_voice_profile()
-        self._seal_canonical_speech_epoch()
         self._speaker_epoch += 1
-        self._canonical_speech_epoch = self._speaker_epoch
+        self._speech_epoch_assembler.start_epoch(self._speaker_epoch)
         self._target_focus_epoch = None
         self._target_focus_pending_epoch = None
         self._sticky_interrupt_epoch = None
@@ -2455,8 +2334,11 @@ class DuplexRuntime:
             self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE
             self.input_guard.candidate_reason = "barge_in_disabled"
             if final:
-                self._canonical_final_observed = True
-                self._user_transcript_contaminated = True
+                self._speech_epoch_assembler.observe_final(
+                    text,
+                    accepted=False,
+                    contaminated=True,
+                )
                 self.orchestrator.metrics.inc_guarded_user_input("barge_in_disabled")
             return PlaybackInputDecision.IGNORE
         decision = self.input_guard.observe(
@@ -2483,9 +2365,8 @@ class DuplexRuntime:
         )
         if trusted_unanchored_control:
             if self._trusted_unanchored_control_epoch is None:
-                self._seal_canonical_speech_epoch()
                 self._speaker_epoch += 1
-                self._canonical_speech_epoch = self._speaker_epoch
+                self._speech_epoch_assembler.start_epoch(self._speaker_epoch)
                 self._target_focus_epoch = None
                 self._target_focus_pending_epoch = None
                 self._reset_speaker_classification_task()
@@ -2507,30 +2388,25 @@ class DuplexRuntime:
             and not self.input_guard.candidate_vad_anchored
             and text.strip()
         ):
-            self._user_transcript_contaminated = True
-            prefix = text.strip()
-            if not self._suspected_playback_prefixes or (
-                self._suspected_playback_prefixes[-1] != prefix
-            ):
-                self._suspected_playback_prefixes.append(prefix)
-                del self._suspected_playback_prefixes[:-8]
+            self._speech_epoch_assembler.mark_contaminated(text)
         if final:
             current_vad_epoch = (
                 self.input_guard.candidate_vad_anchored
-                and self._canonical_speech_epoch == self._speaker_epoch
+                and self._speech_epoch_assembler.current_epoch == self._speaker_epoch
             )
             if current_vad_epoch:
-                self._canonical_final_observed = True
-            if decision is PlaybackInputDecision.ACCEPT and current_vad_epoch:
-                self._accepted_user_finals.append(text.strip())
-            elif decision is PlaybackInputDecision.ACCEPT:
+                self._speech_epoch_assembler.observe_final(
+                    text,
+                    accepted=decision is PlaybackInputDecision.ACCEPT,
+                    contaminated=decision is PlaybackInputDecision.IGNORE,
+                )
+            if decision is PlaybackInputDecision.ACCEPT and not current_vad_epoch:
                 self.mark_audio_event(
                     "orphan_transcript_ignored",
                     status="ignored",
                     detail={"reason": "missing_speech_epoch"},
                 )
             elif decision is PlaybackInputDecision.IGNORE:
-                self._user_transcript_contaminated = True
                 self.orchestrator.metrics.inc_guarded_user_input(
                     self.input_guard.candidate_reason or "playback_noise"
                 )
@@ -2552,80 +2428,31 @@ class DuplexRuntime:
             self._schedule_listener_cue(text, now_ns=now_ns)
         return decision
 
-    def _canonical_snapshot(self) -> CanonicalUserTurnSnapshot:
-        return CanonicalUserTurnSnapshot(
-            speech_epoch=self._canonical_speech_epoch,
-            accepted_finals=tuple(part for part in self._accepted_user_finals if part),
-            contaminated=self._user_transcript_contaminated,
-            suspected_playback_prefixes=tuple(self._suspected_playback_prefixes),
-        )
-
-    def _reset_canonical_speech_epoch(self) -> None:
-        self._accepted_user_finals.clear()
-        self._user_transcript_contaminated = False
-        self._suspected_playback_prefixes.clear()
-        self._canonical_speech_epoch = None
-        self._canonical_final_observed = False
-
-    def _seal_canonical_speech_epoch(self) -> None:
-        """Queue a completed VAD epoch before later ASR events can mutate it."""
-
-        if self._canonical_speech_epoch is None or not self._canonical_final_observed:
-            return
-        self._canonical_turn_snapshots.append(self._canonical_snapshot())
-        self._reset_canonical_speech_epoch()
-
     def consume_canonical_user_turn(self, raw_text: str) -> str | None:
-        """Consume the oldest VAD-epoch snapshot for LiveKit's ordered callback."""
+        """Resolve the callback against one or more matching VAD speech epochs."""
 
-        if self._canonical_turn_snapshots:
-            snapshot = self._canonical_turn_snapshots.popleft()
-        elif (
-            self._canonical_final_observed
-            or self._accepted_user_finals
-            or self._user_transcript_contaminated
-        ):
-            snapshot = self._canonical_snapshot()
-            self._reset_canonical_speech_epoch()
-        else:
-            self._consumed_canonical_snapshot_bound = False
-            self._consumed_canonical_speech_epoch = (
-                self._speaker_epoch if self._fresh_user_speech else None
+        assembled: AssembledUserTurn = self._speech_epoch_assembler.consume(
+            raw_text,
+            fallback_epoch=self._speaker_epoch if self._fresh_user_speech else None,
+        )
+        self._consumed_canonical_snapshot_bound = assembled.snapshot_bound
+        self._consumed_canonical_speech_epoch = assembled.speech_epoch
+        if assembled.discarded_epochs:
+            self.mark_audio_event(
+                "stale_speech_epochs_discarded",
+                status="ignored",
+                detail={"count": len(assembled.discarded_epochs)},
             )
-            return raw_text.strip()
-
-        self._consumed_canonical_snapshot_bound = True
-        self._consumed_canonical_speech_epoch = snapshot.speech_epoch
-        accepted = snapshot.accepted_finals
-        contaminated = snapshot.contaminated
-        suspected_prefixes = snapshot.suspected_playback_prefixes
-        if not contaminated:
-            return " ".join(accepted).strip() or raw_text.strip()
-        canonical_parts: list[str] = []
-        prefixes = sorted(
-            suspected_prefixes,
-            key=lambda value: sum(char.isalnum() for char in value),
-            reverse=True,
-        )
-        for part in accepted:
-            clean = part
-            for prefix in prefixes:
-                matched, remainder = _strip_matching_transcript_prefix(clean, prefix)
-                if matched:
-                    clean = remainder
-                    break
-            if clean.strip():
-                canonical_parts.append(clean.strip())
-        canonical = " ".join(canonical_parts).strip()
-        logger.info(
-            "canonical_user_turn_rebuilt accepted_segments=%s raw_len=%s canonical_len=%s "
-            "session_id=%s",
-            len(accepted),
-            len(raw_text.strip()),
-            len(canonical),
-            self.session_id,
-        )
-        return canonical or None
+        if assembled.snapshot_bound:
+            logger.info(
+                "canonical_user_turn_resolved raw_len=%s canonical_len=%s "
+                "discarded_epochs=%s session_id=%s",
+                len(raw_text.strip()),
+                len(assembled.text or ""),
+                len(assembled.discarded_epochs),
+                self.session_id,
+            )
+        return assembled.text
 
     @property
     def consumed_canonical_speech_epoch(self) -> int | None:
@@ -2638,7 +2465,7 @@ class DuplexRuntime:
     def discard_pending_user_transcript(self) -> None:
         """Discard only the current endpoint buffer, never older queued callbacks."""
 
-        self._reset_canonical_speech_epoch()
+        self._speech_epoch_assembler.discard_current()
         self.input_guard.candidate_active = False
         self._trusted_unanchored_control_epoch = None
         self._trusted_unanchored_playback_epoch = None
@@ -2648,7 +2475,7 @@ class DuplexRuntime:
         """Reset LiveKit STT after echo-only playback input, before the next VAD."""
 
         if (
-            not self._suspected_playback_prefixes
+            not self._speech_epoch_assembler.has_suspected_playback_prefix
             or self._fresh_user_speech
             or self._user_turn_clearer is None
         ):
@@ -3828,7 +3655,7 @@ class DuplexRuntime:
                     _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
                     self.publish_assistant_audio(
                         "duck",
-                        gain=0.0 if self.trusted_aec_playback_control else PLAYBACK_DUCK_GAIN,
+                        gain=0.0,
                     )
                     self.mark_audio_event("barge_in_detected")
                 else:

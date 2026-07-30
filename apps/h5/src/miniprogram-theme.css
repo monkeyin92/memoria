@@ -395,6 +395,12 @@ textarea:focus-visible {
   opacity: 0.5;
 }
 
+.stop-answer-button {
+  color: var(--danger);
+  border-color: rgba(255, 110, 140, 0.32);
+  background: rgba(255, 77, 109, 0.08);
+}
+
 .text-composer {
   width: min(100%, 420px);
   margin: 6px auto 0;

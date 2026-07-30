@@ -2,6 +2,7 @@
 status: accepted
 date: 2026-07-21
 amended_by: 0021-wechat-miniprogram-media-gateway
+last_amended: 2026-07-30
 ---
 
 # 在播放污染后重建权威用户话轮
@@ -29,11 +30,16 @@ FunASR 的多轮 `input.context` 会提高历史内容的识别偏置。它不�
   不能用转写到达时已经被静音覆盖的 PCM 尾窗替代；VAD start、播放替换/结束或 AEC 撤销
   都会清除它。命令还必须未命中助手回声/语言/backchannel 门禁，只能停止当前播放，
   不能进入 chat、历史、记忆或权限平面；普通 H5、普通聊天与 interrupt+chat 不走此例外。
-- `DuplexRuntime` 按 VAD speech epoch 累积 `ACCEPT` 的 final，并记录是否出现过被隔离的
-  final；endpoint 完成时把 canonical snapshot 冻结进 FIFO。`on_user_turn_completed` 必须在
-  任何 `await` 之前消费最老 snapshot，只用该 epoch 的已接受片段重建 canonical text；
-  没有已接受片段则丢弃整个空话轮。LiveKit 没有提供 turn id 时，依赖其 completed hook
-  串行顺序，不允许退化为一个全局字符串累加器。
+- `SpeechEpochAssembler` 按 provider final segment 保存已接受文本，而不是把整个 VAD
+  speech epoch 压成不可拆分的 FIFO snapshot。LiveKit 的一个逻辑话轮可以覆盖多个 VAD
+  epoch；反过来，迟到 final 也可能在下一 VAD epoch 开始后才到达。因此
+  `on_user_turn_completed` 以 LiveKit 已提交文本为关联证据，选择最小的连续 segment 集，
+  允许跨 epoch 合并、跳过不相关旧 segment，并将未匹配旧 segment 隔离，禁止留给后续话轮。
+  连续相同文本按 completed hook 顺序各消费一次；没有可信匹配时 fail closed。
+- FunASR 通过独立 side-channel 记录有界数值时序
+  `task_epoch / sentence_id / begin_ms / end_ms / duration_ms`，供后续按音频区间关联与重连
+  诊断使用；该通道不得携带 transcript、provider task id、设备标识或麦克风标签。当前
+  canonical 正确性不依赖该诊断通道可用。
 - `UtteranceRouter`、LLM 上下文、H5 final、证据账本、记忆和 Persona 只能消费同一份
   canonical text，客户端不再承担清洗或猜测职责。
 - `AgentSession.clear_user_turn()` 继续用于纯控制话轮和播放结束后的 endpoint 清理，但只是一项
@@ -56,13 +62,14 @@ FunASR 的多轮 `input.context` 会提高历史内容的识别偏置。它不�
 
 - 用户看见、模型理解和长期归档的用户 final 保持一致；被污染的 LiveKit 内部拼接文本
   不再成为权威内容。
-- 快速连续话轮即使 completed hook 排队，也按冻结的 FIFO snapshot 隔离；旧控制回调不会
-  误清下一 speech epoch。
+- 快速连续话轮即使 completed hook 排队，也按独立 final segment 与 callback 顺序隔离；
+  多段停顿可以合成一个逻辑话轮，旧 segment 不会在两三轮后重新出现。
 - 极端情况下，若真实讲话在播放期完全没有 VAD/PCM 锚点，也会被安全丢弃。实体停止按钮
   仍可立即停止；语音控制必须先有声学锚点。小程序的 AEC 后 voiced PCM 是上述窄例外的
   锚点，但 AEC 运行期失效、健康撤销 ACK 超时或播放 epoch 已变化时仍按无锚点隔离。
-- 运维需同时观察 AEC、VAD/final 时序、`unanchored_playback_transcript` 指标和
-  `canonical_user_turn_rebuilt` 日志，不能用关键词补丁掩盖设备回声。
+- 运维需同时观察 AEC、VAD/final 时序、FunASR 数值时序、
+  `unanchored_playback_transcript` 指标和 `canonical_user_turn_rebuilt` 日志，不能用
+  关键词补丁掩盖设备回声。
 
 ## References
 

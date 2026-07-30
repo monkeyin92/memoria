@@ -8,11 +8,8 @@ import {
   stopResponse,
 } from "../api.js";
 import { LiveKitCascadeTransport } from "../voice/LiveKitCascadeTransport.js";
+import { LiveKitAudioTelemetry } from "../voice/LiveKitAudioTelemetry.js";
 import { QwenOmniWebRTCTransport } from "../voice/experimental/QwenOmniWebRTCTransport.js";
-import {
-  addInboundAudioDeltas,
-  extractInboundAudioStats,
-} from "../voice/webrtcStats.js";
 import {
   initialVoiceSessionState,
   voiceSessionReducer,
@@ -313,9 +310,7 @@ export function useVoiceSession({
   const audioGainRef = useRef(1);
   const cascadeAudioElementsRef = useRef(new Map());
   const omniAudioElementRef = useRef(null);
-  const statsTrackRef = useRef(null);
-  const statsTimerRef = useRef(null);
-  const statsBaselineRef = useRef(null);
+  const audioTelemetryRef = useRef(null);
   const pendingEmotionRef = useRef(new Map());
   const latestAcceptedUserTurnRef = useRef(0);
   const emotionTimerRef = useRef(null);
@@ -689,43 +684,35 @@ export function useVoiceSession({
     [activateAudioElement],
   );
 
-  const stopStatsSampling = useCallback(() => {
-    if (statsTimerRef.current !== null) {
-      window.clearInterval(statsTimerRef.current);
-      statsTimerRef.current = null;
-    }
-    statsTrackRef.current = null;
-    statsBaselineRef.current = null;
-  }, []);
-
   const startStatsSampling = useCallback(
     (track, isCurrent) => {
-      stopStatsSampling();
-      if (typeof track?.getRTCStatsReport !== "function") return;
-      statsTrackRef.current = track;
-      const sample = async () => {
-        if (!isCurrent() || statsTrackRef.current !== track) return;
-        try {
-          const metrics = extractInboundAudioStats(
-            await track.getRTCStatsReport(),
-          );
-          if (isCurrent() && statsTrackRef.current === track && metrics) {
-            statsBaselineRef.current ||= metrics;
-            recordAudioDiagnostic(
-              "webrtc_inbound_audio",
-              "ok",
-              addInboundAudioDeltas(metrics, statsBaselineRef.current),
-            );
-          }
-        } catch {
-          // Stats are diagnostic-only and must never disturb playback.
-        }
-      };
-      void sample();
-      statsTimerRef.current = window.setInterval(() => void sample(), 5_000);
+      audioTelemetryRef.current ||= new LiveKitAudioTelemetry({
+        onDiagnostic: recordAudioDiagnostic,
+      });
+      audioTelemetryRef.current.observeInboundTrack(track, isCurrent);
     },
-    [recordAudioDiagnostic, stopStatsSampling],
+    [recordAudioDiagnostic],
   );
+
+  const observeMicrophoneTrack = useCallback(
+    (track, isCurrent) => {
+      if (!isCurrent()) return;
+      if (!track) {
+        audioTelemetryRef.current?.stopMicrophone();
+        return;
+      }
+      audioTelemetryRef.current ||= new LiveKitAudioTelemetry({
+        onDiagnostic: recordAudioDiagnostic,
+      });
+      audioTelemetryRef.current.observeMicrophoneTrack(track, isCurrent);
+    },
+    [recordAudioDiagnostic],
+  );
+
+  const stopAudioTelemetry = useCallback(() => {
+    audioTelemetryRef.current?.stop();
+    audioTelemetryRef.current = null;
+  }, []);
 
   const clearReconnectTimer = useCallback(() => {
     if (reconnectTimerRef.current !== null) {
@@ -762,7 +749,7 @@ export function useVoiceSession({
       recoveryInFlightRef.current = false;
       recoveryEpochRef.current += 1;
       roomConnectedRef.current = false;
-      stopStatsSampling();
+      stopAudioTelemetry();
       cascadeAudioElementsRef.current.clear();
       audioContainerRef.current?.replaceChildren();
       setAudioBlocked(false);
@@ -773,7 +760,7 @@ export function useVoiceSession({
     } catch {
       // The local refs are already cleared, so the user can always retry.
     }
-  }, [clearAgentReadyTimer, clearReconnectTimer, stopStatsSampling]);
+  }, [clearAgentReadyTimer, clearReconnectTimer, stopAudioTelemetry]);
 
   const disconnectOmni = useCallback((transport) => {
     if (!transport) return;
@@ -1082,7 +1069,7 @@ export function useVoiceSession({
       cascadeAudioElementsRef.current.delete(key);
       track.detach().forEach((detached) => detached.remove());
       element?.remove();
-      if (statsTrackRef.current === track) stopStatsSampling();
+      audioTelemetryRef.current?.stopInboundTrack(track);
     };
     const onDataReceived = (payload, participant, _kind, topic) => {
       if (!isCurrent() || !participant?.isAgent || topic !== UI_TOPIC) return;
@@ -1306,6 +1293,7 @@ export function useVoiceSession({
     };
     transport = new LiveKitCascadeTransport({
       stopResponse,
+      onMicrophoneTrack: (track) => observeMicrophoneTrack(track, isCurrent),
       onTrackSubscribed,
       onTrackUnsubscribed,
       onDataReceived,
@@ -1452,8 +1440,8 @@ export function useVoiceSession({
     publishAudioDiagnostic,
     recordAudioDiagnostic,
     resetEmotionState,
+    observeMicrophoneTrack,
     startStatsSampling,
-    stopStatsSampling,
     userId,
     voiceBackend,
   ]);

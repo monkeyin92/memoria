@@ -18,6 +18,7 @@ export class LiveKitCascadeTransport extends VoiceTransport {
     room = new Room(roomOptions),
     getLocalDevices = () => Room.getLocalDevices("audioinput", true),
     stopResponse,
+    onMicrophoneTrack = () => undefined,
     onTrackSubscribed = () => undefined,
     onTrackUnsubscribed = () => undefined,
     onDataReceived = () => undefined,
@@ -30,6 +31,7 @@ export class LiveKitCascadeTransport extends VoiceTransport {
     this.room = room;
     this.getLocalDevices = getLocalDevices;
     this.stopResponse = stopResponse;
+    this.onMicrophoneTrack = onMicrophoneTrack;
     this.session = null;
     this.closed = false;
     this.handlers = [
@@ -72,20 +74,31 @@ export class LiveKitCascadeTransport extends VoiceTransport {
     this.session = session;
     await this.room.connect(session.livekit_url, session.participant_token);
     if (!isCurrent()) return;
-    await this.room.localParticipant.setMicrophoneEnabled(
+    let publication = await this.room.localParticipant.setMicrophoneEnabled(
       requestedMicrophoneState,
     );
     if (!isCurrent()) return;
+    this.onMicrophoneTrack(
+      requestedMicrophoneState ? publication?.track || null : null,
+    );
     const latestMicrophoneState = Boolean(getMicrophoneEnabled());
     if (latestMicrophoneState !== requestedMicrophoneState) {
-      await this.room.localParticipant.setMicrophoneEnabled(
+      publication = await this.room.localParticipant.setMicrophoneEnabled(
         latestMicrophoneState,
+      );
+      if (!isCurrent()) return;
+      this.onMicrophoneTrack(
+        latestMicrophoneState ? publication?.track || null : null,
       );
     }
   }
 
-  setMicrophoneEnabled(enabled) {
-    return this.room.localParticipant.setMicrophoneEnabled(Boolean(enabled));
+  async setMicrophoneEnabled(enabled) {
+    const active = Boolean(enabled);
+    const publication =
+      await this.room.localParticipant.setMicrophoneEnabled(active);
+    this.onMicrophoneTrack(active ? publication?.track || null : null);
+    return publication;
   }
 
   resumeAudio() {
@@ -119,6 +132,7 @@ export class LiveKitCascadeTransport extends VoiceTransport {
   async close() {
     if (this.closed) return;
     this.closed = true;
+    this.onMicrophoneTrack(null);
     this.handlers.forEach(([event, handler]) => this.room.off(event, handler));
     this.handlers = [];
     await this.room.disconnect();

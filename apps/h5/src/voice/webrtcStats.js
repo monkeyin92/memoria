@@ -26,9 +26,66 @@ const inboundDeltaFields = [
   "total_samples_received",
 ];
 
+const outboundAudioFields = {
+  packetsSent: "packets_sent",
+  bytesSent: "bytes_sent",
+  retransmittedPacketsSent: "retransmitted_packets_sent",
+  retransmittedBytesSent: "retransmitted_bytes_sent",
+  nackCount: "nack_count",
+  totalPacketSendDelay: "total_packet_send_delay",
+};
+
+const remoteInboundAudioFields = {
+  packetsLost: "packets_lost",
+  packetsReceived: "packets_received",
+  jitter: "jitter",
+  roundTripTime: "round_trip_time",
+  fractionLost: "fraction_lost",
+};
+
+const microphoneSourceFields = {
+  audioLevel: "audio_level",
+  totalAudioEnergy: "total_audio_energy",
+  totalSamplesDuration: "total_samples_duration",
+  echoReturnLoss: "echo_return_loss",
+  echoReturnLossEnhancement: "echo_return_loss_enhancement",
+};
+
+const outboundDeltaFields = [
+  "packets_sent",
+  "bytes_sent",
+  "retransmitted_packets_sent",
+  "retransmitted_bytes_sent",
+];
+
+function audioRows(report) {
+  return report?.values
+    ? report.values()
+    : Array.isArray(report)
+      ? report
+      : [];
+}
+
+function copyFiniteNumbers(target, row, fields) {
+  for (const [source, name] of Object.entries(fields)) {
+    const value = row?.[source];
+    if (
+      typeof value === "number" &&
+      Number.isFinite(value) &&
+      value >= 0
+    ) {
+      target[name] = value;
+    }
+  }
+}
+
 export function addInboundAudioDeltas(metrics, baseline = metrics) {
+  return addAudioDeltas(metrics, baseline, inboundDeltaFields);
+}
+
+function addAudioDeltas(metrics, baseline, fields) {
   const result = { ...metrics };
-  for (const field of inboundDeltaFields) {
+  for (const field of fields) {
     if (
       typeof metrics?.[field] === "number" &&
       typeof baseline?.[field] === "number"
@@ -43,8 +100,7 @@ export function addInboundAudioDeltas(metrics, baseline = metrics) {
 }
 
 export function extractInboundAudioStats(report) {
-  const rows = report?.values ? report.values() : Array.isArray(report) ? report : [];
-  for (const row of rows) {
+  for (const row of audioRows(report)) {
     if (
       row?.type !== "inbound-rtp" ||
       ![row.kind, row.mediaType].includes("audio")
@@ -95,4 +151,52 @@ export function extractInboundAudioStats(report) {
     return Object.keys(metrics).length ? metrics : null;
   }
   return null;
+}
+
+export function addOutboundAudioDeltas(metrics, baseline = metrics) {
+  return addAudioDeltas(metrics, baseline, outboundDeltaFields);
+}
+
+export function extractOutboundAudioStats(report) {
+  const metrics = {};
+  for (const row of audioRows(report)) {
+    if (![row?.kind, row?.mediaType].includes("audio")) continue;
+    if (row.type === "outbound-rtp") {
+      copyFiniteNumbers(metrics, row, outboundAudioFields);
+    } else if (row.type === "remote-inbound-rtp") {
+      copyFiniteNumbers(metrics, row, remoteInboundAudioFields);
+    } else if (row.type === "media-source") {
+      copyFiniteNumbers(metrics, row, microphoneSourceFields);
+    }
+  }
+  return Object.keys(metrics).length ? metrics : null;
+}
+
+export function extractMicrophoneSettings(settings) {
+  if (!settings || typeof settings !== "object") return null;
+  const result = {};
+  const numericFields = {
+    channelCount: "channel_count",
+    sampleRate: "sample_rate",
+    sampleSize: "sample_size",
+  };
+  const booleanFields = {
+    autoGainControl: "auto_gain_control",
+    echoCancellation: "echo_cancellation",
+    noiseSuppression: "noise_suppression",
+  };
+  copyFiniteNumbers(result, settings, numericFields);
+  for (const [source, name] of Object.entries(booleanFields)) {
+    if (typeof settings[source] === "boolean") {
+      result[name] = settings[source];
+    }
+  }
+  if (
+    typeof settings.latency === "number" &&
+    Number.isFinite(settings.latency) &&
+    settings.latency >= 0
+  ) {
+    result.latency_ms = Number((settings.latency * 1000).toFixed(3));
+  }
+  return Object.keys(result).length ? result : null;
 }

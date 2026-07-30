@@ -348,6 +348,30 @@ describe("App identity and profile preferences", () => {
     expect(start).toHaveBeenCalledWith({ inputMode: "text" });
   });
 
+  it("stops only the current spoken answer without ending the conversation", async () => {
+    const stopAssistant = vi.fn().mockResolvedValue(undefined);
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      access_token: "token",
+    });
+    mocks.useVoiceSession.mockImplementation(() => ({
+      ...voiceState(),
+      session: { session_id: "voice-session" },
+      inputMode: "voice",
+      uiState: "speaking",
+      stopAssistant,
+    }));
+
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "停止回答" }));
+
+    expect(stopAssistant).toHaveBeenCalledTimes(1);
+    expect(mocks.endVoice).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "结束对话" })).toBeInTheDocument();
+  });
+
   it("sends typed text without exposing microphone controls", async () => {
     const sendText = vi.fn(async () => true);
     mocks.bootstrapIdentity.mockResolvedValue({

@@ -15,6 +15,7 @@ import {
   PhoneDisconnect,
   ShieldCheck,
   Sparkle,
+  StopCircle,
   UserCircle,
 } from "@phosphor-icons/react";
 
@@ -1104,6 +1105,19 @@ export function App() {
                   {voice.session ? "结束语音对话" : "开始语音对话"}
                 </button>
               )}
+              {voice.session &&
+                voice.inputMode === "voice" &&
+                voice.uiState === "speaking" && (
+                  <button
+                    type="button"
+                    className="text-mode-button stop-answer-button"
+                    aria-label="停止回答"
+                    onClick={() => void voice.stopAssistant()}
+                  >
+                    <StopCircle size={18} weight="fill" aria-hidden="true" />
+                    停止回答
+                  </button>
+                )}
               {!voice.session && !selfPreviewSession && !legacySession && (
                 <button
                   type="button"

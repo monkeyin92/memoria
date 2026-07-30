@@ -2045,6 +2045,14 @@ async def entrypoint(ctx: Any) -> None:
                 detail=detail,
             )
         )
+    if hasattr(stt_plugin, "set_trace_callback"):
+        stt_plugin.set_trace_callback(
+            lambda name, status, detail: runtime.mark_audio_event(
+                name,
+                status=status,
+                detail=detail,
+            )
+        )
     runtime.mark_audio_event("agent_runtime_created")
     emotion_sidecar: QwenEmotionSidecar | None = None
     pcm_observers: list[Any] = [runtime.feed_speaker_pcm]
@@ -2426,6 +2434,8 @@ async def entrypoint(ctx: Any) -> None:
 
         if hasattr(stt_plugin, "set_pcm_observer"):
             stt_plugin.set_pcm_observer(None)
+        if hasattr(stt_plugin, "set_trace_callback"):
+            stt_plugin.set_trace_callback(None)
         if emotion_sidecar is not None:
             await _close_component("emotion_sidecar", emotion_sidecar.aclose())
         await _close_component("runtime", runtime.close())
@@ -2595,10 +2605,10 @@ def build_turn_handling_config(
         "interruption": {
             "enabled": interruptions_enabled,
             "mode": interruption_mode,
-            # Slightly longer on self-hosted: short noise/echo was cancelling
-            # mid-reply creative TTS (user hears "突然不说了").
+            # The semantic/echo guard restores false interruptions, so the VAD
+            # threshold only needs to catch a short「停」without waiting 550ms.
             "min_duration": float(
-                os.getenv("INTERRUPTION_MIN_DURATION_S", "0.55" if self_hosted else "0.25")
+                os.getenv("INTERRUPTION_MIN_DURATION_S", "0.35" if self_hosted else "0.25")
             ),
             "min_words": 0,
             "discard_audio_if_uninterruptible": True,

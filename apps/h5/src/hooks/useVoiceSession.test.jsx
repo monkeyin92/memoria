@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const liveKit = vi.hoisted(() => ({
   instances: [],
+  microphonePublication: null,
   rejectStartAudioCount: 0,
   Room: null,
   RoomEvent: {
@@ -42,7 +43,9 @@ vi.mock("livekit-client", () => {
         return Promise.resolve();
       });
       this.localParticipant = {
-        setMicrophoneEnabled: vi.fn().mockResolvedValue(undefined),
+        setMicrophoneEnabled: vi.fn(async (enabled) =>
+          enabled ? liveKit.microphonePublication : undefined,
+        ),
       };
       liveKit.instances.push(this);
     }
@@ -149,6 +152,7 @@ describe("useVoiceSession production edges", () => {
     await import("livekit-client");
     vi.clearAllMocks();
     liveKit.instances.length = 0;
+    liveKit.microphonePublication = null;
     omni.instances.length = 0;
     liveKit.rejectStartAudioCount = 0;
     liveKit.Room.getLocalDevices.mockResolvedValue([
@@ -1552,6 +1556,66 @@ describe("useVoiceSession production edges", () => {
     );
   });
 
+  it("records sanitized microphone settings and outbound audio quality", async () => {
+    liveKit.microphonePublication = {
+      track: {
+        getSourceTrackSettings: vi.fn(() => ({
+          deviceId: "private-device-id",
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 48_000,
+        })),
+        getRTCStatsReport: vi.fn().mockResolvedValue(
+          new Map([
+            [
+              "audio",
+              {
+                type: "outbound-rtp",
+                kind: "audio",
+                bytesSent: 8_000,
+                packetsSent: 40,
+                trackIdentifier: "private-track-id",
+              },
+            ],
+          ]),
+        ),
+      },
+    };
+
+    const { result } = await renderStartedHook();
+
+    await waitFor(() =>
+      expect(
+        result.current.audioDiagnostics.find(
+          ({ name }) => name === "webrtc_microphone_settings",
+        ),
+      ).toEqual(
+        expect.objectContaining({
+          detail: {
+            echo_cancellation: true,
+            noise_suppression: true,
+            sample_rate: 48_000,
+          },
+        }),
+      ),
+    );
+    expect(
+      result.current.audioDiagnostics.find(
+        ({ name }) => name === "webrtc_outbound_audio",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        detail: expect.objectContaining({
+          bytes_sent: 8_000,
+          packets_sent: 40,
+        }),
+      }),
+    );
+    expect(JSON.stringify(result.current.audioDiagnostics)).not.toMatch(
+      /private-|device_id|track_identifier/i,
+    );
+  });
+
   it("explains a strict speaker rejection and clears it after an accepted turn", async () => {
     const { result, room } = await renderStartedHook();
 
@@ -1640,7 +1704,7 @@ describe("useVoiceSession production edges", () => {
     );
   });
 
-  it("ducks playback during a candidate interruption and restores it smoothly", async () => {
+  it("mutes playback during a candidate interruption and restores it", async () => {
     const { room } = await renderStartedHook();
     const element = document.createElement("audio");
     Object.defineProperty(element, "play", {
@@ -1657,7 +1721,7 @@ describe("useVoiceSession production edges", () => {
           type: "assistant_audio",
           session_id: "session-1",
           action: "duck",
-          gain: 0.25,
+          gain: 0,
           turn_id: 1,
           generation_id: 1,
         }),
@@ -1666,7 +1730,7 @@ describe("useVoiceSession production edges", () => {
         "voice-agent.ui",
       );
     });
-    expect(element.volume).toBe(0.25);
+    expect(element.volume).toBe(0);
 
     act(() => {
       room.emit(

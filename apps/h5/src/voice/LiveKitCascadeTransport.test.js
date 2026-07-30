@@ -75,6 +75,31 @@ describe("LiveKitCascadeTransport", () => {
     ).rejects.toThrow(/麦克风/);
   });
 
+  it("exposes the published microphone track for diagnostics", async () => {
+    const room = fakeRoom();
+    const microphoneTrack = { kind: "audio" };
+    room.localParticipant.setMicrophoneEnabled.mockResolvedValue({
+      track: microphoneTrack,
+    });
+    const onMicrophoneTrack = vi.fn();
+    const transport = new LiveKitCascadeTransport({
+      room,
+      getLocalDevices: vi.fn(async () => [{ deviceId: "mic-1" }]),
+      onMicrophoneTrack,
+      stopResponse: vi.fn(),
+    });
+
+    await transport.connect({
+      session_id: "session-1",
+      livekit_url: "wss://livekit.example.com",
+      participant_token: "token",
+    });
+    await transport.setMicrophoneEnabled(false);
+
+    expect(onMicrophoneTrack).toHaveBeenNthCalledWith(1, microphoneTrack);
+    expect(onMicrophoneTrack).toHaveBeenNthCalledWith(2, null);
+  });
+
   it("opens text-only sessions without microphone discovery and sends lk.chat text", async () => {
     const room = fakeRoom();
     const getLocalDevices = vi.fn(async () => []);

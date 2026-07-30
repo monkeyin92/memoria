@@ -6,6 +6,7 @@ from services.agent.src.providers.funasr_protocol import (
     build_run_task,
     conversation_item_to_funasr_context,
     parse_server_message,
+    result_trace_metrics,
     timestamps_monotonic,
     words_to_seconds,
 )
@@ -140,3 +141,35 @@ def test_task_failed_reads_header_error_message() -> None:
     )
 
     assert parsed.error_message == "Missing required parameter payload.input"
+
+
+def test_result_trace_metrics_expose_timing_without_transcript_text() -> None:
+    event = parse_server_message(
+        {
+            "header": {"event": "result-generated", "task_id": "provider-secret-id"},
+            "payload": {
+                "output": {
+                    "sentence": {
+                        "sentence_id": 7,
+                        "begin_time": 120,
+                        "end_time": 980,
+                        "text": "这是不能进入诊断事件的原文",
+                        "sentence_end": True,
+                    }
+                }
+            },
+        }
+    )
+    assert event.sentence is not None
+
+    metrics = result_trace_metrics(event.sentence, task_epoch=2)
+
+    assert metrics == {
+        "task_epoch": 2,
+        "sentence_id": 7,
+        "begin_ms": 120,
+        "end_ms": 980,
+        "duration_ms": 860,
+    }
+    assert "text" not in metrics
+    assert "task_id" not in metrics

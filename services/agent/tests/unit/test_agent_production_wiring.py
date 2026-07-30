@@ -1769,7 +1769,7 @@ def test_self_hosted_turn_handling_filters_short_echoes_and_reads_timing_env(
         "max_delay": 2.20,
         "alpha": 0.85,
     }
-    assert options["interruption"]["min_duration"] == 0.55
+    assert options["interruption"]["min_duration"] == 0.35
     assert options["interruption"]["min_words"] == 0
     assert options["interruption"]["false_interruption_timeout"] == 1.70
     assert (
