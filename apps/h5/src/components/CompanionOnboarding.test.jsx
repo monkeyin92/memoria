@@ -155,7 +155,7 @@ describe("CompanionOnboarding", () => {
     );
   });
 
-  it("records three clips, creates a shadow voiceprint, then persists the companion", async () => {
+  it("records four voice conditions, creates a shadow voiceprint, then persists the companion", async () => {
     const onComplete = vi.fn();
     render(<CompanionOnboarding userId="owner-1" onComplete={onComplete} />);
 
@@ -165,12 +165,12 @@ describe("CompanionOnboarding", () => {
     fireEvent.click(screen.getByRole("button", { name: "让 玄墨 陪我" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /声纹模板/ }));
 
-    for (let index = 1; index <= 3; index += 1) {
+    for (let index = 1; index <= 4; index += 1) {
       fireEvent.click(screen.getByRole("button", { name: `录制第 ${index} 段` }));
       fireEvent.click(
         await screen.findByRole("button", { name: `停止第 ${index} 段录音` }),
       );
-      if (index < 3) {
+      if (index < 4) {
         await waitFor(() => {
           expect(screen.getByRole("button", { name: `录制第 ${index + 1} 段` }))
             .toBeEnabled();
@@ -185,25 +185,31 @@ describe("CompanionOnboarding", () => {
     fireEvent.click(screen.getByRole("button", { name: "建立声纹并开始陪伴" }));
 
     await waitFor(() => {
-      expect(mocks.createSpeakerPcmRecorder).toHaveBeenCalledTimes(3);
+      expect(mocks.createSpeakerPcmRecorder).toHaveBeenCalledTimes(4);
       expect(mocks.enrollSpeakerProfiles).toHaveBeenCalledWith([
         {
           audio_base64: "AAAA",
           sample_rate: 16_000,
           device: "h5-web-audio",
-          scene: "owner-enrollment",
+          scene: "owner-natural",
         },
         {
           audio_base64: "AAAA",
           sample_rate: 16_000,
           device: "h5-web-audio",
-          scene: "owner-enrollment",
+          scene: "owner-soft",
         },
         {
           audio_base64: "AAAA",
           sample_rate: 16_000,
           device: "h5-web-audio",
-          scene: "owner-enrollment",
+          scene: "owner-bright",
+        },
+        {
+          audio_base64: "AAAA",
+          sample_rate: 16_000,
+          device: "h5-web-audio",
+          scene: "owner-steady",
         },
       ]);
       expect(mocks.updateProfile).toHaveBeenCalledWith("owner-1", {
@@ -212,6 +218,53 @@ describe("CompanionOnboarding", () => {
       expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({
         companion_id: "xuanmo",
       }));
+    });
+  });
+
+  it("updates only the owner voiceprint when opened from My", async () => {
+    const onComplete = vi.fn();
+    render(
+      <CompanionOnboarding
+        mode="voiceprint"
+        companionId="mianmian"
+        onBack={() => undefined}
+        onComplete={onComplete}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "用四种说话状态录取" }))
+      .toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "主人声纹录取进度" }))
+      .toHaveAttribute("max", "4");
+    expect(screen.getByText("自然声线")).toBeInTheDocument();
+    expect(screen.getByText("轻声说话")).toBeInTheDocument();
+    expect(screen.getByText("带点笑意")).toBeInTheDocument();
+    expect(screen.getByText("认真表达")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "录制第 1 段" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "录制第 2 段" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /声纹模板/ }));
+    for (let index = 1; index <= 4; index += 1) {
+      fireEvent.click(screen.getByRole("button", { name: `录制第 ${index} 段` }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: `停止第 ${index} 段录音` }),
+      );
+      if (index < 4) {
+        await waitFor(() => {
+          expect(screen.getByRole("button", { name: `录制第 ${index + 1} 段` }))
+            .toBeEnabled();
+        });
+      }
+    }
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "完成主人声纹录取" }),
+    );
+
+    await waitFor(() => {
+      expect(mocks.enrollSpeakerProfiles).toHaveBeenCalledOnce();
+      expect(mocks.updateProfile).not.toHaveBeenCalled();
+      expect(onComplete).toHaveBeenCalledWith({ profile_id: "speaker-1" });
     });
   });
 });

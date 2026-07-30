@@ -167,6 +167,66 @@ async def test_shadow_profile_never_grants_owner_and_activation_is_versioned(
 
 
 @pytest.mark.asyncio
+async def test_enrollment_keeps_distinct_natural_voice_conditions_as_prototypes(
+    tmp_path: Path,
+) -> None:
+    class VoiceConditionAdapter:
+        model_version = "campplus-voice-conditions-v1"
+
+        async def embed(self, pcm: bytes, *, sample_rate: int) -> EmbeddingResult:
+            _ = sample_rate
+            vectors = {
+                b"natural": (1.0, 0.0, 0.0, 0.0),
+                b"soft": (0.0, 1.0, 0.0, 0.0),
+                b"bright": (0.0, 0.0, 1.0, 0.0),
+                b"steady": (0.0, 0.0, 0.0, 1.0),
+            }
+            return EmbeddingResult(
+                vector=vectors[pcm],
+                speech_ms=2200,
+                snr_db=20.0,
+                quality_score=0.95,
+                replay_risk=0.05,
+                synthetic_risk=0.05,
+            )
+
+    authority = SpeakerAuthority.sqlite(
+        tmp_path / "voice-conditions.sqlite3",
+        template_key=Fernet.generate_key().decode("ascii"),
+        adapter=VoiceConditionAdapter(),
+        owner_threshold=0.80,
+        guest_threshold=0.40,
+    )
+    await authority.enroll(
+        EnrollmentRequest(
+            account_id="account-voice-conditions",
+            consent_grant_id="consent-voice-conditions",
+            samples=tuple(
+                EnrollmentSample(pcm=value, sample_rate=16000)
+                for value in (b"natural", b"soft", b"bright", b"steady")
+            ),
+        )
+    )
+
+    decisions = [
+        await authority.classify(
+            SpeakerSample(
+                account_id="account-voice-conditions",
+                pcm=value,
+                sample_rate=16000,
+            )
+        )
+        for value in (b"natural", b"soft", b"bright", b"steady")
+    ]
+
+    assert [item.reason_code for item in decisions] == [
+        "shadow_owner_candidate",
+    ] * 4
+    assert [item.score for item in decisions] == pytest.approx([1.0] * 4)
+    assert all(not item.permissions.read_private_memory for item in decisions)
+
+
+@pytest.mark.asyncio
 async def test_shadow_short_sample_keeps_candidate_without_granting_authority(
     tmp_path: Path,
 ) -> None:

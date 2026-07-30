@@ -3,6 +3,7 @@
     "pages/home/index",
     "pages/memory/index",
     "pages/profile/index",
+    "pages/speaker-enrollment/index",
     "pages/auth/index",
     "pages/digital-self/index",
     "pages/privacy/index"

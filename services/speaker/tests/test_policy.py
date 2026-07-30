@@ -5,8 +5,11 @@ from services.speaker.domain import EmbeddingResult, EnrollmentQualityError
 from services.speaker.policy import (
     classification_quality_reason,
     cosine_similarity,
+    deserialize_embedding_template,
     normalize_embedding,
     require_enrollment_quality,
+    serialize_embedding_template,
+    template_similarity,
 )
 
 
@@ -52,3 +55,16 @@ def test_enrollment_and_vector_policy_is_shared() -> None:
     assert normalize_embedding((3.0, 4.0)) == pytest.approx((0.6, 0.8))
     assert cosine_similarity((1.0, 0.0), (1.0, 0.0)) == pytest.approx(1.0)
     assert cosine_similarity((1.0,), (1.0, 0.0)) == -1.0
+
+
+def test_multi_prototype_template_keeps_voice_conditions_and_reads_legacy_centroid() -> None:
+    payload = serialize_embedding_template(
+        ((1.0, 0.0), (0.0, 2.0), (0.8, 0.2)),
+    )
+    prototypes = deserialize_embedding_template(payload)
+
+    assert prototypes[0] == pytest.approx((1.0, 0.0))
+    assert prototypes[1] == pytest.approx((0.0, 1.0))
+    assert prototypes[2] == pytest.approx((0.9701425, 0.2425356))
+    assert template_similarity((0.0, 1.0), prototypes) == pytest.approx(1.0)
+    assert deserialize_embedding_template(b"[0.6,0.8]") == ((0.6, 0.8),)

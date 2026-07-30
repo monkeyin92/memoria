@@ -160,8 +160,8 @@ MEMORIA_REFRESH_COOKIE_NAME=memoria_refresh
 WECHAT_AVATAR_PUBLIC_BASE_URL=https://aigcnice.com:8443/memoria-api
 MEMORIA_LEGACY_AUTH_COMPAT_UNTIL=
 MEMORIA_MESSAGE_IDEMPOTENCY_SECRET=
-ENDPOINTING_MIN_DELAY_S=0.90
-ENDPOINTING_MAX_DELAY_S=1.50
+ENDPOINTING_MIN_DELAY_S=1.50
+ENDPOINTING_MAX_DELAY_S=2.20
 ENDPOINTING_ALPHA=0.85
 INTERRUPTION_MIN_DURATION_S=0.45
 FALSE_INTERRUPTION_TIMEOUT_S=1.70
@@ -300,7 +300,7 @@ SPEAKER_MODEL_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-speaker-model.env-pre-$RE
 GATEWAY_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-miniprogram-gateway.env-pre-$RELEASE_TAG
 ```
 
-### 1. 本机构建、打包并上传固定工件
+### 1. 本机构建、打包并增量上传固定工件
 
 生产机只有约 3.6 GiB 内存，默认禁止在服务器执行完整 `compose build`。依赖未变化时，在本机从上一健康 amd64 镜像做增量构建；`pyproject.toml` 或 `uv.lock` 变化时，仍在本机执行固定依赖的完整 amd64 构建。
 
@@ -384,10 +384,9 @@ printf 'copy this manifest hash into the authenticated server shell: %s\n' \
   "$MEMORIA_RELEASE_MANIFEST_SHA256"
 ```
 
-首次包含小程序网关的 release 可以没有上一 tag 的 gateway 镜像；增量脚本会继续复用
-Agent、Control API 和 Speaker Model 的健康基础镜像，只用锁定依赖的
-`Dockerfile.miniprogram-gateway` 完整构建新网关镜像。后续 release 才对 gateway 使用
-同样的增量路径。
+增量构建要求上一健康 release 的四个镜像齐全且共享同一 commit/tag/role。脚本会自动
+对比依赖锁、四个完整 Dockerfile、Speaker Model requirements/patch/exporter；任一变化都
+fail closed，必须走下面的完整镜像构建，不允许继承旧依赖后只换新标签。
 
 依赖变化时不要运行增量脚本，在本机执行完整构建：
 
@@ -416,8 +415,31 @@ docker buildx build --platform linux/amd64 --load \
 
 Dockerfile 必须从 `uv.lock` 或固定 requirements 导出并安装固定版本与哈希，任何不匹配都令构建失败；不得使用 `latest`。完整构建后同样执行上面的架构校验、H5 build、`docker save` 和 SHA-256 清单生成。
 
-将 `source.tar`、`images.tar`、`h5-dist.tar.gz`、三份 SHA-256 清单、
-`release-manifest.json` 与 `release-verifier.pyz` 一起上传到服务器临时目录。
+上传使用项目脚本，并先运行 dry-run。脚本只允许上传 `source/images/H5`、三份 SHA-256、
+manifest 与 verifier，不会把工件目录里的其他文件带到服务器。若服务器仍保留上一健康 release 的
+`images.tar + images.tar.sha256`，脚本先用只读硬链接作为 rsync basis，再按滚动校验只传变化块；
+不会原地修改上一份归档。basis 缺失或不在同一文件系统时自动回退完整上传，输出
+`release_upload_mode=full`，不降低后续 SHA/manifest 验签：
+
+```bash
+bash scripts/upload_release_artifacts.sh \
+  --artifact-dir "$ARTIFACT_DIR" \
+  --remote memoria-prod \
+  --release-tag "$RELEASE_TAG" \
+  --base-tag "$BASE_TAG" \
+  --dry-run
+
+bash scripts/upload_release_artifacts.sh \
+  --artifact-dir "$ARTIFACT_DIR" \
+  --remote memoria-prod \
+  --release-tag "$RELEASE_TAG" \
+  --base-tag "$BASE_TAG"
+```
+
+发布成功并确认新 runtime 可直接回滚后，服务器只需保留**当前 runtime** 对应 incoming 中的
+`images.tar` 与 `images.tar.sha256` 作为下一次上传 basis；更旧 incoming 仍可按精确清理流程删除。
+不要对 basis 使用 `rsync --inplace`，否则中断可能破坏上一版本的可信归档。
+
 manifest 必须在上传前生成，且不得在服务器重建。验证器由已审核 commit 中的三个脚本确定性打包；
 其 SHA-256 必须从本地认证终端单独复制到服务器 shell，不能读取上传目录中的 sidecar 或 manifest
 代替这个信任锚。服务器先验证该哈希，再由验证器核对完整三件套，成功后才能解包源码。此机制是
@@ -598,8 +620,8 @@ sudo test "$(stat -c '%U:%G:%a' "$CONTROL_ENV_CANDIDATE")" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' "$AGENT_ENV_CANDIDATE")" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' "$SPEAKER_MODEL_ENV_CANDIDATE")" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' "$GATEWAY_ENV_CANDIDATE")" = "root:root:600"
-sudo grep -qx 'ENDPOINTING_MIN_DELAY_S=0.90' "$AGENT_ENV_CANDIDATE"
-sudo grep -qx 'ENDPOINTING_MAX_DELAY_S=1.50' "$AGENT_ENV_CANDIDATE"
+sudo grep -qx 'ENDPOINTING_MIN_DELAY_S=1.50' "$AGENT_ENV_CANDIDATE"
+sudo grep -qx 'ENDPOINTING_MAX_DELAY_S=2.20' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'FALSE_INTERRUPTION_TIMEOUT_S=1.70' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'INTERRUPT_SEMANTIC_ENABLED=true' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'INTERRUPT_SEMANTIC_MODEL=qwen-flash' "$AGENT_ENV_CANDIDATE"

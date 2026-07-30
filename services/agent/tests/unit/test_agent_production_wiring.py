@@ -1667,8 +1667,8 @@ def test_self_hosted_turn_handling_filters_short_echoes_and_reads_timing_env(
     options = agent_mod.build_turn_handling_options("cn_self_hosted")
     assert options["endpointing"] == {
         "mode": "dynamic",
-        "min_delay": 0.90,
-        "max_delay": 1.50,
+        "min_delay": 1.50,
+        "max_delay": 2.20,
         "alpha": 0.85,
     }
     assert options["interruption"]["min_duration"] == 0.55

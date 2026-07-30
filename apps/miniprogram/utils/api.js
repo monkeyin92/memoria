@@ -267,6 +267,17 @@ function notifyRtcRecovered(sessionId) {
   });
 }
 
+function enrollSpeakerProfiles(samples) {
+  return rawRequest("/v1/speakers/enrollments", {
+    method: "POST",
+    data: {
+      consent_policy_version: "speaker-biometric-v1",
+      consent_accepted: true,
+      samples,
+    },
+  });
+}
+
 function getProfile(userId) {
   return rawRequest(`/v1/memory/profile/${encodeURIComponent(userId)}`);
 }
@@ -353,6 +364,7 @@ module.exports = {
   refreshMiniProgramGatewayTicket,
   stopResponse,
   notifyRtcRecovered,
+  enrollSpeakerProfiles,
   getProfile,
   updateProfile,
   getMemoryDays,

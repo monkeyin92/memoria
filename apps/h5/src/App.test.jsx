@@ -783,6 +783,32 @@ describe("App identity and profile preferences", () => {
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
   });
 
+  it("opens owner voiceprint enrollment directly from My and returns predictably", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      account_type: "registered",
+      access_token: "token",
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /主人声纹/ }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "用四种说话状态录取" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/保持是你自己的声音，只改变轻重、语速和情绪/))
+      .toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "返回我的" }));
+    expect(await screen.findByRole("heading", { name: "我的" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
+  });
+
   it("runs an active grantee Legacy session with an opaque grant and no history side effects", async () => {
     const startVoice = configureActiveLegacyVoice("legacy-session-1");
     mocks.getInteractionCapabilities.mockResolvedValue({

@@ -197,6 +197,11 @@ Page({
     wx.navigateTo({ url: "/pages/digital-self/index" });
   },
 
+  async openSpeakerEnrollment() {
+    if (!(await requireLogin({ reason: "edit_profile" }))) return;
+    wx.navigateTo({ url: "/pages/speaker-enrollment/index" });
+  },
+
   openPrivacy() {
     wx.navigateTo({ url: "/pages/privacy/index" });
   },

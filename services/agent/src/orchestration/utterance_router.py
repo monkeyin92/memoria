@@ -99,10 +99,18 @@ def route_target_speaker(
 
     if reason_code in {"no_active_profile", "authority_unconfigured"}:
         return TargetSpeakerRoute(allow_input=True, reason="target_profile_absent")
-    non_owner = classification == "guest" or reason_code in {
-        "owner_mismatch",
-        "shadow_guest_candidate",
-    }
+    formal_non_owner = classification == "guest" or reason_code == "owner_mismatch"
+    shadow_non_owner = reason_code == "shadow_guest_candidate"
+    if (
+        context == "interrupt"
+        and explicit_interrupt
+        and shadow_non_owner
+        and not formal_non_owner
+    ):
+        # A shadow score from short, playback-contaminated audio is not formal
+        # identity evidence. Pure stop remains control-only and reversible.
+        return TargetSpeakerRoute(allow_input=True, reason="target_explicit_control")
+    non_owner = formal_non_owner or shadow_non_owner
     if non_owner:
         return TargetSpeakerRoute(
             allow_input=not reject_non_owner_voice,

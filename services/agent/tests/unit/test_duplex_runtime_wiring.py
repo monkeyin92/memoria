@@ -1573,6 +1573,107 @@ async def test_interrupt_command_restores_listen_and_unlocks_min_words() -> None
 
 
 @pytest.mark.asyncio
+async def test_stale_control_final_does_not_repeat_yield_over_new_speech() -> None:
+    said: list[str] = []
+    published: list[dict[str, object]] = []
+
+    async def _yield(phrase: str) -> None:
+        said.append(phrase)
+
+    async def _publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    runtime.set_interrupt_yield(_yield)
+    runtime.set_event_publisher(_publish)
+    await runtime.orchestrator.ready()
+    runtime.on_user_voice_started()
+    stale_epoch = runtime._speaker_epoch
+    runtime.on_user_voice_started()
+
+    accepted, reason = runtime.accept_user_turn(
+        "停一下",
+        speech_anchored=True,
+        canonical_speech_epoch=stale_epoch,
+        canonical_snapshot_bound=True,
+    )
+    await asyncio.sleep(0)
+
+    assert accepted is False
+    assert reason == "stale_control_epoch"
+    assert said == []
+    assert not any(
+        event.get("type") == "audio_trace"
+        and event.get("name") == "interrupt_yield_started"
+        for event in published
+    )
+    assert any(
+        event.get("type") == "audio_trace"
+        and event.get("name") == "control_turn_stale"
+        for event in published
+    )
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_orphan_control_final_after_yield_does_not_repeat_ack() -> None:
+    said: list[str] = []
+
+    async def _yield(phrase: str) -> None:
+        said.append(phrase)
+
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    runtime.set_interrupt_yield(_yield)
+    await runtime.orchestrator.ready()
+    runtime._restore_listen_after_control(cause="first_ack_done")
+    canonical = runtime.consume_canonical_user_turn("停一下")
+
+    accepted, reason = runtime.accept_user_turn(
+        canonical or "停一下",
+        speech_anchored=False,
+        canonical_speech_epoch=runtime.consumed_canonical_speech_epoch,
+        canonical_snapshot_bound=runtime.consumed_canonical_snapshot_bound,
+    )
+    await asyncio.sleep(0)
+
+    assert accepted is False
+    assert reason == "stale_control_epoch"
+    assert said == []
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_late_control_final_cannot_prefix_the_next_vad_turn() -> None:
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    await runtime.orchestrator.ready()
+    runtime.on_user_voice_started()
+    runtime.observe_user_transcript("停一下", final=True)
+    first = runtime.consume_canonical_user_turn("停一下")
+    first_epoch = runtime.consumed_canonical_speech_epoch
+
+    accepted, reason = runtime.accept_user_turn(
+        first or "停一下",
+        speech_anchored=True,
+        canonical_speech_epoch=first_epoch,
+        canonical_snapshot_bound=runtime.consumed_canonical_snapshot_bound,
+    )
+    await asyncio.sleep(0)
+
+    assert accepted is False
+    assert reason == "interrupt_command_only"
+    assert runtime.input_guard.candidate_active is False
+
+    assert runtime.observe_user_transcript("停一下", final=True).value == "accept"
+    assert runtime._accepted_user_finals == []
+    assert runtime._canonical_speech_epoch is None
+
+    runtime.on_user_voice_started()
+    runtime.observe_user_transcript("真正的新问题", final=True)
+    assert runtime.consume_canonical_user_turn("真正的新问题") == "真正的新问题"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_interrupt_diagnostics_never_expose_transcript_text(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

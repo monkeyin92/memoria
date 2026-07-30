@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import sqlite3
 import threading
 import uuid
@@ -14,7 +13,6 @@ from pathlib import Path
 from cryptography.fernet import Fernet, InvalidToken
 
 from services.speaker.domain import (
-    EnrollmentQualityError,
     EnrollmentRequest,
     EnrollmentResult,
     RevokeSpeakerProfile,
@@ -28,10 +26,11 @@ from services.speaker.domain import (
 )
 from services.speaker.policy import (
     classification_quality_reason,
-    cosine_similarity,
+    deserialize_embedding_template,
     embedding_quality_reason,
-    normalize_embedding,
     require_enrollment_quality,
+    serialize_embedding_template,
+    template_similarity,
 )
 
 _SCHEMA = """
@@ -191,21 +190,13 @@ class SpeakerAuthority:
         ]
         for result in embedded:
             require_enrollment_quality(result)
-        dimensions = {len(result.vector) for result in embedded}
-        if len(dimensions) != 1:
-            raise EnrollmentQualityError("speaker embeddings have inconsistent dimensions")
-        template = normalize_embedding(
-            tuple(
-                sum(result.vector[index] for result in embedded) / len(embedded)
-                for index in range(len(embedded[0].vector))
-            )
-        )
+        template = serialize_embedding_template(result.vector for result in embedded)
         now = datetime.now(UTC).isoformat()
         profile_id = str(uuid.uuid4())
         identity_id = str(
             uuid.uuid5(uuid.NAMESPACE_URL, f"memoria:speaker-owner:{request.account_id}")
         )
-        ciphertext = self._fernet.encrypt(json.dumps(template, separators=(",", ":")).encode())
+        ciphertext = self._fernet.encrypt(template)
         with self._connect() as connection:
             connection.execute(
                 """
@@ -357,25 +348,21 @@ class SpeakerAuthority:
         if ciphertext is None:
             return self._uncertain("profile_revoked", row=row, quality=result.quality_score)
         try:
-            template = tuple(json.loads(self._fernet.decrypt(bytes(ciphertext))))
-        except (InvalidToken, TypeError, json.JSONDecodeError):
+            prototypes = deserialize_embedding_template(self._fernet.decrypt(bytes(ciphertext)))
+        except (InvalidToken, TypeError, ValueError):
             return self._uncertain("template_unavailable", row=row, quality=result.quality_score)
-        if len(result.vector) != len(template):
+        if any(len(result.vector) != len(prototype) for prototype in prototypes):
             return self._uncertain(
                 "embedding_dimension_mismatch",
                 row=row,
                 quality=result.quality_score,
             )
-        score = cosine_similarity(
-            tuple(result.vector), tuple(float(value) for value in template)
-        )
+        score = template_similarity(tuple(result.vector), prototypes)
         if row["status"] == "shadow":
             # Shadow output never changes authority. Keep its candidate score even
             # when the short conversational sample fails authority-quality gates,
             # so the realtime target-speaker focus can reject a clear bystander.
-            effective_guest_threshold = min(
-                float(row["guest_threshold"]), self._guest_threshold
-            )
+            effective_guest_threshold = min(float(row["guest_threshold"]), self._guest_threshold)
             if score >= float(row["owner_threshold"]):
                 reason = "shadow_owner_candidate"
             elif score <= effective_guest_threshold:

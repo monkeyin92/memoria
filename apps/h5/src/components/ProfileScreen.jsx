@@ -23,6 +23,9 @@ export function ProfileScreen({
   preferenceSaving,
   preferenceError,
   onChangeCompanion,
+  onOpenSpeakerEnrollment,
+  voiceSessionActive,
+  speakerEnrollmentNotice,
   onOpenDigitalSelf,
   onOpenPrivacyData,
   onLogoutCurrent,
@@ -150,10 +153,33 @@ export function ProfileScreen({
 
         <button
           type="button"
+          className="privacy-card owner-voiceprint-entry"
+          disabled={voiceSessionActive}
+          onClick={onOpenSpeakerEnrollment}
+        >
+          <span className="privacy-icon"><Fingerprint size={22} weight="fill" /></span>
+          <span>
+            <strong>主人声纹</strong>
+            <small>
+              {voiceSessionActive
+                ? "请先结束当前对话，再使用麦克风录取"
+                : "补充自然、轻声、带笑等日常说话状态"}
+            </small>
+          </span>
+          <CaretRight size={19} weight="bold" />
+        </button>
+        {speakerEnrollmentNotice && (
+          <p className="profile-success" role="status">
+            {speakerEnrollmentNotice}
+          </p>
+        )}
+
+        <button
+          type="button"
           className="privacy-card digital-self-entry"
           onClick={onOpenDigitalSelf}
         >
-          <span className="privacy-icon"><Fingerprint size={22} weight="fill" /></span>
+          <span className="privacy-icon"><Brain size={22} weight="fill" /></span>
           <span><strong>数字心智与声音</strong><small>人格学习、声纹识别与声音复刻</small></span>
           <CaretRight size={19} weight="bold" />
         </button>

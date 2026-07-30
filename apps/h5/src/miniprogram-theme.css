@@ -543,6 +543,15 @@ textarea:focus-visible {
 .expression-segments button.active { color: var(--cyan-soft); background: var(--surface-strong); box-shadow: 0 0 12px rgba(34, 229, 255, 0.12); }
 .voice-preview-icon,
 .recording-number { color: var(--cyan-soft); background: var(--surface-soft); }
+.voiceprint-progress { color: var(--muted); }
+.voiceprint-consent { color: var(--text-secondary); }
+.voiceprint-progress progress,
+.voiceprint-progress progress::-webkit-progress-bar { background: rgba(255, 255, 255, 0.12); }
+.voiceprint-progress progress::-webkit-progress-value,
+.voiceprint-progress progress::-moz-progress-bar { background: var(--neon-gradient); }
+.recording-copy strong { color: var(--ink); }
+.recording-copy small,
+.recording-item p { color: var(--muted); }
 .voice-preview-row button,
 .recording-start { background: var(--neon-gradient); }
 .enrollment-companion { border-color: var(--line); }
@@ -689,6 +698,7 @@ textarea:focus-visible {
 .account-session-card h3,
 .account-logout-entry strong { color: var(--ink); }
 .privacy-card:active { border-color: rgba(94, 234, 255, 0.5); background: var(--surface-strong); }
+.profile-success { color: #82e0b4; }
 .account-logout-entry { color: var(--text-secondary); }
 .account-logout-all,
 .account-logout-all strong,

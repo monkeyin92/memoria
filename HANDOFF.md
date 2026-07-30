@@ -10,6 +10,14 @@
   `2026-07-30T07:39:41Z` 原子切换至 `20260730-153343`；小程序未上传、提审或发布。
   直接 runtime/H5 回滚点为 `20260729-193333 / 20260729-113831`，root-only 备份位于
   `/var/backups/memoria/runtime-switch-20260730-092236-from-20260729-193333-20260730T015529Z/`。
+- 2026-07-30 H5 真人会话确认两个本地待发布修复：shadow 短纯控制只停止播放、不进入聊天或
+  权限面；旧/无快照 speech epoch 的迟到控制终稿不再重复播确认音或串入下一话轮。自建
+  endpoint 候选恢复为 `1.50 / 2.20` 秒以降低句中停顿早提交，但供应商终稿仍可能晚于该窗口，
+  上线后必须按同一会话核对 late-transcript warning、权威归档文本和真人完整句，不能只看测试。
+- 同一工作树新增本地待发布的“我的 → 主人声纹”现场录取：自然、轻声、带笑、认真四种状态
+  按顺序录取，并在同一加密声纹版本内保留为四个独立原型，分类取最高相似度；旧单中心模板
+  继续兼容。新版本仍只进入 shadow，不绕过 200 条正式评估与 FAR/FRR/EER 门禁。尚未提交、
+  推送或部署，真实手机麦克风音质、识别率与误识率仍需设备矩阵验收。
 - `20260729-193333` 已于 `2026-07-29T12:28:16Z` 原子切换 runtime：未确认说话人现在可承接
   本次会话末尾连续的 public 工作上下文，但主人私人历史、记忆、Persona、工具与
   `history_eligible` 仍隔离；Qwen 多段情绪按 PCM sample 区间、provider `audio_start_ms`
@@ -59,6 +67,24 @@
   `docs/silicon-life-implementation-plan.md`、`docs/adr/` 与
   `docs/releases/20260728-170236.md`。
 
+## 2026-07-30：H5 主人声纹多原型录取（本地完成，未发布）
+
+- “我的”新增独立“主人声纹”入口，复用既有现场 PCM recorder 与登记 API；四段按
+  “自然声线 → 轻声说话 → 带点笑意 → 认真表达”顺序解锁，显示 `0–4` 进度、重录、授权、
+  忙碌与可恢复错误。录取期间隐藏底栏；返回、卸载或异常会 cancel recorder、停止 track。
+  当前有语音会话时入口禁用，避免会话上行与声纹录取争抢同一麦克风。
+- SpeakerAuthority 不再把多段 embedding 平均成一个中心；新版本将每段归一化后作为独立
+  prototype 加密进既有 `template_ciphertext`，分类取最高 cosine similarity。无数据库迁移，
+  SQLite/PostgreSQL 共用同一 codec，旧 JSON 单中心密文按单 prototype 继续读取。
+- 仍保持安全边界：登记结果只创建新版 `shadow`；已有 active 时仍优先正式模板，新版不会
+  直接获得主人历史、私人记忆或权限。正式激活继续要求 anti-spoof 可用、至少 200 条评估样本
+  以及 FAR/FRR/EER/unknown-rejection 门禁。
+- 本地门禁：全量 Python `1499 passed, 29 skipped`；Ruff、strict mypy `177 source files`、
+  H5 `244/244`、production build、`git diff --check` 通过。现有 Chrome 用隔离本地 API 验证
+  “我的 → 主人声纹 → 返回我的”；`375×812` 与 `812×375` 均无横向溢出，录音按钮
+  `44×44`，深色授权文字与横屏居中已实看修正，console warning/error 为空。未自动接受真实
+  麦克风权限，真人四种声线的 FAR/FRR、噪声与真机录音质量仍是发布前开放验收项。
+
 ## 2026-07-30：当轮语义角色与危机支持（已提交、推送并部署）
 
 - 没有新增会话级角色状态或第二套路由。`DigitalSelfResponsePlanner` 的 canonical
@@ -104,6 +130,22 @@
   index/主 JS/主 CSS 哈希与服务器候选一致，缓存策略、Nginx、域名 TLS 和 9/9 core readiness
   通过。应用内浏览器在 390×844、360×740、760×390 验收线上未登录首屏：无横向溢出，窄屏
   可滚动，可见控件不小于 44px，console warning/error 为空。小程序未上传、提审或发布。
+
+## 2026-07-30：发布包增量上传
+
+- 新增 `scripts/upload_release_artifacts.sh`。生产发布仍在本机构建完整、不可变、commit-bound 的
+  `images.tar`，服务器仍只 `docker load` 和 `compose up --no-build`；没有把依赖安装或镜像构建迁到
+  3.6 GiB 生产机，也没有改变 manifest/verifier、SHA 或回滚边界。
+- 上传时优先把上一健康 release 的服务器 `images.tar` 作为只读 rsync basis，只传变化块；相邻两次
+  现有归档实测约 `99.34%` payload 可复用，新增约 `15.8 MB`。basis 缺失时明确输出 full 并回退完整
+  上传，不会跳过最终 SHA 校验。
+- 脚本支持 `--dry-run`，只上传 8 个允许的发布文件，远端文件固定 `root:root 0600`；上传完成后复验
+  新归档，seeded 模式还会复验旧 basis 未被修改。下一次发布前需保留当前 runtime incoming 的
+  `images.tar + images.tar.sha256`，新版本激活后即可精确删除更旧 incoming。
+- 同轮加固 `delta_build_images.sh`：四个基础镜像必须共享同一 commit/tag/role/amd64；
+  依赖锁、完整 Dockerfile、Speaker Model requirements/patch/exporter 或 `.dockerignore` 变化时
+  fail closed 走完整构建。增量 Agent 补齐 KWS 词表，Speaker Model 补齐服务代码，四个构建均
+  `--network=none --pull=false`。
 
 ## 2026-07-29：短期上下文与自然表达修复（已提交、推送并部署）
 

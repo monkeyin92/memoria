@@ -27,9 +27,30 @@ const expressions = [
 ];
 
 const enrollmentPrompts = [
-  "我是你的主人，今天想让你认识我的声音。",
-  "无论开心还是疲惫，我都会用这样的声音和你说话。",
-  "请记住我的声音，也尊重只有我能决定如何使用它。",
+  {
+    label: "自然声线",
+    hint: "像平常聊天一样",
+    prompt: "我是你的主人，今天想让你认识我的声音。",
+    scene: "owner-natural",
+  },
+  {
+    label: "轻声说话",
+    hint: "稍微放轻音量",
+    prompt: "有时候我会轻声和你说话，也希望你能认出我。",
+    scene: "owner-soft",
+  },
+  {
+    label: "带点笑意",
+    hint: "让语调自然上扬",
+    prompt: "今天想到一件开心的事，我想慢慢讲给你听。",
+    scene: "owner-bright",
+  },
+  {
+    label: "认真表达",
+    hint: "语速放慢、声调稍低",
+    prompt: "请尊重只有我能决定如何使用自己的声音。",
+    scene: "owner-steady",
+  },
 ];
 
 function enrollmentError(error, fallback) {
@@ -42,13 +63,22 @@ function enrollmentError(error, fallback) {
   return error?.message || fallback;
 }
 
-export function CompanionOnboarding({ userId, onComplete }) {
-  const [stage, setStage] = useState("choose");
-  const [selectedId, setSelectedId] = useState(defaultCompanionId);
+export function CompanionOnboarding({
+  userId,
+  onComplete,
+  mode = "onboarding",
+  companionId = defaultCompanionId,
+  onBack,
+}) {
+  const enrollmentOnly = mode === "voiceprint";
+  const [stage, setStage] = useState(enrollmentOnly ? "enroll" : "choose");
+  const [selectedId, setSelectedId] = useState(companionId || defaultCompanionId);
   const [expression, setExpression] = useState("neutral");
   const [playing, setPlaying] = useState(false);
   const [consent, setConsent] = useState(false);
-  const [recordings, setRecordings] = useState([null, null, null]);
+  const [recordings, setRecordings] = useState(() => (
+    enrollmentPrompts.map(() => null)
+  ));
   const [recordingIndex, setRecordingIndex] = useState(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -63,6 +93,7 @@ export function CompanionOnboarding({ userId, onComplete }) {
   const recordingStartedAtRef = useRef(0);
   const selected = companionById(selectedId);
   const selectedIndex = companions.findIndex(({ id }) => id === selectedId);
+  const completedRecordings = recordings.filter(Boolean).length;
 
   const pausePreview = () => {
     audioRef.current?.pause();
@@ -78,7 +109,9 @@ export function CompanionOnboarding({ userId, onComplete }) {
     void recorder.stop().then((sample) => {
       if (!sample) return;
       setRecordings((current) => current.map((item, itemIndex) => (
-        itemIndex === recordingIndex ? sample : item
+        itemIndex === recordingIndex
+          ? { ...sample, scene: enrollmentPrompts[recordingIndex].scene }
+          : item
       )));
       setRecordingIndex(null);
       setRecordingSeconds(0);
@@ -211,17 +244,23 @@ export function CompanionOnboarding({ userId, onComplete }) {
 
   const finishOnboarding = async () => {
     if (recordings.some((recording) => !recording)) {
-      setError("请先完成三段录音。");
+      setError("请先完成四段录音。");
       return;
     }
     setBusy(true);
     setError("");
     let voiceprintReady = enrollmentCreated;
     try {
+      let enrollmentResult = null;
       if (!enrollmentCreated) {
-        await enrollSpeakerProfiles(recordings);
+        enrollmentResult = await enrollSpeakerProfiles(recordings);
         voiceprintReady = true;
         setEnrollmentCreated(true);
+      }
+      if (enrollmentOnly) {
+        releaseMicrophone();
+        onComplete(enrollmentResult);
+        return;
       }
       const savedProfile = await updateProfile(userId, { companion_id: selected.id });
       releaseMicrophone();
@@ -230,8 +269,10 @@ export function CompanionOnboarding({ userId, onComplete }) {
       setError(enrollmentError(
         submitError,
         voiceprintReady
-          ? "声纹已建立，但角色设置尚未保存，请再次完成设置。"
-          : "声纹登记没有完成，请检查三段录音后重试。",
+          ? enrollmentOnly
+            ? "声纹已建立，但页面没有完成，请返回“我的”查看最新版本。"
+            : "声纹已建立，但角色设置尚未保存，请再次完成设置。"
+          : "声纹登记没有完成，请检查四段录音后重试。",
       ));
     } finally {
       setBusy(false);
@@ -251,13 +292,17 @@ export function CompanionOnboarding({ userId, onComplete }) {
             className="onboarding-back"
             onClick={() => {
               releaseMicrophone();
-              setStage("choose");
               setError("");
+              if (enrollmentOnly) {
+                onBack?.();
+              } else {
+                setStage("choose");
+              }
             }}
           >
-            <CaretLeft size={18} weight="bold" /> 重新选择
+            <CaretLeft size={18} weight="bold" /> {enrollmentOnly ? "返回我的" : "重新选择"}
           </button>
-          <span>2 / 2</span>
+          <span>{enrollmentOnly ? "主人声纹" : "2 / 2"}</span>
         </header>
 
         <div className="enrollment-companion">
@@ -266,13 +311,25 @@ export function CompanionOnboarding({ userId, onComplete }) {
             emotion="happy"
             className="enrollment-companion-visual"
           />
-          <div><span>你的培育伙伴</span><strong>{selected.name}</strong></div>
+          <div>
+            <span>{enrollmentOnly ? "当前陪伴伙伴" : "你的培育伙伴"}</span>
+            <strong>{selected.name}</strong>
+          </div>
         </div>
 
         <div className="onboarding-copy">
-          <p className="eyebrow">让它先认识你</p>
-          <h1>录下三段自然说话</h1>
-          <p>用平常聊天的音量参考每句话，每段保持约 3–8 秒。</p>
+          <p className="eyebrow">{enrollmentOnly ? "完善主人声纹" : "让它先认识你"}</p>
+          <h1>用四种说话状态录取</h1>
+          <p>保持是你自己的声音，只改变轻重、语速和情绪。每段约 3–8 秒。</p>
+        </div>
+
+        <div className="voiceprint-progress" aria-live="polite">
+          <span>已完成 {completedRecordings} / {enrollmentPrompts.length}</span>
+          <progress
+            aria-label="主人声纹录取进度"
+            value={completedRecordings}
+            max={enrollmentPrompts.length}
+          />
         </div>
 
         <label className="voiceprint-consent">
@@ -285,21 +342,32 @@ export function CompanionOnboarding({ userId, onComplete }) {
         </label>
 
         <div className="recording-list">
-          {enrollmentPrompts.map((prompt, index) => {
+          {enrollmentPrompts.map((item, index) => {
             const isRecording = recordingIndex === index;
             const isReady = Boolean(recordings[index]);
+            const previousStepsReady = recordings
+              .slice(0, index)
+              .every(Boolean);
             return (
-              <article className="recording-item" key={prompt} data-ready={isReady}>
+              <article className="recording-item" key={item.scene} data-ready={isReady}>
                 <span className="recording-number">
                   {isReady ? <Check size={16} weight="bold" /> : index + 1}
                 </span>
-                <p>{prompt}</p>
+                <div className="recording-copy">
+                  <strong>{item.label}</strong>
+                  <small>{item.hint}</small>
+                  <p>{item.prompt}</p>
+                </div>
                 <button
                   type="button"
                   className={isRecording ? "recording-stop" : "recording-start"}
                   aria-label={isRecording ? `停止第 ${index + 1} 段录音` : `${isReady ? "重录" : "录制"}第 ${index + 1} 段`}
                   title={isRecording ? "停止录音" : isReady ? "重新录制" : "开始录音"}
-                  disabled={recordingIndex !== null && !isRecording || busy}
+                  disabled={
+                    busy
+                    || (recordingIndex !== null && !isRecording)
+                    || (!isReady && !previousStepsReady)
+                  }
                   onClick={() => isRecording ? stopRecording() : void startRecording(index)}
                 >
                   {isRecording ? <Stop size={19} weight="fill" /> : <Microphone size={19} weight="fill" />}
@@ -313,7 +381,7 @@ export function CompanionOnboarding({ userId, onComplete }) {
         </div>
 
         <p className="voiceprint-note">
-          系统会检查时长、清晰度和声学质量，不会用 ASR 强制逐字比对；三段录音只用于生成声纹模板。档案会先进入影子评估，不会自动启用主人判定，也不是声音克隆。
+          系统会检查时长、清晰度和声学质量，不会用 ASR 强制逐字比对；四段录音会在同一影子版本中保留为独立声线原型，识别时取最匹配的一种。正式评估通过前不会自动启用主人判定，也不是声音克隆。
         </p>
         {error && <p className="onboarding-error" role="alert">{error}</p>}
         <button
@@ -322,7 +390,10 @@ export function CompanionOnboarding({ userId, onComplete }) {
           disabled={!consent || recordings.some((recording) => !recording) || recordingIndex !== null || busy}
           onClick={() => void finishOnboarding()}
         >
-          {busy ? "正在建立声纹…" : enrollmentCreated ? "完成设置" : "建立声纹并开始陪伴"}
+          {busy
+            ? enrollmentOnly ? "正在生成新版声纹…" : "正在建立声纹…"
+            : enrollmentCreated ? "完成设置"
+              : enrollmentOnly ? "完成主人声纹录取" : "建立声纹并开始陪伴"}
         </button>
       </section>
     );

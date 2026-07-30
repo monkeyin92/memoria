@@ -267,6 +267,7 @@ class DuplexRuntime:
     _canonical_final_observed: bool = False
     _canonical_turn_snapshots: deque[CanonicalUserTurnSnapshot] = field(default_factory=deque)
     _consumed_canonical_speech_epoch: int | None = None
+    _consumed_canonical_snapshot_bound: bool = False
     _persona_evidence_eligible: bool = False
     _playback_fence: GenerationFence | None = None
     _last_playback_completed_ns: int | None = None
@@ -1144,7 +1145,7 @@ class DuplexRuntime:
         barge_route = self._route_candidate()
         route = self._target_speaker_route(
             context="interrupt",
-            explicit_interrupt=barge_route.should_interrupt,
+            explicit_interrupt=barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND,
         )
         if not route.allow_input:
             self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE
@@ -2467,10 +2468,20 @@ class DuplexRuntime:
                 self._suspected_playback_prefixes.append(prefix)
                 del self._suspected_playback_prefixes[:-8]
         if final:
-            if self.input_guard.candidate_vad_anchored:
+            current_vad_epoch = (
+                self.input_guard.candidate_vad_anchored
+                and self._canonical_speech_epoch == self._speaker_epoch
+            )
+            if current_vad_epoch:
                 self._canonical_final_observed = True
-            if decision is PlaybackInputDecision.ACCEPT and self.input_guard.candidate_vad_anchored:
+            if decision is PlaybackInputDecision.ACCEPT and current_vad_epoch:
                 self._accepted_user_finals.append(text.strip())
+            elif decision is PlaybackInputDecision.ACCEPT:
+                self.mark_audio_event(
+                    "orphan_transcript_ignored",
+                    status="ignored",
+                    detail={"reason": "missing_speech_epoch"},
+                )
             elif decision is PlaybackInputDecision.IGNORE:
                 self._user_transcript_contaminated = True
                 self.orchestrator.metrics.inc_guarded_user_input(
@@ -2530,11 +2541,13 @@ class DuplexRuntime:
             snapshot = self._canonical_snapshot()
             self._reset_canonical_speech_epoch()
         else:
+            self._consumed_canonical_snapshot_bound = False
             self._consumed_canonical_speech_epoch = (
                 self._speaker_epoch if self._fresh_user_speech else None
             )
             return raw_text.strip()
 
+        self._consumed_canonical_snapshot_bound = True
         self._consumed_canonical_speech_epoch = snapshot.speech_epoch
         accepted = snapshot.accepted_finals
         contaminated = snapshot.contaminated
@@ -2571,10 +2584,15 @@ class DuplexRuntime:
     def consumed_canonical_speech_epoch(self) -> int | None:
         return self._consumed_canonical_speech_epoch
 
+    @property
+    def consumed_canonical_snapshot_bound(self) -> bool:
+        return self._consumed_canonical_snapshot_bound
+
     def discard_pending_user_transcript(self) -> None:
         """Discard only the current endpoint buffer, never older queued callbacks."""
 
         self._reset_canonical_speech_epoch()
+        self.input_guard.candidate_active = False
         self._trusted_unanchored_control_epoch = None
         self._trusted_unanchored_playback_epoch = None
         self._clear_trusted_playback_audio()
@@ -2607,6 +2625,7 @@ class DuplexRuntime:
         *,
         speech_anchored: bool | None = None,
         canonical_speech_epoch: int | None = None,
+        canonical_snapshot_bound: bool | None = None,
         semantic_verdict: InterruptSemanticVerdict | None = None,
     ) -> tuple[bool, str | None]:
         self.speaker_verifier.mark_utterance_end()
@@ -2629,6 +2648,27 @@ class DuplexRuntime:
         # Side effects (early enroll finalize, yield ack) stay here; intent is
         # owned by utterance_router so barge-in and turn-commit cannot diverge.
         route = self._route_candidate(text, semantic_verdict=semantic_verdict)
+        if (
+            route.should_interrupt
+            and not route.enter_chat
+            and (
+                canonical_snapshot_bound is False
+                or (
+                    canonical_speech_epoch is not None
+                    and canonical_speech_epoch != self._speaker_epoch
+                )
+            )
+        ):
+            self.orchestrator.metrics.inc_guarded_user_input("stale_control_epoch")
+            self.mark_audio_event(
+                "control_turn_stale",
+                status="ignored",
+                detail={
+                    "request_speech_epoch": canonical_speech_epoch,
+                    "current_speech_epoch": self._speaker_epoch,
+                },
+            )
+            return False, "stale_control_epoch"
         if route.intent is UtteranceIntent.ENROLL:
             # User finished an enroll utterance — try finalize immediately so
             # we do not wait the full wall timeout after they already spoke.
@@ -3416,7 +3456,9 @@ class DuplexRuntime:
                 # still waits for endpointed audio below.
                 target_route = self._target_speaker_route(
                     context="interrupt",
-                    explicit_interrupt=True,
+                    explicit_interrupt=(
+                        barge_route.intent is UtteranceIntent.INTERRUPT_COMMAND
+                    ),
                 )
             else:
                 # LiveKit may request an interrupt on VAD start. Do not classify

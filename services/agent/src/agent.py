@@ -1046,6 +1046,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 text.strip(),
                 speech_anchored=speech_anchored,
                 canonical_speech_epoch=canonical_speech_epoch,
+                canonical_snapshot_bound=self._runtime.consumed_canonical_snapshot_bound,
                 semantic_verdict=semantic_verdict,
             )
             if not accepted:
@@ -1064,6 +1065,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                             "interrupt_semantic_control_only",
                             "interrupt_semantic_unsure",
                             "stale_interrupt_semantic",
+                            "stale_control_epoch",
                             "target_non_owner",
                             "target_insufficient_speech",
                             "target_unconfirmed",
@@ -2471,9 +2473,9 @@ def build_turn_handling_config(
         "turn_detection": {"version": turn_version},
         "endpointing": {
             "mode": "dynamic",
-            # Prod sample (20260717): end_of_turn_delay stuck ~2.0s (= max_delay).
-            # Floor 0.90 keeps false-EOU risk low while shaving ~0.4–1.1s off the
-            # user-stop → first-audio gap vs the previous 1.30/2.00 defaults.
+            # Production 20260730 observed a provider transcript 2.05s after
+            # turn commit. Keep the prior conservative window so natural pauses
+            # do not start playback on the first incomplete final.
             "min_delay": endpointing_min_delay,
             "max_delay": endpointing_max_delay,
             "alpha": float(os.getenv("ENDPOINTING_ALPHA", "0.85")),

@@ -539,7 +539,7 @@ def test_target_speaker_focus_is_separate_from_authority_permissions(
     assert route.reason == reason
 
 
-def test_strict_explicit_wait_cannot_be_used_by_non_owner() -> None:
+def test_strict_explicit_wait_allows_shadow_control_but_blocks_formal_guest() -> None:
     shadow_command = route_target_speaker(
         classification="uncertain",
         reason_code="shadow_guest_candidate",
@@ -556,6 +556,22 @@ def test_strict_explicit_wait_cannot_be_used_by_non_owner() -> None:
         context="interrupt",
         explicit_interrupt=True,
     )
+    contradictory_guest_command = route_target_speaker(
+        classification="guest",
+        reason_code="shadow_guest_candidate",
+        profile_id="formal-guest-2",
+        pcm_duration_ms=1200,
+        context="interrupt",
+        explicit_interrupt=True,
+    )
+    conversation_shadow_command = route_target_speaker(
+        classification="uncertain",
+        reason_code="shadow_guest_candidate",
+        profile_id="shadow-2",
+        pcm_duration_ms=1200,
+        context="conversation",
+        explicit_interrupt=True,
+    )
     shadow_ambiguous_command = route_target_speaker(
         classification="uncertain",
         reason_code="shadow_ambiguous_candidate",
@@ -565,10 +581,14 @@ def test_strict_explicit_wait_cannot_be_used_by_non_owner() -> None:
         explicit_interrupt=True,
     )
 
-    assert shadow_command.allow_input is False
-    assert shadow_command.reason == "target_non_owner"
+    assert shadow_command.allow_input is True
+    assert shadow_command.reason == "target_explicit_control"
     assert formal_guest_command.allow_input is False
     assert formal_guest_command.reason == "target_non_owner"
+    assert contradictory_guest_command.allow_input is False
+    assert contradictory_guest_command.reason == "target_non_owner"
+    assert conversation_shadow_command.allow_input is False
+    assert conversation_shadow_command.reason == "target_non_owner"
     assert shadow_ambiguous_command.allow_input is True
     assert shadow_ambiguous_command.reason == "target_explicit_control"
 
@@ -579,7 +599,7 @@ def test_strict_explicit_wait_cannot_be_used_by_non_owner() -> None:
         ("guest", "owner_mismatch", "conversation", False, "target_guest_allowed"),
         ("guest", "owner_mismatch", "interrupt", True, "target_guest_allowed"),
         ("uncertain", "shadow_guest_candidate", "conversation", False, "target_guest_allowed"),
-        ("uncertain", "shadow_guest_candidate", "interrupt", True, "target_guest_allowed"),
+        ("uncertain", "shadow_guest_candidate", "interrupt", True, "target_explicit_control"),
         ("uncertain", "shadow_ambiguous_candidate", "conversation", False, "target_unconfirmed"),
         ("uncertain", "shadow_ambiguous_candidate", "interrupt", True, "target_explicit_control"),
     ],

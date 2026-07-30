@@ -197,6 +197,8 @@ export function App() {
   const [profile, setProfile] = useState(defaultProfile);
   const [profileReady, setProfileReady] = useState(false);
   const [digitalSelfOpen, setDigitalSelfOpen] = useState(false);
+  const [speakerEnrollmentOpen, setSpeakerEnrollmentOpen] = useState(false);
+  const [speakerEnrollmentNotice, setSpeakerEnrollmentNotice] = useState("");
   const [companionSwitchOpen, setCompanionSwitchOpen] = useState(false);
   const [companionSwitchOrigin, setCompanionSwitchOrigin] = useState("profile");
   const [privacyDataOpen, setPrivacyDataOpen] = useState(false);
@@ -899,6 +901,8 @@ export function App() {
     setFidelityFocusVersionId("");
     growthCompletionIdsRef.current = {};
     setDigitalSelfOpen(false);
+    setSpeakerEnrollmentOpen(false);
+    setSpeakerEnrollmentNotice("");
     setCompanionSwitchOpen(false);
     setPrivacyDataOpen(false);
     setAccountDeletionOpen(false);
@@ -990,6 +994,8 @@ export function App() {
       data-page={
         privacyDataOpen
           ? "privacy-data"
+          : speakerEnrollmentOpen
+            ? "speaker-enrollment"
           : companionSwitchOpen
             ? "companion-switch"
           : digitalSelfOpen
@@ -1247,6 +1253,20 @@ export function App() {
           </Suspense>
         )}
 
+        {activeTab === "profile" && speakerEnrollmentOpen && (
+          <CompanionOnboarding
+            mode="voiceprint"
+            companionId={profile.companion_id}
+            onBack={() => setSpeakerEnrollmentOpen(false)}
+            onComplete={() => {
+              setSpeakerEnrollmentNotice(
+                "新版主人声纹已进入影子评估；正式评估通过前不会获得主人权限。",
+              );
+              setSpeakerEnrollmentOpen(false);
+            }}
+          />
+        )}
+
         {activeTab === "profile" && companionSwitchOpen && (
           <CompanionSwitcher
             userId={userId}
@@ -1285,7 +1305,7 @@ export function App() {
           </Suspense>
         )}
 
-        {activeTab === "profile" && !digitalSelfOpen && !companionSwitchOpen && !privacyDataOpen && (
+        {activeTab === "profile" && !digitalSelfOpen && !speakerEnrollmentOpen && !companionSwitchOpen && !privacyDataOpen && (
           <ProfileScreen
             profile={profile}
             memoryDays={memoryDays}
@@ -1296,6 +1316,12 @@ export function App() {
               setCompanionSwitchOrigin("profile");
               setCompanionSwitchOpen(true);
             }}
+            onOpenSpeakerEnrollment={() => {
+              setSpeakerEnrollmentNotice("");
+              setSpeakerEnrollmentOpen(true);
+            }}
+            voiceSessionActive={Boolean(voice.session)}
+            speakerEnrollmentNotice={speakerEnrollmentNotice}
             onOpenDigitalSelf={() => setDigitalSelfOpen(true)}
             onOpenPrivacyData={() => setPrivacyDataOpen(true)}
             onLogoutCurrent={() => handleLogout(false)}
@@ -1308,7 +1334,7 @@ export function App() {
 
         <div ref={voice.audioContainerRef} hidden aria-hidden="true" />
 
-        {!digitalSelfOpen && !companionSwitchOpen && !privacyDataOpen && !accountDeletionOpen && <nav className="bottom-nav" aria-label="主导航">
+        {!digitalSelfOpen && !speakerEnrollmentOpen && !companionSwitchOpen && !privacyDataOpen && !accountDeletionOpen && <nav className="bottom-nav" aria-label="主导航">
           {tabs.map(({ id, label, Icon }) => (
             <button
               type="button"
@@ -1317,6 +1343,7 @@ export function App() {
               aria-current={activeTab === id ? "page" : undefined}
               onClick={() => {
                 setDigitalSelfOpen(false);
+                setSpeakerEnrollmentOpen(false);
                 setCompanionSwitchOpen(false);
                 setPrivacyDataOpen(false);
                 setActiveTab(id);

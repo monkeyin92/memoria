@@ -17,8 +17,8 @@ DeploymentProfile = Literal["livekit_cloud", "cn_self_hosted"]
 LLMProvider = Literal["qwen", "deepseek"]
 TTSProvider = Literal["doubao"]
 
-SELF_HOSTED_ENDPOINTING_MIN_DELAY_S = 0.90
-SELF_HOSTED_ENDPOINTING_MAX_DELAY_S = 1.50
+SELF_HOSTED_ENDPOINTING_MIN_DELAY_S = 1.50
+SELF_HOSTED_ENDPOINTING_MAX_DELAY_S = 2.20
 SELF_HOSTED_FALSE_INTERRUPTION_TIMEOUT_S = 1.70
 
 

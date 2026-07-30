@@ -69,7 +69,7 @@ npm --prefix apps/h5 run build
 本地默认使用 `/memoria-h5/` base path；生产 Control API 通过同源 `/memoria-api` 访问，永久密钥不会进入浏览器 bundle。H5 通过 `/v1/auth/me` 恢复稳定账号身份；只有服务端返回 401/403 才清理失效身份，临时网络故障不会切换用户数据归属。
 
 当前本地交付已通过 H5 232 项测试、production build 和移动端浏览器回归；注册后选角、
-表情与设计音色试听、三段声纹登记、匿名注册原地升级、跨账号 Profile 隔离、默认
+表情与设计音色试听、四种说话状态声纹登记、匿名注册原地升级、跨账号 Profile 隔离、默认
 “过滤明显旁人（实验）”、主人历史 fail-closed、无横向溢出和 console 0 warning/error
 均已验收。声纹登记仍为 shadow-only，不代表已启用强身份认证。
 

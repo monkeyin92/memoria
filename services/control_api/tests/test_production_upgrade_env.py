@@ -72,8 +72,8 @@ def _upgrade_inputs(
 def test_endpointing_defaults_match_operator_templates() -> None:
     root = Path(__file__).resolve().parents[3]
     expected = {
-        "ENDPOINTING_MIN_DELAY_S": "0.90",
-        "ENDPOINTING_MAX_DELAY_S": "1.50",
+        "ENDPOINTING_MIN_DELAY_S": "1.50",
+        "ENDPOINTING_MAX_DELAY_S": "2.20",
         "FALSE_INTERRUPTION_TIMEOUT_S": "1.70",
         "INTERRUPT_SEMANTIC_ENABLED": "true",
         "INTERRUPT_SEMANTIC_MODEL": "qwen-flash",
@@ -113,8 +113,8 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert agent["MEMORIA_MEMORY_CONTEXT_ENABLED"] == "true"
     assert agent["MEMORIA_PERSONA_ENABLED"] == "true"
     assert agent["MEMORIA_VOICE_PROFILE_ENABLED"] == "true"
-    assert agent["ENDPOINTING_MIN_DELAY_S"] == "0.90"
-    assert agent["ENDPOINTING_MAX_DELAY_S"] == "1.50"
+    assert agent["ENDPOINTING_MIN_DELAY_S"] == "1.50"
+    assert agent["ENDPOINTING_MAX_DELAY_S"] == "2.20"
     assert agent["FALSE_INTERRUPTION_TIMEOUT_S"] == "1.70"
     assert agent["INTERRUPT_SEMANTIC_ENABLED"] == "true"
     assert agent["INTERRUPT_SEMANTIC_MODEL"] == "qwen-flash"
