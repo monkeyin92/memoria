@@ -498,6 +498,9 @@ textarea:focus-visible {
   background: var(--surface);
   box-shadow: var(--glass-shadow);
   backdrop-filter: blur(16px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .conversation-heading {
