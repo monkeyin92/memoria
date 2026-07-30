@@ -2,6 +2,20 @@
 
 ## 当前状态
 
+- `20260730-204546` 已于 `2026-07-30T12:49:39Z` 完成 runtime 热修切换，H5 保持已于
+  `2026-07-30T12:34Z` 切换的 `20260730-202610`；小程序 `0.8.64` 仅完成项目 dry-run，
+  尚未上传、提审或正式发布。首页现在以动态吉祥物为焦点，语音只保留开始/结束一个主按钮，
+  并增加完全不录音、不播放声音的文字对话入口。
+- H5 `lk.chat` 与小程序 WSS `text_turn` 两条公网真实链路均已通过 Agent 的 owner policy、
+  ResponsePlan、伙伴个性和 generation fence，助手终稿为
+  `text_delivered=true / heard=false / history_eligible=true`；验收临时账号已删除。真实 SDK smoke
+  还发现并修复了 Gateway 漏 `await send_text()` 与文字话轮错误要求 TTS 音色 provenance
+  两层问题。
+- 当前四容器 healthy/restart=0、9/9 core ready，真实 LiveKit/Qwen/FunASR/豆包五音色/
+  Interrupt Semantic、隔离 server smoke、公网 H5/API/WMS、209 个 H5 资源和 WSS `4401`
+  均通过；严重错误日志为 0。直接 runtime/H5 回滚点为
+  `20260730-203837 / 20260730-202610`，root-only 备份见
+  `/var/backups/memoria/runtime-switch-20260730-204546-from-20260730-203837-20260730T124912Z/`。
 - `20260730-184554` 已于 `2026-07-30T10:54:21Z` 原子切换 runtime；H5 保持
   `20260730-171321`，小程序体验版保持 `0.8.63`，本轮未重新发布客户端。日期、星期与当前时间
   现在由服务端按 `Asia/Shanghai` 确定性直答；天气缺城市先追问，有城市才走 Qwen 原生联网搜索，
