@@ -2,16 +2,19 @@
 
 ## 当前状态
 
-- `20260731-114616` 实时联网查询修复候选已完成本地门禁，尚未切换 runtime：生产复盘确认
+- `20260731-114616` 已提交、推送并于 `2026-07-31T03:58Z` 原子切换 runtime：生产复盘确认
   `qwen-turbo` 当前不支持联网搜索，原先的 `enable_search=true` 没有实际查询能力，且“不能查询”
-  一类拒答被完成态误判而清掉待办。候选仅在已识别的实时问题上调用独立的 `qwen-plus` 强制搜索，
+  一类拒答被完成态误判而清掉待办。现在仅在已识别的实时问题上调用独立的 `qwen-plus` 强制搜索，
   请求体只含固定安全提示和本轮公开 query；普通对话仍用 `qwen-turbo`，不把历史、主人资料、记忆、
   工具或会话 ID 送去联网。Provider 失败或拒答安全降级为“我不知道。”且保留同 scope 相邻待办，
   “你不能帮我查吗”也会恢复原公开查询。精确红绿回归、完整 Agent unit、Ruff、strict mypy、
-  `git diff --check` 均通过；生产 `qwen-plus + forced_search` 公开天气 canary 已返回 HTTP 200
-  和当天南京天气。下一步：生成 commit-bound 工件，备份后只切 runtime，并重新运行真实 Provider/
-  readiness 和公开天气验收；H5、小程序不改。PostgreSQL WAL archive 既有权限问题仍不在本次范围，
-  可用保护继续是 SQLite 一致快照与 `memoria` custom dump。
+  `git diff --check` 均通过；服务器 source/images/H5/manifest/verifier 验签、隔离 smoke、真实
+  LiveKit/Provider/readiness、容器 healthy/restart=0、Nginx 与公网 H5/API 均通过。新 Agent 容器
+  内 `qwen-plus + forced_search` 公开天气 canary 返回可用结果；H5 保持 `20260730-233824`，小程序
+  未动。直接 runtime 回滚点为 `20260731-102620`，root-only 备份见
+  `docs/releases/20260731-114616.md`。首次备份在旧 `postgres` 角色假设处、切流前停止；最终改用
+  已验证的 `memoria_admin` custom dump。PostgreSQL WAL archive 既有权限问题仍不在本次范围，可用
+  保护继续是 SQLite 一致快照与 `memoria` custom dump；真实用户语音/连续追问体验待产品负责人复测。
 - `20260731-102620` 已提交、推送并于 `2026-07-31T02:42:15Z` 原子切换 runtime：已按生产链路
   复现“南京天气 → 我查一下 → 人呢”的断接。
   原生 Qwen 联网流可正常结束在过渡语，原先没有完成态或待办请求，因此追问被当作全新闲聊。
