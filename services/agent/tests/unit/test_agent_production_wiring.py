@@ -22,7 +22,11 @@ from services.agent.src.agent import (
     should_enable_legacy_speaker_verifier,
 )
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.duplex_runtime import DuplexRuntime, KeywordSpotterBinding
+from services.agent.src.duplex_runtime import (
+    DuplexRuntime,
+    KeywordSpotterBinding,
+    PendingRealtimeRequest,
+)
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.prosody import SpeechPlan
 from services.agent.src.orchestration.state_machine import ConversationState
@@ -381,6 +385,273 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
     assert "可以，我先帮你看一下。" in output
     assert not any(isinstance(item, FlushSentinel) for item in output)
     assert runtime.orchestrator.active_llm_task is None
+
+
+@pytest.mark.asyncio
+async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-search-recovery")
+    await runtime.on_turn_committed("今天南京天气怎么样")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="南京天气必须先联网查询，查询失败不得猜测。",
+        speaker_class="uncertain",
+    )
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="今天南京天气怎么样")
+    calls = 0
+
+    async def search_then_timeout() -> AsyncIterator[str]:
+        yield "我查一下。"
+        raise TimeoutError("native search stream timed out")
+
+    async def fake_llm_node(
+        _agent: Any,
+        safe_ctx: Any,
+        _tools: list[Any],
+        _settings: Any,
+    ) -> AsyncIterator[Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return search_then_timeout()
+        messages = list(safe_ctx.messages())
+        current_user = next(
+            (message.text_content for message in reversed(messages) if message.role == "user"),
+            "",
+        )
+        system_text = "\n".join(
+            message.text_content for message in messages if message.role == "system"
+        )
+        if ("南京" in current_user and "天气" in current_user) or (
+            "南京" in system_text and "天气" in system_text and "恢复" in system_text
+        ):
+            content = "南京今天多云，最高气温三十二度。"
+        else:
+            content = "我在这儿呢。"
+        return _text_source(content)
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    first_spoken = [
+        item
+        async for item in agent.llm_node(chat_ctx, [], None)
+        if isinstance(item, str)
+    ]
+    assert first_spoken == ["我不知道。"]
+
+    runtime.orchestrator.context.commit_assistant_heard(
+        "我不知道。",
+        speaker_scope="public",
+    )
+    chat_ctx.add_message(role="assistant", content="我不知道。")
+    await runtime.on_turn_committed("人呢？")
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="自然回应当前用户。",
+        speaker_class="uncertain",
+    )
+    chat_ctx.add_message(role="user", content="人呢？")
+
+    follow_up = [
+        item
+        async for item in agent.llm_node(chat_ctx, [], None)
+        if isinstance(item, str)
+    ]
+
+    assert "".join(follow_up) == "南京今天多云，最高气温三十二度。"
+    assert runtime.pending_realtime_request is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_reply", "expected", "pending"),
+    (
+        ("我需要查一下哦，稍等一下～", "我不知道。", True),
+        ("抱歉，联网失败，暂时拿不到南京天气。", "我不知道。", True),
+        ("我查一下。南京今天多云，最高气温三十二度。", "南京今天多云，最高气温三十二度。", False),
+        ("我查了一下，美元兑人民币最新汇率是七点一八。", "我查了一下，美元兑人民币最新汇率是七点一八。", False),
+        ("我在这里查到南京今天晴。", "我在这里查到南京今天晴。", False),
+        ("南京今天稍后有阵雨，最高气温三十二度。", "南京今天稍后有阵雨，最高气温三十二度。", False),
+    ),
+)
+async def test_realtime_terminal_reply_never_leaves_bridge_or_error(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_reply: str,
+    expected: str,
+    pending: bool,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-bridge-only")
+    await runtime.on_turn_committed("今天南京天气怎么样")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="南京天气必须先联网查询，查询失败不得猜测。",
+        speaker_class="uncertain",
+    )
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="今天南京天气怎么样")
+
+    async def fake_llm_node(*_args: Any) -> AsyncIterator[str]:
+        yield provider_reply
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+
+    output = [
+        item
+        async for item in agent.llm_node(chat_ctx, [], None)
+        if isinstance(item, str)
+    ]
+    assert "".join(output) == expected
+    assert (runtime.pending_realtime_request is not None) is pending
+
+
+@pytest.mark.asyncio
+async def test_realtime_buffered_reply_stops_at_a_new_tool_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-stale-buffer")
+    await runtime.on_turn_committed("今天南京天气怎么样")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="南京天气必须先联网查询，查询失败不得猜测。",
+        speaker_class="uncertain",
+    )
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="今天南京天气怎么样")
+
+    async def fake_llm_node(*_args: Any) -> AsyncIterator[str]:
+        yield "南京今天多云，最高气温三十二度。"
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    output = agent.llm_node(chat_ctx, [], None)
+
+    assert await anext(output) == "南京今天多云，"
+    await runtime.orchestrator.bump_tool_epoch_on_condition_change()
+    assert [item async for item in output] == []
+    assert runtime.pending_realtime_request is not None
+
+
+@pytest.mark.asyncio
+async def test_realtime_buffered_reply_respects_the_voice_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-reply-budget")
+    await runtime.on_turn_committed("今天南京天气怎么样")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="南京天气必须先联网查询，查询失败不得猜测。",
+        speaker_class="uncertain",
+    )
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="今天南京天气怎么样")
+    monkeypatch.setattr(agent_mod, "MAX_VOICE_REPLY_CHARS", 8)
+
+    closed = False
+    advanced_past_budget = False
+
+    async def fake_llm_node(*_args: Any) -> AsyncIterator[str]:
+        nonlocal advanced_past_budget, closed
+        try:
+            yield "南京今天多云，"
+            yield "最高气温三十二度，空气质量良好。"
+            advanced_past_budget = True
+            yield "这段内容不该继续生成。"
+        finally:
+            closed = True
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+
+    spoken = "".join([
+        item
+        async for item in agent.llm_node(chat_ctx, [], None)
+        if isinstance(item, str)
+    ])
+
+    assert sum(char.isalnum() for char in spoken) <= 8
+    assert advanced_past_budget is False
+    assert closed is True
+    assert runtime.pending_realtime_request is not None
+
+
+@pytest.mark.asyncio
+async def test_realtime_pending_request_stops_at_owner_scope_boundary() -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-public-owner-boundary")
+    await runtime.on_turn_committed("今天南京天气怎么样")
+    request, resumed = runtime.resolve_realtime_request(
+        fence=runtime.fence,
+        direct_text=None,
+    )
+
+    assert request is not None
+    assert resumed is False
+    assert runtime.pending_realtime_request == request
+
+    runtime._speaker_class = "owner"
+    await runtime.on_turn_committed("这是主人的私人问题")
+
+    assert runtime.pending_realtime_request is None
+
+
+@pytest.mark.asyncio
+async def test_realtime_search_recovery_does_not_cross_owner_public_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="private-realtime-search")
+    runtime.orchestrator.context.add_user(
+        "今天南京天气怎么样",
+        speaker_scope="owner",
+    )
+    runtime.orchestrator.context.commit_assistant_heard(
+        "我查一下。",
+        speaker_scope="owner",
+    )
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    pending = PendingRealtimeRequest(
+        query="今天南京天气怎么样",
+        speaker_scope="owner",
+        fence=runtime.fence,
+    )
+    runtime._pending_realtime_request = pending
+    await runtime.on_turn_committed("人呢？")
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="自然回应当前用户。",
+        speaker_class="uncertain",
+    )
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="今天南京天气怎么样")
+    chat_ctx.add_message(role="assistant", content="我查一下。")
+    chat_ctx.add_message(role="user", content="人呢？")
+    captured: dict[str, Any] = {}
+
+    async def fake_llm_node(
+        _agent: Any,
+        safe_ctx: Any,
+        _tools: list[Any],
+        _settings: Any,
+    ) -> AsyncIterator[str]:
+        captured["ctx"] = safe_ctx
+        yield "我在这儿呢。"
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+
+    assert [item async for item in agent.llm_node(chat_ctx, [], None)] == ["我在这儿呢。"]
+    visible = [
+        (message.role, message.text_content)
+        for message in captured["ctx"].messages()
+        if message.role in {"user", "assistant"}
+    ]
+    assert visible == [("user", "人呢？")]
+    system_text = "\n".join(
+        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+    )
+    assert "待完成实时查询恢复" not in system_text
+    assert "南京" not in system_text
+    assert runtime.pending_realtime_request is None
 
 
 @pytest.mark.asyncio

@@ -68,6 +68,10 @@ from services.agent.src.orchestration.utterance_router import (
 )
 from services.common.companions import companion_definition
 from services.common.evidence_policy import classify_prompt_kind
+from services.common.realtime_information import (
+    is_realtime_followup_nudge,
+    requires_realtime_lookup,
+)
 from services.common.redaction import redact_pii
 from services.speaker.domain import (
     SpeakerDecision,
@@ -125,6 +129,15 @@ class GenerationVoiceSnapshot:
     voice_kind: Literal["designed", "personal"]
 
 
+@dataclass(frozen=True, slots=True)
+class PendingRealtimeRequest:
+    """An unresolved live-information request bound to its speaker scope."""
+
+    query: str
+    speaker_scope: Literal["owner", "public"]
+    fence: GenerationFence
+
+
 @dataclass
 class ActiveTTSPool(Protocol):
     async def discard_active_connection(self, fence: GenerationFence) -> None: ...
@@ -165,6 +178,7 @@ class DuplexRuntime:
     _unsubscribers: list[Callable[[], None]] = field(default_factory=list)
     _was_speaking: bool = False
     _pending_assistant_text: str = ""
+    _pending_realtime_request: PendingRealtimeRequest | None = None
     _pending_assistant_text_epoch: int = 0
     _input_policy_epoch: int = 0
     _transcript_revisions: TurnRevisionTracker = field(default_factory=TurnRevisionTracker)
@@ -312,6 +326,48 @@ class DuplexRuntime:
         fence: GenerationFence | None = None,
     ) -> CancellationContext:
         return self.orchestrator.cancellation_context(fence)
+
+    @property
+    def pending_realtime_request(self) -> PendingRealtimeRequest | None:
+        return self._pending_realtime_request
+
+    def resolve_realtime_request(
+        self,
+        *,
+        fence: GenerationFence,
+        direct_text: str | None,
+    ) -> tuple[PendingRealtimeRequest | None, bool]:
+        """Create or resume a live request without crossing a speaker boundary."""
+
+        query = next(
+            (
+                turn.content
+                for turn in reversed(self.orchestrator.context.turns)
+                if turn.role == "user" and turn.content
+            ),
+            "",
+        )
+        speaker_scope = self.orchestrator.speaker_scope_for_fence(fence)
+        pending = self._pending_realtime_request
+        if (
+            pending is not None
+            and pending.fence.session_id == fence.session_id
+            and pending.fence.turn_id + 1 == fence.turn_id
+            and pending.speaker_scope == speaker_scope
+            and is_realtime_followup_nudge(query)
+        ):
+            return pending, True
+        if direct_text is None and requires_realtime_lookup(query):
+            request = PendingRealtimeRequest(query, speaker_scope, fence)
+            self._pending_realtime_request = request
+            return request, False
+        if pending is not None and pending.speaker_scope == speaker_scope:
+            self._pending_realtime_request = None
+        return None, False
+
+    def complete_realtime_request(self, request: PendingRealtimeRequest) -> None:
+        if self._pending_realtime_request == request:
+            self._pending_realtime_request = None
 
     def speech_plan_for_fence(self, fence: GenerationFence) -> SpeechPlan:
         exact = self._speech_plans_by_fence.get(fence)
@@ -2722,6 +2778,14 @@ class DuplexRuntime:
     ) -> GenerationFence:
         history_eligible = self._current_history_eligible()
         owner_projection_eligible = self._current_owner_projection_eligible()
+        next_speaker_scope: Literal["owner", "public"] = (
+            "owner" if self._speaker_class == "owner" else "public"
+        )
+        if (
+            self._pending_realtime_request is not None
+            and self._pending_realtime_request.speaker_scope != next_speaker_scope
+        ):
+            self._pending_realtime_request = None
         self.cancel_listener_cue()
         self._last_playback_completed_ns = None
         if self.orchestrator.state is ConversationState.CONNECTING:
@@ -2731,7 +2795,7 @@ class DuplexRuntime:
         await self.orchestrator.on_vad_start()
         fence = await self.orchestrator.commit_turn(
             user_text,
-            speaker_scope="owner" if self._speaker_class == "owner" else "public",
+            speaker_scope=next_speaker_scope,
         )
         self._apply_speech_plan(user_text, turn_id=fence.turn_id, fence=fence)
         self._last_committed_user_text_normalized = normalize_short(user_text)

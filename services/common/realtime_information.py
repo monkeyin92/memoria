@@ -41,6 +41,52 @@ _LIVE_MARKERS = (
     "实时",
     "最新",
 )
+_REALTIME_FOLLOWUP_NUDGES = frozenset(
+    {
+        "人呢",
+        "你人呢",
+        "还在吗",
+        "在吗",
+        "查到了吗",
+        "查好了吗",
+        "结果呢",
+        "有结果了吗",
+        "怎么样了",
+        "继续",
+    }
+)
+_DEFERRED_REPLY_MARKERS = (
+    "查一下",
+    "查一查",
+    "查查看",
+    "查了一下",
+    "查询",
+    "看看",
+)
+_WAITING_REPLY_MARKERS = ("稍等", "等一下", "等等", "一会儿", "稍后")
+_FAILURE_REPLY_MARKERS = (
+    "联网失败",
+    "无法联网",
+    "暂时无法",
+    "暂时不能",
+    "没有结果",
+    "没查到",
+    "查不到",
+    "拿不到",
+    "出错",
+    "错误",
+    "失败",
+)
+_GENERIC_REALTIME_REPLY = re.compile(
+    r"^(?:(?:你是在问谁呀[呢吗嘛]?|我在(?:这儿|这里|呢)(?:陪着你)?[呢呀啊]?|"
+    r"怎么了[呢吗嘛]?|有什么事[呢吗嘛]?))+[～…]*$"
+)
+_BRIDGE_FILLER = re.compile(r"^[嗯好可以我先需要让帮请一下吧哦呀呢～]+$")
+_DEFERRED_PREFIX = re.compile(
+    r"^\s*(?:嗯[，,]?|好[，,]?|可以[，,]?)?"
+    r"(?:我(?:先|需要)?(?:查一下|查一查|查查看|看看)|(?:让我|我先)看看)"
+    r"(?:吧|哦|呀)?[。！？!?]+\s*"
+)
 
 
 def current_local_time(timezone_name: str = "Asia/Shanghai") -> datetime:
@@ -108,6 +154,48 @@ def realtime_instruction(*, query: str, now: datetime) -> str | None:
         "没有明确城市、可靠结果或联网能力时先追问或只说不知道，绝不猜测。"
         "查询只能使用用户本轮公开提供的地点或主题，不得带入私人资料。"
     )
+
+
+def requires_realtime_lookup(query: str) -> bool:
+    """Whether this turn needs a fresh result rather than a local clock reply."""
+
+    compact = _normalized(query)
+    return bool(compact) and any(marker in compact for marker in _LIVE_MARKERS)
+
+
+def is_realtime_followup_nudge(query: str) -> bool:
+    """Recognize short prompts that may resume a same-scope live request."""
+
+    return _normalized(query) in _REALTIME_FOLLOWUP_NUDGES
+
+
+def is_incomplete_realtime_reply(reply: str, *, query: str = "") -> bool:
+    """Recognize a bridge, generic nudge, or explicit search failure as non-final."""
+
+    compact = _normalized(reply)
+    if query:
+        compact = compact.replace(_normalized(query), "")
+    if not compact:
+        return True
+    if any(marker in compact for marker in _FAILURE_REPLY_MARKERS):
+        return True
+    if _GENERIC_REALTIME_REPLY.fullmatch(compact) is not None:
+        return True
+    remaining = compact
+    matched_bridge_marker = False
+    for marker in (*_DEFERRED_REPLY_MARKERS, *_WAITING_REPLY_MARKERS):
+        if marker in remaining:
+            matched_bridge_marker = True
+            remaining = remaining.replace(marker, "")
+    return matched_bridge_marker and (
+        not remaining or _BRIDGE_FILLER.fullmatch(remaining) is not None
+    )
+
+
+def strip_realtime_bridge_prefix(reply: str) -> str:
+    """Remove a standalone "I will check" sentence before a real answer."""
+
+    return _DEFERRED_PREFIX.sub("", reply).strip()
 
 
 def is_safe_realtime_reply(value: object) -> bool:
