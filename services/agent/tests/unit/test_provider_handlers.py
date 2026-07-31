@@ -22,6 +22,8 @@ async def test_provider_handlers_hide_vendor_construction_behind_one_seam(
     asr = object()
     tts = SimpleNamespace(pool=Pool())
     llm_calls: list[dict[str, Any]] = []
+    realtime_search = object()
+    realtime_search_configs: list[Any] = []
 
     def llm_factory(**kwargs: Any) -> object:
         llm_calls.append(kwargs)
@@ -31,16 +33,25 @@ async def test_provider_handlers_hide_vendor_construction_behind_one_seam(
         settings=SimpleNamespace(
             llm_provider="qwen",
             llm_fast_model="qwen-fast",
+            qwen_deep_model="qwen-plus",
             llm_api_key="secret",
             llm_base_url="https://llm.example.com/v1",
         ),
         llm_factory=llm_factory,
         asr_factory=lambda: asr,
         tts_factory=lambda: tts,
+        realtime_search_factory=lambda config: realtime_search_configs.append(config)
+        or realtime_search,
     )
 
     assert handlers.asr is asr
     assert handlers.speech_synthesis is tts
+    assert handlers.realtime_search_resolver is realtime_search
+    assert handlers.realtime_search_model == "qwen-plus"
+    assert len(realtime_search_configs) == 1
+    assert realtime_search_configs[0].api_key == "secret"
+    assert realtime_search_configs[0].base_url == "https://llm.example.com/v1"
+    assert realtime_search_configs[0].model == "qwen-plus"
     assert warmed == [True]
     assert llm_calls == [
         {
@@ -54,7 +65,6 @@ async def test_provider_handlers_hide_vendor_construction_behind_one_seam(
             "extra_body": {
                 "thinking": {"type": "disabled"},
                 "max_tokens": 180,
-                "enable_search": True,
             },
         }
     ]

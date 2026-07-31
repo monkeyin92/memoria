@@ -388,8 +388,10 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("nudge", ("人呢？", "你不能帮我查吗？"))
 async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
     monkeypatch: pytest.MonkeyPatch,
+    nudge: str,
 ) -> None:
     runtime = DuplexRuntime.create(session_id="realtime-search-recovery")
     await runtime.on_turn_committed("今天南京天气怎么样")
@@ -446,13 +448,13 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
         speaker_scope="public",
     )
     chat_ctx.add_message(role="assistant", content="我不知道。")
-    await runtime.on_turn_committed("人呢？")
+    await runtime.on_turn_committed(nudge)
     agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
         runtime.fence,
         instructions="自然回应当前用户。",
         speaker_class="uncertain",
     )
-    chat_ctx.add_message(role="user", content="人呢？")
+    chat_ctx.add_message(role="user", content=nudge)
 
     follow_up = [
         item
@@ -470,6 +472,9 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
     (
         ("我需要查一下哦，稍等一下～", "我不知道。", True),
         ("抱歉，联网失败，暂时拿不到南京天气。", "我不知道。", True),
+        ("抱歉，我不能查询实时天气。", "我不知道。", True),
+        ("今天南京的天气我暂时不清楚呢，要不你查一下实时天气预报呀？", "我不知道。", True),
+        ("我确实没办法直接查实时天气。", "我不知道。", True),
         ("我查一下。南京今天多云，最高气温三十二度。", "南京今天多云，最高气温三十二度。", False),
         ("我查了一下，美元兑人民币最新汇率是七点一八。", "我查了一下，美元兑人民币最新汇率是七点一八。", False),
         ("我在这里查到南京今天晴。", "我在这里查到南京今天晴。", False),
@@ -505,6 +510,93 @@ async def test_realtime_terminal_reply_never_leaves_bridge_or_error(
     ]
     assert "".join(output) == expected
     assert (runtime.pending_realtime_request is not None) is pending
+
+
+@pytest.mark.asyncio
+async def test_realtime_request_uses_public_only_forced_search_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-forced-search")
+    await runtime.on_turn_committed("今天南京天气怎么样")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="南京天气必须先联网查询，查询失败不得猜测。",
+        speaker_class="uncertain",
+    )
+    queries: list[str] = []
+
+    class PublicOnlyResolver:
+        async def resolve(self, *, query: str) -> str:
+            queries.append(query)
+            return "南京今天多云，最高气温三十二度。"
+
+    agent._realtime_search_resolver = PublicOnlyResolver()
+    agent._realtime_search_model = "qwen-plus"
+    agent._llm_model = "qwen-turbo"
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="system", content="PRIVATE_HISTORY_MUST_NOT_LEAVE_THE_PROCESS")
+    chat_ctx.add_message(role="user", content="今天南京天气怎么样")
+
+    async def unexpected_default_llm(*_args: Any) -> AsyncIterator[str]:
+        raise AssertionError("realtime search must not use the shared chat context")
+        yield ""  # pragma: no cover
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(unexpected_default_llm))
+
+    output = [
+        item
+        async for item in agent.llm_node(chat_ctx, [], None)
+        if isinstance(item, str)
+    ]
+
+    assert queries == ["今天南京天气怎么样"]
+    assert "".join(output) == "南京今天多云，最高气温三十二度。"
+    assert runtime.pending_realtime_request is None
+    provenance = runtime.response_provenance_for(runtime.fence)
+    assert provenance is not None
+    assert provenance["llm_model"] == "qwen-plus"
+
+
+@pytest.mark.asyncio
+async def test_failed_forced_search_does_not_fall_back_to_shared_chat_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-forced-search-failure")
+    await runtime.on_turn_committed("今天南京天气怎么样")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="南京天气必须先联网查询，查询失败不得猜测。",
+        speaker_class="uncertain",
+    )
+    queries: list[str] = []
+
+    class UnavailableResolver:
+        async def resolve(self, *, query: str) -> None:
+            queries.append(query)
+            return None
+
+    agent._realtime_search_resolver = UnavailableResolver()
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="system", content="PRIVATE_HISTORY_MUST_NOT_LEAVE_THE_PROCESS")
+    chat_ctx.add_message(role="user", content="今天南京天气怎么样")
+
+    async def unexpected_default_llm(*_args: Any) -> AsyncIterator[str]:
+        raise AssertionError("failed forced search must not retry with private chat context")
+        yield ""  # pragma: no cover
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(unexpected_default_llm))
+
+    output = [
+        item
+        async for item in agent.llm_node(chat_ctx, [], None)
+        if isinstance(item, str)
+    ]
+
+    assert queries == ["今天南京天气怎么样"]
+    assert "".join(output) == "我不知道。"
+    assert runtime.pending_realtime_request is not None
 
 
 @pytest.mark.asyncio

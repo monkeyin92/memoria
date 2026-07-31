@@ -395,6 +395,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         memory_context_client: Any = None,
         voice_profile_client: VoiceProfileClient | None = None,
         response_planner_client: ResponsePlannerClient | None = None,
+        realtime_search_resolver: Any = None,
+        realtime_search_model: str | None = None,
         llm_provider: str = "unknown",
         llm_model: str = "unknown",
         tts_provider: str = "unknown",
@@ -407,6 +409,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         _ = (persona_client, memory_context_client)
         self._voice_profile_client = voice_profile_client
         self._response_planner_client = response_planner_client
+        self._realtime_search_resolver = realtime_search_resolver
+        self._realtime_search_model = realtime_search_model
         self._llm_provider = llm_provider
         self._llm_model = llm_model
         self._tts_provider = tts_provider
@@ -481,6 +485,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         self,
         fence: GenerationFence,
         plan: ResponsePlan,
+        *,
+        llm_model: str | None = None,
     ) -> bool:
         voice = self._runtime.generation_voice_for(fence)
         text_only = self._runtime.input_modality_for_fence(fence) == "text"
@@ -496,7 +502,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         payload = plan.provenance.archive_payload(
             fence=fence,
             llm_provider=self._llm_provider,
-            llm_model=self._llm_model,
+            llm_model=llm_model or self._llm_model,
             tts_provider=self._tts_provider if voice is not None else None,
             tts_model=voice.resource_id if voice is not None else None,
             actual_voice_profile_id=voice.profile_id if voice is not None else None,
@@ -1294,6 +1300,20 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
     ) -> AsyncGenerator[Any, None]:
         return self._llm_node_impl(chat_ctx, tools, model_settings)
 
+    async def _forced_realtime_search_stream(
+        self,
+        *,
+        query: str,
+    ) -> AsyncGenerator[str, None]:
+        """Resolve one public fresh-information request without chat history."""
+
+        resolver = self._realtime_search_resolver
+        if resolver is None:
+            return
+        result = await resolver.resolve(query=query)
+        if isinstance(result, str) and result.strip():
+            yield result.strip()
+
     async def _llm_node_impl(
         self,
         chat_ctx: Any,
@@ -1362,7 +1382,24 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 fence.generation_id,
             )
             return
-        provenance_bound = self._bind_response_plan_provenance(fence, response_plan)
+        speaker_class = response_plan.provenance.speaker_class
+        if resume_interrupted_reply:
+            realtime_request, resume_realtime_request = None, False
+        else:
+            realtime_request, resume_realtime_request = self._runtime.resolve_realtime_request(
+                fence=fence,
+                direct_text=response_plan.direct_text,
+            )
+        provenance_model = (
+            self._realtime_search_model
+            if realtime_request is not None and self._realtime_search_resolver is not None
+            else None
+        )
+        provenance_bound = self._bind_response_plan_provenance(
+            fence,
+            response_plan,
+            llm_model=provenance_model,
+        )
         if not provenance_bound:
             logger.error(
                 "response provenance bind failed closed mode=%s fallback=%s "
@@ -1374,14 +1411,6 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 fence.generation_id,
             )
             return
-        speaker_class = response_plan.provenance.speaker_class
-        if resume_interrupted_reply:
-            realtime_request, resume_realtime_request = None, False
-        else:
-            realtime_request, resume_realtime_request = self._runtime.resolve_realtime_request(
-                fence=fence,
-                direct_text=response_plan.direct_text,
-            )
         segmenter = self._runtime.orchestrator.segmenter
         if segmenter is None:
             raise RuntimeError("PhraseSegmenter is not configured")
@@ -1554,7 +1583,11 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 and not self._is_local_safe_plan(response_plan)
                 else []
             )
-            stream = Agent.default.llm_node(self, safe_chat_ctx, safe_tools, model_settings)
+            stream = (
+                self._forced_realtime_search_stream(query=realtime_request.query)
+                if realtime_request is not None and self._realtime_search_resolver is not None
+                else Agent.default.llm_node(self, safe_chat_ctx, safe_tools, model_settings)
+            )
             # default may return async gen or coroutine of async gen
             if asyncio.iscoroutine(stream):
                 stream = await stream
@@ -1895,6 +1928,8 @@ async def entrypoint(ctx: Any) -> None:
     stt_plugin = provider_handlers.asr
     llm_plugin = provider_handlers.language_model
     tts_plugin = provider_handlers.speech_synthesis
+    realtime_search_resolver = provider_handlers.realtime_search_resolver
+    realtime_search_model = provider_handlers.realtime_search_model
 
     profile = os.getenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     offline = os.getenv("OFFLINE_MOCK", "false").lower() == "true"
@@ -2478,6 +2513,8 @@ async def entrypoint(ctx: Any) -> None:
         runtime=runtime,
         voice_profile_client=voice_profile_client,
         response_planner_client=response_planner_client,
+        realtime_search_resolver=realtime_search_resolver,
+        realtime_search_model=realtime_search_model,
         llm_provider=runtime_settings.llm_provider,
         llm_model=runtime_settings.llm_fast_model,
         tts_provider="volcengine_doubao",
@@ -2538,6 +2575,11 @@ async def entrypoint(ctx: Any) -> None:
             await _close_component(
                 "interrupt_semantic_classifier",
                 interrupt_semantic_classifier.aclose(),
+            )
+        if realtime_search_resolver is not None:
+            await _close_component(
+                "realtime_search_resolver",
+                realtime_search_resolver.aclose(),
             )
         await _close_component("tts", tts_plugin.aclose())
         if response_planner_client is not None:
