@@ -322,7 +322,10 @@ class ControlSettings(BaseSettings):
         alias="MEMORIA_DOUBAO_VOICE_EXPIRES_AT_FORMAT",
     )
 
-    llm_provider: Literal["qwen", "deepseek"] = Field(default="qwen", alias="LLM_PROVIDER")
+    llm_provider: Literal["qwen", "bailian_deepseek", "deepseek"] = Field(
+        default="bailian_deepseek",
+        alias="LLM_PROVIDER",
+    )
     tts_provider: Literal["cosyvoice", "doubao"] = Field(
         default="doubao",
         alias="TTS_PROVIDER",
@@ -369,7 +372,10 @@ class ControlSettings(BaseSettings):
         default="https://dashscope.aliyuncs.com/compatible-mode/v1",
         alias="DASHSCOPE_BASE_URL",
     )
-    dashscope_summary_model: str = Field(default="qwen-plus", alias="DASHSCOPE_SUMMARY_MODEL")
+    dashscope_summary_model: str = Field(
+        default="deepseek-v4-flash",
+        alias="DASHSCOPE_SUMMARY_MODEL",
+    )
     dashscope_summary_timeout_s: float = Field(
         default=30.0,
         ge=1.0,
@@ -377,7 +383,7 @@ class ControlSettings(BaseSettings):
         alias="DASHSCOPE_SUMMARY_TIMEOUT_S",
     )
     memory_extraction_model: str = Field(
-        default="qwen-plus",
+        default="deepseek-v4-flash",
         alias="MEMORIA_MEMORY_EXTRACTION_MODEL",
     )
     memory_extraction_timeout_s: float = Field(
@@ -393,7 +399,7 @@ class ControlSettings(BaseSettings):
         alias="DEEPSEEK_BASE_URL",
     )
     deepseek_summary_model: str = Field(
-        default="deepseek-chat",
+        default="deepseek-v4-flash",
         alias="DEEPSEEK_SUMMARY_MODEL",
     )
     deepseek_summary_timeout_s: float = Field(

@@ -13,5 +13,5 @@ def test_fast_body_uses_max_tokens_not_completion() -> None:
     assert body["max_tokens"] == 240
     assert "max_completion_tokens" not in body
     assert "parallel_tool_calls" not in body
-    assert body["thinking"] == {"type": "disabled"}
+    assert body["enable_thinking"] is False
     validate_no_forbidden_fields(body)

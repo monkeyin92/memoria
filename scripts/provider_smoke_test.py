@@ -257,6 +257,9 @@ async def smoke_llm() -> str:
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         fast_model=settings.llm_fast_model,
+        thinking_mode=(
+            "dashscope" if settings.llm_provider == "bailian_deepseek" else "deepseek"
+        ),
     )
     client = DeepSeekClient(cfg)
     content = ""
@@ -270,7 +273,7 @@ async def smoke_llm() -> str:
         await client.aclose()
     if "连接正常" not in content:
         raise AssertionError(f"LLM content missing expected phrase: {content!r}")
-    label = "DeepSeek" if settings.llm_provider == "deepseek" else "Qwen"
+    label = "DeepSeek" if settings.llm_provider in {"bailian_deepseek", "deepseek"} else "Qwen"
     print(f"{label} smoke: PASS (streaming content, thinking disabled)")
     return label
 

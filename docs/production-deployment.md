@@ -100,11 +100,11 @@ MEMORIA_AUTH_SECRET
 `DOUBAO_TTS_SECRET_KEY` 写入运维源、候选 env 或服务器配置。候选文件安装后仍必须保持
 `root:root 0600`。
 
-当前生产使用的非 secret 配置：
+下一候选 runtime 切换后的非 secret 配置：
 
 ```dotenv
 ENVIRONMENT=production
-LLM_PROVIDER=qwen
+LLM_PROVIDER=bailian_deepseek
 TTS_PROVIDER=doubao
 DEPLOYMENT_PROFILE=cn_self_hosted
 PUBLIC_BASE_URL=https://122.51.108.140:8443/memoria-api
@@ -120,14 +120,17 @@ DASHSCOPE_COMPATIBLE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_FAST_MODEL=qwen-turbo
 QWEN_DEEP_MODEL=qwen-plus
+DEEPSEEK_FAST_MODEL=deepseek-v4-flash
+DEEPSEEK_DEEP_MODEL=deepseek-v4-flash
 INTERRUPT_SEMANTIC_ENABLED=true
-INTERRUPT_SEMANTIC_MODEL=qwen-flash
+INTERRUPT_SEMANTIC_MODEL=deepseek-v4-flash
 INTERRUPT_SEMANTIC_TIMEOUT_S=0.6
 MINIPROGRAM_KWS_ENABLED=false
 MINIPROGRAM_KWS_MODEL_DIR=/data/models/vosk-model-small-cn-0.22
 MINIPROGRAM_KWS_KEYWORDS_FILE=/app/infra/kws/keywords.txt
 MINIPROGRAM_KWS_MIN_CONFIDENCE=0.65
-DASHSCOPE_SUMMARY_MODEL=qwen-plus
+DASHSCOPE_SUMMARY_MODEL=deepseek-v4-flash
+MEMORIA_MEMORY_EXTRACTION_MODEL=deepseek-v4-flash
 FUNASR_MODEL=fun-asr-realtime
 FUNASR_SAMPLE_RATE=16000
 FUNASR_MAX_SENTENCE_SILENCE_MS=550
@@ -231,7 +234,7 @@ aec-<UTC>-<session-hash>.json
 随即清空 `MINIPROGRAM_GATEWAY_AEC_CAPTURE_SESSION_ID` 并重启 gateway；容器替换会丢失
 未导出的采样。
 
-生产默认 LLM 和每日回顾均使用百炼 Qwen。账号版本发布后，浏览器只接收注册账号 Bearer token 和短期 LiveKit participant token；`/v1/auth/anonymous` 仅用于兼容旧身份并在注册时原地升级。服务端在持久化消息、Profile 或向 Agent/FunASR 传递上下文前统一做 PII 脱敏，所有 memory/session route 均校验 token subject 与资源所有权。账号登录不等于当前说话人是主人，私人档案权限仍需结合 `owner / guest / uncertain` 判定。
+生产默认 LLM 和每日回顾均使用百炼 `deepseek-v4-flash`。账号版本发布后，浏览器只接收注册账号 Bearer token 和短期 LiveKit participant token；`/v1/auth/anonymous` 仅用于兼容旧身份并在注册时原地升级。服务端在持久化消息、Profile 或向 Agent/FunASR 传递上下文前统一做 PII 脱敏，所有 memory/session route 均校验 token subject 与资源所有权。账号登录不等于当前说话人是主人，私人档案权限仍需结合 `owner / guest / uncertain` 判定。
 
 认证会话切换必须使用显式、有限的兼容窗口。runtime 先切流时，仅可把
 `MEMORIA_LEGACY_AUTH_COMPAT_UNTIL` 只接受绝对 UTC，且不能晚于启动时刻 24 小时；空值默认关闭，
@@ -624,7 +627,7 @@ sudo grep -qx 'ENDPOINTING_MIN_DELAY_S=1.50' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'ENDPOINTING_MAX_DELAY_S=2.20' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'FALSE_INTERRUPTION_TIMEOUT_S=1.70' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'INTERRUPT_SEMANTIC_ENABLED=true' "$AGENT_ENV_CANDIDATE"
-sudo grep -qx 'INTERRUPT_SEMANTIC_MODEL=qwen-flash' "$AGENT_ENV_CANDIDATE"
+sudo grep -qx 'INTERRUPT_SEMANTIC_MODEL=deepseek-v4-flash' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'INTERRUPT_SEMANTIC_TIMEOUT_S=0.6' "$AGENT_ENV_CANDIDATE"
 for current_env in "$CONTROL_ENV" "$AGENT_ENV" "$SPEAKER_MODEL_ENV"; do
   sudo test -e "$current_env"
@@ -699,14 +702,14 @@ curl -fsS http://127.0.0.1:8791/health/ready
 
 ```text
 livekit_smoke_test PASS: authenticated room-service access
-provider_smoke_test PASS: FunASR, Qwen, Doubao, InterruptSemantic
-readiness refresh PASS: $RELEASE_TAG (qwen)
+provider_smoke_test PASS: FunASR, DeepSeek, Doubao, InterruptSemantic
+readiness refresh PASS: $RELEASE_TAG (bailian_deepseek)
 ```
 
 `Doubao` 通过必须同时满足：双向增量文本合成返回非空 24 kHz、单声道、
 PCM signed 16-bit little-endian 音频，字级时间戳非空且单调，并将同一段合成音频降采样后
 送入 FunASR，最终文本命中测试语义。任何一项失败都不能写入 readiness evidence。
-`InterruptSemantic` 还必须用 `qwen-flash` 通过五类严格枚举样本：真实污染、
+`InterruptSemantic` 还必须用 `deepseek-v4-flash` 通过五类严格枚举样本：真实污染、
 控制词+真实内容、引用助手原话的追问、明确问题，以及控制词+助手回声；任一返回
 `UNSURE`、非法枚举或与预期不符均不得写入 readiness evidence。
 

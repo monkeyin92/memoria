@@ -7,7 +7,7 @@ date: 2026-07-24
 
 ## Context
 
-Memoria 的当前正式语音主链是 Cascade：`FunASR Realtime → Qwen → Doubao Seed-TTS 2.0 → LiveKit/H5`。H5 使用 Browser LiveKit SDK 直接发布麦克风并订阅 Agent 音频；微信原生小程序没有可用的 `RTCPeerConnection`/MediaStream 兼容层，也没有公开、维护中的 LiveKit 小程序客户端可直接替代该 SDK。
+Memoria 的当前正式语音主链是 Cascade：`FunASR Realtime → 百炼 DeepSeek-v4-flash → Doubao Seed-TTS 2.0 → LiveKit/H5`。H5 使用 Browser LiveKit SDK 直接发布麦克风并订阅 Agent 音频；微信原生小程序没有可用的 `RTCPeerConnection`/MediaStream 兼容层，也没有公开、维护中的 LiveKit 小程序客户端可直接替代该 SDK。
 
 把 `livekit-client` 通过 DOM polyfill 打进小程序不能补足 ICE、DTLS、SRTP、RTP/RTCP、Opus 和 AEC。把原生 H5 放入 web-view 虽然可避免媒体改造，但不满足原生小程序复刻和微信传播入口的目标。
 
@@ -46,7 +46,7 @@ Memoria 的当前正式语音主链是 Cascade：`FunASR Realtime → Qwen → D
 
 ## Consequences
 
-- 语音业务后端和 LiveKit room 继续共用，避免复制 FunASR/Qwen/Doubao、UtteranceRouter、speaker policy 或 archive 历史逻辑。
+- 语音业务后端和 LiveKit room 继续共用，避免复制 FunASR/DeepSeek/Doubao、UtteranceRouter、speaker policy 或 archive 历史逻辑。
 - 增加一个媒体 hop，首音与端到端延迟会高于 H5 的直连 WebRTC 路径；必须在真机验收中量测。
 - 小程序录音/播放期没有和浏览器等价的 AEC 控制，播放回灌是最大风险。Android 可优先请求 `voice_communication` 音频源；iOS 采用 `auto`，两者都不得把“接口调用成功”当作 AEC 通过。
 - 网关侧 APM 只有服务端原始下行参考，不掌握手机真实渲染时刻、音量、路由与非线性失真；它是可校准的回声缓解层，不等价于终端系统 AEC，也不能替代真机双讲验收。

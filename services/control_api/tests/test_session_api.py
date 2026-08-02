@@ -795,7 +795,7 @@ async def test_readiness_requires_fresh_authenticated_smokes(
         "livekit": True,
         "funasr": True,
         "llm": True,
-        "llm_provider": "qwen",
+        "llm_provider": "bailian_deepseek",
         "release_tag": "release-test-a",
         "tts": {
             "provider": "doubao",
@@ -860,7 +860,10 @@ async def test_readiness_requires_fresh_authenticated_smokes(
     assert wrong_tts_provider.status_code == 422
     assert marked.status_code == 200
     assert ready.status_code == 200
-    assert ready.json()["checks"]["llm"] == {"provider": "qwen", "passed": True}
+    assert ready.json()["checks"]["llm"] == {
+        "provider": "bailian_deepseek",
+        "passed": True,
+    }
     assert ready.json()["checks"]["tts"] == {
         "provider": "doubao",
         "audio": True,
@@ -878,7 +881,7 @@ async def test_readiness_evidence_survives_restart_and_is_release_bound(
         "livekit": True,
         "funasr": True,
         "llm": True,
-        "llm_provider": "qwen",
+        "llm_provider": "bailian_deepseek",
         "release_tag": "release-test-a",
         "tts": {
             "provider": "doubao",
@@ -924,7 +927,7 @@ async def test_readiness_evidence_expires_after_24_hours(
     old_mark = datetime.now(UTC) - timedelta(seconds=86_401)
     app.state.memory_store.mark_readiness(
         release_tag="release-test-a",
-        llm_provider="qwen",
+        llm_provider="bailian_deepseek",
         marked_at=old_mark.isoformat().replace("+00:00", "Z"),
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

@@ -14,7 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from services.agent.src.contracts.errors import ConfigValidationError
 
 DeploymentProfile = Literal["livekit_cloud", "cn_self_hosted"]
-LLMProvider = Literal["qwen", "deepseek"]
+LLMProvider = Literal["qwen", "bailian_deepseek", "deepseek"]
 TTSProvider = Literal["doubao"]
 
 SELF_HOSTED_ENDPOINTING_MIN_DELAY_S = 1.50
@@ -116,7 +116,7 @@ class AgentSettings(BaseSettings):
         default="livekit_cloud", alias="DEPLOYMENT_PROFILE"
     )
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
-    llm_provider: LLMProvider = Field(default="qwen", alias="LLM_PROVIDER")
+    llm_provider: LLMProvider = Field(default="bailian_deepseek", alias="LLM_PROVIDER")
     tts_provider: TTSProvider = Field(default="doubao", alias="TTS_PROVIDER")
 
     livekit_url: str = Field(default="", alias="LIVEKIT_URL")
@@ -142,7 +142,7 @@ class AgentSettings(BaseSettings):
         alias="INTERRUPT_SEMANTIC_ENABLED",
     )
     interrupt_semantic_model: str = Field(
-        default="qwen-flash",
+        default="deepseek-v4-flash",
         min_length=1,
         alias="INTERRUPT_SEMANTIC_MODEL",
     )
@@ -188,7 +188,7 @@ class AgentSettings(BaseSettings):
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
     deepseek_fast_model: str = Field(default="deepseek-v4-flash", alias="DEEPSEEK_FAST_MODEL")
-    deepseek_deep_model: str = Field(default="deepseek-v4-pro", alias="DEEPSEEK_DEEP_MODEL")
+    deepseek_deep_model: str = Field(default="deepseek-v4-flash", alias="DEEPSEEK_DEEP_MODEL")
 
     doubao_tts_api_key: SecretStr = Field(default=SecretStr(""), alias="DOUBAO_TTS_API_KEY")
     doubao_tts_app_id: str = Field(default="", alias="DOUBAO_TTS_APP_ID")
@@ -451,11 +451,19 @@ class AgentSettings(BaseSettings):
 
     @property
     def llm_fast_model(self) -> str:
-        return self.deepseek_fast_model if self.llm_provider == "deepseek" else self.qwen_fast_model
+        return (
+            self.deepseek_fast_model
+            if self.llm_provider in {"bailian_deepseek", "deepseek"}
+            else self.qwen_fast_model
+        )
 
     @property
     def llm_deep_model(self) -> str:
-        return self.deepseek_deep_model if self.llm_provider == "deepseek" else self.qwen_deep_model
+        return (
+            self.deepseek_deep_model
+            if self.llm_provider in {"bailian_deepseek", "deepseek"}
+            else self.qwen_deep_model
+        )
 
     def internal_token(
         self,

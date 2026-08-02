@@ -1585,7 +1585,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             )
             stream = (
                 self._forced_realtime_search_stream(query=realtime_request.query)
-                if realtime_request is not None and self._realtime_search_resolver is not None
+                if realtime_request is not None
                 else Agent.default.llm_node(self, safe_chat_ctx, safe_tools, model_settings)
             )
             # default may return async gen or coroutine of async gen

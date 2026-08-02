@@ -82,7 +82,7 @@ async def test_provider_smoke_runs_doubao_funasr_and_llm_without_network(
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
     monkeypatch.setenv("DOUBAO_TTS_API_KEY", "test-doubao-key")
     monkeypatch.setenv("DOUBAO_TTS_STYLE_CONTROL_ENABLED", "true")
-    monkeypatch.setenv("LLM_PROVIDER", "qwen")
+    monkeypatch.setenv("LLM_PROVIDER", "bailian_deepseek")
     calls: list[str] = []
 
     async def fake_doubao() -> list[tuple[bytes, tuple[str, ...], tuple[str, ...]]]:
@@ -102,7 +102,7 @@ async def test_provider_smoke_runs_doubao_funasr_and_llm_without_network(
 
     async def fake_llm() -> str:
         calls.append("llm")
-        return "Qwen"
+        return "DeepSeek"
 
     async def fake_interrupt_semantic() -> None:
         calls.append("interrupt-semantic")
@@ -119,6 +119,6 @@ async def test_provider_smoke_runs_doubao_funasr_and_llm_without_network(
     assert await provider_smoke_test.main() == 0
     assert calls == ["doubao", "funasr", "llm", "interrupt-semantic"]
     assert (
-        "provider_smoke_test PASS: FunASR, Qwen, Doubao, InterruptSemantic"
+        "provider_smoke_test PASS: FunASR, DeepSeek, Doubao, InterruptSemantic"
         in capsys.readouterr().out
     )

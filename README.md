@@ -2,7 +2,7 @@
 
 完整 monorepo，实现规范见 `full_duplex_voice_agent_architecture_zh.md`。
 
-**代码默认选型**：自建 LiveKit Server `1.13.3` · LiveKit Agents `1.6.5` · FunASR Realtime · 百炼 Qwen · 豆包 Seed-TTS 2.0 双向流式 · Python 3.12。当前线上 release 与候选发布状态以 `HANDOFF.md` 为准；默认发布不依赖任何可选 LLM 覆盖配置。
+**代码默认选型**：自建 LiveKit Server `1.13.3` · LiveKit Agents `1.6.5` · FunASR Realtime · 百炼 `deepseek-v4-flash` · 豆包 Seed-TTS 2.0 双向流式 · Python 3.12。当前线上 release 与候选发布状态以 `HANDOFF.md` 为准；默认发布复用百炼凭据，不依赖单独的 DeepSeek key。
 
 ## 生产交付
 

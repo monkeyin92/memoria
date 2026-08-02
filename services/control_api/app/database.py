@@ -195,7 +195,8 @@ ON voice_session_tombstones(user_id_hash, deleted_at);
 
 CREATE TABLE IF NOT EXISTS readiness_evidence (
     release_tag TEXT NOT NULL,
-    llm_provider TEXT NOT NULL CHECK (llm_provider IN ('qwen', 'deepseek')),
+    llm_provider TEXT NOT NULL
+        CHECK (llm_provider IN ('qwen', 'bailian_deepseek', 'deepseek')),
     marked_at TEXT NOT NULL,
     PRIMARY KEY (release_tag, llm_provider)
 );
@@ -301,6 +302,31 @@ class MemoryStore:
                                message_count, generated_at
                         FROM daily_summaries_legacy;
                         DROP TABLE daily_summaries_legacy;
+                        """
+                    )
+                readiness_table = connection.execute(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'readiness_evidence'"
+                ).fetchone()
+                if readiness_table and "'bailian_deepseek'" not in str(readiness_table[0]):
+                    connection.executescript(
+                        """
+                        ALTER TABLE readiness_evidence RENAME TO readiness_evidence_legacy;
+                        CREATE TABLE readiness_evidence (
+                            release_tag TEXT NOT NULL,
+                            llm_provider TEXT NOT NULL
+                                CHECK (llm_provider IN (
+                                    'qwen', 'bailian_deepseek', 'deepseek'
+                                )),
+                            marked_at TEXT NOT NULL,
+                            PRIMARY KEY (release_tag, llm_provider)
+                        );
+                        INSERT INTO readiness_evidence (
+                            release_tag, llm_provider, marked_at
+                        )
+                        SELECT release_tag, llm_provider, marked_at
+                        FROM readiness_evidence_legacy;
+                        DROP TABLE readiness_evidence_legacy;
                         """
                     )
                 existing_columns = {

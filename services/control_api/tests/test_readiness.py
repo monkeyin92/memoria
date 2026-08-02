@@ -256,7 +256,7 @@ async def test_smoke_mark_rejects_invalid_control_production_configuration(
         "livekit": True,
         "funasr": True,
         "llm": True,
-        "llm_provider": "qwen",
+        "llm_provider": "bailian_deepseek",
         "release_tag": "release-readiness-test",
         "tts": {
             "provider": "doubao",

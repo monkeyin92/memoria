@@ -16,7 +16,10 @@
 > 历史迁移资料，不再是当前主链规范。供应商无关的原子打断、generation fence、
 > 迟到输出隔离和实际已听文本不变量仍然有效。
 
-当前默认 LLM provider 是 `qwen`；仓库保留的 DeepSeek 适配器和测试只用于显式兼容覆盖，不得隐式替换 Qwen，也不属于本架构默认选型。终身记忆、人格复刻和声纹扩展见 [`docs/memory-persona-architecture-v1.md`](./docs/memory-persona-architecture-v1.md)。
+当前默认 LLM provider 是百炼 `bailian_deepseek`，模型为 `deepseek-v4-flash`；它复用服务端
+`DASHSCOPE_API_KEY` 与 OpenAI-compatible endpoint。仓库仍保留显式 `qwen` 与直连
+`deepseek` 兼容覆盖，但不会隐式改变默认 provider。终身记忆、人格复刻和声纹扩展见
+[`docs/memory-persona-architecture-v1.md`](./docs/memory-persona-architecture-v1.md)。
 
 ---
 
@@ -57,8 +60,8 @@
 | 语义/声学话轮 | LiveKit Audio Turn Detector | 结合语义与音高、语调、节奏；中文可用 |
 | 自适应打断 | LiveKit Cloud Adaptive Interruption | 区分真正 barge-in 与附和/背景声；要求带时间戳的 STT |
 | ASR | 阿里云百炼 `fun-asr-realtime` WebSocket | 流式中间结果、最终结果、中文、字词级时间戳 |
-| 快速回答 LLM | 百炼 `qwen-turbo`，流式输出 | 低延迟口语回答、工具意图判定 |
-| 深度任务 LLM | 百炼 `qwen-plus` | 复杂分析、RAG、工具编排；不阻塞前台交互 |
+| 快速回答 LLM | 百炼 `deepseek-v4-flash`，流式输出 | 低延迟口语回答、工具意图判定 |
+| 深度任务 LLM | 百炼 `deepseek-v4-flash` | 复杂分析、RAG、工具编排；不阻塞前台交互 |
 | TTS | 豆包 `seed-tts-2.0` 双向流式 + 批准音色目录（默认 `warm_companion`） | 直接消费 LLM 增量短语，支持取消会话；24 kHz mono PCM 与字级时间戳；见 ADR 0012 |
 | 控制 API | FastAPI + Pydantic v2 | 签发 LiveKit Token、会话配置、健康检查 |
 | 短期状态 | 进程内内存；多实例时 Redis | 实时关键路径不得等待数据库 |
@@ -394,6 +397,9 @@ DASHSCOPE_WS_URL=wss://dashscope.aliyuncs.com/api-ws/v1/inference
 DASHSCOPE_COMPATIBLE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_FAST_MODEL=qwen-turbo
 QWEN_DEEP_MODEL=qwen-plus
+DEEPSEEK_FAST_MODEL=deepseek-v4-flash
+DEEPSEEK_DEEP_MODEL=deepseek-v4-flash
+# The default LLM_PROVIDER=bailian_deepseek reuses DASHSCOPE_API_KEY.
 
 # FunASR
 FUNASR_MODEL=fun-asr-realtime
@@ -456,14 +462,14 @@ PII_REDACTION_ENABLED=true
 
 `scripts/verify_env.py` MUST 在启动前验证：
 
-- 所有已启用 Provider 的必需密钥非空；默认 `LLM_PROVIDER=qwen` 只使用服务端 `DASHSCOPE_API_KEY`；
+- 所有已启用 Provider 的必需密钥非空；默认 `LLM_PROVIDER=bailian_deepseek` 只使用服务端 `DASHSCOPE_API_KEY`；
 - `FUNASR_SAMPLE_RATE == 16000`；
 - `DOUBAO_TTS_SAMPLE_RATE` 是 24000；
 - `VAD_MIN_SILENCE_DURATION_S >= 0.25`；
 - 豆包双向流式返回非空、单调的字级时间戳；
 - `livekit_cloud` 档案下 `LIVEKIT_ADAPTIVE_INTERRUPTION=true`；
 - `cn_self_hosted` 档案下自动将 `LIVEKIT_TURN_DETECTOR_VERSION=v1-mini`；
-- `QWEN_FAST_MODEL / QWEN_DEEP_MODEL` 非空；只有显式选择可选 `LLM_PROVIDER=deepseek` 时才校验 DeepSeek 模型与密钥；
+- 默认 `DEEPSEEK_FAST_MODEL / DEEPSEEK_DEEP_MODEL` 为 `deepseek-v4-flash`；只有显式选择兼容 `LLM_PROVIDER=qwen` 时才使用 Qwen 模型，显式选择直连 `LLM_PROVIDER=deepseek` 时才校验独立 DeepSeek 密钥；
 - 生产环境不得允许 `*` CORS；
 - 生产环境不得启用明文 `ws://` 或 `http://` 媒体/控制地址。
 
@@ -769,8 +775,8 @@ async def entrypoint(ctx: JobContext) -> None:
     tts = DoubaoTTS.from_env()
     settings = AgentSettings()
 
-    # Qwen 默认走百炼 OpenAI-compatible endpoint；provider、模型和密钥
-    # 全部由服务端配置解析，任何可选 DeepSeek 变量都不能隐式覆盖 Qwen。
+    # 百炼 DeepSeek 默认走 OpenAI-compatible endpoint；provider、模型和密钥
+    # 全部由服务端配置解析，任何直连 DeepSeek 变量都不能隐式覆盖百炼配置。
     llm = openai.LLM(
         model=settings.llm_fast_model,
         api_key=settings.llm_api_key,
@@ -780,7 +786,7 @@ async def entrypoint(ctx: JobContext) -> None:
         max_retries=0,
         timeout=httpx.Timeout(connect=3.0, read=12.0, write=5.0, pool=3.0),
         extra_body={
-            "thinking": {"type": "disabled"},
+            "enable_thinking": False,
             "max_tokens": 240,
         },
     )
@@ -1146,7 +1152,7 @@ class FunASRRecognizeStream(stt.RecognizeStream):
 
 ---
 
-## 13. Qwen 适配与快慢双路径
+## 13. 百炼 DeepSeek 适配与快慢双路径
 
 ### 13.1 快速语音路径
 
@@ -1154,14 +1160,15 @@ class FunASRRecognizeStream(stt.RecognizeStream):
 
 ```json
 {
-  "model": "qwen-turbo",
+  "model": "deepseek-v4-flash",
   "stream": true,
   "temperature": 0.45,
   "max_tokens": 240
 }
 ```
 
-Qwen 通过百炼 OpenAI-compatible endpoint 接入；`LLM_PROVIDER=qwen` 是默认值，只有显式配置时才允许切到兼容 provider。模型名、base URL 和 API key 必须由同一个 provider 选择器生成，禁止不同供应商配置交叉组合。
+百炼 DeepSeek 通过 OpenAI-compatible endpoint 接入；`LLM_PROVIDER=bailian_deepseek` 是默认值，
+模型名、base URL 和 API key 必须由同一个 provider 选择器生成，禁止不同供应商配置交叉组合。
 
 规则：
 
@@ -1187,7 +1194,7 @@ Qwen 通过百炼 OpenAI-compatible endpoint 接入；`LLM_PROVIDER=qwen` 是默
 
 ```json
 {
-  "model": "qwen-plus",
+  "model": "deepseek-v4-flash",
   "stream": true
 }
 ```
@@ -1197,7 +1204,7 @@ Qwen 通过百炼 OpenAI-compatible endpoint 接入；`LLM_PROVIDER=qwen` 是默
 ```text
 用户提交复杂任务
   ├─ 快速路径立即说一句桥接语：“可以，我先帮你核对关键条件。”
-  ├─ 后台 TaskManager 启动 Qwen Plus + 工具
+  ├─ 后台 TaskManager 启动 DeepSeek-v4-flash + 工具
   ├─ 用户仍可继续说话、增加或修改条件
   ├─ 修改条件 => tool_epoch + 1，旧任务结果自动失效
   └─ 有效结果回来 => 快速模型压缩成 1–3 句口语，再交给 TTS
@@ -2644,7 +2651,7 @@ e2e:
 
 通过条件：
 
-- 使用 `qwen-turbo`；
+  - 使用 `deepseek-v4-flash`；
 - stream=true；
 - 3 秒内收到 content；
 - 输出含“连接正常”；

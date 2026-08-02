@@ -61,7 +61,7 @@ def _mark_smokes_passed(base_url: str) -> bool:
             "livekit": True,
             "funasr": True,
             "llm": True,
-            "llm_provider": os.getenv("LLM_PROVIDER", "qwen"),
+            "llm_provider": os.getenv("LLM_PROVIDER", "bailian_deepseek"),
             "release_tag": os.getenv("MEMORIA_RELEASE_TAG", "development"),
             "tts": {
                 "provider": "doubao",

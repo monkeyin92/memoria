@@ -15,12 +15,14 @@ def _online_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
     monkeypatch.setenv("DASHSCOPE_WS_URL", "wss://dashscope.example.com/realtime")
     monkeypatch.setenv("DOUBAO_TTS_API_KEY", "test-doubao-key")
-    monkeypatch.setenv("LLM_PROVIDER", "qwen")
+    monkeypatch.setenv("LLM_PROVIDER", "bailian_deepseek")
     monkeypatch.setenv("MEMORIA_RELEASE_TAG", "release-test-a")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
 
-def test_qwen_provider_does_not_require_deepseek(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bailian_deepseek_provider_reuses_dashscope_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _online_env(monkeypatch)
     errors, offline, _ = verify_env._validate_environment()
     assert errors == []

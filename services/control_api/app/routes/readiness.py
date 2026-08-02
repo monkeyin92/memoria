@@ -41,7 +41,7 @@ class SmokeChecks(BaseModel):
     livekit: bool
     funasr: bool
     llm: bool
-    llm_provider: Literal["qwen", "deepseek"]
+    llm_provider: Literal["qwen", "bailian_deepseek", "deepseek"]
     release_tag: str = Field(min_length=1, max_length=200)
     tts: TTSSmokeChecks
 

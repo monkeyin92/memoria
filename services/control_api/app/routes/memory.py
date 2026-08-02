@@ -432,7 +432,16 @@ async def generate_daily_summary(
             source = "qwen"
         except Exception:
             logger.warning("Qwen summary failed; using deterministic fallback")
-    if settings.llm_provider == "deepseek" and settings.deepseek_api_key.get_secret_value():
+    elif (
+        settings.llm_provider == "bailian_deepseek"
+        and settings.dashscope_api_key.get_secret_value()
+    ):
+        try:
+            summary = await _dashscope_summary(settings, messages, summary_date)
+            source = "deepseek"
+        except Exception:
+            logger.warning("Bailian DeepSeek summary failed; using deterministic fallback")
+    elif settings.llm_provider == "deepseek" and settings.deepseek_api_key.get_secret_value():
         try:
             summary = await _deepseek_summary(settings, messages, summary_date)
             source = "deepseek"

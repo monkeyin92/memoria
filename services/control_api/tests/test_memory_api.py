@@ -26,7 +26,7 @@ def _configure_database(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path
     monkeypatch.setenv("MEMORIA_DB_PATH", str(path))
     monkeypatch.setenv("MEMORIA_AUTH_SECRET", "test-auth-material-that-is-long-enough")
     monkeypatch.setenv("OFFLINE_MOCK", "true")
-    monkeypatch.setenv("LLM_PROVIDER", "qwen")
+    monkeypatch.setenv("LLM_PROVIDER", "bailian_deepseek")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "")
     return path
@@ -534,8 +534,52 @@ def test_existing_messages_migrate_without_fabricating_request_fingerprints(
     assert migrated == (None, None)
 
 
+def test_existing_readiness_evidence_accepts_bailian_deepseek_after_migration(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy-readiness.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE readiness_evidence (
+                release_tag TEXT NOT NULL,
+                llm_provider TEXT NOT NULL CHECK (llm_provider IN ('qwen', 'deepseek')),
+                marked_at TEXT NOT NULL,
+                PRIMARY KEY (release_tag, llm_provider)
+            );
+            INSERT INTO readiness_evidence (release_tag, llm_provider, marked_at)
+            VALUES ('release-old', 'qwen', '2026-07-31T00:00:00Z');
+            """
+        )
+
+    store = MemoryStore(str(path))
+    store.initialize()
+    store.mark_readiness(
+        release_tag="release-new",
+        llm_provider="bailian_deepseek",
+        marked_at="2026-08-02T00:00:00Z",
+    )
+
+    assert store.get_readiness(
+        release_tag="release-old",
+        llm_provider="qwen",
+    ) == {
+        "release_tag": "release-old",
+        "llm_provider": "qwen",
+        "marked_at": "2026-07-31T00:00:00Z",
+    }
+    assert store.get_readiness(
+        release_tag="release-new",
+        llm_provider="bailian_deepseek",
+    ) == {
+        "release_tag": "release-new",
+        "llm_provider": "bailian_deepseek",
+        "marked_at": "2026-08-02T00:00:00Z",
+    }
+
+
 @pytest.mark.asyncio
-async def test_qwen_summary_is_used_by_default(
+async def test_bailian_deepseek_summary_is_used_by_default(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -572,7 +616,7 @@ async def test_qwen_summary_is_used_by_default(
             json={"user_id": user_id},
         )
     assert response.status_code == 200
-    assert response.json()["source"] == "qwen"
+    assert response.json()["source"] == "deepseek"
     assert "test-only-key" not in response.text
 
 
@@ -625,7 +669,7 @@ async def test_deepseek_is_only_used_when_explicitly_selected(
 
 
 @pytest.mark.asyncio
-async def test_qwen_failure_uses_explicit_fallback(
+async def test_bailian_deepseek_failure_uses_explicit_fallback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:

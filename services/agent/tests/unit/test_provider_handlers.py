@@ -8,7 +8,7 @@ from services.agent.src.providers.handlers import build_voice_provider_handlers
 
 
 @pytest.mark.asyncio
-async def test_provider_handlers_hide_vendor_construction_behind_one_seam(
+async def test_bailian_deepseek_handlers_do_not_construct_qwen_search(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DEEPSEEK_FAST_TEMPERATURE", "0.3")
@@ -22,40 +22,30 @@ async def test_provider_handlers_hide_vendor_construction_behind_one_seam(
     asr = object()
     tts = SimpleNamespace(pool=Pool())
     llm_calls: list[dict[str, Any]] = []
-    realtime_search = object()
-    realtime_search_configs: list[Any] = []
-
     def llm_factory(**kwargs: Any) -> object:
         llm_calls.append(kwargs)
         return object()
 
     handlers = await build_voice_provider_handlers(
         settings=SimpleNamespace(
-            llm_provider="qwen",
-            llm_fast_model="qwen-fast",
-            qwen_deep_model="qwen-plus",
+            llm_provider="bailian_deepseek",
+            llm_fast_model="deepseek-v4-flash",
             llm_api_key="secret",
             llm_base_url="https://llm.example.com/v1",
         ),
         llm_factory=llm_factory,
         asr_factory=lambda: asr,
         tts_factory=lambda: tts,
-        realtime_search_factory=lambda config: realtime_search_configs.append(config)
-        or realtime_search,
     )
 
     assert handlers.asr is asr
     assert handlers.speech_synthesis is tts
-    assert handlers.realtime_search_resolver is realtime_search
-    assert handlers.realtime_search_model == "qwen-plus"
-    assert len(realtime_search_configs) == 1
-    assert realtime_search_configs[0].api_key == "secret"
-    assert realtime_search_configs[0].base_url == "https://llm.example.com/v1"
-    assert realtime_search_configs[0].model == "qwen-plus"
+    assert handlers.realtime_search_resolver is None
+    assert handlers.realtime_search_model is None
     assert warmed == [True]
     assert llm_calls == [
         {
-            "model": "qwen-fast",
+            "model": "deepseek-v4-flash",
             "api_key": "secret",
             "base_url": "https://llm.example.com/v1",
             "temperature": 0.3,
@@ -63,7 +53,7 @@ async def test_provider_handlers_hide_vendor_construction_behind_one_seam(
             "max_retries": 0,
             "timeout": llm_calls[0]["timeout"],
             "extra_body": {
-                "thinking": {"type": "disabled"},
+                "enable_thinking": False,
                 "max_tokens": 180,
             },
         }

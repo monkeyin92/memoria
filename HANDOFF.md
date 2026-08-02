@@ -2,6 +2,7 @@
 
 ## 当前状态
 
+- `20260802` 本地候选已将默认 LLM 切换为百炼 `bailian_deepseek / deepseek-v4-flash`：Agent 主回答、打断语义、Control API 日回顾、记忆与 Persona 提取均复用 `DASHSCOPE_API_KEY` 与 OpenAI-compatible endpoint；已删除的 Qwen 专属实时检索不再接线，缺少已验证检索器时实时问题 fail-closed 为“我不知道。”显式 `qwen` 与直连 `deepseek` 仍仅作兼容覆盖，FunASR/Qwen 情绪 ASR/Omni 实验未误当作主 LLM。当前只完成本地代码与门禁，尚未提交、推送或切换生产 runtime；生产仍以本文件此前最新 release 记录为准。
 - `20260731-114616` 已提交、推送并于 `2026-07-31T03:58Z` 原子切换 runtime：生产复盘确认
   `qwen-turbo` 当前不支持联网搜索，原先的 `enable_search=true` 没有实际查询能力，且“不能查询”
   一类拒答被完成态误判而清掉待办。现在仅在已识别的实时问题上调用独立的 `qwen-plus` 强制搜索，

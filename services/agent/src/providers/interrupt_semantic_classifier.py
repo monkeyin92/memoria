@@ -27,7 +27,7 @@ _SYSTEM_PROMPT = """\
 class InterruptSemanticClassifierConfig:
     api_key: str
     base_url: str
-    model: str = "qwen-flash"
+    model: str = "deepseek-v4-flash"
     timeout_s: float = 0.6
 
     def __post_init__(self) -> None:
@@ -93,6 +93,7 @@ class InterruptSemanticClassifier:
             ],
             "temperature": 0,
             "stream": False,
+            "enable_thinking": False,
             "max_tokens": 12,
         }
         endpoint = f"{self._config.base_url.rstrip('/')}/chat/completions"

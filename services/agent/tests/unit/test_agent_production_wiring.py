@@ -390,7 +390,6 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("nudge", ("人呢？", "你不能帮我查吗？"))
 async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
-    monkeypatch: pytest.MonkeyPatch,
     nudge: str,
 ) -> None:
     runtime = DuplexRuntime.create(session_id="realtime-search-recovery")
@@ -405,37 +404,14 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
     calls = 0
 
-    async def search_then_timeout() -> AsyncIterator[str]:
-        yield "我查一下。"
-        raise TimeoutError("native search stream timed out")
+    class SearchResolver:
+        async def resolve(self, *, query: str) -> str | None:
+            nonlocal calls
+            assert "南京" in query and "天气" in query
+            calls += 1
+            return None if calls == 1 else "南京今天多云，最高气温三十二度。"
 
-    async def fake_llm_node(
-        _agent: Any,
-        safe_ctx: Any,
-        _tools: list[Any],
-        _settings: Any,
-    ) -> AsyncIterator[Any]:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return search_then_timeout()
-        messages = list(safe_ctx.messages())
-        current_user = next(
-            (message.text_content for message in reversed(messages) if message.role == "user"),
-            "",
-        )
-        system_text = "\n".join(
-            message.text_content for message in messages if message.role == "system"
-        )
-        if ("南京" in current_user and "天气" in current_user) or (
-            "南京" in system_text and "天气" in system_text and "恢复" in system_text
-        ):
-            content = "南京今天多云，最高气温三十二度。"
-        else:
-            content = "我在这儿呢。"
-        return _text_source(content)
-
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent._realtime_search_resolver = SearchResolver()
     first_spoken = [
         item
         async for item in agent.llm_node(chat_ctx, [], None)
@@ -482,7 +458,6 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
     ),
 )
 async def test_realtime_terminal_reply_never_leaves_bridge_or_error(
-    monkeypatch: pytest.MonkeyPatch,
     provider_reply: str,
     expected: str,
     pending: bool,
@@ -498,10 +473,12 @@ async def test_realtime_terminal_reply_never_leaves_bridge_or_error(
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
 
-    async def fake_llm_node(*_args: Any) -> AsyncIterator[str]:
-        yield provider_reply
+    class SearchResolver:
+        async def resolve(self, *, query: str) -> str:
+            assert "南京" in query and "天气" in query
+            return provider_reply
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    agent._realtime_search_resolver = SearchResolver()
 
     output = [
         item
@@ -532,8 +509,8 @@ async def test_realtime_request_uses_public_only_forced_search_resolver(
             return "南京今天多云，最高气温三十二度。"
 
     agent._realtime_search_resolver = PublicOnlyResolver()
-    agent._realtime_search_model = "qwen-plus"
-    agent._llm_model = "qwen-turbo"
+    agent._realtime_search_model = "deepseek-v4-flash"
+    agent._llm_model = "deepseek-v4-flash"
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="system", content="PRIVATE_HISTORY_MUST_NOT_LEAVE_THE_PROCESS")
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
@@ -555,7 +532,7 @@ async def test_realtime_request_uses_public_only_forced_search_resolver(
     assert runtime.pending_realtime_request is None
     provenance = runtime.response_provenance_for(runtime.fence)
     assert provenance is not None
-    assert provenance["llm_model"] == "qwen-plus"
+    assert provenance["llm_model"] == "deepseek-v4-flash"
 
 
 @pytest.mark.asyncio
@@ -600,6 +577,38 @@ async def test_failed_forced_search_does_not_fall_back_to_shared_chat_context(
 
 
 @pytest.mark.asyncio
+async def test_realtime_request_without_a_verified_search_resolver_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-no-search-provider")
+    await runtime.on_turn_committed("今天南京天气怎么样")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="南京天气必须先联网查询，查询失败不得猜测。",
+        speaker_class="uncertain",
+    )
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="system", content="PRIVATE_HISTORY_MUST_NOT_LEAVE_THE_PROCESS")
+    chat_ctx.add_message(role="user", content="今天南京天气怎么样")
+
+    async def unexpected_default_llm(*_args: Any) -> AsyncIterator[str]:
+        raise AssertionError("realtime requests must not fall back to the shared chat context")
+        yield ""  # pragma: no cover
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(unexpected_default_llm))
+
+    output = [
+        item
+        async for item in agent.llm_node(chat_ctx, [], None)
+        if isinstance(item, str)
+    ]
+
+    assert "".join(output) == "我不知道。"
+    assert runtime.pending_realtime_request is not None
+
+
+@pytest.mark.asyncio
 async def test_realtime_buffered_reply_stops_at_a_new_tool_epoch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -614,10 +623,11 @@ async def test_realtime_buffered_reply_stops_at_a_new_tool_epoch(
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
 
-    async def fake_llm_node(*_args: Any) -> AsyncIterator[str]:
+    async def search_stream(*, query: str) -> AsyncIterator[str]:
+        assert "南京" in query and "天气" in query
         yield "南京今天多云，最高气温三十二度。"
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    monkeypatch.setattr(agent, "_forced_realtime_search_stream", search_stream)
     output = agent.llm_node(chat_ctx, [], None)
 
     assert await anext(output) == "南京今天多云，"
@@ -645,8 +655,9 @@ async def test_realtime_buffered_reply_respects_the_voice_budget(
     closed = False
     advanced_past_budget = False
 
-    async def fake_llm_node(*_args: Any) -> AsyncIterator[str]:
+    async def search_stream(*, query: str) -> AsyncIterator[str]:
         nonlocal advanced_past_budget, closed
+        assert "南京" in query and "天气" in query
         try:
             yield "南京今天多云，"
             yield "最高气温三十二度，空气质量良好。"
@@ -655,7 +666,7 @@ async def test_realtime_buffered_reply_respects_the_voice_budget(
         finally:
             closed = True
 
-    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    monkeypatch.setattr(agent, "_forced_realtime_search_stream", search_stream)
 
     spoken = "".join([
         item

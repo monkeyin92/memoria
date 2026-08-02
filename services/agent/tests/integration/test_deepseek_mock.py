@@ -40,7 +40,7 @@ async def test_deepseek_stream_content() -> None:
         assert reasoning == ""
         assert srv.last_body is not None
         assert srv.last_body.get("model") == "deepseek-v4-flash"
-        assert srv.last_body.get("thinking") == {"type": "disabled"}
+        assert srv.last_body.get("enable_thinking") is False
         validate_no_forbidden_fields(srv.last_body)
     finally:
         srv.stop()

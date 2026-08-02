@@ -70,9 +70,9 @@ for attempt in 1 2; do
 done
 
 llm_provider="$(awk -F= '$1 == "LLM_PROVIDER" {print $2}' "$agent_env" | tail -1)"
-case "${llm_provider:-qwen}" in
+case "${llm_provider:-bailian_deepseek}" in
   qwen) llm_label=Qwen ;;
-  deepseek) llm_label=DeepSeek ;;
+  bailian_deepseek|deepseek) llm_label=DeepSeek ;;
   *) echo "invalid LLM_PROVIDER in $agent_env" >&2; exit 1 ;;
 esac
 provider_expected="provider_smoke_test PASS: FunASR, $llm_label, Doubao, InterruptSemantic"

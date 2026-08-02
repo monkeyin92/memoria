@@ -33,7 +33,6 @@ async def build_voice_provider_handlers(
     llm_factory: Callable[..., Any],
     asr_factory: Callable[[], Any] | None = None,
     tts_factory: Callable[[], Any] | None = None,
-    realtime_search_factory: Callable[..., Any] | None = None,
 ) -> VoiceProviderHandlers:
     """Build all remote provider adapters without exposing vendor setup to entrypoint."""
 
@@ -56,9 +55,12 @@ async def build_voice_provider_handlers(
             logger.warning("Doubao TTS pool warm failed (will open on demand): %s", exc)
 
     extra_body: dict[str, Any] = {
-        "thinking": {"type": "disabled"},
         "max_tokens": int(os.getenv("DEEPSEEK_FAST_MAX_TOKENS", "240")),
     }
+    if settings.llm_provider == "bailian_deepseek":
+        extra_body["enable_thinking"] = False
+    else:
+        extra_body["thinking"] = {"type": "disabled"}
     language_model = llm_factory(
         model=settings.llm_fast_model,
         api_key=settings.llm_api_key,
@@ -69,30 +71,8 @@ async def build_voice_provider_handlers(
         timeout=httpx.Timeout(connect=3.0, read=12.0, write=5.0, pool=3.0),
         extra_body=extra_body,
     )
-    realtime_search_resolver = None
-    realtime_search_model = None
-    if getattr(settings, "llm_provider", "qwen") == "qwen":
-        from services.agent.src.providers.qwen_realtime_search import (
-            QwenRealtimeSearch,
-            QwenRealtimeSearchConfig,
-        )
-
-        realtime_search_model = str(getattr(settings, "qwen_deep_model", "qwen-plus"))
-        if settings.llm_api_key.strip() and realtime_search_model.strip():
-            factory = realtime_search_factory or QwenRealtimeSearch
-            realtime_search_resolver = factory(
-                QwenRealtimeSearchConfig(
-                    api_key=settings.llm_api_key,
-                    base_url=settings.llm_base_url,
-                    model=realtime_search_model,
-                )
-            )
-        else:
-            logger.warning("Qwen realtime search disabled because credentials or model are missing")
     return VoiceProviderHandlers(
         asr=asr,
         language_model=language_model,
         speech_synthesis=speech_synthesis,
-        realtime_search_resolver=realtime_search_resolver,
-        realtime_search_model=realtime_search_model,
     )

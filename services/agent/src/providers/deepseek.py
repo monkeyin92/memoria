@@ -7,7 +7,7 @@ import json
 import random
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -20,12 +20,13 @@ class DeepSeekConfig:
     api_key: str
     base_url: str = "https://api.deepseek.com"
     fast_model: str = "deepseek-v4-flash"
-    deep_model: str = "deepseek-v4-pro"
+    deep_model: str = "deepseek-v4-flash"
     fast_first_token_timeout_s: float = 3.0
     fast_total_timeout_s: float = 12.0
     fast_max_tokens: int = 240
     fast_temperature: float = 0.45
     deep_total_timeout_s: float = 90.0
+    thinking_mode: Literal["dashscope", "deepseek"] = "dashscope"
 
 
 @dataclass
@@ -67,9 +68,9 @@ class DeepSeekClient:
             "messages": messages,
             "stream": True,
             "temperature": self._config.fast_temperature,
-            "thinking": {"type": "disabled"},
             "max_tokens": self._config.fast_max_tokens,
         }
+        body.update(self._thinking_body(enabled=False))
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
@@ -81,12 +82,17 @@ class DeepSeekClient:
             "model": self._config.deep_model,
             "messages": messages,
             "stream": True,
-            "thinking": {"type": "enabled"},
             "reasoning_effort": "high",
         }
+        body.update(self._thinking_body(enabled=True))
         if tools:
             body["tools"] = tools
         return body
+
+    def _thinking_body(self, *, enabled: bool) -> dict[str, Any]:
+        if self._config.thinking_mode == "dashscope":
+            return {"enable_thinking": enabled}
+        return {"thinking": {"type": "enabled" if enabled else "disabled"}}
 
     async def stream_fast(
         self,

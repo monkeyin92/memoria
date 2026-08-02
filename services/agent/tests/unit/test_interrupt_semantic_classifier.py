@@ -72,7 +72,7 @@ async def test_classifier_sends_only_bounded_turn_evidence() -> None:
         InterruptSemanticClassifierConfig(
             api_key="secret-test-key",
             base_url="https://dashscope.example/compatible-mode/v1",
-            model="qwen-flash",
+            model="deepseek-v4-flash",
             timeout_s=0.6,
         ),
         client=client,
@@ -89,8 +89,9 @@ async def test_classifier_sends_only_bounded_turn_evidence() -> None:
     assert captured["authorization"] == "Bearer secret-test-key"
     body = captured["body"]
     assert isinstance(body, dict)
-    assert body["model"] == "qwen-flash"
+    assert body["model"] == "deepseek-v4-flash"
     assert body["temperature"] == 0
+    assert body["enable_thinking"] is False
     serialized = json.dumps(body, ensure_ascii=False)
     assert "份停听一下能是据提供的数据和指示来协助。" in serialized
     assert "停一下" in serialized

@@ -2,7 +2,7 @@
 
 | 规范要求 | 实现文件 | 测试文件 | 状态 |
 |---|---|---|---|
-| 代码默认选型 FunASR/百炼 Qwen/豆包 Seed-TTS 2.0 双向流式/LiveKit 1.6.5 | `pyproject.toml`, `config.py`, `providers/*`, `agent.py` | `test_versions.py`, `test_config.py`, `test_agent_production_wiring.py` | PASS-LOCAL |
+| 代码默认选型 FunASR/百炼 DeepSeek-v4-flash/豆包 Seed-TTS 2.0 双向流式/LiveKit 1.6.5 | `pyproject.toml`, `config.py`, `providers/*`, `agent.py` | `test_versions.py`, `test_config.py`, `test_agent_production_wiring.py` | PASS-LOCAL |
 | GenerationFence 全字段比对；旧结果丢弃 | `contracts/ids.py`, `orchestration/generation_fence.py` | `test_generation_fence.py`, `test_interrupt_isolation.py` | PASS |
 | 旧 generation 音频不得播放 | `orchestrator.py`, `doubao_tts.py` | `test_interrupt_isolation.py`, `test_doubao_mock.py` | PASS-LOCAL |
 | 旧 tool_epoch 结果不得播报 | `task_manager.py`, `orchestrator.py` | `test_tool_epoch_isolation.py` | PASS |
@@ -23,7 +23,7 @@
 | FunASR 稳定前缀 | `stable_prefix.py` | `test_stable_prefix.py` | PASS |
 | 豆包连接池复用；取消发送 `CancelSession` 并丢连接 | `doubao_tts.py` | `test_doubao_mock.py` | PASS-LOCAL |
 | 豆包字级字幕按完整 PCM 对齐；缩放后时间戳才进入 LiveKit | `doubao_protocol.py`, `doubao_tts.py` | `test_doubao_protocol.py`, `test_doubao_mock.py` | PASS-LOCAL |
-| Qwen 默认快/深模型；可选配置不得隐式覆盖默认 provider | `config.py`, `agent.py` | `test_dashscope_qwen_is_the_default_llm`, `test_deepseek_key_does_not_override_qwen_implicitly` | PASS |
+| 百炼 DeepSeek-v4-flash 默认快/深模型；可选配置不得隐式覆盖默认 provider | `config.py`, `agent.py` | `test_bailian_deepseek_is_the_default_llm`, `test_direct_deepseek_key_does_not_override_bailian_deepseek_implicitly` | PASS |
 | 中文口语分段器 | `phrase_segmenter.py` | `test_phrase_segmenter.py` | PASS |
 | 附和/打断规则；播放期及播放后英文回声、异常脚本与快速打断熔断；按四类原因归档 | `interruption_guard.py` | `test_interruption_guard.py`, `test_agent_production_wiring.py` | PASS |
 | 播放期候选暂停；真打断推进 generation，假打断恢复播放；基础 `min_words=0`，播放期临时封锁后恢复 | `duplex_runtime.py`, `orchestrator.py`, `agent.py` | `test_duplex_runtime_wiring.py`, `test_agent_production_wiring.py` | PASS |
@@ -50,7 +50,7 @@
 | H5 实时语音、停止回答、声音解锁、静音保持与 10 秒重连恢复 | `apps/h5/src/hooks/useVoiceSession.js`, `apps/h5/src/App.jsx` | `apps/h5/src/hooks/useVoiceSession.test.jsx`, 浏览器交互 QA | PASS |
 | 首声全链路 trace 与豆包首包超时恢复；首包计时不包含 LLM 首 token 等待 | `duplex_runtime.py`, `agent.py`, `doubao_tts.py`, `apps/h5/src/hooks/useVoiceSession.js` | `test_duplex_runtime_wiring.py`, `test_doubao_mock.py`, H5 hook tests | PASS-LOCAL |
 | 候选打断 duck-first，确认后停止或平滑恢复 | `duplex_runtime.py`, `interruption_guard.py`, `apps/h5/src/hooks/useVoiceSession.js` | `test_agent_production_wiring.py`, H5 hook tests | PASS-LOCAL |
-| 可信小程序 barge-in 首事件静音；仅对 sticky `interrupt_then_chat` 歧义 final 用 `qwen-flash` 提供严格三态证据，Router 保持唯一副作用入口；超时/非法/迟到 fail closed | `utterance_router.py`, `interrupt_semantic_classifier.py`, `duplex_runtime.py`, `agent.py`, ADR-0022 | Router/classifier/runtime/Agent 生产路径回归，Provider smoke 五类样本，小程序 gain 测试 | PASS-LOCAL / REAL-DEVICE-PENDING |
+| 可信小程序 barge-in 首事件静音；仅对 sticky `interrupt_then_chat` 歧义 final 用 `deepseek-v4-flash` 提供严格三态证据，Router 保持唯一副作用入口；超时/非法/迟到 fail closed | `utterance_router.py`, `interrupt_semantic_classifier.py`, `duplex_runtime.py`, `agent.py`, ADR-0022 | Router/classifier/runtime/Agent 生产路径回归，Provider smoke 五类样本，小程序 gain 测试 | PASS-LOCAL / REAL-DEVICE-PENDING |
 | listener cue 独立调度、上限、冷却、禁用场景与独立取消域 | `orchestration/cue_scheduler.py`, `duplex_runtime.py` | `test_cue_scheduler.py`, `test_duplex_runtime_wiring.py` | PASS-LOCAL |
 | FunASR 主链 + Qwen3-ASR 非阻塞情绪旁路；短 TTL、不持久化 | `funasr_stt.py`, `qwen_emotion_asr.py`, `orchestration/emotion.py`, `duplex_runtime.py` | `test_qwen_emotion_sidecar.py`, `test_emotion_policy.py`, `test_duplex_runtime_wiring.py` | PASS-LOCAL |
 | 每 generation 的豆包受控语速/响度/音高与 native timbre 回退；为时间戳安全不发送 `context_texts` | `orchestration/prosody.py`, `doubao_tts.py`, `duplex_runtime.py` | `test_emotion_policy.py`, `test_provider_config.py`, `test_duplex_runtime_wiring.py` | PASS-LOCAL |

@@ -42,7 +42,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.response_plan_url.endswith("/v1/interaction/response-plan")
     assert s.response_plan_timeout_s == 0.8
     assert s.interrupt_semantic_enabled is True
-    assert s.interrupt_semantic_model == "qwen-flash"
+    assert s.interrupt_semantic_model == "deepseek-v4-flash"
     assert s.interrupt_semantic_timeout_s == 0.6
     assert s.miniprogram_kws_enabled is False
 
@@ -161,17 +161,17 @@ def test_agent_settings_requires_one_complete_doubao_auth_mode(
         AgentSettings()
 
 
-def test_dashscope_qwen_is_the_default_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bailian_deepseek_is_the_default_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-test-key")
     settings = AgentSettings()
 
-    assert settings.llm_provider == "qwen"
+    assert settings.llm_provider == "bailian_deepseek"
     assert settings.llm_api_key == "dashscope-test-key"
     assert settings.llm_base_url.endswith("/compatible-mode/v1")
-    assert settings.llm_fast_model == "qwen-turbo"
-    assert settings.llm_deep_model == "qwen-plus"
+    assert settings.llm_fast_model == "deepseek-v4-flash"
+    assert settings.llm_deep_model == "deepseek-v4-flash"
 
 
 def test_deepseek_configuration_remains_an_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -186,15 +186,15 @@ def test_deepseek_configuration_remains_an_override(monkeypatch: pytest.MonkeyPa
     assert settings.llm_fast_model == "deepseek-v4-flash"
 
 
-def test_deepseek_key_does_not_override_qwen_implicitly(
+def test_direct_deepseek_key_does_not_override_bailian_deepseek_implicitly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("LLM_PROVIDER", "qwen")
+    monkeypatch.setenv("LLM_PROVIDER", "bailian_deepseek")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "dashscope-test-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
     settings = AgentSettings()
 
-    assert settings.llm_provider == "qwen"
+    assert settings.llm_provider == "bailian_deepseek"
     assert settings.llm_api_key == "dashscope-test-key"
 
 
