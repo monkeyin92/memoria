@@ -92,7 +92,7 @@
 
 ## 当前发布结论
 
-当前已发布生产基线为 runtime `20260727-170628`、H5 `20260723-192611`，默认主链为 FunASR + Qwen +
+当前已发布生产基线为 runtime `20260802-142257`、H5 `20260802-142257`，默认主链为 FunASR + 百炼 DeepSeek-v4-flash +
 豆包 Seed-TTS 2.0 双向流式。S1–S9 的四模式、DigitalSelfVersion、成长地图、
 认知/关系、统一回答规划、Self Preview、个人声音安全门禁与 Legacy runtime 均已部署；
 生产 Provider/readiness、能力令牌负向门禁、混合陪伴方案浏览器、证书、WMS 和

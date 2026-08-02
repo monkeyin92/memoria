@@ -100,7 +100,7 @@ MEMORIA_AUTH_SECRET
 `DOUBAO_TTS_SECRET_KEY` 写入运维源、候选 env 或服务器配置。候选文件安装后仍必须保持
 `root:root 0600`。
 
-下一候选 runtime 切换后的非 secret 配置：
+当前生产 runtime 的非 secret 配置：
 
 ```dotenv
 ENVIRONMENT=production
