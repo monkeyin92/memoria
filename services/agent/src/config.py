@@ -147,7 +147,7 @@ class AgentSettings(BaseSettings):
         alias="INTERRUPT_SEMANTIC_MODEL",
     )
     interrupt_semantic_timeout_s: float = Field(
-        default=0.6,
+        default=1.2,
         ge=0.1,
         le=2.0,
         alias="INTERRUPT_SEMANTIC_TIMEOUT_S",

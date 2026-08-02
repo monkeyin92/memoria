@@ -28,7 +28,7 @@ class InterruptSemanticClassifierConfig:
     api_key: str
     base_url: str
     model: str = "deepseek-v4-flash"
-    timeout_s: float = 0.6
+    timeout_s: float = 1.2
 
     def __post_init__(self) -> None:
         if not self.api_key.strip():

@@ -43,7 +43,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.response_plan_timeout_s == 0.8
     assert s.interrupt_semantic_enabled is True
     assert s.interrupt_semantic_model == "deepseek-v4-flash"
-    assert s.interrupt_semantic_timeout_s == 0.6
+    assert s.interrupt_semantic_timeout_s == 1.2
     assert s.miniprogram_kws_enabled is False
 
 

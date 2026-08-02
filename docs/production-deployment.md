@@ -124,7 +124,7 @@ DEEPSEEK_FAST_MODEL=deepseek-v4-flash
 DEEPSEEK_DEEP_MODEL=deepseek-v4-flash
 INTERRUPT_SEMANTIC_ENABLED=true
 INTERRUPT_SEMANTIC_MODEL=deepseek-v4-flash
-INTERRUPT_SEMANTIC_TIMEOUT_S=0.6
+INTERRUPT_SEMANTIC_TIMEOUT_S=1.2
 MINIPROGRAM_KWS_ENABLED=false
 MINIPROGRAM_KWS_MODEL_DIR=/data/models/vosk-model-small-cn-0.22
 MINIPROGRAM_KWS_KEYWORDS_FILE=/app/infra/kws/keywords.txt
@@ -628,7 +628,7 @@ sudo grep -qx 'ENDPOINTING_MAX_DELAY_S=2.20' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'FALSE_INTERRUPTION_TIMEOUT_S=1.70' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'INTERRUPT_SEMANTIC_ENABLED=true' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'INTERRUPT_SEMANTIC_MODEL=deepseek-v4-flash' "$AGENT_ENV_CANDIDATE"
-sudo grep -qx 'INTERRUPT_SEMANTIC_TIMEOUT_S=0.6' "$AGENT_ENV_CANDIDATE"
+sudo grep -qx 'INTERRUPT_SEMANTIC_TIMEOUT_S=1.2' "$AGENT_ENV_CANDIDATE"
 for current_env in "$CONTROL_ENV" "$AGENT_ENV" "$SPEAKER_MODEL_ENV"; do
   sudo test -e "$current_env"
   sudo test "$(stat -c '%U:%G:%a' "$current_env")" = "root:root:600"

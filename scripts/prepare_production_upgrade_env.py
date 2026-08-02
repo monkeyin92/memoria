@@ -117,7 +117,7 @@ def prepare(
             "LLM_PROVIDER": "bailian_deepseek",
             "INTERRUPT_SEMANTIC_ENABLED": "true",
             "INTERRUPT_SEMANTIC_MODEL": "deepseek-v4-flash",
-            "INTERRUPT_SEMANTIC_TIMEOUT_S": "0.6",
+            "INTERRUPT_SEMANTIC_TIMEOUT_S": "1.2",
             "DASHSCOPE_SUMMARY_MODEL": "deepseek-v4-flash",
             "MEMORIA_MEMORY_EXTRACTION_MODEL": "deepseek-v4-flash",
             "DEEPSEEK_FAST_MODEL": "deepseek-v4-flash",

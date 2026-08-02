@@ -36,7 +36,7 @@ date: 2026-07-27
 - 请求与结果绑定 speech epoch、playback epoch 和 generation fence。迟到结果不得作用到
   后续话轮；模型复核与 SpeakerAuthority 并行等待，避免把两段延迟串行相加。
 - 首个可替换适配器复用 DashScope OpenAI-compatible 端点和 `deepseek-v4-flash`，超时
-  `0.6s`，使用会话级长连接。Provider smoke 必须覆盖真实污染、控制+内容、引用助手原话、
+  `1.2s`，使用会话级长连接。Provider smoke 必须覆盖真实污染、控制+内容、引用助手原话、
   明确问题和控制+回声五类样本。
 
 ## Consequences
