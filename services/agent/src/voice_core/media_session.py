@@ -1,0 +1,513 @@
+"""Voice Core session registry for the media-v1 bridge.
+
+This module is the narrow seam between transport and the existing
+``DuplexRuntime``.  It deliberately does not implement a second LLM/TTS
+stack: a deployment injects its ASR/LLM/TTS provider adapter, while this
+registry owns session identity, sample-clock ASR acceptance, generation
+fencing and downlink PCM delivery.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
+from services.agent.src.voice_core.asr_stream_supervisor import ASRStreamSupervisor
+from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
+from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
+from services.agent.src.voice_core.media_bridge_server import (
+    MediaBridgeSession,
+    PCMFrame,
+)
+from services.agent.src.voice_core.media_protocol import (
+    AudioFrame,
+    MediaEnvelope,
+    PlaybackProgress,
+    SessionIdentity,
+)
+from services.agent.src.voice_core.playback_ledger import PlaybackLedger, PlaybackSpan
+from services.agent.src.voice_core.speech_timeline import (
+    ASRResult,
+    SegmentKind,
+    SpeechSegment,
+    asr_result_to_segment,
+)
+
+media_pb2: Any = _media_pb2
+
+
+def _default_runtime_factory(session_id: str) -> DuplexRuntime:
+    return DuplexRuntime.create(session_id=session_id)
+
+
+@dataclass(frozen=True, slots=True)
+class MediaReplyChunk:
+    """One provider-produced PCM chunk bound to a generation fence."""
+
+    pcm_s16le: bytes
+    source_start_sample: int
+    text: str = ""
+    first: bool = False
+    final: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.pcm_s16le or len(self.pcm_s16le) % 2:
+            raise ValueError("media reply PCM must be non-empty 16-bit audio")
+        if self.source_start_sample < 0:
+            raise ValueError("media reply sample range must be non-negative")
+
+    @property
+    def frame_samples(self) -> int:
+        return len(self.pcm_s16le) // 2
+
+
+class MediaVoiceProvider(Protocol):
+    """Provider-neutral adapter implemented by FunASR/Qwen/Doubao wiring."""
+
+    async def ingest_audio(
+        self,
+        identity: SessionIdentity,
+        frame: AudioFrame,
+    ) -> Sequence[ASRResult]: ...
+
+    def generate_reply(
+        self,
+        identity: SessionIdentity,
+        user_text: str,
+        fence: GenerationFence,
+    ) -> AsyncIterator[MediaReplyChunk]: ...
+
+    async def close(self, identity: SessionIdentity) -> None: ...
+
+
+ProviderFactory = Callable[[SessionIdentity], MediaVoiceProvider]
+RuntimeFactory = Callable[[str], DuplexRuntime]
+
+
+@dataclass(slots=True)
+class _MediaVoiceSession:
+    identity: SessionIdentity
+    runtime: DuplexRuntime
+    provider: MediaVoiceProvider
+    asr: ASRStreamSupervisor
+    playback: PlaybackLedger = field(default_factory=PlaybackLedger)
+    output_sequence: int = 0
+    output_text_offset: int = 0
+    assistant_text: str = ""
+    stream_epoch: int = 0
+    turn_started_ns: int | None = None
+    first_audio_observed: bool = False
+    provider_complete: bool = False
+    reply_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    reply_task: asyncio.Task[bool] | None = None
+    closed: bool = False
+
+
+@dataclass(slots=True)
+class MediaVoiceCoreRegistry:
+    """Attach one provider-neutral Voice Core session to each media session."""
+
+    bridge: MediaBridgeGrpcServer
+    provider_factory: ProviderFactory
+    runtime_factory: RuntimeFactory = field(default=_default_runtime_factory)
+    metrics: MetricsRegistry = field(default_factory=lambda: GLOBAL_METRICS)
+    max_sessions: int = 256
+    _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+
+    def __post_init__(self) -> None:
+        if self.max_sessions <= 0:
+            raise ValueError("max_sessions must be positive")
+
+    def install(self) -> None:
+        """Connect this registry to a ``MediaBridgeGrpcServer`` instance."""
+
+        self.bridge.on_audio_frame = self.on_audio_frame
+        self.bridge.on_speech_segment = self.on_speech_segment
+        self.bridge.on_client_event = self.on_client_event
+        self.bridge.on_session_closed = self.on_session_closed
+        self.bridge.on_playback_progress = self.on_playback_progress
+
+    async def _get_or_create(self, identity: SessionIdentity) -> _MediaVoiceSession:
+        async with self._lock:
+            current = self._sessions.get(identity.session_id)
+            if current is not None:
+                if current.identity.account_id != identity.account_id:
+                    raise ValueError("media session account identity changed")
+                if (
+                    current.identity.participant_id != identity.participant_id
+                    or current.identity.device_id != identity.device_id
+                    or current.identity.client_type != identity.client_type
+                ):
+                    raise ValueError("media session device identity changed")
+                if identity.stream_epoch < current.stream_epoch:
+                    raise ValueError("media session stream epoch moved backwards")
+                if identity.stream_epoch > current.stream_epoch:
+                    current.identity = identity
+                    current.stream_epoch = identity.stream_epoch
+                    current.runtime.start_media_stream_epoch(identity.stream_epoch)
+                    if not current.asr.reconnect(stream_epoch=identity.stream_epoch):
+                        raise ValueError("ASR stream epoch did not advance")
+                return current
+            if len(self._sessions) >= self.max_sessions:
+                raise RuntimeError("Voice Core media session limit reached")
+            runtime = self.runtime_factory(identity.session_id)
+            provider = self.provider_factory(identity)
+            asr = ASRStreamSupervisor(stream_epoch=identity.stream_epoch)
+            current = _MediaVoiceSession(
+                identity=identity,
+                runtime=runtime,
+                provider=provider,
+                asr=asr,
+                stream_epoch=identity.stream_epoch,
+            )
+            async def publish_runtime_event(event: dict[str, Any]) -> None:
+                await self._publish_runtime_event(identity.session_id, event)
+
+            runtime.set_event_publisher(publish_runtime_event)
+            self._sessions[identity.session_id] = current
+            self.metrics.inc_media_session_started()
+            self.metrics.set_media_active_sessions(len(self._sessions))
+            return current
+
+    async def _publish_runtime_event(
+        self,
+        session_id: str,
+        event: dict[str, Any],
+    ) -> None:
+        event_type = event.get("type")
+        if not isinstance(event_type, str):
+            return
+        payload = {key: value for key, value in event.items() if key != "type"}
+        def event_int(key: str) -> int:
+            value = event.get(key)
+            return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+        await self.bridge.emit_event(
+            session_id,
+            event_type,
+            payload,
+            turn_id=event_int("turn_id"),
+            generation_id=event_int("generation_id"),
+            tool_epoch=event_int("tool_epoch"),
+        )
+
+    async def on_audio_frame(
+        self,
+        session: MediaBridgeSession,
+        frame: AudioFrame,
+    ) -> None:
+        context = await self._get_or_create(session.identity)
+        try:
+            results = await context.provider.ingest_audio(context.identity, frame)
+        except Exception:
+            self.metrics.inc_media_session_failed()
+            raise
+        for result in results:
+            await self.accept_asr_result(context.identity.session_id, result)
+
+    async def on_speech_segment(
+        self,
+        session: MediaBridgeSession,
+        segment: SpeechSegment,
+    ) -> None:
+        context = await self._get_or_create(session.identity)
+        if not context.runtime.ingest_media_speech_segment(segment):
+            return
+        # A media VAD/KWS event is already range-stamped; it must not be
+        # converted into a callback-order speech epoch.
+        if segment.kind is SegmentKind.KWS and segment.final:
+            await self.bridge.emit_event(
+                context.identity.session_id,
+                "keyword.hit",
+                {
+                    "keyword": segment.text,
+                    "confidence": segment.confidence,
+                    "start_sample": segment.capture_start_sample,
+                    "end_sample": segment.capture_end_sample,
+                },
+                turn_id=context.runtime.fence.turn_id,
+                generation_id=context.runtime.fence.generation_id,
+            )
+
+    async def on_client_event(
+        self,
+        session: MediaBridgeSession,
+        event: MediaEnvelope,
+    ) -> None:
+        context = await self._get_or_create(session.identity)
+        if event.type != "client.stop_assistant":
+            return
+        # MediaBridgeSession has already advanced its authoritative generation
+        # before this callback runs. The Voice Core consumes that exact fence.
+        accepted = await context.runtime.accept_media_generation(
+            session.fence,
+            cause="client_stop_assistant",
+        )
+        if not accepted:
+            raise ValueError("Voice Core rejected authoritative stop generation")
+        context.playback.start(session.fence)
+        context.provider_complete = False
+        if context.reply_task is not None and not context.reply_task.done():
+            context.reply_task.cancel()
+
+    async def on_session_closed(self, session: MediaBridgeSession) -> None:
+        context = self._sessions.pop(session.identity.session_id, None)
+        if context is None or context.closed:
+            return
+        context.closed = True
+        self.metrics.set_media_active_sessions(len(self._sessions))
+        if context.reply_task is not None and not context.reply_task.done():
+            context.reply_task.cancel()
+        await context.runtime.close()
+        await context.provider.close(context.identity)
+
+    async def on_playback_progress(
+        self,
+        session: MediaBridgeSession,
+        progress: PlaybackProgress,
+    ) -> None:
+        context = self._sessions.get(session.identity.session_id)
+        if context is None or context.closed:
+            return
+        fence = GenerationFence(
+            session_id=context.identity.session_id,
+            turn_id=progress.turn_id,
+            generation_id=progress.generation_id,
+            tool_epoch=progress.tool_epoch,
+        )
+        acknowledged = context.playback.acknowledge(
+            fence,
+            progress.rendered_sample_end,
+            approximate=progress.approximate,
+        )
+        if not acknowledged:
+            return
+        # Publish the cumulative acknowledged prefix under one turn/revision;
+        # publishing only the newly acknowledged span would make clients
+        # replace a complete answer with its last phrase.
+        heard = context.playback.actual_heard_text(fence)
+        if (
+            context.provider_complete
+            and context.playback.is_fully_acknowledged(fence)
+            and context.runtime.fence.matches(fence)
+        ):
+            context.provider_complete = False
+            await context.runtime.on_media_playback_done(
+                fence,
+                context.playback.actual_heard_text(fence),
+            )
+        if heard and context.runtime.fence.matches(fence):
+            # Commit actual-heard history before publishing the final event;
+            # consumers must never observe a "heard" transcript while the
+            # authoritative runtime is still SPEAKING.
+            context.runtime.publish_transcript(
+                speaker="assistant",
+                text=heard,
+                final=True,
+                heard=True,
+                text_delivered=True,
+                fence=fence,
+            )
+
+    async def accept_asr_result(self, session_id: str, result: ASRResult) -> bool:
+        context = self._sessions.get(session_id)
+        if context is None or context.closed:
+            return False
+        if not context.asr.accept_result(result, session_id=session_id):
+            if result.is_final:
+                self.metrics.inc_media_stale_asr_final()
+            return False
+        segment = asr_result_to_segment(result, session_id=session_id)
+        if not context.runtime.ingest_media_speech_segment(segment):
+            return False
+        await self.bridge.emit_transcript(session_id, segment)
+        return True
+
+    async def commit_user_turn(
+        self,
+        session_id: str,
+        *,
+        stream_epoch: int,
+        start_sample: int,
+        end_sample: int,
+    ) -> tuple[GenerationFence | None, str | None]:
+        """Commit one explicit sample range, then create its authoritative turn."""
+
+        context = self._sessions.get(session_id)
+        if context is None or context.closed:
+            return None, "session_not_found"
+        text = context.runtime.consume_media_user_turn(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
+        if not text:
+            return None, "empty_media_turn"
+        accepted, reason = context.runtime.accept_user_turn(
+            text,
+            input_modality="audio",
+            speech_anchored=True,
+            canonical_speech_epoch=context.runtime.consumed_canonical_speech_epoch,
+            canonical_snapshot_bound=True,
+        )
+        if not accepted:
+            return None, reason or "user_turn_rejected"
+        fence = await context.runtime.on_turn_committed(text, input_modality="audio")
+        context.playback.start(fence)
+        context.output_sequence = 0
+        context.output_text_offset = 0
+        context.assistant_text = ""
+        context.provider_complete = False
+        context.turn_started_ns = time.monotonic_ns()
+        context.first_audio_observed = False
+        await self.bridge.emit_generation(
+            session_id,
+            fence,
+            action=media_pb2.GENERATION_ACTION_START,
+            reason="user_turn_committed",
+        )
+        return fence, None
+
+    async def generate_reply(
+        self,
+        session_id: str,
+        user_text: str,
+        fence: GenerationFence,
+    ) -> bool:
+        """Serialize one playable provider stream per media session."""
+
+        context = self._sessions.get(session_id)
+        if context is None or context.closed or context.reply_lock.locked():
+            return False
+        task = asyncio.current_task()
+        if task is None:  # pragma: no cover - every async call has a task
+            return False
+        context.reply_task = task
+        try:
+            async with context.reply_lock:
+                return await self._generate_reply(session_id, user_text, fence)
+        finally:
+            if context.reply_task is task:
+                context.reply_task = None
+
+    async def _generate_reply(
+        self,
+        session_id: str,
+        user_text: str,
+        fence: GenerationFence,
+    ) -> bool:
+        """Stream provider PCM through both Voice Core and Media Edge gates."""
+
+        context = self._sessions.get(session_id)
+        if context is None or context.closed or not context.runtime.fence.matches(fence):
+            self.metrics.inc_media_stale_generation()
+            return False
+        announced_speaking = False
+        try:
+            async for chunk in context.provider.generate_reply(context.identity, user_text, fence):
+                if not context.runtime.fence.matches(fence):
+                    self.metrics.inc_media_stale_generation()
+                    return False
+                if chunk.text:
+                    context.assistant_text += chunk.text
+                    # Keep the runtime's heard-text tracker aligned with the
+                    # complete provider text, while the ledger still decides
+                    # whether that text was actually rendered.
+                    await context.runtime.on_assistant_speaking(context.assistant_text)
+                    announced_speaking = True
+                gated = context.runtime.gate_tts_audio(fence, chunk.pcm_s16le)
+                if gated is None:
+                    self.metrics.inc_media_stale_generation()
+                    return False
+                frame = PCMFrame(
+                    identity=context.identity,
+                    turn_id=fence.turn_id,
+                    generation_id=fence.generation_id,
+                    tool_epoch=fence.tool_epoch,
+                    sequence=context.output_sequence,
+                    source_start_sample=chunk.source_start_sample,
+                    frame_samples=len(gated) // 2,
+                    pcm_s16le=gated,
+                    first=chunk.first,
+                    final=chunk.final,
+                )
+                if not await self.bridge.emit_pcm(session_id, frame):
+                    self.metrics.inc_media_stale_generation()
+                    return False
+                if (
+                    not context.first_audio_observed
+                    and context.turn_started_ns is not None
+                ):
+                    self.metrics.observe_voice_latency(
+                        "first_audio",
+                        (time.monotonic_ns() - context.turn_started_ns) / 1_000_000_000,
+                    )
+                    context.first_audio_observed = True
+                context.output_sequence += 1
+                if chunk.text:
+                    text_start = context.output_text_offset
+                    context.output_text_offset += len(chunk.text)
+                    context.playback.add_span(
+                        PlaybackSpan(
+                            fence=fence,
+                            text_start=text_start,
+                            text_end=context.output_text_offset,
+                            audio_start_sample=chunk.source_start_sample,
+                            audio_end_sample=chunk.source_start_sample + len(gated) // 2,
+                            text=chunk.text,
+                        )
+                    )
+                    context.runtime.publish_transcript(
+                        speaker="assistant",
+                        text=chunk.text,
+                        # A provider-complete chunk is not an actual-heard
+                        # transcript yet; the playback ledger closes it only
+                        # after the client sample watermark arrives.
+                        final=False,
+                        text_delivered=True,
+                        fence=fence,
+                    )
+        except Exception:
+            self.metrics.inc_media_session_failed()
+            raise
+        if announced_speaking and context.runtime.fence.matches(fence):
+            # Provider completion is not playback completion.  Keep the
+            # runtime speaking until a client PlaybackProgress watermark
+            # covers every mapped text span; otherwise interrupted/undelivered
+            # text could enter history as if it had been heard.
+            context.provider_complete = True
+            await self.bridge.emit_generation(
+                session_id,
+                fence,
+                action=media_pb2.GENERATION_ACTION_COMPLETE,
+                reason="provider_reply_complete",
+            )
+            # A very fast client may acknowledge the last frame before the
+            # provider iterator yields its completion. Re-check the ledger at
+            # provider completion so the runtime cannot remain SPEAKING until
+            # a second, unnecessary ACK arrives.
+            if context.playback.is_fully_acknowledged(fence):
+                context.provider_complete = False
+                await context.runtime.on_media_playback_done(
+                    fence,
+                    context.playback.actual_heard_text(fence),
+                )
+        return True
+
+    def context(self, session_id: str) -> DuplexRuntime | None:
+        current = self._sessions.get(session_id)
+        return current.runtime if current is not None and not current.closed else None
+
+
+__all__ = [
+    "MediaReplyChunk",
+    "MediaVoiceCoreRegistry",
+    "MediaVoiceProvider",
+]

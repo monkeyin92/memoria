@@ -11,6 +11,9 @@ export {
 export {
   createSession,
   exchangeOmniSdp,
+  reconnectMediaSession,
+  fallbackMediaSession,
+  renewMediaSession,
   getInteractionCapabilities,
   notifyRtcRecovered,
   publishOmniTelemetry,

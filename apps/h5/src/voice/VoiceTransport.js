@@ -23,6 +23,19 @@ export class VoiceTransport {
     throw new Error("VoiceTransport.stopAssistant must be implemented");
   }
 
+  publishData(_payload) {
+    return Promise.reject(new Error("VoiceTransport.publishData is unavailable"));
+  }
+
+  getStats() {
+    return Promise.resolve(new Map());
+  }
+
+  disconnect(reason) {
+    void reason;
+    return this.close();
+  }
+
   close() {
     throw new Error("VoiceTransport.close must be implemented");
   }

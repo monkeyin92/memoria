@@ -68,6 +68,28 @@ _CONTROL_EXTRA_KEYS = frozenset(
 
 _GATEWAY_EXTRA_KEYS = frozenset({"LOG_LEVEL"})
 
+# The Go edge is a separate trust boundary.  Keep its JWT and bridge
+# connection material out of both Control API and Agent env files.
+_MEDIA_EDGE_EXTRA_KEYS = frozenset(
+    {
+        "MEDIA_EDGE_ALLOW_INSECURE_DEVELOPMENT",
+        "MEDIA_EDGE_HEALTHCHECK_URL",
+        "MEDIA_EDGE_HTTP_ADDR",
+        "MEDIA_EDGE_JWT_AUDIENCE",
+        "MEDIA_EDGE_JWT_ISSUER",
+        "MEDIA_EDGE_JWT_SECRET",
+        "MEDIA_EDGE_MAX_PENDING_FRAMES",
+        "MEDIA_EDGE_VOICE_CORE_ADDR",
+        "MEDIA_EDGE_VOICE_CORE_ALLOW_INSECURE_DEVELOPMENT",
+        "MEDIA_EDGE_VOICE_CORE_CA_FILE",
+        "MEDIA_EDGE_VOICE_CORE_CLIENT_CERT_FILE",
+        "MEDIA_EDGE_VOICE_CORE_CLIENT_KEY_FILE",
+        "MEDIA_EDGE_VOICE_CORE_CONNECT_TIMEOUT_MS",
+        "MEDIA_EDGE_VOICE_CORE_REQUIRED",
+        "MEDIA_EDGE_VOICE_CORE_SERVER_NAME",
+    }
+)
+
 
 def _aliases(
     settings_type: type[AgentSettings] | type[ControlSettings] | type[MiniProgramGatewaySettings],
@@ -81,7 +103,13 @@ def _aliases(
 
 def split_env(
     values: dict[str, str],
-) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
+) -> tuple[
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+]:
     if "DOUBAO_TTS_SECRET_KEY" in values:
         raise ValueError("DOUBAO_TTS_SECRET_KEY is not used and must not be deployed")
     validate_doubao_auth(
@@ -116,13 +144,15 @@ def split_env(
     control_keys = _aliases(ControlSettings) | set(_CONTROL_EXTRA_KEYS)
     agent_keys = _aliases(AgentSettings) | set(_AGENT_EXTRA_KEYS)
     gateway_keys = _aliases(MiniProgramGatewaySettings) | set(_GATEWAY_EXTRA_KEYS)
-    known = control_keys | agent_keys | gateway_keys
+    media_edge_keys = set(_MEDIA_EDGE_EXTRA_KEYS)
+    known = control_keys | agent_keys | gateway_keys | media_edge_keys
     unknown = sorted(set(values) - known)
     if unknown:
         raise ValueError(f"unrouted production env keys: {', '.join(unknown)}")
     control = {key: value for key, value in values.items() if key in control_keys}
     agent = {key: value for key, value in values.items() if key in agent_keys}
     gateway = {key: value for key, value in values.items() if key in gateway_keys}
+    media_edge = {key: value for key, value in values.items() if key in media_edge_keys}
     capability_flags = (
         ("MEMORIA_ARCHIVE_WRITE_TOKEN", "MEMORIA_ARCHIVE_SINK_ENABLED", True),
         ("MEMORIA_MEMORY_READ_TOKEN", "MEMORIA_MEMORY_CONTEXT_ENABLED", False),
@@ -135,7 +165,7 @@ def split_env(
             agent.pop(token, None)
     embedding_token = values.get("MEMORIA_SPEAKER_EMBEDDING_TOKEN", "").strip()
     speaker_model = {"MEMORIA_SPEAKER_MODEL_TOKEN": embedding_token} if embedding_token else {}
-    return control, agent, speaker_model, gateway
+    return control, agent, speaker_model, gateway, media_edge
 
 
 def _read_env(path: Path) -> dict[str, str]:
@@ -188,15 +218,22 @@ def main() -> int:
         type=Path,
         default=Path("/etc/memoria-miniprogram-gateway.env"),
     )
+    parser.add_argument(
+        "--media-edge",
+        type=Path,
+        default=Path("/etc/memoria-media-edge.env"),
+    )
     args = parser.parse_args()
-    control, agent, speaker_model, gateway = split_env(_read_env(args.source))
+    control, agent, speaker_model, gateway, media_edge = split_env(_read_env(args.source))
     _write_env(args.control, control)
     _write_env(args.agent, agent)
     _write_env(args.speaker_model, speaker_model)
     _write_env(args.gateway, gateway)
+    _write_env(args.media_edge, media_edge)
     print(
         f"wrote {len(control)} Control API keys, {len(agent)} Agent keys "
-        f"{len(speaker_model)} Speaker Model keys and {len(gateway)} Gateway keys"
+        f"{len(speaker_model)} Speaker Model keys, {len(gateway)} Gateway keys "
+        f"and {len(media_edge)} Media Edge keys"
     )
     return 0
 

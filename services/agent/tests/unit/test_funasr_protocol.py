@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from services.agent.src.providers.funasr_protocol import (
+    ASRResult,
     build_continue_task_context,
     build_finish_task,
     build_run_task,
     conversation_item_to_funasr_context,
     parse_server_message,
     result_trace_metrics,
+    sentence_to_asr_result,
     timestamps_monotonic,
     words_to_seconds,
 )
@@ -60,6 +62,39 @@ def test_parse_result_generated() -> None:
     assert timestamps_monotonic(ev.sentence.words)
     secs = words_to_seconds(ev.sentence.words)
     assert abs(secs[0][1] - 0.17) < 1e-9
+
+
+def test_sentence_to_asr_result_uses_sample_clock() -> None:
+    sentence = parse_server_message(
+        {
+            "header": {"event": "result-generated", "task_id": "t1"},
+            "payload": {
+                "output": {
+                    "sentence": {
+                        "sentence_id": 3,
+                        "begin_time": 170,
+                        "end_time": 920,
+                        "text": "你好",
+                        "sentence_end": True,
+                    }
+                }
+            },
+        }
+    ).sentence
+    assert sentence is not None
+
+    result = sentence_to_asr_result(sentence, task_epoch=2)
+
+    assert isinstance(result, ASRResult)
+    assert result.task_epoch == 2
+    assert result.sentence_id == "3"
+    assert result.capture_start_sample == 2720
+    assert result.capture_end_sample == 14720
+    assert result.is_final is True
+
+    offset = sentence_to_asr_result(sentence, task_epoch=2, sample_offset=10_000)
+    assert offset.capture_start_sample == 12_720
+    assert offset.capture_end_sample == 24_720
 
 
 def test_context_redaction() -> None:

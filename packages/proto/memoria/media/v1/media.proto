@@ -1,0 +1,219 @@
+syntax = "proto3";
+
+package memoria.media.v1;
+
+// This contract is authored by Memoria.  It intentionally describes only the
+// media/Voice Core seam; LLM, memory and provider credentials never cross it.
+option go_package = "github.com/monkeyin92/memoria-media-runtime/gen/media/v1;mediav1";
+
+service VoiceMediaBridge {
+  rpc Connect(stream MediaToCore) returns (stream CoreToMedia);
+}
+
+enum AudioEncoding {
+  AUDIO_ENCODING_UNSPECIFIED = 0;
+  AUDIO_ENCODING_PCM_S16LE = 1;
+  AUDIO_ENCODING_OPUS = 2;
+}
+
+enum ConversationState {
+  CONVERSATION_STATE_UNSPECIFIED = 0;
+  CONVERSATION_STATE_CONNECTING = 1;
+  CONVERSATION_STATE_LISTENING = 2;
+  CONVERSATION_STATE_USER_SPEAKING = 3;
+  CONVERSATION_STATE_FINALIZING = 4;
+  CONVERSATION_STATE_THINKING = 5;
+  CONVERSATION_STATE_ASSISTANT_SPEAKING = 6;
+  CONVERSATION_STATE_INTERRUPT_PENDING = 7;
+  CONVERSATION_STATE_RECOVERING = 8;
+  CONVERSATION_STATE_CLOSED = 9;
+}
+
+enum VadEventType {
+  VAD_EVENT_UNSPECIFIED = 0;
+  VAD_EVENT_SPEECH_START = 1;
+  VAD_EVENT_SPEECH_END = 2;
+}
+
+enum GenerationAction {
+  GENERATION_ACTION_UNSPECIFIED = 0;
+  GENERATION_ACTION_START = 1;
+  GENERATION_ACTION_CANCEL = 2;
+  GENERATION_ACTION_COMPLETE = 3;
+  GENERATION_ACTION_PAUSE = 4;
+  GENERATION_ACTION_RESUME = 5;
+}
+
+message SessionIdentity {
+  string session_id = 1;
+  string account_id = 2;
+  string participant_id = 3;
+  string device_id = 4;
+  string client_type = 5;
+  uint64 stream_epoch = 6;
+}
+
+message AudioFormat {
+  AudioEncoding encoding = 1;
+  uint32 sample_rate = 2;
+  uint32 channels = 3;
+  uint32 frame_ms = 4;
+}
+
+message SessionHello {
+  SessionIdentity identity = 1;
+  AudioFormat uplink_format = 2;
+  AudioFormat downlink_format = 3;
+  map<string, string> capabilities = 4;
+  string traceparent = 5;
+}
+
+message AudioFrame {
+  SessionIdentity identity = 1;
+  uint64 sequence = 2;
+  uint64 capture_start_sample = 3;
+  uint32 frame_samples = 4;
+  bytes payload = 5;
+  uint32 crc32c = 6;
+  bool discontinuity = 7;
+}
+
+message VadEvent {
+  SessionIdentity identity = 1;
+  VadEventType type = 2;
+  uint64 sample_position = 3;
+  float probability = 4;
+  float rms = 5;
+  float noise_floor = 6;
+}
+
+message KeywordEvent {
+  SessionIdentity identity = 1;
+  string keyword = 2;
+  float confidence = 3;
+  uint64 start_sample = 4;
+  uint64 end_sample = 5;
+  bool hard_stop = 6;
+}
+
+message PlaybackProgress {
+  SessionIdentity identity = 1;
+  uint64 generation_id = 2;
+  uint64 received_sequence = 3;
+  uint64 rendered_sample_end = 4;
+  uint64 client_monotonic_ms = 5;
+  bool approximate = 6;
+  uint64 turn_id = 7;
+  uint64 tool_epoch = 8;
+}
+
+message DeviceEvent {
+  SessionIdentity identity = 1;
+  string event_type = 2;
+  bytes json_payload = 3;
+  uint64 monotonic_ms = 4;
+}
+
+message MediaMetric {
+  SessionIdentity identity = 1;
+  string name = 2;
+  double value = 3;
+  map<string, string> labels = 4;
+  uint64 turn_id = 5;
+  uint64 generation_id = 6;
+  uint64 tool_epoch = 7;
+}
+
+message MediaToCore {
+  oneof event {
+    SessionHello hello = 1;
+    AudioFrame audio = 2;
+    VadEvent vad = 3;
+    KeywordEvent keyword = 4;
+    PlaybackProgress playback = 5;
+    DeviceEvent device = 6;
+    MediaMetric metric = 7;
+  }
+}
+
+message SessionAccepted {
+  SessionIdentity identity = 1;
+  ConversationState state = 2;
+  uint64 current_generation_id = 3;
+}
+
+message AssistantAudioFrame {
+  SessionIdentity identity = 1;
+  uint64 turn_id = 2;
+  uint64 generation_id = 3;
+  uint64 tool_epoch = 4;
+  uint64 sequence = 5;
+  uint64 source_start_sample = 6;
+  uint32 frame_samples = 7;
+  bytes pcm_s16le = 8;
+  bool first_frame = 9;
+  bool final_frame = 10;
+}
+
+message GenerationControl {
+  SessionIdentity identity = 1;
+  uint64 turn_id = 2;
+  uint64 generation_id = 3;
+  uint64 tool_epoch = 4;
+  GenerationAction action = 5;
+  string reason = 6;
+  uint64 sequence = 7;
+}
+
+message TranscriptEvent {
+  SessionIdentity identity = 1;
+  uint64 turn_id = 2;
+  uint64 revision = 3;
+  uint64 capture_start_sample = 4;
+  uint64 capture_end_sample = 5;
+  string text = 6;
+  bool final = 7;
+  float confidence = 8;
+  string speaker_class = 9;
+  uint64 generation_id = 10;
+  uint64 tool_epoch = 11;
+  uint64 sequence = 12;
+}
+
+message StateEvent {
+  SessionIdentity identity = 1;
+  ConversationState state = 2;
+  uint64 turn_id = 3;
+  uint64 generation_id = 4;
+  string reason = 5;
+  uint64 sequence = 6;
+}
+
+message ClientEvent {
+  SessionIdentity identity = 1;
+  string type = 2;
+  bytes json_payload = 3;
+  uint64 turn_id = 4;
+  uint64 generation_id = 5;
+  uint64 tool_epoch = 6;
+  uint64 sequence = 7;
+}
+
+message CoreError {
+  SessionIdentity identity = 1;
+  string code = 2;
+  string message = 3;
+  bool retryable = 4;
+}
+
+message CoreToMedia {
+  oneof event {
+    SessionAccepted accepted = 1;
+    AssistantAudioFrame audio = 2;
+    GenerationControl generation = 3;
+    TranscriptEvent transcript = 4;
+    StateEvent state = 5;
+    ClientEvent client = 6;
+    CoreError error = 7;
+  }
+}

@@ -28,6 +28,21 @@ def main() -> None:
         print("agent offline mode: not starting LiveKit worker")
         return
 
+    # Metrics/OTel are opt-in at bootstrap; the LiveKit worker remains the
+    # process owner and no exporter is started by offline unit tests.
+    from services.agent.src.observability.media_otel import configure_otel
+    from services.agent.src.observability.metrics import GLOBAL_METRICS
+
+    configure_otel(str(getattr(settings, "otel_exporter_otlp_endpoint", "")))
+    prometheus_port = int(getattr(settings, "prometheus_port", 0))
+    if prometheus_port > 0:
+        try:
+            GLOBAL_METRICS.start_http_server(prometheus_port)
+        except OSError:
+            # A sidecar may already expose the port; worker startup should not
+            # become unavailable solely because an optional exporter is busy.
+            pass
+
     from livekit import agents
 
     from services.agent.src.agent import entrypoint, prewarm

@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package memoria.media.v1;
+
+option go_package = "github.com/monkeyin92/memoria-media-runtime/gen/media/v1;mediav1";
+
+message EventEnvelope {
+  uint32 version = 1;
+  string type = 2;
+  string event_id = 3;
+  string session_id = 4;
+  uint64 stream_epoch = 5;
+  uint64 sequence = 6;
+  uint64 turn_id = 7;
+  uint64 generation_id = 8;
+  uint64 server_monotonic_ms = 9;
+  bytes json_payload = 10;
+}

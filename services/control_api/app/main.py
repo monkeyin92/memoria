@@ -38,12 +38,15 @@ from services.archive.skill_domain import SkillCatalogPort
 from services.control_api.app.account_gate import AccountDeletingError, AccountOperationGate
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.device_registry import DeviceRegistry
+from services.control_api.app.media_slo import MediaSLOGate
 from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import auth as auth_routes
 from services.control_api.app.routes import digital_self as digital_self_routes
 from services.control_api.app.routes import growth as growth_routes
 from services.control_api.app.routes import interaction as interaction_routes
 from services.control_api.app.routes import legacy as legacy_routes
+from services.control_api.app.routes import media as media_routes
 from services.control_api.app.routes import memory as memory_routes
 from services.control_api.app.routes import persona as persona_routes
 from services.control_api.app.routes import readiness as readiness_routes
@@ -53,6 +56,11 @@ from services.control_api.app.routes import session as session_routes
 from services.control_api.app.routes import skills as skill_routes
 from services.control_api.app.routes import speaker as speaker_routes
 from services.control_api.app.routes import voice as voice_routes
+from services.control_api.app.session_directory import (
+    InMemorySessionDirectory,
+    RedisSessionDirectory,
+    SessionDirectory,
+)
 from services.control_api.app.session_termination import (
     AccountSessionTerminator,
     LiveKitRoomCloser,
@@ -392,9 +400,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             raise
         app.state.config_warning = str(exc)
     app.state.settings = settings
+    session_directory: SessionDirectory = (
+        RedisSessionDirectory(settings.redis_url)
+        if settings.redis_url.strip()
+        else InMemorySessionDirectory()
+    )
+    app.state.session_directory = session_directory
+    media_slo_gate = MediaSLOGate(
+        ttl_s=settings.media_slo_snapshot_ttl_s,
+        redis_url=settings.redis_url.strip() or None,
+    )
+    app.state.media_slo_gate = media_slo_gate
     store = MemoryStore(settings.memoria_db_path)
     await to_thread(store.initialize)
     app.state.memory_store = store
+    app.state.device_registry = DeviceRegistry(
+        store,
+        challenge_ttl_ms=settings.device_challenge_ttl_ms,
+    )
     archive_url = settings.archive_database_url.get_secret_value()
     compiler_url = settings.archive_compiler_database_url.get_secret_value()
     postgres_archive: PostgresLifeArchive | None = None
@@ -559,6 +582,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await deletion_worker.stop()
         await compiler_worker.stop()
+        await session_directory.close()
+        await media_slo_gate.close()
         if postgres_persona is not None:
             await postgres_persona.close()
         if postgres_digital_self is not None:
@@ -594,6 +619,15 @@ def create_app() -> FastAPI:
     )
     # Eager defaults so tests without lifespan still work.
     app.state.settings = settings
+    app.state.session_directory = (
+        RedisSessionDirectory(settings.redis_url)
+        if settings.redis_url.strip()
+        else InMemorySessionDirectory()
+    )
+    app.state.media_slo_gate = MediaSLOGate(
+        ttl_s=settings.media_slo_snapshot_ttl_s,
+        redis_url=settings.redis_url.strip() or None,
+    )
     app.state.account_operations = AccountOperationGate()
     # Single-process CAS fence. A distributed deployment must replace this
     # with an account/task advisory lock or revision projection.
@@ -601,6 +635,10 @@ def create_app() -> FastAPI:
     app.state.realtime_connections = RealtimeConnectionRegistry()
     # The store initializes lazily for ASGI test clients that do not run lifespan.
     app.state.memory_store = MemoryStore(settings.memoria_db_path)
+    app.state.device_registry = DeviceRegistry(
+        app.state.memory_store,
+        challenge_ttl_ms=settings.device_challenge_ttl_ms,
+    )
     app.state.life_archive = LifeArchive.sqlite(settings.memoria_db_path)
     app.state.memory_catalog = MemoryCatalog.sqlite(
         settings.memoria_db_path,
@@ -654,6 +692,9 @@ def create_app() -> FastAPI:
     app.include_router(legacy_routes.router)
     app.include_router(archive_routes.router)
     app.include_router(session_routes.router)
+    app.include_router(media_routes.router)
+    app.include_router(media_routes.device_router)
+    app.include_router(media_routes.internal_router)
     app.include_router(skill_routes.router)
     app.include_router(speaker_routes.router)
     app.include_router(memory_routes.router)

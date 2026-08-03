@@ -32,7 +32,9 @@ RUN uv export --frozen --no-dev --extra kws --no-emit-project --no-header --no-a
 COPY README.md ./
 COPY services ./services
 COPY packages ./packages
-COPY scripts/verify_env.py scripts/livekit_smoke_test.py scripts/provider_smoke_test.py ./scripts/
+COPY scripts/verify_env.py scripts/livekit_smoke_test.py scripts/provider_smoke_test.py \
+     scripts/run_media_bridge.py scripts/run_media_slo_reporter.py \
+     scripts/media_runtime_smoke.py ./scripts/
 # Reviewed runtime voice maps (no secrets).
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 COPY infra/voices/doubao_voice_ids.json ./infra/voices/doubao_voice_ids.json

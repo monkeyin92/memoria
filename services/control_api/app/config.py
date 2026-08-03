@@ -47,6 +47,45 @@ class ControlSettings(BaseSettings):
     livekit_api_key: str = Field(default="", alias="LIVEKIT_API_KEY")
     livekit_api_secret: str = Field(default="", alias="LIVEKIT_API_SECRET")
     livekit_agent_name: str = Field(default="duplex-zh-agent", alias="LIVEKIT_AGENT_NAME")
+    # Production clients use independent coturn credentials, never a static
+    # TURN password. URLs are comma-separated (turn:/turns:).
+    coturn_urls: str = Field(default="", alias="COTURN_URLS")
+    coturn_realm: str = Field(default="memoria", alias="COTURN_REALM")
+    coturn_shared_secret: SecretStr = Field(
+        default=SecretStr(""), alias="COTURN_SHARED_SECRET"
+    )
+    coturn_credential_ttl_s: int = Field(
+        default=300, ge=30, le=3600, alias="COTURN_CREDENTIAL_TTL_S"
+    )
+    redis_url: str = Field(default="", alias="REDIS_URL")
+    media_edge_id: str = Field(default="media-edge-local", alias="MEDIA_EDGE_ID")
+    voice_core_id: str = Field(default="voice-core-local", alias="VOICE_CORE_ID")
+    media_runtime_default: Literal["livekit", "streamcore"] = Field(
+        default="livekit", alias="MEDIA_RUNTIME_DEFAULT"
+    )
+    streamcore_experiment_percent: int = Field(
+        default=0, ge=0, le=100, alias="STREAMCORE_EXPERIMENT_PERCENT"
+    )
+    streamcore_kill_switch: bool = Field(default=False, alias="STREAMCORE_KILL_SWITCH")
+    streamcore_slo_gate_enabled: bool = Field(
+        default=False, alias="STREAMCORE_SLO_GATE_ENABLED"
+    )
+    media_slo_snapshot_ttl_s: int = Field(
+        default=120, ge=30, le=900, alias="MEDIA_SLO_SNAPSHOT_TTL_S"
+    )
+    media_slo_report_token: SecretStr = Field(
+        default=SecretStr(""), alias="MEDIA_SLO_REPORT_TOKEN"
+    )
+    streamcore_whip_url: str = Field(default="", alias="STREAMCORE_WHIP_URL")
+    streamcore_token_secret: SecretStr = Field(
+        default=SecretStr(""), alias="STREAMCORE_TOKEN_SECRET"
+    )
+    streamcore_token_ttl_s: int = Field(
+        default=120, ge=30, le=300, alias="STREAMCORE_TOKEN_TTL_S"
+    )
+    device_challenge_ttl_ms: int = Field(
+        default=120_000, ge=10_000, le=600_000, alias="DEVICE_CHALLENGE_TTL_MS"
+    )
     miniprogram_media_gateway_url: str = Field(
         default="",
         alias="MINIPROGRAM_MEDIA_GATEWAY_URL",
@@ -503,6 +542,9 @@ class ControlSettings(BaseSettings):
     def origins_list(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
+    def coturn_urls_list(self) -> list[str]:
+        return [url.strip() for url in self.coturn_urls.split(",") if url.strip()]
+
     @field_validator("legacy_auth_compat_until", mode="before")
     @classmethod
     def require_absolute_utc_legacy_auth_cutoff(cls, value: object) -> datetime | None:
@@ -591,6 +633,19 @@ class ControlSettings(BaseSettings):
             raise ValueError("production must use secure LIVEKIT_URL")
         if not self.livekit_api_key or not self.livekit_api_secret:
             raise ValueError("production requires LiveKit credentials")
+        if (
+            self.media_runtime_default == "streamcore"
+            and self.streamcore_experiment_percent > 0
+            and not self.streamcore_kill_switch
+        ):
+            if not self.streamcore_whip_url.startswith("https://"):
+                raise ValueError("production StreamCore rollout requires HTTPS WHIP URL")
+            if len(self.streamcore_token_secret.get_secret_value()) < 32:
+                raise ValueError("production StreamCore rollout requires STREAMCORE_TOKEN_SECRET")
+            if not self.streamcore_slo_gate_enabled:
+                raise ValueError("production StreamCore rollout requires STREAMCORE_SLO_GATE_ENABLED")
+            if len(self.media_slo_report_token.get_secret_value()) < 32:
+                raise ValueError("production StreamCore rollout requires MEDIA_SLO_REPORT_TOKEN")
         auth_secret = self.memoria_auth_secret.get_secret_value()
         if auth_secret == DEV_AUTH_SECRET or len(auth_secret) < 32:
             raise ValueError("production requires an independent MEMORIA_AUTH_SECRET (>=32 chars)")
@@ -831,3 +886,13 @@ class ControlSettings(BaseSettings):
                 "MEMORIA_MEMORY_EMBEDDING_API_KEY, MEMORIA_MEMORY_EMBEDDING_MODEL "
                 "and MEMORIA_MEMORY_EMBEDDING_DIMENSIONS"
             )
+        coturn_urls = self.coturn_urls_list()
+        if not coturn_urls:
+            raise ValueError("production requires independent COTURN_URLS")
+        if any(not url.startswith(("turn:", "turns:")) for url in coturn_urls):
+            raise ValueError("production COTURN_URLS must use turn: or turns:")
+        coturn_secret = self.coturn_shared_secret.get_secret_value().strip()
+        if len(coturn_secret) < 32:
+            raise ValueError("production requires COTURN_SHARED_SECRET (>=32 chars)")
+        if coturn_secret in {auth_secret, self.livekit_api_secret, *capability_tokens.values()}:
+            raise ValueError("production COTURN_SHARED_SECRET must be independent")

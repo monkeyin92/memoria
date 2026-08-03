@@ -1,0 +1,10 @@
+{
+  "version": "2026.08.02-rc1",
+  "artifact_url": "https://firmware.example.com/memoria-doll.bin",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "size_bytes": 1,
+  "min_bootloader": "1.0.0",
+  "channel": "stable",
+  "rollout_percent": 0,
+  "signature": ""
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoria.local/contracts/media-events-v1.schema.json",
+  "title": "Memoria media-v1 event envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "type",
+    "event_id",
+    "session_id",
+    "stream_epoch",
+    "sequence",
+    "payload"
+  ],
+  "properties": {
+    "v": { "const": 1 },
+    "protocol": { "const": "media-v1" },
+    "type": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "event_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "session_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "stream_epoch": { "type": "integer", "minimum": 1 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "turn_id": { "type": "integer", "minimum": 0 },
+    "generation_id": { "type": "integer", "minimum": 0 },
+    "tool_epoch": { "type": "integer", "minimum": 0 },
+    "server_monotonic_ms": { "type": "integer", "minimum": 0 },
+    "payload": { "type": "object" }
+  }
+}

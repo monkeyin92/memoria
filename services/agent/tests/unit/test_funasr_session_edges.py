@@ -33,6 +33,25 @@ async def test_unconnected_session_control_methods_and_ring_bound() -> None:
         await session.connect()
 
 
+def test_session_tracks_sample_watermarks_for_bounded_replay() -> None:
+    session = FunASRSession(
+        FunASRConfig(
+            api_key="test",
+            ws_url="ws://unused",
+            sample_rate=1000,
+            reconnect_audio_ms=100,
+        )
+    )
+    session._last_sent_sample = 1000
+    session._last_provider_acked_sample = 700
+    session.mark_committed_sample(800)
+
+    assert session.replay_start_sample() == 900
+    assert session.last_committed_sample == 800
+    with pytest.raises(ValueError):
+        session.mark_committed_sample(-1)
+
+
 def test_resample_pcm_and_stt_does_not_forward_chat_history() -> None:
     pcm = b"\x00\x00" * 160
     assert resample_pcm_16le(pcm, src_rate=16000, dst_rate=16000) is pcm

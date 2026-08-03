@@ -31,6 +31,76 @@ class FunASRSentence:
 
 
 @dataclass(frozen=True, slots=True)
+class ASRResult:
+    """Provider-neutral ASR result stamped on the capture sample clock."""
+
+    task_epoch: int
+    sentence_id: str
+    revision: int
+    capture_start_sample: int
+    capture_end_sample: int
+    text: str
+    is_final: bool
+    confidence: float | None = None
+    provider_begin_ms: int | None = None
+    provider_end_ms: int | None = None
+    stream_epoch: int = 1
+
+    def __post_init__(self) -> None:
+        if self.task_epoch < 1:
+            raise ValueError("task_epoch must be positive")
+        if self.stream_epoch < 1:
+            raise ValueError("stream_epoch must be positive")
+        if not self.sentence_id:
+            raise ValueError("sentence_id is required")
+        if self.revision < 1:
+            raise ValueError("revision must be positive")
+        if self.capture_start_sample < 0:
+            raise ValueError("capture_start_sample must be non-negative")
+        if self.capture_end_sample <= self.capture_start_sample:
+            raise ValueError("capture_end_sample must be greater than start")
+        if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("confidence must be between 0 and 1")
+
+
+def sentence_to_asr_result(
+    sentence: FunASRSentence,
+    *,
+    task_epoch: int,
+    sample_rate: int = 16_000,
+    revision: int = 1,
+    confidence: float | None = None,
+    stream_epoch: int = 1,
+    sample_offset: int = 0,
+) -> ASRResult:
+    """Map FunASR millisecond timestamps to a deterministic sample range."""
+
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+    if sample_offset < 0:
+        raise ValueError("sample_offset must be non-negative")
+    start = sample_offset + max(0, round(sentence.begin_ms * sample_rate / 1000))
+    provider_end = sentence.end_ms if sentence.end_ms is not None else sentence.begin_ms
+    end = max(
+        start + 1,
+        sample_offset + round(max(sentence.begin_ms, provider_end) * sample_rate / 1000),
+    )
+    return ASRResult(
+        task_epoch=task_epoch,
+        sentence_id=str(sentence.sentence_id),
+        revision=revision,
+        capture_start_sample=start,
+        capture_end_sample=end,
+        text=sentence.text,
+        is_final=sentence.sentence_end,
+        confidence=confidence,
+        provider_begin_ms=sentence.begin_ms,
+        provider_end_ms=sentence.end_ms,
+        stream_epoch=stream_epoch,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class FunASRServerEvent:
     event: FunASREventType
     task_id: str

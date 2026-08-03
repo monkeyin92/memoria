@@ -1,0 +1,1 @@
+"""Generated Memoria protobuf namespace."""

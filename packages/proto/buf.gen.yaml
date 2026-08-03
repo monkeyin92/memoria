@@ -1,0 +1,7 @@
+version: v2
+plugins:
+  # Generation is intentionally explicit and reproducible.  The repository
+  # keeps Python output for the Voice Core bridge; Go consumers can generate
+  # their own package from the same descriptor without copying implementation.
+  - protoc_builtin: python
+    out: ../../services/agent/src/voice_core/generated

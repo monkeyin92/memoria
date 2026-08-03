@@ -335,7 +335,7 @@ def test_production_example_declares_control_only_object_read_keyrings() -> None
 
 
 def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent() -> None:
-    control, agent, speaker_model, gateway = split_env(
+    control, agent, speaker_model, gateway, media_edge = split_env(
         {
             "MEMORIA_AUTH_SECRET": "auth",
             "WECHAT_MINIPROGRAM_APPID": "wx-test",
@@ -394,6 +394,8 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     assert "DOUBAO_TTS_ACCESS_TOKEN" not in control
     assert "DOUBAO_TTS_API_KEY" not in control
     assert speaker_model == {"MEMORIA_SPEAKER_MODEL_TOKEN": "speaker-model-token"}
+    assert media_edge == {}
+
     assert agent["MEMORIA_ARCHIVE_WRITE_TOKEN"] == "archive-write-token"
     assert agent["MEMORIA_AGENT_HEARTBEAT_TOKEN"] == "agent-heartbeat-token"
     assert control["MEMORIA_AGENT_HEARTBEAT_TOKEN"] == "agent-heartbeat-token"
@@ -437,6 +439,26 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     assert control["MEMORIA_ARCHIVE_OBJECT_READ_KEYS"] == '{"archive-v1":"archive-old-key"}'
     assert control["MEMORIA_VOICE_SAMPLE_READ_KEYS"] == '{"voice-v1":"voice-old-key"}'
     assert gateway == {}
+
+
+def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None:
+    control, agent, speaker_model, gateway, media_edge = split_env(
+        {
+            "ENVIRONMENT": "production",
+            "STREAMCORE_TOKEN_SECRET": "streamcore-secret-material-that-is-long-enough",
+            "MEDIA_EDGE_JWT_SECRET": "streamcore-secret-material-that-is-long-enough",
+            "MEDIA_EDGE_JWT_ISSUER": "voice-agent",
+            "MEDIA_EDGE_JWT_AUDIENCE": "memoria-media",
+            "MEDIA_EDGE_VOICE_CORE_ADDR": "voice-core-media-bridge:7001",
+        }
+    )
+    assert control["STREAMCORE_TOKEN_SECRET"].startswith("streamcore-")
+    assert media_edge["MEDIA_EDGE_JWT_SECRET"] == control["STREAMCORE_TOKEN_SECRET"]
+    assert media_edge["MEDIA_EDGE_VOICE_CORE_ADDR"] == "voice-core-media-bridge:7001"
+    assert "MEDIA_EDGE_JWT_SECRET" not in control
+    assert "MEDIA_EDGE_VOICE_CORE_ADDR" not in agent
+    assert speaker_model == {}
+    assert gateway == {"ENVIRONMENT": "production"}
 
 
 def test_production_env_split_rejects_unused_doubao_secret_key() -> None:

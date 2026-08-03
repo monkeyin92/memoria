@@ -122,9 +122,21 @@ async def test_create_session_and_stop(
             headers=headers,
             json={"reason": "user_button"},
         )
+        keyed_stop = await client.post(
+            f"/v1/sessions/{data['session_id']}/stop-response",
+            headers={**headers, "Idempotency-Key": "stop-test-1"},
+            json={"reason": "user_button"},
+        )
+        keyed_repeat = await client.post(
+            f"/v1/sessions/{data['session_id']}/stop-response",
+            headers={**headers, "Idempotency-Key": "stop-test-1"},
+            json={"reason": "user_button"},
+        )
     assert stop.status_code == 200
     assert stop.json()["action"] == "atomic_cancel"
     assert stop.json()["create_user_turn"] is False
+    assert keyed_stop.status_code == keyed_repeat.status_code == 200
+    assert keyed_stop.json() == keyed_repeat.json()
 
 
 @pytest.mark.asyncio

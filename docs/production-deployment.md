@@ -56,8 +56,9 @@ sudo sha256sum /etc/letsencrypt/renewal-hooks/deploy/50-memoria-reload-nginx
 ## Secret 与数据边界
 
 生产 secret 按最小权限拆分到服务器 `/etc/memoria-control-api.env`、
-`/etc/memoria-agent.env`、`/etc/memoria-speaker-model.env` 和
-`/etc/memoria-miniprogram-gateway.env`，四者权限都必须是 `root:root 0600`。使用
+`/etc/memoria-agent.env`、`/etc/memoria-speaker-model.env`、
+`/etc/memoria-miniprogram-gateway.env` 和可选的
+`/etc/memoria-media-edge.env`，权限都必须是 `root:root 0600`。使用
 `scripts/split_production_env.py` 从 root-only 运维源生成候选文件；该脚本只分流已有值，
 不会应用默认值。首次 P0-P6 升级应使用 `scripts/prepare_production_upgrade_env.py`，
 普通发布则必须从当前 root-only env 复制并显式核对本文列出的 endpointing 值；
@@ -293,14 +294,17 @@ CONTROL_ENV=/etc/memoria-control-api.env
 AGENT_ENV=/etc/memoria-agent.env
 SPEAKER_MODEL_ENV=/etc/memoria-speaker-model.env
 GATEWAY_ENV=/etc/memoria-miniprogram-gateway.env
+MEDIA_EDGE_ENV=/etc/memoria-media-edge.env
 CONTROL_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/control-api.env
 AGENT_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/agent.env
 SPEAKER_MODEL_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/speaker-model.env
 GATEWAY_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/gateway.env
+MEDIA_EDGE_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/media-edge.env
 CONTROL_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-control-api.env-pre-$RELEASE_TAG
 AGENT_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-agent.env-pre-$RELEASE_TAG
 SPEAKER_MODEL_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-speaker-model.env-pre-$RELEASE_TAG
 GATEWAY_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-miniprogram-gateway.env-pre-$RELEASE_TAG
+MEDIA_EDGE_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-media-edge.env-pre-$RELEASE_TAG
 ```
 
 ### 1. 本机构建、打包并增量上传固定工件
@@ -623,6 +627,9 @@ sudo test "$(stat -c '%U:%G:%a' "$CONTROL_ENV_CANDIDATE")" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' "$AGENT_ENV_CANDIDATE")" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' "$SPEAKER_MODEL_ENV_CANDIDATE")" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' "$GATEWAY_ENV_CANDIDATE")" = "root:root:600"
+if sudo test -e "$MEDIA_EDGE_ENV_CANDIDATE"; then
+  sudo test "$(stat -c '%U:%G:%a' "$MEDIA_EDGE_ENV_CANDIDATE")" = "root:root:600"
+fi
 sudo grep -qx 'ENDPOINTING_MIN_DELAY_S=1.50' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'ENDPOINTING_MAX_DELAY_S=2.20' "$AGENT_ENV_CANDIDATE"
 sudo grep -qx 'FALSE_INTERRUPTION_TIMEOUT_S=1.70' "$AGENT_ENV_CANDIDATE"
@@ -640,17 +647,27 @@ if sudo test -e "$GATEWAY_ENV"; then
   sudo test "$(stat -c '%U:%G:%a' "$GATEWAY_ENV")" = "root:root:600"
   sudo install -o root -g root -m 0600 "$GATEWAY_ENV" "$GATEWAY_ENV_BACKUP"
 fi
+if sudo test -e "$MEDIA_EDGE_ENV"; then
+  sudo test "$(stat -c '%U:%G:%a' "$MEDIA_EDGE_ENV")" = "root:root:600"
+  sudo install -o root -g root -m 0600 "$MEDIA_EDGE_ENV" "$MEDIA_EDGE_ENV_BACKUP"
+fi
 sudo sha256sum "$CONTROL_ENV_BACKUP" "$AGENT_ENV_BACKUP" "$SPEAKER_MODEL_ENV_BACKUP"
 if sudo test -e "$GATEWAY_ENV_BACKUP"; then
   sudo sha256sum "$GATEWAY_ENV_BACKUP"
+fi
+if sudo test -e "$MEDIA_EDGE_ENV_BACKUP"; then
+  sudo sha256sum "$MEDIA_EDGE_ENV_BACKUP"
 fi
 sudo install -o root -g root -m 0600 "$CONTROL_ENV_CANDIDATE" "$CONTROL_ENV"
 sudo install -o root -g root -m 0600 "$AGENT_ENV_CANDIDATE" "$AGENT_ENV"
 sudo install -o root -g root -m 0600 "$SPEAKER_MODEL_ENV_CANDIDATE" "$SPEAKER_MODEL_ENV"
 sudo install -o root -g root -m 0600 "$GATEWAY_ENV_CANDIDATE" "$GATEWAY_ENV"
+if sudo test -e "$MEDIA_EDGE_ENV_CANDIDATE"; then
+  sudo install -o root -g root -m 0600 "$MEDIA_EDGE_ENV_CANDIDATE" "$MEDIA_EDGE_ENV"
+fi
 ```
 
-保护副本放在 root-only `/var/backups/memoria`，避免与容器 bind 目录共享暴露面；`/var/lib/memoria` 中的原始快照继续保留，作为独立的第二份回滚副本。先在可信运维环境生成 Control API、Agent、Speaker Model 与 gateway 四份候选 env；`split_production_env.py` 只做最小权限分流，不能替代 endpointing 精确值门禁。再执行上述“校验候选 → 备份已有 env → 安装候选”顺序。前三份旧 env 是既有 runtime 的强制前提；gateway 只在首次接入小程序前不存在，因此它单独条件备份。数据库、候选 env 和已有 env 备份都必须为 `root:root 0600`，不得为了容器读取而放宽权限。
+保护副本放在 root-only `/var/backups/memoria`，避免与容器 bind 目录共享暴露面；`/var/lib/memoria` 中的原始快照继续保留，作为独立的第二份回滚副本。先在可信运维环境生成五份候选 env；`split_production_env.py` 只做最小权限分流，不能替代 endpointing 精确值门禁。启用 `media-runtime` profile 前必须安装并核对 `/etc/memoria-media-edge.env`，以及 `/etc/memoria-media-runtime/` 下的 Voice Core mTLS 文件；默认 LiveKit 发布不需要这两项。再执行上述“校验候选 → 备份已有 env → 安装候选”顺序。前三份旧 env 是既有 runtime 的强制前提；gateway 与 media-edge 只在首次启用对应 profile 前不存在，因此分别条件备份。数据库、候选 env 和已有 env 备份都必须为 `root:root 0600`，不得为了容器读取而放宽权限。
 
 ### 4. 原子激活 runtime
 
@@ -659,6 +676,9 @@ sudo test "$(stat -c '%U:%G:%a' /etc/memoria-control-api.env)" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' /etc/memoria-agent.env)" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' /etc/memoria-speaker-model.env)" = "root:root:600"
 sudo test "$(stat -c '%U:%G:%a' /etc/memoria-miniprogram-gateway.env)" = "root:root:600"
+if sudo test -e /etc/memoria-media-edge.env; then
+  sudo test "$(stat -c '%U:%G:%a' /etc/memoria-media-edge.env)" = "root:root:600"
+fi
 sudo ln -s "releases/$RELEASE_TAG" "/opt/memoria/.current.$RELEASE_TAG"
 sudo mv -Tf "/opt/memoria/.current.$RELEASE_TAG" /opt/memoria/current
 
@@ -943,7 +963,8 @@ curl -fsS https://aigcnice.com/wms/
 ## 回滚
 
 禁止在 runbook 中长期硬编码“当前”回滚版本。每次发布在切软链前记录真实目标，并把
-四份服务 env 备份到同一 release tag 命名的 root-only 文件：
+四份基础服务 env；若启用 `media-runtime` profile，再加上 media-edge env；全部备份到同一
+release tag 命名的 root-only 文件：
 
 ```bash
 PREV_RUNTIME_TAG="$(basename "$(readlink -f /opt/memoria/current)")"
@@ -952,6 +973,7 @@ CONTROL_ENV_BACKUP="/var/backups/memoria/memoria-control-api.env-pre-$RELEASE_TA
 AGENT_ENV_BACKUP="/var/backups/memoria/memoria-agent.env-pre-$RELEASE_TAG"
 SPEAKER_MODEL_ENV_BACKUP="/var/backups/memoria/memoria-speaker-model.env-pre-$RELEASE_TAG"
 GATEWAY_ENV_BACKUP="/var/backups/memoria/memoria-miniprogram-gateway.env-pre-$RELEASE_TAG"
+MEDIA_EDGE_ENV_BACKUP="/var/backups/memoria/memoria-media-edge.env-pre-$RELEASE_TAG"
 
 sudo test -d "/opt/memoria/releases/$PREV_RUNTIME_TAG"
 sudo test -d "/var/www/memoria-releases/$PREV_H5_TAG"
@@ -961,6 +983,9 @@ sudo docker image inspect "memoria-speaker-model:$PREV_RUNTIME_TAG" >/dev/null
 sudo test "$(stat -c '%U:%G:%a' "$CONTROL_ENV_BACKUP")" = root:root:600
 sudo test "$(stat -c '%U:%G:%a' "$AGENT_ENV_BACKUP")" = root:root:600
 sudo test "$(stat -c '%U:%G:%a' "$SPEAKER_MODEL_ENV_BACKUP")" = root:root:600
+if sudo test -e "$MEDIA_EDGE_ENV_BACKUP"; then
+  sudo test "$(stat -c '%U:%G:%a' "$MEDIA_EDGE_ENV_BACKUP")" = root:root:600
+fi
 ```
 
 H5-only 故障只切回发布前记录的 H5；runtime、Provider 或 readiness 故障必须先恢复
@@ -983,6 +1008,10 @@ if sudo test -e "$GATEWAY_ENV_BACKUP"; then
     "$GATEWAY_ENV_BACKUP" /etc/memoria-miniprogram-gateway.env
 else
   sudo rm -f /etc/memoria-miniprogram-gateway.env
+fi
+if sudo test -e "$MEDIA_EDGE_ENV_BACKUP"; then
+  sudo install -o root -g root -m 0600 \
+    "$MEDIA_EDGE_ENV_BACKUP" /etc/memoria-media-edge.env
 fi
 
 sudo ln -s "releases/$PREV_RUNTIME_TAG" \
@@ -1008,5 +1037,5 @@ SQLite、PostgreSQL 或 MinIO；只有数据格式确实不兼容时，才在另
   8443 媒体入口可用，443 候选路由不被误设为生产下发地址，旧项目没有被意外启动并占用
   Memoria 端口。
 - 证书续期后验证 SAN、有效期、deploy hook 和 Nginx reload 日志。
-- 每次发布记录 release tag、镜像 ID、H5/Nginx SHA-256、证书指纹、两份 SQLite 快照 SHA-256、四份 env 备份 SHA-256、完整性与 foreign-key 检查、激活时间和回滚点；不得记录 secret。
+- 每次发布记录 release tag、镜像 ID、H5/Nginx SHA-256、证书指纹、两份 SQLite 快照 SHA-256、基础四份 env 备份 SHA-256（启用 media-runtime 时再记录 edge env）、完整性与 foreign-key 检查、激活时间和回滚点；不得记录 secret。
 - 200 条真实中文录音、AEC 设备矩阵和第 21 章 SLO 是规模化上线门禁，不阻塞当前 H5 成品交付。

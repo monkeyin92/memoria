@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["version", "status", "consent_required_for_recorded_audio", "fixtures"],
+  "properties": {
+    "version": {"type": "integer", "const": 1},
+    "status": {"type": "string", "enum": ["synthetic_ci_manifest", "consented_recorded"]},
+    "consent_required_for_recorded_audio": {"type": "boolean", "const": true},
+    "consent_artifact": {"type": "string", "minLength": 1},
+    "fixture_root": {"type": "string"},
+    "required_metadata": {"type": "array", "items": {"type": "string"}},
+    "fixtures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "expected_text", "expected_turns", "expected_interrupt", "speaker_profile", "noise", "distance_cm"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "kind": {"type": "string"},
+          "expected_text": {"type": "string"},
+          "expected_turns": {"type": "integer", "minimum": 0},
+          "expected_interrupt": {"type": "boolean"},
+          "speaker_profile": {"type": "string", "enum": ["adult", "child", "synthetic"]},
+          "noise": {"type": "string"},
+          "distance_cm": {"type": "integer", "minimum": 1},
+          "audio_path": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "consented_recorded"}}},
+      "then": {
+        "required": ["consent_artifact"],
+        "properties": {
+          "fixtures": {
+            "minItems": 150,
+            "items": {"required": ["audio_path"]}
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

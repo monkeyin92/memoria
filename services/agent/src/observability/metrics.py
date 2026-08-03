@@ -11,11 +11,16 @@ from prometheus_client import CollectorRegistry, generate_latest
 from prometheus_client import start_http_server as prometheus_start_http_server
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
+from services.agent.src.voice_core.telemetry import MEDIA_METRIC_NAMES
+
 _GAUGES = {
     "tool_tasks_active",
     "tts_pool_available",
     "voice_latency_seconds",
     "voice_sessions_active",
+    "media_active_sessions",
+    "media_pcm_queue_depth",
+    "media_rtp_jitter_ms",
 }
 
 
@@ -24,6 +29,9 @@ class MetricsRegistry:
     counters: dict[str, float] = field(default_factory=lambda: defaultdict(float))
     labeled: dict[str, dict[tuple[tuple[str, str], ...], float]] = field(
         default_factory=lambda: defaultdict(lambda: defaultdict(float))
+    )
+    latency_samples: dict[str, list[float]] = field(
+        default_factory=lambda: defaultdict(list)
     )
     _lock: Any = field(default_factory=threading.RLock, init=False, repr=False)
 
@@ -101,6 +109,34 @@ class MetricsRegistry:
             {"stage": stage, "quantile": quantile},
         )
 
+    def observe_voice_latency(self, stage: str, seconds: float) -> None:
+        """Keep a bounded latency reservoir for the media SLO projection."""
+
+        if seconds < 0 or seconds != seconds or seconds in {float("inf"), float("-inf")}:
+            raise ValueError("voice latency must be finite and non-negative")
+        with self._lock:
+            samples = self.latency_samples[stage]
+            if len(samples) >= 256:
+                samples.pop(0)
+            samples.append(float(seconds))
+
+    def inc_media_session_started(self) -> None:
+        self._inc("media_sessions_total")
+
+    def inc_media_session_failed(self) -> None:
+        self._inc("media_sessions_failed_total")
+
+    def set_media_active_sessions(self, count: int) -> None:
+        if count < 0:
+            raise ValueError("active media session count must be non-negative")
+        self.set_media_metric("media_active_sessions", float(count))
+
+    def inc_media_stale_generation(self) -> None:
+        self.inc_stale_result_dropped("media_generation")
+
+    def inc_media_stale_asr_final(self) -> None:
+        self.inc_stale_result_dropped("asr_final")
+
     def add_audio_input_seconds(self, seconds: float) -> None:
         self._inc("audio_input_seconds_total", amount=seconds)
 
@@ -122,6 +158,34 @@ class MetricsRegistry:
             {"status": status, "model": model, "voice": voice},
         )
 
+    def inc_media_metric(
+        self,
+        name: str,
+        *,
+        amount: float = 1.0,
+        labels: dict[str, str] | None = None,
+    ) -> None:
+        """Record an allowlisted media metric for the Prometheus exporter."""
+
+        if name not in MEDIA_METRIC_NAMES:
+            raise ValueError(f"media metric is not allowlisted: {name}")
+        if amount < 0:
+            raise ValueError("counter increment must be non-negative")
+        self._inc(name, labels, amount)
+
+    def set_media_metric(
+        self,
+        name: str,
+        value: float,
+        *,
+        labels: dict[str, str] | None = None,
+    ) -> None:
+        """Set a bounded media gauge without accepting arbitrary metric names."""
+
+        if name not in MEDIA_METRIC_NAMES:
+            raise ValueError(f"media metric is not allowlisted: {name}")
+        self._set(name, value, labels)
+
     def snapshot(self) -> dict[str, float]:
         with self._lock:
             out = dict(self.counters)
@@ -130,6 +194,46 @@ class MetricsRegistry:
                     label_s = ",".join(f'{k}="{v}"' for k, v in labels)
                     out[f"{name}{{{label_s}}}"] = val
             return out
+
+    def media_slo_snapshot(self) -> dict[str, float]:
+        """Project only aggregate SLO fields for the Control API reporter.
+
+        Missing latency/session fields are intentionally omitted so the
+        Control API evaluator fails closed instead of treating an uninstrumented
+        process as healthy. Stale counters are present from zero because zero
+        is an authoritative observation for a process that has started.
+        """
+
+        snapshot: dict[str, float] = {
+            "stale_generation_total": self.get(
+                "stale_result_dropped_total", {"source": "media_generation"}
+            ),
+            "stale_asr_final_total": self.get(
+                "stale_result_dropped_total", {"source": "asr_final"}
+            ),
+        }
+        for stage, key in (
+            ("first_audio", "first_audio_p95_ms"),
+            ("interrupt_stop", "interrupt_stop_p95_ms"),
+        ):
+            with self._lock:
+                samples = list(self.latency_samples.get(stage, ()))
+            if samples:
+                ordered = sorted(samples)
+                index = min(len(ordered) - 1, int(0.95 * (len(ordered) - 1)))
+                snapshot[key] = ordered[index] * 1000.0
+            else:
+                configured = self.get(
+                    "voice_latency_seconds",
+                    {"stage": stage, "quantile": "p95"},
+                )
+                if configured > 0:
+                    snapshot[key] = configured * 1000.0
+        sessions = self.get("media_sessions_total")
+        failures = self.get("media_sessions_failed_total")
+        if sessions > 0:
+            snapshot["session_failure_rate"] = min(1.0, failures / sessions)
+        return snapshot
 
     def prometheus_registry(self) -> CollectorRegistry:
         registry = CollectorRegistry()
@@ -157,6 +261,14 @@ class _MetricsCollector:
             labeled = {
                 name: dict(series) for name, series in self._metrics.labeled.items()
             }
+            for stage, samples in self._metrics.latency_samples.items():
+                if not samples:
+                    continue
+                ordered = sorted(samples)
+                index = min(len(ordered) - 1, int(0.95 * (len(ordered) - 1)))
+                labeled.setdefault("voice_latency_seconds", {})[
+                    (("quantile", "p95"), ("stage", stage))
+                ] = ordered[index]
         families: list[CounterMetricFamily | GaugeMetricFamily] = []
         for name, value in sorted(plain.items()):
             family = self._family(name, ())

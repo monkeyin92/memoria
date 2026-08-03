@@ -24,6 +24,7 @@ from scripts.split_production_env import (
     _AGENT_EXTRA_KEYS,
     _CONTROL_EXTRA_KEYS,
     _GATEWAY_EXTRA_KEYS,
+    _MEDIA_EDGE_EXTRA_KEYS,
     _aliases,
     _read_env,
     _write_env,
@@ -73,7 +74,13 @@ def prepare(
     postgres: dict[str, str],
     minio: dict[str, str],
     release_tag: str,
-) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
+) -> tuple[
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+]:
     known = (
         _aliases(ControlSettings)
         | _aliases(AgentSettings)
@@ -81,6 +88,7 @@ def prepare(
         | set(_AGENT_EXTRA_KEYS)
         | _aliases(MiniProgramGatewaySettings)
         | set(_GATEWAY_EXTRA_KEYS)
+        | set(_MEDIA_EDGE_EXTRA_KEYS)
     )
     values = {key: value for key, value in legacy.items() if key in known}
     validate_doubao_auth(
@@ -110,6 +118,7 @@ def prepare(
         values.get("MINIPROGRAM_MEDIA_GATEWAY_URL", "").strip()
         or _miniprogram_gateway_url(public_base_url)
     )
+    streamcore_token_secret = _keep_or_create(values, "STREAMCORE_TOKEN_SECRET", _token)
     values.update(
         {
             "ENVIRONMENT": "production",
@@ -123,6 +132,22 @@ def prepare(
             "DEEPSEEK_FAST_MODEL": "deepseek-v4-flash",
             "DEEPSEEK_DEEP_MODEL": "deepseek-v4-flash",
             "MEMORIA_RELEASE_TAG": release_tag,
+            # Control API signs StreamCore tokens; the Go edge verifies the
+            # same short-lived credential in its own least-privilege env.
+            "STREAMCORE_TOKEN_SECRET": streamcore_token_secret,
+            "MEDIA_EDGE_JWT_SECRET": streamcore_token_secret,
+            "MEDIA_EDGE_JWT_ISSUER": values.get("JWT_ISSUER", "voice-agent"),
+            "MEDIA_EDGE_JWT_AUDIENCE": "memoria-media",
+            "MEDIA_EDGE_HTTP_ADDR": ":8080",
+            "MEDIA_EDGE_HEALTHCHECK_URL": "http://127.0.0.1:8080/readyz",
+            "MEDIA_EDGE_VOICE_CORE_REQUIRED": "true",
+            "MEDIA_EDGE_VOICE_CORE_ADDR": "voice-core-media-bridge:7001",
+            "MEDIA_EDGE_VOICE_CORE_CA_FILE": "/etc/memoria-media-runtime/media-edge-ca.crt",
+            "MEDIA_EDGE_VOICE_CORE_CLIENT_CERT_FILE": "/etc/memoria-media-runtime/media-edge-client.crt",
+            "MEDIA_EDGE_VOICE_CORE_CLIENT_KEY_FILE": "/etc/memoria-media-runtime/media-edge-client.key",
+            "MEDIA_EDGE_VOICE_CORE_SERVER_NAME": "voice-core-media-bridge",
+            "MEDIA_EDGE_VOICE_CORE_ALLOW_INSECURE_DEVELOPMENT": "false",
+            "MEDIA_EDGE_VOICE_CORE_CONNECT_TIMEOUT_MS": "5000",
             "MEMORIA_ARCHIVE_DATABASE_URL": _postgres_dsn(
                 user="memoria_app", password=app_password
             ),
@@ -217,6 +242,17 @@ def prepare(
             "MEMORIA_VOICE_PROFILE_ENABLED": "true",
             "MEMORIA_VOICE_PROFILE_URL": ("http://control-api:8000/v1/voices/session-resolution"),
             "LIVEKIT_ADAPTIVE_INTERRUPTION": "false",
+            # coturn uses REST/HMAC credentials; the shared secret stays in
+            # the control-api env and is never copied to H5 or the device.
+            "COTURN_URLS": values.get(
+                "COTURN_URLS",
+                "turn:turn.example.com:3478,turns:turn.example.com:5349",
+            ),
+            "COTURN_REALM": values.get("COTURN_REALM", "memoria"),
+            "COTURN_SHARED_SECRET": _keep_or_create(
+                values, "COTURN_SHARED_SECRET", _token
+            ),
+            "COTURN_CREDENTIAL_TTL_S": values.get("COTURN_CREDENTIAL_TTL_S", "300"),
             "PREEMPTIVE_GENERATION": "false",
             "PREEMPTIVE_TTS": "false",
             "ENDPOINTING_MIN_DELAY_S": f"{SELF_HOSTED_ENDPOINTING_MIN_DELAY_S:.2f}",
@@ -227,13 +263,13 @@ def prepare(
         }
     )
     values.pop("MEMORIA_ARCHIVE_INTERNAL_TOKEN", None)
-    control, agent, speaker_model, gateway = split_env(values)
+    control, agent, speaker_model, gateway, media_edge = split_env(values)
     ControlSettings.model_validate(control).validate_production()
     AgentSettings.model_validate(agent)
     MiniProgramGatewaySettings.model_validate(gateway).validate_production()
     if not speaker_model:
         raise ValueError("speaker-model env must contain its scoped token")
-    return control, agent, speaker_model, gateway
+    return control, agent, speaker_model, gateway, media_edge
 
 
 def main() -> int:
@@ -246,11 +282,12 @@ def main() -> int:
     parser.add_argument("--agent", required=True, type=Path)
     parser.add_argument("--speaker-model", required=True, type=Path)
     parser.add_argument("--gateway", required=True, type=Path)
+    parser.add_argument("--media-edge", required=True, type=Path)
     args = parser.parse_args()
-    for path in (args.control, args.agent, args.speaker_model, args.gateway):
+    for path in (args.control, args.agent, args.speaker_model, args.gateway, args.media_edge):
         if path.exists():
             raise FileExistsError(f"refusing to replace existing candidate: {path}")
-    control, agent, speaker_model, gateway = prepare(
+    control, agent, speaker_model, gateway, media_edge = prepare(
         legacy=_read_env(args.legacy),
         postgres=_read_env(args.postgres),
         minio=_read_env(args.minio),
@@ -260,9 +297,11 @@ def main() -> int:
     _write_env(args.agent, agent)
     _write_env(args.speaker_model, speaker_model)
     _write_env(args.gateway, gateway)
+    _write_env(args.media_edge, media_edge)
     print(
         f"created validated env candidates: control={len(control)}, "
-        f"agent={len(agent)}, speaker-model={len(speaker_model)}, gateway={len(gateway)}"
+        f"agent={len(agent)}, speaker-model={len(speaker_model)}, gateway={len(gateway)}, "
+        f"media-edge={len(media_edge)}"
     )
     return 0
 

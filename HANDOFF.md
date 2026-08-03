@@ -1,5 +1,145 @@
 # 项目交接
 
+## 2026-08-03：全双工整改边界收口（未发布）
+
+- H5 `StreamCoreTransport` 现在等待真正 `connectionState=connected` 才报告 ready，
+  丢弃未来/跨 session/错误版本事件；断线与 heartbeat 只通知一次，hook 使用单飞恢复，
+  重连把期望 `stream_epoch` 作为 CAS 发给 Control API；支持 `playback.flush`、session
+  状态、assistant audio 状态、error/ping/pong。
+- Go `VoiceCoreSession.SendStop` 使用单调 client sequence；Media Edge 入口对 Core gRPC
+  使用有界阻塞拨号，生产 `/readyz` 检查 gRPC connectivity，JWT 强制 secret/issuer/audience，
+  生产 bridge client 拒绝明文。Go 1.22 CI 兼容性已移除测试中的 `t.Context()`。
+- `split_production_env.py`/`prepare_production_upgrade_env.py` 新增独立
+  `/etc/memoria-media-edge.env` 输出，统一 `/etc/memoria-media-runtime` mTLS 路径；SLO
+  stale counter 拒绝小数并 fail-closed，Linux device client 在 production 拒绝 plaintext。
+- 定向与全量验证：Python `pytest` 全通过（含既有弃用 warning/预期 skips），H5 `264 passed`
+  与 production build，Go `go test ./...`、`go test -race ./...`、`go vet ./...`，Ruff、strict
+  mypy、production env tests、`git diff --check` 均通过。仍未发布、未切换 LiveKit；真实
+  WebRTC/WHIP/RTP/DTLS/SRTP/Opus、provider/hardware/Redis/coturn 外部证据仍是启用条件。
+- Device challenge bootstrap 增加每设备最多 3 个未消费 nonce 的持久化上限，超限返回 429；
+  challenge 仍故意保持无 bearer 的首次引导入口，但不会无限堆积数据库状态。
+- 新增 `media-fallback` 的 Session Directory CAS transition：H5 初次/重连失败切回
+  LiveKit 后先把 route 从 `streamcore` 切成 `livekit`，避免后续 Stop 仍走 StreamCore
+  generation-only 分支而无法投递 LiveKit room；目录与 Control API 均有回归测试。
+
+## 2026-08-03：Voice Core registry、设备 client 与 SLO reporter（未发布）
+
+- `services/agent/src/voice_core/media_session.py` 新增 `MediaVoiceCoreRegistry`：每条
+  media-v1 gRPC session 绑定独立 `DuplexRuntime`、`ASRStreamSupervisor`、Generation
+  Fence 和 `PlaybackLedger`；显式 sample range commit 后才创建用户话轮，旧 fence 在
+  Media Edge 与 Voice Core 两端都拒绝。`test_media_session.py` 用真实本地 asyncio gRPC
+  stream + fake provider 验证 ASR transcript、generation START/COMPLETE、PCM downlink、
+  playback ACK 实际听见和 stop/cancel；`provider_adapter.py` 可显式复用现有
+  FunASRSession、LLM handler 和 Doubao TTS handler，不在 bridge 内复制 provider stack。
+- `grpc_bridge.py` 增加 session-close、PlaybackProgress、generation-aware transcript
+  回调；`orchestrator.py`/`duplex_runtime.py` 增加 authoritative external generation
+  fence 接口，停止命令不依赖清空队列保证正确性。启动脚本仍 provider-neutral，生产必须
+  显式注入已有 FunASR/Qwen/Doubao adapter；没有把第三方媒体源码复制进仓库。
+- 新增 `LinuxMediaDeviceClient`：bounded capture/reconnect、sample-clock、NLMS AEC
+  playback reference、本地 mute、device command TTL/allowlist/ACK、exact playback
+  progress；新增 `media-slo-reporter` sidecar，从 Agent Prometheus endpoint 读取后只向
+  Control API 上报 allowlist 聚合指标，缺失字段/过期报告 fail-closed。真实 ALSA/I2S/DMA、硬件静音、WebRTC/RTP/DTLS/SRTP/
+  Opus、生产 provider wiring 和外部 SLO 仍未验收。
+- 文档审计已同步到当前证据：`docs/media-runtime-plan-audit.md`、
+  `docs/media-runtime-foundation.md`、`docs/media-runtime-slo.md`、
+  `docs/media-runtime-license-boundary.md`。
+- 最后验证：全量 `pytest` 通过（含 skips）、Ruff、strict mypy；H5 `260 passed` 与
+  production build；Go `test`/`test -race`；Proto 重新生成、descriptor、bridge smoke、
+  replay/chaos/load、Compose config 和 `git diff --check` 均通过。仅保留 FastAPI/httpx
+  的既有弃用 warning。
+- 之后的边界 hardening 还通过了 Control API directory/media tests、Go race test：gRPC
+  输出事件带 server sequence，Media Edge JWT 绑定当前 stream epoch，Redis generation
+  bump 使用连续 CAS；这些修改未改变 LiveKit 默认或小程序路径。
+
+## 2026-08-03：gRPC bridge、设备 registry 与 SLO gate（未发布）
+
+- `packages/proto` 增加 `buf.yaml`/`buf.gen.yaml` 和可重复的
+  `scripts/generate_media_proto.py`；Python generated bindings 已纳入 CI diff gate，
+  `grpcio`/`grpcio-tools` 为显式依赖，没有复制第三方媒体源码。
+- `services/agent/src/voice_core/grpc_bridge.py` 现在提供真实双向 asyncio gRPC
+  `VoiceMediaBridge.Connect`、bounded downlink、stream epoch/generation/identity fence、
+  TLS/mTLS material loader，以及 audio/VAD/KWS callback seam；`scripts/run_media_bridge.py`
+  可独立启动，生产配置启用时强制 mTLS 和证书路径。它仍是 media boundary：尚未接入现有
+  `DuplexRuntime`/FunASR/LLM/TTS 的生产 session registry，不能视作真实 provider E2E。
+- Control API 新增持久化 `DeviceRegistry`：公钥注册、单次签名 challenge、revoke 和
+  生产 media session signed proof；账户删除会清理设备身份。新增 `MediaSLOGate` 与
+  token/TTL 内部报告接口，StreamCore 灰度在 gate 开启但没有新鲜报告时 fail-closed 到
+  LiveKit。Agent/Media Edge 自动 SLO reporter、真实硬件/WebRTC/coturn/Redis 多实例仍待外部验收。
+- 本轮新增/改动已通过全量 Python `pytest`（含 skips）、H5 `npm test`（260 passed）、H5
+  production build、Go `go test ./...` 与 `go test -race ./...`、Ruff、strict mypy、协议
+  generated diff、`protoc` descriptor、bridge smoke、synthetic replay/chaos/load 和
+  `git diff --check`。未发布、未切换 LiveKit、未提交/推送；工作树中原有用户素材和文档
+  改动保持不动。
+
+## 2026-08-03：Go Media Edge ↔ Voice Core gRPC adapter（未发布）
+
+- `services/media_edge/bridge.go` 新增自有 `media-v1` Go 双向 gRPC client：默认要求
+  Voice Core mTLS（仅显式 development opt-in 才允许明文），支持 PCM audio/VAD/KWS、
+  playback ACK、幂等 stop envelope，并在客户端对 identity、事件 sequence、sample range、
+  downlink sequence 和完整 generation 再做一遍 gate。`scripts/generate_media_go_proto.sh`
+  从仓库自己的 proto 生成 Go bindings，没有引入 StreamCore/Pion/LiveKit 源码。
+- `bridge_test.go` 使用本地 fake gRPC server 验证 hello/accept、generation 后播放和重复
+  downlink 拒绝；`go test ./...`、`go test -race ./...` 通过。真实 RTP/DTLS/SRTP/Opus/WHIP
+  终结器仍需独立审核和接入，当前没有宣称真实网络媒体 E2E。
+
+## 2026-08-03：A/B OTA 控制状态机（未发布）
+
+- `services/agent/src/voice_core/ota.py` 在已有 Ed25519 manifest/digest 验证之上补充
+  inactive-slot staging、bootloader/版本反回滚、bounded boot attempts、健康确认和
+  confirmed-slot fallback；`test_ota.py` 覆盖签名/篡改/旧版本/bootloader 以及失败回退。
+- 这是可持久化的 boot metadata 合同，不冒充真实 ALSA/I2S、Secure Boot、Flash Encryption
+  或硬件断电恢复；真实设备接入时必须把 snapshot 写入 bootloader 的冗余元数据区并做断电演练。
+
+## 2026-08-03：生产验收 runbook（未发布）
+
+- 新增 `docs/media-runtime-acceptance-runbook.md`，把仓内门禁、真实 WebRTC/Provider/
+  浏览器/硬件/儿童语料证据、灰度和 LiveKit 回滚步骤分开；未把 synthetic/fake 测试
+  包装成生产 SLO，也没有记录 secret 或原始音频。
+
+## 2026-08-03：媒体运行面与安全边界（未发布）
+
+- 在 2026-08-02 基础之上补齐了自有 Session Directory（内存/Redis、TTL、drain、
+  reconnect epoch）、coturn REST/HMAC 短期凭证、`/v1/media/sessions` 与设备媒体会话
+  façade；Control API 在没有 Redis 生命周期的 ASGI 测试客户端中也保持内存实现，生产
+  Redis 故障显式 fail-closed，不回退到本地路由；Redis reconnect/renew 使用 stream
+  epoch Lua CAS，HTTP stop 的 generation bump 额外要求当前 generation 连续递增，重复
+  claim 只接受完全相同的幂等投影。
+- 新增 `services/media_edge/` 自有 Go 参考状态机：session/generation/sample-range
+  gate、重连、bounded queue、JWT claim 校验、健康/ready/Prometheus HTTP 控制面和
+  race 测试。它没有复制 Pion/StreamCore/LiveKit 的 RTP/DTLS/SRTP/Opus 代码；真实
+  WebRTC 终结仍必须由经过审核的适配器提供，故 `MEDIA_RUNTIME_DEFAULT=livekit` 不变。
+- 新增 `voice_core` 的 Linux SBC 参考 NLMS AEC、设备 Ed25519 challenge、签名 OTA
+  manifest、设备命令解析、媒体 telemetry/OTel bridge、SLO/自动回滚判定，以及 synthetic
+  child-speech replay/chaos/load harness；H5 StreamCore 会按 Control API heartbeat 续租
+  media route，FunASR/Timeline 对同 revision final 和跨 task final 做 fail-closed 去重，
+  Go edge 默认显式鉴权且拒绝 sample gap/discontinuity。真实儿童录音、硬件声学、TURN
+  relay、生产 Redis 多实例和回滚演练仍不能用合成测试替代。
+- 验证：全量 Python `pytest`（通过）、H5 `npm test`（260 passed）、H5 `npm run build`、
+  Go `go test ./...` 与 `go test -race ./...`、定向 Control/voice_core 测试、Ruff、strict
+  mypy、Proto descriptor 编译和 `git diff --check` 均通过。曾误用 H5 不支持的
+  `--runInBand`，该命令失败不代表测试失败，随后已用项目原生命令重跑通过。
+- 计划逐项审计见 `docs/media-runtime-plan-audit.md`。该审计明确：`services/media_edge`
+  是自有状态机/协议参考入口，并未重写 DTLS/SRTP/Opus/RTP；在真实 WebRTC、Voice Core
+  bridge、Linux AEC、150--300 条监护人授权儿童语料、coturn/Redis 多实例和回滚演练完成
+  前，`MEDIA_RUNTIME_DEFAULT=livekit` 不变。
+- 本轮未发布、未切换 LiveKit、未提交/推送；工作树内原有小程序素材、营销文档和脚本改动
+  保持不动。
+
+## 2026-08-02：全双工整改基础（未发布）
+
+- 已按 `memoria_streamcore_full_duplex_remediation_plan.md` 落地自有媒体契约基础：
+  Sample Clock `SpeechTimeline`、FunASR task/sample watermark、严格 generation/response
+  lease、Playback ACK ledger、adaptive energy VAD、中文控制词 KWS、media-v1 JSON/Proto
+  契约和有界 in-process Media Bridge；实现位于 `services/agent/src/voice_core/`。
+- H5 新增浏览器原生 `StreamCoreTransport` 与 factory，Control API 增加 server-owned
+  `media_runtime`/LiveKit fallback/短期媒体 JWT；默认 `livekit`，小程序不参与迁移。
+- 本轮没有引入 StreamCore/Pion 代码，也没有切换生产链路。Go Media Edge、coturn、Redis
+  Session Directory、Linux AEC、设备 OTA/证书和儿童真实音频 SLO 仍须独立阶段验收；详见
+  `docs/media-runtime-foundation.md`。
+- 已验证：全量 Python `pytest`、全量 H5 Vitest（258 passed）、H5 production build、
+  Control API 会话/媒体测试、Ruff、strict mypy、`git diff --check` 和三份 Proto 的
+  `protoc` descriptor 编译。
+
 ## 当前状态
 
 - `20260802-142257` 已提交、推送并于 `2026-08-02T14:30Z` 原子切换 runtime，H5 随后切换至同 tag；默认主 LLM、打断语义、Control API 日回顾、记忆/Persona 提取均使用百炼 `bailian_deepseek / deepseek-v4-flash`，复用 `DASHSCOPE_API_KEY` 与 OpenAI-compatible endpoint。百炼请求使用 `enable_thinking=false`，实时检索仍无已验证 resolver 时 fail-closed 为“我不知道。”显式 `qwen` 与直连 `deepseek` 仅作兼容覆盖，FunASR/Qwen 情绪 ASR/Omni 实验未误当作主 LLM。

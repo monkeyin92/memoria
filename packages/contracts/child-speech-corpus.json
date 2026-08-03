@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "status": "synthetic_ci_manifest",
+  "consent_required_for_recorded_audio": true,
+  "fixture_root": "tests/fixtures/child_speech",
+  "required_metadata": [
+    "expected_text",
+    "expected_turns",
+    "expected_interrupt",
+    "speaker_profile",
+    "noise",
+    "distance_cm"
+  ],
+  "fixtures": [
+    {"id": "child_clean_001", "kind": "child_clean", "expected_text": "你好", "expected_turns": 1, "expected_interrupt": false, "speaker_profile": "child", "noise": "none", "distance_cm": 50},
+    {"id": "child_clean_002", "kind": "child_clean", "expected_text": "我想听故事", "expected_turns": 1, "expected_interrupt": false, "speaker_profile": "child", "noise": "none", "distance_cm": 100},
+    {"id": "child_pause_001", "kind": "child_pause", "expected_text": "然后再说", "expected_turns": 1, "expected_interrupt": false, "speaker_profile": "child", "noise": "none", "distance_cm": 50},
+    {"id": "tv_background_001", "kind": "tv_background", "expected_text": "今天开心", "expected_turns": 1, "expected_interrupt": false, "speaker_profile": "child", "noise": "tv", "distance_cm": 150},
+    {"id": "echo_001", "kind": "assistant_playback_echo", "expected_text": "停一下", "expected_turns": 0, "expected_interrupt": true, "speaker_profile": "synthetic", "noise": "echo", "distance_cm": 50},
+    {"id": "stop_001", "kind": "stop_commands", "expected_text": "停一下", "expected_turns": 0, "expected_interrupt": true, "speaker_profile": "child", "noise": "none", "distance_cm": 50},
+    {"id": "backchannel_001", "kind": "backchannels", "expected_text": "嗯嗯", "expected_turns": 1, "expected_interrupt": false, "speaker_profile": "child", "noise": "none", "distance_cm": 50},
+    {"id": "reconnect_001", "kind": "network_reconnect", "expected_text": "继续", "expected_turns": 1, "expected_interrupt": false, "speaker_profile": "child", "noise": "network", "distance_cm": 100}
+  ]
+}

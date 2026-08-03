@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package memoria.media.v1;
+
+option go_package = "github.com/monkeyin92/memoria-media-runtime/gen/media/v1;mediav1";
+
+message DeviceIdentity {
+  string device_id = 1;
+  string hardware_model = 2;
+  string firmware_version = 3;
+  bytes public_key = 4;
+}
+
+message DeviceCommand {
+  string command_id = 1;
+  string topic = 2;
+  uint32 ttl_ms = 3;
+  uint64 issued_monotonic_ms = 4;
+  bytes json_payload = 5;
+}
+
+message DeviceCommandAck {
+  string command_id = 1;
+  string status = 2;
+  string message = 3;
+  uint64 device_monotonic_ms = 4;
+}

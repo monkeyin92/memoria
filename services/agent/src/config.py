@@ -65,7 +65,7 @@ def _secure_internal_url(value: str) -> bool:
     parsed = urlsplit(value)
     return parsed.scheme == "https" or (
         parsed.scheme == "http"
-        and parsed.hostname in {"control-api", "localhost", "127.0.0.1", "::1"}
+        and parsed.hostname in {"control-api", "agent", "localhost", "127.0.0.1", "::1"}
     )
 
 
@@ -128,6 +128,67 @@ class AgentSettings(BaseSettings):
     livekit_adaptive_interruption: bool = Field(default=True, alias="LIVEKIT_ADAPTIVE_INTERRUPTION")
     # LiveKit preemptive LLM before EOU — default off; stream phrase TTS is the safe path.
     preemptive_generation: bool = Field(default=False, alias="PREEMPTIVE_GENERATION")
+
+    # The media-runtime experiment is deliberately fail-closed.  LiveKit is
+    # still the production default until a separately deployed media edge has
+    # passed the full audio/reconnect gate.
+    media_runtime_default: Literal["livekit", "streamcore"] = Field(
+        default="livekit", alias="MEDIA_RUNTIME_DEFAULT"
+    )
+    streamcore_experiment_percent: int = Field(
+        default=0, ge=0, le=100, alias="STREAMCORE_EXPERIMENT_PERCENT"
+    )
+    streamcore_kill_switch: bool = Field(default=False, alias="STREAMCORE_KILL_SWITCH")
+    streamcore_whip_url: str = Field(default="", alias="STREAMCORE_WHIP_URL")
+    media_bridge_grpc_enabled: bool = Field(
+        default=False, alias="MEDIA_BRIDGE_GRPC_ENABLED"
+    )
+    media_bridge_grpc_addr: str = Field(
+        default="127.0.0.1:7001", alias="MEDIA_BRIDGE_GRPC_ADDR"
+    )
+    media_bridge_mtls: bool = Field(default=False, alias="MEDIA_BRIDGE_MTLS")
+    media_bridge_tls_cert_file: str = Field(
+        default="", alias="MEDIA_BRIDGE_TLS_CERT_FILE"
+    )
+    media_bridge_tls_key_file: str = Field(
+        default="", alias="MEDIA_BRIDGE_TLS_KEY_FILE"
+    )
+    media_bridge_client_ca_file: str = Field(
+        default="", alias="MEDIA_BRIDGE_CLIENT_CA_FILE"
+    )
+    media_bridge_max_pending_audio_frames: int = Field(
+        default=100, ge=1, le=1000, alias="MEDIA_BRIDGE_MAX_PENDING_AUDIO_FRAMES"
+    )
+    media_bridge_max_pending_messages: int = Field(
+        default=128, ge=1, le=2000, alias="MEDIA_BRIDGE_MAX_PENDING_MESSAGES"
+    )
+    media_slo_report_enabled: bool = Field(
+        default=False, alias="MEDIA_SLO_REPORT_ENABLED"
+    )
+    media_slo_report_url: str = Field(
+        default="http://control-api:8000/v1/internal/media-runtime/slo",
+        alias="MEDIA_SLO_REPORT_URL",
+    )
+    media_slo_metrics_url: str = Field(
+        default="http://agent:9090/",
+        alias="MEDIA_SLO_METRICS_URL",
+    )
+    media_slo_report_token: SecretStr = Field(
+        default=SecretStr(""), alias="MEDIA_SLO_REPORT_TOKEN"
+    )
+    media_slo_report_interval_s: float = Field(
+        default=30.0, ge=5.0, le=900.0, alias="MEDIA_SLO_REPORT_INTERVAL_S"
+    )
+    media_slo_report_timeout_s: float = Field(
+        default=2.0, ge=0.1, le=30.0, alias="MEDIA_SLO_REPORT_TIMEOUT_S"
+    )
+    media_stream_epoch_enabled: bool = Field(
+        default=True, alias="MEDIA_STREAM_EPOCH_ENABLED"
+    )
+    otel_exporter_otlp_endpoint: str = Field(
+        default="", alias="OTEL_EXPORTER_OTLP_ENDPOINT"
+    )
+    prometheus_port: int = Field(default=9090, ge=1, le=65535, alias="PROMETHEUS_PORT")
 
     dashscope_api_key: str = Field(default="", alias="DASHSCOPE_API_KEY")
     dashscope_ws_url: str = Field(default="", alias="DASHSCOPE_WS_URL")
@@ -552,6 +613,26 @@ class AgentSettings(BaseSettings):
         ):
             object.__setattr__(self, "listener_cue_playback", "main_track")
         if self.environment == "production":
+            if self.media_slo_report_enabled:
+                if not _secure_internal_url(self.media_slo_report_url):
+                    raise ValueError("production media SLO reporter requires a secure URL")
+                if not _secure_internal_url(self.media_slo_metrics_url):
+                    raise ValueError("production media SLO reporter requires an internal metrics URL")
+                if len(self.media_slo_report_token.get_secret_value()) < 32:
+                    raise ValueError("production media SLO reporter requires MEDIA_SLO_REPORT_TOKEN")
+            if self.media_bridge_grpc_enabled:
+                if not self.media_bridge_mtls:
+                    raise ValueError("production media bridge requires MEDIA_BRIDGE_MTLS=true")
+                if not all(
+                    (
+                        self.media_bridge_tls_cert_file.strip(),
+                        self.media_bridge_tls_key_file.strip(),
+                        self.media_bridge_client_ca_file.strip(),
+                    )
+                ):
+                    raise ValueError(
+                        "production media bridge requires certificate, key and client CA files"
+                    )
             if self.livekit_url.startswith("ws://") or self.livekit_url.startswith("http://"):
                 raise ValueError("production forbids plaintext media/control URLs")
             heartbeat_token = self.internal_token("agent_heartbeat")

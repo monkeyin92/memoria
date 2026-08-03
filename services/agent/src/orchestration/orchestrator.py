@@ -246,6 +246,73 @@ class Orchestrator:
     ) -> CancellationContext:
         return CancellationContext.capture(fence or self.fence)
 
+    async def accept_authoritative_fence(
+        self,
+        fence: GenerationFence,
+        *,
+        cause: str = "media_generation_control",
+    ) -> bool:
+        """Install a monotonic fence received from the media boundary.
+
+        Media Edge is allowed to publish the cancellation generation. The
+        Voice Core consumes that exact fence instead of deriving a local
+        ``generation_id + 1``. Existing provider tasks are cancelled before
+        the new fence becomes visible; stale callbacks are then rejected by
+        ``FenceGate``.
+        """
+
+        assert self.state_machine is not None
+        assert self.fence_gate is not None
+        async with self._state_lock:
+            current = self.fence
+            if fence.session_id != self.session_id:
+                return False
+            if (
+                fence.turn_id < current.turn_id
+                or (
+                    fence.turn_id == current.turn_id
+                    and fence.generation_id < current.generation_id
+                )
+                or (
+                    fence.turn_id == current.turn_id
+                    and fence.generation_id == current.generation_id
+                    and fence.tool_epoch < current.tool_epoch
+                )
+            ):
+                return False
+            if fence.matches(current):
+                return True
+
+            # Cancellation is a correctness fence, not a queue-clearing hint.
+            self._tts_cancel.set()
+            for task in (self._active_llm_task, self._active_tts_task):
+                if task is not None and not task.done():
+                    task.cancel()
+            for record in self.task_manager.tasks.values():
+                if record.finished or not record.fence.matches(current):
+                    continue
+                if record.cancellable:
+                    record.cancel_event.set()
+                    if not record.task.done():
+                        record.task.cancel()
+
+            self.state_machine.fence = fence
+            self.fence_gate.update(fence)
+            if self.segmenter is not None:
+                self.segmenter.reset(fence)
+            if self.state in {
+                ConversationState.THINKING,
+                ConversationState.SPEAKING,
+                ConversationState.INTERRUPTION_PENDING,
+                ConversationState.TOOL_WAITING,
+            } and self.state_machine.can_transition(TransitionEvent.STOP_RESPONSE):
+                self.state_machine.apply(
+                    TransitionEvent.STOP_RESPONSE,
+                    cause=cause,
+                    new_fence=fence,
+                )
+            return True
+
     @staticmethod
     def _generation_fence(
         cancellation: GenerationFence | CancellationContext,

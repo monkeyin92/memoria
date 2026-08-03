@@ -55,6 +55,7 @@ from services.agent.src.orchestration.speech_epoch_assembler import (
     AssembledUserTurn,
     SpeechEpochAssembler,
 )
+from services.agent.src.orchestration.speech_timeline import SpeechSegment, SpeechTimeline
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
 from services.agent.src.orchestration.turn_revision import TurnRevisionTracker
 from services.agent.src.orchestration.utterance_router import (
@@ -186,6 +187,10 @@ class DuplexRuntime:
     _next_user_prompt_kind: str = "spontaneous"
     _fresh_user_speech: bool = False
     _speech_epoch_assembler: SpeechEpochAssembler = field(default_factory=SpeechEpochAssembler)
+    # Sample-clock timeline is the migration seam for media runtimes.  The
+    # legacy text-matching assembler remains for LiveKit callbacks until the
+    # transport starts supplying explicit ranges.
+    _speech_timeline: SpeechTimeline = field(default_factory=SpeechTimeline)
     _consumed_canonical_speech_epoch: int | None = None
     _consumed_canonical_snapshot_bound: bool = False
     _persona_evidence_eligible: bool = False
@@ -326,6 +331,25 @@ class DuplexRuntime:
         fence: GenerationFence | None = None,
     ) -> CancellationContext:
         return self.orchestrator.cancellation_context(fence)
+
+    async def accept_media_generation(
+        self,
+        fence: GenerationFence,
+        *,
+        cause: str = "media_generation_control",
+    ) -> bool:
+        """Consume the exact generation published by Media Edge."""
+
+        accepted = await self.orchestrator.accept_authoritative_fence(fence, cause=cause)
+        if accepted:
+            self.mark_audio_event("media_generation_accepted", fence=fence)
+        else:
+            self.mark_audio_event(
+                "media_generation_rejected",
+                status="ignored",
+                fence=fence,
+            )
+        return accepted
 
     @property
     def pending_realtime_request(self) -> PendingRealtimeRequest | None:
@@ -2487,6 +2511,21 @@ class DuplexRuntime:
     def consume_canonical_user_turn(self, raw_text: str) -> str | None:
         """Resolve the callback against one or more matching VAD speech epochs."""
 
+        # Media runtimes that provide a sample-clock interval are authoritative
+        # for text assembly.  Keep the callback/FIFO assembler only as a
+        # compatibility fallback for legacy LiveKit callbacks with no range.
+        pending = self._speech_timeline.pending
+        if pending:
+            stream_epoch = self._speech_timeline.stream_epoch
+            if stream_epoch is not None:
+                canonical = self.consume_media_user_turn(
+                    stream_epoch=stream_epoch,
+                    start_sample=min(item.capture_start_sample for item in pending),
+                    end_sample=max(item.capture_end_sample for item in pending),
+                )
+                if canonical:
+                    return canonical
+
         assembled: AssembledUserTurn = self._speech_epoch_assembler.consume(
             raw_text,
             fallback_epoch=self._speaker_epoch if self._fresh_user_speech else None,
@@ -2510,6 +2549,33 @@ class DuplexRuntime:
             )
         return assembled.text
 
+    def consume_media_user_turn(
+        self,
+        *,
+        stream_epoch: int,
+        start_sample: int,
+        end_sample: int,
+    ) -> str | None:
+        """Commit one explicit sample range and return canonical ASR text.
+
+        This is the preferred entry point for a Media Edge bridge.  It never
+        guesses a turn from callback order or from the currently latest
+        speaker; the caller supplies the frozen epoch and interval.
+        """
+
+        canonical = self._speech_timeline.canonical_text(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
+        if not canonical:
+            self._consumed_canonical_snapshot_bound = False
+            return None
+        self._consumed_canonical_snapshot_bound = True
+        self._consumed_canonical_speech_epoch = self._speaker_epoch
+        self._fresh_user_speech = False
+        return canonical
+
     @property
     def consumed_canonical_speech_epoch(self) -> int | None:
         return self._consumed_canonical_speech_epoch
@@ -2517,6 +2583,35 @@ class DuplexRuntime:
     @property
     def consumed_canonical_snapshot_bound(self) -> bool:
         return self._consumed_canonical_snapshot_bound
+
+    @property
+    def speech_timeline(self) -> SpeechTimeline:
+        """Expose the sample-clock migration seam to a media bridge."""
+
+        return self._speech_timeline
+
+    def start_media_stream_epoch(self, stream_epoch: int) -> bool:
+        """Fence media events after a reconnect/discontinuity."""
+
+        return self._speech_timeline.start_stream_epoch(stream_epoch)
+
+    def ingest_media_speech_segment(self, segment: SpeechSegment) -> bool:
+        """Accept only range-stamped events from the active media epoch."""
+
+        return self._speech_timeline.add(segment)
+
+    def commit_media_speech_range(
+        self,
+        *,
+        stream_epoch: int,
+        start_sample: int,
+        end_sample: int,
+    ) -> tuple[SpeechSegment, ...]:
+        return self._speech_timeline.commit_range(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
 
     def discard_pending_user_transcript(self) -> None:
         """Discard only the current endpoint buffer, never older queued callbacks."""
@@ -2874,6 +2969,45 @@ class DuplexRuntime:
             # No audio path — still commit heard text as full if never interrupted.
             await self.orchestrator.begin_speaking([], self._pending_assistant_text)
             await self.orchestrator.finish_speaking(tools_active=tools_active)
+
+    async def on_media_playback_done(
+        self,
+        fence: GenerationFence,
+        heard_text: str,
+        *,
+        tools_active: bool = False,
+    ) -> bool:
+        """Commit the exact sample-ACKed text for a media-v1 playback.
+
+        The generic LiveKit callback estimates heard text from wall-clock
+        playout. A media device/browser can provide a stronger sample
+        watermark, so the ledger's exact text must be passed through rather
+        than re-estimated with a safety margin.
+        """
+
+        if not self.fence.matches(fence):
+            return False
+        normalized = heard_text.strip()
+        if self.orchestrator.state is ConversationState.SPEAKING:
+            await self.orchestrator.finish_livekit_playback(
+                tools_active=tools_active,
+                synchronized_transcript=normalized,
+                reply_fence=fence,
+            )
+        elif self.orchestrator.state is ConversationState.THINKING and normalized:
+            await self.orchestrator.begin_speaking([], normalized)
+            await self.orchestrator.finish_livekit_playback(
+                tools_active=tools_active,
+                synchronized_transcript=normalized,
+                reply_fence=fence,
+            )
+        else:
+            return False
+        self._played_assistant_text = normalized
+        self._pending_assistant_text = ""
+        self._was_speaking = False
+        self.set_interaction_phase(InteractionPhase.LISTENING, cause="media_playback_ack")
+        return True
 
     def set_interrupt_yield(self, speaker: Callable[[str], Awaitable[None]] | None) -> None:
         """speaker(phrase) — phrase is chosen from interrupt semantics."""

@@ -45,6 +45,59 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.interrupt_semantic_model == "deepseek-v4-flash"
     assert s.interrupt_semantic_timeout_s == 1.2
     assert s.miniprogram_kws_enabled is False
+    assert s.media_bridge_grpc_enabled is False
+    assert s.media_bridge_mtls is False
+    assert s.media_bridge_max_pending_audio_frames == 100
+    assert s.media_slo_report_enabled is False
+    assert s.media_slo_metrics_url == "http://agent:9090/"
+    assert s.media_slo_report_interval_s == 30.0
+
+
+def test_production_media_bridge_requires_mtls_material(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
+    monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEDIA_BRIDGE_GRPC_ENABLED", "true")
+    monkeypatch.setenv("MEDIA_BRIDGE_MTLS", "false")
+
+    with pytest.raises(ValidationError, match="media bridge requires MEDIA_BRIDGE_MTLS"):
+        AgentSettings()
+
+
+def test_production_media_slo_reporter_requires_scoped_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
+    monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEDIA_SLO_REPORT_ENABLED", "true")
+    monkeypatch.setenv("MEDIA_SLO_REPORT_URL", "http://control-api:8000/v1/internal/media-runtime/slo")
+    monkeypatch.setenv("MEDIA_SLO_REPORT_TOKEN", "too-short")
+
+    with pytest.raises(ValidationError, match="media SLO reporter requires MEDIA_SLO_REPORT_TOKEN"):
+        AgentSettings()
+
+
+def test_media_bridge_limits_and_tls_paths_are_loaded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MEDIA_BRIDGE_GRPC_ENABLED", "true")
+    monkeypatch.setenv("MEDIA_BRIDGE_MTLS", "true")
+    monkeypatch.setenv("MEDIA_BRIDGE_TLS_CERT_FILE", str(tmp_path / "server.crt"))
+    monkeypatch.setenv("MEDIA_BRIDGE_TLS_KEY_FILE", str(tmp_path / "server.key"))
+    monkeypatch.setenv("MEDIA_BRIDGE_CLIENT_CA_FILE", str(tmp_path / "client-ca.crt"))
+    monkeypatch.setenv("MEDIA_BRIDGE_MAX_PENDING_AUDIO_FRAMES", "64")
+    monkeypatch.setenv("MEDIA_BRIDGE_MAX_PENDING_MESSAGES", "256")
+
+    settings = AgentSettings()
+
+    assert settings.media_bridge_grpc_enabled is True
+    assert settings.media_bridge_mtls is True
+    assert settings.media_bridge_max_pending_audio_frames == 64
+    assert settings.media_bridge_max_pending_messages == 256
 
 
 def test_funasr_vocabulary_and_noise_threshold_are_explicit(

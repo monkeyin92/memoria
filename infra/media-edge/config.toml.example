@@ -1,0 +1,25 @@
+[server]
+http_addr = ":8080"
+metrics_addr = ":9090"
+media_only = true
+max_pending_frames = 100
+
+[voice_core]
+# The Go entrypoint reads these from environment variables; this section is a
+# deployment checklist, not a second source of secret values.
+address_env = "MEDIA_EDGE_VOICE_CORE_ADDR"
+required_env = "MEDIA_EDGE_VOICE_CORE_REQUIRED"
+ca_file_env = "MEDIA_EDGE_VOICE_CORE_CA_FILE"
+client_cert_file_env = "MEDIA_EDGE_VOICE_CORE_CLIENT_CERT_FILE"
+client_key_file_env = "MEDIA_EDGE_VOICE_CORE_CLIENT_KEY_FILE"
+
+[auth]
+# This value must be the same secret as Control API STREAMCORE_TOKEN_SECRET.
+jwt_secret_env = "MEDIA_EDGE_JWT_SECRET"
+jwt_issuer_env = "MEDIA_EDGE_JWT_ISSUER"
+jwt_audience_env = "MEDIA_EDGE_JWT_AUDIENCE"
+
+[rollout]
+# The reference edge stays out of the default path until a real WebRTC
+# adapter, Voice Core bridge, and audio SLO evidence are attached.
+default_runtime = "livekit"

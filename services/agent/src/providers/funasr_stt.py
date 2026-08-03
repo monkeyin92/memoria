@@ -32,6 +32,7 @@ from websockets.asyncio.client import ClientConnection
 
 from services.agent.src.orchestration.stable_prefix import StablePrefixTracker
 from services.agent.src.providers.funasr_protocol import (
+    ASRResult,
     FunASRSentence,
     FunASRServerEvent,
     build_continue_task_context,
@@ -40,6 +41,7 @@ from services.agent.src.providers.funasr_protocol import (
     conversation_item_to_funasr_context,
     parse_server_message,
     result_trace_metrics,
+    sentence_to_asr_result,
 )
 from services.agent.src.providers.reliability import CircuitBreaker
 
@@ -57,7 +59,7 @@ class FunASRConfig:
     max_sentence_silence_ms: int = 550
     semantic_punctuation: bool = False
     heartbeat: bool = True
-    reconnect_audio_ms: int = 1500
+    reconnect_audio_ms: int = 400
     connect_timeout_s: float = 5.0
     result_timeout_s: float = 8.0
     conversation_context_enabled: bool = False
@@ -86,7 +88,7 @@ class FunASRConfig:
             max_sentence_silence_ms=int(e.get("FUNASR_MAX_SENTENCE_SILENCE_MS", "550")),
             semantic_punctuation=e.get("FUNASR_SEMANTIC_PUNCTUATION", "false").lower() == "true",
             heartbeat=e.get("FUNASR_HEARTBEAT", "true").lower() == "true",
-            reconnect_audio_ms=int(e.get("FUNASR_RECONNECT_AUDIO_MS", "1500")),
+            reconnect_audio_ms=int(e.get("FUNASR_RECONNECT_AUDIO_MS", "400")),
             connect_timeout_s=float(e.get("FUNASR_CONNECT_TIMEOUT_S", "5")),
             result_timeout_s=float(e.get("FUNASR_RESULT_TIMEOUT_S", "8")),
             conversation_context_enabled=(
@@ -114,13 +116,59 @@ class FunASRSession:
         self._breaker = CircuitBreaker()
         self._finishing = False
         self._pcm_ring: collections.deque[bytes] = collections.deque()
+        self._pcm_ring_ranges: collections.deque[tuple[int, int]] = collections.deque()
         self._pcm_ring_bytes = 0
         self._max_ring_bytes = int(config.sample_rate * 2 * config.reconnect_audio_ms / 1000)
         self._context: tuple[dict[str, object], ...] = ()
+        self._task_epoch = 0
+        self._task_sample_origin = 0
+        self._last_sent_sample = 0
+        self._last_provider_acked_sample = 0
+        self._last_committed_sample = 0
+        self._last_emitted_final_sample = 0
 
     @property
     def failed(self) -> bool:
         return self._failed
+
+    @property
+    def task_epoch(self) -> int:
+        return self._task_epoch
+
+    @property
+    def task_sample_origin(self) -> int:
+        return self._task_sample_origin
+
+    @property
+    def last_sent_sample(self) -> int:
+        return self._last_sent_sample
+
+    @property
+    def last_provider_acked_sample(self) -> int:
+        return self._last_provider_acked_sample
+
+    @property
+    def last_committed_sample(self) -> int:
+        return self._last_committed_sample
+
+    @property
+    def last_emitted_final_sample(self) -> int:
+        return self._last_emitted_final_sample
+
+    def mark_committed_sample(self, sample: int) -> None:
+        if sample < 0:
+            raise ValueError("committed sample must be non-negative")
+        self._last_committed_sample = max(self._last_committed_sample, sample)
+
+    def replay_start_sample(self) -> int:
+        """Return the earliest sample worth replaying after reconnect."""
+
+        window = max(1, self.config.sample_rate * self.config.reconnect_audio_ms // 1000)
+        return max(
+            self._last_provider_acked_sample,
+            self._last_committed_sample,
+            self._last_sent_sample - window,
+        )
 
     async def connect(self) -> None:
         if self._closed:
@@ -134,6 +182,8 @@ class FunASRSession:
         self._breaker.record_success()
         self._ws = ws
         self.task_id = task_id
+        self._task_epoch += 1
+        self._task_sample_origin = 0
         self._failed = False
         self._started.set()
         self._ready.set()
@@ -212,6 +262,22 @@ class FunASRSession:
                         self._failed = True
                         self._breaker.record_failure()
                     await self.events.put(ev)
+                    if ev.event == "result-generated" and ev.sentence is not None:
+                        end_ms = ev.sentence.end_ms or ev.sentence.begin_ms
+                        ack = max(
+                            0,
+                            self._task_sample_origin
+                            + round(end_ms * self.config.sample_rate / 1000),
+                        )
+                        self._last_provider_acked_sample = max(
+                            self._last_provider_acked_sample,
+                            min(ack, self._last_sent_sample),
+                        )
+                        if ev.sentence.sentence_end:
+                            self._last_emitted_final_sample = max(
+                                self._last_emitted_final_sample,
+                                min(ack, self._last_sent_sample),
+                            )
                     if ev.event in ("task-finished", "task-failed"):
                         if ev.event == "task-failed":
                             self._ready.clear()
@@ -246,6 +312,7 @@ class FunASRSession:
                 await failed_ws.close()
             started_at = asyncio.get_running_loop().time()
             try:
+                replay_start = self.replay_start_sample()
                 self._breaker.before_request()
                 ws, task_id, startup_events = await self._open_with_retry()
             except Exception:
@@ -254,11 +321,13 @@ class FunASRSession:
             try:
                 self._ws = ws
                 self.task_id = task_id
+                self._task_epoch += 1
+                self._task_sample_origin = replay_start
                 self._failed = False
                 for ev in startup_events:
                     await self.events.put(ev)
                 if asyncio.get_running_loop().time() - started_at <= 2.0:
-                    replay = b"".join(self._pcm_ring)
+                    replay = self._replay_pcm()
                     if replay:
                         await ws.send(replay)
                 if self._finishing:
@@ -274,17 +343,56 @@ class FunASRSession:
             return True
 
     def _push_ring(self, pcm: bytes) -> None:
+        start = self._last_sent_sample
+        end = start + len(pcm) // 2
         self._pcm_ring.append(pcm)
+        self._pcm_ring_ranges.append((start, end))
         self._pcm_ring_bytes += len(pcm)
         while self._pcm_ring_bytes > self._max_ring_bytes and self._pcm_ring:
             old = self._pcm_ring.popleft()
+            self._pcm_ring_ranges.popleft()
             self._pcm_ring_bytes -= len(old)
 
-    async def send_pcm(self, pcm: bytes, *, replayed: bool = False) -> None:
+    def _replay_pcm(self) -> bytes:
+        """Slice the bounded ring at the reconnect watermark."""
+
+        start_sample = self.replay_start_sample()
+        chunks: list[bytes] = []
+        for pcm, (frame_start, frame_end) in zip(
+            self._pcm_ring,
+            self._pcm_ring_ranges,
+            strict=True,
+        ):
+            if frame_end <= start_sample:
+                continue
+            offset_samples = max(0, start_sample - frame_start)
+            chunks.append(pcm[offset_samples * 2 :])
+        return b"".join(chunks)
+
+    async def send_pcm(
+        self,
+        pcm: bytes,
+        *,
+        replayed: bool = False,
+        capture_start_sample: int | None = None,
+    ) -> None:
         if self._closed or self._ws is None:
             raise RuntimeError("FunASR session not connected")
+        if not pcm or len(pcm) % 2:
+            raise ValueError("FunASR PCM must be non-empty 16-bit samples")
         if not replayed:
+            start = self._last_sent_sample if capture_start_sample is None else capture_start_sample
+            if start < self._last_sent_sample:
+                raise ValueError("capture sample position moved backwards")
+            if start > self._last_sent_sample:
+                # A capture discontinuity must not make replay bytes appear to
+                # belong to the missing interval.
+                self._pcm_ring.clear()
+                self._pcm_ring_ranges.clear()
+                self._pcm_ring_bytes = 0
+            self._last_sent_sample = start
             self._push_ring(pcm)
+            self._last_sent_sample += len(pcm) // 2
         await self._ready.wait()
         ws = self._ws
         if ws is None:
@@ -396,9 +504,30 @@ class FunASRRecognizeStream(stt.RecognizeStream):
         self._session: FunASRSession | None = None
         self._prefix_tracker = StablePrefixTracker()
         self._speaking = False
-        self._final_sentence_ids: set[tuple[str, int]] = set()
+        # Sentence IDs are stable across a FunASR reconnect.  Keying by
+        # provider task would let a replayed final cross the task boundary.
+        self._final_sentence_ids: set[str] = set()
+        self._sentence_revisions: dict[str, int] = {}
         self._provider_task_id = ""
         self._provider_task_epoch = 0
+        self._asr_results: deque[ASRResult] = deque(maxlen=64)
+        self._stream_epoch = 1
+        self._last_emitted_final_sample = 0
+
+    @property
+    def asr_results(self) -> tuple[ASRResult, ...]:
+        """Recent range-stamped results for a Voice Core/timeline adapter."""
+
+        return tuple(self._asr_results)
+
+    def mark_committed_sample(self, sample: int) -> None:
+        if self._session is not None:
+            self._session.mark_committed_sample(sample)
+
+    def set_stream_epoch(self, stream_epoch: int) -> None:
+        if stream_epoch < 1:
+            raise ValueError("stream_epoch must be positive")
+        self._stream_epoch = stream_epoch
 
     def update_context(self, context: tuple[dict[str, object], ...]) -> None:
         self._pending_context = tuple(context)
@@ -451,6 +580,7 @@ class FunASRRecognizeStream(stt.RecognizeStream):
     async def _send_audio(self, session: FunASRSession) -> None:
         samples_per_chunk = max(1, self._config.sample_rate * self._config.chunk_ms // 1000)
         byte_stream = bytearray()
+        capture_sample = 0
         async for data in self._input_ch:
             if isinstance(data, rtc.AudioFrame):
                 pcm = bytes(data.data)
@@ -464,17 +594,19 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                     chunk = bytes(byte_stream[:chunk_bytes])
                     del byte_stream[:chunk_bytes]
                     self._stt_instance.observe_pcm(chunk)
-                    await session.send_pcm(chunk)
+                    await session.send_pcm(chunk, capture_start_sample=capture_sample)
+                    capture_sample += len(chunk) // 2
             elif isinstance(data, self._FlushSentinel):
                 if byte_stream:
                     remaining = bytes(byte_stream)
                     self._stt_instance.observe_pcm(remaining)
-                    await session.send_pcm(remaining)
+                    await session.send_pcm(remaining, capture_start_sample=capture_sample)
+                    capture_sample += len(remaining) // 2
                     byte_stream.clear()
         if byte_stream:
             remaining = bytes(byte_stream)
             self._stt_instance.observe_pcm(remaining)
-            await session.send_pcm(remaining)
+            await session.send_pcm(remaining, capture_start_sample=capture_sample)
         await session.finish()
 
     async def _recv_events(self, session: FunASRSession) -> None:
@@ -515,6 +647,38 @@ class FunASRRecognizeStream(stt.RecognizeStream):
             if ev.task_id and ev.task_id != self._provider_task_id:
                 self._provider_task_id = ev.task_id
                 self._provider_task_epoch += 1
+            task_epoch = max(1, session.task_epoch, self._provider_task_epoch)
+            sentence_key = str(sent.sentence_id)
+            revision = self._sentence_revisions.get(sentence_key, 0) + 1
+            self._sentence_revisions[sentence_key] = revision
+            asr_result = sentence_to_asr_result(
+                sent,
+                task_epoch=task_epoch,
+                sample_rate=self._config.sample_rate,
+                revision=revision,
+                stream_epoch=self._stream_epoch,
+                sample_offset=session.task_sample_origin,
+            )
+            if asr_result.capture_end_sample <= session.last_committed_sample:
+                logger.info(
+                    "late FunASR result ignored task_epoch=%s sentence_id=%s",
+                    task_epoch,
+                    sent.sentence_id,
+                )
+                continue
+            if sent.sentence_end and asr_result.capture_end_sample <= self._last_emitted_final_sample:
+                logger.info(
+                    "duplicate FunASR final behind sample watermark ignored sentence_id=%s",
+                    sent.sentence_id,
+                )
+                continue
+            if sent.sentence_end and sent.sentence_id > 0 and sentence_key in self._final_sentence_ids:
+                logger.info(
+                    "duplicate FunASR final ignored sentence_id=%s",
+                    sent.sentence_id,
+                )
+                continue
+            self._asr_results.append(asr_result)
             if not self._speaking and sent.text:
                 self._speaking = True
                 self._event_ch.send_nowait(
@@ -529,15 +693,12 @@ class FunASRRecognizeStream(stt.RecognizeStream):
             )
             request_id = session.task_id or ""
             if sent.sentence_end:
-                sentence_key = (ev.task_id, sent.sentence_id)
-                if sent.sentence_id > 0 and sentence_key in self._final_sentence_ids:
-                    logger.info(
-                        "duplicate FunASR final ignored sentence_id=%s",
-                        sent.sentence_id,
-                    )
-                    continue
                 if sent.sentence_id > 0:
                     self._final_sentence_ids.add(sentence_key)
+                self._last_emitted_final_sample = max(
+                    self._last_emitted_final_sample,
+                    asr_result.capture_end_sample,
+                )
                 self._event_ch.send_nowait(
                     stt.SpeechEvent(
                         type=stt.SpeechEventType.FINAL_TRANSCRIPT,

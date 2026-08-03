@@ -35,6 +35,12 @@ jobs:
         run: uv run ruff check .
       - name: Mypy
         run: uv run mypy services --strict
+      - name: Media proto generation is reproducible
+        run: |
+          uv run --extra dev python scripts/generate_media_proto.py
+          git diff --exit-code -- services/agent/src/voice_core/generated
+      - name: Media bridge contract smoke
+        run: uv run python scripts/media_runtime_smoke.py
       - name: Pytest
         run: uv run pytest --cov=services --cov-report=term-missing
         env:
@@ -69,6 +75,23 @@ jobs:
       - name: Build
         working-directory: apps/h5
         run: npm run build
+
+  media-edge:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/media_edge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Race test
+        run: go test -race ./...
 
   miniprogram:
     runs-on: ubuntu-latest

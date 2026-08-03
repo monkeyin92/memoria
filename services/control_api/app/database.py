@@ -214,6 +214,32 @@ CREATE TABLE IF NOT EXISTS account_deletions (
     last_error TEXT,
     deleted_counts_json TEXT NOT NULL DEFAULT '{}'
 );
+
+CREATE TABLE IF NOT EXISTS device_identities (
+    device_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    public_key_b64 TEXT NOT NULL UNIQUE,
+    firmware_channel TEXT NOT NULL CHECK (firmware_channel IN ('stable', 'canary', 'lab')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revoked_at TEXT,
+    FOREIGN KEY (account_id) REFERENCES profiles(user_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_identities_account
+ON device_identities(account_id, revoked_at);
+
+CREATE TABLE IF NOT EXISTS device_challenges (
+    nonce_hash CHAR(64) PRIMARY KEY,
+    device_id TEXT NOT NULL,
+    issued_at_ms INTEGER NOT NULL,
+    expires_at_ms INTEGER NOT NULL,
+    used_at_ms INTEGER,
+    FOREIGN KEY (device_id) REFERENCES device_identities(device_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_challenges_device
+ON device_challenges(device_id, expires_at_ms, used_at_ms);
 """
 
 _PROFILE_BOOLEAN_COLUMNS = {
@@ -581,6 +607,140 @@ class MemoryStore:
             """,
             (user_id, now, now),
         )
+
+    def register_device_identity(
+        self,
+        *,
+        device_id: str,
+        account_id: str,
+        public_key_b64: str,
+        firmware_channel: str,
+        now: str,
+    ) -> dict[str, Any]:
+        """Register one device public key without ever persisting its private key."""
+
+        with self._connection() as connection:
+            self._ensure_profile(connection, account_id, now)
+            existing = connection.execute(
+                "SELECT * FROM device_identities WHERE device_id = ?",
+                (device_id,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["account_id"]) != account_id
+                    or str(existing["public_key_b64"]) != public_key_b64
+                    or existing["revoked_at"] is not None
+                ):
+                    raise ValueError("device identity is already registered")
+                connection.execute(
+                    "UPDATE device_identities SET firmware_channel = ?, updated_at = ? "
+                    "WHERE device_id = ?",
+                    (firmware_channel, now, device_id),
+                )
+            else:
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO device_identities (
+                            device_id, account_id, public_key_b64, firmware_channel,
+                            created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (device_id, account_id, public_key_b64, firmware_channel, now, now),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise ValueError("device public key is already registered") from exc
+            row = connection.execute(
+                "SELECT * FROM device_identities WHERE device_id = ?",
+                (device_id,),
+            ).fetchone()
+            if row is None:  # pragma: no cover - same transaction inserted the row
+                raise RuntimeError("device identity was not persisted")
+            return dict(row)
+
+    def get_device_identity(self, *, device_id: str) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM device_identities WHERE device_id = ?",
+                (device_id,),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def revoke_device_identity(self, *, device_id: str, account_id: str, now: str) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                "UPDATE device_identities SET revoked_at = ?, updated_at = ? "
+                "WHERE device_id = ? AND account_id = ? AND revoked_at IS NULL",
+                (now, now, device_id, account_id),
+            )
+            return cursor.rowcount == 1
+
+    def issue_device_challenge(
+        self,
+        *,
+        nonce_hash: str,
+        device_id: str,
+        issued_at_ms: int,
+        expires_at_ms: int,
+    ) -> None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT revoked_at FROM device_identities WHERE device_id = ?",
+                (device_id,),
+            ).fetchone()
+            if row is None or row["revoked_at"] is not None:
+                raise ValueError("device identity is not active")
+            connection.execute(
+                "INSERT INTO device_challenges "
+                "(nonce_hash, device_id, issued_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)",
+                (nonce_hash, device_id, issued_at_ms, expires_at_ms),
+            )
+
+    def count_pending_device_challenges(self, *, device_id: str, now_ms: int) -> int:
+        """Bound unauthenticated bootstrap state before issuing another nonce."""
+
+        with self._connection() as connection:
+            connection.execute(
+                "DELETE FROM device_challenges "
+                "WHERE device_id = ? AND (used_at_ms IS NOT NULL OR expires_at_ms < ?)",
+                (device_id, now_ms),
+            )
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM device_challenges "
+                "WHERE device_id = ? AND used_at_ms IS NULL AND expires_at_ms >= ?",
+                (device_id, now_ms),
+            ).fetchone()
+            return int(row["count"] if row is not None else 0)
+
+    def consume_device_challenge(
+        self,
+        *,
+        nonce_hash: str,
+        device_id: str,
+        now_ms: int,
+    ) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE device_challenges
+                SET used_at_ms = ?
+                WHERE nonce_hash = ? AND device_id = ?
+                  AND used_at_ms IS NULL AND expires_at_ms >= ?
+                """,
+                (now_ms, nonce_hash, device_id, now_ms),
+            )
+            return cursor.rowcount == 1
+
+    def delete_device_identities(self, *, account_id: str) -> int:
+        with self._connection() as connection:
+            count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM device_identities WHERE account_id = ?",
+                    (account_id,),
+                ).fetchone()[0]
+            )
+            connection.execute("DELETE FROM device_identities WHERE account_id = ?", (account_id,))
+            return count
 
     def add_message(
         self,
@@ -1479,8 +1639,15 @@ class MemoryStore:
                         "SELECT COUNT(*) FROM auth_sessions WHERE user_id = ?", (user_id,)
                     ).fetchone()[0]
                 ),
+                "device_identities": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM device_identities WHERE account_id = ?",
+                        (user_id,),
+                    ).fetchone()[0]
+                ),
                 **preview_counts,
             }
+            connection.execute("DELETE FROM device_identities WHERE account_id = ?", (user_id,))
             connection.execute("DELETE FROM profiles WHERE user_id = ?", (user_id,))
             combined = {**deleted_counts, **counts}
             connection.execute(

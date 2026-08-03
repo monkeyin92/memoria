@@ -1,0 +1,240 @@
+"""Sample-clock based speech timeline.
+
+The LiveKit callback order is not an audio clock.  This module is deliberately
+provider-neutral: VAD, KWS and ASR all publish intervals on the same sample
+clock and a committed range is the only operation that consumes them.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+
+class SegmentKind(StrEnum):
+    VAD = "vad"
+    ASR_PARTIAL = "asr_partial"
+    ASR_FINAL = "asr_final"
+    KWS = "kws"
+
+
+@dataclass(frozen=True, slots=True)
+class SpeechSegment:
+    session_id: str
+    stream_epoch: int
+    provider_task_epoch: int
+    segment_id: str
+    revision: int
+    kind: SegmentKind
+    capture_start_sample: int
+    capture_end_sample: int
+    text: str = ""
+    final: bool = False
+    confidence: float | None = None
+    speaker_class: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.session_id:
+            raise ValueError("speech segment requires a session_id")
+        if self.stream_epoch < 1:
+            raise ValueError("stream_epoch must be positive")
+        if self.provider_task_epoch < 0:
+            raise ValueError("provider_task_epoch must be non-negative")
+        if not self.segment_id:
+            raise ValueError("speech segment requires a segment_id")
+        if self.revision < 1:
+            raise ValueError("revision must be positive")
+        if self.capture_start_sample < 0:
+            raise ValueError("capture_start_sample must be non-negative")
+        if self.capture_end_sample <= self.capture_start_sample:
+            raise ValueError("capture_end_sample must be greater than start")
+        if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("confidence must be between 0 and 1")
+
+
+@dataclass(slots=True)
+class SpeechTimeline:
+    """Interval store with a committed watermark and epoch fence.
+
+    A segment is accepted at most once per ``segment_id``/revision.  A higher
+    revision replaces the older provider result, while a final result always
+    wins over a partial at the same revision.  Events from an old epoch or
+    behind the committed watermark are rejected instead of being re-associated
+    with the newest turn.
+    """
+
+    _segments: list[SpeechSegment] = field(default_factory=list)
+    _current_stream_epoch: int | None = None
+    _committed_sample: int = 0
+    _last_segment_revision: dict[tuple[int, str], int] = field(default_factory=dict)
+    _dropped_late: int = 0
+    _dropped_epoch: int = 0
+
+    @property
+    def stream_epoch(self) -> int | None:
+        return self._current_stream_epoch
+
+    @property
+    def committed_sample(self) -> int:
+        return self._committed_sample
+
+    @property
+    def dropped_late(self) -> int:
+        return self._dropped_late
+
+    @property
+    def dropped_epoch(self) -> int:
+        return self._dropped_epoch
+
+    @property
+    def pending(self) -> tuple[SpeechSegment, ...]:
+        return tuple(self._segments)
+
+    def start_stream_epoch(self, stream_epoch: int) -> bool:
+        """Move to a new media epoch after a discontinuity.
+
+        Epochs are monotonic.  Moving forward drops all old pending events and
+        resets the sample watermark because sample positions are local to an
+        epoch.  Repeating the current epoch is harmless; going backwards is
+        rejected.
+        """
+
+        if stream_epoch < 1:
+            raise ValueError("stream_epoch must be positive")
+        current = self._current_stream_epoch
+        if current is not None and stream_epoch < current:
+            self._dropped_epoch += 1
+            return False
+        if current == stream_epoch:
+            return True
+        self._current_stream_epoch = stream_epoch
+        self._segments.clear()
+        self._last_segment_revision.clear()
+        self._committed_sample = 0
+        return True
+
+    def mark_discontinuity(self) -> int:
+        """Advance the epoch and return it for callers stamping new frames."""
+
+        next_epoch = (self._current_stream_epoch or 0) + 1
+        self.start_stream_epoch(next_epoch)
+        return next_epoch
+
+    def add(self, segment: SpeechSegment) -> bool:
+        """Add a timeline event, returning ``False`` when it is stale."""
+
+        current = self._current_stream_epoch
+        if current is None:
+            self.start_stream_epoch(segment.stream_epoch)
+            current = segment.stream_epoch
+        if segment.stream_epoch != current:
+            self._dropped_epoch += 1
+            return False
+        if segment.capture_end_sample <= self._committed_sample:
+            self._dropped_late += 1
+            return False
+
+        key = (segment.stream_epoch, segment.segment_id)
+        previous_revision = self._last_segment_revision.get(key)
+        if previous_revision is not None and segment.revision < previous_revision:
+            self._dropped_late += 1
+            return False
+
+        previous = next(
+            (
+                item
+                for item in self._segments
+                if item.stream_epoch == segment.stream_epoch
+                and item.segment_id == segment.segment_id
+            ),
+            None,
+        )
+        # A provider may reuse a revision while changing only its final bit.
+        # Once a final exists, an equal-revision partial must never roll it
+        # back into the canonical timeline.
+        if (
+            previous is not None
+            and previous_revision == segment.revision
+            and previous.final
+            and not segment.final
+        ):
+            self._dropped_late += 1
+            return False
+
+        # Replace the provider's previous revision rather than concatenating
+        # partials.  This is the key difference from callback/FIFO assembly.
+        self._segments = [
+            item
+            for item in self._segments
+            if not (item.stream_epoch == segment.stream_epoch and item.segment_id == segment.segment_id)
+        ]
+        self._segments.append(segment)
+        self._last_segment_revision[key] = segment.revision
+        self._segments.sort(
+            key=lambda item: (
+                item.capture_start_sample,
+                item.capture_end_sample,
+                item.segment_id,
+                item.revision,
+            )
+        )
+        return True
+
+    def commit_range(
+        self,
+        *,
+        stream_epoch: int,
+        start_sample: int,
+        end_sample: int,
+    ) -> tuple[SpeechSegment, ...]:
+        """Consume the events overlapping one logical turn interval."""
+
+        if start_sample < 0 or end_sample <= start_sample:
+            raise ValueError("commit range must be a positive sample interval")
+        if self._current_stream_epoch != stream_epoch:
+            self._dropped_epoch += 1
+            return ()
+        matched = tuple(
+            item
+            for item in self._segments
+            if item.stream_epoch == stream_epoch
+            and item.capture_end_sample > start_sample
+            and item.capture_start_sample < end_sample
+        )
+        self._committed_sample = max(self._committed_sample, end_sample)
+        self._segments = [
+            item
+            for item in self._segments
+            if not (
+                item.stream_epoch == stream_epoch
+                and item.capture_end_sample <= self._committed_sample
+            )
+        ]
+        return matched
+
+    def canonical_text(
+        self,
+        *,
+        stream_epoch: int,
+        start_sample: int,
+        end_sample: int,
+    ) -> str:
+        """Return one text per audio interval, preferring final revisions."""
+
+        segments = self.commit_range(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
+        selected: dict[tuple[int, int], SpeechSegment] = {}
+        for segment in segments:
+            if not segment.text.strip():
+                continue
+            key = (segment.capture_start_sample, segment.capture_end_sample)
+            current = selected.get(key)
+            if current is None or (segment.final, segment.revision) > (
+                current.final,
+                current.revision,
+            ):
+                selected[key] = segment
+        return " ".join(item.text.strip() for item in selected.values()).strip()

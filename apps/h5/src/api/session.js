@@ -51,6 +51,35 @@ function requireCompanionInteraction(session) {
   return session;
 }
 
+function requireMediaRuntime(session) {
+  const runtime = session?.media_runtime ?? "livekit";
+  if (!["livekit", "streamcore"].includes(runtime)) {
+    throw new Error("服务端返回了未知的媒体运行时，会话已停止");
+  }
+  if (runtime === "livekit") return session;
+  const streamcore = session?.streamcore;
+  if (
+    session?.fallback_runtime !== "livekit" ||
+    !streamcore ||
+    typeof streamcore.whip_url !== "string" ||
+    !(
+      /^https:\/\//.test(streamcore.whip_url) ||
+      /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(streamcore.whip_url)
+    ) ||
+    typeof streamcore.token !== "string" ||
+    !streamcore.token ||
+    !Number.isInteger(streamcore.stream_epoch) ||
+    streamcore.stream_epoch < 1 ||
+    !Number.isInteger(session.stream_epoch) ||
+    session.stream_epoch !== streamcore.stream_epoch ||
+    typeof streamcore.expires_at !== "string" ||
+    Number.isNaN(new Date(streamcore.expires_at).getTime())
+  ) {
+    throw new Error("服务端没有返回可验证的 Media Runtime 会话");
+  }
+  return session;
+}
+
 function requireSelfPreviewInteraction(session) {
   const interaction = session?.interaction;
   const capabilities = interaction?.capabilities;
@@ -287,11 +316,13 @@ export async function createSession(
       },
     }),
   });
-  if (interactionMode === "self_preview") return requireSelfPreviewInteraction(session);
-  if (interactionMode === "legacy") {
-    return requireLegacyInteraction(session, userId, legacyGrantId.trim());
+  if (interactionMode === "self_preview") {
+    return requireMediaRuntime(requireSelfPreviewInteraction(session));
   }
-  return requireCompanionInteraction(session);
+  if (interactionMode === "legacy") {
+    return requireMediaRuntime(requireLegacyInteraction(session, userId, legacyGrantId.trim()));
+  }
+  return requireMediaRuntime(requireCompanionInteraction(session));
 }
 
 export function exchangeOmniSdp(sessionId, offerSdp) {
@@ -313,9 +344,14 @@ export function publishOmniTelemetry(sessionId, event) {
   });
 }
 
-export function stopResponse(sessionId) {
+export function stopResponse(sessionId, idempotencyKey = null) {
+  const key =
+    idempotencyKey ||
+    globalThis.crypto?.randomUUID?.() ||
+    `stop-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return request(`/v1/sessions/${encodeURIComponent(sessionId)}/stop-response`, {
     method: "POST",
+    headers: { "Idempotency-Key": key },
     body: JSON.stringify({ reason: "user_button" }),
   });
 }
@@ -323,5 +359,29 @@ export function stopResponse(sessionId) {
 export function notifyRtcRecovered(sessionId) {
   return request(`/v1/sessions/${encodeURIComponent(sessionId)}/rtc-recovered`, {
     method: "POST",
+  });
+}
+
+export function reconnectMediaSession(sessionId, streamEpoch) {
+  return request(`/v1/sessions/${encodeURIComponent(sessionId)}/media-reconnect`, {
+    method: "POST",
+    body:
+      Number.isInteger(streamEpoch) && streamEpoch > 0
+        ? JSON.stringify({ stream_epoch: streamEpoch })
+        : undefined,
+  });
+}
+
+export function fallbackMediaSession(sessionId, streamEpoch) {
+  return request(`/v1/sessions/${encodeURIComponent(sessionId)}/media-fallback`, {
+    method: "POST",
+    body: JSON.stringify({ stream_epoch: streamEpoch }),
+  });
+}
+
+export function renewMediaSession(sessionId, streamEpoch) {
+  return request(`/v1/sessions/${encodeURIComponent(sessionId)}/media-heartbeat`, {
+    method: "POST",
+    body: JSON.stringify({ stream_epoch: streamEpoch }),
   });
 }
