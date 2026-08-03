@@ -182,5 +182,9 @@ func (s *Session) IdentityMatches(identity *mediav1.SessionIdentity) bool {
 		return false
 	}
 	sessionID, accountID, deviceID, streamEpoch := s.IdentitySnapshot()
-	return identity.GetSessionId() == sessionID && identity.GetStreamEpoch() == streamEpoch && identity.GetAccountId() == accountID && identity.GetDeviceId() == deviceID
+	clientType := identity.GetClientType()
+	if clientType == "" {
+		clientType = "h5"
+	}
+	return identity.GetSessionId() == sessionID && identity.GetStreamEpoch() == streamEpoch && identity.GetAccountId() == accountID && identity.GetDeviceId() == deviceID && clientType == s.ClientTypeValue()
 }

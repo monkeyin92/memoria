@@ -94,6 +94,7 @@ class _Connection:
     outgoing: asyncio.Queue[media_pb2.CoreToMedia | None]
     next_event_sequence: int = 0
     closed: bool = False
+    close_notified: bool = False
 
 
 def _identity_from_proto(value: Any) -> SessionIdentity:
@@ -144,6 +145,7 @@ class MediaBridgeGrpcServer:
         self.on_session_closed = on_session_closed
         self.on_playback_progress = on_playback_progress
         self._connections: dict[str, _Connection] = {}
+        self._closed_session_notifications: set[str] = set()
         self._server: grpc.aio.Server | None = None
 
     async def start(self, address: str, *, tls: MediaBridgeTLS | None = None) -> int:
@@ -180,9 +182,17 @@ class MediaBridgeGrpcServer:
         for connection in tuple(self._connections.values()):
             connection.closed = True
             connection.session.close()
-            if self.on_session_closed is not None:
-                await self.on_session_closed(connection.session)
+            if not connection.close_notified:
+                connection.close_notified = True
+                await self._notify_session_closed(connection.session)
         self._connections.clear()
+        # A client may have disconnected before the server itself stops.  The
+        # transport map is then empty, but the bounded bridge session still
+        # owns a provider/runtime context; close those sessions explicitly so
+        # shutdown does not leave the reconnect-grace task pending forever.
+        for session_id, session in tuple(self.bridge.sessions.items()):
+            self.bridge.close(session_id)
+            await self._notify_session_closed(session, force=True)
 
     async def connect(
         self,
@@ -230,9 +240,7 @@ class MediaBridgeGrpcServer:
                 except asyncio.CancelledError:
                     pass
             if connection is not None:
-                self._close_connection(connection)
-                if self.on_session_closed is not None:
-                    await self.on_session_closed(connection.session)
+                await self._finish_connection(connection)
 
     async def _consume(
         self,
@@ -305,6 +313,7 @@ class MediaBridgeGrpcServer:
             session = self.bridge.open(identity)
         elif not session.reconnect(identity):
             raise ValueError("media stream epoch did not advance")
+        self._closed_session_notifications.discard(identity.session_id)
         connection = _Connection(
             session=session,
             outgoing=asyncio.Queue(maxsize=self.max_pending_messages),
@@ -317,6 +326,31 @@ class MediaBridgeGrpcServer:
         session_id = connection.session.identity.session_id
         if self._connections.get(session_id) is connection:
             self._connections.pop(session_id, None)
+
+    async def _finish_connection(self, connection: _Connection) -> None:
+        """Detach one transport without closing a replacement epoch."""
+
+        current = self._connections.get(connection.session.identity.session_id)
+        replaced = current is not None and current is not connection
+        self._close_connection(connection)
+        if not replaced and not connection.close_notified:
+            connection.close_notified = True
+            await self._notify_session_closed(connection.session)
+
+    async def _notify_session_closed(
+        self,
+        session: MediaBridgeSession,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Call the lifecycle hook once for the current session epoch."""
+
+        session_id = session.identity.session_id
+        if not force and session_id in self._closed_session_notifications:
+            return
+        self._closed_session_notifications.add(session_id)
+        if self.on_session_closed is not None:
+            await self.on_session_closed(session)
 
     @staticmethod
     def _next_event_sequence(connection: _Connection) -> int:
@@ -345,8 +379,15 @@ class MediaBridgeGrpcServer:
             accepted = connection.session.accept_uplink(frame)
             if not accepted:
                 await self._error(connection, "stale_or_invalid_audio", "audio frame rejected")
-            elif self.on_audio_frame is not None:
-                await self.on_audio_frame(connection.session, frame)
+            else:
+                if self.on_audio_frame is not None:
+                    await self.on_audio_frame(connection.session, frame)
+                # ``accept_uplink`` reserves bounded queue capacity.  Release
+                # it only after the provider callback has consumed the frame;
+                # a missing callback is still an intentional sink, not a
+                # reason to retain every frame forever.
+                connection.session.pop_uplink(frame.sequence)
+                connection.session.ack_uplink(frame.sequence)
             return
         if event_name == "vad":
             event = request.vad
@@ -407,6 +448,39 @@ class MediaBridgeGrpcServer:
                     action=media_pb2.GENERATION_ACTION_CANCEL,
                     reason=str(envelope.payload.get("reason", "client_stop")),
                 )
+            elif envelope.type == "client.playback.progress":
+                try:
+                    payload = envelope.payload
+
+                    def payload_int(name: str, fallback: int) -> int:
+                        value = payload.get(name, fallback)
+                        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                            raise ValueError(f"{name} must be a non-negative integer")
+                        return int(value)
+
+                    if "received_sequence" not in payload:
+                        raise ValueError("received_sequence is required")
+                    approximate = payload.get("approximate", True)
+                    if not isinstance(approximate, bool):
+                        raise ValueError("approximate must be boolean")
+                    progress = PlaybackProgress(
+                        identity=connection.session.identity,
+                        generation_id=payload_int("generation_id", envelope.generation_id),
+                        received_sequence=payload_int("received_sequence", 0),
+                        rendered_sample_end=payload_int("rendered_sample_end", 0),
+                        client_monotonic_ms=payload_int("client_monotonic_ms", 0),
+                        approximate=approximate,
+                        turn_id=payload_int("turn_id", envelope.turn_id),
+                        tool_epoch=payload_int("tool_epoch", envelope.tool_epoch),
+                    )
+                except (TypeError, ValueError) as exc:
+                    await self._error(connection, "invalid_playback_progress", str(exc))
+                    return
+                if not connection.session.accept_client_progress(envelope):
+                    await self._error(connection, "stale_playback_progress", "playback progress rejected")
+                    return
+                if self.on_playback_progress is not None:
+                    await self.on_playback_progress(connection.session, progress)
             elif self.on_client_event is not None:
                 await self.on_client_event(connection.session, envelope)
             return
@@ -466,7 +540,7 @@ class MediaBridgeGrpcServer:
         connection = self._connections.get(session_id)
         if connection is None or not connection.session.accept_downlink(frame):
             return False
-        return await self._enqueue(
+        enqueued = await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
                 audio=media_pb2.AssistantAudioFrame(
@@ -483,6 +557,13 @@ class MediaBridgeGrpcServer:
                 )
             ),
         )
+        if enqueued:
+            # The gRPC outgoing queue now owns the serialized frame.  Release
+            # the bridge's pending PCM slot; client-side playback progress is
+            # validated independently by PlaybackLedger.
+            connection.session.pop_downlink(frame.sequence)
+            connection.session.ack_downlink(frame.sequence)
+        return enqueued
 
     async def emit_generation(
         self,
@@ -498,6 +579,8 @@ class MediaBridgeGrpcServer:
         try:
             connection.session.generation.advance(fence)
         except ValueError:
+            return False
+        if not connection.session.reset_downlink_generation(fence):
             return False
         return await self._enqueue(
             connection,
@@ -537,6 +620,9 @@ class MediaBridgeGrpcServer:
                     json_payload=json.dumps(
                         {
                             "type": event_type,
+                            "session_id": connection.session.identity.session_id,
+                            "stream_epoch": connection.session.identity.stream_epoch,
+                            "sequence": sequence,
                             "payload": payload,
                             "turn_id": turn_id,
                             "generation_id": generation_id,

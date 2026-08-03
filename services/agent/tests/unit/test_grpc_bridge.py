@@ -173,3 +173,21 @@ async def test_bridge_rejects_non_monotonic_generation_controls() -> None:
         action=media_pb2.GENERATION_ACTION_CANCEL,
     )
     assert session.fence.generation_id == 0
+
+
+@pytest.mark.asyncio
+async def test_old_transport_close_cannot_notify_after_reconnect_claims_session() -> None:
+    closed_epochs: list[int] = []
+
+    async def on_closed(session) -> None:
+        closed_epochs.append(session.identity.stream_epoch)
+
+    bridge = MediaBridgeGrpcServer(on_session_closed=on_closed)
+    first = bridge._open_connection(SessionIdentity("race-session", stream_epoch=1))
+    bridge._close_connection(first)
+    second = bridge._open_connection(SessionIdentity("race-session", stream_epoch=2))
+
+    await bridge._finish_connection(first)
+    assert closed_epochs == []
+    await bridge._finish_connection(second)
+    assert closed_epochs == [2]

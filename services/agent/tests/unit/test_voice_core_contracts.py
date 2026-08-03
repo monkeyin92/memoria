@@ -123,6 +123,86 @@ def test_playback_ledger_commits_only_fully_acknowledged_spans() -> None:
     assert ledger.actual_heard_text(_fence(generation=2)) == ""
 
 
+def test_playback_ledger_rejects_progress_beyond_received_audio() -> None:
+    fence = _fence()
+    ledger = PlaybackLedger()
+    ledger.start(fence)
+    assert ledger.register_audio(fence, 0, 0, 320)
+    assert ledger.add_span(
+        PlaybackSpan(
+            fence=fence,
+            text_start=0,
+            text_end=2,
+            audio_start_sample=0,
+            audio_end_sample=320,
+            text="你好",
+            sequence=0,
+        )
+    )
+
+    # Neither a sequence the bridge has not sent nor a sample watermark past
+    # the received frame may promote actual-heard text.
+    assert ledger.acknowledge(fence, 321, received_sequence=0) == ()
+    assert ledger.actual_heard_text(fence) == ""
+    assert ledger.acknowledge(fence, 320, received_sequence=1) == ()
+    assert ledger.actual_heard_text(fence) == ""
+
+    assert ledger.acknowledge(fence, 320, received_sequence=0)
+    assert ledger.actual_heard_text(fence) == "你好"
+
+
+def test_media_bridge_audio_queues_are_consumable_and_generation_local() -> None:
+    server = MediaBridgeServer(max_pending_audio_frames=100)
+    identity = SessionIdentity("queue-session", stream_epoch=1)
+    bridge = server.open(identity)
+
+    # A consumer can sustain more than the bounded queue capacity by popping
+    # and ACKing every accepted frame; accepted sequence remains monotonic.
+    for sequence in range(250):
+        frame = AudioFrame(
+            identity=identity,
+            sequence=sequence,
+            capture_start_sample=sequence * 2,
+            frame_samples=2,
+            payload=b"\x00\x00\x01\x00",
+        )
+        assert bridge.accept_uplink(frame)
+        assert bridge.pop_uplink(sequence) == frame
+        assert bridge.ack_uplink(sequence)
+    assert not bridge.uplink
+    assert bridge.overflow_count == 0
+
+    for sequence in range(250):
+        frame = PCMFrame(
+            identity=identity,
+            turn_id=0,
+            generation_id=0,
+            tool_epoch=0,
+            sequence=sequence,
+            source_start_sample=sequence * 2,
+            frame_samples=2,
+            pcm_s16le=b"\x00\x00\x01\x00",
+        )
+        assert bridge.accept_downlink(frame)
+        assert bridge.pop_downlink(sequence) == frame
+        assert bridge.ack_downlink(sequence)
+
+    next_fence = bridge.generation.start_generation()
+    second = PCMFrame(
+        identity=identity,
+        turn_id=next_fence.turn_id,
+        generation_id=next_fence.generation_id,
+        tool_epoch=next_fence.tool_epoch,
+        sequence=0,
+        source_start_sample=0,
+        frame_samples=2,
+        pcm_s16le=b"\x00\x00\x01\x00",
+    )
+    assert bridge.accept_downlink(second)
+    assert bridge.last_downlink_sequence == 0
+    assert bridge.overflow_count == 0
+
+
 def test_media_v1_envelope_and_audio_metadata_round_trip() -> None:
     identity = SessionIdentity(session_id="session", stream_epoch=2, client_type="h5")
     audio = AudioFrame(

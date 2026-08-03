@@ -135,6 +135,12 @@ def prepare(
             # Control API signs StreamCore tokens; the Go edge verifies the
             # same short-lived credential in its own least-privilege env.
             "STREAMCORE_TOKEN_SECRET": streamcore_token_secret,
+            "MEDIA_EDGE_CONTROL_URL": values.get(
+                "MEDIA_EDGE_CONTROL_URL", "http://media-edge:8080"
+            ),
+            "MEDIA_EDGE_CONTROL_TIMEOUT_S": values.get(
+                "MEDIA_EDGE_CONTROL_TIMEOUT_S", "2"
+            ),
             "MEDIA_EDGE_JWT_SECRET": streamcore_token_secret,
             "MEDIA_EDGE_JWT_ISSUER": values.get("JWT_ISSUER", "voice-agent"),
             "MEDIA_EDGE_JWT_AUDIENCE": "memoria-media",

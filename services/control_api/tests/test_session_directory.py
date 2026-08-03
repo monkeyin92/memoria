@@ -162,6 +162,7 @@ class _FakeRedis:
         _numkeys: int,
         key: str,
         expected_epoch: int,
+        expected_generation: int,
         replacement: str,
         _seconds: int,
     ) -> int:
@@ -173,7 +174,16 @@ class _FakeRedis:
             return -3
         if int(current.get("stream_epoch", 0)) != int(expected_epoch):
             return -2
-        self.values[key] = replacement
+        if int(current.get("generation", 0)) != int(expected_generation):
+            return -5
+        replacement_value = json.loads(replacement)
+        if replacement_value.get("__require_generation_advance") and int(
+            current.get("generation", 0)
+        ) + 1 != int(replacement_value.get("generation", 0)):
+            return -4
+        self.values[key] = json.dumps(
+            {key: value for key, value in replacement_value.items() if key != "__require_generation_advance"}
+        )
         return 1
 
     async def delete(self, key: str) -> int:
@@ -204,3 +214,23 @@ async def test_redis_backend_uses_epoch_compare_and_set_for_reconnect_and_renew(
         await directory.reconnect("session-1", expected_stream_epoch=1)
     renewed = await directory.renew("session-1", expected_stream_epoch=2)
     assert renewed.stream_epoch == 2
+
+
+@pytest.mark.asyncio
+async def test_redis_backend_rejects_stale_generation_replacement() -> None:
+    redis = _FakeRedis()
+    directory = RedisSessionDirectory("redis://unused", redis_client=redis)
+    claimed = await directory.claim(
+        "generation-race",
+        media_edge_id="edge-a",
+        voice_core_id="core-a",
+        device_id="device-1",
+        account_id="account-1",
+    )
+    current = claimed.as_dict()
+    current["generation"] = 1
+    redis.values[directory._key("generation-race")] = json.dumps(current)
+    with pytest.raises(SessionEpochConflict):
+        await directory._redis_replace(claimed, claimed)
+    latest = await directory.lookup("generation-race")
+    assert latest is not None and latest.generation_id == 1

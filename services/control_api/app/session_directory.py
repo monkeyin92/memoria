@@ -95,12 +95,13 @@ if not raw then return -1 end
 local current = cjson.decode(raw)
 if current.state == 'draining' then return -3 end
 if tonumber(current.stream_epoch) ~= tonumber(ARGV[1]) then return -2 end
-local replacement = cjson.decode(ARGV[2])
+if tonumber(current.generation) ~= tonumber(ARGV[2]) then return -5 end
+local replacement = cjson.decode(ARGV[3])
 if replacement.__require_generation_advance == true
    and tonumber(current.generation) + 1 ~= tonumber(replacement.generation) then
   return -4
 end
-redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+redis.call('SET', KEYS[1], ARGV[3], 'EX', ARGV[4])
 return 1
 """
 
@@ -329,6 +330,7 @@ return 1
                     1,
                     self._key(current.session_id),
                     current.stream_epoch,
+                    current.generation,
                     json.dumps(replacement_dict),
                     seconds,
                 )
@@ -342,6 +344,8 @@ return 1
         if result == -3:
             raise SessionDraining(current.session_id)
         if result == -4:
+            raise SessionEpochConflict(current.session_id)
+        if result == -5:
             raise SessionEpochConflict(current.session_id)
         if result != 1:
             raise SessionDirectoryError("unexpected session directory CAS result")
@@ -584,15 +588,20 @@ return 1
             state="draining",
         )
         if self._redis is not None:
-            try:
-                seconds = max(1, math.ceil((route.expires_at - self._timestamp()).total_seconds()))
-                await self._redis.set(
-                    self._key(session_id), json.dumps(route.as_dict()), ex=seconds
-                )
-            except Exception as exc:
-                raise SessionDirectoryUnavailable("session directory drain failed") from exc
+            return await self._redis_replace(current, route)
         else:
             async with self._lock:
+                latest = self._routes.get(session_id)
+                if latest is None or latest.is_expired(self._timestamp()):
+                    self._routes.pop(session_id, None)
+                    raise SessionNotFound(session_id)
+                if (
+                    latest.stream_epoch != current.stream_epoch
+                    or latest.generation != current.generation
+                ):
+                    raise SessionEpochConflict(session_id)
+                if latest.state == "draining":
+                    return latest
                 self._routes[session_id] = route
         return route
 

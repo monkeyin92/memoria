@@ -17,6 +17,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from services.agent.src.config import load_settings
+from services.agent.src.observability.metrics import GLOBAL_METRICS
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer, MediaBridgeTLS
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
@@ -68,6 +69,15 @@ async def run() -> None:
             "MEDIA_BRIDGE_GRPC_ENABLED=false; enable the bridge explicitly before starting it"
         )
     logging.basicConfig(level=settings.log_level)
+    prometheus_port = int(getattr(settings, "prometheus_port", 0))
+    if prometheus_port > 0:
+        try:
+            # The media bridge is a separate process from the LiveKit worker;
+            # expose its own registry so the SLO sidecar never reports the
+            # wrong process's counters.
+            GLOBAL_METRICS.start_http_server(prometheus_port)
+        except OSError:
+            logger.warning("media bridge metrics exporter unavailable", exc_info=True)
     server = MediaBridgeGrpcServer(
         max_pending_audio_frames=settings.media_bridge_max_pending_audio_frames,
         max_pending_messages=settings.media_bridge_max_pending_messages,

@@ -77,6 +77,13 @@ class ControlSettings(BaseSettings):
         default=SecretStr(""), alias="MEDIA_SLO_REPORT_TOKEN"
     )
     streamcore_whip_url: str = Field(default="", alias="STREAMCORE_WHIP_URL")
+    media_edge_control_url: str = Field(default="", alias="MEDIA_EDGE_CONTROL_URL")
+    media_edge_control_timeout_s: float = Field(
+        default=2.0,
+        ge=0.1,
+        le=30.0,
+        alias="MEDIA_EDGE_CONTROL_TIMEOUT_S",
+    )
     streamcore_token_secret: SecretStr = Field(
         default=SecretStr(""), alias="STREAMCORE_TOKEN_SECRET"
     )

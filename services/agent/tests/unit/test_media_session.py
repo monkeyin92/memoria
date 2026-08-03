@@ -22,6 +22,7 @@ from services.agent.src.voice_core.speech_timeline import ASRResult
 class FakeMediaProvider(MediaVoiceProvider):
     def __init__(self) -> None:
         self.audio_calls: list[int] = []
+        self.cancelled: list[GenerationFence] = []
         self.closed = False
 
     async def ingest_audio(
@@ -62,6 +63,10 @@ class FakeMediaProvider(MediaVoiceProvider):
             )
 
         return chunks()
+
+    def cancel_generation(self, fence: GenerationFence) -> bool:
+        self.cancelled.append(fence)
+        return True
 
     async def close(self, _identity: SessionIdentity) -> None:
         self.closed = True
@@ -136,19 +141,9 @@ async def test_media_registry_runs_fake_asr_llm_tts_through_both_fences() -> Non
         assert transcript.transcript.text == "你好"
         assert provider.audio_calls == [0]
 
-        fence, reason = await registry.commit_user_turn(
-            session_identity.session_id,
-            stream_epoch=1,
-            start_sample=0,
-            end_sample=2,
-        )
-        assert reason is None
-        assert fence == GenerationFence(session_identity.session_id, 1, 1, 0)
         started = await _next_event(call, "generation")
         assert started.generation.generation_id == 1
-
-        assert fence is not None
-        assert await registry.generate_reply(session_identity.session_id, "你好", fence)
+        fence = GenerationFence(session_identity.session_id, 1, 1, 0)
         audio = await _next_event(call, "audio")
         assert audio.audio.generation_id == fence.generation_id
         completed = await _next_event(call, "generation")

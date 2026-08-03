@@ -594,7 +594,7 @@ export function useVoiceSession({
   );
 
   const activateAudioElement = useCallback(
-    (element, isCurrent = () => true) => {
+    (element, isCurrent = () => true, publishPlaybackProgress = null) => {
       if (!isCurrent() || !audioContainerRef.current) return;
       element.autoplay = true;
       element.playsInline = true;
@@ -629,6 +629,13 @@ export function useVoiceSession({
         });
       };
       element.addEventListener("timeupdate", onTimeUpdate);
+      if (typeof publishPlaybackProgress === "function") {
+        element.addEventListener("timeupdate", () => {
+          if (isCurrent() && element.currentTime > 0) {
+            void publishPlaybackProgress(element.currentTime).catch(() => undefined);
+          }
+        });
+      }
       element.addEventListener(
         "error",
         () => {
@@ -679,7 +686,7 @@ export function useVoiceSession({
   );
 
   const attachOmniAudio = useCallback(
-    (stream, isCurrent = () => true) => {
+    (stream, isCurrent = () => true, transport = null) => {
       if (!isCurrent()) return;
       const existing = omniAudioElementRef.current;
       if (existing) {
@@ -689,7 +696,13 @@ export function useVoiceSession({
       const element = document.createElement("audio");
       element.srcObject = stream;
       omniAudioElementRef.current = element;
-      activateAudioElement(element, isCurrent);
+      activateAudioElement(
+        element,
+        isCurrent,
+        typeof transport?.publishPlaybackProgressFromTime === "function"
+          ? (seconds) => transport.publishPlaybackProgressFromTime(seconds)
+          : null,
+      );
     },
     [activateAudioElement],
   );
@@ -1507,7 +1520,7 @@ export function useVoiceSession({
               onMicrophoneTrack: (track) => observeMicrophoneTrack(track, isCurrent),
               onState: onStreamCoreState,
               onTranscript: onStreamCoreTranscript,
-              onRemoteStream: (stream) => attachOmniAudio(stream, isCurrent),
+              onRemoteStream: (stream) => attachOmniAudio(stream, isCurrent, transport),
               onDataReceived: onStreamCoreDataReceived,
               onPlaybackFlush: onStreamCorePlaybackFlush,
               onDiagnostic: onStreamCoreDiagnostic,

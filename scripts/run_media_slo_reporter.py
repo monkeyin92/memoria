@@ -46,9 +46,10 @@ async def run() -> None:
         except (NotImplementedError, RuntimeError):
             pass
     try:
-        # The sidecar reads the agent's own Prometheus endpoint.  Importing
-        # GLOBAL_METRICS here would create a new process-local, empty registry
-        # and make every rollout report fail closed for the wrong reason.
+        # The sidecar reads the explicitly configured media-runtime endpoint.
+        # Importing GLOBAL_METRICS here would create a new process-local, empty
+        # registry and make every rollout report fail closed for the wrong
+        # reason.
         await reporter.run(snapshot_provider, stopped)
     finally:
         await metrics_client.aclose()

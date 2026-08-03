@@ -20,7 +20,28 @@ type JWTVerifier struct {
 	Now      func() time.Time
 }
 
+// MediaTokenIdentity is the account/device/client binding carried by a
+// short-lived media token.  The edge compares these values with the session
+// request rather than trusting a client-selected body identity.
+type MediaTokenIdentity struct {
+	SessionID   string
+	AccountID   string
+	DeviceID    string
+	ClientType  string
+	StreamEpoch uint64
+}
+
 func (v JWTVerifier) Verify(token, sessionID string, expectedEpoch ...uint64) error {
+	identity := MediaTokenIdentity{SessionID: sessionID}
+	if len(expectedEpoch) > 0 {
+		identity.StreamEpoch = expectedEpoch[0]
+	}
+	return v.VerifyIdentity(token, identity)
+}
+
+// VerifyIdentity validates the token and, when supplied, binds all account,
+// device, client-type and stream-epoch claims to the current media identity.
+func (v JWTVerifier) VerifyIdentity(token string, expected MediaTokenIdentity) error {
 	if len(v.Secret) < 32 || token == "" {
 		return fmt.Errorf("media token verifier is not configured")
 	}
@@ -53,6 +74,8 @@ func (v JWTVerifier) Verify(token, sessionID string, expectedEpoch ...uint64) er
 		Audience    string `json:"aud"`
 		SessionID   string `json:"session_id"`
 		Subject     string `json:"sub"`
+		DeviceID    string `json:"device_id"`
+		ClientType  string `json:"client_type"`
 		StreamEpoch uint64 `json:"stream_epoch"`
 		Expiry      int64  `json:"exp"`
 	}
@@ -62,10 +85,19 @@ func (v JWTVerifier) Verify(token, sessionID string, expectedEpoch ...uint64) er
 	if v.Issuer != "" && claims.Issuer != v.Issuer || v.Audience != "" && claims.Audience != v.Audience {
 		return fmt.Errorf("media token issuer or audience mismatch")
 	}
-	if claims.SessionID != sessionID || claims.Subject == "" {
+	if expected.SessionID == "" || claims.SessionID != expected.SessionID || claims.Subject == "" {
 		return fmt.Errorf("media token session mismatch")
 	}
-	if len(expectedEpoch) > 0 && claims.StreamEpoch != expectedEpoch[0] {
+	if expected.AccountID != "" && claims.Subject != expected.AccountID {
+		return fmt.Errorf("media token account mismatch")
+	}
+	if expected.DeviceID != "" && claims.DeviceID != expected.DeviceID {
+		return fmt.Errorf("media token device mismatch")
+	}
+	if expected.ClientType != "" && claims.ClientType != expected.ClientType {
+		return fmt.Errorf("media token client type mismatch")
+	}
+	if expected.StreamEpoch != 0 && claims.StreamEpoch != expected.StreamEpoch {
 		return fmt.Errorf("media token stream epoch mismatch")
 	}
 	now := time.Now()

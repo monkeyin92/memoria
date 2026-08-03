@@ -797,6 +797,14 @@
   固定工件、镜像 ID、备份哈希和保护性首次尝试见
   `docs/releases/20260729-093337.md`。
 
+## 2026-08-03：媒体运行面评审整改（代码完成，外部验收待补）
+
+- 已根据评审线程 `019fc681-3b5b-7e93-b794-44024f7d8901` 收敛媒体控制面：gRPC 队列消费 ACK、generation/stream epoch fence、重连 grace、旧连接竞态去重、ASR final 自动进入 `commit_user_turn → generate_reply`、Router 控制词停止、provider 协作取消和 20 ms/24 kHz 固定 TTS 帧。
+- Playback Ledger 现在按已登记的 audio sequence/sample range 验证客户端进度；H5 WHIP/fetch 有超时、事件要求完整 fence、播放进度单调且不会越过已接收音频。Control API 的 HTTP stop 已派发至 Media Edge；Redis CAS 和 Go JWT 增加 generation/account/device/client_type 绑定。
+- 修改文件集中在 `services/agent/src/voice_core/`、`services/control_api/app/`、`services/media_edge/`、`apps/h5/src/voice/`、生产 Compose/env 和 media bridge/SLO 脚本；未修改或清理用户工作区未跟踪文件。
+- 已验证：Agent unit `1607` 通过；Control API 全测试通过；Go `test`、`vet`、`race` 通过；H5 `269` 测试和 production build 通过；`scripts/media_runtime_smoke.py` 通过；Ruff、严格 mypy 和 diff check 通过。
+- 全仓测试结果 `1615 passed, 29 skipped`；现有总覆盖率 `80.95%` 仍低于 `85%` 门槛，因此没有把覆盖率门禁降级。真实 WebRTC/WHIP/RTP/DTLS/SRTP、生产 provider factory、浏览器/硬件播放 ACK、Redis/coturn 多实例和 SLO 演练仍是发布前阻塞项。
+
 ## 验证
 
 - Ruff：通过。

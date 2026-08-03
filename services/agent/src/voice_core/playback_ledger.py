@@ -18,6 +18,10 @@ class PlaybackSpan:
     audio_end_sample: int
     text: str = ""
     acknowledged: bool = False
+    # Optional media sequence that owns this text span.  Older callers did
+    # not carry sequence metadata, so ``None`` remains valid and the ledger
+    # can infer the received sample range from the span itself.
+    sequence: int | None = None
 
     def __post_init__(self) -> None:
         if self.text_start < 0 or self.text_end <= self.text_start:
@@ -26,6 +30,8 @@ class PlaybackSpan:
             raise ValueError("audio range must be a positive interval")
         if self.text and len(self.text) != self.text_end - self.text_start:
             raise ValueError("text length must match its text range")
+        if self.sequence is not None and self.sequence < 0:
+            raise ValueError("sequence must be non-negative")
 
 
 @dataclass(slots=True)
@@ -34,6 +40,12 @@ class PlaybackLedger:
 
     _spans: dict[GenerationFence, list[PlaybackSpan]] = field(default_factory=dict)
     _rendered_sample_end: dict[GenerationFence, int] = field(default_factory=dict)
+    _received_sequence: dict[GenerationFence, int] = field(default_factory=dict)
+    _received_sample_end: dict[GenerationFence, int] = field(default_factory=dict)
+    _received_ranges: dict[GenerationFence, list[tuple[int, int, int]]] = field(
+        default_factory=dict
+    )
+    _client_sequence: dict[GenerationFence, int] = field(default_factory=dict)
     _current_fence: GenerationFence | None = None
     _stale_ack_count: int = 0
 
@@ -51,12 +63,83 @@ class PlaybackLedger:
         self._current_fence = fence
         self._spans.setdefault(fence, [])
         self._rendered_sample_end.setdefault(fence, 0)
+        self._received_sequence.setdefault(fence, -1)
+        self._received_sample_end.setdefault(fence, 0)
+        self._received_ranges.setdefault(fence, [])
+        self._client_sequence.setdefault(fence, -1)
+
+    def register_audio(
+        self,
+        fence: GenerationFence,
+        sequence: int,
+        source_start_sample: int,
+        frame_samples: int,
+    ) -> bool:
+        """Record an emitted PCM frame before accepting client progress.
+
+        ``PlaybackProgress.received_sequence`` is a client claim, not proof
+        that Voice Core sent that frame.  The bridge/registry records each
+        accepted frame here, and ACK watermarks are then bounded by this
+        authoritative sequence/range ledger.
+        """
+
+        if (
+            sequence < 0
+            or source_start_sample < 0
+            or frame_samples <= 0
+        ):
+            raise ValueError("audio sequence/range must be non-negative")
+        if self._current_fence is None:
+            self.start(fence)
+        if self._current_fence is None or not fence.matches(self._current_fence):
+            self._stale_ack_count += 1
+            return False
+        previous_sequence = self._received_sequence.get(fence, -1)
+        previous_end = self._received_sample_end.get(fence, 0)
+        if sequence != previous_sequence + 1:
+            self._stale_ack_count += 1
+            return False
+        if previous_sequence < 0 and source_start_sample != 0:
+            self._stale_ack_count += 1
+            return False
+        if previous_sequence >= 0 and source_start_sample != previous_end:
+            self._stale_ack_count += 1
+            return False
+        end_sample = source_start_sample + frame_samples
+        self._received_ranges.setdefault(fence, []).append(
+            (sequence, source_start_sample, end_sample)
+        )
+        self._received_sequence[fence] = sequence
+        self._received_sample_end[fence] = end_sample
+        return True
+
+    # Explicit alias for callers that use transport terminology.
+    record_received = register_audio
 
     def add_span(self, span: PlaybackSpan) -> bool:
         if self._current_fence is None:
             self.start(span.fence)
         if self._current_fence is None or not span.fence.matches(self._current_fence):
             return False
+        received_end = self._received_sample_end.get(span.fence, 0)
+        if self._received_ranges.get(span.fence):
+            # A text span may cover multiple fixed frames and its first frame
+            # can arrive before the rest of the phrase.  Keep the trusted
+            # mapping now; ``acknowledge`` still caps client progress at the
+            # received sequence/range watermark, so future audio is never
+            # treated as already heard.
+            if span.audio_start_sample < 0:
+                self._stale_ack_count += 1
+                return False
+        else:
+            # Backwards-compatible callers used to add a span without first
+            # registering frames.  Treat its range as received audio; newer
+            # registry code should call ``register_audio`` for every frame so
+            # sequence claims can be checked as well.
+            self._received_sample_end[span.fence] = max(
+                received_end,
+                span.audio_end_sample,
+            )
         spans = self._spans.setdefault(span.fence, [])
         spans.append(span)
         spans.sort(key=lambda item: (item.audio_start_sample, item.audio_end_sample))
@@ -67,6 +150,7 @@ class PlaybackLedger:
         fence: GenerationFence,
         rendered_sample_end: int,
         *,
+        received_sequence: int | None = None,
         approximate: bool = False,
     ) -> tuple[PlaybackSpan, ...]:
         """Mark all fully rendered spans up to the monotonic sample watermark."""
@@ -75,6 +159,33 @@ class PlaybackLedger:
         if rendered_sample_end < 0:
             raise ValueError("rendered_sample_end must be non-negative")
         if self._current_fence is None or not fence.matches(self._current_fence):
+            self._stale_ack_count += 1
+            return ()
+        if received_sequence is not None:
+            if received_sequence < 0:
+                raise ValueError("received_sequence must be non-negative")
+            known_sequence = self._received_sequence.get(fence, -1)
+            previous_client_sequence = self._client_sequence.get(fence, -1)
+            if (
+                received_sequence > known_sequence
+                or received_sequence < previous_client_sequence
+            ):
+                self._stale_ack_count += 1
+                return ()
+            self._client_sequence[fence] = received_sequence
+        effective_sequence = (
+            self._received_sequence.get(fence, -1)
+            if received_sequence is None
+            else received_sequence
+        )
+        renderable_sample_end = self._renderable_sample_end_for(
+            fence,
+            effective_sequence,
+        )
+        # A client cannot claim to have rendered bytes that Voice Core has not
+        # accepted/sent yet.  Reject (rather than clamp) this progress so a
+        # forged watermark can never promote actual-heard text.
+        if rendered_sample_end > renderable_sample_end:
             self._stale_ack_count += 1
             return ()
         previous = self._rendered_sample_end.get(fence, 0)
@@ -88,6 +199,48 @@ class PlaybackLedger:
                     span.acknowledged = True
                     acknowledged.append(span)
         return tuple(acknowledged)
+
+    def _renderable_sample_end_for(
+        self,
+        fence: GenerationFence,
+        received_sequence: int,
+    ) -> int:
+        if received_sequence < 0:
+            if not self._received_ranges.get(fence):
+                return self._received_sample_end.get(fence, 0)
+            return 0
+        ranges = self._received_ranges.get(fence, ())
+        for sequence, _start, end in reversed(ranges):
+            if sequence <= received_sequence:
+                return end
+        return 0
+
+    def received_sequence(self, fence: GenerationFence) -> int:
+        """Highest sequence registered for ``fence`` (or ``-1``)."""
+
+        return self._received_sequence.get(fence, -1)
+
+    def renderable_sample_end(
+        self,
+        fence: GenerationFence,
+        received_sequence: int | None = None,
+    ) -> int:
+        """Return the greatest sample end a client may legitimately render."""
+
+        if (
+            received_sequence is not None
+            and (
+                received_sequence < 0
+                or received_sequence > self._received_sequence.get(fence, -1)
+            )
+        ):
+            return 0
+        sequence = (
+            self._received_sequence.get(fence, -1)
+            if received_sequence is None
+            else received_sequence
+        )
+        return self._renderable_sample_end_for(fence, sequence)
 
     def acknowledged_spans(self, fence: GenerationFence) -> tuple[PlaybackSpan, ...]:
         return tuple(span for span in self._spans.get(fence, ()) if span.acknowledged)
@@ -115,6 +268,10 @@ class PlaybackLedger:
 
         self._spans.pop(fence, None)
         self._rendered_sample_end.pop(fence, None)
+        self._received_sequence.pop(fence, None)
+        self._received_sample_end.pop(fence, None)
+        self._received_ranges.pop(fence, None)
+        self._client_sequence.pop(fence, None)
 
 
 __all__ = ["PlaybackLedger", "PlaybackSpan"]

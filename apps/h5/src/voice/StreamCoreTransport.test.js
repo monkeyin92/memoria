@@ -122,17 +122,19 @@ describe("StreamCoreTransport", () => {
     transport.channel.onmessage({
       data: JSON.stringify({
         type: "user.transcript.final",
+        session_id: "session-1",
         stream_epoch: 3,
         sequence: 2,
-        payload: { text: "你好", turn_id: 1, generation_id: 1 },
+        payload: { text: "你好", turn_id: 1, generation_id: 1, tool_epoch: 0 },
       }),
     });
     transport.channel.onmessage({
       data: JSON.stringify({
         type: "user.transcript.final",
+        session_id: "session-1",
         stream_epoch: 3,
         sequence: 1,
-        payload: { text: "迟到", turn_id: 1, generation_id: 1 },
+        payload: { text: "迟到", turn_id: 1, generation_id: 1, tool_epoch: 0 },
       }),
     });
 
@@ -235,6 +237,164 @@ describe("StreamCoreTransport", () => {
     expect(onTranscript).not.toHaveBeenCalled();
   });
 
+  it("drops events that omit the complete media fence", async () => {
+    const onTranscript = vi.fn();
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+      onTranscript,
+    });
+    await transport.connect({
+      session_id: "session-missing-fence",
+      whip_url: "https://media.example/whip",
+      token: "token",
+      stream_epoch: 1,
+    });
+    transport.channel.onmessage({
+      data: JSON.stringify({
+        type: "user.transcript.final",
+        session_id: "session-missing-fence",
+        stream_epoch: 1,
+        sequence: 0,
+        payload: { text: "没有 fence", turn_id: 1, generation_id: 1 },
+      }),
+    });
+    expect(onTranscript).not.toHaveBeenCalled();
+  });
+
+  it("does not let an invalid high-sequence event poison the next valid event", async () => {
+    const onTranscript = vi.fn();
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+      onTranscript,
+    });
+    await transport.connect({
+      session_id: "session-sequence-fence",
+      whip_url: "https://media.example/whip",
+      token: "token",
+      stream_epoch: 1,
+    });
+    const invalid = {
+      type: "user.transcript.final",
+      session_id: "session-sequence-fence",
+      stream_epoch: 1,
+      sequence: 7,
+      payload: { text: "invalid", turn_id: 1, generation_id: 1 },
+    };
+    transport.channel.onmessage({ data: JSON.stringify(invalid) });
+    transport.channel.onmessage({
+      data: JSON.stringify({
+        ...invalid,
+        payload: { ...invalid.payload, tool_epoch: 0, text: "valid" },
+      }),
+    });
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(onTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "valid", final: true }),
+    );
+  });
+
+  it("publishes monotonic playback progress bounded by received audio", async () => {
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+    });
+    await transport.connect({
+      session_id: "session-progress",
+      whip_url: "https://media.example/whip",
+      token: "token",
+      stream_epoch: 1,
+    });
+    transport.channel.onmessage({
+      data: JSON.stringify({
+        type: "assistant.audio.frame",
+        session_id: "session-progress",
+        stream_epoch: 1,
+        sequence: 0,
+        payload: {
+          turn_id: 1,
+          generation_id: 1,
+          tool_epoch: 0,
+          sequence: 0,
+          source_start_sample: 0,
+          frame_samples: 480,
+        },
+      }),
+    });
+    expect(await transport.publishPlaybackProgressFromTime(0.03)).toBe(true);
+    expect(await transport.publishPlaybackProgressFromTime(0.03)).toBe(false);
+    expect(transport.channel.sent.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "client.playback.progress",
+        turn_id: 1,
+        generation_id: 1,
+        payload: expect.objectContaining({
+          received_sequence: 0,
+          rendered_sample_end: 480,
+          tool_epoch: 0,
+        }),
+      }),
+    );
+  });
+
+  it("releases a playback watermark when DataChannel send fails", async () => {
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+    });
+    await transport.connect({
+      session_id: "session-progress-retry",
+      whip_url: "https://media.example/whip",
+      token: "token",
+      stream_epoch: 1,
+    });
+    transport.channel.onmessage({
+      data: JSON.stringify({
+        type: "assistant.audio.frame",
+        session_id: "session-progress-retry",
+        stream_epoch: 1,
+        sequence: 0,
+        payload: {
+          turn_id: 1,
+          generation_id: 1,
+          tool_epoch: 0,
+          sequence: 0,
+          source_start_sample: 0,
+          frame_samples: 480,
+        },
+      }),
+    });
+    transport.channel.send = () => {
+      throw new Error("channel closed");
+    };
+    await expect(transport.publishPlaybackProgressFromTime(0.03)).rejects.toThrow(
+      "channel closed",
+    );
+    expect(transport.lastPlaybackProgressSample).toBe(-1);
+  });
+
+  it("times out a hung WHIP exchange", async () => {
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(() => new Promise(() => undefined)),
+      connectTimeoutMs: 5,
+    });
+    await expect(
+      transport.connect({
+        session_id: "session-timeout",
+        whip_url: "https://media.example/whip",
+        token: "token",
+        stream_epoch: 1,
+      }),
+    ).rejects.toThrow("媒体协商超时");
+  });
+
   it("handles playback flush and responds to server pings", async () => {
     const onPlaybackFlush = vi.fn();
     const onState = vi.fn();
@@ -258,7 +418,10 @@ describe("StreamCoreTransport", () => {
         session_id: "session-events",
         stream_epoch: 2,
         sequence: 1,
-        payload: { reason: "generation_cancel" },
+        turn_id: 0,
+        generation_id: 0,
+        tool_epoch: 0,
+        payload: { reason: "generation_cancel", turn_id: 0, generation_id: 0, tool_epoch: 0 },
       }),
     });
     transport.channel.onmessage({
@@ -271,7 +434,7 @@ describe("StreamCoreTransport", () => {
       }),
     });
     expect(onPlaybackFlush).toHaveBeenCalledWith(
-      { reason: "generation_cancel" },
+      expect.objectContaining({ reason: "generation_cancel" }),
       expect.objectContaining({ type: "playback.flush" }),
     );
     expect(transport.channel.sent.at(-1)).toEqual(

@@ -82,13 +82,14 @@ def mint_streamcore_token(
     ttl = int(getattr(settings, "streamcore_token_ttl_s", 120))
     now = datetime.now(UTC)
     expires_at = now + timedelta(seconds=ttl)
+    token_device_id = device_id or ("h5" if client_platform == "h5" else None)
     claims = {
         "iss": str(getattr(settings, "jwt_issuer", "memoria-control-api")),
         "aud": "memoria-media",
         "sub": user_id,
         "session_id": session_id,
         "client_type": client_platform,
-        "device_id": device_id,
+        "device_id": token_device_id,
         "stream_epoch": stream_epoch,
         "jti": hashlib.sha256(f"{session_id}:{now.timestamp()}".encode()).hexdigest(),
         "iat": now,

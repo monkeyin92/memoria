@@ -8,7 +8,9 @@ from asyncio import Lock, to_thread
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -39,6 +41,7 @@ from services.control_api.app.account_gate import AccountDeletingError, AccountO
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_registry import DeviceRegistry
+from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.media_slo import MediaSLOGate
 from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import auth as auth_routes
@@ -60,6 +63,7 @@ from services.control_api.app.session_directory import (
     InMemorySessionDirectory,
     RedisSessionDirectory,
     SessionDirectory,
+    SessionRoute,
 )
 from services.control_api.app.session_termination import (
     AccountSessionTerminator,
@@ -342,6 +346,44 @@ def _archive_object_store(settings: ControlSettings) -> ObjectStore:
     )
 
 
+def _build_media_stop_dispatcher(settings: ControlSettings) -> object | None:
+    """Build the production StreamCore stop path when Media Edge is present."""
+
+    base_url = settings.media_edge_control_url.strip().rstrip("/")
+    if not base_url:
+        return None
+
+    async def dispatch(
+        *, session_id: str, route: SessionRoute, event: dict[str, object]
+    ) -> None:
+        stream_epoch = route.stream_epoch
+        account_id = route.account_id
+        device_id = route.device_id
+        client_type = "h5" if device_id == "h5" else "device"
+        token, _ = mint_streamcore_token(
+            settings,
+            session_id=session_id,
+            user_id=account_id,
+            client_platform=client_type,
+            device_id=device_id,
+            stream_epoch=stream_epoch,
+        )
+        url = f"{base_url}/v1/media/sessions/{quote(session_id, safe='')}/stop"
+        idempotency_key = f"{session_id}:{route.generation}"
+        async with httpx.AsyncClient(timeout=settings.media_edge_control_timeout_s) as client:
+            response = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Idempotency-Key": idempotency_key,
+                },
+                json=event,
+            )
+            response.raise_for_status()
+
+    return dispatch
+
+
 def _voice_preview_renderer(settings: ControlSettings) -> VoicePreviewRenderer:
     if (
         settings.offline_mock
@@ -400,6 +442,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             raise
         app.state.config_warning = str(exc)
     app.state.settings = settings
+    media_stop_dispatcher = _build_media_stop_dispatcher(settings)
+    if media_stop_dispatcher is not None:
+        app.state.media_stop_dispatcher = media_stop_dispatcher
     session_directory: SessionDirectory = (
         RedisSessionDirectory(settings.redis_url)
         if settings.redis_url.strip()

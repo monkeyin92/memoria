@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import re
@@ -42,6 +43,7 @@ from services.control_api.app.session_directory import (
     SessionDraining,
     SessionEpochConflict,
     SessionNotFound,
+    SessionRoute,
 )
 from services.control_api.app.turn_credentials import mint_turn_credentials
 from services.digital_self.domain import (
@@ -94,6 +96,7 @@ _WORKSPACE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 
 _STOP_REQUESTS: list[dict[str, Any]] = []
 _STOP_IDEMPOTENCY: dict[tuple[str, str, str], dict[str, Any]] = {}
+_STOP_DISPATCH_PENDING: dict[tuple[str, str, str], tuple[SessionRoute, dict[str, Any]]] = {}
 
 
 def _matching_preview_voice(
@@ -1237,8 +1240,12 @@ async def stop_response(
     }
     settings = request.app.state.settings
     directory = getattr(request.app.state, "session_directory", None)
-    media_route = None
-    if directory is not None:
+    pending_dispatch = _STOP_DISPATCH_PENDING.get(idempotency_scope) if normalized_key else None
+    media_route: SessionRoute | None = None
+    if pending_dispatch is not None:
+        media_route = pending_dispatch[0]
+        event = dict(pending_dispatch[1])
+    elif directory is not None:
         try:
             media_route = await directory.lookup(session_id)
         except SessionDirectoryUnavailable as exc:
@@ -1249,9 +1256,13 @@ async def stop_response(
         and media_route.media_runtime == "streamcore"
     ):
         try:
-            cancelled = await directory.advance_generation(
-                session_id,
-                expected_stream_epoch=media_route.stream_epoch,
+            cancelled = (
+                pending_dispatch[0]
+                if pending_dispatch is not None
+                else await directory.advance_generation(
+                    session_id,
+                    expected_stream_epoch=media_route.stream_epoch,
+                )
             )
         except SessionNotFound as exc:
             raise HTTPException(status_code=404, detail="media route not found") from exc
@@ -1269,6 +1280,37 @@ async def stop_response(
                 "action": "atomic_cancel",
             }
         )
+        if normalized_key and pending_dispatch is None:
+            # The directory generation has advanced before the edge call. Keep
+            # the exact route/event pair so a transient Edge failure can be
+            # retried with the same generation instead of incrementing twice.
+            _STOP_DISPATCH_PENDING[idempotency_scope] = (cancelled, dict(event))
+        dispatcher = getattr(request.app.state, "media_stop_dispatcher", None)
+        if dispatcher is None:
+            if not settings.offline_mock:
+                raise HTTPException(
+                    status_code=503,
+                    detail="media stop dispatcher unavailable",
+                )
+            # Offline fixtures have no Edge/Core process to receive the
+            # command; retain an explicit pending marker instead of claiming
+            # that the authoritative media stop was delivered.
+            event["media_stop_dispatch"] = "pending"
+        else:
+            try:
+                result = dispatcher(
+                    session_id=session_id,
+                    route=cancelled,
+                    event=dict(event),
+                )
+                if inspect.isawaitable(result):
+                    await result
+            except HTTPException:
+                raise
+            except Exception as exc:
+                logger.warning("failed to dispatch stop-response to media runtime", exc_info=True)
+                raise HTTPException(status_code=502, detail="media stop dispatch failed") from exc
+            event["media_stop_dispatch"] = "dispatched"
     elif not settings.offline_mock:
         try:
             await _send_room_control(settings, room_name=str(rec["room_name"]), event=event)
@@ -1277,6 +1319,7 @@ async def stop_response(
             raise HTTPException(status_code=502, detail="stop-response routing failed") from exc
     _STOP_REQUESTS.append(event)
     if normalized_key:
+        _STOP_DISPATCH_PENDING.pop(idempotency_scope, None)
         _STOP_IDEMPOTENCY[idempotency_scope] = {"ok": True, **event}
     return {"ok": True, **event}
 
@@ -1465,3 +1508,4 @@ def get_stop_requests() -> list[dict[str, Any]]:
 def reset_session_state() -> None:
     _STOP_REQUESTS.clear()
     _STOP_IDEMPOTENCY.clear()
+    _STOP_DISPATCH_PENDING.clear()

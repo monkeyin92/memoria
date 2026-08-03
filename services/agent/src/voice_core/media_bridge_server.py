@@ -62,9 +62,18 @@ class MediaBridgeSession:
     downlink: deque[PCMFrame] = field(default_factory=deque)
     last_uplink_sequence: int = -1
     last_downlink_sequence: int = -1
+    # ``last_*_sequence`` are acceptance watermarks.  The queues themselves
+    # are intentionally separate from those watermarks: a frame can be
+    # accepted, consumed by the transport callback, and acknowledged without
+    # changing the replay/deduplication fence.
+    last_uplink_ack_sequence: int = -1
+    last_downlink_ack_sequence: int = -1
     _last_capture_end_sample: int = 0
+    _downlink_fence: GenerationFence | None = field(default=None, init=False)
+    _last_downlink_source_end_sample: int = 0
     stale_downlink_count: int = 0
     overflow_count: int = 0
+    _last_client_event_sequence: int = -1
     _stop_keys: deque[str] = field(default_factory=lambda: deque(maxlen=64))
 
     def __post_init__(self) -> None:
@@ -100,12 +109,67 @@ class MediaBridgeSession:
         self.uplink.append(frame)
         return True
 
+    def pop_uplink(self, sequence: int | None = None) -> AudioFrame | None:
+        """Consume one accepted uplink frame from the pending queue.
+
+        ``accept_uplink`` only reserves bounded queue capacity.  The owner of
+        the provider callback must call this method after it has consumed the
+        frame; otherwise a slow/no-op callback will eventually apply the
+        configured backpressure limit instead of silently growing memory.
+        Passing a sequence makes retries idempotent and avoids accidentally
+        consuming a later frame when callbacks complete out of order.
+        """
+
+        if not self.uplink:
+            return None
+        if sequence is None:
+            return self.uplink.popleft()
+        for index, frame in enumerate(self.uplink):
+            if frame.sequence == sequence:
+                del self.uplink[index]
+                return frame
+        return None
+
+    def ack_uplink(self, sequence: int) -> bool:
+        """Acknowledge an uplink frame after provider consumption.
+
+        ACK is monotonic and idempotent.  It does not accept a sequence that
+        was never accepted, which prevents a forged ACK from moving the
+        replay watermark.
+        """
+
+        if self.state == "closed" or sequence < 0 or sequence > self.last_uplink_sequence:
+            return False
+        if sequence < self.last_uplink_ack_sequence:
+            return False
+        self.last_uplink_ack_sequence = sequence
+        # Be defensive for callers that ACK without an explicit pop.
+        while self.uplink and self.uplink[0].sequence <= sequence:
+            self.uplink.popleft()
+        return True
+
+    def reset_downlink_generation(self, fence: GenerationFence) -> bool:
+        """Reset output sequence/sample watermarks at an announced fence."""
+
+        if self.state == "closed" or not self.generation.accept(fence):
+            return False
+        if self._downlink_fence == fence:
+            return True
+        self._downlink_fence = fence
+        self.last_downlink_sequence = -1
+        self.last_downlink_ack_sequence = -1
+        self._last_downlink_source_end_sample = 0
+        self.downlink.clear()
+        return True
+
     def accept_client_stop(self, event: MediaEnvelope) -> bool:
         """Apply one idempotent client stop to the authoritative generation."""
 
         if self.state == "closed" or event.session_id != self.identity.session_id:
             return False
         if event.stream_epoch != self.identity.stream_epoch or event.type != "client.stop_assistant":
+            return False
+        if event.sequence < self._last_client_event_sequence:
             return False
         key = event.payload.get("idempotency_key")
         if not isinstance(key, str) or not key.strip():
@@ -117,6 +181,7 @@ class MediaBridgeSession:
         if not isinstance(key, str) or not key.strip():
             return False
         if key in self._stop_keys:
+            self._last_client_event_sequence = max(self._last_client_event_sequence, event.sequence)
             return True
         if event.generation_id or event.turn_id or event.tool_epoch:
             expected = GenerationFence(
@@ -127,8 +192,25 @@ class MediaBridgeSession:
             )
             if not self.generation.accept(expected):
                 return False
-        self.generation.cancel(self.generation.current)
+        self._last_client_event_sequence = max(self._last_client_event_sequence, event.sequence)
+        next_fence = self.generation.cancel(self.generation.current)
+        if next_fence is None or not self.reset_downlink_generation(next_fence):
+            return False
         self._stop_keys.append(key)
+        return True
+
+    def accept_client_progress(self, event: MediaEnvelope) -> bool:
+        """Fence DataChannel playback progress before it reaches Voice Core."""
+
+        if (
+            self.state == "closed"
+            or event.session_id != self.identity.session_id
+            or event.stream_epoch != self.identity.stream_epoch
+            or event.type != "client.playback.progress"
+            or event.sequence < self._last_client_event_sequence
+        ):
+            return False
+        self._last_client_event_sequence = max(self._last_client_event_sequence, event.sequence)
         return True
 
     @property
@@ -139,9 +221,6 @@ class MediaBridgeSession:
         if self.state == "closed" or frame.identity != self.identity:
             self.stale_downlink_count += 1
             return False
-        if frame.sequence <= self.last_downlink_sequence:
-            self.stale_downlink_count += 1
-            return False
         expected = self.fence
         actual = GenerationFence(
             session_id=frame.identity.session_id,
@@ -149,13 +228,29 @@ class MediaBridgeSession:
             generation_id=frame.generation_id,
             tool_epoch=frame.tool_epoch,
         )
-        # A downlink frame may only consume a fence already published by the
-        # authoritative generation-control event.  Do not call ``accept`` on
-        # a future frame before this comparison: ``accept`` is intentionally a
-        # pure exact-match check, but keeping the order explicit prevents a
-        # future implementation from accidentally advancing the gate through
-        # an unannounced audio frame.
         if actual != expected or not self.generation.accept(actual):
+            self.stale_downlink_count += 1
+            return False
+
+        # Output sequence and source samples are local to a response
+        # generation.  The first frame of a new authoritative fence therefore
+        # starts at sequence zero, even when the previous generation ended at
+        # a much larger sequence.  Pending stale audio is never allowed to
+        # cross that fence.
+        if self._downlink_fence != actual:
+            self.reset_downlink_generation(actual)
+            self._last_downlink_source_end_sample = frame.source_start_sample
+
+        if frame.sequence != self.last_downlink_sequence + 1:
+            self.stale_downlink_count += 1
+            return False
+        if self.last_downlink_sequence < 0 and frame.source_start_sample != 0:
+            self.stale_downlink_count += 1
+            return False
+        if (
+            self.last_downlink_sequence >= 0
+            and frame.source_start_sample != self._last_downlink_source_end_sample
+        ):
             self.stale_downlink_count += 1
             return False
         if len(self.downlink) >= self.max_pending_audio_frames:
@@ -165,7 +260,40 @@ class MediaBridgeSession:
             self.overflow_count += 1
             return False
         self.last_downlink_sequence = frame.sequence
+        self._last_downlink_source_end_sample = (
+            frame.source_start_sample + frame.frame_samples
+        )
         self.downlink.append(frame)
+        return True
+
+    def pop_downlink(self, sequence: int | None = None) -> PCMFrame | None:
+        """Consume one pending downlink frame, optionally by sequence."""
+
+        if not self.downlink:
+            return None
+        if sequence is None:
+            return self.downlink.popleft()
+        for index, frame in enumerate(self.downlink):
+            if frame.sequence == sequence:
+                del self.downlink[index]
+                return frame
+        return None
+
+    def ack_downlink(self, sequence: int) -> bool:
+        """Acknowledge transport delivery of a downlink frame.
+
+        The client playback ACK remains a separate concern (the playback
+        ledger validates that watermark).  This ACK only releases bridge
+        queue capacity after the gRPC writer has accepted the frame.
+        """
+
+        if self.state == "closed" or sequence < 0 or sequence > self.last_downlink_sequence:
+            return False
+        if sequence < self.last_downlink_ack_sequence:
+            return False
+        self.last_downlink_ack_sequence = sequence
+        while self.downlink and self.downlink[0].sequence <= sequence:
+            self.downlink.popleft()
         return True
 
     def reconnect(self, identity: SessionIdentity) -> bool:
@@ -183,8 +311,13 @@ class MediaBridgeSession:
         self.identity = identity
         self.state = "connected"
         self.last_uplink_sequence = -1
-        self.last_downlink_sequence = -1
+        self.last_uplink_ack_sequence = -1
         self._last_capture_end_sample = 0
+        self._last_client_event_sequence = -1
+        # A reconnect advances only the transport epoch.  Preserve the
+        # current generation's output sequence/sample watermark so an in-flight
+        # reply can continue on the new connection; a later generation fence
+        # will reset these values in ``accept_downlink``.
         self.uplink.clear()
         self.downlink.clear()
         self.timeline.start_stream_epoch(identity.stream_epoch)

@@ -150,7 +150,13 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := s.authorize(r, request.SessionID, request.StreamEpoch); err != nil {
+	if err := s.authorizeIdentity(r, MediaTokenIdentity{
+		SessionID:   request.SessionID,
+		AccountID:   request.AccountID,
+		DeviceID:    request.DeviceID,
+		ClientType:  defaultClientType(request.ClientType),
+		StreamEpoch: request.StreamEpoch,
+	}); err != nil {
 		writeStatus(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
@@ -197,9 +203,15 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, http.StatusNotFound, map[string]string{"error": "session not found"})
 		return
 	}
-	// Re-verify against the current route epoch. A token from the previous
-	// reconnect epoch must not access uplink, downlink or control operations.
-	if err := s.authorize(r, id, session.Epoch()); err != nil {
+	accountID, deviceID := "", ""
+	_, accountID, deviceID, epoch := session.IdentitySnapshot()
+	if err := s.authorizeIdentity(r, MediaTokenIdentity{
+		SessionID:   id,
+		AccountID:   accountID,
+		DeviceID:    deviceID,
+		ClientType:  session.ClientTypeValue(),
+		StreamEpoch: epoch,
+	}); err != nil {
 		writeStatus(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 		return
 	}
@@ -304,6 +316,14 @@ func (s *Server) acceptFrame(w http.ResponseWriter, r *http.Request, session *Se
 }
 
 func (s *Server) authorize(r *http.Request, sessionID string, expectedEpoch ...uint64) error {
+	identity := MediaTokenIdentity{SessionID: sessionID}
+	if len(expectedEpoch) > 0 {
+		identity.StreamEpoch = expectedEpoch[0]
+	}
+	return s.authorizeIdentity(r, identity)
+}
+
+func (s *Server) authorizeIdentity(r *http.Request, identity MediaTokenIdentity) error {
 	if len(s.Verifier.Secret) == 0 {
 		// Development-only mode is explicit; production and every other
 		// environment fail closed unless the embedding test/dev process opts in.
@@ -316,10 +336,9 @@ func (s *Server) authorize(r *http.Request, sessionID string, expectedEpoch ...u
 	if !strings.HasPrefix(header, "Bearer ") {
 		return fmt.Errorf("bearer media token is required")
 	}
-	return s.Verifier.Verify(
+	return s.Verifier.VerifyIdentity(
 		strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")),
-		sessionID,
-		expectedEpoch...,
+		identity,
 	)
 }
 

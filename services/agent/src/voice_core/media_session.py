@@ -10,6 +10,8 @@ fencing and downlink PCM delivery.
 from __future__ import annotations
 
 import asyncio
+import inspect
+import logging
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
@@ -40,6 +42,7 @@ from services.agent.src.voice_core.speech_timeline import (
 )
 
 media_pb2: Any = _media_pb2
+logger = logging.getLogger(__name__)
 
 
 def _default_runtime_factory(session_id: str) -> DuplexRuntime:
@@ -55,12 +58,27 @@ class MediaReplyChunk:
     text: str = ""
     first: bool = False
     final: bool = False
+    # A fixed-frame provider may put a phrase's text on its first frame while
+    # the phrase spans several frames. Keep the complete audio span explicit.
+    text_audio_start_sample: int | None = None
+    text_audio_end_sample: int | None = None
 
     def __post_init__(self) -> None:
         if not self.pcm_s16le or len(self.pcm_s16le) % 2:
             raise ValueError("media reply PCM must be non-empty 16-bit audio")
         if self.source_start_sample < 0:
             raise ValueError("media reply sample range must be non-negative")
+        if (self.text_audio_start_sample is None) != (
+            self.text_audio_end_sample is None
+        ):
+            raise ValueError("text audio bounds must be provided together")
+        text_audio_start = self.text_audio_start_sample
+        text_audio_end = self.text_audio_end_sample
+        if text_audio_start is not None and text_audio_end is not None:
+            if text_audio_start < 0:
+                raise ValueError("text audio start must be non-negative")
+            if text_audio_end <= text_audio_start:
+                raise ValueError("text audio range must be positive")
 
     @property
     def frame_samples(self) -> int:
@@ -106,6 +124,7 @@ class _MediaVoiceSession:
     provider_complete: bool = False
     reply_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     reply_task: asyncio.Task[bool] | None = None
+    committed_asr_keys: set[tuple[int, str, int, int]] = field(default_factory=set)
     closed: bool = False
 
 
@@ -118,12 +137,16 @@ class MediaVoiceCoreRegistry:
     runtime_factory: RuntimeFactory = field(default=_default_runtime_factory)
     metrics: MetricsRegistry = field(default_factory=lambda: GLOBAL_METRICS)
     max_sessions: int = 256
+    reconnect_grace_s: float = 30.0
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
+    _cleanup_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
     def __post_init__(self) -> None:
         if self.max_sessions <= 0:
             raise ValueError("max_sessions must be positive")
+        if self.reconnect_grace_s <= 0:
+            raise ValueError("reconnect_grace_s must be positive")
 
     def install(self) -> None:
         """Connect this registry to a ``MediaBridgeGrpcServer`` instance."""
@@ -138,6 +161,9 @@ class MediaVoiceCoreRegistry:
         async with self._lock:
             current = self._sessions.get(identity.session_id)
             if current is not None:
+                cleanup = self._cleanup_tasks.pop(identity.session_id, None)
+                if cleanup is not None and not cleanup.done():
+                    cleanup.cancel()
                 if current.identity.account_id != identity.account_id:
                     raise ValueError("media session account identity changed")
                 if (
@@ -210,7 +236,80 @@ class MediaVoiceCoreRegistry:
             self.metrics.inc_media_session_failed()
             raise
         for result in results:
-            await self.accept_asr_result(context.identity.session_id, result)
+            accepted = await self.accept_asr_result(context.identity.session_id, result)
+            if accepted and result.is_final:
+                await self._commit_final_asr_result(context, result)
+
+    async def _commit_final_asr_result(
+        self,
+        context: _MediaVoiceSession,
+        result: ASRResult,
+    ) -> None:
+        """Drive accepted provider finals through the normal turn pipeline."""
+
+        key = (
+            result.stream_epoch,
+            result.sentence_id,
+            result.capture_start_sample,
+            result.capture_end_sample,
+        )
+        if key in context.committed_asr_keys:
+            return
+        context.committed_asr_keys.add(key)
+        previous_fence = context.playback.current_fence or context.runtime.fence
+        if len(context.committed_asr_keys) > 256:
+            # Keep the fence/idempotency memory bounded across long sessions.
+            context.committed_asr_keys = set(list(context.committed_asr_keys)[-128:])
+        fence, reason = await self.commit_user_turn(
+            context.identity.session_id,
+            stream_epoch=result.stream_epoch,
+            start_sample=result.capture_start_sample,
+            end_sample=result.capture_end_sample,
+        )
+        if fence is None:
+            # Pure control/enrol/guarded utterances are intentionally not sent
+            # to the LLM; ``accept_user_turn`` already routed those centrally.
+            if reason not in {"empty_media_turn", "session_not_found"}:
+                logger.info(
+                    "media final did not start reply session=%s reason=%s",
+                    context.identity.session_id,
+                    reason,
+                )
+            return
+        # A final ASR result can arrive while the previous answer is still
+        # synthesizing.  Wait for that task to release the per-session reply
+        # lock before scheduling the new turn; otherwise ``generate_reply``
+        # sees a locked session and silently drops a valid user turn.
+        await self._cancel_reply_task(context, previous_fence)
+        task = asyncio.create_task(
+            self.generate_reply(
+                context.identity.session_id,
+                next(
+                    (
+                        turn.content
+                        for turn in reversed(context.runtime.orchestrator.context.turns)
+                        if turn.role == "user" and turn.content
+                    ),
+                    result.text,
+                ),
+                fence,
+            ),
+            name=f"media-reply-{context.identity.session_id}-{fence.turn_id}",
+        )
+
+        def _observe(done: asyncio.Task[bool]) -> None:
+            if done.cancelled():
+                return
+            try:
+                done.result()
+            except Exception:
+                logger.exception(
+                    "media reply failed session=%s fence=%s",
+                    context.identity.session_id,
+                    fence,
+                )
+
+        task.add_done_callback(_observe)
 
     async def on_speech_segment(
         self,
@@ -223,6 +322,25 @@ class MediaVoiceCoreRegistry:
         # A media VAD/KWS event is already range-stamped; it must not be
         # converted into a callback-order speech epoch.
         if segment.kind is SegmentKind.KWS and segment.final:
+            route = context.runtime.route_user_turn(segment.text)
+            if route.should_interrupt and not route.enter_chat:
+                previous_fence = session.fence
+                cancelled = session.generation.cancel(previous_fence)
+                if cancelled is not None:
+                    accepted = await context.runtime.accept_media_generation(
+                        cancelled,
+                        cause="media_keyword_interrupt",
+                    )
+                    if accepted:
+                        context.playback.start(cancelled)
+                        context.provider_complete = False
+                        await self._cancel_reply_task(context, previous_fence)
+                        await self.bridge.emit_generation(
+                            context.identity.session_id,
+                            cancelled,
+                            action=media_pb2.GENERATION_ACTION_CANCEL,
+                            reason="keyword_interrupt",
+                        )
             await self.bridge.emit_event(
                 context.identity.session_id,
                 "keyword.hit",
@@ -246,6 +364,7 @@ class MediaVoiceCoreRegistry:
             return
         # MediaBridgeSession has already advanced its authoritative generation
         # before this callback runs. The Voice Core consumes that exact fence.
+        previous_fence = context.playback.current_fence or context.runtime.fence
         accepted = await context.runtime.accept_media_generation(
             session.fence,
             cause="client_stop_assistant",
@@ -254,11 +373,85 @@ class MediaVoiceCoreRegistry:
             raise ValueError("Voice Core rejected authoritative stop generation")
         context.playback.start(session.fence)
         context.provider_complete = False
-        if context.reply_task is not None and not context.reply_task.done():
-            context.reply_task.cancel()
+        if not previous_fence.matches(session.fence):
+            await self._cancel_reply_task(context, previous_fence)
+
+    @staticmethod
+    async def _cancel_provider_generation(
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> None:
+        """Propagate a transport cancel into adapters that support it.
+
+        ``MediaVoiceProvider`` stays provider-neutral, but the existing
+        adapter exposes a cooperative cancellation hook.  Calling it before
+        cancelling the registry task prevents an in-flight remote TTS request
+        from continuing after the authoritative generation has moved on.
+        """
+
+        cancel = getattr(context.provider, "cancel_generation", None)
+        if not callable(cancel):
+            cancel = getattr(context.provider, "cancel", None)
+        if not callable(cancel):
+            return
+        result = cancel(fence)
+        if inspect.isawaitable(result):
+            await result
+
+    @classmethod
+    async def _cancel_reply_task(
+        cls,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> None:
+        """Cancel provider work and drain the old reply task before reuse."""
+
+        task = context.reply_task
+        if task is None or task.done() or task is asyncio.current_task():
+            return
+        await cls._cancel_provider_generation(context, fence)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("media reply cancellation observed a failed task")
 
     async def on_session_closed(self, session: MediaBridgeSession) -> None:
-        context = self._sessions.pop(session.identity.session_id, None)
+        session_id = session.identity.session_id
+        if session.state == "closed":
+            await self._finalize_session(session_id)
+            return
+        # A gRPC stream closing is normally a transport reconnect, not a
+        # conversation close. Keep the runtime/provider alive briefly so a
+        # higher stream epoch can reclaim the same context without losing the
+        # turn, pending reply, or generation fence.
+        previous = self._cleanup_tasks.pop(session_id, None)
+        if previous is not None and not previous.done():
+            previous.cancel()
+        task = asyncio.create_task(
+            self._expire_disconnected_session(session_id, session.identity.stream_epoch),
+            name=f"media-reconnect-grace-{session_id}",
+        )
+        self._cleanup_tasks[session_id] = task
+
+    async def _expire_disconnected_session(self, session_id: str, stream_epoch: int) -> None:
+        try:
+            await asyncio.sleep(self.reconnect_grace_s)
+            current = self._sessions.get(session_id)
+            if current is None or current.closed or current.identity.stream_epoch != stream_epoch:
+                return
+            await self._finalize_session(session_id)
+        except asyncio.CancelledError:
+            return
+
+    async def _finalize_session(self, session_id: str) -> None:
+        cleanup = self._cleanup_tasks.pop(session_id, None)
+        current_task = asyncio.current_task()
+        if cleanup is not None and cleanup is not current_task and not cleanup.done():
+            cleanup.cancel()
+        context = self._sessions.pop(session_id, None)
         if context is None or context.closed:
             return
         context.closed = True
@@ -285,6 +478,7 @@ class MediaVoiceCoreRegistry:
         acknowledged = context.playback.acknowledge(
             fence,
             progress.rendered_sample_end,
+            received_sequence=progress.received_sequence,
             approximate=progress.approximate,
         )
         if not acknowledged:
@@ -441,6 +635,14 @@ class MediaVoiceCoreRegistry:
                 if not await self.bridge.emit_pcm(session_id, frame):
                     self.metrics.inc_media_stale_generation()
                     return False
+                if not context.playback.register_audio(
+                    fence,
+                    frame.sequence,
+                    frame.source_start_sample,
+                    frame.frame_samples,
+                ):
+                    self.metrics.inc_media_stale_generation()
+                    return False
                 if (
                     not context.first_audio_observed
                     and context.turn_started_ns is not None
@@ -459,8 +661,16 @@ class MediaVoiceCoreRegistry:
                             fence=fence,
                             text_start=text_start,
                             text_end=context.output_text_offset,
-                            audio_start_sample=chunk.source_start_sample,
-                            audio_end_sample=chunk.source_start_sample + len(gated) // 2,
+                            audio_start_sample=(
+                                chunk.text_audio_start_sample
+                                if chunk.text_audio_start_sample is not None
+                                else chunk.source_start_sample
+                            ),
+                            audio_end_sample=(
+                                chunk.text_audio_end_sample
+                                if chunk.text_audio_end_sample is not None
+                                else chunk.source_start_sample + len(gated) // 2
+                            ),
                             text=chunk.text,
                         )
                     )

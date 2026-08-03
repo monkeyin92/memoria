@@ -2,6 +2,20 @@ import { VoiceTransport } from "./VoiceTransport.js";
 
 const EVENTS_LABEL = "memoria.events.v1";
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+const REQUIRED_FENCE_EVENTS = new Set([
+  "generation",
+  "assistant.state",
+  "assistant_state",
+  "assistant.audio.started",
+  "assistant.audio.stopped",
+  "assistant.audio.frame",
+  "user.transcript.partial",
+  "user.transcript.final",
+  "assistant.text.delta",
+  "assistant.text.final",
+  "transcript_delta",
+  "playback.flush",
+]);
 
 function randomEventId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -65,6 +79,17 @@ function waitForPeerConnected(pc, timeoutMs) {
     // A mocked or non-event-target implementation may already have changed
     // state between the first read and listener installation.
     onChange();
+  });
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = globalThis.setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer !== undefined) globalThis.clearTimeout(timer);
   });
 }
 
@@ -141,6 +166,12 @@ export class StreamCoreTransport extends VoiceTransport {
     this.streamEpoch = 0;
     this.lastEventSequence = -1;
     this.nextClientSequence = 0;
+    this.currentTurnId = 0;
+    this.currentGenerationId = 0;
+    this.currentToolEpoch = 0;
+    this.lastAudioSequence = -1;
+    this.lastAudioSampleEnd = 0;
+    this.lastPlaybackProgressSample = -1;
     this.closed = false;
     this._connectionHandler = null;
     this._trackHandler = null;
@@ -170,6 +201,12 @@ export class StreamCoreTransport extends VoiceTransport {
     this.streamEpoch = config.streamEpoch;
     this.lastEventSequence = -1;
     this.nextClientSequence = 0;
+    this.currentTurnId = 0;
+    this.currentGenerationId = 0;
+    this.currentToolEpoch = 0;
+    this.lastAudioSequence = -1;
+    this.lastAudioSampleEnd = 0;
+    this.lastPlaybackProgressSample = -1;
     this._connectHandshakeComplete = false;
     this._disconnectNotified = false;
     this.onState("connecting");
@@ -294,21 +331,42 @@ export class StreamCoreTransport extends VoiceTransport {
   async _exchangeSdp({ session, whipUrl, token, offerSdp }) {
     if (typeof this.exchangeSdp === "function") {
       return asSdpResponse(
-        await this.exchangeSdp(session.session_id, offerSdp, {
-          token,
-          whipUrl,
-        }),
+        await withTimeout(
+          this.exchangeSdp(session.session_id, offerSdp, {
+            token,
+            whipUrl,
+          }),
+          this.connectTimeoutMs,
+          "媒体协商超时",
+        ),
       );
     }
-    const response = await this.fetchImpl(whipUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/sdp",
-        Accept: "application/sdp",
-      },
-      body: offerSdp,
-    });
+    const controller =
+      typeof globalThis.AbortController === "function"
+        ? new globalThis.AbortController()
+        : null;
+    const timer = controller
+      ? globalThis.setTimeout(() => controller.abort(), this.connectTimeoutMs)
+      : null;
+    let response;
+    try {
+      response = await withTimeout(
+        this.fetchImpl(whipUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/sdp",
+            Accept: "application/sdp",
+          },
+          body: offerSdp,
+          ...(controller ? { signal: controller.signal } : {}),
+        }),
+        this.connectTimeoutMs,
+        "媒体协商超时",
+      );
+    } finally {
+      if (timer !== null) globalThis.clearTimeout(timer);
+    }
     return asSdpResponse(response);
   }
 
@@ -366,16 +424,14 @@ export class StreamCoreTransport extends VoiceTransport {
     }
     if (!event || typeof event !== "object" || typeof event.type !== "string") return;
     if (event.v !== undefined && event.v !== 1) return;
-    if (
-      event.session_id !== undefined &&
-      event.session_id !== this.session?.session_id
-    ) {
+    if (event.type !== "ping" && event.session_id !== this.session?.session_id) {
       return;
     }
-    if (event.stream_epoch !== undefined) {
-      if (!Number.isInteger(event.stream_epoch) || event.stream_epoch !== this.streamEpoch) {
-        return;
-      }
+    if (
+      event.type !== "ping" &&
+      (!Number.isInteger(event.stream_epoch) || event.stream_epoch !== this.streamEpoch)
+    ) {
+      return;
     }
     if (
       event.payload &&
@@ -385,12 +441,69 @@ export class StreamCoreTransport extends VoiceTransport {
     ) {
       return;
     }
+    if (event.type !== "ping" && !Number.isInteger(event.sequence)) return;
+    if (
+      Number.isInteger(event.sequence) &&
+      event.sequence <= this.lastEventSequence
+    ) {
+      return;
+    }
+    const payload = event.payload && typeof event.payload === "object" ? event.payload : event;
+    const turnId = payload.turn_id ?? event.turn_id;
+    const generationId = payload.generation_id ?? event.generation_id;
+    const toolEpoch = payload.tool_epoch ?? event.tool_epoch;
+    if (REQUIRED_FENCE_EVENTS.has(event.type)) {
+      if (
+        !Number.isInteger(turnId) ||
+        !Number.isInteger(generationId) ||
+        !Number.isInteger(toolEpoch) ||
+        turnId < 0 ||
+        generationId < 0 ||
+        toolEpoch < 0 ||
+        generationId < this.currentGenerationId ||
+        (generationId === this.currentGenerationId && turnId < this.currentTurnId)
+      ) {
+        return;
+      }
+      const fenceChanged =
+        generationId !== this.currentGenerationId ||
+        turnId !== this.currentTurnId ||
+        toolEpoch !== this.currentToolEpoch;
+      this.currentTurnId = turnId;
+      this.currentGenerationId = generationId;
+      this.currentToolEpoch = toolEpoch;
+      if (fenceChanged) {
+        this.lastAudioSequence = -1;
+        this.lastAudioSampleEnd = 0;
+        this.lastPlaybackProgressSample = -1;
+      }
+    }
+    // Consume the server event sequence only after the identity/fence checks
+    // above. An invalid high-sequence packet must not poison the next valid
+    // event on the same DataChannel.
     if (Number.isInteger(event.sequence)) {
-      if (event.sequence <= this.lastEventSequence) return;
       this.lastEventSequence = event.sequence;
     }
+    if (event.type === "assistant.audio.frame") {
+      const sequence = payload.sequence ?? event.sequence;
+      const sourceStart = payload.source_start_sample ?? event.source_start_sample;
+      const frameSamples = payload.frame_samples ?? event.frame_samples;
+      if (
+        Number.isInteger(sequence) &&
+        Number.isInteger(sourceStart) &&
+        Number.isInteger(frameSamples) &&
+        sequence >= 0 &&
+        sourceStart >= 0 &&
+        frameSamples > 0
+      ) {
+        this.lastAudioSequence = Math.max(this.lastAudioSequence, sequence);
+        this.lastAudioSampleEnd = Math.max(
+          this.lastAudioSampleEnd,
+          sourceStart + frameSamples,
+        );
+      }
+    }
     this.onDataReceived(event);
-    const payload = event.payload && typeof event.payload === "object" ? event.payload : event;
     if (event.type === "assistant.state" || event.type === "assistant_state") {
       if (typeof payload.state === "string") this.onState(payload.state, event);
     } else if (
@@ -540,8 +653,57 @@ export class StreamCoreTransport extends VoiceTransport {
     for (const [key, value] of Object.entries(envelope)) {
       if (value === undefined) delete envelope[key];
     }
-    this.channel.send(JSON.stringify(envelope));
+    try {
+      this.channel.send(JSON.stringify(envelope));
+    } catch (error) {
+      return Promise.reject(error);
+    }
     return Promise.resolve();
+  }
+
+  publishPlaybackProgressFromTime(currentTimeSeconds) {
+    if (!Number.isFinite(currentTimeSeconds) || currentTimeSeconds < 0) {
+      return Promise.reject(new Error("播放时间无效"));
+    }
+    if (this.lastAudioSequence < 0 || this.lastAudioSampleEnd <= 0) {
+      return Promise.resolve(false);
+    }
+    const renderedSampleEnd = Math.min(
+      this.lastAudioSampleEnd,
+      Math.max(0, Math.floor(currentTimeSeconds * 24_000)),
+    );
+    if (renderedSampleEnd <= this.lastPlaybackProgressSample) {
+      return Promise.resolve(false);
+    }
+    const previousProgressSample = this.lastPlaybackProgressSample;
+    this.lastPlaybackProgressSample = renderedSampleEnd;
+    return this.publishData({
+      type: "client.playback.progress",
+      turn_id: this.currentTurnId,
+      generation_id: this.currentGenerationId,
+      payload: {
+        received_sequence: this.lastAudioSequence,
+        rendered_sample_end: renderedSampleEnd,
+        client_monotonic_ms: Math.max(
+          0,
+          Math.round(globalThis.performance?.now?.() ?? Date.now()),
+        ),
+        approximate: true,
+        turn_id: this.currentTurnId,
+        generation_id: this.currentGenerationId,
+        tool_epoch: this.currentToolEpoch,
+      },
+    }).then(
+      () => true,
+      (error) => {
+        // Do not lose the watermark when a transient DataChannel failure
+        // prevents the server from receiving this progress update.
+        if (this.lastPlaybackProgressSample === renderedSampleEnd) {
+          this.lastPlaybackProgressSample = previousProgressSample;
+        }
+        throw error;
+      },
+    );
   }
 
   sendText(text) {

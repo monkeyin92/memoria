@@ -58,6 +58,7 @@ services:
       MEMORIA_DB_PATH: /data/memoria.sqlite3
       MEMORIA_SPEAKER_EMBEDDING_URL: http://speaker-model:8001/v1/embeddings/speaker
       MEMORIA_SPEAKER_EMBEDDING_MODEL: campplus-cn-common@v1.0.0+ckpt.3388cf5f+onnx.7a39d2e5e566+fbank.v1
+      MEDIA_EDGE_CONTROL_URL: "http://media-edge:8080"
     command:
       - /app/.venv/bin/uvicorn
       - services.control_api.app.main:app
@@ -206,12 +207,15 @@ services:
       MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
       HOME: /tmp
       XDG_CACHE_HOME: /tmp/.cache
+      MEDIA_SLO_METRICS_URL: "http://voice-core-media-bridge:9090/"
     command:
       - /app/scripts/run_media_slo_reporter.py
     depends_on:
       control-api:
         condition: service_healthy
       agent:
+        condition: service_healthy
+      voice-core-media-bridge:
         condition: service_healthy
     restart: unless-stopped
     read_only: true
@@ -245,6 +249,7 @@ services:
       - /app/scripts/run_media_bridge.py
     expose:
       - "7001"
+      - "9090"
     volumes:
       - type: bind
         source: /etc/memoria-media-runtime

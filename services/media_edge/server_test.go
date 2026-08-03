@@ -86,6 +86,59 @@ func TestHTTPReferenceEdgeFailsClosedWithoutExplicitDevelopmentOptIn(t *testing.
 	}
 }
 
+func TestHTTPReferenceEdgeBindsJWTIdentityToSessionBody(t *testing.T) {
+	secret := []byte("media-token-secret-that-is-long-enough")
+	server := NewServer(JWTVerifier{Secret: secret, Issuer: "voice-agent", Audience: "memoria-media"}, 4)
+	defer server.Close()
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+	token := signedMediaToken(t, secret, map[string]any{
+		"iss":          "voice-agent",
+		"aud":          "memoria-media",
+		"sub":          "account-1",
+		"session_id":   "s",
+		"device_id":    "device-1",
+		"client_type":  "h5",
+		"stream_epoch": 1,
+		"exp":          time.Now().Add(time.Minute).Unix(),
+	})
+	request, err := http.NewRequest(
+		http.MethodPost,
+		ts.URL+"/v1/media/sessions",
+		strings.NewReader(`{"session_id":"s","account_id":"other","device_id":"device-1","client_type":"h5","stream_epoch":1}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", response.StatusCode, http.StatusUnauthorized)
+	}
+	_ = response.Body.Close()
+
+	request, err = http.NewRequest(
+		http.MethodPost,
+		ts.URL+"/v1/media/sessions",
+		strings.NewReader(`{"session_id":"s","account_id":"account-1","device_id":"device-1","client_type":"h5","stream_epoch":1}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("valid identity status=%d, want %d", response.StatusCode, http.StatusCreated)
+	}
+	_ = response.Body.Close()
+}
+
 func TestHTTPServerForwardsFramesThroughVoiceCoreRuntime(t *testing.T) {
 	server := NewServer(JWTVerifier{}, 2)
 	server.AllowInsecureDevelopment = true
