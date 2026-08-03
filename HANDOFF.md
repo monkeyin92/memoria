@@ -40,8 +40,9 @@
   没有 CI PostgreSQL，29 个数据库/真实模型条件测试被跳过，本轮没有降低门槛或排除代码。
 - 未完成且不得包装成“全部生产验收”：真实 Pion/WHIP/RTP/DTLS/SRTP/Opus 终结器、完整
   Agent orchestrated handler 注入、真实 Provider/浏览器/硬件 ACK、监护人授权儿童录音、
-  Redis/coturn 多实例、真实 chaos/load、灰度/回滚 SLO 证据。未发布、未切换 LiveKit、
-  未提交或推送；小程序素材、营销/研究文档和上传脚本等用户原有改动未触碰。
+  Redis/coturn 多实例、真实 chaos/load、灰度/回滚 SLO 证据。当前修复已提交为
+  `c3b6c19` 并推送 `main`，但仍未发布、未切换 LiveKit；小程序素材、营销/研究文档和上传脚本等
+  用户原有改动未触碰。
 
 ## 2026-08-03：全双工整改边界收口（未发布）
 
