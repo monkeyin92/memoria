@@ -11,6 +11,7 @@ import (
 	mediav1 "memoria/services/media_edge/gen/memoria/media/v1"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 )
@@ -94,14 +95,22 @@ func newBufconnBridge(t *testing.T, service *fakeVoiceCore) (*VoiceCoreBridge, f
 	grpcServer := grpc.NewServer()
 	mediav1.RegisterVoiceMediaBridgeServer(grpcServer, service)
 	go func() { _ = grpcServer.Serve(listener) }()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	conn, err := grpc.DialContext(
-		ctx,
-		"bufnet",
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
 		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	cancel()
+	if err == nil {
+		conn.Connect()
+		readyCtx, readyCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		for conn.GetState() != connectivity.Ready {
+			if !conn.WaitForStateChange(readyCtx, conn.GetState()) {
+				err = readyCtx.Err()
+				break
+			}
+		}
+		readyCancel()
+	}
 	if err != nil {
 		grpcServer.Stop()
 		_ = listener.Close()
@@ -229,10 +238,10 @@ func TestVoiceCoreBridgeStopSequenceIsMonotonic(t *testing.T) {
 		t.Fatal(err)
 	}
 	fence := Fence{SessionID: "s"}
-	if err := session.SendStop("stop-1", "first", fence); err != nil {
+	if err := session.SendStop("stop-1", "first", fence, 1234); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.SendStop("stop-2", "second", fence); err != nil {
+	if err := session.SendStop("stop-2", "second", fence, 2234); err != nil {
 		t.Fatal(err)
 	}
 	first := (<-service.received).GetDevice().GetJsonPayload()
@@ -268,6 +277,7 @@ func TestVoiceCoreBridgeKeywordHardStopRequiresConfidenceAndPreservesFlag(t *tes
 	if err := session.SendKeywordAtFence(
 		"停一下", 0.9, 10, 20, true,
 		Fence{SessionID: "s", GenerationID: 99},
+		1234,
 	); err == nil {
 		t.Fatal("stale hard-stop keyword fence was accepted")
 	}
@@ -277,5 +287,8 @@ func TestVoiceCoreBridgeKeywordHardStopRequiresConfidenceAndPreservesFlag(t *tes
 	keyword := (<-service.received).GetKeyword()
 	if keyword == nil || !keyword.GetHardStop() || keyword.GetConfidence() != float32(0.8) {
 		t.Fatalf("unexpected keyword event: %v", keyword)
+	}
+	if keyword.GetDetectedMonotonicMs() == 0 {
+		t.Fatal("hard-stop keyword event is missing the edge detection timestamp")
 	}
 }

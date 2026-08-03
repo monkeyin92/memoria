@@ -225,10 +225,16 @@ func (s *Session) acceptDownlinkLocked(frame AudioFrame) error {
 }
 
 // DeliverDownlink keeps the authoritative generation check, bounded queue and
-// transport write in one order. A failed sender leaves the frame pending; a
-// successful sender retires it immediately.
+// transport write inside one session lock, so a concurrent CancelGeneration
+// can never admit an old-generation frame to the terminator's encoder.  The
+// sender is the real media terminator's enqueue step; it must be fast and
+// must not call back into Session (the gate is held across the call).  A
+// failed sender leaves the frame pending; a successful sender retires it
+// immediately.
 func (s *Session) DeliverDownlink(frame AudioFrame, sender DownlinkSender) error {
-	if err := s.AcceptDownlink(frame); err != nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.acceptDownlinkLocked(frame); err != nil {
 		return err
 	}
 	if sender == nil {
@@ -237,7 +243,7 @@ func (s *Session) DeliverDownlink(frame AudioFrame, sender DownlinkSender) error
 	if err := sender(frame); err != nil {
 		return err
 	}
-	return s.AcknowledgeDownlink(frame.Sequence)
+	return s.acknowledgeDownlinkLocked(frame.Sequence)
 }
 
 func (s *Session) AcknowledgeDownlink(sequence uint64) error {

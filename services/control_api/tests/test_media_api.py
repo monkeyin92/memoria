@@ -253,6 +253,94 @@ async def test_streamcore_stop_dispatches_cancel_to_current_media_runtime(
 
 
 @pytest.mark.asyncio
+async def test_streamcore_stop_forwards_expected_fence_to_media_edge(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("MEDIA_RUNTIME_DEFAULT", "streamcore")
+    monkeypatch.setenv("STREAMCORE_EXPERIMENT_PERCENT", "100")
+    monkeypatch.setenv("STREAMCORE_WHIP_URL", "http://localhost:7000/whip")
+    monkeypatch.setenv("STREAMCORE_TOKEN_SECRET", "streamcore-token-secret-long-enough")
+    app = create_app()
+    dispatched: list[dict[str, object]] = []
+
+    async def dispatch(
+        *, session_id: str, route: object, event: dict[str, object]
+    ) -> dict[str, object]:
+        dispatched.append({"session_id": session_id, "route": route, "event": event})
+        return {"stream_epoch": 1, "turn_id": 4, "generation_id": 7, "tool_epoch": 2}
+
+    app.state.media_stop_dispatcher = dispatch
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        anonymous = await client.post("/v1/auth/anonymous")
+        headers = {"Authorization": f"Bearer {anonymous.json()['access_token']}"}
+        created = await client.post("/v1/media/sessions", headers=headers, json={})
+        session_id = created.json()["session_id"]
+        stop = await client.post(
+            f"/v1/sessions/{session_id}/stop-response",
+            headers={**headers, "Idempotency-Key": "fenced-stop-1"},
+            json={
+                "reason": "user_button",
+                "stream_epoch": 1,
+                "turn_id": 4,
+                "generation_id": 7,
+                "tool_epoch": 2,
+            },
+        )
+
+    assert stop.status_code == 200
+    assert dispatched[0]["event"]["turn_id"] == 4
+    assert dispatched[0]["event"]["generation_id"] == 7
+    assert dispatched[0]["event"]["tool_epoch"] == 2
+    assert dispatched[0]["event"]["stream_epoch"] == 1
+
+
+@pytest.mark.asyncio
+async def test_streamcore_stop_rejects_stale_or_partial_fence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    monkeypatch.setenv("MEDIA_RUNTIME_DEFAULT", "streamcore")
+    monkeypatch.setenv("STREAMCORE_EXPERIMENT_PERCENT", "100")
+    monkeypatch.setenv("STREAMCORE_WHIP_URL", "http://localhost:7000/whip")
+    monkeypatch.setenv("STREAMCORE_TOKEN_SECRET", "streamcore-token-secret-long-enough")
+    app = create_app()
+
+    async def dispatch(
+        *, session_id: str, route: object, event: dict[str, object]
+    ) -> dict[str, object]:
+        return {"stream_epoch": 1, "turn_id": 4, "generation_id": 7, "tool_epoch": 2}
+
+    app.state.media_stop_dispatcher = dispatch
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        anonymous = await client.post("/v1/auth/anonymous")
+        headers = {"Authorization": f"Bearer {anonymous.json()['access_token']}"}
+        created = await client.post("/v1/media/sessions", headers=headers, json={})
+        session_id = created.json()["session_id"]
+        stale = await client.post(
+            f"/v1/sessions/{session_id}/stop-response",
+            headers={**headers, "Idempotency-Key": "stale-stop-1"},
+            json={
+                "reason": "user_button",
+                "stream_epoch": 99,
+                "turn_id": 4,
+                "generation_id": 7,
+                "tool_epoch": 2,
+            },
+        )
+        partial = await client.post(
+            f"/v1/sessions/{session_id}/stop-response",
+            headers={**headers, "Idempotency-Key": "partial-stop-1"},
+            json={"reason": "user_button", "stream_epoch": 1, "generation_id": 7},
+        )
+
+    assert stale.status_code == 409
+    assert partial.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_streamcore_stop_retry_reuses_generation_after_edge_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -85,9 +85,9 @@ class MediaBridgeTLS:
         )
 
 
-ClientEventHandler = Callable[[MediaBridgeSession, MediaEnvelope], Awaitable[None]]
+ClientEventHandler = Callable[[MediaBridgeSession, MediaEnvelope, int], Awaitable[None]]
 AudioFrameHandler = Callable[[MediaBridgeSession, AudioFrame], Awaitable[None]]
-SpeechSegmentHandler = Callable[[MediaBridgeSession, SpeechSegment], Awaitable[None]]
+SpeechSegmentHandler = Callable[[MediaBridgeSession, SpeechSegment, int], Awaitable[None]]
 SessionClosedHandler = Callable[[MediaBridgeSession], Awaitable[None]]
 PlaybackProgressHandler = Callable[[MediaBridgeSession, PlaybackProgress], Awaitable[None]]
 
@@ -253,6 +253,11 @@ class MediaBridgeGrpcServer:
                 if message is None:
                     break
                 yield message
+                if connection.closed:
+                    # An overflow terminal (e.g. a generation cancel) was
+                    # enqueued after the writer was closed; stop after it so
+                    # the client observes the authoritative terminal event.
+                    break
         finally:
             if not consumer.done():
                 consumer.cancel()
@@ -483,11 +488,16 @@ class MediaBridgeGrpcServer:
                     min_confidence=KWS_HARD_STOP_MIN_CONFIDENCE,
                 )
             if accepted and self.on_speech_segment is not None:
-                await self.on_speech_segment(connection.session, segment)
+                await self.on_speech_segment(connection.session, segment, 0)
             return
         if event_name == "keyword":
             event = request.keyword
             self._require_identity(connection, event.identity)
+            detected_monotonic_ms = (
+                int(event.detected_monotonic_ms)
+                if event.HasField("detected_monotonic_ms")
+                else 0
+            )
             segment = SpeechSegment(
                 session_id=connection.session.identity.session_id,
                 stream_epoch=connection.session.identity.stream_epoch,
@@ -509,7 +519,11 @@ class MediaBridgeGrpcServer:
                     min_confidence=KWS_HARD_STOP_MIN_CONFIDENCE,
                 )
             if accepted and self.on_speech_segment is not None:
-                await self.on_speech_segment(connection.session, segment)
+                await self.on_speech_segment(
+                    connection.session,
+                    segment,
+                    detected_monotonic_ms,
+                )
             return
         if event_name == "device":
             event = request.device
@@ -524,7 +538,11 @@ class MediaBridgeGrpcServer:
                     await self._error(connection, "stale_client_event", "client event rejected")
                     return
                 if self.on_client_event is not None:
-                    await self.on_client_event(connection.session, envelope)
+                    await self.on_client_event(
+                        connection.session,
+                        envelope,
+                        int(event.monotonic_ms),
+                    )
                 await self.emit_generation(
                     connection.session.identity.session_id,
                     connection.session.fence,
@@ -567,7 +585,7 @@ class MediaBridgeGrpcServer:
                 if self.on_playback_progress is not None:
                     await self.on_playback_progress(connection.session, progress)
             elif self.on_client_event is not None:
-                await self.on_client_event(connection.session, envelope)
+                await self.on_client_event(connection.session, envelope, 0)
             return
         if event_name == "playback":
             event = request.playback
@@ -617,12 +635,18 @@ class MediaBridgeGrpcServer:
             connection.outgoing.put_nowait(message)
         except asyncio.QueueFull:
             connection.session.overflow_count += 1
-            self._terminate_outgoing(connection)
+            self._terminate_outgoing(
+                connection,
+                self._overflow_cancel_message(connection),
+            )
             return False
         return True
 
     @staticmethod
-    def _terminate_outgoing(connection: _Connection) -> None:
+    def _terminate_outgoing(
+        connection: _Connection,
+        terminal: media_pb2.CoreToMedia | None = None,
+    ) -> None:
         """Wake the writer immediately when bounded delivery is exhausted."""
 
         connection.closed = True
@@ -631,7 +655,46 @@ class MediaBridgeGrpcServer:
                 connection.outgoing.get_nowait()
             except asyncio.QueueEmpty:
                 break
-        connection.outgoing.put_nowait(None)
+        if terminal is not None:
+            connection.outgoing.put_nowait(terminal)
+        else:
+            connection.outgoing.put_nowait(None)
+
+    def _overflow_cancel_message(
+        self,
+        connection: _Connection,
+    ) -> media_pb2.CoreToMedia | None:
+        """Derive the authoritative cancelled fence for a delivery overflow.
+
+        Bounded delivery exhaustion is a transport failure for the current
+        generation: the provider output for that fence can no longer be
+        delivered, so the generation is cancelled and a reconnect receives
+        GENERATION_ACTION_CANCEL instead of a stale RESUME.
+        """
+
+        fence = connection.session.generation.current
+        if (
+            connection.session.state == "closed"
+            or not connection.session.generation_active
+            or not (fence.turn_id or fence.generation_id or fence.tool_epoch)
+        ):
+            return None
+        next_fence = connection.session.generation.cancel(connection.session.generation.current)
+        if next_fence is None:
+            return None
+        connection.session.generation_active = False
+        connection.session.reset_downlink_generation(next_fence)
+        return media_pb2.CoreToMedia(
+            generation=media_pb2.GenerationControl(
+                identity=_identity_to_proto(connection.session.identity),
+                turn_id=next_fence.turn_id,
+                generation_id=next_fence.generation_id,
+                tool_epoch=next_fence.tool_epoch,
+                action=media_pb2.GENERATION_ACTION_CANCEL,
+                reason="downlink_queue_full",
+                sequence=self._next_event_sequence(connection),
+            )
+        )
 
     async def emit_pcm(self, session_id: str, frame: PCMFrame) -> bool:
         connection = self._connections.get(session_id)

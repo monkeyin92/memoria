@@ -31,14 +31,14 @@ async def test_bidirectional_media_v1_bridge_fences_audio_and_client_stop() -> N
     audio_seen = asyncio.Event()
     segment_seen = asyncio.Event()
 
-    async def on_client_event(_session, event: MediaEnvelope) -> None:
+    async def on_client_event(_session, event: MediaEnvelope, detected_monotonic_ms: int = 0) -> None:
         client_events.append(event.type)
 
     async def on_audio_frame(_session, frame) -> None:
         audio_sequences.append(frame.sequence)
         audio_seen.set()
 
-    async def on_speech_segment(_session, segment) -> None:
+    async def on_speech_segment(_session, segment, detected_monotonic_ms: int = 0) -> None:
         segment_kinds.append(segment.kind.value)
         segment_controls.append((segment.final, segment.hard_stop))
         voiced_end_samples.append(segment.voiced_end_sample)
@@ -241,6 +241,37 @@ async def test_outgoing_queue_overflow_wakes_writer_for_reconnect() -> None:
     assert not await bridge._enqueue(connection, message)
     assert connection.closed is True
     assert await asyncio.wait_for(connection.outgoing.get(), timeout=0.1) is None
+
+
+@pytest.mark.asyncio
+async def test_outgoing_queue_overflow_cancels_generation_and_reconnect_sends_cancel() -> None:
+    bridge = MediaBridgeGrpcServer(max_pending_messages=1)
+    connection = bridge._open_connection(SessionIdentity("overflow-session", stream_epoch=1))
+    fence = GenerationFence("overflow-session", 1, 1, 0)
+    # The START control occupies the single queue slot; the next PCM/event
+    # triggers overflow.
+    assert await bridge.emit_generation(
+        "overflow-session",
+        fence,
+        action=media_pb2.GENERATION_ACTION_START,
+    )
+    message = media_pb2.CoreToMedia(
+        error=media_pb2.CoreError(code="one", message="queued")
+    )
+    assert not await bridge._enqueue(connection, message)
+    assert connection.closed is True
+    assert connection.session.generation_active is False
+    terminal = await asyncio.wait_for(connection.outgoing.get(), timeout=0.1)
+    assert terminal.generation.action == media_pb2.GENERATION_ACTION_CANCEL
+    assert terminal.generation.reason == "downlink_queue_full"
+    assert terminal.generation.generation_id == fence.generation_id + 1
+    # A reconnect reuses the same session state: because the overflowed
+    # generation is inactive, the transport announces CANCEL, never RESUME.
+    reconnected = bridge._open_connection(
+        SessionIdentity("overflow-session", stream_epoch=2)
+    )
+    assert reconnected.session is connection.session
+    assert reconnected.session.generation_active is False
 
 
 @pytest.mark.asyncio

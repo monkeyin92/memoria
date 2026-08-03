@@ -97,6 +97,11 @@ message KeywordEvent {
   uint64 start_sample = 4;
   uint64 end_sample = 5;
   bool hard_stop = 6;
+  // Wall-clock millisecond when Media Edge detected the keyword locally.
+  // Voice Core uses this as the interrupt.detect anchor so the interrupt
+  // SLO includes Edge-side detection, gate and network hops instead of only
+  // the time after the event reaches the Core.
+  optional uint64 detected_monotonic_ms = 7;
 }
 
 message PlaybackProgress {

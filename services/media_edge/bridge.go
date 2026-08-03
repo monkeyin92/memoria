@@ -15,6 +15,7 @@ import (
 	"math"
 	"os"
 	"sync"
+	"time"
 
 	mediav1 "memoria/services/media_edge/gen/memoria/media/v1"
 
@@ -194,15 +195,31 @@ func DialVoiceCore(ctx context.Context, config VoiceCoreBridgeConfig) (*VoiceCor
 	} else {
 		return nil, fmt.Errorf("Voice Core bridge requires mTLS outside development")
 	}
-	// A production edge must not announce readiness and only discover an
-	// unreachable Voice Core on the first browser session. Callers should pass
-	// a bounded context so startup fails closed and predictably.
-	opts = append(opts, grpc.WithBlock())
-	conn, err := grpc.DialContext(ctx, config.Address, opts...)
+	// grpc.NewClient connects lazily; callers pass a bounded context so
+	// startup fails closed and predictably instead of announcing readiness
+	// and only discovering an unreachable Voice Core on the first session.
+	conn, err := grpc.NewClient(config.Address, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("dial Voice Core bridge: %w", err)
 	}
+	conn.Connect()
+	if err := waitForReady(ctx, conn); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
 	return NewVoiceCoreBridge(conn), nil
+}
+
+func waitForReady(ctx context.Context, conn *grpc.ClientConn) error {
+	for {
+		state := conn.GetState()
+		if state == connectivity.Ready {
+			return nil
+		}
+		if !conn.WaitForStateChange(ctx, state) {
+			return fmt.Errorf("Voice Core bridge did not become ready: %w", ctx.Err())
+		}
+	}
 }
 
 // VoiceCoreBridge owns a gRPC connection and creates fenced sessions on it.
@@ -406,7 +423,10 @@ func (s *VoiceCoreSession) SendVadWithVoicedEnd(sample, voicedEnd uint64, probab
 }
 
 func (s *VoiceCoreSession) SendKeyword(keyword string, confidence float32, start, end uint64, hardStop bool) error {
-	return s.SendKeywordAtFence(keyword, confidence, start, end, hardStop, s.CurrentFence())
+	return s.SendKeywordAtFence(
+		keyword, confidence, start, end, hardStop, s.CurrentFence(),
+		uint64(time.Now().UnixMilli()),
+	)
 }
 
 func validateKeyword(keyword string, confidence float32, start, end uint64, hardStop bool) error {
@@ -423,8 +443,10 @@ func validateKeyword(keyword string, confidence float32, start, end uint64, hard
 }
 
 // SendKeywordAtFence rejects delayed KWS evidence before it can stop a newer
-// generation. SendKeyword remains as the current-fence compatibility helper.
-func (s *VoiceCoreSession) SendKeywordAtFence(keyword string, confidence float32, start, end uint64, hardStop bool, fence Fence) error {
+// generation and stamps the edge-side detection time so Voice Core can
+// measure interrupt.detect → interrupt.cancel. SendKeyword remains as the
+// current-fence compatibility helper.
+func (s *VoiceCoreSession) SendKeywordAtFence(keyword string, confidence float32, start, end uint64, hardStop bool, fence Fence, detectedAtMs uint64) error {
 	if err := validateKeyword(keyword, confidence, start, end, hardStop); err != nil {
 		return err
 	}
@@ -435,15 +457,19 @@ func (s *VoiceCoreSession) SendKeywordAtFence(keyword string, confidence float32
 	if !s.current.Equal(fence) {
 		return fmt.Errorf("keyword belongs to a stale generation")
 	}
+	keywordEvent := &mediav1.KeywordEvent{
+		Identity:    s.identity.proto(),
+		Keyword:     keyword,
+		Confidence:  confidence,
+		StartSample: start,
+		EndSample:   end,
+		HardStop:    hardStop,
+	}
+	if detectedAtMs > 0 {
+		keywordEvent.DetectedMonotonicMs = &detectedAtMs
+	}
 	if err := s.stream.Send(&mediav1.MediaToCore{Event: &mediav1.MediaToCore_Keyword{
-		Keyword: &mediav1.KeywordEvent{
-			Identity:    s.identity.proto(),
-			Keyword:     keyword,
-			Confidence:  confidence,
-			StartSample: start,
-			EndSample:   end,
-			HardStop:    hardStop,
-		},
+		Keyword: keywordEvent,
 	}}); err != nil {
 		return fmt.Errorf("send media-v1 event: %w", err)
 	}
@@ -474,7 +500,7 @@ func (s *VoiceCoreSession) SendPlaybackProgress(progress PlaybackProgress) error
 	}})
 }
 
-func (s *VoiceCoreSession) SendStop(eventID, reason string, fence Fence) error {
+func (s *VoiceCoreSession) SendStop(eventID, reason string, fence Fence, detectedAtMs uint64) error {
 	if eventID == "" || fence.SessionID != s.identity.SessionID {
 		return fmt.Errorf("stop event id and matching fence are required")
 	}
@@ -501,8 +527,14 @@ func (s *VoiceCoreSession) SendStop(eventID, reason string, fence Fence) error {
 	if err != nil {
 		return fmt.Errorf("encode stop envelope: %w", err)
 	}
+	deviceEvent := &mediav1.DeviceEvent{
+		Identity:    s.identity.proto(),
+		EventType:   "client.stop_assistant",
+		JsonPayload: raw,
+		MonotonicMs: detectedAtMs,
+	}
 	if err := s.stream.Send(&mediav1.MediaToCore{Event: &mediav1.MediaToCore_Device{
-		Device: &mediav1.DeviceEvent{Identity: s.identity.proto(), EventType: "client.stop_assistant", JsonPayload: raw},
+		Device: deviceEvent,
 	}}); err != nil {
 		return fmt.Errorf("send media-v1 event: %w", err)
 	}

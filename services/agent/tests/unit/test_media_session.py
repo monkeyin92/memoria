@@ -16,6 +16,7 @@ from services.agent.src.voice_core.media_session import (
     MediaVoiceCoreRegistry,
     MediaVoiceProvider,
 )
+from services.agent.src.voice_core.playback_ledger import PlaybackSpan
 from services.agent.src.voice_core.speech_timeline import (
     ASRResult,
     SegmentKind,
@@ -529,6 +530,200 @@ async def test_kws_hard_stop_requires_wire_flag_and_confidence_threshold() -> No
     await keyword("accepted-hard-stop", 0.8, True)
     assert session.fence.generation_id == 1
     assert registry.metrics.latency_samples["interrupt_stop"]
+
+
+async def _start_speaking_reply(
+    registry: MediaVoiceCoreRegistry,
+    session: object,
+    identity: SessionIdentity,
+) -> tuple[object, GenerationFence]:
+    """Drive one VAD+ASR turn and a provider reply, returning its context."""
+
+    context = await registry._get_or_create(identity)
+
+    async def vad(segment_id: str, sample: int, *, final: bool) -> None:
+        await registry.on_speech_segment(
+            session,  # type: ignore[arg-type]
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=1,
+                provider_task_epoch=0,
+                segment_id=segment_id,
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=sample,
+                capture_end_sample=sample + 1,
+                final=final,
+                voiced_end_sample=sample if final else None,
+            ),
+        )
+
+    await vad("start", 0, final=False)
+    final = ASRResult(1, "turn-final", 1, 0, 320, "你好", True, stream_epoch=1)
+    assert await registry.accept_asr_result(identity.session_id, final)
+    registry._observe_final_asr_result(context, final)
+    await vad("end", 320, final=True)
+    await asyncio.sleep(0.03)
+    fence = context.runtime.fence
+    if context.reply_task is not None:
+        assert await asyncio.wait_for(context.reply_task, timeout=1)
+    assert context.runtime.orchestrator.state is ConversationState.SPEAKING
+    # Keep the bridge-side authoritative gate in sync with the runtime fence
+    # so a subsequent client stop/KWS cancel derives the expected fence.
+    session.generation.advance(fence)  # type: ignore[attr-defined]
+    session.reset_downlink_generation(fence)  # type: ignore[attr-defined]
+    session.generation_active = True  # type: ignore[attr-defined]
+    return context, fence
+
+
+@pytest.mark.asyncio
+async def test_client_stop_during_interruption_pending_finalizes_heard_prefix() -> None:
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = SessionIdentity("pending-stop-session")
+    session = bridge.bridge.open(identity)
+    context, fence = await _start_speaking_reply(registry, session, identity)
+    assert context.playback.register_audio(fence, 0, 0, 2)
+    assert context.playback.add_span(
+        PlaybackSpan(
+            fence=fence,
+            text_start=0,
+            text_end=3,
+            audio_start_sample=0,
+            audio_end_sample=2,
+            text="你好。",
+        )
+    )
+    assert context.playback.acknowledge(fence, 2)
+    assert context.playback.actual_heard_text(fence) == "你好。"
+    assert context.runtime.orchestrator.state is ConversationState.SPEAKING
+    # VAD has already moved the runtime into INTERRUPTION_PENDING; the client
+    # stop must still run the interrupted-playback finalize with the heard
+    # prefix instead of switching fences without history.
+    context.runtime.orchestrator.state_machine.state = ConversationState.INTERRUPTION_PENDING
+    interrupted: list[tuple[GenerationFence, str]] = []
+    original = context.runtime.on_media_playback_interrupted
+
+    async def spy(*, interrupted_from: GenerationFence, synchronized_transcript: str) -> None:
+        interrupted.append((interrupted_from, synchronized_transcript))
+        await original(
+            interrupted_from=interrupted_from,
+            synchronized_transcript=synchronized_transcript,
+        )
+
+    context.runtime.on_media_playback_interrupted = spy  # type: ignore[method-assign]
+    stop = MediaEnvelope.create(
+        type="client.stop_assistant",
+        event_id="stop-pending-1",
+        session_id=identity.session_id,
+        stream_epoch=1,
+        sequence=1,
+        turn_id=fence.turn_id,
+        generation_id=fence.generation_id,
+        tool_epoch=fence.tool_epoch,
+        payload={"idempotency_key": "stop-pending-1", "reason": "test"},
+    )
+    assert session.accept_client_stop(stop)
+    await registry.on_client_event(session, stop)
+    assert interrupted == [(fence, "你好。")]
+    assert registry.metrics.latency_samples["interrupt_stop"]
+
+
+@pytest.mark.asyncio
+async def test_kws_stop_during_interruption_pending_finalizes_heard_prefix() -> None:
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = SessionIdentity("kws-pending-stop-session")
+    session = bridge.bridge.open(identity)
+    context, fence = await _start_speaking_reply(registry, session, identity)
+    assert context.playback.register_audio(fence, 0, 0, 2)
+    assert context.playback.add_span(
+        PlaybackSpan(
+            fence=fence,
+            text_start=0,
+            text_end=3,
+            audio_start_sample=0,
+            audio_end_sample=2,
+            text="你好。",
+        )
+    )
+    assert context.playback.acknowledge(fence, 2)
+    context.runtime.orchestrator.state_machine.state = ConversationState.INTERRUPTION_PENDING
+    interrupted: list[str] = []
+    original = context.runtime.on_media_playback_interrupted
+
+    async def spy(*, interrupted_from: GenerationFence, synchronized_transcript: str) -> None:
+        interrupted.append(synchronized_transcript)
+        await original(
+            interrupted_from=interrupted_from,
+            synchronized_transcript=synchronized_transcript,
+        )
+
+    context.runtime.on_media_playback_interrupted = spy  # type: ignore[method-assign]
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="kws-pending-stop",
+            revision=1,
+            kind=SegmentKind.KWS,
+            capture_start_sample=400,
+            capture_end_sample=402,
+            text="停一下",
+            final=True,
+            confidence=0.95,
+            hard_stop=True,
+        ),
+    )
+    assert interrupted == ["你好。"]
+    assert registry.metrics.latency_samples["interrupt_stop"]
+
+
+@pytest.mark.asyncio
+async def test_interrupt_slo_uses_edge_detected_timestamp() -> None:
+    import time as time_module
+
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = SessionIdentity("slo-session")
+    session = bridge.bridge.open(identity)
+    context, fence = await _start_speaking_reply(registry, session, identity)
+    detected_ms = int(time_module.time() * 1000) - 1_000
+    stop = MediaEnvelope.create(
+        type="client.stop_assistant",
+        event_id="slo-stop-1",
+        session_id=identity.session_id,
+        stream_epoch=1,
+        sequence=1,
+        turn_id=fence.turn_id,
+        generation_id=fence.generation_id,
+        tool_epoch=fence.tool_epoch,
+        payload={"idempotency_key": "slo-stop-1", "reason": "test"},
+    )
+    assert session.accept_client_stop(stop)
+    await registry.on_client_event(session, stop, detected_ms)
+    latency = registry.metrics.latency_samples["interrupt_stop"][-1]
+    assert 0.5 <= latency <= 2.5
 
 
 @pytest.mark.asyncio

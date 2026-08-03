@@ -14,6 +14,14 @@ epoch、设备/会话 HTTP 控制面、Prometheus 基础指标，以及到 Voice
 Edge 才 ACK 本地帧；失败时帧保留在有界队列中形成背压。没有真实 sender 的 HTTP
 GET `/v1/media/sessions/{id}/downlink` 仅用于开发参考，生产 binary 会保持
 readiness=false 且拒绝创建 session，不能把静默丢帧当作媒体终结。
+生产部署在真实终结器安装后，由运维显式设置
+`MEDIA_EDGE_EXTERNAL_DOWNLINK_SENDER_READY=true` 作为交接确认；该开关只让
+readiness 探针放行，session 创建仍要求每个 Voice Core bridge 实际携带
+`DownlinkSender`，单独的开关不能伪造媒体链路。`VoiceCoreMediaRuntime` 在
+Edge 本地检测到 hard-stop KWS 或收到 stop 请求时用墙钟毫秒打点，并通过
+`KeywordEvent.detected_monotonic_ms` / `DeviceEvent.monotonic_ms` 传给 Voice
+Core，作为 `interrupt.detect → interrupt.cancel` SLO 的起点（覆盖 Edge 本地
+检测、gate 与 Edge→Core 网络，而不是只测 Core 到达后的处理时间）。
 
 ## Voice Core gRPC bridge
 

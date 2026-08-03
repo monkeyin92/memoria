@@ -105,10 +105,20 @@ func main() {
 	}
 	server := mediaedge.NewServer(verifier, envInt("MEDIA_EDGE_MAX_PENDING_FRAMES", 100))
 	server.AllowInsecureDevelopment = !production && envBool("MEDIA_EDGE_ALLOW_INSECURE_DEVELOPMENT")
-	// This binary currently exposes only the development HTTP queue. It must
-	// not become ready in production until a real WHIP/WebRTC/RTP terminator
-	// installs an explicit DownlinkSender.
+	// This binary currently exposes only the development HTTP queue. It stays
+	// fail-closed in production until a real WHIP/WebRTC/RTP terminator is
+	// installed and the operator explicitly confirms it with
+	// MEDIA_EDGE_EXTERNAL_DOWNLINK_SENDER_READY=true. The flag is the
+	// documented hand-over seam for that terminator, not a way to bypass the
+	// gate: session creation additionally requires every Voice Core bridge to
+	// carry an actual DownlinkSender (see Server.sessions), so a bare flag
+	// without an installed sender still rejects media sessions.
 	server.RequireExternalDownlinkSender = production
+	externalDownlinkSenderReady := envBool("MEDIA_EDGE_EXTERNAL_DOWNLINK_SENDER_READY")
+	server.ExternalDownlinkSenderReady = func() bool { return externalDownlinkSenderReady }
+	if production && !externalDownlinkSenderReady {
+		log.Print("production media edge has no installed downlink sender; readiness stays fail-closed until a real terminator is attached and MEDIA_EDGE_EXTERNAL_DOWNLINK_SENDER_READY=true")
+	}
 	voiceCore, err := buildVoiceCoreBridge()
 	if err != nil {
 		log.Fatal(err)

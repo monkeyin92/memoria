@@ -1,5 +1,26 @@
 # 项目交接
 
+## 2026-08-03：双轴评审二轮整改（已提交，未发布）
+
+- CI 门禁：buf lint 命名例外（media-v1 既有契约，避免破坏性改名）、Trivy action
+  `v0.36.0`、golangci 清除弃用 gRPC API 与未使用字段；ASR 改为区间集合去重
+  （乱序不重叠 final 接受、同区间修正、跨 task 重放与歧义重叠 fail-closed）；
+  流式 TTS 按短语增量登记 playback span，打断不再丢失已完成短语；
+  INTERRUPTION_PENDING 下按钮/KWS stop 走同一 finalize；interrupt SLO 用
+  Edge 墙钟检测时间戳覆盖 detect→gate→网络→cancel；Go
+  `DeliverDownlink` 在单锁内完成 gate+sender+出队，队列溢出以 terminal
+  CANCEL 收尾、重连不再收到陈旧 RESUME；H5 HTTP stop fallback 携带完整
+  expected fence；`MEDIA_EDGE_EXTERNAL_DOWNLINK_SENDER_READY` 显式接线
+  production ready 探针（默认 fail-closed，不伪造链路）。
+- 验证：全量 pytest 通过（本机 coverage `81.08%`，`85%` 门槛仍差约 4pp，缺口为
+  历史遗留 postgres/ONNX 真实依赖模块，未降级）、Ruff、strict mypy（216 源文件）、
+  H5 `275 passed` + production build、Go `test/vet/test-race/golangci`、buf lint、
+  proto 生成无 diff、bridge smoke 与 replay/chaos/load、`git diff --check` 均通过。
+- 仍未关闭且必须外部验收：真实 WHIP/RTP/DTLS/SRTP/Opus 终结器与音频级 KWS
+  producer、完整 Agent orchestrated provider factory、真实浏览器/硬件播放 ACK、
+  监护人授权儿童语料、Linux 硬件 AEC、Redis/coturn 多实例、真实 chaos/load/SLO
+  与回滚演练；`media-runtime` profile 不可上线，默认链路不变。
+
 ## 2026-08-03：最新双轴评审整改（未发布）
 
 - 话轮入口不再把每个 ASR final 当作用户轮结束：`VAD_EVENT_SPEECH_END` 显式区分

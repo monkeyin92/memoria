@@ -21,7 +21,7 @@ async def test_linux_device_client_capture_playback_ack_and_local_mute() -> None
     async def on_audio(_session, frame) -> None:
         uplink_seen.append(frame.sequence)
 
-    async def on_event(_session, event: MediaEnvelope) -> None:
+    async def on_event(_session, event: MediaEnvelope, detected_monotonic_ms: int = 0) -> None:
         if event.type == "device.command_ack":
             command_acks.append(event)
 

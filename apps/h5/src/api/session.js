@@ -347,17 +347,35 @@ export function publishOmniTelemetry(sessionId, event) {
 export function stopResponse(
   sessionId,
   idempotencyKey = null,
-  { signal, timeoutMs = 5_000 } = {},
+  { signal, timeoutMs = 5_000, expectedFence = null } = {},
 ) {
   const key =
     idempotencyKey ||
     globalThis.crypto?.randomUUID?.() ||
     `stop-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const body = { reason: "user_button" };
+  if (expectedFence && typeof expectedFence === "object") {
+    const { stream_epoch, turn_id, generation_id, tool_epoch } = expectedFence;
+    const fenceFields = [turn_id, generation_id, tool_epoch];
+    if (
+      [stream_epoch, ...fenceFields].every(
+        (value) => Number.isInteger(value) && value >= 0,
+      )
+    ) {
+      // Carry the fence observed when the button was pressed.  A delayed HTTP
+      // fallback must cancel that exact generation; without it the edge would
+      // stop whatever generation is newest when the request finally arrives.
+      body.stream_epoch = stream_epoch;
+      body.turn_id = turn_id;
+      body.generation_id = generation_id;
+      body.tool_epoch = tool_epoch;
+    }
+  }
   return request(`/v1/sessions/${encodeURIComponent(sessionId)}/stop-response`, {
     method: "POST",
     headers: { "Idempotency-Key": key },
     signal,
-    body: JSON.stringify({ reason: "user_button" }),
+    body: JSON.stringify(body),
   }, { timeoutMs });
 }
 

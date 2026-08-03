@@ -37,3 +37,44 @@ WebRTC 的完成声明。
 - 媒体桥接的 uplink/downlink 队列改为消费后 ACK，按 generation 重置 downlink 序号并拒绝 sample gap；ASR final 只作为证据，由 VAD+sample coverage coordinator 统一提交；控制词仍经过 Router，停止会取消 provider 与旧 reply task。
 - Playback Ledger 只接受已登记的 sequence/sample watermark；H5 以每 generation 播放基线发布单调进度，非法高序号/旧 tool epoch 事件不会吞掉后续合法事件。Python、Control API、Go、H5 的回归测试和 smoke 已执行。
 - 全仓功能测试 `1641 passed, 29 skipped`，但本机 coverage 仍为 `81.00%`，低于现有 `85%` 门槛；本机没有 CI PostgreSQL，条件测试被跳过，本轮没有降低门槛。真实 WHIP/RTP/DTLS/SRTP、完整 Agent orchestrated provider、硬件播放与外部 SLO 仍必须按上表独立验收。
+
+## 2026-08-03 第二轮评审整改（已提交 c3b6c19、f7845e2 后再次评审）
+
+- **CI 门禁修复**：`buf lint` 对 media-v1 的既有命名（`MediaToCore`/`CoreToMedia`、
+  `VAD_EVENT_*`、服务名）配置显式例外并说明理由，避免把既有契约改成破坏性变更；
+  Trivy action 版本修正为存在的 `v0.36.0`；golangci 修复未使用字段与弃用
+  `grpc.DialContext`/`WithBlock`（迁移到 `grpc.NewClient` + 显式 ready 等待）。
+- **ASR 真区间去重**：supervisor 与 provider adapter 不再用“最大 final end
+  watermark”压掉乱序 final；改为已接受区间集合去重——不重叠乱序 final 接受、
+  同区间更高 revision/更新文本可修正、跨 task 同区间重放与跨句模糊重叠
+  fail-closed、扩展区间仍走连续前缀对账。回归覆盖 320..640 先于 0..320、
+  修正、重放、歧义重叠、扩展与历史有界。
+- **流式 TTS 部分已听文本**：生产双向流按短语边界增量登记 playback span
+  （下一短语音频开始/EOS 时关闭），打断时已完成短语不再整体丢失；未完成
+  短语仍严格按“只提交 ACK 覆盖文本”保守处理，不冒领。
+- **INTERRUPTION_PENDING 不再丢已听前缀**：按钮/KWS stop 在
+  SPEAKING 或 INTERRUPTION_PENDING 都执行同一 interrupted-playback finalize。
+- **interrupt SLO 口径**：Edge 在本地 KWS 检测/stop 接收时用墙钟毫秒打点，
+  经 `KeywordEvent.detected_monotonic_ms` / `DeviceEvent.monotonic_ms` 传给
+  Core，Core 用同一墙钟计算 `interrupt.detect → interrupt.cancel`；无检测
+  时间戳时保持到达时刻。
+- **下行 gate 与 sender 原子**：`Session.DeliverDownlink` 在单个 session 锁内
+  完成 generation 校验、sender 写入与出队，并发 cancel 无法让旧 generation
+  PCM 进入编码器；gRPC 输出队列溢出会以 terminal `GENERATION_ACTION_CANCEL`
+  （`downlink_queue_full`）关闭 generation，重连收到 CANCEL 而非陈旧 RESUME。
+- **HTTP stop 携带完整 fence**：H5 DataChannel 失败后的 HTTP fallback 携带
+  按钮时刻的 stream_epoch/turn_id/generation_id/tool_epoch，Control API 校验
+  并转发，Edge 用 `StopGenerationRequest.ExpectedFence` 只取消用户按下按钮时
+  看到的 generation，迟到的 fallback 不会误停新回答。
+- **生产 ready 接缝**：`MEDIA_EDGE_EXTERNAL_DOWNLINK_SENDER_READY` 显式 opt-in
+  接线 `ExternalDownlinkSenderReady`，默认仍 fail-closed；session 创建仍要求
+  bridge 实际携带 DownlinkSender，开关不能伪造链路。
+- 验证：全量 `pytest` 通过（本机 coverage `81.08%`，仍低于 `85%` 门槛且未降级；
+  缺口集中于历史遗留的 postgres/ONNX 真实依赖模块），Ruff 与 strict mypy
+  （216 源文件）通过，H5 `275 passed` + production build，Go
+  `test/vet/test-race/golangci` 通过，buf lint 通过，proto 生成无 diff，
+  media bridge smoke 与 replay/chaos/load 通过，`git diff --check` 通过。
+- 仍未关闭且必须外部验收：真实 WHIP/RTP/DTLS/SRTP/Opus 终结器与音频级 KWS
+  producer、完整 Agent orchestrated provider factory、真实浏览器/硬件播放
+  ACK、监护人授权儿童语料、Linux 硬件 AEC、Redis/coturn 多实例、真实
+  chaos/load/SLO 与回滚演练；`media-runtime` profile 仍不可上线，默认链路不变。

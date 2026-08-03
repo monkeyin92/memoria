@@ -681,6 +681,12 @@ export class StreamCoreTransport extends VoiceTransport {
   stopAssistant() {
     this.onLocalDuck(true, { reason: "user_stop" });
     const idempotencyKey = randomEventId();
+    const expectedFence = {
+      stream_epoch: this.streamEpoch,
+      turn_id: this.currentTurnId,
+      generation_id: this.currentGenerationId,
+      tool_epoch: this.currentToolEpoch,
+    };
     const stopEvent = this.publishData({
       type: "client.stop_assistant",
       event_id: idempotencyKey,
@@ -693,7 +699,7 @@ export class StreamCoreTransport extends VoiceTransport {
     // channel is unavailable or send fails; using both as independent cancel
     // commands would bump generation twice.
     return stopEvent.catch(() =>
-      this.stopResponse(this.session.session_id, idempotencyKey),
+      this.stopResponse(this.session.session_id, idempotencyKey, { expectedFence }),
     );
   }
 

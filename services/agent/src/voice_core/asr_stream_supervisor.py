@@ -33,6 +33,14 @@ class ASRStreamSupervisor:
     _latest_task_by_segment: dict[str, int] = field(default_factory=dict)
     _revision_order: deque[tuple[int, str]] = field(default_factory=deque)
     _segment_order: deque[str] = field(default_factory=deque)
+    _final_intervals: dict[tuple[int, int, str, int, int], int] = field(
+        default_factory=dict,
+        init=False,
+    )
+    _final_interval_order: deque[tuple[int, int, str, int, int]] = field(
+        default_factory=deque,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         if (
@@ -74,8 +82,6 @@ class ASRStreamSupervisor:
             return False
         if result.capture_end_sample <= self.last_committed_sample:
             return False
-        if result.is_final and result.capture_end_sample <= self.last_emitted_final_sample:
-            return False
         # A provider task epoch is part of the revision identity.  Providers
         # can restart within one media epoch and legitimately reuse a
         # sentence id with an expanded absolute range; treating that as the
@@ -89,6 +95,62 @@ class ASRStreamSupervisor:
         revision_key = (result.task_epoch, result.segment_id)
         latest_revision = self._revisions.get(revision_key, 0)
         if result.revision < latest_revision:
+            return False
+        final_key = (
+            result.stream_epoch,
+            result.task_epoch,
+            result.segment_id,
+            result.capture_start_sample,
+            result.capture_end_sample,
+        )
+        if result.is_final:
+            # Interval-based dedup, not a global end watermark: out-of-order
+            # non-overlapping finals (320..640 before 0..320) must survive,
+            # while a higher revision of the exact same interval supersedes
+            # the older text.  An identical range replayed by a different task
+            # is a reconnect duplicate and fails closed; only a strict
+            # expansion by a newer task of the same sentence may cover older
+            # accepted audio.
+            previous_revision = self._final_intervals.get(final_key)
+            if previous_revision is not None and result.revision <= previous_revision:
+                return False
+            overlapping = [
+                key
+                for key in self._final_intervals
+                if key[0] == result.stream_epoch
+                and key[3] < result.capture_end_sample
+                and result.capture_start_sample < key[4]
+            ]
+            if overlapping:
+                cross_sentence = [
+                    key for key in overlapping if key[2] != result.segment_id
+                ]
+                if cross_sentence:
+                    return False
+                same_range_keys = [
+                    key
+                    for key in overlapping
+                    if key[3] == result.capture_start_sample
+                    and key[4] == result.capture_end_sample
+                ]
+                if same_range_keys and any(
+                    key[1] != result.task_epoch for key in same_range_keys
+                ):
+                    # The exact same audio interval already accepted by another
+                    # provider task: reconnect replay, never a new turn.
+                    return False
+                covered_start = min(key[3] for key in overlapping)
+                covered_end = max(key[4] for key in overlapping)
+                if not (
+                    result.capture_start_sample <= covered_start
+                    and result.capture_end_sample >= covered_end
+                ):
+                    return False
+                if any(key[1] > result.task_epoch for key in overlapping):
+                    return False
+        elif result.capture_end_sample <= self.last_emitted_final_sample:
+            # A partial fully inside already-finalized audio is stale; finals
+            # themselves are handled by the interval set above.
             return False
         accepted = self.timeline.add(
             asr_result_to_segment(result, session_id=session_id),
@@ -114,6 +176,19 @@ class ASRStreamSupervisor:
                         self._revisions.pop(key, None)
             self.mark_provider_acked(result.capture_end_sample)
             if result.is_final:
+                if final_key in self._final_intervals:
+                    # A higher revision of the same interval replaces the
+                    # previously accepted final instead of being dropped.
+                    self._final_intervals.pop(final_key, None)
+                    try:
+                        self._final_interval_order.remove(final_key)
+                    except ValueError:
+                        pass
+                self._final_intervals[final_key] = result.revision
+                self._final_interval_order.append(final_key)
+                while len(self._final_interval_order) > self.max_result_history:
+                    evicted_interval = self._final_interval_order.popleft()
+                    self._final_intervals.pop(evicted_interval, None)
                 self.last_emitted_final_sample = max(
                     self.last_emitted_final_sample,
                     result.capture_end_sample,
@@ -138,6 +213,8 @@ class ASRStreamSupervisor:
         self.last_committed_sample = 0
         self.last_emitted_final_sample = 0
         self._revisions.clear()
+        self._final_intervals.clear()
+        self._final_interval_order.clear()
         self._latest_task_by_segment.clear()
         self._revision_order.clear()
         self._segment_order.clear()

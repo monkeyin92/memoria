@@ -288,6 +288,10 @@ class CreateOmniSessionResponse(BaseModel):
 
 class StopResponseBody(BaseModel):
     reason: str = "user_button"
+    stream_epoch: int | None = Field(default=None, ge=1)
+    turn_id: int | None = Field(default=None, ge=0)
+    generation_id: int | None = Field(default=None, ge=1)
+    tool_epoch: int | None = Field(default=None, ge=0)
 
 
 class MediaHeartbeatBody(BaseModel):
@@ -1238,6 +1242,19 @@ async def stop_response(
         "action": "atomic_cancel",
         "create_user_turn": False,
     }
+    fence_fields = (body.turn_id, body.generation_id, body.tool_epoch)
+    if body.stream_epoch is not None and any(field is None for field in fence_fields):
+        raise HTTPException(
+            status_code=400,
+            detail="stop stream_epoch requires turn_id, generation_id and tool_epoch",
+        )
+    if any(field is not None for field in fence_fields) and (
+        body.stream_epoch is None or not all(field is not None for field in fence_fields)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="expected stop fence must include stream_epoch, turn_id, generation_id and tool_epoch",
+        )
     settings = request.app.state.settings
     directory = getattr(request.app.state, "session_directory", None)
     pending_dispatch = _STOP_DISPATCH_PENDING.get(idempotency_scope) if normalized_key else None
@@ -1254,6 +1271,8 @@ async def stop_response(
         and directory is not None
         and media_route.media_runtime == "streamcore"
     ):
+        if body.stream_epoch is not None and body.stream_epoch != media_route.stream_epoch:
+            raise HTTPException(status_code=409, detail="stop stream epoch is stale")
         edge_key = normalized_key or hashlib.sha256(
             f"{session_id}:{datetime.now(UTC).isoformat()}".encode()
         ).hexdigest()
@@ -1265,6 +1284,14 @@ async def stop_response(
                 "idempotency_key": edge_key,
             }
         )
+        if body.stream_epoch is not None:
+            event.update(
+                {
+                    "turn_id": body.turn_id,
+                    "generation_id": body.generation_id,
+                    "tool_epoch": body.tool_epoch,
+                }
+            )
         if normalized_key and pending_dispatch is None:
             # Persist the exact Edge key before dispatch. If Edge succeeds but
             # the response or directory observation fails, retrying must ask

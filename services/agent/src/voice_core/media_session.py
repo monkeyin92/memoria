@@ -436,6 +436,7 @@ class MediaVoiceCoreRegistry:
         self,
         session: MediaBridgeSession,
         segment: SpeechSegment,
+        detected_monotonic_ms: int = 0,
     ) -> None:
         context = await self._get_or_create(session.identity)
         if not context.runtime.ingest_media_speech_segment(segment):
@@ -485,7 +486,15 @@ class MediaVoiceCoreRegistry:
                 segment.hard_stop
                 and (segment.confidence or 0.0) >= self.kws_hard_stop_min_confidence
             ):
-                stop_started_ns = time.monotonic_ns()
+                # The edge stamps wall-clock milliseconds at local detection;
+                # use the same clock domain so the SLO covers the edge gate
+                # and network hop instead of only Core-side processing.
+                stop_clock = time.time_ns if detected_monotonic_ms > 0 else time.monotonic_ns
+                stop_started_ns = (
+                    detected_monotonic_ms * 1_000_000
+                    if detected_monotonic_ms > 0
+                    else stop_clock()
+                )
                 route = context.runtime.route_user_turn(segment.text)
                 if route.should_interrupt and not route.enter_chat:
                     previous_fence = context.playback.current_fence or context.runtime.fence
@@ -497,7 +506,8 @@ class MediaVoiceCoreRegistry:
                     if cancelled is not None:
                         if (
                             not previous_fence.matches(cancelled)
-                            and context.runtime.orchestrator.state.name == "SPEAKING"
+                            and context.runtime.orchestrator.state.name
+                            in ("SPEAKING", "INTERRUPTION_PENDING")
                         ):
                             heard = context.playback.actual_heard_text(previous_fence)
                             interrupted_fence = await context.runtime.on_real_interrupt(
@@ -530,7 +540,7 @@ class MediaVoiceCoreRegistry:
                             )
                             self.metrics.observe_voice_latency(
                                 "interrupt_stop",
-                                (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
+                                (stop_clock() - stop_started_ns) / 1_000_000_000,
                             )
             await self.bridge.emit_event(
                 context.identity.session_id,
@@ -550,17 +560,24 @@ class MediaVoiceCoreRegistry:
         self,
         session: MediaBridgeSession,
         event: MediaEnvelope,
+        detected_monotonic_ms: int = 0,
     ) -> None:
         context = await self._get_or_create(session.identity)
         if event.type != "client.stop_assistant":
             return
-        stop_started_ns = time.monotonic_ns()
+        stop_clock = time.time_ns if detected_monotonic_ms > 0 else time.monotonic_ns
+        stop_started_ns = (
+            detected_monotonic_ms * 1_000_000
+            if detected_monotonic_ms > 0
+            else stop_clock()
+        )
         # MediaBridgeSession has already advanced its authoritative generation
         # before this callback runs. The Voice Core consumes that exact fence.
         previous_fence = context.playback.current_fence or context.runtime.fence
         if (
             not previous_fence.matches(session.fence)
-            and context.runtime.orchestrator.state.name == "SPEAKING"
+            and context.runtime.orchestrator.state.name
+            in ("SPEAKING", "INTERRUPTION_PENDING")
         ):
             heard = context.playback.actual_heard_text(previous_fence)
             interrupted_fence = await context.runtime.on_real_interrupt(
@@ -587,7 +604,7 @@ class MediaVoiceCoreRegistry:
             await self._cancel_reply_task(context, previous_fence)
         self.metrics.observe_voice_latency(
             "interrupt_stop",
-            (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
+            (stop_clock() - stop_started_ns) / 1_000_000_000,
         )
 
     @staticmethod

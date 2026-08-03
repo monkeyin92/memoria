@@ -777,6 +777,14 @@ describe("StreamCoreTransport", () => {
     expect(stopResponse).toHaveBeenCalledWith(
       "session-stop-fallback",
       expect.any(String),
+      expect.objectContaining({
+        expectedFence: {
+          stream_epoch: 1,
+          turn_id: 0,
+          generation_id: 0,
+          tool_epoch: 0,
+        },
+      }),
     );
   });
 

@@ -286,6 +286,27 @@ class LongRunningASR(FakeASR):
         )
 
 
+class CorrectingASR(FakeASR):
+    async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+        self.sent.append((pcm, capture_start_sample))
+        for text in ("你好", "你好呀"):
+            await self.events.put(
+                FunASRServerEvent(
+                    event="result-generated",
+                    task_id=self.task_id,
+                    sentence=FunASRSentence(
+                        sentence_id=7,
+                        text=text,
+                        begin_ms=0,
+                        end_ms=20,
+                        sentence_end=True,
+                        heartbeat=False,
+                        words=(),
+                    ),
+                )
+            )
+
+
 class FakeProductionLLMStream:
     def __init__(self) -> None:
         self.closed = False
@@ -501,7 +522,17 @@ async def test_incremental_tts_reuses_one_stream_and_starts_before_second_phrase
     chunks = [first, *[chunk async for chunk in stream]]
     assert speech.stream_calls == 1
     assert speech.stream_instance.phrases == ["第一句。", "第二句。"]
-    assert chunks[-1].text == "第一句。第二句。"
+    # Ledger spans are registered per completed phrase: the second phrase's
+    # first frame closes the first phrase's span, and the final frame closes
+    # the last phrase's span, so an interruption never loses the earlier
+    # fully-rendered phrase.
+    assert [chunk.text for chunk in chunks if chunk.text] == ["第一句。", "第二句。"]
+    assert [
+        (chunk.text_audio_start_sample, chunk.text_audio_end_sample)
+        for chunk in chunks
+        if chunk.text
+    ] == [(0, 480), (480, 1_440)]
+    assert chunks[-1].text == "第二句。"
     assert chunks[-1].final is True
     assert speech.stream_instance.closed
 
@@ -586,6 +617,27 @@ async def test_existing_provider_adapter_trims_cross_task_expanding_replay() -> 
     assert [
         (item.capture_start_sample, item.capture_end_sample, item.text) for item in extension
     ] == [(320, 640, "世界")]
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_accepts_same_interval_correction() -> None:
+    asr = CorrectingASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("asr-correction", stream_epoch=1)
+
+    ingested = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+
+    assert [
+        (item.revision, item.capture_start_sample, item.capture_end_sample, item.text)
+        for item in ingested
+    ] == [(1, 0, 320, "你好"), (2, 0, 320, "你好呀")]
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // BridgeRuntimeFactory is injected by a deployment that has an authenticated
@@ -340,9 +341,13 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 			writeStatus(w, http.StatusBadRequest, map[string]string{"error": "stop reason is too long"})
 			return
 		}
+		// Edge-side detection time (interrupt.detect). Voice Core uses it as
+		// the SLO anchor so the measurement includes local receipt, gate and
+		// the Edge→Core hop rather than only Core-side processing.
+		detectedAtMs := uint64(time.Now().UnixMilli())
 		var cancelled Fence
 		if runtime := s.bridgeFor(id); runtime != nil {
-			cancelled, err = runtime.CancelGeneration(eventID, reason, expected)
+			cancelled, err = runtime.CancelGeneration(eventID, reason, expected, detectedAtMs)
 		} else {
 			_, cancelled, _, err = session.CancelGeneration(eventID, expected)
 		}

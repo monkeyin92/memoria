@@ -12,18 +12,20 @@ import (
 )
 
 type fakeCoreStream struct {
-	mu          sync.Mutex
-	sent        []AudioFrame
-	stops       []Fence
-	current     Fence
-	keywords    int
-	keywordHook func()
-	failKeyword error
-	events      chan *mediav1.CoreToMedia
-	closed      chan struct{}
-	closeOnce   sync.Once
-	failSend    error
-	failStop    error
+	mu           sync.Mutex
+	sent         []AudioFrame
+	stops        []Fence
+	stopTimes    []uint64
+	current      Fence
+	keywords     int
+	keywordTimes []uint64
+	keywordHook  func()
+	failKeyword  error
+	events       chan *mediav1.CoreToMedia
+	closed       chan struct{}
+	closeOnce    sync.Once
+	failSend     error
+	failStop     error
 }
 
 func newFakeCoreStream() *fakeCoreStream {
@@ -75,7 +77,7 @@ func (f *fakeCoreStream) setCurrentFence(fence Fence) {
 	f.mu.Unlock()
 }
 
-func (f *fakeCoreStream) SendStop(_ string, _ string, fence Fence) error {
+func (f *fakeCoreStream) SendStop(_ string, _ string, fence Fence, detectedAtMs uint64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failStop != nil {
@@ -85,6 +87,7 @@ func (f *fakeCoreStream) SendStop(_ string, _ string, fence Fence) error {
 		return errors.New("stop fence is stale")
 	}
 	f.stops = append(f.stops, fence)
+	f.stopTimes = append(f.stopTimes, detectedAtMs)
 	return nil
 }
 
@@ -100,7 +103,7 @@ func (f *fakeCoreStream) stopCount() int {
 	return len(f.stops)
 }
 
-func (f *fakeCoreStream) SendKeywordAtFence(_ string, _ float32, _, _ uint64, _ bool, fence Fence) error {
+func (f *fakeCoreStream) SendKeywordAtFence(_ string, _ float32, _, _ uint64, _ bool, fence Fence, detectedAtMs uint64) error {
 	f.mu.Lock()
 	current := f.current
 	hook := f.keywordHook
@@ -117,6 +120,7 @@ func (f *fakeCoreStream) SendKeywordAtFence(_ string, _ float32, _, _ uint64, _ 
 	}
 	f.mu.Lock()
 	f.keywords++
+	f.keywordTimes = append(f.keywordTimes, detectedAtMs)
 	f.mu.Unlock()
 	return nil
 }
@@ -244,9 +248,9 @@ func TestVoiceCoreMediaRuntimeExplicitSenderRetiresMoreThanQueueCapacity(t *test
 	runtime, err := NewVoiceCoreMediaRuntimeWithDownlinkSender(
 		context.Background(), session, core,
 		func(frame AudioFrame) error {
-			// The sender is an external terminator and may inspect session state;
-			// DeliverDownlink must not hold the Session mutex across this call.
-			_ = session.Stats()
+			// DeliverDownlink holds the generation gate across the sender call
+			// so a concurrent cancel can never admit stale PCM to the encoder.
+			// The terminator sender is therefore a fast, non-reentrant enqueue.
 			delivered <- frame
 			return nil
 		},
@@ -291,6 +295,71 @@ func TestVoiceCoreMediaRuntimeExplicitSenderRetiresMoreThanQueueCapacity(t *test
 	_ = runtime.Close()
 	if err := runtime.Wait(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConcurrentCancelCannotInterleaveWithDownlinkSender(t *testing.T) {
+	session := runtimeSession(t, 16)
+	current := Fence{SessionID: "s", TurnID: 1, GenerationID: 1}
+	if err := session.AdvanceGeneration(current); err != nil {
+		t.Fatal(err)
+	}
+	senderEntered := make(chan struct{})
+	release := make(chan struct{})
+	delivered := make(chan AudioFrame, 1)
+	var senderStarted bool
+	sender := func(frame AudioFrame) error {
+		if !senderStarted {
+			senderStarted = true
+			close(senderEntered)
+		}
+		<-release
+		delivered <- frame
+		return nil
+	}
+	deliveryDone := make(chan struct{})
+	var deliveryErr error
+	go func() {
+		frame := runtimeFrame(0)
+		frame.TurnID = current.TurnID
+		frame.GenerationID = current.GenerationID
+		deliveryErr = session.DeliverDownlink(frame, sender)
+		close(deliveryDone)
+	}()
+	<-senderEntered
+	cancelDone := make(chan struct{})
+	go func() {
+		_, _, _, _ = session.CancelGeneration("atomic-stop", &current)
+		close(cancelDone)
+	}()
+	select {
+	case <-cancelDone:
+		t.Fatal("CancelGeneration completed while the sender held the gate")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	<-deliveryDone
+	<-cancelDone
+	if deliveryErr != nil {
+		t.Fatalf("downlink delivery failed: %v", deliveryErr)
+	}
+	select {
+	case frame := <-delivered:
+		if frame.GenerationID != current.GenerationID {
+			t.Fatalf("delivered stale frame: %+v", frame)
+		}
+	default:
+		t.Fatal("active-generation frame was not delivered")
+	}
+	senderCalls := 0
+	stale := runtimeFrame(0)
+	stale.TurnID = current.TurnID
+	stale.GenerationID = current.GenerationID
+	if err := session.DeliverDownlink(stale, func(AudioFrame) error {
+		senderCalls++
+		return nil
+	}); !errors.Is(err, ErrStaleDownlinkGeneration) || senderCalls != 0 {
+		t.Fatalf("stale frame reached sender: err=%v senderCalls=%d", err, senderCalls)
 	}
 }
 
@@ -370,16 +439,16 @@ func TestVoiceCoreMediaRuntimeCancelUsesAuthoritativeFenceAndKeepsSessionActive(
 		t.Fatal(err)
 	}
 	stale := Fence{SessionID: "s", TurnID: 1, GenerationID: 0}
-	if _, err := runtime.CancelGeneration("stale-stop", "user_button", &stale); err == nil {
+	if _, err := runtime.CancelGeneration("stale-stop", "user_button", &stale, 111); err == nil {
 		t.Fatal("stale expected stop fence was accepted")
 	}
 	stopErr := errors.New("core temporarily unavailable")
 	core.setStopError(stopErr)
-	if _, err := runtime.CancelGeneration("stop-1", "user_button", &current); !errors.Is(err, stopErr) {
+	if _, err := runtime.CancelGeneration("stop-1", "user_button", &current, 222); !errors.Is(err, stopErr) {
 		t.Fatalf("first stop error=%v, want %v", err, stopErr)
 	}
 	core.setStopError(nil)
-	cancelled, err := runtime.CancelGeneration("stop-1", "user_button", &current)
+	cancelled, err := runtime.CancelGeneration("stop-1", "user_button", &current, 222)
 	if err != nil {
 		t.Fatalf("failed stop retry: %v", err)
 	}
@@ -387,11 +456,14 @@ func TestVoiceCoreMediaRuntimeCancelUsesAuthoritativeFenceAndKeepsSessionActive(
 		t.Fatalf("cancelled=%+v", cancelled)
 	}
 	core.setCurrentFence(cancelled)
-	if _, err := runtime.CancelGeneration("stop-1", "user_button", &current); err != nil {
+	if _, err := runtime.CancelGeneration("stop-1", "user_button", &current, 222); err != nil {
 		t.Fatalf("idempotent completed retry failed: %v", err)
 	}
 	if core.stopCount() != 1 {
 		t.Fatalf("stop count=%d, want 1", core.stopCount())
+	}
+	if len(core.stopTimes) != 1 || core.stopTimes[0] != 222 {
+		t.Fatalf("detection timestamp was not forwarded: %v", core.stopTimes)
 	}
 	if stats := session.Stats(); stats.State != SessionActive {
 		t.Fatalf("state=%s, want active", stats.State)
@@ -413,7 +485,7 @@ func TestVoiceCoreMediaRuntimeReplaysOlderStopAfterLaterCancellation(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstCancelled, err := runtime.CancelGeneration("stop-1", "first", &firstCurrent)
+	firstCancelled, err := runtime.CancelGeneration("stop-1", "first", &firstCurrent, 333)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,10 +495,10 @@ func TestVoiceCoreMediaRuntimeReplaysOlderStopAfterLaterCancellation(t *testing.
 		t.Fatal(err)
 	}
 	core.setCurrentFence(secondCurrent)
-	if _, err := runtime.CancelGeneration("stop-2", "second", &secondCurrent); err != nil {
+	if _, err := runtime.CancelGeneration("stop-2", "second", &secondCurrent, 444); err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := runtime.CancelGeneration("stop-1", "changed-retry-reason", &firstCurrent)
+	replayed, err := runtime.CancelGeneration("stop-1", "changed-retry-reason", &firstCurrent, 333)
 	if err != nil {
 		t.Fatalf("out-of-order retry failed: %v", err)
 	}
@@ -456,7 +528,7 @@ func TestVoiceCoreMediaRuntimeKeywordUsesLocalGenerationGate(t *testing.T) {
 	if fence, active := session.GenerationSnapshot(); !active || !fence.Equal(current) {
 		t.Fatalf("ordinary keyword changed generation: fence=%+v active=%v", fence, active)
 	}
-	if _, err := runtime.CancelGeneration("stop-1", "user_button", &current); err != nil {
+	if _, err := runtime.CancelGeneration("stop-1", "user_button", &current, 555); err != nil {
 		t.Fatal(err)
 	}
 	if err := runtime.SendKeyword("提示词", 0.9, 20, 30, false, current); err == nil {
@@ -575,7 +647,7 @@ func TestVoiceCoreMediaRuntimeDropsLateCancelledAudioAndAcceptsNextGeneration(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtime.CancelGeneration("stop-1", "user_button", &current); err != nil {
+	if _, err := runtime.CancelGeneration("stop-1", "user_button", &current, 0); err != nil {
 		t.Fatal(err)
 	}
 	runtime.Start()

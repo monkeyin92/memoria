@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	mediav1 "memoria/services/media_edge/gen/memoria/media/v1"
 )
@@ -24,11 +25,11 @@ type CoreMediaStream interface {
 
 type generationStopStream interface {
 	CurrentFence() Fence
-	SendStop(eventID, reason string, fence Fence) error
+	SendStop(eventID, reason string, fence Fence, detectedAtMs uint64) error
 }
 
 type keywordStream interface {
-	SendKeywordAtFence(keyword string, confidence float32, start, end uint64, hardStop bool, fence Fence) error
+	SendKeywordAtFence(keyword string, confidence float32, start, end uint64, hardStop bool, fence Fence, detectedAtMs uint64) error
 }
 
 // DownlinkSender is implemented by the real media terminator. Returning nil
@@ -37,9 +38,10 @@ type keywordStream interface {
 type DownlinkSender func(AudioFrame) error
 
 type stopAttempt struct {
-	cancelled Fence
-	core      Fence
-	reason    string
+	cancelled    Fence
+	core         Fence
+	reason       string
+	detectedAtMs uint64
 }
 
 // VoiceCoreMediaRuntime owns one session's edge↔core forwarding loop.
@@ -53,7 +55,6 @@ type VoiceCoreMediaRuntime struct {
 	cancel            context.CancelFunc
 	done              chan error
 	once              sync.Once
-	mu                sync.Mutex
 	uplinkMu          sync.Mutex
 	stopMu            sync.Mutex
 	pendingStopID     string
@@ -121,6 +122,10 @@ func (r *VoiceCoreMediaRuntime) SendKeyword(keyword string, confidence float32, 
 	if !ok {
 		return fmt.Errorf("Voice Core stream does not support keyword events")
 	}
+	// Wall-clock detection time at the edge; Voice Core uses it as the
+	// interrupt.detect anchor so the SLO covers local detection and the
+	// Edge→Core network hop instead of only the Core arrival time.
+	detectedAtMs := uint64(time.Now().UnixMilli())
 	if err := validateKeyword(keyword, confidence, start, end, hardStop); err != nil {
 		return err
 	}
@@ -138,7 +143,7 @@ func (r *VoiceCoreMediaRuntime) SendKeyword(keyword string, confidence float32, 
 		if err != nil {
 			return err
 		}
-		if err := sender.SendKeywordAtFence(keyword, confidence, start, end, true, current); err != nil {
+		if err := sender.SendKeywordAtFence(keyword, confidence, start, end, true, current, detectedAtMs); err != nil {
 			return err
 		}
 		if len(r.sentKeywordOrder) == maxCancelResults {
@@ -150,14 +155,15 @@ func (r *VoiceCoreMediaRuntime) SendKeyword(keyword string, confidence float32, 
 		return nil
 	}
 	return r.session.withActiveGeneration(fence, func() error {
-		return sender.SendKeywordAtFence(keyword, confidence, start, end, false, fence)
+		return sender.SendKeywordAtFence(keyword, confidence, start, end, false, fence, detectedAtMs)
 	})
 }
 
 // CancelGeneration closes the Edge gate before asking Voice Core to cancel.
 // A failed upstream send remains fail-closed and may be retried with the same
-// event id and authoritative replacement fence.
-func (r *VoiceCoreMediaRuntime) CancelGeneration(eventID, reason string, expected *Fence) (Fence, error) {
+// event id and authoritative replacement fence. detectedAtMs is the edge-side
+// interrupt.detect wall-clock stamp forwarded to Voice Core for SLO timing.
+func (r *VoiceCoreMediaRuntime) CancelGeneration(eventID, reason string, expected *Fence, detectedAtMs uint64) (Fence, error) {
 	if eventID == "" {
 		return Fence{}, fmt.Errorf("stop event id is required")
 	}
@@ -180,7 +186,7 @@ func (r *VoiceCoreMediaRuntime) CancelGeneration(eventID, reason string, expecte
 			r.pendingStop = stopAttempt{}
 			return cancelled, nil
 		}
-		if err := stopper.SendStop(eventID, r.pendingStop.reason, r.pendingStop.core); err != nil {
+		if err := stopper.SendStop(eventID, r.pendingStop.reason, r.pendingStop.core, r.pendingStop.detectedAtMs); err != nil {
 			return Fence{}, err
 		}
 		cancelled := r.pendingStop.cancelled
@@ -209,8 +215,8 @@ func (r *VoiceCoreMediaRuntime) CancelGeneration(eventID, reason string, expecte
 		return Fence{}, fmt.Errorf("Edge and Voice Core generation fences diverged")
 	}
 	r.pendingStopID = eventID
-	r.pendingStop = stopAttempt{cancelled: cancelled, core: core, reason: reason}
-	if err := stopper.SendStop(eventID, reason, core); err != nil {
+	r.pendingStop = stopAttempt{cancelled: cancelled, core: core, reason: reason, detectedAtMs: detectedAtMs}
+	if err := stopper.SendStop(eventID, reason, core, r.pendingStop.detectedAtMs); err != nil {
 		return Fence{}, err
 	}
 	r.pendingStopID = ""

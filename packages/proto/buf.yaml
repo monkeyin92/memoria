@@ -1,3 +1,18 @@
 version: v2
 modules:
   - path: .
+lint:
+  use:
+    - STANDARD
+  except:
+    # media-v1 is the repository's own long-lived contract: the stream
+    # request/response types MediaToCore/CoreToMedia and the VAD_EVENT_*
+    # values are deliberate domain names already consumed by checked-in
+    # Python/Go bindings and by Media Edge/ Voice Core.  Renaming them would
+    # be a breaking contract change; keep the descriptive names and pin the
+    # lint exceptions instead.
+    - SERVICE_SUFFIX
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - ENUM_VALUE_PREFIX

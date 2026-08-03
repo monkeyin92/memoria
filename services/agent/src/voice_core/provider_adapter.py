@@ -103,11 +103,14 @@ class ExistingVoiceProviderAdapter:
         default_factory=deque,
         init=False,
     )
-    _accepted_final_ranges: deque[tuple[int, int, int, str]] = field(
+    _accepted_final_ranges: deque[tuple[int, int, str, int, int, str, int]] = field(
         default_factory=deque,
         init=False,
     )
-    _last_final_audio_sample: int = field(default=0, init=False)
+    _max_final_end_by_epoch: dict[int, int] = field(
+        default_factory=dict,
+        init=False,
+    )
     _generation_started: set[GenerationFence] = field(default_factory=set, init=False)
     _generation_cancel_events: dict[GenerationFence, asyncio.Event] = field(
         default_factory=dict,
@@ -144,7 +147,7 @@ class ExistingVoiceProviderAdapter:
             self._final_sentence_ids.clear()
             self._final_sentence_order.clear()
             self._accepted_final_ranges.clear()
-            self._last_final_audio_sample = 0
+            self._max_final_end_by_epoch.clear()
             self._remember_asr_task(self._asr, stream_epoch)
         return self._asr
 
@@ -243,88 +246,142 @@ class ExistingVoiceProviderAdapter:
             stream_epoch=event_stream_epoch,
             sample_offset=sample_offset,
         )
-        if not sentence.sentence_end and mapped.capture_end_sample <= self._last_final_audio_sample:
-            return None
-        if sentence.sentence_end:
-            final_key = (
-                event_stream_epoch,
-                task_epoch,
-                sentence_id,
-                mapped.capture_start_sample,
-                mapped.capture_end_sample,
-            )
-            if (
-                final_key in self._final_sentence_ids
-                or mapped.capture_end_sample <= self._last_final_audio_sample
-            ):
+        mapped_start = mapped.capture_start_sample
+        mapped_end = mapped.capture_end_sample
+        if not sentence.sentence_end:
+            # A late partial fully inside audio already finalized for this
+            # stream epoch is stale; out-of-order finals are decided below by
+            # the interval set, not by a global end watermark.
+            if mapped_end <= self._max_final_end_by_epoch.get(event_stream_epoch, 0):
                 return None
-            mapped_start = mapped.capture_start_sample
-            mapped_text = mapped.text
-            if mapped_start < self._last_final_audio_sample:
-                # A reconnected provider may replay an expanding absolute
-                # interval, for example 0..640 after 0..320 was already
-                # accepted.  Reconcile only a provable, contiguous text
-                # prefix; ambiguous overlaps fail closed instead of entering
-                # the user's turn twice.
-                covered_end = mapped_start
-                covered_text = ""
-                for range_epoch, range_start, range_end, range_text in sorted(
-                    self._accepted_final_ranges,
-                    key=lambda item: (item[1], item[2]),
-                ):
-                    if range_epoch != event_stream_epoch or range_end <= mapped_start:
-                        continue
-                    if range_start != covered_end or range_end > self._last_final_audio_sample:
-                        break
-                    covered_text += range_text
-                    covered_end = range_end
-                    if covered_end == self._last_final_audio_sample:
-                        break
-                if (
-                    covered_end != self._last_final_audio_sample
-                    or not mapped_text.startswith(covered_text)
-                ):
-                    return None
-                mapped_text = mapped_text[len(covered_text) :]
-                mapped_start = covered_end
-                if not mapped_text:
-                    return None
-            self._final_sentence_ids.add(final_key)
-            self._final_sentence_order.append(final_key)
-            self._last_final_audio_sample = mapped.capture_end_sample
-            self._accepted_final_ranges.append(
-                (
-                    event_stream_epoch,
-                    mapped_start,
-                    mapped.capture_end_sample,
-                    mapped_text,
-                )
-            )
-            while len(self._final_sentence_order) > self.config.max_asr_result_history:
-                self._final_sentence_ids.discard(self._final_sentence_order.popleft())
-            while len(self._accepted_final_ranges) > self.config.max_asr_result_history:
-                self._accepted_final_ranges.popleft()
             return ASRResult(
                 task_epoch=mapped.task_epoch,
                 sentence_id=mapped.sentence_id,
                 revision=mapped.revision,
                 capture_start_sample=mapped_start,
-                capture_end_sample=mapped.capture_end_sample,
-                text=mapped_text,
-                is_final=True,
+                capture_end_sample=mapped_end,
+                text=mapped.text,
+                is_final=mapped.is_final,
                 confidence=mapped.confidence,
                 provider_begin_ms=mapped.provider_begin_ms,
                 provider_end_ms=mapped.provider_end_ms,
                 stream_epoch=mapped.stream_epoch,
             )
+        final_key = (
+            event_stream_epoch,
+            task_epoch,
+            sentence_id,
+            mapped_start,
+            mapped_end,
+        )
+        epoch_ranges = [
+            accepted
+            for accepted in self._accepted_final_ranges
+            if accepted[0] == event_stream_epoch
+        ]
+        overlapping = [
+            accepted
+            for accepted in epoch_ranges
+            if accepted[3] < mapped_end and mapped_start < accepted[4]
+        ]
+        same_range = [
+            accepted
+            for accepted in overlapping
+            if accepted[1] == task_epoch
+            and accepted[2] == sentence_id
+            and accepted[3] == mapped_start
+            and accepted[4] == mapped_end
+        ]
+        if final_key in self._final_sentence_ids:
+            # Only a same-provider correction of the exact same interval
+            # (newer text) may replace the stored final; identical text is a
+            # transport duplicate and any other key is a replay.
+            if (
+                not same_range
+                or mapped.text == same_range[0][5]
+                or mapped.revision <= same_range[0][6]
+            ):
+                return None
+        mapped_text = mapped.text
+        mapped_revision = mapped.revision
+        if overlapping and not same_range:
+            # A reconnected provider may replay an expanding absolute interval,
+            # for example 0..640 after 0..320 was already accepted.  Reconcile
+            # only a provable, contiguous text prefix of the same sentence by
+            # a newer task; cross-sentence overlaps, older-task replays and
+            # identical-range replays fail closed instead of entering the
+            # user's turn twice.  Out-of-order but non-overlapping finals
+            # bypass this branch entirely.
+            cross_sentence = [accepted for accepted in overlapping if accepted[2] != sentence_id]
+            if cross_sentence:
+                return None
+            same_range_other_task = [
+                accepted
+                for accepted in overlapping
+                if accepted[3] == mapped_start
+                and accepted[4] == mapped_end
+                and accepted[1] != task_epoch
+            ]
+            if same_range_other_task:
+                return None
+            if any(accepted[1] > task_epoch for accepted in overlapping):
+                return None
+            covered_start = min(accepted[3] for accepted in overlapping)
+            if mapped_start > covered_start:
+                return None
+            sorted_overlaps = sorted(overlapping, key=lambda item: (item[3], item[4]))
+            target_end = max(item[4] for item in sorted_overlaps)
+            covered_end = mapped_start
+            covered_text = ""
+            for _epoch, _task, _sentence, range_start, range_end, range_text, _rev in sorted_overlaps:
+                if range_start != covered_end:
+                    break
+                covered_text += range_text
+                covered_end = range_end
+            if covered_end != target_end or not mapped_text.startswith(covered_text):
+                return None
+            mapped_text = mapped_text[len(covered_text) :]
+            if not mapped_text:
+                return None
+            mapped_start = covered_end
+        elif same_range and (
+            mapped.text == same_range[0][5] or mapped.revision <= same_range[0][6]
+        ):
+            return None
+        for accepted in overlapping:
+            try:
+                self._accepted_final_ranges.remove(accepted)
+            except ValueError:
+                pass
+        self._final_sentence_ids.add(final_key)
+        self._final_sentence_order.append(final_key)
+        self._accepted_final_ranges.append(
+            (
+                event_stream_epoch,
+                task_epoch,
+                sentence_id,
+                mapped_start,
+                mapped_end,
+                mapped_text,
+                mapped_revision,
+            )
+        )
+        self._max_final_end_by_epoch[event_stream_epoch] = max(
+            self._max_final_end_by_epoch.get(event_stream_epoch, 0),
+            mapped_end,
+        )
+        while len(self._final_sentence_order) > self.config.max_asr_result_history:
+            self._final_sentence_ids.discard(self._final_sentence_order.popleft())
+        while len(self._accepted_final_ranges) > self.config.max_asr_result_history:
+            self._accepted_final_ranges.popleft()
         return ASRResult(
             task_epoch=mapped.task_epoch,
             sentence_id=mapped.sentence_id,
             revision=mapped.revision,
-            capture_start_sample=mapped.capture_start_sample,
-            capture_end_sample=mapped.capture_end_sample,
-            text=mapped.text,
-            is_final=mapped.is_final,
+            capture_start_sample=mapped_start,
+            capture_end_sample=mapped_end,
+            text=mapped_text,
+            is_final=True,
             confidence=mapped.confidence,
             provider_begin_ms=mapped.provider_begin_ms,
             provider_end_ms=mapped.provider_end_ms,
@@ -625,6 +682,37 @@ class ExistingVoiceProviderAdapter:
         buffered = bytearray()
         held_frame: bytes | None = None
         output_sample = 0
+        open_phrase: str | None = None
+        open_phrase_start: int | None = None
+
+        def closed_span(end_sample: int) -> tuple[str, int, int] | None:
+            """Close the phrase whose audio ended at ``end_sample``.
+
+            The provider does not expose per-phrase alignment until the next
+            phrase boundary or end-of-stream, so a span is registered exactly
+            when its full audio range becomes known.  An interruption inside a
+            phrase leaves that phrase unclaimed (no text overclaim), while
+            every previously completed phrase is already in the ledger.
+            """
+
+            nonlocal open_phrase, open_phrase_start
+            if open_phrase is None or open_phrase_start is None:
+                return None
+            span = (open_phrase, open_phrase_start, end_sample)
+            open_phrase = None
+            open_phrase_start = None
+            return span
+
+        def span_kwargs(span: tuple[str, int, int] | None) -> dict[str, Any]:
+            if span is None:
+                return {}
+            phrase_text, start_sample, end_sample = span
+            return {
+                "text": phrase_text,
+                "text_audio_start_sample": start_sample,
+                "text_audio_end_sample": end_sample,
+            }
+
         try:
             # Start consuming PCM only after at least one complete phrase was
             # accepted by the live provider.  This keeps subtitle publication
@@ -643,11 +731,18 @@ class ExistingVoiceProviderAdapter:
                     next_frame = bytes(buffered[:frame_bytes])
                     del buffered[:frame_bytes]
                     if held_frame is not None:
+                        announcement = take_announcement()
+                        span = None
+                        if announcement:
+                            span = closed_span(output_sample)
+                            open_phrase = announcement
+                            open_phrase_start = output_sample
                         yield MediaReplyChunk(
                             pcm_s16le=held_frame,
                             source_start_sample=output_sample,
-                            assistant_text_delta=take_announcement(),
+                            assistant_text_delta=announcement,
                             first=output_sample == 0,
+                            **span_kwargs(span),
                         )
                         output_sample += frame_samples
                         self._output_sample = output_sample
@@ -661,11 +756,18 @@ class ExistingVoiceProviderAdapter:
                 raise RuntimeError("speech provider returned invalid 16-bit PCM")
             if buffered:
                 if held_frame is not None:
+                    announcement = take_announcement()
+                    span = None
+                    if announcement:
+                        span = closed_span(output_sample)
+                        open_phrase = announcement
+                        open_phrase_start = output_sample
                     yield MediaReplyChunk(
                         pcm_s16le=held_frame,
                         source_start_sample=output_sample,
-                        assistant_text_delta=take_announcement(),
+                        assistant_text_delta=announcement,
                         first=output_sample == 0,
+                        **span_kwargs(span),
                     )
                     output_sample += frame_samples
                     self._output_sample = output_sample
@@ -678,15 +780,20 @@ class ExistingVoiceProviderAdapter:
                     return
                 raise RuntimeError("language model returned no speakable text")
             audio_end = output_sample + frame_samples
+            announcement = take_announcement()
+            span = None
+            if announcement:
+                span = closed_span(output_sample)
+                open_phrase = announcement
+                open_phrase_start = output_sample
+            final_span = span if span is not None else closed_span(audio_end)
             yield MediaReplyChunk(
                 pcm_s16le=held_frame,
                 source_start_sample=output_sample,
-                text=complete_text,
-                assistant_text_delta=take_announcement(),
+                assistant_text_delta=announcement,
                 first=output_sample == 0,
                 final=True,
-                text_audio_start_sample=0,
-                text_audio_end_sample=audio_end,
+                **span_kwargs(final_span),
             )
             self._output_sample = audio_end
         finally:

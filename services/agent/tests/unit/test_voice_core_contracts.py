@@ -341,6 +341,112 @@ def test_asr_supervisor_uses_watermark_and_task_epoch_on_reconnect() -> None:
     assert supervisor.task_epoch == 2
 
 
+def test_asr_supervisor_accepts_out_of_order_non_overlapping_finals() -> None:
+    supervisor = ASRStreamSupervisor(reconnect_audio_ms=500)
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=800)
+    late_start = ASRResult(
+        task_epoch=1,
+        sentence_id="s2",
+        revision=1,
+        capture_start_sample=320,
+        capture_end_sample=640,
+        text="后半句",
+        is_final=True,
+    )
+    assert supervisor.accept_result(late_start, session_id="session")
+    earlier = ASRResult(
+        task_epoch=1,
+        sentence_id="s1",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=320,
+        text="前半句",
+        is_final=True,
+    )
+    assert supervisor.accept_result(earlier, session_id="session")
+    assert supervisor.last_emitted_final_sample == 640
+
+
+def test_asr_supervisor_higher_revision_replaces_same_interval() -> None:
+    supervisor = ASRStreamSupervisor(reconnect_audio_ms=500)
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=800)
+    original = ASRResult(
+        task_epoch=1,
+        sentence_id="s1",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=320,
+        text="你好",
+        is_final=True,
+    )
+    assert supervisor.accept_result(original, session_id="session")
+    corrected = ASRResult(
+        task_epoch=1,
+        sentence_id="s1",
+        revision=2,
+        capture_start_sample=0,
+        capture_end_sample=320,
+        text="你好呀",
+        is_final=True,
+    )
+    assert supervisor.accept_result(corrected, session_id="session")
+    assert supervisor.accept_result(corrected, session_id="session") is False
+
+
+def test_asr_supervisor_rejects_cross_task_same_range_replay() -> None:
+    supervisor = ASRStreamSupervisor(reconnect_audio_ms=500)
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=800)
+    first = ASRResult(
+        task_epoch=1,
+        sentence_id="s1",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=320,
+        text="你好",
+        is_final=True,
+    )
+    assert supervisor.accept_result(first, session_id="session")
+    replay = ASRResult(
+        task_epoch=2,
+        sentence_id="s1",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=320,
+        text="你好",
+        is_final=True,
+    )
+    assert not supervisor.accept_result(replay, session_id="session")
+
+
+def test_asr_supervisor_rejects_cross_sentence_ambiguous_overlap() -> None:
+    supervisor = ASRStreamSupervisor(reconnect_audio_ms=500)
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=800)
+    first = ASRResult(
+        task_epoch=1,
+        sentence_id="s1",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=640,
+        text="第一句",
+        is_final=True,
+    )
+    assert supervisor.accept_result(first, session_id="session")
+    ambiguous = ASRResult(
+        task_epoch=1,
+        sentence_id="s2",
+        revision=1,
+        capture_start_sample=160,
+        capture_end_sample=320,
+        text="重叠",
+        is_final=True,
+    )
+    assert not supervisor.accept_result(ambiguous, session_id="session")
+
+
 def test_device_commands_are_allowlisted_and_expire_without_cloud_dependency() -> None:
     command = DeviceCommand(
         command_id="cmd-1",
