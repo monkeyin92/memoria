@@ -23,6 +23,9 @@ const api = vi.hoisted(() => ({
   publishOmniTelemetry: vi.fn(),
   notifyRtcRecovered: vi.fn(),
   stopResponse: vi.fn(),
+  reconnectMediaSession: vi.fn(),
+  fallbackMediaSession: vi.fn(),
+  renewMediaSession: vi.fn(),
 }));
 
 const omni = vi.hoisted(() => ({ instances: [] }));
@@ -76,6 +79,9 @@ vi.mock("../api.js", () => ({
   publishOmniTelemetry: api.publishOmniTelemetry,
   notifyRtcRecovered: api.notifyRtcRecovered,
   stopResponse: api.stopResponse,
+  reconnectMediaSession: api.reconnectMediaSession,
+  fallbackMediaSession: api.fallbackMediaSession,
+  renewMediaSession: api.renewMediaSession,
 }));
 
 vi.mock("../voice/experimental/QwenOmniWebRTCTransport.js", () => ({
@@ -107,6 +113,86 @@ function deferred() {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+const streamCorePeers = [];
+
+class BrowserFactPeerConnection {
+  constructor() {
+    this.iceGatheringState = "complete";
+    this.connectionState = "connected";
+    this.listeners = new Map();
+    this.channel = {
+      readyState: "open",
+      sent: [],
+      send: (raw) => this.channel.sent.push(JSON.parse(raw)),
+      close: () => {
+        this.channel.readyState = "closed";
+      },
+      onmessage: null,
+    };
+    streamCorePeers.push(this);
+  }
+
+  addEventListener(name, listener) {
+    this.listeners.set(name, listener);
+  }
+
+  removeEventListener(name, listener) {
+    if (this.listeners.get(name) === listener) this.listeners.delete(name);
+  }
+
+  addTrack() {}
+
+  createDataChannel() {
+    return this.channel;
+  }
+
+  createOffer() {
+    return Promise.resolve({ type: "offer", sdp: "v=0\\no=browser-fact" });
+  }
+
+  setLocalDescription(description) {
+    this.localDescription = description;
+    return Promise.resolve();
+  }
+
+  setRemoteDescription(description) {
+    this.remoteDescription = description;
+    return Promise.resolve();
+  }
+
+  close() {
+    this.connectionState = "closed";
+  }
+}
+
+let nextStreamCoreEventId = 0;
+
+function streamCoreEvent({
+  type,
+  sequence,
+  turnId,
+  generationId,
+  toolEpoch = 0,
+  payload = {},
+  streamEpoch = 1,
+}) {
+  nextStreamCoreEventId += 1;
+  return {
+    v: 1,
+    protocol: "media-v1",
+    type,
+    event_id: `browser-fact-${nextStreamCoreEventId}`,
+    session_id: "streamcore-session",
+    stream_epoch: streamEpoch,
+    sequence,
+    turn_id: turnId,
+    generation_id: generationId,
+    tool_epoch: toolEpoch,
+    server_monotonic_ms: sequence,
+    payload: { turn_id: turnId, generation_id: generationId, tool_epoch: toolEpoch, ...payload },
+  };
 }
 
 async function renderStartedHook({
@@ -158,6 +244,7 @@ describe("useVoiceSession production edges", () => {
     liveKit.instances.length = 0;
     liveKit.microphonePublication = null;
     omni.instances.length = 0;
+    streamCorePeers.length = 0;
     liveKit.rejectStartAudioCount = 0;
     liveKit.Room.getLocalDevices.mockResolvedValue([
       { deviceId: "microphone" },
@@ -171,6 +258,18 @@ describe("useVoiceSession production edges", () => {
     api.exchangeOmniSdp.mockResolvedValue("answer-sdp");
     api.publishOmniTelemetry.mockResolvedValue(null);
     api.stopResponse.mockResolvedValue(undefined);
+    api.reconnectMediaSession.mockResolvedValue({
+      session_id: "streamcore-session",
+      media_runtime: "streamcore",
+      stream_epoch: 2,
+      streamcore: {
+        whip_url: "https://media.example/whip",
+        token: "rotated-token",
+        stream_epoch: 2,
+      },
+    });
+    api.fallbackMediaSession.mockResolvedValue(undefined);
+    api.renewMediaSession.mockResolvedValue({ stream_epoch: 1 });
   });
 
   afterEach(() => {
@@ -472,6 +571,189 @@ describe("useVoiceSession production edges", () => {
       omni.instances[0].callbacks.onDiagnostic("omni_response_created");
     });
     expect(container.querySelector("audio").muted).toBe(false);
+  });
+
+  it("derives StreamCore playback ACKs from browser media progress per generation", async () => {
+    api.createSession.mockResolvedValueOnce({
+      session_id: "streamcore-session",
+      media_runtime: "streamcore",
+      fallback_runtime: "livekit",
+      stream_epoch: 1,
+      streamcore: {
+        whip_url: "https://media.example/whip",
+        token: "short-token",
+        stream_epoch: 1,
+      },
+    });
+    vi.stubGlobal("RTCPeerConnection", BrowserFactPeerConnection);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        text: vi.fn().mockResolvedValue("v=0\\no=answer"),
+      }),
+    );
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({
+          getAudioTracks: () => [{ enabled: true, stop: vi.fn() }],
+          getTracks: () => [{ stop: vi.fn() }],
+        }),
+      },
+    });
+    const playSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockResolvedValue(undefined);
+    const pauseSpy = vi
+      .spyOn(HTMLMediaElement.prototype, "pause")
+      .mockImplementation(() => undefined);
+    const { result } = renderHook(() =>
+      useVoiceSession({
+        userId: "anonymous-user",
+        onFinalTranscript: vi.fn(),
+        voiceReplyEnabled: true,
+      }),
+    );
+    result.current.audioContainerRef.current = document.createElement("div");
+
+    await act(async () => {
+      await result.current.start();
+    });
+    const firstPeer = streamCorePeers[0];
+    act(() => firstPeer.ontrack({ streams: [{ id: "stream-1" }] }));
+    const element = result.current.audioContainerRef.current.querySelector("audio");
+    Object.defineProperty(element, "currentTime", {
+      configurable: true,
+      writable: true,
+      value: 40,
+    });
+    const emit = (peer, event) =>
+      peer.channel.onmessage({ data: JSON.stringify(event) });
+
+    act(() => element.dispatchEvent(new Event("timeupdate")));
+    act(() => emit(firstPeer, streamCoreEvent({
+      type: "assistant.audio.frame",
+      sequence: 0,
+      turnId: 1,
+      generationId: 1,
+      payload: { sequence: 0, source_start_sample: 0, frame_samples: 480 },
+    })));
+    await act(async () => {
+      element.currentTime = 40.03;
+      element.dispatchEvent(new Event("timeupdate"));
+      await Promise.resolve();
+    });
+    expect(firstPeer.channel.sent.at(-1).payload.rendered_sample_end).toBe(480);
+
+    await act(async () => {
+      element.currentTime = 50;
+      element.dispatchEvent(new Event("timeupdate"));
+      emit(firstPeer, streamCoreEvent({
+        type: "assistant.audio.frame",
+        sequence: 1,
+        turnId: 2,
+        generationId: 2,
+        payload: { sequence: 0, source_start_sample: 0, frame_samples: 480 },
+      }));
+      element.currentTime = 50.005;
+      element.dispatchEvent(new Event("timeupdate"));
+      await Promise.resolve();
+    });
+    const secondGenerationAck = firstPeer.channel.sent.at(-1);
+    expect(secondGenerationAck.generation_id).toBe(2);
+    expect(secondGenerationAck.payload.rendered_sample_end).toBeGreaterThan(0);
+    expect(secondGenerationAck.payload.rendered_sample_end).toBeLessThan(480);
+
+    const ackCountBeforeSeek = firstPeer.channel.sent.filter(
+      (event) => event.type === "client.playback.progress",
+    ).length;
+    await act(async () => {
+      element.currentTime = 55;
+      element.dispatchEvent(new Event("seeking"));
+      element.currentTime = 55.03;
+      element.dispatchEvent(new Event("timeupdate"));
+      await Promise.resolve();
+    });
+    expect(firstPeer.channel.sent.filter(
+      (event) => event.type === "client.playback.progress",
+    )).toHaveLength(ackCountBeforeSeek);
+
+    act(() => emit(firstPeer, streamCoreEvent({
+      type: "playback.flush",
+      sequence: 2,
+      turnId: 2,
+      generationId: 2,
+      payload: { reason: "generation_cancel" },
+    })));
+    expect(element.currentTime).toBe(0);
+    expect(pauseSpy).toHaveBeenCalled();
+    const playCountAfterFlush = playSpy.mock.calls.length;
+
+    await act(async () => {
+      emit(firstPeer, streamCoreEvent({
+        type: "assistant.audio.frame",
+        sequence: 3,
+        turnId: 3,
+        generationId: 3,
+        payload: { sequence: 0, source_start_sample: 0, frame_samples: 480 },
+      }));
+      element.currentTime = 0.005;
+      element.dispatchEvent(new Event("timeupdate"));
+      await Promise.resolve();
+    });
+    expect(playSpy.mock.calls.length).toBeGreaterThan(playCountAfterFlush);
+    expect(firstPeer.channel.sent.at(-1).generation_id).toBe(3);
+    expect(firstPeer.channel.sent.at(-1).payload.rendered_sample_end).toBeGreaterThan(0);
+
+    const ackCountBeforeMutedGeneration = firstPeer.channel.sent.filter(
+      (event) => event.type === "client.playback.progress",
+    ).length;
+    await act(async () => {
+      element.muted = true;
+      emit(firstPeer, streamCoreEvent({
+        type: "assistant.audio.frame",
+        sequence: 4,
+        turnId: 4,
+        generationId: 4,
+        payload: { sequence: 0, source_start_sample: 0, frame_samples: 480 },
+      }));
+      element.currentTime = 0.03;
+      element.dispatchEvent(new Event("timeupdate"));
+      await Promise.resolve();
+    });
+    expect(firstPeer.channel.sent.filter(
+      (event) => event.type === "client.playback.progress",
+    )).toHaveLength(ackCountBeforeMutedGeneration);
+    element.muted = false;
+
+    act(() => {
+      firstPeer.connectionState = "failed";
+      firstPeer.onconnectionstatechange();
+    });
+    await waitFor(() => expect(streamCorePeers).toHaveLength(2));
+    const secondPeer = streamCorePeers[1];
+    act(() => secondPeer.ontrack({ streams: [{ id: "stream-2" }] }));
+    await act(async () => {
+      element.currentTime = 70;
+      element.dispatchEvent(new Event("timeupdate"));
+      emit(secondPeer, streamCoreEvent({
+        type: "assistant.audio.frame",
+        sequence: 0,
+        turnId: 5,
+        generationId: 5,
+        streamEpoch: 2,
+        payload: { sequence: 0, source_start_sample: 0, frame_samples: 480 },
+      }));
+      element.currentTime = 70.005;
+      element.dispatchEvent(new Event("timeupdate"));
+      await Promise.resolve();
+    });
+    const reconnectAck = secondPeer.channel.sent.at(-1);
+    expect(reconnectAck.stream_epoch).toBe(2);
+    expect(reconnectAck.generation_id).toBe(5);
+    expect(reconnectAck.payload.rendered_sample_end).toBeLessThan(480);
   });
 
   it("waits for explicit agent readiness and remains retryable after a 45 second timeout", async () => {

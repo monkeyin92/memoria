@@ -344,7 +344,11 @@ export function publishOmniTelemetry(sessionId, event) {
   });
 }
 
-export function stopResponse(sessionId, idempotencyKey = null) {
+export function stopResponse(
+  sessionId,
+  idempotencyKey = null,
+  { signal, timeoutMs = 5_000 } = {},
+) {
   const key =
     idempotencyKey ||
     globalThis.crypto?.randomUUID?.() ||
@@ -352,8 +356,9 @@ export function stopResponse(sessionId, idempotencyKey = null) {
   return request(`/v1/sessions/${encodeURIComponent(sessionId)}/stop-response`, {
     method: "POST",
     headers: { "Idempotency-Key": key },
+    signal,
     body: JSON.stringify({ reason: "user_button" }),
-  });
+  }, { timeoutMs });
 }
 
 export function notifyRtcRecovered(sessionId) {
@@ -362,14 +367,23 @@ export function notifyRtcRecovered(sessionId) {
   });
 }
 
-export function reconnectMediaSession(sessionId, streamEpoch) {
-  return request(`/v1/sessions/${encodeURIComponent(sessionId)}/media-reconnect`, {
-    method: "POST",
-    body:
-      Number.isInteger(streamEpoch) && streamEpoch > 0
-        ? JSON.stringify({ stream_epoch: streamEpoch })
-        : undefined,
-  });
+export function reconnectMediaSession(
+  sessionId,
+  streamEpoch,
+  { signal, timeoutMs } = {},
+) {
+  return request(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/media-reconnect`,
+    {
+      method: "POST",
+      signal,
+      body:
+        Number.isInteger(streamEpoch) && streamEpoch > 0
+          ? JSON.stringify({ stream_epoch: streamEpoch })
+          : undefined,
+    },
+    { timeoutMs },
+  );
 }
 
 export function fallbackMediaSession(sessionId, streamEpoch) {
@@ -379,9 +393,18 @@ export function fallbackMediaSession(sessionId, streamEpoch) {
   });
 }
 
-export function renewMediaSession(sessionId, streamEpoch) {
-  return request(`/v1/sessions/${encodeURIComponent(sessionId)}/media-heartbeat`, {
-    method: "POST",
-    body: JSON.stringify({ stream_epoch: streamEpoch }),
-  });
+export function renewMediaSession(
+  sessionId,
+  streamEpoch,
+  { signal, timeoutMs } = {},
+) {
+  return request(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/media-heartbeat`,
+    {
+      method: "POST",
+      signal,
+      body: JSON.stringify({ stream_epoch: streamEpoch }),
+    },
+    { timeoutMs },
+  );
 }

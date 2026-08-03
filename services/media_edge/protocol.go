@@ -33,9 +33,9 @@ func (f Fence) Equal(other Fence) bool {
 		f.GenerationID == other.GenerationID && f.ToolEpoch == other.ToolEpoch
 }
 
-// AudioFrame carries a bounded encoded PCM/Opus payload and absolute capture
-// range.  The HTTP reference edge uses base64; a native WebRTC adapter can
-// map RTP/Opus packets into this same shape without changing Voice Core.
+// AudioFrame carries a bounded 16-bit PCM payload and absolute capture range.
+// The HTTP reference edge uses base64; a native WebRTC adapter decodes its
+// RTP/Opus input before handing PCM to this Voice Core seam.
 type AudioFrame struct {
 	SessionID          string `json:"session_id"`
 	StreamEpoch        uint64 `json:"stream_epoch"`
@@ -70,8 +70,15 @@ func (f AudioFrame) Validate(expectedSession string, expectedEpoch uint64) error
 	if f.StreamEpoch != expectedEpoch || f.FrameSamples == 0 {
 		return fmt.Errorf("frame epoch or sample range is invalid")
 	}
-	if _, err := f.Payload(); err != nil {
+	if ^uint64(0)-f.CaptureStartSample < f.FrameSamples {
+		return fmt.Errorf("frame sample range overflows")
+	}
+	payload, err := f.Payload()
+	if err != nil {
 		return err
+	}
+	if len(payload)%2 != 0 || uint64(len(payload)/2) != f.FrameSamples {
+		return fmt.Errorf("PCM payload length does not match frame samples")
 	}
 	return nil
 }
@@ -105,6 +112,43 @@ type SessionResponse struct {
 	MediaRuntime string `json:"media_runtime"`
 	StreamEpoch  uint64 `json:"stream_epoch"`
 	Protocol     string `json:"protocol"`
+}
+
+// StopGenerationRequest optionally carries the complete generation expected
+// by the caller. With no fence fields, Edge/Core current state is authoritative.
+type StopGenerationRequest struct {
+	SessionID    string  `json:"session_id,omitempty"`
+	StreamEpoch  uint64  `json:"stream_epoch,omitempty"`
+	TurnID       *uint64 `json:"turn_id,omitempty"`
+	GenerationID *uint64 `json:"generation_id,omitempty"`
+	ToolEpoch    *uint64 `json:"tool_epoch,omitempty"`
+	Reason       string  `json:"reason,omitempty"`
+}
+
+func (r StopGenerationRequest) ExpectedFence(sessionID string) (*Fence, error) {
+	if r.SessionID != "" && r.SessionID != sessionID {
+		return nil, fmt.Errorf("stop session does not match")
+	}
+	provided := 0
+	if r.TurnID != nil {
+		provided++
+	}
+	if r.GenerationID != nil {
+		provided++
+	}
+	if r.ToolEpoch != nil {
+		provided++
+	}
+	if provided == 0 {
+		return nil, nil
+	}
+	if provided != 3 {
+		return nil, fmt.Errorf("expected stop fence must include turn_id, generation_id and tool_epoch")
+	}
+	return &Fence{
+		SessionID: sessionID, TurnID: *r.TurnID,
+		GenerationID: *r.GenerationID, ToolEpoch: *r.ToolEpoch,
+	}, nil
 }
 
 func writeJSON(w interface{ Write([]byte) (int, error) }, value any) error {

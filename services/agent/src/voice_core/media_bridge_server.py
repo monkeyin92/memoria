@@ -71,10 +71,14 @@ class MediaBridgeSession:
     _last_capture_end_sample: int = 0
     _downlink_fence: GenerationFence | None = field(default=None, init=False)
     _last_downlink_source_end_sample: int = 0
+    generation_active: bool = True
     stale_downlink_count: int = 0
     overflow_count: int = 0
     _last_client_event_sequence: int = -1
+    _last_client_event_id: str | None = None
+    _last_client_progress_fingerprint: tuple[object, ...] | None = None
     _stop_keys: deque[str] = field(default_factory=lambda: deque(maxlen=64))
+    _stop_fences: dict[str, GenerationFence] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.max_pending_audio_frames <= 0:
@@ -169,8 +173,6 @@ class MediaBridgeSession:
             return False
         if event.stream_epoch != self.identity.stream_epoch or event.type != "client.stop_assistant":
             return False
-        if event.sequence < self._last_client_event_sequence:
-            return False
         key = event.payload.get("idempotency_key")
         if not isinstance(key, str) or not key.strip():
             # The envelope event_id is generated once by the client and is
@@ -181,22 +183,38 @@ class MediaBridgeSession:
         if not isinstance(key, str) or not key.strip():
             return False
         if key in self._stop_keys:
-            self._last_client_event_sequence = max(self._last_client_event_sequence, event.sequence)
-            return True
-        if event.generation_id or event.turn_id or event.tool_epoch:
-            expected = GenerationFence(
+            expected = self._stop_fences.get(key)
+            if expected is None or expected != GenerationFence(
                 session_id=event.session_id,
                 turn_id=event.turn_id,
                 generation_id=event.generation_id,
                 tool_epoch=event.tool_epoch,
-            )
-            if not self.generation.accept(expected):
+            ):
                 return False
+            self._last_client_event_sequence = max(self._last_client_event_sequence, event.sequence)
+            self._last_client_event_id = event.event_id
+            return True
+        if event.sequence <= self._last_client_event_sequence:
+            return False
+        expected = GenerationFence(
+            session_id=event.session_id,
+            turn_id=event.turn_id,
+            generation_id=event.generation_id,
+            tool_epoch=event.tool_epoch,
+        )
+        if not self.generation.accept(expected):
+            return False
         self._last_client_event_sequence = max(self._last_client_event_sequence, event.sequence)
+        self._last_client_event_id = event.event_id
         next_fence = self.generation.cancel(self.generation.current)
         if next_fence is None or not self.reset_downlink_generation(next_fence):
             return False
+        self.generation_active = False
+        if self._stop_keys.maxlen is not None and len(self._stop_keys) >= self._stop_keys.maxlen:
+            evicted = self._stop_keys.popleft()
+            self._stop_fences.pop(evicted, None)
         self._stop_keys.append(key)
+        self._stop_fences[key] = expected
         return True
 
     def accept_client_progress(self, event: MediaEnvelope) -> bool:
@@ -204,14 +222,75 @@ class MediaBridgeSession:
 
         if (
             self.state == "closed"
+            or not self.generation_active
             or event.session_id != self.identity.session_id
             or event.stream_epoch != self.identity.stream_epoch
             or event.type != "client.playback.progress"
-            or event.sequence < self._last_client_event_sequence
+        ):
+            return False
+        required_payload = {
+            "turn_id": event.turn_id,
+            "generation_id": event.generation_id,
+            "tool_epoch": event.tool_epoch,
+        }
+        if any(event.payload.get(key) != value for key, value in required_payload.items()):
+            return False
+        if not self.generation.accept(
+            GenerationFence(
+                session_id=event.session_id,
+                turn_id=event.turn_id,
+                generation_id=event.generation_id,
+                tool_epoch=event.tool_epoch,
+            )
+        ):
+            return False
+        if event.sequence < self._last_client_event_sequence:
+            return False
+        if (
+            event.sequence == self._last_client_event_sequence
+            and event.event_id != self._last_client_event_id
+        ):
+            return False
+        fingerprint = tuple(
+            event.payload.get(key)
+            for key in (
+                "received_sequence",
+                "rendered_sample_end",
+                "client_monotonic_ms",
+                "approximate",
+            )
+        )
+        if (
+            event.sequence == self._last_client_event_sequence
+            and event.event_id == self._last_client_event_id
+            and fingerprint != self._last_client_progress_fingerprint
         ):
             return False
         self._last_client_event_sequence = max(self._last_client_event_sequence, event.sequence)
+        self._last_client_event_id = event.event_id
+        self._last_client_progress_fingerprint = fingerprint
         return True
+
+    def apply_local_keyword_stop(
+        self,
+        *,
+        confidence: float,
+        min_confidence: float = 0.8,
+    ) -> GenerationFence | None:
+        """Close the Edge generation gate before forwarding a hard-stop KWS hit."""
+
+        if (
+            self.state == "closed"
+            or self.generation_active is False
+            or confidence < min_confidence
+        ):
+            return None
+        next_fence = self.generation.cancel(self.generation.current)
+        if next_fence is None:
+            return None
+        self.generation_active = False
+        self.reset_downlink_generation(next_fence)
+        return next_fence
 
     @property
     def last_capture_end_sample(self) -> int:
@@ -228,6 +307,18 @@ class MediaBridgeSession:
             generation_id=frame.generation_id,
             tool_epoch=frame.tool_epoch,
         )
+        if (
+            not self.generation_active
+            and actual == self.generation.current
+            and actual != self._downlink_fence
+        ):
+            # Direct state-machine users may advance the controller without
+            # going through ``emit_generation``; a new fence is the only
+            # safe activation signal after a cancelled generation.
+            self.generation_active = True
+        if not self.generation_active:
+            self.stale_downlink_count += 1
+            return False
         if actual != expected or not self.generation.accept(actual):
             self.stale_downlink_count += 1
             return False
@@ -314,6 +405,13 @@ class MediaBridgeSession:
         self.last_uplink_ack_sequence = -1
         self._last_capture_end_sample = 0
         self._last_client_event_sequence = -1
+        self._last_client_event_id = None
+        self._last_client_progress_fingerprint = None
+        # Stop idempotency is scoped to one transport epoch. Reusing an old
+        # event id after reconnect must not replay a cancellation fence from
+        # the previous sample clock.
+        self._stop_keys.clear()
+        self._stop_fences.clear()
         # A reconnect advances only the transport epoch.  Preserve the
         # current generation's output sequence/sample watermark so an in-flight
         # reply can continue on the new connection; a later generation fence
@@ -355,6 +453,16 @@ class MediaBridgeServer:
         session = self.sessions.pop(session_id, None)
         if session is None:
             return False
+        session.close()
+        return True
+
+    def close_if_epoch(self, session_id: str, stream_epoch: int) -> bool:
+        """Close only the session epoch owned by a completed grace task."""
+
+        session = self.sessions.get(session_id)
+        if session is None or session.identity.stream_epoch != stream_epoch:
+            return False
+        self.sessions.pop(session_id, None)
         session.close()
         return True
 

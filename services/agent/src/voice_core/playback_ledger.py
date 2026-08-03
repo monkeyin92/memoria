@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 
 from services.agent.src.contracts.ids import GenerationFence
@@ -38,6 +39,7 @@ class PlaybackSpan:
 class PlaybackLedger:
     """Track acknowledged audio without ever promoting stale generations."""
 
+    max_fences: int = 64
     _spans: dict[GenerationFence, list[PlaybackSpan]] = field(default_factory=dict)
     _rendered_sample_end: dict[GenerationFence, int] = field(default_factory=dict)
     _received_sequence: dict[GenerationFence, int] = field(default_factory=dict)
@@ -48,6 +50,11 @@ class PlaybackLedger:
     _client_sequence: dict[GenerationFence, int] = field(default_factory=dict)
     _current_fence: GenerationFence | None = None
     _stale_ack_count: int = 0
+    _fence_order: deque[GenerationFence] = field(default_factory=deque)
+
+    def __post_init__(self) -> None:
+        if self.max_fences <= 0:
+            raise ValueError("max_fences must be positive")
 
     @property
     def current_fence(self) -> GenerationFence | None:
@@ -61,12 +68,25 @@ class PlaybackLedger:
         """Make ``fence`` the only generation allowed to receive ACKs."""
 
         self._current_fence = fence
+        if fence not in self._spans:
+            self._fence_order.append(fence)
         self._spans.setdefault(fence, [])
         self._rendered_sample_end.setdefault(fence, 0)
         self._received_sequence.setdefault(fence, -1)
         self._received_sample_end.setdefault(fence, 0)
         self._received_ranges.setdefault(fence, [])
         self._client_sequence.setdefault(fence, -1)
+        while len(self._fence_order) > self.max_fences:
+            evicted = self._fence_order.popleft()
+            if evicted == self._current_fence:
+                self._fence_order.append(evicted)
+                break
+            self._spans.pop(evicted, None)
+            self._rendered_sample_end.pop(evicted, None)
+            self._received_sequence.pop(evicted, None)
+            self._received_sample_end.pop(evicted, None)
+            self._received_ranges.pop(evicted, None)
+            self._client_sequence.pop(evicted, None)
 
     def register_audio(
         self,
@@ -272,6 +292,10 @@ class PlaybackLedger:
         self._received_sample_end.pop(fence, None)
         self._received_ranges.pop(fence, None)
         self._client_sequence.pop(fence, None)
+        try:
+            self._fence_order.remove(fence)
+        except ValueError:
+            pass
 
 
 __all__ = ["PlaybackLedger", "PlaybackSpan"]

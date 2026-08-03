@@ -26,6 +26,8 @@ async def test_bidirectional_media_v1_bridge_fences_audio_and_client_stop() -> N
     client_events: list[str] = []
     audio_sequences: list[int] = []
     segment_kinds: list[str] = []
+    segment_controls: list[tuple[bool, bool]] = []
+    voiced_end_samples: list[int | None] = []
     audio_seen = asyncio.Event()
     segment_seen = asyncio.Event()
 
@@ -38,6 +40,8 @@ async def test_bidirectional_media_v1_bridge_fences_audio_and_client_stop() -> N
 
     async def on_speech_segment(_session, segment) -> None:
         segment_kinds.append(segment.kind.value)
+        segment_controls.append((segment.final, segment.hard_stop))
+        voiced_end_samples.append(segment.voiced_end_sample)
         segment_seen.set()
 
     bridge = MediaBridgeGrpcServer(
@@ -102,6 +106,38 @@ async def test_bidirectional_media_v1_bridge_fences_audio_and_client_stop() -> N
     await asyncio.wait_for(segment_seen.wait(), timeout=1)
     assert audio_sequences == [0]
     assert segment_kinds == ["vad"]
+    assert segment_controls == [(False, False)]
+    assert voiced_end_samples == [None]
+
+    segment_seen.clear()
+    await requests.put(
+        media_pb2.MediaToCore(
+            vad=media_pb2.VadEvent(
+                identity=identity,
+                type=media_pb2.VAD_EVENT_SPEECH_END,
+                sample_position=400,
+                probability=0.1,
+            )
+        )
+    )
+    invalid_vad = await asyncio.wait_for(call.read(), timeout=1)
+    assert invalid_vad.error.code == "invalid_vad_event"
+    assert not segment_seen.is_set()
+
+    await requests.put(
+        media_pb2.MediaToCore(
+            vad=media_pb2.VadEvent(
+                identity=identity,
+                type=media_pb2.VAD_EVENT_SPEECH_END,
+                sample_position=400,
+                voiced_end_sample=320,
+                probability=0.1,
+            )
+        )
+    )
+    await asyncio.wait_for(segment_seen.wait(), timeout=1)
+    assert segment_controls[-1] == (True, False)
+    assert voiced_end_samples[-1] == 320
 
     session_identity = SessionIdentity("grpc-session", account_id="account", device_id="h5")
     assert await bridge.emit_pcm(
@@ -155,6 +191,25 @@ async def test_bidirectional_media_v1_bridge_fences_audio_and_client_stop() -> N
             pcm_s16le=b"\x00\x00\x01\x00",
         ),
     )
+
+    # A hard-stop keyword closes the Edge gate before the callback is
+    # delivered; it is still observed as a speech control event, but cannot
+    # reopen the cancelled generation or admit stale PCM.
+    segment_seen.clear()
+    await requests.put(
+        media_pb2.MediaToCore(
+            keyword=media_pb2.KeywordEvent(
+                identity=identity,
+                keyword="停一下",
+                confidence=0.95,
+                start_sample=0,
+                end_sample=2,
+                hard_stop=True,
+            )
+        )
+    )
+    await asyncio.wait_for(segment_seen.wait(), timeout=1)
+    assert segment_controls[-1] == (True, True)
     await requests.put(None)
     assert await call.read() is grpc.aio.EOF
     assert await call.code() == grpc.StatusCode.OK
@@ -173,6 +228,19 @@ async def test_bridge_rejects_non_monotonic_generation_controls() -> None:
         action=media_pb2.GENERATION_ACTION_CANCEL,
     )
     assert session.fence.generation_id == 0
+
+
+@pytest.mark.asyncio
+async def test_outgoing_queue_overflow_wakes_writer_for_reconnect() -> None:
+    bridge = MediaBridgeGrpcServer(max_pending_messages=1)
+    connection = bridge._open_connection(SessionIdentity("overflow-session"))
+    message = media_pb2.CoreToMedia(
+        error=media_pb2.CoreError(code="one", message="queued")
+    )
+    assert await bridge._enqueue(connection, message)
+    assert not await bridge._enqueue(connection, message)
+    assert connection.closed is True
+    assert await asyncio.wait_for(connection.outgoing.get(), timeout=0.1) is None
 
 
 @pytest.mark.asyncio

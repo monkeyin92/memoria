@@ -522,6 +522,70 @@ return 1
             self._routes[session_id] = replacement
         return replacement
 
+    async def observe_generation(
+        self,
+        session_id: str,
+        *,
+        generation: int,
+        expected_stream_epoch: int | None = None,
+        ttl_s: int | None = None,
+    ) -> SessionRoute:
+        """Record an Edge/Core-authoritative generation without inventing it.
+
+        Normal Voice Core turns do not synchronously pass through the Control
+        API, so the directory generation is only a routing observation. HTTP
+        stop first obtains the complete fence from Media Edge, then uses this
+        monotonic CAS to catch the directory up; it must never pre-advance this
+        counter and present it as the media generation authority.
+        """
+
+        current = await self.lookup(session_id)
+        if current is None:
+            raise SessionNotFound(session_id)
+        if current.state == "draining":
+            raise SessionDraining(session_id)
+        if (
+            expected_stream_epoch is not None
+            and current.stream_epoch != expected_stream_epoch
+        ):
+            raise SessionEpochConflict(session_id)
+        if generation < current.generation:
+            raise SessionEpochConflict(session_id)
+        if generation == current.generation:
+            return current
+        lifetime = ttl_s
+        if lifetime is None:
+            lifetime = max(
+                1,
+                math.ceil((current.expires_at - self._timestamp()).total_seconds()),
+            )
+        replacement = self._route(
+            session_id=current.session_id,
+            media_edge_id=current.media_edge_id,
+            voice_core_id=current.voice_core_id,
+            stream_epoch=current.stream_epoch,
+            generation=generation,
+            device_id=current.device_id,
+            account_id=current.account_id,
+            ttl_s=lifetime,
+            media_runtime=current.media_runtime,
+        )
+        if self._redis is not None:
+            return await self._redis_replace(current, replacement)
+        async with self._lock:
+            latest = self._routes.get(session_id)
+            if latest is None or latest.is_expired(self._timestamp()):
+                self._routes.pop(session_id, None)
+                raise SessionNotFound(session_id)
+            if (
+                latest.stream_epoch != current.stream_epoch
+                or latest.generation != current.generation
+                or latest.state == "draining"
+            ):
+                raise SessionEpochConflict(session_id)
+            self._routes[session_id] = replacement
+        return replacement
+
     async def renew(
         self,
         session_id: str,

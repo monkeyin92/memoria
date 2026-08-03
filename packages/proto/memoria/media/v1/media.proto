@@ -85,6 +85,9 @@ message VadEvent {
   float probability = 4;
   float rms = 5;
   float noise_floor = 6;
+  // Required for SPEECH_END. Unlike sample_position, this excludes the VAD
+  // hangover/tail silence and is the acoustic boundary ASR must cover.
+  optional uint64 voiced_end_sample = 7;
 }
 
 message KeywordEvent {

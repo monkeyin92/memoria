@@ -10,9 +10,13 @@ SDK in the media bridge.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+import importlib
+import inspect
+import os
+from collections import deque
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, cast
 
 from services.agent.src.contracts.ids import CancellationContext, GenerationFence
 from services.agent.src.orchestration.handlers import (
@@ -31,6 +35,7 @@ from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIden
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
 if TYPE_CHECKING:
+    from services.agent.src.config import AgentSettings
     from services.agent.src.voice_core.media_session import MediaReplyChunk
 
 
@@ -42,6 +47,9 @@ class ExistingVoiceProviderConfig:
     output_sample_rate: int = 24_000
     output_frame_ms: int = 20
     max_events_per_audio_frame: int = 64
+    max_asr_task_history: int = 8
+    max_asr_result_history: int = 256
+    max_generation_history: int = 256
 
     def __post_init__(self) -> None:
         if self.sample_rate <= 0 or self.output_sample_rate <= 0:
@@ -54,6 +62,10 @@ class ExistingVoiceProviderConfig:
             raise ValueError("provider output frame duration must produce samples")
         if self.max_events_per_audio_frame <= 0:
             raise ValueError("max_events_per_audio_frame must be positive")
+        if self.max_asr_task_history <= 0 or self.max_asr_result_history <= 0:
+            raise ValueError("ASR metadata history bounds must be positive")
+        if self.max_generation_history <= 0:
+            raise ValueError("max_generation_history must be positive")
 
 
 ASRSessionFactory = Callable[[], FunASRSession]
@@ -67,16 +79,46 @@ class ExistingVoiceProviderAdapter:
     language_model: LanguageModelHandler
     speech_synthesis: SpeechSynthesisHandler
     config: ExistingVoiceProviderConfig = field(default_factory=ExistingVoiceProviderConfig)
+    owns_speech_synthesis: bool = False
     _asr: FunASRSession | None = field(default=None, init=False)
     _stream_epoch: int = field(default=0, init=False)
-    _sentence_revisions: dict[str, int] = field(default_factory=dict, init=False)
-    _final_sentence_ids: set[str] = field(default_factory=set, init=False)
+    _asr_task_contexts: dict[str, tuple[int, int, int]] = field(
+        default_factory=dict,
+        init=False,
+    )
+    _asr_task_order: deque[str] = field(default_factory=deque, init=False)
+    _sentence_revisions: dict[tuple[int, int, str, int], int] = field(
+        default_factory=dict,
+        init=False,
+    )
+    _sentence_revision_order: deque[tuple[int, int, str, int]] = field(
+        default_factory=deque,
+        init=False,
+    )
+    _final_sentence_ids: set[tuple[int, int, str, int, int]] = field(
+        default_factory=set,
+        init=False,
+    )
+    _final_sentence_order: deque[tuple[int, int, str, int, int]] = field(
+        default_factory=deque,
+        init=False,
+    )
+    _accepted_final_ranges: deque[tuple[int, int, int, str]] = field(
+        default_factory=deque,
+        init=False,
+    )
+    _last_final_audio_sample: int = field(default=0, init=False)
     _generation_started: set[GenerationFence] = field(default_factory=set, init=False)
     _generation_cancel_events: dict[GenerationFence, asyncio.Event] = field(
         default_factory=dict,
         init=False,
     )
     _cancelled_generations: set[GenerationFence] = field(default_factory=set, init=False)
+    _generation_history: deque[GenerationFence] = field(default_factory=deque, init=False)
+    _generation_eviction_floor: tuple[int, int, int] | None = field(
+        default=None,
+        init=False,
+    )
     _output_sample: int = field(default=0, init=False)
     _closed: bool = field(default=False, init=False)
 
@@ -89,17 +131,35 @@ class ExistingVoiceProviderAdapter:
             self._asr = self.asr_session_factory()
             await self._asr.connect()
             self._stream_epoch = stream_epoch
+            self._remember_asr_task(self._asr, stream_epoch)
         elif stream_epoch < self._stream_epoch:
             raise ValueError("ASR stream epoch moved backwards")
         elif stream_epoch > self._stream_epoch:
             await self._asr.reconnect_with_replay()
             self._stream_epoch = stream_epoch
-            # FunASR sentence ids are scoped to a task/connection.  Keeping a
-            # final-id set across a reconnect can suppress a valid sentence
-            # that happens to reuse the same provider id.
+            self._asr_task_contexts.clear()
+            self._asr_task_order.clear()
             self._sentence_revisions.clear()
+            self._sentence_revision_order.clear()
             self._final_sentence_ids.clear()
+            self._final_sentence_order.clear()
+            self._accepted_final_ranges.clear()
+            self._last_final_audio_sample = 0
+            self._remember_asr_task(self._asr, stream_epoch)
         return self._asr
+
+    def _remember_asr_task(self, asr: FunASRSession, stream_epoch: int) -> None:
+        task_id = str(getattr(asr, "task_id", "") or "")
+        if task_id:
+            if task_id not in self._asr_task_contexts:
+                self._asr_task_order.append(task_id)
+            self._asr_task_contexts[task_id] = (
+                stream_epoch,
+                max(1, asr.task_epoch),
+                asr.task_sample_origin,
+            )
+            while len(self._asr_task_order) > self.config.max_asr_task_history:
+                self._asr_task_contexts.pop(self._asr_task_order.popleft(), None)
 
     async def ingest_audio(
         self,
@@ -113,10 +173,15 @@ class ExistingVoiceProviderAdapter:
         if len(frame.payload) % 2:
             raise ValueError("provider input must be 16-bit PCM")
         asr = await self._ensure_asr(identity.stream_epoch)
+        self._remember_asr_task(asr, identity.stream_epoch)
         await asr.send_pcm(
             frame.payload,
             capture_start_sample=frame.capture_start_sample,
         )
+        # ``send_pcm`` may transparently reconnect and advance the provider
+        # task. Remember both sides so queued late events retain their own
+        # task epoch and absolute sample origin.
+        self._remember_asr_task(asr, identity.stream_epoch)
         results: list[ASRResult] = []
         for _ in range(self.config.max_events_per_audio_frame):
             try:
@@ -141,21 +206,117 @@ class ExistingVoiceProviderAdapter:
         sentence = event.sentence
         if sentence is None:
             return None
-        sentence_id = str(sentence.sentence_id)
-        if sentence.sentence_end and sentence_id in self._final_sentence_ids:
+        if not event.task_id:
             return None
-        revision = self._sentence_revisions.get(sentence_id, 0) + 1
-        self._sentence_revisions[sentence_id] = revision
+        sentence_id = str(sentence.sentence_id)
+        task_context = self._asr_task_contexts.get(event.task_id)
+        if task_context is None:
+            current_task_id = str(getattr(asr, "task_id", "") or "")
+            if event.task_id and event.task_id != current_task_id:
+                # Its task context was safely evicted. Never re-associate a
+                # very late result with the newest provider task.
+                return None
+            self._remember_asr_task(asr, stream_epoch)
+            task_context = (
+                stream_epoch,
+                max(1, asr.task_epoch),
+                asr.task_sample_origin,
+            )
+        event_stream_epoch, task_epoch, sample_offset = task_context
+        revision_key = (
+            event_stream_epoch,
+            task_epoch,
+            sentence_id,
+            sentence.begin_ms,
+        )
+        if revision_key not in self._sentence_revisions:
+            self._sentence_revision_order.append(revision_key)
+        revision = self._sentence_revisions.get(revision_key, 0) + 1
+        self._sentence_revisions[revision_key] = revision
+        while len(self._sentence_revision_order) > self.config.max_asr_result_history:
+            self._sentence_revisions.pop(self._sentence_revision_order.popleft(), None)
         mapped = sentence_to_asr_result(
             sentence,
-            task_epoch=max(1, asr.task_epoch),
+            task_epoch=task_epoch,
             sample_rate=self.config.sample_rate,
             revision=revision,
-            stream_epoch=stream_epoch,
-            sample_offset=asr.task_sample_origin,
+            stream_epoch=event_stream_epoch,
+            sample_offset=sample_offset,
         )
+        if not sentence.sentence_end and mapped.capture_end_sample <= self._last_final_audio_sample:
+            return None
         if sentence.sentence_end:
-            self._final_sentence_ids.add(sentence_id)
+            final_key = (
+                event_stream_epoch,
+                task_epoch,
+                sentence_id,
+                mapped.capture_start_sample,
+                mapped.capture_end_sample,
+            )
+            if (
+                final_key in self._final_sentence_ids
+                or mapped.capture_end_sample <= self._last_final_audio_sample
+            ):
+                return None
+            mapped_start = mapped.capture_start_sample
+            mapped_text = mapped.text
+            if mapped_start < self._last_final_audio_sample:
+                # A reconnected provider may replay an expanding absolute
+                # interval, for example 0..640 after 0..320 was already
+                # accepted.  Reconcile only a provable, contiguous text
+                # prefix; ambiguous overlaps fail closed instead of entering
+                # the user's turn twice.
+                covered_end = mapped_start
+                covered_text = ""
+                for range_epoch, range_start, range_end, range_text in sorted(
+                    self._accepted_final_ranges,
+                    key=lambda item: (item[1], item[2]),
+                ):
+                    if range_epoch != event_stream_epoch or range_end <= mapped_start:
+                        continue
+                    if range_start != covered_end or range_end > self._last_final_audio_sample:
+                        break
+                    covered_text += range_text
+                    covered_end = range_end
+                    if covered_end == self._last_final_audio_sample:
+                        break
+                if (
+                    covered_end != self._last_final_audio_sample
+                    or not mapped_text.startswith(covered_text)
+                ):
+                    return None
+                mapped_text = mapped_text[len(covered_text) :]
+                mapped_start = covered_end
+                if not mapped_text:
+                    return None
+            self._final_sentence_ids.add(final_key)
+            self._final_sentence_order.append(final_key)
+            self._last_final_audio_sample = mapped.capture_end_sample
+            self._accepted_final_ranges.append(
+                (
+                    event_stream_epoch,
+                    mapped_start,
+                    mapped.capture_end_sample,
+                    mapped_text,
+                )
+            )
+            while len(self._final_sentence_order) > self.config.max_asr_result_history:
+                self._final_sentence_ids.discard(self._final_sentence_order.popleft())
+            while len(self._accepted_final_ranges) > self.config.max_asr_result_history:
+                self._accepted_final_ranges.popleft()
+            return ASRResult(
+                task_epoch=mapped.task_epoch,
+                sentence_id=mapped.sentence_id,
+                revision=mapped.revision,
+                capture_start_sample=mapped_start,
+                capture_end_sample=mapped.capture_end_sample,
+                text=mapped_text,
+                is_final=True,
+                confidence=mapped.confidence,
+                provider_begin_ms=mapped.provider_begin_ms,
+                provider_end_ms=mapped.provider_end_ms,
+                stream_epoch=mapped.stream_epoch,
+            )
         return ASRResult(
             task_epoch=mapped.task_epoch,
             sentence_id=mapped.sentence_id,
@@ -176,6 +337,124 @@ class ExistingVoiceProviderAdapter:
 
         return self.config.output_sample_rate * self.config.output_frame_ms // 1000
 
+    async def _provider_pcm_chunks(
+        self,
+        phrase: str,
+        fence: GenerationFence,
+        cancellation: CancellationContext,
+        cancel_event: asyncio.Event,
+    ) -> AsyncGenerator[bytes, None]:
+        """Yield the provider's actual asynchronous PCM chunks when available."""
+
+        request = SpeechSynthesisRequest(
+            phrases=(phrase,),
+            cancellation=cancellation,
+            cancel_event=cancel_event,
+        )
+        stream_factory = getattr(self.speech_synthesis, "stream", None)
+        if callable(stream_factory):
+            bind_fence = getattr(self.speech_synthesis, "bind_fence", None)
+            if callable(bind_fence):
+                bound = bind_fence(fence)
+                if inspect.isawaitable(bound):
+                    await bound
+            stream = stream_factory()
+            if inspect.isawaitable(stream):
+                stream = await stream
+            try:
+                push_text = getattr(stream, "push_text", None)
+                end_input = getattr(stream, "end_input", None)
+                if not callable(push_text) or not callable(end_input):
+                    raise RuntimeError("speech provider stream cannot accept text")
+                pushed = push_text(phrase)
+                if inspect.isawaitable(pushed):
+                    await pushed
+                ended = end_input()
+                if inspect.isawaitable(ended):
+                    await ended
+                async for pcm in self._async_speech_pcm(stream, cancel_event):
+                    yield pcm
+            finally:
+                close = getattr(stream, "aclose", None)
+                if callable(close):
+                    closed = close()
+                    if inspect.isawaitable(closed):
+                        await closed
+            return
+
+        # Compatibility for the existing orchestration handler contract. New
+        # provider adapters should expose ``stream()`` so first audio is not
+        # delayed until a whole phrase buffer has completed.
+        result: Any = self.speech_synthesis.synthesize(request)
+        if inspect.isawaitable(result):
+            result = await result
+        if hasattr(result, "__aiter__"):
+            async for pcm in self._async_speech_pcm(result, cancel_event):
+                yield pcm
+            return
+        pcm = self._speech_chunk_pcm(result)
+        if pcm:
+            yield pcm
+
+    async def _async_speech_pcm(
+        self,
+        stream: Any,
+        cancel_event: asyncio.Event,
+    ) -> AsyncIterator[bytes]:
+        async for chunk in self._cancel_aware_items(stream, cancel_event):
+            pcm = self._speech_chunk_pcm(chunk)
+            if pcm:
+                yield pcm
+
+    async def _cancel_aware_items(
+        self,
+        stream: Any,
+        cancel_event: asyncio.Event,
+    ) -> AsyncIterator[Any]:
+        iterator = aiter(stream)
+        while not cancel_event.is_set():
+
+            async def read_next() -> Any:
+                return await anext(iterator)
+
+            next_chunk = asyncio.create_task(read_next())
+            cancelled = asyncio.create_task(cancel_event.wait())
+            try:
+                done, _ = await asyncio.wait(
+                    (next_chunk, cancelled),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            except asyncio.CancelledError:
+                next_chunk.cancel()
+                cancelled.cancel()
+                await asyncio.gather(next_chunk, cancelled, return_exceptions=True)
+                raise
+            if cancelled in done:
+                next_chunk.cancel()
+                await asyncio.gather(next_chunk, return_exceptions=True)
+                return
+            cancelled.cancel()
+            await asyncio.gather(cancelled, return_exceptions=True)
+            try:
+                chunk = next_chunk.result()
+            except StopAsyncIteration:
+                return
+            yield chunk
+
+    def _speech_chunk_pcm(self, chunk: Any) -> bytes:
+        if isinstance(chunk, (bytes, bytearray, memoryview)):
+            return bytes(chunk)
+        pcm = getattr(chunk, "pcm", None)
+        if pcm is not None:
+            return bytes(pcm)
+        frame = getattr(chunk, "frame", None)
+        if frame is None:
+            return b""
+        sample_rate = getattr(frame, "sample_rate", self.config.output_sample_rate)
+        if sample_rate != self.config.output_sample_rate:
+            raise RuntimeError("speech provider returned an unexpected sample rate")
+        return bytes(getattr(frame, "data", b"") or b"")
+
     async def _synthesize_phrase(
         self,
         phrase: str,
@@ -187,62 +466,238 @@ class ExistingVoiceProviderAdapter:
         final: bool,
         source_start_sample: int,
     ) -> AsyncIterator[MediaReplyChunk]:
-        """Synthesize one phrase and yield bounded, fixed-size PCM frames.
-
-        Existing ``SpeechSynthesisHandler`` implementations return a PCM
-        buffer for a phrase.  The adapter deliberately never forwards that
-        buffer as one media frame: it slices it into 20 ms/24 kHz frames and
-        yields one frame at a time, giving cancellation and downstream
-        backpressure a scheduling point between frames.  A short tail is
-        zero-padded so every emitted frame has the negotiated fixed size.
-        """
+        """Stream one phrase as bounded, fixed-size PCM frames."""
 
         if cancel_event.is_set():
             return
-        result = await self.speech_synthesis.synthesize(
-            SpeechSynthesisRequest(
-                phrases=(phrase,),
-                cancellation=cancellation,
-                cancel_event=cancel_event,
-            )
-        )
-        pcm = bytes(getattr(result, "pcm", b"") or b"")
-        if not pcm or len(pcm) % 2:
-            raise RuntimeError("speech provider returned no valid PCM")
         from services.agent.src.voice_core.media_session import MediaReplyChunk
 
         frame_samples = self.output_frame_samples
         frame_bytes = frame_samples * 2
-        phrase_frame_count = (len(pcm) + frame_bytes - 1) // frame_bytes
-        phrase_audio_end = source_start_sample + phrase_frame_count * frame_samples
+        buffered = bytearray()
+        held_frame: bytes | None = None
         output_sample = source_start_sample
-        for offset in range(0, len(pcm), frame_bytes):
+        provider_pcm = self._provider_pcm_chunks(
+            phrase,
+            fence,
+            cancellation,
+            cancel_event,
+        )
+        try:
+            async for pcm in provider_pcm:
+                if cancel_event.is_set():
+                    return
+                buffered.extend(pcm)
+                while len(buffered) >= frame_bytes:
+                    next_frame = bytes(buffered[:frame_bytes])
+                    del buffered[:frame_bytes]
+                    if held_frame is not None:
+                        yield MediaReplyChunk(
+                            pcm_s16le=held_frame,
+                            source_start_sample=output_sample,
+                            assistant_text_delta=(
+                                phrase if output_sample == source_start_sample else ""
+                            ),
+                            first=first and output_sample == source_start_sample,
+                        )
+                        if cancel_event.is_set():
+                            return
+                        output_sample += frame_samples
+                        self._output_sample = output_sample
+                    held_frame = next_frame
+        finally:
+            await provider_pcm.aclose()
+        if cancel_event.is_set():
+            return
+        if len(buffered) % 2:
+            raise RuntimeError("speech provider returned invalid 16-bit PCM")
+        if buffered:
+            if held_frame is not None:
+                yield MediaReplyChunk(
+                    pcm_s16le=held_frame,
+                    source_start_sample=output_sample,
+                    assistant_text_delta=(phrase if output_sample == source_start_sample else ""),
+                    first=first and output_sample == source_start_sample,
+                )
+                if cancel_event.is_set():
+                    return
+                output_sample += frame_samples
+                self._output_sample = output_sample
+            held_frame = bytes(buffered) + b"\x00" * (frame_bytes - len(buffered))
+        if held_frame is None:
+            raise RuntimeError("speech provider returned no valid PCM")
+        phrase_audio_end = output_sample + frame_samples
+        yield MediaReplyChunk(
+            pcm_s16le=held_frame,
+            source_start_sample=output_sample,
+            text=phrase,
+            assistant_text_delta=(phrase if output_sample == source_start_sample else ""),
+            first=first and output_sample == source_start_sample,
+            final=final,
+            text_audio_start_sample=source_start_sample,
+            text_audio_end_sample=phrase_audio_end,
+        )
+        self._output_sample = phrase_audio_end
+
+    async def _stream_incremental_generation(
+        self,
+        user_text: str,
+        fence: GenerationFence,
+        cancellation: CancellationContext,
+        cancel_event: asyncio.Event,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        """Feed every completed LLM phrase into one live TTS session.
+
+        Doubao's bidirectional protocol is generation-scoped: reopening it for
+        every phrase adds avoidable first-audio latency and can change the
+        voice between adjacent phrases.  Text-to-audio boundaries are not
+        exposed until the provider's final subtitle alignment, so this seam
+        deliberately records one conservative whole-generation ledger span;
+        an interruption can never over-claim a partly rendered phrase.
+        """
+
+        from services.agent.src.voice_core.media_session import MediaReplyChunk
+
+        bind_fence = getattr(self.speech_synthesis, "bind_fence", None)
+        if callable(bind_fence):
+            bound = bind_fence(fence)
+            if inspect.isawaitable(bound):
+                await bound
+        stream_factory = self.speech_synthesis.stream  # type: ignore[attr-defined]
+        stream = stream_factory()
+        if inspect.isawaitable(stream):
+            stream = await stream
+        push_text = getattr(stream, "push_text", None)
+        end_input = getattr(stream, "end_input", None)
+        if not callable(push_text) or not callable(end_input):
+            raise RuntimeError("speech provider stream cannot accept text")
+
+        phrases: list[str] = []
+        pending_announcements: deque[str] = deque()
+        segmenter = PhraseSegmenter(fence=fence)
+        first_phrase_ready = asyncio.Event()
+
+        async def push_phrase(phrase: str) -> None:
+            if cancel_event.is_set() or not phrase:
+                return
+            phrases.append(phrase)
+            pending_announcements.append(phrase)
+            pushed = push_text(phrase)
+            if inspect.isawaitable(pushed):
+                await pushed
+            first_phrase_ready.set()
+
+        async def produce_text() -> None:
+            llm_stream = self.language_model.stream(
+                LanguageModelRequest(user_text=user_text, cancellation=cancellation)
+            )
+            try:
+                async for token in self._cancel_aware_items(llm_stream, cancel_event):
+                    if not token:
+                        continue
+                    for segment in segmenter.push_token(token):
+                        await push_phrase(segment.text)
+                for segment in segmenter.flush(end_of_stream=True):
+                    await push_phrase(segment.text)
+            finally:
+                close_llm = getattr(llm_stream, "aclose", None)
+                if callable(close_llm):
+                    closed_llm = close_llm()
+                    if inspect.isawaitable(closed_llm):
+                        await closed_llm
+                first_phrase_ready.set()
+                ended = end_input()
+                if inspect.isawaitable(ended):
+                    await ended
+
+        producer = asyncio.create_task(
+            produce_text(),
+            name=f"media-tts-text-{fence.session_id}-{fence.generation_id}",
+        )
+
+        def take_announcement() -> str:
+            announcement = "".join(pending_announcements)
+            pending_announcements.clear()
+            return announcement
+
+        frame_samples = self.output_frame_samples
+        frame_bytes = frame_samples * 2
+        buffered = bytearray()
+        held_frame: bytes | None = None
+        output_sample = 0
+        try:
+            # Start consuming PCM only after at least one complete phrase was
+            # accepted by the live provider.  This keeps subtitle publication
+            # aligned with the first playable frame without waiting for LLM
+            # end-of-stream or a second phrase.
+            await first_phrase_ready.wait()
             if cancel_event.is_set():
                 return
-            frame_pcm = pcm[offset : offset + frame_bytes]
-            if len(frame_pcm) < frame_bytes:
-                frame_pcm += b"\x00" * (frame_bytes - len(frame_pcm))
-            is_first = first and offset == 0
-            is_final = final and offset + frame_bytes >= len(pcm)
-            # ``text`` is attached to the first frame of a phrase.  The
-            # media-session span writer can use the frame range metadata to
-            # map that text across all frames without duplicating it.
-            chunk = MediaReplyChunk(
-                pcm_s16le=frame_pcm,
+            if producer.done() and producer.exception() is not None:
+                await producer
+            async for pcm in self._async_speech_pcm(stream, cancel_event):
+                if cancel_event.is_set():
+                    return
+                buffered.extend(pcm)
+                while len(buffered) >= frame_bytes:
+                    next_frame = bytes(buffered[:frame_bytes])
+                    del buffered[:frame_bytes]
+                    if held_frame is not None:
+                        yield MediaReplyChunk(
+                            pcm_s16le=held_frame,
+                            source_start_sample=output_sample,
+                            assistant_text_delta=take_announcement(),
+                            first=output_sample == 0,
+                        )
+                        output_sample += frame_samples
+                        self._output_sample = output_sample
+                    held_frame = next_frame
+            if cancel_event.is_set():
+                return
+            await producer
+            if cancel_event.is_set():
+                return
+            if len(buffered) % 2:
+                raise RuntimeError("speech provider returned invalid 16-bit PCM")
+            if buffered:
+                if held_frame is not None:
+                    yield MediaReplyChunk(
+                        pcm_s16le=held_frame,
+                        source_start_sample=output_sample,
+                        assistant_text_delta=take_announcement(),
+                        first=output_sample == 0,
+                    )
+                    output_sample += frame_samples
+                    self._output_sample = output_sample
+                held_frame = bytes(buffered) + b"\x00" * (frame_bytes - len(buffered))
+            if held_frame is None:
+                raise RuntimeError("speech provider returned no valid PCM")
+            complete_text = "".join(phrases)
+            if not complete_text:
+                if cancel_event.is_set():
+                    return
+                raise RuntimeError("language model returned no speakable text")
+            audio_end = output_sample + frame_samples
+            yield MediaReplyChunk(
+                pcm_s16le=held_frame,
                 source_start_sample=output_sample,
-                text=phrase if is_first else "",
-                first=is_first,
-                final=is_final,
-                text_audio_start_sample=(source_start_sample if is_first else None),
-                text_audio_end_sample=(phrase_audio_end if is_first else None),
+                text=complete_text,
+                assistant_text_delta=take_announcement(),
+                first=output_sample == 0,
+                final=True,
+                text_audio_start_sample=0,
+                text_audio_end_sample=audio_end,
             )
-            output_sample += frame_samples
-            self._output_sample = output_sample
-            yield chunk
-            # Async-generator suspension is the backpressure boundary.  The
-            # explicit yield-to-loop also lets a cancellation request arrive
-            # before the next expensive provider call.
-            await asyncio.sleep(0)
+            self._output_sample = audio_end
+        finally:
+            if not producer.done():
+                producer.cancel()
+            await asyncio.gather(producer, return_exceptions=True)
+            close = getattr(stream, "aclose", None)
+            if callable(close):
+                closed = close()
+                if inspect.isawaitable(closed):
+                    await closed
 
     async def generate_reply(
         self,
@@ -259,7 +714,11 @@ class ExistingVoiceProviderAdapter:
         # A generation is a one-shot output stream.  Retrying the same fence
         # would duplicate sequence/sample ranges in the media bridge; callers
         # must create a new authoritative generation for a retry.
-        if fence in self._generation_started or fence in self._cancelled_generations:
+        if (
+            fence in self._generation_started
+            or fence in self._cancelled_generations
+            or self._generation_was_evicted(fence)
+        ):
             return
         self._generation_started.add(fence)
         cancellation = CancellationContext.capture(fence)
@@ -269,26 +728,28 @@ class ExistingVoiceProviderAdapter:
         # local so interleaved/stale generations cannot reset one another.
         output_sample = 0
         self._output_sample = 0
-        segmenter = PhraseSegmenter(fence=fence)
-        pending: list[str] = []
         try:
-            async for token in self.language_model.stream(
+            if callable(getattr(self.speech_synthesis, "stream", None)):
+                async for chunk in self._stream_incremental_generation(
+                    user_text,
+                    fence,
+                    cancellation,
+                    cancel_event,
+                ):
+                    yield chunk
+                return
+            segmenter = PhraseSegmenter(fence=fence)
+            terminal_chunk: MediaReplyChunk | None = None
+            llm_stream = self.language_model.stream(
                 LanguageModelRequest(user_text=user_text, cancellation=cancellation)
-            ):
-                if cancel_event.is_set():
-                    return
-                if not token:
-                    continue
-                for segment in segmenter.push_token(token):
-                    pending.append(segment.text)
-                    # Keep one phrase in hand so a stream that ends directly
-                    # after punctuation can mark its final PCM frame.  Once
-                    # the next phrase arrives, the older one is known to be
-                    # non-final and can flow immediately.
-                    while len(pending) > 1:
-                        phrase = pending.pop(0)
+            )
+            try:
+                async for token in self._cancel_aware_items(llm_stream, cancel_event):
+                    if not token:
+                        continue
+                    for segment in segmenter.push_token(token):
                         async for chunk in self._synthesize_phrase(
-                            phrase,
+                            segment.text,
                             fence,
                             cancellation,
                             cancel_event,
@@ -297,9 +758,16 @@ class ExistingVoiceProviderAdapter:
                             source_start_sample=output_sample,
                         ):
                             output_sample = chunk.source_start_sample + chunk.frame_samples
-                            yield chunk
-            for segment in segmenter.flush(end_of_stream=True):
-                pending.append(segment.text)
+                            if terminal_chunk is not None:
+                                yield terminal_chunk
+                            terminal_chunk = chunk
+            finally:
+                close_llm = getattr(llm_stream, "aclose", None)
+                if callable(close_llm):
+                    closed_llm = close_llm()
+                    if inspect.isawaitable(closed_llm):
+                        await closed_llm
+            pending = [segment.text for segment in segmenter.flush(end_of_stream=True)]
             for index, phrase in enumerate(pending):
                 if cancel_event.is_set():
                     return
@@ -313,23 +781,51 @@ class ExistingVoiceProviderAdapter:
                     source_start_sample=output_sample,
                 ):
                     output_sample = chunk.source_start_sample + chunk.frame_samples
-                    yield chunk
+                    if terminal_chunk is not None:
+                        yield terminal_chunk
+                    terminal_chunk = chunk
+            if terminal_chunk is not None and not cancel_event.is_set():
+                yield replace(terminal_chunk, final=True)
         finally:
-            # Keep the event in the map for a late cancellation call; this is
-            # cheap bounded metadata compared with PCM and makes cancellation
-            # idempotent after the provider has completed.
             cancel_event.set()
+            self._generation_cancel_events.pop(fence, None)
+            self._remember_terminal_generation(fence)
+
+    @staticmethod
+    def _generation_order(fence: GenerationFence) -> tuple[int, int, int]:
+        return (fence.turn_id, fence.generation_id, fence.tool_epoch)
+
+    def _generation_was_evicted(self, fence: GenerationFence) -> bool:
+        floor = self._generation_eviction_floor
+        return floor is not None and self._generation_order(fence) <= floor
+
+    def _remember_terminal_generation(self, fence: GenerationFence) -> None:
+        if fence not in self._generation_history:
+            self._generation_history.append(fence)
+        while len(self._generation_history) > self.config.max_generation_history:
+            evicted = self._generation_history.popleft()
+            self._generation_started.discard(evicted)
+            self._cancelled_generations.discard(evicted)
+            order = self._generation_order(evicted)
+            floor = self._generation_eviction_floor
+            if floor is None or order > floor:
+                self._generation_eviction_floor = order
 
     def cancel_generation(self, fence: GenerationFence) -> bool:
         """Request cooperative cancellation of one generation output stream."""
 
         event = self._generation_cancel_events.get(fence)
         if event is None:
+            if self._generation_was_evicted(fence):
+                return False
+            if fence in self._cancelled_generations:
+                return True
             # Async-generator bodies run only when first iterated.  Retain a
             # pre-start cancellation request so a caller can cancel between
             # creating the stream and scheduling its first ``anext``.
             if fence not in self._generation_started:
                 self._cancelled_generations.add(fence)
+                self._remember_terminal_generation(fence)
                 return True
             return False
         event.set()
@@ -345,6 +841,13 @@ class ExistingVoiceProviderAdapter:
         self._closed = True
         for cancel_event in self._generation_cancel_events.values():
             cancel_event.set()
+        self._generation_cancel_events.clear()
+        if self.owns_speech_synthesis:
+            close_speech = getattr(self.speech_synthesis, "aclose", None)
+            if callable(close_speech):
+                closed_speech = close_speech()
+                if inspect.isawaitable(closed_speech):
+                    await closed_speech
         if self._asr is not None:
             await self._asr.aclose()
             self._asr = None
@@ -373,8 +876,93 @@ def build_existing_provider_factory(
     return factory
 
 
+def build_production_provider_factory(
+    settings: AgentSettings,
+) -> Callable[[SessionIdentity], ExistingVoiceProviderAdapter]:
+    """Build FunASR/Doubao around the existing full response orchestrator.
+
+    The media bridge is a transport seam, not a second product brain.  Its
+    production language-model handler must come from the same memory,
+    persona, permission, tool and response-planning pipeline used by the
+    established Agent path.  Missing that injection is a readiness failure;
+    a system-prompt-plus-current-turn fallback would silently bypass policy.
+    """
+
+    from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
+    from services.agent.src.providers.funasr_stt import FunASRConfig
+
+    orchestrated_reference = os.getenv(
+        "MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY",
+        "",
+    ).strip()
+    if not orchestrated_reference:
+        raise ValueError(
+            "production media bridge requires "
+            "MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY from the full Agent pipeline"
+        )
+    module_name, separator, attribute = orchestrated_reference.partition(":")
+    if not separator or not module_name or not attribute:
+        raise ValueError(
+            "MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY must be module:callable"
+        )
+    orchestrated_builder = getattr(importlib.import_module(module_name), attribute, None)
+    if not callable(orchestrated_builder):
+        raise ValueError("orchestrated LLM factory is not callable")
+    language_model_factory = orchestrated_builder(settings)
+    if not callable(language_model_factory):
+        raise ValueError("orchestrated LLM builder did not return a session factory")
+
+    asr_config = FunASRConfig.from_env()
+    tts_config = DoubaoTTSConfig.from_env()
+    if getattr(settings, "environment", "development") == "production":
+        doubao_auth = tts_config.api_key.strip() or (
+            tts_config.app_id.strip() and tts_config.access_token.strip()
+        )
+        missing = [
+            name
+            for name, value in (
+                ("DASHSCOPE_API_KEY", asr_config.api_key.strip()),
+                ("DASHSCOPE_WS_URL", asr_config.ws_url.strip()),
+                ("DOUBAO_TTS_AUTH", doubao_auth),
+                ("DOUBAO_TTS_WS_URL", tts_config.ws_url.strip()),
+                ("DOUBAO_TTS_SPEAKER", tts_config.speaker.strip()),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                f"production media provider missing required config: {', '.join(missing)}"
+            )
+        if not asr_config.ws_url.startswith("wss://") or not tts_config.ws_url.startswith(
+            "wss://"
+        ):
+            raise ValueError("production media providers require WSS endpoints")
+    adapter_config = ExistingVoiceProviderConfig(
+        sample_rate=asr_config.sample_rate,
+        output_sample_rate=tts_config.sample_rate,
+    )
+
+    def factory(identity: SessionIdentity) -> ExistingVoiceProviderAdapter:
+        language_model = language_model_factory(identity)
+        if not callable(getattr(language_model, "stream", None)):
+            raise ValueError("orchestrated language-model handler must expose stream()")
+        return ExistingVoiceProviderAdapter(
+            asr_session_factory=lambda: FunASRSession(replace(asr_config)),
+            language_model=language_model,
+            speech_synthesis=cast(
+                SpeechSynthesisHandler,
+                DoubaoTTS(replace(tts_config)),
+            ),
+            config=adapter_config,
+            owns_speech_synthesis=True,
+        )
+
+    return factory
+
+
 __all__ = [
     "ExistingVoiceProviderAdapter",
     "ExistingVoiceProviderConfig",
     "build_existing_provider_factory",
+    "build_production_provider_factory",
 ]

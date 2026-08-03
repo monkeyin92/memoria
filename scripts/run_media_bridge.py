@@ -17,6 +17,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from services.agent.src.config import load_settings
+from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.observability.metrics import GLOBAL_METRICS
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer, MediaBridgeTLS
 from services.agent.src.voice_core.media_protocol import SessionIdentity
@@ -47,6 +48,30 @@ def _load_provider_factory(
     if not callable(provider_factory):
         raise ValueError("media bridge provider factory did not return a callable")
     return cast(Callable[[SessionIdentity], Any], provider_factory)
+
+
+def _load_runtime_factory(
+    settings: Any,
+) -> Callable[[str], DuplexRuntime] | None:
+    """Load the full Agent runtime factory; never invent a production shell."""
+
+    reference = os.getenv("MEDIA_BRIDGE_RUNTIME_FACTORY", "").strip()
+    if not reference:
+        if getattr(settings, "environment", "development") == "production":
+            raise ValueError(
+                "production media bridge requires MEDIA_BRIDGE_RUNTIME_FACTORY"
+            )
+        return None
+    module_name, separator, attribute = reference.partition(":")
+    if not separator or not module_name or not attribute:
+        raise ValueError("MEDIA_BRIDGE_RUNTIME_FACTORY must be module:callable")
+    factory = getattr(importlib.import_module(module_name), attribute, None)
+    if not callable(factory):
+        raise ValueError("MEDIA_BRIDGE_RUNTIME_FACTORY is not callable")
+    runtime_factory = factory(settings)
+    if not callable(runtime_factory):
+        raise ValueError("media bridge runtime factory did not return a callable")
+    return cast(Callable[[str], DuplexRuntime], runtime_factory)
 
 
 def _tls_for_settings(settings: object) -> MediaBridgeTLS | None:
@@ -83,11 +108,13 @@ async def run() -> None:
         max_pending_messages=settings.media_bridge_max_pending_messages,
     )
     provider_factory = _load_provider_factory(settings)
+    runtime_factory = _load_runtime_factory(settings)
     registry: MediaVoiceCoreRegistry | None = None
     if provider_factory is not None:
         registry = MediaVoiceCoreRegistry(
             bridge=server,
             provider_factory=provider_factory,
+            **({"runtime_factory": runtime_factory} if runtime_factory is not None else {}),
         )
         registry.install()
         logger.info("media bridge Voice Core provider registry installed")

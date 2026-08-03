@@ -96,7 +96,7 @@ _WORKSPACE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 
 _STOP_REQUESTS: list[dict[str, Any]] = []
 _STOP_IDEMPOTENCY: dict[tuple[str, str, str], dict[str, Any]] = {}
-_STOP_DISPATCH_PENDING: dict[tuple[str, str, str], tuple[SessionRoute, dict[str, Any]]] = {}
+_STOP_DISPATCH_PENDING: dict[tuple[str, str, str], dict[str, Any]] = {}
 
 
 def _matching_preview_voice(
@@ -1243,9 +1243,8 @@ async def stop_response(
     pending_dispatch = _STOP_DISPATCH_PENDING.get(idempotency_scope) if normalized_key else None
     media_route: SessionRoute | None = None
     if pending_dispatch is not None:
-        media_route = pending_dispatch[0]
-        event = dict(pending_dispatch[1])
-    elif directory is not None:
+        event = dict(pending_dispatch)
+    if directory is not None:
         try:
             media_route = await directory.lookup(session_id)
         except SessionDirectoryUnavailable as exc:
@@ -1255,36 +1254,22 @@ async def stop_response(
         and directory is not None
         and media_route.media_runtime == "streamcore"
     ):
-        try:
-            cancelled = (
-                pending_dispatch[0]
-                if pending_dispatch is not None
-                else await directory.advance_generation(
-                    session_id,
-                    expected_stream_epoch=media_route.stream_epoch,
-                )
-            )
-        except SessionNotFound as exc:
-            raise HTTPException(status_code=404, detail="media route not found") from exc
-        except SessionDraining as exc:
-            raise HTTPException(status_code=409, detail="media route is draining") from exc
-        except SessionEpochConflict as exc:
-            raise HTTPException(status_code=409, detail="media route epoch changed") from exc
-        except SessionDirectoryUnavailable as exc:
-            raise HTTPException(status_code=503, detail="media session directory unavailable") from exc
+        edge_key = normalized_key or hashlib.sha256(
+            f"{session_id}:{datetime.now(UTC).isoformat()}".encode()
+        ).hexdigest()
         event.update(
             {
                 "media_runtime": "streamcore",
-                "stream_epoch": cancelled.stream_epoch,
-                "generation_id": cancelled.generation,
+                "stream_epoch": media_route.stream_epoch,
                 "action": "atomic_cancel",
+                "idempotency_key": edge_key,
             }
         )
         if normalized_key and pending_dispatch is None:
-            # The directory generation has advanced before the edge call. Keep
-            # the exact route/event pair so a transient Edge failure can be
-            # retried with the same generation instead of incrementing twice.
-            _STOP_DISPATCH_PENDING[idempotency_scope] = (cancelled, dict(event))
+            # Persist the exact Edge key before dispatch. If Edge succeeds but
+            # the response or directory observation fails, retrying must ask
+            # for the same cancellation fence rather than advancing twice.
+            _STOP_DISPATCH_PENDING[idempotency_scope] = dict(event)
         dispatcher = getattr(request.app.state, "media_stop_dispatcher", None)
         if dispatcher is None:
             if not settings.offline_mock:
@@ -1295,22 +1280,75 @@ async def stop_response(
             # Offline fixtures have no Edge/Core process to receive the
             # command; retain an explicit pending marker instead of claiming
             # that the authoritative media stop was delivered.
+            try:
+                observed = await directory.advance_generation(
+                    session_id,
+                    expected_stream_epoch=media_route.stream_epoch,
+                )
+            except (SessionNotFound, SessionDraining, SessionEpochConflict) as exc:
+                raise HTTPException(status_code=409, detail="media route changed") from exc
+            event["generation_id"] = observed.generation
             event["media_stop_dispatch"] = "pending"
         else:
             try:
                 result = dispatcher(
                     session_id=session_id,
-                    route=cancelled,
+                    route=media_route,
                     event=dict(event),
                 )
                 if inspect.isawaitable(result):
-                    await result
+                    result = await result
+                if not isinstance(result, dict):
+                    raise ValueError("media stop dispatcher returned no authoritative fence")
+                response_epoch = result.get("stream_epoch", media_route.stream_epoch)
+                turn_id = result.get("turn_id")
+                generation_id = result.get("generation_id")
+                tool_epoch = result.get("tool_epoch")
+                if (
+                    isinstance(response_epoch, bool)
+                    or not isinstance(response_epoch, int)
+                    or response_epoch != media_route.stream_epoch
+                    or isinstance(turn_id, bool)
+                    or not isinstance(turn_id, int)
+                    or turn_id < 0
+                    or isinstance(generation_id, bool)
+                    or not isinstance(generation_id, int)
+                    or generation_id <= 0
+                    or isinstance(tool_epoch, bool)
+                    or not isinstance(tool_epoch, int)
+                    or tool_epoch < 0
+                ):
+                    raise ValueError("media stop dispatcher returned an invalid fence")
+                await directory.observe_generation(
+                    session_id,
+                    generation=generation_id,
+                    expected_stream_epoch=media_route.stream_epoch,
+                )
+                event.update(
+                    {
+                        "turn_id": turn_id,
+                        "generation_id": generation_id,
+                        "tool_epoch": tool_epoch,
+                    }
+                )
             except HTTPException:
                 raise
+            except SessionNotFound as exc:
+                raise HTTPException(status_code=404, detail="media route not found") from exc
+            except SessionDraining as exc:
+                raise HTTPException(status_code=409, detail="media route is draining") from exc
+            except SessionEpochConflict as exc:
+                raise HTTPException(status_code=409, detail="media route epoch changed") from exc
+            except SessionDirectoryUnavailable as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="media session directory unavailable",
+                ) from exc
             except Exception as exc:
                 logger.warning("failed to dispatch stop-response to media runtime", exc_info=True)
                 raise HTTPException(status_code=502, detail="media stop dispatch failed") from exc
             event["media_stop_dispatch"] = "dispatched"
+        event.pop("idempotency_key", None)
     elif not settings.offline_mock:
         try:
             await _send_room_control(settings, room_name=str(rec["room_name"]), event=event)

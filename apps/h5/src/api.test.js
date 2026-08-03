@@ -33,6 +33,42 @@ describe("authenticated Control API client", () => {
     window.localStorage.clear();
   });
 
+  it("does not abort a voice enrollment at the former shared 10 second timeout", async () => {
+    vi.useFakeTimers();
+    const enrollmentResponse = deferred();
+    let enrollmentSignal = null;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          user_id: "registered-user",
+          username: "memorykeeper",
+          account_type: "registered",
+          access_token: "short-token",
+        }),
+      )
+      .mockImplementationOnce((_url, options) => {
+        enrollmentSignal = options.signal;
+        return enrollmentResponse.promise;
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const { bootstrapIdentity, enrollVoiceProfile } = await import("./api.js");
+
+    await bootstrapIdentity();
+    let settled = false;
+    const pending = enrollVoiceProfile({ sample: "audio" }).finally(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(settled).toBe(false);
+    expect(enrollmentSignal).toBeInstanceOf(AbortSignal);
+    expect(enrollmentSignal.aborted).toBe(false);
+    enrollmentResponse.resolve(jsonResponse({ profile_id: "voice-001" }, 201));
+    await expect(pending).resolves.toEqual({ profile_id: "voice-001" });
+    vi.useRealTimers();
+  });
+
   it("registers an account before adding Bearer auth", async () => {
     const fetchMock = vi
       .fn()

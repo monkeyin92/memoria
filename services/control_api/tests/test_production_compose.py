@@ -20,6 +20,22 @@ def test_production_services_use_separate_env_files_and_persistent_agent_spool()
     assert "target: /data" in compose
 
 
+def test_media_bridge_uses_the_reviewed_production_provider_factory() -> None:
+    compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    bridge = compose.split("  voice-core-media-bridge:\n", 1)[1].split(
+        "  media-slo-reporter:\n", 1
+    )[0]
+    factory = (
+        "services.agent.src.voice_core.provider_adapter:"
+        "build_production_provider_factory"
+    )
+    assert f'MEDIA_BRIDGE_PROVIDER_FACTORY: "{factory}"' in bridge
+    assert "MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY" in bridge
+    assert f"MEDIA_BRIDGE_PROVIDER_FACTORY={factory}" in (
+        ROOT / "infra/memoria.env.production.example"
+    ).read_text(encoding="utf-8")
+
+
 def test_production_agent_healthcheck_uses_accepted_heartbeat_checker() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
     readiness = (ROOT / "services/control_api/app/routes/readiness.py").read_text(encoding="utf-8")

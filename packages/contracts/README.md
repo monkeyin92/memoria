@@ -11,8 +11,10 @@ Executable contracts shared by the Agent, H5, and Mini Program media gateway.
   mapping surface. It delegates to the existing `DuplexRuntime` and does not
   expose a second audio transport or pipeline.
 - `media-events.schema.json` defines the versioned media-v1 DataChannel envelope;
-  it carries stream epoch/sequence/generation metadata and remains separate from
-  the Agent-authoritative UI event schema.
+  every envelope carries the complete session/stream/sequence/generation/tool
+  fence and a required object payload. Clients reject stale fences and require
+  `tool_epoch` to move monotonically within one turn/generation. This contract
+  remains separate from the Agent-authoritative UI event schema.
 - `../proto/memoria/media/v1/*.proto` is the language-neutral Media Edge ↔ Voice
   Core contract. It is authored in this repository and deliberately contains no
   provider, memory, persona or tool payloads.

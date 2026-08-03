@@ -22,6 +22,11 @@ type Server struct {
 	MaxPendingFrames int
 	BridgeFactory    BridgeRuntimeFactory
 	ReadyProbe       func() bool
+	// RequireExternalDownlinkSender makes the HTTP reference queue
+	// development-only. A production embedding must expose a real media
+	// terminator and report its readiness explicitly.
+	RequireExternalDownlinkSender bool
+	ExternalDownlinkSenderReady   func() bool
 	// AllowInsecureDevelopment must be explicitly enabled by a caller that
 	// wants an unauthenticated local reference edge.  Leaving it false keeps
 	// accidental non-production deployments fail-closed as well.
@@ -53,12 +58,14 @@ func (s *Server) Close() error {
 		delete(s.bridges, id)
 	}
 	s.bridgeMu.Unlock()
+	var closeErr error
 	for _, runtime := range bridges {
-		if err := runtime.Close(); err != nil {
-			return err
+		if err := runtime.Close(); err != nil && closeErr == nil {
+			closeErr = err
 		}
 	}
-	return nil
+	s.Directory.CloseAll()
+	return closeErr
 }
 
 func (s *Server) bridgeFor(sessionID string) *VoiceCoreMediaRuntime {
@@ -80,6 +87,22 @@ func (s *Server) removeBridge(sessionID string) *VoiceCoreMediaRuntime {
 	delete(s.bridges, sessionID)
 	s.bridgeMu.Unlock()
 	return runtime
+}
+
+// CloseSession is the explicit lifecycle hook used by the control plane when
+// a media-directory route expires or a user session is deleted.  Generation
+// stop intentionally does not call this method: stopping an answer must leave
+// the session reusable for the next turn.
+func (s *Server) CloseSession(sessionID string) bool {
+	session, ok := s.Directory.Get(sessionID)
+	if !ok {
+		return false
+	}
+	if runtime := s.removeBridge(sessionID); runtime != nil {
+		_ = runtime.Close()
+	}
+	session.Stop()
+	return s.Directory.Delete(sessionID)
 }
 
 func (s *Server) buildBridge(request OpenSessionRequest, session *Session) (*VoiceCoreMediaRuntime, error) {
@@ -123,6 +146,10 @@ func (s *Server) ready(w http.ResponseWriter, _ *http.Request) {
 		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"status": "voice_core_unavailable"})
 		return
 	}
+	if s.RequireExternalDownlinkSender && (s.ExternalDownlinkSenderReady == nil || !s.ExternalDownlinkSenderReady()) {
+		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"status": "downlink_sender_unavailable"})
+		return
+	}
 	writeStatus(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
@@ -139,6 +166,10 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Draining.Load() {
 		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "edge is draining"})
+		return
+	}
+	if s.RequireExternalDownlinkSender && (s.ExternalDownlinkSenderReady == nil || !s.ExternalDownlinkSenderReady()) {
+		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "external downlink sender is unavailable"})
 		return
 	}
 	var request OpenSessionRequest
@@ -168,6 +199,13 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 	runtime, err := s.buildBridge(request, created)
 	if err != nil {
 		writeStatus(w, http.StatusBadGateway, map[string]string{"error": "Voice Core bridge unavailable"})
+		return
+	}
+	if s.RequireExternalDownlinkSender && (runtime == nil || !runtime.HasDownlinkSender()) {
+		if runtime != nil {
+			_ = runtime.Close()
+		}
+		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "Voice Core bridge has no external downlink sender"})
 		return
 	}
 	if err := s.Directory.Put(created); err != nil {
@@ -220,6 +258,20 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 		operation = parts[1]
 	}
 	switch operation {
+	case "":
+		if r.Method != http.MethodDelete {
+			if r.Method != http.MethodGet {
+				writeStatus(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+				return
+			}
+			writeStatus(w, http.StatusOK, session.Stats())
+			return
+		}
+		if !s.CloseSession(id) {
+			writeStatus(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+			return
+		}
+		writeStatus(w, http.StatusOK, map[string]string{"status": "closed"})
 	case "reconnect":
 		if r.Method != http.MethodPost {
 			writeStatus(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -246,6 +298,13 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 				writeStatus(w, http.StatusBadGateway, map[string]string{"error": "Voice Core bridge unavailable"})
 				return
 			}
+			if s.RequireExternalDownlinkSender && (runtime == nil || !runtime.HasDownlinkSender()) {
+				if runtime != nil {
+					_ = runtime.Close()
+				}
+				writeStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "Voice Core bridge has no external downlink sender"})
+				return
+			}
 			s.installBridge(id, runtime)
 		}
 		writeStatus(w, http.StatusOK, map[string]any{"session_id": id, "stream_epoch": epoch})
@@ -254,11 +313,48 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 			writeStatus(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
-		session.Stop()
-		if runtime := s.removeBridge(id); runtime != nil {
-			_ = runtime.Close()
+		var request StopGenerationRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&request); err != nil {
+			writeStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid stop request"})
+			return
 		}
-		writeStatus(w, http.StatusOK, map[string]string{"status": "stopped"})
+		if request.StreamEpoch != 0 && request.StreamEpoch != epoch {
+			writeStatus(w, http.StatusConflict, map[string]string{"error": "stop stream epoch is stale"})
+			return
+		}
+		expected, err := request.ExpectedFence(id)
+		if err != nil {
+			writeStatus(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		eventID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+		if eventID == "" || len(eventID) > 128 {
+			writeStatus(w, http.StatusBadRequest, map[string]string{"error": "valid Idempotency-Key is required"})
+			return
+		}
+		reason := strings.TrimSpace(request.Reason)
+		if reason == "" {
+			reason = "client_stop"
+		}
+		if len(reason) > 128 {
+			writeStatus(w, http.StatusBadRequest, map[string]string{"error": "stop reason is too long"})
+			return
+		}
+		var cancelled Fence
+		if runtime := s.bridgeFor(id); runtime != nil {
+			cancelled, err = runtime.CancelGeneration(eventID, reason, expected)
+		} else {
+			_, cancelled, _, err = session.CancelGeneration(eventID, expected)
+		}
+		if err != nil {
+			writeStatus(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		writeStatus(w, http.StatusOK, map[string]any{
+			"status": "cancelled", "stream_epoch": epoch,
+			"turn_id": cancelled.TurnID, "generation_id": cancelled.GenerationID,
+			"tool_epoch": cancelled.ToolEpoch,
+		})
 	case "uplink":
 		s.acceptFrame(w, r, session, false)
 	case "downlink":

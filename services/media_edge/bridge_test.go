@@ -129,6 +129,33 @@ func bridgeFormat(rate uint32) BridgeAudioFormat {
 	}
 }
 
+func TestVoiceCoreSessionSendsExplicitVoicedEndBoundary(t *testing.T) {
+	service := &fakeVoiceCore{received: make(chan *mediav1.MediaToCore, 1)}
+	bridge, cleanup := newBufconnBridge(t, service)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	session, err := bridge.Connect(ctx, bridgeIdentity(), bridgeFormat(16_000), bridgeFormat(24_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SendVadWithVoicedEnd(400, 320, 0.1, 10, 2, false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case message := <-service.received:
+		vad := message.GetVad()
+		if vad == nil || vad.VoicedEndSample == nil || vad.GetVoicedEndSample() != 320 {
+			t.Fatalf("missing explicit voiced end: %+v", vad)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Voice Core did not receive VAD end")
+	}
+	if err := session.SendVadWithVoicedEnd(400, 401, 0.1, 10, 2, false); err == nil {
+		t.Fatal("VAD accepted voiced end after event sample")
+	}
+}
+
 func TestVoiceCoreBridgeConnectsAndAppliesDualGenerationGate(t *testing.T) {
 	service := &fakeVoiceCore{received: make(chan *mediav1.MediaToCore, 4)}
 	bridge, cleanup := newBufconnBridge(t, service)
@@ -219,5 +246,36 @@ func TestVoiceCoreBridgeStopSequenceIsMonotonic(t *testing.T) {
 	}
 	if firstEnvelope["sequence"] != float64(0) || secondEnvelope["sequence"] != float64(1) {
 		t.Fatalf("stop sequence did not advance: first=%v second=%v", firstEnvelope["sequence"], secondEnvelope["sequence"])
+	}
+	if firstEnvelope["protocol"] != "media-v1" || secondEnvelope["protocol"] != "media-v1" {
+		t.Fatalf("stop envelope protocol missing: first=%v second=%v", firstEnvelope["protocol"], secondEnvelope["protocol"])
+	}
+}
+
+func TestVoiceCoreBridgeKeywordHardStopRequiresConfidenceAndPreservesFlag(t *testing.T) {
+	service := &fakeVoiceCore{received: make(chan *mediav1.MediaToCore, 4)}
+	bridge, cleanup := newBufconnBridge(t, service)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	session, err := bridge.Connect(ctx, bridgeIdentity(), bridgeFormat(16_000), bridgeFormat(24_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SendKeyword("停一下", 0.79, 10, 20, true); err == nil {
+		t.Fatal("low-confidence hard stop was accepted")
+	}
+	if err := session.SendKeywordAtFence(
+		"停一下", 0.9, 10, 20, true,
+		Fence{SessionID: "s", GenerationID: 99},
+	); err == nil {
+		t.Fatal("stale hard-stop keyword fence was accepted")
+	}
+	if err := session.SendKeyword("停一下", 0.8, 10, 20, true); err != nil {
+		t.Fatal(err)
+	}
+	keyword := (<-service.received).GetKeyword()
+	if keyword == nil || !keyword.GetHardStop() || keyword.GetConfidence() != float32(0.8) {
+		t.Fatalf("unexpected keyword event: %v", keyword)
 	}
 }

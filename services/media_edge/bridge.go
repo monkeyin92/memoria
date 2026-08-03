@@ -24,6 +24,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+const KWSHardStopMinConfidence float32 = 0.8
+
 // BridgeIdentity is the identity carried on every media-v1 message.
 type BridgeIdentity struct {
 	SessionID     string
@@ -255,10 +257,11 @@ func (b *VoiceCoreBridge) Connect(
 		return nil, fmt.Errorf("open Voice Core stream: %w", err)
 	}
 	session := &VoiceCoreSession{
-		identity: identity,
-		stream:   stream,
-		cancel:   cancel,
-		current:  Fence{SessionID: identity.SessionID},
+		identity:           identity,
+		stream:             stream,
+		cancel:             cancel,
+		current:            Fence{SessionID: identity.SessionID},
+		requireAudioOrigin: true,
 	}
 	if err := session.send(&mediav1.MediaToCore{Event: &mediav1.MediaToCore_Hello{
 		Hello: &mediav1.SessionHello{
@@ -282,6 +285,23 @@ func (b *VoiceCoreBridge) Connect(
 	}
 	if accepted.GetAccepted().GetCurrentGenerationId() > 0 {
 		session.current.GenerationID = accepted.GetAccepted().GetCurrentGenerationId()
+		// SessionAccepted predates the full fence fields.  A reconnect with a
+		// non-zero generation therefore carries one ordered GenerationControl
+		// resume event immediately after acceptance; consume it before exposing
+		// the session so callers cannot send a stop/playback fact against the
+		// generation-only placeholder fence.
+		resume, resumeErr := stream.Recv()
+		if resumeErr != nil {
+			session.Close()
+			return nil, fmt.Errorf("receive Voice Core reconnect fence: %w", resumeErr)
+		}
+		if resumeErr := session.validateCoreEvent(resume); resumeErr != nil || resume.GetGeneration() == nil {
+			session.Close()
+			if resumeErr != nil {
+				return nil, fmt.Errorf("invalid Voice Core reconnect fence: %w", resumeErr)
+			}
+			return nil, fmt.Errorf("Voice Core reconnect acceptance omitted full generation fence")
+		}
 	}
 	return session, nil
 }
@@ -309,6 +329,7 @@ type VoiceCoreSession struct {
 	lastAudioSequence  uint64
 	hasEventSequence   bool
 	hasAudioSequence   bool
+	requireAudioOrigin bool
 	lastAudioEnd       uint64
 	nextClientSequence uint64
 }
@@ -354,27 +375,67 @@ func (s *VoiceCoreSession) SendAudio(frame AudioFrame) error {
 }
 
 func (s *VoiceCoreSession) SendVad(sample uint64, probability, rms, noiseFloor float32, start bool) error {
+	return s.SendVadWithVoicedEnd(sample, sample, probability, rms, noiseFloor, start)
+}
+
+// SendVadWithVoicedEnd distinguishes the transport event time from the last
+// voiced sample. SPEECH_END must carry this boundary so Voice Core can wait
+// for late ASR text without treating VAD tail silence as missing speech.
+func (s *VoiceCoreSession) SendVadWithVoicedEnd(sample, voicedEnd uint64, probability, rms, noiseFloor float32, start bool) error {
 	typeValue := mediav1.VadEventType_VAD_EVENT_SPEECH_END
 	if start {
 		typeValue = mediav1.VadEventType_VAD_EVENT_SPEECH_START
+	} else if voicedEnd > sample {
+		return fmt.Errorf("VAD voiced end cannot exceed event sample")
+	}
+	var voicedEndSample *uint64
+	if !start {
+		voicedEndSample = &voicedEnd
 	}
 	return s.send(&mediav1.MediaToCore{Event: &mediav1.MediaToCore_Vad{
 		Vad: &mediav1.VadEvent{
-			Identity:       s.identity.proto(),
-			Type:           typeValue,
-			SamplePosition: sample,
-			Probability:    probability,
-			Rms:            rms,
-			NoiseFloor:     noiseFloor,
+			Identity:        s.identity.proto(),
+			Type:            typeValue,
+			SamplePosition:  sample,
+			Probability:     probability,
+			Rms:             rms,
+			NoiseFloor:      noiseFloor,
+			VoicedEndSample: voicedEndSample,
 		},
 	}})
 }
 
 func (s *VoiceCoreSession) SendKeyword(keyword string, confidence float32, start, end uint64, hardStop bool) error {
+	return s.SendKeywordAtFence(keyword, confidence, start, end, hardStop, s.CurrentFence())
+}
+
+func validateKeyword(keyword string, confidence float32, start, end uint64, hardStop bool) error {
 	if keyword == "" || end <= start {
 		return fmt.Errorf("keyword and sample range are required")
 	}
-	return s.send(&mediav1.MediaToCore{Event: &mediav1.MediaToCore_Keyword{
+	if math.IsNaN(float64(confidence)) || math.IsInf(float64(confidence), 0) || confidence < 0 || confidence > 1 {
+		return fmt.Errorf("keyword confidence must be between 0 and 1")
+	}
+	if hardStop && confidence < KWSHardStopMinConfidence {
+		return fmt.Errorf("hard-stop keyword confidence must be at least %.1f", KWSHardStopMinConfidence)
+	}
+	return nil
+}
+
+// SendKeywordAtFence rejects delayed KWS evidence before it can stop a newer
+// generation. SendKeyword remains as the current-fence compatibility helper.
+func (s *VoiceCoreSession) SendKeywordAtFence(keyword string, confidence float32, start, end uint64, hardStop bool, fence Fence) error {
+	if err := validateKeyword(keyword, confidence, start, end, hardStop); err != nil {
+		return err
+	}
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if !s.current.Equal(fence) {
+		return fmt.Errorf("keyword belongs to a stale generation")
+	}
+	if err := s.stream.Send(&mediav1.MediaToCore{Event: &mediav1.MediaToCore_Keyword{
 		Keyword: &mediav1.KeywordEvent{
 			Identity:    s.identity.proto(),
 			Keyword:     keyword,
@@ -383,7 +444,10 @@ func (s *VoiceCoreSession) SendKeyword(keyword string, confidence float32, start
 			EndSample:   end,
 			HardStop:    hardStop,
 		},
-	}})
+	}}); err != nil {
+		return fmt.Errorf("send media-v1 event: %w", err)
+	}
+	return nil
 }
 
 func (s *VoiceCoreSession) SendPlaybackProgress(progress PlaybackProgress) error {
@@ -427,7 +491,7 @@ func (s *VoiceCoreSession) SendStop(eventID, reason string, fence Fence) error {
 	s.nextClientSequence++
 	s.stateMu.Unlock()
 	envelope := map[string]any{
-		"v": 1, "type": "client.stop_assistant", "event_id": eventID,
+		"v": 1, "protocol": "media-v1", "type": "client.stop_assistant", "event_id": eventID,
 		"session_id": s.identity.SessionID, "stream_epoch": s.identity.StreamEpoch,
 		"sequence": clientSequence, "turn_id": fence.TurnID, "generation_id": fence.GenerationID,
 		"tool_epoch": fence.ToolEpoch, "server_monotonic_ms": 0,
@@ -473,6 +537,10 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 		if !s.identity.equal(audio.GetIdentity()) {
 			return fmt.Errorf("audio event identity does not match")
 		}
+		if audio.GetFrameSamples() == 0 || len(audio.GetPcmS16Le())%2 != 0 ||
+			uint64(len(audio.GetPcmS16Le())/2) != uint64(audio.GetFrameSamples()) {
+			return fmt.Errorf("audio PCM payload does not match frame samples")
+		}
 		s.stateMu.Lock()
 		defer s.stateMu.Unlock()
 		actual := Fence{SessionID: s.identity.SessionID, TurnID: audio.GetTurnId(), GenerationID: audio.GetGenerationId(), ToolEpoch: audio.GetToolEpoch()}
@@ -482,12 +550,26 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 		if s.hasAudioSequence && audio.GetSequence() <= s.lastAudioSequence {
 			return fmt.Errorf("stale audio sequence")
 		}
+		if s.hasAudioSequence && audio.GetSequence() != s.lastAudioSequence+1 {
+			return fmt.Errorf("audio sequence has a gap")
+		}
 		if s.hasAudioSequence && audio.GetSourceStartSample() < s.lastAudioEnd {
 			return fmt.Errorf("audio sample range moved backwards")
 		}
+		if s.hasAudioSequence && audio.GetSourceStartSample() != s.lastAudioEnd {
+			return fmt.Errorf("audio sample range has a gap")
+		}
+		if !s.hasAudioSequence && s.requireAudioOrigin &&
+			(audio.GetSequence() != 0 || audio.GetSourceStartSample() != 0) {
+			return fmt.Errorf("first audio frame must start at sequence and sample zero")
+		}
 		s.lastAudioSequence = audio.GetSequence()
 		s.hasAudioSequence = true
-		s.lastAudioEnd = audio.GetSourceStartSample() + uint64(audio.GetFrameSamples())
+		end := audio.GetSourceStartSample() + uint64(audio.GetFrameSamples())
+		if end < audio.GetSourceStartSample() {
+			return fmt.Errorf("audio sample range overflow")
+		}
+		s.lastAudioEnd = end
 		return nil
 	}
 	if generation := event.GetGeneration(); generation != nil {
@@ -509,6 +591,9 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 			s.hasAudioSequence = false
 			s.lastAudioSequence = 0
 			s.lastAudioEnd = 0
+			// RESUME takes over an in-flight generation after reconnect;
+			// START/CANCEL/COMPLETE begin a fresh media range.
+			s.requireAudioOrigin = generation.GetAction() != mediav1.GenerationAction_GENERATION_ACTION_RESUME
 		}
 		s.current = actual
 		return nil
@@ -531,10 +616,13 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 		}
 		return s.acceptEventSequence(client.GetSequence())
 	}
-	if coreError := event.GetError(); coreError != nil && coreError.GetIdentity() != nil && !s.identity.equal(coreError.GetIdentity()) {
-		return fmt.Errorf("core error identity does not match")
+	if coreError := event.GetError(); coreError != nil {
+		if !s.identity.equal(coreError.GetIdentity()) {
+			return fmt.Errorf("core error identity does not match")
+		}
+		return nil
 	}
-	return nil
+	return fmt.Errorf("Voice Core returned an unknown event")
 }
 
 func (s *VoiceCoreSession) acceptEventSequence(sequence uint64) error {

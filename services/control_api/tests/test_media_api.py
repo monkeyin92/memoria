@@ -209,8 +209,11 @@ async def test_streamcore_stop_dispatches_cancel_to_current_media_runtime(
     app = create_app()
     dispatched: list[dict[str, object]] = []
 
-    async def dispatch(*, session_id: str, route: object, event: dict[str, object]) -> None:
+    async def dispatch(
+        *, session_id: str, route: object, event: dict[str, object]
+    ) -> dict[str, object]:
         dispatched.append({"session_id": session_id, "route": route, "event": event})
+        return {"stream_epoch": 1, "turn_id": 4, "generation_id": 7, "tool_epoch": 2}
 
     app.state.media_stop_dispatcher = dispatch
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -234,7 +237,9 @@ async def test_streamcore_stop_dispatches_cancel_to_current_media_runtime(
     assert len(dispatched) == 1
     assert dispatched[0]["session_id"] == session_id
     assert stop.json()["stream_epoch"] == 1
-    assert stop.json()["generation_id"] == 1
+    assert stop.json()["turn_id"] == 4
+    assert stop.json()["generation_id"] == 7
+    assert stop.json()["tool_epoch"] == 2
     assert dispatched[0]["event"] == {
         "type": "stop_response",
         "session_id": session_id,
@@ -243,7 +248,7 @@ async def test_streamcore_stop_dispatches_cancel_to_current_media_runtime(
         "create_user_turn": False,
         "media_runtime": "streamcore",
         "stream_epoch": 1,
-        "generation_id": 1,
+        "idempotency_key": "dispatch-stop-1",
     }
 
 
@@ -258,13 +263,16 @@ async def test_streamcore_stop_retry_reuses_generation_after_edge_failure(
     monkeypatch.setenv("STREAMCORE_WHIP_URL", "http://localhost:7000/whip")
     monkeypatch.setenv("STREAMCORE_TOKEN_SECRET", "streamcore-token-secret-long-enough")
     app = create_app()
-    attempts: list[int] = []
+    attempts: list[tuple[int, str]] = []
 
-    async def dispatch(*, session_id: str, route: SessionRoute, event: dict[str, object]) -> None:
-        _ = session_id, event
-        attempts.append(route.generation)
+    async def dispatch(
+        *, session_id: str, route: SessionRoute, event: dict[str, object]
+    ) -> dict[str, object]:
+        _ = session_id
+        attempts.append((route.generation, str(event["idempotency_key"])))
         if len(attempts) == 1:
             raise RuntimeError("edge temporarily unavailable")
+        return {"stream_epoch": 1, "turn_id": 2, "generation_id": 3, "tool_epoch": 0}
 
     app.state.media_stop_dispatcher = dispatch
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -285,8 +293,8 @@ async def test_streamcore_stop_retry_reuses_generation_after_edge_failure(
 
     assert first.status_code == 502
     assert second.status_code == 200
-    assert second.json()["generation_id"] == 1
-    assert attempts == [1, 1]
+    assert second.json()["generation_id"] == 3
+    assert attempts == [(0, "retry-stop-1"), (0, "retry-stop-1")]
 
 
 @pytest.mark.asyncio

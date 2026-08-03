@@ -80,6 +80,8 @@ class AudioFrame:
             raise ValueError("frame_samples must be positive")
         if not self.payload:
             raise ValueError("audio payload must not be empty")
+        if len(self.payload) != self.frame_samples * 2:
+            raise ValueError("audio payload length must match frame_samples")
         if self.crc32c is not None and not 0 <= self.crc32c <= 0xFFFFFFFF:
             raise ValueError("crc32c must fit an unsigned 32-bit integer")
 
@@ -199,6 +201,7 @@ class MediaEnvelope:
     def to_dict(self) -> dict[str, Any]:
         return {
             "v": self.version,
+            "protocol": MEDIA_PROTOCOL,
             "type": self.type,
             "event_id": self.event_id,
             "session_id": self.session_id,
@@ -234,12 +237,32 @@ class MediaEnvelope:
             raise ValueError("invalid media envelope JSON") from exc
         if not isinstance(decoded, dict):
             raise ValueError("media envelope must be a JSON object")
+        allowed_fields = {
+            "v",
+            "protocol",
+            "type",
+            "event_id",
+            "session_id",
+            "stream_epoch",
+            "sequence",
+            "turn_id",
+            "generation_id",
+            "tool_epoch",
+            "server_monotonic_ms",
+            "payload",
+        }
+        unknown_fields = set(decoded) - allowed_fields
+        if unknown_fields:
+            raise ValueError("media envelope contains unknown fields")
+        required_fields = allowed_fields
+        if required_fields - set(decoded):
+            raise ValueError("media envelope is missing required fields")
         protocol = decoded.get("protocol")
-        if protocol is not None and protocol != MEDIA_PROTOCOL:
+        if protocol != MEDIA_PROTOCOL:
             raise ValueError("unsupported media protocol")
         if decoded.get("v") != 1:
             raise ValueError("unsupported media envelope version")
-        payload = decoded.get("payload", {})
+        payload = decoded.get("payload")
         if not isinstance(payload, dict):
             raise ValueError("media envelope payload must be an object")
         return cls(

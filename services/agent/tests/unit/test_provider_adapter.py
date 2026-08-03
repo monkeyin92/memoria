@@ -16,11 +16,20 @@ from services.agent.src.providers.funasr_protocol import (
     FunASRServerEvent,
 )
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
-from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
+from services.agent.src.voice_core.provider_adapter import (
+    ExistingVoiceProviderAdapter,
+    ExistingVoiceProviderConfig,
+    build_production_provider_factory,
+)
+
+
+async def _collect(stream: AsyncIterator[Any]) -> list[Any]:
+    return [item async for item in stream]
 
 
 class FakeASR:
     def __init__(self) -> None:
+        self.task_id = "task-1"
         self.task_epoch = 1
         self.task_sample_origin = 0
         self.events: asyncio.Queue[FunASRServerEvent] = asyncio.Queue()
@@ -32,6 +41,7 @@ class FakeASR:
 
     async def reconnect_with_replay(self) -> None:
         self.task_epoch += 1
+        self.task_id = f"task-{self.task_epoch}"
         self.task_sample_origin = 320
 
     async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
@@ -67,6 +77,31 @@ class FakeLLM:
         return tokens()
 
 
+class MultiPhraseLLM:
+    def stream(self, request: LanguageModelRequest) -> AsyncIterator[str]:
+        _ = request
+
+        async def tokens() -> AsyncIterator[str]:
+            yield "第一句。第二句。"
+
+        return tokens()
+
+
+class PausedMultiPhraseLLM:
+    def __init__(self, release_second: asyncio.Event) -> None:
+        self.release_second = release_second
+
+    def stream(self, request: LanguageModelRequest) -> AsyncIterator[str]:
+        _ = request
+
+        async def tokens() -> AsyncIterator[str]:
+            yield "第一句。"
+            await self.release_second.wait()
+            yield "第二句。"
+
+        return tokens()
+
+
 class FakeTTS:
     async def synthesize(self, request: SpeechSynthesisRequest) -> Any:
         assert request.phrases
@@ -80,6 +115,219 @@ class SizedTTS:
     async def synthesize(self, request: SpeechSynthesisRequest) -> Any:
         assert request.phrases
         return SimpleNamespace(pcm=b"\x01\x00" * self.samples)
+
+
+class FakeStreamingSpeech:
+    def __init__(
+        self,
+        chunks: tuple[bytes, ...],
+        *,
+        release_after_first: asyncio.Event | None = None,
+    ) -> None:
+        self.chunks = chunks
+        self.release_after_first = release_after_first
+        self.bound_fences: list[GenerationFence] = []
+        self.phrases: list[str] = []
+        self.completed = False
+        self.closed = False
+
+    def bind_fence(self, fence: GenerationFence) -> None:
+        self.bound_fences.append(fence)
+
+    def stream(self) -> FakeStreamingSpeech:
+        return self
+
+    def push_text(self, text: str) -> None:
+        self.phrases.append(text)
+
+    def end_input(self) -> None:
+        return None
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        async def events() -> AsyncIterator[Any]:
+            for index, chunk in enumerate(self.chunks):
+                yield SimpleNamespace(frame=SimpleNamespace(data=chunk, sample_rate=24_000))
+                if index == 0 and self.release_after_first is not None:
+                    await self.release_after_first.wait()
+            self.completed = True
+
+        return events()
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class PhraseDrivenStreamingSpeech:
+    def __init__(self) -> None:
+        self.queue: asyncio.Queue[Any | None] = asyncio.Queue()
+        self.phrases: list[str] = []
+        self.closed = False
+
+    def push_text(self, text: str) -> None:
+        self.phrases.append(text)
+        samples = 960 if len(self.phrases) == 1 else 480
+        self.queue.put_nowait(
+            SimpleNamespace(
+                frame=SimpleNamespace(data=b"\x01\x00" * samples, sample_rate=24_000)
+            )
+        )
+
+    def end_input(self) -> None:
+        self.queue.put_nowait(None)
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        async def events() -> AsyncIterator[Any]:
+            while True:
+                item = await self.queue.get()
+                if item is None:
+                    return
+                yield item
+
+        return events()
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class PhraseDrivenTTS:
+    def __init__(self) -> None:
+        self.stream_calls = 0
+        self.stream_instance = PhraseDrivenStreamingSpeech()
+
+    def stream(self) -> PhraseDrivenStreamingSpeech:
+        self.stream_calls += 1
+        return self.stream_instance
+
+
+class ReconnectingASR(FakeASR):
+    async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+        self.sent.append((pcm, capture_start_sample))
+        call = len(self.sent)
+        if call == 2:
+            self.task_id = "task-2"
+            self.task_epoch = 2
+            self.task_sample_origin = 320
+        elif call == 3:
+            self.task_id = "task-3"
+            self.task_epoch = 3
+            self.task_sample_origin = 0
+        sentence = FunASRSentence(
+            sentence_id=7,
+            text="重连结果",
+            begin_ms=0,
+            end_ms=20,
+            sentence_end=True,
+            heartbeat=False,
+            words=(),
+        )
+        await self.events.put(
+            FunASRServerEvent(
+                event="result-generated",
+                task_id=self.task_id,
+                sentence=sentence,
+            )
+        )
+        if call == 1:
+            await self.events.put(
+                FunASRServerEvent(
+                    event="result-generated",
+                    task_id=self.task_id,
+                    sentence=sentence,
+                )
+            )
+
+
+class ExpandingReplayASR(FakeASR):
+    async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+        self.sent.append((pcm, capture_start_sample))
+        call = len(self.sent)
+        if call == 2:
+            self.task_id = "expanded-task"
+            self.task_epoch = 2
+            self.task_sample_origin = 0
+        await self.events.put(
+            FunASRServerEvent(
+                event="result-generated",
+                task_id=self.task_id,
+                sentence=FunASRSentence(
+                    sentence_id=1,
+                    text="你好" if call == 1 else "你好世界",
+                    begin_ms=0,
+                    end_ms=20 if call == 1 else 40,
+                    sentence_end=True,
+                    heartbeat=False,
+                    words=(),
+                ),
+            )
+        )
+
+
+class LongRunningASR(FakeASR):
+    async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+        self.sent.append((pcm, capture_start_sample))
+        call = len(self.sent)
+        self.task_id = f"long-task-{call}"
+        self.task_epoch = call
+        self.task_sample_origin = (call - 1) * 320
+        await self.events.put(
+            FunASRServerEvent(
+                event="result-generated",
+                task_id=self.task_id,
+                sentence=FunASRSentence(
+                    sentence_id=1,
+                    text=f"结果{call}",
+                    begin_ms=0,
+                    end_ms=20,
+                    sentence_end=True,
+                    heartbeat=False,
+                    words=(),
+                ),
+            )
+        )
+
+
+class FakeProductionLLMStream:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        async def chunks() -> AsyncIterator[Any]:
+            yield SimpleNamespace(delta=SimpleNamespace(content="生产回复。"))
+
+        return chunks()
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class FakeProductionLLM:
+    init_kwargs: dict[str, Any] = {}
+
+    def __init__(self, **kwargs: Any) -> None:
+        type(self).init_kwargs = kwargs
+
+    def chat(self, **kwargs: Any) -> FakeProductionLLMStream:
+        assert kwargs["chat_ctx"].items
+        return FakeProductionLLMStream()
+
+
+class FakeProductionTTS:
+    instances: list[FakeProductionTTS] = []
+
+    def __init__(self, config: Any) -> None:
+        self.config = config
+        self.fence: GenerationFence | None = None
+        self.closed = False
+        type(self).instances.append(self)
+
+    def bind_fence(self, fence: GenerationFence) -> None:
+        self.fence = fence
+
+    def stream(self) -> FakeStreamingSpeech:
+        return FakeStreamingSpeech((b"\x01\x00" * 8,))
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 @pytest.mark.asyncio
@@ -114,6 +362,7 @@ async def test_existing_provider_adapter_maps_asr_and_streams_existing_handlers(
     assert chunks[0].final is True
     assert chunks[0].text_audio_start_sample == 0
     assert chunks[0].text_audio_end_sample == 480
+    assert chunks[0].assistant_text_delta == "你好。"
     await adapter.close(identity)
     assert asr.closed
 
@@ -133,19 +382,19 @@ async def test_existing_provider_adapter_splits_pcm_and_deduplicates_generation(
     assert [chunk.frame_samples for chunk in chunks] == [480, 480]
     assert chunks[0].first is True
     assert chunks[0].final is False
-    assert chunks[0].text == "你好。"
-    assert chunks[0].text_audio_start_sample == 0
-    assert chunks[0].text_audio_end_sample == 960
-    assert chunks[1].text == ""
+    assert chunks[0].text == ""
+    assert chunks[0].assistant_text_delta == "你好。"
+    assert chunks[1].text == "你好。"
+    assert chunks[1].assistant_text_delta == ""
+    assert chunks[1].text_audio_start_sample == 0
+    assert chunks[1].text_audio_end_sample == 960
     assert chunks[1].final is True
 
     # Replaying the same authoritative fence must not duplicate sequence or
     # sample ranges.  A new fence gets a fresh local sample clock.
     assert [chunk async for chunk in adapter.generate_reply(identity, "hi", fence)] == []
     next_fence = GenerationFence(identity.session_id, 2, 2, 0)
-    next_chunks = [
-        chunk async for chunk in adapter.generate_reply(identity, "hi", next_fence)
-    ]
+    next_chunks = [chunk async for chunk in adapter.generate_reply(identity, "hi", next_fence)]
     assert next_chunks[0].source_start_sample == 0
 
 
@@ -168,3 +417,374 @@ async def test_existing_provider_adapter_cancellation_stops_pending_frames() -> 
     pre_start_stream = adapter.generate_reply(identity, "hi", pre_start_fence)
     assert adapter.cancel_generation(pre_start_fence)
     assert [chunk async for chunk in pre_start_stream] == []
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_maps_every_phrase_to_its_audio_span() -> None:
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: FakeASR()),
+        language_model=cast(Any, MultiPhraseLLM()),
+        speech_synthesis=cast(Any, SizedTTS(8)),
+    )
+    identity = SessionIdentity("phrase-map", stream_epoch=1)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+
+    chunks = [chunk async for chunk in adapter.generate_reply(identity, "hi", fence)]
+
+    assert [chunk.text for chunk in chunks] == ["第一句。", "第二句。"]
+    assert [chunk.assistant_text_delta for chunk in chunks] == ["第一句。", "第二句。"]
+    assert [(chunk.text_audio_start_sample, chunk.text_audio_end_sample) for chunk in chunks] == [
+        (0, 480),
+        (480, 960),
+    ]
+    assert [chunk.first for chunk in chunks] == [True, False]
+    assert [chunk.final for chunk in chunks] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_frames_real_provider_stream_before_completion() -> None:
+    release = asyncio.Event()
+    speech = FakeStreamingSpeech(
+        (
+            b"\x01\x00" * 960,
+            b"\x02\x00" * 241,
+        ),
+        release_after_first=release,
+    )
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: FakeASR()),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, speech),
+    )
+    identity = SessionIdentity("provider-stream", stream_epoch=1)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+    stream = adapter.generate_reply(identity, "hi", fence)
+
+    first = await asyncio.wait_for(anext(stream), timeout=0.5)
+
+    assert first.frame_samples == 480
+    assert first.first is True
+    assert first.assistant_text_delta == "你好。"
+    assert not speech.completed
+    release.set()
+    chunks = [first, *[chunk async for chunk in stream]]
+    assert [chunk.frame_samples for chunk in chunks] == [480, 480, 480]
+    assert chunks[-1].text == "你好。"
+    assert chunks[-1].assistant_text_delta == ""
+    assert chunks[-1].text_audio_start_sample == 0
+    assert chunks[-1].text_audio_end_sample == 1_440
+    assert chunks[-1].final is True
+    assert speech.phrases == ["你好。"]
+    assert speech.bound_fences == [fence]
+    assert speech.closed
+
+
+@pytest.mark.asyncio
+async def test_incremental_tts_reuses_one_stream_and_starts_before_second_phrase() -> None:
+    release_second = asyncio.Event()
+    speech = PhraseDrivenTTS()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: FakeASR()),
+        language_model=cast(Any, PausedMultiPhraseLLM(release_second)),
+        speech_synthesis=cast(Any, speech),
+    )
+    identity = SessionIdentity("incremental-tts", stream_epoch=1)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+    stream = adapter.generate_reply(identity, "hi", fence)
+
+    first = await asyncio.wait_for(anext(stream), timeout=0.5)
+
+    assert first.assistant_text_delta == "第一句。"
+    assert speech.stream_calls == 1
+    assert speech.stream_instance.phrases == ["第一句。"]
+    release_second.set()
+    chunks = [first, *[chunk async for chunk in stream]]
+    assert speech.stream_calls == 1
+    assert speech.stream_instance.phrases == ["第一句。", "第二句。"]
+    assert chunks[-1].text == "第一句。第二句。"
+    assert chunks[-1].final is True
+    assert speech.stream_instance.closed
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_cancellation_closes_waiting_provider_stream() -> None:
+    speech = FakeStreamingSpeech(
+        (b"\x01\x00" * 960,),
+        release_after_first=asyncio.Event(),
+    )
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: FakeASR()),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, speech),
+    )
+    identity = SessionIdentity("cancel-provider-stream", stream_epoch=1)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+    stream = adapter.generate_reply(identity, "hi", fence)
+
+    assert (await anext(stream)).first
+    assert adapter.cancel_generation(fence)
+    assert await asyncio.wait_for(_collect(stream), timeout=0.5) == []
+    assert speech.closed
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_deduplicates_asr_by_task_and_audio_range() -> None:
+    asr = ReconnectingASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("asr-reconnect", stream_epoch=1)
+
+    first = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+    reconnected = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 1, 320, 320, b"\x00\x00" * 320),
+    )
+    replayed = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 2, 640, 320, b"\x00\x00" * 320),
+    )
+
+    assert [
+        (result.task_epoch, result.capture_start_sample, result.capture_end_sample)
+        for result in first
+    ] == [(1, 0, 320)]
+    assert [
+        (result.task_epoch, result.capture_start_sample, result.capture_end_sample)
+        for result in reconnected
+    ] == [(2, 320, 640)]
+    assert replayed == ()
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_trims_cross_task_expanding_replay() -> None:
+    asr = ExpandingReplayASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("asr-expanding-replay", stream_epoch=1)
+
+    first = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+    extension = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 1, 320, 320, b"\x00\x00" * 320),
+    )
+
+    assert [(item.capture_start_sample, item.capture_end_sample, item.text) for item in first] == [
+        (0, 320, "你好")
+    ]
+    assert [
+        (item.capture_start_sample, item.capture_end_sample, item.text) for item in extension
+    ] == [(320, 640, "世界")]
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_drops_asr_without_task_identity() -> None:
+    asr = FakeASR()
+    await asr.events.put(
+        FunASRServerEvent(
+            event="result-generated",
+            task_id="",
+            sentence=FunASRSentence(
+                sentence_id=99,
+                text="无法归属",
+                begin_ms=0,
+                end_ms=20,
+                sentence_end=True,
+                heartbeat=False,
+                words=(),
+            ),
+        )
+    )
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("missing-asr-task", stream_epoch=1)
+
+    results = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+
+    assert [result.text for result in results] == ["你好"]
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_bounds_asr_metadata_during_long_reconnects() -> None:
+    asr = LongRunningASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+        config=ExistingVoiceProviderConfig(
+            max_asr_task_history=3,
+            max_asr_result_history=4,
+        ),
+    )
+    identity = SessionIdentity("long-asr", stream_epoch=1)
+
+    for sequence in range(12):
+        results = await adapter.ingest_audio(
+            identity,
+            AudioFrame(
+                identity,
+                sequence,
+                sequence * 320,
+                320,
+                b"\x00\x00" * 320,
+            ),
+        )
+        assert len(results) == 1
+
+    assert len(adapter._asr_task_contexts) <= 3
+    assert len(adapter._sentence_revisions) <= 4
+    assert len(adapter._final_sentence_ids) <= 4
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_evicts_terminal_generations_without_replay() -> None:
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: FakeASR()),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, SizedTTS(8)),
+        config=ExistingVoiceProviderConfig(max_generation_history=2),
+    )
+    identity = SessionIdentity("bounded-generations", stream_epoch=1)
+    fences = [
+        GenerationFence(identity.session_id, generation, generation, 0)
+        for generation in range(1, 5)
+    ]
+
+    for fence in fences:
+        assert [chunk async for chunk in adapter.generate_reply(identity, "hi", fence)]
+
+    assert len(adapter._generation_started) <= 2
+    assert len(adapter._generation_cancel_events) == 0
+    assert [chunk async for chunk in adapter.generate_reply(identity, "hi", fences[0])] == []
+    assert not adapter.cancel_generation(fences[0])
+
+    cancelled = [
+        GenerationFence(identity.session_id, generation, generation, 0)
+        for generation in range(5, 9)
+    ]
+    for fence in cancelled:
+        assert adapter.cancel_generation(fence)
+    assert len(adapter._cancelled_generations) <= 2
+    assert [chunk async for chunk in adapter.generate_reply(identity, "hi", cancelled[0])] == []
+
+
+@pytest.mark.asyncio
+async def test_production_provider_factory_owns_session_tts_and_uses_injected_orchestrator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.agent.src.providers import doubao_tts, funasr_stt
+
+    asr_config = funasr_stt.FunASRConfig(api_key="asr-key", ws_url="ws://asr")
+    tts_config = doubao_tts.DoubaoTTSConfig(
+        ws_url="ws://tts",
+        api_key="tts-key",
+        speaker="speaker",
+    )
+    monkeypatch.setattr(
+        funasr_stt.FunASRConfig,
+        "from_env",
+        classmethod(lambda cls: asr_config),
+    )
+    monkeypatch.setattr(
+        doubao_tts.DoubaoTTSConfig,
+        "from_env",
+        classmethod(lambda cls: tts_config),
+    )
+    monkeypatch.setattr(doubao_tts, "DoubaoTTS", FakeProductionTTS)
+    monkeypatch.setenv("MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY", "fake.module:build")
+    monkeypatch.setattr(
+        "services.agent.src.voice_core.provider_adapter.importlib.import_module",
+        lambda _name: SimpleNamespace(build=lambda _settings: lambda _identity: FakeLLM()),
+    )
+    FakeProductionTTS.instances.clear()
+    settings = SimpleNamespace(
+        environment="development",
+        llm_api_key="llm-key",
+        llm_base_url="https://llm.example/v1",
+        llm_fast_model="fast-model",
+        llm_provider="bailian_deepseek",
+    )
+
+    factory = build_production_provider_factory(cast(Any, settings))
+    first_identity = SessionIdentity("production-1", stream_epoch=1)
+    second_identity = SessionIdentity("production-2", stream_epoch=1)
+    first = factory(first_identity)
+    second = factory(second_identity)
+
+    assert first.speech_synthesis is not second.speech_synthesis
+    fence = GenerationFence(first_identity.session_id, 1, 1, 0)
+    chunks = [chunk async for chunk in first.generate_reply(first_identity, "你好", fence)]
+    assert [chunk.text for chunk in chunks] == ["你好。"]
+    assert [chunk.assistant_text_delta for chunk in chunks] == ["你好。"]
+    assert cast(FakeProductionTTS, first.speech_synthesis).fence == fence
+    await first.close(first_identity)
+    assert cast(FakeProductionTTS, first.speech_synthesis).closed
+
+
+def test_production_provider_factory_fails_closed_without_production_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.agent.src.providers import doubao_tts, funasr_stt
+
+    monkeypatch.setattr(
+        funasr_stt.FunASRConfig,
+        "from_env",
+        classmethod(
+            lambda cls: funasr_stt.FunASRConfig(
+                api_key="",
+                ws_url="wss://asr.example/ws",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        doubao_tts.DoubaoTTSConfig,
+        "from_env",
+        classmethod(
+            lambda cls: doubao_tts.DoubaoTTSConfig(
+                ws_url="wss://tts.example/ws",
+                api_key="tts-key",
+                speaker="speaker",
+            )
+        ),
+    )
+    settings = SimpleNamespace(
+        environment="production",
+        llm_api_key="",
+        llm_base_url="https://llm.example/v1",
+        llm_fast_model="fast-model",
+        llm_provider="bailian_deepseek",
+    )
+
+    monkeypatch.setenv("MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY", "fake.module:build")
+    monkeypatch.setattr(
+        "services.agent.src.voice_core.provider_adapter.importlib.import_module",
+        lambda _name: SimpleNamespace(build=lambda _settings: lambda _identity: FakeLLM()),
+    )
+    with pytest.raises(ValueError, match="DASHSCOPE_API_KEY"):
+        build_production_provider_factory(cast(Any, settings))
+
+
+def test_production_provider_factory_rejects_raw_llm_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY", raising=False)
+
+    with pytest.raises(ValueError, match="full Agent pipeline"):
+        build_production_provider_factory(cast(Any, SimpleNamespace()))

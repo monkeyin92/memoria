@@ -1,9 +1,19 @@
 package mediaedge
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 )
+
+var ErrStaleDownlinkGeneration = errors.New("downlink generation is stale")
+
+const maxCancelResults = 64
+
+type cancelResult struct {
+	current   Fence
+	cancelled Fence
+}
 
 type SessionState string
 
@@ -25,26 +35,30 @@ type SessionStats struct {
 }
 
 type Session struct {
-	mu                 sync.Mutex
-	ID                 string
-	AccountID          string
-	DeviceID           string
-	ClientType         string
-	StreamEpoch        uint64
-	Generation         Fence
-	State              SessionState
-	MaxPendingFrames   int
-	uplink             []AudioFrame
-	downlink           []AudioFrame
-	lastUplinkSequence uint64
-	lastDownlinkSeq    uint64
-	hasUplinkSequence  bool
-	hasDownlinkSeq     bool
-	lastCaptureEnd     uint64
-	uplinkFrames       uint64
-	downlinkFrames     uint64
-	staleFrames        uint64
-	overflowFrames     uint64
+	mu                    sync.Mutex
+	ID                    string
+	AccountID             string
+	DeviceID              string
+	ClientType            string
+	StreamEpoch           uint64
+	Generation            Fence
+	generationActive      bool
+	State                 SessionState
+	MaxPendingFrames      int
+	uplink                []AudioFrame
+	downlink              []AudioFrame
+	lastUplinkSequence    uint64
+	lastDownlinkSeq       uint64
+	hasUplinkSequence     bool
+	hasDownlinkSeq        bool
+	lastCaptureEnd        uint64
+	uplinkFrames          uint64
+	downlinkFrames        uint64
+	staleFrames           uint64
+	overflowFrames        uint64
+	cancelResults         map[string]cancelResult
+	cancelResultOrder     []string
+	lastDownlinkSourceEnd uint64
 }
 
 // Epoch returns the authoritative stream epoch without exposing an unlocked
@@ -81,8 +95,10 @@ func NewSession(request OpenSessionRequest, maxPendingFrames int) (*Session, err
 		ClientType:       defaultClientType(request.ClientType),
 		StreamEpoch:      request.StreamEpoch,
 		Generation:       Fence{SessionID: request.SessionID},
+		generationActive: true,
 		State:            SessionActive,
 		MaxPendingFrames: maxPendingFrames,
+		cancelResults:    make(map[string]cancelResult),
 	}, nil
 }
 
@@ -129,6 +145,10 @@ func (s *Session) AcceptUplink(frame AudioFrame) error {
 		s.overflowFrames++
 		return fmt.Errorf("uplink queue is full")
 	}
+	if ^uint64(0)-frame.CaptureStartSample < frame.FrameSamples {
+		s.staleFrames++
+		return fmt.Errorf("capture sample range overflows")
+	}
 	s.lastUplinkSequence = frame.Sequence
 	s.hasUplinkSequence = true
 	s.lastCaptureEnd = frame.CaptureStartSample + frame.FrameSamples
@@ -155,6 +175,10 @@ func (s *Session) AcknowledgeUplink(sequence uint64) error {
 func (s *Session) AcceptDownlink(frame AudioFrame) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.acceptDownlinkLocked(frame)
+}
+
+func (s *Session) acceptDownlinkLocked(frame AudioFrame) error {
 	if s.State != SessionActive {
 		s.staleFrames++
 		return fmt.Errorf("session is not active")
@@ -171,19 +195,62 @@ func (s *Session) AcceptDownlink(frame AudioFrame) error {
 		s.staleFrames++
 		return fmt.Errorf("downlink sequence has a gap")
 	}
-	actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch}
-	if !actual.Equal(s.Generation) {
+	if !s.hasDownlinkSeq && (frame.Sequence != 0 || frame.CaptureStartSample != 0) {
 		s.staleFrames++
-		return fmt.Errorf("downlink generation is stale")
+		return fmt.Errorf("first downlink frame must start at sequence and sample zero")
+	}
+	if s.hasDownlinkSeq && frame.CaptureStartSample != s.lastDownlinkSourceEnd {
+		s.staleFrames++
+		return fmt.Errorf("downlink sample range has a gap")
+	}
+	actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch}
+	if !s.generationActive || !actual.Equal(s.Generation) {
+		s.staleFrames++
+		return ErrStaleDownlinkGeneration
 	}
 	if len(s.downlink) >= s.MaxPendingFrames {
 		s.overflowFrames++
 		return fmt.Errorf("downlink queue is full")
 	}
+	if ^uint64(0)-frame.CaptureStartSample < frame.FrameSamples {
+		s.staleFrames++
+		return fmt.Errorf("downlink sample range overflows")
+	}
 	s.lastDownlinkSeq = frame.Sequence
 	s.hasDownlinkSeq = true
+	s.lastDownlinkSourceEnd = frame.CaptureStartSample + frame.FrameSamples
 	s.downlink = append(s.downlink, frame)
 	s.downlinkFrames++
+	return nil
+}
+
+// DeliverDownlink keeps the authoritative generation check, bounded queue and
+// transport write in one order. A failed sender leaves the frame pending; a
+// successful sender retires it immediately.
+func (s *Session) DeliverDownlink(frame AudioFrame, sender DownlinkSender) error {
+	if err := s.AcceptDownlink(frame); err != nil {
+		return err
+	}
+	if sender == nil {
+		return nil
+	}
+	if err := sender(frame); err != nil {
+		return err
+	}
+	return s.AcknowledgeDownlink(frame.Sequence)
+}
+
+func (s *Session) AcknowledgeDownlink(sequence uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.acknowledgeDownlinkLocked(sequence)
+}
+
+func (s *Session) acknowledgeDownlinkLocked(sequence uint64) error {
+	if len(s.downlink) == 0 || s.downlink[0].Sequence != sequence {
+		return fmt.Errorf("downlink sequence is not pending")
+	}
+	s.downlink = s.downlink[1:]
 	return nil
 }
 
@@ -192,12 +259,16 @@ func (s *Session) AcceptDownlink(frame AudioFrame) error {
 func (s *Session) PopDownlink() (AudioFrame, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.downlink) == 0 {
-		return AudioFrame{}, false
+	for len(s.downlink) > 0 {
+		frame := s.downlink[0]
+		s.downlink = s.downlink[1:]
+		actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch}
+		if s.generationActive && actual.Equal(s.Generation) {
+			return frame, true
+		}
+		s.staleFrames++
 	}
-	frame := s.downlink[0]
-	s.downlink = s.downlink[1:]
-	return frame, true
+	return AudioFrame{}, false
 }
 
 func (s *Session) AdvanceGeneration(fence Fence) error {
@@ -211,11 +282,124 @@ func (s *Session) AdvanceGeneration(fence Fence) error {
 		(fence.TurnID == s.Generation.TurnID && fence.GenerationID == s.Generation.GenerationID && fence.ToolEpoch < s.Generation.ToolEpoch) {
 		return fmt.Errorf("generation must advance monotonically")
 	}
+	if fence.Equal(s.Generation) {
+		if !s.generationActive {
+			return fmt.Errorf("cancelled generation cannot be reactivated")
+		}
+		return nil
+	}
 	s.Generation = fence
-	// Cancel is a gate operation; draining the queue is intentionally not the
-	// correctness mechanism.  Consumers will reject any frame with the old
-	// fence even if one is already buffered.
+	s.generationActive = true
+	s.hasDownlinkSeq = false
+	s.lastDownlinkSeq = 0
+	s.lastDownlinkSourceEnd = 0
+	s.discardStaleDownlinkLocked()
+	// The gate remains authoritative even though stale buffered frames are
+	// retired eagerly to release bounded queue capacity.
 	return nil
+}
+
+// CancelGeneration atomically derives and installs the next generation from
+// the current authoritative fence. The session and uplink remain active.
+func (s *Session) CancelGeneration(eventID string, expected *Fence) (current, cancelled Fence, replayed bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if eventID == "" {
+		return Fence{}, Fence{}, false, fmt.Errorf("stop event id is required")
+	}
+	if result, ok := s.cancelResults[eventID]; ok {
+		if expected != nil && !expected.Equal(result.current) {
+			return Fence{}, Fence{}, false, fmt.Errorf("stop event id was reused for another generation")
+		}
+		return result.current, result.cancelled, true, nil
+	}
+	if s.State != SessionActive {
+		return Fence{}, Fence{}, false, fmt.Errorf("session is not active")
+	}
+	if !s.generationActive || (expected != nil && !expected.Equal(s.Generation)) {
+		return Fence{}, Fence{}, false, fmt.Errorf("generation cancel fence is stale")
+	}
+	if s.Generation.GenerationID == ^uint64(0) {
+		return Fence{}, Fence{}, false, fmt.Errorf("generation_id cannot advance")
+	}
+	current = s.Generation
+	cancelled = current
+	cancelled.GenerationID++
+	s.Generation = cancelled
+	s.generationActive = false
+	s.hasDownlinkSeq = false
+	s.lastDownlinkSeq = 0
+	s.lastDownlinkSourceEnd = 0
+	if len(s.cancelResultOrder) == maxCancelResults {
+		delete(s.cancelResults, s.cancelResultOrder[0])
+		s.cancelResultOrder = s.cancelResultOrder[1:]
+	}
+	s.cancelResults[eventID] = cancelResult{current: current, cancelled: cancelled}
+	s.cancelResultOrder = append(s.cancelResultOrder, eventID)
+	s.discardStaleDownlinkLocked()
+	return current, cancelled, false, nil
+}
+
+func (s *Session) cancelledGeneration(eventID string) (current, cancelled Fence, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result, ok := s.cancelResults[eventID]
+	if eventID == "" || !ok {
+		return Fence{}, Fence{}, false
+	}
+	return result.current, result.cancelled, true
+}
+
+// ApplyCancelledGeneration consumes the authoritative cancellation emitted by
+// Voice Core. It is idempotent with a cancellation already initiated locally.
+func (s *Session) ApplyCancelledGeneration(cancelled Fence) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.generationActive && s.Generation.Equal(cancelled) {
+		return nil
+	}
+	if !s.generationActive || cancelled.SessionID != s.ID ||
+		cancelled.TurnID != s.Generation.TurnID ||
+		cancelled.ToolEpoch != s.Generation.ToolEpoch ||
+		s.Generation.GenerationID == ^uint64(0) ||
+		cancelled.GenerationID != s.Generation.GenerationID+1 {
+		return fmt.Errorf("cancelled generation does not match current fence")
+	}
+	s.Generation = cancelled
+	s.generationActive = false
+	s.hasDownlinkSeq = false
+	s.lastDownlinkSeq = 0
+	s.lastDownlinkSourceEnd = 0
+	s.discardStaleDownlinkLocked()
+	return nil
+}
+
+func (s *Session) GenerationSnapshot() (Fence, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Generation, s.generationActive
+}
+
+func (s *Session) withActiveGeneration(fence Fence, action func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.generationActive || !s.Generation.Equal(fence) {
+		return fmt.Errorf("generation fence is stale")
+	}
+	return action()
+}
+
+func (s *Session) discardStaleDownlinkLocked() {
+	kept := s.downlink[:0]
+	for _, frame := range s.downlink {
+		actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch}
+		if s.generationActive && actual.Equal(s.Generation) {
+			kept = append(kept, frame)
+		} else {
+			s.staleFrames++
+		}
+	}
+	s.downlink = kept
 }
 
 func (s *Session) Reconnect() (uint64, error) {
@@ -226,10 +410,13 @@ func (s *Session) Reconnect() (uint64, error) {
 	}
 	s.StreamEpoch++
 	s.hasUplinkSequence = false
-	s.hasDownlinkSeq = false
 	s.lastCaptureEnd = 0
 	s.uplink = nil
 	s.downlink = nil
+	// Stop idempotency is scoped to one transport epoch. Reusing an event id
+	// after reconnect must not replay a cancellation fence from the old clock.
+	s.cancelResults = make(map[string]cancelResult)
+	s.cancelResultOrder = nil
 	return s.StreamEpoch, nil
 }
 
@@ -295,4 +482,20 @@ func (d *Directory) Delete(id string) bool {
 	}
 	delete(d.sessions, id)
 	return true
+}
+
+// CloseAll releases every edge-owned session during process shutdown. The
+// control-plane TTL still uses CloseSession for individual expiry; this sweep
+// prevents a graceful server stop from retaining the directory map.
+func (d *Directory) CloseAll() {
+	d.mu.Lock()
+	sessions := make([]*Session, 0, len(d.sessions))
+	for id, session := range d.sessions {
+		sessions = append(sessions, session)
+		delete(d.sessions, id)
+	}
+	d.mu.Unlock()
+	for _, session := range sessions {
+		session.Stop()
+	}
 }

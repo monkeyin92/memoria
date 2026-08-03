@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +35,8 @@ from services.agent.src.voice_core.media_protocol import (
 from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment
 
 media_pb2: Any = _media_pb2
+KWS_HARD_STOP_MIN_CONFIDENCE = 0.8
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,6 +231,23 @@ class MediaBridgeGrpcServer:
                     current_generation_id=connection.session.fence.generation_id,
                 )
             )
+            if connection.session.fence.turn_id or connection.session.fence.generation_id or connection.session.fence.tool_epoch:
+                action = (
+                    media_pb2.GENERATION_ACTION_RESUME
+                    if connection.session.generation_active
+                    else media_pb2.GENERATION_ACTION_CANCEL
+                )
+                yield media_pb2.CoreToMedia(
+                    generation=media_pb2.GenerationControl(
+                        identity=_identity_to_proto(connection.session.identity),
+                        turn_id=connection.session.fence.turn_id,
+                        generation_id=connection.session.fence.generation_id,
+                        tool_epoch=connection.session.fence.tool_epoch,
+                        action=action,
+                        reason="stream_reconnected",
+                        sequence=self._next_event_sequence(connection),
+                    )
+                )
             while True:
                 message = await outgoing.get()
                 if message is None:
@@ -262,10 +283,13 @@ class MediaBridgeGrpcServer:
                     holder["connection"] = connection
                     ready.set()
                     continue
+                if connection.closed:
+                    break
                 await self._handle_request(connection, request)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            logger.exception("media bridge request loop failed")
             holder["error"] = exc
             if not ready.is_set():
                 ready.set()
@@ -279,6 +303,15 @@ class MediaBridgeGrpcServer:
     @staticmethod
     def _validate_hello(hello: Any) -> None:
         """Reject explicitly mismatched media formats at the session boundary."""
+
+        identity = getattr(hello, "identity", None)
+        if identity is None:
+            raise ValueError("media hello identity is required")
+        for field_name in ("session_id", "account_id", "device_id"):
+            if not str(getattr(identity, field_name, "")).strip():
+                raise ValueError(f"media hello {field_name} is required")
+        if str(getattr(identity, "client_type", "")).strip() not in {"h5", "device"}:
+            raise ValueError("media hello client_type must be h5 or device")
 
         expected = {
             "uplink_format": (16_000, 1, 20),
@@ -306,8 +339,15 @@ class MediaBridgeGrpcServer:
                 raise ValueError(f"{field_name} format is not supported")
 
     def _open_connection(self, identity: SessionIdentity) -> _Connection:
-        if identity.session_id in self._connections:
-            raise ValueError("media session already has an active bridge")
+        existing = self._connections.get(identity.session_id)
+        if existing is not None:
+            if identity.stream_epoch <= existing.session.identity.stream_epoch:
+                raise ValueError("media session already has an active bridge")
+            # A newer stream epoch owns the session immediately.  Wake the
+            # older writer; its late ``finally`` must not tear down the new
+            # connection or provider context.
+            self._terminate_outgoing(existing)
+            self._connections.pop(identity.session_id, None)
         session = self.bridge.get(identity.session_id)
         if session is None:
             session = self.bridge.open(identity)
@@ -364,15 +404,27 @@ class MediaBridgeGrpcServer:
         request: media_pb2.MediaToCore,
     ) -> None:
         event_name = request.WhichOneof("event")
+        if event_name is None:
+            await self._error(connection, "invalid_media_event", "media event is required")
+            return
         if event_name == "audio":
             audio = request.audio
             self._require_identity(connection, audio.identity)
+            raw_payload = bytes(audio.payload)
+            frame_samples = int(audio.frame_samples)
+            if frame_samples <= 0 or len(raw_payload) != frame_samples * 2:
+                await self._error(
+                    connection,
+                    "invalid_audio_frame",
+                    "PCM payload length does not match frame_samples",
+                )
+                return
             frame = AudioFrame(
                 identity=connection.session.identity,
                 sequence=int(audio.sequence),
                 capture_start_sample=int(audio.capture_start_sample),
-                frame_samples=int(audio.frame_samples),
-                payload=bytes(audio.payload),
+                frame_samples=frame_samples,
+                payload=raw_payload,
                 crc32c=int(audio.crc32c) if audio.crc32c else None,
                 discontinuity=bool(audio.discontinuity),
             )
@@ -393,6 +445,24 @@ class MediaBridgeGrpcServer:
             event = request.vad
             self._require_identity(connection, event.identity)
             sample = int(event.sample_position)
+            speech_end = int(event.type) == media_pb2.VAD_EVENT_SPEECH_END
+            voiced_end_sample: int | None = None
+            if speech_end:
+                if not event.HasField("voiced_end_sample"):
+                    await self._error(
+                        connection,
+                        "invalid_vad_event",
+                        "speech-end VAD requires voiced_end_sample",
+                    )
+                    return
+                voiced_end_sample = int(event.voiced_end_sample)
+                if voiced_end_sample > sample:
+                    await self._error(
+                        connection,
+                        "invalid_vad_event",
+                        "voiced_end_sample cannot exceed sample_position",
+                    )
+                    return
             segment = SpeechSegment(
                 session_id=connection.session.identity.session_id,
                 stream_epoch=connection.session.identity.stream_epoch,
@@ -403,8 +473,15 @@ class MediaBridgeGrpcServer:
                 capture_start_sample=sample,
                 capture_end_sample=sample + 1,
                 confidence=float(event.probability),
+                final=speech_end,
+                voiced_end_sample=voiced_end_sample,
             )
             accepted = connection.session.timeline.add(segment)
+            if accepted and segment.hard_stop and (segment.confidence or 0.0) >= KWS_HARD_STOP_MIN_CONFIDENCE:
+                connection.session.apply_local_keyword_stop(
+                    confidence=float(segment.confidence or 0.0),
+                    min_confidence=KWS_HARD_STOP_MIN_CONFIDENCE,
+                )
             if accepted and self.on_speech_segment is not None:
                 await self.on_speech_segment(connection.session, segment)
             return
@@ -423,8 +500,14 @@ class MediaBridgeGrpcServer:
                 text=str(event.keyword),
                 final=True,
                 confidence=float(event.confidence),
+                hard_stop=bool(event.hard_stop),
             )
             accepted = connection.session.timeline.add(segment)
+            if accepted and segment.hard_stop and (segment.confidence or 0.0) >= KWS_HARD_STOP_MIN_CONFIDENCE:
+                connection.session.apply_local_keyword_stop(
+                    confidence=float(segment.confidence or 0.0),
+                    min_confidence=KWS_HARD_STOP_MIN_CONFIDENCE,
+                )
             if accepted and self.on_speech_segment is not None:
                 await self.on_speech_segment(connection.session, segment)
             return
@@ -452,8 +535,10 @@ class MediaBridgeGrpcServer:
                 try:
                     payload = envelope.payload
 
-                    def payload_int(name: str, fallback: int) -> int:
-                        value = payload.get(name, fallback)
+                    def payload_int(name: str) -> int:
+                        if name not in payload:
+                            raise ValueError(f"{name} is required")
+                        value = payload[name]
                         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                             raise ValueError(f"{name} must be a non-negative integer")
                         return int(value)
@@ -465,13 +550,13 @@ class MediaBridgeGrpcServer:
                         raise ValueError("approximate must be boolean")
                     progress = PlaybackProgress(
                         identity=connection.session.identity,
-                        generation_id=payload_int("generation_id", envelope.generation_id),
-                        received_sequence=payload_int("received_sequence", 0),
-                        rendered_sample_end=payload_int("rendered_sample_end", 0),
-                        client_monotonic_ms=payload_int("client_monotonic_ms", 0),
+                        generation_id=payload_int("generation_id"),
+                        received_sequence=payload_int("received_sequence"),
+                        rendered_sample_end=payload_int("rendered_sample_end"),
+                        client_monotonic_ms=payload_int("client_monotonic_ms"),
                         approximate=approximate,
-                        turn_id=payload_int("turn_id", envelope.turn_id),
-                        tool_epoch=payload_int("tool_epoch", envelope.tool_epoch),
+                        turn_id=payload_int("turn_id"),
+                        tool_epoch=payload_int("tool_epoch"),
                     )
                 except (TypeError, ValueError) as exc:
                     await self._error(connection, "invalid_playback_progress", str(exc))
@@ -532,9 +617,21 @@ class MediaBridgeGrpcServer:
             connection.outgoing.put_nowait(message)
         except asyncio.QueueFull:
             connection.session.overflow_count += 1
-            connection.closed = True
+            self._terminate_outgoing(connection)
             return False
         return True
+
+    @staticmethod
+    def _terminate_outgoing(connection: _Connection) -> None:
+        """Wake the writer immediately when bounded delivery is exhausted."""
+
+        connection.closed = True
+        while True:
+            try:
+                connection.outgoing.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        connection.outgoing.put_nowait(None)
 
     async def emit_pcm(self, session_id: str, frame: PCMFrame) -> bool:
         connection = self._connections.get(session_id)
@@ -582,6 +679,7 @@ class MediaBridgeGrpcServer:
             return False
         if not connection.session.reset_downlink_generation(fence):
             return False
+        connection.session.generation_active = action != media_pb2.GENERATION_ACTION_CANCEL
         return await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
@@ -611,6 +709,10 @@ class MediaBridgeGrpcServer:
         if connection is None:
             return False
         sequence = self._next_event_sequence(connection)
+        event_id = (
+            f"{connection.session.identity.session_id}:"
+            f"{connection.session.identity.stream_epoch}:{sequence}"
+        )
         return await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
@@ -619,7 +721,10 @@ class MediaBridgeGrpcServer:
                     type=event_type,
                     json_payload=json.dumps(
                         {
+                            "v": 1,
+                            "protocol": "media-v1",
                             "type": event_type,
+                            "event_id": event_id,
                             "session_id": connection.session.identity.session_id,
                             "stream_epoch": connection.session.identity.stream_epoch,
                             "sequence": sequence,
@@ -627,6 +732,7 @@ class MediaBridgeGrpcServer:
                             "turn_id": turn_id,
                             "generation_id": generation_id,
                             "tool_epoch": tool_epoch,
+                            "server_monotonic_ms": max(0, time.monotonic_ns() // 1_000_000),
                         },
                         ensure_ascii=False,
                         separators=(",", ":"),

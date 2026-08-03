@@ -1,3 +1,5 @@
+import { withAbortTimeout } from "../network/abortTimeout.js";
+
 const baseUrl = (import.meta.env.VITE_CONTROL_API_URL || "/memoria-api").replace(
   /\/$/,
   "",
@@ -125,48 +127,63 @@ async function upgradeLegacyAccess(token) {
 async function performRequest(
   path,
   options = {},
-  { authenticated = true, responseType = "json" } = {},
+  {
+    authenticated = true,
+    responseType = "json",
+    timeoutMs = null,
+  } = {},
 ) {
   if (authenticated && !activeIdentity?.access_token) {
     throw new Error("账号身份尚未就绪");
   }
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...options,
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(authenticated
-        ? { Authorization: `Bearer ${activeIdentity.access_token}` }
-        : {}),
-      ...options.headers,
-    },
-  });
+  const { signal: parentSignal, ...fetchOptions } = options;
+  return withAbortTimeout(
+    async (signal) => {
+      const response = await fetch(`${baseUrl}${path}`, {
+        ...fetchOptions,
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(authenticated
+            ? { Authorization: `Bearer ${activeIdentity.access_token}` }
+            : {}),
+          ...fetchOptions.headers,
+        },
+        signal,
+      });
 
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    let message = detail;
-    let errorCode = null;
-    try {
-      const parsed = JSON.parse(detail);
-      if (typeof parsed?.detail === "string") message = parsed.detail;
-      if (typeof parsed?.detail?.code === "string") {
-        errorCode = parsed.detail.code;
-        message = apiErrorMessages[errorCode] || "请求未完成，请刷新后重试。";
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        let message = detail;
+        let errorCode = null;
+        try {
+          const parsed = JSON.parse(detail);
+          if (typeof parsed?.detail === "string") message = parsed.detail;
+          if (typeof parsed?.detail?.code === "string") {
+            errorCode = parsed.detail.code;
+            message = apiErrorMessages[errorCode] || "请求未完成，请刷新后重试。";
+          }
+        } catch {
+          // Non-JSON upstream failures keep their safe response text.
+        }
+        const error = new Error(message || `请求失败（${response.status}）`);
+        error.status = response.status;
+        error.code = errorCode;
+        error.retryAfter = response.headers?.get?.("Retry-After") || null;
+        throw error;
       }
-    } catch {
-      // Non-JSON upstream failures keep their safe response text.
-    }
-    const error = new Error(message || `请求失败（${response.status}）`);
-    error.status = response.status;
-    error.code = errorCode;
-    error.retryAfter = response.headers?.get?.("Retry-After") || null;
-    throw error;
-  }
 
-  if (response.status === 204) return null;
-  if (responseType === "blob") return response.blob();
-  if (responseType === "text") return response.text();
-  return response.json();
+      if (response.status === 204) return null;
+      if (responseType === "blob") return response.blob();
+      if (responseType === "text") return response.text();
+      return response.json();
+    },
+    {
+      timeoutMs,
+      message: "请求超时，请稍后重试",
+      signal: parentSignal,
+    },
+  );
 }
 
 function persistSnapshot(identity) {
@@ -238,14 +255,26 @@ function refreshAccess() {
 export async function request(
   path,
   options = {},
-  { authenticated = true, responseType = "json" } = {},
+  {
+    authenticated = true,
+    responseType = "json",
+    timeoutMs = null,
+  } = {},
 ) {
   try {
-    return await performRequest(path, options, { authenticated, responseType });
+    return await performRequest(path, options, {
+      authenticated,
+      responseType,
+      timeoutMs,
+    });
   } catch (error) {
     if (!authenticated || error?.status !== 401) throw error;
     await refreshAccess();
-    return performRequest(path, options, { authenticated, responseType });
+    return performRequest(path, options, {
+      authenticated,
+      responseType,
+      timeoutMs,
+    });
   }
 }
 

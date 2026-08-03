@@ -71,6 +71,32 @@ async def test_session_directory_advance_generation_is_cas_fenced() -> None:
 
 
 @pytest.mark.asyncio
+async def test_session_directory_observes_edge_generation_without_inventing_next_value() -> None:
+    directory = InMemorySessionDirectory()
+    claimed = await directory.claim(
+        "observed-generation",
+        media_edge_id="edge-a",
+        voice_core_id="core-a",
+        device_id="device-1",
+        account_id="account-1",
+        generation=1,
+    )
+    observed = await directory.observe_generation(
+        claimed.session_id,
+        generation=7,
+        expected_stream_epoch=claimed.stream_epoch,
+    )
+    assert observed.generation_id == 7
+    assert await directory.observe_generation(
+        claimed.session_id,
+        generation=7,
+        expected_stream_epoch=claimed.stream_epoch,
+    ) == observed
+    with pytest.raises(SessionEpochConflict):
+        await directory.observe_generation(claimed.session_id, generation=6)
+
+
+@pytest.mark.asyncio
 async def test_session_directory_fallback_to_livekit_preserves_epoch_and_is_cas_fenced() -> None:
     directory = InMemorySessionDirectory()
     claimed = await directory.claim(

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+
+import pytest
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.voice_core.asr_stream_supervisor import ASRStreamSupervisor
 from services.agent.src.voice_core.device_protocol import DeviceCommand, DeviceCommandAck
@@ -210,7 +213,7 @@ def test_media_v1_envelope_and_audio_metadata_round_trip() -> None:
         sequence=7,
         capture_start_sample=320,
         frame_samples=320,
-        payload=b"\x00\x01",
+        payload=b"\x00\x01" * 320,
         discontinuity=True,
     )
     assert audio.capture_end_sample == 640
@@ -224,8 +227,19 @@ def test_media_v1_envelope_and_audio_metadata_round_trip() -> None:
     )
     decoded = MediaEnvelope.decode(envelope.encode())
     assert decoded == envelope
-    assert decoded.payload["payload_b64"] == "AAE="
+    assert decoded.payload["payload_b64"] == base64.b64encode(audio.payload).decode("ascii")
     assert AudioFormat(AudioEncoding.PCM_S16LE, 16_000).frame_ms == 20
+
+
+def test_audio_frame_rejects_pcm_length_mismatch() -> None:
+    with pytest.raises(ValueError, match="payload length"):
+        AudioFrame(
+            identity=SessionIdentity("bad-audio"),
+            sequence=0,
+            capture_start_sample=0,
+            frame_samples=160,
+            payload=b"\x00\x00",
+        )
 
 
 def test_media_bridge_drops_stale_audio_and_restarts_on_new_epoch() -> None:
@@ -303,6 +317,26 @@ def test_asr_supervisor_uses_watermark_and_task_epoch_on_reconnect() -> None:
     supervisor.mark_committed(640)
     assert not supervisor.accept_result(result, session_id="session")
     assert supervisor.replay_start_sample() == 640
+    expanded = ASRResult(
+        task_epoch=2,
+        sentence_id="s1",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=800,
+        text="你好世界",
+        is_final=True,
+    )
+    assert supervisor.accept_result(expanded, session_id="session")
+    late_old_task = ASRResult(
+        task_epoch=1,
+        sentence_id="s1",
+        revision=2,
+        capture_start_sample=0,
+        capture_end_sample=800,
+        text="旧结果",
+        is_final=True,
+    )
+    assert not supervisor.accept_result(late_old_task, session_id="session")
     assert supervisor.reconnect(stream_epoch=2)
     assert supervisor.task_epoch == 2
 
@@ -358,6 +392,63 @@ def test_media_bridge_stop_uses_envelope_event_id_when_payload_key_is_absent() -
     assert bridge.fence.generation_id == 1
 
 
+def test_media_bridge_stop_retry_cannot_rebind_idempotency_key_to_other_fence() -> None:
+    server = MediaBridgeServer()
+    server.open(SessionIdentity("stop-fence", stream_epoch=1))
+    event = MediaEnvelope.create(
+        type="client.stop_assistant",
+        event_id="evt-stop",
+        session_id="stop-fence",
+        stream_epoch=1,
+        sequence=0,
+        turn_id=0,
+        generation_id=0,
+        tool_epoch=0,
+        payload={"idempotency_key": "stable-stop"},
+    )
+    assert server.accept_client_event(event)
+    forged = MediaEnvelope.create(
+        type="client.stop_assistant",
+        event_id="evt-other",
+        session_id="stop-fence",
+        stream_epoch=1,
+        sequence=0,
+        turn_id=1,
+        generation_id=1,
+        tool_epoch=0,
+        payload={"idempotency_key": "stable-stop"},
+    )
+    assert not server.accept_client_event(forged)
+
+
+def test_media_bridge_stop_idempotency_is_scoped_to_stream_epoch() -> None:
+    server = MediaBridgeServer()
+    bridge = server.open(SessionIdentity("stop-reconnect", stream_epoch=1))
+    event = MediaEnvelope.create(
+        type="client.stop_assistant",
+        event_id="evt-reused",
+        session_id="stop-reconnect",
+        stream_epoch=1,
+        sequence=0,
+        payload={},
+    )
+    assert server.accept_client_event(event)
+    assert bridge.fence.generation_id == 1
+    assert bridge.reconnect(SessionIdentity("stop-reconnect", stream_epoch=2))
+    # Reconnect preserves the cancelled gate; a new START/RESUME control must
+    # arrive before a stop can target the new stream epoch.
+    replay = MediaEnvelope.create(
+        type="client.stop_assistant",
+        event_id="evt-reused",
+        session_id="stop-reconnect",
+        stream_epoch=2,
+        sequence=0,
+        payload={},
+    )
+    assert not server.accept_client_event(replay)
+    assert bridge.fence.generation_id == 1
+
+
 def test_media_bridge_rejects_audio_discontinuity_and_sample_gap() -> None:
     server = MediaBridgeServer()
     bridge = server.open(SessionIdentity("gap-session", stream_epoch=1))
@@ -366,7 +457,7 @@ def test_media_bridge_rejects_audio_discontinuity_and_sample_gap() -> None:
         sequence=0,
         capture_start_sample=0,
         frame_samples=160,
-        payload=b"pcm",
+        payload=b"\x00\x00" * 160,
     )
     assert bridge.accept_uplink(first)
     gap = AudioFrame(
@@ -374,7 +465,7 @@ def test_media_bridge_rejects_audio_discontinuity_and_sample_gap() -> None:
         sequence=1,
         capture_start_sample=320,
         frame_samples=160,
-        payload=b"pcm",
+        payload=b"\x00\x00" * 160,
     )
     assert not bridge.accept_uplink(gap)
     discontinuity = AudioFrame(
@@ -382,7 +473,7 @@ def test_media_bridge_rejects_audio_discontinuity_and_sample_gap() -> None:
         sequence=1,
         capture_start_sample=160,
         frame_samples=160,
-        payload=b"pcm",
+        payload=b"\x00\x00" * 160,
         discontinuity=True,
     )
     assert not bridge.accept_uplink(discontinuity)
@@ -394,6 +485,38 @@ def test_media_bridge_rejects_audio_discontinuity_and_sample_gap() -> None:
             sequence=2,
             capture_start_sample=320,
             frame_samples=160,
-            payload=b"pcm",
+            payload=b"\x00\x00" * 160,
         )
     )
+
+
+def test_media_bridge_playback_retry_cannot_change_same_event_payload() -> None:
+    server = MediaBridgeServer()
+    bridge = server.open(SessionIdentity("progress-retry", stream_epoch=1))
+    event = MediaEnvelope.create(
+        type="client.playback.progress",
+        event_id="progress-1",
+        session_id="progress-retry",
+        stream_epoch=1,
+        sequence=0,
+        payload={
+            "turn_id": 0,
+            "generation_id": 0,
+            "tool_epoch": 0,
+            "received_sequence": 0,
+            "rendered_sample_end": 10,
+            "client_monotonic_ms": 20,
+            "approximate": True,
+        },
+    )
+    assert bridge.accept_client_progress(event)
+    assert bridge.accept_client_progress(event)
+    forged = MediaEnvelope.create(
+        type="client.playback.progress",
+        event_id="progress-1",
+        session_id="progress-retry",
+        stream_epoch=1,
+        sequence=0,
+        payload={**event.payload, "rendered_sample_end": 11},
+    )
+    assert not bridge.accept_client_progress(forged)

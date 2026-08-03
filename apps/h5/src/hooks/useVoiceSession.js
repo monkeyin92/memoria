@@ -316,6 +316,7 @@ export function useVoiceSession({
   const audioGainRef = useRef(1);
   const cascadeAudioElementsRef = useRef(new Map());
   const omniAudioElementRef = useRef(null);
+  const playbackFlushFenceRef = useRef(null);
   const audioTelemetryRef = useRef(null);
   const pendingEmotionRef = useRef(new Map());
   const latestAcceptedUserTurnRef = useRef(0);
@@ -343,8 +344,14 @@ export function useVoiceSession({
     voiceReplyEnabledRef.current = voiceReplyEnabled;
     const elements = audioContainerRef.current?.querySelectorAll("audio") || [];
     elements.forEach((element) => {
+      const wasAudible = !element.muted && element.volume > 0;
       element.muted =
         inputModeRef.current === "text" || !voiceReplyEnabled;
+      if (wasAudible && element.muted) {
+        cascadeTransportRef.current?.resetPlaybackTimelineFromTime?.(
+          element.currentTime,
+        );
+      }
     });
     if (!voiceReplyEnabled || inputModeRef.current === "text") {
       setAudioBlocked(false);
@@ -594,7 +601,7 @@ export function useVoiceSession({
   );
 
   const activateAudioElement = useCallback(
-    (element, isCurrent = () => true, publishPlaybackProgress = null) => {
+    (element, isCurrent = () => true, playbackProgress = null) => {
       if (!isCurrent() || !audioContainerRef.current) return;
       element.autoplay = true;
       element.playsInline = true;
@@ -629,10 +636,22 @@ export function useVoiceSession({
         });
       };
       element.addEventListener("timeupdate", onTimeUpdate);
-      if (typeof publishPlaybackProgress === "function") {
+      if (typeof playbackProgress?.publish === "function") {
         element.addEventListener("timeupdate", () => {
-          if (isCurrent() && element.currentTime > 0) {
-            void publishPlaybackProgress(element.currentTime).catch(() => undefined);
+          if (
+            isCurrent() &&
+            !element.muted &&
+            element.volume > 0 &&
+            element.currentTime >= 0
+          ) {
+            void playbackProgress.publish(element.currentTime).catch(() => undefined);
+          }
+        });
+        element.addEventListener("seeking", () => {
+          if (isCurrent()) {
+            void playbackProgress
+              .publish(element.currentTime, { seeking: true })
+              .catch(() => undefined);
           }
         });
       }
@@ -700,7 +719,10 @@ export function useVoiceSession({
         element,
         isCurrent,
         typeof transport?.publishPlaybackProgressFromTime === "function"
-          ? (seconds) => transport.publishPlaybackProgressFromTime(seconds)
+          ? {
+              publish: (seconds, options) =>
+                transport.publishPlaybackProgressFromTime(seconds, options),
+            }
           : null,
       );
     },
@@ -887,7 +909,13 @@ export function useVoiceSession({
         const elements = audioContainerRef.current?.querySelectorAll("audio") || [];
         await Promise.all(
           [...elements].map((element) => {
+            const wasAudible = !element.muted && element.volume > 0;
             element.muted = !activeEnabled;
+            if (wasAudible && element.muted) {
+              cascadeTransport?.resetPlaybackTimelineFromTime?.(
+                element.currentTime,
+              );
+            }
             return element.muted ? Promise.resolve() : element.play();
           }),
         );
@@ -933,6 +961,7 @@ export function useVoiceSession({
     traceStartedAtRef.current = performance.now();
     firstPlaybackRef.current = false;
     audioGainRef.current = 1;
+    playbackFlushFenceRef.current = null;
     audioDiagnosticsRef.current = [];
     setAudioDiagnostics([]);
 
@@ -1282,8 +1311,41 @@ export function useVoiceSession({
       if (event?.session_id !== sessionRef.current?.session_id) return;
       applyTranscript(event, { authoritative: true });
     };
+    const resumeStreamCorePlayback = (event) => {
+      const flushed = playbackFlushFenceRef.current;
+      if (!flushed || !event || typeof event !== "object") return;
+      const nextTurn = Number.isInteger(event.turn_id)
+        ? event.turn_id
+        : flushed.turnId;
+      const nextGeneration = Number.isInteger(event.generation_id)
+        ? event.generation_id
+        : flushed.generationId;
+      const newerFence =
+        nextTurn > flushed.turnId ||
+        (nextTurn === flushed.turnId && nextGeneration > flushed.generationId);
+      const assistantAudioStarted =
+        event.type === "assistant.audio.started" &&
+        (newerFence ||
+          (nextTurn === flushed.turnId &&
+            nextGeneration === flushed.generationId));
+      if (
+        !assistantAudioStarted &&
+        !(event.type === "assistant.audio.frame" && newerFence)
+      ) {
+        return;
+      }
+      if (
+        inputModeRef.current === "text" ||
+        !voiceReplyEnabledRef.current
+      ) {
+        return;
+      }
+      playbackFlushFenceRef.current = null;
+      void resumeAudio(true);
+    };
     const onStreamCoreDataReceived = (event) => {
       if (!event || typeof event !== "object") return;
+      resumeStreamCorePlayback(event);
       const payload = new TextEncoder().encode(JSON.stringify(event));
       onDataReceived(payload, { isAgent: true }, null, UI_TOPIC);
     };
@@ -1301,6 +1363,14 @@ export function useVoiceSession({
     };
     const onStreamCorePlaybackFlush = (_payload, event = {}) => {
       if (!isCurrent()) return;
+      playbackFlushFenceRef.current = {
+        turnId: Number.isInteger(event.turn_id)
+          ? event.turn_id
+          : turnRef.current,
+        generationId: Number.isInteger(event.generation_id)
+          ? event.generation_id
+          : generationRef.current,
+      };
       for (const element of cascadeAudioElementsRef.current.values()) {
         element.pause?.();
         try {
@@ -1316,6 +1386,7 @@ export function useVoiceSession({
       } catch {
         // Ignore non-seekable MediaStreams.
       }
+      transport?.resetPlaybackTimelineFromTime?.(omni?.currentTime || 0);
       clearAssistantExpression(
         Number.isInteger(event.generation_id)
           ? event.generation_id
@@ -1513,14 +1584,19 @@ export function useVoiceSession({
             streamCoreTransport: StreamCoreTransport,
             streamCoreOptions: {
               stopResponse,
-              reconnectSession: (sessionId, _current, streamEpoch) =>
-                reconnectMediaSession(sessionId, streamEpoch),
-              heartbeatSession: (sessionId, streamEpoch) =>
-                renewMediaSession(sessionId, streamEpoch),
+              reconnectSession: (sessionId, _current, streamEpoch, options) =>
+                reconnectMediaSession(sessionId, streamEpoch, options),
+              heartbeatSession: (sessionId, streamEpoch, options) =>
+                renewMediaSession(sessionId, streamEpoch, options),
               onMicrophoneTrack: (track) => observeMicrophoneTrack(track, isCurrent),
               onState: onStreamCoreState,
               onTranscript: onStreamCoreTranscript,
               onRemoteStream: (stream) => attachOmniAudio(stream, isCurrent, transport),
+              getPlaybackTime: () => omniAudioElementRef.current?.currentTime ?? null,
+              isPlaybackAudible: () => {
+                const element = omniAudioElementRef.current;
+                return Boolean(element && !element.muted && element.volume > 0);
+              },
               onDataReceived: onStreamCoreDataReceived,
               onPlaybackFlush: onStreamCorePlaybackFlush,
               onDiagnostic: onStreamCoreDiagnostic,
@@ -1662,6 +1738,7 @@ export function useVoiceSession({
     publishAudioDiagnostic,
     recordAudioDiagnostic,
     resetEmotionState,
+    resumeAudio,
     observeMicrophoneTrack,
     startStatsSampling,
     userId,

@@ -105,6 +105,10 @@ func main() {
 	}
 	server := mediaedge.NewServer(verifier, envInt("MEDIA_EDGE_MAX_PENDING_FRAMES", 100))
 	server.AllowInsecureDevelopment = !production && envBool("MEDIA_EDGE_ALLOW_INSECURE_DEVELOPMENT")
+	// This binary currently exposes only the development HTTP queue. It must
+	// not become ready in production until a real WHIP/WebRTC/RTP terminator
+	// installs an explicit DownlinkSender.
+	server.RequireExternalDownlinkSender = production
 	voiceCore, err := buildVoiceCoreBridge()
 	if err != nil {
 		log.Fatal(err)

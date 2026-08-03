@@ -6,11 +6,16 @@
   "additionalProperties": false,
   "required": [
     "v",
+    "protocol",
     "type",
     "event_id",
     "session_id",
     "stream_epoch",
     "sequence",
+    "turn_id",
+    "generation_id",
+    "tool_epoch",
+    "server_monotonic_ms",
     "payload"
   ],
   "properties": {

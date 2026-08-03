@@ -1,5 +1,48 @@
 # 项目交接
 
+## 2026-08-03：最新双轴评审整改（未发布）
+
+- 话轮入口不再把每个 ASR final 当作用户轮结束：`VAD_EVENT_SPEECH_END` 显式区分
+  含 hangover 的 `sample_position` 与尾静音前的 `voiced_end_sample`；
+  `MediaVoiceCoreRegistry` 只在 ASR final 覆盖后一边界且 900ms 静默窗口稳定后提交；500--800ms
+  句中停顿、超时后迟到 final、多 final 单话轮均有回归。canonical text 截止前一
+  声学边界，提交后再用 `sample_position` 推进 transport retire watermark，尾静音区间
+  的迟到/重放结果不会串入下一轮。FunASR 重连若返回跨 task
+  扩展区间，只接收能由连续区间和文本前缀证明的新后缀，歧义重叠 fail-closed。
+- Go Edge 的按钮停止和 `hard_stop=true && confidence>=0.8` KWS 都先在本地原子关闭
+  generation gate，再通知 Core；旧 PCM 立即拒绝，失败重试复用同一事件/fence，下一
+  generation 可继续下行。生产缺少真实 downlink sender 时 readiness/session creation
+  fail-closed；gRPC 输出队列溢出会唤醒 writer 并结束连接。
+- H5 播放 ACK 改为按完整 fence 的每代 `currentTime` 基线计算；flush/seek/静音/重连
+  重置基线，停止后更高权威 fence 会恢复同一 remote track。事件必须携带完整版本、
+  session/epoch/sequence/turn/generation/tool/server monotonic 字段。Control API 请求不再
+  全局硬限 10 秒；仅 heartbeat/reconnect/WHIP 等短请求显式超时，120 秒声纹录取不被误杀。
+- ASR supervisor 现在按 `task_epoch + sentence_id` 管理 revision，并拒绝旧 task 回写更新
+  segment；Media session 在送入 provider 前记录绝对 sample watermark。VAD endpoint 只允许
+  单调前进，重连后的 stop 幂等键按 stream epoch 隔离，Edge/Voice Core session 的显式关闭
+  会清理 bridge registry。流式 TTS 的字幕发布改为同一 fence 下的累计文本 revision，避免
+  后续短语覆盖前文；播放 ledger 仍对无 provider 对齐信息的整代范围 fail-closed。
+- Provider 多短句不再漏文本或 ledger：生产 TTS 在一个 generation 内只建一条双向流，
+  首短句完成即推入 TTS，不等待下一短句或 LLM EOS；无 provider 分句时间戳时采用保守的
+  整代 actual-heard span，避免中断时多记。generation/ASR 元数据均有界。
+- 删除了 media bridge 中“固定系统提示 + 当前文本”的简化生产 LLM 入口。生产
+  `build_production_provider_factory` 必须通过
+  `MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY` 注入既有完整 Agent 响应链（记忆、Persona、
+  权限、工具、安全规划），否则启动失败。仓库目前没有把这条外部注入冒充为已完成，
+  `media-runtime` profile 仍不可上线。
+- Control API `/stop-response` 先由 Edge/Core 返回完整权威 fence，再单调观察到 Session
+  Directory；相同 idempotency key 在“Edge 已成功、响应/目录更新失败”后仍复用原取消。
+  HTTP stop 不再关闭 session，后续 uplink/下一话轮 TTS 的 Go 回归已覆盖。
+- 本轮验证：Python 功能测试 `1641 passed, 29 skipped`，Ruff 与 strict mypy（216 个源文件）
+  通过；H5 `275 passed` 与 production build 通过；Go `vet/test/test-race` 通过；Proto
+  生成无 diff，media bridge smoke、synthetic replay/chaos/load、offline E2E、
+  `git diff --check` 通过。全仓本地 coverage 为 `81.00%`，仍低于既有 `85%` 门槛；本地
+  没有 CI PostgreSQL，29 个数据库/真实模型条件测试被跳过，本轮没有降低门槛或排除代码。
+- 未完成且不得包装成“全部生产验收”：真实 Pion/WHIP/RTP/DTLS/SRTP/Opus 终结器、完整
+  Agent orchestrated handler 注入、真实 Provider/浏览器/硬件 ACK、监护人授权儿童录音、
+  Redis/coturn 多实例、真实 chaos/load、灰度/回滚 SLO 证据。未发布、未切换 LiveKit、
+  未提交或推送；小程序素材、营销/研究文档和上传脚本等用户原有改动未触碰。
+
 ## 2026-08-03：全双工整改边界收口（未发布）
 
 - H5 `StreamCoreTransport` 现在等待真正 `connectionState=connected` 才报告 ready，

@@ -32,6 +32,8 @@ class SpeechSegment:
     final: bool = False
     confidence: float | None = None
     speaker_class: str | None = None
+    hard_stop: bool = False
+    voiced_end_sample: int | None = None
 
     def __post_init__(self) -> None:
         if not self.session_id:
@@ -48,6 +50,10 @@ class SpeechSegment:
             raise ValueError("capture_start_sample must be non-negative")
         if self.capture_end_sample <= self.capture_start_sample:
             raise ValueError("capture_end_sample must be greater than start")
+        if self.voiced_end_sample is not None and not (
+            0 <= self.voiced_end_sample < self.capture_end_sample
+        ):
+            raise ValueError("voiced end sample must precede the event sample end")
         if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
 

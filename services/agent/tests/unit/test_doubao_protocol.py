@@ -7,6 +7,7 @@ import pytest
 from services.agent.src.providers.doubao_protocol import (
     EventType,
     MessageType,
+    ServerMessage,
     align_subtitle_words,
     build_client_message,
     build_start_session_payload,
@@ -147,3 +148,64 @@ def test_rejects_truncated_or_compressed_frames() -> None:
     compressed[2] = 0x11
     with pytest.raises(ValueError, match="compressed"):
         parse_server_message(bytes(compressed))
+
+
+def test_server_payload_and_protocol_validation_edges() -> None:
+    empty = ServerMessage(0, 0, 0, "", "", b"")
+    assert empty.json_payload() == {}
+    with pytest.raises(ValueError, match="JSON object"):
+        ServerMessage(0, 0, 0, "", "", b"[]").json_payload()
+
+    bad_header = bytearray(b"\x01\x00\x00\x00\x00\x00\x00\x00")
+    with pytest.raises(ValueError, match="protocol header"):
+        parse_server_message(bytes(bad_header))
+    truncated_header = bytearray(b"\x13\x00\x00\x00\x00\x00\x00\x00")
+    with pytest.raises(ValueError, match="truncated.*header"):
+        parse_server_message(bytes(truncated_header))
+
+    unsupported_type = bytearray(
+        _server_frame(
+            message_type=MessageType.FULL_SERVER_RESPONSE,
+            event=EventType.CONNECTION_STARTED,
+            payload=b"{}",
+        )
+    )
+    unsupported_type[1] = 0x34
+    with pytest.raises(ValueError, match="unsupported.*message type"):
+        parse_server_message(bytes(unsupported_type))
+
+    audio_json = _server_frame(
+        message_type=MessageType.AUDIO_ONLY_SERVER,
+        event=EventType.TTS_RESPONSE,
+        session_id="session-1",
+        payload=b"{}",
+        serialization=1,
+    )
+    with pytest.raises(ValueError, match="audio frame.*raw"):
+        parse_server_message(audio_json)
+    unsupported_serialization = _server_frame(
+        message_type=MessageType.FULL_SERVER_RESPONSE,
+        event=EventType.TTS_RESPONSE,
+        session_id="session-1",
+        payload=b"{}",
+        serialization=2,
+    )
+    with pytest.raises(ValueError, match="response serialization"):
+        parse_server_message(unsupported_serialization)
+
+
+def test_subtitle_parser_handles_nested_and_malformed_words() -> None:
+    assert parse_subtitle_words([]) == ()
+    assert parse_subtitle_words({"payload": {"words": []}}) == ()
+    assert parse_subtitle_words({"payload": {}}) == ()
+    words = parse_subtitle_words(
+        {
+            "words": [
+                "bad",
+                {"word": 1, "startTime": 0, "endTime": 1},
+                {"word": "倒序", "startTime": 1, "endTime": 0},
+                {"word": "好", "startTime": 0, "endTime": 0.1},
+            ]
+        }
+    )
+    assert [(word.text, word.begin_ms, word.end_ms) for word in words] == [("好", 0, 100)]

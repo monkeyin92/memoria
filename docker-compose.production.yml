@@ -228,7 +228,9 @@ services:
 
   # The media-runtime profile is intentionally opt-in. It wires the self-owned
   # Go edge to the self-owned Python media-v1 bridge, but still requires a
-  # reviewed WHIP/WebRTC terminator and an explicit provider factory.
+  # reviewed WHIP/WebRTC terminator and the full Agent response-orchestrator
+  # factory. The media bridge fails readiness rather than bypassing product
+  # memory/persona/permission/tool policy with a second LLM entry point.
   voice-core-media-bridge:
     profiles:
       - media-runtime
@@ -245,6 +247,8 @@ services:
       MEDIA_BRIDGE_GRPC_ENABLED: "true"
       MEDIA_BRIDGE_GRPC_ADDR: "0.0.0.0:7001"
       MEDIA_BRIDGE_MTLS: "true"
+      MEDIA_BRIDGE_PROVIDER_FACTORY: "services.agent.src.voice_core.provider_adapter:build_production_provider_factory"
+      MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY: "${MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY:-}"
     command:
       - /app/scripts/run_media_bridge.py
     expose:

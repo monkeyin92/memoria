@@ -16,7 +16,11 @@ from services.agent.src.voice_core.media_session import (
     MediaVoiceCoreRegistry,
     MediaVoiceProvider,
 )
-from services.agent.src.voice_core.speech_timeline import ASRResult
+from services.agent.src.voice_core.speech_timeline import (
+    ASRResult,
+    SegmentKind,
+    SpeechSegment,
+)
 
 
 class FakeMediaProvider(MediaVoiceProvider):
@@ -72,6 +76,28 @@ class FakeMediaProvider(MediaVoiceProvider):
         self.closed = True
 
 
+class MultiFinalProvider(FakeMediaProvider):
+    async def ingest_audio(
+        self,
+        _identity: SessionIdentity,
+        frame: AudioFrame,
+    ) -> Sequence[ASRResult]:
+        self.audio_calls.append(frame.sequence)
+        return (
+            ASRResult(
+                task_epoch=1,
+                sentence_id=f"sentence-{frame.sequence}",
+                revision=1,
+                capture_start_sample=frame.capture_start_sample,
+                capture_end_sample=frame.capture_end_sample,
+                text=("第一句", "第二句")[frame.sequence],
+                is_final=True,
+                confidence=0.99,
+                stream_epoch=frame.identity.stream_epoch,
+            ),
+        )
+
+
 async def _requests(queue: asyncio.Queue[media_pb2.MediaToCore | None]):
     while True:
         message = await queue.get()
@@ -91,12 +117,428 @@ async def _next_event(call, kind: str):
 
 
 @pytest.mark.asyncio
+async def test_multiple_asr_finals_wait_for_vad_and_commit_one_logical_turn() -> None:
+    provider = MultiFinalProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = SessionIdentity("multi-final-session")
+    session = bridge.bridge.open(identity)
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+        ),
+    )
+    await registry.on_audio_frame(
+        session,
+        AudioFrame(
+            identity=identity,
+            sequence=0,
+            capture_start_sample=0,
+            frame_samples=2,
+            payload=b"\x00\x00\x01\x00",
+        ),
+    )
+    # A short VAD pause is not a logical turn boundary: the following speech
+    # start cancels the pending endpoint and both provider finals stay in one
+    # sample-clock turn.
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-pause",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=2,
+            capture_end_sample=3,
+            final=True,
+        ),
+    )
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-resume",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=2,
+            capture_end_sample=3,
+        ),
+    )
+    await registry.on_audio_frame(
+        session,
+        AudioFrame(
+            identity=identity,
+            sequence=1,
+            capture_start_sample=2,
+            frame_samples=2,
+            payload=b"\x00\x00\x01\x00",
+        ),
+    )
+
+    context = registry._sessions[identity.session_id]
+    assert context.asr.last_sent_sample == 4
+    assert [turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"] == []
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=4,
+            capture_end_sample=5,
+            final=True,
+        ),
+    )
+    await asyncio.sleep(0.03)
+
+    user_turns = [
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ]
+    assert user_turns == ["第一句 第二句"]
+    assert context.asr.last_committed_sample == 4
+
+
+@pytest.mark.asyncio
+async def test_vad_endpoint_waits_for_late_asr_coverage_before_committing() -> None:
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = SessionIdentity("late-final-session")
+    session = bridge.bridge.open(identity)
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+        ),
+    )
+    assert await registry.accept_asr_result(
+        identity.session_id,
+        ASRResult(
+            task_epoch=1,
+            sentence_id="first",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=320,
+            text="第一句",
+            is_final=True,
+            stream_epoch=1,
+        ),
+    )
+    registry._observe_final_asr_result(
+        registry._sessions[identity.session_id],
+        ASRResult(
+            task_epoch=1,
+            sentence_id="first",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=320,
+            text="第一句",
+            is_final=True,
+            stream_epoch=1,
+        ),
+    )
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=640,
+            capture_end_sample=641,
+            final=True,
+            voiced_end_sample=640,
+        ),
+    )
+    await asyncio.sleep(0.03)
+
+    context = registry._sessions[identity.session_id]
+    assert context.asr.last_committed_sample == 0
+    assert [turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"] == []
+
+    late = ASRResult(
+        task_epoch=1,
+        sentence_id="second",
+        revision=1,
+        capture_start_sample=320,
+        capture_end_sample=640,
+        text="第二句",
+        is_final=True,
+        stream_epoch=1,
+    )
+    assert await registry.accept_asr_result(identity.session_id, late)
+    registry._observe_final_asr_result(context, late)
+    await asyncio.sleep(0.03)
+
+    assert [
+        turn.content
+        for turn in context.runtime.orchestrator.context.turns
+        if turn.role == "user"
+    ] == ["第一句 第二句"]
+    assert context.asr.last_committed_sample == 640
+
+
+@pytest.mark.asyncio
+async def test_vad_tail_silence_tolerance_does_not_leave_turn_pending() -> None:
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = SessionIdentity("tail-silence-session")
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+        ),
+    )
+    final = ASRResult(
+        task_epoch=1,
+        sentence_id="tail-final",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=16_000,
+        text="尾音结束",
+        is_final=True,
+        stream_epoch=1,
+    )
+    assert await registry.accept_asr_result(identity.session_id, final)
+    registry._observe_final_asr_result(context, final)
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-tail-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=24_000,
+            capture_end_sample=24_001,
+            final=True,
+            voiced_end_sample=16_000,
+        ),
+    )
+    await asyncio.sleep(0.03)
+
+    assert [
+        turn.content
+        for turn in context.runtime.orchestrator.context.turns
+        if turn.role == "user"
+    ] == ["尾音结束"]
+    assert context.asr.last_committed_sample == 24_000
+
+    late_tail = ASRResult(
+        task_epoch=1,
+        sentence_id="late-tail",
+        revision=1,
+        capture_start_sample=16_000,
+        capture_end_sample=20_000,
+        text="不应串入",
+        is_final=True,
+        stream_epoch=1,
+    )
+    assert not await registry.accept_asr_result(identity.session_id, late_tail)
+
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="next-vad-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=24_000,
+            capture_end_sample=24_001,
+        ),
+    )
+    next_final = ASRResult(
+        task_epoch=1,
+        sentence_id="next-final",
+        revision=1,
+        capture_start_sample=24_000,
+        capture_end_sample=25_000,
+        text="新一轮",
+        is_final=True,
+        stream_epoch=1,
+    )
+    assert await registry.accept_asr_result(identity.session_id, next_final)
+    registry._observe_final_asr_result(context, next_final)
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="next-vad-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=26_000,
+            capture_end_sample=26_001,
+            final=True,
+            voiced_end_sample=25_000,
+        ),
+    )
+    await asyncio.sleep(0.03)
+    assert [
+        turn.content
+        for turn in context.runtime.orchestrator.context.turns
+        if turn.role == "user"
+    ] == ["尾音结束", "新一轮"]
+
+
+@pytest.mark.asyncio
+async def test_eight_hundred_ms_within_turn_pause_does_not_split_child_speech() -> None:
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("child-pause-session")
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+
+    async def vad(segment_id: str, sample: int, *, final: bool) -> None:
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=1,
+                provider_task_epoch=0,
+                segment_id=segment_id,
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=sample,
+                capture_end_sample=sample + 1,
+                final=final,
+                voiced_end_sample=sample if final else None,
+            ),
+        )
+
+    await vad("start-1", 0, final=False)
+    first = ASRResult(1, "first", 1, 0, 320, "我想说", True, stream_epoch=1)
+    assert await registry.accept_asr_result(identity.session_id, first)
+    registry._observe_final_asr_result(context, first)
+    await vad("pause", 320, final=True)
+    await asyncio.sleep(0.82)
+    assert [turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"] == []
+
+    await vad("resume", 320, final=False)
+    second = ASRResult(1, "second", 1, 320, 640, "一个故事", True, stream_epoch=1)
+    assert await registry.accept_asr_result(identity.session_id, second)
+    registry._observe_final_asr_result(context, second)
+    await vad("end", 640, final=True)
+    endpoint_task = context.turn_endpoint_task
+    assert endpoint_task is not None
+    endpoint_task.cancel()
+    await asyncio.gather(endpoint_task, return_exceptions=True)
+    await registry._commit_pending_turn(context)
+
+    assert [
+        turn.content
+        for turn in context.runtime.orchestrator.context.turns
+        if turn.role == "user"
+    ] == ["我想说 一个故事"]
+
+
+@pytest.mark.asyncio
+async def test_kws_hard_stop_requires_wire_flag_and_confidence_threshold() -> None:
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        kws_hard_stop_min_confidence=0.8,
+    )
+    registry.install()
+    identity = SessionIdentity("kws-session")
+    session = bridge.bridge.open(identity)
+
+    async def keyword(segment_id: str, confidence: float, hard_stop: bool) -> None:
+        start = len(segment_id) * 10
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=1,
+                provider_task_epoch=0,
+                segment_id=segment_id,
+                revision=1,
+                kind=SegmentKind.KWS,
+                capture_start_sample=start,
+                capture_end_sample=start + 1,
+                text="停一下",
+                final=True,
+                confidence=confidence,
+                hard_stop=hard_stop,
+            ),
+        )
+
+    await keyword("not-hard", 1.0, False)
+    await keyword("low-confidence", 0.79, True)
+    assert session.fence.generation_id == 0
+    await keyword("accepted-hard-stop", 0.8, True)
+    assert session.fence.generation_id == 1
+    assert registry.metrics.latency_samples["interrupt_stop"]
+
+
+@pytest.mark.asyncio
 async def test_media_registry_runs_fake_asr_llm_tts_through_both_fences() -> None:
     provider = FakeMediaProvider()
     bridge = MediaBridgeGrpcServer()
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
     )
     registry.install()
     port = await bridge.start("127.0.0.1:0")
@@ -128,6 +570,16 @@ async def test_media_registry_runs_fake_asr_llm_tts_through_both_fences() -> Non
         assert accepted.accepted.identity.session_id == session_identity.session_id
         await requests.put(
             media_pb2.MediaToCore(
+                vad=media_pb2.VadEvent(
+                    identity=identity,
+                    type=media_pb2.VAD_EVENT_SPEECH_START,
+                    sample_position=0,
+                    probability=0.99,
+                )
+            )
+        )
+        await requests.put(
+            media_pb2.MediaToCore(
                 audio=media_pb2.AudioFrame(
                     identity=identity,
                     sequence=0,
@@ -141,6 +593,17 @@ async def test_media_registry_runs_fake_asr_llm_tts_through_both_fences() -> Non
         assert transcript.transcript.text == "你好"
         assert provider.audio_calls == [0]
 
+        await requests.put(
+            media_pb2.MediaToCore(
+                vad=media_pb2.VadEvent(
+                    identity=identity,
+                    type=media_pb2.VAD_EVENT_SPEECH_END,
+                    sample_position=2,
+                    probability=0.99,
+                    voiced_end_sample=2,
+                )
+            )
+        )
         started = await _next_event(call, "generation")
         assert started.generation.generation_id == 1
         fence = GenerationFence(session_identity.session_id, 1, 1, 0)
@@ -175,17 +638,24 @@ async def test_media_registry_runs_fake_asr_llm_tts_through_both_fences() -> Non
             if isinstance(payload, dict) and payload.get("heard") is True:
                 break
         assert heard_payload["type"] == "transcript_delta"
+        assert heard_payload["v"] == 1
+        assert heard_payload["protocol"] == "media-v1"
+        assert heard_payload["event_id"]
+        assert heard_payload["server_monotonic_ms"] > 0
         assert heard_payload["payload"]["heard"] is True  # type: ignore[index]
         assert context.runtime.orchestrator.state is ConversationState.LISTENING
         assert context.runtime.orchestrator.context.turns[-1].content == "你好。"
 
         stop = MediaEnvelope.create(
-            type="client.stop_assistant",
-            event_id="stop-1",
-            session_id=session_identity.session_id,
-            stream_epoch=1,
-            sequence=1,
-            payload={"idempotency_key": "stop-1", "reason": "test"},
+        type="client.stop_assistant",
+        event_id="stop-1",
+        session_id=session_identity.session_id,
+        stream_epoch=1,
+        sequence=1,
+        turn_id=fence.turn_id,
+        generation_id=fence.generation_id,
+        tool_epoch=fence.tool_epoch,
+        payload={"idempotency_key": "stop-1", "reason": "test"},
         )
         await requests.put(
             media_pb2.MediaToCore(
@@ -207,3 +677,4 @@ async def test_media_registry_runs_fake_asr_llm_tts_through_both_fences() -> Non
         await channel.close()
         await bridge.stop()
     assert provider.closed is True
+    assert bridge.bridge.get(session_identity.session_id) is None

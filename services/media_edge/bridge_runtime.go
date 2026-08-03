@@ -7,6 +7,7 @@ package mediaedge
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -21,18 +22,45 @@ type CoreMediaStream interface {
 	Close() error
 }
 
+type generationStopStream interface {
+	CurrentFence() Fence
+	SendStop(eventID, reason string, fence Fence) error
+}
+
+type keywordStream interface {
+	SendKeywordAtFence(keyword string, confidence float32, start, end uint64, hardStop bool, fence Fence) error
+}
+
+// DownlinkSender is implemented by the real media terminator. Returning nil
+// means the frame was accepted for transport; returning an error retains the
+// frame in the bounded Session queue as backpressure evidence.
+type DownlinkSender func(AudioFrame) error
+
+type stopAttempt struct {
+	cancelled Fence
+	core      Fence
+	reason    string
+}
+
 // VoiceCoreMediaRuntime owns one session's edge↔core forwarding loop.
 type VoiceCoreMediaRuntime struct {
-	session              *Session
-	core                 CoreMediaStream
-	onEvent              func(*mediav1.CoreToMedia)
-	onError              func(error)
-	ctx                  context.Context
-	cancel               context.CancelFunc
-	done                 chan error
-	once                 sync.Once
-	mu                   sync.Mutex
-	nextDownlinkSequence uint64
+	session           *Session
+	core              CoreMediaStream
+	onEvent           func(*mediav1.CoreToMedia)
+	onError           func(error)
+	downlinkSender    DownlinkSender
+	ctx               context.Context
+	cancel            context.CancelFunc
+	done              chan error
+	once              sync.Once
+	mu                sync.Mutex
+	uplinkMu          sync.Mutex
+	stopMu            sync.Mutex
+	pendingStopID     string
+	pendingStop       stopAttempt
+	keywordMu         sync.Mutex
+	sentKeywordFences map[string]Fence
+	sentKeywordOrder  []string
 }
 
 func NewVoiceCoreMediaRuntime(
@@ -42,19 +70,152 @@ func NewVoiceCoreMediaRuntime(
 	onEvent func(*mediav1.CoreToMedia),
 	onError func(error),
 ) (*VoiceCoreMediaRuntime, error) {
+	return newVoiceCoreMediaRuntime(ctx, session, core, nil, onEvent, onError)
+}
+
+func NewVoiceCoreMediaRuntimeWithDownlinkSender(
+	ctx context.Context,
+	session *Session,
+	core CoreMediaStream,
+	downlinkSender DownlinkSender,
+	onEvent func(*mediav1.CoreToMedia),
+	onError func(error),
+) (*VoiceCoreMediaRuntime, error) {
+	if downlinkSender == nil {
+		return nil, fmt.Errorf("downlink sender is required")
+	}
+	return newVoiceCoreMediaRuntime(ctx, session, core, downlinkSender, onEvent, onError)
+}
+
+func newVoiceCoreMediaRuntime(
+	ctx context.Context,
+	session *Session,
+	core CoreMediaStream,
+	downlinkSender DownlinkSender,
+	onEvent func(*mediav1.CoreToMedia),
+	onError func(error),
+) (*VoiceCoreMediaRuntime, error) {
 	if session == nil || core == nil {
 		return nil, fmt.Errorf("session and Voice Core stream are required")
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	return &VoiceCoreMediaRuntime{
-		session: session,
-		core:    core,
-		onEvent: onEvent,
-		onError: onError,
-		ctx:     streamCtx,
-		cancel:  cancel,
-		done:    make(chan error, 1),
+		session:           session,
+		core:              core,
+		downlinkSender:    downlinkSender,
+		onEvent:           onEvent,
+		onError:           onError,
+		ctx:               streamCtx,
+		cancel:            cancel,
+		done:              make(chan error, 1),
+		sentKeywordFences: make(map[string]Fence),
 	}, nil
+}
+
+func (r *VoiceCoreMediaRuntime) HasDownlinkSender() bool { return r.downlinkSender != nil }
+
+// SendKeyword applies the Session's local gate immediately around the bridge
+// write so delayed hard-stop evidence cannot target a cancelled generation.
+func (r *VoiceCoreMediaRuntime) SendKeyword(keyword string, confidence float32, start, end uint64, hardStop bool, fence Fence) error {
+	sender, ok := r.core.(keywordStream)
+	if !ok {
+		return fmt.Errorf("Voice Core stream does not support keyword events")
+	}
+	if err := validateKeyword(keyword, confidence, start, end, hardStop); err != nil {
+		return err
+	}
+	if hardStop {
+		eventID := fmt.Sprintf("\x00kws:%d:%d:%d", r.session.Epoch(), start, end)
+		r.keywordMu.Lock()
+		defer r.keywordMu.Unlock()
+		if sentFence, sent := r.sentKeywordFences[eventID]; sent {
+			if !sentFence.Equal(fence) {
+				return fmt.Errorf("keyword event id belongs to another generation")
+			}
+			return nil
+		}
+		current, _, _, err := r.session.CancelGeneration(eventID, &fence)
+		if err != nil {
+			return err
+		}
+		if err := sender.SendKeywordAtFence(keyword, confidence, start, end, true, current); err != nil {
+			return err
+		}
+		if len(r.sentKeywordOrder) == maxCancelResults {
+			delete(r.sentKeywordFences, r.sentKeywordOrder[0])
+			r.sentKeywordOrder = r.sentKeywordOrder[1:]
+		}
+		r.sentKeywordFences[eventID] = current
+		r.sentKeywordOrder = append(r.sentKeywordOrder, eventID)
+		return nil
+	}
+	return r.session.withActiveGeneration(fence, func() error {
+		return sender.SendKeywordAtFence(keyword, confidence, start, end, false, fence)
+	})
+}
+
+// CancelGeneration closes the Edge gate before asking Voice Core to cancel.
+// A failed upstream send remains fail-closed and may be retried with the same
+// event id and authoritative replacement fence.
+func (r *VoiceCoreMediaRuntime) CancelGeneration(eventID, reason string, expected *Fence) (Fence, error) {
+	if eventID == "" {
+		return Fence{}, fmt.Errorf("stop event id is required")
+	}
+	stopper, ok := r.core.(generationStopStream)
+	if !ok {
+		return Fence{}, fmt.Errorf("Voice Core stream does not support generation stop")
+	}
+	r.stopMu.Lock()
+	defer r.stopMu.Unlock()
+	if r.pendingStopID != "" {
+		if r.pendingStopID != eventID {
+			return Fence{}, fmt.Errorf("another generation stop is pending")
+		}
+		if expected != nil && !expected.Equal(r.pendingStop.core) {
+			return Fence{}, fmt.Errorf("stop event id was reused for another generation")
+		}
+		if stopper.CurrentFence().Equal(r.pendingStop.cancelled) {
+			cancelled := r.pendingStop.cancelled
+			r.pendingStopID = ""
+			r.pendingStop = stopAttempt{}
+			return cancelled, nil
+		}
+		if err := stopper.SendStop(eventID, r.pendingStop.reason, r.pendingStop.core); err != nil {
+			return Fence{}, err
+		}
+		cancelled := r.pendingStop.cancelled
+		r.pendingStopID = ""
+		r.pendingStop = stopAttempt{}
+		return cancelled, nil
+	}
+	if current, cancelled, ok := r.session.cancelledGeneration(eventID); ok {
+		if expected != nil && !expected.Equal(current) {
+			return Fence{}, fmt.Errorf("stop event id was reused for another generation")
+		}
+		return cancelled, nil
+	}
+	core := stopper.CurrentFence()
+	if expected != nil && !expected.Equal(core) {
+		return Fence{}, fmt.Errorf("expected stop fence does not match Voice Core")
+	}
+	current, cancelled, replayed, err := r.session.CancelGeneration(eventID, &core)
+	if err != nil {
+		return Fence{}, err
+	}
+	if replayed {
+		return cancelled, nil
+	}
+	if !current.Equal(core) {
+		return Fence{}, fmt.Errorf("Edge and Voice Core generation fences diverged")
+	}
+	r.pendingStopID = eventID
+	r.pendingStop = stopAttempt{cancelled: cancelled, core: core, reason: reason}
+	if err := stopper.SendStop(eventID, reason, core); err != nil {
+		return Fence{}, err
+	}
+	r.pendingStopID = ""
+	r.pendingStop = stopAttempt{}
+	return cancelled, nil
 }
 
 // Start launches the receive loop once.  SendUplink may be called after Start
@@ -68,6 +229,8 @@ func (r *VoiceCoreMediaRuntime) Start() {
 // SendUplink applies the edge sample/sequence gate, forwards the frame once,
 // and retires it from the local queue only after the gRPC send succeeds.
 func (r *VoiceCoreMediaRuntime) SendUplink(frame AudioFrame) error {
+	r.uplinkMu.Lock()
+	defer r.uplinkMu.Unlock()
 	if err := r.session.AcceptUplink(frame); err != nil {
 		return err
 	}
@@ -130,7 +293,11 @@ func (r *VoiceCoreMediaRuntime) handleEvent(event *mediav1.CoreToMedia) error {
 			GenerationID: generation.GetGenerationId(),
 			ToolEpoch:    generation.GetToolEpoch(),
 		}
-		if err := r.session.AdvanceGeneration(fence); err != nil {
+		if generation.GetAction() == mediav1.GenerationAction_GENERATION_ACTION_CANCEL {
+			if err := r.session.ApplyCancelledGeneration(fence); err != nil {
+				return err
+			}
+		} else if err := r.session.AdvanceGeneration(fence); err != nil {
 			return err
 		}
 	}
@@ -138,15 +305,11 @@ func (r *VoiceCoreMediaRuntime) handleEvent(event *mediav1.CoreToMedia) error {
 		if !r.session.IdentityMatches(audio.GetIdentity()) {
 			return fmt.Errorf("Voice Core audio identity does not match edge session")
 		}
-		r.mu.Lock()
-		sequence := r.nextDownlinkSequence
-		r.nextDownlinkSequence++
-		r.mu.Unlock()
 		sessionID, _, _, streamEpoch := r.session.IdentitySnapshot()
 		frame := AudioFrame{
 			SessionID:          sessionID,
 			StreamEpoch:        streamEpoch,
-			Sequence:           sequence,
+			Sequence:           audio.GetSequence(),
 			CaptureStartSample: audio.GetSourceStartSample(),
 			FrameSamples:       uint64(audio.GetFrameSamples()),
 			TurnID:             audio.GetTurnId(),
@@ -154,7 +317,9 @@ func (r *VoiceCoreMediaRuntime) handleEvent(event *mediav1.CoreToMedia) error {
 			ToolEpoch:          audio.GetToolEpoch(),
 			PayloadB64:         base64.StdEncoding.EncodeToString(audio.GetPcmS16Le()),
 		}
-		if err := r.session.AcceptDownlink(frame); err != nil {
+		if err := r.session.DeliverDownlink(frame, r.downlinkSender); errors.Is(err, ErrStaleDownlinkGeneration) {
+			return nil
+		} else if err != nil {
 			return err
 		}
 	}

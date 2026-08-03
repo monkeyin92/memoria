@@ -1,20 +1,22 @@
 import { VoiceTransport } from "./VoiceTransport.js";
+import { withAbortTimeout } from "../network/abortTimeout.js";
 
 const EVENTS_LABEL = "memoria.events.v1";
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
-const REQUIRED_FENCE_EVENTS = new Set([
-  "generation",
-  "assistant.state",
-  "assistant_state",
-  "assistant.audio.started",
-  "assistant.audio.stopped",
-  "assistant.audio.frame",
-  "user.transcript.partial",
-  "user.transcript.final",
-  "assistant.text.delta",
-  "assistant.text.final",
-  "transcript_delta",
-  "playback.flush",
+const PLAYBACK_SAMPLE_RATE = 24_000;
+const MEDIA_ENVELOPE_FIELDS = new Set([
+  "v",
+  "protocol",
+  "type",
+  "event_id",
+  "session_id",
+  "stream_epoch",
+  "sequence",
+  "turn_id",
+  "generation_id",
+  "tool_epoch",
+  "server_monotonic_ms",
+  "payload",
 ]);
 
 function randomEventId() {
@@ -82,15 +84,36 @@ function waitForPeerConnected(pc, timeoutMs) {
   });
 }
 
-function withTimeout(promise, timeoutMs, message) {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = globalThis.setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-  return Promise.race([promise, timeout]).finally(() => {
-    if (timer !== undefined) globalThis.clearTimeout(timer);
-  });
+function isObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isBoundedString(value, maxLength) {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLength;
+}
+
+function isNonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0;
+}
+
+function isMediaEnvelope(event) {
+  return (
+    isObject(event) &&
+    Object.keys(event).every((field) => MEDIA_ENVELOPE_FIELDS.has(field)) &&
+    event.v === 1 &&
+    event.protocol === "media-v1" &&
+    isBoundedString(event.type, 96) &&
+    isBoundedString(event.event_id, 128) &&
+    isBoundedString(event.session_id, 128) &&
+    Number.isInteger(event.stream_epoch) &&
+    event.stream_epoch >= 1 &&
+    isNonNegativeInteger(event.sequence) &&
+    isNonNegativeInteger(event.turn_id) &&
+    isNonNegativeInteger(event.generation_id) &&
+    isNonNegativeInteger(event.tool_epoch) &&
+    isNonNegativeInteger(event.server_monotonic_ms) &&
+    isObject(event.payload)
+  );
 }
 
 function runtimeConfig(session) {
@@ -133,6 +156,8 @@ export class StreamCoreTransport extends VoiceTransport {
     onError = () => undefined,
     onDisconnected = () => undefined,
     onLocalDuck = () => undefined,
+    getPlaybackTime = () => null,
+    isPlaybackAudible = () => true,
     dataChannelLabel = EVENTS_LABEL,
     connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
     heartbeatIntervalMs = 60_000,
@@ -156,6 +181,8 @@ export class StreamCoreTransport extends VoiceTransport {
     this.onError = onError;
     this.onDisconnected = onDisconnected;
     this.onLocalDuck = onLocalDuck;
+    this.getPlaybackTime = getPlaybackTime;
+    this.isPlaybackAudible = isPlaybackAudible;
     this.dataChannelLabel = dataChannelLabel;
     this.connectTimeoutMs = connectTimeoutMs;
     this.heartbeatIntervalMs = heartbeatIntervalMs;
@@ -172,6 +199,8 @@ export class StreamCoreTransport extends VoiceTransport {
     this.lastAudioSequence = -1;
     this.lastAudioSampleEnd = 0;
     this.lastPlaybackProgressSample = -1;
+    this.playbackTimeBaselineSeconds = null;
+    this.playbackTimelineBlocked = false;
     this.closed = false;
     this._connectionHandler = null;
     this._trackHandler = null;
@@ -181,11 +210,16 @@ export class StreamCoreTransport extends VoiceTransport {
     this._heartbeatInFlight = false;
     this._connectHandshakeComplete = false;
     this._disconnectNotified = false;
+    this._lifecycleController = null;
   }
 
   async connect(
     session,
-    { getMicrophoneEnabled = () => true, isCurrent = () => true } = {},
+    {
+      getMicrophoneEnabled = () => true,
+      isCurrent = () => true,
+      preserveMediaState = false,
+    } = {},
   ) {
     const config = runtimeConfig(session);
     if (!session?.session_id || !config.whipUrl || !config.token) {
@@ -194,19 +228,32 @@ export class StreamCoreTransport extends VoiceTransport {
     if (typeof this.RTCPeerConnectionImpl !== "function") {
       throw new Error("当前浏览器不支持 WebRTC");
     }
+    const preservedMediaState =
+      preserveMediaState && this.session?.session_id === session.session_id
+        ? {
+            turnId: this.currentTurnId,
+            generationId: this.currentGenerationId,
+            toolEpoch: this.currentToolEpoch,
+            audioSequence: this.lastAudioSequence,
+            audioSampleEnd: this.lastAudioSampleEnd,
+          }
+        : null;
     await this.close();
     this.closed = false;
+    this._lifecycleController = new AbortController();
     this.session = session;
     this._connectOptions = { getMicrophoneEnabled, isCurrent };
     this.streamEpoch = config.streamEpoch;
     this.lastEventSequence = -1;
     this.nextClientSequence = 0;
-    this.currentTurnId = 0;
-    this.currentGenerationId = 0;
-    this.currentToolEpoch = 0;
-    this.lastAudioSequence = -1;
-    this.lastAudioSampleEnd = 0;
+    this.currentTurnId = preservedMediaState?.turnId ?? 0;
+    this.currentGenerationId = preservedMediaState?.generationId ?? 0;
+    this.currentToolEpoch = preservedMediaState?.toolEpoch ?? 0;
+    this.lastAudioSequence = preservedMediaState?.audioSequence ?? -1;
+    this.lastAudioSampleEnd = preservedMediaState?.audioSampleEnd ?? 0;
     this.lastPlaybackProgressSample = -1;
+    this.playbackTimeBaselineSeconds = null;
+    this.playbackTimelineBlocked = false;
     this._connectHandshakeComplete = false;
     this._disconnectNotified = false;
     this.onState("connecting");
@@ -288,12 +335,31 @@ export class StreamCoreTransport extends VoiceTransport {
     ) {
       return;
     }
+    const lifecycleController = this._lifecycleController;
+    const sessionId = this.session.session_id;
+    const streamEpoch = this.streamEpoch;
     this._heartbeatInFlight = true;
     try {
-      const response = await this.heartbeatSession(
-        this.session.session_id,
-        this.streamEpoch,
+      const response = await withAbortTimeout(
+        (signal) =>
+          this.heartbeatSession(
+            sessionId,
+            streamEpoch,
+            { signal, timeoutMs: this.connectTimeoutMs },
+          ),
+        {
+          timeoutMs: this.connectTimeoutMs,
+          message: "媒体 heartbeat 超时",
+          signal: lifecycleController?.signal,
+        },
       );
+      if (
+        lifecycleController !== this._lifecycleController ||
+        sessionId !== this.session?.session_id ||
+        streamEpoch !== this.streamEpoch
+      ) {
+        return;
+      }
       const epoch = Number(response?.stream_epoch);
       if (!Number.isInteger(epoch) || epoch !== this.streamEpoch) {
         throw new Error("媒体 heartbeat 返回了错误的 stream epoch");
@@ -315,6 +381,7 @@ export class StreamCoreTransport extends VoiceTransport {
       };
       this.onDiagnostic("media_heartbeat", "ok");
     } catch (error) {
+      if (lifecycleController !== this._lifecycleController) return;
       this.onDiagnostic("media_heartbeat", "error", {
         error: error?.message || "heartbeat_failed",
       });
@@ -324,50 +391,40 @@ export class StreamCoreTransport extends VoiceTransport {
         this.onDisconnected("media_heartbeat_failed");
       }
     } finally {
-      this._heartbeatInFlight = false;
+      if (lifecycleController === this._lifecycleController) {
+        this._heartbeatInFlight = false;
+      }
     }
   }
 
   async _exchangeSdp({ session, whipUrl, token, offerSdp }) {
-    if (typeof this.exchangeSdp === "function") {
-      return asSdpResponse(
-        await withTimeout(
-          this.exchangeSdp(session.session_id, offerSdp, {
-            token,
-            whipUrl,
-          }),
-          this.connectTimeoutMs,
-          "媒体协商超时",
+    return withAbortTimeout(
+      async (signal) =>
+        asSdpResponse(
+          await (typeof this.exchangeSdp === "function"
+            ? this.exchangeSdp(session.session_id, offerSdp, {
+                token,
+                whipUrl,
+                signal,
+                timeoutMs: this.connectTimeoutMs,
+              })
+            : this.fetchImpl(whipUrl, {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  "Content-Type": "application/sdp",
+                  Accept: "application/sdp",
+                },
+                body: offerSdp,
+                signal,
+              })),
         ),
-      );
-    }
-    const controller =
-      typeof globalThis.AbortController === "function"
-        ? new globalThis.AbortController()
-        : null;
-    const timer = controller
-      ? globalThis.setTimeout(() => controller.abort(), this.connectTimeoutMs)
-      : null;
-    let response;
-    try {
-      response = await withTimeout(
-        this.fetchImpl(whipUrl, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/sdp",
-            Accept: "application/sdp",
-          },
-          body: offerSdp,
-          ...(controller ? { signal: controller.signal } : {}),
-        }),
-        this.connectTimeoutMs,
-        "媒体协商超时",
-      );
-    } finally {
-      if (timer !== null) globalThis.clearTimeout(timer);
-    }
-    return asSdpResponse(response);
+      {
+        timeoutMs: this.connectTimeoutMs,
+        message: "媒体协商超时",
+        signal: this._lifecycleController?.signal,
+      },
+    );
   }
 
   _installPeerHandlers(pc, isCurrent) {
@@ -422,86 +479,87 @@ export class StreamCoreTransport extends VoiceTransport {
     } catch {
       return;
     }
-    if (!event || typeof event !== "object" || typeof event.type !== "string") return;
-    if (event.v !== undefined && event.v !== 1) return;
-    if (event.type !== "ping" && event.session_id !== this.session?.session_id) {
-      return;
-    }
     if (
-      event.type !== "ping" &&
-      (!Number.isInteger(event.stream_epoch) || event.stream_epoch !== this.streamEpoch)
-    ) {
-      return;
-    }
-    if (
-      event.payload &&
-      typeof event.payload === "object" &&
-      event.payload.session_id !== undefined &&
-      event.payload.session_id !== this.session?.session_id
-    ) {
-      return;
-    }
-    if (event.type !== "ping" && !Number.isInteger(event.sequence)) return;
-    if (
-      Number.isInteger(event.sequence) &&
+      !isMediaEnvelope(event) ||
+      event.session_id !== this.session?.session_id ||
+      event.stream_epoch !== this.streamEpoch ||
       event.sequence <= this.lastEventSequence
     ) {
       return;
     }
-    const payload = event.payload && typeof event.payload === "object" ? event.payload : event;
-    const turnId = payload.turn_id ?? event.turn_id;
-    const generationId = payload.generation_id ?? event.generation_id;
-    const toolEpoch = payload.tool_epoch ?? event.tool_epoch;
-    if (REQUIRED_FENCE_EVENTS.has(event.type)) {
+    const payload = event.payload;
+    for (const field of ["session_id", "turn_id", "generation_id", "tool_epoch"]) {
+      if (Object.hasOwn(payload, field) && payload[field] !== event[field]) return;
+    }
+    const turnId = event.turn_id;
+    const generationId = event.generation_id;
+    const toolEpoch = event.tool_epoch;
+    if (
+      event.type !== "ping" &&
+      (turnId < this.currentTurnId ||
+        (turnId === this.currentTurnId && generationId < this.currentGenerationId) ||
+        (turnId === this.currentTurnId &&
+          generationId === this.currentGenerationId &&
+          toolEpoch < this.currentToolEpoch))
+    ) {
+      return;
+    }
+    const fenceChanged =
+      event.type !== "ping" &&
+      (generationId !== this.currentGenerationId ||
+        turnId !== this.currentTurnId ||
+        toolEpoch !== this.currentToolEpoch);
+    if (event.type === "assistant.audio.frame") {
+      const sequence = payload.sequence;
+      const sourceStart = payload.source_start_sample;
+      const frameSamples = payload.frame_samples;
+      const expectedSequence = fenceChanged ? 0 : this.lastAudioSequence + 1;
+      const expectedStart = fenceChanged ? 0 : this.lastAudioSampleEnd;
       if (
-        !Number.isInteger(turnId) ||
-        !Number.isInteger(generationId) ||
-        !Number.isInteger(toolEpoch) ||
-        turnId < 0 ||
-        generationId < 0 ||
-        toolEpoch < 0 ||
-        generationId < this.currentGenerationId ||
-        (generationId === this.currentGenerationId && turnId < this.currentTurnId)
+        !isNonNegativeInteger(sequence) ||
+        !isNonNegativeInteger(sourceStart) ||
+        !Number.isInteger(frameSamples) ||
+        frameSamples <= 0 ||
+        sequence !== expectedSequence ||
+        sourceStart !== expectedStart
       ) {
         return;
       }
-      const fenceChanged =
-        generationId !== this.currentGenerationId ||
-        turnId !== this.currentTurnId ||
-        toolEpoch !== this.currentToolEpoch;
+    }
+    if (event.type !== "ping") {
       this.currentTurnId = turnId;
       this.currentGenerationId = generationId;
       this.currentToolEpoch = toolEpoch;
-      if (fenceChanged) {
-        this.lastAudioSequence = -1;
-        this.lastAudioSampleEnd = 0;
-        this.lastPlaybackProgressSample = -1;
-      }
+      if (fenceChanged) this._resetPlaybackGeneration();
     }
     // Consume the server event sequence only after the identity/fence checks
     // above. An invalid high-sequence packet must not poison the next valid
     // event on the same DataChannel.
-    if (Number.isInteger(event.sequence)) {
-      this.lastEventSequence = event.sequence;
-    }
+    this.lastEventSequence = event.sequence;
     if (event.type === "assistant.audio.frame") {
-      const sequence = payload.sequence ?? event.sequence;
-      const sourceStart = payload.source_start_sample ?? event.source_start_sample;
-      const frameSamples = payload.frame_samples ?? event.frame_samples;
-      if (
-        Number.isInteger(sequence) &&
-        Number.isInteger(sourceStart) &&
-        Number.isInteger(frameSamples) &&
-        sequence >= 0 &&
-        sourceStart >= 0 &&
-        frameSamples > 0
-      ) {
-        this.lastAudioSequence = Math.max(this.lastAudioSequence, sequence);
-        this.lastAudioSampleEnd = Math.max(
-          this.lastAudioSampleEnd,
-          sourceStart + frameSamples,
-        );
+      if (this.lastAudioSequence < 0) {
+        if (!this.isPlaybackAudible?.()) {
+          this.playbackTimelineBlocked = true;
+        } else {
+          const currentTime = this.getPlaybackTime?.();
+          if (Number.isFinite(currentTime) && currentTime >= 0) {
+            this.playbackTimeBaselineSeconds = currentTime;
+            this.playbackTimelineBlocked = false;
+          }
+        }
+      } else if (this.playbackTimelineBlocked && this.isPlaybackAudible?.()) {
+        // A flush/seek/mute can deliberately block ACKs while the remote
+        // track keeps advancing.  The first frame observed after playback is
+        // audible is the safe resynchronization point; rebuild the wall-clock
+        // baseline there instead of dropping the audio sequence watermark.
+        const currentTime = this.getPlaybackTime?.();
+        if (Number.isFinite(currentTime) && currentTime >= 0) {
+          this.playbackTimeBaselineSeconds = currentTime;
+        }
+        this.playbackTimelineBlocked = false;
       }
+      this.lastAudioSequence = payload.sequence;
+      this.lastAudioSampleEnd = payload.source_start_sample + payload.frame_samples;
     }
     this.onDataReceived(event);
     if (event.type === "assistant.state" || event.type === "assistant_state") {
@@ -515,9 +573,10 @@ export class StreamCoreTransport extends VoiceTransport {
     ) {
       this.onTranscript({
         ...payload,
-        session_id: payload.session_id || event.session_id,
-        turn_id: payload.turn_id ?? event.turn_id,
-        generation_id: payload.generation_id ?? event.generation_id,
+        session_id: event.session_id,
+        turn_id: event.turn_id,
+        generation_id: event.generation_id,
+        tool_epoch: event.tool_epoch,
         speaker: payload.speaker || (event.type.startsWith("user.") ? "user" : "assistant"),
         final:
           event.type === "user.transcript.final" ||
@@ -575,10 +634,19 @@ export class StreamCoreTransport extends VoiceTransport {
     const current = this.session;
     let nextSession;
     if (typeof this.reconnectSession === "function") {
-      nextSession = await this.reconnectSession(
-        current.session_id,
-        current,
-        this.streamEpoch,
+      nextSession = await withAbortTimeout(
+        (signal) =>
+          this.reconnectSession(
+            current.session_id,
+            current,
+            this.streamEpoch,
+            { signal, timeoutMs: this.connectTimeoutMs },
+          ),
+        {
+          timeoutMs: this.connectTimeoutMs,
+          message: "媒体重连超时",
+          signal: this._lifecycleController?.signal,
+        },
       );
     } else {
       const nextEpoch = Math.max(this.streamEpoch + 1, 1);
@@ -594,7 +662,10 @@ export class StreamCoreTransport extends VoiceTransport {
       throw new Error("服务端没有推进媒体 stream epoch");
     }
     this.onState("reconnecting");
-    await this.connect(nextSession, this._connectOptions || {});
+    await this.connect(nextSession, {
+      ...(this._connectOptions || {}),
+      preserveMediaState: true,
+    });
     return nextEpoch;
   }
 
@@ -634,24 +705,38 @@ export class StreamCoreTransport extends VoiceTransport {
       payload && typeof payload === "object" && typeof payload.type === "string"
         ? payload
         : { type: "client.event", payload };
+    if (
+      !isBoundedString(body.type, 96) ||
+      (body.payload !== undefined && !isObject(body.payload))
+    ) {
+      return Promise.reject(new Error("媒体事件格式无效"));
+    }
     const explicitSequence = Number.isInteger(body.sequence) ? body.sequence : null;
+    if (explicitSequence !== null && explicitSequence < this.nextClientSequence) {
+      return Promise.reject(new Error("媒体事件 sequence 必须单调递增"));
+    }
     if (explicitSequence !== null && explicitSequence >= this.nextClientSequence) {
       this.nextClientSequence = explicitSequence + 1;
     }
     const envelope = {
       v: 1,
+      protocol: "media-v1",
       type: body.type,
       event_id: body.event_id || randomEventId(),
       session_id: this.session?.session_id,
       stream_epoch: this.streamEpoch,
       sequence: explicitSequence === null ? this.nextClientSequence++ : explicitSequence,
-      turn_id: body.turn_id,
-      generation_id: body.generation_id,
-      server_monotonic_ms: body.server_monotonic_ms,
-      payload: body.payload || {},
+      turn_id: body.turn_id ?? this.currentTurnId,
+      generation_id: body.generation_id ?? this.currentGenerationId,
+      tool_epoch: body.tool_epoch ?? this.currentToolEpoch,
+      server_monotonic_ms: body.server_monotonic_ms ?? 0,
+      payload: body.payload ?? {},
     };
     for (const [key, value] of Object.entries(envelope)) {
       if (value === undefined) delete envelope[key];
+    }
+    if (!isMediaEnvelope(envelope)) {
+      return Promise.reject(new Error("媒体事件 envelope 无效"));
     }
     try {
       this.channel.send(JSON.stringify(envelope));
@@ -661,16 +746,48 @@ export class StreamCoreTransport extends VoiceTransport {
     return Promise.resolve();
   }
 
-  publishPlaybackProgressFromTime(currentTimeSeconds) {
+  _resetPlaybackGeneration() {
+    this.lastAudioSequence = -1;
+    this.lastAudioSampleEnd = 0;
+    this.lastPlaybackProgressSample = -1;
+    this.playbackTimeBaselineSeconds = null;
+    this.playbackTimelineBlocked = false;
+  }
+
+  resetPlaybackTimelineFromTime(currentTimeSeconds = 0) {
+    if (Number.isFinite(currentTimeSeconds) && currentTimeSeconds >= 0) {
+      this.playbackTimeBaselineSeconds = currentTimeSeconds;
+    }
+    this.lastPlaybackProgressSample = -1;
+    this.playbackTimelineBlocked = true;
+  }
+
+  publishPlaybackProgressFromTime(currentTimeSeconds, { seeking = false } = {}) {
     if (!Number.isFinite(currentTimeSeconds) || currentTimeSeconds < 0) {
       return Promise.reject(new Error("播放时间无效"));
     }
+    if (seeking) {
+      this.playbackTimelineBlocked = true;
+      return Promise.resolve(false);
+    }
+    if (this.playbackTimeBaselineSeconds === null) {
+      this.playbackTimeBaselineSeconds = currentTimeSeconds;
+      if (this.isPlaybackAudible?.()) this.playbackTimelineBlocked = false;
+      return Promise.resolve(false);
+    }
+    if (this.playbackTimelineBlocked) return Promise.resolve(false);
     if (this.lastAudioSequence < 0 || this.lastAudioSampleEnd <= 0) {
       return Promise.resolve(false);
     }
     const renderedSampleEnd = Math.min(
       this.lastAudioSampleEnd,
-      Math.max(0, Math.floor(currentTimeSeconds * 24_000)),
+      Math.max(
+        0,
+        Math.floor(
+          (currentTimeSeconds - this.playbackTimeBaselineSeconds) *
+            PLAYBACK_SAMPLE_RATE,
+        ),
+      ),
     );
     if (renderedSampleEnd <= this.lastPlaybackProgressSample) {
       return Promise.resolve(false);
@@ -724,6 +841,8 @@ export class StreamCoreTransport extends VoiceTransport {
   async close() {
     if (this.closed && !this.pc && !this.mediaStream) return;
     this.closed = true;
+    this._lifecycleController?.abort();
+    this._lifecycleController = null;
     this._stopHeartbeat();
     for (const track of this.mediaStream?.getTracks?.() || []) track.stop();
     this.onMicrophoneTrack(null);

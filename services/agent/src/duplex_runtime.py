@@ -3009,6 +3009,44 @@ class DuplexRuntime:
         self.set_interaction_phase(InteractionPhase.LISTENING, cause="media_playback_ack")
         return True
 
+    async def on_media_playback_interrupted(
+        self,
+        *,
+        interrupted_from: GenerationFence,
+        synchronized_transcript: str | None,
+    ) -> str | None:
+        """Finalize a media stop using the exact prefix acknowledged so far."""
+
+        finalized = await self.orchestrator.finalize_interrupted_playback(
+            interrupted_from=interrupted_from,
+            synchronized_transcript=synchronized_transcript,
+        )
+        if finalized is None:
+            return None
+        heard, event_fence = finalized
+        self._bind_history_eligibility(
+            event_fence,
+            self._history_eligible(interrupted_from),
+        )
+        self._bind_owner_projection_eligibility(
+            event_fence,
+            self._owner_projection_eligible(interrupted_from),
+        )
+        self._was_speaking = False
+        self._pending_assistant_text = ""
+        self._played_assistant_text = heard
+        self._playback_fence = None
+        if heard:
+            self.publish_transcript(
+                speaker="assistant",
+                text=heard,
+                final=True,
+                heard=True,
+                fence=event_fence,
+                archive_fence=interrupted_from,
+            )
+        return heard
+
     def set_interrupt_yield(self, speaker: Callable[[str], Awaitable[None]] | None) -> None:
         """speaker(phrase) — phrase is chosen from interrupt semantics."""
         self._interrupt_yield = speaker
@@ -3690,34 +3728,10 @@ class DuplexRuntime:
                 # interrupted segment, conservatively omit that partial segment.
                 synchronized_transcript=combined_heard,
             )
-            finalized = await self.orchestrator.finalize_interrupted_playback(
+            await self.on_media_playback_interrupted(
                 interrupted_from=interrupted_from,
                 synchronized_transcript=combined_heard,
             )
-            if finalized is None:
-                return
-            heard, event_fence = finalized
-            self._bind_history_eligibility(
-                event_fence,
-                self._history_eligible(interrupted_from),
-            )
-            self._bind_owner_projection_eligibility(
-                event_fence,
-                self._owner_projection_eligible(interrupted_from),
-            )
-            self._was_speaking = False
-            self._pending_assistant_text = ""
-            self._played_assistant_text = heard
-            self._playback_fence = None
-            if heard:
-                self.publish_transcript(
-                    speaker="assistant",
-                    text=heard,
-                    final=True,
-                    heard=True,
-                    fence=event_fence,
-                    archive_fence=interrupted_from,
-                )
         else:
             _ = playback_position_s
             self._played_assistant_text = self._combine_played_text(

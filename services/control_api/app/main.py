@@ -355,7 +355,7 @@ def _build_media_stop_dispatcher(settings: ControlSettings) -> object | None:
 
     async def dispatch(
         *, session_id: str, route: SessionRoute, event: dict[str, object]
-    ) -> None:
+    ) -> dict[str, object]:
         stream_epoch = route.stream_epoch
         account_id = route.account_id
         device_id = route.device_id
@@ -369,7 +369,10 @@ def _build_media_stop_dispatcher(settings: ControlSettings) -> object | None:
             stream_epoch=stream_epoch,
         )
         url = f"{base_url}/v1/media/sessions/{quote(session_id, safe='')}/stop"
-        idempotency_key = f"{session_id}:{route.generation}"
+        idempotency_key = str(event.get("idempotency_key") or "").strip()
+        if not idempotency_key:
+            raise ValueError("media stop dispatch requires an idempotency key")
+        body = {key: value for key, value in event.items() if key != "idempotency_key"}
         async with httpx.AsyncClient(timeout=settings.media_edge_control_timeout_s) as client:
             response = await client.post(
                 url,
@@ -377,9 +380,13 @@ def _build_media_stop_dispatcher(settings: ControlSettings) -> object | None:
                     "Authorization": f"Bearer {token}",
                     "Idempotency-Key": idempotency_key,
                 },
-                json=event,
+                json=body,
             )
             response.raise_for_status()
+            payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("media edge stop response must be an object")
+        return payload
 
     return dispatch
 

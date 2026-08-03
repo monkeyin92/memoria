@@ -575,8 +575,11 @@ type VadEvent struct {
 	Probability    float32                `protobuf:"fixed32,4,opt,name=probability,proto3" json:"probability,omitempty"`
 	Rms            float32                `protobuf:"fixed32,5,opt,name=rms,proto3" json:"rms,omitempty"`
 	NoiseFloor     float32                `protobuf:"fixed32,6,opt,name=noise_floor,json=noiseFloor,proto3" json:"noise_floor,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Required for SPEECH_END. Unlike sample_position, this excludes the VAD
+	// hangover/tail silence and is the acoustic boundary ASR must cover.
+	VoicedEndSample *uint64 `protobuf:"varint,7,opt,name=voiced_end_sample,json=voicedEndSample,proto3,oneof" json:"voiced_end_sample,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *VadEvent) Reset() {
@@ -647,6 +650,13 @@ func (x *VadEvent) GetRms() float32 {
 func (x *VadEvent) GetNoiseFloor() float32 {
 	if x != nil {
 		return x.NoiseFloor
+	}
+	return 0
+}
+
+func (x *VadEvent) GetVoicedEndSample() uint64 {
+	if x != nil && x.VoicedEndSample != nil {
+		return *x.VoicedEndSample
 	}
 	return 0
 }
@@ -2001,7 +2011,7 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\rframe_samples\x18\x04 \x01(\rR\fframeSamples\x12\x18\n" +
 	"\apayload\x18\x05 \x01(\fR\apayload\x12\x16\n" +
 	"\x06crc32c\x18\x06 \x01(\rR\x06crc32c\x12$\n" +
-	"\rdiscontinuity\x18\a \x01(\bR\rdiscontinuity\"\xfb\x01\n" +
+	"\rdiscontinuity\x18\a \x01(\bR\rdiscontinuity\"\xc2\x02\n" +
 	"\bVadEvent\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x122\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x1e.memoria.media.v1.VadEventTypeR\x04type\x12'\n" +
@@ -2009,7 +2019,9 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\vprobability\x18\x04 \x01(\x02R\vprobability\x12\x10\n" +
 	"\x03rms\x18\x05 \x01(\x02R\x03rms\x12\x1f\n" +
 	"\vnoise_floor\x18\x06 \x01(\x02R\n" +
-	"noiseFloor\"\xe6\x01\n" +
+	"noiseFloor\x12/\n" +
+	"\x11voiced_end_sample\x18\a \x01(\x04H\x00R\x0fvoicedEndSample\x88\x01\x01B\x14\n" +
+	"\x12_voiced_end_sample\"\xe6\x01\n" +
 	"\fKeywordEvent\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x18\n" +
 	"\akeyword\x18\x02 \x01(\tR\akeyword\x12\x1e\n" +
@@ -2258,6 +2270,7 @@ func file_memoria_media_v1_media_proto_init() {
 	if File_memoria_media_v1_media_proto != nil {
 		return
 	}
+	file_memoria_media_v1_media_proto_msgTypes[4].OneofWrappers = []any{}
 	file_memoria_media_v1_media_proto_msgTypes[9].OneofWrappers = []any{
 		(*MediaToCore_Hello)(nil),
 		(*MediaToCore_Audio)(nil),

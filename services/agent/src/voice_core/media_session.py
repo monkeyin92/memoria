@@ -56,6 +56,12 @@ class MediaReplyChunk:
     pcm_s16le: bytes
     source_start_sample: int
     text: str = ""
+    # Provider-visible text and playback-ledger text have different clocks:
+    # announce a phrase on its first PCM frame, then attach ``text`` with the
+    # complete audio range once the phrase boundary is known. ``None`` keeps
+    # legacy chunks using ``text`` for both roles; ``""`` suppresses a second
+    # announcement on the later ledger-metadata frame.
+    assistant_text_delta: str | None = None
     first: bool = False
     final: bool = False
     # A fixed-frame provider may put a phrase's text on its first frame while
@@ -125,6 +131,11 @@ class _MediaVoiceSession:
     reply_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     reply_task: asyncio.Task[bool] | None = None
     committed_asr_keys: set[tuple[int, str, int, int]] = field(default_factory=set)
+    turn_start_sample: int | None = None
+    turn_end_sample: int | None = None
+    turn_endpoint_sample: int | None = None
+    turn_retire_sample: int | None = None
+    turn_endpoint_task: asyncio.Task[None] | None = None
     closed: bool = False
 
 
@@ -138,6 +149,11 @@ class MediaVoiceCoreRegistry:
     metrics: MetricsRegistry = field(default_factory=lambda: GLOBAL_METRICS)
     max_sessions: int = 256
     reconnect_grace_s: float = 30.0
+    # Child speech commonly contains 500-800 ms within-turn pauses.  The VAD
+    # edge is therefore only a candidate endpoint until this quiescence
+    # window passes and final ASR covers the same sample-clock position.
+    turn_endpoint_grace_s: float = 0.9
+    kws_hard_stop_min_confidence: float = 0.8
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
     _cleanup_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
@@ -147,6 +163,10 @@ class MediaVoiceCoreRegistry:
             raise ValueError("max_sessions must be positive")
         if self.reconnect_grace_s <= 0:
             raise ValueError("reconnect_grace_s must be positive")
+        if self.turn_endpoint_grace_s < 0:
+            raise ValueError("turn_endpoint_grace_s must be non-negative")
+        if not 0.0 <= self.kws_hard_stop_min_confidence <= 1.0:
+            raise ValueError("kws_hard_stop_min_confidence must be between 0 and 1")
 
     def install(self) -> None:
         """Connect this registry to a ``MediaBridgeGrpcServer`` instance."""
@@ -180,6 +200,14 @@ class MediaVoiceCoreRegistry:
                     current.runtime.start_media_stream_epoch(identity.stream_epoch)
                     if not current.asr.reconnect(stream_epoch=identity.stream_epoch):
                         raise ValueError("ASR stream epoch did not advance")
+                    endpoint_task = current.turn_endpoint_task
+                    if endpoint_task is not None and not endpoint_task.done():
+                        endpoint_task.cancel()
+                    current.turn_start_sample = None
+                    current.turn_end_sample = None
+                    current.turn_endpoint_sample = None
+                    current.turn_retire_sample = None
+                    current.committed_asr_keys.clear()
                 return current
             if len(self._sessions) >= self.max_sessions:
                 raise RuntimeError("Voice Core media session limit reached")
@@ -230,6 +258,14 @@ class MediaVoiceCoreRegistry:
         frame: AudioFrame,
     ) -> None:
         context = await self._get_or_create(session.identity)
+        if not context.asr.record_audio(
+            start_sample=frame.capture_start_sample,
+            frame_samples=frame.frame_samples,
+        ):
+            # Media Edge already performs the transport sample gate; this
+            # second watermark protects the provider replay window if a
+            # callback is duplicated or reordered before it reaches Core.
+            return
         try:
             results = await context.provider.ingest_audio(context.identity, frame)
         except Exception:
@@ -238,14 +274,14 @@ class MediaVoiceCoreRegistry:
         for result in results:
             accepted = await self.accept_asr_result(context.identity.session_id, result)
             if accepted and result.is_final:
-                await self._commit_final_asr_result(context, result)
+                self._observe_final_asr_result(context, result)
 
-    async def _commit_final_asr_result(
+    def _observe_final_asr_result(
         self,
         context: _MediaVoiceSession,
         result: ASRResult,
     ) -> None:
-        """Drive accepted provider finals through the normal turn pipeline."""
+        """Buffer a provider final until the sample-clock endpoint is stable."""
 
         key = (
             result.stream_epoch,
@@ -256,16 +292,101 @@ class MediaVoiceCoreRegistry:
         if key in context.committed_asr_keys:
             return
         context.committed_asr_keys.add(key)
-        previous_fence = context.playback.current_fence or context.runtime.fence
         if len(context.committed_asr_keys) > 256:
             # Keep the fence/idempotency memory bounded across long sessions.
             context.committed_asr_keys = set(list(context.committed_asr_keys)[-128:])
+        context.turn_start_sample = min(
+            result.capture_start_sample,
+            context.turn_start_sample
+            if context.turn_start_sample is not None
+            else result.capture_start_sample,
+        )
+        context.turn_end_sample = max(result.capture_end_sample, context.turn_end_sample or 0)
+        # A provider final is evidence, never the endpoint itself. If VAD has
+        # already ended, a late final re-arms the same logical-turn commit.
+        if context.turn_endpoint_sample is not None:
+            self._schedule_turn_commit(context)
+
+    def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None:
+        task = context.turn_endpoint_task
+        if task is not None and not task.done():
+            task.cancel()
+        endpoint_sample = context.turn_endpoint_sample
+        if endpoint_sample is None:
+            return
+        context.turn_endpoint_task = asyncio.create_task(
+            self._commit_pending_turn_after_grace(
+                context.identity.session_id,
+                context.stream_epoch,
+                endpoint_sample,
+            ),
+            name=f"media-turn-endpoint-{context.identity.session_id}-{endpoint_sample}",
+        )
+
+    async def _commit_pending_turn_after_grace(
+        self,
+        session_id: str,
+        stream_epoch: int,
+        endpoint_sample: int,
+    ) -> None:
+        try:
+            if self.turn_endpoint_grace_s:
+                await asyncio.sleep(self.turn_endpoint_grace_s)
+            context = self._sessions.get(session_id)
+            if (
+                context is None
+                or context.closed
+                or context.stream_epoch != stream_epoch
+                or context.turn_endpoint_sample != endpoint_sample
+                or context.turn_end_sample is None
+                # A provider final is evidence, not an endpoint.  If ASR has
+                # not covered the VAD end yet, leave the buffered turn open;
+                # the late final will re-arm this same commit in
+                # ``_observe_final_asr_result``.
+                or context.turn_end_sample < endpoint_sample
+            ):
+                return
+            await self._commit_pending_turn(context)
+        except asyncio.CancelledError:
+            return
+        finally:
+            context = self._sessions.get(session_id)
+            if context is not None and context.turn_endpoint_task is asyncio.current_task():
+                context.turn_endpoint_task = None
+
+    async def _commit_pending_turn(self, context: _MediaVoiceSession) -> None:
+        """Commit one VAD/ASR-coordinated logical turn through UtteranceRouter."""
+
+        start_sample = context.turn_start_sample
+        end_sample = context.turn_end_sample
+        endpoint_sample = context.turn_endpoint_sample
+        retire_sample = context.turn_retire_sample
+        if (
+            start_sample is None
+            or end_sample is None
+            or endpoint_sample is None
+            or retire_sample is None
+            or endpoint_sample <= start_sample
+            or end_sample <= start_sample
+            or retire_sample < endpoint_sample
+        ):
+            return
+        previous_fence = context.playback.current_fence or context.runtime.fence
         fence, reason = await self.commit_user_turn(
             context.identity.session_id,
-            stream_epoch=result.stream_epoch,
-            start_sample=result.capture_start_sample,
-            end_sample=result.capture_end_sample,
+            stream_epoch=context.stream_epoch,
+            start_sample=start_sample,
+            end_sample=endpoint_sample,
+            retire_sample=retire_sample,
         )
+        # The range was consumed even when Router turns it into a low-risk
+        # control action rather than a chat generation.
+        if reason != "empty_media_turn":
+            context.turn_start_sample = None
+            context.turn_end_sample = None
+            context.turn_endpoint_sample = None
+            context.turn_retire_sample = None
+            context.committed_asr_keys.clear()
         if fence is None:
             # Pure control/enrol/guarded utterances are intentionally not sent
             # to the LLM; ``accept_user_turn`` already routed those centrally.
@@ -290,7 +411,7 @@ class MediaVoiceCoreRegistry:
                         for turn in reversed(context.runtime.orchestrator.context.turns)
                         if turn.role == "user" and turn.content
                     ),
-                    result.text,
+                    "",
                 ),
                 fence,
             ),
@@ -319,34 +440,105 @@ class MediaVoiceCoreRegistry:
         context = await self._get_or_create(session.identity)
         if not context.runtime.ingest_media_speech_segment(segment):
             return
+        if segment.kind is SegmentKind.VAD:
+            if segment.final:
+                voiced_end_sample = (
+                    segment.voiced_end_sample
+                    if segment.voiced_end_sample is not None
+                    else segment.capture_start_sample
+                )
+                # Late/replayed VAD finals may arrive out of callback order.
+                # Never move a pending endpoint backwards, or an older tail
+                # event could truncate the logical turn before ASR coverage.
+                context.turn_endpoint_sample = max(
+                    context.turn_endpoint_sample or 0,
+                    voiced_end_sample,
+                )
+                context.turn_retire_sample = max(
+                    context.turn_retire_sample or 0,
+                    segment.capture_start_sample,
+                )
+                if context.turn_start_sample is None:
+                    context.turn_start_sample = min(
+                        segment.capture_start_sample,
+                        context.turn_end_sample
+                        if context.turn_end_sample is not None
+                        else segment.capture_start_sample,
+                    )
+                self._schedule_turn_commit(context)
+            else:
+                task = context.turn_endpoint_task
+                if task is not None and not task.done():
+                    task.cancel()
+                context.turn_endpoint_sample = None
+                context.turn_retire_sample = None
+                context.turn_start_sample = min(
+                    segment.capture_start_sample,
+                    context.turn_start_sample
+                    if context.turn_start_sample is not None
+                    else segment.capture_start_sample,
+                )
         # A media VAD/KWS event is already range-stamped; it must not be
         # converted into a callback-order speech epoch.
         if segment.kind is SegmentKind.KWS and segment.final:
-            route = context.runtime.route_user_turn(segment.text)
-            if route.should_interrupt and not route.enter_chat:
-                previous_fence = session.fence
-                cancelled = session.generation.cancel(previous_fence)
-                if cancelled is not None:
-                    accepted = await context.runtime.accept_media_generation(
-                        cancelled,
-                        cause="media_keyword_interrupt",
+            if (
+                segment.hard_stop
+                and (segment.confidence or 0.0) >= self.kws_hard_stop_min_confidence
+            ):
+                stop_started_ns = time.monotonic_ns()
+                route = context.runtime.route_user_turn(segment.text)
+                if route.should_interrupt and not route.enter_chat:
+                    previous_fence = context.playback.current_fence or context.runtime.fence
+                    cancelled = (
+                        session.fence
+                        if not session.fence.matches(previous_fence)
+                        else session.generation.cancel(previous_fence)
                     )
-                    if accepted:
-                        context.playback.start(cancelled)
-                        context.provider_complete = False
-                        await self._cancel_reply_task(context, previous_fence)
-                        await self.bridge.emit_generation(
-                            context.identity.session_id,
+                    if cancelled is not None:
+                        if (
+                            not previous_fence.matches(cancelled)
+                            and context.runtime.orchestrator.state.name == "SPEAKING"
+                        ):
+                            heard = context.playback.actual_heard_text(previous_fence)
+                            interrupted_fence = await context.runtime.on_real_interrupt(
+                                cause="media_keyword_interrupt",
+                                create_user_turn=False,
+                                synchronized_transcript=heard,
+                                force_generation_bump=True,
+                            )
+                            if not interrupted_fence.matches(cancelled):
+                                raise ValueError(
+                                    "Voice Core keyword stop generation diverged from Media Edge"
+                                )
+                            await context.runtime.on_media_playback_interrupted(
+                                interrupted_from=previous_fence,
+                                synchronized_transcript=heard,
+                            )
+                        accepted = await context.runtime.accept_media_generation(
                             cancelled,
-                            action=media_pb2.GENERATION_ACTION_CANCEL,
-                            reason="keyword_interrupt",
+                            cause="media_keyword_interrupt",
                         )
+                        if accepted:
+                            context.playback.start(cancelled)
+                            context.provider_complete = False
+                            await self._cancel_reply_task(context, previous_fence)
+                            await self.bridge.emit_generation(
+                                context.identity.session_id,
+                                cancelled,
+                                action=media_pb2.GENERATION_ACTION_CANCEL,
+                                reason="keyword_interrupt",
+                            )
+                            self.metrics.observe_voice_latency(
+                                "interrupt_stop",
+                                (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
+                            )
             await self.bridge.emit_event(
                 context.identity.session_id,
                 "keyword.hit",
                 {
                     "keyword": segment.text,
                     "confidence": segment.confidence,
+                    "hard_stop": segment.hard_stop,
                     "start_sample": segment.capture_start_sample,
                     "end_sample": segment.capture_end_sample,
                 },
@@ -362,9 +554,27 @@ class MediaVoiceCoreRegistry:
         context = await self._get_or_create(session.identity)
         if event.type != "client.stop_assistant":
             return
+        stop_started_ns = time.monotonic_ns()
         # MediaBridgeSession has already advanced its authoritative generation
         # before this callback runs. The Voice Core consumes that exact fence.
         previous_fence = context.playback.current_fence or context.runtime.fence
+        if (
+            not previous_fence.matches(session.fence)
+            and context.runtime.orchestrator.state.name == "SPEAKING"
+        ):
+            heard = context.playback.actual_heard_text(previous_fence)
+            interrupted_fence = await context.runtime.on_real_interrupt(
+                cause="client_stop_assistant",
+                create_user_turn=False,
+                synchronized_transcript=heard,
+                force_generation_bump=True,
+            )
+            if not interrupted_fence.matches(session.fence):
+                raise ValueError("Voice Core stop generation diverged from Media Edge")
+            await context.runtime.on_media_playback_interrupted(
+                interrupted_from=previous_fence,
+                synchronized_transcript=heard,
+            )
         accepted = await context.runtime.accept_media_generation(
             session.fence,
             cause="client_stop_assistant",
@@ -375,6 +585,10 @@ class MediaVoiceCoreRegistry:
         context.provider_complete = False
         if not previous_fence.matches(session.fence):
             await self._cancel_reply_task(context, previous_fence)
+        self.metrics.observe_voice_latency(
+            "interrupt_stop",
+            (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
+        )
 
     @staticmethod
     async def _cancel_provider_generation(
@@ -440,11 +654,21 @@ class MediaVoiceCoreRegistry:
         try:
             await asyncio.sleep(self.reconnect_grace_s)
             current = self._sessions.get(session_id)
+            bridge_session = self.bridge.bridge.get(session_id)
             if current is None or current.closed or current.identity.stream_epoch != stream_epoch:
+                return
+            # A replacement gRPC stream claims the Edge session before the
+            # first application event reaches this registry. Inspect that
+            # authoritative epoch as well, otherwise the old grace task could
+            # close the newly reconnected transport/context.
+            if bridge_session is None or bridge_session.identity.stream_epoch != stream_epoch:
                 return
             await self._finalize_session(session_id)
         except asyncio.CancelledError:
             return
+        finally:
+            if self._cleanup_tasks.get(session_id) is asyncio.current_task():
+                self._cleanup_tasks.pop(session_id, None)
 
     async def _finalize_session(self, session_id: str) -> None:
         cleanup = self._cleanup_tasks.pop(session_id, None)
@@ -454,12 +678,20 @@ class MediaVoiceCoreRegistry:
         context = self._sessions.pop(session_id, None)
         if context is None or context.closed:
             return
+        context_stream_epoch = context.stream_epoch
         context.closed = True
         self.metrics.set_media_active_sessions(len(self._sessions))
         if context.reply_task is not None and not context.reply_task.done():
             context.reply_task.cancel()
+        if context.turn_endpoint_task is not None and not context.turn_endpoint_task.done():
+            context.turn_endpoint_task.cancel()
         await context.runtime.close()
         await context.provider.close(context.identity)
+        # The registry owns the transport session created by the bridge. Once
+        # reconnect grace expires there is no replacement epoch left to claim
+        # it, so remove it as well; otherwise stale identities accumulate in
+        # ``MediaBridgeServer.sessions`` and can block a future open.
+        self.bridge.bridge.close_if_epoch(session_id, context_stream_epoch)
 
     async def on_playback_progress(
         self,
@@ -531,12 +763,15 @@ class MediaVoiceCoreRegistry:
         stream_epoch: int,
         start_sample: int,
         end_sample: int,
+        retire_sample: int | None = None,
     ) -> tuple[GenerationFence | None, str | None]:
         """Commit one explicit sample range, then create its authoritative turn."""
 
         context = self._sessions.get(session_id)
         if context is None or context.closed:
             return None, "session_not_found"
+        if start_sample < 0 or end_sample <= start_sample:
+            return None, "invalid_media_range"
         text = context.runtime.consume_media_user_turn(
             stream_epoch=stream_epoch,
             start_sample=start_sample,
@@ -544,6 +779,16 @@ class MediaVoiceCoreRegistry:
         )
         if not text:
             return None, "empty_media_turn"
+        retire_end = end_sample if retire_sample is None else retire_sample
+        if retire_end < end_sample:
+            raise ValueError("media retire sample cannot precede the logical endpoint")
+        if retire_end > end_sample:
+            context.runtime.commit_media_speech_range(
+                stream_epoch=stream_epoch,
+                start_sample=end_sample,
+                end_sample=retire_end,
+            )
+        context.asr.mark_committed(retire_end)
         accepted, reason = context.runtime.accept_user_turn(
             text,
             input_modality="audio",
@@ -609,12 +854,30 @@ class MediaVoiceCoreRegistry:
                 if not context.runtime.fence.matches(fence):
                     self.metrics.inc_media_stale_generation()
                     return False
-                if chunk.text:
-                    context.assistant_text += chunk.text
+                announcement = (
+                    chunk.text
+                    if chunk.assistant_text_delta is None
+                    else chunk.assistant_text_delta
+                )
+                if announcement:
+                    context.assistant_text += announcement
                     # Keep the runtime's heard-text tracker aligned with the
                     # complete provider text, while the ledger still decides
                     # whether that text was actually rendered.
                     await context.runtime.on_assistant_speaking(context.assistant_text)
+                    # ``assistant_text_delta`` is incremental at the provider
+                    # boundary, but transcript consumers replace one fenced
+                    # turn by revision. Publish the cumulative text so a
+                    # second phrase cannot make the UI/history seam regress
+                    # to only that phrase. This remains non-final until the
+                    # playback ledger supplies an actual-heard watermark.
+                    context.runtime.publish_transcript(
+                        speaker="assistant",
+                        text=context.assistant_text,
+                        final=False,
+                        text_delivered=True,
+                        fence=fence,
+                    )
                     announced_speaking = True
                 gated = context.runtime.gate_tts_audio(fence, chunk.pcm_s16le)
                 if gated is None:
@@ -673,16 +936,6 @@ class MediaVoiceCoreRegistry:
                             ),
                             text=chunk.text,
                         )
-                    )
-                    context.runtime.publish_transcript(
-                        speaker="assistant",
-                        text=chunk.text,
-                        # A provider-complete chunk is not an actual-heard
-                        # transcript yet; the playback ledger closes it only
-                        # after the client sample watermark arrives.
-                        final=False,
-                        text_delivered=True,
-                        fence=fence,
                     )
         except Exception:
             self.metrics.inc_media_session_failed()
