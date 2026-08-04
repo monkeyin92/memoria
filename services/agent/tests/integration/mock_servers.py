@@ -510,7 +510,7 @@ def _parse_doubao_client_frame(data: bytes) -> tuple[EventType, str, dict[str, A
 class MockDoubaoServer:
     host: str = "127.0.0.1"
     port: int = 0
-    scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|slow|slow_once|slow_after_first|slow_after_second|slow_after_sixth|empty_ts|scaled_ts
+    scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|slow|slow_once|slow_after_first|slow_after_second|slow_after_sixth|empty_ts|scaled_ts|degraded_ts
     connections: int = 0
     sessions: int = 0
     task_requests: list[list[str]] = field(default_factory=list)
@@ -668,7 +668,15 @@ class MockDoubaoServer:
             )
         if self.scenario != "empty_ts":
             duration_s = samples / 24000
-            subtitle_duration_s = duration_s + 0.5 if self.scenario == "scaled_ts" else duration_s
+            # scaled_ts keeps the mismatch inside the spec's scaled band
+            # (>120ms and <=300ms); degraded_ts exceeds it so the provider
+            # must mark the alignment degraded rather than scaled.
+            if self.scenario == "scaled_ts":
+                subtitle_duration_s = duration_s + 0.2
+            elif self.scenario == "degraded_ts":
+                subtitle_duration_s = duration_s + 0.5
+            else:
+                subtitle_duration_s = duration_s
             step = subtitle_duration_s / len(full_text)
             words = [
                 {"word": char, "startTime": index * step, "endTime": (index + 1) * step}

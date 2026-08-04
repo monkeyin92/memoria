@@ -10,7 +10,12 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.state_machine import ConversationState
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
-from services.agent.src.voice_core.media_protocol import AudioFrame, MediaEnvelope, SessionIdentity
+from services.agent.src.voice_core.media_protocol import (
+    AudioFrame,
+    MediaEnvelope,
+    PlaybackProgress,
+    SessionIdentity,
+)
 from services.agent.src.voice_core.media_session import (
     MediaReplyChunk,
     MediaTextSpan,
@@ -790,6 +795,56 @@ async def test_downlink_queue_overflow_cancels_runtime_and_provider() -> None:
     assert connection.session.generation_active is False
     assert context.runtime.fence.matches(connection.session.fence)
     assert provider.cancelled == [fence]
+
+
+@pytest.mark.asyncio
+async def test_playback_ack_without_text_spans_still_completes_speaking() -> None:
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = SessionIdentity("no-span-ack-session")
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+    assert await context.runtime.accept_media_generation(fence, cause="test")
+    await context.runtime.on_assistant_speaking("你好。")
+    context.runtime.orchestrator.state_machine.state = ConversationState.SPEAKING
+    context.playback.start(fence)
+    # Audio is delivered and fully rendered, but the provider never supplied a
+    # timed text span: the ledger has a received watermark without any span.
+    assert context.playback.register_audio(fence, 0, 0, 2)
+    context.provider_complete = True
+    completed: list[tuple[GenerationFence, str]] = []
+    original = context.runtime.on_media_playback_done
+
+    async def spy(done_fence: GenerationFence, heard_text: str) -> bool:
+        completed.append((done_fence, heard_text))
+        return await original(done_fence, heard_text)
+
+    context.runtime.on_media_playback_done = spy  # type: ignore[method-assign]
+    await registry.on_playback_progress(
+        session,
+        PlaybackProgress(
+            identity=identity,
+            generation_id=fence.generation_id,
+            received_sequence=0,
+            rendered_sample_end=2,
+            client_monotonic_ms=1,
+            turn_id=fence.turn_id,
+            tool_epoch=fence.tool_epoch,
+        ),
+    )
+
+    # The final ACK advances only the audio watermark and yields no new text
+    # span; the registry must still finalize playback instead of staying
+    # SPEAKING forever.
+    assert completed == [(fence, "")]
+    assert context.runtime.orchestrator.state is ConversationState.LISTENING
 
 
 @pytest.mark.asyncio

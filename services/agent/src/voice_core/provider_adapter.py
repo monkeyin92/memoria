@@ -32,7 +32,7 @@ from services.agent.src.providers.funasr_protocol import (
 )
 from services.agent.src.providers.funasr_stt import FunASRSession
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
-from services.agent.src.voice_core.speech_timeline import ASRFinalInterval, ASRResult
+from services.agent.src.voice_core.speech_timeline import ASRResult
 
 if TYPE_CHECKING:
     from services.agent.src.config import AgentSettings
@@ -95,30 +95,6 @@ class ExistingVoiceProviderAdapter:
         default_factory=deque,
         init=False,
     )
-    _final_sentence_ids: set[ASRFinalInterval] = field(
-        default_factory=set,
-        init=False,
-    )
-    _final_sentence_order: deque[ASRFinalInterval] = field(
-        default_factory=deque,
-        init=False,
-    )
-    _accepted_final_ranges: deque[ASRFinalInterval] = field(
-        default_factory=deque,
-        init=False,
-    )
-    _provider_final_ranges: dict[tuple[int, str, int, int], ASRFinalInterval] = field(
-        default_factory=dict,
-        init=False,
-    )
-    _provider_final_order: deque[tuple[int, str, int, int]] = field(
-        default_factory=deque,
-        init=False,
-    )
-    _max_final_end_by_epoch: dict[int, int] = field(
-        default_factory=dict,
-        init=False,
-    )
     _generation_started: set[GenerationFence] = field(default_factory=set, init=False)
     _generation_cancel_events: dict[GenerationFence, asyncio.Event] = field(
         default_factory=dict,
@@ -157,12 +133,6 @@ class ExistingVoiceProviderAdapter:
             self._asr_task_order.clear()
             self._sentence_revisions.clear()
             self._sentence_revision_order.clear()
-            self._final_sentence_ids.clear()
-            self._final_sentence_order.clear()
-            self._accepted_final_ranges.clear()
-            self._provider_final_ranges.clear()
-            self._provider_final_order.clear()
-            self._max_final_end_by_epoch.clear()
             self._remember_asr_task(self._asr, stream_epoch)
         return self._asr
 
@@ -264,11 +234,8 @@ class ExistingVoiceProviderAdapter:
         mapped_start = mapped.capture_start_sample
         mapped_end = mapped.capture_end_sample
         if not sentence.sentence_end:
-            # A late partial fully inside audio already finalized for this
-            # stream epoch is stale; out-of-order finals are decided below by
-            # the interval set, not by a global end watermark.
-            if mapped_end <= self._max_final_end_by_epoch.get(event_stream_epoch, 0):
-                return None
+            # Partial staleness is decided by ASRStreamSupervisor, the single
+            # interval/revision authority, not by a second adapter watermark.
             return ASRResult(
                 task_epoch=mapped.task_epoch,
                 sentence_id=mapped.sentence_id,
@@ -282,212 +249,24 @@ class ExistingVoiceProviderAdapter:
                 provider_end_ms=mapped.provider_end_ms,
                 stream_epoch=mapped.stream_epoch,
             )
-        final_interval = ASRFinalInterval(
-            event_stream_epoch,
-            task_epoch,
-            sentence_id,
-            mapped_start,
-            mapped_end,
-            mapped.text,
-            revision,
-        )
-        mapped_text = mapped.text
-        mapped_revision = mapped.revision
-        provider_range_key = (
-            event_stream_epoch,
-            sentence_id,
-            mapped.capture_start_sample,
-            mapped.capture_end_sample,
-        )
-        previous_provider_final = self._provider_final_ranges.get(provider_range_key)
-        epoch_ranges = [
-            accepted
-            for accepted in self._accepted_final_ranges
-            if accepted.stream_epoch == event_stream_epoch
-        ]
-        overlapping = [accepted for accepted in epoch_ranges if accepted.overlaps(final_interval)]
-        same_range = [accepted for accepted in overlapping if accepted == final_interval]
-        if previous_provider_final is not None:
-            # The provider sends a reconnected expansion as one full range,
-            # but the adapter emits its novel tail as a distinct timeline
-            # segment. Keep the raw full interval separately so a later
-            # correction can still replace that tail instead of being dropped
-            # after the overlap records were trimmed.
-            emitted_parts = sorted(
-                (
-                    accepted
-                    for accepted in epoch_ranges
-                    if accepted.sentence_id == sentence_id
-                    and accepted.capture_start_sample >= mapped.capture_start_sample
-                    and accepted.capture_end_sample <= mapped.capture_end_sample
-                ),
-                key=lambda accepted: (
-                    accepted.capture_start_sample,
-                    accepted.capture_end_sample,
-                ),
-            )
-            if (
-                revision > previous_provider_final.revision
-                and len(emitted_parts) > 1
-                and emitted_parts[-1].capture_end_sample == mapped.capture_end_sample
-            ):
-                prefix_end = mapped.capture_start_sample
-                prefix_text = ""
-                for accepted in emitted_parts[:-1]:
-                    if accepted.capture_start_sample != prefix_end:
-                        break
-                    prefix_text += accepted.text
-                    prefix_end = accepted.capture_end_sample
-                tail = emitted_parts[-1]
-                if prefix_end == tail.capture_start_sample and mapped.text.startswith(prefix_text):
-                    mapped_start = tail.capture_start_sample
-                    mapped_end = tail.capture_end_sample
-                    mapped_text = mapped.text[len(prefix_text) :]
-                    if not mapped_text:
-                        return None
-                    final_interval = ASRFinalInterval(
-                        event_stream_epoch,
-                        task_epoch,
-                        sentence_id,
-                        mapped_start,
-                        mapped_end,
-                        mapped_text,
-                        revision,
-                    )
-                    overlapping = [
-                        accepted for accepted in epoch_ranges if accepted.overlaps(final_interval)
-                    ]
-                    same_range = [
-                        accepted for accepted in overlapping if accepted == final_interval
-                    ]
-        if final_interval in self._final_sentence_ids:
-            # Only a same-provider correction of the exact same interval
-            # (newer text) may replace the stored final; identical text is a
-            # transport duplicate and any other key is a replay.
-            if (
-                not same_range
-                or mapped_text == same_range[0].text
-                or mapped.revision <= same_range[0].revision
-            ):
-                return None
-        if overlapping and not same_range:
-            # A reconnected provider may replay an expanding absolute interval,
-            # for example 0..640 after 0..320 was already accepted.  Reconcile
-            # only a provable, contiguous text prefix of the same sentence by
-            # a newer task; cross-sentence overlaps, older-task replays and
-            # identical-range replays fail closed instead of entering the
-            # user's turn twice.  Out-of-order but non-overlapping finals
-            # bypass this branch entirely.
-            cross_sentence = [
-                accepted for accepted in overlapping if accepted.sentence_id != sentence_id
-            ]
-            if cross_sentence:
-                return None
-            same_range_other_task = [
-                accepted
-                for accepted in overlapping
-                if accepted.has_same_range(final_interval) and accepted.task_epoch != task_epoch
-            ]
-            if same_range_other_task:
-                return None
-            if any(accepted.task_epoch > task_epoch for accepted in overlapping):
-                return None
-            covered_start = min(accepted.capture_start_sample for accepted in overlapping)
-            if mapped_start > covered_start:
-                return None
-            sorted_overlaps = sorted(
-                overlapping,
-                key=lambda item: (item.capture_start_sample, item.capture_end_sample),
-            )
-            target_end = max(item.capture_end_sample for item in sorted_overlaps)
-            covered_end = mapped_start
-            covered_text = ""
-            for accepted in sorted_overlaps:
-                range_start = accepted.capture_start_sample
-                range_end = accepted.capture_end_sample
-                if range_start != covered_end:
-                    break
-                covered_text += accepted.text
-                covered_end = range_end
-            if covered_end != target_end or not mapped_text.startswith(covered_text):
-                return None
-            mapped_text = mapped_text[len(covered_text) :]
-            if not mapped_text:
-                return None
-            mapped_start = covered_end
-        elif same_range and (
-            mapped_text == same_range[0].text or mapped.revision <= same_range[0].revision
-        ):
-            return None
-        # An expanding replay emits only its novel tail. Keep the accepted
-        # prefix for later provider corrections; only an exact-range revision
-        # replaces an existing timeline interval.
-        for accepted in same_range:
-            try:
-                self._accepted_final_ranges.remove(accepted)
-            except ValueError:
-                pass
-        accepted_interval = ASRFinalInterval(
-            event_stream_epoch,
-            task_epoch,
-            sentence_id,
-            mapped_start,
-            mapped_end,
-            mapped_text,
-            mapped_revision,
-        )
-        self._final_sentence_ids.add(accepted_interval)
-        self._final_sentence_order.append(accepted_interval)
-        self._accepted_final_ranges.append(accepted_interval)
-        self._remember_provider_final(
-            provider_range_key,
-            ASRFinalInterval(
-                event_stream_epoch,
-                task_epoch,
-                sentence_id,
-                mapped.capture_start_sample,
-                mapped.capture_end_sample,
-                mapped.text,
-                revision,
-            ),
-        )
-        self._max_final_end_by_epoch[event_stream_epoch] = max(
-            self._max_final_end_by_epoch.get(event_stream_epoch, 0),
-            mapped_end,
-        )
-        while len(self._final_sentence_order) > self.config.max_asr_result_history:
-            self._final_sentence_ids.discard(self._final_sentence_order.popleft())
-        while len(self._accepted_final_ranges) > self.config.max_asr_result_history:
-            self._accepted_final_ranges.popleft()
+        # Interval dedup, replay and revision semantics are owned by
+        # ASRStreamSupervisor as the single decision point. This adapter only
+        # maps provider events onto the absolute sample clock and assigns a
+        # per-task revision; the full provider range and text pass through so
+        # the highest revision can become the authoritative result.
         return ASRResult(
             task_epoch=mapped.task_epoch,
             sentence_id=mapped.sentence_id,
             revision=mapped.revision,
-            capture_start_sample=mapped_start,
-            capture_end_sample=mapped_end,
-            text=mapped_text,
+            capture_start_sample=mapped.capture_start_sample,
+            capture_end_sample=mapped.capture_end_sample,
+            text=mapped.text,
             is_final=True,
             confidence=mapped.confidence,
             provider_begin_ms=mapped.provider_begin_ms,
             provider_end_ms=mapped.provider_end_ms,
             stream_epoch=mapped.stream_epoch,
-            timeline_segment_id=(
-                f"{mapped.sentence_id}@{mapped_start}:{mapped_end}"
-                if mapped_start != mapped.capture_start_sample
-                else None
-            ),
         )
-
-    def _remember_provider_final(
-        self,
-        key: tuple[int, str, int, int],
-        interval: ASRFinalInterval,
-    ) -> None:
-        if key not in self._provider_final_ranges:
-            self._provider_final_order.append(key)
-        self._provider_final_ranges[key] = interval
-        while len(self._provider_final_order) > self.config.max_asr_result_history:
-            self._provider_final_ranges.pop(self._provider_final_order.popleft(), None)
 
     @property
     def output_frame_samples(self) -> int:
@@ -664,7 +443,13 @@ class ExistingVoiceProviderAdapter:
             previous_end = end
         if not spans:
             return ()
-        if max_audio_end_sample is not None and alignment not in ("ok", "scaled"):
+        # A live/pending snapshot grows as subtitles arrive and may legally
+        # trail the already-generated PCM. The loop above already keeps only
+        # spans fully inside the generated audio, so a missing subtitle tail
+        # must not discredit the safely covered prefix. Only an alignment that
+        # claims to be final but is neither ok nor scaled gets the end-gap
+        # consistency check (and scaling) below.
+        if max_audio_end_sample is not None and alignment not in ("ok", "scaled", "pending"):
             timed_end = spans[-1].audio_end_sample
             difference = abs(max_audio_end_sample - timed_end)
             if difference > self.config.output_sample_rate * 0.3:

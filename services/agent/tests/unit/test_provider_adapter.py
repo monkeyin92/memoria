@@ -22,6 +22,7 @@ from services.agent.src.voice_core.provider_adapter import (
     ExistingVoiceProviderConfig,
     build_production_provider_factory,
 )
+from services.agent.src.voice_core.speech_timeline import ASRResult
 
 
 async def _collect(stream: AsyncIterator[Any]) -> list[Any]:
@@ -161,6 +162,14 @@ class FakeStreamingSpeech:
 class TimedStreamingSpeech(FakeStreamingSpeech):
     def timed_transcript(self) -> tuple[SimpleNamespace, ...]:
         return (SimpleNamespace(text="你好。", start_time=0.0, end_time=0.02),)
+
+
+class PendingTimedStreamingSpeech(FakeStreamingSpeech):
+    def timed_transcript(self) -> tuple[SimpleNamespace, ...]:
+        return (SimpleNamespace(text="你好", start_time=0.0, end_time=0.5),)
+
+    def timed_transcript_alignment(self) -> str:
+        return "pending"
 
 
 class PhraseDrivenStreamingSpeech:
@@ -563,6 +572,65 @@ async def test_existing_provider_adapter_exposes_safe_timed_prefix_during_interr
 
 
 @pytest.mark.asyncio
+async def test_existing_provider_adapter_keeps_pending_subtitle_prefix_when_pcm_leads() -> None:
+    speech = PendingTimedStreamingSpeech(
+        (b"\x01\x00" * 96_000,),
+        release_after_first=asyncio.Event(),
+    )
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: FakeASR()),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, speech),
+    )
+    identity = SessionIdentity("pending-subtitle-interrupt", stream_epoch=1)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+    stream = adapter.generate_reply(identity, "hi", fence)
+
+    assert (await anext(stream)).first
+    # Drain all 100 frames of the first chunk so the PCM watermark reaches 2s
+    # while the provider stream is still blocked mid-generation and the live
+    # subtitle snapshot only covers the first 0.5s. The already covered prefix
+    # must survive even though the subtitle tail has not arrived yet.
+    for _ in range(99):
+        await anext(stream)
+    spans = await adapter.interrupted_timed_text_spans(fence)
+
+    assert [(span.text, span.audio_start_sample, span.audio_end_sample) for span in spans] == [
+        ("你好", 0, 12_000)
+    ]
+    assert adapter.cancel_generation(fence)
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_rejects_unverified_subtitle_gap_on_interrupt() -> None:
+    # No alignment status is reported (``None``), so the transcript claims to
+    # be final without proof. A 1.5s trailing gap against the generated PCM
+    # must fail closed instead of fabricating a heard prefix.
+    speech = TimedStreamingSpeech(
+        (b"\x01\x00" * 96_000,),
+        release_after_first=asyncio.Event(),
+    )
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: FakeASR()),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, speech),
+    )
+    identity = SessionIdentity("unverified-gap-interrupt", stream_epoch=1)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+    stream = adapter.generate_reply(identity, "hi", fence)
+
+    assert (await anext(stream)).first
+    for _ in range(99):
+        await anext(stream)
+    spans = await adapter.interrupted_timed_text_spans(fence)
+
+    assert spans == ()
+    assert adapter.cancel_generation(fence)
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
 async def test_incremental_tts_reuses_one_stream_and_starts_before_second_phrase() -> None:
     release_second = asyncio.Event()
     speech = PhraseDrivenTTS()
@@ -642,6 +710,24 @@ async def test_existing_provider_adapter_deduplicates_asr_by_task_and_audio_rang
         AudioFrame(identity, 2, 640, 320, b"\x00\x00" * 320),
     )
 
+    # The adapter is a pure provider mapping; ASRStreamSupervisor is the
+    # single interval/revision/replay authority.
+    supervisor = ASRStreamSupervisor()
+    first = [
+        result
+        for result in first
+        if supervisor.accept_result(result, session_id=identity.session_id)
+    ]
+    reconnected = [
+        result
+        for result in reconnected
+        if supervisor.accept_result(result, session_id=identity.session_id)
+    ]
+    replayed = [
+        result
+        for result in replayed
+        if supervisor.accept_result(result, session_id=identity.session_id)
+    ]
     assert [
         (result.task_epoch, result.capture_start_sample, result.capture_end_sample)
         for result in first
@@ -650,11 +736,11 @@ async def test_existing_provider_adapter_deduplicates_asr_by_task_and_audio_rang
         (result.task_epoch, result.capture_start_sample, result.capture_end_sample)
         for result in reconnected
     ] == [(2, 320, 640)]
-    assert replayed == ()
+    assert replayed == []
 
 
 @pytest.mark.asyncio
-async def test_existing_provider_adapter_trims_cross_task_expanding_replay() -> None:
+async def test_existing_provider_adapter_replaces_expanding_replay_as_full_range() -> None:
     asr = ExpandingReplayASR()
     adapter = ExistingVoiceProviderAdapter(
         asr_session_factory=cast(Any, lambda: asr),
@@ -677,8 +763,8 @@ async def test_existing_provider_adapter_trims_cross_task_expanding_replay() -> 
     ]
     assert [
         (item.capture_start_sample, item.capture_end_sample, item.text) for item in extension
-    ] == [(320, 640, "世界")]
-    assert extension[0].segment_id != first[0].segment_id
+    ] == [(0, 640, "你好世界")]
+    assert extension[0].segment_id == first[0].segment_id
     supervisor = ASRStreamSupervisor()
     assert supervisor.accept_result(first[0], session_id=identity.session_id)
     assert supervisor.accept_result(extension[0], session_id=identity.session_id)
@@ -688,12 +774,12 @@ async def test_existing_provider_adapter_trims_cross_task_expanding_replay() -> 
             start_sample=0,
             end_sample=640,
         )
-        == "你好 世界"
+        == "你好世界"
     )
 
 
 @pytest.mark.asyncio
-async def test_existing_provider_adapter_keeps_expansion_context_for_correction() -> None:
+async def test_existing_provider_adapter_revises_expanded_result_text() -> None:
     asr = CorrectingExpandedASR()
     adapter = ExistingVoiceProviderAdapter(
         asr_session_factory=cast(Any, lambda: asr),
@@ -717,7 +803,7 @@ async def test_existing_provider_adapter_keeps_expansion_context_for_correction(
 
     assert [
         (item.capture_start_sample, item.capture_end_sample, item.text) for item in correction
-    ] == [(320, 640, "世间")]
+    ] == [(0, 640, "你好世间")]
     supervisor = ASRStreamSupervisor()
     assert supervisor.accept_result(first[0], session_id=identity.session_id)
     assert supervisor.accept_result(extension[0], session_id=identity.session_id)
@@ -728,7 +814,7 @@ async def test_existing_provider_adapter_keeps_expansion_context_for_correction(
             start_sample=0,
             end_sample=640,
         )
-        == "你好 世间"
+        == "你好世间"
     )
 
 
@@ -815,7 +901,83 @@ async def test_existing_provider_adapter_bounds_asr_metadata_during_long_reconne
 
     assert len(adapter._asr_task_contexts) <= 3
     assert len(adapter._sentence_revisions) <= 4
-    assert len(adapter._final_sentence_ids) <= 4
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_higher_revision_revises_output_prefix() -> None:
+    class PrefixRevisingASR(FakeASR):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sequence = (
+                ("你好", 20),
+                ("你好世界", 40),
+                ("你号世界", 40),
+            )
+
+        async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+            self.sent.append((pcm, capture_start_sample))
+            call = len(self.sent)
+            if call > len(self.sequence):
+                return
+            text, end_ms = self.sequence[call - 1]
+            await self.events.put(
+                FunASRServerEvent(
+                    event="result-generated",
+                    task_id=self.task_id,
+                    sentence=FunASRSentence(
+                        sentence_id=1,
+                        text=text,
+                        begin_ms=0,
+                        end_ms=end_ms,
+                        sentence_end=True,
+                        heartbeat=False,
+                        words=(),
+                    ),
+                )
+            )
+
+    asr = PrefixRevisingASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("asr-prefix-revision", stream_epoch=1)
+    supervisor = ASRStreamSupervisor()
+
+    # 你好 -> 你好世界 -> 你号世界: the highest revision must become the
+    # authoritative full-sentence result even though it rewrites an already
+    # published prefix.
+    emitted: list[ASRResult] = []
+    for call in range(1, 4):
+        results = await adapter.ingest_audio(
+            identity,
+            AudioFrame(identity, call, (call - 1) * 320, 320, b"\x00\x00" * 320),
+        )
+        accepted = [
+            result
+            for result in results
+            if supervisor.accept_result(result, session_id=identity.session_id)
+        ]
+        assert len(accepted) == 1
+        emitted.extend(accepted)
+
+    assert [
+        (item.revision, item.capture_start_sample, item.capture_end_sample, item.text)
+        for item in emitted
+    ] == [
+        (1, 0, 320, "你好"),
+        (2, 0, 640, "你好世界"),
+        (3, 0, 640, "你号世界"),
+    ]
+    assert (
+        supervisor.timeline.canonical_text(
+            stream_epoch=1,
+            start_sample=0,
+            end_sample=640,
+        )
+        == "你号世界"
+    )
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,29 @@
 # 项目交接
 
+## 2026-08-04：review.md 复评问题修复（未提交）
+
+- ASR 区间/重放/修正规则收敛为单一决策点：`provider_adapter.py` 退化为纯 provider
+  映射（删除 `_final_sentence_ids`/`_accepted_final_ranges`/`_provider_final_ranges`/
+  `_max_final_end_by_epoch` 及裁尾逻辑，final 携带完整绝对区间与全文），
+  `ASRStreamSupervisor.accept_result` 成为唯一区间权威；supervisor 新增同区间同文本
+  高 revision 重放的 fail-closed 去重（transport duplicate 不再重复发布）。由此满足
+  “最高 revision 成为权威结果”：`你好`→`你好世界`→`你号世界` 最终 canonical 为
+  `你号世界`（P1）。
+- pending 字幕合法落后 PCM 时保留已安全确认 heard 前缀：`_provider_timed_text_spans`
+  对 `alignment=="pending"` 不再做“最后字幕词 vs 全部 PCM 末尾”的 300ms 差距检查，只
+  信任已落在已生成音频范围内的 span；无/未知 alignment 仍 fail-closed（P2）。
+- `on_playback_progress` 空 span ACK 仍执行播放完成判定：`acknowledged == ()` 只表示
+  无新可发布文本，不再提前 return；`provider_complete + is_fully_acknowledged` 照常
+  结束 SPEAKING，heard 文本发布仍以新 span 为条件（P1）。
+- doubao mock `scaled_ts` 偏差 0.5s→0.2s（落在 120–300ms scaled 带），新增
+  `degraded_ts`（>300ms）集成测试，修复远端 CI `test_doubao_mock.py` 红（P1）。
+- 已验证：agent 单测 867 通过；全量 pytest 通过（含预期跳过）；Ruff、strict mypy、
+  media smoke/replay、Go `test`、`git diff --check` 均通过。
+- 未闭环（外部证据，未伪造）：P0 生产 media-runtime 仍无真实 `DownlinkSenderFactory`
+  ——真实 WHIP/RTP/DTLS/SRTP/Opus 终结器需按
+  `docs/media-runtime-acceptance-runbook.md` 外部接入并安全审查；端到端打断 P95、
+  真实媒体链联调、儿童语料/AEC/多实例/chaos/load/回滚演练仍缺；fail-closed 保持。
+
 ## 2026-08-04：最新评审修复（未提交）
 
 - 跟进 `3d05407` 后续评审：gRPC 下行队列满时先原子替换为 terminal

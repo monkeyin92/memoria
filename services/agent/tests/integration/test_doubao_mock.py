@@ -632,6 +632,37 @@ async def test_livekit_stream_emits_only_final_scaled_word_alignment() -> None:
 
 
 @pytest.mark.asyncio
+async def test_livekit_stream_marks_alignment_degraded_beyond_300ms() -> None:
+    server = MockDoubaoServer(scenario="degraded_ts")
+    server.start()
+    tts = DoubaoTTS(_config(server))
+    fence = GenerationFence("livekit-degraded", 1, 1, 0)
+    alignment: list[str] = []
+    tts.bind_fence(fence)
+    tts.set_alignment_callback(lambda _fence, _utterance_id, status: alignment.append(status))
+    try:
+        await tts.pool.warm(1)
+        async with tts.stream(conn_options=APIConnectOptions(max_retry=0)) as stream:
+            stream.push_text("字幕劣化")
+            stream.end_input()
+            events = [event async for event in stream]
+
+        transcripts = [
+            word
+            for event in events
+            for word in event.frame.userdata.get(USERDATA_TIMED_TRANSCRIPT, [])
+        ]
+        assert events
+        # A >300ms subtitle/PCM mismatch is degraded, never scaled, and the
+        # transcript must not be published as a precise timed alignment.
+        assert alignment == ["started", "degraded"]
+        assert transcripts == []
+    finally:
+        await tts.aclose()
+        server.stop()
+
+
+@pytest.mark.asyncio
 async def test_livekit_stream_starts_audio_timeout_after_first_text() -> None:
     server = MockDoubaoServer()
     server.start()

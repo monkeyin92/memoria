@@ -835,8 +835,6 @@ class MediaVoiceCoreRegistry:
             received_sequence=progress.received_sequence,
             approximate=progress.approximate,
         )
-        if not acknowledged:
-            return
         # Publish the cumulative acknowledged prefix under one turn/revision;
         # publishing only the newly acknowledged span would make clients
         # replace a complete answer with its last phrase.
@@ -849,9 +847,13 @@ class MediaVoiceCoreRegistry:
             context.provider_complete = False
             await context.runtime.on_media_playback_done(
                 fence,
-                context.playback.actual_heard_text(fence),
+                heard,
             )
-        if heard and context.runtime.fence.matches(fence):
+        # An empty acknowledged tuple only means no new publishable text span;
+        # it must not skip the playback-completion check above. Transcript
+        # publication itself still requires a newly acknowledged span so a
+        # duplicate ACK cannot re-emit the same text.
+        if acknowledged and heard and context.runtime.fence.matches(fence):
             # Commit actual-heard history before publishing the final event;
             # consumers must never observe a "heard" transcript while the
             # authoritative runtime is still SPEAKING.

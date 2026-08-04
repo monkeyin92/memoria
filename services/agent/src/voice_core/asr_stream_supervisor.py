@@ -34,7 +34,7 @@ class ASRStreamSupervisor:
     _latest_task_by_segment: dict[str, int] = field(default_factory=dict)
     _revision_order: deque[tuple[int, str]] = field(default_factory=deque)
     _segment_order: deque[str] = field(default_factory=deque)
-    _final_intervals: dict[ASRFinalInterval, int] = field(
+    _final_intervals: dict[ASRFinalInterval, ASRResult] = field(
         default_factory=dict,
         init=False,
     )
@@ -105,9 +105,13 @@ class ASRStreamSupervisor:
             # the older text.  An identical range replayed by a different task
             # is a reconnect duplicate and fails closed; only a strict
             # expansion by a newer task of the same sentence may cover older
-            # accepted audio.
-            previous_revision = self._final_intervals.get(final_interval)
-            if previous_revision is not None and result.revision <= previous_revision:
+            # accepted audio.  An identical text with a higher revision is a
+            # transport duplicate, never a correction, and must not be
+            # re-published to the client.
+            previous = self._final_intervals.get(final_interval)
+            if previous is not None and (
+                result.revision <= previous.revision or result.text == previous.text
+            ):
                 return False
             overlapping = [
                 interval
@@ -177,7 +181,7 @@ class ASRStreamSupervisor:
                         self._final_interval_order.remove(final_interval)
                     except ValueError:
                         pass
-                self._final_intervals[final_interval] = result.revision
+                self._final_intervals[final_interval] = result
                 self._final_interval_order.append(final_interval)
                 while len(self._final_interval_order) > self.max_result_history:
                     evicted_interval = self._final_interval_order.popleft()
