@@ -2,6 +2,18 @@
 
 ## 2026-08-04：最新评审修复（未提交）
 
+- 跟进 `3d05407` 后续评审：gRPC 下行队列满时先原子替换为 terminal
+  `CANCEL`，再异步取消 runtime/provider；writer 只在关闭且队列已清空时退出，避免
+  terminal 留在无人消费的队列中。
+- 豆包字幕仅在误差 ≤120ms 时原样入账、120–300ms 缩放；>300ms 仅保留 telemetry，
+  不生成精确 actual-heard span。流式字幕到达时保留快照，打断前只登记已验证、且已由
+  ACK 覆盖的前缀；空/非法字幕时音频 ACK 仍能结束 SPEAKING，但不会写入已听历史。
+- ASR 重连扩展保留 provider 的完整原始区间；后续同区间高 revision correction 会更新
+  已发出的尾段，不再因扩展时裁尾而静默丢失。生产 sender readiness 增加
+  `DownlinkReadyProbe`，factory 存在但终结器不健康时 `/readyz`、建连与重连均 fail-closed。
+- 已验证：定向 Python 73 项、Ruff、所改 Python 模块 strict mypy、Media Edge
+  `go vet`、`go test` 与 `go test -race`、`git diff --check` 均通过。
+
 - Go Media Edge 升级为 Go `1.26.5`、gRPC `1.83.0`、`x/net 0.55.0` 与
   `x/text 0.39.0`；同步 CI 与镜像构建版本，修复上一轮 Trivy 报告的 Go 标准库、
   gRPC 和 `x/*` 高危漏洞，不降低扫描门槛。CI 的 `golangci-lint-action` 同步升级至

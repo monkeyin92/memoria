@@ -158,6 +158,11 @@ class FakeStreamingSpeech:
         self.closed = True
 
 
+class TimedStreamingSpeech(FakeStreamingSpeech):
+    def timed_transcript(self) -> tuple[SimpleNamespace, ...]:
+        return (SimpleNamespace(text="你好。", start_time=0.0, end_time=0.02),)
+
+
 class PhraseDrivenStreamingSpeech:
     def __init__(self) -> None:
         self.queue: asyncio.Queue[Any | None] = asyncio.Queue()
@@ -168,9 +173,7 @@ class PhraseDrivenStreamingSpeech:
         self.phrases.append(text)
         samples = 960 if len(self.phrases) == 1 else 480
         self.queue.put_nowait(
-            SimpleNamespace(
-                frame=SimpleNamespace(data=b"\x01\x00" * samples, sample_rate=24_000)
-            )
+            SimpleNamespace(frame=SimpleNamespace(data=b"\x01\x00" * samples, sample_rate=24_000))
         )
 
     def end_input(self) -> None:
@@ -263,6 +266,32 @@ class ExpandingReplayASR(FakeASR):
                     text="你好" if call == 1 else "你好世界",
                     begin_ms=0,
                     end_ms=20 if call == 1 else 40,
+                    sentence_end=True,
+                    heartbeat=False,
+                    words=(),
+                ),
+            )
+        )
+
+
+class CorrectingExpandedASR(FakeASR):
+    async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+        self.sent.append((pcm, capture_start_sample))
+        call = len(self.sent)
+        if call >= 2:
+            self.task_id = "expanded-task"
+            self.task_epoch = 2
+            self.task_sample_origin = 0
+        text, end_ms = (("你好", 20), ("你好世界", 40), ("你好世间", 40))[call - 1]
+        await self.events.put(
+            FunASRServerEvent(
+                event="result-generated",
+                task_id=self.task_id,
+                sentence=FunASRSentence(
+                    sentence_id=1,
+                    text=text,
+                    begin_ms=0,
+                    end_ms=end_ms,
                     sentence_end=True,
                     heartbeat=False,
                     words=(),
@@ -509,6 +538,31 @@ async def test_existing_provider_adapter_frames_real_provider_stream_before_comp
 
 
 @pytest.mark.asyncio
+async def test_existing_provider_adapter_exposes_safe_timed_prefix_during_interrupt() -> None:
+    speech = TimedStreamingSpeech(
+        (b"\x01\x00" * 960,),
+        release_after_first=asyncio.Event(),
+    )
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: FakeASR()),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, speech),
+    )
+    identity = SessionIdentity("interrupt-provider-stream", stream_epoch=1)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+    stream = adapter.generate_reply(identity, "hi", fence)
+
+    assert (await anext(stream)).first
+    spans = await adapter.interrupted_timed_text_spans(fence)
+
+    assert [(span.text, span.audio_start_sample, span.audio_end_sample) for span in spans] == [
+        ("你好。", 0, 480)
+    ]
+    assert adapter.cancel_generation(fence)
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
 async def test_incremental_tts_reuses_one_stream_and_starts_before_second_phrase() -> None:
     release_second = asyncio.Event()
     speech = PhraseDrivenTTS()
@@ -533,7 +587,10 @@ async def test_incremental_tts_reuses_one_stream_and_starts_before_second_phrase
     # The TTS provider, rather than LLM enqueue timing, supplies the exact
     # sample ranges. The spans arrive after its final subtitle alignment.
     assert chunks[-1].text == ""
-    assert [(span.text, span.audio_start_sample, span.audio_end_sample) for span in chunks[-1].text_spans] == [
+    assert [
+        (span.text, span.audio_start_sample, span.audio_end_sample)
+        for span in chunks[-1].text_spans
+    ] == [
         ("第一句。", 0, 960),
         ("第二句。", 960, 1440),
     ]
@@ -625,11 +682,54 @@ async def test_existing_provider_adapter_trims_cross_task_expanding_replay() -> 
     supervisor = ASRStreamSupervisor()
     assert supervisor.accept_result(first[0], session_id=identity.session_id)
     assert supervisor.accept_result(extension[0], session_id=identity.session_id)
-    assert supervisor.timeline.canonical_text(
-        stream_epoch=1,
-        start_sample=0,
-        end_sample=640,
-    ) == "你好 世界"
+    assert (
+        supervisor.timeline.canonical_text(
+            stream_epoch=1,
+            start_sample=0,
+            end_sample=640,
+        )
+        == "你好 世界"
+    )
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_keeps_expansion_context_for_correction() -> None:
+    asr = CorrectingExpandedASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("asr-expanded-correction", stream_epoch=1)
+
+    first = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+    extension = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 1, 320, 320, b"\x00\x00" * 320),
+    )
+    correction = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 2, 640, 320, b"\x00\x00" * 320),
+    )
+
+    assert [
+        (item.capture_start_sample, item.capture_end_sample, item.text) for item in correction
+    ] == [(320, 640, "世间")]
+    supervisor = ASRStreamSupervisor()
+    assert supervisor.accept_result(first[0], session_id=identity.session_id)
+    assert supervisor.accept_result(extension[0], session_id=identity.session_id)
+    assert supervisor.accept_result(correction[0], session_id=identity.session_id)
+    assert (
+        supervisor.timeline.canonical_text(
+            stream_epoch=1,
+            start_sample=0,
+            end_sample=640,
+        )
+        == "你好 世间"
+    )
 
 
 @pytest.mark.asyncio

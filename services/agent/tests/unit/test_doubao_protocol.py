@@ -130,9 +130,24 @@ def test_request_payloads_and_pcm_duration() -> None:
     assert build_task_request_payload("你好")["req_params"]["text"] == "你好"
     assert pcm_duration_ms(b"\0" * 48000) == 1000
     words = parse_subtitle_words({"words": [{"word": "你", "startTime": 0, "endTime": 0.5}]})
-    aligned, status = align_subtitle_words(words, pcm_duration_ms_value=1000)
+    aligned, status = align_subtitle_words(words, pcm_duration_ms_value=700)
     assert status == "scaled"
-    assert aligned[-1].end_ms == 1000
+    assert aligned[-1].end_ms == 700
+
+
+def test_subtitle_alignment_only_uses_raw_timing_within_120ms() -> None:
+    words = parse_subtitle_words({"words": [{"word": "你", "startTime": 0, "endTime": 1.0}]})
+
+    exact, exact_status = align_subtitle_words(words, pcm_duration_ms_value=1120)
+    scaled, scaled_status = align_subtitle_words(words, pcm_duration_ms_value=1121)
+    degraded, degraded_status = align_subtitle_words(words, pcm_duration_ms_value=1301)
+
+    assert exact_status == "ok"
+    assert exact[-1].end_ms == 1000
+    assert scaled_status == "scaled"
+    assert scaled[-1].end_ms == 1121
+    assert degraded_status == "degraded"
+    assert degraded[-1].end_ms == 1301
 
 
 def test_rejects_truncated_or_compressed_frames() -> None:

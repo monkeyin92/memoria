@@ -28,7 +28,11 @@ type Server struct {
 	MaxPendingFrames      int
 	BridgeFactory         BridgeRuntimeFactory
 	DownlinkSenderFactory DownlinkSenderFactory
-	ReadyProbe            func() bool
+	// DownlinkReadyProbe is supplied by the same media terminator as the
+	// sender factory. A factory function alone cannot prove that its RTP/WebRTC
+	// transport can accept a new session.
+	DownlinkReadyProbe func() bool
+	ReadyProbe         func() bool
 	// RequireExternalDownlinkSender makes the HTTP reference queue
 	// development-only. A production embedding must expose a real media
 	// terminator and report its readiness explicitly.
@@ -154,6 +158,11 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeStatus(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (s *Server) externalDownlinkReady() bool {
+	return !s.RequireExternalDownlinkSender || (s.DownlinkSenderFactory != nil &&
+		s.BridgeFactory != nil && s.DownlinkReadyProbe != nil && s.DownlinkReadyProbe())
+}
+
 func (s *Server) ready(w http.ResponseWriter, _ *http.Request) {
 	if s.Draining.Load() {
 		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"status": "draining"})
@@ -163,7 +172,7 @@ func (s *Server) ready(w http.ResponseWriter, _ *http.Request) {
 		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"status": "voice_core_unavailable"})
 		return
 	}
-	if s.RequireExternalDownlinkSender && (s.DownlinkSenderFactory == nil || s.BridgeFactory == nil) {
+	if !s.externalDownlinkReady() {
 		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"status": "downlink_sender_unavailable"})
 		return
 	}
@@ -185,7 +194,7 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "edge is draining"})
 		return
 	}
-	if s.RequireExternalDownlinkSender && (s.DownlinkSenderFactory == nil || s.BridgeFactory == nil) {
+	if !s.externalDownlinkReady() {
 		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "external downlink sender is unavailable"})
 		return
 	}
@@ -292,6 +301,10 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 	case "reconnect":
 		if r.Method != http.MethodPost {
 			writeStatus(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		if !s.externalDownlinkReady() {
+			writeStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "external downlink sender is unavailable"})
 			return
 		}
 		oldRuntime := s.removeBridge(id)

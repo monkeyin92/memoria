@@ -256,10 +256,10 @@ class MediaBridgeGrpcServer:
                 if message is None:
                     break
                 yield message
-                if connection.closed:
-                    # An overflow terminal (e.g. a generation cancel) was
-                    # enqueued after the writer was closed; stop after it so
-                    # the client observes the authoritative terminal event.
+                if connection.closed and outgoing.empty():
+                    # A closed transport replaces pending output with either
+                    # its terminal control or a sentinel.  Do not abandon a
+                    # terminal queued behind the message just yielded.
                     break
         finally:
             if not consumer.done():
@@ -639,19 +639,15 @@ class MediaBridgeGrpcServer:
         except asyncio.QueueFull:
             connection.session.overflow_count += 1
             terminal = self._overflow_cancel_message(connection)
-            # Stop accepting publisher callbacks before notifying the registry:
-            # on_real_interrupt may itself publish state, and a full transport
-            # must not recurse through another overflow path.
-            connection.closed = True
+            # Stop publishers and wake the writer before awaiting Voice Core:
+            # provider cancellation can wait on remote I/O, but the terminal
+            # must remain deliverable while it does.
+            self._terminate_outgoing(connection, terminal)
             if terminal is not None and self.on_downlink_overflow is not None:
                 try:
                     await self.on_downlink_overflow(connection.session)
                 except Exception:
                     logger.exception("Voice Core did not accept downlink overflow cancellation")
-            self._terminate_outgoing(
-                connection,
-                terminal,
-            )
             return False
         return True
 

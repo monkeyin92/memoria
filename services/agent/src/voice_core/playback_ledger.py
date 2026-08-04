@@ -103,11 +103,7 @@ class PlaybackLedger:
         authoritative sequence/range ledger.
         """
 
-        if (
-            sequence < 0
-            or source_start_sample < 0
-            or frame_samples <= 0
-        ):
+        if sequence < 0 or source_start_sample < 0 or frame_samples <= 0:
             raise ValueError("audio sequence/range must be non-negative")
         if self._current_fence is None:
             self.start(fence)
@@ -192,10 +188,7 @@ class PlaybackLedger:
                 raise ValueError("received_sequence must be non-negative")
             known_sequence = self._received_sequence.get(fence, -1)
             previous_client_sequence = self._client_sequence.get(fence, -1)
-            if (
-                received_sequence > known_sequence
-                or received_sequence < previous_client_sequence
-            ):
+            if received_sequence > known_sequence or received_sequence < previous_client_sequence:
                 self._stale_ack_count += 1
                 return ()
             self._client_sequence[fence] = received_sequence
@@ -253,12 +246,8 @@ class PlaybackLedger:
     ) -> int:
         """Return the greatest sample end a client may legitimately render."""
 
-        if (
-            received_sequence is not None
-            and (
-                received_sequence < 0
-                or received_sequence > self._received_sequence.get(fence, -1)
-            )
+        if received_sequence is not None and (
+            received_sequence < 0 or received_sequence > self._received_sequence.get(fence, -1)
         ):
             return 0
         sequence = (
@@ -272,19 +261,23 @@ class PlaybackLedger:
         return tuple(span for span in self._spans.get(fence, ()) if span.acknowledged)
 
     def is_fully_acknowledged(self, fence: GenerationFence) -> bool:
-        """Return true only after every mapped text span crossed the watermark."""
+        """Return true once rendered audio can no longer advance this generation.
+
+        Text spans determine what may enter actual-heard history.  They are
+        optional provider metadata, however, so an empty/invalid transcript
+        must not leave a fully played response stuck in ``SPEAKING``.
+        """
 
         spans = self._spans.get(fence, ())
-        return bool(spans) and all(span.acknowledged for span in spans)
+        if spans:
+            return all(span.acknowledged for span in spans)
+        received_end = self._received_sample_end.get(fence, 0)
+        return received_end > 0 and self._rendered_sample_end.get(fence, 0) >= received_end
 
     def actual_heard_text(self, fence: GenerationFence) -> str:
         """Return only text whose complete mapped span was actually rendered."""
 
-        return "".join(
-            span.text
-            for span in self.acknowledged_spans(fence)
-            if span.text
-        )
+        return "".join(span.text for span in self.acknowledged_spans(fence) if span.text)
 
     def rendered_sample_end(self, fence: GenerationFence) -> int:
         return self._rendered_sample_end.get(fence, 0)

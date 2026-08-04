@@ -107,6 +107,14 @@ class ExistingVoiceProviderAdapter:
         default_factory=deque,
         init=False,
     )
+    _provider_final_ranges: dict[tuple[int, str, int, int], ASRFinalInterval] = field(
+        default_factory=dict,
+        init=False,
+    )
+    _provider_final_order: deque[tuple[int, str, int, int]] = field(
+        default_factory=deque,
+        init=False,
+    )
     _max_final_end_by_epoch: dict[int, int] = field(
         default_factory=dict,
         init=False,
@@ -120,6 +128,11 @@ class ExistingVoiceProviderAdapter:
     _generation_history: deque[GenerationFence] = field(default_factory=deque, init=False)
     _generation_eviction_floor: tuple[int, int, int] | None = field(
         default=None,
+        init=False,
+    )
+    _active_speech_streams: dict[GenerationFence, Any] = field(default_factory=dict, init=False)
+    _generation_output_ends: dict[GenerationFence, int] = field(
+        default_factory=dict,
         init=False,
     )
     _output_sample: int = field(default=0, init=False)
@@ -147,6 +160,8 @@ class ExistingVoiceProviderAdapter:
             self._final_sentence_ids.clear()
             self._final_sentence_order.clear()
             self._accepted_final_ranges.clear()
+            self._provider_final_ranges.clear()
+            self._provider_final_order.clear()
             self._max_final_end_by_epoch.clear()
             self._remember_asr_task(self._asr, stream_epoch)
         return self._asr
@@ -276,33 +291,85 @@ class ExistingVoiceProviderAdapter:
             mapped.text,
             revision,
         )
+        mapped_text = mapped.text
+        mapped_revision = mapped.revision
+        provider_range_key = (
+            event_stream_epoch,
+            sentence_id,
+            mapped.capture_start_sample,
+            mapped.capture_end_sample,
+        )
+        previous_provider_final = self._provider_final_ranges.get(provider_range_key)
         epoch_ranges = [
             accepted
             for accepted in self._accepted_final_ranges
             if accepted.stream_epoch == event_stream_epoch
         ]
-        overlapping = [
-            accepted
-            for accepted in epoch_ranges
-            if accepted.overlaps(final_interval)
-        ]
-        same_range = [
-            accepted
-            for accepted in overlapping
-            if accepted == final_interval
-        ]
+        overlapping = [accepted for accepted in epoch_ranges if accepted.overlaps(final_interval)]
+        same_range = [accepted for accepted in overlapping if accepted == final_interval]
+        if previous_provider_final is not None:
+            # The provider sends a reconnected expansion as one full range,
+            # but the adapter emits its novel tail as a distinct timeline
+            # segment. Keep the raw full interval separately so a later
+            # correction can still replace that tail instead of being dropped
+            # after the overlap records were trimmed.
+            emitted_parts = sorted(
+                (
+                    accepted
+                    for accepted in epoch_ranges
+                    if accepted.sentence_id == sentence_id
+                    and accepted.capture_start_sample >= mapped.capture_start_sample
+                    and accepted.capture_end_sample <= mapped.capture_end_sample
+                ),
+                key=lambda accepted: (
+                    accepted.capture_start_sample,
+                    accepted.capture_end_sample,
+                ),
+            )
+            if (
+                revision > previous_provider_final.revision
+                and len(emitted_parts) > 1
+                and emitted_parts[-1].capture_end_sample == mapped.capture_end_sample
+            ):
+                prefix_end = mapped.capture_start_sample
+                prefix_text = ""
+                for accepted in emitted_parts[:-1]:
+                    if accepted.capture_start_sample != prefix_end:
+                        break
+                    prefix_text += accepted.text
+                    prefix_end = accepted.capture_end_sample
+                tail = emitted_parts[-1]
+                if prefix_end == tail.capture_start_sample and mapped.text.startswith(prefix_text):
+                    mapped_start = tail.capture_start_sample
+                    mapped_end = tail.capture_end_sample
+                    mapped_text = mapped.text[len(prefix_text) :]
+                    if not mapped_text:
+                        return None
+                    final_interval = ASRFinalInterval(
+                        event_stream_epoch,
+                        task_epoch,
+                        sentence_id,
+                        mapped_start,
+                        mapped_end,
+                        mapped_text,
+                        revision,
+                    )
+                    overlapping = [
+                        accepted for accepted in epoch_ranges if accepted.overlaps(final_interval)
+                    ]
+                    same_range = [
+                        accepted for accepted in overlapping if accepted == final_interval
+                    ]
         if final_interval in self._final_sentence_ids:
             # Only a same-provider correction of the exact same interval
             # (newer text) may replace the stored final; identical text is a
             # transport duplicate and any other key is a replay.
             if (
                 not same_range
-                or mapped.text == same_range[0].text
+                or mapped_text == same_range[0].text
                 or mapped.revision <= same_range[0].revision
             ):
                 return None
-        mapped_text = mapped.text
-        mapped_revision = mapped.revision
         if overlapping and not same_range:
             # A reconnected provider may replay an expanding absolute interval,
             # for example 0..640 after 0..320 was already accepted.  Reconcile
@@ -311,14 +378,15 @@ class ExistingVoiceProviderAdapter:
             # identical-range replays fail closed instead of entering the
             # user's turn twice.  Out-of-order but non-overlapping finals
             # bypass this branch entirely.
-            cross_sentence = [accepted for accepted in overlapping if accepted.sentence_id != sentence_id]
+            cross_sentence = [
+                accepted for accepted in overlapping if accepted.sentence_id != sentence_id
+            ]
             if cross_sentence:
                 return None
             same_range_other_task = [
                 accepted
                 for accepted in overlapping
-                if accepted.has_same_range(final_interval)
-                and accepted.task_epoch != task_epoch
+                if accepted.has_same_range(final_interval) and accepted.task_epoch != task_epoch
             ]
             if same_range_other_task:
                 return None
@@ -348,10 +416,13 @@ class ExistingVoiceProviderAdapter:
                 return None
             mapped_start = covered_end
         elif same_range and (
-            mapped.text == same_range[0].text or mapped.revision <= same_range[0].revision
+            mapped_text == same_range[0].text or mapped.revision <= same_range[0].revision
         ):
             return None
-        for accepted in overlapping:
+        # An expanding replay emits only its novel tail. Keep the accepted
+        # prefix for later provider corrections; only an exact-range revision
+        # replaces an existing timeline interval.
+        for accepted in same_range:
             try:
                 self._accepted_final_ranges.remove(accepted)
             except ValueError:
@@ -368,6 +439,18 @@ class ExistingVoiceProviderAdapter:
         self._final_sentence_ids.add(accepted_interval)
         self._final_sentence_order.append(accepted_interval)
         self._accepted_final_ranges.append(accepted_interval)
+        self._remember_provider_final(
+            provider_range_key,
+            ASRFinalInterval(
+                event_stream_epoch,
+                task_epoch,
+                sentence_id,
+                mapped.capture_start_sample,
+                mapped.capture_end_sample,
+                mapped.text,
+                revision,
+            ),
+        )
         self._max_final_end_by_epoch[event_stream_epoch] = max(
             self._max_final_end_by_epoch.get(event_stream_epoch, 0),
             mapped_end,
@@ -394,6 +477,17 @@ class ExistingVoiceProviderAdapter:
                 else None
             ),
         )
+
+    def _remember_provider_final(
+        self,
+        key: tuple[int, str, int, int],
+        interval: ASRFinalInterval,
+    ) -> None:
+        if key not in self._provider_final_ranges:
+            self._provider_final_order.append(key)
+        self._provider_final_ranges[key] = interval
+        while len(self._provider_final_order) > self.config.max_asr_result_history:
+            self._provider_final_ranges.pop(self._provider_final_order.popleft(), None)
 
     @property
     def output_frame_samples(self) -> int:
@@ -519,7 +613,12 @@ class ExistingVoiceProviderAdapter:
             raise RuntimeError("speech provider returned an unexpected sample rate")
         return bytes(getattr(frame, "data", b"") or b"")
 
-    async def _provider_timed_text_spans(self, stream: Any) -> tuple[Any, ...]:
+    async def _provider_timed_text_spans(
+        self,
+        stream: Any,
+        *,
+        max_audio_end_sample: int | None = None,
+    ) -> tuple[Any, ...]:
         """Read exact provider subtitle timing, or return no ledger facts.
 
         LLM phrase arrival and PCM arrival have unrelated clocks. Only a
@@ -538,6 +637,10 @@ class ExistingVoiceProviderAdapter:
             timed = await timed
         if not isinstance(timed, (tuple, list)):
             return ()
+        alignment_getter = getattr(stream, "timed_transcript_alignment", None)
+        alignment = alignment_getter() if callable(alignment_getter) else None
+        if alignment == "degraded":
+            return ()
         spans: list[MediaTextSpan] = []
         previous_end = 0
         for item in timed:
@@ -555,9 +658,40 @@ class ExistingVoiceProviderAdapter:
             end = round(end_time * self.config.output_sample_rate)
             if start < previous_end or end <= start:
                 return ()
+            if max_audio_end_sample is not None and end > max_audio_end_sample:
+                break
             spans.append(MediaTextSpan(text, start, end))
             previous_end = end
+        if not spans:
+            return ()
+        if max_audio_end_sample is not None and alignment not in ("ok", "scaled"):
+            timed_end = spans[-1].audio_end_sample
+            difference = abs(max_audio_end_sample - timed_end)
+            if difference > self.config.output_sample_rate * 0.3:
+                return ()
+            if difference > self.config.output_sample_rate * 0.12:
+                factor = max_audio_end_sample / timed_end
+                spans = [
+                    MediaTextSpan(
+                        span.text,
+                        round(span.audio_start_sample * factor),
+                        round(span.audio_end_sample * factor),
+                    )
+                    for span in spans
+                ]
         return tuple(spans)
+
+    async def interrupted_timed_text_spans(self, fence: GenerationFence) -> tuple[Any, ...]:
+        """Return only the verified timed prefix available at interruption."""
+
+        stream = self._active_speech_streams.get(fence)
+        audio_end = self._generation_output_ends.get(fence, 0)
+        if stream is None or audio_end <= 0:
+            return ()
+        return await self._provider_timed_text_spans(
+            stream,
+            max_audio_end_sample=audio_end,
+        )
 
     async def _synthesize_phrase(
         self,
@@ -675,6 +809,8 @@ class ExistingVoiceProviderAdapter:
         end_input = getattr(stream, "end_input", None)
         if not callable(push_text) or not callable(end_input):
             raise RuntimeError("speech provider stream cannot accept text")
+        self._active_speech_streams[fence] = stream
+        self._generation_output_ends[fence] = 0
 
         phrases: list[str] = []
         pending_announcements: deque[str] = deque()
@@ -749,13 +885,15 @@ class ExistingVoiceProviderAdapter:
                     del buffered[:frame_bytes]
                     if held_frame is not None:
                         announcement = take_announcement()
+                        next_output_sample = output_sample + frame_samples
+                        self._generation_output_ends[fence] = next_output_sample
                         yield MediaReplyChunk(
                             pcm_s16le=held_frame,
                             source_start_sample=output_sample,
                             assistant_text_delta=announcement,
                             first=output_sample == 0,
                         )
-                        output_sample += frame_samples
+                        output_sample = next_output_sample
                         self._output_sample = output_sample
                     held_frame = next_frame
             if cancel_event.is_set():
@@ -768,13 +906,15 @@ class ExistingVoiceProviderAdapter:
             if buffered:
                 if held_frame is not None:
                     announcement = take_announcement()
+                    next_output_sample = output_sample + frame_samples
+                    self._generation_output_ends[fence] = next_output_sample
                     yield MediaReplyChunk(
                         pcm_s16le=held_frame,
                         source_start_sample=output_sample,
                         assistant_text_delta=announcement,
                         first=output_sample == 0,
                     )
-                    output_sample += frame_samples
+                    output_sample = next_output_sample
                     self._output_sample = output_sample
                 held_frame = bytes(buffered) + b"\x00" * (frame_bytes - len(buffered))
             if held_frame is None:
@@ -786,7 +926,10 @@ class ExistingVoiceProviderAdapter:
                 raise RuntimeError("language model returned no speakable text")
             audio_end = output_sample + frame_samples
             announcement = take_announcement()
-            timed_text_spans = await self._provider_timed_text_spans(stream)
+            timed_text_spans = await self._provider_timed_text_spans(
+                stream,
+                max_audio_end_sample=audio_end,
+            )
             yield MediaReplyChunk(
                 pcm_s16le=held_frame,
                 source_start_sample=output_sample,
@@ -796,6 +939,7 @@ class ExistingVoiceProviderAdapter:
                 text_spans=timed_text_spans,
             )
             self._output_sample = audio_end
+            self._generation_output_ends[fence] = audio_end
         finally:
             if not producer.done():
                 producer.cancel()
@@ -805,6 +949,8 @@ class ExistingVoiceProviderAdapter:
                 closed = close()
                 if inspect.isawaitable(closed):
                     await closed
+            self._active_speech_streams.pop(fence, None)
+            self._generation_output_ends.pop(fence, None)
 
     async def generate_reply(
         self,
@@ -1009,9 +1155,7 @@ def build_production_provider_factory(
         )
     module_name, separator, attribute = orchestrated_reference.partition(":")
     if not separator or not module_name or not attribute:
-        raise ValueError(
-            "MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY must be module:callable"
-        )
+        raise ValueError("MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY must be module:callable")
     orchestrated_builder = getattr(importlib.import_module(module_name), attribute, None)
     if not callable(orchestrated_builder):
         raise ValueError("orchestrated LLM factory is not callable")
@@ -1040,9 +1184,7 @@ def build_production_provider_factory(
             raise ValueError(
                 f"production media provider missing required config: {', '.join(missing)}"
             )
-        if not asr_config.ws_url.startswith("wss://") or not tts_config.ws_url.startswith(
-            "wss://"
-        ):
+        if not asr_config.ws_url.startswith("wss://") or not tts_config.ws_url.startswith("wss://"):
             raise ValueError("production media providers require WSS endpoints")
     adapter_config = ExistingVoiceProviderConfig(
         sample_rate=asr_config.sample_rate,

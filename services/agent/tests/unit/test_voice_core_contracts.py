@@ -175,6 +175,17 @@ def test_playback_ledger_applies_existing_ack_to_late_provider_alignment() -> No
     assert ledger.is_fully_acknowledged(fence)
 
 
+def test_playback_ledger_completes_playback_without_timed_text() -> None:
+    fence = _fence()
+    ledger = PlaybackLedger()
+    ledger.start(fence)
+    assert ledger.register_audio(fence, 0, 0, 320)
+    assert ledger.acknowledge(fence, 320, received_sequence=0) == ()
+
+    assert ledger.actual_heard_text(fence) == ""
+    assert ledger.is_fully_acknowledged(fence)
+
+
 def test_media_bridge_audio_queues_are_consumable_and_generation_local() -> None:
     server = MediaBridgeServer(max_pending_audio_frames=100)
     identity = SessionIdentity("queue-session", stream_epoch=1)
@@ -479,11 +490,14 @@ def test_device_commands_are_allowlisted_and_expire_without_cloud_dependency() -
     assert not command.expired(3_099)
     assert command.expired(3_100)
     assert b"device.command" in command.to_json()
-    assert b"device.command_ack" in DeviceCommandAck(
-        command_id="cmd-1",
-        status="applied",
-        device_monotonic_ms=200,
-    ).to_json()
+    assert (
+        b"device.command_ack"
+        in DeviceCommandAck(
+            command_id="cmd-1",
+            status="applied",
+            device_monotonic_ms=200,
+        ).to_json()
+    )
 
 
 def test_media_bridge_stop_is_generation_gated_and_idempotent() -> None:

@@ -164,6 +164,7 @@ func TestProductionBridgeInjectsTheActualDownlinkSender(t *testing.T) {
 			}
 		}, nil
 	}
+	server.DownlinkReadyProbe = func() bool { return true }
 	server.BridgeFactory = func(_ OpenSessionRequest, session *Session, sender DownlinkSender) (*VoiceCoreMediaRuntime, error) {
 		return NewVoiceCoreMediaRuntimeWithDownlinkSender(
 			context.Background(), session, newFakeCoreStream(), sender, nil, nil,
@@ -183,6 +184,38 @@ func TestProductionBridgeInjectsTheActualDownlinkSender(t *testing.T) {
 		strings.NewReader(`{"session_id":"sender","account_id":"a","device_id":"d","stream_epoch":1}`),
 	)
 	if err != nil || created.StatusCode != http.StatusCreated {
+		t.Fatalf("create status=%v err=%v", created.StatusCode, err)
+	}
+	_ = created.Body.Close()
+}
+
+func TestProductionBridgeFailsClosedWhenDownlinkTransportIsUnhealthy(t *testing.T) {
+	server := NewServer(JWTVerifier{}, 4)
+	server.AllowInsecureDevelopment = true
+	server.RequireExternalDownlinkSender = true
+	server.DownlinkSenderFactory = func(_ OpenSessionRequest, _ *Session) (DownlinkSender, error) {
+		return func(context.Context, AudioFrame) error { return nil }, nil
+	}
+	server.DownlinkReadyProbe = func() bool { return false }
+	server.BridgeFactory = func(_ OpenSessionRequest, session *Session, sender DownlinkSender) (*VoiceCoreMediaRuntime, error) {
+		return NewVoiceCoreMediaRuntimeWithDownlinkSender(
+			context.Background(), session, newFakeCoreStream(), sender, nil, nil,
+		)
+	}
+	defer func() { _ = server.Close() }()
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	ready, err := http.Get(ts.URL + "/readyz")
+	if err != nil || ready.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("ready status=%v err=%v", ready.StatusCode, err)
+	}
+	_ = ready.Body.Close()
+	created, err := http.Post(
+		ts.URL+"/v1/media/sessions", "application/json",
+		strings.NewReader(`{"session_id":"unhealthy","account_id":"a","device_id":"d","stream_epoch":1}`),
+	)
+	if err != nil || created.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("create status=%v err=%v", created.StatusCode, err)
 	}
 	_ = created.Body.Close()

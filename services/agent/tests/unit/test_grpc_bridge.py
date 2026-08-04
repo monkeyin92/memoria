@@ -275,6 +275,56 @@ async def test_outgoing_queue_overflow_cancels_generation_and_reconnect_sends_ca
 
 
 @pytest.mark.asyncio
+async def test_overflow_delivers_terminal_before_runtime_cancellation_finishes() -> None:
+    cancellation_started = asyncio.Event()
+    allow_cancellation_to_finish = asyncio.Event()
+
+    async def on_downlink_overflow(_session) -> None:
+        cancellation_started.set()
+        await allow_cancellation_to_finish.wait()
+
+    bridge = MediaBridgeGrpcServer(
+        max_pending_messages=1,
+        on_downlink_overflow=on_downlink_overflow,
+    )
+    requests: asyncio.Queue[media_pb2.MediaToCore | None] = asyncio.Queue()
+    identity = media_pb2.SessionIdentity(
+        session_id="overflow-terminal-session",
+        account_id="account",
+        device_id="h5",
+        client_type="h5",
+        stream_epoch=1,
+    )
+    stream = bridge.connect(_request_stream(requests), None)  # type: ignore[arg-type]
+    await requests.put(media_pb2.MediaToCore(hello=media_pb2.SessionHello(identity=identity)))
+    await anext(stream)
+    connection = bridge._connections["overflow-terminal-session"]
+    stale_message = media_pb2.CoreToMedia(error=media_pb2.CoreError(code="one", message="stale"))
+    overflow_message = media_pb2.CoreToMedia(
+        error=media_pb2.CoreError(code="three", message="overflow")
+    )
+
+    assert await bridge._enqueue(connection, stale_message)
+    stale = await anext(stream)
+    assert stale == stale_message
+    assert await bridge.emit_generation(
+        "overflow-terminal-session",
+        GenerationFence("overflow-terminal-session", 1, 1, 0),
+        action=media_pb2.GENERATION_ACTION_START,
+    )
+    overflow = asyncio.create_task(bridge._enqueue(connection, overflow_message))
+    await asyncio.wait_for(cancellation_started.wait(), timeout=0.1)
+    terminal = await asyncio.wait_for(anext(stream), timeout=0.1)
+    assert terminal.generation.action == media_pb2.GENERATION_ACTION_CANCEL
+    assert not overflow.done()
+
+    allow_cancellation_to_finish.set()
+    assert not await asyncio.wait_for(overflow, timeout=0.1)
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(stream), timeout=0.1)
+
+
+@pytest.mark.asyncio
 async def test_old_transport_close_cannot_notify_after_reconnect_claims_session() -> None:
     closed_epochs: list[int] = []
 

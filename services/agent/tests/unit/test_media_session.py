@@ -13,6 +13,7 @@ from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import AudioFrame, MediaEnvelope, SessionIdentity
 from services.agent.src.voice_core.media_session import (
     MediaReplyChunk,
+    MediaTextSpan,
     MediaVoiceCoreRegistry,
     MediaVoiceProvider,
 )
@@ -97,6 +98,14 @@ class MultiFinalProvider(FakeMediaProvider):
                 stream_epoch=frame.identity.stream_epoch,
             ),
         )
+
+
+class TimedInterruptProvider(FakeMediaProvider):
+    async def interrupted_timed_text_spans(
+        self,
+        _fence: GenerationFence,
+    ) -> tuple[MediaTextSpan, ...]:
+        return (MediaTextSpan("你好。", 0, 2),)
 
 
 async def _requests(queue: asyncio.Queue[media_pb2.MediaToCore | None]):
@@ -195,7 +204,9 @@ async def test_multiple_asr_finals_wait_for_vad_and_commit_one_logical_turn() ->
 
     context = registry._sessions[identity.session_id]
     assert context.asr.last_sent_sample == 4
-    assert [turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"] == []
+    assert [
+        turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == []
     await registry.on_speech_segment(
         session,
         SpeechSegment(
@@ -289,7 +300,9 @@ async def test_vad_endpoint_waits_for_late_asr_coverage_before_committing() -> N
 
     context = registry._sessions[identity.session_id]
     assert context.asr.last_committed_sample == 0
-    assert [turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"] == []
+    assert [
+        turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == []
 
     late = ASRResult(
         task_epoch=1,
@@ -306,9 +319,7 @@ async def test_vad_endpoint_waits_for_late_asr_coverage_before_committing() -> N
     await asyncio.sleep(0.03)
 
     assert [
-        turn.content
-        for turn in context.runtime.orchestrator.context.turns
-        if turn.role == "user"
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
     ] == ["第一句 第二句"]
     assert context.asr.last_committed_sample == 640
 
@@ -369,9 +380,7 @@ async def test_vad_tail_silence_tolerance_does_not_leave_turn_pending() -> None:
     await asyncio.sleep(0.03)
 
     assert [
-        turn.content
-        for turn in context.runtime.orchestrator.context.turns
-        if turn.role == "user"
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
     ] == ["尾音结束"]
     assert context.asr.last_committed_sample == 24_000
 
@@ -429,9 +438,7 @@ async def test_vad_tail_silence_tolerance_does_not_leave_turn_pending() -> None:
     )
     await asyncio.sleep(0.03)
     assert [
-        turn.content
-        for turn in context.runtime.orchestrator.context.turns
-        if turn.role == "user"
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
     ] == ["尾音结束", "新一轮"]
 
 
@@ -471,7 +478,9 @@ async def test_eight_hundred_ms_within_turn_pause_does_not_split_child_speech() 
     registry._observe_final_asr_result(context, first)
     await vad("pause", 320, final=True)
     await asyncio.sleep(0.82)
-    assert [turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"] == []
+    assert [
+        turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == []
 
     await vad("resume", 320, final=False)
     second = ASRResult(1, "second", 1, 320, 640, "一个故事", True, stream_epoch=1)
@@ -485,9 +494,7 @@ async def test_eight_hundred_ms_within_turn_pause_does_not_split_child_speech() 
     await registry._commit_pending_turn(context)
 
     assert [
-        turn.content
-        for turn in context.runtime.orchestrator.context.turns
-        if turn.role == "user"
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
     ] == ["我想说 一个故事"]
 
 
@@ -574,6 +581,28 @@ async def _start_speaking_reply(
     session.reset_downlink_generation(fence)  # type: ignore[attr-defined]
     session.generation_active = True  # type: ignore[attr-defined]
     return context, fence
+
+
+@pytest.mark.asyncio
+async def test_interruption_records_only_provider_timed_prefix_before_fence_change() -> None:
+    provider = TimedInterruptProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = SessionIdentity("timed-interrupt-session")
+    context = await registry._get_or_create(identity)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+    context.playback.start(fence)
+    assert context.playback.register_audio(fence, 0, 0, 2)
+    assert context.playback.acknowledge(fence, 2, received_sequence=0) == ()
+
+    await registry._record_interrupted_timed_spans(context, fence)
+
+    assert context.playback.actual_heard_text(fence) == "你好。"
 
 
 @pytest.mark.asyncio
@@ -879,15 +908,15 @@ async def test_media_registry_runs_fake_asr_llm_tts_through_both_fences() -> Non
         assert context.runtime.orchestrator.context.turns[-1].content == "你好。"
 
         stop = MediaEnvelope.create(
-        type="client.stop_assistant",
-        event_id="stop-1",
-        session_id=session_identity.session_id,
-        stream_epoch=1,
-        sequence=1,
-        turn_id=fence.turn_id,
-        generation_id=fence.generation_id,
-        tool_epoch=fence.tool_epoch,
-        payload={"idempotency_key": "stop-1", "reason": "test"},
+            type="client.stop_assistant",
+            event_id="stop-1",
+            session_id=session_identity.session_id,
+            stream_epoch=1,
+            sequence=1,
+            turn_id=fence.turn_id,
+            generation_id=fence.generation_id,
+            tool_epoch=fence.tool_epoch,
+            payload={"idempotency_key": "stop-1", "reason": "test"},
         )
         await requests.put(
             media_pb2.MediaToCore(

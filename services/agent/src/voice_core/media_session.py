@@ -93,9 +93,7 @@ class MediaReplyChunk:
             raise ValueError("media reply PCM must be non-empty 16-bit audio")
         if self.source_start_sample < 0:
             raise ValueError("media reply sample range must be non-negative")
-        if (self.text_audio_start_sample is None) != (
-            self.text_audio_end_sample is None
-        ):
+        if (self.text_audio_start_sample is None) != (self.text_audio_end_sample is None):
             raise ValueError("text audio bounds must be provided together")
         text_audio_start = self.text_audio_start_sample
         text_audio_end = self.text_audio_end_sample
@@ -246,6 +244,7 @@ class MediaVoiceCoreRegistry:
                 asr=asr,
                 stream_epoch=identity.stream_epoch,
             )
+
             async def publish_runtime_event(event: dict[str, Any]) -> None:
                 await self._publish_runtime_event(identity.session_id, event)
 
@@ -264,6 +263,7 @@ class MediaVoiceCoreRegistry:
         if not isinstance(event_type, str):
             return
         payload = {key: value for key, value in event.items() if key != "type"}
+
         def event_int(key: str) -> int:
             value = event.get(key)
             return value if isinstance(value, int) and not isinstance(value, bool) else 0
@@ -526,11 +526,13 @@ class MediaVoiceCoreRegistry:
                         else session.generation.cancel(previous_fence)
                     )
                     if cancelled is not None:
-                        if (
-                            not previous_fence.matches(cancelled)
-                            and context.runtime.orchestrator.state.name
-                            in ("SPEAKING", "INTERRUPTION_PENDING")
+                        if not previous_fence.matches(
+                            cancelled
+                        ) and context.runtime.orchestrator.state.name in (
+                            "SPEAKING",
+                            "INTERRUPTION_PENDING",
                         ):
+                            await self._record_interrupted_timed_spans(context, previous_fence)
                             heard = context.playback.actual_heard_text(previous_fence)
                             interrupted_fence = await context.runtime.on_real_interrupt(
                                 cause="media_keyword_interrupt",
@@ -597,11 +599,10 @@ class MediaVoiceCoreRegistry:
         # MediaBridgeSession has already advanced its authoritative generation
         # before this callback runs. The Voice Core consumes that exact fence.
         previous_fence = context.playback.current_fence or context.runtime.fence
-        if (
-            not previous_fence.matches(session.fence)
-            and context.runtime.orchestrator.state.name
-            in ("SPEAKING", "INTERRUPTION_PENDING")
-        ):
+        if not previous_fence.matches(
+            session.fence
+        ) and context.runtime.orchestrator.state.name in ("SPEAKING", "INTERRUPTION_PENDING"):
+            await self._record_interrupted_timed_spans(context, previous_fence)
             heard = context.playback.actual_heard_text(previous_fence)
             interrupted_fence = await context.runtime.on_real_interrupt(
                 cause="client_stop_assistant",
@@ -641,6 +642,7 @@ class MediaVoiceCoreRegistry:
         if previous_fence.matches(cancelled):
             return
         if context.runtime.orchestrator.state.name in ("SPEAKING", "INTERRUPTION_PENDING"):
+            await self._record_interrupted_timed_spans(context, previous_fence)
             heard = context.playback.actual_heard_text(previous_fence)
             interrupted_fence = await context.runtime.on_real_interrupt(
                 cause="downlink_queue_full",
@@ -684,6 +686,51 @@ class MediaVoiceCoreRegistry:
         result = cancel(fence)
         if inspect.isawaitable(result):
             await result
+
+    @staticmethod
+    async def _record_interrupted_timed_spans(
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+    ) -> None:
+        """Attach a provider's already-verified subtitle prefix before cancel.
+
+        A live stream can expose timed subtitle facts before it reaches its
+        normal completion.  This preserves only spans whose audio is already
+        known to the provider adapter; absent or malformed metadata remains a
+        deliberate no-op.
+        """
+
+        getter = getattr(context.provider, "interrupted_timed_text_spans", None)
+        if not callable(getter):
+            return
+        spans = getter(fence)
+        if inspect.isawaitable(spans):
+            spans = await spans
+        if not isinstance(spans, (tuple, list)):
+            return
+        for span in spans:
+            text = getattr(span, "text", None)
+            start = getattr(span, "audio_start_sample", None)
+            end = getattr(span, "audio_end_sample", None)
+            if (
+                not isinstance(text, str)
+                or not text
+                or not isinstance(start, int)
+                or not isinstance(end, int)
+            ):
+                return
+            text_start = context.output_text_offset
+            context.output_text_offset += len(text)
+            context.playback.add_span(
+                PlaybackSpan(
+                    fence=fence,
+                    text_start=text_start,
+                    text_end=context.output_text_offset,
+                    audio_start_sample=start,
+                    audio_end_sample=end,
+                    text=text,
+                )
+            )
 
     @classmethod
     async def _cancel_reply_task(
@@ -930,9 +977,7 @@ class MediaVoiceCoreRegistry:
                     self.metrics.inc_media_stale_generation()
                     return False
                 announcement = (
-                    chunk.text
-                    if chunk.assistant_text_delta is None
-                    else chunk.assistant_text_delta
+                    chunk.text if chunk.assistant_text_delta is None else chunk.assistant_text_delta
                 )
                 if announcement:
                     context.assistant_text += announcement
@@ -981,10 +1026,7 @@ class MediaVoiceCoreRegistry:
                 ):
                     self.metrics.inc_media_stale_generation()
                     return False
-                if (
-                    not context.first_audio_observed
-                    and context.turn_started_ns is not None
-                ):
+                if not context.first_audio_observed and context.turn_started_ns is not None:
                     self.metrics.observe_voice_latency(
                         "first_audio",
                         (time.monotonic_ns() - context.turn_started_ns) / 1_000_000_000,

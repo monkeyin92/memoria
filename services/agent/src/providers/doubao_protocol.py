@@ -277,7 +277,7 @@ def align_subtitle_words(
     if not words or words[-1].end_ms <= 0:
         return (), "degraded"
     difference = abs(words[-1].end_ms - pcm_duration_ms_value)
-    if difference <= 300:
+    if difference <= 120:
         return words, "ok"
     factor = pcm_duration_ms_value / words[-1].end_ms
     aligned = tuple(
@@ -289,4 +289,4 @@ def align_subtitle_words(
         )
         for word in words
     )
-    return aligned, "scaled" if difference <= 700 else "degraded"
+    return aligned, "scaled" if difference <= 300 else "degraded"

@@ -601,11 +601,17 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
         self._fence = fence
         self._conn: PooledConnection | None = None
         self._timed_transcript: tuple[TimedString, ...] = ()
+        self._timed_transcript_alignment = "pending"
 
     def timed_transcript(self) -> tuple[TimedString, ...]:
-        """Return provider subtitle timing once this stream has completed."""
+        """Return the provider's latest subtitle timing snapshot."""
 
         return self._timed_transcript
+
+    def timed_transcript_alignment(self) -> str:
+        """Report whether the snapshot is final, scaled, or still provisional."""
+
+        return self._timed_transcript_alignment
 
     async def _run(self, output_emitter: tts.AudioEmitter) -> None:
         replay: list[str] = []
@@ -766,6 +772,18 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
                                 )
                             got_words = True
                             subtitle_words.extend(words)
+                            # Keep a provider-timestamped snapshot while the
+                            # stream is live. On an interruption the adapter
+                            # may retain only the safe, ACK-covered prefix;
+                            # final alignment still replaces this snapshot.
+                            self._timed_transcript += tuple(
+                                TimedString(
+                                    word.text + (word.punctuation or ""),
+                                    start_time=word.begin_ms / 1000,
+                                    end_time=word.end_ms / 1000,
+                                )
+                                for word in words
+                            )
                     elif message.event == EventType.SESSION_FINISHED:
                         break
                     elif (
@@ -796,15 +814,21 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
                 session_id,
                 alignment_status,
             )
-            self._timed_transcript = tuple(
-                TimedString(
-                    word.text + (word.punctuation or ""),
-                    start_time=word.begin_ms / 1000,
-                    end_time=word.end_ms / 1000,
+            self._timed_transcript_alignment = alignment_status
+            if alignment_status != "degraded":
+                self._timed_transcript = tuple(
+                    TimedString(
+                        word.text + (word.punctuation or ""),
+                        start_time=word.begin_ms / 1000,
+                        end_time=word.end_ms / 1000,
+                    )
+                    for word in aligned_words
                 )
-                for word in aligned_words
-            )
-            output_emitter.push_timed_transcript(list(self._timed_transcript))
+                output_emitter.push_timed_transcript(list(self._timed_transcript))
+            else:
+                # A badly aligned subtitle remains telemetry only. It must
+                # never become a precise actual-heard ledger fact.
+                self._timed_transcript = ()
             if emitter_started:
                 output_emitter.end_segment()
             await pool.release(conn)
