@@ -231,42 +231,11 @@ class ExistingVoiceProviderAdapter:
             stream_epoch=event_stream_epoch,
             sample_offset=sample_offset,
         )
-        mapped_start = mapped.capture_start_sample
-        mapped_end = mapped.capture_end_sample
-        if not sentence.sentence_end:
-            # Partial staleness is decided by ASRStreamSupervisor, the single
-            # interval/revision authority, not by a second adapter watermark.
-            return ASRResult(
-                task_epoch=mapped.task_epoch,
-                sentence_id=mapped.sentence_id,
-                revision=mapped.revision,
-                capture_start_sample=mapped_start,
-                capture_end_sample=mapped_end,
-                text=mapped.text,
-                is_final=mapped.is_final,
-                confidence=mapped.confidence,
-                provider_begin_ms=mapped.provider_begin_ms,
-                provider_end_ms=mapped.provider_end_ms,
-                stream_epoch=mapped.stream_epoch,
-            )
         # Interval dedup, replay and revision semantics are owned by
-        # ASRStreamSupervisor as the single decision point. This adapter only
-        # maps provider events onto the absolute sample clock and assigns a
-        # per-task revision; the full provider range and text pass through so
-        # the highest revision can become the authoritative result.
-        return ASRResult(
-            task_epoch=mapped.task_epoch,
-            sentence_id=mapped.sentence_id,
-            revision=mapped.revision,
-            capture_start_sample=mapped.capture_start_sample,
-            capture_end_sample=mapped.capture_end_sample,
-            text=mapped.text,
-            is_final=True,
-            confidence=mapped.confidence,
-            provider_begin_ms=mapped.provider_begin_ms,
-            provider_end_ms=mapped.provider_end_ms,
-            stream_epoch=mapped.stream_epoch,
-        )
+        # ASRStreamSupervisor.  The adapter only maps provider events onto the
+        # absolute sample clock and assigns a per-task revision; returning the
+        # mapped value unchanged keeps partial/final contracts in one place.
+        return mapped
 
     @property
     def output_frame_samples(self) -> int:

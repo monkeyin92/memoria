@@ -1,7 +1,11 @@
 # 项目交接
 
-## 2026-08-04：review.md 复评问题修复（未提交）
+## 2026-08-04：已提交 `b8c98d9`，review.md 复评问题跟进
 
+- 当前工作区另有未提交的 follow-up：ASR 版本统一为
+  `ASRLogicalVersion(task_epoch, provider_revision)`；跨 committed watermark 的结果由
+  `ASRAcceptDecision` 规范化，缺少可靠词时序时 fail-closed；provider adapter 直接透传
+  统一映射结果。对应回归测试已通过，提交前仍需复核工作区状态。
 - ASR 区间/重放/修正规则收敛为单一决策点：`provider_adapter.py` 退化为纯 provider
   映射（删除 `_final_sentence_ids`/`_accepted_final_ranges`/`_provider_final_ranges`/
   `_max_final_end_by_epoch` 及裁尾逻辑，final 携带完整绝对区间与全文），

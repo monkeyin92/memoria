@@ -5,7 +5,11 @@ be used by the existing LiveKit path while the future media edge is built.
 """
 
 from .adaptive_vad import AdaptiveEnergyVAD, AdaptiveVADConfig, VADEngine, VADEvent
-from .asr_stream_supervisor import ASRStreamSupervisor
+from .asr_stream_supervisor import (
+    ASRAcceptDecision,
+    ASRDecisionReason,
+    ASRStreamSupervisor,
+)
 from .device_client import (
     LinuxMediaDeviceClient,
     MediaDeviceConfig,
@@ -71,7 +75,9 @@ from .replay_harness import (
 from .slo import MediaSLO, SLOReport, evaluate_slo
 from .slo_reporter import MediaSLOReporter, MediaSLOReporterConfig
 from .speech_timeline import (
+    ASRLogicalVersion,
     ASRResult,
+    ASRWordTiming,
     SegmentKind,
     SpeechSegment,
     SpeechTimeline,
@@ -88,6 +94,10 @@ from .telemetry import (
 
 __all__ = [
     "ASRResult",
+    "ASRAcceptDecision",
+    "ASRDecisionReason",
+    "ASRLogicalVersion",
+    "ASRWordTiming",
     "ASRStreamSupervisor",
     "DEVICE_TOPICS",
     "DeviceCommand",

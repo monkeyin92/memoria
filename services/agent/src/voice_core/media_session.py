@@ -20,7 +20,11 @@ from typing import Any, Protocol
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
-from services.agent.src.voice_core.asr_stream_supervisor import ASRStreamSupervisor
+from services.agent.src.voice_core.asr_stream_supervisor import (
+    ASRAcceptDecision,
+    ASRDecisionReason,
+    ASRStreamSupervisor,
+)
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_bridge_server import (
@@ -297,9 +301,10 @@ class MediaVoiceCoreRegistry:
             self.metrics.inc_media_session_failed()
             raise
         for result in results:
-            accepted = await self.accept_asr_result(context.identity.session_id, result)
-            if accepted and result.is_final:
-                self._observe_final_asr_result(context, result)
+            decision = await self._accept_asr_result_decision(context.identity.session_id, result)
+            accepted = decision.accepted
+            if accepted is not None and accepted.is_final:
+                self._observe_final_asr_result(context, accepted)
 
     def _observe_final_asr_result(
         self,
@@ -867,18 +872,32 @@ class MediaVoiceCoreRegistry:
             )
 
     async def accept_asr_result(self, session_id: str, result: ASRResult) -> bool:
+        """Compatibility bool seam; use the normalized decision internally."""
+
+        decision = await self._accept_asr_result_decision(session_id, result)
+        return decision.accepted is not None
+
+    async def _accept_asr_result_decision(
+        self,
+        session_id: str,
+        result: ASRResult,
+    ) -> ASRAcceptDecision:
         context = self._sessions.get(session_id)
         if context is None or context.closed:
-            return False
-        if not context.asr.accept_result(result, session_id=session_id):
+            return ASRAcceptDecision(None, ASRDecisionReason.SESSION_NOT_FOUND)
+        decision = context.asr.accept_result(result, session_id=session_id)
+        accepted = decision.accepted
+        if accepted is None:
             if result.is_final:
                 self.metrics.inc_media_stale_asr_final()
-            return False
-        segment = asr_result_to_segment(result, session_id=session_id)
+            return decision
+        # The provider result is never forwarded after supervisor policy has
+        # normalized it (e.g. a committed-watermark tail).
+        segment = asr_result_to_segment(accepted, session_id=session_id)
         if not context.runtime.ingest_media_speech_segment(segment):
-            return False
+            return ASRAcceptDecision(None, ASRDecisionReason.INTERVAL_CONFLICT)
         await self.bridge.emit_transcript(session_id, segment)
-        return True
+        return decision
 
     async def commit_user_turn(
         self,

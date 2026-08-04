@@ -11,6 +11,42 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 
+@dataclass(frozen=True, slots=True, order=True)
+class ASRLogicalVersion:
+    """Comparable ASR version shared by provider tasks and the timeline.
+
+    Provider ``revision`` values are task-local and restart at one after a
+    reconnect. Pairing that revision with the monotonically increasing task
+    epoch gives every result one ordering that remains valid across tasks.
+    """
+
+    task_epoch: int
+    provider_revision: int
+
+    def __post_init__(self) -> None:
+        if self.task_epoch < 0:
+            raise ValueError("task epoch must be non-negative")
+        if self.provider_revision < 1:
+            raise ValueError("provider revision must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class ASRWordTiming:
+    """A provider word boundary projected onto the capture sample clock."""
+
+    text: str
+    capture_start_sample: int
+    capture_end_sample: int
+
+    def __post_init__(self) -> None:
+        if not self.text:
+            raise ValueError("word text must not be empty")
+        if self.capture_start_sample < 0:
+            raise ValueError("word start sample must be non-negative")
+        if self.capture_end_sample <= self.capture_start_sample:
+            raise ValueError("word end sample must follow its start")
+
+
 class SegmentKind(StrEnum):
     VAD = "vad"
     ASR_PARTIAL = "asr_partial"
@@ -57,22 +93,32 @@ class SpeechSegment:
         if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
 
+    @property
+    def logical_version(self) -> ASRLogicalVersion:
+        """Version used for all replacement and canonical selection decisions."""
+
+        return ASRLogicalVersion(self.provider_task_epoch, self.revision)
+
 
 @dataclass(slots=True)
 class SpeechTimeline:
     """Interval store with a committed watermark and epoch fence.
 
-    A segment is accepted at most once per ``segment_id``/revision.  A higher
-    revision replaces the older provider result, while a final result always
-    wins over a partial at the same revision.  Events from an old epoch or
-    behind the committed watermark are rejected instead of being re-associated
-    with the newest turn.
+    A segment is accepted at most once per ``segment_id``/logical version.  A
+    higher ``(task_epoch, provider_revision)`` replaces the older provider
+    result, while a final result always wins over a partial at the same
+    version. Events from an old epoch or behind the committed watermark are
+    rejected instead of being re-associated with the newest turn.
     """
 
     _segments: list[SpeechSegment] = field(default_factory=list)
     _current_stream_epoch: int | None = None
     _committed_sample: int = 0
-    _last_segment_revision: dict[tuple[int, str], int] = field(default_factory=dict)
+    # Kept under the historical attribute name for introspection compatibility;
+    # values are logical versions, never bare provider revisions.
+    _last_segment_revision: dict[tuple[int, str], ASRLogicalVersion] = field(
+        default_factory=dict,
+    )
     _dropped_late: int = 0
     _dropped_epoch: int = 0
 
@@ -141,8 +187,9 @@ class SpeechTimeline:
             return False
 
         key = (segment.stream_epoch, segment.segment_id)
-        previous_revision = self._last_segment_revision.get(key)
-        if previous_revision is not None and segment.revision < previous_revision:
+        previous_version = self._last_segment_revision.get(key)
+        segment_version = segment.logical_version
+        if previous_version is not None and segment_version < previous_version:
             self._dropped_late += 1
             return False
 
@@ -160,7 +207,7 @@ class SpeechTimeline:
         # back into the canonical timeline.
         if (
             previous is not None
-            and previous_revision == segment.revision
+            and previous_version == segment_version
             and previous.final
             and not segment.final
         ):
@@ -175,13 +222,13 @@ class SpeechTimeline:
             if not (item.stream_epoch == segment.stream_epoch and item.segment_id == segment.segment_id)
         ]
         self._segments.append(segment)
-        self._last_segment_revision[key] = segment.revision
+        self._last_segment_revision[key] = segment_version
         self._segments.sort(
             key=lambda item: (
                 item.capture_start_sample,
                 item.capture_end_sample,
                 item.segment_id,
-                item.revision,
+                item.logical_version,
             )
         )
         return True
@@ -238,9 +285,9 @@ class SpeechTimeline:
                 continue
             key = (segment.capture_start_sample, segment.capture_end_sample)
             current = selected.get(key)
-            if current is None or (segment.final, segment.revision) > (
+            if current is None or (segment.final, segment.logical_version) > (
                 current.final,
-                current.revision,
+                current.logical_version,
             ):
                 selected[key] = segment
         return " ".join(item.text.strip() for item in selected.values()).strip()

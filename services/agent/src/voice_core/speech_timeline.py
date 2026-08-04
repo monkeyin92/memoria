@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from services.agent.src.orchestration.speech_timeline import (
+    ASRLogicalVersion,
+    ASRWordTiming,
     SegmentKind,
     SpeechSegment,
     SpeechTimeline,
@@ -31,6 +33,9 @@ class ASRResult:
     provider_begin_ms: int | None = None
     provider_end_ms: int | None = None
     stream_epoch: int = 1
+    # Optional reliable word boundaries projected onto the absolute sample
+    # clock. Supervisor uses these only for committed-watermark straddles.
+    word_timings: tuple[ASRWordTiming, ...] = ()
     # Reconnected providers can trim an expanded sentence to a new tail. Keep
     # the provider sentence id for reconciliation while giving that tail its
     # own timeline replacement identity so it cannot erase the accepted
@@ -66,12 +71,27 @@ class ASRResult:
             and self.provider_end_ms < self.provider_begin_ms
         ):
             raise ValueError("provider_end_ms must not precede provider_begin_ms")
+        previous_end = self.capture_start_sample
+        for word in self.word_timings:
+            if not isinstance(word, ASRWordTiming):
+                raise ValueError("word_timings must contain ASRWordTiming values")
+            if word.capture_start_sample < previous_end:
+                raise ValueError("word timings must be ordered within the result")
+            if word.capture_end_sample > self.capture_end_sample:
+                raise ValueError("word timing must fit inside the result range")
+            previous_end = word.capture_end_sample
 
     @property
     def segment_id(self) -> str:
         """Stable ID used by the timeline when replacing revisions."""
 
         return self.timeline_segment_id or self.sentence_id
+
+    @property
+    def logical_version(self) -> ASRLogicalVersion:
+        """Comparable version that includes the provider task epoch."""
+
+        return ASRLogicalVersion(self.task_epoch, self.revision)
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +159,8 @@ def asr_result_to_segment(
 __all__ = [
     "ASRResult",
     "ASRFinalInterval",
+    "ASRLogicalVersion",
+    "ASRWordTiming",
     "SegmentKind",
     "SpeechSegment",
     "SpeechTimeline",

@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from services.agent.src.contracts.events import TimedWord
+from services.agent.src.voice_core.speech_timeline import (
+    ASRResult,
+    ASRWordTiming,
+)
 from services.common.redaction import redact_pii
 
 FunASREventType = Literal[
@@ -30,39 +34,6 @@ class FunASRSentence:
     words: tuple[TimedWord, ...]
 
 
-@dataclass(frozen=True, slots=True)
-class ASRResult:
-    """Provider-neutral ASR result stamped on the capture sample clock."""
-
-    task_epoch: int
-    sentence_id: str
-    revision: int
-    capture_start_sample: int
-    capture_end_sample: int
-    text: str
-    is_final: bool
-    confidence: float | None = None
-    provider_begin_ms: int | None = None
-    provider_end_ms: int | None = None
-    stream_epoch: int = 1
-
-    def __post_init__(self) -> None:
-        if self.task_epoch < 1:
-            raise ValueError("task_epoch must be positive")
-        if self.stream_epoch < 1:
-            raise ValueError("stream_epoch must be positive")
-        if not self.sentence_id:
-            raise ValueError("sentence_id is required")
-        if self.revision < 1:
-            raise ValueError("revision must be positive")
-        if self.capture_start_sample < 0:
-            raise ValueError("capture_start_sample must be non-negative")
-        if self.capture_end_sample <= self.capture_start_sample:
-            raise ValueError("capture_end_sample must be greater than start")
-        if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
-            raise ValueError("confidence must be between 0 and 1")
-
-
 def sentence_to_asr_result(
     sentence: FunASRSentence,
     *,
@@ -80,7 +51,8 @@ def sentence_to_asr_result(
     if sample_offset < 0:
         raise ValueError("sample_offset must be non-negative")
     start = sample_offset + max(0, round(sentence.begin_ms * sample_rate / 1000))
-    provider_end = sentence.end_ms if sentence.end_ms is not None else sentence.begin_ms
+    word_end = max((word.end_ms for word in sentence.words), default=sentence.begin_ms)
+    provider_end = max(sentence.end_ms or sentence.begin_ms, word_end)
     end = max(
         start + 1,
         sample_offset + round(max(sentence.begin_ms, provider_end) * sample_rate / 1000),
@@ -97,6 +69,17 @@ def sentence_to_asr_result(
         provider_begin_ms=sentence.begin_ms,
         provider_end_ms=sentence.end_ms,
         stream_epoch=stream_epoch,
+        word_timings=tuple(
+            ASRWordTiming(
+                text=word.text + (word.punctuation or ""),
+                capture_start_sample=sample_offset
+                + round(word.begin_ms * sample_rate / 1000),
+                capture_end_sample=sample_offset
+                + round(word.end_ms * sample_rate / 1000),
+            )
+            for word in sentence.words
+            if word.text and word.end_ms > word.begin_ms
+        ),
     )
 
 

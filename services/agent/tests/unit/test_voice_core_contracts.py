@@ -4,7 +4,10 @@ import base64
 
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.voice_core.asr_stream_supervisor import ASRStreamSupervisor
+from services.agent.src.voice_core.asr_stream_supervisor import (
+    ASRDecisionReason,
+    ASRStreamSupervisor,
+)
 from services.agent.src.voice_core.device_protocol import DeviceCommand, DeviceCommandAck
 from services.agent.src.voice_core.generation_controller import GenerationController
 from services.agent.src.voice_core.media_bridge_server import (
@@ -21,6 +24,7 @@ from services.agent.src.voice_core.media_protocol import (
 from services.agent.src.voice_core.playback_ledger import PlaybackLedger, PlaybackSpan
 from services.agent.src.voice_core.speech_timeline import (
     ASRResult,
+    ASRWordTiming,
     SpeechTimeline,
     asr_result_to_segment,
 )
@@ -358,7 +362,9 @@ def test_asr_supervisor_uses_watermark_and_task_epoch_on_reconnect() -> None:
         text="你好世界",
         is_final=True,
     )
-    assert supervisor.accept_result(expanded, session_id="session")
+    decision = supervisor.accept_result(expanded, session_id="session")
+    assert not decision
+    assert decision.reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
     late_old_task = ASRResult(
         task_epoch=1,
         sentence_id="s1",
@@ -424,7 +430,84 @@ def test_asr_supervisor_higher_revision_replaces_same_interval() -> None:
         is_final=True,
     )
     assert supervisor.accept_result(corrected, session_id="session")
-    assert supervisor.accept_result(corrected, session_id="session") is False
+    duplicate = supervisor.accept_result(corrected, session_id="session")
+    assert not duplicate
+    assert duplicate.reason is ASRDecisionReason.TRANSPORT_DUPLICATE
+
+
+def test_asr_supervisor_normalizes_committed_cross_task_extension_with_word_timing() -> None:
+    supervisor = ASRStreamSupervisor(reconnect_audio_ms=500)
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=800)
+    first = ASRResult(
+        task_epoch=1,
+        sentence_id="s1",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=320,
+        text="你好",
+        is_final=True,
+    )
+    assert supervisor.accept_result(first, session_id="session")
+    supervisor.mark_committed(320)
+    extension = ASRResult(
+        task_epoch=2,
+        sentence_id="s1",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=800,
+        text="你好世界",
+        is_final=True,
+        word_timings=(
+            ASRWordTiming("你", 0, 160),
+            ASRWordTiming("好", 160, 320),
+            ASRWordTiming("世", 320, 560),
+            ASRWordTiming("界", 560, 800),
+        ),
+    )
+    decision = supervisor.accept_result(extension, session_id="session")
+    assert decision
+    assert decision.accepted is not None
+    assert decision.accepted.capture_start_sample == 320
+    assert decision.accepted.capture_end_sample == 800
+    assert decision.accepted.text == "世界"
+    assert decision.accepted.timeline_segment_id == "s1:tail:320"
+
+
+def test_asr_supervisor_orders_reconnect_revision_above_old_task_revision() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=640)
+    first = ASRResult(1, "s1", 1, 0, 320, "你号", True)
+    old_correction = ASRResult(1, "s1", 2, 0, 320, "你好", True)
+    expanded = ASRResult(2, "s1", 1, 0, 640, "你好世界", True)
+    late_old = ASRResult(1, "s1", 3, 0, 640, "旧结果", True)
+
+    assert supervisor.accept_result(first, session_id="session")
+    assert supervisor.accept_result(old_correction, session_id="session")
+    assert supervisor.accept_result(expanded, session_id="session")
+    assert supervisor.timeline.canonical_text(
+        stream_epoch=1,
+        start_sample=0,
+        end_sample=640,
+    ) == "你好世界"
+    assert not supervisor.accept_result(late_old, session_id="session")
+
+
+def test_asr_supervisor_accepts_new_task_same_interval_correction() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=320)
+    first = ASRResult(1, "s1", 2, 0, 320, "你号", True)
+    correction = ASRResult(2, "s1", 1, 0, 320, "你好", True)
+
+    assert supervisor.accept_result(first, session_id="session")
+    assert supervisor.accept_result(correction, session_id="session")
+    assert supervisor.timeline.canonical_text(
+        stream_epoch=1,
+        start_sample=0,
+        end_sample=320,
+    ) == "你好"
 
 
 def test_asr_supervisor_rejects_cross_task_same_range_replay() -> None:
