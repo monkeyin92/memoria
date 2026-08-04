@@ -600,6 +600,12 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
         self._fallback_pool = fallback_pool
         self._fence = fence
         self._conn: PooledConnection | None = None
+        self._timed_transcript: tuple[TimedString, ...] = ()
+
+    def timed_transcript(self) -> tuple[TimedString, ...]:
+        """Return provider subtitle timing once this stream has completed."""
+
+        return self._timed_transcript
 
     async def _run(self, output_emitter: tts.AudioEmitter) -> None:
         replay: list[str] = []
@@ -790,16 +796,15 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
                 session_id,
                 alignment_status,
             )
-            output_emitter.push_timed_transcript(
-                [
-                    TimedString(
-                        word.text + (word.punctuation or ""),
-                        start_time=word.begin_ms / 1000,
-                        end_time=word.end_ms / 1000,
-                    )
-                    for word in aligned_words
-                ]
+            self._timed_transcript = tuple(
+                TimedString(
+                    word.text + (word.punctuation or ""),
+                    start_time=word.begin_ms / 1000,
+                    end_time=word.end_ms / 1000,
+                )
+                for word in aligned_words
             )
+            output_emitter.push_timed_transcript(list(self._timed_transcript))
             if emitter_started:
                 output_emitter.end_segment()
             await pool.release(conn)

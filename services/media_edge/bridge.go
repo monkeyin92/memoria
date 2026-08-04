@@ -181,7 +181,7 @@ type VoiceCoreBridgeConfig struct {
 // gRPC is available only with an explicit development opt-in.
 func DialVoiceCore(ctx context.Context, config VoiceCoreBridgeConfig) (*VoiceCoreBridge, error) {
 	if config.Address == "" {
-		return nil, fmt.Errorf("Voice Core bridge address is required")
+		return nil, fmt.Errorf("voice-core bridge address is required")
 	}
 	var opts []grpc.DialOption
 	if config.TLS != nil {
@@ -193,7 +193,7 @@ func DialVoiceCore(ctx context.Context, config VoiceCoreBridgeConfig) (*VoiceCor
 	} else if config.AllowInsecureDevelopment {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
-		return nil, fmt.Errorf("Voice Core bridge requires mTLS outside development")
+		return nil, fmt.Errorf("voice-core bridge requires mTLS outside development")
 	}
 	// grpc.NewClient connects lazily; callers pass a bounded context so
 	// startup fails closed and predictably instead of announcing readiness
@@ -217,7 +217,7 @@ func waitForReady(ctx context.Context, conn *grpc.ClientConn) error {
 			return nil
 		}
 		if !conn.WaitForStateChange(ctx, state) {
-			return fmt.Errorf("Voice Core bridge did not become ready: %w", ctx.Err())
+			return fmt.Errorf("voice-core bridge did not become ready: %w", ctx.Err())
 		}
 	}
 }
@@ -265,7 +265,7 @@ func (b *VoiceCoreBridge) Connect(
 		return nil, fmt.Errorf("downlink format: %w", err)
 	}
 	if uplink.SampleRate != 16_000 || downlink.SampleRate != 24_000 {
-		return nil, fmt.Errorf("Voice Core bridge requires 16 kHz uplink and 24 kHz downlink")
+		return nil, fmt.Errorf("voice-core bridge requires 16 kHz uplink and 24 kHz downlink")
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	stream, err := b.client.Connect(streamCtx)
@@ -288,17 +288,17 @@ func (b *VoiceCoreBridge) Connect(
 			Capabilities:   map[string]string{"media_only": "true", "generation_gate": "true"},
 		},
 	}}); err != nil {
-		session.Close()
+		_ = session.Close()
 		return nil, err
 	}
 	accepted, err := stream.Recv()
 	if err != nil {
-		session.Close()
+		_ = session.Close()
 		return nil, fmt.Errorf("receive Voice Core acceptance: %w", err)
 	}
 	if accepted == nil || accepted.GetAccepted() == nil || !identity.equal(accepted.GetAccepted().GetIdentity()) {
-		session.Close()
-		return nil, fmt.Errorf("Voice Core returned an invalid session acceptance")
+		_ = session.Close()
+		return nil, fmt.Errorf("voice-core bridge returned an invalid session acceptance")
 	}
 	if accepted.GetAccepted().GetCurrentGenerationId() > 0 {
 		session.current.GenerationID = accepted.GetAccepted().GetCurrentGenerationId()
@@ -309,15 +309,15 @@ func (b *VoiceCoreBridge) Connect(
 		// generation-only placeholder fence.
 		resume, resumeErr := stream.Recv()
 		if resumeErr != nil {
-			session.Close()
+			_ = session.Close()
 			return nil, fmt.Errorf("receive Voice Core reconnect fence: %w", resumeErr)
 		}
 		if resumeErr := session.validateCoreEvent(resume); resumeErr != nil || resume.GetGeneration() == nil {
-			session.Close()
+			_ = session.Close()
 			if resumeErr != nil {
 				return nil, fmt.Errorf("invalid Voice Core reconnect fence: %w", resumeErr)
 			}
-			return nil, fmt.Errorf("Voice Core reconnect acceptance omitted full generation fence")
+			return nil, fmt.Errorf("voice-core reconnect acceptance omitted full generation fence")
 		}
 	}
 	return session, nil
@@ -377,7 +377,7 @@ func (s *VoiceCoreSession) SendAudio(frame AudioFrame) error {
 		return err
 	}
 	if frame.FrameSamples > math.MaxUint32 || len(payload)%2 != 0 || uint64(len(payload)/2) != frame.FrameSamples {
-		return fmt.Errorf("PCM payload does not match frame samples")
+		return fmt.Errorf("pcm payload does not match frame samples")
 	}
 	return s.send(&mediav1.MediaToCore{Event: &mediav1.MediaToCore_Audio{
 		Audio: &mediav1.AudioFrame{
@@ -403,7 +403,7 @@ func (s *VoiceCoreSession) SendVadWithVoicedEnd(sample, voicedEnd uint64, probab
 	if start {
 		typeValue = mediav1.VadEventType_VAD_EVENT_SPEECH_START
 	} else if voicedEnd > sample {
-		return fmt.Errorf("VAD voiced end cannot exceed event sample")
+		return fmt.Errorf("vad voiced end cannot exceed event sample")
 	}
 	var voicedEndSample *uint64
 	if !start {
@@ -557,7 +557,7 @@ func (s *VoiceCoreSession) Recv() (*mediav1.CoreToMedia, error) {
 
 func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 	if event == nil {
-		return fmt.Errorf("Voice Core returned an empty event")
+		return fmt.Errorf("voice-core bridge returned an empty event")
 	}
 	if accepted := event.GetAccepted(); accepted != nil {
 		if !s.identity.equal(accepted.GetIdentity()) {
@@ -654,7 +654,7 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("Voice Core returned an unknown event")
+	return fmt.Errorf("voice-core bridge returned an unknown event")
 }
 
 func (s *VoiceCoreSession) acceptEventSequence(sequence uint64) error {

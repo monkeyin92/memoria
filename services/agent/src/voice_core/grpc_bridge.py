@@ -90,6 +90,7 @@ AudioFrameHandler = Callable[[MediaBridgeSession, AudioFrame], Awaitable[None]]
 SpeechSegmentHandler = Callable[[MediaBridgeSession, SpeechSegment, int], Awaitable[None]]
 SessionClosedHandler = Callable[[MediaBridgeSession], Awaitable[None]]
 PlaybackProgressHandler = Callable[[MediaBridgeSession, PlaybackProgress], Awaitable[None]]
+DownlinkOverflowHandler = Callable[[MediaBridgeSession], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -138,6 +139,7 @@ class MediaBridgeGrpcServer:
         on_speech_segment: SpeechSegmentHandler | None = None,
         on_session_closed: SessionClosedHandler | None = None,
         on_playback_progress: PlaybackProgressHandler | None = None,
+        on_downlink_overflow: DownlinkOverflowHandler | None = None,
     ) -> None:
         if max_pending_messages <= 0:
             raise ValueError("max_pending_messages must be positive")
@@ -148,6 +150,7 @@ class MediaBridgeGrpcServer:
         self.on_speech_segment = on_speech_segment
         self.on_session_closed = on_session_closed
         self.on_playback_progress = on_playback_progress
+        self.on_downlink_overflow = on_downlink_overflow
         self._connections: dict[str, _Connection] = {}
         self._closed_session_notifications: set[str] = set()
         self._server: grpc.aio.Server | None = None
@@ -635,9 +638,19 @@ class MediaBridgeGrpcServer:
             connection.outgoing.put_nowait(message)
         except asyncio.QueueFull:
             connection.session.overflow_count += 1
+            terminal = self._overflow_cancel_message(connection)
+            # Stop accepting publisher callbacks before notifying the registry:
+            # on_real_interrupt may itself publish state, and a full transport
+            # must not recurse through another overflow path.
+            connection.closed = True
+            if terminal is not None and self.on_downlink_overflow is not None:
+                try:
+                    await self.on_downlink_overflow(connection.session)
+                except Exception:
+                    logger.exception("Voice Core did not accept downlink overflow cancellation")
             self._terminate_outgoing(
                 connection,
-                self._overflow_cancel_message(connection),
+                terminal,
             )
             return False
         return True

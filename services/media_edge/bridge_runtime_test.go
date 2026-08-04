@@ -216,6 +216,7 @@ func TestVoiceCoreMediaRuntimeAppliesGenerationAndDownlinkGate(t *testing.T) {
 		},
 	}}
 	deadline := time.Now().Add(time.Second)
+waitCallbacks:
 	for range 2 {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -224,7 +225,7 @@ func TestVoiceCoreMediaRuntimeAppliesGenerationAndDownlinkGate(t *testing.T) {
 		select {
 		case <-callbackEvents:
 		case <-time.After(remaining):
-			break
+			break waitCallbacks
 		}
 	}
 	if frame, ok := session.PopDownlink(); ok {
@@ -247,10 +248,9 @@ func TestVoiceCoreMediaRuntimeExplicitSenderRetiresMoreThanQueueCapacity(t *test
 	delivered := make(chan AudioFrame, 128)
 	runtime, err := NewVoiceCoreMediaRuntimeWithDownlinkSender(
 		context.Background(), session, core,
-		func(frame AudioFrame) error {
-			// DeliverDownlink holds the generation gate across the sender call
-			// so a concurrent cancel can never admit stale PCM to the encoder.
-			// The terminator sender is therefore a fast, non-reentrant enqueue.
+		func(_ context.Context, frame AudioFrame) error {
+			// The sender receives a generation-scoped context. A real terminator
+			// must stop its enqueue when hard-stop cancellation closes that gate.
 			delivered <- frame
 			return nil
 		},
@@ -298,7 +298,7 @@ func TestVoiceCoreMediaRuntimeExplicitSenderRetiresMoreThanQueueCapacity(t *test
 	}
 }
 
-func TestConcurrentCancelCannotInterleaveWithDownlinkSender(t *testing.T) {
+func TestConcurrentCancelDoesNotWaitForDownlinkSender(t *testing.T) {
 	session := runtimeSession(t, 16)
 	current := Fence{SessionID: "s", TurnID: 1, GenerationID: 1}
 	if err := session.AdvanceGeneration(current); err != nil {
@@ -308,14 +308,18 @@ func TestConcurrentCancelCannotInterleaveWithDownlinkSender(t *testing.T) {
 	release := make(chan struct{})
 	delivered := make(chan AudioFrame, 1)
 	var senderStarted bool
-	sender := func(frame AudioFrame) error {
+	sender := func(ctx context.Context, frame AudioFrame) error {
 		if !senderStarted {
 			senderStarted = true
 			close(senderEntered)
 		}
-		<-release
-		delivered <- frame
-		return nil
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-release:
+			delivered <- frame
+			return nil
+		}
 	}
 	deliveryDone := make(chan struct{})
 	var deliveryErr error
@@ -334,28 +338,23 @@ func TestConcurrentCancelCannotInterleaveWithDownlinkSender(t *testing.T) {
 	}()
 	select {
 	case <-cancelDone:
-		t.Fatal("CancelGeneration completed while the sender held the gate")
 	case <-time.After(50 * time.Millisecond):
+		t.Fatal("CancelGeneration waited for the sender")
 	}
-	close(release)
 	<-deliveryDone
-	<-cancelDone
-	if deliveryErr != nil {
-		t.Fatalf("downlink delivery failed: %v", deliveryErr)
+	if !errors.Is(deliveryErr, ErrStaleDownlinkGeneration) {
+		t.Fatalf("downlink delivery error=%v, want stale generation", deliveryErr)
 	}
 	select {
 	case frame := <-delivered:
-		if frame.GenerationID != current.GenerationID {
-			t.Fatalf("delivered stale frame: %+v", frame)
-		}
+		t.Fatalf("cancelled frame reached sender: %+v", frame)
 	default:
-		t.Fatal("active-generation frame was not delivered")
 	}
 	senderCalls := 0
 	stale := runtimeFrame(0)
 	stale.TurnID = current.TurnID
 	stale.GenerationID = current.GenerationID
-	if err := session.DeliverDownlink(stale, func(AudioFrame) error {
+	if err := session.DeliverDownlink(stale, func(context.Context, AudioFrame) error {
 		senderCalls++
 		return nil
 	}); !errors.Is(err, ErrStaleDownlinkGeneration) || senderCalls != 0 {
@@ -369,7 +368,7 @@ func TestVoiceCoreMediaRuntimeSenderFailureKeepsFramePending(t *testing.T) {
 	sendErr := errors.New("transport backpressure")
 	runtime, err := NewVoiceCoreMediaRuntimeWithDownlinkSender(
 		context.Background(), session, core,
-		func(AudioFrame) error { return sendErr }, nil, nil,
+		func(context.Context, AudioFrame) error { return sendErr }, nil, nil,
 	)
 	if err != nil {
 		t.Fatal(err)

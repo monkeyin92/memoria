@@ -1,5 +1,38 @@
 # 项目交接
 
+## 2026-08-04：最新评审修复（未提交）
+
+- Go Media Edge 升级为 Go `1.26.5`、gRPC `1.83.0`、`x/net 0.55.0` 与
+  `x/text 0.39.0`；同步 CI 与镜像构建版本，修复上一轮 Trivy 报告的 Go 标准库、
+  gRPC 和 `x/*` 高危漏洞，不降低扫描门槛。CI 的 `golangci-lint-action` 同步升级至
+  `v9` / linter `v2.12.2`（旧 `v1.63.4` 不支持 Go 1.26）；按新门禁修正 Close 错误
+  处理、错误文案和回调等待测试。
+- 生产 ready 不再接受 `MEDIA_EDGE_EXTERNAL_DOWNLINK_SENDER_READY` 这类布尔
+  声明。真实终结器必须把 `DownlinkSenderFactory` 注入 `Server`，并将 factory
+  生成的 sender 直接传给每条 `VoiceCoreMediaRuntime`；当前参考 binary 没有该
+  集成，因此生产继续 fail-closed，不能创建假可用 session。
+- `DeliverDownlink` 现以 generation-scoped context 调用 sender，调用不再占用
+  session mutex；取消先关闭 context 和 generation gate。慢/阻塞 sender 不再拖住
+  hard-stop，合规 sender 不能在 context 取消后写入旧 PCM。Reconnect 同步重置
+  uplink/downlink 的 sequence 与 sample 基线，避免新 epoch 的首个下行帧被误判为 stale。
+- ASR 扩展重放裁出的尾段保留 provider sentence id，但拥有独立 timeline segment
+  id，`0..320 “你好” + 320..640 “世界”` 不会再被同 ID revision 覆盖为只剩尾段。
+- 流式 TTS 只以供应商 `TTS_SUBTITLE` 字级时间戳登记 Playback Ledger；时间戳晚到
+  时按已有 ACK 立即结算。无对齐时间戳时不登记 actual-heard 文本，拒绝用 LLM
+  announcement 或 PCM 到达时机猜短语边界。gRPC 下行队列满会同步取消 registry
+  runtime、provider 与旧 reply task。
+- `interrupt_stop` 不再跨 Edge/Core 主机相减墙钟；Core 只记录本进程
+  `interrupt_core_stop`。端到端 SLO 在分布式 trace/时钟同步与真实媒体验收前
+  继续缺失并保持 rollout fail-closed。
+- 已验证：全量 `uv run pytest -q`、Ruff、strict mypy（216 源文件）、H5 `275 passed`
+  及 production build、Go `vet/test/test-race`、CI 同版本 golangci-lint、镜像构建、
+  Trivy `HIGH/CRITICAL=0`、media runtime smoke、synthetic replay/chaos/load 和
+  `git diff --check` 均通过。
+- 仍需外部验收：真实 WHIP/WebRTC/RTP 终结器及其 `DownlinkSenderFactory` 集成、真实
+  浏览器/硬件 ACK、Provider/硬件与分布式 trace/端到端 SLO、儿童语料、Redis/coturn
+  多实例、真实 chaos/load、灰度与回滚演练。`media-runtime` profile 不可上线，默认
+  LiveKit 路径未切换。
+
 ## 2026-08-03：双轴评审二轮整改（已提交，未发布）
 
 - CI 门禁：buf lint 命名例外（media-v1 既有契约，避免破坏性改名）、Trivy action

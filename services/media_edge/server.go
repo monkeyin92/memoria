@@ -12,22 +12,27 @@ import (
 	"time"
 )
 
+// DownlinkSenderFactory is supplied by the real media terminator. Its sender
+// is wired into each Voice Core runtime, so production cannot be made ready
+// with an unverified environment flag.
+type DownlinkSenderFactory func(OpenSessionRequest, *Session) (DownlinkSender, error)
+
 // BridgeRuntimeFactory is injected by a deployment that has an authenticated
-// Voice Core stream.  The default HTTP reference server leaves it nil and
+// Voice Core stream. The default HTTP reference server leaves it nil and
 // remains provider/media-terminator neutral.
-type BridgeRuntimeFactory func(OpenSessionRequest, *Session) (*VoiceCoreMediaRuntime, error)
+type BridgeRuntimeFactory func(OpenSessionRequest, *Session, DownlinkSender) (*VoiceCoreMediaRuntime, error)
 
 type Server struct {
-	Directory        *Directory
-	Verifier         JWTVerifier
-	MaxPendingFrames int
-	BridgeFactory    BridgeRuntimeFactory
-	ReadyProbe       func() bool
+	Directory             *Directory
+	Verifier              JWTVerifier
+	MaxPendingFrames      int
+	BridgeFactory         BridgeRuntimeFactory
+	DownlinkSenderFactory DownlinkSenderFactory
+	ReadyProbe            func() bool
 	// RequireExternalDownlinkSender makes the HTTP reference queue
 	// development-only. A production embedding must expose a real media
 	// terminator and report its readiness explicitly.
 	RequireExternalDownlinkSender bool
-	ExternalDownlinkSenderReady   func() bool
 	// AllowInsecureDevelopment must be explicitly enabled by a caller that
 	// wants an unauthenticated local reference edge.  Leaving it false keeps
 	// accidental non-production deployments fail-closed as well.
@@ -110,7 +115,18 @@ func (s *Server) buildBridge(request OpenSessionRequest, session *Session) (*Voi
 	if s.BridgeFactory == nil {
 		return nil, nil
 	}
-	runtime, err := s.BridgeFactory(request, session)
+	var sender DownlinkSender
+	if s.DownlinkSenderFactory != nil {
+		var err error
+		sender, err = s.DownlinkSenderFactory(request, session)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if s.RequireExternalDownlinkSender && sender == nil {
+		return nil, fmt.Errorf("external downlink sender is unavailable")
+	}
+	runtime, err := s.BridgeFactory(request, session, sender)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +163,7 @@ func (s *Server) ready(w http.ResponseWriter, _ *http.Request) {
 		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"status": "voice_core_unavailable"})
 		return
 	}
-	if s.RequireExternalDownlinkSender && (s.ExternalDownlinkSenderReady == nil || !s.ExternalDownlinkSenderReady()) {
+	if s.RequireExternalDownlinkSender && (s.DownlinkSenderFactory == nil || s.BridgeFactory == nil) {
 		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"status": "downlink_sender_unavailable"})
 		return
 	}
@@ -169,7 +185,7 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "edge is draining"})
 		return
 	}
-	if s.RequireExternalDownlinkSender && (s.ExternalDownlinkSenderReady == nil || !s.ExternalDownlinkSenderReady()) {
+	if s.RequireExternalDownlinkSender && (s.DownlinkSenderFactory == nil || s.BridgeFactory == nil) {
 		writeStatus(w, http.StatusServiceUnavailable, map[string]string{"error": "external downlink sender is unavailable"})
 		return
 	}

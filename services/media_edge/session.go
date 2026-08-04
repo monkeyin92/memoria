@@ -1,6 +1,7 @@
 package mediaedge
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -35,30 +36,32 @@ type SessionStats struct {
 }
 
 type Session struct {
-	mu                    sync.Mutex
-	ID                    string
-	AccountID             string
-	DeviceID              string
-	ClientType            string
-	StreamEpoch           uint64
-	Generation            Fence
-	generationActive      bool
-	State                 SessionState
-	MaxPendingFrames      int
-	uplink                []AudioFrame
-	downlink              []AudioFrame
-	lastUplinkSequence    uint64
-	lastDownlinkSeq       uint64
-	hasUplinkSequence     bool
-	hasDownlinkSeq        bool
-	lastCaptureEnd        uint64
-	uplinkFrames          uint64
-	downlinkFrames        uint64
-	staleFrames           uint64
-	overflowFrames        uint64
-	cancelResults         map[string]cancelResult
-	cancelResultOrder     []string
-	lastDownlinkSourceEnd uint64
+	mu                     sync.Mutex
+	ID                     string
+	AccountID              string
+	DeviceID               string
+	ClientType             string
+	StreamEpoch            uint64
+	Generation             Fence
+	generationActive       bool
+	State                  SessionState
+	MaxPendingFrames       int
+	uplink                 []AudioFrame
+	downlink               []AudioFrame
+	lastUplinkSequence     uint64
+	lastDownlinkSeq        uint64
+	hasUplinkSequence      bool
+	hasDownlinkSeq         bool
+	lastCaptureEnd         uint64
+	uplinkFrames           uint64
+	downlinkFrames         uint64
+	staleFrames            uint64
+	overflowFrames         uint64
+	cancelResults          map[string]cancelResult
+	cancelResultOrder      []string
+	lastDownlinkSourceEnd  uint64
+	downlinkDeliveryCtx    context.Context
+	cancelDownlinkDelivery context.CancelFunc
 }
 
 // Epoch returns the authoritative stream epoch without exposing an unlocked
@@ -88,17 +91,20 @@ func NewSession(request OpenSessionRequest, maxPendingFrames int) (*Session, err
 	if maxPendingFrames <= 0 {
 		return nil, fmt.Errorf("max_pending_frames must be positive")
 	}
+	deliveryCtx, cancelDelivery := context.WithCancel(context.Background())
 	return &Session{
-		ID:               request.SessionID,
-		AccountID:        request.AccountID,
-		DeviceID:         request.DeviceID,
-		ClientType:       defaultClientType(request.ClientType),
-		StreamEpoch:      request.StreamEpoch,
-		Generation:       Fence{SessionID: request.SessionID},
-		generationActive: true,
-		State:            SessionActive,
-		MaxPendingFrames: maxPendingFrames,
-		cancelResults:    make(map[string]cancelResult),
+		ID:                     request.SessionID,
+		AccountID:              request.AccountID,
+		DeviceID:               request.DeviceID,
+		ClientType:             defaultClientType(request.ClientType),
+		StreamEpoch:            request.StreamEpoch,
+		Generation:             Fence{SessionID: request.SessionID},
+		generationActive:       true,
+		State:                  SessionActive,
+		MaxPendingFrames:       maxPendingFrames,
+		cancelResults:          make(map[string]cancelResult),
+		downlinkDeliveryCtx:    deliveryCtx,
+		cancelDownlinkDelivery: cancelDelivery,
 	}, nil
 }
 
@@ -224,24 +230,33 @@ func (s *Session) acceptDownlinkLocked(frame AudioFrame) error {
 	return nil
 }
 
-// DeliverDownlink keeps the authoritative generation check, bounded queue and
-// transport write inside one session lock, so a concurrent CancelGeneration
-// can never admit an old-generation frame to the terminator's encoder.  The
-// sender is the real media terminator's enqueue step; it must be fast and
-// must not call back into Session (the gate is held across the call).  A
-// failed sender leaves the frame pending; a successful sender retires it
-// immediately.
+// DeliverDownlink records a fenced frame before calling the external sender.
+// The sender runs outside the Session mutex, so a slow encoder cannot delay a
+// hard stop. CancelGeneration cancels its context before closing the gate;
+// compliant terminators must not enqueue PCM once that context is done.
 func (s *Session) DeliverDownlink(frame AudioFrame, sender DownlinkSender) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err := s.acceptDownlinkLocked(frame); err != nil {
+		s.mu.Unlock()
 		return err
 	}
 	if sender == nil {
+		s.mu.Unlock()
 		return nil
 	}
-	if err := sender(frame); err != nil {
+	deliveryCtx := s.downlinkDeliveryCtx
+	s.mu.Unlock()
+	if err := sender(deliveryCtx, frame); err != nil {
+		if deliveryCtx.Err() != nil {
+			return ErrStaleDownlinkGeneration
+		}
 		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch}
+	if deliveryCtx.Err() != nil || !s.generationActive || !actual.Equal(s.Generation) {
+		return ErrStaleDownlinkGeneration
 	}
 	return s.acknowledgeDownlinkLocked(frame.Sequence)
 }
@@ -296,6 +311,7 @@ func (s *Session) AdvanceGeneration(fence Fence) error {
 	}
 	s.Generation = fence
 	s.generationActive = true
+	s.rotateDownlinkDeliveryLocked()
 	s.hasDownlinkSeq = false
 	s.lastDownlinkSeq = 0
 	s.lastDownlinkSourceEnd = 0
@@ -331,6 +347,7 @@ func (s *Session) CancelGeneration(eventID string, expected *Fence) (current, ca
 	current = s.Generation
 	cancelled = current
 	cancelled.GenerationID++
+	s.cancelDownlinkDeliveryLocked()
 	s.Generation = cancelled
 	s.generationActive = false
 	s.hasDownlinkSeq = false
@@ -373,6 +390,7 @@ func (s *Session) ApplyCancelledGeneration(cancelled Fence) error {
 	}
 	s.Generation = cancelled
 	s.generationActive = false
+	s.cancelDownlinkDeliveryLocked()
 	s.hasDownlinkSeq = false
 	s.lastDownlinkSeq = 0
 	s.lastDownlinkSourceEnd = 0
@@ -408,6 +426,17 @@ func (s *Session) discardStaleDownlinkLocked() {
 	s.downlink = kept
 }
 
+func (s *Session) cancelDownlinkDeliveryLocked() {
+	if s.cancelDownlinkDelivery != nil {
+		s.cancelDownlinkDelivery()
+	}
+}
+
+func (s *Session) rotateDownlinkDeliveryLocked() {
+	s.cancelDownlinkDeliveryLocked()
+	s.downlinkDeliveryCtx, s.cancelDownlinkDelivery = context.WithCancel(context.Background())
+}
+
 func (s *Session) Reconnect() (uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -415,8 +444,12 @@ func (s *Session) Reconnect() (uint64, error) {
 		return 0, fmt.Errorf("session cannot reconnect while %s", s.State)
 	}
 	s.StreamEpoch++
+	s.rotateDownlinkDeliveryLocked()
 	s.hasUplinkSequence = false
+	s.hasDownlinkSeq = false
+	s.lastDownlinkSeq = 0
 	s.lastCaptureEnd = 0
+	s.lastDownlinkSourceEnd = 0
 	s.uplink = nil
 	s.downlink = nil
 	// Stop idempotency is scoped to one transport epoch. Reusing an event id
@@ -438,6 +471,7 @@ func (s *Session) Stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.State = SessionStopped
+	s.cancelDownlinkDeliveryLocked()
 	s.uplink = nil
 	s.downlink = nil
 }

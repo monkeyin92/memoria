@@ -48,12 +48,17 @@ func TestGenerationGateAndReconnect(t *testing.T) {
 	if err := session.AcceptUplink(testFrame("s", 1, 0, 0)); err == nil {
 		t.Fatal("old epoch accepted")
 	}
+	firstAfterReconnect := testFrame("s", 2, 0, 1)
+	firstAfterReconnect.TurnID = 1
+	if err := session.AcceptDownlink(firstAfterReconnect); err != nil {
+		t.Fatalf("first downlink after reconnect: %v", err)
+	}
 }
 
 func TestHTTPReferenceEdge(t *testing.T) {
 	server := NewServer(JWTVerifier{}, 4)
 	server.AllowInsecureDevelopment = true
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	ts := httptest.NewServer(server.Handler())
 	defer ts.Close()
 	body := `{"session_id":"s","account_id":"a","device_id":"d","stream_epoch":1}`
@@ -76,7 +81,7 @@ func TestHTTPReferenceEdge(t *testing.T) {
 func TestHTTPDeleteClosesSessionAndReleasesDirectoryEntry(t *testing.T) {
 	server := NewServer(JWTVerifier{}, 4)
 	server.AllowInsecureDevelopment = true
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	ts := httptest.NewServer(server.Handler())
 	defer ts.Close()
 	created, err := http.Post(
@@ -118,7 +123,7 @@ func TestProductionBridgeFailsClosedWithoutExternalDownlinkSender(t *testing.T) 
 	server := NewServer(JWTVerifier{}, 4)
 	server.AllowInsecureDevelopment = true
 	server.RequireExternalDownlinkSender = true
-	server.BridgeFactory = func(_ OpenSessionRequest, session *Session) (*VoiceCoreMediaRuntime, error) {
+	server.BridgeFactory = func(_ OpenSessionRequest, session *Session, _ DownlinkSender) (*VoiceCoreMediaRuntime, error) {
 		return NewVoiceCoreMediaRuntime(context.Background(), session, newFakeCoreStream(), nil, nil)
 	}
 	ts := httptest.NewServer(server.Handler())
@@ -132,7 +137,6 @@ func TestProductionBridgeFailsClosedWithoutExternalDownlinkSender(t *testing.T) 
 		t.Fatalf("ready status=%d, want %d", ready.StatusCode, http.StatusServiceUnavailable)
 	}
 	_ = ready.Body.Close()
-	server.ExternalDownlinkSenderReady = func() bool { return true }
 	created, err := http.Post(
 		ts.URL+"/v1/media/sessions", "application/json",
 		strings.NewReader(`{"session_id":"s","account_id":"a","device_id":"d","stream_epoch":1}`),
@@ -143,6 +147,45 @@ func TestProductionBridgeFailsClosedWithoutExternalDownlinkSender(t *testing.T) 
 	if created.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("create status=%d, want %d", created.StatusCode, http.StatusServiceUnavailable)
 	}
+}
+
+func TestProductionBridgeInjectsTheActualDownlinkSender(t *testing.T) {
+	server := NewServer(JWTVerifier{}, 4)
+	server.AllowInsecureDevelopment = true
+	server.RequireExternalDownlinkSender = true
+	sent := make(chan AudioFrame, 1)
+	server.DownlinkSenderFactory = func(_ OpenSessionRequest, _ *Session) (DownlinkSender, error) {
+		return func(ctx context.Context, frame AudioFrame) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case sent <- frame:
+				return nil
+			}
+		}, nil
+	}
+	server.BridgeFactory = func(_ OpenSessionRequest, session *Session, sender DownlinkSender) (*VoiceCoreMediaRuntime, error) {
+		return NewVoiceCoreMediaRuntimeWithDownlinkSender(
+			context.Background(), session, newFakeCoreStream(), sender, nil, nil,
+		)
+	}
+	defer func() { _ = server.Close() }()
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	ready, err := http.Get(ts.URL + "/readyz")
+	if err != nil || ready.StatusCode != http.StatusOK {
+		t.Fatalf("ready status=%v err=%v", ready.StatusCode, err)
+	}
+	_ = ready.Body.Close()
+	created, err := http.Post(
+		ts.URL+"/v1/media/sessions", "application/json",
+		strings.NewReader(`{"session_id":"sender","account_id":"a","device_id":"d","stream_epoch":1}`),
+	)
+	if err != nil || created.StatusCode != http.StatusCreated {
+		t.Fatalf("create status=%v err=%v", created.StatusCode, err)
+	}
+	_ = created.Body.Close()
 }
 
 func TestSessionCancelGenerationKeepsSessionUsableAndFencesQueuedAudio(t *testing.T) {
@@ -271,12 +314,12 @@ func TestHTTPStopCancelsGenerationWithoutStoppingSession(t *testing.T) {
 	server := NewServer(JWTVerifier{}, 2)
 	server.AllowInsecureDevelopment = true
 	core := newFakeCoreStream()
-	server.BridgeFactory = func(_ OpenSessionRequest, session *Session) (*VoiceCoreMediaRuntime, error) {
+	server.BridgeFactory = func(_ OpenSessionRequest, session *Session, _ DownlinkSender) (*VoiceCoreMediaRuntime, error) {
 		return NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
 	}
 	ts := httptest.NewServer(server.Handler())
 	defer ts.Close()
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	created, err := http.Post(
 		ts.URL+"/v1/media/sessions", "application/json",
 		strings.NewReader(`{"session_id":"s","account_id":"a","device_id":"d","stream_epoch":1}`),
@@ -376,7 +419,7 @@ func TestStopGenerationRequestRequiresCompleteExpectedFence(t *testing.T) {
 func TestHTTPReferenceEdgeBindsJWTIdentityToSessionBody(t *testing.T) {
 	secret := []byte("media-token-secret-that-is-long-enough")
 	server := NewServer(JWTVerifier{Secret: secret, Issuer: "voice-agent", Audience: "memoria-media"}, 4)
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 	ts := httptest.NewServer(server.Handler())
 	defer ts.Close()
 	token := signedMediaToken(t, secret, map[string]any{
@@ -430,12 +473,12 @@ func TestHTTPServerForwardsFramesThroughVoiceCoreRuntime(t *testing.T) {
 	server := NewServer(JWTVerifier{}, 2)
 	server.AllowInsecureDevelopment = true
 	core := newFakeCoreStream()
-	server.BridgeFactory = func(_ OpenSessionRequest, session *Session) (*VoiceCoreMediaRuntime, error) {
+	server.BridgeFactory = func(_ OpenSessionRequest, session *Session, _ DownlinkSender) (*VoiceCoreMediaRuntime, error) {
 		return NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
 	}
 	ts := httptest.NewServer(server.Handler())
 	defer ts.Close()
-	defer server.Close()
+	defer func() { _ = server.Close() }()
 
 	create, err := http.Post(
 		ts.URL+"/v1/media/sessions",

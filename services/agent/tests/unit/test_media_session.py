@@ -529,7 +529,7 @@ async def test_kws_hard_stop_requires_wire_flag_and_confidence_threshold() -> No
     assert session.fence.generation_id == 0
     await keyword("accepted-hard-stop", 0.8, True)
     assert session.fence.generation_id == 1
-    assert registry.metrics.latency_samples["interrupt_stop"]
+    assert registry.metrics.latency_samples["interrupt_core_stop"]
 
 
 async def _start_speaking_reply(
@@ -632,7 +632,7 @@ async def test_client_stop_during_interruption_pending_finalizes_heard_prefix() 
     assert session.accept_client_stop(stop)
     await registry.on_client_event(session, stop)
     assert interrupted == [(fence, "你好。")]
-    assert registry.metrics.latency_samples["interrupt_stop"]
+    assert registry.metrics.latency_samples["interrupt_core_stop"]
 
 
 @pytest.mark.asyncio
@@ -690,11 +690,11 @@ async def test_kws_stop_during_interruption_pending_finalizes_heard_prefix() -> 
         ),
     )
     assert interrupted == ["你好。"]
-    assert registry.metrics.latency_samples["interrupt_stop"]
+    assert registry.metrics.latency_samples["interrupt_core_stop"]
 
 
 @pytest.mark.asyncio
-async def test_interrupt_slo_uses_edge_detected_timestamp() -> None:
+async def test_interrupt_metric_uses_core_monotonic_clock() -> None:
     import time as time_module
 
     provider = FakeMediaProvider()
@@ -708,7 +708,7 @@ async def test_interrupt_slo_uses_edge_detected_timestamp() -> None:
     identity = SessionIdentity("slo-session")
     session = bridge.bridge.open(identity)
     context, fence = await _start_speaking_reply(registry, session, identity)
-    detected_ms = int(time_module.time() * 1000) - 1_000
+    future_edge_wall_clock_ms = int(time_module.time() * 1000) + 86_400_000
     stop = MediaEnvelope.create(
         type="client.stop_assistant",
         event_id="slo-stop-1",
@@ -721,9 +721,46 @@ async def test_interrupt_slo_uses_edge_detected_timestamp() -> None:
         payload={"idempotency_key": "slo-stop-1", "reason": "test"},
     )
     assert session.accept_client_stop(stop)
-    await registry.on_client_event(session, stop, detected_ms)
-    latency = registry.metrics.latency_samples["interrupt_stop"][-1]
-    assert 0.5 <= latency <= 2.5
+    await registry.on_client_event(session, stop, future_edge_wall_clock_ms)
+    latency = registry.metrics.latency_samples["interrupt_core_stop"][-1]
+    assert 0.0 <= latency < 1.0
+
+
+@pytest.mark.asyncio
+async def test_downlink_queue_overflow_cancels_runtime_and_provider() -> None:
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer(max_pending_messages=1)
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = SessionIdentity("overflow-registry-session")
+    connection = bridge._open_connection(identity)
+    context = await registry._get_or_create(identity)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+    assert await context.runtime.accept_media_generation(fence, cause="test")
+    await context.runtime.on_assistant_speaking("你好。")
+    context.runtime.orchestrator.state_machine.state = ConversationState.SPEAKING
+    connection.session.generation.advance(fence)
+    assert connection.session.reset_downlink_generation(fence)
+    connection.session.generation_active = True
+    assert context.runtime.orchestrator.state is ConversationState.SPEAKING
+
+    assert await bridge.emit_generation(
+        identity.session_id,
+        fence,
+        action=media_pb2.GENERATION_ACTION_START,
+    )
+    assert not await bridge._enqueue(
+        connection,
+        media_pb2.CoreToMedia(error=media_pb2.CoreError(code="full", message="full")),
+    )
+
+    assert connection.session.generation_active is False
+    assert context.runtime.fence.matches(connection.session.fence)
+    assert provider.cancelled == [fence]
 
 
 @pytest.mark.asyncio

@@ -32,10 +32,10 @@ type keywordStream interface {
 	SendKeywordAtFence(keyword string, confidence float32, start, end uint64, hardStop bool, fence Fence, detectedAtMs uint64) error
 }
 
-// DownlinkSender is implemented by the real media terminator. Returning nil
-// means the frame was accepted for transport; returning an error retains the
-// frame in the bounded Session queue as backpressure evidence.
-type DownlinkSender func(AudioFrame) error
+// DownlinkSender is implemented by the real media terminator. The context is
+// cancelled before the Session generation gate closes, so a blocked encoder
+// must abandon stale PCM without making CancelGeneration wait for it.
+type DownlinkSender func(context.Context, AudioFrame) error
 
 type stopAttempt struct {
 	cancelled    Fence
@@ -120,7 +120,7 @@ func (r *VoiceCoreMediaRuntime) HasDownlinkSender() bool { return r.downlinkSend
 func (r *VoiceCoreMediaRuntime) SendKeyword(keyword string, confidence float32, start, end uint64, hardStop bool, fence Fence) error {
 	sender, ok := r.core.(keywordStream)
 	if !ok {
-		return fmt.Errorf("Voice Core stream does not support keyword events")
+		return fmt.Errorf("voice-core stream does not support keyword events")
 	}
 	// Wall-clock detection time at the edge; Voice Core uses it as the
 	// interrupt.detect anchor so the SLO covers local detection and the
@@ -169,7 +169,7 @@ func (r *VoiceCoreMediaRuntime) CancelGeneration(eventID, reason string, expecte
 	}
 	stopper, ok := r.core.(generationStopStream)
 	if !ok {
-		return Fence{}, fmt.Errorf("Voice Core stream does not support generation stop")
+		return Fence{}, fmt.Errorf("voice-core stream does not support generation stop")
 	}
 	r.stopMu.Lock()
 	defer r.stopMu.Unlock()
@@ -212,7 +212,7 @@ func (r *VoiceCoreMediaRuntime) CancelGeneration(eventID, reason string, expecte
 		return cancelled, nil
 	}
 	if !current.Equal(core) {
-		return Fence{}, fmt.Errorf("Edge and Voice Core generation fences diverged")
+		return Fence{}, fmt.Errorf("edge and voice-core generation fences diverged")
 	}
 	r.pendingStopID = eventID
 	r.pendingStop = stopAttempt{cancelled: cancelled, core: core, reason: reason, detectedAtMs: detectedAtMs}
@@ -287,11 +287,11 @@ func (r *VoiceCoreMediaRuntime) receive() error {
 
 func (r *VoiceCoreMediaRuntime) handleEvent(event *mediav1.CoreToMedia) error {
 	if event == nil {
-		return fmt.Errorf("Voice Core returned an empty event")
+		return fmt.Errorf("voice-core returned an empty event")
 	}
 	if generation := event.GetGeneration(); generation != nil {
 		if !r.session.IdentityMatches(generation.GetIdentity()) {
-			return fmt.Errorf("Voice Core generation identity does not match edge session")
+			return fmt.Errorf("voice-core generation identity does not match edge session")
 		}
 		fence := Fence{
 			SessionID:    r.sessionID(),
@@ -309,7 +309,7 @@ func (r *VoiceCoreMediaRuntime) handleEvent(event *mediav1.CoreToMedia) error {
 	}
 	if audio := event.GetAudio(); audio != nil {
 		if !r.session.IdentityMatches(audio.GetIdentity()) {
-			return fmt.Errorf("Voice Core audio identity does not match edge session")
+			return fmt.Errorf("voice-core audio identity does not match edge session")
 		}
 		sessionID, _, _, streamEpoch := r.session.IdentitySnapshot()
 		frame := AudioFrame{

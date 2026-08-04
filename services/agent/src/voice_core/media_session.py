@@ -50,6 +50,21 @@ def _default_runtime_factory(session_id: str) -> DuplexRuntime:
 
 
 @dataclass(frozen=True, slots=True)
+class MediaTextSpan:
+    """Provider-aligned text and its authoritative audio interval."""
+
+    text: str
+    audio_start_sample: int
+    audio_end_sample: int
+
+    def __post_init__(self) -> None:
+        if not self.text:
+            raise ValueError("media text span must not be empty")
+        if self.audio_start_sample < 0 or self.audio_end_sample <= self.audio_start_sample:
+            raise ValueError("media text span audio range must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class MediaReplyChunk:
     """One provider-produced PCM chunk bound to a generation fence."""
 
@@ -68,6 +83,10 @@ class MediaReplyChunk:
     # the phrase spans several frames. Keep the complete audio span explicit.
     text_audio_start_sample: int | None = None
     text_audio_end_sample: int | None = None
+    # A streaming provider can deliver word-level timestamps only after it has
+    # finished audio. Attach those facts to any already-valid PCM chunk rather
+    # than guessing phrase boundaries from LLM scheduling.
+    text_spans: tuple[MediaTextSpan, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.pcm_s16le or len(self.pcm_s16le) % 2:
@@ -85,6 +104,11 @@ class MediaReplyChunk:
                 raise ValueError("text audio start must be non-negative")
             if text_audio_end <= text_audio_start:
                 raise ValueError("text audio range must be positive")
+        previous_end = -1
+        for span in self.text_spans:
+            if span.audio_start_sample < previous_end:
+                raise ValueError("media text spans must be ordered")
+            previous_end = span.audio_end_sample
 
     @property
     def frame_samples(self) -> int:
@@ -176,6 +200,7 @@ class MediaVoiceCoreRegistry:
         self.bridge.on_client_event = self.on_client_event
         self.bridge.on_session_closed = self.on_session_closed
         self.bridge.on_playback_progress = self.on_playback_progress
+        self.bridge.on_downlink_overflow = self.on_downlink_overflow
 
     async def _get_or_create(self, identity: SessionIdentity) -> _MediaVoiceSession:
         async with self._lock:
@@ -486,15 +511,12 @@ class MediaVoiceCoreRegistry:
                 segment.hard_stop
                 and (segment.confidence or 0.0) >= self.kws_hard_stop_min_confidence
             ):
-                # The edge stamps wall-clock milliseconds at local detection;
-                # use the same clock domain so the SLO covers the edge gate
-                # and network hop instead of only Core-side processing.
-                stop_clock = time.time_ns if detected_monotonic_ms > 0 else time.monotonic_ns
-                stop_started_ns = (
-                    detected_monotonic_ms * 1_000_000
-                    if detected_monotonic_ms > 0
-                    else stop_clock()
-                )
+                # Never subtract an Edge wall-clock timestamp from Core's
+                # monotonic clock. The only trustworthy local measurement is
+                # this handler's own work; end-to-end timing is fail-closed
+                # until distributed tracing is available.
+                _ = detected_monotonic_ms
+                stop_started_ns = time.monotonic_ns()
                 route = context.runtime.route_user_turn(segment.text)
                 if route.should_interrupt and not route.enter_chat:
                     previous_fence = context.playback.current_fence or context.runtime.fence
@@ -539,8 +561,8 @@ class MediaVoiceCoreRegistry:
                                 reason="keyword_interrupt",
                             )
                             self.metrics.observe_voice_latency(
-                                "interrupt_stop",
-                                (stop_clock() - stop_started_ns) / 1_000_000_000,
+                                "interrupt_core_stop",
+                                (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
                             )
             await self.bridge.emit_event(
                 context.identity.session_id,
@@ -565,12 +587,13 @@ class MediaVoiceCoreRegistry:
         context = await self._get_or_create(session.identity)
         if event.type != "client.stop_assistant":
             return
-        stop_clock = time.time_ns if detected_monotonic_ms > 0 else time.monotonic_ns
-        stop_started_ns = (
-            detected_monotonic_ms * 1_000_000
-            if detected_monotonic_ms > 0
-            else stop_clock()
-        )
+        # The edge timestamp is wall-clock time on another host. It is useful
+        # trace metadata, but never a subtraction operand in this process.
+        # This metric therefore measures only Core-side stop handling; the
+        # end-to-end SLO stays unavailable until trace/clock synchronization is
+        # deployed and remains fail-closed in the rollout gate.
+        _ = detected_monotonic_ms
+        stop_started_ns = time.monotonic_ns()
         # MediaBridgeSession has already advanced its authoritative generation
         # before this callback runs. The Voice Core consumes that exact fence.
         previous_fence = context.playback.current_fence or context.runtime.fence
@@ -603,9 +626,42 @@ class MediaVoiceCoreRegistry:
         if not previous_fence.matches(session.fence):
             await self._cancel_reply_task(context, previous_fence)
         self.metrics.observe_voice_latency(
-            "interrupt_stop",
-            (stop_clock() - stop_started_ns) / 1_000_000_000,
+            "interrupt_core_stop",
+            (time.monotonic_ns() - stop_started_ns) / 1_000_000_000,
         )
+
+    async def on_downlink_overflow(self, session: MediaBridgeSession) -> None:
+        """Cancel the authoritative runtime when transport delivery is lost."""
+
+        context = self._sessions.get(session.identity.session_id)
+        if context is None or context.closed:
+            return
+        previous_fence = context.playback.current_fence or context.runtime.fence
+        cancelled = session.fence
+        if previous_fence.matches(cancelled):
+            return
+        if context.runtime.orchestrator.state.name in ("SPEAKING", "INTERRUPTION_PENDING"):
+            heard = context.playback.actual_heard_text(previous_fence)
+            interrupted_fence = await context.runtime.on_real_interrupt(
+                cause="downlink_queue_full",
+                create_user_turn=False,
+                synchronized_transcript=heard,
+                force_generation_bump=True,
+            )
+            if not interrupted_fence.matches(cancelled):
+                raise ValueError("Voice Core overflow generation diverged from Media Edge")
+            await context.runtime.on_media_playback_interrupted(
+                interrupted_from=previous_fence,
+                synchronized_transcript=heard,
+            )
+        if not await context.runtime.accept_media_generation(
+            cancelled,
+            cause="downlink_queue_full",
+        ):
+            raise ValueError("Voice Core rejected overflow cancellation")
+        context.playback.start(cancelled)
+        context.provider_complete = False
+        await self._cancel_reply_task(context, previous_fence)
 
     @staticmethod
     async def _cancel_provider_generation(
@@ -638,9 +694,11 @@ class MediaVoiceCoreRegistry:
         """Cancel provider work and drain the old reply task before reuse."""
 
         task = context.reply_task
+        # A provider can own a remote stream after its local task has already
+        # completed. Transport cancellation must still reach that provider.
+        await cls._cancel_provider_generation(context, fence)
         if task is None or task.done() or task is asyncio.current_task():
             return
-        await cls._cancel_provider_generation(context, fence)
         task.cancel()
         try:
             await task
@@ -954,6 +1012,19 @@ class MediaVoiceCoreRegistry:
                             text=chunk.text,
                         )
                     )
+                for span in chunk.text_spans:
+                    text_start = context.output_text_offset
+                    context.output_text_offset += len(span.text)
+                    context.playback.add_span(
+                        PlaybackSpan(
+                            fence=fence,
+                            text_start=text_start,
+                            text_end=context.output_text_offset,
+                            audio_start_sample=span.audio_start_sample,
+                            audio_end_sample=span.audio_end_sample,
+                            text=span.text,
+                        )
+                    )
         except Exception:
             self.metrics.inc_media_session_failed()
             raise
@@ -987,6 +1058,7 @@ class MediaVoiceCoreRegistry:
 
 
 __all__ = [
+    "MediaTextSpan",
     "MediaReplyChunk",
     "MediaVoiceCoreRegistry",
     "MediaVoiceProvider",

@@ -32,7 +32,7 @@ from services.agent.src.providers.funasr_protocol import (
 )
 from services.agent.src.providers.funasr_stt import FunASRSession
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
-from services.agent.src.voice_core.speech_timeline import ASRResult
+from services.agent.src.voice_core.speech_timeline import ASRFinalInterval, ASRResult
 
 if TYPE_CHECKING:
     from services.agent.src.config import AgentSettings
@@ -95,15 +95,15 @@ class ExistingVoiceProviderAdapter:
         default_factory=deque,
         init=False,
     )
-    _final_sentence_ids: set[tuple[int, int, str, int, int]] = field(
+    _final_sentence_ids: set[ASRFinalInterval] = field(
         default_factory=set,
         init=False,
     )
-    _final_sentence_order: deque[tuple[int, int, str, int, int]] = field(
+    _final_sentence_order: deque[ASRFinalInterval] = field(
         default_factory=deque,
         init=False,
     )
-    _accepted_final_ranges: deque[tuple[int, int, str, int, int, str, int]] = field(
+    _accepted_final_ranges: deque[ASRFinalInterval] = field(
         default_factory=deque,
         init=False,
     )
@@ -267,39 +267,38 @@ class ExistingVoiceProviderAdapter:
                 provider_end_ms=mapped.provider_end_ms,
                 stream_epoch=mapped.stream_epoch,
             )
-        final_key = (
+        final_interval = ASRFinalInterval(
             event_stream_epoch,
             task_epoch,
             sentence_id,
             mapped_start,
             mapped_end,
+            mapped.text,
+            revision,
         )
         epoch_ranges = [
             accepted
             for accepted in self._accepted_final_ranges
-            if accepted[0] == event_stream_epoch
+            if accepted.stream_epoch == event_stream_epoch
         ]
         overlapping = [
             accepted
             for accepted in epoch_ranges
-            if accepted[3] < mapped_end and mapped_start < accepted[4]
+            if accepted.overlaps(final_interval)
         ]
         same_range = [
             accepted
             for accepted in overlapping
-            if accepted[1] == task_epoch
-            and accepted[2] == sentence_id
-            and accepted[3] == mapped_start
-            and accepted[4] == mapped_end
+            if accepted == final_interval
         ]
-        if final_key in self._final_sentence_ids:
+        if final_interval in self._final_sentence_ids:
             # Only a same-provider correction of the exact same interval
             # (newer text) may replace the stored final; identical text is a
             # transport duplicate and any other key is a replay.
             if (
                 not same_range
-                or mapped.text == same_range[0][5]
-                or mapped.revision <= same_range[0][6]
+                or mapped.text == same_range[0].text
+                or mapped.revision <= same_range[0].revision
             ):
                 return None
         mapped_text = mapped.text
@@ -312,31 +311,35 @@ class ExistingVoiceProviderAdapter:
             # identical-range replays fail closed instead of entering the
             # user's turn twice.  Out-of-order but non-overlapping finals
             # bypass this branch entirely.
-            cross_sentence = [accepted for accepted in overlapping if accepted[2] != sentence_id]
+            cross_sentence = [accepted for accepted in overlapping if accepted.sentence_id != sentence_id]
             if cross_sentence:
                 return None
             same_range_other_task = [
                 accepted
                 for accepted in overlapping
-                if accepted[3] == mapped_start
-                and accepted[4] == mapped_end
-                and accepted[1] != task_epoch
+                if accepted.has_same_range(final_interval)
+                and accepted.task_epoch != task_epoch
             ]
             if same_range_other_task:
                 return None
-            if any(accepted[1] > task_epoch for accepted in overlapping):
+            if any(accepted.task_epoch > task_epoch for accepted in overlapping):
                 return None
-            covered_start = min(accepted[3] for accepted in overlapping)
+            covered_start = min(accepted.capture_start_sample for accepted in overlapping)
             if mapped_start > covered_start:
                 return None
-            sorted_overlaps = sorted(overlapping, key=lambda item: (item[3], item[4]))
-            target_end = max(item[4] for item in sorted_overlaps)
+            sorted_overlaps = sorted(
+                overlapping,
+                key=lambda item: (item.capture_start_sample, item.capture_end_sample),
+            )
+            target_end = max(item.capture_end_sample for item in sorted_overlaps)
             covered_end = mapped_start
             covered_text = ""
-            for _epoch, _task, _sentence, range_start, range_end, range_text, _rev in sorted_overlaps:
+            for accepted in sorted_overlaps:
+                range_start = accepted.capture_start_sample
+                range_end = accepted.capture_end_sample
                 if range_start != covered_end:
                     break
-                covered_text += range_text
+                covered_text += accepted.text
                 covered_end = range_end
             if covered_end != target_end or not mapped_text.startswith(covered_text):
                 return None
@@ -345,7 +348,7 @@ class ExistingVoiceProviderAdapter:
                 return None
             mapped_start = covered_end
         elif same_range and (
-            mapped.text == same_range[0][5] or mapped.revision <= same_range[0][6]
+            mapped.text == same_range[0].text or mapped.revision <= same_range[0].revision
         ):
             return None
         for accepted in overlapping:
@@ -353,19 +356,18 @@ class ExistingVoiceProviderAdapter:
                 self._accepted_final_ranges.remove(accepted)
             except ValueError:
                 pass
-        self._final_sentence_ids.add(final_key)
-        self._final_sentence_order.append(final_key)
-        self._accepted_final_ranges.append(
-            (
-                event_stream_epoch,
-                task_epoch,
-                sentence_id,
-                mapped_start,
-                mapped_end,
-                mapped_text,
-                mapped_revision,
-            )
+        accepted_interval = ASRFinalInterval(
+            event_stream_epoch,
+            task_epoch,
+            sentence_id,
+            mapped_start,
+            mapped_end,
+            mapped_text,
+            mapped_revision,
         )
+        self._final_sentence_ids.add(accepted_interval)
+        self._final_sentence_order.append(accepted_interval)
+        self._accepted_final_ranges.append(accepted_interval)
         self._max_final_end_by_epoch[event_stream_epoch] = max(
             self._max_final_end_by_epoch.get(event_stream_epoch, 0),
             mapped_end,
@@ -386,6 +388,11 @@ class ExistingVoiceProviderAdapter:
             provider_begin_ms=mapped.provider_begin_ms,
             provider_end_ms=mapped.provider_end_ms,
             stream_epoch=mapped.stream_epoch,
+            timeline_segment_id=(
+                f"{mapped.sentence_id}@{mapped_start}:{mapped_end}"
+                if mapped_start != mapped.capture_start_sample
+                else None
+            ),
         )
 
     @property
@@ -511,6 +518,46 @@ class ExistingVoiceProviderAdapter:
         if sample_rate != self.config.output_sample_rate:
             raise RuntimeError("speech provider returned an unexpected sample rate")
         return bytes(getattr(frame, "data", b"") or b"")
+
+    async def _provider_timed_text_spans(self, stream: Any) -> tuple[Any, ...]:
+        """Read exact provider subtitle timing, or return no ledger facts.
+
+        LLM phrase arrival and PCM arrival have unrelated clocks. Only a
+        provider-supplied timed transcript may map assistant text into the
+        actual-heard ledger; absent or malformed timing deliberately yields no
+        text spans instead of a plausible but false boundary.
+        """
+
+        from services.agent.src.voice_core.media_session import MediaTextSpan
+
+        getter = getattr(stream, "timed_transcript", None)
+        if not callable(getter):
+            return ()
+        timed = getter()
+        if inspect.isawaitable(timed):
+            timed = await timed
+        if not isinstance(timed, (tuple, list)):
+            return ()
+        spans: list[MediaTextSpan] = []
+        previous_end = 0
+        for item in timed:
+            text = getattr(item, "text", None)
+            start_time = getattr(item, "start_time", None)
+            end_time = getattr(item, "end_time", None)
+            if (
+                not isinstance(text, str)
+                or not text
+                or not isinstance(start_time, (int, float))
+                or not isinstance(end_time, (int, float))
+            ):
+                return ()
+            start = round(start_time * self.config.output_sample_rate)
+            end = round(end_time * self.config.output_sample_rate)
+            if start < previous_end or end <= start:
+                return ()
+            spans.append(MediaTextSpan(text, start, end))
+            previous_end = end
+        return tuple(spans)
 
     async def _synthesize_phrase(
         self,
@@ -682,36 +729,6 @@ class ExistingVoiceProviderAdapter:
         buffered = bytearray()
         held_frame: bytes | None = None
         output_sample = 0
-        open_phrase: str | None = None
-        open_phrase_start: int | None = None
-
-        def closed_span(end_sample: int) -> tuple[str, int, int] | None:
-            """Close the phrase whose audio ended at ``end_sample``.
-
-            The provider does not expose per-phrase alignment until the next
-            phrase boundary or end-of-stream, so a span is registered exactly
-            when its full audio range becomes known.  An interruption inside a
-            phrase leaves that phrase unclaimed (no text overclaim), while
-            every previously completed phrase is already in the ledger.
-            """
-
-            nonlocal open_phrase, open_phrase_start
-            if open_phrase is None or open_phrase_start is None:
-                return None
-            span = (open_phrase, open_phrase_start, end_sample)
-            open_phrase = None
-            open_phrase_start = None
-            return span
-
-        def span_kwargs(span: tuple[str, int, int] | None) -> dict[str, Any]:
-            if span is None:
-                return {}
-            phrase_text, start_sample, end_sample = span
-            return {
-                "text": phrase_text,
-                "text_audio_start_sample": start_sample,
-                "text_audio_end_sample": end_sample,
-            }
 
         try:
             # Start consuming PCM only after at least one complete phrase was
@@ -732,17 +749,11 @@ class ExistingVoiceProviderAdapter:
                     del buffered[:frame_bytes]
                     if held_frame is not None:
                         announcement = take_announcement()
-                        span = None
-                        if announcement:
-                            span = closed_span(output_sample)
-                            open_phrase = announcement
-                            open_phrase_start = output_sample
                         yield MediaReplyChunk(
                             pcm_s16le=held_frame,
                             source_start_sample=output_sample,
                             assistant_text_delta=announcement,
                             first=output_sample == 0,
-                            **span_kwargs(span),
                         )
                         output_sample += frame_samples
                         self._output_sample = output_sample
@@ -757,17 +768,11 @@ class ExistingVoiceProviderAdapter:
             if buffered:
                 if held_frame is not None:
                     announcement = take_announcement()
-                    span = None
-                    if announcement:
-                        span = closed_span(output_sample)
-                        open_phrase = announcement
-                        open_phrase_start = output_sample
                     yield MediaReplyChunk(
                         pcm_s16le=held_frame,
                         source_start_sample=output_sample,
                         assistant_text_delta=announcement,
                         first=output_sample == 0,
-                        **span_kwargs(span),
                     )
                     output_sample += frame_samples
                     self._output_sample = output_sample
@@ -781,19 +786,14 @@ class ExistingVoiceProviderAdapter:
                 raise RuntimeError("language model returned no speakable text")
             audio_end = output_sample + frame_samples
             announcement = take_announcement()
-            span = None
-            if announcement:
-                span = closed_span(output_sample)
-                open_phrase = announcement
-                open_phrase_start = output_sample
-            final_span = span if span is not None else closed_span(audio_end)
+            timed_text_spans = await self._provider_timed_text_spans(stream)
             yield MediaReplyChunk(
                 pcm_s16le=held_frame,
                 source_start_sample=output_sample,
                 assistant_text_delta=announcement,
                 first=output_sample == 0,
                 final=True,
-                **span_kwargs(final_span),
+                text_spans=timed_text_spans,
             )
             self._output_sample = audio_end
         finally:

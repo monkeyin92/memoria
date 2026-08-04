@@ -49,26 +49,28 @@ WebRTC 的完成声明。
   同区间更高 revision/更新文本可修正、跨 task 同区间重放与跨句模糊重叠
   fail-closed、扩展区间仍走连续前缀对账。回归覆盖 320..640 先于 0..320、
   修正、重放、歧义重叠、扩展与历史有界。
-- **流式 TTS 部分已听文本**：生产双向流按短语边界增量登记 playback span
-  （下一短语音频开始/EOS 时关闭），打断时已完成短语不再整体丢失；未完成
-  短语仍严格按“只提交 ACK 覆盖文本”保守处理，不冒领。
+- **流式 TTS 部分已听文本**：生产双向流只以 Doubao `TTS_SUBTITLE` 返回的
+  字级时间戳登记 playback span，时间戳可以在 PCM 后到达；ledger 会按已有 ACK
+  立即结算。没有 provider 对齐时间戳时不登记 text span，避免把 LLM 入队时机
+  误当音频边界。
 - **INTERRUPTION_PENDING 不再丢已听前缀**：按钮/KWS stop 在
   SPEAKING 或 INTERRUPTION_PENDING 都执行同一 interrupted-playback finalize。
-- **interrupt SLO 口径**：Edge 在本地 KWS 检测/stop 接收时用墙钟毫秒打点，
-  经 `KeywordEvent.detected_monotonic_ms` / `DeviceEvent.monotonic_ms` 传给
-  Core，Core 用同一墙钟计算 `interrupt.detect → interrupt.cancel`；无检测
-  时间戳时保持到达时刻。
-- **下行 gate 与 sender 原子**：`Session.DeliverDownlink` 在单个 session 锁内
-  完成 generation 校验、sender 写入与出队，并发 cancel 无法让旧 generation
-  PCM 进入编码器；gRPC 输出队列溢出会以 terminal `GENERATION_ACTION_CANCEL`
-  （`downlink_queue_full`）关闭 generation，重连收到 CANCEL 而非陈旧 RESUME。
+- **interrupt SLO 口径**：不再跨主机相减墙钟。Core 只记录本进程
+  `interrupt_core_stop`；端到端 `interrupt.detect → interrupt.cancel` 在
+  分布式 trace/时钟同步落地前保持缺失并由 SLO gate fail-closed。
+- **下行 gate 与 sender 原子**：`Session.DeliverDownlink` 先记录受 fence 保护的
+  帧，再在锁外调用带 generation context 的 sender；cancel 先取消 context，因而
+  slow sender 不会阻塞 hard-stop，且合规终结器不能在取消后写 PCM。gRPC 输出
+  队列溢出会以 terminal `GENERATION_ACTION_CANCEL`（`downlink_queue_full`）关闭
+  generation，并同步取消 Voice Core runtime/provider；重连收到 CANCEL 而非陈旧 RESUME。
 - **HTTP stop 携带完整 fence**：H5 DataChannel 失败后的 HTTP fallback 携带
   按钮时刻的 stream_epoch/turn_id/generation_id/tool_epoch，Control API 校验
   并转发，Edge 用 `StopGenerationRequest.ExpectedFence` 只取消用户按下按钮时
   看到的 generation，迟到的 fallback 不会误停新回答。
-- **生产 ready 接缝**：`MEDIA_EDGE_EXTERNAL_DOWNLINK_SENDER_READY` 显式 opt-in
-  接线 `ExternalDownlinkSenderReady`，默认仍 fail-closed；session 创建仍要求
-  bridge 实际携带 DownlinkSender，开关不能伪造链路。
+- **生产 ready 接缝**：生产 `Server` 必须收到真实终结器提供的
+  `DownlinkSenderFactory`，factory 产生的 sender 直接传入 bridge runtime；参考
+  binary 没有 factory 时 `/readyz` 与 session 创建均 fail-closed，不能再用环境
+  变量伪造 ready。
 - 验证：全量 `pytest` 通过（本机 coverage `81.08%`，仍低于 `85%` 门槛且未降级；
   缺口集中于历史遗留的 postgres/ONNX 真实依赖模块），Ruff 与 strict mypy
   （216 源文件）通过，H5 `275 passed` + production build，Go

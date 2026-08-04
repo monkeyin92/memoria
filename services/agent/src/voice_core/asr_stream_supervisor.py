@@ -11,6 +11,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from services.agent.src.voice_core.speech_timeline import (
+    ASRFinalInterval,
     ASRResult,
     SpeechTimeline,
     asr_result_to_segment,
@@ -33,11 +34,11 @@ class ASRStreamSupervisor:
     _latest_task_by_segment: dict[str, int] = field(default_factory=dict)
     _revision_order: deque[tuple[int, str]] = field(default_factory=deque)
     _segment_order: deque[str] = field(default_factory=deque)
-    _final_intervals: dict[tuple[int, int, str, int, int], int] = field(
+    _final_intervals: dict[ASRFinalInterval, int] = field(
         default_factory=dict,
         init=False,
     )
-    _final_interval_order: deque[tuple[int, int, str, int, int]] = field(
+    _final_interval_order: deque[ASRFinalInterval] = field(
         default_factory=deque,
         init=False,
     )
@@ -96,13 +97,7 @@ class ASRStreamSupervisor:
         latest_revision = self._revisions.get(revision_key, 0)
         if result.revision < latest_revision:
             return False
-        final_key = (
-            result.stream_epoch,
-            result.task_epoch,
-            result.segment_id,
-            result.capture_start_sample,
-            result.capture_end_sample,
-        )
+        final_interval = ASRFinalInterval.from_result(result)
         if result.is_final:
             # Interval-based dedup, not a global end watermark: out-of-order
             # non-overlapping finals (320..640 before 0..320) must survive,
@@ -111,42 +106,40 @@ class ASRStreamSupervisor:
             # is a reconnect duplicate and fails closed; only a strict
             # expansion by a newer task of the same sentence may cover older
             # accepted audio.
-            previous_revision = self._final_intervals.get(final_key)
+            previous_revision = self._final_intervals.get(final_interval)
             if previous_revision is not None and result.revision <= previous_revision:
                 return False
             overlapping = [
-                key
-                for key in self._final_intervals
-                if key[0] == result.stream_epoch
-                and key[3] < result.capture_end_sample
-                and result.capture_start_sample < key[4]
+                interval
+                for interval in self._final_intervals
+                if interval.stream_epoch == result.stream_epoch
+                and interval.overlaps(final_interval)
             ]
             if overlapping:
                 cross_sentence = [
-                    key for key in overlapping if key[2] != result.segment_id
+                    interval for interval in overlapping if interval.sentence_id != result.sentence_id
                 ]
                 if cross_sentence:
                     return False
                 same_range_keys = [
-                    key
-                    for key in overlapping
-                    if key[3] == result.capture_start_sample
-                    and key[4] == result.capture_end_sample
+                    interval
+                    for interval in overlapping
+                    if interval.has_same_range(final_interval)
                 ]
                 if same_range_keys and any(
-                    key[1] != result.task_epoch for key in same_range_keys
+                    interval.task_epoch != result.task_epoch for interval in same_range_keys
                 ):
                     # The exact same audio interval already accepted by another
                     # provider task: reconnect replay, never a new turn.
                     return False
-                covered_start = min(key[3] for key in overlapping)
-                covered_end = max(key[4] for key in overlapping)
+                covered_start = min(interval.capture_start_sample for interval in overlapping)
+                covered_end = max(interval.capture_end_sample for interval in overlapping)
                 if not (
                     result.capture_start_sample <= covered_start
                     and result.capture_end_sample >= covered_end
                 ):
                     return False
-                if any(key[1] > result.task_epoch for key in overlapping):
+                if any(interval.task_epoch > result.task_epoch for interval in overlapping):
                     return False
         elif result.capture_end_sample <= self.last_emitted_final_sample:
             # A partial fully inside already-finalized audio is stale; finals
@@ -176,16 +169,16 @@ class ASRStreamSupervisor:
                         self._revisions.pop(key, None)
             self.mark_provider_acked(result.capture_end_sample)
             if result.is_final:
-                if final_key in self._final_intervals:
+                if final_interval in self._final_intervals:
                     # A higher revision of the same interval replaces the
                     # previously accepted final instead of being dropped.
-                    self._final_intervals.pop(final_key, None)
+                    self._final_intervals.pop(final_interval, None)
                     try:
-                        self._final_interval_order.remove(final_key)
+                        self._final_interval_order.remove(final_interval)
                     except ValueError:
                         pass
-                self._final_intervals[final_key] = result.revision
-                self._final_interval_order.append(final_key)
+                self._final_intervals[final_interval] = result.revision
+                self._final_interval_order.append(final_interval)
                 while len(self._final_interval_order) > self.max_result_history:
                     evicted_interval = self._final_interval_order.popleft()
                     self._final_intervals.pop(evicted_interval, None)

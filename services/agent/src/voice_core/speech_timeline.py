@@ -7,7 +7,7 @@ provider result shape required to map a result to that clock.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from services.agent.src.orchestration.speech_timeline import (
     SegmentKind,
@@ -31,6 +31,11 @@ class ASRResult:
     provider_begin_ms: int | None = None
     provider_end_ms: int | None = None
     stream_epoch: int = 1
+    # Reconnected providers can trim an expanded sentence to a new tail. Keep
+    # the provider sentence id for reconciliation while giving that tail its
+    # own timeline replacement identity so it cannot erase the accepted
+    # prefix.
+    timeline_segment_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.stream_epoch < 1:
@@ -39,6 +44,10 @@ class ASRResult:
             raise ValueError("task_epoch must be positive")
         if not isinstance(self.sentence_id, str) or not self.sentence_id:
             raise ValueError("sentence_id is required")
+        if self.timeline_segment_id is not None and (
+            not isinstance(self.timeline_segment_id, str) or not self.timeline_segment_id
+        ):
+            raise ValueError("timeline_segment_id must be a non-empty string")
         if self.revision < 1:
             raise ValueError("revision must be positive")
         if self.capture_start_sample < 0:
@@ -62,7 +71,44 @@ class ASRResult:
     def segment_id(self) -> str:
         """Stable ID used by the timeline when replacing revisions."""
 
-        return self.sentence_id
+        return self.timeline_segment_id or self.sentence_id
+
+
+@dataclass(frozen=True, slots=True)
+class ASRFinalInterval:
+    """One absolute final-result interval shared by adapter and supervisor."""
+
+    stream_epoch: int
+    task_epoch: int
+    sentence_id: str
+    capture_start_sample: int
+    capture_end_sample: int
+    text: str = field(default="", compare=False)
+    revision: int = field(default=0, compare=False)
+
+    @classmethod
+    def from_result(cls, result: ASRResult) -> ASRFinalInterval:
+        return cls(
+            stream_epoch=result.stream_epoch,
+            task_epoch=result.task_epoch,
+            sentence_id=result.sentence_id,
+            capture_start_sample=result.capture_start_sample,
+            capture_end_sample=result.capture_end_sample,
+            text=result.text,
+            revision=result.revision,
+        )
+
+    def overlaps(self, other: ASRFinalInterval) -> bool:
+        return (
+            self.capture_start_sample < other.capture_end_sample
+            and other.capture_start_sample < self.capture_end_sample
+        )
+
+    def has_same_range(self, other: ASRFinalInterval) -> bool:
+        return (
+            self.capture_start_sample == other.capture_start_sample
+            and self.capture_end_sample == other.capture_end_sample
+        )
 
 
 def asr_result_to_segment(
@@ -92,6 +138,7 @@ def asr_result_to_segment(
 
 __all__ = [
     "ASRResult",
+    "ASRFinalInterval",
     "SegmentKind",
     "SpeechSegment",
     "SpeechTimeline",

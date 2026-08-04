@@ -14,14 +14,13 @@ epoch、设备/会话 HTTP 控制面、Prometheus 基础指标，以及到 Voice
 Edge 才 ACK 本地帧；失败时帧保留在有界队列中形成背压。没有真实 sender 的 HTTP
 GET `/v1/media/sessions/{id}/downlink` 仅用于开发参考，生产 binary 会保持
 readiness=false 且拒绝创建 session，不能把静默丢帧当作媒体终结。
-生产部署在真实终结器安装后，由运维显式设置
-`MEDIA_EDGE_EXTERNAL_DOWNLINK_SENDER_READY=true` 作为交接确认；该开关只让
-readiness 探针放行，session 创建仍要求每个 Voice Core bridge 实际携带
-`DownlinkSender`，单独的开关不能伪造媒体链路。`VoiceCoreMediaRuntime` 在
-Edge 本地检测到 hard-stop KWS 或收到 stop 请求时用墙钟毫秒打点，并通过
-`KeywordEvent.detected_monotonic_ms` / `DeviceEvent.monotonic_ms` 传给 Voice
-Core，作为 `interrupt.detect → interrupt.cancel` SLO 的起点（覆盖 Edge 本地
-检测、gate 与 Edge→Core 网络，而不是只测 Core 到达后的处理时间）。
+生产部署必须把真实终结器作为 `DownlinkSenderFactory` 链接进 `Server`，由该
+factory 为每个 session 创建实际 sender；没有 factory 的 binary 不存在环境变量
+绕过路径，`/readyz` 与 session 创建都会 fail-closed。sender 收到 generation
+scoped `context.Context`，hard-stop 会先取消该 context 再关闭 gate，因此阻塞编码器
+不得拖慢停止，也不得在 context 取消后写入 PCM。Edge 的检测时间仍作为 trace
+metadata 转发；Core 仅记录本进程的 `interrupt_core_stop`，在部署分布式 trace 或
+时钟同步前不得把它当作 `interrupt.detect → interrupt.cancel` 端到端 SLO。
 
 ## Voice Core gRPC bridge
 

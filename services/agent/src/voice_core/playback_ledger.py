@@ -161,6 +161,12 @@ class PlaybackLedger:
                 span.audio_end_sample,
             )
         spans = self._spans.setdefault(span.fence, [])
+        # Timed subtitles can arrive after their PCM has already been
+        # acknowledged. They are still authoritative provider facts, so apply
+        # the existing render watermark instead of waiting for a redundant
+        # client progress event.
+        if span.audio_end_sample <= self._rendered_sample_end.get(span.fence, 0):
+            span.acknowledged = True
         spans.append(span)
         spans.sort(key=lambda item: (item.audio_start_sample, item.audio_end_sample))
         return True

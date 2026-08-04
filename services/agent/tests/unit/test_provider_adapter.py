@@ -15,6 +15,7 @@ from services.agent.src.providers.funasr_protocol import (
     FunASRSentence,
     FunASRServerEvent,
 )
+from services.agent.src.voice_core.asr_stream_supervisor import ASRStreamSupervisor
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
 from services.agent.src.voice_core.provider_adapter import (
     ExistingVoiceProviderAdapter,
@@ -187,6 +188,14 @@ class PhraseDrivenStreamingSpeech:
 
     async def aclose(self) -> None:
         self.closed = True
+
+    def timed_transcript(self) -> tuple[SimpleNamespace, ...]:
+        if len(self.phrases) != 2:
+            return ()
+        return (
+            SimpleNamespace(text=self.phrases[0], start_time=0.0, end_time=0.04),
+            SimpleNamespace(text=self.phrases[1], start_time=0.04, end_time=0.06),
+        )
 
 
 class PhraseDrivenTTS:
@@ -490,10 +499,9 @@ async def test_existing_provider_adapter_frames_real_provider_stream_before_comp
     release.set()
     chunks = [first, *[chunk async for chunk in stream]]
     assert [chunk.frame_samples for chunk in chunks] == [480, 480, 480]
-    assert chunks[-1].text == "你好。"
+    assert chunks[-1].text == ""
     assert chunks[-1].assistant_text_delta == ""
-    assert chunks[-1].text_audio_start_sample == 0
-    assert chunks[-1].text_audio_end_sample == 1_440
+    assert chunks[-1].text_spans == ()
     assert chunks[-1].final is True
     assert speech.phrases == ["你好。"]
     assert speech.bound_fences == [fence]
@@ -522,17 +530,13 @@ async def test_incremental_tts_reuses_one_stream_and_starts_before_second_phrase
     chunks = [first, *[chunk async for chunk in stream]]
     assert speech.stream_calls == 1
     assert speech.stream_instance.phrases == ["第一句。", "第二句。"]
-    # Ledger spans are registered per completed phrase: the second phrase's
-    # first frame closes the first phrase's span, and the final frame closes
-    # the last phrase's span, so an interruption never loses the earlier
-    # fully-rendered phrase.
-    assert [chunk.text for chunk in chunks if chunk.text] == ["第一句。", "第二句。"]
-    assert [
-        (chunk.text_audio_start_sample, chunk.text_audio_end_sample)
-        for chunk in chunks
-        if chunk.text
-    ] == [(0, 480), (480, 1_440)]
-    assert chunks[-1].text == "第二句。"
+    # The TTS provider, rather than LLM enqueue timing, supplies the exact
+    # sample ranges. The spans arrive after its final subtitle alignment.
+    assert chunks[-1].text == ""
+    assert [(span.text, span.audio_start_sample, span.audio_end_sample) for span in chunks[-1].text_spans] == [
+        ("第一句。", 0, 960),
+        ("第二句。", 960, 1440),
+    ]
     assert chunks[-1].final is True
     assert speech.stream_instance.closed
 
@@ -617,6 +621,15 @@ async def test_existing_provider_adapter_trims_cross_task_expanding_replay() -> 
     assert [
         (item.capture_start_sample, item.capture_end_sample, item.text) for item in extension
     ] == [(320, 640, "世界")]
+    assert extension[0].segment_id != first[0].segment_id
+    supervisor = ASRStreamSupervisor()
+    assert supervisor.accept_result(first[0], session_id=identity.session_id)
+    assert supervisor.accept_result(extension[0], session_id=identity.session_id)
+    assert supervisor.timeline.canonical_text(
+        stream_epoch=1,
+        start_sample=0,
+        end_sample=640,
+    ) == "你好 世界"
 
 
 @pytest.mark.asyncio
@@ -783,7 +796,7 @@ async def test_production_provider_factory_owns_session_tts_and_uses_injected_or
     assert first.speech_synthesis is not second.speech_synthesis
     fence = GenerationFence(first_identity.session_id, 1, 1, 0)
     chunks = [chunk async for chunk in first.generate_reply(first_identity, "你好", fence)]
-    assert [chunk.text for chunk in chunks] == ["你好。"]
+    assert [chunk.text for chunk in chunks] == [""]
     assert [chunk.assistant_text_delta for chunk in chunks] == ["你好。"]
     assert cast(FakeProductionTTS, first.speech_synthesis).fence == fence
     await first.close(first_identity)

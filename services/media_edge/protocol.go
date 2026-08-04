@@ -78,7 +78,7 @@ func (f AudioFrame) Validate(expectedSession string, expectedEpoch uint64) error
 		return err
 	}
 	if len(payload)%2 != 0 || uint64(len(payload)/2) != f.FrameSamples {
-		return fmt.Errorf("PCM payload length does not match frame samples")
+		return fmt.Errorf("pcm payload length does not match frame samples")
 	}
 	return nil
 }

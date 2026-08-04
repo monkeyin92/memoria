@@ -154,6 +154,27 @@ def test_playback_ledger_rejects_progress_beyond_received_audio() -> None:
     assert ledger.actual_heard_text(fence) == "你好"
 
 
+def test_playback_ledger_applies_existing_ack_to_late_provider_alignment() -> None:
+    fence = _fence()
+    ledger = PlaybackLedger()
+    ledger.start(fence)
+    assert ledger.register_audio(fence, 0, 0, 320)
+    assert ledger.acknowledge(fence, 320, received_sequence=0) == ()
+
+    assert ledger.add_span(
+        PlaybackSpan(
+            fence=fence,
+            text_start=0,
+            text_end=2,
+            audio_start_sample=0,
+            audio_end_sample=320,
+            text="你好",
+        )
+    )
+    assert ledger.actual_heard_text(fence) == "你好"
+    assert ledger.is_fully_acknowledged(fence)
+
+
 def test_media_bridge_audio_queues_are_consumable_and_generation_local() -> None:
     server = MediaBridgeServer(max_pending_audio_frames=100)
     identity = SessionIdentity("queue-session", stream_epoch=1)

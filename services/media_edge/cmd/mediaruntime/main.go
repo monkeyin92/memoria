@@ -26,7 +26,7 @@ func runHealthcheck() int {
 	if err != nil {
 		return 1
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return 1
 	}
@@ -105,19 +105,14 @@ func main() {
 	}
 	server := mediaedge.NewServer(verifier, envInt("MEDIA_EDGE_MAX_PENDING_FRAMES", 100))
 	server.AllowInsecureDevelopment = !production && envBool("MEDIA_EDGE_ALLOW_INSECURE_DEVELOPMENT")
-	// This binary currently exposes only the development HTTP queue. It stays
-	// fail-closed in production until a real WHIP/WebRTC/RTP terminator is
-	// installed and the operator explicitly confirms it with
-	// MEDIA_EDGE_EXTERNAL_DOWNLINK_SENDER_READY=true. The flag is the
-	// documented hand-over seam for that terminator, not a way to bypass the
-	// gate: session creation additionally requires every Voice Core bridge to
-	// carry an actual DownlinkSender (see Server.sessions), so a bare flag
-	// without an installed sender still rejects media sessions.
+	// This binary currently exposes only the development HTTP queue. Production
+	// stays fail-closed until a real WHIP/WebRTC/RTP terminator supplies a
+	// DownlinkSenderFactory. There is deliberately no environment-variable
+	// escape hatch: readiness must be backed by the sender actually passed into
+	// every Voice Core runtime.
 	server.RequireExternalDownlinkSender = production
-	externalDownlinkSenderReady := envBool("MEDIA_EDGE_EXTERNAL_DOWNLINK_SENDER_READY")
-	server.ExternalDownlinkSenderReady = func() bool { return externalDownlinkSenderReady }
-	if production && !externalDownlinkSenderReady {
-		log.Print("production media edge has no installed downlink sender; readiness stays fail-closed until a real terminator is attached and MEDIA_EDGE_EXTERNAL_DOWNLINK_SENDER_READY=true")
+	if production {
+		log.Print("production media edge has no installed downlink sender factory; readiness stays fail-closed until a real terminator is linked")
 	}
 	voiceCore, err := buildVoiceCoreBridge()
 	if err != nil {
@@ -125,7 +120,7 @@ func main() {
 	}
 	if voiceCore != nil {
 		server.ReadyProbe = voiceCore.Ready
-		server.BridgeFactory = func(request mediaedge.OpenSessionRequest, session *mediaedge.Session) (*mediaedge.VoiceCoreMediaRuntime, error) {
+		server.BridgeFactory = func(request mediaedge.OpenSessionRequest, session *mediaedge.Session, sender mediaedge.DownlinkSender) (*mediaedge.VoiceCoreMediaRuntime, error) {
 			connectCtx, cancel := context.WithTimeout(context.Background(), envDuration("MEDIA_EDGE_VOICE_CORE_CONNECT_TIMEOUT_MS", 5*time.Second))
 			defer cancel()
 			clientType := request.ClientType
@@ -145,12 +140,15 @@ func main() {
 			if err != nil {
 				return nil, err
 			}
-			return mediaedge.NewVoiceCoreMediaRuntime(
-				context.Background(), session, core, nil,
-				func(bridgeErr error) {
-					log.Printf("media edge Voice Core stream failed session=%s err=%v", request.SessionID, bridgeErr)
-				},
-			)
+			onError := func(bridgeErr error) {
+				log.Printf("media edge Voice Core stream failed session=%s err=%v", request.SessionID, bridgeErr)
+			}
+			if sender != nil {
+				return mediaedge.NewVoiceCoreMediaRuntimeWithDownlinkSender(
+					context.Background(), session, core, sender, nil, onError,
+				)
+			}
+			return mediaedge.NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, onError)
 		}
 		log.Printf("media edge Voice Core bridge enabled address=%s", strings.TrimSpace(os.Getenv("MEDIA_EDGE_VOICE_CORE_ADDR")))
 	} else {
