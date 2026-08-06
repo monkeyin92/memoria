@@ -4,18 +4,24 @@
 sample clock、generation gate、reconnect epoch、设备/会话 HTTP 控制面、
 Prometheus 基础指标、到 Voice Core 的双向 gRPC 适配器，以及真实
 WHIP/WebRTC terminator。Go protobuf 代码由仓库内自有 proto 生成；ICE、DTLS、
-SRTP、RTP 和 DataChannel 复用 Pion，Opus 上行使用 Pion decoder，下行只通过一层
-最小 `libopus` encoder 包装，不自行重写媒体协议。
+SRTP、RTP 和 DataChannel 复用 Pion；Opus 上下行使用一层最小 `libopus` 包装，
+上行支持 PLC/FEC 丢包恢复，不自行重写媒体协议。
+
+当前生产状态与外部验收 Gate 以仓库根目录的
+[`architecture-status.yaml`](../../architecture-status.yaml) 为准。该文件明确保持
+`python_authoritative + LiveKit` 默认路径；真实 provider、TURN、浏览器播放、硬件、容量、
+多实例和混沌证据完成前，Go 只允许 shadow，不能晋升为权威。
 
 `POST /whip` 验证 Control API 签发的短期 JWT，从 token 绑定 session/account/device/
 client/stream epoch，完成非 trickle offer/answer，并返回 `Location` 和 `ETag`。
 `PATCH /whip/{resource}` 是 Memoria 的完整 SDP 非 trickle restart 扩展（要求
 `If-Match`）；标准 WHIP client 只依赖初始 POST/DELETE，
 `DELETE /whip/{resource}` 关闭对应 epoch。上行 Opus 转为连续 16 kHz mono PCM，
-丢包按 RTP timestamp 补静音、乱序包丢弃，再送入 `VoiceCoreBridge`；下行 24 kHz
-PCM 转为 48 kHz Opus 并写入 SRTP track。`memoria.events.v1` DataChannel 转发
-transcript/projection/state/error/audio metadata，接收 stop、playout progress 和其他
-client event。
+先尝试 Opus FEC/PLC，只有 codec 无法恢复时才补静音；恢复区间带
+`loss_concealed=true`，乱序包丢弃，再送入 `VoiceCoreBridge`；下行 24 kHz
+PCM 转为 48 kHz Opus 并写入 SRTP track。新 H5 同时使用 control、conversation、
+ephemeral 三条 DataChannel；旧客户端的 `memoria.events.v1` 仍兼容，ephemeral 队列
+不能挤占 control。
 
 真实 sender 通过 `DownlinkSenderFactory` 与 exact `(session_id, stream_epoch)` peer
 绑定。sender 收到 generation-scoped `context.Context`；hard-stop 先取消 context 再
@@ -93,8 +99,11 @@ MEDIA_EDGE_JWT_SECRET='...' ENVIRONMENT=development \
   MEDIA_EDGE_ALLOW_INSECURE_DEVELOPMENT=true go run ./cmd/mediaruntime
 ```
 
-生产环境必须配置至少 32 字节的 `MEDIA_EDGE_JWT_SECRET`，且它必须与 Control
-API 的 `STREAMCORE_TOKEN_SECRET` 使用同一份 secret（不要复制成第二份可漂移的
-密钥）；并在网关层完成 mTLS 与限流。参考 HTTP 端点不会接收长期模型/用户密钥。
+生产优先配置 `MEDIA_EDGE_JWT_PUBLIC_KEY_FILE`/JWKS、`MEDIA_EDGE_JWT_KEY_ID`，Control
+API 只持有 `STREAMCORE_TOKEN_PRIVATE_KEY_FILE` 或 PEM；Edge 支持轮换期间的多 `kid`。
+HS256 的 `MEDIA_EDGE_JWT_SECRET`/`STREAMCORE_TOKEN_SECRET` 仅作为迁移 fallback，不能与
+EdDSA 同时启用。设置 `MEDIA_EDGE_INTERNAL_HTTP_ADDR` 后，`/readyz` 和 `/metrics` 只在
+私网监听；公网 listener 只保留 liveness、WHIP 和带 token 的媒体控制。参考 HTTP 端点不会
+接收长期模型/用户密钥。
 无 secret 的本地测试必须显式设置
 `AllowInsecureDevelopment=true`，默认 fail closed。

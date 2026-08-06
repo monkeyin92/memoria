@@ -1,5 +1,34 @@
 # 项目交接
 
+## 2026-08-06：评审整改阶段收口与天气实时查询（20260806-213522 已发布）
+
+- `20260806-201007` 的 source/images/H5 均完成验签，隔离 server smoke 通过，但 production
+  Control API 在启动时无条件要求尚未验收的 `COTURN_URLS`，导致 healthcheck 失败。runtime 与
+  H5 已立即恢复到 `20260802-142257`，没有切 H5、没有回滚数据；root-only SQLite/env 备份和
+  失败候选工件保留供审计。
+- 修复把 coturn 的 production 必需校验限制到实际 StreamCore rollout
+  （`streamcore + percent > 0 + !kill_switch`）。LiveKit/0% 保持空 `ice_servers`，StreamCore
+  真正启用时仍会因缺 COTURN_URLS/独立 secret fail closed。`test_session_api.py` 与 strict mypy
+  已通过。`20260806-211652` 的候选 runtime 已启动且 LiveKit smoke 通过，但 Doubao 五音色
+  provider gate 因旧 300 ms 单一绝对字幕门禁失败；已原子恢复到 `20260802-142257`，H5 未切换。
+- `20260806-213522` 已将字幕规则收敛为绝对+相对门禁：`ok` 需 `<=120 ms` 与 `<=20%`，
+  `scaled` 需 `<=700 ms` 与 `<=20%`。真实 `calm_guide/low_magnetic` 的 340–514 ms、最高
+  16.2% 漂移会被安全缩放；短音频的大比例误差和超过 700 ms 的偏差仍为 `degraded`，不写入
+  精确 actual-heard。runtime 与 H5 均已原子切至该 tag，四个核心容器 healthy、9/9 ready，
+  LiveKit、QwenRealtimeSearch、DeepSeek、Doubao 五音色、FunASR 与 InterruptSemantic 都通过；
+  H5 immutable union 为 228 个资产。直接 runtime/H5 回滚点是 `20260802-142257`，SQLite
+  双备份和四份 root-only env 回滚副本位于
+  `/var/backups/memoria/runtime-switch-20260806-213522/`。
+
+- 天气/实时查询已接入生产 Provider factory：天气问题优先走无密钥 Open-Meteo，其他主题在有 `DASHSCOPE_API_KEY` 时走 Qwen forced search；先播“稍等，我查询一下。”，后台查询完成后按 generation fence 回告。实时意图会覆盖规划器的静态“我不知道”，但危害/危机混合语句仍由固定安全回复优先；无结果保持安全拒答，不猜测。真实 Open-Meteo 南京 canary 已成功返回实时数据。
+- Python Voice Core 的 session singleflight、有限 Audio Pump、Adaptive Endpoint/尾超时、有序 ASR LRU、gRPC Critical/Reliable/Coalescing lane 已通过定向与全量回归；`uv run ruff check services/agent services/control_api services/common` 和 `uv run mypy services --strict` 通过（237 files）。
+- Go Media Edge 新增 Opus FEC/PLC（不可恢复时才静音）、peer 工作缓冲复用、conceal/heap/malloc/GC 指标；priority mailbox 同时保留 critical 优先级、音频 reserve 与跨 lane 原子总容量门禁。`go test ./...`、`go test -race ./...`、`go vet ./...` 全部通过。
+- H5 StreamCore 统一麦克风约束，关闭麦克风启动时预留 transceiver，ICE incomplete fail-closed + 一次有界重试；control/conversation/ephemeral DataChannel 与旧通道兼容；客户端事件改用 `client_monotonic_ms`。远端 `<audio>` 现在接入 `MediaElementAudioSourceNode -> AudioWorkletNode -> destination`，按 Worklet 渲染 watermark 发布 generation-fenced ACK；不支持、静音、seek、flush、重连或关闭时 fail closed/回退为 `currentTime` 近似 ACK。`approximate: false` 只代表软件图已处理，不代表 DAC 已出声。本地浏览器已验证 Worklet 模块加载和图内递增帧水位；完整套件 `26 files / 300 tests` 与 production build 均通过（保留既有首个 chunk >500 KB 警告）。
+- Python `media_session.py` 已收敛为 116 行 facade；可变 session state 仍由单一 owner 持有，output coordinator 进一步拆为 29 行兼容 facade、398 行 dispatch、272 行 lease owner 与 388 行 PCM/playback stream。Go 的 WebRTC signaling/audio/DataChannel、bridge runtime event/shadow 映射、actor mailbox、session/server/bridge 已分别落文件，原热点降至 `webrtc_terminator.go` 417 行、`live_session_actor.go` 507 行、`bridge_runtime.go` 369 行、`session.go` 224 行、`server.go` 390 行、`bridge.go` 404 行；未引入第二个状态权威。
+- Media Edge 支持 Ed25519/EdDSA `kid`/JWKS 公钥验证、TTL/时钟校验和可选公私监听器；HS256 仅迁移 fallback。生产 profile 的密钥轮换、Redis ownership、多实例、真实 Provider/TURN/浏览器/硬件/AEC/儿童语料/容量/Chaos/灰度/回滚仍未取得外部证据，`go_authoritative` 必须保持关闭。
+- 本机 Redis 8.10 已完成真实 Lua CAS canary（stream epoch、generation、owner/ownership epoch、fallback）；这不是多实例 ownership 验收，外部 Gate 仍保持 pending。
+- 阶段计划见 [`docs/implementation-plan-20260806-streamcore-review-remediation.md`](docs/implementation-plan-20260806-streamcore-review-remediation.md)，唯一状态基线见 [`architecture-status.yaml`](architecture-status.yaml)。
+
 ## 2026-08-06：review.md 完成项归档（未提交、未发布）
 
 - F0 的当前工作区 PostgreSQL/pgvector 子门禁已关闭：使用 CI 同镜像
@@ -127,9 +156,9 @@
   再由 WHIP DataChannel 发布 H5 `floor.state`。这不改变 Python floor 写权，也不能提前启用 A6B。
 - StreamCore 的实时查询已收口为 Registry-owned `media_deep_response -> DEEP_RESULT -> OutputWork`：
   已注册 delegation 的实时查询不再进入普通 `generate_reply`，因此每轮只调用一次 resolver；空结果使用
-  既有安全回复，迟到结果仍按 fence 丢弃。普通非实时回复维持原路径。
-- 慢于 `20ms` 的 StreamCore realtime delegation 现在会创建 allowlist typed
-  `FAST_ACKNOWLEDGEMENT` 并进入同一 OutputWork 队列；快速结果不播 ACK，深度结果在 ACK 完成后接替。
+  `REALTIME_UNAVAILABLE_REPLY`，迟到结果仍按 fence 丢弃。普通非实时回复维持原路径。
+- StreamCore realtime delegation 会创建 allowlist typed `FAST_ACKNOWLEDGEMENT` 并进入同一
+  `OutputWork` 队列；确认语先发出，MediaSession 在 ACK 完成后让深度结果接替。
 - 本轮新增的 `ShadowFloorDecision` 为 additive typed shadow 证据；Python bridge 只在
   `go_shadow` 会话投递，Go 只记录 parity，不执行 floor effect。新增 actor 过期 fallback、
   Python bridge 和 Go typed-floor 回归均已通过。

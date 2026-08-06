@@ -1843,8 +1843,12 @@ type AudioFrame struct {
 	Payload            []byte                 `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
 	Crc32C             uint32                 `protobuf:"varint,6,opt,name=crc32c,proto3" json:"crc32c,omitempty"`
 	Discontinuity      bool                   `protobuf:"varint,7,opt,name=discontinuity,proto3" json:"discontinuity,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// True when the media edge reconstructed this range after an RTP loss.
+	// It preserves the sample clock without presenting synthetic PCM as clean
+	// speech evidence to Voice Core.
+	LossConcealed bool `protobuf:"varint,8,opt,name=loss_concealed,json=lossConcealed,proto3" json:"loss_concealed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AudioFrame) Reset() {
@@ -1922,6 +1926,13 @@ func (x *AudioFrame) GetCrc32C() uint32 {
 func (x *AudioFrame) GetDiscontinuity() bool {
 	if x != nil {
 		return x.Discontinuity
+	}
+	return false
+}
+
+func (x *AudioFrame) GetLossConcealed() bool {
+	if x != nil {
+		return x.LossConcealed
 	}
 	return false
 }
@@ -2896,6 +2907,7 @@ type TranscriptEvent struct {
 	Sequence           uint64                 `protobuf:"varint,12,opt,name=sequence,proto3" json:"sequence,omitempty"`
 	TaskEpoch          uint64                 `protobuf:"varint,13,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
 	ContextVersion     uint64                 `protobuf:"varint,14,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	LossConcealed      bool                   `protobuf:"varint,15,opt,name=loss_concealed,json=lossConcealed,proto3" json:"loss_concealed,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -3026,6 +3038,13 @@ func (x *TranscriptEvent) GetContextVersion() uint64 {
 		return x.ContextVersion
 	}
 	return 0
+}
+
+func (x *TranscriptEvent) GetLossConcealed() bool {
+	if x != nil {
+		return x.LossConcealed
+	}
+	return false
 }
 
 // Sanitized Timeline metadata for one no-side-effect shadow observation.
@@ -4505,7 +4524,7 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\x15interaction_authority\x18\x06 \x01(\x0e2&.memoria.media.v1.InteractionAuthorityR\x14interactionAuthority\x1a?\n" +
 	"\x11CapabilitiesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x96\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbd\x02\n" +
 	"\n" +
 	"AudioFrame\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x1a\n" +
@@ -4514,7 +4533,8 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\rframe_samples\x18\x04 \x01(\rR\fframeSamples\x12\x18\n" +
 	"\apayload\x18\x05 \x01(\fR\apayload\x12\x16\n" +
 	"\x06crc32c\x18\x06 \x01(\rR\x06crc32c\x12$\n" +
-	"\rdiscontinuity\x18\a \x01(\bR\rdiscontinuity\"\xc2\x02\n" +
+	"\rdiscontinuity\x18\a \x01(\bR\rdiscontinuity\x12%\n" +
+	"\x0eloss_concealed\x18\b \x01(\bR\rlossConcealed\"\xc2\x02\n" +
 	"\bVadEvent\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x122\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x1e.memoria.media.v1.VadEventTypeR\x04type\x12'\n" +
@@ -4613,7 +4633,7 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\bsequence\x18\a \x01(\x04R\bsequence\x12\x1d\n" +
 	"\n" +
 	"task_epoch\x18\b \x01(\x04R\ttaskEpoch\x12'\n" +
-	"\x0fcontext_version\x18\t \x01(\x04R\x0econtextVersion\"\xfc\x03\n" +
+	"\x0fcontext_version\x18\t \x01(\x04R\x0econtextVersion\"\xa3\x04\n" +
 	"\x0fTranscriptEvent\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x17\n" +
 	"\aturn_id\x18\x02 \x01(\x04R\x06turnId\x12\x1a\n" +
@@ -4633,7 +4653,8 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\bsequence\x18\f \x01(\x04R\bsequence\x12\x1d\n" +
 	"\n" +
 	"task_epoch\x18\r \x01(\x04R\ttaskEpoch\x12'\n" +
-	"\x0fcontext_version\x18\x0e \x01(\x04R\x0econtextVersion\"\x86\x02\n" +
+	"\x0fcontext_version\x18\x0e \x01(\x04R\x0econtextVersion\x12%\n" +
+	"\x0eloss_concealed\x18\x0f \x01(\bR\rlossConcealed\"\x86\x02\n" +
 	"\x13ShadowSpeechSegment\x12\x1d\n" +
 	"\n" +
 	"segment_id\x18\x01 \x01(\tR\tsegmentId\x120\n" +

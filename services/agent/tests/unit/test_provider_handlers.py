@@ -13,7 +13,7 @@ from services.agent.src.providers.handlers import (
 
 
 @pytest.mark.asyncio
-async def test_bailian_deepseek_handlers_do_not_construct_qwen_search(
+async def test_bailian_deepseek_handlers_keep_keyless_weather_lookup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DEEPSEEK_FAST_TEMPERATURE", "0.3")
@@ -45,8 +45,9 @@ async def test_bailian_deepseek_handlers_do_not_construct_qwen_search(
 
     assert handlers.asr is asr
     assert handlers.speech_synthesis is tts
-    assert handlers.realtime_search_resolver is None
-    assert handlers.realtime_search_model is None
+    assert handlers.realtime_search_resolver is not None
+    assert handlers.realtime_search_resolver.qwen is None
+    assert handlers.realtime_search_model == "open-meteo"
     assert warmed == [True]
     assert llm_calls == [
         {
@@ -119,6 +120,7 @@ def test_realtime_search_resolver_uses_isolated_qwen_settings(
     class Resolver:
         def __init__(self, config: Any) -> None:
             captured.append(config)
+            self.model = config.model
 
     monkeypatch.setattr(handlers, "QwenRealtimeSearch", Resolver)
     resolver = build_realtime_search_resolver(
@@ -129,8 +131,32 @@ def test_realtime_search_resolver_uses_isolated_qwen_settings(
         )
     )
 
-    assert isinstance(resolver, Resolver)
+    assert isinstance(resolver.qwen, Resolver)
     config = captured[0]
     assert config.api_key == "qwen-key"
     assert config.base_url == "https://qwen.example/v1"
     assert config.model == "qwen-deep"
+
+
+@pytest.mark.asyncio
+async def test_keyless_realtime_search_uses_public_weather_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Weather:
+        model = "open-meteo"
+
+        async def resolve(self, *, query: str) -> str | None:
+            assert query == "南京天气"
+            return "南京现在晴，气温三十三摄氏度。"
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(handlers, "OpenMeteoWeather", Weather)
+    resolver = build_realtime_search_resolver(
+        settings=SimpleNamespace(dashscope_api_key=""),
+    )
+
+    assert resolver.qwen is None
+    assert await resolver.resolve(query="南京天气") == "南京现在晴，气温三十三摄氏度。"
+    await resolver.aclose()

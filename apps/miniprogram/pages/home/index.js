@@ -424,7 +424,9 @@ Page({
     if (
       stateFence &&
       (generationId < stateFence.generationId ||
-        (generationId === stateFence.generationId && turnId !== stateFence.turnId))
+        (generationId === stateFence.generationId &&
+          (turnId !== stateFence.turnId ||
+            payload.tool_epoch < stateFence.toolEpoch)))
     ) {
       return;
     }
@@ -432,16 +434,18 @@ Page({
       stateFence &&
       generationId === stateFence.generationId &&
       turnId === stateFence.turnId &&
+      payload.tool_epoch !== stateFence.toolEpoch &&
       !["thinking", "speaking"].includes(this.data.status)
     ) {
       return;
     }
-    const next = { expression, turnId, generationId };
+    const next = { expression, turnId, generationId, toolEpoch: payload.tool_epoch };
     if (
       this.data.status === "speaking" &&
       stateFence &&
       stateFence.turnId === turnId &&
-      stateFence.generationId === generationId
+      stateFence.generationId === generationId &&
+      stateFence.toolEpoch === payload.tool_epoch
     ) {
       this._activateAssistantExpression(next);
       return;
@@ -570,18 +574,27 @@ Page({
   _setStatus(status, event = {}) {
     const turnId = event.turn_id;
     const generationId = event.generation_id;
-    if (status === "speaking" && Number.isInteger(turnId) && Number.isInteger(generationId)) {
-      this._assistantStateFence = { turnId, generationId };
+    const toolEpoch = event.tool_epoch;
+    if (
+      status === "speaking" &&
+      Number.isInteger(turnId) &&
+      Number.isInteger(generationId) &&
+      Number.isInteger(toolEpoch)
+    ) {
+      this._assistantStateFence = { turnId, generationId, toolEpoch };
       const pending = this._pendingAssistantExpression;
       if (
         pending &&
         pending.turnId === turnId &&
-        pending.generationId === generationId
+        pending.generationId === generationId &&
+        pending.toolEpoch === toolEpoch
       ) {
         this._pendingAssistantExpression = null;
         this._activateAssistantExpression(pending);
       }
     } else if (status !== "speaking") {
+      this._assistantStateFence = null;
+      this._pendingAssistantExpression = null;
       this._clearAssistantExpression(generationId);
     }
     this.setData({

@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,10 +103,131 @@ PlaybackProgressHandler = Callable[[MediaBridgeSession, PlaybackProgress], Await
 DownlinkOverflowHandler = Callable[[MediaBridgeSession], Awaitable[None]]
 
 
+class _PriorityOutgoing:
+    """Bounded Critical/Reliable/Coalescing queue with strict priority drain."""
+
+    _RELIABLE_BUDGET = 16
+
+    def __init__(self, maxsize: int) -> None:
+        self.maxsize = maxsize
+        self._critical: deque[media_pb2.CoreToMedia | None] = deque()
+        self._reliable: deque[media_pb2.CoreToMedia | None] = deque()
+        self._coalescing: deque[media_pb2.CoreToMedia | None] = deque()
+        self._ready = asyncio.Event()
+        self._space = asyncio.Event()
+        self._space.set()
+        self._reliable_since_bulk = 0
+
+    @staticmethod
+    def _lane(message: media_pb2.CoreToMedia | None) -> str:
+        if message is None:
+            return "critical"
+        kind = message.WhichOneof("event")
+        if kind in {"generation", "realtime_effect", "floor_effect", "error"}:
+            return "critical"
+        if kind == "shadow_observation":
+            return "coalescing"
+        if kind == "transcript" and not bool(message.transcript.final):
+            return "coalescing"
+        if kind == "client" and str(message.client.type).startswith("turn.provisional."):
+            return "coalescing"
+        return "reliable"
+
+    @staticmethod
+    def _coalescing_key(message: media_pb2.CoreToMedia | None) -> tuple[object, ...] | None:
+        if message is None:
+            return None
+        kind = message.WhichOneof("event")
+        if kind == "transcript":
+            return (kind, int(message.transcript.turn_id))
+        if kind == "client":
+            return (kind, str(message.client.type), int(message.client.turn_id))
+        return None
+
+    def put_nowait(self, message: media_pb2.CoreToMedia | None) -> None:
+        lane = self._lane(message)
+        if lane == "coalescing":
+            key = self._coalescing_key(message)
+            if key is not None:
+                self._coalescing = deque(
+                    queued
+                    for queued in self._coalescing
+                    if self._coalescing_key(queued) != key
+                )
+        if self.qsize() >= self.maxsize:
+            raise asyncio.QueueFull
+        target = {
+            "critical": self._critical,
+            "reliable": self._reliable,
+            "coalescing": self._coalescing,
+        }[lane]
+        target.append(message)
+        self._ready.set()
+        if self.qsize() >= self.maxsize:
+            self._space.clear()
+
+    async def put(self, message: media_pb2.CoreToMedia | None) -> None:
+        while True:
+            try:
+                self.put_nowait(message)
+                return
+            except asyncio.QueueFull:
+                self._space.clear()
+                if self.qsize() < self.maxsize:
+                    continue
+                await self._space.wait()
+
+    def get_nowait(self) -> media_pb2.CoreToMedia | None:
+        if self._critical:
+            message = self._critical.popleft()
+        elif self._coalescing and (
+            not self._reliable or self._reliable_since_bulk >= self._RELIABLE_BUDGET
+        ):
+            message = self._coalescing.popleft()
+            self._reliable_since_bulk = 0
+        elif self._reliable:
+            message = self._reliable.popleft()
+            self._reliable_since_bulk += 1
+        elif self._coalescing:
+            message = self._coalescing.popleft()
+            self._reliable_since_bulk = 0
+        else:
+            raise asyncio.QueueEmpty
+        self._space.set()
+        if self.empty():
+            self._ready.clear()
+        return message
+
+    async def get(self) -> media_pb2.CoreToMedia | None:
+        while True:
+            try:
+                return self.get_nowait()
+            except asyncio.QueueEmpty:
+                self._ready.clear()
+                if not self.empty():
+                    continue
+                await self._ready.wait()
+
+    def evict_coalescing(self) -> media_pb2.CoreToMedia | None:
+        if not self._coalescing:
+            return None
+        message = self._coalescing.popleft()
+        self._space.set()
+        if self.empty():
+            self._ready.clear()
+        return message
+
+    def qsize(self) -> int:
+        return len(self._critical) + len(self._reliable) + len(self._coalescing)
+
+    def empty(self) -> bool:
+        return self.qsize() == 0
+
+
 @dataclass(slots=True)
 class _Connection:
     session: MediaBridgeSession
-    outgoing: asyncio.Queue[media_pb2.CoreToMedia | None]
+    outgoing: _PriorityOutgoing
     next_event_sequence: int = 0
     next_shadow_sequence: int = 0
     dropped_shadow_observations: int = 0
@@ -163,7 +285,7 @@ class MediaBridgeGrpcServer:
     def __init__(
         self,
         *,
-        max_pending_audio_frames: int = 100,
+        max_pending_audio_frames: int = 20,
         max_pending_messages: int = 128,
         allow_go_shadow: bool = False,
         on_client_event: ClientEventHandler | None = None,
@@ -239,9 +361,7 @@ class MediaBridgeGrpcServer:
         requests: AsyncIterator[media_pb2.MediaToCore],
         context: grpc.aio.ServicerContext,
     ) -> AsyncIterator[media_pb2.CoreToMedia]:
-        outgoing: asyncio.Queue[media_pb2.CoreToMedia | None] = asyncio.Queue(
-            maxsize=self.max_pending_messages
-        )
+        outgoing = _PriorityOutgoing(self.max_pending_messages)
         ready = asyncio.Event()
         holder: dict[str, object] = {}
         consumer = asyncio.create_task(
@@ -315,7 +435,7 @@ class MediaBridgeGrpcServer:
     async def _consume(
         self,
         requests: AsyncIterator[media_pb2.MediaToCore],
-        outgoing: asyncio.Queue[media_pb2.CoreToMedia | None],
+        outgoing: _PriorityOutgoing,
         ready: asyncio.Event,
         holder: dict[str, object],
     ) -> None:
@@ -432,7 +552,7 @@ class MediaBridgeGrpcServer:
         self._closed_session_notifications.discard(identity.session_id)
         connection = _Connection(
             session=session,
-            outgoing=asyncio.Queue(maxsize=self.max_pending_messages),
+            outgoing=_PriorityOutgoing(self.max_pending_messages),
         )
         self._connections[identity.session_id] = connection
         return connection
@@ -503,6 +623,7 @@ class MediaBridgeGrpcServer:
                 payload=raw_payload,
                 crc32c=int(audio.crc32c) if audio.crc32c else None,
                 discontinuity=bool(audio.discontinuity),
+                loss_concealed=bool(audio.loss_concealed),
             )
             accepted = connection.session.accept_uplink(frame)
             if not accepted:
@@ -730,25 +851,12 @@ class MediaBridgeGrpcServer:
 
     @staticmethod
     def _evict_shadow_observation(connection: _Connection) -> bool:
-        retained: list[media_pb2.CoreToMedia | None] = []
-        removed = False
-        while True:
-            try:
-                queued = connection.outgoing.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            if (
-                not removed
-                and queued is not None
-                and queued.WhichOneof("event") == "shadow_observation"
-            ):
-                removed = True
-                connection.dropped_shadow_observations += 1
-                continue
-            retained.append(queued)
-        for queued in retained:
-            connection.outgoing.put_nowait(queued)
-        return removed
+        removed = connection.outgoing.evict_coalescing()
+        if removed is None:
+            return False
+        if removed.WhichOneof("event") == "shadow_observation":
+            connection.dropped_shadow_observations += 1
+        return True
 
     @staticmethod
     def _try_enqueue_shadow(
@@ -1252,6 +1360,7 @@ class MediaBridgeGrpcServer:
                     sequence=sequence,
                     task_epoch=task_epoch,
                     context_version=context_version,
+                    loss_concealed=segment.loss_concealed,
                 )
             ),
         )

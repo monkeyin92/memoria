@@ -157,7 +157,7 @@ class AgentSettings(BaseSettings):
         default="", alias="MEDIA_BRIDGE_CLIENT_CA_FILE"
     )
     media_bridge_max_pending_audio_frames: int = Field(
-        default=100, ge=1, le=1000, alias="MEDIA_BRIDGE_MAX_PENDING_AUDIO_FRAMES"
+        default=20, ge=1, le=1000, alias="MEDIA_BRIDGE_MAX_PENDING_AUDIO_FRAMES"
     )
     media_bridge_max_pending_messages: int = Field(
         default=128, ge=1, le=2000, alias="MEDIA_BRIDGE_MAX_PENDING_MESSAGES"

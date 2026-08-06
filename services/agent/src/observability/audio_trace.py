@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +21,7 @@ CLIENT_AUDIO_TRACE_NAMES = frozenset(
         "first_playback",
         "media_error",
         "webrtc_inbound_audio",
+        "webrtc_microphone_capabilities",
         "webrtc_microphone_settings",
         "webrtc_outbound_audio",
         "miniprogram_playback_underrun",
@@ -100,12 +102,21 @@ CLIENT_MICROPHONE_BOOLEAN_SETTINGS = frozenset(
     }
 )
 
+CLIENT_MICROPHONE_CAPABILITY_RANGES = frozenset(
+    {
+        "sample_rate",
+        "sample_size",
+        "channel_count",
+        "latency_ms",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ClientAudioTrace:
     name: str
     status: str
-    metrics: dict[str, int | float | bool]
+    metrics: Mapping[str, object]
 
 
 def parse_client_audio_trace(
@@ -130,15 +141,32 @@ def parse_client_audio_trace(
         "miniprogram_playback_lead_adjusted",
     }
     if name in {"webrtc_inbound_audio", "webrtc_outbound_audio"} or miniprogram_trace:
-        metrics = _numeric_metrics(event.get("detail"))
-        if metrics is None:
+        numeric_metrics = _numeric_metrics(event.get("detail"))
+        if numeric_metrics is None:
             return None
-        return ClientAudioTrace(name=str(name), status=str(status), metrics=metrics)
+        return ClientAudioTrace(
+            name=str(name),
+            status=str(status),
+            metrics=numeric_metrics,
+        )
     if name == "webrtc_microphone_settings":
-        metrics = _microphone_settings(event.get("detail"))
-        if metrics is None:
+        microphone_settings = _microphone_settings(event.get("detail"))
+        if microphone_settings is None:
             return None
-        return ClientAudioTrace(name=str(name), status=str(status), metrics=metrics)
+        return ClientAudioTrace(
+            name=str(name),
+            status=str(status),
+            metrics=microphone_settings,
+        )
+    if name == "webrtc_microphone_capabilities":
+        microphone_capabilities = _microphone_capabilities(event.get("detail"))
+        if microphone_capabilities is None:
+            return None
+        return ClientAudioTrace(
+            name=str(name),
+            status=str(status),
+            metrics=microphone_capabilities,
+        )
     return ClientAudioTrace(name=str(name), status=str(status), metrics={})
 
 
@@ -176,3 +204,39 @@ def _microphone_settings(detail: object) -> dict[str, int | float | bool] | None
         ):
             return None
     return {str(key): value for key, value in detail.items()}
+
+
+def _microphone_capabilities(detail: object) -> dict[str, object] | None:
+    if not isinstance(detail, dict) or not detail:
+        return None
+    allowed = CLIENT_MICROPHONE_BOOLEAN_SETTINGS | CLIENT_MICROPHONE_CAPABILITY_RANGES
+    if not set(detail).issubset(allowed):
+        return None
+    clean: dict[str, object] = {}
+    for key, value in detail.items():
+        if key in CLIENT_MICROPHONE_BOOLEAN_SETTINGS:
+            if (
+                not isinstance(value, list)
+                or not value
+                or len(value) > 2
+                or any(not isinstance(item, bool) for item in value)
+            ):
+                return None
+            clean[str(key)] = list(value)
+            continue
+        if not isinstance(value, dict) or not value or not set(value).issubset({"min", "max"}):
+            return None
+        range_value: dict[str, int | float] = {}
+        for bound, number in value.items():
+            if (
+                isinstance(number, bool)
+                or not isinstance(number, (int, float))
+                or not math.isfinite(number)
+                or number < 0
+            ):
+                return None
+            range_value[str(bound)] = number
+        if "min" in range_value and "max" in range_value and range_value["min"] > range_value["max"]:
+            return None
+        clean[str(key)] = range_value
+    return clean

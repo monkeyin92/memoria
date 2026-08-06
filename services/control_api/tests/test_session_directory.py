@@ -12,6 +12,7 @@ from services.control_api.app.session_directory import (
     SessionDraining,
     SessionEpochConflict,
     SessionNotFound,
+    SessionOwnershipConflict,
 )
 
 
@@ -30,11 +31,15 @@ async def test_session_directory_reconnect_bumps_epoch_and_expiry_is_fail_closed
     )
     assert claimed.stream_epoch == 1
     assert claimed.generation_id == 4
+    assert claimed.owner_instance_id == "edge-a"
+    assert claimed.ownership_epoch == 1
+    assert claimed.lease_expires_at == claimed.expires_at
 
     reconnected = await directory.reconnect("session-1", media_edge_id="edge-b")
     assert reconnected.stream_epoch == 2
     assert reconnected.media_edge_id == "edge-b"
     assert reconnected.account_id == "account-1"
+    assert reconnected.ownership_epoch == claimed.ownership_epoch
     with pytest.raises(SessionEpochConflict):
         await directory.reconnect("session-1", expected_stream_epoch=1)
     renewed = await directory.renew("session-1", expected_stream_epoch=2, ttl_s=20)
@@ -45,6 +50,37 @@ async def test_session_directory_reconnect_bumps_epoch_and_expiry_is_fail_closed
     assert await directory.lookup("session-1") is None
     with pytest.raises(SessionNotFound):
         await directory.reconnect("session-1")
+
+
+@pytest.mark.asyncio
+async def test_expired_claim_gets_a_new_owner_fence_and_old_owner_cannot_write() -> None:
+    clock = [datetime(2026, 8, 2, tzinfo=UTC)]
+    directory = InMemorySessionDirectory(ttl_s=10, now=lambda: clock[0])
+    old = await directory.claim(
+        "ownership-session",
+        media_edge_id="edge-a",
+        voice_core_id="core-a",
+        device_id="device-1",
+        account_id="account-1",
+        owner_instance_id="edge-a",
+    )
+    clock[0] += timedelta(seconds=11)
+    new = await directory.claim(
+        "ownership-session",
+        media_edge_id="edge-b",
+        voice_core_id="core-b",
+        device_id="device-1",
+        account_id="account-1",
+        owner_instance_id="edge-b",
+    )
+    assert new.ownership_epoch > old.ownership_epoch
+    with pytest.raises(SessionOwnershipConflict):
+        await directory.renew(
+            "ownership-session",
+            expected_stream_epoch=new.stream_epoch,
+            owner_instance_id="edge-a",
+            expected_ownership_epoch=old.ownership_epoch,
+        )
 
 
 @pytest.mark.asyncio
@@ -171,6 +207,7 @@ class _UnavailableRedis:
 class _FakeRedis:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
+        self.counters: dict[str, int] = {}
 
     async def get(self, key: str) -> str | None:
         return self.values.get(key)
@@ -182,6 +219,10 @@ class _FakeRedis:
         self.values[key] = value
         return True
 
+    async def incr(self, key: str) -> int:
+        self.counters[key] = self.counters.get(key, 0) + 1
+        return self.counters[key]
+
     async def eval(
         self,
         _script: str,
@@ -189,6 +230,8 @@ class _FakeRedis:
         key: str,
         expected_epoch: int,
         expected_generation: int,
+        expected_owner: str,
+        expected_ownership_epoch: int,
         replacement: str,
         _seconds: int,
     ) -> int:
@@ -202,6 +245,10 @@ class _FakeRedis:
             return -2
         if int(current.get("generation", 0)) != int(expected_generation):
             return -5
+        if current.get("owner_instance_id", current.get("media_edge_id")) != expected_owner:
+            return -6
+        if int(current.get("ownership_epoch", 1)) != int(expected_ownership_epoch):
+            return -7
         replacement_value = json.loads(replacement)
         if replacement_value.get("__require_generation_advance") and int(
             current.get("generation", 0)
@@ -260,3 +307,26 @@ async def test_redis_backend_rejects_stale_generation_replacement() -> None:
         await directory._redis_replace(claimed, claimed)
     latest = await directory.lookup("generation-race")
     assert latest is not None and latest.generation_id == 1
+
+
+@pytest.mark.asyncio
+async def test_redis_backend_fences_a_revived_owner() -> None:
+    redis = _FakeRedis()
+    directory = RedisSessionDirectory("redis://unused", redis_client=redis)
+    claimed = await directory.claim(
+        "ownership-race",
+        media_edge_id="edge-a",
+        voice_core_id="core-a",
+        device_id="device-1",
+        account_id="account-1",
+    )
+    current = claimed.as_dict()
+    current.update({"owner_instance_id": "edge-b", "ownership_epoch": 2})
+    redis.values[directory._key("ownership-race")] = json.dumps(current)
+    with pytest.raises(SessionOwnershipConflict):
+        await directory.renew(
+            "ownership-race",
+            expected_stream_epoch=claimed.stream_epoch,
+            owner_instance_id="edge-a",
+            expected_ownership_epoch=claimed.ownership_epoch,
+        )

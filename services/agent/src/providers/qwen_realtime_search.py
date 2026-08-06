@@ -49,6 +49,10 @@ class QwenRealtimeSearch:
         self._client = client or httpx.AsyncClient(timeout=config.timeout_s)
         self._owns_client = client is None
 
+    @property
+    def model(self) -> str:
+        return self._config.model
+
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()

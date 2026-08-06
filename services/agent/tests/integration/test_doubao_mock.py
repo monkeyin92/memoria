@@ -632,7 +632,7 @@ async def test_livekit_stream_emits_only_final_scaled_word_alignment() -> None:
 
 
 @pytest.mark.asyncio
-async def test_livekit_stream_marks_alignment_degraded_beyond_300ms() -> None:
+async def test_livekit_stream_marks_excessive_relative_alignment_degraded() -> None:
     server = MockDoubaoServer(scenario="degraded_ts")
     server.start()
     tts = DoubaoTTS(_config(server))
@@ -653,8 +653,8 @@ async def test_livekit_stream_marks_alignment_degraded_beyond_300ms() -> None:
             for word in event.frame.userdata.get(USERDATA_TIMED_TRANSCRIPT, [])
         ]
         assert events
-        # A >300ms subtitle/PCM mismatch is degraded, never scaled, and the
-        # transcript must not be published as a precise timed alignment.
+        # A 500ms mismatch on this one-second PCM is too large proportionally,
+        # so the transcript must not become a precise timed alignment.
         assert alignment == ["started", "degraded"]
         assert transcripts == []
     finally:

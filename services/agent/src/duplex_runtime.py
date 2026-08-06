@@ -82,9 +82,11 @@ from services.agent.src.orchestration.utterance_router import (
     route_target_speaker,
     route_utterance,
 )
+from services.common.companion_response_safety import SAFE_UNKNOWN_REPLY
 from services.common.companions import companion_definition
 from services.common.evidence_policy import classify_prompt_kind
 from services.common.realtime_information import (
+    is_incomplete_realtime_reply,
     is_realtime_followup_nudge,
     requires_realtime_lookup,
 )
@@ -559,7 +561,14 @@ class DuplexRuntime:
             and is_realtime_followup_nudge(query)
         ):
             return pending, True
-        if direct_text is None and requires_realtime_lookup(query):
+        # Fresh-information intent outranks a planner's static fallback (for
+        # example ``我不知道。``). The resolver is the only authority allowed
+        # to produce a current weather/news result.
+        static_reply_is_fallback = direct_text is None or direct_text == SAFE_UNKNOWN_REPLY or (
+            isinstance(direct_text, str)
+            and is_incomplete_realtime_reply(direct_text, query=query)
+        )
+        if static_reply_is_fallback and requires_realtime_lookup(query):
             request = PendingRealtimeRequest(query, speaker_scope, fence)
             self._pending_realtime_request = request
             return request, False

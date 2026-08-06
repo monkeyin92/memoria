@@ -256,6 +256,10 @@ message AudioFrame {
   bytes payload = 5;
   uint32 crc32c = 6;
   bool discontinuity = 7;
+  // True when the media edge reconstructed this range after an RTP loss.
+  // It preserves the sample clock without presenting synthetic PCM as clean
+  // speech evidence to Voice Core.
+  bool loss_concealed = 8;
 }
 
 message VadEvent {
@@ -379,6 +383,7 @@ message TranscriptEvent {
   uint64 sequence = 12;
   uint64 task_epoch = 13;
   uint64 context_version = 14;
+  bool loss_concealed = 15;
 }
 
 enum ShadowObservationKind {

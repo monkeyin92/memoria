@@ -87,6 +87,15 @@ class ControlSettings(BaseSettings):
     streamcore_token_secret: SecretStr = Field(
         default=SecretStr(""), alias="STREAMCORE_TOKEN_SECRET"
     )
+    streamcore_token_private_key_file: str = Field(
+        default="", alias="STREAMCORE_TOKEN_PRIVATE_KEY_FILE"
+    )
+    streamcore_token_private_key_pem: SecretStr = Field(
+        default=SecretStr(""), alias="STREAMCORE_TOKEN_PRIVATE_KEY_PEM"
+    )
+    streamcore_token_key_id: str = Field(
+        default="streamcore-1", alias="STREAMCORE_TOKEN_KEY_ID"
+    )
     streamcore_token_ttl_s: int = Field(
         default=120, ge=30, le=300, alias="STREAMCORE_TOKEN_TTL_S"
     )
@@ -640,15 +649,25 @@ class ControlSettings(BaseSettings):
             raise ValueError("production must use secure LIVEKIT_URL")
         if not self.livekit_api_key or not self.livekit_api_secret:
             raise ValueError("production requires LiveKit credentials")
-        if (
+        streamcore_rollout_enabled = (
             self.media_runtime_default == "streamcore"
             and self.streamcore_experiment_percent > 0
             and not self.streamcore_kill_switch
-        ):
+        )
+        if streamcore_rollout_enabled:
             if not self.streamcore_whip_url.startswith("https://"):
                 raise ValueError("production StreamCore rollout requires HTTPS WHIP URL")
-            if len(self.streamcore_token_secret.get_secret_value()) < 32:
-                raise ValueError("production StreamCore rollout requires STREAMCORE_TOKEN_SECRET")
+            has_private_key = bool(
+                self.streamcore_token_private_key_file.strip()
+                or self.streamcore_token_private_key_pem.get_secret_value().strip()
+            )
+            if not has_private_key and len(self.streamcore_token_secret.get_secret_value()) < 32:
+                raise ValueError(
+                    "production StreamCore rollout requires an Ed25519 private key "
+                    "or STREAMCORE_TOKEN_SECRET fallback"
+                )
+            if has_private_key and not self.streamcore_token_key_id.strip():
+                raise ValueError("production StreamCore rollout requires STREAMCORE_TOKEN_KEY_ID")
             if not self.streamcore_slo_gate_enabled:
                 raise ValueError("production StreamCore rollout requires STREAMCORE_SLO_GATE_ENABLED")
             if len(self.media_slo_report_token.get_secret_value()) < 32:
@@ -893,13 +912,16 @@ class ControlSettings(BaseSettings):
                 "MEMORIA_MEMORY_EMBEDDING_API_KEY, MEMORIA_MEMORY_EMBEDDING_MODEL "
                 "and MEMORIA_MEMORY_EMBEDDING_DIMENSIONS"
             )
-        coturn_urls = self.coturn_urls_list()
-        if not coturn_urls:
-            raise ValueError("production requires independent COTURN_URLS")
-        if any(not url.startswith(("turn:", "turns:")) for url in coturn_urls):
-            raise ValueError("production COTURN_URLS must use turn: or turns:")
-        coturn_secret = self.coturn_shared_secret.get_secret_value().strip()
-        if len(coturn_secret) < 32:
-            raise ValueError("production requires COTURN_SHARED_SECRET (>=32 chars)")
-        if coturn_secret in {auth_secret, self.livekit_api_secret, *capability_tokens.values()}:
-            raise ValueError("production COTURN_SHARED_SECRET must be independent")
+        if streamcore_rollout_enabled:
+            coturn_urls = self.coturn_urls_list()
+            if not coturn_urls:
+                raise ValueError("production StreamCore rollout requires independent COTURN_URLS")
+            if any(not url.startswith(("turn:", "turns:")) for url in coturn_urls):
+                raise ValueError("production COTURN_URLS must use turn: or turns:")
+            coturn_secret = self.coturn_shared_secret.get_secret_value().strip()
+            if len(coturn_secret) < 32:
+                raise ValueError(
+                    "production StreamCore rollout requires COTURN_SHARED_SECRET (>=32 chars)"
+                )
+            if coturn_secret in {auth_secret, self.livekit_api_secret, *capability_tokens.values()}:
+                raise ValueError("production COTURN_SHARED_SECRET must be independent")

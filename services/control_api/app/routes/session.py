@@ -39,6 +39,7 @@ from services.control_api.app.security import (
     require_matching_user,
 )
 from services.control_api.app.session_directory import (
+    SessionDirectory,
     SessionDirectoryUnavailable,
     SessionDraining,
     SessionEpochConflict,
@@ -273,6 +274,8 @@ class CreateSessionResponse(BaseModel):
     media_runtime: Literal["livekit", "streamcore"] = "livekit"
     fallback_runtime: Literal["livekit"] = "livekit"
     stream_epoch: int = Field(default=1, ge=1)
+    owner_instance_id: str | None = None
+    ownership_epoch: int | None = Field(default=None, ge=1)
     streamcore: dict[str, Any] | None = None
     ice_servers: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -296,18 +299,21 @@ class StopResponseBody(BaseModel):
 
 class MediaHeartbeatBody(BaseModel):
     stream_epoch: int = Field(ge=1)
+    ownership_epoch: int | None = Field(default=None, ge=1)
 
 
 class MediaReconnectBody(BaseModel):
     """Optional client CAS fence for rotating a media session epoch."""
 
     stream_epoch: int = Field(ge=1)
+    ownership_epoch: int | None = Field(default=None, ge=1)
 
 
 class MediaFallbackBody(BaseModel):
     """CAS fence for returning a failed StreamCore session to LiveKit."""
 
     stream_epoch: int = Field(ge=1)
+    ownership_epoch: int | None = Field(default=None, ge=1)
 
 
 class WebRTCMetrics(BaseModel):
@@ -900,9 +906,10 @@ async def create_session(
                 "stream_epoch": 1,
             }
     learning_task_id = await persist_voice_session()
+    claimed_route: SessionRoute | None = None
     if body.client.platform == "h5":
         try:
-            await claim_session_route(
+            claimed_route = await claim_session_route(
                 request,
                 session_id=session_id,
                 account_id=user_id,
@@ -918,6 +925,9 @@ async def create_session(
                 logger.warning("session directory unavailable; using LiveKit fallback")
                 media_runtime = "livekit"
                 streamcore = None
+    if streamcore is not None and claimed_route is not None:
+        streamcore["owner_instance_id"] = claimed_route.owner_instance_id
+        streamcore["ownership_epoch"] = claimed_route.ownership_epoch
     return CreateSessionResponse(
         session_id=session_id,
         livekit_url=settings.livekit_url,
@@ -934,6 +944,8 @@ async def create_session(
         media_runtime=media_runtime,
         fallback_runtime="livekit",
         stream_epoch=1,
+        owner_instance_id=claimed_route.owner_instance_id if claimed_route else None,
+        ownership_epoch=claimed_route.ownership_epoch if claimed_route else None,
         streamcore=streamcore,
         ice_servers=turn_ice_servers(
             settings,
@@ -1008,11 +1020,14 @@ async def claim_session_route(
     device_id: str,
     stream_epoch: int,
     media_runtime: Literal["livekit", "streamcore"] = "livekit",
-) -> None:
-    directory = getattr(request.app.state, "session_directory", None)
+) -> SessionRoute | None:
+    directory = cast(
+        SessionDirectory | None,
+        getattr(request.app.state, "session_directory", None),
+    )
     if directory is None:
-        return
-    await directory.claim(
+        return None
+    return await directory.claim(
         session_id,
         media_edge_id=request.app.state.settings.media_edge_id,
         voice_core_id=request.app.state.settings.voice_core_id,
@@ -1021,6 +1036,7 @@ async def claim_session_route(
         stream_epoch=stream_epoch,
         generation=0,
         media_runtime=media_runtime,
+        owner_instance_id=request.app.state.settings.media_edge_id,
     )
 
 
@@ -1319,6 +1335,8 @@ async def stop_response(
                 observed = await directory.advance_generation(
                     session_id,
                     expected_stream_epoch=media_route.stream_epoch,
+                    owner_instance_id=settings.media_edge_id,
+                    expected_ownership_epoch=media_route.ownership_epoch,
                 )
             except (SessionNotFound, SessionDraining, SessionEpochConflict) as exc:
                 raise HTTPException(status_code=409, detail="media route changed") from exc
@@ -1358,6 +1376,8 @@ async def stop_response(
                     session_id,
                     generation=generation_id,
                     expected_stream_epoch=media_route.stream_epoch,
+                    owner_instance_id=settings.media_edge_id,
+                    expected_ownership_epoch=media_route.ownership_epoch,
                 )
                 event.update(
                     {
@@ -1461,6 +1481,8 @@ async def reconnect_media_session(
         route = await directory.reconnect(
             session_id,
             expected_stream_epoch=body.stream_epoch if body is not None else None,
+            owner_instance_id=settings.media_edge_id,
+            expected_ownership_epoch=body.ownership_epoch if body is not None else None,
         )
         device_id = None if route.device_id == "h5" else route.device_id
         media_token, media_expires_at = mint_streamcore_token(
@@ -1485,12 +1507,16 @@ async def reconnect_media_session(
         "session_id": session_id,
         "media_runtime": "streamcore",
         "fallback_runtime": "livekit",
-        "stream_epoch": route.stream_epoch,
-        "streamcore": {
+            "stream_epoch": route.stream_epoch,
+            "owner_instance_id": route.owner_instance_id,
+            "ownership_epoch": route.ownership_epoch,
+            "streamcore": {
             "whip_url": str(settings.streamcore_whip_url).strip(),
             "token": media_token,
             "expires_at": media_expires_at.isoformat().replace("+00:00", "Z"),
             "stream_epoch": route.stream_epoch,
+            "owner_instance_id": route.owner_instance_id,
+            "ownership_epoch": route.ownership_epoch,
         },
         "ice_servers": turn_ice_servers(
             settings,
@@ -1520,6 +1546,8 @@ async def fallback_media_session(
         route = await directory.fallback_to_livekit(
             session_id,
             expected_stream_epoch=body.stream_epoch,
+            owner_instance_id=request.app.state.settings.media_edge_id,
+            expected_ownership_epoch=body.ownership_epoch,
         )
     except SessionNotFound as exc:
         raise HTTPException(status_code=404, detail="media route not found") from exc
@@ -1535,6 +1563,8 @@ async def fallback_media_session(
         "fallback_runtime": "livekit",
         "stream_epoch": route.stream_epoch,
         "generation_id": route.generation,
+        "owner_instance_id": route.owner_instance_id,
+        "ownership_epoch": route.ownership_epoch,
     }
 
 
@@ -1557,6 +1587,8 @@ async def renew_media_session(
         route = await directory.renew(
             session_id,
             expected_stream_epoch=body.stream_epoch,
+            owner_instance_id=request.app.state.settings.media_edge_id,
+            expected_ownership_epoch=body.ownership_epoch,
         )
     except SessionNotFound as exc:
         raise HTTPException(status_code=404, detail="media route not found") from exc
@@ -1570,6 +1602,8 @@ async def renew_media_session(
         "session_id": session_id,
         "media_runtime": route.media_runtime,
         "stream_epoch": route.stream_epoch,
+        "owner_instance_id": route.owner_instance_id,
+        "ownership_epoch": route.ownership_epoch,
         "expires_at": route.expires_at.isoformat().replace("+00:00", "Z"),
     }
     if route.media_runtime == "streamcore":

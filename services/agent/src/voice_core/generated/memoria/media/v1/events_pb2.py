@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1dmemoria/media/v1/events.proto\x12\x10memoria.media.v1\"\x98\x02\n\rEventEnvelope\x12\x0f\n\x07version\x18\x01 \x01(\r\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\x10\n\x08\x65vent_id\x18\x03 \x01(\t\x12\x12\n\nsession_id\x18\x04 \x01(\t\x12\x14\n\x0cstream_epoch\x18\x05 \x01(\x04\x12\x10\n\x08sequence\x18\x06 \x01(\x04\x12\x0f\n\x07turn_id\x18\x07 \x01(\x04\x12\x15\n\rgeneration_id\x18\x08 \x01(\x04\x12\x1b\n\x13server_monotonic_ms\x18\t \x01(\x04\x12\x14\n\x0cjson_payload\x18\n \x01(\x0c\x12\x12\n\ntool_epoch\x18\x0b \x01(\x04\x12\x12\n\ntask_epoch\x18\x0c \x01(\x04\x12\x17\n\x0f\x63ontext_version\x18\r \x01(\x04\x42\x42Z@github.com/monkeyin92/memoria-media-runtime/gen/media/v1;mediav1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1dmemoria/media/v1/events.proto\x12\x10memoria.media.v1\"\xb5\x02\n\rEventEnvelope\x12\x0f\n\x07version\x18\x01 \x01(\r\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\x10\n\x08\x65vent_id\x18\x03 \x01(\t\x12\x12\n\nsession_id\x18\x04 \x01(\t\x12\x14\n\x0cstream_epoch\x18\x05 \x01(\x04\x12\x10\n\x08sequence\x18\x06 \x01(\x04\x12\x0f\n\x07turn_id\x18\x07 \x01(\x04\x12\x15\n\rgeneration_id\x18\x08 \x01(\x04\x12\x1b\n\x13server_monotonic_ms\x18\t \x01(\x04\x12\x14\n\x0cjson_payload\x18\n \x01(\x0c\x12\x12\n\ntool_epoch\x18\x0b \x01(\x04\x12\x12\n\ntask_epoch\x18\x0c \x01(\x04\x12\x17\n\x0f\x63ontext_version\x18\r \x01(\x04\x12\x1b\n\x13\x63lient_monotonic_ms\x18\x0e \x01(\x04\x42\x42Z@github.com/monkeyin92/memoria-media-runtime/gen/media/v1;mediav1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,5 +33,5 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'Z@github.com/monkeyin92/memoria-media-runtime/gen/media/v1;mediav1'
   _globals['_EVENTENVELOPE']._serialized_start=52
-  _globals['_EVENTENVELOPE']._serialized_end=332
+  _globals['_EVENTENVELOPE']._serialized_end=361
 # @@protoc_insertion_point(module_scope)

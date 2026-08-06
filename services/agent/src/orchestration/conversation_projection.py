@@ -114,6 +114,7 @@ class CommitEvidence:
     history_eligible: bool
     context_version: int = 0
     persist_as_turn: bool = True
+    provider_final_missing: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,9 +131,10 @@ class CommittedTurn:
     history_eligible: bool
     context_version: int
     persist_as_turn: bool = True
+    provider_final_missing: bool = False
 
     def to_payload(self) -> dict[str, object]:
-        return {
+        payload = {
             "provisional_id": self.provisional_id,
             "stream_epoch": self.stream_epoch,
             "projection_revision": self.revision,
@@ -151,6 +153,9 @@ class CommittedTurn:
             "history_eligible": self.history_eligible,
             "context_version": self.context_version,
         }
+        if self.provider_final_missing:
+            payload["provider_final_missing"] = True
+        return payload
 
 
 @dataclass(slots=True)
@@ -307,6 +312,7 @@ class ConversationProjection:
             speaker_evidence=evidence.speaker_evidence,
             history_eligible=eligible,
             context_version=evidence.context_version,
+            provider_final_missing=evidence.provider_final_missing,
         )
         self._provisional = None
         return committed

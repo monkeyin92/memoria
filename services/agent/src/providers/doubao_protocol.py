@@ -269,6 +269,11 @@ def pcm_duration_ms(pcm_bytes: bytes, *, sample_rate: int = 24000) -> int:
     return int((len(pcm_bytes) // 2) * 1000 / sample_rate)
 
 
+_RAW_ALIGNMENT_MAX_ERROR_MS = 120
+_SCALED_ALIGNMENT_MAX_ERROR_MS = 700
+_ALIGNMENT_MAX_RELATIVE_ERROR = 0.20
+
+
 def align_subtitle_words(
     words: tuple[TimedWord, ...],
     *,
@@ -276,10 +281,15 @@ def align_subtitle_words(
 ) -> tuple[tuple[TimedWord, ...], str]:
     if not words or words[-1].end_ms <= 0:
         return (), "degraded"
-    difference = abs(words[-1].end_ms - pcm_duration_ms_value)
-    if difference <= 120:
+    subtitle_duration_ms = words[-1].end_ms
+    difference = abs(subtitle_duration_ms - pcm_duration_ms_value)
+    relative_error = difference / max(subtitle_duration_ms, pcm_duration_ms_value)
+    if (
+        difference <= _RAW_ALIGNMENT_MAX_ERROR_MS
+        and relative_error <= _ALIGNMENT_MAX_RELATIVE_ERROR
+    ):
         return words, "ok"
-    factor = pcm_duration_ms_value / words[-1].end_ms
+    factor = pcm_duration_ms_value / subtitle_duration_ms
     aligned = tuple(
         TimedWord(
             text=word.text,
@@ -289,4 +299,9 @@ def align_subtitle_words(
         )
         for word in words
     )
-    return aligned, "scaled" if difference <= 300 else "degraded"
+    if (
+        difference <= _SCALED_ALIGNMENT_MAX_ERROR_MS
+        and relative_error <= _ALIGNMENT_MAX_RELATIVE_ERROR
+    ):
+        return aligned, "scaled"
+    return aligned, "degraded"

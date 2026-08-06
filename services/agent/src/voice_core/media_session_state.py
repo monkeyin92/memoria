@@ -1,0 +1,63 @@
+"""Mutable state owned by one Media Voice session."""
+
+from __future__ import annotations
+
+import asyncio
+from collections import OrderedDict
+from dataclasses import dataclass, field
+
+from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.orchestration.conversation_projection import ConversationProjection
+from services.agent.src.voice_core.asr_stream_supervisor import ASRStreamSupervisor
+from services.agent.src.voice_core.media_audio_ingress import MediaAudioIngressState
+from services.agent.src.voice_core.media_protocol import SessionIdentity
+from services.agent.src.voice_core.media_session_types import (
+    MediaVoiceProvider,
+    OutputOwnerLease,
+    OutputWork,
+)
+from services.agent.src.voice_core.playback_ledger import PlaybackLedger
+from services.agent.src.voice_core.speech_timeline import ASRResult
+
+
+@dataclass(slots=True)
+class MediaVoiceSessionState:
+    """One registry-owned authority record; collaborators never clone it."""
+
+    identity: SessionIdentity
+    runtime: DuplexRuntime
+    provider: MediaVoiceProvider
+    asr: ASRStreamSupervisor
+    projection: ConversationProjection
+    ingress: MediaAudioIngressState
+    playback: PlaybackLedger = field(default_factory=PlaybackLedger)
+    output_sequence: int = 0
+    output_text_offset: int = 0
+    assistant_text: str = ""
+    stream_epoch: int = 0
+    floor_epoch: int = 0
+    turn_started_ns: int | None = None
+    first_audio_observed: bool = False
+    provider_complete: bool = False
+    output_complete_emitted: bool = False
+    reply_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    turn_commit_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    reply_task: asyncio.Task[bool] | None = None
+    output_owner: OutputOwnerLease | None = None
+    output_work: dict[str, OutputWork] = field(default_factory=dict)
+    output_dispatch_task: asyncio.Task[bool] | None = None
+    delegation_owns_realtime_output: bool = False
+    committed_asr_keys: OrderedDict[tuple[int, str, int, int], None] = field(
+        default_factory=OrderedDict
+    )
+    turn_start_sample: int | None = None
+    turn_end_sample: int | None = None
+    turn_endpoint_sample: int | None = None
+    turn_retire_sample: int | None = None
+    turn_endpoint_task: asyncio.Task[None] | None = None
+    turn_endpoint_grace_deadline: float | None = None
+    turn_endpoint_tail_deadline: float | None = None
+    turn_endpoint_timeout_handle: asyncio.TimerHandle | None = None
+    observed_within_turn_pause_s: float | None = None
+    pending_partial: ASRResult | None = None
+    closed: bool = False

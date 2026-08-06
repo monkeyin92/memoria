@@ -118,7 +118,13 @@ def prepare(
         values.get("MINIPROGRAM_MEDIA_GATEWAY_URL", "").strip()
         or _miniprogram_gateway_url(public_base_url)
     )
-    streamcore_token_secret = _keep_or_create(values, "STREAMCORE_TOKEN_SECRET", _token)
+    asymmetric_streamcore = bool(
+        values.get("STREAMCORE_TOKEN_PRIVATE_KEY_FILE", "").strip()
+        or values.get("STREAMCORE_TOKEN_PRIVATE_KEY_PEM", "").strip()
+    )
+    streamcore_token_secret = "" if asymmetric_streamcore else _keep_or_create(
+        values, "STREAMCORE_TOKEN_SECRET", _token
+    )
     values.update(
         {
             "ENVIRONMENT": "production",
@@ -135,6 +141,13 @@ def prepare(
             # Control API signs StreamCore tokens; the Go edge verifies the
             # same short-lived credential in its own least-privilege env.
             "STREAMCORE_TOKEN_SECRET": streamcore_token_secret,
+            "STREAMCORE_TOKEN_PRIVATE_KEY_FILE": values.get(
+                "STREAMCORE_TOKEN_PRIVATE_KEY_FILE", ""
+            ),
+            "STREAMCORE_TOKEN_PRIVATE_KEY_PEM": values.get(
+                "STREAMCORE_TOKEN_PRIVATE_KEY_PEM", ""
+            ),
+            "STREAMCORE_TOKEN_KEY_ID": values.get("STREAMCORE_TOKEN_KEY_ID", "streamcore-1"),
             "MEDIA_EDGE_CONTROL_URL": values.get(
                 "MEDIA_EDGE_CONTROL_URL", "http://media-edge:8080"
             ),
@@ -142,9 +155,15 @@ def prepare(
                 "MEDIA_EDGE_CONTROL_TIMEOUT_S", "2"
             ),
             "MEDIA_EDGE_JWT_SECRET": streamcore_token_secret,
+            "MEDIA_EDGE_JWT_PUBLIC_KEY_FILE": values.get("MEDIA_EDGE_JWT_PUBLIC_KEY_FILE", ""),
+            "MEDIA_EDGE_JWT_PUBLIC_KEY_PEM": values.get("MEDIA_EDGE_JWT_PUBLIC_KEY_PEM", ""),
+            "MEDIA_EDGE_JWT_KEY_ID": values.get("STREAMCORE_TOKEN_KEY_ID", "streamcore-1"),
+            "MEDIA_EDGE_JWT_MAX_TTL_S": values.get("MEDIA_EDGE_JWT_MAX_TTL_S", "300"),
+            "MEDIA_EDGE_JWT_CLOCK_SKEW_S": values.get("MEDIA_EDGE_JWT_CLOCK_SKEW_S", "30"),
             "MEDIA_EDGE_JWT_ISSUER": values.get("JWT_ISSUER", "voice-agent"),
             "MEDIA_EDGE_JWT_AUDIENCE": "memoria-media",
             "MEDIA_EDGE_HTTP_ADDR": ":8080",
+            "MEDIA_EDGE_INTERNAL_HTTP_ADDR": values.get("MEDIA_EDGE_INTERNAL_HTTP_ADDR", ""),
             "MEDIA_EDGE_HEALTHCHECK_URL": "http://127.0.0.1:8080/readyz",
             "MEDIA_EDGE_VOICE_CORE_REQUIRED": "true",
             "MEDIA_EDGE_VOICE_CORE_ADDR": "voice-core-media-bridge:7001",

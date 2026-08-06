@@ -229,8 +229,14 @@ func (c *loopbackClient) restartICE(t *testing.T, endpoint, location, token stri
 	if err != nil {
 		t.Fatal(err)
 	}
+	gatherComplete := webrtc.GatheringCompletePromise(c.pc)
 	if err := c.pc.SetLocalDescription(offer); err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case <-gatherComplete:
+	case <-time.After(5 * time.Second):
+		t.Fatal("client ICE restart gathering timed out")
 	}
 	request, err := http.NewRequest(
 		http.MethodPatch, endpoint+location, strings.NewReader(c.pc.LocalDescription().SDP),
@@ -868,7 +874,7 @@ func TestWebRTCTerminatorReadinessRequiresConfiguredCandidateType(t *testing.T) 
 	}
 }
 
-func TestWebRTCTerminatorFillsRTPLossAndDropsOutOfOrder(t *testing.T) {
+func TestWebRTCTerminatorMarksRTPLossAndDropsOutOfOrder(t *testing.T) {
 	server, terminator, core, httpServer, _, token := setupLoopback(t)
 	defer httpServer.Close()
 	defer func() { _ = terminator.Close() }()
@@ -914,15 +920,12 @@ func TestWebRTCTerminatorFillsRTPLossAndDropsOutOfOrder(t *testing.T) {
 		if frame.Sequence != uint64(index) || frame.CaptureStartSample != uint64(index*uplinkFrameSamples) {
 			t.Fatalf("frame %d clock=%+v", index, frame)
 		}
-	}
-	lostPCM, err := frames[1].Payload()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, value := range lostPCM {
-		if value != 0 {
-			t.Fatal("lost RTP packet was not replaced with silence")
+		if frame.LossConcealed != (index == 1) {
+			t.Fatalf("frame %d loss_concealed=%v", index, frame.LossConcealed)
 		}
+	}
+	if server.OpusFECFrames.Load()+server.OpusPLCFrames.Load() == 0 {
+		t.Fatal("lost RTP packet was not decoded with Opus PLC/FEC")
 	}
 }
 
@@ -1091,14 +1094,14 @@ func TestCanActivateRejectsClosedNativePeerBeforeCallbackRuns(t *testing.T) {
 
 func TestDecodeClientEnvelopeAcceptsExtensionsAndRejectsWrongEpoch(t *testing.T) {
 	request := OpenSessionRequest{SessionID: "s", AccountID: "a", DeviceID: "d", ClientType: "h5", StreamEpoch: 2}
-	base := `{"v":1,"protocol":"media-v1","type":"client.text","event_id":"e","session_id":"s","stream_epoch":2,"sequence":0,"turn_id":0,"generation_id":0,"tool_epoch":0,"server_monotonic_ms":0,"payload":{}}`
+	base := `{"v":1,"protocol":"media-v1","type":"client.text","event_id":"e","session_id":"s","stream_epoch":2,"sequence":0,"turn_id":0,"generation_id":0,"tool_epoch":0,"client_monotonic_ms":12,"payload":{}}`
 	if _, err := decodeClientEnvelope([]byte(base), request); err != nil {
 		t.Fatal(err)
 	}
 	versioned := strings.Replace(
 		base,
-		`"server_monotonic_ms":0,`,
-		`"server_monotonic_ms":0,"task_epoch":3,"context_version":7,`,
+		`"client_monotonic_ms":12,`,
+		`"client_monotonic_ms":12,"task_epoch":3,"context_version":7,`,
 		1,
 	)
 	decoded, err := decodeClientEnvelope([]byte(versioned), request)
@@ -1108,12 +1111,47 @@ func TestDecodeClientEnvelopeAcceptsExtensionsAndRejectsWrongEpoch(t *testing.T)
 	if _, err := decodeClientEnvelope([]byte(strings.Replace(base, `"payload":{}`, `"future_extension":true,"payload":{}`, 1)), request); err != nil {
 		t.Fatalf("future extension should remain forward-compatible: %v", err)
 	}
+	legacy := strings.Replace(base, `"client_monotonic_ms":12`, `"server_monotonic_ms":0`, 1)
+	if _, err := decodeClientEnvelope([]byte(legacy), request); err != nil {
+		t.Fatalf("legacy zero server clock should remain compatible: %v", err)
+	}
 	for _, raw := range []string{
 		strings.Replace(base, `"stream_epoch":2`, `"stream_epoch":1`, 1),
+		strings.Replace(base, `"client_monotonic_ms":12`, `"server_monotonic_ms":1`, 1),
+		strings.Replace(base, `"payload":{}`, `"server_monotonic_ms":0,"payload":{}`, 1),
 	} {
 		if _, err := decodeClientEnvelope([]byte(raw), request); err == nil {
 			t.Fatal("invalid envelope accepted")
 		}
+	}
+}
+
+func TestDataChannelLanesKeepControlIndependentFromEphemeralTraffic(t *testing.T) {
+	tests := map[string]dataChannelLane{
+		"playback.flush":          dataChannelControl,
+		"floor.state":             dataChannelControl,
+		"turn.committed":          dataChannelConversation,
+		"assistant.audio.frame":   dataChannelConversation,
+		"user.transcript.partial": dataChannelEphemeral,
+		"turn.provisional.patch":  dataChannelEphemeral,
+	}
+	for eventType, expected := range tests {
+		if actual := dataChannelLaneForEvent(eventType); actual != expected {
+			t.Fatalf("event %q lane=%d want=%d", eventType, actual, expected)
+		}
+	}
+
+	pending := make([]pendingDataEvent, 0, maxPendingDataEvents)
+	for range maxPendingEphemeral {
+		pending = append(pending, pendingDataEvent{lane: dataChannelEphemeral})
+	}
+	pending = append(pending, pendingDataEvent{lane: dataChannelControl})
+	trimmed, dropped := dropOldestPendingLane(pending, dataChannelEphemeral)
+	if !dropped || len(trimmed) != len(pending)-1 {
+		t.Fatalf("ephemeral event was not evicted: dropped=%v len=%d", dropped, len(trimmed))
+	}
+	if trimmed[len(trimmed)-1].lane != dataChannelControl {
+		t.Fatal("control event was displaced by ephemeral eviction")
 	}
 }
 

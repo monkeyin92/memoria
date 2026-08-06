@@ -33,7 +33,9 @@ PCM 偏移超过 1.4 秒，破坏打断后的实际已听文本计算。2026-07-
   剔除该连接；任何迟到音频仍必须经过 fence 丢弃。
 - 输出契约固定为 PCM s16le、24 kHz、mono，并要求字级时间戳。时间戳必须单调，
   且继续作为 `HeardTextTracker` 截断助手历史的事实来源；缺失时间戳不能通过
-  provider smoke/readiness。
+  provider smoke/readiness。原始字幕只有绝对误差不超过 120 ms 且相对误差不超过
+  20% 才可标为 `ok`；其余只在绝对误差不超过 700 ms 且相对误差不超过 20% 时线性
+  缩放为 `scaled`，避免把短音频的大比例偏差误写成精确 actual-heard 事实。
 - 鉴权允许两种形式：非空 `DOUBAO_TTS_API_KEY`，或同时提供非空
   `DOUBAO_TTS_APP_ID` 与 `DOUBAO_TTS_ACCESS_TOKEN`。火山引擎 Secret Key
   不参与该 WebSocket 鉴权，不进入 Agent 配置，也不得部署。

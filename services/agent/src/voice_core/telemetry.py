@@ -28,6 +28,7 @@ MEDIA_METRIC_NAMES = frozenset(
         "media_pcm_queue_depth",
         "media_pcm_overflow_total",
         "media_discontinuity_total",
+        "media_loss_concealed_frames_total",
         "asr_send_lag_ms",
         "asr_partial_age_ms",
         "tts_frame_age_ms",

@@ -1,6 +1,7 @@
 package mediaedge
 
 import (
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -8,6 +9,21 @@ import (
 	"testing"
 	"time"
 )
+
+func signedEdDSAToken(t *testing.T, key ed25519.PrivateKey, kid string, claims map[string]any) string {
+	t.Helper()
+	encode := func(value any) string {
+		payload, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return base64.RawURLEncoding.EncodeToString(payload)
+	}
+	header := encode(map[string]string{"alg": "EdDSA", "typ": "JWT", "kid": kid})
+	body := encode(claims)
+	signature := ed25519.Sign(key, []byte(header+"."+body))
+	return header + "." + body + "." + base64.RawURLEncoding.EncodeToString(signature)
+}
 
 func signedMediaToken(t *testing.T, secret []byte, claims map[string]any) string {
 	t.Helper()
@@ -66,5 +82,46 @@ func TestJWTVerifierBindsMediaIdentity(t *testing.T) {
 				t.Fatalf("mismatched %s identity was accepted", name)
 			}
 		})
+	}
+}
+
+func TestJWTVerifierAcceptsEdDSAAndJWKSRotationKeys(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0)
+	claims := map[string]any{
+		"iss": "voice-agent", "aud": "memoria-media", "sub": "account-1",
+		"session_id": "session-1", "device_id": "device-1", "client_type": "h5",
+		"stream_epoch": 2, "iat": now.Unix(), "exp": now.Add(time.Minute).Unix(),
+	}
+	token := signedEdDSAToken(t, private, "media-2026-08", claims)
+	verifier := JWTVerifier{
+		PublicKeys: map[string]ed25519.PublicKey{"media-2026-08": public},
+		Issuer:     "voice-agent", Audience: "memoria-media", MaxTTL: 2 * time.Minute,
+		ClockSkew: time.Second, Now: func() time.Time { return now },
+	}
+	identity, err := verifier.ParseIdentity(token)
+	if err != nil {
+		t.Fatalf("valid EdDSA token rejected: %v", err)
+	}
+	if identity.AccountID != "account-1" || identity.ClientType != "h5" {
+		t.Fatalf("unexpected identity: %+v", identity)
+	}
+
+	badKid := signedEdDSAToken(t, private, "old-key", claims)
+	if err := verifier.VerifyIdentity(badKid, identity); err == nil {
+		t.Fatal("token signed with an unknown kid was accepted")
+	}
+	legacy := signedMediaToken(t, []byte("media-token-secret-that-is-long-enough"), claims)
+	if err := verifier.VerifyIdentity(legacy, identity); err == nil {
+		t.Fatal("HS256 fallback was accepted when EdDSA keys were configured")
+	}
+
+	jwks := `{"keys":[{"kty":"OKP","crv":"Ed25519","kid":"media-2026-08","alg":"EdDSA","use":"sig","x":"` + base64.RawURLEncoding.EncodeToString(public) + `"}]}`
+	keys, err := ParseEd25519PublicKeys([]byte(jwks))
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("JWKS parse failed: keys=%d err=%v", len(keys), err)
 	}
 }

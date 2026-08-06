@@ -70,6 +70,7 @@ class SpeechSegment:
     speaker_class: str | None = None
     hard_stop: bool = False
     voiced_end_sample: int | None = None
+    loss_concealed: bool = False
 
     def __post_init__(self) -> None:
         if not self.session_id:

@@ -72,13 +72,16 @@ StreamCore/Pion 或其他第三方仓库的代码，也不改变 LiveKit 生产�
   media façade 会先写入带 TTL 的路由记录，并把短期 TURN 凭证交给浏览器，不发送共享密钥。
 - `packages/proto/memoria/media/v1` 保存与 JSON 实现对齐的媒体边界；协议只承载
   媒体时钟、事件和 generation，不承载 LLM、记忆、人格、工具或供应商密钥。
-- H5 新增浏览器原生 `StreamCoreTransport`、DataChannel sequence/epoch fence、
+- H5 新增浏览器原生 `StreamCoreTransport`、control/conversation/ephemeral DataChannel
+  sequence/epoch fence、
   `connected` readiness、断线 single-flight、`playback.flush`/ping/session 事件、
   本地停止 duck 和 HTTP fallback；`voiceTransportFactory` 默认仍返回 LiveKit，
   StreamCore 只有服务端灰度字段显式选择时才会构造。
 - Control API 增加 server-owned `media_runtime`、`fallback_runtime`、
   `stream_epoch` 和短期、session-scoped media JWT。生产启用 StreamCore 时要求独立
   `STREAMCORE_TOKEN_SECRET` 与 HTTPS WHIP URL；小程序始终回 LiveKit/半双工。
+- Media JWT 支持 Ed25519/EdDSA `kid`/JWKS 公钥轮换；HS256 只作为迁移 fallback。Media
+  Edge 可把 `/readyz` 与 `/metrics` 绑定到独立私网 listener。
 - 生产 env 分流新增独立 `/etc/memoria-media-edge.env`：其中仅放 edge JWT、Voice Core
   地址和 mTLS 文件路径；`MEDIA_EDGE_JWT_SECRET` 与 Control API 的
   `STREAMCORE_TOKEN_SECRET` 保持同值但不重复写入 Control/Agent key。Go edge 启动时

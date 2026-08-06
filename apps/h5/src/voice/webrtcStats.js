@@ -200,3 +200,43 @@ export function extractMicrophoneSettings(settings) {
   }
   return Object.keys(result).length ? result : null;
 }
+
+export function extractMicrophoneCapabilities(capabilities) {
+  if (!capabilities || typeof capabilities !== "object") return null;
+  const result = {};
+  const booleanFields = {
+    autoGainControl: "auto_gain_control",
+    echoCancellation: "echo_cancellation",
+    noiseSuppression: "noise_suppression",
+  };
+  const rangeFields = {
+    channelCount: ["channel_count", 1],
+    latency: ["latency_ms", 1_000],
+    sampleRate: ["sample_rate", 1],
+    sampleSize: ["sample_size", 1],
+  };
+  for (const [source, name] of Object.entries(booleanFields)) {
+    const values = Array.isArray(capabilities[source])
+      ? capabilities[source]
+      : [capabilities[source]];
+    const supported = [
+      ...new Set(values.filter((value) => typeof value === "boolean")),
+    ];
+    if (supported.length) result[name] = supported;
+  }
+  for (const [source, [name, scale]] of Object.entries(rangeFields)) {
+    const value = capabilities[source];
+    const range = {};
+    for (const bound of ["min", "max"]) {
+      if (
+        typeof value?.[bound] === "number" &&
+        Number.isFinite(value[bound]) &&
+        value[bound] >= 0
+      ) {
+        range[bound] = Number((value[bound] * scale).toFixed(3));
+      }
+    }
+    if (Object.keys(range).length) result[name] = range;
+  }
+  return Object.keys(result).length ? result : null;
+}

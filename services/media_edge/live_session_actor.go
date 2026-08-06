@@ -3,9 +3,8 @@ package mediaedge
 import (
 	"context"
 	"errors"
-	"slices"
-	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -199,14 +198,21 @@ type LiveSessionActor struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	done         chan struct{}
-	mailbox      chan LiveSessionEvent
+	critical     chan LiveSessionEvent
+	audio        chan LiveSessionEvent
+	bulk         chan LiveSessionEvent
+	mailboxSize  int
 	audioReserve int
 	deadline     time.Duration
 	processDelay time.Duration
 
-	submitMu     sync.Mutex
-	closed       bool
-	nextSequence uint64
+	submitMu        sync.Mutex
+	closed          bool
+	nextSequence    uint64
+	pending         atomic.Int64
+	criticalPending atomic.Int64
+	audioPending    atomic.Int64
+	bulkPending     atomic.Int64
 
 	stateMu sync.RWMutex
 	state   LiveSessionSnapshot
@@ -246,11 +252,15 @@ func newLiveSessionActor(
 		panic("invalid live session actor configuration")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	controlCapacity := mailboxSize - audioReserve
 	a := &LiveSessionActor{
 		ctx:                      ctx,
 		cancel:                   cancel,
 		done:                     make(chan struct{}),
-		mailbox:                  make(chan LiveSessionEvent, mailboxSize),
+		critical:                 make(chan LiveSessionEvent, controlCapacity),
+		audio:                    make(chan LiveSessionEvent, mailboxSize),
+		bulk:                     make(chan LiveSessionEvent, controlCapacity),
+		mailboxSize:              mailboxSize,
 		audioReserve:             audioReserve,
 		deadline:                 deadline,
 		processDelay:             processDelay,
@@ -266,74 +276,6 @@ func newLiveSessionActor(
 	}
 	go a.run()
 	return a
-}
-
-func (a *LiveSessionActor) TrySubmit(event LiveSessionEvent) error {
-	a.submitMu.Lock()
-	defer a.submitMu.Unlock()
-	if a.closed {
-		return ErrActorClosed
-	}
-	isAudio := event.Kind == LiveEventAudioUplink || event.Kind == LiveEventAudioDownlink
-	event.Audio = isAudio
-	if event.Scenario == "" {
-		event.Scenario = string(event.Kind)
-	}
-	if event.ContractVersion == "" {
-		if requiresExactStreamEpoch(event.Kind) {
-			event.ContractVersion = shadowA6AContractVersion
-		} else {
-			event.ContractVersion = shadowContractVersion
-		}
-	}
-	if event.Authoritative != nil {
-		authoritative := cloneLiveSessionSnapshot(*event.Authoritative, false)
-		event.Authoritative = &authoritative
-	}
-	if event.SpeechSegment != nil {
-		segment := *event.SpeechSegment
-		event.SpeechSegment = &segment
-	}
-	if event.OutputIntent != nil {
-		intent := *event.OutputIntent
-		event.OutputIntent = &intent
-	}
-	if !isAudio && len(a.mailbox) >= cap(a.mailbox)-a.audioReserve {
-		a.recordDrop(false)
-		return ErrActorMailboxFull
-	}
-	event.enqueuedAt = time.Now()
-	a.nextSequence++
-	event.mailboxSequence = a.nextSequence
-	select {
-	case a.mailbox <- event:
-		return nil
-	default:
-		a.recordDrop(isAudio)
-		return ErrActorMailboxFull
-	}
-}
-
-func (a *LiveSessionActor) Close() {
-	a.submitMu.Lock()
-	if a.closed {
-		a.submitMu.Unlock()
-		<-a.done
-		return
-	}
-	a.closed = true
-	a.cancel()
-	a.submitMu.Unlock()
-	<-a.done
-}
-
-func (a *LiveSessionActor) Snapshot() LiveSessionSnapshot {
-	a.stateMu.Lock()
-	defer a.stateMu.Unlock()
-	a.refreshOutputCandidate(time.Now().UnixMilli())
-	snapshot := cloneLiveSessionSnapshot(a.state, true)
-	snapshot.MailboxDepth = len(a.mailbox)
-	return snapshot
 }
 
 func cloneLiveSessionSnapshot(source LiveSessionSnapshot, includeComparisons bool) LiveSessionSnapshot {
@@ -363,36 +305,6 @@ func cloneLiveSessionSnapshot(source LiveSessionSnapshot, includeComparisons boo
 		}
 	}
 	return clone
-}
-
-func (a *LiveSessionActor) run() {
-	defer func() {
-		for {
-			select {
-			case event := <-a.mailbox:
-				a.recordDrained(event)
-			default:
-				close(a.done)
-				return
-			}
-		}
-	}()
-	for {
-		select {
-		case <-a.ctx.Done():
-			return
-		case event := <-a.mailbox:
-			if a.processDelay > 0 {
-				select {
-				case <-a.ctx.Done():
-					a.recordDrained(event)
-					return
-				case <-time.After(a.processDelay):
-				}
-			}
-			a.apply(event)
-		}
-	}
 }
 
 func (a *LiveSessionActor) apply(event LiveSessionEvent) {
@@ -592,402 +504,4 @@ func (a *LiveSessionActor) applyContextVersion(contextVersion uint64) {
 		a.clearOutputCandidate()
 	}
 	a.state.LastDecision = "record_context_candidate"
-}
-
-func (a *LiveSessionActor) applyOutputIntent(input *ShadowOutputIntent, nowUnixMillis int64) {
-	rank, ranked := shadowOutputDomainRank(input)
-	output := &a.state.OutputArbiter
-	a.refreshOutputCandidate(nowUnixMillis)
-	if !ranked || input.IntentID == "" {
-		a.dropOutputIntent("drop_invalid_output_intent")
-		return
-	}
-	if !a.recordOutputEvaluation(input.IntentID) {
-		a.dropOutputIntent("drop_stale_output_intent")
-		return
-	}
-	if input.CreatedAtUnixMillis <= 0 ||
-		input.CreatedAtUnixMillis > nowUnixMillis ||
-		input.ExpiresAtUnixMillis <= nowUnixMillis || input.CreatedAtUnixMillis > input.ExpiresAtUnixMillis ||
-		!input.Fence.Equal(a.state.Generation) || !a.state.GenerationActive ||
-		input.ContextVersion != output.ContextVersion ||
-		input.FloorRequirement != ShadowOutputFloorAvailable ||
-		input.PlaybackRequirement != ShadowOutputPlaybackCurrentGeneration ||
-		a.state.Floor == ShadowFloorUser || a.state.Floor == ShadowFloorOverlap {
-		a.dropOutputIntent("drop_invalid_output_intent")
-		return
-	}
-
-	candidate := *input
-	candidate.DomainRank = rank
-	candidate.CandidateOnly = true
-	a.outputCandidates[candidate.IntentID] = candidate
-	a.trimOutputCandidates(rank)
-	a.refreshOutputCandidate(nowUnixMillis)
-	if _, retained := a.outputCandidates[candidate.IntentID]; !retained {
-		a.dropOutputIntent("drop_superseded_output_intent")
-		return
-	}
-	a.state.LastDecision = "record_output_candidate"
-}
-
-func (a *LiveSessionActor) refreshOutputCandidate(nowUnixMillis int64) {
-	for intentID, candidate := range a.outputCandidates {
-		if candidate.ExpiresAtUnixMillis <= nowUnixMillis {
-			delete(a.outputCandidates, intentID)
-		}
-	}
-	candidates := make([]ShadowOutputIntent, 0, len(a.outputCandidates))
-	for _, candidate := range a.outputCandidates {
-		candidates = append(candidates, candidate)
-	}
-	sortShadowOutputCandidates(candidates)
-	a.state.OutputArbiter.Candidates = candidates
-	a.state.OutputArbiter.CandidatesComplete = a.outputCandidatesComplete
-	a.state.OutputArbiter.Candidate = nil
-	if len(candidates) > 0 {
-		winner := candidates[0]
-		a.state.OutputArbiter.Candidate = &winner
-	}
-}
-
-func (a *LiveSessionActor) consumeOutputIntent(input *ShadowOutputIntent, nowUnixMillis int64) {
-	if input != nil {
-		delete(a.outputCandidates, input.IntentID)
-	}
-	if nowUnixMillis <= 0 {
-		nowUnixMillis = time.Now().UnixMilli()
-	}
-	a.refreshOutputCandidate(nowUnixMillis)
-	a.state.LastDecision = "consume_output_intent"
-}
-
-func (a *LiveSessionActor) replaceOutputCandidates(output ShadowOutputArbiter) {
-	a.state.OutputArbiter = output
-	a.outputCandidates = make(map[string]ShadowOutputIntent)
-	a.outputCandidatesComplete = output.CandidatesComplete
-	a.outputEvaluated = make(map[string]struct{})
-	a.outputEvaluatedOrder = nil
-	candidates := output.Candidates
-	if !output.CandidatesComplete && output.Candidate != nil {
-		candidates = []ShadowOutputIntent{*output.Candidate}
-	}
-	for _, candidate := range candidates {
-		a.outputCandidates[candidate.IntentID] = candidate
-		a.outputEvaluated[candidate.IntentID] = struct{}{}
-		a.outputEvaluatedOrder = append(a.outputEvaluatedOrder, candidate.IntentID)
-	}
-}
-
-func (a *LiveSessionActor) recordOutputEvaluation(intentID string) bool {
-	if _, exists := a.outputEvaluated[intentID]; exists {
-		return false
-	}
-	if len(a.outputEvaluatedOrder) == maxShadowOutputEvaluated {
-		delete(a.outputEvaluated, a.outputEvaluatedOrder[0])
-		a.outputEvaluatedOrder = a.outputEvaluatedOrder[1:]
-	}
-	a.outputEvaluated[intentID] = struct{}{}
-	a.outputEvaluatedOrder = append(a.outputEvaluatedOrder, intentID)
-	return true
-}
-
-func (a *LiveSessionActor) trimOutputCandidates(rank uint8) {
-	candidates := make([]ShadowOutputIntent, 0, maxShadowOutputPerDomain+1)
-	for _, candidate := range a.outputCandidates {
-		if candidate.DomainRank == rank {
-			candidates = append(candidates, candidate)
-		}
-	}
-	sortShadowOutputCandidates(candidates)
-	if len(candidates) <= maxShadowOutputPerDomain {
-		return
-	}
-	for _, candidate := range candidates[maxShadowOutputPerDomain:] {
-		delete(a.outputCandidates, candidate.IntentID)
-	}
-}
-
-func shadowOutputDomainRank(intent *ShadowOutputIntent) (uint8, bool) {
-	if intent == nil {
-		return 0, false
-	}
-	switch intent.Kind {
-	case ShadowOutputFastAck:
-		return 4, true
-	case ShadowOutputConversation:
-		return 3, true
-	case ShadowOutputTool, ShadowOutputDeep:
-		return 2, true
-	case ShadowOutputReminder, ShadowOutputNotification:
-		return 1, true
-	default:
-		return 0, false
-	}
-}
-
-func newerOutputIntent(candidate, current ShadowOutputIntent) bool {
-	return newerOutputWatermark(
-		shadowOutputWatermark{candidate.Priority, candidate.CreatedAtUnixMillis, candidate.IntentID},
-		shadowOutputWatermark{current.Priority, current.CreatedAtUnixMillis, current.IntentID},
-	)
-}
-
-func newerOutputWatermark(candidate, current shadowOutputWatermark) bool {
-	if candidate.priority != current.priority {
-		return candidate.priority > current.priority
-	}
-	if candidate.created != current.created {
-		return candidate.created > current.created
-	}
-	return candidate.intentID > current.intentID
-}
-
-func sortShadowOutputCandidates(candidates []ShadowOutputIntent) {
-	sort.Slice(candidates, func(left, right int) bool {
-		if candidates[left].DomainRank != candidates[right].DomainRank {
-			return candidates[left].DomainRank > candidates[right].DomainRank
-		}
-		return newerOutputIntent(candidates[left], candidates[right])
-	})
-}
-
-func (a *LiveSessionActor) clearOutputCandidate() {
-	a.state.OutputArbiter.Candidate = nil
-	a.state.OutputArbiter.Candidates = nil
-	a.state.OutputArbiter.CandidatesComplete = true
-	a.outputCandidates = make(map[string]ShadowOutputIntent)
-	a.outputCandidatesComplete = true
-	a.outputEvaluated = make(map[string]struct{})
-	a.outputEvaluatedOrder = nil
-}
-
-func (a *LiveSessionActor) dropOutputIntent(decision string) {
-	a.state.DroppedEvents++
-	a.state.OutputArbiter.DroppedIntents++
-	a.state.LastDecision = decision
-}
-
-func (a *LiveSessionActor) applySpeechCommit(commitSample uint64) {
-	timeline := &a.state.SpeechTimeline
-	if commitSample == 0 || commitSample < timeline.CommittedSample {
-		a.dropSpeechSegment("drop_stale_speech_commit")
-		return
-	}
-	timeline.CommittedSample = commitSample
-	pending := timeline.Segments[:0]
-	for _, segment := range timeline.Segments {
-		if segment.CaptureEndSample > commitSample {
-			pending = append(pending, segment)
-		}
-	}
-	timeline.Segments = pending
-	a.state.LastDecision = "commit_speech_candidate"
-}
-
-func (a *LiveSessionActor) applySpeechSegment(candidate *ShadowSpeechSegment) {
-	timeline := &a.state.SpeechTimeline
-	if candidate == nil || candidate.SegmentID == "" || candidate.Revision == 0 ||
-		candidate.CaptureEndSample <= candidate.CaptureStartSample {
-		a.dropSpeechSegment("drop_invalid_speech_segment")
-		return
-	}
-	if candidate.TaskEpoch < timeline.LatestTaskEpoch ||
-		candidate.CaptureEndSample <= timeline.CommittedSample {
-		a.dropSpeechSegment("drop_stale_speech_segment")
-		return
-	}
-	if candidate.TaskEpoch > timeline.LatestTaskEpoch {
-		timeline.LatestTaskEpoch = candidate.TaskEpoch
-	}
-
-	for index := range timeline.Segments {
-		current := &timeline.Segments[index]
-		if current.SegmentID != candidate.SegmentID {
-			continue
-		}
-		if candidate.TaskEpoch < current.TaskEpoch ||
-			(candidate.TaskEpoch == current.TaskEpoch && candidate.Revision < current.Revision) ||
-			(candidate.TaskEpoch == current.TaskEpoch && candidate.Revision == current.Revision && current.Final && !candidate.Final) {
-			a.dropSpeechSegment("drop_stale_speech_segment")
-			return
-		}
-		*current = *candidate
-		a.state.LastDecision = "record_speech_candidate"
-		sortShadowSpeechSegments(timeline.Segments)
-		return
-	}
-
-	if len(timeline.Segments) >= maxShadowSpeechSegments {
-		a.dropSpeechSegment("drop_speech_capacity")
-		return
-	}
-	timeline.Segments = append(timeline.Segments, *candidate)
-	sortShadowSpeechSegments(timeline.Segments)
-	a.state.LastDecision = "record_speech_candidate"
-}
-
-func sortShadowSpeechSegments(segments []ShadowSpeechSegment) {
-	sort.Slice(segments, func(left, right int) bool {
-		if segments[left].CaptureStartSample != segments[right].CaptureStartSample {
-			return segments[left].CaptureStartSample < segments[right].CaptureStartSample
-		}
-		if segments[left].CaptureEndSample != segments[right].CaptureEndSample {
-			return segments[left].CaptureEndSample < segments[right].CaptureEndSample
-		}
-		return segments[left].SegmentID < segments[right].SegmentID
-	})
-}
-
-func (a *LiveSessionActor) dropSpeechSegment(decision string) {
-	a.state.DroppedEvents++
-	a.state.SpeechTimeline.DroppedSegments++
-	a.state.LastDecision = decision
-}
-
-func fenceBefore(left, right Fence) bool {
-	if left.TurnID != right.TurnID {
-		return left.TurnID < right.TurnID
-	}
-	if left.GenerationID != right.GenerationID {
-		return left.GenerationID < right.GenerationID
-	}
-	return left.ToolEpoch < right.ToolEpoch
-}
-
-func (a *LiveSessionActor) compare(event LiveSessionEvent) {
-	if event.Authoritative == nil {
-		return
-	}
-	reason := ""
-	if event.Authoritative.StreamEpoch != a.state.StreamEpoch {
-		reason = "stream_epoch"
-	} else if event.CompareGeneration &&
-		(!event.Authoritative.Generation.Equal(a.state.Generation) ||
-			event.Authoritative.GenerationActive != a.state.GenerationActive) {
-		reason = "generation"
-	} else if event.Authoritative.Floor != "" && event.Authoritative.Floor != a.state.Floor {
-		reason = "floor"
-	} else if event.Authoritative.LastDecision != "" && event.Authoritative.LastDecision != a.state.LastDecision {
-		reason = "decision"
-	} else if event.ComparePlayout && event.Authoritative.PlayoutSample != a.state.PlayoutSample {
-		reason = "playout"
-	} else if event.CompareTimeline && !equalShadowSpeechTimeline(
-		event.Authoritative.SpeechTimeline,
-		a.state.SpeechTimeline,
-	) {
-		reason = "speech_timeline"
-	} else if event.CompareOutput && !equalShadowOutputArbiter(
-		event.Authoritative.OutputArbiter,
-		a.state.OutputArbiter,
-	) {
-		reason = "output_arbiter"
-	}
-	comparison := ShadowComparison{
-		Sequence:             event.mailboxSequence,
-		Kind:                 event.Kind,
-		Scenario:             event.Scenario,
-		ContractVersion:      event.ContractVersion,
-		AuthoritativeReason:  event.AuthoritativeReason,
-		CandidateReason:      a.state.LastDecision,
-		ObservedAtUnixMillis: time.Now().UnixMilli(),
-		MailboxAgeMillis:     float64(time.Since(event.enqueuedAt)) / float64(time.Millisecond),
-		Mismatch:             reason != "",
-		Reason:               reason,
-		Authoritative:        cloneLiveSessionSnapshot(*event.Authoritative, false),
-		Candidate:            cloneLiveSessionSnapshot(a.state, false),
-	}
-	comparison.Authoritative.ShadowMismatchCounts = nil
-	comparison.Candidate.ShadowMismatchCounts = nil
-	if comparison.Mismatch {
-		a.state.ShadowMismatchTotal++
-		a.state.ShadowMismatchCounts = mergeShadowMismatchCounts(
-			a.state.ShadowMismatchCounts,
-			[]ShadowMismatchCount{{
-				Scenario: event.Scenario, ContractVersion: event.ContractVersion, Count: 1,
-			}},
-		)
-	}
-	if len(a.state.RecentComparisons) == maxShadowComparisons {
-		a.state.RecentComparisons = a.state.RecentComparisons[1:]
-	}
-	a.state.RecentComparisons = append(a.state.RecentComparisons, comparison)
-}
-
-func equalShadowSpeechTimeline(left, right ShadowSpeechTimeline) bool {
-	return left.CommittedSample == right.CommittedSample &&
-		left.LatestTaskEpoch == right.LatestTaskEpoch &&
-		slices.Equal(left.Segments, right.Segments)
-}
-
-func equalShadowOutputArbiter(left, right ShadowOutputArbiter) bool {
-	if left.ContextVersion != right.ContextVersion {
-		return false
-	}
-	if left.Candidate == nil || right.Candidate == nil {
-		if left.Candidate != nil || right.Candidate != nil {
-			return false
-		}
-	} else if *left.Candidate != *right.Candidate {
-		return false
-	}
-	return !left.CandidatesComplete || slices.Equal(left.Candidates, right.Candidates)
-}
-
-func mergeShadowMismatchCounts(
-	target []ShadowMismatchCount,
-	additions []ShadowMismatchCount,
-) []ShadowMismatchCount {
-	for _, addition := range additions {
-		found := false
-		for index := range target {
-			count := &target[index]
-			if count.Scenario == addition.Scenario && count.ContractVersion == addition.ContractVersion {
-				count.Count += addition.Count
-				found = true
-				break
-			}
-		}
-		if !found {
-			for index := range target {
-				if target[index].Scenario == "other" && target[index].ContractVersion == "mixed" {
-					target[index].Count += addition.Count
-					found = true
-					break
-				}
-			}
-		}
-		if !found && len(target) < maxShadowMismatchCounts-1 {
-			target = append(target, addition)
-		} else if !found && len(target) < maxShadowMismatchCounts {
-			target = append(target, ShadowMismatchCount{
-				Scenario: "other", ContractVersion: "mixed", Count: addition.Count,
-			})
-		} else if !found {
-			target[maxShadowMismatchCounts-1].Count += addition.Count
-		}
-	}
-	return target
-}
-
-func (a *LiveSessionActor) recordDrop(audio bool) {
-	a.stateMu.Lock()
-	defer a.stateMu.Unlock()
-	a.state.DroppedEvents++
-	if audio {
-		a.state.ProcessedAudioFrames++
-		a.state.FrameDeadlineMisses++
-	}
-}
-
-func (a *LiveSessionActor) recordDrained(event LiveSessionEvent) {
-	a.stateMu.Lock()
-	defer a.stateMu.Unlock()
-	a.state.DroppedEvents++
-	if event.Audio {
-		a.state.ProcessedAudioFrames++
-		if time.Since(event.enqueuedAt) > a.deadline {
-			a.state.FrameDeadlineMisses++
-		}
-	}
 }

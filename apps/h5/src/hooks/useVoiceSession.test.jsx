@@ -167,6 +167,49 @@ class BrowserFactPeerConnection {
   }
 }
 
+class BrowserFactAudioContext {
+  static instances = [];
+
+  constructor() {
+    this.state = "running";
+    this.sampleRate = 48_000;
+    this.destination = { id: "browser-fact-destination" };
+    this.audioWorklet = { addModule: vi.fn(async () => undefined) };
+    this.sources = [];
+    this.close = vi.fn(async () => {
+      this.state = "closed";
+    });
+    this.resume = vi.fn(async () => {
+      this.state = "running";
+    });
+    BrowserFactAudioContext.instances.push(this);
+  }
+
+  createMediaElementSource(element) {
+    const source = {
+      element,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    this.sources.push(source);
+    return source;
+  }
+}
+
+class BrowserFactAudioWorkletNode {
+  static instances = [];
+
+  constructor(context, name, options) {
+    this.context = context;
+    this.name = name;
+    this.options = options;
+    this.port = { onmessage: null };
+    this.connect = vi.fn();
+    this.disconnect = vi.fn();
+    BrowserFactAudioWorkletNode.instances.push(this);
+  }
+}
+
 let nextStreamCoreEventId = 0;
 
 function streamCoreEvent({
@@ -953,6 +996,7 @@ describe("useVoiceSession production edges", () => {
       await Promise.resolve();
     });
     expect(firstPeer.channel.sent.at(-1).payload.rendered_sample_end).toBe(480);
+    expect(firstPeer.channel.sent.at(-1).payload.approximate).toBe(true);
 
     await act(async () => {
       element.currentTime = 50;
@@ -1086,6 +1130,158 @@ describe("useVoiceSession production edges", () => {
     expect(reconnectAck.stream_epoch).toBe(2);
     expect(reconnectAck.generation_id).toBe(5);
     expect(reconnectAck.payload.rendered_sample_end).toBeLessThan(480);
+  });
+
+  it("uses the default AudioWorklet rendered watermark for StreamCore playback", async () => {
+    api.createSession.mockResolvedValueOnce({
+      session_id: "streamcore-session",
+      media_runtime: "streamcore",
+      fallback_runtime: "livekit",
+      stream_epoch: 1,
+      streamcore: {
+        whip_url: "https://media.example/whip",
+        token: "short-token",
+        stream_epoch: 1,
+      },
+    });
+    BrowserFactAudioContext.instances.length = 0;
+    BrowserFactAudioWorkletNode.instances.length = 0;
+    vi.stubGlobal("AudioContext", BrowserFactAudioContext);
+    vi.stubGlobal("AudioWorkletNode", BrowserFactAudioWorkletNode);
+    vi.stubGlobal("RTCPeerConnection", BrowserFactPeerConnection);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        text: vi.fn().mockResolvedValue("v=0\\no=answer"),
+      }),
+    );
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({
+          getAudioTracks: () => [{ enabled: true, stop: vi.fn() }],
+          getTracks: () => [{ stop: vi.fn() }],
+        }),
+      },
+    });
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    const { result } = renderHook(() =>
+      useVoiceSession({
+        userId: "anonymous-user",
+        onFinalTranscript: vi.fn(),
+        voiceReplyEnabled: true,
+      }),
+    );
+    result.current.audioContainerRef.current = document.createElement("div");
+
+    await act(async () => {
+      await result.current.start();
+    });
+    const peer = streamCorePeers[0];
+    act(() => peer.ontrack({ streams: [{ id: "worklet-stream-1" }] }));
+    await waitFor(() =>
+      expect(BrowserFactAudioWorkletNode.instances).toHaveLength(1),
+    );
+    const workletNode = BrowserFactAudioWorkletNode.instances[0];
+    act(() => {
+      workletNode.port.onmessage({
+        data: { type: "ready", rendered_frames: 0 },
+      });
+      peer.channel.onmessage({
+        data: JSON.stringify(streamCoreEvent({
+          type: "assistant.audio.frame",
+          sequence: 0,
+          turnId: 1,
+          generationId: 1,
+          payload: {
+            sequence: 0,
+            source_start_sample: 0,
+            frame_samples: 960,
+          },
+        })),
+      });
+      workletNode.port.onmessage({
+        data: { type: "rendered", rendered_frames: 960 },
+      });
+    });
+    await waitFor(() =>
+      expect(
+        peer.channel.sent.find((event) => event.type === "client.playback.progress"),
+      ).toEqual(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            rendered_sample_end: 480,
+            approximate: false,
+          }),
+        }),
+      ),
+    );
+    expect(BrowserFactAudioContext.instances[0].sources[0].connect).toHaveBeenCalledWith(
+      workletNode,
+    );
+    expect(workletNode.connect).toHaveBeenCalledWith(
+      BrowserFactAudioContext.instances[0].destination,
+    );
+
+    const progressCount = peer.channel.sent.filter(
+      (event) => event.type === "client.playback.progress",
+    ).length;
+    act(() => {
+      peer.channel.onmessage({
+        data: JSON.stringify(streamCoreEvent({
+          type: "playback.flush",
+          sequence: 1,
+          turnId: 1,
+          generationId: 1,
+          payload: { reason: "generation_cancel" },
+        })),
+      });
+      workletNode.port.onmessage({
+        data: { type: "rendered", rendered_frames: 1_920 },
+      });
+    });
+    expect(peer.channel.sent.filter(
+      (event) => event.type === "client.playback.progress",
+    )).toHaveLength(progressCount);
+
+    act(() => {
+      peer.channel.onmessage({
+        data: JSON.stringify(streamCoreEvent({
+          type: "assistant.audio.frame",
+          sequence: 2,
+          turnId: 2,
+          generationId: 2,
+          payload: {
+            sequence: 0,
+            source_start_sample: 0,
+            frame_samples: 960,
+          },
+        })),
+      });
+      workletNode.port.onmessage({
+        data: { type: "rendered", rendered_frames: 2_880 },
+      });
+    });
+    await waitFor(() =>
+      expect(peer.channel.sent.at(-1)).toEqual(
+        expect.objectContaining({
+          generation_id: 2,
+          payload: expect.objectContaining({
+            rendered_sample_end: 480,
+            approximate: false,
+          }),
+        }),
+      ),
+    );
+
+    await act(async () => {
+      await result.current.end();
+    });
+    expect(BrowserFactAudioContext.instances[0].close).toHaveBeenCalled();
+    expect(workletNode.port.onmessage).toBeNull();
   });
 
   it("waits for explicit agent readiness and remains retryable after a 45 second timeout", async () => {
