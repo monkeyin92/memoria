@@ -36,6 +36,7 @@ type EventEnvelope struct {
 	ToolEpoch         uint64                 `protobuf:"varint,11,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
 	TaskEpoch         uint64                 `protobuf:"varint,12,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
 	ContextVersion    uint64                 `protobuf:"varint,13,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	ClientMonotonicMs uint64                 `protobuf:"varint,14,opt,name=client_monotonic_ms,json=clientMonotonicMs,proto3" json:"client_monotonic_ms,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -161,11 +162,18 @@ func (x *EventEnvelope) GetContextVersion() uint64 {
 	return 0
 }
 
+func (x *EventEnvelope) GetClientMonotonicMs() uint64 {
+	if x != nil {
+		return x.ClientMonotonicMs
+	}
+	return 0
+}
+
 var File_memoria_media_v1_events_proto protoreflect.FileDescriptor
 
 const file_memoria_media_v1_events_proto_rawDesc = "" +
 	"\n" +
-	"\x1dmemoria/media/v1/events.proto\x12\x10memoria.media.v1\"\xae\x03\n" +
+	"\x1dmemoria/media/v1/events.proto\x12\x10memoria.media.v1\"\xde\x03\n" +
 	"\rEventEnvelope\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x19\n" +
@@ -183,7 +191,8 @@ const file_memoria_media_v1_events_proto_rawDesc = "" +
 	"tool_epoch\x18\v \x01(\x04R\ttoolEpoch\x12\x1d\n" +
 	"\n" +
 	"task_epoch\x18\f \x01(\x04R\ttaskEpoch\x12'\n" +
-	"\x0fcontext_version\x18\r \x01(\x04R\x0econtextVersionBBZ@github.com/monkeyin92/memoria-media-runtime/gen/media/v1;mediav1b\x06proto3"
+	"\x0fcontext_version\x18\r \x01(\x04R\x0econtextVersion\x12.\n" +
+	"\x13client_monotonic_ms\x18\x0e \x01(\x04R\x11clientMonotonicMsBBZ@github.com/monkeyin92/memoria-media-runtime/gen/media/v1;mediav1b\x06proto3"
 
 var (
 	file_memoria_media_v1_events_proto_rawDescOnce sync.Once

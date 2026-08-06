@@ -12,6 +12,7 @@ import {
 } from "../api.js";
 import { LiveKitCascadeTransport } from "../voice/LiveKitCascadeTransport.js";
 import { LiveKitAudioTelemetry } from "../voice/LiveKitAudioTelemetry.js";
+import { AudioWorkletPlaybackTracker } from "../voice/AudioWorkletPlaybackTracker.js";
 import { StreamCoreTransport } from "../voice/StreamCoreTransport.js";
 import { createVoiceTransport } from "../voice/voiceTransportFactory.js";
 import { QwenOmniWebRTCTransport } from "../voice/experimental/QwenOmniWebRTCTransport.js";
@@ -430,6 +431,7 @@ export function useVoiceSession({
   const audioGainRef = useRef(1);
   const cascadeAudioElementsRef = useRef(new Map());
   const omniAudioElementRef = useRef(null);
+  const streamCorePlaybackTrackerRef = useRef(null);
   const playbackFlushFenceRef = useRef(null);
   const audioTelemetryRef = useRef(null);
   const pendingEmotionRef = useRef(new Map());
@@ -875,6 +877,8 @@ export function useVoiceSession({
           playback
             ?.then(() => {
               if (!isCurrent()) return;
+              const resumePromise = playbackProgress?.resume?.();
+              void resumePromise?.catch?.(() => undefined);
               setAudioBlocked(false);
               recordAudioDiagnostic("play_resolved");
             })
@@ -916,6 +920,26 @@ export function useVoiceSession({
       const existing = omniAudioElementRef.current;
       if (existing) {
         if (existing.srcObject !== stream) existing.srcObject = stream;
+        if (typeof transport?.setPlaybackTracker === "function") {
+          const tracker =
+            streamCorePlaybackTrackerRef.current ||
+            new AudioWorkletPlaybackTracker();
+          streamCorePlaybackTrackerRef.current = tracker;
+          transport.setPlaybackTracker(tracker);
+          void tracker
+            .attach(existing)
+            .then((attached) => {
+              if (
+                attached &&
+                isCurrent() &&
+                cascadeTransportRef.current === transport
+              ) {
+                const resumePromise = transport.resumePlaybackTracker?.();
+                void resumePromise?.catch?.(() => undefined);
+              }
+            })
+            .catch(() => undefined);
+        }
         return;
       }
       const element = document.createElement("audio");
@@ -928,9 +952,30 @@ export function useVoiceSession({
           ? {
               publish: (seconds, options) =>
                 transport.publishPlaybackProgressFromTime(seconds, options),
+              resume: () => transport.resumePlaybackTracker?.(),
             }
           : null,
       );
+      if (typeof transport?.setPlaybackTracker === "function") {
+        const tracker =
+          streamCorePlaybackTrackerRef.current ||
+          new AudioWorkletPlaybackTracker();
+        streamCorePlaybackTrackerRef.current = tracker;
+        transport.setPlaybackTracker(tracker);
+        void tracker
+          .attach(element)
+          .then((attached) => {
+            if (
+              attached &&
+              isCurrent() &&
+              cascadeTransportRef.current === transport
+            ) {
+              const resumePromise = transport.resumePlaybackTracker?.();
+              void resumePromise?.catch?.(() => undefined);
+            }
+          })
+          .catch(() => undefined);
+      }
     },
     [activateAudioElement],
   );
@@ -965,6 +1010,12 @@ export function useVoiceSession({
     audioTelemetryRef.current = null;
   }, []);
 
+  const closeStreamCorePlaybackTracker = useCallback(() => {
+    const tracker = streamCorePlaybackTrackerRef.current;
+    streamCorePlaybackTrackerRef.current = null;
+    return tracker?.close?.() || Promise.resolve();
+  }, []);
+
   const clearReconnectTimer = useCallback(() => {
     if (reconnectTimerRef.current !== null) {
       window.clearTimeout(reconnectTimerRef.current);
@@ -994,6 +1045,9 @@ export function useVoiceSession({
       cascadeAudioElementsRef.current.clear();
       audioContainerRef.current?.replaceChildren();
       setAudioBlocked(false);
+      if (activeTransport.mediaRuntime === "streamcore") {
+        await closeStreamCorePlaybackTracker();
+      }
       try {
         await activeTransport.close();
       } catch {
@@ -1005,6 +1059,7 @@ export function useVoiceSession({
       clearReconnectTimer();
       clearAgentReadyTimer();
       setAudioBlocked(false);
+      await closeStreamCorePlaybackTracker();
       return;
     }
     const isCurrent = roomRef.current === room;
@@ -1032,7 +1087,12 @@ export function useVoiceSession({
     } catch {
       // The local refs are already cleared, so the user can always retry.
     }
-  }, [clearAgentReadyTimer, clearReconnectTimer, stopAudioTelemetry]);
+  }, [
+    clearAgentReadyTimer,
+    clearReconnectTimer,
+    closeStreamCorePlaybackTracker,
+    stopAudioTelemetry,
+  ]);
 
   const disconnectOmni = useCallback((transport) => {
     if (!transport) return;
@@ -1625,6 +1685,11 @@ export function useVoiceSession({
       elements.forEach((element) => {
         element.volume = audioGainRef.current;
       });
+      if (audioGainRef.current <= 0) {
+        transport?.resetPlaybackTimelineFromTime?.(
+          omniAudioElementRef.current?.currentTime || 0,
+        );
+      }
       recordAudioDiagnostic(ducked ? "playback_ducked" : "playback_restored");
     };
     const onStreamCorePlaybackFlush = (_payload, event = {}) => {
@@ -1682,6 +1747,10 @@ export function useVoiceSession({
         try {
           await streamTransport.reconnect();
           if (!isCurrent() || recoveryEpochRef.current !== reconnectEpoch) return;
+          const playbackTracker = streamCorePlaybackTrackerRef.current;
+          if (playbackTracker) {
+            streamTransport.setPlaybackTracker?.(playbackTracker);
+          }
           roomConnectedRef.current = true;
           recordAudioDiagnostic("media_reconnected");
           setUiState("listening");
@@ -1691,6 +1760,12 @@ export function useVoiceSession({
           // transport without discarding the frozen voice session.
           try {
             await streamTransport.close();
+            await closeStreamCorePlaybackTracker();
+            const remoteAudio = omniAudioElementRef.current;
+            remoteAudio?.pause?.();
+            if (remoteAudio) remoteAudio.srcObject = null;
+            remoteAudio?.remove?.();
+            omniAudioElementRef.current = null;
             const fallbackEpoch = streamTransport.streamEpoch;
             transport = createLiveKitTransport();
             cascadeTransportRef.current = transport;
@@ -1949,6 +2024,12 @@ export function useVoiceSession({
         ) {
           try {
             await transport.close();
+            await closeStreamCorePlaybackTracker();
+            const remoteAudio = omniAudioElementRef.current;
+            remoteAudio?.pause?.();
+            if (remoteAudio) remoteAudio.srcObject = null;
+            remoteAudio?.remove?.();
+            omniAudioElementRef.current = null;
             transport = createLiveKitTransport();
             cascadeTransportRef.current = transport;
             room = transport.room;
@@ -2003,6 +2084,7 @@ export function useVoiceSession({
     clearAssistantExpression,
     clearProvisionalTranscripts,
     clearReconnectTimer,
+    closeStreamCorePlaybackTracker,
     disconnectOmni,
     disconnectRoom,
     failOmni,

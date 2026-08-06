@@ -19,8 +19,10 @@ def test_h5_artifact_is_deterministic_and_contains_only_normalized_files(
 ) -> None:
     source = tmp_path / "dist"
     (source / "assets").mkdir(parents=True)
+    (source / "worklets").mkdir()
     (source / "index.html").write_text("<main>Memoria</main>\n", encoding="utf-8")
     (source / "assets" / "app.js").write_text("console.log('ok')\n", encoding="utf-8")
+    (source / "worklets" / "counter.js").write_text("registerProcessor()\n", encoding="utf-8")
     first = tmp_path / "first.tar.gz"
     second = tmp_path / "second.tar.gz"
 
@@ -45,6 +47,7 @@ def test_h5_artifact_is_deterministic_and_contains_only_normalized_files(
             "assets/app.js",
             "index.html",
             "memoria-release.json",
+            "worklets/counter.js",
         ]
         assert all(member.isfile() for member in members)
         assert all(member.mtime == 0 for member in members)

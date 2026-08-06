@@ -18,4 +18,5 @@ message EventEnvelope {
   uint64 tool_epoch = 11;
   uint64 task_epoch = 12;
   uint64 context_version = 13;
+  uint64 client_monotonic_ms = 14;
 }

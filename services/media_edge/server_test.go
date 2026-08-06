@@ -2,6 +2,8 @@ package mediaedge
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -20,6 +22,25 @@ func testFrame(sessionID string, epoch, seq uint64, generation uint64) AudioFram
 		SessionID: sessionID, StreamEpoch: epoch, Sequence: seq,
 		CaptureStartSample: seq * 160, FrameSamples: 160,
 		GenerationID: generation, PayloadB64: base64.StdEncoding.EncodeToString(make([]byte, 320)),
+	}
+}
+
+func TestPublicAndInternalHandlersSeparateOperationalRoutes(t *testing.T) {
+	server := NewServer(JWTVerifier{}, 4)
+	public := httptest.NewRecorder()
+	server.PublicHandler().ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if public.Code != http.StatusNotFound {
+		t.Fatalf("public metrics route status=%d, want 404", public.Code)
+	}
+	internal := httptest.NewRecorder()
+	server.InternalHandler().ServeHTTP(internal, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if internal.Code != http.StatusOK {
+		t.Fatalf("internal metrics route status=%d, want 200", internal.Code)
+	}
+	publicReady := httptest.NewRecorder()
+	server.PublicHandler().ServeHTTP(publicReady, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if publicReady.Code != http.StatusNotFound {
+		t.Fatalf("public readiness route status=%d, want 404", publicReady.Code)
 	}
 }
 
@@ -251,6 +272,108 @@ func TestServerShutdownSerializesConcurrentSessionCreation(t *testing.T) {
 	}
 	if err := actor.TrySubmit(LiveSessionEvent{Kind: LiveEventVADStart}); !errors.Is(err, ErrActorClosed) {
 		t.Fatalf("shutdown left the in-flight actor running: %v", err)
+	}
+}
+
+func TestReconnectUsesPerSessionLifecycleWithoutLeakingAReplacement(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "development")
+	server := NewServer(JWTVerifier{}, 4)
+	server.AllowInsecureDevelopment = true
+	defer func() { _ = server.Close() }()
+
+	slow, err := NewSession(OpenSessionRequest{
+		SessionID: "slow-reconnect", AccountID: "account", DeviceID: "device", StreamEpoch: 1,
+	}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := NewSession(OpenSessionRequest{
+		SessionID: "other-session", AccountID: "account", DeviceID: "device", StreamEpoch: 1,
+	}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Directory.Put(slow); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Directory.Put(other); err != nil {
+		t.Fatal(err)
+	}
+
+	bridgeStarted := make(chan struct{})
+	releaseBridge := make(chan struct{})
+	server.BridgeFactory = func(
+		request OpenSessionRequest,
+		session *Session,
+		_ DownlinkSender,
+	) (*VoiceCoreMediaRuntime, error) {
+		if request.SessionID == slow.ID && request.StreamEpoch == 2 {
+			close(bridgeStarted)
+			<-releaseBridge
+		}
+		return NewVoiceCoreMediaRuntime(
+			context.Background(), session, newFakeCoreStream(), nil, nil,
+		)
+	}
+
+	reconnectRecorder := httptest.NewRecorder()
+	reconnectDone := make(chan struct{})
+	go func() {
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/media/sessions/slow-reconnect/reconnect",
+			nil,
+		)
+		server.Handler().ServeHTTP(reconnectRecorder, request)
+		close(reconnectDone)
+	}()
+	select {
+	case <-bridgeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("reconnect did not reach the slow bridge")
+	}
+
+	otherClosed := make(chan bool, 1)
+	go func() { otherClosed <- server.CloseSession(other.ID) }()
+	select {
+	case closed := <-otherClosed:
+		if !closed {
+			t.Fatal("unrelated session could not close during reconnect")
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("slow reconnect held the global lifecycle lock")
+	}
+
+	slowClosed := make(chan bool, 1)
+	go func() { slowClosed <- server.CloseSession(slow.ID) }()
+	select {
+	case <-slowClosed:
+		t.Fatal("same-session close bypassed reconnect lifecycle")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseBridge)
+
+	select {
+	case <-reconnectDone:
+	case <-time.After(time.Second):
+		t.Fatal("reconnect did not finish after bridge release")
+	}
+	if reconnectRecorder.Code != http.StatusOK {
+		t.Fatalf("reconnect status=%d body=%s", reconnectRecorder.Code, reconnectRecorder.Body.String())
+	}
+	select {
+	case closed := <-slowClosed:
+		if !closed {
+			t.Fatal("same-session close failed after reconnect")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("same-session close did not finish")
+	}
+	if _, ok := server.Directory.Get(slow.ID); ok {
+		t.Fatal("closed reconnect session remained in the directory")
+	}
+	if runtime := server.bridgeFor(slow.ID); runtime != nil {
+		t.Fatal("closed reconnect session retained its replacement bridge")
 	}
 }
 
@@ -811,6 +934,35 @@ func TestHTTPReferenceEdgeBindsJWTIdentityToSessionBody(t *testing.T) {
 		t.Fatalf("valid identity status=%d, want %d", response.StatusCode, http.StatusCreated)
 	}
 	_ = response.Body.Close()
+}
+
+func TestHTTPAuthorizationAcceptsConfiguredEdDSAWithoutHMACFallback(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "production")
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	identity := MediaTokenIdentity{
+		SessionID: "eddsa-session", AccountID: "account-1", DeviceID: "h5",
+		ClientType: "h5", StreamEpoch: 1,
+	}
+	token := signedEdDSAToken(t, private, "media-2026-08", map[string]any{
+		"iss": "voice-agent", "aud": "memoria-media", "sub": identity.AccountID,
+		"session_id": identity.SessionID, "device_id": identity.DeviceID,
+		"client_type": identity.ClientType, "stream_epoch": identity.StreamEpoch,
+		"iat": now.Unix(), "exp": now.Add(time.Minute).Unix(),
+	})
+	server := NewServer(JWTVerifier{
+		PublicKeys: map[string]ed25519.PublicKey{"media-2026-08": public},
+		Issuer:     "voice-agent", Audience: "memoria-media",
+	}, 4)
+	request := httptest.NewRequest(http.MethodPost, "/whip", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+
+	if err := server.authorizeIdentity(request, identity); err != nil {
+		t.Fatalf("configured EdDSA verifier was rejected: %v", err)
+	}
 }
 
 func TestHTTPServerForwardsFramesThroughVoiceCoreRuntime(t *testing.T) {

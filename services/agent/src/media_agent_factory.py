@@ -136,7 +136,13 @@ class ProductionMediaSessionFactory:
                 response_planner_client=response_planner_client,
                 realtime_search_resolver=realtime_search_resolver,
                 realtime_search_model=(
-                    str(getattr(self.settings, "qwen_deep_model", "qwen-plus"))
+                    str(
+                        getattr(
+                            realtime_search_resolver,
+                            "model",
+                            getattr(self.settings, "qwen_deep_model", "qwen-plus"),
+                        )
+                    )
                     if realtime_search_resolver is not None
                     else None
                 ),

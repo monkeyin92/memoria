@@ -75,8 +75,14 @@ _MEDIA_EDGE_EXTRA_KEYS = frozenset(
         "MEDIA_EDGE_ALLOW_INSECURE_DEVELOPMENT",
         "MEDIA_EDGE_HEALTHCHECK_URL",
         "MEDIA_EDGE_HTTP_ADDR",
+        "MEDIA_EDGE_INTERNAL_HTTP_ADDR",
         "MEDIA_EDGE_INTERACTION_AUTHORITY",
         "MEDIA_EDGE_JWT_AUDIENCE",
+        "MEDIA_EDGE_JWT_CLOCK_SKEW_S",
+        "MEDIA_EDGE_JWT_KEY_ID",
+        "MEDIA_EDGE_JWT_MAX_TTL_S",
+        "MEDIA_EDGE_JWT_PUBLIC_KEY_FILE",
+        "MEDIA_EDGE_JWT_PUBLIC_KEY_PEM",
         "MEDIA_EDGE_JWT_ISSUER",
         "MEDIA_EDGE_JWT_SECRET",
         "MEDIA_EDGE_MAX_PENDING_FRAMES",
@@ -136,10 +142,22 @@ def split_env(
             raise ValueError("production forbids the legacy all-access internal token")
         streamcore_secret = values.get("STREAMCORE_TOKEN_SECRET", "").strip()
         media_edge_secret = values.get("MEDIA_EDGE_JWT_SECRET", "").strip()
+        private_key = values.get("STREAMCORE_TOKEN_PRIVATE_KEY_FILE", "").strip() or values.get(
+            "STREAMCORE_TOKEN_PRIVATE_KEY_PEM", ""
+        ).strip()
+        public_key = values.get("MEDIA_EDGE_JWT_PUBLIC_KEY_FILE", "").strip() or values.get(
+            "MEDIA_EDGE_JWT_PUBLIC_KEY_PEM", ""
+        ).strip()
+        if private_key and not public_key:
+            raise ValueError("Ed25519 StreamCore signing requires a Media Edge public key")
+        if public_key and not private_key:
+            raise ValueError("Media Edge public key requires a StreamCore private key")
         if (streamcore_secret or media_edge_secret) and streamcore_secret != media_edge_secret:
             raise ValueError(
                 "production StreamCore and Media Edge token secrets must both be set and match"
             )
+        if private_key and (streamcore_secret or media_edge_secret):
+            raise ValueError("do not deploy both Ed25519 and shared StreamCore token secrets")
         encryption_keys = [
             values.get(name, "").strip()
             for name in (

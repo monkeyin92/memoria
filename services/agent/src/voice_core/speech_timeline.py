@@ -124,6 +124,7 @@ class ASRResult:
     text: str
     is_final: bool
     confidence: float | None = None
+    loss_concealed: bool = False
     provider_begin_ms: int | None = None
     provider_end_ms: int | None = None
     stream_epoch: int = 1
@@ -252,6 +253,7 @@ def asr_result_to_segment(
         final=result.is_final,
         confidence=result.confidence,
         speaker_class=speaker_class,
+        loss_concealed=result.loss_concealed,
     )
 
 

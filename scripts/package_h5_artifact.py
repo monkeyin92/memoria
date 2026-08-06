@@ -73,6 +73,10 @@ def package_h5_artifact(
     if any(path.relative_to(source).as_posix() == _PROVENANCE_NAME for path in files):
         raise ValueError(f"H5 artifact source must not contain {_PROVENANCE_NAME}")
     provenance = _provenance(expected_commit=expected_commit, release_tag=release_tag)
+    members: list[tuple[str, Path | None]] = [
+        (path.relative_to(source).as_posix(), path) for path in files
+    ]
+    members.append((_PROVENANCE_NAME, None))
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f".{output.name}.tmp")
     try:
@@ -83,27 +87,20 @@ def package_h5_artifact(
                     mode="w",
                     format=tarfile.USTAR_FORMAT,
                 ) as archive:
-                    for path in files:
-                        relative = path.relative_to(source).as_posix()
+                    for relative, path in sorted(members, key=lambda member: member[0]):
                         info = tarfile.TarInfo(name=relative)
-                        info.size = path.stat().st_size
+                        info.size = len(provenance) if path is None else path.stat().st_size
                         info.mode = 0o644
                         info.uid = 0
                         info.gid = 0
                         info.uname = ""
                         info.gname = ""
                         info.mtime = 0
-                        with path.open("rb") as stream:
-                            archive.addfile(info, stream)
-                    provenance_info = tarfile.TarInfo(name=_PROVENANCE_NAME)
-                    provenance_info.size = len(provenance)
-                    provenance_info.mode = 0o644
-                    provenance_info.uid = 0
-                    provenance_info.gid = 0
-                    provenance_info.uname = ""
-                    provenance_info.gname = ""
-                    provenance_info.mtime = 0
-                    archive.addfile(provenance_info, io.BytesIO(provenance))
+                        if path is None:
+                            archive.addfile(info, io.BytesIO(provenance))
+                        else:
+                            with path.open("rb") as stream:
+                                archive.addfile(info, stream)
         temporary.replace(output)
     finally:
         temporary.unlink(missing_ok=True)

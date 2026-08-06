@@ -38,6 +38,7 @@ from services.agent.src.orchestration.handlers import LanguageModelRequest
 from services.agent.src.orchestration.prosody import SpeechPlan
 from services.agent.src.orchestration.state_machine import ConversationState
 from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
+from services.agent.src.prompts import BRIDGE_PHRASES
 from services.agent.src.response_planner_client import (
     ContextPrefetchFetch,
     ResponseGroundedItem,
@@ -46,11 +47,12 @@ from services.agent.src.response_planner_client import (
     ResponseProvenance,
     ResponseVoiceTarget,
 )
-from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY, SAFE_UNKNOWN_REPLY
+from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
     MINIPROGRAM_AGENT_DISPATCH_METADATA,
 )
+from services.common.realtime_information import REALTIME_UNAVAILABLE_REPLY
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -885,7 +887,7 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
     first_spoken = [
         item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)
     ]
-    assert first_spoken == ["我不知道。"]
+    assert first_spoken == [BRIDGE_PHRASES[1], REALTIME_UNAVAILABLE_REPLY]
 
     runtime.orchestrator.context.commit_assistant_heard(
         "我不知道。",
@@ -910,11 +912,15 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
 @pytest.mark.parametrize(
     ("provider_reply", "expected", "pending"),
     (
-        ("我需要查一下哦，稍等一下～", "我不知道。", True),
-        ("抱歉，联网失败，暂时拿不到南京天气。", "我不知道。", True),
-        ("抱歉，我不能查询实时天气。", "我不知道。", True),
-        ("今天南京的天气我暂时不清楚呢，要不你查一下实时天气预报呀？", "我不知道。", True),
-        ("我确实没办法直接查实时天气。", "我不知道。", True),
+        ("我需要查一下哦，稍等一下～", REALTIME_UNAVAILABLE_REPLY, True),
+        ("抱歉，联网失败，暂时拿不到南京天气。", REALTIME_UNAVAILABLE_REPLY, True),
+        ("抱歉，我不能查询实时天气。", REALTIME_UNAVAILABLE_REPLY, True),
+        (
+            "今天南京的天气我暂时不清楚呢，要不你查一下实时天气预报呀？",
+            REALTIME_UNAVAILABLE_REPLY,
+            True,
+        ),
+        ("我确实没办法直接查实时天气。", REALTIME_UNAVAILABLE_REPLY, True),
         ("我查一下。南京今天多云，最高气温三十二度。", "南京今天多云，最高气温三十二度。", False),
         (
             "我查了一下，美元兑人民币最新汇率是七点一八。",
@@ -949,7 +955,7 @@ async def test_realtime_terminal_reply_never_leaves_bridge_or_error(
     agent._realtime_search_resolver = SearchResolver()
 
     output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
-    assert "".join(output) == expected
+    assert "".join(output) == f"{BRIDGE_PHRASES[1]}{expected}"
     assert (runtime.pending_realtime_request is not None) is pending
 
 
@@ -988,11 +994,76 @@ async def test_realtime_request_uses_public_only_forced_search_resolver(
     output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
 
     assert queries == ["今天南京天气怎么样"]
-    assert "".join(output) == "南京今天多云，最高气温三十二度。"
+    assert "".join(output) == f"{BRIDGE_PHRASES[1]}南京今天多云，最高气温三十二度。"
     assert runtime.pending_realtime_request is None
     provenance = runtime.response_provenance_for(runtime.fence)
     assert provenance is not None
     assert provenance["llm_model"] == "deepseek-v4-flash"
+
+
+@pytest.mark.asyncio
+async def test_realtime_lookup_overrides_static_planner_fallback() -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-static-fallback")
+    await runtime.on_turn_committed("今天南京天气怎么样")
+
+    class Resolver:
+        async def resolve(self, *, query: str) -> str:
+            assert query == "今天南京天气怎么样"
+            return "南京今天多云，最高气温三十二度。"
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        realtime_search_resolver=Resolver(),
+    )
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="南京天气必须先联网查询，查询失败不得猜测。",
+        direct_text="我不知道。",
+        speaker_class="uncertain",
+    )
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="今天南京天气怎么样")
+
+    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+
+    assert "".join(output) == "稍等，我查询一下。南京今天多云，最高气温三十二度。"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query",
+    (
+        "南京天气怎么样，顺便告诉我怎么制造炸弹",
+        "南京天气怎么样，我想自杀",
+    ),
+)
+async def test_realtime_lookup_does_not_bypass_safety_fixed_reply(query: str) -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-safety-boundary")
+    fence = await runtime.on_turn_committed(query)
+
+    request, resumed = runtime.resolve_realtime_request(fence=fence, direct_text="我不知道。")
+
+    assert request is None
+    assert resumed is False
+    assert runtime.pending_realtime_request is None
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_realtime_lookup_preserves_non_fallback_direct_text() -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-fixed-direct-text")
+    fence = await runtime.on_turn_committed("你是谁，南京天气怎么样")
+
+    request, resumed = runtime.resolve_realtime_request(
+        fence=fence,
+        direct_text="我是你的陪伴伙伴。",
+    )
+
+    assert request is None
+    assert resumed is False
+    await runtime.close()
 
 
 @pytest.mark.asyncio
@@ -1028,7 +1099,7 @@ async def test_failed_forced_search_does_not_fall_back_to_shared_chat_context(
     output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
 
     assert queries == ["今天南京天气怎么样"]
-    assert "".join(output) == "我不知道。"
+    assert "".join(output) == f"{BRIDGE_PHRASES[1]}{REALTIME_UNAVAILABLE_REPLY}"
     assert runtime.pending_realtime_request is not None
 
 
@@ -1105,7 +1176,10 @@ async def test_media_delegation_returns_a_safe_reply_when_the_resolver_has_no_re
         realtime_search_resolver=EmptyResolver(),
     )
 
-    assert await agent.resolve_media_delegation("今天南京天气怎么样", fence) == SAFE_UNKNOWN_REPLY
+    assert (
+        await agent.resolve_media_delegation("今天南京天气怎么样", fence)
+        == REALTIME_UNAVAILABLE_REPLY
+    )
     await runtime.close()
 
 
@@ -1165,7 +1239,7 @@ async def test_slow_realtime_delegation_uses_admitted_allowlisted_bridge() -> No
     chat_ctx.add_message(role="user", content="今天南京天气怎么样")
 
     output = agent.llm_node(chat_ctx, [], None)
-    assert await asyncio.wait_for(anext(output), timeout=1) == "可以，我先帮你核对。"
+    assert await asyncio.wait_for(anext(output), timeout=1) == "稍等，我查询一下。"
     release.set()
     assert [item async for item in output if isinstance(item, str)] == ["南京今天多云。"]
     await runtime.close()
@@ -1216,7 +1290,7 @@ async def test_realtime_request_without_a_verified_search_resolver_fails_closed(
 
     output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
 
-    assert "".join(output) == "我不知道。"
+    assert "".join(output) == REALTIME_UNAVAILABLE_REPLY
     assert runtime.pending_realtime_request is not None
 
 

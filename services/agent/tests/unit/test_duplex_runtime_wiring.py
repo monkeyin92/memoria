@@ -2319,6 +2319,31 @@ def test_runtime_accepts_only_bounded_microphone_settings_and_outbound_metrics(
     assert "must-not-enter-logs" not in caplog.text
 
 
+def test_runtime_accepts_only_bounded_microphone_capabilities(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="microphone-capabilities-session")
+    caplog.set_level("INFO", logger="services.agent.src.duplex_runtime")
+    event = {
+        "type": "audio_trace",
+        "session_id": "microphone-capabilities-session",
+        "name": "webrtc_microphone_capabilities",
+        "status": "ok",
+        "detail": {
+            "echo_cancellation": [True, False],
+            "noise_suppression": [True],
+            "sample_rate": {"min": 8_000, "max": 48_000},
+            "latency_ms": {"min": 10, "max": 100},
+        },
+    }
+
+    assert runtime.observe_client_audio_trace(event) is True
+    assert "sample_rate" in caplog.text
+
+    event["detail"] = {"device_id": "must-not-enter-logs"}
+    assert runtime.observe_client_audio_trace(event) is False
+    assert "must-not-enter-logs" not in caplog.text
+
 def test_runtime_accepts_only_bounded_miniprogram_playback_metrics(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

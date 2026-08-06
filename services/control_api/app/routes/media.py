@@ -82,6 +82,8 @@ class MediaSessionResponse(BaseModel):
     expires_at: str | None = None
     ice_servers: list[dict[str, Any]] = Field(default_factory=list)
     stream_epoch: int = Field(ge=1)
+    owner_instance_id: str | None = None
+    ownership_epoch: int | None = Field(default=None, ge=1)
     fallback_runtime: str = "livekit"
     streamcore: dict[str, Any] | None = None
     fallback: dict[str, str]
@@ -118,7 +120,7 @@ async def _create(
     if not isinstance(created, session_routes.CreateSessionResponse):
         raise HTTPException(status_code=409, detail="media session requires cascade backend")
     try:
-        await session_routes.claim_session_route(
+        claimed_route = await session_routes.claim_session_route(
             request,
             session_id=created.session_id,
             account_id=user.user_id,
@@ -144,6 +146,8 @@ async def _create(
         stream_epoch=created.stream_epoch,
         fallback_runtime=created.fallback_runtime,
         streamcore=created.streamcore,
+        owner_instance_id=claimed_route.owner_instance_id if claimed_route else created.owner_instance_id,
+        ownership_epoch=claimed_route.ownership_epoch if claimed_route else created.ownership_epoch,
         fallback={"media_runtime": created.fallback_runtime},
         livekit={
             "url": created.livekit_url,

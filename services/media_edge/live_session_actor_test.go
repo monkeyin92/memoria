@@ -949,6 +949,67 @@ func TestLiveSessionActorReservesMailboxCapacityForAudio(t *testing.T) {
 	}
 }
 
+func TestLiveSessionActorKeepsCriticalLaneAvailableWhenBulkIsFull(t *testing.T) {
+	actor := newLiveSessionActor("session", 1, 4, 2, time.Second, 100*time.Millisecond)
+	defer actor.Close()
+	segment := ShadowSpeechSegment{
+		SegmentID: "bulk", TaskEpoch: 1, Revision: 1,
+		CaptureStartSample: 1, CaptureEndSample: 2,
+	}
+	for index := 0; index < 2; index++ {
+		segment.SegmentID = fmt.Sprintf("bulk-%d", index)
+		copy := segment
+		if err := actor.TrySubmit(LiveSessionEvent{
+			Kind: LiveEventSpeechSegment, StreamEpoch: 1, SpeechSegment: &copy,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	third := segment
+	third.SegmentID = "bulk-overflow"
+	if err := actor.TrySubmit(LiveSessionEvent{
+		Kind: LiveEventSpeechSegment, StreamEpoch: 1, SpeechSegment: &third,
+	}); !errors.Is(err, ErrActorMailboxFull) {
+		t.Fatalf("bulk lane did not enforce its bound: %v", err)
+	}
+	fence := Fence{SessionID: "session", GenerationID: 1}
+	if err := actor.TrySubmit(LiveSessionEvent{
+		Kind: LiveEventGenerationCancel, StreamEpoch: 1, Fence: fence,
+	}); err != nil {
+		t.Fatalf("critical lane was blocked by bulk backlog: %v", err)
+	}
+}
+
+func TestLiveSessionActorKeepsAggregateMailboxBoundedAcrossLanes(t *testing.T) {
+	actor := newLiveSessionActor("session", 1, 4, 2, time.Second, time.Hour)
+	defer actor.Close()
+	for index := 0; index < 2; index++ {
+		if err := actor.TrySubmit(LiveSessionEvent{
+			Kind: LiveEventSpeechSegment, StreamEpoch: 1,
+			SpeechSegment: &ShadowSpeechSegment{
+				SegmentID: fmt.Sprintf("bulk-%d", index), TaskEpoch: 1,
+				Revision: 1, CaptureStartSample: 1, CaptureEndSample: 2,
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index := 0; index < 2; index++ {
+		if err := actor.TrySubmit(LiveSessionEvent{
+			Kind: LiveEventGenerationCancel, StreamEpoch: 1,
+			Fence: Fence{SessionID: "session", GenerationID: uint64(index + 1)},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if pending := actor.pending.Load(); pending > int64(actor.mailboxSize) {
+		t.Fatalf("aggregate mailbox exceeded bound: pending=%d capacity=%d", pending, actor.mailboxSize)
+	}
+	if err := actor.TrySubmit(LiveSessionEvent{Kind: LiveEventAudioUplink, StreamEpoch: 1}); !errors.Is(err, ErrActorMailboxFull) {
+		t.Fatalf("audio admission bypassed aggregate mailbox bound: %v", err)
+	}
+}
+
 func TestLiveSessionActorCountsMailboxRejectedAudioInDeadlineRatioDenominator(t *testing.T) {
 	actor := newLiveSessionActor("session", 1, 3, 1, time.Second, 100*time.Millisecond)
 	defer actor.Close()

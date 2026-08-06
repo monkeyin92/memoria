@@ -28,7 +28,9 @@ class FakePeerConnection {
     this.localDescription = null;
     this.listeners = new Map();
     this.channel = null;
+    this.channels = new Map();
     this.tracks = [];
+    this.transceivers = [];
   }
 
   addEventListener(name, listener) {
@@ -43,8 +45,17 @@ class FakePeerConnection {
     this.tracks.push(track);
   }
 
-  createDataChannel(label) {
+  addTransceiver(kind, init) {
+    const sender = { replaceTrack: vi.fn(async () => undefined) };
+    const transceiver = { kind, init, sender };
+    this.transceivers.push(transceiver);
+    return transceiver;
+  }
+
+  createDataChannel(label, options) {
     this.channel = new FakeChannel(label);
+    this.channel.options = options;
+    this.channels.set(label, this.channel);
     return this.channel;
   }
 
@@ -83,13 +94,72 @@ class ConnectingPeerConnection extends FakePeerConnection {
   }
 }
 
-function stream() {
-  const track = { enabled: true, stop: vi.fn() };
+class GatheringPeerConnection extends FakePeerConnection {
+  constructor() {
+    super();
+    this.iceGatheringState = "gathering";
+  }
+}
+
+class RetryGatheringPeerConnection extends FakePeerConnection {
+  static attempts = 0;
+
+  constructor() {
+    super();
+    RetryGatheringPeerConnection.attempts += 1;
+    if (RetryGatheringPeerConnection.attempts === 1) {
+      this.iceGatheringState = "gathering";
+    }
+  }
+}
+
+function stream(trackOverrides = {}) {
+  const track = { enabled: true, stop: vi.fn(), ...trackOverrides };
   return {
     track,
     getAudioTracks: () => [track],
     getTracks: () => [track],
   };
+}
+
+class FakePlaybackTracker {
+  constructor(sampleRate = 48_000) {
+    this.sampleRate = sampleRate;
+    this.renderedFrames = 0;
+    this.onRendered = () => undefined;
+    this.onDiagnostic = () => undefined;
+    this.closed = false;
+  }
+
+  setOnRendered(callback) {
+    this.onRendered = callback;
+  }
+
+  setOnDiagnostic(callback) {
+    this.onDiagnostic = callback;
+  }
+
+  getSnapshot() {
+    return this.closed
+      ? null
+      : { renderedFrames: this.renderedFrames, sampleRate: this.sampleRate };
+  }
+
+  resume() {
+    return Promise.resolve(true);
+  }
+
+  emit(renderedFrames) {
+    this.renderedFrames = renderedFrames;
+    this.onRendered(this.getSnapshot());
+  }
+
+  close() {
+    this.closed = true;
+    this.onRendered = () => undefined;
+    this.onDiagnostic = () => undefined;
+    return Promise.resolve();
+  }
 }
 
 let nextServerEventId = 0;
@@ -124,6 +194,169 @@ function mediaEvent({
 }
 
 describe("StreamCoreTransport", () => {
+  it("uses identical constraints and sanitized diagnostics for every microphone capture", async () => {
+    const onDiagnostic = vi.fn();
+    const microphoneTrack = (sampleRate) => ({
+      getSettings: vi.fn(() => ({
+        deviceId: "private-device-id",
+        echoCancellation: true,
+        groupId: "private-group-id",
+        label: "Private microphone label",
+        noiseSuppression: true,
+        sampleRate,
+      })),
+      getCapabilities: vi.fn(() => ({
+        deviceId: "private-device-id",
+        echoCancellation: [true, false],
+        groupId: "private-group-id",
+        latency: { min: 0.01, max: 0.1 },
+        noiseSuppression: [true],
+        sampleRate: { min: 8_000, max: 48_000 },
+      })),
+    });
+    const captures = [
+      stream(microphoneTrack(48_000)),
+      stream(microphoneTrack(44_100)),
+    ];
+    const getUserMedia = vi.fn(async () => captures.shift());
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia,
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+      onDiagnostic,
+    });
+    const session = {
+      session_id: "microphone-capture-session",
+      whip_url: "https://media.example/whip",
+      token: "token",
+    };
+
+    await transport.connect(session);
+    await transport.close();
+    await transport.connect(session, { getMicrophoneEnabled: () => false });
+    await transport.setMicrophoneEnabled(true);
+
+    const expectedConstraints = {
+      audio: {
+        channelCount: { ideal: 1 },
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    };
+    expect(getUserMedia).toHaveBeenNthCalledWith(1, expectedConstraints);
+    expect(getUserMedia).toHaveBeenNthCalledWith(2, expectedConstraints);
+    expect(onDiagnostic).toHaveBeenCalledWith(
+      "webrtc_microphone_settings",
+      "ok",
+      expect.objectContaining({
+        echo_cancellation: true,
+        noise_suppression: true,
+        sample_rate: 48_000,
+      }),
+    );
+    expect(onDiagnostic).toHaveBeenCalledWith(
+      "webrtc_microphone_capabilities",
+      "ok",
+      {
+        echo_cancellation: [true, false],
+        latency_ms: { min: 10, max: 100 },
+        noise_suppression: [true],
+        sample_rate: { min: 8_000, max: 48_000 },
+      },
+    );
+    expect(
+      onDiagnostic.mock.calls.filter(
+        ([name]) => name === "webrtc_microphone_settings",
+      ),
+    ).toHaveLength(2);
+    expect(
+      onDiagnostic.mock.calls.filter(
+        ([name]) => name === "webrtc_microphone_capabilities",
+      ),
+    ).toHaveLength(2);
+    expect(JSON.stringify(onDiagnostic.mock.calls)).not.toMatch(
+      /private-|deviceId|groupId|label/i,
+    );
+    await transport.close();
+  });
+
+  it("rejects incomplete ICE gathering before exchanging SDP", async () => {
+    const exchangeSdp = vi.fn(async () => "v=0\\no=answer");
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: GatheringPeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp,
+      connectTimeoutMs: 5,
+    });
+
+    await expect(
+      transport.connect({
+        session_id: "ice-timeout-session",
+        whip_url: "https://media.example/whip",
+        token: "token",
+      }),
+    ).rejects.toThrow("ICE 候选收集超时");
+    expect(exchangeSdp).not.toHaveBeenCalled();
+    expect(transport.pc.listeners.has("icegatheringstatechange")).toBe(false);
+    await transport.close();
+  });
+
+  it("retries a bounded ICE gathering timeout before surfacing failure", async () => {
+    RetryGatheringPeerConnection.attempts = 0;
+    const exchangeSdp = vi.fn(async () => "v=0\\no=answer");
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: RetryGatheringPeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp,
+      connectTimeoutMs: 5,
+      iceRetryDelayMs: 0,
+    });
+
+    await transport.connect({
+      session_id: "ice-retry-session",
+      whip_url: "https://media.example/whip",
+      token: "token",
+    });
+
+    expect(RetryGatheringPeerConnection.attempts).toBe(2);
+    expect(exchangeSdp).toHaveBeenCalledTimes(1);
+    await transport.close();
+  });
+
+  it("reserves an audio transceiver when starting muted and later replaces its track", async () => {
+    const captured = stream();
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => captured),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+    });
+
+    await transport.connect(
+      {
+        session_id: "late-microphone-session",
+        whip_url: "https://media.example/whip",
+        token: "token",
+      },
+      { getMicrophoneEnabled: () => false },
+    );
+
+    expect(transport.pc.transceivers).toHaveLength(1);
+    expect(transport.pc.transceivers[0]).toMatchObject({
+      kind: "audio",
+      init: { direction: "sendrecv" },
+    });
+
+    await transport.setMicrophoneEnabled(true);
+
+    expect(transport.pc.transceivers[0].sender.replaceTrack).toHaveBeenCalledWith(
+      captured.track,
+    );
+    expect(transport.pc.tracks).toEqual([]);
+    await transport.close();
+  });
+
   it("exposes the server-selected interaction authority from session.ready", async () => {
     const onState = vi.fn();
     const transport = new StreamCoreTransport({
@@ -156,6 +389,67 @@ describe("StreamCoreTransport", () => {
       "ready",
       expect.objectContaining({ interaction_authority: "go_shadow" }),
     );
+  });
+
+  it("uses independent control, conversation, and ephemeral DataChannel sequences", async () => {
+    const onState = vi.fn();
+    const onTranscript = vi.fn();
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+      onState,
+      onTranscript,
+    });
+    await transport.connect({
+      session_id: "multi-channel-session",
+      whip_url: "https://media.example/whip",
+      token: "token",
+    });
+
+    expect([...transport.channels.keys()]).toEqual([
+      "control",
+      "conversation",
+      "ephemeral",
+    ]);
+    expect(transport.channels.get("ephemeral").options).toEqual({
+      ordered: false,
+      maxRetransmits: 1,
+    });
+
+    transport.channels.get("ephemeral").onmessage({
+      data: JSON.stringify(
+        mediaEvent({
+          type: "user.transcript.partial",
+          session_id: "multi-channel-session",
+          stream_epoch: 1,
+          sequence: 0,
+          payload: { text: "南" },
+        }),
+      ),
+    });
+    transport.channels.get("control").onmessage({
+      data: JSON.stringify(
+        mediaEvent({
+          type: "session.ready",
+          session_id: "multi-channel-session",
+          stream_epoch: 1,
+          sequence: 0,
+          payload: { state: "ready", interaction_authority: "python_authoritative" },
+        }),
+      ),
+    });
+
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(onState).toHaveBeenCalledWith(
+      "ready",
+      expect.objectContaining({ sequence: 0 }),
+    );
+    await transport.stopAssistant();
+    expect(transport.channels.get("control").sent.at(-1)).toEqual(
+      expect.objectContaining({ type: "client.stop_assistant" }),
+    );
+    await transport.close();
   });
 
   it("consumes only monotonic typed floor effects for the current media stream", async () => {
@@ -485,10 +779,11 @@ describe("StreamCoreTransport", () => {
         turn_id: 0,
         generation_id: 0,
         tool_epoch: 0,
-        server_monotonic_ms: 0,
+        client_monotonic_ms: expect.any(Number),
         payload: expect.any(Object),
       }),
     );
+    expect(transport.channel.sent[0]).not.toHaveProperty("server_monotonic_ms");
     expect(stopResponse).not.toHaveBeenCalled();
   });
 
@@ -765,6 +1060,7 @@ describe("StreamCoreTransport", () => {
         payload: expect.objectContaining({
           received_sequence: 0,
           rendered_sample_end: 480,
+          approximate: true,
           tool_epoch: 0,
         }),
       }),
@@ -792,6 +1088,234 @@ describe("StreamCoreTransport", () => {
     expect(transport.channel.sent.at(-1).payload).toEqual(
       expect.objectContaining({
         rendered_sample_end: 240,
+        generation_id: 2,
+      }),
+    );
+  });
+
+  it("publishes rendered-sample ACKs from an AudioWorklet tracker and fences generations", async () => {
+    const getPlaybackTime = vi.fn(() => 12);
+    const tracker = new FakePlaybackTracker();
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+      getPlaybackTime,
+    });
+    await transport.connect({
+      session_id: "session-worklet-progress",
+      whip_url: "https://media.example/whip",
+      token: "token",
+      stream_epoch: 1,
+    });
+    transport.setPlaybackTracker(tracker);
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "assistant.audio.frame",
+        session_id: "session-worklet-progress",
+        stream_epoch: 1,
+        sequence: 0,
+        payload: {
+          turn_id: 1,
+          generation_id: 1,
+          tool_epoch: 0,
+          sequence: 0,
+          source_start_sample: 0,
+          frame_samples: 960,
+        },
+      })),
+    });
+
+    tracker.emit(960);
+    await Promise.resolve();
+    expect(transport.channel.sent.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "client.playback.progress",
+        payload: expect.objectContaining({
+          rendered_sample_end: 480,
+          approximate: false,
+          generation_id: 1,
+        }),
+      }),
+    );
+    expect(getPlaybackTime).not.toHaveBeenCalled();
+
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "assistant.audio.frame",
+        session_id: "session-worklet-progress",
+        stream_epoch: 1,
+        sequence: 1,
+        payload: {
+          turn_id: 2,
+          generation_id: 2,
+          tool_epoch: 0,
+          sequence: 0,
+          source_start_sample: 0,
+          frame_samples: 960,
+        },
+      })),
+    });
+    tracker.emit(960);
+    expect(
+      transport.channel.sent.filter(
+        (event) => event.type === "client.playback.progress",
+      ),
+    ).toHaveLength(1);
+    tracker.emit(1_920);
+    await Promise.resolve();
+    expect(transport.channel.sent.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "client.playback.progress",
+        generation_id: 2,
+        payload: expect.objectContaining({
+          rendered_sample_end: 480,
+          approximate: false,
+        }),
+      }),
+    );
+  });
+
+  it("detaches worklet ACK callbacks across reconnect and close", async () => {
+    const tracker = new FakePlaybackTracker();
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+      reconnectSession: vi.fn(async () => ({
+        session_id: "session-worklet-reconnect",
+        stream_epoch: 2,
+        streamcore: {
+          whip_url: "https://media.example/whip",
+          token: "rotated-token",
+          stream_epoch: 2,
+        },
+      })),
+    });
+    await transport.connect({
+      session_id: "session-worklet-reconnect",
+      whip_url: "https://media.example/whip",
+      token: "token",
+      stream_epoch: 1,
+    });
+    transport.setPlaybackTracker(tracker);
+    const oldChannel = transport.channel;
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "assistant.audio.frame",
+        session_id: "session-worklet-reconnect",
+        stream_epoch: 1,
+        sequence: 0,
+        payload: {
+          turn_id: 1,
+          generation_id: 1,
+          tool_epoch: 0,
+          sequence: 0,
+          source_start_sample: 0,
+          frame_samples: 480,
+        },
+      })),
+    });
+    tracker.emit(960);
+    const beforeReconnect = oldChannel.sent.length;
+
+    await transport.reconnect();
+    tracker.emit(1_920);
+    expect(oldChannel.sent).toHaveLength(beforeReconnect);
+    // Reattachment is performed by the hook after the new remote track event.
+    transport.setPlaybackTracker(tracker);
+    const newChannel = transport.channel;
+    expect(newChannel.sent).toHaveLength(0);
+    newChannel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "assistant.audio.frame",
+        session_id: "session-worklet-reconnect",
+        stream_epoch: 2,
+        sequence: 0,
+        payload: {
+          turn_id: 2,
+          generation_id: 2,
+          tool_epoch: 0,
+          sequence: 0,
+          source_start_sample: 0,
+          frame_samples: 480,
+        },
+      })),
+    });
+    tracker.emit(2_880);
+    await Promise.resolve();
+    expect(newChannel.sent.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "client.playback.progress",
+        stream_epoch: 2,
+        payload: expect.objectContaining({ approximate: false }),
+      }),
+    );
+    await transport.close();
+    tracker.emit(3_840);
+    expect(oldChannel.sent).toHaveLength(beforeReconnect);
+    expect(newChannel.sent.filter((event) => event.type === "client.playback.progress")).toHaveLength(1);
+  });
+
+  it("keeps an exact watermark suppressed after mute and seek until a new fence", async () => {
+    let audible = true;
+    const tracker = new FakePlaybackTracker();
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+      isPlaybackAudible: () => audible,
+    });
+    await transport.connect({
+      session_id: "session-worklet-muted",
+      whip_url: "https://media.example/whip",
+      token: "token",
+      stream_epoch: 1,
+    });
+    transport.setPlaybackTracker(tracker);
+    const emitFrame = (eventSequence, turnId, generationId, sequence, sourceStart) =>
+      transport.channel.onmessage({
+        data: JSON.stringify(mediaEvent({
+          type: "assistant.audio.frame",
+          session_id: "session-worklet-muted",
+          stream_epoch: 1,
+          sequence: eventSequence,
+          payload: {
+            turn_id: turnId,
+            generation_id: generationId,
+            tool_epoch: 0,
+            sequence,
+            source_start_sample: sourceStart,
+            frame_samples: 960,
+          },
+        })),
+      });
+
+    emitFrame(0, 1, 1, 0, 0);
+    tracker.emit(960);
+    expect(transport.channel.sent.at(-1).payload).toEqual(
+      expect.objectContaining({ rendered_sample_end: 480, approximate: false }),
+    );
+    const ackCount = transport.channel.sent.filter(
+      (event) => event.type === "client.playback.progress",
+    ).length;
+
+    audible = false;
+    tracker.emit(1_920);
+    transport.resetPlaybackTimelineFromTime(0);
+    audible = true;
+    emitFrame(1, 1, 1, 1, 960);
+    tracker.emit(2_880);
+    expect(transport.channel.sent.filter(
+      (event) => event.type === "client.playback.progress",
+    )).toHaveLength(ackCount);
+
+    emitFrame(2, 2, 2, 0, 0);
+    tracker.emit(3_840);
+    expect(transport.channel.sent.at(-1).payload).toEqual(
+      expect.objectContaining({
+        rendered_sample_end: 480,
+        approximate: false,
         generation_id: 2,
       }),
     );

@@ -77,6 +77,7 @@ from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AGENT_DISPATCH_METADATA,
 )
 from services.common.realtime_information import (
+    REALTIME_UNAVAILABLE_REPLY,
     current_local_time,
     fixed_realtime_reply,
     is_incomplete_realtime_reply,
@@ -506,7 +507,11 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             result = None
         if not self._runtime.fence.matches(fence):
             return None
-        return result.strip() if isinstance(result, str) and result.strip() else SAFE_UNKNOWN_REPLY
+        return (
+            result.strip()
+            if isinstance(result, str) and result.strip()
+            else REALTIME_UNAVAILABLE_REPLY
+        )
 
     async def _stream_media_response(
         self,
@@ -2083,7 +2088,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         realtime_buffer_exhausted = False
         try:
             self._runtime.mark_audio_event("llm_request_started")
-            if response_plan.direct_text is not None:
+            if response_plan.direct_text is not None and realtime_request is None:
                 self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(
                     cancellation,
@@ -2181,13 +2186,15 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     query=realtime_request.query,
                     fence=fence,
                 )
-                if handle is not None and not handle.record.task.done():
+                if handle is not None:
+                    # The acknowledgement is a control-plane cue, not the
+                    # query result. Emit it before waiting so a slow provider
+                    # never leaves the user in silence.
                     with contextlib.suppress(TimeoutError):
                         await asyncio.wait_for(
                             asyncio.shield(handle.record.task),
                             timeout=0.02,
                         )
-                if handle is not None and not handle.record.task.done():
                     bridge_intent = self._runtime.orchestrator.delegation.bridge_acknowledgement(
                         BRIDGE_PHRASES[1],
                         fence=fence,
@@ -2304,8 +2311,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     fence.turn_id,
                     fence.generation_id,
                 )
-                self._llm_text_buf = SAFE_UNKNOWN_REPLY
-                realtime_reply = SAFE_UNKNOWN_REPLY
+                self._llm_text_buf = REALTIME_UNAVAILABLE_REPLY
+                realtime_reply = REALTIME_UNAVAILABLE_REPLY
             if realtime_request is not None and cancellation.is_current(self._runtime.fence):
                 realtime_current = True
                 for segment in segmenter.push_token(strip_realtime_bridge_prefix(realtime_reply)):
@@ -2337,8 +2344,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 fence.generation_id,
                 exc_info=True,
             )
-            self._llm_text_buf = SAFE_UNKNOWN_REPLY
-            for segment in segmenter.push_token(SAFE_UNKNOWN_REPLY):
+            self._llm_text_buf = REALTIME_UNAVAILABLE_REPLY
+            for segment in segmenter.push_token(REALTIME_UNAVAILABLE_REPLY):
                 accepted_segment = _ready_segment(segment.text)
                 if accepted_segment is None:
                     break

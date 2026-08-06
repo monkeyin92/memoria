@@ -10,6 +10,10 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from services.agent.src.providers.open_meteo_weather import (
+    OpenMeteoWeather,
+    is_weather_query,
+)
 from services.agent.src.providers.qwen_realtime_search import (
     QwenRealtimeSearch,
     QwenRealtimeSearchConfig,
@@ -30,6 +34,36 @@ class VoiceProviderHandlers:
     speech_synthesis: Any
     realtime_search_resolver: Any | None = None
     realtime_search_model: str | None = None
+
+
+class PublicRealtimeSearch:
+    """Route weather to a deterministic public API and other topics to Qwen."""
+
+    def __init__(
+        self,
+        *,
+        weather: OpenMeteoWeather,
+        qwen: QwenRealtimeSearch | None,
+    ) -> None:
+        self.weather = weather
+        self.qwen = qwen
+        self.model = (
+            f"{weather.model}+{qwen.model}" if qwen is not None else weather.model
+        )
+
+    async def resolve(self, *, query: str) -> str | None:
+        if is_weather_query(query):
+            weather = await self.weather.resolve(query=query)
+            if weather:
+                return weather
+        if self.qwen is None:
+            return None
+        return await self.qwen.resolve(query=query)
+
+    async def aclose(self) -> None:
+        await self.weather.aclose()
+        if self.qwen is not None:
+            await self.qwen.aclose()
 
 
 def build_language_model_handler(
@@ -58,25 +92,26 @@ def build_language_model_handler(
     )
 
 
-def build_realtime_search_resolver(*, settings: AgentSettings) -> QwenRealtimeSearch | None:
-    """Build the isolated Qwen search client without changing the main LLM."""
+def build_realtime_search_resolver(*, settings: AgentSettings) -> PublicRealtimeSearch:
+    """Build public live lookup without changing the conversational LLM."""
 
     api_key = str(getattr(settings, "dashscope_api_key", "") or "").strip()
-    if not api_key:
-        return None
-    return QwenRealtimeSearch(
-        QwenRealtimeSearchConfig(
-            api_key=api_key,
-            base_url=str(
-                getattr(
-                    settings,
-                    "dashscope_compatible_base_url",
-                    "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                )
-            ),
-            model=str(getattr(settings, "qwen_deep_model", "qwen-plus")),
+    qwen = None
+    if api_key:
+        qwen = QwenRealtimeSearch(
+            QwenRealtimeSearchConfig(
+                api_key=api_key,
+                base_url=str(
+                    getattr(
+                        settings,
+                        "dashscope_compatible_base_url",
+                        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    )
+                ),
+                model=str(getattr(settings, "qwen_deep_model", "qwen-plus")),
+            )
         )
-    )
+    return PublicRealtimeSearch(weather=OpenMeteoWeather(), qwen=qwen)
 
 
 async def build_voice_provider_handlers(
@@ -117,7 +152,13 @@ async def build_voice_provider_handlers(
         speech_synthesis=speech_synthesis,
         realtime_search_resolver=realtime_search_resolver,
         realtime_search_model=(
-            str(getattr(settings, "qwen_deep_model", "qwen-plus"))
+            str(
+                getattr(
+                    realtime_search_resolver,
+                    "model",
+                    getattr(settings, "qwen_deep_model", "qwen-plus"),
+                )
+            )
             if realtime_search_resolver is not None
             else None
         ),

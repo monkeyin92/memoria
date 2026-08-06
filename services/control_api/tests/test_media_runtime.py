@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import SecretStr
 from services.control_api.app.media_runtime import (
     decide_media_runtime,
@@ -58,6 +61,35 @@ def test_streamcore_token_is_short_lived_and_session_scoped() -> None:
     )
     assert token.count(".") == 2
     assert expires_at.tzinfo is not None
+
+
+def test_streamcore_token_uses_configured_eddsa_private_key() -> None:
+    private_key = Ed25519PrivateKey.generate()
+    pem = private_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode("ascii")
+    token, _ = mint_streamcore_token(
+        settings(
+            streamcore_token_secret=SecretStr(""),
+            streamcore_token_private_key_pem=SecretStr(pem),
+            streamcore_token_key_id="media-2026-08",
+        ),
+        session_id="session-eddsa",
+        user_id="user-1",
+        client_platform="h5",
+    )
+    header = jwt.get_unverified_header(token)
+    assert header == {"alg": "EdDSA", "kid": "media-2026-08", "typ": "JWT"}
+    decoded = jwt.decode(
+        token,
+        private_key.public_key(),
+        algorithms=["EdDSA"],
+        audience="memoria-media",
+        issuer="memoria-control-api",
+    )
+    assert decoded["session_id"] == "session-eddsa"
 
 
 def test_production_token_requires_independent_secret() -> None:

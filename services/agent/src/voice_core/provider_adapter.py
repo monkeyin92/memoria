@@ -258,6 +258,25 @@ class ExistingVoiceProviderAdapter:
                 results.append(result)
         return tuple(results)
 
+    async def reset_after_discontinuity(
+        self,
+        identity: SessionIdentity,
+        *,
+        capture_start_sample: int,
+    ) -> None:
+        """Fence a dropped input interval before accepting newer audio."""
+
+        if capture_start_sample < 0:
+            raise ValueError("discontinuity sample must be non-negative")
+        asr = await self._ensure_asr(identity.stream_epoch)
+        asr.mark_committed_sample(capture_start_sample)
+        await asr.reconnect_with_replay()
+        self._asr_task_contexts.clear()
+        self._asr_task_order.clear()
+        self._sentence_revisions.clear()
+        self._sentence_revision_order.clear()
+        self._remember_asr_task(asr, identity.stream_epoch)
+
     def _map_asr_event(
         self,
         asr: FunASRSession,

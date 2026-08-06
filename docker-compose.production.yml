@@ -298,11 +298,13 @@ services:
     environment:
       ENVIRONMENT: production
       MEDIA_EDGE_HTTP_ADDR: ":8080"
-      MEDIA_EDGE_HEALTHCHECK_URL: "http://127.0.0.1:8080/readyz"
+      MEDIA_EDGE_INTERNAL_HTTP_ADDR: ":8081"
+      MEDIA_EDGE_HEALTHCHECK_URL: "http://127.0.0.1:8081/readyz"
       MEDIA_EDGE_VOICE_CORE_ADDR: "voice-core-media-bridge:7001"
       MEDIA_EDGE_VOICE_CORE_REQUIRED: "true"
     expose:
       - "8080"
+      - "8081"
     volumes:
       - type: bind
         source: /etc/memoria-media-runtime

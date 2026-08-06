@@ -1,7 +1,13 @@
 import { VoiceTransport } from "./VoiceTransport.js";
 import { withAbortTimeout } from "../network/abortTimeout.js";
+import {
+  extractMicrophoneCapabilities,
+  extractMicrophoneSettings,
+} from "./webrtcStats.js";
 
 const EVENTS_LABEL = "memoria.events.v1";
+const CONVERSATION_LABEL = "memoria.conversation.v1";
+const EPHEMERAL_LABEL = "memoria.ephemeral.v1";
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 const PLAYBACK_SAMPLE_RATE = 24_000;
 const INTERACTION_AUTHORITIES = new Set([
@@ -23,6 +29,15 @@ const FLOOR_STATES = new Set([
   "silence",
 ]);
 
+function getAudioConstraints() {
+  return {
+    channelCount: { ideal: 1 },
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  };
+}
+
 function randomEventId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return `evt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -38,18 +53,28 @@ function asSdpResponse(response) {
 
 function waitForIceGathering(pc, timeoutMs) {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let timer = null;
-    const done = () => {
+    let settled = false;
+    const finish = (error = null) => {
+      if (settled) return;
+      settled = true;
       if (timer !== null) globalThis.clearTimeout(timer);
       pc.removeEventListener?.("icegatheringstatechange", onChange);
-      resolve();
+      if (error) reject(error);
+      else resolve();
     };
     const onChange = () => {
-      if (pc.iceGatheringState === "complete") done();
+      if (pc.iceGatheringState === "complete") finish();
     };
     pc.addEventListener?.("icegatheringstatechange", onChange);
-    timer = globalThis.setTimeout(done, timeoutMs);
+    if (!settled) {
+      timer = globalThis.setTimeout(
+        () => finish(new Error("ICE 候选收集超时")),
+        timeoutMs,
+      );
+    }
+    onChange();
   });
 }
 
@@ -100,7 +125,11 @@ function isNonNegativeInteger(value) {
   return Number.isInteger(value) && value >= 0;
 }
 
-function isMediaEnvelope(event) {
+function isMediaEnvelope(event, clockField = "server_monotonic_ms") {
+  const otherClock =
+    clockField === "server_monotonic_ms"
+      ? "client_monotonic_ms"
+      : "server_monotonic_ms";
   return (
     isObject(event) &&
     event.v === 1 &&
@@ -117,9 +146,14 @@ function isMediaEnvelope(event) {
     (event.task_epoch === undefined || isNonNegativeInteger(event.task_epoch)) &&
     (event.context_version === undefined ||
       isNonNegativeInteger(event.context_version)) &&
-    isNonNegativeInteger(event.server_monotonic_ms) &&
+    isNonNegativeInteger(event[clockField]) &&
+    event[otherClock] === undefined &&
     isObject(event.payload)
   );
+}
+
+function clientMonotonicMs() {
+  return Math.max(0, Math.round(globalThis.performance?.now?.() ?? Date.now()));
 }
 
 function runtimeConfig(session) {
@@ -168,6 +202,8 @@ export class StreamCoreTransport extends VoiceTransport {
     isPlaybackAudible = () => true,
     dataChannelLabel = EVENTS_LABEL,
     connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
+    iceRetryCount = 1,
+    iceRetryDelayMs = 100,
     heartbeatIntervalMs = 60_000,
   } = {}) {
     super();
@@ -195,13 +231,18 @@ export class StreamCoreTransport extends VoiceTransport {
     this.isPlaybackAudible = isPlaybackAudible;
     this.dataChannelLabel = dataChannelLabel;
     this.connectTimeoutMs = connectTimeoutMs;
+    this.iceRetryCount = Math.max(0, Math.min(2, Number(iceRetryCount) || 0));
+    this.iceRetryDelayMs = Math.max(0, Math.min(1_000, Number(iceRetryDelayMs) || 0));
     this.heartbeatIntervalMs = heartbeatIntervalMs;
     this.pc = null;
     this.channel = null;
+    this.channels = new Map();
+    this.audioSender = null;
     this.mediaStream = null;
     this.session = null;
     this.streamEpoch = 0;
     this.lastEventSequence = -1;
+    this.lastEventSequenceByLane = new Map();
     this.lastFloorEpoch = 0;
     this.nextClientSequence = 0;
     this.currentTurnId = 0;
@@ -215,6 +256,10 @@ export class StreamCoreTransport extends VoiceTransport {
     this.lastPlaybackProgressSample = -1;
     this.playbackTimeBaselineSeconds = null;
     this.playbackTimelineBlocked = false;
+    this.playbackTracker = null;
+    this.playbackWorkletBaseline = null;
+    this.playbackUsesWorklet = false;
+    this.playbackWorkletSuppressed = false;
     this.closed = false;
     this._connectionHandler = null;
     this._trackHandler = null;
@@ -227,7 +272,26 @@ export class StreamCoreTransport extends VoiceTransport {
     this._lifecycleController = null;
   }
 
-  async connect(
+  async connect(session, options = {}) {
+    let attempt = 0;
+    while (true) {
+      try {
+        return await this._connectOnce(session, options);
+      } catch (error) {
+        const retryable =
+          error instanceof Error &&
+          /ICE 候选收集超时|WebRTC 连接超时/.test(error.message);
+        if (!retryable || attempt >= this.iceRetryCount) throw error;
+        attempt += 1;
+        await this.close();
+        if (this.iceRetryDelayMs > 0) {
+          await new Promise((resolve) => globalThis.setTimeout(resolve, this.iceRetryDelayMs));
+        }
+      }
+    }
+  }
+
+  async _connectOnce(
     session,
     {
       getMicrophoneEnabled = () => true,
@@ -261,6 +325,7 @@ export class StreamCoreTransport extends VoiceTransport {
     this._connectOptions = { getMicrophoneEnabled, isCurrent };
     this.streamEpoch = config.streamEpoch;
     this.lastEventSequence = -1;
+    this.lastEventSequenceByLane.clear();
     this.lastFloorEpoch = 0;
     this.nextClientSequence = 0;
     this.currentTurnId = preservedMediaState?.turnId ?? 0;
@@ -274,6 +339,9 @@ export class StreamCoreTransport extends VoiceTransport {
     this.lastPlaybackProgressSample = -1;
     this.playbackTimeBaselineSeconds = null;
     this.playbackTimelineBlocked = false;
+    this.playbackWorkletBaseline = null;
+    this.playbackUsesWorklet = false;
+    this.playbackWorkletSuppressed = false;
     this._connectHandshakeComplete = false;
     this._disconnectNotified = false;
     this.onState("connecting");
@@ -283,26 +351,38 @@ export class StreamCoreTransport extends VoiceTransport {
     });
     this.pc = pc;
     this._installPeerHandlers(pc, isCurrent);
+    const audioTransceiver = pc.addTransceiver?.("audio", {
+      direction: "sendrecv",
+    });
+    this.audioSender = audioTransceiver?.sender || null;
     const microphoneEnabled = Boolean(getMicrophoneEnabled());
     if (microphoneEnabled) {
       this.mediaStream = await this.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: getAudioConstraints(),
         video: false,
       });
       if (!isCurrent()) return;
       for (const track of this.mediaStream?.getAudioTracks?.() || []) {
-        pc.addTrack(track, this.mediaStream);
+        if (this.audioSender?.replaceTrack) {
+          await this.audioSender.replaceTrack(track);
+        } else {
+          pc.addTrack(track, this.mediaStream);
+        }
+        this._reportMicrophoneTrack(track);
       }
       this.onMicrophoneTrack(this.mediaStream?.getAudioTracks?.()[0] || null);
     }
-    const channel = pc.createDataChannel(this.dataChannelLabel);
-    this.channel = channel;
-    this._installDataChannel(channel, isCurrent);
+    const channelDefinitions = [
+      ["control", this.dataChannelLabel, { ordered: true }],
+      ["conversation", CONVERSATION_LABEL, { ordered: true }],
+      ["ephemeral", EPHEMERAL_LABEL, { ordered: false, maxRetransmits: 1 }],
+    ];
+    for (const [lane, label, options] of channelDefinitions) {
+      const channel = pc.createDataChannel(label, options);
+      this.channels.set(lane, channel);
+      this._installDataChannel(channel, isCurrent, lane);
+    }
+    this.channel = this.channels.get("control") || null;
     const offer = await pc.createOffer();
     if (!isCurrent()) return;
     await pc.setLocalDescription(offer);
@@ -482,23 +562,27 @@ export class StreamCoreTransport extends VoiceTransport {
     pc.ontrack = this._trackHandler;
   }
 
-  _installDataChannel(channel, isCurrent) {
+  _installDataChannel(channel, isCurrent, lane = "control") {
     channel.onopen = () => {
-      if (isCurrent()) this.onDiagnostic("media_events_open", "ok");
+      if (isCurrent()) {
+        this.onDiagnostic(lane === "control" ? "media_events_open" : `media_${lane}_open`, "ok");
+      }
     };
     channel.onclose = () => {
-      if (isCurrent()) this.onDiagnostic("media_events_closed", "ok");
+      if (isCurrent()) {
+        this.onDiagnostic(lane === "control" ? "media_events_closed" : `media_${lane}_closed`, "ok");
+      }
     };
     channel.onerror = () => {
       if (isCurrent()) this.onError("媒体事件通道不可用");
     };
     channel.onmessage = (event) => {
       if (!isCurrent()) return;
-      this._handleEvent(event?.data);
+      this._handleEvent(event?.data, lane);
     };
   }
 
-  _handleEvent(raw) {
+  _handleEvent(raw, lane = "control") {
     let event;
     try {
       event = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -509,7 +593,7 @@ export class StreamCoreTransport extends VoiceTransport {
       !isMediaEnvelope(event) ||
       event.session_id !== this.session?.session_id ||
       event.stream_epoch !== this.streamEpoch ||
-      event.sequence <= this.lastEventSequence
+      event.sequence <= (this.lastEventSequenceByLane.get(lane) ?? -1)
     ) {
       return;
     }
@@ -601,32 +685,12 @@ export class StreamCoreTransport extends VoiceTransport {
       }
       if (fenceChanged) this._resetPlaybackGeneration();
     }
-    // Consume the server event sequence only after the identity/fence checks
-    // above. An invalid high-sequence packet must not poison the next valid
-    // event on the same DataChannel.
-    this.lastEventSequence = event.sequence;
+    // Sequences are monotonic within one SCTP stream. Cross-channel delivery
+    // can reorder, so each lane owns an independent watermark.
+    this.lastEventSequenceByLane.set(lane, event.sequence);
+    this.lastEventSequence = Math.max(this.lastEventSequence, event.sequence);
     if (event.type === "assistant.audio.frame") {
-      if (this.lastAudioSequence < 0) {
-        if (!this.isPlaybackAudible?.()) {
-          this.playbackTimelineBlocked = true;
-        } else {
-          const currentTime = this.getPlaybackTime?.();
-          if (Number.isFinite(currentTime) && currentTime >= 0) {
-            this.playbackTimeBaselineSeconds = currentTime;
-            this.playbackTimelineBlocked = false;
-          }
-        }
-      } else if (this.playbackTimelineBlocked && this.isPlaybackAudible?.()) {
-        // A flush/seek/mute can deliberately block ACKs while the remote
-        // track keeps advancing.  The first frame observed after playback is
-        // audible is the safe resynchronization point; rebuild the wall-clock
-        // baseline there instead of dropping the audio sequence watermark.
-        const currentTime = this.getPlaybackTime?.();
-        if (Number.isFinite(currentTime) && currentTime >= 0) {
-          this.playbackTimeBaselineSeconds = currentTime;
-        }
-        this.playbackTimelineBlocked = false;
-      }
+      this._anchorPlaybackFrame(payload);
       this.lastAudioSequence = payload.sequence;
       this.lastAudioSampleEnd = payload.source_start_sample + payload.frame_samples;
     }
@@ -709,12 +773,45 @@ export class StreamCoreTransport extends VoiceTransport {
     return undefined;
   }
 
+  _reportMicrophoneTrack(track) {
+    try {
+      const settings = extractMicrophoneSettings(track?.getSettings?.());
+      if (settings) {
+        this.onDiagnostic("webrtc_microphone_settings", "ok", settings);
+      }
+    } catch {
+      // Diagnostics must never disturb microphone capture.
+    }
+    try {
+      const capabilities = extractMicrophoneCapabilities(
+        track?.getCapabilities?.(),
+      );
+      if (capabilities) {
+        this.onDiagnostic(
+          "webrtc_microphone_capabilities",
+          "ok",
+          capabilities,
+        );
+      }
+    } catch {
+      // Diagnostics must never disturb microphone capture.
+    }
+  }
+
   async setMicrophoneEnabled(enabled) {
     const active = Boolean(enabled);
     if (!this.mediaStream && active) {
-      this.mediaStream = await this.getUserMedia({ audio: true, video: false });
+      this.mediaStream = await this.getUserMedia({
+        audio: getAudioConstraints(),
+        video: false,
+      });
       for (const track of this.mediaStream?.getAudioTracks?.() || []) {
-        this.pc?.addTrack(track, this.mediaStream);
+        if (this.audioSender?.replaceTrack) {
+          await this.audioSender.replaceTrack(track);
+        } else {
+          this.pc?.addTrack(track, this.mediaStream);
+        }
+        this._reportMicrophoneTrack(track);
       }
     }
     for (const track of this.mediaStream?.getAudioTracks?.() || []) {
@@ -764,7 +861,8 @@ export class StreamCoreTransport extends VoiceTransport {
     return nextEpoch;
   }
 
-  resumeAudio() {
+  async resumeAudio() {
+    await this.resumePlaybackTracker().catch(() => false);
     const elements = globalThis.document?.querySelectorAll?.("audio") || [];
     return Promise.all(
       [...elements].map((element) =>
@@ -832,13 +930,13 @@ export class StreamCoreTransport extends VoiceTransport {
       tool_epoch: body.tool_epoch ?? this.currentToolEpoch,
       task_epoch: body.task_epoch ?? this.currentTaskEpoch,
       context_version: body.context_version ?? this.currentContextVersion,
-      server_monotonic_ms: body.server_monotonic_ms ?? 0,
+      client_monotonic_ms: body.client_monotonic_ms ?? clientMonotonicMs(),
       payload: body.payload ?? {},
     };
     for (const [key, value] of Object.entries(envelope)) {
       if (value === undefined) delete envelope[key];
     }
-    if (!isMediaEnvelope(envelope)) {
+    if (!isMediaEnvelope(envelope, "client_monotonic_ms")) {
       return Promise.reject(new Error("媒体事件 envelope 无效"));
     }
     try {
@@ -849,12 +947,173 @@ export class StreamCoreTransport extends VoiceTransport {
     return Promise.resolve();
   }
 
+  setPlaybackTracker(tracker = null) {
+    const nextTracker = tracker || null;
+    const changed = this.playbackTracker !== nextTracker;
+    if (this.playbackTracker && changed) {
+      this.playbackTracker.setOnRendered?.(() => undefined);
+      this.playbackTracker.setOnDiagnostic?.(() => undefined);
+    }
+    this.playbackTracker = nextTracker;
+    if (changed) {
+      this.playbackWorkletBaseline = null;
+      this.playbackUsesWorklet = false;
+      this.playbackWorkletSuppressed = false;
+    }
+    if (!nextTracker) return;
+    nextTracker.setOnDiagnostic?.((name, status = "ok", detail = undefined) => {
+      if (this.playbackTracker === nextTracker && !this.closed) {
+        this.onDiagnostic(name, status, detail);
+      }
+    });
+    nextTracker.setOnRendered?.((snapshot) => {
+      if (this.playbackTracker !== nextTracker || this.closed) return;
+      void this.publishPlaybackProgressFromWorklet(snapshot).catch(() => undefined);
+    });
+  }
+
+  resumePlaybackTracker() {
+    return this.playbackTracker?.resume?.() || Promise.resolve(false);
+  }
+
+  _workletSnapshot(snapshot = this.playbackTracker?.getSnapshot?.()) {
+    const renderedFrames = snapshot?.renderedFrames ?? snapshot?.rendered_frames;
+    const sampleRate = snapshot?.sampleRate ?? snapshot?.sample_rate;
+    if (
+      !Number.isSafeInteger(renderedFrames) ||
+      renderedFrames < 0 ||
+      !Number.isFinite(sampleRate) ||
+      sampleRate <= 0
+    ) {
+      return null;
+    }
+    return { renderedFrames, sampleRate };
+  }
+
+  _anchorPlaybackFrame(payload) {
+    const firstFrame = this.lastAudioSequence < 0;
+    const audible = Boolean(this.isPlaybackAudible?.());
+    if (!firstFrame && (!this.playbackTimelineBlocked || !audible)) return;
+    if (!audible) {
+      this.playbackTimelineBlocked = true;
+      if (this._workletSnapshot()) this.playbackWorkletSuppressed = true;
+      return;
+    }
+
+    const snapshot = this._workletSnapshot();
+    if (snapshot && payload.source_start_sample === 0) {
+      this.playbackWorkletBaseline = snapshot;
+      this.playbackUsesWorklet = true;
+      this.playbackWorkletSuppressed = false;
+      this.playbackTimelineBlocked = false;
+      return;
+    }
+
+    const currentTime = this.getPlaybackTime?.();
+    if (Number.isFinite(currentTime) && currentTime >= 0) {
+      this.playbackTimeBaselineSeconds = currentTime;
+    }
+
+    // A sample ACK is a contiguous watermark. After muted, flushed, or
+    // seeked playout, a later RTP frame cannot prove that earlier samples were
+    // audible. Keep a Worklet-backed generation fail-closed until its next
+    // zero-based fence rather than acknowledging an unseen prefix.
+    if (snapshot && this.playbackWorkletSuppressed) {
+      this.playbackWorkletBaseline = null;
+      this.playbackUsesWorklet = false;
+      this.playbackTimelineBlocked = true;
+      return;
+    }
+
+    this.playbackTimelineBlocked = false;
+  }
+
+  _workletRenderedSampleEnd(snapshot) {
+    const baseline = this.playbackWorkletBaseline;
+    const current = this._workletSnapshot(snapshot);
+    if (
+      !this.playbackUsesWorklet ||
+      this.playbackWorkletSuppressed ||
+      !baseline ||
+      !current ||
+      baseline.sampleRate !== current.sampleRate ||
+      current.renderedFrames < baseline.renderedFrames
+    ) {
+      return null;
+    }
+    return Math.min(
+      this.lastAudioSampleEnd,
+      Math.max(
+        0,
+        Math.floor(
+          ((current.renderedFrames - baseline.renderedFrames) *
+            PLAYBACK_SAMPLE_RATE) /
+            current.sampleRate,
+        ),
+      ),
+    );
+  }
+
+  _publishPlaybackWatermark(renderedSampleEnd, approximate) {
+    if (!this.isPlaybackAudible?.()) {
+      this.playbackTimelineBlocked = true;
+      if (!approximate) this.playbackWorkletSuppressed = true;
+      return Promise.resolve(false);
+    }
+    if (
+      this.playbackTimelineBlocked ||
+      this.playbackWorkletSuppressed ||
+      this.lastAudioSequence < 0 ||
+      this.lastAudioSampleEnd <= 0 ||
+      !Number.isSafeInteger(renderedSampleEnd) ||
+      renderedSampleEnd < 0
+    ) {
+      return Promise.resolve(false);
+    }
+    const boundedSampleEnd = Math.min(renderedSampleEnd, this.lastAudioSampleEnd);
+    if (
+      boundedSampleEnd <= 0 ||
+      boundedSampleEnd <= this.lastPlaybackProgressSample
+    ) {
+      return Promise.resolve(false);
+    }
+    const previousProgressSample = this.lastPlaybackProgressSample;
+    this.lastPlaybackProgressSample = boundedSampleEnd;
+    return this.publishData({
+      type: "client.playback.progress",
+      turn_id: this.currentTurnId,
+      generation_id: this.currentGenerationId,
+      payload: {
+        received_sequence: this.lastAudioSequence,
+        rendered_sample_end: boundedSampleEnd,
+        client_monotonic_ms: clientMonotonicMs(),
+        approximate,
+        turn_id: this.currentTurnId,
+        generation_id: this.currentGenerationId,
+        tool_epoch: this.currentToolEpoch,
+      },
+    }).then(
+      () => true,
+      (error) => {
+        // Do not lose the watermark when a transient DataChannel failure
+        // prevents the server from receiving this progress update.
+        if (this.lastPlaybackProgressSample === boundedSampleEnd) {
+          this.lastPlaybackProgressSample = previousProgressSample;
+        }
+        throw error;
+      },
+    );
+  }
+
   _resetPlaybackGeneration() {
     this.lastAudioSequence = -1;
     this.lastAudioSampleEnd = 0;
     this.lastPlaybackProgressSample = -1;
     this.playbackTimeBaselineSeconds = null;
     this.playbackTimelineBlocked = false;
+    this.playbackWorkletBaseline = null;
+    this.playbackUsesWorklet = false;
+    this.playbackWorkletSuppressed = false;
   }
 
   resetPlaybackTimelineFromTime(currentTimeSeconds = 0) {
@@ -863,6 +1122,19 @@ export class StreamCoreTransport extends VoiceTransport {
     }
     this.lastPlaybackProgressSample = -1;
     this.playbackTimelineBlocked = true;
+    this.playbackWorkletSuppressed = Boolean(
+      this.playbackWorkletSuppressed ||
+        this.playbackUsesWorklet ||
+        this.playbackWorkletBaseline,
+    );
+    this.playbackWorkletBaseline = null;
+    this.playbackUsesWorklet = false;
+  }
+
+  publishPlaybackProgressFromWorklet(snapshot) {
+    const renderedSampleEnd = this._workletRenderedSampleEnd(snapshot);
+    if (renderedSampleEnd === null) return Promise.resolve(false);
+    return this._publishPlaybackWatermark(renderedSampleEnd, false);
   }
 
   publishPlaybackProgressFromTime(currentTimeSeconds, { seeking = false } = {}) {
@@ -871,14 +1143,31 @@ export class StreamCoreTransport extends VoiceTransport {
     }
     if (seeking) {
       this.playbackTimelineBlocked = true;
+      this.playbackWorkletSuppressed = Boolean(
+        this.playbackWorkletSuppressed ||
+          this.playbackUsesWorklet ||
+          this.playbackWorkletBaseline,
+      );
+      this.playbackWorkletBaseline = null;
+      this.playbackUsesWorklet = false;
       return Promise.resolve(false);
+    }
+    if (this.playbackUsesWorklet) {
+      const renderedSampleEnd = this._workletRenderedSampleEnd();
+      if (renderedSampleEnd !== null) {
+        return this._publishPlaybackWatermark(renderedSampleEnd, false);
+      }
+      this.playbackUsesWorklet = false;
+      this.playbackWorkletBaseline = null;
     }
     if (this.playbackTimeBaselineSeconds === null) {
       this.playbackTimeBaselineSeconds = currentTimeSeconds;
       if (this.isPlaybackAudible?.()) this.playbackTimelineBlocked = false;
       return Promise.resolve(false);
     }
-    if (this.playbackTimelineBlocked) return Promise.resolve(false);
+    if (this.playbackTimelineBlocked || this.playbackWorkletSuppressed) {
+      return Promise.resolve(false);
+    }
     if (this.lastAudioSequence < 0 || this.lastAudioSampleEnd <= 0) {
       return Promise.resolve(false);
     }
@@ -892,38 +1181,7 @@ export class StreamCoreTransport extends VoiceTransport {
         ),
       ),
     );
-    if (renderedSampleEnd <= this.lastPlaybackProgressSample) {
-      return Promise.resolve(false);
-    }
-    const previousProgressSample = this.lastPlaybackProgressSample;
-    this.lastPlaybackProgressSample = renderedSampleEnd;
-    return this.publishData({
-      type: "client.playback.progress",
-      turn_id: this.currentTurnId,
-      generation_id: this.currentGenerationId,
-      payload: {
-        received_sequence: this.lastAudioSequence,
-        rendered_sample_end: renderedSampleEnd,
-        client_monotonic_ms: Math.max(
-          0,
-          Math.round(globalThis.performance?.now?.() ?? Date.now()),
-        ),
-        approximate: true,
-        turn_id: this.currentTurnId,
-        generation_id: this.currentGenerationId,
-        tool_epoch: this.currentToolEpoch,
-      },
-    }).then(
-      () => true,
-      (error) => {
-        // Do not lose the watermark when a transient DataChannel failure
-        // prevents the server from receiving this progress update.
-        if (this.lastPlaybackProgressSample === renderedSampleEnd) {
-          this.lastPlaybackProgressSample = previousProgressSample;
-        }
-        throw error;
-      },
-    );
+    return this._publishPlaybackWatermark(renderedSampleEnd, true);
   }
 
   sendText(text) {
@@ -942,15 +1200,19 @@ export class StreamCoreTransport extends VoiceTransport {
   }
 
   async close() {
-    if (this.closed && !this.pc && !this.mediaStream) return;
+    if (this.closed && !this.pc && !this.mediaStream) {
+      this.setPlaybackTracker(null);
+      return;
+    }
     this.closed = true;
+    this.setPlaybackTracker(null);
     this._lifecycleController?.abort();
     this._lifecycleController = null;
     this._stopHeartbeat();
     for (const track of this.mediaStream?.getTracks?.() || []) track.stop();
     this.onMicrophoneTrack(null);
     this.mediaStream = null;
-    this.channel?.close?.();
+    for (const channel of new Set(this.channels.values())) channel?.close?.();
     if (this.pc) {
       if (this._connectionHandler) {
         this.pc.removeEventListener?.("connectionstatechange", this._connectionHandler);
@@ -959,6 +1221,8 @@ export class StreamCoreTransport extends VoiceTransport {
       this.pc.close?.();
     }
     this.channel = null;
+    this.channels.clear();
+    this.audioSender = null;
     this.pc = null;
     this.session = null;
   }

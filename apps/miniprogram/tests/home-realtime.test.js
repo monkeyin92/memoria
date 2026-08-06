@@ -78,6 +78,7 @@ test("text mode replaces the user turn when the assistant starts streaming", () 
       state: "speaking",
       turn_id: 1,
       generation_id: 1,
+      tool_epoch: 0,
     },
   });
   page._onGatewayEvent.call(instance, {
@@ -388,7 +389,7 @@ test("assistant expression follows the active speaking fence and clears on compl
   const instance = {
     data,
     _session: { session_id: "session-1" },
-    _assistantStateFence: { turnId: 1, generationId: 1 },
+    _assistantStateFence: { turnId: 1, generationId: 1, toolEpoch: 0 },
     setData(update) {
       Object.assign(this.data, update);
     },
@@ -409,12 +410,14 @@ test("assistant expression follows the active speaking fence and clears on compl
   page._setStatus.call(instance, "speaking", {
     turn_id: 1,
     generation_id: 1,
+    tool_epoch: 0,
   });
   assert.equal(data.expression, "caring");
 
   page._setStatus.call(instance, "listening", {
     turn_id: 1,
     generation_id: 1,
+    tool_epoch: 0,
   });
   assert.equal(data.expression, "neutral");
 
@@ -426,7 +429,53 @@ test("assistant expression follows the active speaking fence and clears on compl
     generation_id: 1,
     tool_epoch: 0,
   });
-  assert.equal(instance._pendingAssistantExpression, null);
+  assert.equal(instance._pendingAssistantExpression.expression, "happy");
+
+  page._setStatus.call(instance, "speaking", {
+    turn_id: 1,
+    generation_id: 1,
+    tool_epoch: 0,
+  });
+  assert.equal(data.expression, "happy");
+});
+
+test("assistant expression is bound to the complete turn/generation/tool epoch fence", () => {
+  const data = {
+    status: "speaking",
+    statusLabel: "正在回应",
+    expression: "neutral",
+  };
+  const instance = {
+    data,
+    _session: { session_id: "session-1" },
+    _assistantStateFence: { turnId: 1, generationId: 1, toolEpoch: 2 },
+    setData(update) {
+      Object.assign(this.data, update);
+    },
+    _activateAssistantExpression: page._activateAssistantExpression,
+    _clearAssistantExpression: page._clearAssistantExpression,
+  };
+
+  page._onAssistantExpression.call(instance, {
+    type: "assistant_expression",
+    session_id: "session-1",
+    expression: "happy",
+    turn_id: 1,
+    generation_id: 1,
+    tool_epoch: 0,
+  });
+  assert.equal(instance._pendingAssistantExpression, undefined);
+  assert.equal(data.expression, "neutral");
+
+  page._onAssistantExpression.call(instance, {
+    type: "assistant_expression",
+    session_id: "session-1",
+    expression: "caring",
+    turn_id: 1,
+    generation_id: 1,
+    tool_epoch: 2,
+  });
+  assert.equal(data.expression, "caring");
 });
 
 test("media close and interruption reset a prior assistant expression", async () => {

@@ -72,6 +72,7 @@ class AudioFrame:
     payload: bytes
     crc32c: int | None = None
     discontinuity: bool = False
+    loss_concealed: bool = False
 
     def __post_init__(self) -> None:
         _non_negative_int(self.sequence, "sequence")
@@ -97,6 +98,7 @@ class AudioFrame:
             "payload_b64": base64.b64encode(self.payload).decode("ascii"),
             "crc32c": self.crc32c,
             "discontinuity": self.discontinuity,
+            "loss_concealed": self.loss_concealed,
         }
 
 

@@ -1,5 +1,11 @@
 # StreamCore 全双工架构升级复核
 
+## 2026-08-06 阶段推进补充
+
+本轮按文章建议关闭了可在仓内证明的性能与控制面缺口：Voice Core 有界 Audio Pump/尾超时/有序 LRU/分 lane 出站队列，Go Edge 使用 Ring Buffer、Opus FEC/PLC 和固定工作缓冲，H5 使用统一采集约束、transceiver、ICE 有界重试、三条 DataChannel 与 client/server 单调时钟分离。H5 StreamCore 远端音频已接入 AudioWorklet 软件播放图，按渲染帧产生 generation-fenced sample watermark；Python `media_session.py` 与 Go 的 WebRTC/Actor 职责已按 ingress、turn、output、audio、DataChannel 和 shadow 规则拆分。Media Edge 具备 Ed25519/EdDSA `kid`/JWKS 验证和可选公私监听器。实时天气查询已接入 Open-Meteo/Qwen resolver，实时 delegation 先播确认语，再按 generation 回告；静态“我不知道”不会抢先结束实时请求。
+
+这些仓内结果不改变生产边界：Worklet 路径的 `approximate: false` 只表示软件播放图处理过 watermark，不是浏览器 DAC 或扬声器的实际出声证明；`currentTime` 回退继续标记为 approximate。Redis 多实例 ownership、真实 Provider/TURN/浏览器/硬件/儿童语料/容量/Chaos/灰度和回滚证据仍开放；`go_authoritative` 继续 fail closed。
+
 ## 结论
 
 **架构判断和实施路线已经完成；架构升级本身尚未完成。**
@@ -46,8 +52,14 @@
 - [x] **C2**：StreamCore 的 realtime-search 已收口为
   `media_deep_response -> DEEP_RESULT -> OutputWork`；该路径不会再产生普通
   `CONVERSATION_REPLY` 的重复 resolver 调用。
-- [x] **C3**：慢 delegation 的 `FAST_ACKNOWLEDGEMENT` 已进入正式 `OutputWork`；ACK 的
-  `PlaybackProgress` 完成后才由 `DEEP_RESULT` 接替，快速结果不播放 ACK。
+- [x] **C3**：realtime delegation 的 `FAST_ACKNOWLEDGEMENT` 已进入正式 `OutputWork`；确认语
+  先经 output owner 门禁，MediaSession 在 playback ACK 后才让 `DEEP_RESULT` 接替，Agent
+  流式路径也沿用同一 generation fence，迟到或过期结果丢弃。
+- [x] **C7**：实时意图会覆盖响应规划器的静态 `direct_text`，并在 Agent 与 MediaSession
+  两条链路统一使用 `REALTIME_UNAVAILABLE_REPLY` fail closed；危害/危机混合语句仍由固定
+  安全回复优先。成功、慢查询、无结果、generation 变化和安全边界均有回归。
+- [x] **C8**：H5 StreamCore 播放 ACK 已接入 AudioWorklet 渲染 watermark，并对 generation、静音、seek、flush、重连和关闭保持 fence/连续前缀门禁；不支持时回退为 `currentTime` 近似 ACK。该项只关闭软件播放图实现，不关闭真实浏览器/DAC 门禁。
+- [x] **C9**：Python Voice Core 已保留单一 `MediaVoiceCoreRegistry` facade，并把有界音频 ingress、话轮端点和输出仲裁拆出；Go 已把 WebRTC 音频、DataChannel 转发和 shadow speech/output/comparison 拆出。拆分不改变 Python 权威或 Go shadow 边界。
 - [x] **C4**：当前工作区已留下 CI 同镜像 PostgreSQL/pgvector 的全量 Python 与 coverage
   通过记录（`1856 passed, 2 skipped`，总 coverage `87.70%`）。
 - [x] **C5**：StreamCore 的物理 PCM 执行面只允许 `CONVERSATION_REPLY`、
@@ -152,8 +164,8 @@ F0 当前工作区与远端 CI
 
 ## 本次复核的本地证据
 
-2026-08-06：`uv run mypy services --strict` 通过（223 source files）；架构相关的
+2026-08-06：`uv run mypy services --strict` 通过（228 source files），Python 全量 `pytest --no-cov` 通过；架构相关的
 MediaSession/Provider/Delegation/Authority/Factory 定向 Python 回归通过；H5 为
-`25 files / 288 tests` 通过；日期回答的短 ASR 回声不会再提交为新话轮（`PlaybackInputGuard` 与
-`DuplexRuntime` 回归已通过）；`services/media_edge` 的 `go test ./...` 通过。没有新的远端 CI、
-真实 TURN/provider、硬件、生产 shadow 或回滚证据，因此 R1-R5 保持开放。
+`26 files / 300 tests` 通过且 production build 成功，Worklet 静态资源在本地预览返回 `200 text/javascript`；Go 的
+`go test ./...`、`go test -race ./...` 和 `go vet ./...` 通过。应用内浏览器 H5 壳无 console error，但其沙箱未暴露
+Web Audio API，因此不能替代真实浏览器 Worklet/DAC 证据。没有新的远端 CI、真实 TURN/provider、硬件、生产 shadow 或回滚证据，因此 R1-R5 保持开放。

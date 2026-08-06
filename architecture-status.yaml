@@ -1,0 +1,48 @@
+# 唯一架构状态基线；真实外部 Gate 未通过前不得启用 go_authoritative。
+schema_version: 1
+as_of_commit: 20260806-201007
+production_runtime: python_authoritative
+production_media: livekit
+go_shadow_enabled: false
+go_authoritative_allowed: false
+
+stages:
+  python_voice_core: implemented_local
+  go_media_edge: implemented_local_shadow_only
+  h5_streamcore_transport: implemented_local
+  h5_audio_worklet_playback_ack: implemented_local_software_graph
+  voice_core_and_edge_module_split: implemented_local
+  realtime_weather_lookup: implemented_local_public_canary
+  opus_plc_fec_and_buffer_reuse: implemented_local
+  prioritized_data_channels: implemented_local_backward_compatible
+  asymmetric_media_jwt: implemented_local_optional_migration
+  media_public_internal_listeners: implemented_local_optional_split
+  multi_instance_ownership: pending
+  authority_migration: blocked_by_external_gates
+
+gates:
+  ci: pending_remote_run
+  local_strict_mypy: passed
+  local_proto_generation: passed
+  local_python_tests: passed
+  local_h5_tests: passed
+  local_go_tests: passed
+  local_go_race: passed
+  local_go_vet: passed
+  local_go_opus_plc_fec: passed
+  local_h5_transport: passed
+  weather_public_api_canary: passed
+  redis_lua_single_node_canary: passed
+  real_provider: pending
+  turn_cross_host_e2e: pending
+  browser_playout_ack: pending
+  hardware_aec: pending
+  authorized_child_corpus_200: pending
+  capacity_matrix: pending
+  redis_session_ownership: pending
+  chaos_recovery: pending
+  canary_and_rollback: pending
+
+external_evidence_policy:
+  fail_closed: true
+  note: "本地 fake、loopback、公开天气 canary 或 AudioWorklet 软件播放图 watermark 不等同于真实 provider/TURN/硬件/容量验收；approximate=false 不表示 DAC 已出声。"

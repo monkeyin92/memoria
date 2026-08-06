@@ -6,6 +6,8 @@ import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from services.common.companion_response_safety import companion_safety_decision
+
 _WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 _STRIP = re.compile(r"[\s，,。！？!?；;：:、]")
 _SAFE_REPLY = re.compile(
@@ -68,6 +70,7 @@ _DEFERRED_REPLY_MARKERS = (
     "看看",
 )
 _WAITING_REPLY_MARKERS = ("稍等", "等一下", "等等", "一会儿", "稍后")
+REALTIME_UNAVAILABLE_REPLY = "我暂时没查到实时结果，稍后再试一次。"
 _FAILURE_REPLY_MARKERS = (
     "联网失败",
     "无法联网",
@@ -171,7 +174,11 @@ def requires_realtime_lookup(query: str) -> bool:
     """Whether this turn needs a fresh result rather than a local clock reply."""
 
     compact = _normalized(query)
-    return bool(compact) and any(marker in compact for marker in _LIVE_MARKERS)
+    return (
+        bool(compact)
+        and companion_safety_decision(query) == "none"
+        and any(marker in compact for marker in _LIVE_MARKERS)
+    )
 
 
 def is_realtime_followup_nudge(query: str) -> bool:

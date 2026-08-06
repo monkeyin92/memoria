@@ -279,6 +279,33 @@ async def test_shadow_queue_overflow_never_cancels_authoritative_delivery() -> N
     assert queued.client.type == "still-authoritative"
 
 
+def test_outgoing_queue_drains_critical_before_reliable_and_coalescing() -> None:
+    bridge = MediaBridgeGrpcServer(max_pending_messages=4)
+    connection = bridge._open_connection(  # noqa: SLF001 - transport seam under test
+        SessionIdentity("priority-outgoing", account_id="account", device_id="h5")
+    )
+    connection.outgoing.put_nowait(
+        media_pb2.CoreToMedia(client=media_pb2.ClientEvent(type="committed"))
+    )
+    connection.outgoing.put_nowait(
+        media_pb2.CoreToMedia(
+            transcript=media_pb2.TranscriptEvent(turn_id=1, revision=1, text="草稿")
+        )
+    )
+    connection.outgoing.put_nowait(
+        media_pb2.CoreToMedia(
+            generation=media_pb2.GenerationControl(
+                action=media_pb2.GENERATION_ACTION_CANCEL,
+                reason="user_stop",
+            )
+        )
+    )
+
+    assert connection.outgoing.get_nowait().WhichOneof("event") == "generation"
+    assert connection.outgoing.get_nowait().WhichOneof("event") == "client"
+    assert connection.outgoing.get_nowait().WhichOneof("event") == "transcript"
+
+
 @pytest.mark.asyncio
 async def test_python_executor_emits_fenced_realtime_effect_during_go_shadow() -> None:
     bridge = MediaBridgeGrpcServer(allow_go_shadow=True)

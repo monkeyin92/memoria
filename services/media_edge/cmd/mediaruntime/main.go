@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log"
@@ -19,6 +23,59 @@ import (
 	mediaedge "memoria/services/media_edge"
 	mediav1 "memoria/services/media_edge/gen/memoria/media/v1"
 )
+
+func loadMediaPublicKeys() (map[string]ed25519.PublicKey, error) {
+	file := strings.TrimSpace(os.Getenv("MEDIA_EDGE_JWT_PUBLIC_KEY_FILE"))
+	inline := strings.TrimSpace(os.Getenv("MEDIA_EDGE_JWT_PUBLIC_KEY_PEM"))
+	if file != "" && inline != "" {
+		return nil, errors.New("configure one MEDIA_EDGE_JWT public key source")
+	}
+	material := inline
+	if file != "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("read media edge JWT public key: %w", err)
+		}
+		material = string(data)
+	}
+	if strings.TrimSpace(material) == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(strings.TrimSpace(material), "{") {
+		return mediaedge.ParseEd25519PublicKeys([]byte(material))
+	}
+	block, _ := pem.Decode([]byte(material))
+	if block == nil {
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(material))
+		if err != nil {
+			decoded, err = base64.RawStdEncoding.DecodeString(strings.TrimSpace(material))
+		}
+		if err != nil {
+			return nil, errors.New("media edge JWT public key must be PEM, JWKS, or base64")
+		}
+		if len(decoded) != ed25519.PublicKeySize {
+			return nil, errors.New("media edge JWT public key has invalid length")
+		}
+		keyID := strings.TrimSpace(os.Getenv("MEDIA_EDGE_JWT_KEY_ID"))
+		if keyID == "" {
+			return nil, errors.New("MEDIA_EDGE_JWT_KEY_ID is required with a public key")
+		}
+		return map[string]ed25519.PublicKey{keyID: ed25519.PublicKey(decoded)}, nil
+	}
+	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse media edge JWT public key: %w", err)
+	}
+	key, ok := parsed.(ed25519.PublicKey)
+	if !ok || len(key) != ed25519.PublicKeySize {
+		return nil, errors.New("media edge JWT public key is not Ed25519")
+	}
+	keyID := strings.TrimSpace(os.Getenv("MEDIA_EDGE_JWT_KEY_ID"))
+	if keyID == "" {
+		return nil, errors.New("MEDIA_EDGE_JWT_KEY_ID is required with a public key")
+	}
+	return map[string]ed25519.PublicKey{keyID: key}, nil
+}
 
 func runHealthcheck() int {
 	url := strings.TrimSpace(os.Getenv("MEDIA_EDGE_HEALTHCHECK_URL"))
@@ -173,16 +230,25 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
 		os.Exit(runHealthcheck())
 	}
+	publicKeys, err := loadMediaPublicKeys()
+	if err != nil {
+		log.Fatal(err)
+	}
 	verifier := mediaedge.JWTVerifier{
-		Secret:   []byte(strings.TrimSpace(os.Getenv("MEDIA_EDGE_JWT_SECRET"))),
-		Issuer:   strings.TrimSpace(os.Getenv("MEDIA_EDGE_JWT_ISSUER")),
-		Audience: strings.TrimSpace(os.Getenv("MEDIA_EDGE_JWT_AUDIENCE")),
+		Secret:     []byte(strings.TrimSpace(os.Getenv("MEDIA_EDGE_JWT_SECRET"))),
+		PublicKeys: publicKeys,
+		KeyID:      strings.TrimSpace(os.Getenv("MEDIA_EDGE_JWT_KEY_ID")),
+		Issuer:     strings.TrimSpace(os.Getenv("MEDIA_EDGE_JWT_ISSUER")),
+		Audience:   strings.TrimSpace(os.Getenv("MEDIA_EDGE_JWT_AUDIENCE")),
+		MaxTTL:     time.Duration(envInt("MEDIA_EDGE_JWT_MAX_TTL_S", 300)) * time.Second,
+		ClockSkew:  time.Duration(envInt("MEDIA_EDGE_JWT_CLOCK_SKEW_S", 30)) * time.Second,
 	}
 	production := strings.EqualFold(strings.TrimSpace(os.Getenv("ENVIRONMENT")), "production")
-	if production && (len(verifier.Secret) < 32 || verifier.Issuer == "" || verifier.Audience == "") {
+	if production && ((len(publicKeys) == 0 && len(verifier.Secret) < 32) ||
+		verifier.Issuer == "" || verifier.Audience == "") {
 		log.Fatal("production media edge requires JWT secret, issuer and audience")
 	}
-	server := mediaedge.NewServer(verifier, envInt("MEDIA_EDGE_MAX_PENDING_FRAMES", 100))
+	server := mediaedge.NewServer(verifier, envInt("MEDIA_EDGE_MAX_PENDING_FRAMES", 20))
 	server.AllowInsecureDevelopment = !production && envBool("MEDIA_EDGE_ALLOW_INSECURE_DEVELOPMENT")
 	webrtcConfig, err := buildWebRTCConfig(production)
 	if err != nil {
@@ -243,12 +309,24 @@ func main() {
 	if addr == "" {
 		addr = ":8080"
 	}
+	internalAddr := strings.TrimSpace(os.Getenv("MEDIA_EDGE_INTERNAL_HTTP_ADDR"))
 	log.Printf("memoria media edge listening on %s", addr)
-	httpServer := &http.Server{Addr: addr, Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	if internalAddr != "" {
+		log.Printf("memoria media edge internal listener on %s", internalAddr)
+	}
+	publicHandler := server.Handler()
+	if internalAddr != "" {
+		publicHandler = server.PublicHandler()
+	}
+	httpServer := &http.Server{Addr: addr, Handler: publicHandler, ReadHeaderTimeout: 5 * time.Second}
+	internalServer := &http.Server{Addr: internalAddr, Handler: server.InternalHandler(), ReadHeaderTimeout: 5 * time.Second}
 	stopContext, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	errors := make(chan error, 1)
 	go func() { errors <- httpServer.ListenAndServe() }()
+	if internalAddr != "" {
+		go func() { errors <- internalServer.ListenAndServe() }()
+	}
 	select {
 	case err := <-errors:
 		if err != nil && err != http.ErrServerClosed {
@@ -263,6 +341,9 @@ func main() {
 		}
 		shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = httpServer.Shutdown(shutdownContext)
+		if internalAddr != "" {
+			_ = internalServer.Shutdown(shutdownContext)
+		}
 		cancel()
 	}
 }
