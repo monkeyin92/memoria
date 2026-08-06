@@ -1088,6 +1088,39 @@ def _valid_archive_pipeline_settings(**overrides: str) -> ControlSettings:
     return ControlSettings(_env_file=None, **values)
 
 
+def test_livekit_production_does_not_require_streamcore_coturn() -> None:
+    settings = _valid_archive_pipeline_settings(
+        MEMORIA_ARCHIVE_COMPILER_DATABASE_URL=("postgresql://memoria-compiler:test@db/memoria"),
+        MEMORIA_ARCHIVE_COMPILER_ROLE="memoria-compiler",
+        MEMORIA_MEMORY_EMBEDDING_URL="http://embedding:8000/v1/embeddings",
+        MEMORIA_MEMORY_EMBEDDING_API_KEY="embedding-api-key",
+        MEMORIA_MEMORY_EMBEDDING_MODEL="embedding-test",
+        MEMORIA_MEMORY_EMBEDDING_DIMENSIONS="3",
+    )
+
+    settings.validate_production()
+
+
+def test_streamcore_production_requires_coturn_when_rollout_is_enabled() -> None:
+    settings = _valid_archive_pipeline_settings(
+        MEMORIA_ARCHIVE_COMPILER_DATABASE_URL=("postgresql://memoria-compiler:test@db/memoria"),
+        MEMORIA_ARCHIVE_COMPILER_ROLE="memoria-compiler",
+        MEMORIA_MEMORY_EMBEDDING_URL="http://embedding:8000/v1/embeddings",
+        MEMORIA_MEMORY_EMBEDDING_API_KEY="embedding-api-key",
+        MEMORIA_MEMORY_EMBEDDING_MODEL="embedding-test",
+        MEMORIA_MEMORY_EMBEDDING_DIMENSIONS="3",
+        MEDIA_RUNTIME_DEFAULT="streamcore",
+        STREAMCORE_EXPERIMENT_PERCENT="1",
+        STREAMCORE_WHIP_URL="https://media.example/whip",
+        STREAMCORE_TOKEN_SECRET="streamcore-secret-material-that-is-long-enough",
+        STREAMCORE_SLO_GATE_ENABLED="true",
+        MEDIA_SLO_REPORT_TOKEN="media-slo-report-material-that-is-long-enough",
+    )
+
+    with pytest.raises(ValueError, match="COTURN_URLS"):
+        settings.validate_production()
+
+
 def test_production_requires_a_response_plan_capability_token() -> None:
     settings = _valid_archive_pipeline_settings(MEMORIA_RESPONSE_PLAN_TOKEN="")
 

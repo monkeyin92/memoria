@@ -1,6 +1,6 @@
 # 唯一架构状态基线；真实外部 Gate 未通过前不得启用 go_authoritative。
 schema_version: 1
-as_of_commit: 20260806-201007
+as_of_commit: 20260806-211652
 production_runtime: python_authoritative
 production_media: livekit
 go_shadow_enabled: false

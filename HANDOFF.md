@@ -1,6 +1,15 @@
 # 项目交接
 
-## 2026-08-06：评审整改阶段收口与天气实时查询（待发布）
+## 2026-08-06：评审整改阶段收口与天气实时查询（候选 20260806-201007 已回滚；修复待发布）
+
+- `20260806-201007` 的 source/images/H5 均完成验签，隔离 server smoke 通过，但 production
+  Control API 在启动时无条件要求尚未验收的 `COTURN_URLS`，导致 healthcheck 失败。runtime 与
+  H5 已立即恢复到 `20260802-142257`，没有切 H5、没有回滚数据；root-only SQLite/env 备份和
+  失败候选工件保留供审计。
+- 修复把 coturn 的 production 必需校验限制到实际 StreamCore rollout
+  （`streamcore + percent > 0 + !kill_switch`）。LiveKit/0% 保持空 `ice_servers`，StreamCore
+  真正启用时仍会因缺 COTURN_URLS/独立 secret fail closed。`test_session_api.py` 与 strict mypy
+  已通过，下一候选为 `20260806-211652`。
 
 - 天气/实时查询已接入生产 Provider factory：天气问题优先走无密钥 Open-Meteo，其他主题在有 `DASHSCOPE_API_KEY` 时走 Qwen forced search；先播“稍等，我查询一下。”，后台查询完成后按 generation fence 回告。实时意图会覆盖规划器的静态“我不知道”，但危害/危机混合语句仍由固定安全回复优先；无结果保持安全拒答，不猜测。真实 Open-Meteo 南京 canary 已成功返回实时数据。
 - Python Voice Core 的 session singleflight、有限 Audio Pump、Adaptive Endpoint/尾超时、有序 ASR LRU、gRPC Critical/Reliable/Coalescing lane 已通过定向与全量回归；`uv run ruff check services/agent services/control_api services/common` 和 `uv run mypy services --strict` 通过（237 files）。
