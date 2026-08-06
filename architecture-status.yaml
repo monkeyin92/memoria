@@ -33,7 +33,7 @@ gates:
   local_h5_transport: passed
   weather_public_api_canary: passed
   redis_lua_single_node_canary: passed
-  real_provider: pending
+  real_provider: passed
   turn_cross_host_e2e: pending
   browser_playout_ack: pending
   hardware_aec: pending
