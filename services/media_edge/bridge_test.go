@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -18,7 +19,9 @@ import (
 
 type fakeVoiceCore struct {
 	mediav1.UnimplementedVoiceMediaBridgeServer
-	received chan *mediav1.MediaToCore
+	received           chan *mediav1.MediaToCore
+	requestedAuthority chan mediav1.InteractionAuthority
+	effectiveAuthority mediav1.InteractionAuthority
 }
 
 func (f *fakeVoiceCore) Connect(stream grpc.BidiStreamingServer[mediav1.MediaToCore, mediav1.CoreToMedia]) error {
@@ -30,9 +33,15 @@ func (f *fakeVoiceCore) Connect(stream grpc.BidiStreamingServer[mediav1.MediaToC
 		return statusError("hello is required")
 	}
 	identity := first.GetHello().GetIdentity()
+	if f.requestedAuthority != nil {
+		f.requestedAuthority <- first.GetHello().GetInteractionAuthority()
+	}
 	if err := stream.Send(&mediav1.CoreToMedia{
 		Event: &mediav1.CoreToMedia_Accepted{
-			Accepted: &mediav1.SessionAccepted{Identity: identity, State: mediav1.ConversationState_CONVERSATION_STATE_LISTENING},
+			Accepted: &mediav1.SessionAccepted{
+				Identity: identity, State: mediav1.ConversationState_CONVERSATION_STATE_LISTENING,
+				InteractionAuthority: f.effectiveAuthority,
+			},
 		},
 	}); err != nil {
 		return err
@@ -80,6 +89,134 @@ func (f *fakeVoiceCore) Connect(stream grpc.BidiStreamingServer[mediav1.MediaToC
 				return err
 			}
 		}
+	}
+}
+
+func TestVoiceCoreBridgeNegotiatesAndRecordsEffectiveInteractionAuthority(t *testing.T) {
+	service := &fakeVoiceCore{
+		received: make(chan *mediav1.MediaToCore, 1), requestedAuthority: make(chan mediav1.InteractionAuthority, 1),
+		effectiveAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW,
+	}
+	bridge, cleanup := newBufconnBridge(t, service)
+	defer cleanup()
+	bridge.interactionAuthority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	session, err := bridge.Connect(ctx, bridgeIdentity(), bridgeFormat(16_000), bridgeFormat(24_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requested := <-service.requestedAuthority; requested != mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW {
+		t.Fatalf("unexpected requested authority: %v", requested)
+	}
+	if session.InteractionAuthority() != mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW {
+		t.Fatalf("effective authority was not retained: %v", session.InteractionAuthority())
+	}
+}
+
+func TestVoiceCoreSessionDropsStaleShadowWithoutPoisoningAuthoritativeEvents(t *testing.T) {
+	identity := BridgeIdentity{
+		SessionID: "s", AccountID: "a", DeviceID: "d", ClientType: "h5", StreamEpoch: 1,
+	}
+	session := &VoiceCoreSession{
+		identity:             identity,
+		interactionAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW,
+	}
+	observation := func(sequence, shadowSequence uint64, value *mediav1.SessionIdentity) *mediav1.CoreToMedia {
+		return &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_ShadowObservation{
+			ShadowObservation: &mediav1.ShadowObservation{
+				Identity: value, Sequence: sequence, ShadowSequence: shadowSequence,
+				ContractVersion: shadowA6AContractVersion, CandidateOnly: true,
+			},
+		}}
+	}
+	if err := session.validateCoreEvent(observation(1, 0, identity.proto())); err != nil {
+		t.Fatalf("valid shadow observation failed: %v", err)
+	}
+	if err := session.validateCoreEvent(observation(2, 0, identity.proto())); !errors.Is(err, errDropShadowObservation) {
+		t.Fatalf("duplicate shadow sequence was not classified as a lossy drop: %v", err)
+	}
+	other := identity.proto()
+	other.SessionId = "other"
+	if err := session.validateCoreEvent(observation(2, 1, other)); !errors.Is(err, errDropShadowObservation) {
+		t.Fatalf("mismatched shadow identity was not classified as a lossy drop: %v", err)
+	}
+	if err := session.validateCoreEvent(&mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_Transcript{
+		Transcript: &mediav1.TranscriptEvent{Identity: identity.proto(), Sequence: 3},
+	}}); err != nil {
+		t.Fatalf("shadow drop poisoned the next authoritative event: %v", err)
+	}
+}
+
+func TestVoiceCoreSessionAdmitsOnlyCurrentPythonRealtimeEffects(t *testing.T) {
+	identity := BridgeIdentity{
+		SessionID: "s", AccountID: "a", DeviceID: "d", ClientType: "h5", StreamEpoch: 1,
+	}
+	fence := Fence{SessionID: "s", TurnID: 4, GenerationID: 5, ToolEpoch: 6}
+	session := &VoiceCoreSession{
+		identity: identity, current: fence,
+		interactionAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW,
+	}
+	effect := func(sequence uint64) *mediav1.RealtimeEffect {
+		return &mediav1.RealtimeEffect{
+			EffectId: "effect-1", SessionId: identity.SessionID, StreamEpoch: identity.StreamEpoch,
+			Sequence: sequence, EffectKind: mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_DUCK_OUTPUT,
+			SourceEventId: "assistant_audio:duck", TurnId: fence.TurnID,
+			GenerationId: fence.GenerationID, ToolEpoch: fence.ToolEpoch,
+			Payload: []byte(`{"action":"duck","gain":0}`), Identity: identity.proto(),
+		}
+	}
+
+	candidate := effect(99)
+	candidate.CandidateOnly = true
+	if err := session.validateCoreEvent(&mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_RealtimeEffect{
+		RealtimeEffect: candidate,
+	}}); !errors.Is(err, errDropRealtimeEffect) {
+		t.Fatalf("candidate effect error=%v, want drop", err)
+	}
+	if err := session.validateCoreEvent(&mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_RealtimeEffect{
+		RealtimeEffect: effect(1),
+	}}); err != nil {
+		t.Fatalf("current Python effect rejected: %v", err)
+	}
+	if session.lastEventSequence != 1 {
+		t.Fatalf("candidate effect poisoned authoritative sequence: %d", session.lastEventSequence)
+	}
+
+	stale := effect(2)
+	stale.GenerationId--
+	if err := session.validateCoreEvent(&mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_RealtimeEffect{
+		RealtimeEffect: stale,
+	}}); err == nil {
+		t.Fatal("stale effect fence was accepted")
+	}
+	illegal := effect(3)
+	illegal.EffectKind = mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_START_DELEGATION
+	if err := session.validateCoreEvent(&mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_RealtimeEffect{
+		RealtimeEffect: illegal,
+	}}); err == nil {
+		t.Fatal("non-media effect kind was accepted")
+	}
+
+	session.interactionAuthority = mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_AUTHORITATIVE
+	if err := session.validateCoreEvent(&mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_RealtimeEffect{
+		RealtimeEffect: effect(4),
+	}}); !errors.Is(err, errDropRealtimeEffect) {
+		t.Fatalf("unproven Go-authoritative effect error=%v, want drop", err)
+	}
+}
+
+func TestVoiceCoreBridgeFailsClosedForUnprovenGoAuthority(t *testing.T) {
+	service := &fakeVoiceCore{
+		received:           make(chan *mediav1.MediaToCore, 1),
+		effectiveAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_AUTHORITATIVE,
+	}
+	bridge, cleanup := newBufconnBridge(t, service)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := bridge.Connect(ctx, bridgeIdentity(), bridgeFormat(16_000), bridgeFormat(24_000)); err == nil {
+		t.Fatal("bridge accepted unproven Go authority")
 	}
 }
 
@@ -258,6 +395,38 @@ func TestVoiceCoreBridgeStopSequenceIsMonotonic(t *testing.T) {
 	}
 	if firstEnvelope["protocol"] != "media-v1" || secondEnvelope["protocol"] != "media-v1" {
 		t.Fatalf("stop envelope protocol missing: first=%v second=%v", firstEnvelope["protocol"], secondEnvelope["protocol"])
+	}
+}
+
+func TestVoiceCoreBridgeResequencesBrowserEventAfterEdgeStop(t *testing.T) {
+	service := &fakeVoiceCore{received: make(chan *mediav1.MediaToCore, 4)}
+	bridge, cleanup := newBufconnBridge(t, service)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	session, err := bridge.Connect(ctx, bridgeIdentity(), bridgeFormat(16_000), bridgeFormat(24_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence := Fence{SessionID: "s"}
+	if err := session.SendStop("stop-1", "first", fence, 1234); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"v":1,"protocol":"media-v1","type":"client.text","event_id":"text-1","session_id":"s","stream_epoch":1,"sequence":99,"turn_id":0,"generation_id":0,"tool_epoch":0,"server_monotonic_ms":0,"payload":{"text":"继续"}}`)
+	if err := session.SendClientEvent(raw, "client.text", fence, 2345); err != nil {
+		t.Fatal(err)
+	}
+	<-service.received
+	device := (<-service.received).GetDevice()
+	if device == nil || device.GetEventType() != "client.text" || device.GetMonotonicMs() != 2345 {
+		t.Fatalf("unexpected client device event: %v", device)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(device.GetJsonPayload(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope["sequence"] != float64(1) || envelope["event_id"] != "text-1" {
+		t.Fatalf("browser event was not safely re-sequenced: %v", envelope)
 	}
 }
 

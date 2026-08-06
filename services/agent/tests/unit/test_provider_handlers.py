@@ -4,7 +4,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from services.agent.src.providers.handlers import build_voice_provider_handlers
+from services.agent.src.observability.metrics import GLOBAL_METRICS
+from services.agent.src.providers import doubao_tts, funasr_stt, handlers
+from services.agent.src.providers.handlers import (
+    build_realtime_search_resolver,
+    build_voice_provider_handlers,
+)
 
 
 @pytest.mark.asyncio
@@ -80,3 +85,52 @@ async def test_provider_handlers_do_not_send_dashscope_search_options_to_deepsee
         "thinking": {"type": "disabled"},
         "max_tokens": 240,
     }
+
+
+def test_default_provider_factories_share_exported_process_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        funasr_stt.FunASRConfig,
+        "from_env",
+        classmethod(lambda cls: funasr_stt.FunASRConfig(api_key="test", ws_url="ws://asr")),
+    )
+    monkeypatch.setattr(
+        doubao_tts.DoubaoTTSConfig,
+        "from_env",
+        classmethod(
+            lambda cls: doubao_tts.DoubaoTTSConfig(
+                api_key="test",
+                ws_url="ws://tts",
+                speaker="test",
+            )
+        ),
+    )
+
+    assert funasr_stt.FunASRSTT.from_env().metrics is GLOBAL_METRICS
+    assert doubao_tts.DoubaoTTS.from_env().pool.metrics is GLOBAL_METRICS
+
+
+def test_realtime_search_resolver_uses_isolated_qwen_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[Any] = []
+
+    class Resolver:
+        def __init__(self, config: Any) -> None:
+            captured.append(config)
+
+    monkeypatch.setattr(handlers, "QwenRealtimeSearch", Resolver)
+    resolver = build_realtime_search_resolver(
+        settings=SimpleNamespace(
+            dashscope_api_key="qwen-key",
+            dashscope_compatible_base_url="https://qwen.example/v1",
+            qwen_deep_model="qwen-deep",
+        )
+    )
+
+    assert isinstance(resolver, Resolver)
+    config = captured[0]
+    assert config.api_key == "qwen-key"
+    assert config.base_url == "https://qwen.example/v1"
+    assert config.model == "qwen-deep"

@@ -162,6 +162,9 @@ class AgentSettings(BaseSettings):
     media_bridge_max_pending_messages: int = Field(
         default=128, ge=1, le=2000, alias="MEDIA_BRIDGE_MAX_PENDING_MESSAGES"
     )
+    media_bridge_go_shadow_enabled: bool = Field(
+        default=False, alias="MEDIA_BRIDGE_GO_SHADOW_ENABLED"
+    )
     media_slo_report_enabled: bool = Field(
         default=False, alias="MEDIA_SLO_REPORT_ENABLED"
     )

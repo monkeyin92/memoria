@@ -32,6 +32,7 @@ class FunASRSentence:
     sentence_end: bool
     heartbeat: bool
     words: tuple[TimedWord, ...]
+    word_timing_valid: bool = True
 
 
 def sentence_to_asr_result(
@@ -50,13 +51,33 @@ def sentence_to_asr_result(
         raise ValueError("sample_rate must be positive")
     if sample_offset < 0:
         raise ValueError("sample_offset must be non-negative")
-    start = sample_offset + max(0, round(sentence.begin_ms * sample_rate / 1000))
+    provider_begin_ms = max(0, sentence.begin_ms)
+    start = sample_offset + round(provider_begin_ms * sample_rate / 1000)
     word_end = max((word.end_ms for word in sentence.words), default=sentence.begin_ms)
-    provider_end = max(sentence.end_ms or sentence.begin_ms, word_end)
+    provider_end = (
+        sentence.end_ms if sentence.end_ms is not None else max(sentence.begin_ms, word_end)
+    )
+    provider_end_ms = max(provider_begin_ms, provider_end, 0)
     end = max(
         start + 1,
-        sample_offset + round(max(sentence.begin_ms, provider_end) * sample_rate / 1000),
+        sample_offset + round(provider_end_ms * sample_rate / 1000),
     )
+    projected_words: list[ASRWordTiming] = []
+    invalid_word = not sentence.word_timing_valid
+    for word in sentence.words:
+        try:
+            projected_words.append(
+                ASRWordTiming(
+                    text=word.text + (word.punctuation or ""),
+                    capture_start_sample=sample_offset + round(word.begin_ms * sample_rate / 1000),
+                    capture_end_sample=sample_offset + round(word.end_ms * sample_rate / 1000),
+                )
+            )
+        except ValueError:
+            # Malformed provider timing is evidence failure, not an ASR
+            # session failure. Preserve the transcript and fail closed later.
+            invalid_word = True
+    word_timings = tuple(projected_words) if not invalid_word else ()
     return ASRResult(
         task_epoch=task_epoch,
         sentence_id=str(sentence.sentence_id),
@@ -66,20 +87,10 @@ def sentence_to_asr_result(
         text=sentence.text,
         is_final=sentence.sentence_end,
         confidence=confidence,
-        provider_begin_ms=sentence.begin_ms,
-        provider_end_ms=sentence.end_ms,
+        provider_begin_ms=provider_begin_ms,
+        provider_end_ms=provider_end_ms,
         stream_epoch=stream_epoch,
-        word_timings=tuple(
-            ASRWordTiming(
-                text=word.text + (word.punctuation or ""),
-                capture_start_sample=sample_offset
-                + round(word.begin_ms * sample_rate / 1000),
-                capture_end_sample=sample_offset
-                + round(word.end_ms * sample_rate / 1000),
-            )
-            for word in sentence.words
-            if word.text and word.end_ms > word.begin_ms
-        ),
+        word_timings=word_timings,
     )
 
 
@@ -210,14 +221,19 @@ def _parse_sentence(obj: dict[str, Any]) -> FunASRSentence | None:
         return None
     words_raw = sent.get("words") or []
     words: list[TimedWord] = []
+    word_timing_valid = True
     for w in words_raw:
         if not isinstance(w, dict):
+            word_timing_valid = False
             continue
-        begin = int(w.get("begin_time") or w.get("begin_ms") or 0)
-        end = int(w.get("end_time") or w.get("end_ms") or begin)
-        text = str(w.get("text") or "")
-        punct = str(w.get("punctuation") or "")
-        words.append(TimedWord(text=text, begin_ms=begin, end_ms=end, punctuation=punct))
+        try:
+            begin = int(w.get("begin_time") or w.get("begin_ms") or 0)
+            end = int(w.get("end_time") or w.get("end_ms") or begin)
+            text = str(w.get("text") or "")
+            punct = str(w.get("punctuation") or "")
+            words.append(TimedWord(text=text, begin_ms=begin, end_ms=end, punctuation=punct))
+        except (TypeError, ValueError):
+            word_timing_valid = False
 
     end_time = sent.get("end_time")
     return FunASRSentence(
@@ -228,6 +244,7 @@ def _parse_sentence(obj: dict[str, Any]) -> FunASRSentence | None:
         sentence_end=bool(sent.get("sentence_end")),
         heartbeat=bool(sent.get("heartbeat")),
         words=tuple(words),
+        word_timing_valid=word_timing_valid,
     )
 
 

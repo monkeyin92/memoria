@@ -140,6 +140,33 @@ async def test_create_session_and_stop(
 
 
 @pytest.mark.asyncio
+async def test_create_session_returns_service_unavailable_without_livekit_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path, offline=False)
+    monkeypatch.delenv("LIVEKIT_API_KEY", raising=False)
+    monkeypatch.delenv("LIVEKIT_API_SECRET", raising=False)
+    app = create_app()
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        user_id, headers = await _anonymous_identity(client)
+        response = await client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={
+                "user_id": user_id,
+                "locale": "zh-CN",
+                "client": {"platform": "h5", "timezone": "Asia/Shanghai"},
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "livekit_credentials_missing"}}
+
+
+@pytest.mark.asyncio
 async def test_miniprogram_session_uses_gateway_ticket_not_livekit_participant_token(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

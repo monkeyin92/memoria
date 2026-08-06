@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
@@ -190,6 +191,30 @@ def test_playback_ledger_completes_playback_without_timed_text() -> None:
     assert ledger.is_fully_acknowledged(fence)
 
 
+def test_playback_ledger_requires_all_audio_and_text_to_be_acknowledged() -> None:
+    fence = _fence()
+    ledger = PlaybackLedger()
+    ledger.start(fence)
+    assert ledger.register_audio(fence, 0, 0, 1_000)
+    assert ledger.add_span(
+        PlaybackSpan(
+            fence=fence,
+            text_start=0,
+            text_end=2,
+            audio_start_sample=0,
+            audio_end_sample=800,
+            text="你好",
+            sequence=0,
+        )
+    )
+
+    assert ledger.acknowledge(fence, 800, received_sequence=0)
+    assert not ledger.is_fully_acknowledged(fence)
+
+    assert ledger.acknowledge(fence, 1_000, received_sequence=0) == ()
+    assert ledger.is_fully_acknowledged(fence)
+
+
 def test_media_bridge_audio_queues_are_consumable_and_generation_local() -> None:
     server = MediaBridgeServer(max_pending_audio_frames=100)
     identity = SessionIdentity("queue-session", stream_epoch=1)
@@ -259,12 +284,37 @@ def test_media_v1_envelope_and_audio_metadata_round_trip() -> None:
         session_id=identity.session_id,
         stream_epoch=identity.stream_epoch,
         sequence=audio.sequence,
+        task_epoch=5,
+        context_version=7,
         payload=audio.to_payload(),
     )
     decoded = MediaEnvelope.decode(envelope.encode())
     assert decoded == envelope
     assert decoded.payload["payload_b64"] == base64.b64encode(audio.payload).decode("ascii")
+    assert decoded.task_epoch == 5
+    assert decoded.context_version == 7
     assert AudioFormat(AudioEncoding.PCM_S16LE, 16_000).frame_ms == 20
+
+
+def test_media_v1_envelope_keeps_v1_compatibility_for_missing_and_future_versions() -> None:
+    envelope = MediaEnvelope.create(
+        type="client.trace",
+        event_id="evt-legacy",
+        session_id="session",
+        stream_epoch=1,
+        sequence=0,
+        payload={},
+    )
+    legacy = envelope.to_dict()
+    legacy.pop("task_epoch", None)
+    legacy.pop("context_version", None)
+    legacy["future_extension"] = {"ignored": True}
+
+    decoded = MediaEnvelope.decode(json.dumps(legacy))
+
+    assert decoded.task_epoch == 0
+    assert decoded.context_version == 0
+    assert decoded.type == "client.trace"
 
 
 def test_audio_frame_rejects_pcm_length_mismatch() -> None:
@@ -486,11 +536,14 @@ def test_asr_supervisor_orders_reconnect_revision_above_old_task_revision() -> N
     assert supervisor.accept_result(first, session_id="session")
     assert supervisor.accept_result(old_correction, session_id="session")
     assert supervisor.accept_result(expanded, session_id="session")
-    assert supervisor.timeline.canonical_text(
-        stream_epoch=1,
-        start_sample=0,
-        end_sample=640,
-    ) == "你好世界"
+    assert (
+        supervisor.timeline.canonical_text(
+            stream_epoch=1,
+            start_sample=0,
+            end_sample=640,
+        )
+        == "你好世界"
+    )
     assert not supervisor.accept_result(late_old, session_id="session")
 
 
@@ -503,11 +556,14 @@ def test_asr_supervisor_accepts_new_task_same_interval_correction() -> None:
 
     assert supervisor.accept_result(first, session_id="session")
     assert supervisor.accept_result(correction, session_id="session")
-    assert supervisor.timeline.canonical_text(
-        stream_epoch=1,
-        start_sample=0,
-        end_sample=320,
-    ) == "你好"
+    assert (
+        supervisor.timeline.canonical_text(
+            stream_epoch=1,
+            start_sample=0,
+            end_sample=320,
+        )
+        == "你好"
+    )
 
 
 def test_asr_supervisor_rejects_cross_task_same_range_replay() -> None:
@@ -560,6 +616,141 @@ def test_asr_supervisor_rejects_cross_sentence_ambiguous_overlap() -> None:
         is_final=True,
     )
     assert not supervisor.accept_result(ambiguous, session_id="session")
+
+
+def test_asr_supervisor_fences_old_task_with_a_different_sentence_id() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=960)
+    newer = ASRResult(2, "new-sentence", 1, 320, 640, "新话轮", True)
+    older = ASRResult(1, "old-sentence", 1, 0, 320, "旧话轮", True)
+
+    assert supervisor.accept_result(newer, session_id="session")
+    decision = supervisor.accept_result(older, session_id="session")
+    assert not decision
+    assert decision.reason is ASRDecisionReason.STALE_TASK_EPOCH
+
+
+def test_rejected_new_task_result_does_not_take_authority() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=640)
+    supervisor.mark_committed(320)
+    rejected = ASRResult(2, "bad-replay", 1, 0, 640, "不可靠回放", True)
+
+    decision = supervisor.accept_result(rejected, session_id="session")
+    assert not decision
+    assert decision.reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
+
+    current = ASRResult(1, "current", 1, 320, 640, "当前任务", True)
+    assert supervisor.accept_result(current, session_id="session")
+
+
+def test_policy_rejected_new_task_does_not_take_authority() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.record_audio(start_sample=0, frame_samples=640)
+    first = ASRResult(1, "first", 1, 0, 320, "第一句", True)
+    assert supervisor.accept_result(first, session_id="session")
+
+    conflict = ASRResult(2, "conflict", 1, 160, 480, "冲突", True)
+    decision = supervisor.accept_result(conflict, session_id="session")
+    assert not decision
+    assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
+    assert supervisor.latest_authoritative_task_epoch == 1
+
+    current = ASRResult(1, "second", 1, 320, 640, "第二句", True)
+    assert supervisor.accept_result(current, session_id="session")
+
+
+def test_same_task_higher_revision_can_move_sentence_start_forward() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.record_audio(start_sample=0, frame_samples=320)
+    original = ASRResult(1, "same", 1, 0, 320, "原结果", True)
+    corrected = ASRResult(1, "same", 2, 160, 320, "修正结果", True)
+
+    assert supervisor.accept_result(original, session_id="session")
+    assert supervisor.accept_result(corrected, session_id="session")
+    assert (
+        supervisor.timeline.canonical_text(
+            stream_epoch=1,
+            start_sample=0,
+            end_sample=320,
+        )
+        == "修正结果"
+    )
+
+
+def test_asr_supervisor_discards_crossing_word_but_keeps_safe_suffix() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=960)
+    supervisor.mark_committed(500)
+    result = ASRResult(
+        1,
+        "sentence",
+        1,
+        0,
+        900,
+        "前跨后",
+        True,
+        word_timings=(
+            ASRWordTiming("前", 0, 400),
+            ASRWordTiming("跨", 400, 600),
+            ASRWordTiming("后", 700, 900),
+        ),
+    )
+
+    decision = supervisor.accept_result(result, session_id="session")
+    assert decision
+    assert decision.accepted is not None
+    assert decision.accepted.text == "后"
+    assert decision.accepted.capture_start_sample == 700
+
+
+def test_asr_supervisor_rejects_incomplete_timing_evidence() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=800)
+    supervisor.mark_committed(320)
+    result = ASRResult(
+        1,
+        "sentence",
+        1,
+        0,
+        800,
+        "你好世界",
+        True,
+        word_timings=(ASRWordTiming("世", 320, 560),),
+    )
+
+    decision = supervisor.accept_result(result, session_id="session")
+    assert not decision
+    assert decision.reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
+
+
+def test_asr_supervisor_preserves_spaces_when_extracting_timed_tail() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=300)
+    supervisor.mark_committed(100)
+    result = ASRResult(
+        1,
+        "sentence",
+        1,
+        0,
+        300,
+        "前 hello world",
+        True,
+        word_timings=(
+            ASRWordTiming("前", 0, 100),
+            ASRWordTiming("hello", 100, 200),
+            ASRWordTiming("world", 200, 300),
+        ),
+    )
+
+    decision = supervisor.accept_result(result, session_id="session")
+    assert decision.accepted is not None
+    assert decision.accepted.text == "hello world"
 
 
 def test_device_commands_are_allowlisted_and_expire_without_cloud_dependency() -> None:

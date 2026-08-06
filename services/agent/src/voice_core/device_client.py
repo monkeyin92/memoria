@@ -19,14 +19,22 @@ from typing import Any, Literal, cast
 
 import grpc
 
-from services.agent.src.voice_core.device_protocol import DeviceCommand, DeviceCommandAck
+from services.agent.src.voice_core.device_protocol import (
+    DEVICE_EVENT_TYPES,
+    DeviceCommand,
+    DeviceCommandAck,
+    DeviceEvent,
+)
 from services.agent.src.voice_core.device_runtime import AudioDeviceConfig, LinuxAudioPipeline
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.media_protocol import MediaEnvelope, SessionIdentity
 
 media_pb2: Any = _media_pb2
 
-PcmPlaybackHandler = Callable[[bytes, int, int, int], Awaitable[None] | None]
+PcmPlaybackHandler = Callable[
+    [bytes, int, int, int],
+    Awaitable[int | None] | int | None,
+]
 GenerationHandler = Callable[[int, int, int], Awaitable[None] | None]
 DeviceCommandHandler = Callable[[DeviceCommand], Awaitable[bool] | bool]
 
@@ -55,6 +63,7 @@ class MediaDeviceConfig:
     identity: SessionIdentity
     audio: AudioDeviceConfig = AudioDeviceConfig()
     max_pending_frames: int = 32
+    traceparent: str = ""
 
     def __post_init__(self) -> None:
         if not self.address.strip():
@@ -63,6 +72,8 @@ class MediaDeviceConfig:
             raise ValueError("device client identity must use client_type=device")
         if self.max_pending_frames <= 0:
             raise ValueError("max_pending_frames must be positive")
+        if len(self.traceparent) > 128:
+            raise ValueError("traceparent must be a short string")
 
 
 async def _request_stream(
@@ -107,6 +118,9 @@ class LinuxMediaDeviceClient:
         self._receiver: asyncio.Task[None] | None = None
         self._closed = True
         self._event_sequence = 0
+        self._current_turn_id = 0
+        self._current_generation_id = 0
+        self._current_tool_epoch = 0
 
     @property
     def connected(self) -> bool:
@@ -133,6 +147,7 @@ class LinuxMediaDeviceClient:
             media_pb2.MediaToCore(
                 hello=media_pb2.SessionHello(
                     identity=self._proto_identity(),
+                    traceparent=self.config.traceparent,
                     uplink_format=media_pb2.AudioFormat(
                         encoding=media_pb2.AUDIO_ENCODING_PCM_S16LE,
                         sample_rate=self.config.audio.sample_rate,
@@ -152,6 +167,7 @@ class LinuxMediaDeviceClient:
         if accepted is grpc.aio.EOF or accepted.WhichOneof("event") != "accepted":
             await self.close()
             raise RuntimeError("device media bridge did not accept hello")
+        self._current_generation_id = int(accepted.accepted.current_generation_id)
         self._receiver = asyncio.create_task(self._receive_loop(), name="media-device-receiver")
 
     async def _receive_loop(self) -> None:
@@ -177,6 +193,7 @@ class LinuxMediaDeviceClient:
             if self.muted:
                 return
             payload = bytes(audio.pcm_s16le)
+            rendered_sample_end: int | None = None
             if self.on_playback is not None:
                 result = self.on_playback(
                     payload,
@@ -185,15 +202,28 @@ class LinuxMediaDeviceClient:
                     int(audio.sequence),
                 )
                 if inspect.isawaitable(result):
-                    await result
-            await self.send_playback_progress(
-                generation_id=int(audio.generation_id),
-                received_sequence=int(audio.sequence),
-                rendered_sample_end=int(audio.source_start_sample) + int(audio.frame_samples),
-                turn_id=int(audio.turn_id),
-                tool_epoch=int(audio.tool_epoch),
-            )
+                    result = await result
+                if isinstance(result, int) and not isinstance(result, bool):
+                    rendered_sample_end = result
+                elif result is not None:
+                    self._report_error("device playback callback returned an invalid sample position")
+            if rendered_sample_end is not None:
+                frame_start = int(audio.source_start_sample)
+                frame_end = frame_start + int(audio.frame_samples)
+                if not frame_start <= rendered_sample_end <= frame_end:
+                    self._report_error("device playback sample position is outside the audio frame")
+                    return
+                await self.send_playback_progress(
+                    generation_id=int(audio.generation_id),
+                    received_sequence=int(audio.sequence),
+                    rendered_sample_end=rendered_sample_end,
+                    turn_id=int(audio.turn_id),
+                    tool_epoch=int(audio.tool_epoch),
+                )
         elif kind == "generation":
+            self._current_turn_id = int(event.generation.turn_id)
+            self._current_generation_id = int(event.generation.generation_id)
+            self._current_tool_epoch = int(event.generation.tool_epoch)
             if self.on_generation is not None:
                 result = self.on_generation(
                     int(event.generation.turn_id),
@@ -275,6 +305,9 @@ class LinuxMediaDeviceClient:
             session_id=self.identity.session_id,
             stream_epoch=self.identity.stream_epoch,
             sequence=self._event_sequence,
+            turn_id=self._current_turn_id,
+            generation_id=self._current_generation_id,
+            tool_epoch=self._current_tool_epoch,
             payload=json.loads(ack.to_json()),
         )
         self._event_sequence += 1
@@ -290,6 +323,50 @@ class LinuxMediaDeviceClient:
             self._requests.put_nowait(message)
         except asyncio.QueueFull:
             self._report_error("device uplink queue is full")
+
+    async def send_device_event(
+        self,
+        *,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> bool:
+        """Report bounded device telemetry (button/network) to the bridge."""
+
+        if self._closed:
+            return False
+        if event_type not in DEVICE_EVENT_TYPES:
+            raise ValueError("device event type is not allowlisted")
+        event = DeviceEvent(
+            event_type=event_type,  # type: ignore[arg-type]
+            device_monotonic_ms=self._now_ms(),
+            payload=dict(payload),
+        )
+        envelope = MediaEnvelope.create(
+            type="client.device.event",
+            event_id=f"{self.identity.session_id}:{self._event_sequence}:{event.event_type}",
+            session_id=self.identity.session_id,
+            stream_epoch=self.identity.stream_epoch,
+            sequence=self._event_sequence,
+            turn_id=self._current_turn_id,
+            generation_id=self._current_generation_id,
+            tool_epoch=self._current_tool_epoch,
+            payload=json.loads(event.to_json()),
+        )
+        self._event_sequence += 1
+        message = media_pb2.MediaToCore(
+            device=media_pb2.DeviceEvent(
+                identity=self._proto_identity(),
+                event_type="client.device.event",
+                json_payload=envelope.encode(),
+                monotonic_ms=event.device_monotonic_ms,
+            )
+        )
+        try:
+            self._requests.put_nowait(message)
+        except asyncio.QueueFull:
+            self._report_error("device telemetry queue is full")
+            return False
+        return True
 
     async def capture(self, samples: Sequence[int | float]) -> bool:
         if self._closed or self.muted:
@@ -354,6 +431,9 @@ class LinuxMediaDeviceClient:
         self.identity = replace(self.identity, stream_epoch=next_epoch)
         self.pipeline.reset_stream(next_epoch)
         self._event_sequence = 0
+        self._current_turn_id = 0
+        self._current_generation_id = 0
+        self._current_tool_epoch = 0
         self._requests = asyncio.Queue(maxsize=self.config.max_pending_frames)
         await self.connect()
 

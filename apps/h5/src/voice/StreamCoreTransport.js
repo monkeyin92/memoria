@@ -4,19 +4,23 @@ import { withAbortTimeout } from "../network/abortTimeout.js";
 const EVENTS_LABEL = "memoria.events.v1";
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 const PLAYBACK_SAMPLE_RATE = 24_000;
-const MEDIA_ENVELOPE_FIELDS = new Set([
-  "v",
-  "protocol",
-  "type",
-  "event_id",
-  "session_id",
-  "stream_epoch",
-  "sequence",
-  "turn_id",
-  "generation_id",
-  "tool_epoch",
-  "server_monotonic_ms",
-  "payload",
+const INTERACTION_AUTHORITIES = new Set([
+  "python_authoritative",
+  "go_shadow",
+  "go_authoritative",
+]);
+const PROJECTION_EVENT_TYPES = new Set([
+  "turn.provisional.started",
+  "turn.provisional.patch",
+  "turn.provisional.discarded",
+  "turn.committed",
+]);
+const FLOOR_STATES = new Set([
+  "user_holds_floor",
+  "assistant_holds_floor",
+  "overlap",
+  "uncertain",
+  "silence",
 ]);
 
 function randomEventId() {
@@ -99,7 +103,6 @@ function isNonNegativeInteger(value) {
 function isMediaEnvelope(event) {
   return (
     isObject(event) &&
-    Object.keys(event).every((field) => MEDIA_ENVELOPE_FIELDS.has(field)) &&
     event.v === 1 &&
     event.protocol === "media-v1" &&
     isBoundedString(event.type, 96) &&
@@ -111,6 +114,9 @@ function isMediaEnvelope(event) {
     isNonNegativeInteger(event.turn_id) &&
     isNonNegativeInteger(event.generation_id) &&
     isNonNegativeInteger(event.tool_epoch) &&
+    (event.task_epoch === undefined || isNonNegativeInteger(event.task_epoch)) &&
+    (event.context_version === undefined ||
+      isNonNegativeInteger(event.context_version)) &&
     isNonNegativeInteger(event.server_monotonic_ms) &&
     isObject(event.payload)
   );
@@ -149,6 +155,8 @@ export class StreamCoreTransport extends VoiceTransport {
     onMicrophoneTrack = () => undefined,
     onState = () => undefined,
     onTranscript = () => undefined,
+    onProjection = () => undefined,
+    onFloor = () => undefined,
     onRemoteStream = () => undefined,
     onDataReceived = () => undefined,
     onPlaybackFlush = () => undefined,
@@ -174,6 +182,8 @@ export class StreamCoreTransport extends VoiceTransport {
     this.onMicrophoneTrack = onMicrophoneTrack;
     this.onState = onState;
     this.onTranscript = onTranscript;
+    this.onProjection = onProjection;
+    this.onFloor = onFloor;
     this.onRemoteStream = onRemoteStream;
     this.onDataReceived = onDataReceived;
     this.onPlaybackFlush = onPlaybackFlush;
@@ -192,10 +202,14 @@ export class StreamCoreTransport extends VoiceTransport {
     this.session = null;
     this.streamEpoch = 0;
     this.lastEventSequence = -1;
+    this.lastFloorEpoch = 0;
     this.nextClientSequence = 0;
     this.currentTurnId = 0;
     this.currentGenerationId = 0;
     this.currentToolEpoch = 0;
+    this.currentTaskEpoch = 0;
+    this.currentContextVersion = 0;
+    this.interactionAuthority = "python_authoritative";
     this.lastAudioSequence = -1;
     this.lastAudioSampleEnd = 0;
     this.lastPlaybackProgressSample = -1;
@@ -234,6 +248,8 @@ export class StreamCoreTransport extends VoiceTransport {
             turnId: this.currentTurnId,
             generationId: this.currentGenerationId,
             toolEpoch: this.currentToolEpoch,
+            taskEpoch: this.currentTaskEpoch,
+            contextVersion: this.currentContextVersion,
             audioSequence: this.lastAudioSequence,
             audioSampleEnd: this.lastAudioSampleEnd,
           }
@@ -245,10 +261,14 @@ export class StreamCoreTransport extends VoiceTransport {
     this._connectOptions = { getMicrophoneEnabled, isCurrent };
     this.streamEpoch = config.streamEpoch;
     this.lastEventSequence = -1;
+    this.lastFloorEpoch = 0;
     this.nextClientSequence = 0;
     this.currentTurnId = preservedMediaState?.turnId ?? 0;
     this.currentGenerationId = preservedMediaState?.generationId ?? 0;
     this.currentToolEpoch = preservedMediaState?.toolEpoch ?? 0;
+    this.currentTaskEpoch = preservedMediaState?.taskEpoch ?? 0;
+    this.currentContextVersion = preservedMediaState?.contextVersion ?? 0;
+    this.interactionAuthority = "python_authoritative";
     this.lastAudioSequence = preservedMediaState?.audioSequence ?? -1;
     this.lastAudioSampleEnd = preservedMediaState?.audioSampleEnd ?? 0;
     this.lastPlaybackProgressSample = -1;
@@ -372,8 +392,14 @@ export class StreamCoreTransport extends VoiceTransport {
               streamcore: {
                 ...this.session.streamcore,
                 stream_epoch: epoch,
+                ...(typeof response?.token === "string" && response.token
+                  ? { token: response.token }
+                  : {}),
                 ...(response?.expires_at
                   ? { expires_at: response.expires_at }
+                  : {}),
+                ...(response?.token_expires_at
+                  ? { token_expires_at: response.token_expires_at }
                   : {}),
               },
             }
@@ -488,12 +514,37 @@ export class StreamCoreTransport extends VoiceTransport {
       return;
     }
     const payload = event.payload;
-    for (const field of ["session_id", "turn_id", "generation_id", "tool_epoch"]) {
+    const taskEpoch = event.task_epoch ?? 0;
+    const contextVersion = event.context_version ?? 0;
+    event = { ...event, task_epoch: taskEpoch, context_version: contextVersion };
+
+    if (
+      event.type === "floor.state" &&
+      (!FLOOR_STATES.has(payload.floor_state) ||
+        !isNonNegativeInteger(payload.floor_epoch) ||
+        payload.floor_epoch === 0 ||
+        payload.floor_epoch <= this.lastFloorEpoch)
+    ) {
+      return;
+    }
+    for (const field of [
+      "session_id",
+      "stream_epoch",
+      "turn_id",
+      "generation_id",
+      "tool_epoch",
+      "task_epoch",
+      "context_version",
+    ]) {
       if (Object.hasOwn(payload, field) && payload[field] !== event[field]) return;
     }
     const turnId = event.turn_id;
     const generationId = event.generation_id;
     const toolEpoch = event.tool_epoch;
+    const sameFence =
+      turnId === this.currentTurnId &&
+      generationId === this.currentGenerationId &&
+      toolEpoch === this.currentToolEpoch;
     if (
       event.type !== "ping" &&
       (turnId < this.currentTurnId ||
@@ -501,6 +552,14 @@ export class StreamCoreTransport extends VoiceTransport {
         (turnId === this.currentTurnId &&
           generationId === this.currentGenerationId &&
           toolEpoch < this.currentToolEpoch))
+    ) {
+      return;
+    }
+    if (
+      event.type !== "ping" &&
+      sameFence &&
+      (taskEpoch < this.currentTaskEpoch ||
+        contextVersion < this.currentContextVersion)
     ) {
       return;
     }
@@ -530,6 +589,16 @@ export class StreamCoreTransport extends VoiceTransport {
       this.currentTurnId = turnId;
       this.currentGenerationId = generationId;
       this.currentToolEpoch = toolEpoch;
+      if (fenceChanged) {
+        this.currentTaskEpoch = taskEpoch;
+        this.currentContextVersion = contextVersion;
+      } else {
+        this.currentTaskEpoch = Math.max(this.currentTaskEpoch, taskEpoch);
+        this.currentContextVersion = Math.max(
+          this.currentContextVersion,
+          contextVersion,
+        );
+      }
       if (fenceChanged) this._resetPlaybackGeneration();
     }
     // Consume the server event sequence only after the identity/fence checks
@@ -564,6 +633,21 @@ export class StreamCoreTransport extends VoiceTransport {
     this.onDataReceived(event);
     if (event.type === "assistant.state" || event.type === "assistant_state") {
       if (typeof payload.state === "string") this.onState(payload.state, event);
+    } else if (event.type === "floor.state") {
+      this.lastFloorEpoch = payload.floor_epoch;
+      this.onFloor(payload.floor_state, event);
+    } else if (PROJECTION_EVENT_TYPES.has(event.type)) {
+      this.onProjection({
+        ...payload,
+        type: event.type,
+        session_id: event.session_id,
+        envelope_stream_epoch: event.stream_epoch,
+        envelope_turn_id: event.turn_id,
+        envelope_generation_id: event.generation_id,
+        envelope_tool_epoch: event.tool_epoch,
+        task_epoch: event.task_epoch,
+        context_version: event.context_version,
+      });
     } else if (
       event.type === "user.transcript.partial" ||
       event.type === "user.transcript.final" ||
@@ -573,10 +657,13 @@ export class StreamCoreTransport extends VoiceTransport {
     ) {
       this.onTranscript({
         ...payload,
+        event_type: event.type,
         session_id: event.session_id,
         turn_id: event.turn_id,
         generation_id: event.generation_id,
         tool_epoch: event.tool_epoch,
+        task_epoch: event.task_epoch,
+        context_version: event.context_version,
         speaker: payload.speaker || (event.type.startsWith("user.") ? "user" : "assistant"),
         final:
           event.type === "user.transcript.final" ||
@@ -592,7 +679,15 @@ export class StreamCoreTransport extends VoiceTransport {
     } else if (event.type === "session.reconnecting") {
       this.onState("reconnecting", event);
     } else if (event.type === "session.ready") {
-      this.onState("ready", event);
+      this.interactionAuthority = INTERACTION_AUTHORITIES.has(
+        payload.interaction_authority,
+      )
+        ? payload.interaction_authority
+        : "python_authoritative";
+      this.onState("ready", {
+        ...event,
+        interaction_authority: this.interactionAuthority,
+      });
     } else if (event.type === "session.closed") {
       this.onState("closed", event);
     } else if (event.type === "assistant.audio.started") {
@@ -735,6 +830,8 @@ export class StreamCoreTransport extends VoiceTransport {
       turn_id: body.turn_id ?? this.currentTurnId,
       generation_id: body.generation_id ?? this.currentGenerationId,
       tool_epoch: body.tool_epoch ?? this.currentToolEpoch,
+      task_epoch: body.task_epoch ?? this.currentTaskEpoch,
+      context_version: body.context_version ?? this.currentContextVersion,
       server_monotonic_ms: body.server_monotonic_ms ?? 0,
       payload: body.payload ?? {},
     };

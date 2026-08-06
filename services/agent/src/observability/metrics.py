@@ -16,11 +16,17 @@ from services.agent.src.voice_core.telemetry import MEDIA_METRIC_NAMES
 _GAUGES = {
     "tool_tasks_active",
     "tts_pool_available",
+    "provider_ws_active",
     "voice_latency_seconds",
     "voice_sessions_active",
     "media_active_sessions",
     "media_pcm_queue_depth",
     "media_rtp_jitter_ms",
+    "context_snapshot_build_seconds",
+    "context_snapshot_size_chars",
+    "asr_send_lag_ms",
+    "asr_partial_age_ms",
+    "tts_frame_age_ms",
 }
 
 
@@ -30,9 +36,7 @@ class MetricsRegistry:
     labeled: dict[str, dict[tuple[tuple[str, str], ...], float]] = field(
         default_factory=lambda: defaultdict(lambda: defaultdict(float))
     )
-    latency_samples: dict[str, list[float]] = field(
-        default_factory=lambda: defaultdict(list)
-    )
+    latency_samples: dict[str, list[float]] = field(default_factory=lambda: defaultdict(list))
     _lock: Any = field(default_factory=threading.RLock, init=False, repr=False)
 
     def _inc(self, name: str, labels: dict[str, str] | None = None, amount: float = 1.0) -> None:
@@ -60,6 +64,19 @@ class MetricsRegistry:
 
     def inc_stale_result_dropped(self, source: str) -> None:
         self._inc("stale_result_dropped_total", {"source": source})
+
+    def observe_context_snapshot_build(self, seconds: float) -> None:
+        if seconds < 0 or seconds != seconds or seconds in {float("inf"), float("-inf")}:
+            raise ValueError("context snapshot build time must be finite and non-negative")
+        self._set("context_snapshot_build_seconds", seconds)
+
+    def set_context_snapshot_size(self, size_chars: int) -> None:
+        if size_chars < 0:
+            raise ValueError("context snapshot size must be non-negative")
+        self._set("context_snapshot_size_chars", float(size_chars))
+
+    def inc_context_snapshot_build_failed(self, reason: str) -> None:
+        self._inc("context_snapshot_build_failed_total", {"reason": reason})
 
     def inc_state_transition(self, from_state: str, to_state: str, event: str) -> None:
         self._inc(
@@ -145,6 +162,23 @@ class MetricsRegistry:
 
     def inc_asr_reconnect(self) -> None:
         self._inc("asr_reconnects_total")
+        self._inc("provider_ws_reconnect_total", {"provider": "asr"})
+
+    def set_provider_ws_active(self, provider: str, n: int) -> None:
+        if n < 0:
+            raise ValueError("active provider connection count must be non-negative")
+        self._set("provider_ws_active", float(n), {"provider": provider})
+
+    def add_provider_ws_active(self, provider: str, delta: int) -> None:
+        with self._lock:
+            labels = {"provider": provider}
+            active = self.get("provider_ws_active", labels) + delta
+            if active < 0:
+                raise ValueError("active provider connection count must be non-negative")
+            self._set("provider_ws_active", active, labels)
+
+    def inc_provider_ws_reconnect(self, provider: str) -> None:
+        self._inc("provider_ws_reconnect_total", {"provider": provider})
 
     def inc_llm_request(self, model: str, status: str, *, thinking: bool) -> None:
         self._inc(
@@ -258,9 +292,7 @@ class _MetricsCollector:
     def collect(self) -> list[CounterMetricFamily | GaugeMetricFamily]:
         with self._metrics._lock:
             plain = dict(self._metrics.counters)
-            labeled = {
-                name: dict(series) for name, series in self._metrics.labeled.items()
-            }
+            labeled = {name: dict(series) for name, series in self._metrics.labeled.items()}
             for stage, samples in self._metrics.latency_samples.items():
                 if not samples:
                     continue
@@ -284,9 +316,7 @@ class _MetricsCollector:
         return families
 
     @staticmethod
-    def _family(
-        name: str, label_names: tuple[str, ...]
-    ) -> CounterMetricFamily | GaugeMetricFamily:
+    def _family(name: str, label_names: tuple[str, ...]) -> CounterMetricFamily | GaugeMetricFamily:
         family_type = GaugeMetricFamily if name in _GAUGES else CounterMetricFamily
         return family_type(name, f"Voice agent metric {name}.", labels=list(label_names))
 

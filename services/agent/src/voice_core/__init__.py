@@ -15,7 +15,13 @@ from .device_client import (
     MediaDeviceConfig,
     MediaDeviceTLS,
 )
-from .device_protocol import DEVICE_TOPICS, DeviceCommand, DeviceCommandAck
+from .device_protocol import (
+    DEVICE_EVENT_TYPES,
+    DEVICE_TOPICS,
+    DeviceCommand,
+    DeviceCommandAck,
+    DeviceEvent,
+)
 from .device_runtime import (
     AudioDeviceConfig,
     DevicePcmFrame,
@@ -77,6 +83,8 @@ from .slo_reporter import MediaSLOReporter, MediaSLOReporterConfig
 from .speech_timeline import (
     ASRLogicalVersion,
     ASRResult,
+    ASRTimingCoverage,
+    ASRTimingEvidence,
     ASRWordTiming,
     SegmentKind,
     SpeechSegment,
@@ -97,11 +105,15 @@ __all__ = [
     "ASRAcceptDecision",
     "ASRDecisionReason",
     "ASRLogicalVersion",
+    "ASRTimingCoverage",
+    "ASRTimingEvidence",
     "ASRWordTiming",
     "ASRStreamSupervisor",
     "DEVICE_TOPICS",
     "DeviceCommand",
     "DeviceCommandAck",
+    "DeviceEvent",
+    "DEVICE_EVENT_TYPES",
     "LinuxMediaDeviceClient",
     "MediaDeviceConfig",
     "MediaDeviceTLS",

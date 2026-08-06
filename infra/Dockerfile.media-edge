@@ -1,9 +1,13 @@
 FROM golang:1.26.5 AS build
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libopus-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY services/media_edge ./services/media_edge
 WORKDIR /src/services/media_edge
-RUN go build -trimpath -ldflags='-s -w' -o /out/memoria-media-edge ./cmd/mediaruntime
+RUN go build -trimpath -ldflags='-s -w' -o /out/memoria-media-edge ./cmd/mediaruntime \
+    && cp "$(ldconfig -p | awk '/libopus.so.0/{print $NF; exit}')" /out/libopus.so.0
 
 FROM gcr.io/distroless/base-debian12:nonroot
 
@@ -14,5 +18,6 @@ LABEL org.opencontainers.image.revision="${MEMORIA_RELEASE_COMMIT}" \
       com.memoria.release.role="media-edge"
 
 COPY --from=build /out/memoria-media-edge /usr/local/bin/memoria-media-edge
+COPY --from=build /out/libopus.so.0 /lib/libopus.so.0
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/memoria-media-edge"]

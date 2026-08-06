@@ -21,6 +21,430 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// The selected real-time state writer for one session. UNSPECIFIED is kept
+// wire-compatible with clients that predate this contract and MUST be treated
+// as PYTHON_AUTHORITATIVE by every receiver.
+type InteractionAuthority int32
+
+const (
+	InteractionAuthority_INTERACTION_AUTHORITY_UNSPECIFIED          InteractionAuthority = 0
+	InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE InteractionAuthority = 1
+	InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW            InteractionAuthority = 2
+	InteractionAuthority_INTERACTION_AUTHORITY_GO_AUTHORITATIVE     InteractionAuthority = 3
+)
+
+// Enum value maps for InteractionAuthority.
+var (
+	InteractionAuthority_name = map[int32]string{
+		0: "INTERACTION_AUTHORITY_UNSPECIFIED",
+		1: "INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE",
+		2: "INTERACTION_AUTHORITY_GO_SHADOW",
+		3: "INTERACTION_AUTHORITY_GO_AUTHORITATIVE",
+	}
+	InteractionAuthority_value = map[string]int32{
+		"INTERACTION_AUTHORITY_UNSPECIFIED":          0,
+		"INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE": 1,
+		"INTERACTION_AUTHORITY_GO_SHADOW":            2,
+		"INTERACTION_AUTHORITY_GO_AUTHORITATIVE":     3,
+	}
+)
+
+func (x InteractionAuthority) Enum() *InteractionAuthority {
+	p := new(InteractionAuthority)
+	*p = x
+	return p
+}
+
+func (x InteractionAuthority) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (InteractionAuthority) Descriptor() protoreflect.EnumDescriptor {
+	return file_memoria_media_v1_media_proto_enumTypes[0].Descriptor()
+}
+
+func (InteractionAuthority) Type() protoreflect.EnumType {
+	return &file_memoria_media_v1_media_proto_enumTypes[0]
+}
+
+func (x InteractionAuthority) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use InteractionAuthority.Descriptor instead.
+func (InteractionAuthority) EnumDescriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{0}
+}
+
+type ContinuousEventKind int32
+
+const (
+	ContinuousEventKind_CONTINUOUS_EVENT_KIND_UNSPECIFIED       ContinuousEventKind = 0
+	ContinuousEventKind_CONTINUOUS_EVENT_KIND_AUDIO_FRAME       ContinuousEventKind = 1
+	ContinuousEventKind_CONTINUOUS_EVENT_KIND_VAD               ContinuousEventKind = 2
+	ContinuousEventKind_CONTINUOUS_EVENT_KIND_KEYWORD           ContinuousEventKind = 3
+	ContinuousEventKind_CONTINUOUS_EVENT_KIND_ASR_PARTIAL       ContinuousEventKind = 4
+	ContinuousEventKind_CONTINUOUS_EVENT_KIND_ASR_FINAL         ContinuousEventKind = 5
+	ContinuousEventKind_CONTINUOUS_EVENT_KIND_PLAYBACK_PROGRESS ContinuousEventKind = 6
+	ContinuousEventKind_CONTINUOUS_EVENT_KIND_CLIENT_STOP       ContinuousEventKind = 7
+	ContinuousEventKind_CONTINUOUS_EVENT_KIND_PROVIDER_STATE    ContinuousEventKind = 8
+	ContinuousEventKind_CONTINUOUS_EVENT_KIND_DELEGATION_RESULT ContinuousEventKind = 9
+)
+
+// Enum value maps for ContinuousEventKind.
+var (
+	ContinuousEventKind_name = map[int32]string{
+		0: "CONTINUOUS_EVENT_KIND_UNSPECIFIED",
+		1: "CONTINUOUS_EVENT_KIND_AUDIO_FRAME",
+		2: "CONTINUOUS_EVENT_KIND_VAD",
+		3: "CONTINUOUS_EVENT_KIND_KEYWORD",
+		4: "CONTINUOUS_EVENT_KIND_ASR_PARTIAL",
+		5: "CONTINUOUS_EVENT_KIND_ASR_FINAL",
+		6: "CONTINUOUS_EVENT_KIND_PLAYBACK_PROGRESS",
+		7: "CONTINUOUS_EVENT_KIND_CLIENT_STOP",
+		8: "CONTINUOUS_EVENT_KIND_PROVIDER_STATE",
+		9: "CONTINUOUS_EVENT_KIND_DELEGATION_RESULT",
+	}
+	ContinuousEventKind_value = map[string]int32{
+		"CONTINUOUS_EVENT_KIND_UNSPECIFIED":       0,
+		"CONTINUOUS_EVENT_KIND_AUDIO_FRAME":       1,
+		"CONTINUOUS_EVENT_KIND_VAD":               2,
+		"CONTINUOUS_EVENT_KIND_KEYWORD":           3,
+		"CONTINUOUS_EVENT_KIND_ASR_PARTIAL":       4,
+		"CONTINUOUS_EVENT_KIND_ASR_FINAL":         5,
+		"CONTINUOUS_EVENT_KIND_PLAYBACK_PROGRESS": 6,
+		"CONTINUOUS_EVENT_KIND_CLIENT_STOP":       7,
+		"CONTINUOUS_EVENT_KIND_PROVIDER_STATE":    8,
+		"CONTINUOUS_EVENT_KIND_DELEGATION_RESULT": 9,
+	}
+)
+
+func (x ContinuousEventKind) Enum() *ContinuousEventKind {
+	p := new(ContinuousEventKind)
+	*p = x
+	return p
+}
+
+func (x ContinuousEventKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ContinuousEventKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_memoria_media_v1_media_proto_enumTypes[1].Descriptor()
+}
+
+func (ContinuousEventKind) Type() protoreflect.EnumType {
+	return &file_memoria_media_v1_media_proto_enumTypes[1]
+}
+
+func (x ContinuousEventKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ContinuousEventKind.Descriptor instead.
+func (ContinuousEventKind) EnumDescriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{1}
+}
+
+type FloorState int32
+
+const (
+	FloorState_FLOOR_STATE_UNSPECIFIED           FloorState = 0
+	FloorState_FLOOR_STATE_USER_HOLDS_FLOOR      FloorState = 1
+	FloorState_FLOOR_STATE_ASSISTANT_HOLDS_FLOOR FloorState = 2
+	FloorState_FLOOR_STATE_OVERLAP               FloorState = 3
+	FloorState_FLOOR_STATE_UNCERTAIN             FloorState = 4
+	FloorState_FLOOR_STATE_SILENCE               FloorState = 5
+)
+
+// Enum value maps for FloorState.
+var (
+	FloorState_name = map[int32]string{
+		0: "FLOOR_STATE_UNSPECIFIED",
+		1: "FLOOR_STATE_USER_HOLDS_FLOOR",
+		2: "FLOOR_STATE_ASSISTANT_HOLDS_FLOOR",
+		3: "FLOOR_STATE_OVERLAP",
+		4: "FLOOR_STATE_UNCERTAIN",
+		5: "FLOOR_STATE_SILENCE",
+	}
+	FloorState_value = map[string]int32{
+		"FLOOR_STATE_UNSPECIFIED":           0,
+		"FLOOR_STATE_USER_HOLDS_FLOOR":      1,
+		"FLOOR_STATE_ASSISTANT_HOLDS_FLOOR": 2,
+		"FLOOR_STATE_OVERLAP":               3,
+		"FLOOR_STATE_UNCERTAIN":             4,
+		"FLOOR_STATE_SILENCE":               5,
+	}
+)
+
+func (x FloorState) Enum() *FloorState {
+	p := new(FloorState)
+	*p = x
+	return p
+}
+
+func (x FloorState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FloorState) Descriptor() protoreflect.EnumDescriptor {
+	return file_memoria_media_v1_media_proto_enumTypes[2].Descriptor()
+}
+
+func (FloorState) Type() protoreflect.EnumType {
+	return &file_memoria_media_v1_media_proto_enumTypes[2]
+}
+
+func (x FloorState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FloorState.Descriptor instead.
+func (FloorState) EnumDescriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{2}
+}
+
+type RealtimeEffectKind int32
+
+const (
+	RealtimeEffectKind_REALTIME_EFFECT_KIND_UNSPECIFIED            RealtimeEffectKind = 0
+	RealtimeEffectKind_REALTIME_EFFECT_KIND_DUCK_OUTPUT            RealtimeEffectKind = 1
+	RealtimeEffectKind_REALTIME_EFFECT_KIND_CANCEL_GENERATION      RealtimeEffectKind = 2
+	RealtimeEffectKind_REALTIME_EFFECT_KIND_PAUSE_OUTPUT           RealtimeEffectKind = 3
+	RealtimeEffectKind_REALTIME_EFFECT_KIND_RESUME_OUTPUT          RealtimeEffectKind = 4
+	RealtimeEffectKind_REALTIME_EFFECT_KIND_EMIT_PROVISIONAL_PATCH RealtimeEffectKind = 5
+	RealtimeEffectKind_REALTIME_EFFECT_KIND_COMMIT_TURN_CANDIDATE  RealtimeEffectKind = 6
+	RealtimeEffectKind_REALTIME_EFFECT_KIND_START_DELEGATION       RealtimeEffectKind = 7
+	RealtimeEffectKind_REALTIME_EFFECT_KIND_ENQUEUE_OUTPUT_INTENT  RealtimeEffectKind = 8
+	RealtimeEffectKind_REALTIME_EFFECT_KIND_DROP_STALE_EVENT       RealtimeEffectKind = 9
+)
+
+// Enum value maps for RealtimeEffectKind.
+var (
+	RealtimeEffectKind_name = map[int32]string{
+		0: "REALTIME_EFFECT_KIND_UNSPECIFIED",
+		1: "REALTIME_EFFECT_KIND_DUCK_OUTPUT",
+		2: "REALTIME_EFFECT_KIND_CANCEL_GENERATION",
+		3: "REALTIME_EFFECT_KIND_PAUSE_OUTPUT",
+		4: "REALTIME_EFFECT_KIND_RESUME_OUTPUT",
+		5: "REALTIME_EFFECT_KIND_EMIT_PROVISIONAL_PATCH",
+		6: "REALTIME_EFFECT_KIND_COMMIT_TURN_CANDIDATE",
+		7: "REALTIME_EFFECT_KIND_START_DELEGATION",
+		8: "REALTIME_EFFECT_KIND_ENQUEUE_OUTPUT_INTENT",
+		9: "REALTIME_EFFECT_KIND_DROP_STALE_EVENT",
+	}
+	RealtimeEffectKind_value = map[string]int32{
+		"REALTIME_EFFECT_KIND_UNSPECIFIED":            0,
+		"REALTIME_EFFECT_KIND_DUCK_OUTPUT":            1,
+		"REALTIME_EFFECT_KIND_CANCEL_GENERATION":      2,
+		"REALTIME_EFFECT_KIND_PAUSE_OUTPUT":           3,
+		"REALTIME_EFFECT_KIND_RESUME_OUTPUT":          4,
+		"REALTIME_EFFECT_KIND_EMIT_PROVISIONAL_PATCH": 5,
+		"REALTIME_EFFECT_KIND_COMMIT_TURN_CANDIDATE":  6,
+		"REALTIME_EFFECT_KIND_START_DELEGATION":       7,
+		"REALTIME_EFFECT_KIND_ENQUEUE_OUTPUT_INTENT":  8,
+		"REALTIME_EFFECT_KIND_DROP_STALE_EVENT":       9,
+	}
+)
+
+func (x RealtimeEffectKind) Enum() *RealtimeEffectKind {
+	p := new(RealtimeEffectKind)
+	*p = x
+	return p
+}
+
+func (x RealtimeEffectKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RealtimeEffectKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_memoria_media_v1_media_proto_enumTypes[3].Descriptor()
+}
+
+func (RealtimeEffectKind) Type() protoreflect.EnumType {
+	return &file_memoria_media_v1_media_proto_enumTypes[3]
+}
+
+func (x RealtimeEffectKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RealtimeEffectKind.Descriptor instead.
+func (RealtimeEffectKind) EnumDescriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{3}
+}
+
+type OutputIntentKind int32
+
+const (
+	OutputIntentKind_OUTPUT_INTENT_KIND_UNSPECIFIED          OutputIntentKind = 0
+	OutputIntentKind_OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT OutputIntentKind = 1
+	OutputIntentKind_OUTPUT_INTENT_KIND_DEEP_RESULT          OutputIntentKind = 2
+	OutputIntentKind_OUTPUT_INTENT_KIND_TOOL_RESULT          OutputIntentKind = 3
+	OutputIntentKind_OUTPUT_INTENT_KIND_REMINDER             OutputIntentKind = 4
+	OutputIntentKind_OUTPUT_INTENT_KIND_BACKCHANNEL          OutputIntentKind = 5
+	OutputIntentKind_OUTPUT_INTENT_KIND_NOTIFICATION         OutputIntentKind = 6
+	OutputIntentKind_OUTPUT_INTENT_KIND_CONVERSATION_REPLY   OutputIntentKind = 7
+)
+
+// Enum value maps for OutputIntentKind.
+var (
+	OutputIntentKind_name = map[int32]string{
+		0: "OUTPUT_INTENT_KIND_UNSPECIFIED",
+		1: "OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT",
+		2: "OUTPUT_INTENT_KIND_DEEP_RESULT",
+		3: "OUTPUT_INTENT_KIND_TOOL_RESULT",
+		4: "OUTPUT_INTENT_KIND_REMINDER",
+		5: "OUTPUT_INTENT_KIND_BACKCHANNEL",
+		6: "OUTPUT_INTENT_KIND_NOTIFICATION",
+		7: "OUTPUT_INTENT_KIND_CONVERSATION_REPLY",
+	}
+	OutputIntentKind_value = map[string]int32{
+		"OUTPUT_INTENT_KIND_UNSPECIFIED":          0,
+		"OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT": 1,
+		"OUTPUT_INTENT_KIND_DEEP_RESULT":          2,
+		"OUTPUT_INTENT_KIND_TOOL_RESULT":          3,
+		"OUTPUT_INTENT_KIND_REMINDER":             4,
+		"OUTPUT_INTENT_KIND_BACKCHANNEL":          5,
+		"OUTPUT_INTENT_KIND_NOTIFICATION":         6,
+		"OUTPUT_INTENT_KIND_CONVERSATION_REPLY":   7,
+	}
+)
+
+func (x OutputIntentKind) Enum() *OutputIntentKind {
+	p := new(OutputIntentKind)
+	*p = x
+	return p
+}
+
+func (x OutputIntentKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (OutputIntentKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_memoria_media_v1_media_proto_enumTypes[4].Descriptor()
+}
+
+func (OutputIntentKind) Type() protoreflect.EnumType {
+	return &file_memoria_media_v1_media_proto_enumTypes[4]
+}
+
+func (x OutputIntentKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use OutputIntentKind.Descriptor instead.
+func (OutputIntentKind) EnumDescriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{4}
+}
+
+type FloorRequirement int32
+
+const (
+	FloorRequirement_FLOOR_REQUIREMENT_UNSPECIFIED         FloorRequirement = 0
+	FloorRequirement_FLOOR_REQUIREMENT_ANY                 FloorRequirement = 1
+	FloorRequirement_FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK FloorRequirement = 2
+	FloorRequirement_FLOOR_REQUIREMENT_SILENCE             FloorRequirement = 3
+)
+
+// Enum value maps for FloorRequirement.
+var (
+	FloorRequirement_name = map[int32]string{
+		0: "FLOOR_REQUIREMENT_UNSPECIFIED",
+		1: "FLOOR_REQUIREMENT_ANY",
+		2: "FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK",
+		3: "FLOOR_REQUIREMENT_SILENCE",
+	}
+	FloorRequirement_value = map[string]int32{
+		"FLOOR_REQUIREMENT_UNSPECIFIED":         0,
+		"FLOOR_REQUIREMENT_ANY":                 1,
+		"FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK": 2,
+		"FLOOR_REQUIREMENT_SILENCE":             3,
+	}
+)
+
+func (x FloorRequirement) Enum() *FloorRequirement {
+	p := new(FloorRequirement)
+	*p = x
+	return p
+}
+
+func (x FloorRequirement) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FloorRequirement) Descriptor() protoreflect.EnumDescriptor {
+	return file_memoria_media_v1_media_proto_enumTypes[5].Descriptor()
+}
+
+func (FloorRequirement) Type() protoreflect.EnumType {
+	return &file_memoria_media_v1_media_proto_enumTypes[5]
+}
+
+func (x FloorRequirement) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FloorRequirement.Descriptor instead.
+func (FloorRequirement) EnumDescriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{5}
+}
+
+type ProjectionEventKind int32
+
+const (
+	ProjectionEventKind_PROJECTION_EVENT_KIND_UNSPECIFIED           ProjectionEventKind = 0
+	ProjectionEventKind_PROJECTION_EVENT_KIND_PROVISIONAL_STARTED   ProjectionEventKind = 1
+	ProjectionEventKind_PROJECTION_EVENT_KIND_PROVISIONAL_PATCH     ProjectionEventKind = 2
+	ProjectionEventKind_PROJECTION_EVENT_KIND_PROVISIONAL_DISCARDED ProjectionEventKind = 3
+	ProjectionEventKind_PROJECTION_EVENT_KIND_TURN_COMMITTED        ProjectionEventKind = 4
+)
+
+// Enum value maps for ProjectionEventKind.
+var (
+	ProjectionEventKind_name = map[int32]string{
+		0: "PROJECTION_EVENT_KIND_UNSPECIFIED",
+		1: "PROJECTION_EVENT_KIND_PROVISIONAL_STARTED",
+		2: "PROJECTION_EVENT_KIND_PROVISIONAL_PATCH",
+		3: "PROJECTION_EVENT_KIND_PROVISIONAL_DISCARDED",
+		4: "PROJECTION_EVENT_KIND_TURN_COMMITTED",
+	}
+	ProjectionEventKind_value = map[string]int32{
+		"PROJECTION_EVENT_KIND_UNSPECIFIED":           0,
+		"PROJECTION_EVENT_KIND_PROVISIONAL_STARTED":   1,
+		"PROJECTION_EVENT_KIND_PROVISIONAL_PATCH":     2,
+		"PROJECTION_EVENT_KIND_PROVISIONAL_DISCARDED": 3,
+		"PROJECTION_EVENT_KIND_TURN_COMMITTED":        4,
+	}
+)
+
+func (x ProjectionEventKind) Enum() *ProjectionEventKind {
+	p := new(ProjectionEventKind)
+	*p = x
+	return p
+}
+
+func (x ProjectionEventKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ProjectionEventKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_memoria_media_v1_media_proto_enumTypes[6].Descriptor()
+}
+
+func (ProjectionEventKind) Type() protoreflect.EnumType {
+	return &file_memoria_media_v1_media_proto_enumTypes[6]
+}
+
+func (x ProjectionEventKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ProjectionEventKind.Descriptor instead.
+func (ProjectionEventKind) EnumDescriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{6}
+}
+
 type AudioEncoding int32
 
 const (
@@ -54,11 +478,11 @@ func (x AudioEncoding) String() string {
 }
 
 func (AudioEncoding) Descriptor() protoreflect.EnumDescriptor {
-	return file_memoria_media_v1_media_proto_enumTypes[0].Descriptor()
+	return file_memoria_media_v1_media_proto_enumTypes[7].Descriptor()
 }
 
 func (AudioEncoding) Type() protoreflect.EnumType {
-	return &file_memoria_media_v1_media_proto_enumTypes[0]
+	return &file_memoria_media_v1_media_proto_enumTypes[7]
 }
 
 func (x AudioEncoding) Number() protoreflect.EnumNumber {
@@ -67,7 +491,7 @@ func (x AudioEncoding) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AudioEncoding.Descriptor instead.
 func (AudioEncoding) EnumDescriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{0}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{7}
 }
 
 type ConversationState int32
@@ -124,11 +548,11 @@ func (x ConversationState) String() string {
 }
 
 func (ConversationState) Descriptor() protoreflect.EnumDescriptor {
-	return file_memoria_media_v1_media_proto_enumTypes[1].Descriptor()
+	return file_memoria_media_v1_media_proto_enumTypes[8].Descriptor()
 }
 
 func (ConversationState) Type() protoreflect.EnumType {
-	return &file_memoria_media_v1_media_proto_enumTypes[1]
+	return &file_memoria_media_v1_media_proto_enumTypes[8]
 }
 
 func (x ConversationState) Number() protoreflect.EnumNumber {
@@ -137,7 +561,7 @@ func (x ConversationState) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ConversationState.Descriptor instead.
 func (ConversationState) EnumDescriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{1}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{8}
 }
 
 type VadEventType int32
@@ -173,11 +597,11 @@ func (x VadEventType) String() string {
 }
 
 func (VadEventType) Descriptor() protoreflect.EnumDescriptor {
-	return file_memoria_media_v1_media_proto_enumTypes[2].Descriptor()
+	return file_memoria_media_v1_media_proto_enumTypes[9].Descriptor()
 }
 
 func (VadEventType) Type() protoreflect.EnumType {
-	return &file_memoria_media_v1_media_proto_enumTypes[2]
+	return &file_memoria_media_v1_media_proto_enumTypes[9]
 }
 
 func (x VadEventType) Number() protoreflect.EnumNumber {
@@ -186,7 +610,7 @@ func (x VadEventType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use VadEventType.Descriptor instead.
 func (VadEventType) EnumDescriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{2}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{9}
 }
 
 type GenerationAction int32
@@ -231,11 +655,11 @@ func (x GenerationAction) String() string {
 }
 
 func (GenerationAction) Descriptor() protoreflect.EnumDescriptor {
-	return file_memoria_media_v1_media_proto_enumTypes[3].Descriptor()
+	return file_memoria_media_v1_media_proto_enumTypes[10].Descriptor()
 }
 
 func (GenerationAction) Type() protoreflect.EnumType {
-	return &file_memoria_media_v1_media_proto_enumTypes[3]
+	return &file_memoria_media_v1_media_proto_enumTypes[10]
 }
 
 func (x GenerationAction) Number() protoreflect.EnumNumber {
@@ -244,7 +668,932 @@ func (x GenerationAction) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use GenerationAction.Descriptor instead.
 func (GenerationAction) EnumDescriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{10}
+}
+
+type ShadowObservationKind int32
+
+const (
+	ShadowObservationKind_SHADOW_OBSERVATION_KIND_UNSPECIFIED         ShadowObservationKind = 0
+	ShadowObservationKind_SHADOW_OBSERVATION_KIND_SPEECH_TASK_STARTED ShadowObservationKind = 1
+	ShadowObservationKind_SHADOW_OBSERVATION_KIND_SPEECH_SEGMENT      ShadowObservationKind = 2
+	ShadowObservationKind_SHADOW_OBSERVATION_KIND_SPEECH_COMMIT       ShadowObservationKind = 3
+	ShadowObservationKind_SHADOW_OBSERVATION_KIND_CONTEXT_ACTIVATED   ShadowObservationKind = 4
+	ShadowObservationKind_SHADOW_OBSERVATION_KIND_OUTPUT_INTENT       ShadowObservationKind = 5
+	ShadowObservationKind_SHADOW_OBSERVATION_KIND_FLOOR_DECISION      ShadowObservationKind = 6
+)
+
+// Enum value maps for ShadowObservationKind.
+var (
+	ShadowObservationKind_name = map[int32]string{
+		0: "SHADOW_OBSERVATION_KIND_UNSPECIFIED",
+		1: "SHADOW_OBSERVATION_KIND_SPEECH_TASK_STARTED",
+		2: "SHADOW_OBSERVATION_KIND_SPEECH_SEGMENT",
+		3: "SHADOW_OBSERVATION_KIND_SPEECH_COMMIT",
+		4: "SHADOW_OBSERVATION_KIND_CONTEXT_ACTIVATED",
+		5: "SHADOW_OBSERVATION_KIND_OUTPUT_INTENT",
+		6: "SHADOW_OBSERVATION_KIND_FLOOR_DECISION",
+	}
+	ShadowObservationKind_value = map[string]int32{
+		"SHADOW_OBSERVATION_KIND_UNSPECIFIED":         0,
+		"SHADOW_OBSERVATION_KIND_SPEECH_TASK_STARTED": 1,
+		"SHADOW_OBSERVATION_KIND_SPEECH_SEGMENT":      2,
+		"SHADOW_OBSERVATION_KIND_SPEECH_COMMIT":       3,
+		"SHADOW_OBSERVATION_KIND_CONTEXT_ACTIVATED":   4,
+		"SHADOW_OBSERVATION_KIND_OUTPUT_INTENT":       5,
+		"SHADOW_OBSERVATION_KIND_FLOOR_DECISION":      6,
+	}
+)
+
+func (x ShadowObservationKind) Enum() *ShadowObservationKind {
+	p := new(ShadowObservationKind)
+	*p = x
+	return p
+}
+
+func (x ShadowObservationKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ShadowObservationKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_memoria_media_v1_media_proto_enumTypes[11].Descriptor()
+}
+
+func (ShadowObservationKind) Type() protoreflect.EnumType {
+	return &file_memoria_media_v1_media_proto_enumTypes[11]
+}
+
+func (x ShadowObservationKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ShadowObservationKind.Descriptor instead.
+func (ShadowObservationKind) EnumDescriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{11}
+}
+
+type SpeakerEvidence struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SpeakerClass      string                 `protobuf:"bytes,1,opt,name=speaker_class,json=speakerClass,proto3" json:"speaker_class,omitempty"`
+	Confidence        float32                `protobuf:"fixed32,2,opt,name=confidence,proto3" json:"confidence,omitempty"`
+	ReasonCode        string                 `protobuf:"bytes,3,opt,name=reason_code,json=reasonCode,proto3" json:"reason_code,omitempty"`
+	AuthorityVerified bool                   `protobuf:"varint,4,opt,name=authority_verified,json=authorityVerified,proto3" json:"authority_verified,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *SpeakerEvidence) Reset() {
+	*x = SpeakerEvidence{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpeakerEvidence) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpeakerEvidence) ProtoMessage() {}
+
+func (x *SpeakerEvidence) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpeakerEvidence.ProtoReflect.Descriptor instead.
+func (*SpeakerEvidence) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *SpeakerEvidence) GetSpeakerClass() string {
+	if x != nil {
+		return x.SpeakerClass
+	}
+	return ""
+}
+
+func (x *SpeakerEvidence) GetConfidence() float32 {
+	if x != nil {
+		return x.Confidence
+	}
+	return 0
+}
+
+func (x *SpeakerEvidence) GetReasonCode() string {
+	if x != nil {
+		return x.ReasonCode
+	}
+	return ""
+}
+
+func (x *SpeakerEvidence) GetAuthorityVerified() bool {
+	if x != nil {
+		return x.AuthorityVerified
+	}
+	return false
+}
+
+// Normalized continuous input for the interaction kernel. payload contains
+// kind-specific bytes; authorization and owner policy remain Python-owned.
+type ContinuousInteractionEvent struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	EventId            string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	SessionId          string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	StreamEpoch        uint64                 `protobuf:"varint,3,opt,name=stream_epoch,json=streamEpoch,proto3" json:"stream_epoch,omitempty"`
+	Sequence           uint64                 `protobuf:"varint,4,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	CaptureStartSample uint64                 `protobuf:"varint,5,opt,name=capture_start_sample,json=captureStartSample,proto3" json:"capture_start_sample,omitempty"`
+	CaptureEndSample   uint64                 `protobuf:"varint,6,opt,name=capture_end_sample,json=captureEndSample,proto3" json:"capture_end_sample,omitempty"`
+	SourceMonotonicMs  uint64                 `protobuf:"varint,7,opt,name=source_monotonic_ms,json=sourceMonotonicMs,proto3" json:"source_monotonic_ms,omitempty"`
+	EventKind          ContinuousEventKind    `protobuf:"varint,8,opt,name=event_kind,json=eventKind,proto3,enum=memoria.media.v1.ContinuousEventKind" json:"event_kind,omitempty"`
+	TurnId             uint64                 `protobuf:"varint,9,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	GenerationId       uint64                 `protobuf:"varint,10,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
+	ToolEpoch          uint64                 `protobuf:"varint,11,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
+	TaskEpoch          uint64                 `protobuf:"varint,12,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
+	ContextVersion     uint64                 `protobuf:"varint,13,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	SpeakerEvidence    *SpeakerEvidence       `protobuf:"bytes,14,opt,name=speaker_evidence,json=speakerEvidence,proto3" json:"speaker_evidence,omitempty"`
+	Payload            []byte                 `protobuf:"bytes,15,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ContinuousInteractionEvent) Reset() {
+	*x = ContinuousInteractionEvent{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContinuousInteractionEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContinuousInteractionEvent) ProtoMessage() {}
+
+func (x *ContinuousInteractionEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContinuousInteractionEvent.ProtoReflect.Descriptor instead.
+func (*ContinuousInteractionEvent) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ContinuousInteractionEvent) GetEventId() string {
+	if x != nil {
+		return x.EventId
+	}
+	return ""
+}
+
+func (x *ContinuousInteractionEvent) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ContinuousInteractionEvent) GetStreamEpoch() uint64 {
+	if x != nil {
+		return x.StreamEpoch
+	}
+	return 0
+}
+
+func (x *ContinuousInteractionEvent) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *ContinuousInteractionEvent) GetCaptureStartSample() uint64 {
+	if x != nil {
+		return x.CaptureStartSample
+	}
+	return 0
+}
+
+func (x *ContinuousInteractionEvent) GetCaptureEndSample() uint64 {
+	if x != nil {
+		return x.CaptureEndSample
+	}
+	return 0
+}
+
+func (x *ContinuousInteractionEvent) GetSourceMonotonicMs() uint64 {
+	if x != nil {
+		return x.SourceMonotonicMs
+	}
+	return 0
+}
+
+func (x *ContinuousInteractionEvent) GetEventKind() ContinuousEventKind {
+	if x != nil {
+		return x.EventKind
+	}
+	return ContinuousEventKind_CONTINUOUS_EVENT_KIND_UNSPECIFIED
+}
+
+func (x *ContinuousInteractionEvent) GetTurnId() uint64 {
+	if x != nil {
+		return x.TurnId
+	}
+	return 0
+}
+
+func (x *ContinuousInteractionEvent) GetGenerationId() uint64 {
+	if x != nil {
+		return x.GenerationId
+	}
+	return 0
+}
+
+func (x *ContinuousInteractionEvent) GetToolEpoch() uint64 {
+	if x != nil {
+		return x.ToolEpoch
+	}
+	return 0
+}
+
+func (x *ContinuousInteractionEvent) GetTaskEpoch() uint64 {
+	if x != nil {
+		return x.TaskEpoch
+	}
+	return 0
+}
+
+func (x *ContinuousInteractionEvent) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
+func (x *ContinuousInteractionEvent) GetSpeakerEvidence() *SpeakerEvidence {
+	if x != nil {
+		return x.SpeakerEvidence
+	}
+	return nil
+}
+
+func (x *ContinuousInteractionEvent) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+// A kernel decision is data until the authority guard admits it. Go-shadow
+// producers MUST set candidate_only and no consumer may execute such a value.
+type RealtimeEffect struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	EffectId       string                 `protobuf:"bytes,1,opt,name=effect_id,json=effectId,proto3" json:"effect_id,omitempty"`
+	SessionId      string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	StreamEpoch    uint64                 `protobuf:"varint,3,opt,name=stream_epoch,json=streamEpoch,proto3" json:"stream_epoch,omitempty"`
+	Sequence       uint64                 `protobuf:"varint,4,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	EffectKind     RealtimeEffectKind     `protobuf:"varint,5,opt,name=effect_kind,json=effectKind,proto3,enum=memoria.media.v1.RealtimeEffectKind" json:"effect_kind,omitempty"`
+	SourceEventId  string                 `protobuf:"bytes,6,opt,name=source_event_id,json=sourceEventId,proto3" json:"source_event_id,omitempty"`
+	TurnId         uint64                 `protobuf:"varint,7,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	GenerationId   uint64                 `protobuf:"varint,8,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
+	ToolEpoch      uint64                 `protobuf:"varint,9,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
+	TaskEpoch      uint64                 `protobuf:"varint,10,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
+	ContextVersion uint64                 `protobuf:"varint,11,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	CandidateOnly  bool                   `protobuf:"varint,12,opt,name=candidate_only,json=candidateOnly,proto3" json:"candidate_only,omitempty"`
+	Payload        []byte                 `protobuf:"bytes,13,opt,name=payload,proto3" json:"payload,omitempty"`
+	// Full stream identity is required on the executable Core -> Media path.
+	// The legacy session_id/stream_epoch fields remain for additive compatibility.
+	Identity      *SessionIdentity `protobuf:"bytes,14,opt,name=identity,proto3" json:"identity,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RealtimeEffect) Reset() {
+	*x = RealtimeEffect{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RealtimeEffect) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RealtimeEffect) ProtoMessage() {}
+
+func (x *RealtimeEffect) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RealtimeEffect.ProtoReflect.Descriptor instead.
+func (*RealtimeEffect) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *RealtimeEffect) GetEffectId() string {
+	if x != nil {
+		return x.EffectId
+	}
+	return ""
+}
+
+func (x *RealtimeEffect) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *RealtimeEffect) GetStreamEpoch() uint64 {
+	if x != nil {
+		return x.StreamEpoch
+	}
+	return 0
+}
+
+func (x *RealtimeEffect) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *RealtimeEffect) GetEffectKind() RealtimeEffectKind {
+	if x != nil {
+		return x.EffectKind
+	}
+	return RealtimeEffectKind_REALTIME_EFFECT_KIND_UNSPECIFIED
+}
+
+func (x *RealtimeEffect) GetSourceEventId() string {
+	if x != nil {
+		return x.SourceEventId
+	}
+	return ""
+}
+
+func (x *RealtimeEffect) GetTurnId() uint64 {
+	if x != nil {
+		return x.TurnId
+	}
+	return 0
+}
+
+func (x *RealtimeEffect) GetGenerationId() uint64 {
+	if x != nil {
+		return x.GenerationId
+	}
+	return 0
+}
+
+func (x *RealtimeEffect) GetToolEpoch() uint64 {
+	if x != nil {
+		return x.ToolEpoch
+	}
+	return 0
+}
+
+func (x *RealtimeEffect) GetTaskEpoch() uint64 {
+	if x != nil {
+		return x.TaskEpoch
+	}
+	return 0
+}
+
+func (x *RealtimeEffect) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
+func (x *RealtimeEffect) GetCandidateOnly() bool {
+	if x != nil {
+		return x.CandidateOnly
+	}
+	return false
+}
+
+func (x *RealtimeEffect) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *RealtimeEffect) GetIdentity() *SessionIdentity {
+	if x != nil {
+		return x.Identity
+	}
+	return nil
+}
+
+// Python-authoritative Floor state for the executable media path. Unlike the
+// candidate-only ShadowFloorDecision, this has a per-stream monotonic epoch,
+// a full generation fence and no untyped payload.
+type FloorEffect struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	EffectId       string                 `protobuf:"bytes,1,opt,name=effect_id,json=effectId,proto3" json:"effect_id,omitempty"`
+	Identity       *SessionIdentity       `protobuf:"bytes,2,opt,name=identity,proto3" json:"identity,omitempty"`
+	Sequence       uint64                 `protobuf:"varint,3,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	FloorState     FloorState             `protobuf:"varint,4,opt,name=floor_state,json=floorState,proto3,enum=memoria.media.v1.FloorState" json:"floor_state,omitempty"`
+	FloorEpoch     uint64                 `protobuf:"varint,5,opt,name=floor_epoch,json=floorEpoch,proto3" json:"floor_epoch,omitempty"`
+	SourceEventId  string                 `protobuf:"bytes,6,opt,name=source_event_id,json=sourceEventId,proto3" json:"source_event_id,omitempty"`
+	TurnId         uint64                 `protobuf:"varint,7,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	GenerationId   uint64                 `protobuf:"varint,8,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
+	ToolEpoch      uint64                 `protobuf:"varint,9,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
+	TaskEpoch      uint64                 `protobuf:"varint,10,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
+	ContextVersion uint64                 `protobuf:"varint,11,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	CandidateOnly  bool                   `protobuf:"varint,12,opt,name=candidate_only,json=candidateOnly,proto3" json:"candidate_only,omitempty"`
+	// Reject delayed control updates before they can revive an obsolete floor.
+	ExpiresAtMs   uint64 `protobuf:"varint,13,opt,name=expires_at_ms,json=expiresAtMs,proto3" json:"expires_at_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FloorEffect) Reset() {
+	*x = FloorEffect{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FloorEffect) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FloorEffect) ProtoMessage() {}
+
+func (x *FloorEffect) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FloorEffect.ProtoReflect.Descriptor instead.
+func (*FloorEffect) Descriptor() ([]byte, []int) {
 	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *FloorEffect) GetEffectId() string {
+	if x != nil {
+		return x.EffectId
+	}
+	return ""
+}
+
+func (x *FloorEffect) GetIdentity() *SessionIdentity {
+	if x != nil {
+		return x.Identity
+	}
+	return nil
+}
+
+func (x *FloorEffect) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *FloorEffect) GetFloorState() FloorState {
+	if x != nil {
+		return x.FloorState
+	}
+	return FloorState_FLOOR_STATE_UNSPECIFIED
+}
+
+func (x *FloorEffect) GetFloorEpoch() uint64 {
+	if x != nil {
+		return x.FloorEpoch
+	}
+	return 0
+}
+
+func (x *FloorEffect) GetSourceEventId() string {
+	if x != nil {
+		return x.SourceEventId
+	}
+	return ""
+}
+
+func (x *FloorEffect) GetTurnId() uint64 {
+	if x != nil {
+		return x.TurnId
+	}
+	return 0
+}
+
+func (x *FloorEffect) GetGenerationId() uint64 {
+	if x != nil {
+		return x.GenerationId
+	}
+	return 0
+}
+
+func (x *FloorEffect) GetToolEpoch() uint64 {
+	if x != nil {
+		return x.ToolEpoch
+	}
+	return 0
+}
+
+func (x *FloorEffect) GetTaskEpoch() uint64 {
+	if x != nil {
+		return x.TaskEpoch
+	}
+	return 0
+}
+
+func (x *FloorEffect) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
+func (x *FloorEffect) GetCandidateOnly() bool {
+	if x != nil {
+		return x.CandidateOnly
+	}
+	return false
+}
+
+func (x *FloorEffect) GetExpiresAtMs() uint64 {
+	if x != nil {
+		return x.ExpiresAtMs
+	}
+	return 0
+}
+
+type OutputIntent struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	IntentId         string                 `protobuf:"bytes,1,opt,name=intent_id,json=intentId,proto3" json:"intent_id,omitempty"`
+	SessionId        string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	TurnId           uint64                 `protobuf:"varint,3,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	GenerationId     uint64                 `protobuf:"varint,4,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
+	ToolEpoch        uint64                 `protobuf:"varint,5,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
+	Kind             OutputIntentKind       `protobuf:"varint,6,opt,name=kind,proto3,enum=memoria.media.v1.OutputIntentKind" json:"kind,omitempty"`
+	Priority         uint32                 `protobuf:"varint,7,opt,name=priority,proto3" json:"priority,omitempty"`
+	CreatedAtMs      uint64                 `protobuf:"varint,8,opt,name=created_at_ms,json=createdAtMs,proto3" json:"created_at_ms,omitempty"`
+	ExpiresAtMs      uint64                 `protobuf:"varint,9,opt,name=expires_at_ms,json=expiresAtMs,proto3" json:"expires_at_ms,omitempty"`
+	FloorRequirement FloorRequirement       `protobuf:"varint,10,opt,name=floor_requirement,json=floorRequirement,proto3,enum=memoria.media.v1.FloorRequirement" json:"floor_requirement,omitempty"`
+	ContextVersion   uint64                 `protobuf:"varint,11,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	// Types that are valid to be assigned to Source:
+	//
+	//	*OutputIntent_PcmS16Le
+	//	*OutputIntent_TtsSource
+	Source        isOutputIntent_Source `protobuf_oneof:"source"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OutputIntent) Reset() {
+	*x = OutputIntent{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OutputIntent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OutputIntent) ProtoMessage() {}
+
+func (x *OutputIntent) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OutputIntent.ProtoReflect.Descriptor instead.
+func (*OutputIntent) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *OutputIntent) GetIntentId() string {
+	if x != nil {
+		return x.IntentId
+	}
+	return ""
+}
+
+func (x *OutputIntent) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *OutputIntent) GetTurnId() uint64 {
+	if x != nil {
+		return x.TurnId
+	}
+	return 0
+}
+
+func (x *OutputIntent) GetGenerationId() uint64 {
+	if x != nil {
+		return x.GenerationId
+	}
+	return 0
+}
+
+func (x *OutputIntent) GetToolEpoch() uint64 {
+	if x != nil {
+		return x.ToolEpoch
+	}
+	return 0
+}
+
+func (x *OutputIntent) GetKind() OutputIntentKind {
+	if x != nil {
+		return x.Kind
+	}
+	return OutputIntentKind_OUTPUT_INTENT_KIND_UNSPECIFIED
+}
+
+func (x *OutputIntent) GetPriority() uint32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
+func (x *OutputIntent) GetCreatedAtMs() uint64 {
+	if x != nil {
+		return x.CreatedAtMs
+	}
+	return 0
+}
+
+func (x *OutputIntent) GetExpiresAtMs() uint64 {
+	if x != nil {
+		return x.ExpiresAtMs
+	}
+	return 0
+}
+
+func (x *OutputIntent) GetFloorRequirement() FloorRequirement {
+	if x != nil {
+		return x.FloorRequirement
+	}
+	return FloorRequirement_FLOOR_REQUIREMENT_UNSPECIFIED
+}
+
+func (x *OutputIntent) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
+func (x *OutputIntent) GetSource() isOutputIntent_Source {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
+func (x *OutputIntent) GetPcmS16Le() []byte {
+	if x != nil {
+		if x, ok := x.Source.(*OutputIntent_PcmS16Le); ok {
+			return x.PcmS16Le
+		}
+	}
+	return nil
+}
+
+func (x *OutputIntent) GetTtsSource() string {
+	if x != nil {
+		if x, ok := x.Source.(*OutputIntent_TtsSource); ok {
+			return x.TtsSource
+		}
+	}
+	return ""
+}
+
+type isOutputIntent_Source interface {
+	isOutputIntent_Source()
+}
+
+type OutputIntent_PcmS16Le struct {
+	PcmS16Le []byte `protobuf:"bytes,12,opt,name=pcm_s16le,json=pcmS16le,proto3,oneof"`
+}
+
+type OutputIntent_TtsSource struct {
+	TtsSource string `protobuf:"bytes,13,opt,name=tts_source,json=ttsSource,proto3,oneof"`
+}
+
+func (*OutputIntent_PcmS16Le) isOutputIntent_Source() {}
+
+func (*OutputIntent_TtsSource) isOutputIntent_Source() {}
+
+type ProjectionEvent struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	EventId            string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	SessionId          string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	StreamEpoch        uint64                 `protobuf:"varint,3,opt,name=stream_epoch,json=streamEpoch,proto3" json:"stream_epoch,omitempty"`
+	Sequence           uint64                 `protobuf:"varint,4,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	EventKind          ProjectionEventKind    `protobuf:"varint,5,opt,name=event_kind,json=eventKind,proto3,enum=memoria.media.v1.ProjectionEventKind" json:"event_kind,omitempty"`
+	TurnId             uint64                 `protobuf:"varint,6,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	Revision           uint64                 `protobuf:"varint,7,opt,name=revision,proto3" json:"revision,omitempty"`
+	CaptureStartSample uint64                 `protobuf:"varint,8,opt,name=capture_start_sample,json=captureStartSample,proto3" json:"capture_start_sample,omitempty"`
+	CaptureEndSample   uint64                 `protobuf:"varint,9,opt,name=capture_end_sample,json=captureEndSample,proto3" json:"capture_end_sample,omitempty"`
+	Text               string                 `protobuf:"bytes,10,opt,name=text,proto3" json:"text,omitempty"`
+	FloorState         FloorState             `protobuf:"varint,11,opt,name=floor_state,json=floorState,proto3,enum=memoria.media.v1.FloorState" json:"floor_state,omitempty"`
+	SpeakerEvidence    *SpeakerEvidence       `protobuf:"bytes,12,opt,name=speaker_evidence,json=speakerEvidence,proto3" json:"speaker_evidence,omitempty"`
+	GenerationId       uint64                 `protobuf:"varint,13,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
+	ToolEpoch          uint64                 `protobuf:"varint,14,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
+	ContextVersion     uint64                 `protobuf:"varint,15,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	HistoryEligible    bool                   `protobuf:"varint,16,opt,name=history_eligible,json=historyEligible,proto3" json:"history_eligible,omitempty"`
+	Reason             string                 `protobuf:"bytes,17,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ProjectionEvent) Reset() {
+	*x = ProjectionEvent{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProjectionEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProjectionEvent) ProtoMessage() {}
+
+func (x *ProjectionEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProjectionEvent.ProtoReflect.Descriptor instead.
+func (*ProjectionEvent) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ProjectionEvent) GetEventId() string {
+	if x != nil {
+		return x.EventId
+	}
+	return ""
+}
+
+func (x *ProjectionEvent) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ProjectionEvent) GetStreamEpoch() uint64 {
+	if x != nil {
+		return x.StreamEpoch
+	}
+	return 0
+}
+
+func (x *ProjectionEvent) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *ProjectionEvent) GetEventKind() ProjectionEventKind {
+	if x != nil {
+		return x.EventKind
+	}
+	return ProjectionEventKind_PROJECTION_EVENT_KIND_UNSPECIFIED
+}
+
+func (x *ProjectionEvent) GetTurnId() uint64 {
+	if x != nil {
+		return x.TurnId
+	}
+	return 0
+}
+
+func (x *ProjectionEvent) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *ProjectionEvent) GetCaptureStartSample() uint64 {
+	if x != nil {
+		return x.CaptureStartSample
+	}
+	return 0
+}
+
+func (x *ProjectionEvent) GetCaptureEndSample() uint64 {
+	if x != nil {
+		return x.CaptureEndSample
+	}
+	return 0
+}
+
+func (x *ProjectionEvent) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *ProjectionEvent) GetFloorState() FloorState {
+	if x != nil {
+		return x.FloorState
+	}
+	return FloorState_FLOOR_STATE_UNSPECIFIED
+}
+
+func (x *ProjectionEvent) GetSpeakerEvidence() *SpeakerEvidence {
+	if x != nil {
+		return x.SpeakerEvidence
+	}
+	return nil
+}
+
+func (x *ProjectionEvent) GetGenerationId() uint64 {
+	if x != nil {
+		return x.GenerationId
+	}
+	return 0
+}
+
+func (x *ProjectionEvent) GetToolEpoch() uint64 {
+	if x != nil {
+		return x.ToolEpoch
+	}
+	return 0
+}
+
+func (x *ProjectionEvent) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
+func (x *ProjectionEvent) GetHistoryEligible() bool {
+	if x != nil {
+		return x.HistoryEligible
+	}
+	return false
+}
+
+func (x *ProjectionEvent) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
 }
 
 type SessionIdentity struct {
@@ -261,7 +1610,7 @@ type SessionIdentity struct {
 
 func (x *SessionIdentity) Reset() {
 	*x = SessionIdentity{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[0]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -273,7 +1622,7 @@ func (x *SessionIdentity) String() string {
 func (*SessionIdentity) ProtoMessage() {}
 
 func (x *SessionIdentity) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[0]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -286,7 +1635,7 @@ func (x *SessionIdentity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionIdentity.ProtoReflect.Descriptor instead.
 func (*SessionIdentity) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{0}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *SessionIdentity) GetSessionId() string {
@@ -343,7 +1692,7 @@ type AudioFormat struct {
 
 func (x *AudioFormat) Reset() {
 	*x = AudioFormat{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[1]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -355,7 +1704,7 @@ func (x *AudioFormat) String() string {
 func (*AudioFormat) ProtoMessage() {}
 
 func (x *AudioFormat) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[1]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -368,7 +1717,7 @@ func (x *AudioFormat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AudioFormat.ProtoReflect.Descriptor instead.
 func (*AudioFormat) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{1}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *AudioFormat) GetEncoding() AudioEncoding {
@@ -406,13 +1755,16 @@ type SessionHello struct {
 	DownlinkFormat *AudioFormat           `protobuf:"bytes,3,opt,name=downlink_format,json=downlinkFormat,proto3" json:"downlink_format,omitempty"`
 	Capabilities   map[string]string      `protobuf:"bytes,4,rep,name=capabilities,proto3" json:"capabilities,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Traceparent    string                 `protobuf:"bytes,5,opt,name=traceparent,proto3" json:"traceparent,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Requested session authority. UNSPECIFIED is an old client and therefore
+	// requests the safe PYTHON_AUTHORITATIVE mode.
+	InteractionAuthority InteractionAuthority `protobuf:"varint,6,opt,name=interaction_authority,json=interactionAuthority,proto3,enum=memoria.media.v1.InteractionAuthority" json:"interaction_authority,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *SessionHello) Reset() {
 	*x = SessionHello{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[2]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -424,7 +1776,7 @@ func (x *SessionHello) String() string {
 func (*SessionHello) ProtoMessage() {}
 
 func (x *SessionHello) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[2]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -437,7 +1789,7 @@ func (x *SessionHello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionHello.ProtoReflect.Descriptor instead.
 func (*SessionHello) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{2}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SessionHello) GetIdentity() *SessionIdentity {
@@ -475,6 +1827,13 @@ func (x *SessionHello) GetTraceparent() string {
 	return ""
 }
 
+func (x *SessionHello) GetInteractionAuthority() InteractionAuthority {
+	if x != nil {
+		return x.InteractionAuthority
+	}
+	return InteractionAuthority_INTERACTION_AUTHORITY_UNSPECIFIED
+}
+
 type AudioFrame struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	Identity           *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
@@ -490,7 +1849,7 @@ type AudioFrame struct {
 
 func (x *AudioFrame) Reset() {
 	*x = AudioFrame{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[3]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -502,7 +1861,7 @@ func (x *AudioFrame) String() string {
 func (*AudioFrame) ProtoMessage() {}
 
 func (x *AudioFrame) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[3]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -515,7 +1874,7 @@ func (x *AudioFrame) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AudioFrame.ProtoReflect.Descriptor instead.
 func (*AudioFrame) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{3}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *AudioFrame) GetIdentity() *SessionIdentity {
@@ -584,7 +1943,7 @@ type VadEvent struct {
 
 func (x *VadEvent) Reset() {
 	*x = VadEvent{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[4]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -596,7 +1955,7 @@ func (x *VadEvent) String() string {
 func (*VadEvent) ProtoMessage() {}
 
 func (x *VadEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[4]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -609,7 +1968,7 @@ func (x *VadEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VadEvent.ProtoReflect.Descriptor instead.
 func (*VadEvent) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{4}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *VadEvent) GetIdentity() *SessionIdentity {
@@ -680,7 +2039,7 @@ type KeywordEvent struct {
 
 func (x *KeywordEvent) Reset() {
 	*x = KeywordEvent{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[5]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -692,7 +2051,7 @@ func (x *KeywordEvent) String() string {
 func (*KeywordEvent) ProtoMessage() {}
 
 func (x *KeywordEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[5]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -705,7 +2064,7 @@ func (x *KeywordEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeywordEvent.ProtoReflect.Descriptor instead.
 func (*KeywordEvent) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{5}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *KeywordEvent) GetIdentity() *SessionIdentity {
@@ -773,7 +2132,7 @@ type PlaybackProgress struct {
 
 func (x *PlaybackProgress) Reset() {
 	*x = PlaybackProgress{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[6]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -785,7 +2144,7 @@ func (x *PlaybackProgress) String() string {
 func (*PlaybackProgress) ProtoMessage() {}
 
 func (x *PlaybackProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[6]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -798,7 +2157,7 @@ func (x *PlaybackProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaybackProgress.ProtoReflect.Descriptor instead.
 func (*PlaybackProgress) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{6}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *PlaybackProgress) GetIdentity() *SessionIdentity {
@@ -869,7 +2228,7 @@ type DeviceEvent struct {
 
 func (x *DeviceEvent) Reset() {
 	*x = DeviceEvent{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[7]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -881,7 +2240,7 @@ func (x *DeviceEvent) String() string {
 func (*DeviceEvent) ProtoMessage() {}
 
 func (x *DeviceEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[7]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -894,7 +2253,7 @@ func (x *DeviceEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeviceEvent.ProtoReflect.Descriptor instead.
 func (*DeviceEvent) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{7}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *DeviceEvent) GetIdentity() *SessionIdentity {
@@ -940,7 +2299,7 @@ type MediaMetric struct {
 
 func (x *MediaMetric) Reset() {
 	*x = MediaMetric{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[8]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -952,7 +2311,7 @@ func (x *MediaMetric) String() string {
 func (*MediaMetric) ProtoMessage() {}
 
 func (x *MediaMetric) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[8]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -965,7 +2324,7 @@ func (x *MediaMetric) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MediaMetric.ProtoReflect.Descriptor instead.
 func (*MediaMetric) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{8}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *MediaMetric) GetIdentity() *SessionIdentity {
@@ -1035,7 +2394,7 @@ type MediaToCore struct {
 
 func (x *MediaToCore) Reset() {
 	*x = MediaToCore{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[9]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1047,7 +2406,7 @@ func (x *MediaToCore) String() string {
 func (*MediaToCore) ProtoMessage() {}
 
 func (x *MediaToCore) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[9]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1060,7 +2419,7 @@ func (x *MediaToCore) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MediaToCore.ProtoReflect.Descriptor instead.
 func (*MediaToCore) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{9}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *MediaToCore) GetEvent() isMediaToCore_Event {
@@ -1184,13 +2543,20 @@ type SessionAccepted struct {
 	Identity            *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
 	State               ConversationState      `protobuf:"varint,2,opt,name=state,proto3,enum=memoria.media.v1.ConversationState" json:"state,omitempty"`
 	CurrentGenerationId uint64                 `protobuf:"varint,3,opt,name=current_generation_id,json=currentGenerationId,proto3" json:"current_generation_id,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Effective server-selected authority. UNSPECIFIED MUST still be treated as
+	// PYTHON_AUTHORITATIVE by old and new clients.
+	InteractionAuthority InteractionAuthority `protobuf:"varint,4,opt,name=interaction_authority,json=interactionAuthority,proto3,enum=memoria.media.v1.InteractionAuthority" json:"interaction_authority,omitempty"`
+	CurrentTurnId        uint64               `protobuf:"varint,5,opt,name=current_turn_id,json=currentTurnId,proto3" json:"current_turn_id,omitempty"`
+	CurrentToolEpoch     uint64               `protobuf:"varint,6,opt,name=current_tool_epoch,json=currentToolEpoch,proto3" json:"current_tool_epoch,omitempty"`
+	TaskEpoch            uint64               `protobuf:"varint,7,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
+	ContextVersion       uint64               `protobuf:"varint,8,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *SessionAccepted) Reset() {
 	*x = SessionAccepted{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[10]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1202,7 +2568,7 @@ func (x *SessionAccepted) String() string {
 func (*SessionAccepted) ProtoMessage() {}
 
 func (x *SessionAccepted) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[10]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1215,7 +2581,7 @@ func (x *SessionAccepted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionAccepted.ProtoReflect.Descriptor instead.
 func (*SessionAccepted) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{10}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SessionAccepted) GetIdentity() *SessionIdentity {
@@ -1239,6 +2605,41 @@ func (x *SessionAccepted) GetCurrentGenerationId() uint64 {
 	return 0
 }
 
+func (x *SessionAccepted) GetInteractionAuthority() InteractionAuthority {
+	if x != nil {
+		return x.InteractionAuthority
+	}
+	return InteractionAuthority_INTERACTION_AUTHORITY_UNSPECIFIED
+}
+
+func (x *SessionAccepted) GetCurrentTurnId() uint64 {
+	if x != nil {
+		return x.CurrentTurnId
+	}
+	return 0
+}
+
+func (x *SessionAccepted) GetCurrentToolEpoch() uint64 {
+	if x != nil {
+		return x.CurrentToolEpoch
+	}
+	return 0
+}
+
+func (x *SessionAccepted) GetTaskEpoch() uint64 {
+	if x != nil {
+		return x.TaskEpoch
+	}
+	return 0
+}
+
+func (x *SessionAccepted) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
 type AssistantAudioFrame struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	Identity          *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
@@ -1251,13 +2652,15 @@ type AssistantAudioFrame struct {
 	PcmS16Le          []byte                 `protobuf:"bytes,8,opt,name=pcm_s16le,json=pcmS16le,proto3" json:"pcm_s16le,omitempty"`
 	FirstFrame        bool                   `protobuf:"varint,9,opt,name=first_frame,json=firstFrame,proto3" json:"first_frame,omitempty"`
 	FinalFrame        bool                   `protobuf:"varint,10,opt,name=final_frame,json=finalFrame,proto3" json:"final_frame,omitempty"`
+	TaskEpoch         uint64                 `protobuf:"varint,11,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
+	ContextVersion    uint64                 `protobuf:"varint,12,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
 
 func (x *AssistantAudioFrame) Reset() {
 	*x = AssistantAudioFrame{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[11]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1269,7 +2672,7 @@ func (x *AssistantAudioFrame) String() string {
 func (*AssistantAudioFrame) ProtoMessage() {}
 
 func (x *AssistantAudioFrame) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[11]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1282,7 +2685,7 @@ func (x *AssistantAudioFrame) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssistantAudioFrame.ProtoReflect.Descriptor instead.
 func (*AssistantAudioFrame) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{11}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *AssistantAudioFrame) GetIdentity() *SessionIdentity {
@@ -1355,22 +2758,38 @@ func (x *AssistantAudioFrame) GetFinalFrame() bool {
 	return false
 }
 
+func (x *AssistantAudioFrame) GetTaskEpoch() uint64 {
+	if x != nil {
+		return x.TaskEpoch
+	}
+	return 0
+}
+
+func (x *AssistantAudioFrame) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
 type GenerationControl struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Identity      *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
-	TurnId        uint64                 `protobuf:"varint,2,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
-	GenerationId  uint64                 `protobuf:"varint,3,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
-	ToolEpoch     uint64                 `protobuf:"varint,4,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
-	Action        GenerationAction       `protobuf:"varint,5,opt,name=action,proto3,enum=memoria.media.v1.GenerationAction" json:"action,omitempty"`
-	Reason        string                 `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
-	Sequence      uint64                 `protobuf:"varint,7,opt,name=sequence,proto3" json:"sequence,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Identity       *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
+	TurnId         uint64                 `protobuf:"varint,2,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	GenerationId   uint64                 `protobuf:"varint,3,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
+	ToolEpoch      uint64                 `protobuf:"varint,4,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
+	Action         GenerationAction       `protobuf:"varint,5,opt,name=action,proto3,enum=memoria.media.v1.GenerationAction" json:"action,omitempty"`
+	Reason         string                 `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
+	Sequence       uint64                 `protobuf:"varint,7,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	TaskEpoch      uint64                 `protobuf:"varint,8,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
+	ContextVersion uint64                 `protobuf:"varint,9,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *GenerationControl) Reset() {
 	*x = GenerationControl{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[12]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1382,7 +2801,7 @@ func (x *GenerationControl) String() string {
 func (*GenerationControl) ProtoMessage() {}
 
 func (x *GenerationControl) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[12]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1395,7 +2814,7 @@ func (x *GenerationControl) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerationControl.ProtoReflect.Descriptor instead.
 func (*GenerationControl) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{12}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *GenerationControl) GetIdentity() *SessionIdentity {
@@ -1447,6 +2866,20 @@ func (x *GenerationControl) GetSequence() uint64 {
 	return 0
 }
 
+func (x *GenerationControl) GetTaskEpoch() uint64 {
+	if x != nil {
+		return x.TaskEpoch
+	}
+	return 0
+}
+
+func (x *GenerationControl) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
 type TranscriptEvent struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	Identity           *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
@@ -1461,13 +2894,15 @@ type TranscriptEvent struct {
 	GenerationId       uint64                 `protobuf:"varint,10,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
 	ToolEpoch          uint64                 `protobuf:"varint,11,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
 	Sequence           uint64                 `protobuf:"varint,12,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	TaskEpoch          uint64                 `protobuf:"varint,13,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
+	ContextVersion     uint64                 `protobuf:"varint,14,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
 
 func (x *TranscriptEvent) Reset() {
 	*x = TranscriptEvent{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[13]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1479,7 +2914,7 @@ func (x *TranscriptEvent) String() string {
 func (*TranscriptEvent) ProtoMessage() {}
 
 func (x *TranscriptEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[13]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1492,7 +2927,7 @@ func (x *TranscriptEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TranscriptEvent.ProtoReflect.Descriptor instead.
 func (*TranscriptEvent) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{13}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *TranscriptEvent) GetIdentity() *SessionIdentity {
@@ -1579,21 +3014,839 @@ func (x *TranscriptEvent) GetSequence() uint64 {
 	return 0
 }
 
-type StateEvent struct {
+func (x *TranscriptEvent) GetTaskEpoch() uint64 {
+	if x != nil {
+		return x.TaskEpoch
+	}
+	return 0
+}
+
+func (x *TranscriptEvent) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
+// Sanitized Timeline metadata for one no-side-effect shadow observation.
+// Transcript text is represented only by a digest so the comparison ledger
+// does not create another copy of user speech.
+type ShadowSpeechSegment struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	SegmentId          string                 `protobuf:"bytes,1,opt,name=segment_id,json=segmentId,proto3" json:"segment_id,omitempty"`
+	CaptureStartSample uint64                 `protobuf:"varint,2,opt,name=capture_start_sample,json=captureStartSample,proto3" json:"capture_start_sample,omitempty"`
+	CaptureEndSample   uint64                 `protobuf:"varint,3,opt,name=capture_end_sample,json=captureEndSample,proto3" json:"capture_end_sample,omitempty"`
+	TaskEpoch          uint64                 `protobuf:"varint,4,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
+	Revision           uint64                 `protobuf:"varint,5,opt,name=revision,proto3" json:"revision,omitempty"`
+	TextSha256         []byte                 `protobuf:"bytes,6,opt,name=text_sha256,json=textSha256,proto3" json:"text_sha256,omitempty"`
+	Final              bool                   `protobuf:"varint,7,opt,name=final,proto3" json:"final,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ShadowSpeechSegment) Reset() {
+	*x = ShadowSpeechSegment{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShadowSpeechSegment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShadowSpeechSegment) ProtoMessage() {}
+
+func (x *ShadowSpeechSegment) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShadowSpeechSegment.ProtoReflect.Descriptor instead.
+func (*ShadowSpeechSegment) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ShadowSpeechSegment) GetSegmentId() string {
+	if x != nil {
+		return x.SegmentId
+	}
+	return ""
+}
+
+func (x *ShadowSpeechSegment) GetCaptureStartSample() uint64 {
+	if x != nil {
+		return x.CaptureStartSample
+	}
+	return 0
+}
+
+func (x *ShadowSpeechSegment) GetCaptureEndSample() uint64 {
+	if x != nil {
+		return x.CaptureEndSample
+	}
+	return 0
+}
+
+func (x *ShadowSpeechSegment) GetTaskEpoch() uint64 {
+	if x != nil {
+		return x.TaskEpoch
+	}
+	return 0
+}
+
+func (x *ShadowSpeechSegment) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *ShadowSpeechSegment) GetTextSha256() []byte {
+	if x != nil {
+		return x.TextSha256
+	}
+	return nil
+}
+
+func (x *ShadowSpeechSegment) GetFinal() bool {
+	if x != nil {
+		return x.Final
+	}
+	return false
+}
+
+type ShadowSpeechTaskStarted struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Identity      *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
-	State         ConversationState      `protobuf:"varint,2,opt,name=state,proto3,enum=memoria.media.v1.ConversationState" json:"state,omitempty"`
-	TurnId        uint64                 `protobuf:"varint,3,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
-	GenerationId  uint64                 `protobuf:"varint,4,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
-	Reason        string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
-	Sequence      uint64                 `protobuf:"varint,6,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	TaskEpoch     uint64                 `protobuf:"varint,1,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
+func (x *ShadowSpeechTaskStarted) Reset() {
+	*x = ShadowSpeechTaskStarted{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShadowSpeechTaskStarted) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShadowSpeechTaskStarted) ProtoMessage() {}
+
+func (x *ShadowSpeechTaskStarted) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShadowSpeechTaskStarted.ProtoReflect.Descriptor instead.
+func (*ShadowSpeechTaskStarted) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ShadowSpeechTaskStarted) GetTaskEpoch() uint64 {
+	if x != nil {
+		return x.TaskEpoch
+	}
+	return 0
+}
+
+type ShadowSpeechCommit struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	CommittedSample uint64                 `protobuf:"varint,1,opt,name=committed_sample,json=committedSample,proto3" json:"committed_sample,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ShadowSpeechCommit) Reset() {
+	*x = ShadowSpeechCommit{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShadowSpeechCommit) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShadowSpeechCommit) ProtoMessage() {}
+
+func (x *ShadowSpeechCommit) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShadowSpeechCommit.ProtoReflect.Descriptor instead.
+func (*ShadowSpeechCommit) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *ShadowSpeechCommit) GetCommittedSample() uint64 {
+	if x != nil {
+		return x.CommittedSample
+	}
+	return 0
+}
+
+type ShadowContextActivated struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ContextVersion uint64                 `protobuf:"varint,1,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ShadowContextActivated) Reset() {
+	*x = ShadowContextActivated{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShadowContextActivated) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShadowContextActivated) ProtoMessage() {}
+
+func (x *ShadowContextActivated) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShadowContextActivated.ProtoReflect.Descriptor instead.
+func (*ShadowContextActivated) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *ShadowContextActivated) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
+type ShadowOutputIntent struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	IntentId         string                 `protobuf:"bytes,1,opt,name=intent_id,json=intentId,proto3" json:"intent_id,omitempty"`
+	TurnId           uint64                 `protobuf:"varint,2,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	GenerationId     uint64                 `protobuf:"varint,3,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
+	ToolEpoch        uint64                 `protobuf:"varint,4,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
+	Kind             OutputIntentKind       `protobuf:"varint,5,opt,name=kind,proto3,enum=memoria.media.v1.OutputIntentKind" json:"kind,omitempty"`
+	Priority         uint32                 `protobuf:"varint,6,opt,name=priority,proto3" json:"priority,omitempty"`
+	CreatedAtMs      uint64                 `protobuf:"varint,7,opt,name=created_at_ms,json=createdAtMs,proto3" json:"created_at_ms,omitempty"`
+	ExpiresAtMs      uint64                 `protobuf:"varint,8,opt,name=expires_at_ms,json=expiresAtMs,proto3" json:"expires_at_ms,omitempty"`
+	FloorRequirement FloorRequirement       `protobuf:"varint,9,opt,name=floor_requirement,json=floorRequirement,proto3,enum=memoria.media.v1.FloorRequirement" json:"floor_requirement,omitempty"`
+	ContextVersion   uint64                 `protobuf:"varint,10,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ShadowOutputIntent) Reset() {
+	*x = ShadowOutputIntent{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShadowOutputIntent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShadowOutputIntent) ProtoMessage() {}
+
+func (x *ShadowOutputIntent) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShadowOutputIntent.ProtoReflect.Descriptor instead.
+func (*ShadowOutputIntent) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *ShadowOutputIntent) GetIntentId() string {
+	if x != nil {
+		return x.IntentId
+	}
+	return ""
+}
+
+func (x *ShadowOutputIntent) GetTurnId() uint64 {
+	if x != nil {
+		return x.TurnId
+	}
+	return 0
+}
+
+func (x *ShadowOutputIntent) GetGenerationId() uint64 {
+	if x != nil {
+		return x.GenerationId
+	}
+	return 0
+}
+
+func (x *ShadowOutputIntent) GetToolEpoch() uint64 {
+	if x != nil {
+		return x.ToolEpoch
+	}
+	return 0
+}
+
+func (x *ShadowOutputIntent) GetKind() OutputIntentKind {
+	if x != nil {
+		return x.Kind
+	}
+	return OutputIntentKind_OUTPUT_INTENT_KIND_UNSPECIFIED
+}
+
+func (x *ShadowOutputIntent) GetPriority() uint32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
+func (x *ShadowOutputIntent) GetCreatedAtMs() uint64 {
+	if x != nil {
+		return x.CreatedAtMs
+	}
+	return 0
+}
+
+func (x *ShadowOutputIntent) GetExpiresAtMs() uint64 {
+	if x != nil {
+		return x.ExpiresAtMs
+	}
+	return 0
+}
+
+func (x *ShadowOutputIntent) GetFloorRequirement() FloorRequirement {
+	if x != nil {
+		return x.FloorRequirement
+	}
+	return FloorRequirement_FLOOR_REQUIREMENT_UNSPECIFIED
+}
+
+func (x *ShadowOutputIntent) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
+type ShadowSpeechTimelineState struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	CommittedSample uint64                 `protobuf:"varint,1,opt,name=committed_sample,json=committedSample,proto3" json:"committed_sample,omitempty"`
+	LatestTaskEpoch uint64                 `protobuf:"varint,2,opt,name=latest_task_epoch,json=latestTaskEpoch,proto3" json:"latest_task_epoch,omitempty"`
+	Segments        []*ShadowSpeechSegment `protobuf:"bytes,3,rep,name=segments,proto3" json:"segments,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ShadowSpeechTimelineState) Reset() {
+	*x = ShadowSpeechTimelineState{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShadowSpeechTimelineState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShadowSpeechTimelineState) ProtoMessage() {}
+
+func (x *ShadowSpeechTimelineState) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShadowSpeechTimelineState.ProtoReflect.Descriptor instead.
+func (*ShadowSpeechTimelineState) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *ShadowSpeechTimelineState) GetCommittedSample() uint64 {
+	if x != nil {
+		return x.CommittedSample
+	}
+	return 0
+}
+
+func (x *ShadowSpeechTimelineState) GetLatestTaskEpoch() uint64 {
+	if x != nil {
+		return x.LatestTaskEpoch
+	}
+	return 0
+}
+
+func (x *ShadowSpeechTimelineState) GetSegments() []*ShadowSpeechSegment {
+	if x != nil {
+		return x.Segments
+	}
+	return nil
+}
+
+// Typed floor/effect evidence for candidate-only parity. The effect remains
+// data in go_shadow; the Python authority is still the only executor.
+type ShadowFloorDecision struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FloorState    FloorState             `protobuf:"varint,1,opt,name=floor_state,json=floorState,proto3,enum=memoria.media.v1.FloorState" json:"floor_state,omitempty"`
+	EffectKind    RealtimeEffectKind     `protobuf:"varint,2,opt,name=effect_kind,json=effectKind,proto3,enum=memoria.media.v1.RealtimeEffectKind" json:"effect_kind,omitempty"`
+	TurnId        uint64                 `protobuf:"varint,3,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	GenerationId  uint64                 `protobuf:"varint,4,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
+	ToolEpoch     uint64                 `protobuf:"varint,5,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ShadowFloorDecision) Reset() {
+	*x = ShadowFloorDecision{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShadowFloorDecision) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShadowFloorDecision) ProtoMessage() {}
+
+func (x *ShadowFloorDecision) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShadowFloorDecision.ProtoReflect.Descriptor instead.
+func (*ShadowFloorDecision) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ShadowFloorDecision) GetFloorState() FloorState {
+	if x != nil {
+		return x.FloorState
+	}
+	return FloorState_FLOOR_STATE_UNSPECIFIED
+}
+
+func (x *ShadowFloorDecision) GetEffectKind() RealtimeEffectKind {
+	if x != nil {
+		return x.EffectKind
+	}
+	return RealtimeEffectKind_REALTIME_EFFECT_KIND_UNSPECIFIED
+}
+
+func (x *ShadowFloorDecision) GetTurnId() uint64 {
+	if x != nil {
+		return x.TurnId
+	}
+	return 0
+}
+
+func (x *ShadowFloorDecision) GetGenerationId() uint64 {
+	if x != nil {
+		return x.GenerationId
+	}
+	return 0
+}
+
+func (x *ShadowFloorDecision) GetToolEpoch() uint64 {
+	if x != nil {
+		return x.ToolEpoch
+	}
+	return 0
+}
+
+type ShadowOutputArbiterState struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ContextVersion uint64                 `protobuf:"varint,1,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	// Compatibility winner for readers that predate the bounded active set.
+	Candidate        *ShadowOutputIntent   `protobuf:"bytes,2,opt,name=candidate,proto3" json:"candidate,omitempty"`
+	ActiveCandidates []*ShadowOutputIntent `protobuf:"bytes,3,rep,name=active_candidates,json=activeCandidates,proto3" json:"active_candidates,omitempty"`
+	// Distinguishes a complete empty set from a legacy winner-only state.
+	ActiveCandidatesComplete bool `protobuf:"varint,4,opt,name=active_candidates_complete,json=activeCandidatesComplete,proto3" json:"active_candidates_complete,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
+}
+
+func (x *ShadowOutputArbiterState) Reset() {
+	*x = ShadowOutputArbiterState{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShadowOutputArbiterState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShadowOutputArbiterState) ProtoMessage() {}
+
+func (x *ShadowOutputArbiterState) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShadowOutputArbiterState.ProtoReflect.Descriptor instead.
+func (*ShadowOutputArbiterState) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ShadowOutputArbiterState) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
+func (x *ShadowOutputArbiterState) GetCandidate() *ShadowOutputIntent {
+	if x != nil {
+		return x.Candidate
+	}
+	return nil
+}
+
+func (x *ShadowOutputArbiterState) GetActiveCandidates() []*ShadowOutputIntent {
+	if x != nil {
+		return x.ActiveCandidates
+	}
+	return nil
+}
+
+func (x *ShadowOutputArbiterState) GetActiveCandidatesComplete() bool {
+	if x != nil {
+		return x.ActiveCandidatesComplete
+	}
+	return false
+}
+
+type ShadowObservation struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Identity        *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
+	Sequence        uint64                 `protobuf:"varint,2,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	ShadowSequence  uint64                 `protobuf:"varint,3,opt,name=shadow_sequence,json=shadowSequence,proto3" json:"shadow_sequence,omitempty"`
+	ContractVersion string                 `protobuf:"bytes,4,opt,name=contract_version,json=contractVersion,proto3" json:"contract_version,omitempty"`
+	CandidateOnly   bool                   `protobuf:"varint,5,opt,name=candidate_only,json=candidateOnly,proto3" json:"candidate_only,omitempty"`
+	Kind            ShadowObservationKind  `protobuf:"varint,6,opt,name=kind,proto3,enum=memoria.media.v1.ShadowObservationKind" json:"kind,omitempty"`
+	// Types that are valid to be assigned to Input:
+	//
+	//	*ShadowObservation_SpeechTaskStarted
+	//	*ShadowObservation_SpeechSegment
+	//	*ShadowObservation_SpeechCommit
+	//	*ShadowObservation_ContextActivated
+	//	*ShadowObservation_OutputIntent
+	//	*ShadowObservation_FloorDecision
+	Input                       isShadowObservation_Input  `protobuf_oneof:"input"`
+	AuthoritativeAccepted       bool                       `protobuf:"varint,10,opt,name=authoritative_accepted,json=authoritativeAccepted,proto3" json:"authoritative_accepted,omitempty"`
+	AuthoritativeReason         string                     `protobuf:"bytes,11,opt,name=authoritative_reason,json=authoritativeReason,proto3" json:"authoritative_reason,omitempty"`
+	AuthoritativeTimeline       *ShadowSpeechTimelineState `protobuf:"bytes,12,opt,name=authoritative_timeline,json=authoritativeTimeline,proto3" json:"authoritative_timeline,omitempty"`
+	ObservedAtMs                uint64                     `protobuf:"varint,15,opt,name=observed_at_ms,json=observedAtMs,proto3" json:"observed_at_ms,omitempty"`
+	AuthoritativeContextVersion uint64                     `protobuf:"varint,16,opt,name=authoritative_context_version,json=authoritativeContextVersion,proto3" json:"authoritative_context_version,omitempty"`
+	AuthoritativeOutputArbiter  *ShadowOutputArbiterState  `protobuf:"bytes,18,opt,name=authoritative_output_arbiter,json=authoritativeOutputArbiter,proto3" json:"authoritative_output_arbiter,omitempty"`
+	AuthoritativeConsumed       bool                       `protobuf:"varint,19,opt,name=authoritative_consumed,json=authoritativeConsumed,proto3" json:"authoritative_consumed,omitempty"`
+	unknownFields               protoimpl.UnknownFields
+	sizeCache                   protoimpl.SizeCache
+}
+
+func (x *ShadowObservation) Reset() {
+	*x = ShadowObservation{}
+	mi := &file_memoria_media_v1_media_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShadowObservation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShadowObservation) ProtoMessage() {}
+
+func (x *ShadowObservation) ProtoReflect() protoreflect.Message {
+	mi := &file_memoria_media_v1_media_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShadowObservation.ProtoReflect.Descriptor instead.
+func (*ShadowObservation) Descriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *ShadowObservation) GetIdentity() *SessionIdentity {
+	if x != nil {
+		return x.Identity
+	}
+	return nil
+}
+
+func (x *ShadowObservation) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *ShadowObservation) GetShadowSequence() uint64 {
+	if x != nil {
+		return x.ShadowSequence
+	}
+	return 0
+}
+
+func (x *ShadowObservation) GetContractVersion() string {
+	if x != nil {
+		return x.ContractVersion
+	}
+	return ""
+}
+
+func (x *ShadowObservation) GetCandidateOnly() bool {
+	if x != nil {
+		return x.CandidateOnly
+	}
+	return false
+}
+
+func (x *ShadowObservation) GetKind() ShadowObservationKind {
+	if x != nil {
+		return x.Kind
+	}
+	return ShadowObservationKind_SHADOW_OBSERVATION_KIND_UNSPECIFIED
+}
+
+func (x *ShadowObservation) GetInput() isShadowObservation_Input {
+	if x != nil {
+		return x.Input
+	}
+	return nil
+}
+
+func (x *ShadowObservation) GetSpeechTaskStarted() *ShadowSpeechTaskStarted {
+	if x != nil {
+		if x, ok := x.Input.(*ShadowObservation_SpeechTaskStarted); ok {
+			return x.SpeechTaskStarted
+		}
+	}
+	return nil
+}
+
+func (x *ShadowObservation) GetSpeechSegment() *ShadowSpeechSegment {
+	if x != nil {
+		if x, ok := x.Input.(*ShadowObservation_SpeechSegment); ok {
+			return x.SpeechSegment
+		}
+	}
+	return nil
+}
+
+func (x *ShadowObservation) GetSpeechCommit() *ShadowSpeechCommit {
+	if x != nil {
+		if x, ok := x.Input.(*ShadowObservation_SpeechCommit); ok {
+			return x.SpeechCommit
+		}
+	}
+	return nil
+}
+
+func (x *ShadowObservation) GetContextActivated() *ShadowContextActivated {
+	if x != nil {
+		if x, ok := x.Input.(*ShadowObservation_ContextActivated); ok {
+			return x.ContextActivated
+		}
+	}
+	return nil
+}
+
+func (x *ShadowObservation) GetOutputIntent() *ShadowOutputIntent {
+	if x != nil {
+		if x, ok := x.Input.(*ShadowObservation_OutputIntent); ok {
+			return x.OutputIntent
+		}
+	}
+	return nil
+}
+
+func (x *ShadowObservation) GetFloorDecision() *ShadowFloorDecision {
+	if x != nil {
+		if x, ok := x.Input.(*ShadowObservation_FloorDecision); ok {
+			return x.FloorDecision
+		}
+	}
+	return nil
+}
+
+func (x *ShadowObservation) GetAuthoritativeAccepted() bool {
+	if x != nil {
+		return x.AuthoritativeAccepted
+	}
+	return false
+}
+
+func (x *ShadowObservation) GetAuthoritativeReason() string {
+	if x != nil {
+		return x.AuthoritativeReason
+	}
+	return ""
+}
+
+func (x *ShadowObservation) GetAuthoritativeTimeline() *ShadowSpeechTimelineState {
+	if x != nil {
+		return x.AuthoritativeTimeline
+	}
+	return nil
+}
+
+func (x *ShadowObservation) GetObservedAtMs() uint64 {
+	if x != nil {
+		return x.ObservedAtMs
+	}
+	return 0
+}
+
+func (x *ShadowObservation) GetAuthoritativeContextVersion() uint64 {
+	if x != nil {
+		return x.AuthoritativeContextVersion
+	}
+	return 0
+}
+
+func (x *ShadowObservation) GetAuthoritativeOutputArbiter() *ShadowOutputArbiterState {
+	if x != nil {
+		return x.AuthoritativeOutputArbiter
+	}
+	return nil
+}
+
+func (x *ShadowObservation) GetAuthoritativeConsumed() bool {
+	if x != nil {
+		return x.AuthoritativeConsumed
+	}
+	return false
+}
+
+type isShadowObservation_Input interface {
+	isShadowObservation_Input()
+}
+
+type ShadowObservation_SpeechTaskStarted struct {
+	SpeechTaskStarted *ShadowSpeechTaskStarted `protobuf:"bytes,7,opt,name=speech_task_started,json=speechTaskStarted,proto3,oneof"`
+}
+
+type ShadowObservation_SpeechSegment struct {
+	SpeechSegment *ShadowSpeechSegment `protobuf:"bytes,8,opt,name=speech_segment,json=speechSegment,proto3,oneof"`
+}
+
+type ShadowObservation_SpeechCommit struct {
+	SpeechCommit *ShadowSpeechCommit `protobuf:"bytes,9,opt,name=speech_commit,json=speechCommit,proto3,oneof"`
+}
+
+type ShadowObservation_ContextActivated struct {
+	ContextActivated *ShadowContextActivated `protobuf:"bytes,13,opt,name=context_activated,json=contextActivated,proto3,oneof"`
+}
+
+type ShadowObservation_OutputIntent struct {
+	OutputIntent *ShadowOutputIntent `protobuf:"bytes,14,opt,name=output_intent,json=outputIntent,proto3,oneof"`
+}
+
+type ShadowObservation_FloorDecision struct {
+	FloorDecision *ShadowFloorDecision `protobuf:"bytes,17,opt,name=floor_decision,json=floorDecision,proto3,oneof"`
+}
+
+func (*ShadowObservation_SpeechTaskStarted) isShadowObservation_Input() {}
+
+func (*ShadowObservation_SpeechSegment) isShadowObservation_Input() {}
+
+func (*ShadowObservation_SpeechCommit) isShadowObservation_Input() {}
+
+func (*ShadowObservation_ContextActivated) isShadowObservation_Input() {}
+
+func (*ShadowObservation_OutputIntent) isShadowObservation_Input() {}
+
+func (*ShadowObservation_FloorDecision) isShadowObservation_Input() {}
+
+type StateEvent struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Identity       *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
+	State          ConversationState      `protobuf:"varint,2,opt,name=state,proto3,enum=memoria.media.v1.ConversationState" json:"state,omitempty"`
+	TurnId         uint64                 `protobuf:"varint,3,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	GenerationId   uint64                 `protobuf:"varint,4,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
+	Reason         string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	Sequence       uint64                 `protobuf:"varint,6,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	ToolEpoch      uint64                 `protobuf:"varint,7,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
+	TaskEpoch      uint64                 `protobuf:"varint,8,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
+	ContextVersion uint64                 `protobuf:"varint,9,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
 func (x *StateEvent) Reset() {
 	*x = StateEvent{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[14]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1605,7 +3858,7 @@ func (x *StateEvent) String() string {
 func (*StateEvent) ProtoMessage() {}
 
 func (x *StateEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[14]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1618,7 +3871,7 @@ func (x *StateEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StateEvent.ProtoReflect.Descriptor instead.
 func (*StateEvent) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{14}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *StateEvent) GetIdentity() *SessionIdentity {
@@ -1663,22 +3916,47 @@ func (x *StateEvent) GetSequence() uint64 {
 	return 0
 }
 
+func (x *StateEvent) GetToolEpoch() uint64 {
+	if x != nil {
+		return x.ToolEpoch
+	}
+	return 0
+}
+
+func (x *StateEvent) GetTaskEpoch() uint64 {
+	if x != nil {
+		return x.TaskEpoch
+	}
+	return 0
+}
+
+func (x *StateEvent) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
 type ClientEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Identity      *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
-	Type          string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
-	JsonPayload   []byte                 `protobuf:"bytes,3,opt,name=json_payload,json=jsonPayload,proto3" json:"json_payload,omitempty"`
-	TurnId        uint64                 `protobuf:"varint,4,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
-	GenerationId  uint64                 `protobuf:"varint,5,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
-	ToolEpoch     uint64                 `protobuf:"varint,6,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
-	Sequence      uint64                 `protobuf:"varint,7,opt,name=sequence,proto3" json:"sequence,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Identity     *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
+	Type         string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
+	JsonPayload  []byte                 `protobuf:"bytes,3,opt,name=json_payload,json=jsonPayload,proto3" json:"json_payload,omitempty"`
+	TurnId       uint64                 `protobuf:"varint,4,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	GenerationId uint64                 `protobuf:"varint,5,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
+	ToolEpoch    uint64                 `protobuf:"varint,6,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
+	Sequence     uint64                 `protobuf:"varint,7,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	// Optional v1 extensions. Zero preserves wire compatibility with older
+	// Media Edge and browser clients that did not carry these versions.
+	TaskEpoch      uint64 `protobuf:"varint,8,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
+	ContextVersion uint64 `protobuf:"varint,9,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ClientEvent) Reset() {
 	*x = ClientEvent{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[15]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1690,7 +3968,7 @@ func (x *ClientEvent) String() string {
 func (*ClientEvent) ProtoMessage() {}
 
 func (x *ClientEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[15]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1703,7 +3981,7 @@ func (x *ClientEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientEvent.ProtoReflect.Descriptor instead.
 func (*ClientEvent) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{15}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ClientEvent) GetIdentity() *SessionIdentity {
@@ -1755,19 +4033,38 @@ func (x *ClientEvent) GetSequence() uint64 {
 	return 0
 }
 
+func (x *ClientEvent) GetTaskEpoch() uint64 {
+	if x != nil {
+		return x.TaskEpoch
+	}
+	return 0
+}
+
+func (x *ClientEvent) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
 type CoreError struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Identity      *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
-	Code          string                 `protobuf:"bytes,2,opt,name=code,proto3" json:"code,omitempty"`
-	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
-	Retryable     bool                   `protobuf:"varint,4,opt,name=retryable,proto3" json:"retryable,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Identity       *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
+	Code           string                 `protobuf:"bytes,2,opt,name=code,proto3" json:"code,omitempty"`
+	Message        string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	Retryable      bool                   `protobuf:"varint,4,opt,name=retryable,proto3" json:"retryable,omitempty"`
+	TurnId         uint64                 `protobuf:"varint,5,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	GenerationId   uint64                 `protobuf:"varint,6,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
+	ToolEpoch      uint64                 `protobuf:"varint,7,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
+	TaskEpoch      uint64                 `protobuf:"varint,8,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
+	ContextVersion uint64                 `protobuf:"varint,9,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *CoreError) Reset() {
 	*x = CoreError{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[16]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1779,7 +4076,7 @@ func (x *CoreError) String() string {
 func (*CoreError) ProtoMessage() {}
 
 func (x *CoreError) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[16]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1792,7 +4089,7 @@ func (x *CoreError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CoreError.ProtoReflect.Descriptor instead.
 func (*CoreError) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{16}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *CoreError) GetIdentity() *SessionIdentity {
@@ -1823,6 +4120,41 @@ func (x *CoreError) GetRetryable() bool {
 	return false
 }
 
+func (x *CoreError) GetTurnId() uint64 {
+	if x != nil {
+		return x.TurnId
+	}
+	return 0
+}
+
+func (x *CoreError) GetGenerationId() uint64 {
+	if x != nil {
+		return x.GenerationId
+	}
+	return 0
+}
+
+func (x *CoreError) GetToolEpoch() uint64 {
+	if x != nil {
+		return x.ToolEpoch
+	}
+	return 0
+}
+
+func (x *CoreError) GetTaskEpoch() uint64 {
+	if x != nil {
+		return x.TaskEpoch
+	}
+	return 0
+}
+
+func (x *CoreError) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
 type CoreToMedia struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Event:
@@ -1834,6 +4166,9 @@ type CoreToMedia struct {
 	//	*CoreToMedia_State
 	//	*CoreToMedia_Client
 	//	*CoreToMedia_Error
+	//	*CoreToMedia_ShadowObservation
+	//	*CoreToMedia_RealtimeEffect
+	//	*CoreToMedia_FloorEffect
 	Event         isCoreToMedia_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1841,7 +4176,7 @@ type CoreToMedia struct {
 
 func (x *CoreToMedia) Reset() {
 	*x = CoreToMedia{}
-	mi := &file_memoria_media_v1_media_proto_msgTypes[17]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1853,7 +4188,7 @@ func (x *CoreToMedia) String() string {
 func (*CoreToMedia) ProtoMessage() {}
 
 func (x *CoreToMedia) ProtoReflect() protoreflect.Message {
-	mi := &file_memoria_media_v1_media_proto_msgTypes[17]
+	mi := &file_memoria_media_v1_media_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1866,7 +4201,7 @@ func (x *CoreToMedia) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CoreToMedia.ProtoReflect.Descriptor instead.
 func (*CoreToMedia) Descriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{17}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *CoreToMedia) GetEvent() isCoreToMedia_Event {
@@ -1939,6 +4274,33 @@ func (x *CoreToMedia) GetError() *CoreError {
 	return nil
 }
 
+func (x *CoreToMedia) GetShadowObservation() *ShadowObservation {
+	if x != nil {
+		if x, ok := x.Event.(*CoreToMedia_ShadowObservation); ok {
+			return x.ShadowObservation
+		}
+	}
+	return nil
+}
+
+func (x *CoreToMedia) GetRealtimeEffect() *RealtimeEffect {
+	if x != nil {
+		if x, ok := x.Event.(*CoreToMedia_RealtimeEffect); ok {
+			return x.RealtimeEffect
+		}
+	}
+	return nil
+}
+
+func (x *CoreToMedia) GetFloorEffect() *FloorEffect {
+	if x != nil {
+		if x, ok := x.Event.(*CoreToMedia_FloorEffect); ok {
+			return x.FloorEffect
+		}
+	}
+	return nil
+}
+
 type isCoreToMedia_Event interface {
 	isCoreToMedia_Event()
 }
@@ -1971,6 +4333,18 @@ type CoreToMedia_Error struct {
 	Error *CoreError `protobuf:"bytes,7,opt,name=error,proto3,oneof"`
 }
 
+type CoreToMedia_ShadowObservation struct {
+	ShadowObservation *ShadowObservation `protobuf:"bytes,8,opt,name=shadow_observation,json=shadowObservation,proto3,oneof"`
+}
+
+type CoreToMedia_RealtimeEffect struct {
+	RealtimeEffect *RealtimeEffect `protobuf:"bytes,9,opt,name=realtime_effect,json=realtimeEffect,proto3,oneof"`
+}
+
+type CoreToMedia_FloorEffect struct {
+	FloorEffect *FloorEffect `protobuf:"bytes,10,opt,name=floor_effect,json=floorEffect,proto3,oneof"`
+}
+
 func (*CoreToMedia_Accepted) isCoreToMedia_Event() {}
 
 func (*CoreToMedia_Audio) isCoreToMedia_Event() {}
@@ -1985,11 +4359,127 @@ func (*CoreToMedia_Client) isCoreToMedia_Event() {}
 
 func (*CoreToMedia_Error) isCoreToMedia_Event() {}
 
+func (*CoreToMedia_ShadowObservation) isCoreToMedia_Event() {}
+
+func (*CoreToMedia_RealtimeEffect) isCoreToMedia_Event() {}
+
+func (*CoreToMedia_FloorEffect) isCoreToMedia_Event() {}
+
 var File_memoria_media_v1_media_proto protoreflect.FileDescriptor
 
 const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\n" +
-	"\x1cmemoria/media/v1/media.proto\x12\x10memoria.media.v1\"\xd7\x01\n" +
+	"\x1cmemoria/media/v1/media.proto\x12\x10memoria.media.v1\"\xa6\x01\n" +
+	"\x0fSpeakerEvidence\x12#\n" +
+	"\rspeaker_class\x18\x01 \x01(\tR\fspeakerClass\x12\x1e\n" +
+	"\n" +
+	"confidence\x18\x02 \x01(\x02R\n" +
+	"confidence\x12\x1f\n" +
+	"\vreason_code\x18\x03 \x01(\tR\n" +
+	"reasonCode\x12-\n" +
+	"\x12authority_verified\x18\x04 \x01(\bR\x11authorityVerified\"\xf8\x04\n" +
+	"\x1aContinuousInteractionEvent\x12\x19\n" +
+	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12!\n" +
+	"\fstream_epoch\x18\x03 \x01(\x04R\vstreamEpoch\x12\x1a\n" +
+	"\bsequence\x18\x04 \x01(\x04R\bsequence\x120\n" +
+	"\x14capture_start_sample\x18\x05 \x01(\x04R\x12captureStartSample\x12,\n" +
+	"\x12capture_end_sample\x18\x06 \x01(\x04R\x10captureEndSample\x12.\n" +
+	"\x13source_monotonic_ms\x18\a \x01(\x04R\x11sourceMonotonicMs\x12D\n" +
+	"\n" +
+	"event_kind\x18\b \x01(\x0e2%.memoria.media.v1.ContinuousEventKindR\teventKind\x12\x17\n" +
+	"\aturn_id\x18\t \x01(\x04R\x06turnId\x12#\n" +
+	"\rgeneration_id\x18\n" +
+	" \x01(\x04R\fgenerationId\x12\x1d\n" +
+	"\n" +
+	"tool_epoch\x18\v \x01(\x04R\ttoolEpoch\x12\x1d\n" +
+	"\n" +
+	"task_epoch\x18\f \x01(\x04R\ttaskEpoch\x12'\n" +
+	"\x0fcontext_version\x18\r \x01(\x04R\x0econtextVersion\x12L\n" +
+	"\x10speaker_evidence\x18\x0e \x01(\v2!.memoria.media.v1.SpeakerEvidenceR\x0fspeakerEvidence\x12\x18\n" +
+	"\apayload\x18\x0f \x01(\fR\apayload\"\x9f\x04\n" +
+	"\x0eRealtimeEffect\x12\x1b\n" +
+	"\teffect_id\x18\x01 \x01(\tR\beffectId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12!\n" +
+	"\fstream_epoch\x18\x03 \x01(\x04R\vstreamEpoch\x12\x1a\n" +
+	"\bsequence\x18\x04 \x01(\x04R\bsequence\x12E\n" +
+	"\veffect_kind\x18\x05 \x01(\x0e2$.memoria.media.v1.RealtimeEffectKindR\n" +
+	"effectKind\x12&\n" +
+	"\x0fsource_event_id\x18\x06 \x01(\tR\rsourceEventId\x12\x17\n" +
+	"\aturn_id\x18\a \x01(\x04R\x06turnId\x12#\n" +
+	"\rgeneration_id\x18\b \x01(\x04R\fgenerationId\x12\x1d\n" +
+	"\n" +
+	"tool_epoch\x18\t \x01(\x04R\ttoolEpoch\x12\x1d\n" +
+	"\n" +
+	"task_epoch\x18\n" +
+	" \x01(\x04R\ttaskEpoch\x12'\n" +
+	"\x0fcontext_version\x18\v \x01(\x04R\x0econtextVersion\x12%\n" +
+	"\x0ecandidate_only\x18\f \x01(\bR\rcandidateOnly\x12\x18\n" +
+	"\apayload\x18\r \x01(\fR\apayload\x12=\n" +
+	"\bidentity\x18\x0e \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\"\xfd\x03\n" +
+	"\vFloorEffect\x12\x1b\n" +
+	"\teffect_id\x18\x01 \x01(\tR\beffectId\x12=\n" +
+	"\bidentity\x18\x02 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x1a\n" +
+	"\bsequence\x18\x03 \x01(\x04R\bsequence\x12=\n" +
+	"\vfloor_state\x18\x04 \x01(\x0e2\x1c.memoria.media.v1.FloorStateR\n" +
+	"floorState\x12\x1f\n" +
+	"\vfloor_epoch\x18\x05 \x01(\x04R\n" +
+	"floorEpoch\x12&\n" +
+	"\x0fsource_event_id\x18\x06 \x01(\tR\rsourceEventId\x12\x17\n" +
+	"\aturn_id\x18\a \x01(\x04R\x06turnId\x12#\n" +
+	"\rgeneration_id\x18\b \x01(\x04R\fgenerationId\x12\x1d\n" +
+	"\n" +
+	"tool_epoch\x18\t \x01(\x04R\ttoolEpoch\x12\x1d\n" +
+	"\n" +
+	"task_epoch\x18\n" +
+	" \x01(\x04R\ttaskEpoch\x12'\n" +
+	"\x0fcontext_version\x18\v \x01(\x04R\x0econtextVersion\x12%\n" +
+	"\x0ecandidate_only\x18\f \x01(\bR\rcandidateOnly\x12\"\n" +
+	"\rexpires_at_ms\x18\r \x01(\x04R\vexpiresAtMs\"\x87\x04\n" +
+	"\fOutputIntent\x12\x1b\n" +
+	"\tintent_id\x18\x01 \x01(\tR\bintentId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x17\n" +
+	"\aturn_id\x18\x03 \x01(\x04R\x06turnId\x12#\n" +
+	"\rgeneration_id\x18\x04 \x01(\x04R\fgenerationId\x12\x1d\n" +
+	"\n" +
+	"tool_epoch\x18\x05 \x01(\x04R\ttoolEpoch\x126\n" +
+	"\x04kind\x18\x06 \x01(\x0e2\".memoria.media.v1.OutputIntentKindR\x04kind\x12\x1a\n" +
+	"\bpriority\x18\a \x01(\rR\bpriority\x12\"\n" +
+	"\rcreated_at_ms\x18\b \x01(\x04R\vcreatedAtMs\x12\"\n" +
+	"\rexpires_at_ms\x18\t \x01(\x04R\vexpiresAtMs\x12O\n" +
+	"\x11floor_requirement\x18\n" +
+	" \x01(\x0e2\".memoria.media.v1.FloorRequirementR\x10floorRequirement\x12'\n" +
+	"\x0fcontext_version\x18\v \x01(\x04R\x0econtextVersion\x12\x1d\n" +
+	"\tpcm_s16le\x18\f \x01(\fH\x00R\bpcmS16le\x12\x1f\n" +
+	"\n" +
+	"tts_source\x18\r \x01(\tH\x00R\tttsSourceB\b\n" +
+	"\x06source\"\xb6\x05\n" +
+	"\x0fProjectionEvent\x12\x19\n" +
+	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12!\n" +
+	"\fstream_epoch\x18\x03 \x01(\x04R\vstreamEpoch\x12\x1a\n" +
+	"\bsequence\x18\x04 \x01(\x04R\bsequence\x12D\n" +
+	"\n" +
+	"event_kind\x18\x05 \x01(\x0e2%.memoria.media.v1.ProjectionEventKindR\teventKind\x12\x17\n" +
+	"\aturn_id\x18\x06 \x01(\x04R\x06turnId\x12\x1a\n" +
+	"\brevision\x18\a \x01(\x04R\brevision\x120\n" +
+	"\x14capture_start_sample\x18\b \x01(\x04R\x12captureStartSample\x12,\n" +
+	"\x12capture_end_sample\x18\t \x01(\x04R\x10captureEndSample\x12\x12\n" +
+	"\x04text\x18\n" +
+	" \x01(\tR\x04text\x12=\n" +
+	"\vfloor_state\x18\v \x01(\x0e2\x1c.memoria.media.v1.FloorStateR\n" +
+	"floorState\x12L\n" +
+	"\x10speaker_evidence\x18\f \x01(\v2!.memoria.media.v1.SpeakerEvidenceR\x0fspeakerEvidence\x12#\n" +
+	"\rgeneration_id\x18\r \x01(\x04R\fgenerationId\x12\x1d\n" +
+	"\n" +
+	"tool_epoch\x18\x0e \x01(\x04R\ttoolEpoch\x12'\n" +
+	"\x0fcontext_version\x18\x0f \x01(\x04R\x0econtextVersion\x12)\n" +
+	"\x10history_eligible\x18\x10 \x01(\bR\x0fhistoryEligible\x12\x16\n" +
+	"\x06reason\x18\x11 \x01(\tR\x06reason\"\xd7\x01\n" +
 	"\x0fSessionIdentity\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
@@ -2005,13 +4495,14 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\vsample_rate\x18\x02 \x01(\rR\n" +
 	"sampleRate\x12\x1a\n" +
 	"\bchannels\x18\x03 \x01(\rR\bchannels\x12\x19\n" +
-	"\bframe_ms\x18\x04 \x01(\rR\aframeMs\"\x92\x03\n" +
+	"\bframe_ms\x18\x04 \x01(\rR\aframeMs\"\xef\x03\n" +
 	"\fSessionHello\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12B\n" +
 	"\ruplink_format\x18\x02 \x01(\v2\x1d.memoria.media.v1.AudioFormatR\fuplinkFormat\x12F\n" +
 	"\x0fdownlink_format\x18\x03 \x01(\v2\x1d.memoria.media.v1.AudioFormatR\x0edownlinkFormat\x12T\n" +
 	"\fcapabilities\x18\x04 \x03(\v20.memoria.media.v1.SessionHello.CapabilitiesEntryR\fcapabilities\x12 \n" +
-	"\vtraceparent\x18\x05 \x01(\tR\vtraceparent\x1a?\n" +
+	"\vtraceparent\x18\x05 \x01(\tR\vtraceparent\x12[\n" +
+	"\x15interaction_authority\x18\x06 \x01(\x0e2&.memoria.media.v1.InteractionAuthorityR\x14interactionAuthority\x1a?\n" +
 	"\x11CapabilitiesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x96\x02\n" +
@@ -2082,11 +4573,17 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\bplayback\x18\x05 \x01(\v2\".memoria.media.v1.PlaybackProgressH\x00R\bplayback\x127\n" +
 	"\x06device\x18\x06 \x01(\v2\x1d.memoria.media.v1.DeviceEventH\x00R\x06device\x127\n" +
 	"\x06metric\x18\a \x01(\v2\x1d.memoria.media.v1.MediaMetricH\x00R\x06metricB\a\n" +
-	"\x05event\"\xbf\x01\n" +
+	"\x05event\"\xba\x03\n" +
 	"\x0fSessionAccepted\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x129\n" +
 	"\x05state\x18\x02 \x01(\x0e2#.memoria.media.v1.ConversationStateR\x05state\x122\n" +
-	"\x15current_generation_id\x18\x03 \x01(\x04R\x13currentGenerationId\"\x81\x03\n" +
+	"\x15current_generation_id\x18\x03 \x01(\x04R\x13currentGenerationId\x12[\n" +
+	"\x15interaction_authority\x18\x04 \x01(\x0e2&.memoria.media.v1.InteractionAuthorityR\x14interactionAuthority\x12&\n" +
+	"\x0fcurrent_turn_id\x18\x05 \x01(\x04R\rcurrentTurnId\x12,\n" +
+	"\x12current_tool_epoch\x18\x06 \x01(\x04R\x10currentToolEpoch\x12\x1d\n" +
+	"\n" +
+	"task_epoch\x18\a \x01(\x04R\ttaskEpoch\x12'\n" +
+	"\x0fcontext_version\x18\b \x01(\x04R\x0econtextVersion\"\xc9\x03\n" +
 	"\x13AssistantAudioFrame\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x17\n" +
 	"\aturn_id\x18\x02 \x01(\x04R\x06turnId\x12#\n" +
@@ -2101,7 +4598,10 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"firstFrame\x12\x1f\n" +
 	"\vfinal_frame\x18\n" +
 	" \x01(\bR\n" +
-	"finalFrame\"\x9f\x02\n" +
+	"finalFrame\x12\x1d\n" +
+	"\n" +
+	"task_epoch\x18\v \x01(\x04R\ttaskEpoch\x12'\n" +
+	"\x0fcontext_version\x18\f \x01(\x04R\x0econtextVersion\"\xe7\x02\n" +
 	"\x11GenerationControl\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x17\n" +
 	"\aturn_id\x18\x02 \x01(\x04R\x06turnId\x12#\n" +
@@ -2110,7 +4610,10 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"tool_epoch\x18\x04 \x01(\x04R\ttoolEpoch\x12:\n" +
 	"\x06action\x18\x05 \x01(\x0e2\".memoria.media.v1.GenerationActionR\x06action\x12\x16\n" +
 	"\x06reason\x18\x06 \x01(\tR\x06reason\x12\x1a\n" +
-	"\bsequence\x18\a \x01(\x04R\bsequence\"\xb4\x03\n" +
+	"\bsequence\x18\a \x01(\x04R\bsequence\x12\x1d\n" +
+	"\n" +
+	"task_epoch\x18\b \x01(\x04R\ttaskEpoch\x12'\n" +
+	"\x0fcontext_version\x18\t \x01(\x04R\x0econtextVersion\"\xfc\x03\n" +
 	"\x0fTranscriptEvent\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x17\n" +
 	"\aturn_id\x18\x02 \x01(\x04R\x06turnId\x12\x1a\n" +
@@ -2127,7 +4630,81 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	" \x01(\x04R\fgenerationId\x12\x1d\n" +
 	"\n" +
 	"tool_epoch\x18\v \x01(\x04R\ttoolEpoch\x12\x1a\n" +
-	"\bsequence\x18\f \x01(\x04R\bsequence\"\xf8\x01\n" +
+	"\bsequence\x18\f \x01(\x04R\bsequence\x12\x1d\n" +
+	"\n" +
+	"task_epoch\x18\r \x01(\x04R\ttaskEpoch\x12'\n" +
+	"\x0fcontext_version\x18\x0e \x01(\x04R\x0econtextVersion\"\x86\x02\n" +
+	"\x13ShadowSpeechSegment\x12\x1d\n" +
+	"\n" +
+	"segment_id\x18\x01 \x01(\tR\tsegmentId\x120\n" +
+	"\x14capture_start_sample\x18\x02 \x01(\x04R\x12captureStartSample\x12,\n" +
+	"\x12capture_end_sample\x18\x03 \x01(\x04R\x10captureEndSample\x12\x1d\n" +
+	"\n" +
+	"task_epoch\x18\x04 \x01(\x04R\ttaskEpoch\x12\x1a\n" +
+	"\brevision\x18\x05 \x01(\x04R\brevision\x12\x1f\n" +
+	"\vtext_sha256\x18\x06 \x01(\fR\n" +
+	"textSha256\x12\x14\n" +
+	"\x05final\x18\a \x01(\bR\x05final\"8\n" +
+	"\x17ShadowSpeechTaskStarted\x12\x1d\n" +
+	"\n" +
+	"task_epoch\x18\x01 \x01(\x04R\ttaskEpoch\"?\n" +
+	"\x12ShadowSpeechCommit\x12)\n" +
+	"\x10committed_sample\x18\x01 \x01(\x04R\x0fcommittedSample\"A\n" +
+	"\x16ShadowContextActivated\x12'\n" +
+	"\x0fcontext_version\x18\x01 \x01(\x04R\x0econtextVersion\"\xa4\x03\n" +
+	"\x12ShadowOutputIntent\x12\x1b\n" +
+	"\tintent_id\x18\x01 \x01(\tR\bintentId\x12\x17\n" +
+	"\aturn_id\x18\x02 \x01(\x04R\x06turnId\x12#\n" +
+	"\rgeneration_id\x18\x03 \x01(\x04R\fgenerationId\x12\x1d\n" +
+	"\n" +
+	"tool_epoch\x18\x04 \x01(\x04R\ttoolEpoch\x126\n" +
+	"\x04kind\x18\x05 \x01(\x0e2\".memoria.media.v1.OutputIntentKindR\x04kind\x12\x1a\n" +
+	"\bpriority\x18\x06 \x01(\rR\bpriority\x12\"\n" +
+	"\rcreated_at_ms\x18\a \x01(\x04R\vcreatedAtMs\x12\"\n" +
+	"\rexpires_at_ms\x18\b \x01(\x04R\vexpiresAtMs\x12O\n" +
+	"\x11floor_requirement\x18\t \x01(\x0e2\".memoria.media.v1.FloorRequirementR\x10floorRequirement\x12'\n" +
+	"\x0fcontext_version\x18\n" +
+	" \x01(\x04R\x0econtextVersion\"\xb5\x01\n" +
+	"\x19ShadowSpeechTimelineState\x12)\n" +
+	"\x10committed_sample\x18\x01 \x01(\x04R\x0fcommittedSample\x12*\n" +
+	"\x11latest_task_epoch\x18\x02 \x01(\x04R\x0flatestTaskEpoch\x12A\n" +
+	"\bsegments\x18\x03 \x03(\v2%.memoria.media.v1.ShadowSpeechSegmentR\bsegments\"\xf8\x01\n" +
+	"\x13ShadowFloorDecision\x12=\n" +
+	"\vfloor_state\x18\x01 \x01(\x0e2\x1c.memoria.media.v1.FloorStateR\n" +
+	"floorState\x12E\n" +
+	"\veffect_kind\x18\x02 \x01(\x0e2$.memoria.media.v1.RealtimeEffectKindR\n" +
+	"effectKind\x12\x17\n" +
+	"\aturn_id\x18\x03 \x01(\x04R\x06turnId\x12#\n" +
+	"\rgeneration_id\x18\x04 \x01(\x04R\fgenerationId\x12\x1d\n" +
+	"\n" +
+	"tool_epoch\x18\x05 \x01(\x04R\ttoolEpoch\"\x98\x02\n" +
+	"\x18ShadowOutputArbiterState\x12'\n" +
+	"\x0fcontext_version\x18\x01 \x01(\x04R\x0econtextVersion\x12B\n" +
+	"\tcandidate\x18\x02 \x01(\v2$.memoria.media.v1.ShadowOutputIntentR\tcandidate\x12Q\n" +
+	"\x11active_candidates\x18\x03 \x03(\v2$.memoria.media.v1.ShadowOutputIntentR\x10activeCandidates\x12<\n" +
+	"\x1aactive_candidates_complete\x18\x04 \x01(\bR\x18activeCandidatesComplete\"\xfc\t\n" +
+	"\x11ShadowObservation\x12=\n" +
+	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x1a\n" +
+	"\bsequence\x18\x02 \x01(\x04R\bsequence\x12'\n" +
+	"\x0fshadow_sequence\x18\x03 \x01(\x04R\x0eshadowSequence\x12)\n" +
+	"\x10contract_version\x18\x04 \x01(\tR\x0fcontractVersion\x12%\n" +
+	"\x0ecandidate_only\x18\x05 \x01(\bR\rcandidateOnly\x12;\n" +
+	"\x04kind\x18\x06 \x01(\x0e2'.memoria.media.v1.ShadowObservationKindR\x04kind\x12[\n" +
+	"\x13speech_task_started\x18\a \x01(\v2).memoria.media.v1.ShadowSpeechTaskStartedH\x00R\x11speechTaskStarted\x12N\n" +
+	"\x0espeech_segment\x18\b \x01(\v2%.memoria.media.v1.ShadowSpeechSegmentH\x00R\rspeechSegment\x12K\n" +
+	"\rspeech_commit\x18\t \x01(\v2$.memoria.media.v1.ShadowSpeechCommitH\x00R\fspeechCommit\x12W\n" +
+	"\x11context_activated\x18\r \x01(\v2(.memoria.media.v1.ShadowContextActivatedH\x00R\x10contextActivated\x12K\n" +
+	"\routput_intent\x18\x0e \x01(\v2$.memoria.media.v1.ShadowOutputIntentH\x00R\foutputIntent\x12N\n" +
+	"\x0efloor_decision\x18\x11 \x01(\v2%.memoria.media.v1.ShadowFloorDecisionH\x00R\rfloorDecision\x125\n" +
+	"\x16authoritative_accepted\x18\n" +
+	" \x01(\bR\x15authoritativeAccepted\x121\n" +
+	"\x14authoritative_reason\x18\v \x01(\tR\x13authoritativeReason\x12b\n" +
+	"\x16authoritative_timeline\x18\f \x01(\v2+.memoria.media.v1.ShadowSpeechTimelineStateR\x15authoritativeTimeline\x12$\n" +
+	"\x0eobserved_at_ms\x18\x0f \x01(\x04R\fobservedAtMs\x12B\n" +
+	"\x1dauthoritative_context_version\x18\x10 \x01(\x04R\x1bauthoritativeContextVersion\x12l\n" +
+	"\x1cauthoritative_output_arbiter\x18\x12 \x01(\v2*.memoria.media.v1.ShadowOutputArbiterStateR\x1aauthoritativeOutputArbiter\x125\n" +
+	"\x16authoritative_consumed\x18\x13 \x01(\bR\x15authoritativeConsumedB\a\n" +
+	"\x05input\"\xdf\x02\n" +
 	"\n" +
 	"StateEvent\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x129\n" +
@@ -2135,7 +4712,12 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\aturn_id\x18\x03 \x01(\x04R\x06turnId\x12#\n" +
 	"\rgeneration_id\x18\x04 \x01(\x04R\fgenerationId\x12\x16\n" +
 	"\x06reason\x18\x05 \x01(\tR\x06reason\x12\x1a\n" +
-	"\bsequence\x18\x06 \x01(\x04R\bsequence\"\xfc\x01\n" +
+	"\bsequence\x18\x06 \x01(\x04R\bsequence\x12\x1d\n" +
+	"\n" +
+	"tool_epoch\x18\a \x01(\x04R\ttoolEpoch\x12\x1d\n" +
+	"\n" +
+	"task_epoch\x18\b \x01(\x04R\ttaskEpoch\x12'\n" +
+	"\x0fcontext_version\x18\t \x01(\x04R\x0econtextVersion\"\xc4\x02\n" +
 	"\vClientEvent\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12!\n" +
@@ -2144,12 +4726,22 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\rgeneration_id\x18\x05 \x01(\x04R\fgenerationId\x12\x1d\n" +
 	"\n" +
 	"tool_epoch\x18\x06 \x01(\x04R\ttoolEpoch\x12\x1a\n" +
-	"\bsequence\x18\a \x01(\x04R\bsequence\"\x96\x01\n" +
+	"\bsequence\x18\a \x01(\x04R\bsequence\x12\x1d\n" +
+	"\n" +
+	"task_epoch\x18\b \x01(\x04R\ttaskEpoch\x12'\n" +
+	"\x0fcontext_version\x18\t \x01(\x04R\x0econtextVersion\"\xbb\x02\n" +
 	"\tCoreError\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x12\n" +
 	"\x04code\x18\x02 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1c\n" +
-	"\tretryable\x18\x04 \x01(\bR\tretryable\"\xc6\x03\n" +
+	"\tretryable\x18\x04 \x01(\bR\tretryable\x12\x17\n" +
+	"\aturn_id\x18\x05 \x01(\x04R\x06turnId\x12#\n" +
+	"\rgeneration_id\x18\x06 \x01(\x04R\fgenerationId\x12\x1d\n" +
+	"\n" +
+	"tool_epoch\x18\a \x01(\x04R\ttoolEpoch\x12\x1d\n" +
+	"\n" +
+	"task_epoch\x18\b \x01(\x04R\ttaskEpoch\x12'\n" +
+	"\x0fcontext_version\x18\t \x01(\x04R\x0econtextVersion\"\xad\x05\n" +
 	"\vCoreToMedia\x12?\n" +
 	"\baccepted\x18\x01 \x01(\v2!.memoria.media.v1.SessionAcceptedH\x00R\baccepted\x12=\n" +
 	"\x05audio\x18\x02 \x01(\v2%.memoria.media.v1.AssistantAudioFrameH\x00R\x05audio\x12E\n" +
@@ -2161,8 +4753,67 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"transcript\x124\n" +
 	"\x05state\x18\x05 \x01(\v2\x1c.memoria.media.v1.StateEventH\x00R\x05state\x127\n" +
 	"\x06client\x18\x06 \x01(\v2\x1d.memoria.media.v1.ClientEventH\x00R\x06client\x123\n" +
-	"\x05error\x18\a \x01(\v2\x1b.memoria.media.v1.CoreErrorH\x00R\x05errorB\a\n" +
-	"\x05event*f\n" +
+	"\x05error\x18\a \x01(\v2\x1b.memoria.media.v1.CoreErrorH\x00R\x05error\x12T\n" +
+	"\x12shadow_observation\x18\b \x01(\v2#.memoria.media.v1.ShadowObservationH\x00R\x11shadowObservation\x12K\n" +
+	"\x0frealtime_effect\x18\t \x01(\v2 .memoria.media.v1.RealtimeEffectH\x00R\x0erealtimeEffect\x12B\n" +
+	"\ffloor_effect\x18\n" +
+	" \x01(\v2\x1d.memoria.media.v1.FloorEffectH\x00R\vfloorEffectB\a\n" +
+	"\x05event*\xbe\x01\n" +
+	"\x14InteractionAuthority\x12%\n" +
+	"!INTERACTION_AUTHORITY_UNSPECIFIED\x10\x00\x12.\n" +
+	"*INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE\x10\x01\x12#\n" +
+	"\x1fINTERACTION_AUTHORITY_GO_SHADOW\x10\x02\x12*\n" +
+	"&INTERACTION_AUTHORITY_GO_AUTHORITATIVE\x10\x03*\x9c\x03\n" +
+	"\x13ContinuousEventKind\x12%\n" +
+	"!CONTINUOUS_EVENT_KIND_UNSPECIFIED\x10\x00\x12%\n" +
+	"!CONTINUOUS_EVENT_KIND_AUDIO_FRAME\x10\x01\x12\x1d\n" +
+	"\x19CONTINUOUS_EVENT_KIND_VAD\x10\x02\x12!\n" +
+	"\x1dCONTINUOUS_EVENT_KIND_KEYWORD\x10\x03\x12%\n" +
+	"!CONTINUOUS_EVENT_KIND_ASR_PARTIAL\x10\x04\x12#\n" +
+	"\x1fCONTINUOUS_EVENT_KIND_ASR_FINAL\x10\x05\x12+\n" +
+	"'CONTINUOUS_EVENT_KIND_PLAYBACK_PROGRESS\x10\x06\x12%\n" +
+	"!CONTINUOUS_EVENT_KIND_CLIENT_STOP\x10\a\x12(\n" +
+	"$CONTINUOUS_EVENT_KIND_PROVIDER_STATE\x10\b\x12+\n" +
+	"'CONTINUOUS_EVENT_KIND_DELEGATION_RESULT\x10\t*\xbf\x01\n" +
+	"\n" +
+	"FloorState\x12\x1b\n" +
+	"\x17FLOOR_STATE_UNSPECIFIED\x10\x00\x12 \n" +
+	"\x1cFLOOR_STATE_USER_HOLDS_FLOOR\x10\x01\x12%\n" +
+	"!FLOOR_STATE_ASSISTANT_HOLDS_FLOOR\x10\x02\x12\x17\n" +
+	"\x13FLOOR_STATE_OVERLAP\x10\x03\x12\x19\n" +
+	"\x15FLOOR_STATE_UNCERTAIN\x10\x04\x12\x17\n" +
+	"\x13FLOOR_STATE_SILENCE\x10\x05*\xc2\x03\n" +
+	"\x12RealtimeEffectKind\x12$\n" +
+	" REALTIME_EFFECT_KIND_UNSPECIFIED\x10\x00\x12$\n" +
+	" REALTIME_EFFECT_KIND_DUCK_OUTPUT\x10\x01\x12*\n" +
+	"&REALTIME_EFFECT_KIND_CANCEL_GENERATION\x10\x02\x12%\n" +
+	"!REALTIME_EFFECT_KIND_PAUSE_OUTPUT\x10\x03\x12&\n" +
+	"\"REALTIME_EFFECT_KIND_RESUME_OUTPUT\x10\x04\x12/\n" +
+	"+REALTIME_EFFECT_KIND_EMIT_PROVISIONAL_PATCH\x10\x05\x12.\n" +
+	"*REALTIME_EFFECT_KIND_COMMIT_TURN_CANDIDATE\x10\x06\x12)\n" +
+	"%REALTIME_EFFECT_KIND_START_DELEGATION\x10\a\x12.\n" +
+	"*REALTIME_EFFECT_KIND_ENQUEUE_OUTPUT_INTENT\x10\b\x12)\n" +
+	"%REALTIME_EFFECT_KIND_DROP_STALE_EVENT\x10\t*\xc0\x02\n" +
+	"\x10OutputIntentKind\x12\"\n" +
+	"\x1eOUTPUT_INTENT_KIND_UNSPECIFIED\x10\x00\x12+\n" +
+	"'OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT\x10\x01\x12\"\n" +
+	"\x1eOUTPUT_INTENT_KIND_DEEP_RESULT\x10\x02\x12\"\n" +
+	"\x1eOUTPUT_INTENT_KIND_TOOL_RESULT\x10\x03\x12\x1f\n" +
+	"\x1bOUTPUT_INTENT_KIND_REMINDER\x10\x04\x12\"\n" +
+	"\x1eOUTPUT_INTENT_KIND_BACKCHANNEL\x10\x05\x12#\n" +
+	"\x1fOUTPUT_INTENT_KIND_NOTIFICATION\x10\x06\x12)\n" +
+	"%OUTPUT_INTENT_KIND_CONVERSATION_REPLY\x10\a*\x9a\x01\n" +
+	"\x10FloorRequirement\x12!\n" +
+	"\x1dFLOOR_REQUIREMENT_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15FLOOR_REQUIREMENT_ANY\x10\x01\x12)\n" +
+	"%FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK\x10\x02\x12\x1d\n" +
+	"\x19FLOOR_REQUIREMENT_SILENCE\x10\x03*\xf3\x01\n" +
+	"\x13ProjectionEventKind\x12%\n" +
+	"!PROJECTION_EVENT_KIND_UNSPECIFIED\x10\x00\x12-\n" +
+	")PROJECTION_EVENT_KIND_PROVISIONAL_STARTED\x10\x01\x12+\n" +
+	"'PROJECTION_EVENT_KIND_PROVISIONAL_PATCH\x10\x02\x12/\n" +
+	"+PROJECTION_EVENT_KIND_PROVISIONAL_DISCARDED\x10\x03\x12(\n" +
+	"$PROJECTION_EVENT_KIND_TURN_COMMITTED\x10\x04*f\n" +
 	"\rAudioEncoding\x12\x1e\n" +
 	"\x1aAUDIO_ENCODING_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18AUDIO_ENCODING_PCM_S16LE\x10\x01\x12\x17\n" +
@@ -2188,7 +4839,15 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\x18GENERATION_ACTION_CANCEL\x10\x02\x12\x1e\n" +
 	"\x1aGENERATION_ACTION_COMPLETE\x10\x03\x12\x1b\n" +
 	"\x17GENERATION_ACTION_PAUSE\x10\x04\x12\x1c\n" +
-	"\x18GENERATION_ACTION_RESUME\x10\x052_\n" +
+	"\x18GENERATION_ACTION_RESUME\x10\x05*\xce\x02\n" +
+	"\x15ShadowObservationKind\x12'\n" +
+	"#SHADOW_OBSERVATION_KIND_UNSPECIFIED\x10\x00\x12/\n" +
+	"+SHADOW_OBSERVATION_KIND_SPEECH_TASK_STARTED\x10\x01\x12*\n" +
+	"&SHADOW_OBSERVATION_KIND_SPEECH_SEGMENT\x10\x02\x12)\n" +
+	"%SHADOW_OBSERVATION_KIND_SPEECH_COMMIT\x10\x03\x12-\n" +
+	")SHADOW_OBSERVATION_KIND_CONTEXT_ACTIVATED\x10\x04\x12)\n" +
+	"%SHADOW_OBSERVATION_KIND_OUTPUT_INTENT\x10\x05\x12*\n" +
+	"&SHADOW_OBSERVATION_KIND_FLOOR_DECISION\x10\x062_\n" +
 	"\x10VoiceMediaBridge\x12K\n" +
 	"\aConnect\x12\x1d.memoria.media.v1.MediaToCore\x1a\x1d.memoria.media.v1.CoreToMedia(\x010\x01BBZ@github.com/monkeyin92/memoria-media-runtime/gen/media/v1;mediav1b\x06proto3"
 
@@ -2204,79 +4863,135 @@ func file_memoria_media_v1_media_proto_rawDescGZIP() []byte {
 	return file_memoria_media_v1_media_proto_rawDescData
 }
 
-var file_memoria_media_v1_media_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_memoria_media_v1_media_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_memoria_media_v1_media_proto_enumTypes = make([]protoimpl.EnumInfo, 12)
+var file_memoria_media_v1_media_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_memoria_media_v1_media_proto_goTypes = []any{
-	(AudioEncoding)(0),          // 0: memoria.media.v1.AudioEncoding
-	(ConversationState)(0),      // 1: memoria.media.v1.ConversationState
-	(VadEventType)(0),           // 2: memoria.media.v1.VadEventType
-	(GenerationAction)(0),       // 3: memoria.media.v1.GenerationAction
-	(*SessionIdentity)(nil),     // 4: memoria.media.v1.SessionIdentity
-	(*AudioFormat)(nil),         // 5: memoria.media.v1.AudioFormat
-	(*SessionHello)(nil),        // 6: memoria.media.v1.SessionHello
-	(*AudioFrame)(nil),          // 7: memoria.media.v1.AudioFrame
-	(*VadEvent)(nil),            // 8: memoria.media.v1.VadEvent
-	(*KeywordEvent)(nil),        // 9: memoria.media.v1.KeywordEvent
-	(*PlaybackProgress)(nil),    // 10: memoria.media.v1.PlaybackProgress
-	(*DeviceEvent)(nil),         // 11: memoria.media.v1.DeviceEvent
-	(*MediaMetric)(nil),         // 12: memoria.media.v1.MediaMetric
-	(*MediaToCore)(nil),         // 13: memoria.media.v1.MediaToCore
-	(*SessionAccepted)(nil),     // 14: memoria.media.v1.SessionAccepted
-	(*AssistantAudioFrame)(nil), // 15: memoria.media.v1.AssistantAudioFrame
-	(*GenerationControl)(nil),   // 16: memoria.media.v1.GenerationControl
-	(*TranscriptEvent)(nil),     // 17: memoria.media.v1.TranscriptEvent
-	(*StateEvent)(nil),          // 18: memoria.media.v1.StateEvent
-	(*ClientEvent)(nil),         // 19: memoria.media.v1.ClientEvent
-	(*CoreError)(nil),           // 20: memoria.media.v1.CoreError
-	(*CoreToMedia)(nil),         // 21: memoria.media.v1.CoreToMedia
-	nil,                         // 22: memoria.media.v1.SessionHello.CapabilitiesEntry
-	nil,                         // 23: memoria.media.v1.MediaMetric.LabelsEntry
+	(InteractionAuthority)(0),          // 0: memoria.media.v1.InteractionAuthority
+	(ContinuousEventKind)(0),           // 1: memoria.media.v1.ContinuousEventKind
+	(FloorState)(0),                    // 2: memoria.media.v1.FloorState
+	(RealtimeEffectKind)(0),            // 3: memoria.media.v1.RealtimeEffectKind
+	(OutputIntentKind)(0),              // 4: memoria.media.v1.OutputIntentKind
+	(FloorRequirement)(0),              // 5: memoria.media.v1.FloorRequirement
+	(ProjectionEventKind)(0),           // 6: memoria.media.v1.ProjectionEventKind
+	(AudioEncoding)(0),                 // 7: memoria.media.v1.AudioEncoding
+	(ConversationState)(0),             // 8: memoria.media.v1.ConversationState
+	(VadEventType)(0),                  // 9: memoria.media.v1.VadEventType
+	(GenerationAction)(0),              // 10: memoria.media.v1.GenerationAction
+	(ShadowObservationKind)(0),         // 11: memoria.media.v1.ShadowObservationKind
+	(*SpeakerEvidence)(nil),            // 12: memoria.media.v1.SpeakerEvidence
+	(*ContinuousInteractionEvent)(nil), // 13: memoria.media.v1.ContinuousInteractionEvent
+	(*RealtimeEffect)(nil),             // 14: memoria.media.v1.RealtimeEffect
+	(*FloorEffect)(nil),                // 15: memoria.media.v1.FloorEffect
+	(*OutputIntent)(nil),               // 16: memoria.media.v1.OutputIntent
+	(*ProjectionEvent)(nil),            // 17: memoria.media.v1.ProjectionEvent
+	(*SessionIdentity)(nil),            // 18: memoria.media.v1.SessionIdentity
+	(*AudioFormat)(nil),                // 19: memoria.media.v1.AudioFormat
+	(*SessionHello)(nil),               // 20: memoria.media.v1.SessionHello
+	(*AudioFrame)(nil),                 // 21: memoria.media.v1.AudioFrame
+	(*VadEvent)(nil),                   // 22: memoria.media.v1.VadEvent
+	(*KeywordEvent)(nil),               // 23: memoria.media.v1.KeywordEvent
+	(*PlaybackProgress)(nil),           // 24: memoria.media.v1.PlaybackProgress
+	(*DeviceEvent)(nil),                // 25: memoria.media.v1.DeviceEvent
+	(*MediaMetric)(nil),                // 26: memoria.media.v1.MediaMetric
+	(*MediaToCore)(nil),                // 27: memoria.media.v1.MediaToCore
+	(*SessionAccepted)(nil),            // 28: memoria.media.v1.SessionAccepted
+	(*AssistantAudioFrame)(nil),        // 29: memoria.media.v1.AssistantAudioFrame
+	(*GenerationControl)(nil),          // 30: memoria.media.v1.GenerationControl
+	(*TranscriptEvent)(nil),            // 31: memoria.media.v1.TranscriptEvent
+	(*ShadowSpeechSegment)(nil),        // 32: memoria.media.v1.ShadowSpeechSegment
+	(*ShadowSpeechTaskStarted)(nil),    // 33: memoria.media.v1.ShadowSpeechTaskStarted
+	(*ShadowSpeechCommit)(nil),         // 34: memoria.media.v1.ShadowSpeechCommit
+	(*ShadowContextActivated)(nil),     // 35: memoria.media.v1.ShadowContextActivated
+	(*ShadowOutputIntent)(nil),         // 36: memoria.media.v1.ShadowOutputIntent
+	(*ShadowSpeechTimelineState)(nil),  // 37: memoria.media.v1.ShadowSpeechTimelineState
+	(*ShadowFloorDecision)(nil),        // 38: memoria.media.v1.ShadowFloorDecision
+	(*ShadowOutputArbiterState)(nil),   // 39: memoria.media.v1.ShadowOutputArbiterState
+	(*ShadowObservation)(nil),          // 40: memoria.media.v1.ShadowObservation
+	(*StateEvent)(nil),                 // 41: memoria.media.v1.StateEvent
+	(*ClientEvent)(nil),                // 42: memoria.media.v1.ClientEvent
+	(*CoreError)(nil),                  // 43: memoria.media.v1.CoreError
+	(*CoreToMedia)(nil),                // 44: memoria.media.v1.CoreToMedia
+	nil,                                // 45: memoria.media.v1.SessionHello.CapabilitiesEntry
+	nil,                                // 46: memoria.media.v1.MediaMetric.LabelsEntry
 }
 var file_memoria_media_v1_media_proto_depIdxs = []int32{
-	0,  // 0: memoria.media.v1.AudioFormat.encoding:type_name -> memoria.media.v1.AudioEncoding
-	4,  // 1: memoria.media.v1.SessionHello.identity:type_name -> memoria.media.v1.SessionIdentity
-	5,  // 2: memoria.media.v1.SessionHello.uplink_format:type_name -> memoria.media.v1.AudioFormat
-	5,  // 3: memoria.media.v1.SessionHello.downlink_format:type_name -> memoria.media.v1.AudioFormat
-	22, // 4: memoria.media.v1.SessionHello.capabilities:type_name -> memoria.media.v1.SessionHello.CapabilitiesEntry
-	4,  // 5: memoria.media.v1.AudioFrame.identity:type_name -> memoria.media.v1.SessionIdentity
-	4,  // 6: memoria.media.v1.VadEvent.identity:type_name -> memoria.media.v1.SessionIdentity
-	2,  // 7: memoria.media.v1.VadEvent.type:type_name -> memoria.media.v1.VadEventType
-	4,  // 8: memoria.media.v1.KeywordEvent.identity:type_name -> memoria.media.v1.SessionIdentity
-	4,  // 9: memoria.media.v1.PlaybackProgress.identity:type_name -> memoria.media.v1.SessionIdentity
-	4,  // 10: memoria.media.v1.DeviceEvent.identity:type_name -> memoria.media.v1.SessionIdentity
-	4,  // 11: memoria.media.v1.MediaMetric.identity:type_name -> memoria.media.v1.SessionIdentity
-	23, // 12: memoria.media.v1.MediaMetric.labels:type_name -> memoria.media.v1.MediaMetric.LabelsEntry
-	6,  // 13: memoria.media.v1.MediaToCore.hello:type_name -> memoria.media.v1.SessionHello
-	7,  // 14: memoria.media.v1.MediaToCore.audio:type_name -> memoria.media.v1.AudioFrame
-	8,  // 15: memoria.media.v1.MediaToCore.vad:type_name -> memoria.media.v1.VadEvent
-	9,  // 16: memoria.media.v1.MediaToCore.keyword:type_name -> memoria.media.v1.KeywordEvent
-	10, // 17: memoria.media.v1.MediaToCore.playback:type_name -> memoria.media.v1.PlaybackProgress
-	11, // 18: memoria.media.v1.MediaToCore.device:type_name -> memoria.media.v1.DeviceEvent
-	12, // 19: memoria.media.v1.MediaToCore.metric:type_name -> memoria.media.v1.MediaMetric
-	4,  // 20: memoria.media.v1.SessionAccepted.identity:type_name -> memoria.media.v1.SessionIdentity
-	1,  // 21: memoria.media.v1.SessionAccepted.state:type_name -> memoria.media.v1.ConversationState
-	4,  // 22: memoria.media.v1.AssistantAudioFrame.identity:type_name -> memoria.media.v1.SessionIdentity
-	4,  // 23: memoria.media.v1.GenerationControl.identity:type_name -> memoria.media.v1.SessionIdentity
-	3,  // 24: memoria.media.v1.GenerationControl.action:type_name -> memoria.media.v1.GenerationAction
-	4,  // 25: memoria.media.v1.TranscriptEvent.identity:type_name -> memoria.media.v1.SessionIdentity
-	4,  // 26: memoria.media.v1.StateEvent.identity:type_name -> memoria.media.v1.SessionIdentity
-	1,  // 27: memoria.media.v1.StateEvent.state:type_name -> memoria.media.v1.ConversationState
-	4,  // 28: memoria.media.v1.ClientEvent.identity:type_name -> memoria.media.v1.SessionIdentity
-	4,  // 29: memoria.media.v1.CoreError.identity:type_name -> memoria.media.v1.SessionIdentity
-	14, // 30: memoria.media.v1.CoreToMedia.accepted:type_name -> memoria.media.v1.SessionAccepted
-	15, // 31: memoria.media.v1.CoreToMedia.audio:type_name -> memoria.media.v1.AssistantAudioFrame
-	16, // 32: memoria.media.v1.CoreToMedia.generation:type_name -> memoria.media.v1.GenerationControl
-	17, // 33: memoria.media.v1.CoreToMedia.transcript:type_name -> memoria.media.v1.TranscriptEvent
-	18, // 34: memoria.media.v1.CoreToMedia.state:type_name -> memoria.media.v1.StateEvent
-	19, // 35: memoria.media.v1.CoreToMedia.client:type_name -> memoria.media.v1.ClientEvent
-	20, // 36: memoria.media.v1.CoreToMedia.error:type_name -> memoria.media.v1.CoreError
-	13, // 37: memoria.media.v1.VoiceMediaBridge.Connect:input_type -> memoria.media.v1.MediaToCore
-	21, // 38: memoria.media.v1.VoiceMediaBridge.Connect:output_type -> memoria.media.v1.CoreToMedia
-	38, // [38:39] is the sub-list for method output_type
-	37, // [37:38] is the sub-list for method input_type
-	37, // [37:37] is the sub-list for extension type_name
-	37, // [37:37] is the sub-list for extension extendee
-	0,  // [0:37] is the sub-list for field type_name
+	1,  // 0: memoria.media.v1.ContinuousInteractionEvent.event_kind:type_name -> memoria.media.v1.ContinuousEventKind
+	12, // 1: memoria.media.v1.ContinuousInteractionEvent.speaker_evidence:type_name -> memoria.media.v1.SpeakerEvidence
+	3,  // 2: memoria.media.v1.RealtimeEffect.effect_kind:type_name -> memoria.media.v1.RealtimeEffectKind
+	18, // 3: memoria.media.v1.RealtimeEffect.identity:type_name -> memoria.media.v1.SessionIdentity
+	18, // 4: memoria.media.v1.FloorEffect.identity:type_name -> memoria.media.v1.SessionIdentity
+	2,  // 5: memoria.media.v1.FloorEffect.floor_state:type_name -> memoria.media.v1.FloorState
+	4,  // 6: memoria.media.v1.OutputIntent.kind:type_name -> memoria.media.v1.OutputIntentKind
+	5,  // 7: memoria.media.v1.OutputIntent.floor_requirement:type_name -> memoria.media.v1.FloorRequirement
+	6,  // 8: memoria.media.v1.ProjectionEvent.event_kind:type_name -> memoria.media.v1.ProjectionEventKind
+	2,  // 9: memoria.media.v1.ProjectionEvent.floor_state:type_name -> memoria.media.v1.FloorState
+	12, // 10: memoria.media.v1.ProjectionEvent.speaker_evidence:type_name -> memoria.media.v1.SpeakerEvidence
+	7,  // 11: memoria.media.v1.AudioFormat.encoding:type_name -> memoria.media.v1.AudioEncoding
+	18, // 12: memoria.media.v1.SessionHello.identity:type_name -> memoria.media.v1.SessionIdentity
+	19, // 13: memoria.media.v1.SessionHello.uplink_format:type_name -> memoria.media.v1.AudioFormat
+	19, // 14: memoria.media.v1.SessionHello.downlink_format:type_name -> memoria.media.v1.AudioFormat
+	45, // 15: memoria.media.v1.SessionHello.capabilities:type_name -> memoria.media.v1.SessionHello.CapabilitiesEntry
+	0,  // 16: memoria.media.v1.SessionHello.interaction_authority:type_name -> memoria.media.v1.InteractionAuthority
+	18, // 17: memoria.media.v1.AudioFrame.identity:type_name -> memoria.media.v1.SessionIdentity
+	18, // 18: memoria.media.v1.VadEvent.identity:type_name -> memoria.media.v1.SessionIdentity
+	9,  // 19: memoria.media.v1.VadEvent.type:type_name -> memoria.media.v1.VadEventType
+	18, // 20: memoria.media.v1.KeywordEvent.identity:type_name -> memoria.media.v1.SessionIdentity
+	18, // 21: memoria.media.v1.PlaybackProgress.identity:type_name -> memoria.media.v1.SessionIdentity
+	18, // 22: memoria.media.v1.DeviceEvent.identity:type_name -> memoria.media.v1.SessionIdentity
+	18, // 23: memoria.media.v1.MediaMetric.identity:type_name -> memoria.media.v1.SessionIdentity
+	46, // 24: memoria.media.v1.MediaMetric.labels:type_name -> memoria.media.v1.MediaMetric.LabelsEntry
+	20, // 25: memoria.media.v1.MediaToCore.hello:type_name -> memoria.media.v1.SessionHello
+	21, // 26: memoria.media.v1.MediaToCore.audio:type_name -> memoria.media.v1.AudioFrame
+	22, // 27: memoria.media.v1.MediaToCore.vad:type_name -> memoria.media.v1.VadEvent
+	23, // 28: memoria.media.v1.MediaToCore.keyword:type_name -> memoria.media.v1.KeywordEvent
+	24, // 29: memoria.media.v1.MediaToCore.playback:type_name -> memoria.media.v1.PlaybackProgress
+	25, // 30: memoria.media.v1.MediaToCore.device:type_name -> memoria.media.v1.DeviceEvent
+	26, // 31: memoria.media.v1.MediaToCore.metric:type_name -> memoria.media.v1.MediaMetric
+	18, // 32: memoria.media.v1.SessionAccepted.identity:type_name -> memoria.media.v1.SessionIdentity
+	8,  // 33: memoria.media.v1.SessionAccepted.state:type_name -> memoria.media.v1.ConversationState
+	0,  // 34: memoria.media.v1.SessionAccepted.interaction_authority:type_name -> memoria.media.v1.InteractionAuthority
+	18, // 35: memoria.media.v1.AssistantAudioFrame.identity:type_name -> memoria.media.v1.SessionIdentity
+	18, // 36: memoria.media.v1.GenerationControl.identity:type_name -> memoria.media.v1.SessionIdentity
+	10, // 37: memoria.media.v1.GenerationControl.action:type_name -> memoria.media.v1.GenerationAction
+	18, // 38: memoria.media.v1.TranscriptEvent.identity:type_name -> memoria.media.v1.SessionIdentity
+	4,  // 39: memoria.media.v1.ShadowOutputIntent.kind:type_name -> memoria.media.v1.OutputIntentKind
+	5,  // 40: memoria.media.v1.ShadowOutputIntent.floor_requirement:type_name -> memoria.media.v1.FloorRequirement
+	32, // 41: memoria.media.v1.ShadowSpeechTimelineState.segments:type_name -> memoria.media.v1.ShadowSpeechSegment
+	2,  // 42: memoria.media.v1.ShadowFloorDecision.floor_state:type_name -> memoria.media.v1.FloorState
+	3,  // 43: memoria.media.v1.ShadowFloorDecision.effect_kind:type_name -> memoria.media.v1.RealtimeEffectKind
+	36, // 44: memoria.media.v1.ShadowOutputArbiterState.candidate:type_name -> memoria.media.v1.ShadowOutputIntent
+	36, // 45: memoria.media.v1.ShadowOutputArbiterState.active_candidates:type_name -> memoria.media.v1.ShadowOutputIntent
+	18, // 46: memoria.media.v1.ShadowObservation.identity:type_name -> memoria.media.v1.SessionIdentity
+	11, // 47: memoria.media.v1.ShadowObservation.kind:type_name -> memoria.media.v1.ShadowObservationKind
+	33, // 48: memoria.media.v1.ShadowObservation.speech_task_started:type_name -> memoria.media.v1.ShadowSpeechTaskStarted
+	32, // 49: memoria.media.v1.ShadowObservation.speech_segment:type_name -> memoria.media.v1.ShadowSpeechSegment
+	34, // 50: memoria.media.v1.ShadowObservation.speech_commit:type_name -> memoria.media.v1.ShadowSpeechCommit
+	35, // 51: memoria.media.v1.ShadowObservation.context_activated:type_name -> memoria.media.v1.ShadowContextActivated
+	36, // 52: memoria.media.v1.ShadowObservation.output_intent:type_name -> memoria.media.v1.ShadowOutputIntent
+	38, // 53: memoria.media.v1.ShadowObservation.floor_decision:type_name -> memoria.media.v1.ShadowFloorDecision
+	37, // 54: memoria.media.v1.ShadowObservation.authoritative_timeline:type_name -> memoria.media.v1.ShadowSpeechTimelineState
+	39, // 55: memoria.media.v1.ShadowObservation.authoritative_output_arbiter:type_name -> memoria.media.v1.ShadowOutputArbiterState
+	18, // 56: memoria.media.v1.StateEvent.identity:type_name -> memoria.media.v1.SessionIdentity
+	8,  // 57: memoria.media.v1.StateEvent.state:type_name -> memoria.media.v1.ConversationState
+	18, // 58: memoria.media.v1.ClientEvent.identity:type_name -> memoria.media.v1.SessionIdentity
+	18, // 59: memoria.media.v1.CoreError.identity:type_name -> memoria.media.v1.SessionIdentity
+	28, // 60: memoria.media.v1.CoreToMedia.accepted:type_name -> memoria.media.v1.SessionAccepted
+	29, // 61: memoria.media.v1.CoreToMedia.audio:type_name -> memoria.media.v1.AssistantAudioFrame
+	30, // 62: memoria.media.v1.CoreToMedia.generation:type_name -> memoria.media.v1.GenerationControl
+	31, // 63: memoria.media.v1.CoreToMedia.transcript:type_name -> memoria.media.v1.TranscriptEvent
+	41, // 64: memoria.media.v1.CoreToMedia.state:type_name -> memoria.media.v1.StateEvent
+	42, // 65: memoria.media.v1.CoreToMedia.client:type_name -> memoria.media.v1.ClientEvent
+	43, // 66: memoria.media.v1.CoreToMedia.error:type_name -> memoria.media.v1.CoreError
+	40, // 67: memoria.media.v1.CoreToMedia.shadow_observation:type_name -> memoria.media.v1.ShadowObservation
+	14, // 68: memoria.media.v1.CoreToMedia.realtime_effect:type_name -> memoria.media.v1.RealtimeEffect
+	15, // 69: memoria.media.v1.CoreToMedia.floor_effect:type_name -> memoria.media.v1.FloorEffect
+	27, // 70: memoria.media.v1.VoiceMediaBridge.Connect:input_type -> memoria.media.v1.MediaToCore
+	44, // 71: memoria.media.v1.VoiceMediaBridge.Connect:output_type -> memoria.media.v1.CoreToMedia
+	71, // [71:72] is the sub-list for method output_type
+	70, // [70:71] is the sub-list for method input_type
+	70, // [70:70] is the sub-list for extension type_name
+	70, // [70:70] is the sub-list for extension extendee
+	0,  // [0:70] is the sub-list for field type_name
 }
 
 func init() { file_memoria_media_v1_media_proto_init() }
@@ -2284,9 +4999,13 @@ func file_memoria_media_v1_media_proto_init() {
 	if File_memoria_media_v1_media_proto != nil {
 		return
 	}
-	file_memoria_media_v1_media_proto_msgTypes[4].OneofWrappers = []any{}
-	file_memoria_media_v1_media_proto_msgTypes[5].OneofWrappers = []any{}
-	file_memoria_media_v1_media_proto_msgTypes[9].OneofWrappers = []any{
+	file_memoria_media_v1_media_proto_msgTypes[4].OneofWrappers = []any{
+		(*OutputIntent_PcmS16Le)(nil),
+		(*OutputIntent_TtsSource)(nil),
+	}
+	file_memoria_media_v1_media_proto_msgTypes[10].OneofWrappers = []any{}
+	file_memoria_media_v1_media_proto_msgTypes[11].OneofWrappers = []any{}
+	file_memoria_media_v1_media_proto_msgTypes[15].OneofWrappers = []any{
 		(*MediaToCore_Hello)(nil),
 		(*MediaToCore_Audio)(nil),
 		(*MediaToCore_Vad)(nil),
@@ -2295,7 +5014,15 @@ func file_memoria_media_v1_media_proto_init() {
 		(*MediaToCore_Device)(nil),
 		(*MediaToCore_Metric)(nil),
 	}
-	file_memoria_media_v1_media_proto_msgTypes[17].OneofWrappers = []any{
+	file_memoria_media_v1_media_proto_msgTypes[28].OneofWrappers = []any{
+		(*ShadowObservation_SpeechTaskStarted)(nil),
+		(*ShadowObservation_SpeechSegment)(nil),
+		(*ShadowObservation_SpeechCommit)(nil),
+		(*ShadowObservation_ContextActivated)(nil),
+		(*ShadowObservation_OutputIntent)(nil),
+		(*ShadowObservation_FloorDecision)(nil),
+	}
+	file_memoria_media_v1_media_proto_msgTypes[32].OneofWrappers = []any{
 		(*CoreToMedia_Accepted)(nil),
 		(*CoreToMedia_Audio)(nil),
 		(*CoreToMedia_Generation)(nil),
@@ -2303,14 +5030,17 @@ func file_memoria_media_v1_media_proto_init() {
 		(*CoreToMedia_State)(nil),
 		(*CoreToMedia_Client)(nil),
 		(*CoreToMedia_Error)(nil),
+		(*CoreToMedia_ShadowObservation)(nil),
+		(*CoreToMedia_RealtimeEffect)(nil),
+		(*CoreToMedia_FloorEffect)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_memoria_media_v1_media_proto_rawDesc), len(file_memoria_media_v1_media_proto_rawDesc)),
-			NumEnums:      4,
-			NumMessages:   20,
+			NumEnums:      12,
+			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

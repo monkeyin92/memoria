@@ -28,6 +28,9 @@ MEDIA_METRIC_NAMES = frozenset(
         "media_pcm_queue_depth",
         "media_pcm_overflow_total",
         "media_discontinuity_total",
+        "asr_send_lag_ms",
+        "asr_partial_age_ms",
+        "tts_frame_age_ms",
         "voice_vad_onset_ms",
         "voice_asr_partial_latency_ms",
         "voice_asr_final_latency_ms",
@@ -117,14 +120,20 @@ class TraceContext:
             ("tool_epoch", self.tool_epoch),
             ("provider_task_epoch", self.provider_task_epoch),
         ):
-            if isinstance(number_value, bool) or not isinstance(number_value, int) or number_value < 0:
+            if (
+                isinstance(number_value, bool)
+                or not isinstance(number_value, int)
+                or number_value < 0
+            ):
                 raise ValueError(f"{field_name} must be a non-negative integer")
         if self.stream_epoch < 1:
             raise ValueError("stream_epoch must be positive")
         if self.device_id is not None and (not self.device_id.strip() or len(self.device_id) > 128):
             raise ValueError("device_id must be a short non-empty string")
 
-    def child(self, *, turn_id: int | None = None, generation_id: int | None = None) -> TraceContext:
+    def child(
+        self, *, turn_id: int | None = None, generation_id: int | None = None
+    ) -> TraceContext:
         return TraceContext(
             trace_id=self.trace_id,
             session_id=self.session_id,
@@ -224,35 +233,55 @@ class MediaTelemetry:
         self._max_series = max_series
         self._counters: dict[tuple[str, tuple[tuple[str, str], ...]], float] = defaultdict(float)
         self._gauges: dict[tuple[str, tuple[tuple[str, str], ...]], float] = {}
-        self._observations: dict[tuple[str, tuple[tuple[str, str], ...]], list[float]] = defaultdict(list)
+        self._observations: dict[tuple[str, tuple[tuple[str, str], ...]], list[float]] = (
+            defaultdict(list)
+        )
         self._lock = threading.RLock()
 
-    def _key(self, name: str, labels: Mapping[str, str] | None) -> tuple[str, tuple[tuple[str, str], ...]]:
+    def _key(
+        self, name: str, labels: Mapping[str, str] | None
+    ) -> tuple[str, tuple[tuple[str, str], ...]]:
         if name not in MEDIA_METRIC_NAMES:
             raise ValueError(f"media metric is not allowlisted: {name}")
         key = (name, _labels(labels))
         with self._lock:
-            if key not in self._counters and key not in self._gauges and key not in self._observations:
-                series_count = len(set(self._counters) | set(self._gauges) | set(self._observations))
+            if (
+                key not in self._counters
+                and key not in self._gauges
+                and key not in self._observations
+            ):
+                series_count = len(
+                    set(self._counters) | set(self._gauges) | set(self._observations)
+                )
                 if series_count >= self._max_series:
                     raise OverflowError("media telemetry series limit reached")
         return key
 
-    def inc(self, name: str, *, amount: float = 1.0, labels: Mapping[str, str] | None = None) -> None:
+    def inc(
+        self, name: str, *, amount: float = 1.0, labels: Mapping[str, str] | None = None
+    ) -> None:
         if amount < 0:
             raise ValueError("counter increment must be non-negative")
         key = self._key(name, labels)
         with self._lock:
             self._counters[key] += amount
 
-    def set_gauge(self, name: str, value: float, *, labels: Mapping[str, str] | None = None) -> None:
-        if not isinstance(value, (int, float)) or value != value or value in {float("inf"), float("-inf")}:
+    def set_gauge(
+        self, name: str, value: float, *, labels: Mapping[str, str] | None = None
+    ) -> None:
+        if (
+            not isinstance(value, (int, float))
+            or value != value
+            or value in {float("inf"), float("-inf")}
+        ):
             raise ValueError("gauge value must be finite")
         key = self._key(name, labels)
         with self._lock:
             self._gauges[key] = float(value)
 
-    def observe_ms(self, name: str, value: float, *, labels: Mapping[str, str] | None = None) -> None:
+    def observe_ms(
+        self, name: str, value: float, *, labels: Mapping[str, str] | None = None
+    ) -> None:
         if value < 0 or value != value or value in {float("inf"), float("-inf")}:
             raise ValueError("latency observation must be finite and non-negative")
         key = self._key(name, labels)
@@ -289,9 +318,7 @@ class MediaTelemetry:
                 ordered = sorted(values)
                 position = min(len(ordered) - 1, int(index * (len(ordered) - 1)))
                 quantile_labels = _format_labels((*labels, ("quantile", quantile)))
-                lines.append(
-                    f"{name}{quantile_labels} {ordered[position]:g}"
-                )
+                lines.append(f"{name}{quantile_labels} {ordered[position]:g}")
             lines.append(f"{name}_count{_format_labels(labels)} {len(values)}")
         return "\n".join(lines) + ("\n" if lines else "")
 

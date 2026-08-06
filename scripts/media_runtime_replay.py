@@ -22,8 +22,8 @@ def main() -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("status") == "consented_recorded":
         fixtures = manifest.get("fixtures", [])
-        if len(fixtures) < 150:
-            raise SystemExit("consented_recorded manifest requires at least 150 fixtures")
+        if len(fixtures) < 200:
+            raise SystemExit("consented_recorded manifest requires at least 200 fixtures")
         consent_artifact = manifest.get("consent_artifact", "")
         if not consent_artifact:
             raise SystemExit("consented_recorded manifest requires consent_artifact")
@@ -35,7 +35,10 @@ def main() -> None:
     replay = AudioReplayHarness()
     results = []
     for item in manifest["fixtures"]:
-        metadata = FixtureMetadata(fixture_id=item["id"], **{key: value for key, value in item.items() if key != "id"})
+        metadata = FixtureMetadata(
+            fixture_id=item["id"],
+            **{key: value for key, value in item.items() if key not in {"id", "audio_path"}},
+        )
         result = replay.replay(SyntheticFixture(metadata), stream_epoch=1)
         results.append(result)
     chaos = ChaosRunner().run(

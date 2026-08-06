@@ -142,6 +142,47 @@ async def test_fetch_sends_only_bounded_fence_and_non_biometric_speaker_metadata
     assert "quality_score" not in json.dumps(body)
 
 
+@pytest.mark.asyncio
+async def test_context_prefetch_uses_non_authoritative_endpoint_and_strict_payload() -> None:
+    observed: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        observed["path"] = request.url.path
+        observed["body"] = json.loads(request.content)
+        item = _plan_payload()["grounded_items"]
+        return httpx.Response(
+            200,
+            json={
+                "speaker_class": "owner",
+                "grounded_items": item,
+                "persona_version_id": None,
+                "persona_version_number": None,
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = ResponsePlannerClient(
+            ResponsePlannerClientConfig(
+                endpoint="https://control.test/v1/interaction/response-plan",
+                internal_token="response-plan-token",
+            ),
+            client=http_client,
+        )
+        result = await client.prefetch_context(
+            session_id="session-1",
+            query="桂花",
+            speaker_decision=_speaker(),
+        )
+
+    assert result.available
+    assert result.grounded_items[0].item_id == "claim-1"
+    assert observed["path"] == "/v1/interaction/context-prefetch"
+    body = observed["body"]
+    assert isinstance(body, dict)
+    assert "fence" not in body
+    assert "score" not in json.dumps(body)
+
+
 @pytest.mark.parametrize(
     "planner_policy_version",
     ["response-planner-v1", "local-safe-fallback-v1", "digital-self-response-planner-v1"],
@@ -164,8 +205,16 @@ def test_parse_rejects_noncanonical_planner_policy_version(
         ([], None, None),
         (["event-2"], None, None),
         (["event-1"], {"kind": "memory_claim", "item_id": "claim-1", "source_event_ids": []}, None),
-        (["event-1"], {"kind": "memory_claim", "item_id": "other-claim", "source_event_ids": ["event-1"]}, None),
-        (["event-1"], None, {"kind": "memory_claim", "item_id": "other-claim", "source_event_ids": ["event-2"]}),
+        (
+            ["event-1"],
+            {"kind": "memory_claim", "item_id": "other-claim", "source_event_ids": ["event-1"]},
+            None,
+        ),
+        (
+            ["event-1"],
+            None,
+            {"kind": "memory_claim", "item_id": "other-claim", "source_event_ids": ["event-2"]},
+        ),
     ],
     ids=(
         "empty-grounded-source-ids",
@@ -331,9 +380,23 @@ def test_parse_rejects_incoherent_persona_provenance(
     ("response", "expected_reason"),
     [
         (httpx.Response(409, json={"detail": {"code": "response_plan_unavailable"}}), "http_409"),
-        (httpx.Response(200, json=_plan_payload(fence={"session_id": "other", "turn_id": 1, "generation_id": 2, "tool_epoch": 0})), "fence_mismatch"),
-        (httpx.Response(200, json=_plan_payload(instructions="x" * 8001)), "request_or_payload_invalid"),
-        (httpx.Response(200, json=_plan_payload(grounded_items=[{"kind": "memory_claim"}])), "request_or_payload_invalid"),
+        (
+            httpx.Response(
+                200,
+                json=_plan_payload(
+                    fence={"session_id": "other", "turn_id": 1, "generation_id": 2, "tool_epoch": 0}
+                ),
+            ),
+            "fence_mismatch",
+        ),
+        (
+            httpx.Response(200, json=_plan_payload(instructions="x" * 8001)),
+            "request_or_payload_invalid",
+        ),
+        (
+            httpx.Response(200, json=_plan_payload(grounded_items=[{"kind": "memory_claim"}])),
+            "request_or_payload_invalid",
+        ),
         (
             httpx.Response(
                 200,

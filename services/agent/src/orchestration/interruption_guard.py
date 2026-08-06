@@ -158,6 +158,8 @@ _ZH_EN_REQUEST = re.compile(
     rf"{_ZH_EN_LANGUAGE}.{{0,8}}{_LANGUAGE_ACTION})"
 )
 _PUNCTUATION = " \t\r\n。！？.!?，,；;：:\"'“”‘’（）()【】[]"
+_WEEKDAY_ECHO = re.compile(r"^(?:(?:今天|现在)(?:是)?)?(?:星期|周|礼拜)([一二三四五六日天])$")
+_WEEKDAY_TOKEN = re.compile(r"(?:星期|周|礼拜)([一二三四五六日天])")
 
 
 def normalize_short(text: str) -> str:
@@ -358,6 +360,12 @@ def _looks_like_assistant_echo(text: str, assistant_text: str) -> bool:
     spoken = _content(assistant_text)
     if content == "等下" and ("等下" in spoken or "等一下" in spoken):
         return True
+    weekday_echo = _WEEKDAY_ECHO.fullmatch(content)
+    if weekday_echo is not None:
+        return any(
+            token.group(1) == weekday_echo.group(1)
+            for token in _WEEKDAY_TOKEN.finditer(spoken)
+        )
     if len(content) < 4 or not spoken:
         return False
     if content in spoken:

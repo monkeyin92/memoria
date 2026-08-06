@@ -16,6 +16,8 @@ const apiErrorMessages = {
   account_not_registered: "请先完成账号注册后再管理数字分身版本。",
   empty_source: "还没有已确认的记忆或人格材料，暂时无法构建数字分身草稿。",
   invalid_transition: "当前状态不允许此操作，或状态已发生变化，请刷新后重试。",
+  livekit_credentials_missing: "语音服务尚未配置，请联系管理员。",
+  livekit_token_unavailable: "语音服务暂时不可用，请稍后重试。",
   manifest_conflict: "版本摘要或内容校验失败，请刷新后重试。",
   manifest_integrity: "版本内容完整性校验失败，请刷新后重试。",
   source_snapshot_conflict: "确认材料在构建期间发生变化，请重新生成草稿。",

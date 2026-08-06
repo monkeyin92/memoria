@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -20,18 +21,17 @@ def test_production_services_use_separate_env_files_and_persistent_agent_spool()
     assert "target: /data" in compose
 
 
-def test_media_bridge_uses_the_reviewed_production_provider_factory() -> None:
+def test_media_bridge_uses_the_shared_production_agent_session_factory() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
     bridge = compose.split("  voice-core-media-bridge:\n", 1)[1].split(
         "  media-slo-reporter:\n", 1
     )[0]
-    factory = (
-        "services.agent.src.voice_core.provider_adapter:"
-        "build_production_provider_factory"
-    )
-    assert f'MEDIA_BRIDGE_PROVIDER_FACTORY: "{factory}"' in bridge
-    assert "MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY" in bridge
-    assert f"MEDIA_BRIDGE_PROVIDER_FACTORY={factory}" in (
+    factory = "services.agent.src.media_agent_factory:build_production_media_session_factory"
+    assert f'MEDIA_BRIDGE_SESSION_FACTORY: "{factory}"' in bridge
+    assert "MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY" not in bridge
+    assert "source: /var/lib/memoria-agent" in bridge
+    assert "target: /data" in bridge
+    assert f"MEDIA_BRIDGE_SESSION_FACTORY={factory}" in (
         ROOT / "infra/memoria.env.production.example"
     ).read_text(encoding="utf-8")
 
@@ -461,20 +461,108 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
     control, agent, speaker_model, gateway, media_edge = split_env(
         {
             "ENVIRONMENT": "production",
+            "MEDIA_RUNTIME_DEFAULT": "livekit",
+            "STREAMCORE_EXPERIMENT_PERCENT": "0",
+            "STREAMCORE_KILL_SWITCH": "false",
+            "STREAMCORE_WHIP_URL": "",
             "STREAMCORE_TOKEN_SECRET": "streamcore-secret-material-that-is-long-enough",
+            "MEDIA_BRIDGE_GO_SHADOW_ENABLED": "false",
             "MEDIA_EDGE_JWT_SECRET": "streamcore-secret-material-that-is-long-enough",
             "MEDIA_EDGE_JWT_ISSUER": "voice-agent",
             "MEDIA_EDGE_JWT_AUDIENCE": "memoria-media",
+            "MEDIA_EDGE_INTERACTION_AUTHORITY": "python_authoritative",
             "MEDIA_EDGE_VOICE_CORE_ADDR": "voice-core-media-bridge:7001",
+            "MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON": "[]",
+            "MEDIA_EDGE_WEBRTC_PUBLIC_IPS": "198.51.100.10",
+            "MEDIA_EDGE_WEBRTC_UDP_PORT_MIN": "40000",
+            "MEDIA_EDGE_WEBRTC_UDP_PORT_MAX": "40100",
         }
     )
+    assert control["MEDIA_RUNTIME_DEFAULT"] == "livekit"
+    assert control["STREAMCORE_EXPERIMENT_PERCENT"] == "0"
+    assert control["STREAMCORE_KILL_SWITCH"] == "false"
+    assert control["STREAMCORE_WHIP_URL"] == ""
     assert control["STREAMCORE_TOKEN_SECRET"].startswith("streamcore-")
+    assert agent["MEDIA_BRIDGE_GO_SHADOW_ENABLED"] == "false"
     assert media_edge["MEDIA_EDGE_JWT_SECRET"] == control["STREAMCORE_TOKEN_SECRET"]
+    assert media_edge["MEDIA_EDGE_INTERACTION_AUTHORITY"] == "python_authoritative"
     assert media_edge["MEDIA_EDGE_VOICE_CORE_ADDR"] == "voice-core-media-bridge:7001"
+    assert media_edge["MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON"] == "[]"
+    assert media_edge["MEDIA_EDGE_WEBRTC_PUBLIC_IPS"] == "198.51.100.10"
+    assert media_edge["MEDIA_EDGE_WEBRTC_UDP_PORT_MIN"] == "40000"
+    assert media_edge["MEDIA_EDGE_WEBRTC_UDP_PORT_MAX"] == "40100"
     assert "MEDIA_EDGE_JWT_SECRET" not in control
     assert "MEDIA_EDGE_VOICE_CORE_ADDR" not in agent
     assert speaker_model == {}
     assert gateway == {"ENVIRONMENT": "production"}
+
+
+def test_production_example_routes_media_edge_webrtc_connectivity_config() -> None:
+    example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
+    compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    media_edge = compose.split("  media-edge:\n", 1)[1]
+    values = dict(
+        line.split("=", 1)
+        for line in example.splitlines()
+        if line and not line.startswith("#") and "=" in line
+    )
+
+    for key in (
+        "MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON",
+        "MEDIA_EDGE_WEBRTC_PUBLIC_IPS",
+        "MEDIA_EDGE_WEBRTC_UDP_PORT_MIN",
+        "MEDIA_EDGE_WEBRTC_UDP_PORT_MAX",
+    ):
+        assert f"{key}=" in example
+    ice_servers = json.loads(values["MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON"])
+    assert ice_servers[0]["urls"] == ["turns:turn.example.com:5349"]
+    assert ice_servers[0]["credential"] == "replace-in-private-copy"
+    assert "terminator is linked" not in example
+    assert "/etc/memoria-media-edge.env" in media_edge
+
+
+def test_production_example_keeps_streamcore_rollout_fail_closed() -> None:
+    example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
+    values = dict(
+        line.split("=", 1)
+        for line in example.splitlines()
+        if line and not line.startswith("#") and "=" in line
+    )
+
+    assert values["MEDIA_RUNTIME_DEFAULT"] == "livekit"
+    assert values["STREAMCORE_EXPERIMENT_PERCENT"] == "0"
+    assert values["STREAMCORE_KILL_SWITCH"] == "false"
+    assert values["STREAMCORE_WHIP_URL"] == ""
+    assert values["STREAMCORE_TOKEN_SECRET"] == ""
+    assert values["MEDIA_BRIDGE_GO_SHADOW_ENABLED"] == "false"
+    assert values["MEDIA_EDGE_INTERACTION_AUTHORITY"] == "python_authoritative"
+    assert "STREAMCORE_TOKEN_SECRET must use the same secret as MEDIA_EDGE_JWT_SECRET" in example
+
+
+@pytest.mark.parametrize(
+    "secrets",
+    [
+        {"STREAMCORE_TOKEN_SECRET": "control-secret"},
+        {"MEDIA_EDGE_JWT_SECRET": "edge-secret"},
+        {
+            "STREAMCORE_TOKEN_SECRET": "control-secret",
+            "MEDIA_EDGE_JWT_SECRET": "different-edge-secret",
+        },
+    ],
+)
+def test_production_env_split_rejects_missing_or_mismatched_media_token_secrets(
+    secrets: dict[str, str],
+) -> None:
+    with pytest.raises(ValueError) as caught:
+        split_env({"ENVIRONMENT": "production", **secrets})
+
+    message = str(caught.value)
+    assert (
+        message == "production StreamCore and Media Edge token secrets must both be set and match"
+    )
+    assert "control-secret" not in message
+    assert "edge-secret" not in message
+    assert "different-edge-secret" not in message
 
 
 def test_production_env_split_rejects_unused_doubao_secret_key() -> None:

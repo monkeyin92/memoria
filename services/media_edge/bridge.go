@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -25,7 +26,17 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-const KWSHardStopMinConfidence float32 = 0.8
+const (
+	KWSHardStopMinConfidence      float32 = 0.8
+	maxRealtimeEffectPayloadBytes         = 4 * 1024
+	maxFloorEffectTTLMS           uint64  = 60_000
+)
+
+var (
+	errDropShadowObservation = errors.New("drop shadow observation")
+	errDropRealtimeEffect    = errors.New("drop realtime effect")
+	errDropFloorEffect       = errors.New("drop floor effect")
+)
 
 // BridgeIdentity is the identity carried on every media-v1 message.
 type BridgeIdentity struct {
@@ -175,6 +186,30 @@ type VoiceCoreBridgeConfig struct {
 	Address                  string
 	TLS                      *BridgeTLSConfig
 	AllowInsecureDevelopment bool
+	InteractionAuthority     mediav1.InteractionAuthority
+}
+
+func normalizeRequestedInteractionAuthority(value mediav1.InteractionAuthority) mediav1.InteractionAuthority {
+	if value == mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW {
+		return value
+	}
+	return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE
+}
+
+func normalizeEffectiveInteractionAuthority(value mediav1.InteractionAuthority) (mediav1.InteractionAuthority, error) {
+	switch value {
+	case mediav1.InteractionAuthority_INTERACTION_AUTHORITY_UNSPECIFIED,
+		mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE:
+		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE, nil
+	case mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW:
+		return value, nil
+	case mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_AUTHORITATIVE:
+		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
+			fmt.Errorf("voice core selected Go authority before the parity gate")
+	default:
+		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
+			fmt.Errorf("voice core selected an unknown interaction authority")
+	}
 }
 
 // DialVoiceCore opens the authenticated edge -> Voice Core channel.  Plain
@@ -207,7 +242,9 @@ func DialVoiceCore(ctx context.Context, config VoiceCoreBridgeConfig) (*VoiceCor
 		_ = conn.Close()
 		return nil, err
 	}
-	return NewVoiceCoreBridge(conn), nil
+	bridge := NewVoiceCoreBridge(conn)
+	bridge.interactionAuthority = normalizeRequestedInteractionAuthority(config.InteractionAuthority)
+	return bridge, nil
 }
 
 func waitForReady(ctx context.Context, conn *grpc.ClientConn) error {
@@ -224,15 +261,19 @@ func waitForReady(ctx context.Context, conn *grpc.ClientConn) error {
 
 // VoiceCoreBridge owns a gRPC connection and creates fenced sessions on it.
 type VoiceCoreBridge struct {
-	conn   *grpc.ClientConn
-	client mediav1.VoiceMediaBridgeClient
+	conn                 *grpc.ClientConn
+	client               mediav1.VoiceMediaBridgeClient
+	interactionAuthority mediav1.InteractionAuthority
 }
 
 func NewVoiceCoreBridge(conn *grpc.ClientConn) *VoiceCoreBridge {
 	if conn == nil {
 		panic("nil Voice Core gRPC connection")
 	}
-	return &VoiceCoreBridge{conn: conn, client: mediav1.NewVoiceMediaBridgeClient(conn)}
+	return &VoiceCoreBridge{
+		conn: conn, client: mediav1.NewVoiceMediaBridgeClient(conn),
+		interactionAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
+	}
 }
 
 func (b *VoiceCoreBridge) Close() error {
@@ -282,10 +323,11 @@ func (b *VoiceCoreBridge) Connect(
 	}
 	if err := session.send(&mediav1.MediaToCore{Event: &mediav1.MediaToCore_Hello{
 		Hello: &mediav1.SessionHello{
-			Identity:       identity.proto(),
-			UplinkFormat:   uplink.proto(),
-			DownlinkFormat: downlink.proto(),
-			Capabilities:   map[string]string{"media_only": "true", "generation_gate": "true"},
+			Identity:             identity.proto(),
+			UplinkFormat:         uplink.proto(),
+			DownlinkFormat:       downlink.proto(),
+			Capabilities:         map[string]string{"media_only": "true", "generation_gate": "true"},
+			InteractionAuthority: b.interactionAuthority,
 		},
 	}}); err != nil {
 		_ = session.Close()
@@ -300,6 +342,14 @@ func (b *VoiceCoreBridge) Connect(
 		_ = session.Close()
 		return nil, fmt.Errorf("voice-core bridge returned an invalid session acceptance")
 	}
+	effectiveAuthority, err := normalizeEffectiveInteractionAuthority(
+		accepted.GetAccepted().GetInteractionAuthority(),
+	)
+	if err != nil {
+		_ = session.Close()
+		return nil, err
+	}
+	session.interactionAuthority = effectiveAuthority
 	if accepted.GetAccepted().GetCurrentGenerationId() > 0 {
 		session.current.GenerationID = accepted.GetAccepted().GetCurrentGenerationId()
 		// SessionAccepted predates the full fence fields.  A reconnect with a
@@ -336,22 +386,33 @@ func (f Fence) monotonic(other Fence) bool {
 // VoiceCoreSession serializes client sends and validates the dual-end
 // generation/sequence gates on all core output.
 type VoiceCoreSession struct {
-	identity           BridgeIdentity
-	stream             grpc.BidiStreamingClient[mediav1.MediaToCore, mediav1.CoreToMedia]
-	cancel             context.CancelFunc
-	sendMu             sync.Mutex
-	stateMu            sync.Mutex
-	current            Fence
-	lastEventSequence  uint64
-	lastAudioSequence  uint64
-	hasEventSequence   bool
-	hasAudioSequence   bool
-	requireAudioOrigin bool
-	lastAudioEnd       uint64
-	nextClientSequence uint64
+	identity             BridgeIdentity
+	stream               grpc.BidiStreamingClient[mediav1.MediaToCore, mediav1.CoreToMedia]
+	cancel               context.CancelFunc
+	sendMu               sync.Mutex
+	stateMu              sync.Mutex
+	current              Fence
+	lastEventSequence    uint64
+	lastShadowSequence   uint64
+	lastFloorEpoch       uint64
+	lastAudioSequence    uint64
+	hasEventSequence     bool
+	hasShadowSequence    bool
+	hasFloorEpoch        bool
+	hasAudioSequence     bool
+	requireAudioOrigin   bool
+	lastAudioEnd         uint64
+	nextClientSequence   uint64
+	interactionAuthority mediav1.InteractionAuthority
 }
 
 func (s *VoiceCoreSession) Identity() BridgeIdentity { return s.identity }
+
+func (s *VoiceCoreSession) InteractionAuthority() mediav1.InteractionAuthority {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	return s.interactionAuthority
+}
 
 func (s *VoiceCoreSession) CurrentFence() Fence {
 	s.stateMu.Lock()
@@ -500,6 +561,48 @@ func (s *VoiceCoreSession) SendPlaybackProgress(progress PlaybackProgress) error
 	}})
 }
 
+// SendClientEvent re-sequences a validated browser envelope onto the single
+// Media Edge -> Voice Core client-event stream. Browser sequence numbers are
+// transport-local and cannot be mixed with Edge-generated stop events.
+func (s *VoiceCoreSession) SendClientEvent(
+	raw []byte,
+	eventType string,
+	fence Fence,
+	monotonicMS uint64,
+) error {
+	if len(raw) == 0 || eventType == "" || fence.SessionID != s.identity.SessionID {
+		return fmt.Errorf("client event and matching fence are required")
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return fmt.Errorf("decode client envelope: %w", err)
+	}
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	s.stateMu.Lock()
+	if !s.current.Equal(fence) {
+		s.stateMu.Unlock()
+		return fmt.Errorf("client event belongs to a stale generation")
+	}
+	sequence := s.nextClientSequence
+	s.nextClientSequence++
+	s.stateMu.Unlock()
+	envelope["sequence"] = sequence
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		return fmt.Errorf("encode client envelope: %w", err)
+	}
+	if err := s.stream.Send(&mediav1.MediaToCore{Event: &mediav1.MediaToCore_Device{
+		Device: &mediav1.DeviceEvent{
+			Identity: s.identity.proto(), EventType: eventType,
+			JsonPayload: encoded, MonotonicMs: monotonicMS,
+		},
+	}}); err != nil {
+		return fmt.Errorf("send media-v1 event: %w", err)
+	}
+	return nil
+}
+
 func (s *VoiceCoreSession) SendStop(eventID, reason string, fence Fence, detectedAtMs uint64) error {
 	if eventID == "" || fence.SessionID != s.identity.SessionID {
 		return fmt.Errorf("stop event id and matching fence are required")
@@ -545,14 +648,19 @@ func (s *VoiceCoreSession) SendStop(eventID, reason string, fence Fence, detecte
 // complete generation checks.  A stale event is an error, not a silent queue
 // clear, so the media terminator can reconnect with a fresh stream epoch.
 func (s *VoiceCoreSession) Recv() (*mediav1.CoreToMedia, error) {
-	event, err := s.stream.Recv()
-	if err != nil {
-		return nil, err
+	for {
+		event, err := s.stream.Recv()
+		if err != nil {
+			return nil, err
+		}
+		if err := s.validateCoreEvent(event); errors.Is(err, errDropShadowObservation) ||
+			errors.Is(err, errDropRealtimeEffect) || errors.Is(err, errDropFloorEffect) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		return event, nil
 	}
-	if err := s.validateCoreEvent(event); err != nil {
-		return nil, err
-	}
-	return event, nil
 }
 
 func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
@@ -630,11 +738,90 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 		s.current = actual
 		return nil
 	}
+	if effect := event.GetRealtimeEffect(); effect != nil {
+		// Candidate values are telemetry even when an upstream implementation
+		// accidentally uses the executable oneof. A6B is still fail-closed.
+		if effect.GetCandidateOnly() ||
+			s.interactionAuthority == mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_AUTHORITATIVE {
+			return errDropRealtimeEffect
+		}
+		if !s.identity.equal(effect.GetIdentity()) ||
+			effect.GetSessionId() != s.identity.SessionID ||
+			effect.GetStreamEpoch() != s.identity.StreamEpoch {
+			return fmt.Errorf("realtime effect identity does not match")
+		}
+		fence, err := validateRealtimeEffect(effect)
+		if err != nil {
+			return err
+		}
+		s.stateMu.Lock()
+		defer s.stateMu.Unlock()
+		if effect.GetEffectKind() == mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_CANCEL_GENERATION {
+			if fence.TurnID != s.current.TurnID || fence.ToolEpoch != s.current.ToolEpoch ||
+				s.current.GenerationID == math.MaxUint64 || fence.GenerationID != s.current.GenerationID+1 {
+				return fmt.Errorf("realtime cancel effect fence is stale")
+			}
+		} else if !s.current.Equal(fence) {
+			return fmt.Errorf("realtime effect fence is stale")
+		}
+		if err := s.acceptEventSequence(effect.GetSequence()); err != nil {
+			return err
+		}
+		if effect.GetEffectKind() == mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_CANCEL_GENERATION {
+			s.current = fence
+		}
+		return nil
+	}
+	if effect := event.GetFloorEffect(); effect != nil {
+		if effect.GetCandidateOnly() ||
+			s.interactionAuthority == mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_AUTHORITATIVE {
+			return errDropFloorEffect
+		}
+		if !s.identity.equal(effect.GetIdentity()) {
+			return fmt.Errorf("floor effect identity does not match")
+		}
+		fence, err := validateFloorEffect(effect)
+		if err != nil {
+			return err
+		}
+		s.stateMu.Lock()
+		defer s.stateMu.Unlock()
+		if !s.current.Equal(fence) {
+			return fmt.Errorf("floor effect fence is stale")
+		}
+		if s.hasFloorEpoch && effect.GetFloorEpoch() <= s.lastFloorEpoch {
+			return fmt.Errorf("floor effect epoch is stale")
+		}
+		if err := s.acceptEventSequence(effect.GetSequence()); err != nil {
+			return err
+		}
+		s.lastFloorEpoch = effect.GetFloorEpoch()
+		s.hasFloorEpoch = true
+		return nil
+	}
 	if transcript := event.GetTranscript(); transcript != nil {
 		if !s.identity.equal(transcript.GetIdentity()) {
 			return fmt.Errorf("transcript event identity does not match")
 		}
 		return s.acceptEventSequence(transcript.GetSequence())
+	}
+	if observation := event.GetShadowObservation(); observation != nil {
+		if s.interactionAuthority != mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW ||
+			!s.identity.equal(observation.GetIdentity()) || !observation.GetCandidateOnly() ||
+			observation.GetContractVersion() != shadowA6AContractVersion {
+			return errDropShadowObservation
+		}
+		s.stateMu.Lock()
+		defer s.stateMu.Unlock()
+		if (s.hasEventSequence && observation.GetSequence() <= s.lastEventSequence) ||
+			(s.hasShadowSequence && observation.GetShadowSequence() <= s.lastShadowSequence) {
+			return errDropShadowObservation
+		}
+		s.lastEventSequence = observation.GetSequence()
+		s.hasEventSequence = true
+		s.lastShadowSequence = observation.GetShadowSequence()
+		s.hasShadowSequence = true
+		return nil
 	}
 	if state := event.GetState(); state != nil {
 		if !s.identity.equal(state.GetIdentity()) {
@@ -664,6 +851,58 @@ func (s *VoiceCoreSession) acceptEventSequence(sequence uint64) error {
 	s.lastEventSequence = sequence
 	s.hasEventSequence = true
 	return nil
+}
+
+func validateRealtimeEffect(effect *mediav1.RealtimeEffect) (Fence, error) {
+	if effect == nil || effect.GetEffectId() == "" || len(effect.GetEffectId()) > 256 ||
+		effect.GetSourceEventId() == "" || len(effect.GetSourceEventId()) > 128 {
+		return Fence{}, fmt.Errorf("realtime effect id and source event are required")
+	}
+	switch effect.GetEffectKind() {
+	case mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_DUCK_OUTPUT,
+		mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_CANCEL_GENERATION,
+		mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_PAUSE_OUTPUT,
+		mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_RESUME_OUTPUT:
+	default:
+		return Fence{}, fmt.Errorf("realtime effect kind is not executable")
+	}
+	payload := effect.GetPayload()
+	if len(payload) == 0 || len(payload) > maxRealtimeEffectPayloadBytes || !json.Valid(payload) {
+		return Fence{}, fmt.Errorf("realtime effect payload is invalid")
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &decoded); err != nil || decoded == nil {
+		return Fence{}, fmt.Errorf("realtime effect payload must be an object")
+	}
+	return Fence{
+		SessionID: effect.GetSessionId(), TurnID: effect.GetTurnId(),
+		GenerationID: effect.GetGenerationId(), ToolEpoch: effect.GetToolEpoch(),
+	}, nil
+}
+
+func validateFloorEffect(effect *mediav1.FloorEffect) (Fence, error) {
+	if effect == nil || effect.GetEffectId() == "" || len(effect.GetEffectId()) > 256 ||
+		effect.GetSourceEventId() == "" || len(effect.GetSourceEventId()) > 128 ||
+		effect.GetFloorEpoch() == 0 {
+		return Fence{}, fmt.Errorf("floor effect id, source event and epoch are required")
+	}
+	switch effect.GetFloorState() {
+	case mediav1.FloorState_FLOOR_STATE_USER_HOLDS_FLOOR,
+		mediav1.FloorState_FLOOR_STATE_ASSISTANT_HOLDS_FLOOR,
+		mediav1.FloorState_FLOOR_STATE_OVERLAP,
+		mediav1.FloorState_FLOOR_STATE_UNCERTAIN,
+		mediav1.FloorState_FLOOR_STATE_SILENCE:
+	default:
+		return Fence{}, fmt.Errorf("floor effect state is invalid")
+	}
+	now := uint64(time.Now().UnixMilli())
+	if effect.GetExpiresAtMs() <= now || effect.GetExpiresAtMs()-now > maxFloorEffectTTLMS {
+		return Fence{}, fmt.Errorf("floor effect is expired or exceeds TTL")
+	}
+	return Fence{
+		SessionID: effect.GetIdentity().GetSessionId(), TurnID: effect.GetTurnId(),
+		GenerationID: effect.GetGenerationId(), ToolEpoch: effect.GetToolEpoch(),
+	}, nil
 }
 
 func (s *VoiceCoreSession) CloseSend() error {

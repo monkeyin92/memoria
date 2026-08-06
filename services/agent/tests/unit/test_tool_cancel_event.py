@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
@@ -30,11 +31,21 @@ async def test_cancel_sets_cancel_event() -> None:
             cancellable=True,
             idempotent=True,
             timeout_s=5.0,
+            side_effect_policy="read_only",
         ),
         slow_tool,
     )
     fence = GenerationFence("s", 1, 1, 0)
-    rec = await tm.start("slow", {}, fence)
+    rec = await tm.start(
+        "slow",
+        {},
+        fence,
+        task_epoch=1,
+        context_version=0,
+        expires_at_ms=int(time.time() * 1_000) + 10_000,
+        side_effect_policy="read_only",
+        committed=True,
+    )
     assert rec.cancel_event.is_set() is False
     await tm.cancel_cancellable(fence)
     assert rec.cancel_event.is_set() is True

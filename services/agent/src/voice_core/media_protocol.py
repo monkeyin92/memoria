@@ -146,6 +146,8 @@ class MediaEnvelope:
     turn_id: int = 0
     generation_id: int = 0
     tool_epoch: int = 0
+    task_epoch: int = 0
+    context_version: int = 0
     server_monotonic_ms: int = 0
     payload: Mapping[str, Any] = field(default_factory=dict)
     version: int = 1
@@ -162,6 +164,8 @@ class MediaEnvelope:
             (self.turn_id, "turn_id"),
             (self.generation_id, "generation_id"),
             (self.tool_epoch, "tool_epoch"),
+            (self.task_epoch, "task_epoch"),
+            (self.context_version, "context_version"),
             (self.server_monotonic_ms, "server_monotonic_ms"),
         ):
             _non_negative_int(value, name)
@@ -182,6 +186,8 @@ class MediaEnvelope:
         turn_id: int = 0,
         generation_id: int = 0,
         tool_epoch: int = 0,
+        task_epoch: int = 0,
+        context_version: int = 0,
         server_monotonic_ms: int = 0,
         payload: Mapping[str, Any] | None = None,
     ) -> MediaEnvelope:
@@ -194,6 +200,8 @@ class MediaEnvelope:
             turn_id=turn_id,
             generation_id=generation_id,
             tool_epoch=tool_epoch,
+            task_epoch=task_epoch,
+            context_version=context_version,
             server_monotonic_ms=server_monotonic_ms,
             payload=payload or {},
         )
@@ -210,6 +218,8 @@ class MediaEnvelope:
             "turn_id": self.turn_id,
             "generation_id": self.generation_id,
             "tool_epoch": self.tool_epoch,
+            "task_epoch": self.task_epoch,
+            "context_version": self.context_version,
             "server_monotonic_ms": self.server_monotonic_ms,
             "payload": dict(self.payload),
         }
@@ -237,7 +247,7 @@ class MediaEnvelope:
             raise ValueError("invalid media envelope JSON") from exc
         if not isinstance(decoded, dict):
             raise ValueError("media envelope must be a JSON object")
-        allowed_fields = {
+        required_fields = {
             "v",
             "protocol",
             "type",
@@ -245,18 +255,12 @@ class MediaEnvelope:
             "session_id",
             "stream_epoch",
             "sequence",
-            "turn_id",
-            "generation_id",
-            "tool_epoch",
-            "server_monotonic_ms",
             "payload",
         }
-        unknown_fields = set(decoded) - allowed_fields
-        if unknown_fields:
-            raise ValueError("media envelope contains unknown fields")
-        required_fields = allowed_fields
         if required_fields - set(decoded):
             raise ValueError("media envelope is missing required fields")
+        # v1 extensions are optional and future top-level extensions must not
+        # block an older relay from carrying a newer browser envelope.
         protocol = decoded.get("protocol")
         if protocol != MEDIA_PROTOCOL:
             raise ValueError("unsupported media protocol")
@@ -274,6 +278,11 @@ class MediaEnvelope:
             turn_id=_non_negative_int(decoded.get("turn_id", 0), "turn_id"),
             generation_id=_non_negative_int(decoded.get("generation_id", 0), "generation_id"),
             tool_epoch=_non_negative_int(decoded.get("tool_epoch", 0), "tool_epoch"),
+            task_epoch=_non_negative_int(decoded.get("task_epoch", 0), "task_epoch"),
+            context_version=_non_negative_int(
+                decoded.get("context_version", 0),
+                "context_version",
+            ),
             server_monotonic_ms=_non_negative_int(
                 decoded.get("server_monotonic_ms", 0),
                 "server_monotonic_ms",

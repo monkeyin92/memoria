@@ -1559,6 +1559,29 @@ describe("authenticated Control API client", () => {
     );
   });
 
+  it("shows a safe message when LiveKit credentials are not configured", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        user_id: "owner",
+        username: "memorykeeper",
+        account_type: "registered",
+        access_token: "short-token",
+      }, 201))
+      .mockResolvedValueOnce(jsonResponse({
+        detail: { code: "livekit_credentials_missing" },
+      }, 503));
+    vi.stubGlobal("fetch", fetchMock);
+    const { createSession, registerAccount } = await import("./api.js");
+
+    await registerAccount("memorykeeper", "safe-passphrase");
+    await expect(createSession("owner")).rejects.toMatchObject({
+      message: "语音服务尚未配置，请联系管理员。",
+      status: 503,
+      code: "livekit_credentials_missing",
+    });
+  });
+
   it("uses strict growth-map endpoints without percentage fields", async () => {
     const task = {
       task_id: "task-1",

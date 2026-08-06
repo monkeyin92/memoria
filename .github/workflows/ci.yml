@@ -50,7 +50,7 @@ jobs:
         working-directory: packages/proto
         run: |
           mkdir -p /tmp/memoria-proto-base
-          git archive "${{ github.event.pull_request.base.sha }}" packages/proto \
+          git -C "$(git rev-parse --show-toplevel)" archive "${{ github.event.pull_request.base.sha }}" packages/proto \
             | tar -x -C /tmp/memoria-proto-base --strip-components=2
           buf breaking --against /tmp/memoria-proto-base
       - name: Media bridge contract smoke
@@ -102,6 +102,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.5"
+      - name: Install Opus build dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libopus-dev pkg-config
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "35.1"
+      - name: Media proto Go generation is reproducible
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+          cd ../..
+          scripts/generate_media_go_proto.sh
+          git diff --exit-code -- services/media_edge/gen
       - name: Gofmt
         run: test -z "$(gofmt -l .)"
       - name: GolangCI-Lint

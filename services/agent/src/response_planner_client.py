@@ -30,9 +30,7 @@ Disclosure = Literal["digital_identity", "inference", "unknown", "privacy_refusa
 VoiceTargetKind = Literal["companion", "approved_personal", "fallback"]
 CANONICAL_PLANNER_POLICY_VERSION: Final = "digital-self-response-planner-v2"
 
-_EPISTEMIC_STATUSES = frozenset(
-    {"not_applicable", "fact", "inference", "unknown", "mixed"}
-)
+_EPISTEMIC_STATUSES = frozenset({"not_applicable", "fact", "inference", "unknown", "mixed"})
 _GROUNDED_KINDS = frozenset(
     {
         "memory_claim",
@@ -42,12 +40,8 @@ _GROUNDED_KINDS = frozenset(
         "relationship_profile",
     }
 )
-_GROUNDED_USES = frozenset(
-    {"fact", "style", "decision_precedent", "relationship_rule", "boundary"}
-)
-_DISCLOSURES = frozenset(
-    {"digital_identity", "inference", "unknown", "privacy_refusal"}
-)
+_GROUNDED_USES = frozenset({"fact", "style", "decision_precedent", "relationship_rule", "boundary"})
+_DISCLOSURES = frozenset({"digital_identity", "inference", "unknown", "privacy_refusal"})
 _VOICE_TARGET_KINDS = frozenset({"companion", "approved_personal", "fallback"})
 _PLAN_KEYS = frozenset(
     {
@@ -62,9 +56,7 @@ _PLAN_KEYS = frozenset(
         "provenance",
     }
 )
-_FENCE_KEYS = frozenset(
-    {"session_id", "turn_id", "generation_id", "tool_epoch"}
-)
+_FENCE_KEYS = frozenset({"session_id", "turn_id", "generation_id", "tool_epoch"})
 _GROUNDED_ITEM_KEYS = frozenset(
     {
         "kind",
@@ -111,6 +103,14 @@ _PROVENANCE_KEYS = frozenset(
     }
 )
 _SOURCE_REF_KEYS = frozenset({"kind", "item_id", "source_event_ids"})
+_CONTEXT_PREFETCH_KEYS = frozenset(
+    {
+        "speaker_class",
+        "grounded_items",
+        "persona_version_id",
+        "persona_version_number",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +270,18 @@ class ResponsePlanFetch:
         return self.plan is not None
 
 
+@dataclass(frozen=True, slots=True)
+class ContextPrefetchFetch:
+    grounded_items: tuple[ResponseGroundedItem, ...]
+    persona_version_id: str | None
+    persona_version_number: int | None
+    reason: str
+
+    @property
+    def available(self) -> bool:
+        return self.reason == "ok"
+
+
 class ResponsePlannerClient:
     """Fetch exactly one bounded plan; failures never expose cached private context."""
 
@@ -339,6 +351,67 @@ class ResponsePlannerClient:
         ):
             return ResponsePlanFetch(None, "speaker_mismatch")
         return ResponsePlanFetch(plan, "ok")
+
+    async def prefetch_context(
+        self,
+        *,
+        session_id: str,
+        query: str,
+        speaker_decision: SpeakerDecision,
+    ) -> ContextPrefetchFetch:
+        normalized_query = query.strip()
+        if not session_id.strip() or not normalized_query or len(normalized_query) > 4000:
+            return ContextPrefetchFetch((), None, None, "request_invalid")
+        endpoint = httpx.URL(self._config.endpoint)
+        path = endpoint.path.rsplit("/", 1)[0] + "/context-prefetch"
+        try:
+            response = await self._client.post(
+                endpoint.copy_with(path=path),
+                headers={"X-Memoria-Internal-Token": self._config.internal_token},
+                json={
+                    "session_id": session_id,
+                    "query": normalized_query,
+                    "speaker_decision": {
+                        "classification": speaker_decision.classification,
+                        "reason_code": speaker_decision.reason_code,
+                        "model_version": speaker_decision.model_version,
+                        "profile_id": speaker_decision.profile_id,
+                        "template_version": speaker_decision.template_version,
+                    },
+                },
+                timeout=self._config.timeout_s,
+            )
+            if response.status_code != 200:
+                return ContextPrefetchFetch((), None, None, f"http_{response.status_code}")
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("context prefetch must be an object")
+            self._require_keys(payload, _CONTEXT_PREFETCH_KEYS, label="context prefetch")
+            if payload.get("speaker_class") != speaker_decision.classification:
+                raise ValueError("context prefetch speaker mismatch")
+            raw_items = payload.get("grounded_items")
+            if not isinstance(raw_items, list) or len(raw_items) > 32:
+                raise ValueError("context prefetch grounded items are invalid")
+            items = tuple(self._grounded_item(item) for item in raw_items)
+            persona_version_id = self._optional_text(payload, "persona_version_id", 128)
+            persona_version_number = payload.get("persona_version_number")
+            if (persona_version_id is None) != (persona_version_number is None) or (
+                persona_version_number is not None
+                and (
+                    isinstance(persona_version_number, bool)
+                    or not isinstance(persona_version_number, int)
+                    or persona_version_number < 1
+                )
+            ):
+                raise ValueError("context prefetch persona version is invalid")
+        except (httpx.HTTPError, TypeError, ValueError):
+            return ContextPrefetchFetch((), None, None, "request_or_payload_invalid")
+        return ContextPrefetchFetch(
+            items,
+            persona_version_id,
+            cast(int | None, persona_version_number),
+            "ok",
+        )
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -534,16 +607,12 @@ class ResponsePlannerClient:
                 or (
                     legacy_actor_role == "owner_preview"
                     and (
-                        actor_account_id != resource_owner_account_id
-                        or legacy_shell_id is not None
+                        actor_account_id != resource_owner_account_id or legacy_shell_id is not None
                     )
                 )
                 or (
                     legacy_actor_role == "grantee"
-                    and (
-                        actor_account_id != legacy_grantee_account_id
-                        or legacy_shell_id is None
-                    )
+                    and (actor_account_id != legacy_grantee_account_id or legacy_shell_id is None)
                 )
             ):
                 raise ValueError("legacy response provenance actor binding is invalid")
@@ -561,9 +630,7 @@ class ResponsePlannerClient:
         if (persona_version_id is None) != (persona_version_number is None):
             raise ValueError("response provenance persona version fields must be paired")
         if persona_style_only and persona_version_id is None:
-            raise ValueError(
-                "response provenance persona style marker requires a persona version"
-            )
+            raise ValueError("response provenance persona style marker requires a persona version")
         planner_policy_version = cls._text(value, "planner_policy_version", 64)
         if planner_policy_version != CANONICAL_PLANNER_POLICY_VERSION:
             raise ValueError("response plan policy version is invalid")
@@ -668,9 +735,7 @@ class ResponsePlannerClient:
         grounded_keys = tuple(
             (item.kind, item.item_id, item.source_event_ids) for item in grounded_items
         )
-        ref_keys = tuple(
-            (ref.kind, ref.item_id, ref.source_event_ids) for ref in source_refs
-        )
+        ref_keys = tuple((ref.kind, ref.item_id, ref.source_event_ids) for ref in source_refs)
         if any(not source_ids for _, _, source_ids in grounded_keys + ref_keys):
             raise ValueError("grounded provenance source ids are required")
         if len(grounded_keys) != len(set(grounded_keys)):
@@ -733,8 +798,7 @@ class ResponsePlannerClient:
     def _optional_digest(cls, value: dict[str, Any], key: str) -> str | None:
         digest = cls._optional_text(value, key, 64)
         if digest is not None and (
-            len(digest) != 64
-            or any(character not in "0123456789abcdef" for character in digest)
+            len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest)
         ):
             raise ValueError("response provenance digest is invalid")
         return digest

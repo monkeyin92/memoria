@@ -9,6 +9,7 @@ embedded here.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -21,6 +22,13 @@ import grpc
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
+from services.agent.src.voice_core.interaction_authority import (
+    InteractionAuthority,
+    InteractionRuntime,
+    can_execute_realtime_effect,
+    interaction_authority_from_proto,
+    interaction_authority_to_proto,
+)
 from services.agent.src.voice_core.media_bridge_server import (
     MediaBridgeServer,
     MediaBridgeSession,
@@ -32,10 +40,11 @@ from services.agent.src.voice_core.media_protocol import (
     PlaybackProgress,
     SessionIdentity,
 )
-from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment
+from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment, SpeechTimeline
 
 media_pb2: Any = _media_pb2
 KWS_HARD_STOP_MIN_CONFIDENCE = 0.8
+FLOOR_EFFECT_TTL_MS = 10_000
 logger = logging.getLogger(__name__)
 
 
@@ -98,6 +107,8 @@ class _Connection:
     session: MediaBridgeSession
     outgoing: asyncio.Queue[media_pb2.CoreToMedia | None]
     next_event_sequence: int = 0
+    next_shadow_sequence: int = 0
+    dropped_shadow_observations: int = 0
     closed: bool = False
     close_notified: bool = False
 
@@ -124,6 +135,26 @@ def _identity_to_proto(identity: SessionIdentity) -> Any:
     )
 
 
+def floor_state_for_phase(phase: str) -> int | None:
+    """Map the Python-owned interaction phase to one typed Floor state."""
+
+    return {
+        "connecting": media_pb2.FLOOR_STATE_SILENCE,
+        "ready": media_pb2.FLOOR_STATE_SILENCE,
+        "speaker_enroll": media_pb2.FLOOR_STATE_SILENCE,
+        "listening": media_pb2.FLOOR_STATE_SILENCE,
+        "user_speaking": media_pb2.FLOOR_STATE_USER_HOLDS_FLOOR,
+        "backchannel": media_pb2.FLOOR_STATE_OVERLAP,
+        "thinking": media_pb2.FLOOR_STATE_SILENCE,
+        "thinking_silent": media_pb2.FLOOR_STATE_SILENCE,
+        "tool_waiting": media_pb2.FLOOR_STATE_SILENCE,
+        "speaking": media_pb2.FLOOR_STATE_ASSISTANT_HOLDS_FLOOR,
+        "interrupted": media_pb2.FLOOR_STATE_USER_HOLDS_FLOOR,
+        "recovering": media_pb2.FLOOR_STATE_SILENCE,
+        "closed": media_pb2.FLOOR_STATE_SILENCE,
+    }.get(phase)
+
+
 class MediaBridgeGrpcServer:
     """A real asyncio gRPC streaming endpoint over the media-v1 contract."""
 
@@ -134,6 +165,7 @@ class MediaBridgeGrpcServer:
         *,
         max_pending_audio_frames: int = 100,
         max_pending_messages: int = 128,
+        allow_go_shadow: bool = False,
         on_client_event: ClientEventHandler | None = None,
         on_audio_frame: AudioFrameHandler | None = None,
         on_speech_segment: SpeechSegmentHandler | None = None,
@@ -145,6 +177,7 @@ class MediaBridgeGrpcServer:
             raise ValueError("max_pending_messages must be positive")
         self.bridge = MediaBridgeServer(max_pending_audio_frames=max_pending_audio_frames)
         self.max_pending_messages = max_pending_messages
+        self.allow_go_shadow = bool(allow_go_shadow)
         self.on_client_event = on_client_event
         self.on_audio_frame = on_audio_frame
         self.on_speech_segment = on_speech_segment
@@ -227,11 +260,19 @@ class MediaBridgeGrpcServer:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "media hello is required")
                 return
             connection = value
+            fence = connection.session.fence
             yield media_pb2.CoreToMedia(
                 accepted=media_pb2.SessionAccepted(
                     identity=_identity_to_proto(connection.session.identity),
                     state=media_pb2.CONVERSATION_STATE_LISTENING,
-                    current_generation_id=connection.session.fence.generation_id,
+                    current_generation_id=fence.generation_id,
+                    interaction_authority=interaction_authority_to_proto(
+                        connection.session.interaction_authority
+                    ),
+                    current_turn_id=fence.turn_id,
+                    current_tool_epoch=fence.tool_epoch,
+                    task_epoch=connection.session.task_epoch,
+                    context_version=connection.session.context_version,
                 )
             )
             if connection.session.fence.turn_id or connection.session.fence.generation_id or connection.session.fence.tool_epoch:
@@ -286,7 +327,14 @@ class MediaBridgeGrpcServer:
                     if event_name != "hello":
                         raise ValueError("the first media event must be hello")
                     self._validate_hello(request.hello)
-                    connection = self._open_connection(_identity_from_proto(request.hello.identity))
+                    interaction_authority = self._select_interaction_authority(
+                        int(request.hello.interaction_authority)
+                    )
+                    connection = self._open_connection(
+                        _identity_from_proto(request.hello.identity),
+                        traceparent=str(request.hello.traceparent or ""),
+                        interaction_authority=interaction_authority,
+                    )
                     connection.outgoing = outgoing
                     holder["connection"] = connection
                     ready.set()
@@ -346,7 +394,21 @@ class MediaBridgeGrpcServer:
             ):
                 raise ValueError(f"{field_name} format is not supported")
 
-    def _open_connection(self, identity: SessionIdentity) -> _Connection:
+    def _select_interaction_authority(self, requested: int) -> InteractionAuthority:
+        mode = interaction_authority_from_proto(requested)
+        if mode is InteractionAuthority.GO_SHADOW and self.allow_go_shadow:
+            return mode
+        # Go authority is not selectable until A6 parity, SLO and rollback
+        # gates are proven. Unknown/old clients also fail closed here.
+        return InteractionAuthority.PYTHON_AUTHORITATIVE
+
+    def _open_connection(
+        self,
+        identity: SessionIdentity,
+        *,
+        traceparent: str = "",
+        interaction_authority: InteractionAuthority = InteractionAuthority.PYTHON_AUTHORITATIVE,
+    ) -> _Connection:
         existing = self._connections.get(identity.session_id)
         if existing is not None:
             if identity.stream_epoch <= existing.session.identity.stream_epoch:
@@ -358,9 +420,15 @@ class MediaBridgeGrpcServer:
             self._connections.pop(identity.session_id, None)
         session = self.bridge.get(identity.session_id)
         if session is None:
-            session = self.bridge.open(identity)
+            session = self.bridge.open(
+                identity,
+                traceparent=traceparent,
+                interaction_authority=interaction_authority,
+            )
         elif not session.reconnect(identity):
             raise ValueError("media stream epoch did not advance")
+        else:
+            session.interaction_authority = interaction_authority
         self._closed_session_notifications.discard(identity.session_id)
         connection = _Connection(
             session=session,
@@ -619,6 +687,7 @@ class MediaBridgeGrpcServer:
             raise ValueError("media event identity does not match the session")
 
     async def _error(self, connection: _Connection, code: str, message: str) -> None:
+        fence = connection.session.fence
         await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
@@ -627,6 +696,11 @@ class MediaBridgeGrpcServer:
                     code=code,
                     message=message[:256],
                     retryable=True,
+                    turn_id=fence.turn_id,
+                    generation_id=fence.generation_id,
+                    tool_epoch=fence.tool_epoch,
+                    task_epoch=connection.session.task_epoch,
+                    context_version=connection.session.context_version,
                 )
             ),
         )
@@ -637,6 +711,9 @@ class MediaBridgeGrpcServer:
         try:
             connection.outgoing.put_nowait(message)
         except asyncio.QueueFull:
+            if self._evict_shadow_observation(connection):
+                connection.outgoing.put_nowait(message)
+                return True
             connection.session.overflow_count += 1
             terminal = self._overflow_cancel_message(connection)
             # Stop publishers and wake the writer before awaiting Voice Core:
@@ -648,6 +725,42 @@ class MediaBridgeGrpcServer:
                     await self.on_downlink_overflow(connection.session)
                 except Exception:
                     logger.exception("Voice Core did not accept downlink overflow cancellation")
+            return False
+        return True
+
+    @staticmethod
+    def _evict_shadow_observation(connection: _Connection) -> bool:
+        retained: list[media_pb2.CoreToMedia | None] = []
+        removed = False
+        while True:
+            try:
+                queued = connection.outgoing.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if (
+                not removed
+                and queued is not None
+                and queued.WhichOneof("event") == "shadow_observation"
+            ):
+                removed = True
+                connection.dropped_shadow_observations += 1
+                continue
+            retained.append(queued)
+        for queued in retained:
+            connection.outgoing.put_nowait(queued)
+        return removed
+
+    @staticmethod
+    def _try_enqueue_shadow(
+        connection: _Connection,
+        message: media_pb2.CoreToMedia,
+    ) -> bool:
+        if connection.closed:
+            return False
+        try:
+            connection.outgoing.put_nowait(message)
+        except asyncio.QueueFull:
+            connection.dropped_shadow_observations += 1
             return False
         return True
 
@@ -702,6 +815,8 @@ class MediaBridgeGrpcServer:
                 action=media_pb2.GENERATION_ACTION_CANCEL,
                 reason="downlink_queue_full",
                 sequence=self._next_event_sequence(connection),
+                task_epoch=connection.session.task_epoch,
+                context_version=connection.session.context_version,
             )
         )
 
@@ -709,6 +824,10 @@ class MediaBridgeGrpcServer:
         connection = self._connections.get(session_id)
         if connection is None or not connection.session.accept_downlink(frame):
             return False
+        task_epoch, context_version = connection.session.observe_versions(
+            frame.task_epoch,
+            frame.context_version,
+        )
         enqueued = await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
@@ -723,6 +842,8 @@ class MediaBridgeGrpcServer:
                     pcm_s16le=frame.pcm_s16le,
                     first_frame=frame.first,
                     final_frame=frame.final,
+                    task_epoch=task_epoch,
+                    context_version=context_version,
                 )
             ),
         )
@@ -741,10 +862,16 @@ class MediaBridgeGrpcServer:
         *,
         action: int,
         reason: str = "",
+        task_epoch: int = 0,
+        context_version: int = 0,
     ) -> bool:
         connection = self._connections.get(session_id)
         if connection is None:
             return False
+        task_epoch, context_version = connection.session.observe_versions(
+            task_epoch,
+            context_version,
+        )
         try:
             connection.session.generation.advance(fence)
         except ValueError:
@@ -763,6 +890,164 @@ class MediaBridgeGrpcServer:
                     action=action,
                     reason=reason[:256],
                     sequence=self._next_event_sequence(connection),
+                    task_epoch=task_epoch,
+                    context_version=context_version,
+                )
+            ),
+        )
+
+    async def emit_realtime_effect(
+        self,
+        session_id: str,
+        effect_kind: int,
+        fence: GenerationFence,
+        *,
+        source_event_id: str,
+        payload: dict[str, Any],
+        task_epoch: int = 0,
+        context_version: int = 0,
+    ) -> bool:
+        """Publish one Python-authoritative, fully fenced media effect."""
+
+        connection = self._connections.get(session_id)
+        if (
+            connection is None
+            or connection.closed
+            or not source_event_id.strip()
+            or not can_execute_realtime_effect(
+                connection.session.interaction_authority,
+                producer=InteractionRuntime.PYTHON,
+                candidate_only=False,
+            )
+        ):
+            return False
+        if effect_kind not in {
+            media_pb2.REALTIME_EFFECT_KIND_DUCK_OUTPUT,
+            media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
+            media_pb2.REALTIME_EFFECT_KIND_PAUSE_OUTPUT,
+            media_pb2.REALTIME_EFFECT_KIND_RESUME_OUTPUT,
+        }:
+            return False
+        try:
+            encoded_payload = json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            return False
+        if len(encoded_payload) > 4 * 1024:
+            return False
+
+        if effect_kind == media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION:
+            try:
+                connection.session.generation.advance(fence)
+            except ValueError:
+                return False
+            if not connection.session.reset_downlink_generation(fence):
+                return False
+            connection.session.generation_active = False
+        elif (
+            not connection.session.generation_active
+            or not connection.session.generation.accept(fence)
+        ):
+            return False
+
+        task_epoch, context_version = connection.session.observe_versions(
+            task_epoch,
+            context_version,
+        )
+        sequence = self._next_event_sequence(connection)
+        effect_id = (
+            f"{connection.session.identity.session_id}:"
+            f"{connection.session.identity.stream_epoch}:effect:{sequence}"
+        )
+        return await self._enqueue(
+            connection,
+            media_pb2.CoreToMedia(
+                realtime_effect=media_pb2.RealtimeEffect(
+                    effect_id=effect_id,
+                    session_id=connection.session.identity.session_id,
+                    stream_epoch=connection.session.identity.stream_epoch,
+                    sequence=sequence,
+                    effect_kind=effect_kind,
+                    source_event_id=source_event_id[:128],
+                    turn_id=fence.turn_id,
+                    generation_id=fence.generation_id,
+                    tool_epoch=fence.tool_epoch,
+                    task_epoch=task_epoch,
+                    context_version=context_version,
+                    candidate_only=False,
+                    payload=encoded_payload,
+                    identity=_identity_to_proto(connection.session.identity),
+                )
+            ),
+        )
+
+    async def emit_floor_effect(
+        self,
+        session_id: str,
+        floor_state: int,
+        *,
+        floor_epoch: int,
+        fence: GenerationFence,
+        source_event_id: str,
+        task_epoch: int = 0,
+        context_version: int = 0,
+    ) -> bool:
+        """Publish one typed, Python-authoritative Floor state update."""
+
+        connection = self._connections.get(session_id)
+        if (
+            connection is None
+            or connection.closed
+            or floor_epoch <= 0
+            or not source_event_id.strip()
+            or floor_state
+            not in {
+                media_pb2.FLOOR_STATE_USER_HOLDS_FLOOR,
+                media_pb2.FLOOR_STATE_ASSISTANT_HOLDS_FLOOR,
+                media_pb2.FLOOR_STATE_OVERLAP,
+                media_pb2.FLOOR_STATE_UNCERTAIN,
+                media_pb2.FLOOR_STATE_SILENCE,
+            }
+            or not can_execute_realtime_effect(
+                connection.session.interaction_authority,
+                producer=InteractionRuntime.PYTHON,
+                candidate_only=False,
+            )
+            # A floor update may describe the cancelled current fence, but it
+            # must never revive a prior generation.
+            or not connection.session.generation.accept(fence)
+        ):
+            return False
+        task_epoch, context_version = connection.session.observe_versions(
+            task_epoch,
+            context_version,
+        )
+        sequence = self._next_event_sequence(connection)
+        effect_id = (
+            f"{connection.session.identity.session_id}:"
+            f"{connection.session.identity.stream_epoch}:floor:{floor_epoch}:{sequence}"
+        )
+        return await self._enqueue(
+            connection,
+            media_pb2.CoreToMedia(
+                floor_effect=media_pb2.FloorEffect(
+                    effect_id=effect_id,
+                    identity=_identity_to_proto(connection.session.identity),
+                    sequence=sequence,
+                    floor_state=floor_state,
+                    floor_epoch=floor_epoch,
+                    source_event_id=source_event_id[:128],
+                    turn_id=fence.turn_id,
+                    generation_id=fence.generation_id,
+                    tool_epoch=fence.tool_epoch,
+                    task_epoch=task_epoch,
+                    context_version=context_version,
+                    candidate_only=False,
+                    expires_at_ms=max(0, int(time.time() * 1_000)) + FLOOR_EFFECT_TTL_MS,
                 )
             ),
         )
@@ -776,16 +1061,22 @@ class MediaBridgeGrpcServer:
         turn_id: int = 0,
         generation_id: int = 0,
         tool_epoch: int = 0,
+        task_epoch: int = 0,
+        context_version: int = 0,
     ) -> bool:
         connection = self._connections.get(session_id)
         if connection is None:
             return False
+        task_epoch, context_version = connection.session.observe_versions(
+            task_epoch,
+            context_version,
+        )
         sequence = self._next_event_sequence(connection)
         event_id = (
             f"{connection.session.identity.session_id}:"
             f"{connection.session.identity.stream_epoch}:{sequence}"
         )
-        return await self._enqueue(
+        enqueued = await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
                 client=media_pb2.ClientEvent(
@@ -804,6 +1095,8 @@ class MediaBridgeGrpcServer:
                             "turn_id": turn_id,
                             "generation_id": generation_id,
                             "tool_epoch": tool_epoch,
+                            "task_epoch": task_epoch,
+                            "context_version": context_version,
                             "server_monotonic_ms": max(0, time.monotonic_ns() // 1_000_000),
                         },
                         ensure_ascii=False,
@@ -812,9 +1105,110 @@ class MediaBridgeGrpcServer:
                     turn_id=turn_id,
                     generation_id=generation_id,
                     tool_epoch=tool_epoch,
+                    task_epoch=task_epoch,
+                    context_version=context_version,
                     sequence=sequence,
                 )
             ),
+        )
+        if enqueued and event_type == "assistant_state":
+            self._emit_floor_decision_shadow(
+                connection,
+                payload=payload,
+                turn_id=turn_id,
+                generation_id=generation_id,
+                tool_epoch=tool_epoch,
+            )
+        return enqueued
+
+    def _emit_floor_decision_shadow(
+        self,
+        connection: _Connection,
+        *,
+        payload: dict[str, Any],
+        turn_id: int,
+        generation_id: int,
+        tool_epoch: int,
+    ) -> bool:
+        if connection.closed or connection.session.interaction_authority is not InteractionAuthority.GO_SHADOW:
+            return False
+        phase = str(payload.get("phase") or payload.get("state") or "")
+        mapping = {
+            "connecting": (
+                media_pb2.FLOOR_STATE_SILENCE,
+                media_pb2.REALTIME_EFFECT_KIND_PAUSE_OUTPUT,
+            ),
+            "ready": (
+                media_pb2.FLOOR_STATE_SILENCE,
+                media_pb2.REALTIME_EFFECT_KIND_RESUME_OUTPUT,
+            ),
+            "speaker_enroll": (
+                media_pb2.FLOOR_STATE_SILENCE,
+                media_pb2.REALTIME_EFFECT_KIND_RESUME_OUTPUT,
+            ),
+            "listening": (
+                media_pb2.FLOOR_STATE_SILENCE,
+                media_pb2.REALTIME_EFFECT_KIND_RESUME_OUTPUT,
+            ),
+            "user_speaking": (
+                media_pb2.FLOOR_STATE_USER_HOLDS_FLOOR,
+                media_pb2.REALTIME_EFFECT_KIND_DUCK_OUTPUT,
+            ),
+            "backchannel": (
+                media_pb2.FLOOR_STATE_OVERLAP,
+                media_pb2.REALTIME_EFFECT_KIND_RESUME_OUTPUT,
+            ),
+            "thinking": (
+                media_pb2.FLOOR_STATE_SILENCE,
+                media_pb2.REALTIME_EFFECT_KIND_RESUME_OUTPUT,
+            ),
+            "thinking_silent": (
+                media_pb2.FLOOR_STATE_SILENCE,
+                media_pb2.REALTIME_EFFECT_KIND_RESUME_OUTPUT,
+            ),
+            "tool_waiting": (
+                media_pb2.FLOOR_STATE_SILENCE,
+                media_pb2.REALTIME_EFFECT_KIND_RESUME_OUTPUT,
+            ),
+            "speaking": (
+                media_pb2.FLOOR_STATE_ASSISTANT_HOLDS_FLOOR,
+                media_pb2.REALTIME_EFFECT_KIND_ENQUEUE_OUTPUT_INTENT,
+            ),
+            "interrupted": (
+                media_pb2.FLOOR_STATE_USER_HOLDS_FLOOR,
+                media_pb2.REALTIME_EFFECT_KIND_DROP_STALE_EVENT,
+            ),
+            "recovering": (
+                media_pb2.FLOOR_STATE_SILENCE,
+                media_pb2.REALTIME_EFFECT_KIND_DROP_STALE_EVENT,
+            ),
+            "closed": (
+                media_pb2.FLOOR_STATE_SILENCE,
+                media_pb2.REALTIME_EFFECT_KIND_DROP_STALE_EVENT,
+            ),
+        }.get(phase)
+        if mapping is None:
+            return False
+        floor_state, effect_kind = mapping
+        observation = self._new_shadow_observation(
+            connection,
+            kind=media_pb2.SHADOW_OBSERVATION_KIND_FLOOR_DECISION,
+            authoritative_accepted=True,
+            authoritative_reason=phase,
+            observed_at_ms=max(0, int(time.time() * 1_000)),
+        )
+        observation.floor_decision.CopyFrom(
+            media_pb2.ShadowFloorDecision(
+                floor_state=floor_state,
+                effect_kind=effect_kind,
+                turn_id=max(0, int(turn_id)),
+                generation_id=max(0, int(generation_id)),
+                tool_epoch=max(0, int(tool_epoch)),
+            )
+        )
+        return self._try_enqueue_shadow(
+            connection,
+            media_pb2.CoreToMedia(shadow_observation=observation),
         )
 
     async def emit_transcript(
@@ -824,6 +1218,8 @@ class MediaBridgeGrpcServer:
         *,
         turn_id: int | None = None,
         speaker_class: str = "",
+        task_epoch: int = 0,
+        context_version: int = 0,
     ) -> bool:
         """Publish one range-stamped transcript under the current fence."""
 
@@ -833,6 +1229,10 @@ class MediaBridgeGrpcServer:
         fence = connection.session.fence
         if segment.session_id != session_id or segment.stream_epoch != connection.session.identity.stream_epoch:
             return False
+        task_epoch, context_version = connection.session.observe_versions(
+            task_epoch,
+            context_version,
+        )
         sequence = self._next_event_sequence(connection)
         return await self._enqueue(
             connection,
@@ -850,8 +1250,241 @@ class MediaBridgeGrpcServer:
                     generation_id=fence.generation_id,
                     tool_epoch=fence.tool_epoch,
                     sequence=sequence,
+                    task_epoch=task_epoch,
+                    context_version=context_version,
                 )
             ),
+        )
+
+    async def emit_speech_task_started(
+        self,
+        session_id: str,
+        task_epoch: int,
+        timeline: SpeechTimeline,
+    ) -> bool:
+        return self._emit_speech_shadow_observation(
+            session_id,
+            kind=media_pb2.SHADOW_OBSERVATION_KIND_SPEECH_TASK_STARTED,
+            input_value=media_pb2.ShadowSpeechTaskStarted(task_epoch=task_epoch),
+            authoritative_accepted=True,
+            authoritative_reason="task_started",
+            timeline=timeline,
+            latest_task_epoch=task_epoch,
+        )
+
+    async def emit_speech_segment_decision(
+        self,
+        session_id: str,
+        segment: SpeechSegment,
+        *,
+        authoritative_accepted: bool,
+        authoritative_reason: str,
+        timeline: SpeechTimeline,
+        latest_task_epoch: int,
+    ) -> bool:
+        return self._emit_speech_shadow_observation(
+            session_id,
+            kind=media_pb2.SHADOW_OBSERVATION_KIND_SPEECH_SEGMENT,
+            input_value=self._shadow_speech_segment(segment),
+            authoritative_accepted=authoritative_accepted,
+            authoritative_reason=authoritative_reason,
+            timeline=timeline,
+            latest_task_epoch=latest_task_epoch,
+        )
+
+    async def emit_speech_commit(
+        self,
+        session_id: str,
+        committed_sample: int,
+        timeline: SpeechTimeline,
+        *,
+        latest_task_epoch: int,
+    ) -> bool:
+        return self._emit_speech_shadow_observation(
+            session_id,
+            kind=media_pb2.SHADOW_OBSERVATION_KIND_SPEECH_COMMIT,
+            input_value=media_pb2.ShadowSpeechCommit(committed_sample=committed_sample),
+            authoritative_accepted=True,
+            authoritative_reason="committed",
+            timeline=timeline,
+            latest_task_epoch=latest_task_epoch,
+        )
+
+    async def emit_context_activated(
+        self,
+        session_id: str,
+        context_version: int,
+    ) -> bool:
+        connection = self._shadow_connection(session_id)
+        if connection is None or context_version < 0:
+            return False
+        observation = self._new_shadow_observation(
+            connection,
+            kind=media_pb2.SHADOW_OBSERVATION_KIND_CONTEXT_ACTIVATED,
+            authoritative_accepted=True,
+            authoritative_reason="context_activated",
+            observed_at_ms=max(0, int(time.time() * 1_000)),
+            authoritative_context_version=context_version,
+        )
+        observation.context_activated.context_version = context_version
+        return self._try_enqueue_shadow(
+            connection,
+            media_pb2.CoreToMedia(shadow_observation=observation),
+        )
+
+    def emit_output_intent_decision(self, session_id: str, admission: Any) -> bool:
+        connection = self._shadow_connection(session_id)
+        intent = getattr(admission, "intent", None)
+        if connection is None or intent is None or str(intent.session_id) != session_id:
+            return False
+        consumed = bool(getattr(admission, "consumed", False))
+        if consumed and bool(admission.accepted):
+            return False
+        observation = self._new_shadow_observation(
+            connection,
+            kind=media_pb2.SHADOW_OBSERVATION_KIND_OUTPUT_INTENT,
+            authoritative_accepted=bool(admission.accepted),
+            authoritative_reason=str(admission.reason),
+            observed_at_ms=int(admission.observed_at_ms),
+            authoritative_context_version=int(admission.current_context_version),
+        )
+        observation.authoritative_consumed = consumed
+
+        def shadow_intent(candidate: Any) -> Any:
+            return media_pb2.ShadowOutputIntent(
+                intent_id=str(candidate.intent_id),
+                turn_id=int(candidate.turn_id),
+                generation_id=int(candidate.generation_id),
+                tool_epoch=int(candidate.tool_epoch),
+                kind=int(candidate.kind),
+                priority=int(candidate.priority),
+                created_at_ms=int(candidate.created_at_ms),
+                expires_at_ms=int(candidate.expires_at_ms),
+                floor_requirement=int(candidate.floor_requirement),
+                context_version=int(candidate.context_version),
+            )
+        observation.output_intent.CopyFrom(shadow_intent(intent))
+        candidate = getattr(admission, "authoritative_candidate", None)
+        arbiter = media_pb2.ShadowOutputArbiterState(
+            context_version=int(admission.current_context_version),
+            active_candidates_complete=True,
+        )
+        if candidate is not None:
+            arbiter.candidate.CopyFrom(shadow_intent(candidate))
+        candidates = tuple(getattr(admission, "authoritative_candidates", ()))
+        if not candidates and candidate is not None:
+            candidates = (candidate,)
+        arbiter.active_candidates.extend(shadow_intent(item) for item in candidates)
+        observation.authoritative_output_arbiter.CopyFrom(arbiter)
+        return self._try_enqueue_shadow(
+            connection,
+            media_pb2.CoreToMedia(shadow_observation=observation),
+        )
+
+    def _shadow_connection(self, session_id: str) -> _Connection | None:
+        connection = self._connections.get(session_id)
+        if (
+            connection is None
+            or connection.session.interaction_authority is not InteractionAuthority.GO_SHADOW
+        ):
+            return None
+        return connection
+
+    def _new_shadow_observation(
+        self,
+        connection: _Connection,
+        *,
+        kind: int,
+        authoritative_accepted: bool,
+        authoritative_reason: str,
+        observed_at_ms: int = 0,
+        authoritative_context_version: int = 0,
+    ) -> Any:
+        sequence = self._next_event_sequence(connection)
+        shadow_sequence = connection.next_shadow_sequence
+        connection.next_shadow_sequence += 1
+        return media_pb2.ShadowObservation(
+            identity=_identity_to_proto(connection.session.identity),
+            sequence=sequence,
+            shadow_sequence=shadow_sequence,
+            contract_version="media-v1-a6a",
+            candidate_only=True,
+            kind=kind,
+            authoritative_accepted=authoritative_accepted,
+            authoritative_reason=authoritative_reason[:64],
+            observed_at_ms=observed_at_ms,
+            authoritative_context_version=authoritative_context_version,
+        )
+
+    def _emit_speech_shadow_observation(
+        self,
+        session_id: str,
+        *,
+        kind: int,
+        input_value: Any,
+        authoritative_accepted: bool,
+        authoritative_reason: str,
+        timeline: SpeechTimeline,
+        latest_task_epoch: int,
+    ) -> bool:
+        connection = self._shadow_connection(session_id)
+        if connection is None or timeline.stream_epoch != connection.session.identity.stream_epoch:
+            return False
+        input_field = {
+            media_pb2.SHADOW_OBSERVATION_KIND_SPEECH_TASK_STARTED: "speech_task_started",
+            media_pb2.SHADOW_OBSERVATION_KIND_SPEECH_SEGMENT: "speech_segment",
+            media_pb2.SHADOW_OBSERVATION_KIND_SPEECH_COMMIT: "speech_commit",
+        }.get(kind)
+        if input_field is None:
+            return False
+        observation = self._new_shadow_observation(
+            connection,
+            kind=kind,
+            authoritative_accepted=authoritative_accepted,
+            authoritative_reason=authoritative_reason[:64],
+        )
+        observation.authoritative_timeline.CopyFrom(
+            self._shadow_timeline_state(
+                timeline,
+                latest_task_epoch=latest_task_epoch,
+            )
+        )
+        getattr(observation, input_field).CopyFrom(input_value)
+        return self._try_enqueue_shadow(
+            connection,
+            media_pb2.CoreToMedia(shadow_observation=observation),
+        )
+
+    @staticmethod
+    def _shadow_speech_segment(segment: SpeechSegment) -> Any:
+        return media_pb2.ShadowSpeechSegment(
+            segment_id=segment.segment_id,
+            capture_start_sample=segment.capture_start_sample,
+            capture_end_sample=segment.capture_end_sample,
+            task_epoch=segment.provider_task_epoch,
+            revision=segment.revision,
+            text_sha256=hashlib.sha256(segment.text.encode("utf-8")).digest(),
+            final=segment.final,
+        )
+
+    def _shadow_timeline_state(
+        self,
+        timeline: SpeechTimeline,
+        *,
+        latest_task_epoch: int,
+    ) -> Any:
+        segments = (
+            segment
+            for segment in timeline.pending
+            if segment.kind in {SegmentKind.ASR_PARTIAL, SegmentKind.ASR_FINAL}
+        )
+        return media_pb2.ShadowSpeechTimelineState(
+            committed_sample=timeline.committed_sample,
+            latest_task_epoch=max(
+                latest_task_epoch,
+                timeline.latest_task_epoch(timeline.stream_epoch or 0),
+            ),
+            segments=(self._shadow_speech_segment(segment) for segment in segments),
         )
 
 

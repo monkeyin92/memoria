@@ -25,6 +25,15 @@ from services.agent.src.contracts.ids import (
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.observability.audio_trace import parse_client_audio_trace
 from services.agent.src.observability.tracing import LatencyTrace
+from services.agent.src.orchestration.context_snapshot_manager import (
+    ContextSnapshot,
+    ContextSnapshotDraft,
+    ContextTurn,
+    MemoryCapsule,
+    PendingSnapshot,
+    PersonaCapsule,
+    scope_context_snapshot_draft,
+)
 from services.agent.src.orchestration.cue_scheduler import CueScheduler, ListenerCue
 from services.agent.src.orchestration.emotion import (
     EmotionObservation,
@@ -32,6 +41,12 @@ from services.agent.src.orchestration.emotion import (
     aggregate_acoustic_segments,
 )
 from services.agent.src.orchestration.heard_text_tracker import HeardTextTracker
+from services.agent.src.orchestration.interaction_plane import (
+    InteractionDecision,
+    InteractionEvent,
+    InteractionPlane,
+    InteractionSnapshot,
+)
 from services.agent.src.orchestration.interruption_guard import (
     PlaybackInputDecision,
     PlaybackInputGuard,
@@ -111,6 +126,8 @@ _RESPONSE_PROVENANCE_FORBIDDEN_KEYS = frozenset(
         "cookie",
     }
 )
+
+
 @dataclass(frozen=True, slots=True)
 class KeywordSpotterBinding:
     """Playback and speech epochs frozen when KWS starts decoding."""
@@ -165,6 +182,7 @@ class DuplexRuntime:
     tts: Any | None = None
     session_id: str = field(default_factory=new_session_id)
     input_guard: PlaybackInputGuard = field(default_factory=PlaybackInputGuard)
+    interaction_plane: InteractionPlane = field(default_factory=InteractionPlane)
     trusted_aec_playback_control: bool = False
     barge_in_enabled: bool = True
     latency_trace: LatencyTrace = field(default_factory=LatencyTrace)
@@ -249,6 +267,8 @@ class DuplexRuntime:
     _interrupt_semantic_result_epoch: int | None = None
     _interrupt_semantic_result_fence: GenerationFence | None = None
     _interrupt_semantic_result: InterruptSemanticVerdict | None = None
+    _interaction_decision_epoch: int | None = None
+    _interaction_decision: InteractionDecision | None = None
     _last_committed_user_text_normalized: str = ""
     _trusted_unanchored_control_epoch: int | None = None
     _trusted_unanchored_playback_epoch: int | None = None
@@ -287,6 +307,18 @@ class DuplexRuntime:
     _listener_cue_aec_healthy: bool = False
     _emotion_turn_observer: Callable[[int], None] | None = None
     _keyword_spotter_finalizer: Callable[[KeywordSpotterBinding | None], None] | None = None
+    _fast_model_warmer: Callable[[], Awaitable[Any] | Any] | None = None
+    _delegation_starter: Callable[[str, GenerationFence], Awaitable[Any] | Any] | None = None
+    _interaction_prefetch_epoch: int | None = None
+    _interaction_context_prefetch_key: tuple[int, str] | None = None
+    _context_prefetch_text: str = ""
+    _interaction_warm_epoch: int | None = None
+    _interaction_delegated_fences: set[GenerationFence] = field(default_factory=set)
+    _pending_context_snapshot: PendingSnapshot | None = None
+    _pending_context_snapshot_epoch: int | None = None
+    _context_snapshot_prepare_epoch: int = 0
+    _context_snapshot_prepare_task: asyncio.Task[Any] | None = None
+    context_snapshot_prepare_timeout_s: float = 1.0
     _emotion_segments_by_turn: dict[int, list[tuple[str, str]]] = field(default_factory=dict)
     _voice_profile_refresher: Callable[[], Coroutine[Any, Any, Any]] | None = None
     _voice_profile_refresh_task: asyncio.Task[Any] | None = None
@@ -332,6 +364,80 @@ class DuplexRuntime:
     ) -> CancellationContext:
         return self.orchestrator.cancellation_context(fence)
 
+    @property
+    def assistant_speaking(self) -> bool:
+        return self._was_speaking
+
+    @property
+    def output_floor_allows_assistant(self) -> bool:
+        return not self._fresh_user_speech and self.interaction_phase not in {
+            InteractionPhase.USER_SPEAKING,
+            InteractionPhase.INTERRUPTED,
+        }
+
+    def decide_interaction(self, snapshot: InteractionSnapshot) -> InteractionDecision:
+        return self.interaction_plane.decide(snapshot)
+
+    def apply_interaction_decision(
+        self,
+        decision: InteractionDecision,
+        *,
+        text: str = "",
+        fence: GenerationFence | None = None,
+    ) -> None:
+        if decision.start_prefetch:
+            first_prefetch = self._interaction_prefetch_epoch != self._speaker_epoch
+            if first_prefetch:
+                self._interaction_prefetch_epoch = self._speaker_epoch
+                self.refresh_voice_profile()
+            query = text.strip()
+            context_key = (self._speaker_epoch, query)
+            if query and context_key != self._interaction_context_prefetch_key:
+                self._interaction_context_prefetch_key = context_key
+                self._context_prefetch_text = query
+                self._schedule_context_snapshot_prepare()
+                self.mark_audio_event("interaction_context_prefetch_started")
+            elif first_prefetch:
+                self._schedule_context_snapshot_prepare()
+            if first_prefetch:
+                self.mark_audio_event("interaction_prefetch_started")
+        if decision.warm_fast_model and self._interaction_warm_epoch != self._speaker_epoch:
+            self._interaction_warm_epoch = self._speaker_epoch
+            warmer = self._fast_model_warmer
+            if warmer is not None:
+
+                async def _await_warmup() -> None:
+                    warmed = warmer()
+                    if inspect.isawaitable(warmed):
+                        await warmed
+
+                self._spawn(_await_warmup(), name="interaction-fast-model-warmup")
+            self.mark_audio_event("interaction_fast_model_warmup")
+        if (
+            decision.start_delegation
+            and fence is not None
+            and self.fence.matches(fence)
+            and fence not in self._interaction_delegated_fences
+        ):
+            self._interaction_delegated_fences = {fence}
+            starter = self._delegation_starter
+            if starter is not None:
+
+                async def _await_delegation() -> None:
+                    started = starter(text, fence)
+                    if inspect.isawaitable(started):
+                        await started
+
+                self._spawn(_await_delegation(), name="interaction-delegation-start")
+            self.mark_audio_event("interaction_delegation_started", fence=fence)
+
+    def playback_guarded_reason(self, text: str, *, duration_ms: int) -> str | None:
+        return self.input_guard.guarded_reason(
+            text,
+            duration_ms=duration_ms,
+            assistant_text=self._pending_assistant_text or self._played_assistant_text,
+        )
+
     async def accept_media_generation(
         self,
         fence: GenerationFence,
@@ -350,6 +456,78 @@ class DuplexRuntime:
                 fence=fence,
             )
         return accepted
+
+    async def begin_media_auxiliary_output(
+        self,
+        expected_fence: GenerationFence,
+    ) -> GenerationFence | None:
+        """Start one queued audible source after a prior media reply completed."""
+
+        next_fence = await self.orchestrator.begin_auxiliary_output(expected_fence)
+        if next_fence is None:
+            return None
+        self._bind_mode_policy(next_fence, self.mode_policy_for_fence(expected_fence))
+        self._bind_history_eligibility(next_fence, self._history_eligible(expected_fence))
+        self._bind_owner_projection_eligibility(
+            next_fence,
+            self._owner_projection_eligible(expected_fence),
+        )
+        self._speech_plans_by_fence[next_fence] = self.speech_plan_for_fence(expected_fence)
+        previous_key = (
+            expected_fence.turn_id,
+            expected_fence.generation_id,
+            expected_fence.tool_epoch,
+        )
+        next_key = (
+            next_fence.turn_id,
+            next_fence.generation_id,
+            next_fence.tool_epoch,
+        )
+        if previous_key in self._response_provenance_by_fence:
+            self._response_provenance_by_fence[next_key] = self._response_provenance_by_fence[
+                previous_key
+            ]
+        # An explicit preemption leaves the interaction phase at INTERRUPTED
+        # even though this source is an admitted assistant output. Move the
+        # runtime through THINKING before the OutputWork admission re-check so
+        # the floor gate does not discard the rebound source.
+        self.set_interaction_phase(InteractionPhase.THINKING_SILENT, cause="media_auxiliary_output")
+        if previous_key in self._voice_snapshot_by_fence:
+            self._voice_snapshot_by_fence[next_key] = self._voice_snapshot_by_fence[previous_key]
+        self.apply_speech_plan_to_tts(next_fence)
+        self._pending_assistant_text = ""
+        self._played_assistant_text = ""
+        self._playback_fence = None
+        self._assistant_expression_fence = None
+        return next_fence
+
+    async def preempt_media_output(
+        self,
+        *,
+        cause: str,
+        synchronized_transcript: str | None,
+    ) -> GenerationFence:
+        """Cancel one audible source so a higher-priority source can take over.
+
+        This is an internal arbitration transition, not evidence of new user
+        speech. Reuse the generation/history cleanup from the normal interrupt
+        path, then reopen the assistant output floor for the replacement work.
+        """
+
+        previous = self.fence
+        replacement = await self.on_real_interrupt(
+            cause=cause,
+            create_user_turn=False,
+            synchronized_transcript=synchronized_transcript,
+            force_generation_bump=True,
+        )
+        if not replacement.matches(previous):
+            self._fresh_user_speech = False
+            self.set_interaction_phase(
+                InteractionPhase.LISTENING,
+                cause=f"media_output_preempt:{cause}",
+            )
+        return replacement
 
     @property
     def pending_realtime_request(self) -> PendingRealtimeRequest | None:
@@ -392,6 +570,206 @@ class DuplexRuntime:
     def complete_realtime_request(self, request: PendingRealtimeRequest) -> None:
         if self._pending_realtime_request == request:
             self._pending_realtime_request = None
+
+    def context_snapshot_for_fence(self, fence: GenerationFence) -> ContextSnapshot:
+        version = self.orchestrator.context_version_for_fence(fence)
+        snapshot = self.orchestrator.context_snapshots.current(self.session_id)
+        if snapshot.version != version:
+            raise RuntimeError("frozen context snapshot is no longer retained")
+        return snapshot
+
+    def _activate_pending_context_snapshot(self) -> None:
+        pending = self._pending_context_snapshot
+        if (
+            pending is None
+            or self._pending_context_snapshot_epoch != self._context_snapshot_prepare_epoch
+        ):
+            return
+        if pending.candidate.speaker_class != self.current_speaker_class:
+            self._pending_context_snapshot = None
+            self._pending_context_snapshot_epoch = None
+            return
+        activated = self.orchestrator.context_snapshots.activate(
+            pending,
+            expected_current_version=pending.base_version,
+        )
+        self._pending_context_snapshot = None
+        self._pending_context_snapshot_epoch = None
+        if isinstance(activated, ContextSnapshot):
+            self.orchestrator.delegation.activate_context_version(
+                self.session_id,
+                activated.version,
+            )
+
+    def activate_context_snapshot_for_turn(self) -> int:
+        self._activate_pending_context_snapshot()
+        return self.orchestrator.context_snapshots.current(self.session_id).version
+
+    def _context_snapshot_draft(self) -> ContextSnapshotDraft:
+        current = self.orchestrator.context_snapshots.current(self.session_id)
+        turns = tuple(
+            ContextTurn(
+                "user" if turn.role == "user" else "assistant",
+                turn.content,
+                turn.speaker_scope,
+            )
+            for turn in self.orchestrator.context.turns
+            if turn.role in {"user", "assistant"}
+        )
+        policy = self._mode_policy
+        return scope_context_snapshot_draft(
+            ContextSnapshotDraft(
+                recent_committed_turns=turns,
+                memory_capsule=current.memory_capsule,
+                persona_capsule=current.persona_capsule,
+                relationship_policy=policy,
+                tool_permission=policy.allows_tools(self.current_speaker_class),
+                speaker_class=self.current_speaker_class,
+                summary=self.orchestrator.context.business_summary,
+            )
+        )
+
+    def prepare_context_capsules(
+        self,
+        *,
+        memory_capsule: MemoryCapsule,
+        persona_capsule: PersonaCapsule,
+    ) -> None:
+        draft = self._context_snapshot_draft()
+        self._schedule_context_snapshot_prepare(
+            scope_context_snapshot_draft(
+                ContextSnapshotDraft(
+                    recent_committed_turns=draft.recent_committed_turns,
+                    memory_capsule=memory_capsule,
+                    persona_capsule=persona_capsule,
+                    relationship_policy=draft.relationship_policy,
+                    tool_permission=draft.tool_permission,
+                    speaker_class=draft.speaker_class,
+                    summary=draft.summary,
+                )
+            )
+        )
+
+    async def freeze_context_capsules_for_generation(
+        self,
+        fence: GenerationFence,
+        *,
+        memory_capsule: MemoryCapsule,
+        persona_capsule: PersonaCapsule,
+    ) -> ContextSnapshot | None:
+        """Activate and freeze the exact capsules used by one current reply."""
+
+        if not self.fence.matches(fence):
+            return None
+        self._context_snapshot_prepare_epoch += 1
+        prepare_epoch = self._context_snapshot_prepare_epoch
+        previous = self._context_snapshot_prepare_task
+        if previous is not None and not previous.done():
+            previous.cancel()
+        self._pending_context_snapshot = None
+        self._pending_context_snapshot_epoch = None
+        manager = self.orchestrator.context_snapshots
+        base = manager.current(self.session_id)
+        draft = self._context_snapshot_draft()
+        prepared = await manager.prepare_next(
+            self.session_id,
+            base_version=base.version,
+            committed_events=draft.recent_committed_turns,
+            draft=scope_context_snapshot_draft(
+                ContextSnapshotDraft(
+                    recent_committed_turns=draft.recent_committed_turns,
+                    memory_capsule=memory_capsule,
+                    persona_capsule=persona_capsule,
+                    relationship_policy=draft.relationship_policy,
+                    tool_permission=draft.tool_permission,
+                    speaker_class=draft.speaker_class,
+                    summary=draft.summary,
+                )
+            ),
+        )
+        if (
+            prepare_epoch != self._context_snapshot_prepare_epoch
+            or not self.fence.matches(fence)
+            or not isinstance(prepared, PendingSnapshot)
+            or prepared.candidate.speaker_class != self.current_speaker_class
+        ):
+            return None
+        activated = manager.activate(
+            prepared,
+            expected_current_version=prepared.base_version,
+        )
+        if not isinstance(activated, ContextSnapshot):
+            return None
+        self.orchestrator.delegation.activate_context_version(
+            self.session_id,
+            activated.version,
+        )
+        if not self.orchestrator.bind_context_version(fence, activated.version):
+            return None
+        return activated
+
+    def freeze_current_context_for_generation(
+        self,
+        fence: GenerationFence,
+    ) -> ContextSnapshot | None:
+        """Keep the last valid snapshot when background preparation fails."""
+
+        if not self.fence.matches(fence):
+            return None
+        snapshot = self.orchestrator.context_snapshots.current(self.session_id)
+        self.orchestrator.delegation.activate_context_version(
+            self.session_id,
+            snapshot.version,
+        )
+        return snapshot if self.orchestrator.bind_context_version(fence, snapshot.version) else None
+
+    def _schedule_context_snapshot_prepare(
+        self,
+        draft: ContextSnapshotDraft | None = None,
+    ) -> None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._context_snapshot_prepare_epoch += 1
+        prepare_epoch = self._context_snapshot_prepare_epoch
+        previous = self._context_snapshot_prepare_task
+        if previous is not None and not previous.done():
+            previous.cancel()
+        self._pending_context_snapshot = None
+        self._pending_context_snapshot_epoch = None
+        manager = self.orchestrator.context_snapshots
+        base = manager.current(self.session_id)
+        draft = draft or self._context_snapshot_draft()
+
+        async def _prepare() -> None:
+            try:
+                prepared = await asyncio.wait_for(
+                    manager.prepare_next(
+                        self.session_id,
+                        base_version=base.version,
+                        committed_events=draft.recent_committed_turns,
+                        draft=draft if manager.builder is None else None,
+                    ),
+                    timeout=self.context_snapshot_prepare_timeout_s,
+                )
+            except TimeoutError:
+                manager.metrics.inc_context_snapshot_build_failed("timeout")
+                return
+            except Exception:
+                logger.warning("context snapshot prepare failed", exc_info=True)
+                return
+            if prepare_epoch == self._context_snapshot_prepare_epoch and isinstance(
+                prepared,
+                PendingSnapshot,
+            ):
+                self._pending_context_snapshot = prepared
+                self._pending_context_snapshot_epoch = prepare_epoch
+
+        self._context_snapshot_prepare_task = self._spawn(
+            _prepare(),
+            name="context-snapshot-prepare",
+        )
 
     def speech_plan_for_fence(self, fence: GenerationFence) -> SpeechPlan:
         exact = self._speech_plans_by_fence.get(fence)
@@ -533,6 +911,34 @@ class DuplexRuntime:
             if self._speaker_class in {"owner", "guest", "uncertain"}
             else "uncertain",
         )
+
+    @property
+    def current_speaker_reason_code(self) -> str:
+        decision = self._speaker_decision
+        return decision.reason_code if decision is not None else "authority_unavailable"
+
+    @property
+    def current_speaker_authority_verified(self) -> bool:
+        decision = self._speaker_decision
+        return bool(
+            decision is not None
+            and decision.classification in {"owner", "guest"}
+            and not decision.reason_code.startswith("shadow_")
+        )
+
+    @property
+    def current_speaker_decision(self) -> SpeakerDecision:
+        return self._speaker_decision or self._uncertain_speaker_decision("authority_unavailable")
+
+    @property
+    def context_prefetch_text(self) -> str:
+        return self._context_prefetch_text
+
+    @property
+    def current_history_eligible(self) -> bool:
+        """Snapshot history policy before the next generation fence is bound."""
+
+        return self._current_history_eligible()
 
     @property
     def text_only_delivery(self) -> bool:
@@ -783,6 +1189,18 @@ class DuplexRuntime:
     ) -> None:
         self._keyword_spotter_finalizer = finalizer
 
+    def set_fast_model_warmer(
+        self,
+        warmer: Callable[[], Awaitable[Any] | Any] | None,
+    ) -> None:
+        self._fast_model_warmer = warmer
+
+    def set_delegation_starter(
+        self,
+        starter: Callable[[str, GenerationFence], Awaitable[Any] | Any] | None,
+    ) -> None:
+        self._delegation_starter = starter
+
     def set_voice_profile_refresher(
         self,
         refresher: Callable[[], Coroutine[Any, Any, Any]],
@@ -898,11 +1316,19 @@ class DuplexRuntime:
         binding: KeywordSpotterBinding,
     ) -> bool:
         route = route_utterance(keyword, speaker_state=self.speaker_verifier.state)
+        interaction = self.decide_interaction(
+            InteractionSnapshot(
+                event=InteractionEvent.KEYWORD,
+                assistant_speaking=self._was_speaking,
+                text=keyword,
+                utterance_route=route,
+                keyword_hard_stop=route.intent is UtteranceIntent.INTERRUPT_COMMAND,
+                keyword_confidence=1.0,
+            )
+        )
         if (
             not self._keyword_spotter_binding_is_current(binding, require_pcm=True)
-            or route.intent is not UtteranceIntent.INTERRUPT_COMMAND
-            or not route.should_interrupt
-            or route.enter_chat
+            or not interaction.cancel_generation
             or self._pending_keyword_interrupt_binding == binding
             or (
                 self._sticky_interrupt_epoch == binding.speaker_epoch
@@ -1049,6 +1475,8 @@ class DuplexRuntime:
         self._interrupt_semantic_result_epoch = None
         self._interrupt_semantic_result_fence = None
         self._interrupt_semantic_result = None
+        self._interaction_decision_epoch = None
+        self._interaction_decision = None
         self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE
         self.input_guard.candidate_reason = reason
 
@@ -1661,6 +2089,7 @@ class DuplexRuntime:
                 "phase": self.interaction_phase.value,
                 "turn_id": fence.turn_id,
                 "generation_id": fence.generation_id,
+                "tool_epoch": fence.tool_epoch,
                 "at": datetime.now(UTC).isoformat(),
             }
         )
@@ -1754,6 +2183,7 @@ class DuplexRuntime:
                 "gain": min(1.0, max(0.0, gain)),
                 "turn_id": fence.turn_id,
                 "generation_id": fence.generation_id,
+                "tool_epoch": fence.tool_epoch,
                 "at": datetime.now(UTC).isoformat(),
             }
         )
@@ -2372,7 +2802,7 @@ class DuplexRuntime:
                 user_turn_id=pending_turn_id,
                 now_ns=now_ns,
             )
-        if self.input_guard.candidate_during_playback:
+        if self._was_speaking or self.input_guard.candidate_during_playback:
             # Nearby talker often starts with short energy; require speaker match
             # before treating this as a real barge-in candidate.
             if self.speaker_verifier.active and not self._speaker_allows_user_input(
@@ -2498,6 +2928,62 @@ class DuplexRuntime:
                 self._sticky_interrupt_text = raw_route.normalized_text
             self._sticky_interrupt_epoch = self._speaker_epoch
             self._sticky_interrupt_route = raw_route
+        if self._was_speaking or self.input_guard.candidate_during_playback:
+            started_ns = self.input_guard.candidate_started_ns
+            observed_ns = now_ns if now_ns is not None else time.monotonic_ns()
+            elapsed_ms = (
+                max(0, int((observed_ns - started_ns) / 1_000_000)) if started_ns is not None else 0
+            )
+            interaction = self.decide_interaction(
+                InteractionSnapshot(
+                    event=InteractionEvent.TRANSCRIPT,
+                    assistant_speaking=self._was_speaking,
+                    text=text,
+                    elapsed_ms=elapsed_ms,
+                    final=final,
+                    has_speech_energy=True,
+                    guarded_reason=self.playback_guarded_reason(
+                        text,
+                        duration_ms=elapsed_ms,
+                    ),
+                    playback_decision=decision,
+                    utterance_route=self._route_candidate(text),
+                )
+            )
+            self.apply_interaction_decision(interaction, text=text)
+            if interaction.continue_output:
+                decision = PlaybackInputDecision.IGNORE
+                self.input_guard.candidate_reason = interaction.reason
+            elif interaction.cancel_generation:
+                decision = PlaybackInputDecision.ACCEPT
+                self.input_guard.candidate_reason = None
+            elif decision is PlaybackInputDecision.ACCEPT:
+                decision = PlaybackInputDecision.WAIT
+                self.input_guard.candidate_reason = interaction.reason
+            self.input_guard.candidate_decision = decision
+            self._interaction_decision_epoch = self._speaker_epoch
+            self._interaction_decision = interaction
+        elif (
+            not final
+            and decision is PlaybackInputDecision.ACCEPT
+            and self.input_guard.candidate_active
+            and self.input_guard.candidate_vad_anchored
+            and text.strip()
+        ):
+            interaction = self.decide_interaction(
+                InteractionSnapshot(
+                    event=InteractionEvent.TRANSCRIPT,
+                    assistant_speaking=False,
+                    text=text,
+                    final=False,
+                    has_speech_energy=True,
+                    playback_decision=decision,
+                    utterance_route=self._route_candidate(text),
+                )
+            )
+            self.apply_interaction_decision(interaction, text=text)
+            self._interaction_decision_epoch = self._speaker_epoch
+            self._interaction_decision = interaction
         if final:
             self._cancel_listener_cue_candidate()
         elif (
@@ -2563,15 +3049,37 @@ class DuplexRuntime:
         speaker; the caller supplies the frozen epoch and interval.
         """
 
-        canonical = self._speech_timeline.canonical_text(
+        canonical = self.project_media_user_turn(
             stream_epoch=stream_epoch,
             start_sample=start_sample,
             end_sample=end_sample,
         )
         if not canonical:
-            self._consumed_canonical_snapshot_bound = False
             return None
-        self._consumed_canonical_snapshot_bound = True
+        self._speech_timeline.commit_range(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
+        return canonical
+
+    def project_media_user_turn(
+        self,
+        *,
+        stream_epoch: int,
+        start_sample: int,
+        end_sample: int,
+    ) -> str | None:
+        """Resolve canonical media text without advancing its committed watermark."""
+
+        canonical = self._speech_timeline.projected_text(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
+        )
+        self._consumed_canonical_snapshot_bound = bool(canonical)
+        if not canonical:
+            return None
         self._consumed_canonical_speech_epoch = self._speaker_epoch
         self._fresh_user_speech = False
         return canonical
@@ -2674,6 +3182,17 @@ class DuplexRuntime:
         # Side effects (early enroll finalize, yield ack) stay here; intent is
         # owned by utterance_router so barge-in and turn-commit cannot diverge.
         route = self._route_candidate(text, semantic_verdict=semantic_verdict)
+        interaction = (
+            self._interaction_decision
+            if self._interaction_decision_epoch == self._speaker_epoch
+            and (canonical_speech_epoch is None or canonical_speech_epoch == self._speaker_epoch)
+            else None
+        )
+        if interaction is not None and interaction.continue_output:
+            self.orchestrator.metrics.inc_guarded_user_input(interaction.reason)
+            self.discard_pending_user_transcript()
+            self.publish_assistant_audio("restore", gain=1.0)
+            return False, interaction.reason
         if (
             route.should_interrupt
             and not route.enter_chat
@@ -2871,11 +3390,22 @@ class DuplexRuntime:
         *,
         input_modality: Literal["audio", "text"] = "audio",
     ) -> GenerationFence:
+        if (
+            self.fence.turn_id == 0
+            and self.orchestrator.context_snapshots.current(self.session_id).version == 0
+        ):
+            self.orchestrator.context_snapshots.seed_initial(
+                self.session_id,
+                self._context_snapshot_draft(),
+            )
         history_eligible = self._current_history_eligible()
         owner_projection_eligible = self._current_owner_projection_eligible()
         next_speaker_scope: Literal["owner", "public"] = (
             "owner" if self._speaker_class == "owner" else "public"
         )
+        # A turn boundary is the only activation point; snapshots from a
+        # different speaker authority are discarded rather than reused.
+        self._activate_pending_context_snapshot()
         if (
             self._pending_realtime_request is not None
             and self._pending_realtime_request.speaker_scope != next_speaker_scope
@@ -2912,6 +3442,24 @@ class DuplexRuntime:
             cause="turn_committed",
         )
         self.mark_audio_event("turn_committed")
+        committed_interaction = self.decide_interaction(
+            InteractionSnapshot(
+                event=InteractionEvent.TRANSCRIPT,
+                assistant_speaking=False,
+                text=user_text,
+                final=True,
+                has_speech_energy=input_modality == "audio",
+                semantic_evidence=True,
+                utterance_route=self.route_user_turn(user_text),
+                turn_committed=True,
+            )
+        )
+        self.apply_interaction_decision(
+            committed_interaction,
+            text=user_text,
+            fence=fence,
+        )
+        self._schedule_context_snapshot_prepare()
         self._pending_assistant_text = ""
         self._played_assistant_text = ""
         self._playback_fence = None
@@ -2922,23 +3470,69 @@ class DuplexRuntime:
         self,
         full_text: str,
         words: list[TimedWord] | tuple[TimedWord, ...] | None = None,
-    ) -> None:
-        self._pending_assistant_text = full_text
-        self._was_speaking = True
+        *,
+        expected_fence: GenerationFence | None = None,
+        precondition: Callable[[], bool] | None = None,
+    ) -> bool:
+        def may_publish() -> bool:
+            return bool(
+                (expected_fence is None or self.fence.matches(expected_fence))
+                and (precondition is None or precondition())
+            )
+
+        if not may_publish():
+            return False
         w = list(words) if words else []
         # Only transition if we are in THINKING (or already SPEAKING is ok to re-enter carefully)
         if self.orchestrator.state is ConversationState.THINKING:
-            await self.orchestrator.begin_speaking(w, full_text)
+            if not await self.orchestrator.begin_speaking(
+                w,
+                full_text,
+                expected_fence=expected_fence,
+                precondition=precondition,
+            ):
+                return False
         elif self.orchestrator.state is ConversationState.SPEAKING:
+            if not may_publish():
+                return False
             self.orchestrator.heard_tracker.set_full_text(full_text)
             if w:
                 self.orchestrator.heard_tracker.add_words(w)
         else:
+            if not may_publish():
+                return False
             # Still record tracker data for interrupt truncation.
             self.orchestrator.heard_tracker.set_full_text(full_text)
             if w:
                 self.orchestrator.heard_tracker.add_words(w)
+        self._pending_assistant_text = full_text
+        self._was_speaking = True
+        self.set_interaction_phase(
+            InteractionPhase.SPEAKING,
+            cause="assistant_speaking",
+        )
         self._publish_assistant_expression(full_text)
+        return True
+
+    async def on_assistant_reply_aborted(
+        self,
+        fence: GenerationFence,
+        *,
+        cause: str,
+        precondition: Callable[[], bool] | None = None,
+    ) -> bool:
+        if not await self.orchestrator.abandon_response(
+            fence,
+            cause=cause,
+            precondition=precondition,
+        ):
+            return False
+        self._pending_assistant_text = ""
+        self._was_speaking = False
+        self._assistant_expression_fence = None
+        self._playback_fence = None
+        self.set_interaction_phase(InteractionPhase.LISTENING, cause=cause)
+        return True
 
     def _publish_assistant_expression(self, full_text: str) -> None:
         fence = self.fence
@@ -3786,6 +4380,7 @@ class DuplexRuntime:
                 text_delivered=text_delivered,
                 fence=reply_fence,
             )
+            self._schedule_context_snapshot_prepare()
 
     def should_ignore_post_playback_backchannel(
         self,
@@ -3863,21 +4458,29 @@ class DuplexRuntime:
             if state == "speaking":
                 _cancel_false_resume()
                 decision = self.on_user_voice_started()
+                interaction = self.decide_interaction(
+                    InteractionSnapshot(
+                        event=InteractionEvent.VAD_START,
+                        assistant_speaking=self._was_speaking and self.barge_in_enabled,
+                        has_speech_energy=True,
+                    )
+                )
+                self.apply_interaction_decision(interaction)
+                if interaction.duck_output:
+                    self.publish_assistant_audio("duck", gain=0.0)
+                    self.mark_audio_event("barge_in_detected")
                 if decision is PlaybackInputDecision.WAIT:
                     _set_min_words(PLAYBACK_INPUT_BLOCK_MIN_WORDS)
-                    self.publish_assistant_audio(
-                        "duck",
-                        gain=0.0,
-                    )
-                    self.mark_audio_event("barge_in_detected")
                 else:
                     _set_min_words(base_min_words)
+                    if interaction.duck_output and decision is PlaybackInputDecision.IGNORE:
+                        self.publish_assistant_audio("restore", gain=1.0)
                 return
             if state == "listening":
                 self.on_user_voice_stopped()
                 if (
                     self.input_guard.candidate_active
-                    and self.input_guard.candidate_during_playback
+                    and (self.input_guard.candidate_during_playback or self._was_speaking)
                     and self.input_guard.candidate_decision is PlaybackInputDecision.WAIT
                 ):
                     candidate_started = self.input_guard.candidate_started_ns
@@ -3925,7 +4528,7 @@ class DuplexRuntime:
             if text:
                 final = bool(getattr(ev, "is_final", False))
                 decision = self.observe_user_transcript(text, final=final)
-                if self.input_guard.candidate_during_playback:
+                if self._was_speaking or self.input_guard.candidate_during_playback:
                     if decision is PlaybackInputDecision.WAIT:
                         return
                     _cancel_false_resume()

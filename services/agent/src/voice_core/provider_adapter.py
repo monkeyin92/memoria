@@ -16,6 +16,7 @@ import os
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
+from time import monotonic
 from typing import TYPE_CHECKING, Any, cast
 
 from services.agent.src.contracts.ids import CancellationContext, GenerationFence
@@ -36,6 +37,7 @@ from services.agent.src.voice_core.speech_timeline import ASRResult
 
 if TYPE_CHECKING:
     from services.agent.src.config import AgentSettings
+    from services.agent.src.observability.metrics import MetricsRegistry
     from services.agent.src.voice_core.media_session import MediaReplyChunk
 
 
@@ -79,7 +81,9 @@ class ExistingVoiceProviderAdapter:
     language_model: LanguageModelHandler
     speech_synthesis: SpeechSynthesisHandler
     config: ExistingVoiceProviderConfig = field(default_factory=ExistingVoiceProviderConfig)
+    metrics: MetricsRegistry | None = None
     owns_speech_synthesis: bool = False
+    owns_language_model: bool = False
     _asr: FunASRSession | None = field(default=None, init=False)
     _stream_epoch: int = field(default=0, init=False)
     _asr_task_contexts: dict[str, tuple[int, int, int]] = field(
@@ -87,11 +91,14 @@ class ExistingVoiceProviderAdapter:
         init=False,
     )
     _asr_task_order: deque[str] = field(default_factory=deque, init=False)
-    _sentence_revisions: dict[tuple[int, int, str, int], int] = field(
+    # begin_ms is mutable provider content, not sentence identity. Keeping it
+    # out of this key makes revisions monotonic when a provider corrects the
+    # sentence start in the same task.
+    _sentence_revisions: dict[tuple[int, int, str], int] = field(
         default_factory=dict,
         init=False,
     )
-    _sentence_revision_order: deque[tuple[int, int, str, int]] = field(
+    _sentence_revision_order: deque[tuple[int, int, str]] = field(
         default_factory=deque,
         init=False,
     )
@@ -111,8 +118,74 @@ class ExistingVoiceProviderAdapter:
         default_factory=dict,
         init=False,
     )
+    # Direct intent sources are independent pieces of work inside one logical
+    # generation. They cannot share the conversation reply's one-shot key.
+    _output_work_started: set[tuple[GenerationFence, str]] = field(
+        default_factory=set,
+        init=False,
+    )
+    _output_work_history: deque[tuple[GenerationFence, str]] = field(
+        default_factory=deque,
+        init=False,
+    )
+    _output_work_cancel_events: dict[tuple[GenerationFence, str], asyncio.Event] = field(
+        default_factory=dict,
+        init=False,
+    )
     _output_sample: int = field(default=0, init=False)
     _closed: bool = field(default=False, init=False)
+
+    def prewarm(self) -> Any:
+        """Use the provider's native fast-model prewarm without starting a reply."""
+
+        prewarm = getattr(self.language_model, "prewarm", None)
+        return prewarm() if callable(prewarm) else None
+
+    @property
+    def supports_delegation(self) -> bool:
+        return bool(getattr(self.language_model, "supports_delegation", True)) and callable(
+            getattr(self.language_model, "start_delegation", None)
+        ) and callable(getattr(self.language_model, "accept_output_intent", None))
+
+    @property
+    def current_asr_task_epoch(self) -> int:
+        """Return the provider task that has successfully connected."""
+
+        return self._asr.task_epoch if self._asr is not None else 0
+
+    @property
+    def supports_turn_preparation(self) -> bool:
+        return callable(getattr(self.language_model, "prepare_committed_turn", None))
+
+    def start_delegation(self, text: str, fence: GenerationFence) -> Any:
+        """Start deep work through the injected full orchestration handler."""
+
+        starter = getattr(self.language_model, "start_delegation", None)
+        if not callable(starter):
+            raise RuntimeError("orchestrated language-model handler has no delegation seam")
+        return starter(text, fence)
+
+    def accept_output_intent(self, intent: Any) -> Any:
+        acceptor = getattr(self.language_model, "accept_output_intent", None)
+        if not callable(acceptor):
+            raise RuntimeError("orchestrated language-model handler has no output-intent seam")
+        return acceptor(intent)
+
+    async def prepare_committed_turn(
+        self,
+        identity: SessionIdentity,
+        text: str,
+    ) -> GenerationFence:
+        """Let the shared Agent freeze policy, context and response plan once."""
+
+        prepare = getattr(self.language_model, "prepare_committed_turn", None)
+        if not callable(prepare):
+            raise RuntimeError("orchestrated language-model handler cannot prepare a turn")
+        prepared = prepare(text)
+        fence = await prepared if inspect.isawaitable(prepared) else prepared
+        if not isinstance(fence, GenerationFence) or fence.session_id != identity.session_id:
+            raise RuntimeError("orchestrated language-model handler returned an invalid fence")
+        return fence
 
     async def _ensure_asr(self, stream_epoch: int) -> FunASRSession:
         if self._closed:
@@ -211,12 +284,7 @@ class ExistingVoiceProviderAdapter:
                 asr.task_sample_origin,
             )
         event_stream_epoch, task_epoch, sample_offset = task_context
-        revision_key = (
-            event_stream_epoch,
-            task_epoch,
-            sentence_id,
-            sentence.begin_ms,
-        )
+        revision_key = (event_stream_epoch, task_epoch, sentence_id)
         if revision_key not in self._sentence_revisions:
             self._sentence_revision_order.append(revision_key)
         revision = self._sentence_revisions.get(revision_key, 0) + 1
@@ -235,6 +303,15 @@ class ExistingVoiceProviderAdapter:
         # ASRStreamSupervisor.  The adapter only maps provider events onto the
         # absolute sample clock and assigns a per-task revision; returning the
         # mapped value unchanged keeps partial/final contracts in one place.
+        if not mapped.is_final and self.metrics is not None:
+            latest_sample = max(
+                mapped.capture_end_sample,
+                int(getattr(asr, "last_sent_sample", mapped.capture_end_sample)),
+            )
+            self.metrics.set_media_metric(
+                "asr_partial_age_ms",
+                (latest_sample - mapped.capture_end_sample) * 1000.0 / self.config.sample_rate,
+            )
         return mapped
 
     @property
@@ -242,6 +319,13 @@ class ExistingVoiceProviderAdapter:
         """Number of PCM samples in one fixed 20 ms output frame."""
 
         return self.config.output_sample_rate * self.config.output_frame_ms // 1000
+
+    def _record_tts_frame_age(self, received_at: float | None) -> None:
+        if received_at is not None and self.metrics is not None:
+            self.metrics.set_media_metric(
+                "tts_frame_age_ms",
+                (monotonic() - received_at) * 1000.0,
+            )
 
     async def _provider_pcm_chunks(
         self,
@@ -468,6 +552,7 @@ class ExistingVoiceProviderAdapter:
         frame_bytes = frame_samples * 2
         buffered = bytearray()
         held_frame: bytes | None = None
+        held_frame_received_at: float | None = None
         output_sample = source_start_sample
         provider_pcm = self._provider_pcm_chunks(
             phrase,
@@ -484,6 +569,7 @@ class ExistingVoiceProviderAdapter:
                     next_frame = bytes(buffered[:frame_bytes])
                     del buffered[:frame_bytes]
                     if held_frame is not None:
+                        self._record_tts_frame_age(held_frame_received_at)
                         yield MediaReplyChunk(
                             pcm_s16le=held_frame,
                             source_start_sample=output_sample,
@@ -497,6 +583,7 @@ class ExistingVoiceProviderAdapter:
                         output_sample += frame_samples
                         self._output_sample = output_sample
                     held_frame = next_frame
+                    held_frame_received_at = monotonic()
         finally:
             await provider_pcm.aclose()
         if cancel_event.is_set():
@@ -505,6 +592,7 @@ class ExistingVoiceProviderAdapter:
             raise RuntimeError("speech provider returned invalid 16-bit PCM")
         if buffered:
             if held_frame is not None:
+                self._record_tts_frame_age(held_frame_received_at)
                 yield MediaReplyChunk(
                     pcm_s16le=held_frame,
                     source_start_sample=output_sample,
@@ -516,9 +604,11 @@ class ExistingVoiceProviderAdapter:
                 output_sample += frame_samples
                 self._output_sample = output_sample
             held_frame = bytes(buffered) + b"\x00" * (frame_bytes - len(buffered))
+            held_frame_received_at = monotonic()
         if held_frame is None:
             raise RuntimeError("speech provider returned no valid PCM")
         phrase_audio_end = output_sample + frame_samples
+        self._record_tts_frame_age(held_frame_received_at)
         yield MediaReplyChunk(
             pcm_s16le=held_frame,
             source_start_sample=output_sample,
@@ -618,6 +708,7 @@ class ExistingVoiceProviderAdapter:
         frame_bytes = frame_samples * 2
         buffered = bytearray()
         held_frame: bytes | None = None
+        held_frame_received_at: float | None = None
         output_sample = 0
 
         try:
@@ -638,6 +729,7 @@ class ExistingVoiceProviderAdapter:
                     next_frame = bytes(buffered[:frame_bytes])
                     del buffered[:frame_bytes]
                     if held_frame is not None:
+                        self._record_tts_frame_age(held_frame_received_at)
                         announcement = take_announcement()
                         next_output_sample = output_sample + frame_samples
                         self._generation_output_ends[fence] = next_output_sample
@@ -650,6 +742,7 @@ class ExistingVoiceProviderAdapter:
                         output_sample = next_output_sample
                         self._output_sample = output_sample
                     held_frame = next_frame
+                    held_frame_received_at = monotonic()
             if cancel_event.is_set():
                 return
             await producer
@@ -659,6 +752,7 @@ class ExistingVoiceProviderAdapter:
                 raise RuntimeError("speech provider returned invalid 16-bit PCM")
             if buffered:
                 if held_frame is not None:
+                    self._record_tts_frame_age(held_frame_received_at)
                     announcement = take_announcement()
                     next_output_sample = output_sample + frame_samples
                     self._generation_output_ends[fence] = next_output_sample
@@ -671,6 +765,7 @@ class ExistingVoiceProviderAdapter:
                     output_sample = next_output_sample
                     self._output_sample = output_sample
                 held_frame = bytes(buffered) + b"\x00" * (frame_bytes - len(buffered))
+                held_frame_received_at = monotonic()
             if held_frame is None:
                 raise RuntimeError("speech provider returned no valid PCM")
             complete_text = "".join(phrases)
@@ -684,6 +779,7 @@ class ExistingVoiceProviderAdapter:
                 stream,
                 max_audio_end_sample=audio_end,
             )
+            self._record_tts_frame_age(held_frame_received_at)
             yield MediaReplyChunk(
                 pcm_s16le=held_frame,
                 source_start_sample=output_sample,
@@ -798,6 +894,88 @@ class ExistingVoiceProviderAdapter:
             self._generation_cancel_events.pop(fence, None)
             self._remember_terminal_generation(fence)
 
+    async def generate_output(
+        self,
+        identity: SessionIdentity,
+        intent: Any,
+        fence: GenerationFence,
+        *,
+        work_id: str,
+        source_start_sample: int,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        """Render one admitted non-conversation OutputIntent source.
+
+        The Registry serializes source ownership. This adapter only gives each
+        source a distinct cancellation key so a deep/ack work can follow the
+        conversation stream under the same generation fence.
+        """
+
+        from services.agent.src.voice_core.media_session import MediaReplyChunk
+
+        if self._closed:
+            return
+        if identity.session_id != fence.session_id or source_start_sample < 0 or not work_id:
+            raise ValueError("output source does not match the active media generation")
+        key = (fence, work_id)
+        if (
+            key in self._output_work_started
+            or fence in self._cancelled_generations
+            or self._generation_was_evicted(fence)
+        ):
+            return
+        self._output_work_started.add(key)
+        cancel_event = asyncio.Event()
+        self._output_work_cancel_events[key] = cancel_event
+        cancellation = CancellationContext.capture(fence)
+        try:
+            source = getattr(intent, "WhichOneof", lambda _name: None)("source")
+            if source == "tts_source":
+                text = str(getattr(intent, "tts_source", "")).strip()
+                if not text:
+                    raise ValueError("output tts source must not be empty")
+                async for chunk in self._synthesize_phrase(
+                    text,
+                    fence,
+                    cancellation,
+                    cancel_event,
+                    first=True,
+                    final=True,
+                    source_start_sample=source_start_sample,
+                ):
+                    yield chunk
+                return
+            if source != "pcm_s16le":
+                raise ValueError("output intent has no executable source")
+            pcm = bytes(getattr(intent, "pcm_s16le", b""))
+            if not pcm or len(pcm) % 2:
+                raise ValueError("output PCM source must be non-empty 16-bit audio")
+            frame_bytes = self.output_frame_samples * 2
+            sample = source_start_sample
+            for offset in range(0, len(pcm), frame_bytes):
+                if cancel_event.is_set():
+                    return
+                frame = pcm[offset : offset + frame_bytes]
+                final = offset + frame_bytes >= len(pcm)
+                if len(frame) < frame_bytes:
+                    frame += b"\x00" * (frame_bytes - len(frame))
+                yield MediaReplyChunk(
+                    pcm_s16le=frame,
+                    source_start_sample=sample,
+                    first=offset == 0,
+                    final=final,
+                )
+                sample += self.output_frame_samples
+        finally:
+            cancel_event.set()
+            self._output_work_cancel_events.pop(key, None)
+            self._remember_output_work(key)
+
+    def _remember_output_work(self, key: tuple[GenerationFence, str]) -> None:
+        if key not in self._output_work_history:
+            self._output_work_history.append(key)
+        while len(self._output_work_history) > self.config.max_generation_history:
+            self._output_work_started.discard(self._output_work_history.popleft())
+
     @staticmethod
     def _generation_order(fence: GenerationFence) -> tuple[int, int, int]:
         return (fence.turn_id, fence.generation_id, fence.tool_epoch)
@@ -821,10 +999,15 @@ class ExistingVoiceProviderAdapter:
     def cancel_generation(self, fence: GenerationFence) -> bool:
         """Request cooperative cancellation of one generation output stream."""
 
+        output_cancelled = False
+        for (output_fence, _work_id), output_event in tuple(self._output_work_cancel_events.items()):
+            if output_fence.matches(fence):
+                output_event.set()
+                output_cancelled = True
         event = self._generation_cancel_events.get(fence)
         if event is None:
             if self._generation_was_evicted(fence):
-                return False
+                return output_cancelled
             if fence in self._cancelled_generations:
                 return True
             # Async-generator bodies run only when first iterated.  Retain a
@@ -834,7 +1017,7 @@ class ExistingVoiceProviderAdapter:
                 self._cancelled_generations.add(fence)
                 self._remember_terminal_generation(fence)
                 return True
-            return False
+            return output_cancelled
         event.set()
         self._cancelled_generations.add(fence)
         return True
@@ -849,12 +1032,21 @@ class ExistingVoiceProviderAdapter:
         for cancel_event in self._generation_cancel_events.values():
             cancel_event.set()
         self._generation_cancel_events.clear()
+        for cancel_event in self._output_work_cancel_events.values():
+            cancel_event.set()
+        self._output_work_cancel_events.clear()
         if self.owns_speech_synthesis:
             close_speech = getattr(self.speech_synthesis, "aclose", None)
             if callable(close_speech):
                 closed_speech = close_speech()
                 if inspect.isawaitable(closed_speech):
                     await closed_speech
+        if self.owns_language_model:
+            close_language_model = getattr(self.language_model, "aclose", None)
+            if callable(close_language_model):
+                closed_language_model = close_language_model()
+                if inspect.isawaitable(closed_language_model):
+                    await closed_language_model
         if self._asr is not None:
             await self._asr.aclose()
             self._asr = None
@@ -895,6 +1087,7 @@ def build_production_provider_factory(
     a system-prompt-plus-current-turn fallback would silently bypass policy.
     """
 
+    from services.agent.src.observability.metrics import GLOBAL_METRICS
     from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
     from services.agent.src.providers.funasr_stt import FunASRConfig
 
@@ -949,14 +1142,24 @@ def build_production_provider_factory(
         language_model = language_model_factory(identity)
         if not callable(getattr(language_model, "stream", None)):
             raise ValueError("orchestrated language-model handler must expose stream()")
+        if not callable(getattr(language_model, "start_delegation", None)):
+            raise ValueError("orchestrated language-model handler must expose start_delegation()")
+        if not callable(getattr(language_model, "accept_output_intent", None)):
+            raise ValueError(
+                "orchestrated language-model handler must expose accept_output_intent()"
+            )
         return ExistingVoiceProviderAdapter(
-            asr_session_factory=lambda: FunASRSession(replace(asr_config)),
+            asr_session_factory=lambda: FunASRSession(
+                replace(asr_config),
+                metrics=GLOBAL_METRICS,
+            ),
             language_model=language_model,
             speech_synthesis=cast(
                 SpeechSynthesisHandler,
-                DoubaoTTS(replace(tts_config)),
+                DoubaoTTS(replace(tts_config), metrics=GLOBAL_METRICS),
             ),
             config=adapter_config,
+            metrics=GLOBAL_METRICS,
             owns_speech_synthesis=True,
         )
 

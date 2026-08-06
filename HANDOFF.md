@@ -1,11 +1,251 @@
 # 项目交接
 
-## 2026-08-04：已提交 `b8c98d9`，review.md 复评问题跟进
+## 2026-08-06：review.md 完成项归档（未提交、未发布）
 
-- 当前工作区另有未提交的 follow-up：ASR 版本统一为
+- F0 的当前工作区 PostgreSQL/pgvector 子门禁已关闭：使用 CI 同镜像
+  `pgvector/pgvector:0.8.1-pg17-bookworm` 得到全量 Python `1856 passed, 2 skipped`，总 coverage
+  `87.70%`、orchestration `90%`、provider protocol `97%`。Ruff、strict mypy、Python/Go proto
+  生成摘要、Go `gofmt/vet/test -race`、media smoke/replay、offline E2E 均通过。`buf lint`、
+  相对 `HEAD` 的 `buf breaking`、GolangCI `v2.12.2`（`0 issues`）、当前媒体 Edge 镜像构建与
+  Trivy `v0.70.0`（HIGH/CRITICAL 为 0）也已补跑；Trivy 发现的 `golang.org/x/crypto v0.51.0`
+  已升级到 `v0.52.0`。远端最新 CI 是 2026-08-04 的
+  [`#30889467167`](https://github.com/monkeyin92/memoria/actions/runs/30889467167)：Python job 因
+  `funasr_stt.py` 导入未显式导出的 `ASRResult` 失败；当前工作区已修复该错误，但尚未提交并取得
+  后续全绿 run，因此 F0 整体继续为部分完成。
+- H5 当前 `288 passed` 且 production build 通过；in-app browser `390x844` smoke 中主容器无横向
+  溢出，语音/文字入口可用且 console 无 error。该结果只证明本地 H5 壳可用，不能替代真实
+  StreamCore TURN/provider E2E。
+- 本轮再次在 in-app browser 验证 `390x844` 与 `1440x900`：首页、文字入口与“我的”导航均可用，
+  页面没有横向溢出或 console error。`npm test -- --run` 仍为 `25 files / 288 passed`，
+  `npm run build` 通过；Vite 仅提示首个 JavaScript chunk 大于 500 kB，尚未构成功能阻塞。
+- 本轮 media smoke、replay 与 offline E2E 均通过（旧 generation PCM 为 0）；真实 provider smoke
+  未运行：去除 `OFFLINE_MOCK` 后脚本明确报告缺少 `DASHSCOPE_API_KEY` 与 Doubao TTS 认证，未发起
+  外部请求，R2 保持开放。
+- `docs/media-runtime-acceptance-runbook.md` 已明确 required-mode 的真实 provider 命令，以及
+  `DEEP_RESULT` 在 resolver 开始后发生新话轮/Stop 时必须证明零下行 PCM/ACK 的取证要求；offline
+  skip 不再可被误读为验收通过。
+- `provider_smoke_test.py` 的 required-mode 已补入隔离的 `QwenRealtimeSearch` forced-search
+  source，`refresh_readiness.sh` 也同步要求该 PASS 标识；单测、Ruff 和 shell 语法通过。没有
+  `DASHSCOPE_API_KEY`/Doubao 认证时仍 fail closed，尚无真实执行证据。
+- StreamCore 物理 PCM 执行面现在显式只允许 `CONVERSATION_REPLY`、
+  `FAST_ACKNOWLEDGEMENT`、`DEEP_RESULT`；`TOOL_RESULT`、backchannel/reminder/notification
+  保留 wire/shadow 兼容但会在执行边界 fail closed。新增
+  `test_reserved_output_kind_is_rejected_at_streamcore_execution_boundary`；相关定向套件
+  `191 passed`。
+- `review.md` 已将 C1 正式 `FloorEffect`、C2 单路 realtime-search、C3 typed
+  `FAST_ACKNOWLEDGEMENT` 收入“仓内完成”归档，不再作为 A6A/R2 的开放问题；A6A 只保留实际输出
+  来源与真实 Qwen/Doubao provider smoke。
+- 修复 H5 语音询问日期后重复回答的仓内根因：播放结束后的回声防护原先放行短 ASR 片段
+  `星期四`，导致它被提交为新话轮；`PlaybackInputGuard` 现在只对与当前助手日期回答匹配的
+  `星期/周/礼拜` 片段判定 `assistant_echo`，普通“星期四我有安排”等新内容仍放行。新增
+  `test_post_playback_weekday_echo_cannot_start_a_follow_up_turn` 与 guard 单测，相关 Agent/Runtime
+  定向文件、公共日期回复、Ruff 和 strict mypy 均通过。
+- 新增 `test_slow_media_delegation_plays_typed_fast_ack_then_deep_result`：慢 delegation 的 ACK
+  必须先持有 playback，`DEEP_RESULT` 仅排队；ACK 的 `PlaybackProgress` 完成后才开始深度结果。
+  相关 Agent/MediaSession/Provider/Delegation/gRPC 定向套件为 `190 passed`，Ruff 与
+  `git diff --check` 通过。
+
+## 2026-08-05：review.md 复核收口（未提交、未发布）
+
+- 结论：架构升级判断和 A0–A9 计划已经写完，但实现/验收没有全部完成。F1–F3 已完成；
+  F0 仍是部分完成：历史同 CI 版本 PostgreSQL/pgvector 基线为
+  `1816 passed, 2 skipped`、coverage `87.59% >= 85%`，但当前新增代码尚未在该条件重跑；strict mypy 为
+  `223 source files, 0 errors`。本次未启动数据库的全量测试为 `1810 passed, 29 skipped`，coverage
+  `81.88%` 未达门槛，不能替代上述数据库条件证据；远端 CI 尚未复跑。
+- A0 authority 契约已接入真实握手：Python bridge 选择并在 `SessionAccepted` 返回实际
+  `interaction_authority`，Go 保存该值并通过 `session.ready` 提供给 H5。默认保持
+  `python_authoritative`；`go_shadow` 要求 Edge/Core 双方显式启用；A6 前
+  `go_authoritative` 一律回退或拒绝。
+- 修复 A8 指标真实性：Doubao 多 pool 与 FunASR 多 session 使用进程级增减计数；断线、
+  重连失败、已关闭 socket 和重复 close 不再覆盖或泄漏 `provider_ws_active`。
+- 修复 A7 设备真实性：Linux renderer 只有明确返回绝对 `rendered_sample_end` 才上报
+  `approximate=false`，返回 `None` 不再冒充 actual-heard；button/network 事件携带当前
+  `(turn_id, generation_id, tool_epoch)`。Go `playout_buffer_ms` 在 generation 变化时重置。
+- 生产 StreamCore 已改用仓内
+  `services.agent.src.media_agent_factory:build_production_media_session_factory`：每个 session
+  原子获得共享的 Runtime/Provider/ModePolicy/ResponsePlanner/speaker/voice authority/context
+  与关闭生命周期，删除 production compose 对缺失外部 Runtime/LLM factory 的依赖。H5
+  收到 `media_runtime=streamcore` 时会选择该 transport 代码路径；本地开发 API 代理以及浏览器
+  注册、Profile、伙伴选择与声纹录取页 smoke 已通过，真实 provider + 浏览器媒体整链联调尚未
+  完成。默认仍保持 LiveKit/0%，等待真实外部门槛。
+- 修复 StreamCore 正式说话人时序：首次 range-stamped VAD start 建立一个逻辑 speaker
+  fence，PCM 在 commit 前完成分类并把 owner/guest/uncertain 证据冻结到 Projection；短暂停顿
+  与恢复仍由 sample-clock 合并为同一话轮，owner 历史/私人上下文/工具不再永久失去资格。
+- archive spool replay 不再同步阻塞首个 session；`run_media_bridge` 在 start/wait/stop 异常
+  下始终关闭共享 factory，并保留主异常。
+- Registry 的 fast path 与锁内二次命中都已在执行 `_reuse_session` 前释放新 session 创建锁；
+  新 session factory 创建仍串行化，不能把它当作完全无锁容量优化。Projection 的 provisional
+  ID 在 discard/backchannel 后不复用，revision 在 session 内保持单调，H5 可继续显示并提交下一话轮。
+- 本轮又补上 Voice Core 的提交临界区：provider preparation 成功且 stream epoch 仍有效后才
+  消费 Projection provisional；prepare 失败会保留 provisional，重连期间不会把旧 epoch 的
+  `turn.committed` 发布到新连接。旧 epoch provider callback 在 speaker/shadow 路径前后重验并
+  fail-closed；factory 接线失败会关闭尚未发布的 Runtime/Provider 资源。
+- Shadow resync 只有在 actor 接受 observation 后才推进 sequence/清除 resync；mailbox 拒绝时
+  保留待恢复状态，避免 comparison ledger 因丢失 resync after-state 持续失真。
+- H5 最新 StreamCore 路径已通过回归测试验证：generic client-event 先以 envelope 的 session/fence 覆盖 payload，
+  合法 expression/emotion/trace 可进入既有解析器，伪造 payload fence 被拒绝；完整 speaking fence
+  激活表情，listening/interrupted/closed/flush 清除。当前 `286 passed` 且 production build 通过；Go `test`、
+  `test-race`、`vet` 通过；小程序 `86 passed`。小程序本轮按产品决定暂缓，现有
+  speaking/expression 路径已经使用完整 `(turn_id, generation_id, tool_epoch)` fence；工作区
+  另有体验版上传依赖/脚本，未纳入本轮实现或验收。
+- H5 本地开发认证代理已把后端 `Path=/v1/auth` cookie 重写为
+  `Path=/memoria-api/v1/auth`，浏览器整页刷新可以恢复登录；Control API 缺少 LiveKit 凭据时
+  现在返回结构化 `503 livekit_credentials_missing`，H5 显示安全中文提示。前后端回归和真实
+  Vite 代理请求均已通过，服务端没有未捕获 traceback。
+- 全仓 Ruff lint、Go `gofmt -l` 和 `git diff --check` 通过；Python/Go proto 生成物复现已通过。
+  本机未安装 `buf`/`golangci-lint`，因此 `buf lint/breaking` 与 GolangCI 未运行；镜像/Trivy
+  和远端 CI 也尚未复跑。
+- 复核修复：Projection 的 canonical preview 也会结束 fresh-speech admission，避免 provider
+  prepare/commit 事务改造后主回复永久停在 `THINKING`；全量 Python `pytest --no-cov` 已重跑通过。
+  儿童授权录音 schema、replay gate 和回归测试现统一为至少 200 条。A7 的 `ClientEvent`
+  task/context version 已完成 additive 透传，严格 envelope 会保留这两个字段；Go 使用进程单调时钟
+  填写 `server_monotonic_ms`。剩余 A7 缺口是实际设备/浏览器媒体、trace、AEC 与端到端 SLO 证据。
+- A6A 当前边界：actor 级有界 SpeechTimeline、candidate-only OutputArbiter、typed Floor shadow 及生产
+  bridge 的 `shadow_observation` 代码路径已接通；task/segment/commit/context/真实 OutputIntent admission 会在
+  单 mailbox event 内 apply/compare。规范化 watermark tail 与 lossy gap 分域 resync 已有
+  Speech/Output/Floor 独立恢复回归；Python/Go 现使用一致的
+  `(domain rank, priority, created_at, intent_id)` winner 排序，未知/未指定 kind 在 Python 权威入口
+  fail closed；完整 active set 每个固定 rank 最多保留 4 个候选，支持同域和跨域 expiry fallback；
+  wire 保留旧 `candidate` winner，并用 `active_candidates_complete` 区分完整空集合与旧 sender，
+  结构合法 rejected admission 记录双侧 reason；带合法 after-state 的结构非法 rejection 也会
+  进入 Go candidate-only ledger。普通 observation 现在由 Go 独立 apply 后比较，不再先覆盖出
+  人为 parity；只有 transport gap resync 才原子恢复 Python 完整 after-state。
+  `CONVERSATION_REPLY` 和 consumed after-state 已在 Python/Go 两端完成 apply/compare；只有 winner
+  返回执行许可。多 kind OutputIntent 仍是 candidate/admission 元数据，但 normal reply、
+  `tts_source`、`pcm_s16le` 已统一经 `OutputWork` 取得唯一物理 PCM owner；异步 speaking transition
+  后重验 generation/owner，取消先撤 lease 并排空本地 task，再做 best-effort provider 清理；正常
+  完成等待全部 PCM 与文本 span 获得 playback ACK 后再消费。queued candidate 会在旧 owner ACK 后
+  唤醒，高优先级 work 会取消旧 owner、flush generation，并从 sequence/sample `0` 重启；无 span
+  ACK 与 provider COMPLETE 时序回归也已关闭。Go retained queued intent 不再误计 dropped，只有容量
+  trim 掉的当前 intent 才记录 superseded。最小 Python-authoritative `RealtimeEffect` 已通过
+  `CoreToMedia`、Go identity/sequence/fence gate 和 WebRTC/H5 duck/restore/flush 接通；candidate、
+  stale/非法 payload 与 A6B 前的 `go_authoritative` 均 fail closed，duck gain 保持原语义。
+  `TOOL_RESULT`、backchannel/reminder/notification 等尚无真实生产来源；逐状态迁移和 A6B 权威启用
+  仍未完成。
+- 正式 `FloorEffect` 已仓内接通：Python 在 session ready/reconnect/assistant phase 发出带 identity、
+  fence、单调 epoch 与 TTL 的 snapshot；Go bridge/runtime 复验 candidate、旧 epoch、TTL 和 A6B gate，
+  再由 WHIP DataChannel 发布 H5 `floor.state`。这不改变 Python floor 写权，也不能提前启用 A6B。
+- StreamCore 的实时查询已收口为 Registry-owned `media_deep_response -> DEEP_RESULT -> OutputWork`：
+  已注册 delegation 的实时查询不再进入普通 `generate_reply`，因此每轮只调用一次 resolver；空结果使用
+  既有安全回复，迟到结果仍按 fence 丢弃。普通非实时回复维持原路径。
+- 慢于 `20ms` 的 StreamCore realtime delegation 现在会创建 allowlist typed
+  `FAST_ACKNOWLEDGEMENT` 并进入同一 OutputWork 队列；快速结果不播 ACK，深度结果在 ACK 完成后接替。
+- 本轮新增的 `ShadowFloorDecision` 为 additive typed shadow 证据；Python bridge 只在
+  `go_shadow` 会话投递，Go 只记录 parity，不执行 floor effect。新增 actor 过期 fallback、
+  Python bridge 和 Go typed-floor 回归均已通过。
+- StreamCore Registry 的所有 `OutputWork` 不再只依赖 `reply_lock`；normal reply、`tts_source`、
+  `pcm_s16le` 通过同一 OutputIntent winner 和 session owner lease 控制 provider PCM，并在
+  cancel/ACK 路径释放。`TOOL_RESULT`、backchannel/reminder/notification 等尚无真实生产 provider
+  矩阵，不能据此
+  外推为 A6A/A6B 已整体验收。
+  A7 仍缺真实浏览器/设备 playout、硬件 AEC 和端到端 P95；A8 四个指标已有本地数据源，
+  但仍缺生产长会话容量、SLO 与无副作用 shadow；A9 仍缺儿童授权语料、多实例、chaos/load、
+  灰度和回滚。A2 只有仓内实现与 loopback，真实 TURN/provider/跨主机验收仍缺。
+
+## 2026-08-04：A7/A8 本地客户端 fence 与指标接线（未提交、未发布）
+
+- A7 客户端侧补齐 turn/generation/tool fence 消费：H5 `assistant_state` 现在要求 `tool_epoch` 并以
+  `(turn_id, generation_id, tool_epoch)` 单调门禁；`assistantStateFenceRef` 保存完整
+  fence，`assistant_expression` 只在与当前 speaking fence 完全一致时激活；
+  StreamCore 状态回调消费 envelope 的完整 fence；provisional UI 保留 envelope 的
+  generation/tool fence。旧 tool epoch、同 generation 新 tool epoch、旧事件拒绝均有回归
+  测试（`useVoiceSession.test.jsx` 新增 2 条）。
+- H5 provisional 卡片消费 floor state：`user_holds_floor` 显示“你 · 正在说”，
+  `uncertain` 显示“你 · 正在确认”，其余保持“你 · 正在听”（`App.jsx` 新增标签映射与
+  App 级测试）。`packages/contracts/events.schema.json` 把 `assistant_state.tool_epoch`
+  列入 required（Python 权威发布方本已携带）。
+- 小程序对齐完整 fence：`_setStatus` 的 speaking fence 保存 `toolEpoch`，离开 speaking
+  清空 fence 与 pending 表情；`_onAssistantExpression` 按
+  `(turn, generation, tool_epoch)` 拒绝过期表达式，并新增 1 条回归测试。
+- Linux 设备客户端新增设备事件上报缝：`client.device.event` 的 `button` 与
+  `network_status`（按键与网络 RTT/transport）经 gRPC bridge 的现有
+  `on_client_event` 透出，测试覆盖完整往返；`SessionHello.traceparent` 现由设备客户端
+  传入并在 `MediaBridgeSession` 保留，为分布式 trace 关联提供本地接缝。设备按键/网络
+  真实采集、硬件接线与 trace 后端消费仍待真机/生产。
+- A8 指标接线（仅真实数据源）：`provider_ws_active`（Doubao TTS 连接池 `_all` 与 FunASR
+  session 连接状态）与 `provider_ws_reconnect_total`（TTS refill 重开、FunASR `_recover`
+  重连）接入 `MetricsRegistry`；原有 `asr_reconnects_total` 同时计入
+  `provider_ws_reconnect_total{provider="asr"}`。media-edge 已有
+  `active_media_sessions / audio_frame_deadline_miss_total|ratio / ingress_queue_age_ms /
+  egress_queue_age_ms / floor_decision_latency_ms / generation_cancel_latency_ms /
+  playout_buffer_ms / actor_mailbox_age_ms / session_duration_ms /
+  shadow_decision_mismatch_total`。
+- A8 后续已补齐本地数据源：`asr_send_lag_ms / asr_partial_age_ms /
+  tts_frame_age_ms / playout_underrun_total` 分别由 provider send/partial/TTS frame 时间戳和
+  Go playout 空转状态产生；仍缺真实生产容量、SLO 和长会话数据。
+- 顺手修复 A3 遗留回归：`test_interaction_mode_agent` 的 owner 工具用例改为注册真实
+  TaskManager handler 并验证协调包装后的工具通过（原断言用裸字符串，不再符合
+  DelegationCoordinator 的 registered-handler 门禁）。
+- 本轮验证：H5 `280 passed` + production build；小程序 `86 passed`；Python unit 全量
+  `passed`；Ruff + format；strict mypy（改动的核心源文件）。A7/A8 的真实
+  PeerConnection/设备 playout、AEC、网络指标和容量验收仍须外部环境完成。
+
+## 2026-08-04：review.md F0–A5 架构升级（未提交、未发布）
+
+- F1–F3 已关闭；F0 的原 mypy 问题已修复，但总 coverage 门禁仍未关闭。A0 已新增
+  ADR-0029、三态 `interaction_authority`、单写者/effect
+  ownership、additive media-v1 契约、Python/Go wire/旧 binding 兼容与可重复生成门禁。
+- A1 已实现 `ConversationProjection`：ASR partial/revision 聚合 provisional patch，Router
+  只提交 commit evidence，只有 committed + eligible 才进入权威字幕/历史；H5 单条原位
+  patch，commit/discard/reconnect/epoch 清理，访客/ambiguous/backchannel 规则不被绕过。
+- A2 已在现有 `services/media_edge` 内安装真实 Pion terminator，不新增网络服务：短期 JWT
+  全身份绑定、WHIP POST/DELETE、带 ETag 的 Memoria full-SDP restart、ICE/DTLS/SRTP/RTP、
+  上行 Opus→16 kHz PCM/energy VAD、丢包补静音/乱序丢弃、下行 24 kHz PCM→48 kHz
+  Opus、DataChannel event/playout/stop relay、generation-scoped sender、immediate
+  `playback.flush`、connected 后原子 epoch 替换、旧 epoch 错误隔离。production readiness
+  实际 gather candidate，TURN-only 必须获得 relay candidate。
+- A2 独立双轴审查发现并已修复：并发 epoch 反向覆盖、resource 鉴权字段不完整、restart
+  半失败存活、VAD end 错误吞掉、满队列淘汰 flush、重复 peer lookup，以及 PC failure
+  callback/cleanup 锁竞争造成失败 peer 覆盖旧 epoch。`closed` 在任何失败 cleanup 前同步
+  发布，cutover 同时校验 Pion 原生状态仍为 connected；新 epoch 现在保留旧链到 ICE/DTLS
+  connected 且 sender/Voice Core bridge 全部成功。
+- A3 已实现统一 `InteractionPlane` 与 `DelegationCoordinator` 的内部接缝：普通监听和播放期
+  transcript 共用决策面，VAD/partial 可提前预取和 warmup；测试覆盖 search/tool/deep 的
+  task/generation/context/relevance/expiry gate。生产 session factory 目前没有真实
+  `realtime_search_resolver`；adapter 只有条件代理 seam，生产 `_SessionLanguageModel` 未实现
+  `start_delegation/accept_output_intent`，所以 `supports_delegation=false`。因此 A3 只能记为部分完成，不能把测试 fake 写成
+  StreamCore deep source 已生产接线。
+- A4 已实现不可变 `ContextSnapshotManager`、每 generation 固定 `context_version`、后台
+  builder、超时/取消和 CAS 激活；superseded partial 会立即取消旧 builder。非 owner
+  snapshot 在统一构建边界剥离 owner turns、Memory、Persona、summary 与 tool permission，
+  builder 失败或说话人切换不能复用主人私密上下文。
+- A5 已实现 Go `LiveSessionActor` shadow：每 session 有界 mailbox、音频 reserve、20ms
+  deadline、floor/generation/playout/output candidate、Python-vs-Go comparison ledger；
+  `assistant_state` 携带完整 tool epoch，全部 interaction phase 有映射，mismatch 按
+  scenario/contract version 导出。`GET /v1/media/sessions/{id}/shadow` 是带完整 session JWT
+  的只读证据入口，candidate 解析/队列失败不影响用户路径。
+- A5 指标与生命周期按进程单调累计：mailbox reject、deadline、close drain 均计入一致
+  denominator；reconnect、显式 close、WHIP replacement 和 server shutdown 会原子转移
+  actor counters。`Draining + openMu` 串行 create/reconnect/WHIP/shutdown，所有
+  `NewSession` 失败路径都会关闭 runtime 并回收 actor。
+- 媒体镜像已安装 `libopus` 构建/运行依赖并实际构建、启动，distroless `/healthz` 通过。
+  本地真实 Pion loopback 覆盖双向媒体、DataChannel transcript/projection/state/error、stop、
+  cancel 后旧 Core PCM 拒绝、playout progress、ICE restart、RTP 丢包/乱序和 epoch reconnect。
+- 本轮验证：Ruff；strict mypy（218 files）；全仓 `1692 passed, 29 skipped`；H5 `277
+  passed` + production build；Go `test-race/vet/gofmt`；最终 epoch failure 竞态用 race detector
+  连跑 30 次；Docker build/runtime health；`git diff --check`。本地没有安装 golangci-lint，
+  CI action仍保留该门禁。
+- A3–A5 最新门禁：Python/Control API 扩展回归 404 项通过；相关 30 个 Python 文件 Ruff
+  与 format check 通过；13 个核心源文件 strict mypy 通过；Go `test`、`test -race`、`vet`、
+  `gofmt` 与 `git diff --check` 通过。当时的双轴复审结论已由本文件顶部最新复核取代。
+- 尚不得宣称生产验收：真实浏览器/TURN/跨主机 playout、停止词/普通插话 P95、硬件 AEC、
+  儿童授权语料、多实例、真实 chaos/load、Shadow 和回滚发布证据仍缺。一次已开始的
+  WebRTC write 无法撤回；后续旧 PCM 会被 gate 拒绝且客户端立即 flush，最终可听停止必须
+  在 A7 以真实 playout 测量。LiveKit 默认/fallback 未切换。
+- A6 仍不得启用：缺少真实固定评测集 parity、真实长会话容量/SLO、无副作用 shadow 与
+  回滚证据，当前 authority 保持 Python，Go 只产生 candidate。下一步继续 A7/A8 可本地
+  实现的客户端/指标/证据面；真实设备、儿童授权样本、生产 shadow、灰度和 A9 发布验收
+  必须在对应外部环境完成，不能包装成本地已验收。
+
+## 2026-08-04：已提交 `6ee6350`，review.md 复评问题跟进
+
+- `6ee6350` 已提交 ASR 版本统一为
   `ASRLogicalVersion(task_epoch, provider_revision)`；跨 committed watermark 的结果由
   `ASRAcceptDecision` 规范化，缺少可靠词时序时 fail-closed；provider adapter 直接透传
-  统一映射结果。对应回归测试已通过，提交前仍需复核工作区状态。
+  统一映射结果。
+- 该提交同时包含 review.md 复评问题的修复：canonical `ASRResult` 导入、同 task 起点
+  修订 revision、stream-scoped 旧 task fence、可靠 timing evidence、Registry timeline
+  rollback 与回归测试；上述修复均已提交，不再标记为“工作区未提交”。
 - ASR 区间/重放/修正规则收敛为单一决策点：`provider_adapter.py` 退化为纯 provider
   映射（删除 `_final_sentence_ids`/`_accepted_final_ranges`/`_provider_final_ranges`/
   `_max_final_end_by_epoch` 及裁尾逻辑，final 携带完整绝对区间与全文），
@@ -21,8 +261,9 @@
   结束 SPEAKING，heard 文本发布仍以新 span 为条件（P1）。
 - doubao mock `scaled_ts` 偏差 0.5s→0.2s（落在 120–300ms scaled 带），新增
   `degraded_ts`（>300ms）集成测试，修复远端 CI `test_doubao_mock.py` 红（P1）。
-- 已验证：agent 单测 867 通过；全量 pytest 通过（含预期跳过）；Ruff、strict mypy、
-  media smoke/replay、Go `test`、`git diff --check` 均通过。
+- `6ee6350` 已验证 agent 单测、全量 pytest（含预期跳过）、Ruff、strict mypy、media
+  smoke/replay、Go `test` 与 `git diff --check`。当前工作区未提交内容为 F0–A5 与
+  A7/A8 的后续实现（见本文件顶部），与本提交无关。
 - 未闭环（外部证据，未伪造）：P0 生产 media-runtime 仍无真实 `DownlinkSenderFactory`
   ——真实 WHIP/RTP/DTLS/SRTP/Opus 终结器需按
   `docs/media-runtime-acceptance-runbook.md` 外部接入并安全审查；端到端打断 P95、

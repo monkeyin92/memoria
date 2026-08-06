@@ -23,14 +23,40 @@ StreamCore/Pion 或其他第三方仓库的代码，也不改变 LiveKit 生产�
   `VoiceCoreBridge`/`VoiceCoreSession`：连接前拒绝未授权明文，连接后重复校验 identity、
   event sequence、sample range 和完整 generation；`scripts/generate_media_go_proto.sh`
   可重复生成 bindings，且本地 fake gRPC server 已覆盖 replay/stale frame。
+- Go `LiveSessionActor` 已实现 A6A actor 级 dormant `SpeechTimeline`、按来源域保留待决的
+  candidate-only `OutputArbiter` 与 phase-derived typed Floor shadow parity：状态有界、每个 rank 最多 4 个
+  active candidate，按完整 fence/context/floor/expiry 拒绝陈旧输入，不持有 sender、工具或持久化依赖。
+  生产 Session/bridge 已投递 task、segment、commit、context 和 sanitized OutputIntent observation，
+  覆盖 Timeline 与 Python candidate metadata 的 after-state parity；普通 observation 独立 apply 后比较，
+  lossy gap 才分域 resync。同域/跨域 expiry fallback、`CONVERSATION_REPLY` 与 consumed after-state 已完成。
+  Registry 的 normal reply、`tts_source`、`pcm_s16le` 已统一经 `OutputWork` 取得唯一 session owner，
+  异步 speaking transition 后重验 generation/owner；取消先撤 lease 并排空本地 task，再做 best-effort
+  provider 清理；全部 PCM 与文本 span 获得 playback ACK 后才释放 owner。queued candidate 会在旧
+  owner ACK 后 wakeup，高优先级 work 会取消旧 owner、flush generation，并从 sequence/sample `0`
+  重启；无 span ACK 与 provider COMPLETE 时序回归也已关闭。慢 realtime delegation 的
+  `FAST_ACKNOWLEDGEMENT` 也经同一 `OutputWork` 发送，快速 resolver 不产生 ACK。当前 StreamCore 的
+  物理 PCM 执行面只允许 `CONVERSATION_REPLY`、`FAST_ACKNOWLEDGEMENT`、`DEEP_RESULT`；其余
+  `OutputIntentKind` 仅保留 wire/shadow 兼容，执行边界 fail closed，直到有真实产品生产者、权限
+  设计和独立回归。最小 Python-authoritative
+  `RealtimeEffect` 已作为 `CoreToMedia` 正式 oneof 传输 `DUCK_OUTPUT`、
+  `CANCEL_GENERATION`、`PAUSE_OUTPUT`、`RESUME_OUTPUT`：Python bridge 和 Go bridge/runtime
+  均复验 authority、identity、sequence、payload 与完整 fence，candidate 和 A6B 前的
+  `go_authoritative` 不执行；WebRTC 映射为 H5 的 duck/restore/flush 并保留合法 duck gain。
+  正式 `FloorEffect` 也已通过 Python→Go bridge/runtime→WHIP WebRTC→H5 接通：完整 identity、fence、
+  单调 epoch、TTL、candidate 与 A6B authority 均在执行前复验，H5 只消费当前 stream 的单调状态。
+  必要输出种类的真实 production source/provider smoke 与逐状态 authority 切换仍缺，不能视为 A6
+  生产迁移完成。
 - `scripts/media_runtime_smoke.py` 在不访问外网 Provider 的情况下启动真实 gRPC
   endpoint，验证 hello、authoritative generation、downlink PCM 和 stale frame 丢弃；
   该 smoke 已纳入 CI，但不能替代真实 WebRTC/Provider/硬件验收。
 - `MediaVoiceCoreRegistry` 为每条 bridge session 建立独立的 `DuplexRuntime`、ASR
   watermark、Generation Fence 和 Playback Ledger；它会把真实 gRPC 音频送入注入的
   provider adapter，并只在客户端 `PlaybackProgress` 覆盖音频 sample range 后发布
-  `actual-heard` 文本。当前启动脚本仍保持 provider-neutral，部署必须显式注入现有
-  FunASR/Qwen/Doubao adapter，避免复制第二套智能编排。
+  `actual-heard` 文本。生产启动使用仓内 `MEDIA_BRIDGE_SESSION_FACTORY`，从同一个
+  session bootstrap 原子构造 Runtime、FunASR/LLM/Doubao provider、ModePolicy、
+  ResponsePlanner、speaker/voice authority 和关闭生命周期，避免复制第二套智能编排。
+  range-stamped VAD 在一个逻辑话轮内收集 PCM，并在 commit 前冻结正式 Speaker
+  Classification；archive spool replay 由异步 evidence publish 路径处理，不阻塞 session 创建。
 - `LinuxMediaDeviceClient` 提供 bounded capture/reconnect、本地 mute、NLMS AEC
   reference、PCM 播放回调和精确 playback ACK；`media-slo-reporter` Compose sidecar
   只上报 allowlist 聚合指标，报告过期或字段缺失时 StreamCore gate fail-closed。
@@ -72,11 +98,11 @@ StreamCore/Pion 或其他第三方仓库的代码，也不改变 LiveKit 生产�
 门禁已经有单测/竞态测试；它们不是对生产外部系统的成功证明。以下仍需要独立部署、
 真实硬件/音频夹具和生产演练：
 
-- 真正的 WebRTC WHIP/RTP/DTLS/SRTP 终结、Media Edge 到 bridge 的 mTLS 部署和
-  provider adapter 到真实 FunASR/LLM/TTS 的生产音频会话；仓内 registry 只完成
-  fake-provider 的可回归闭环；
+- 仓内 Pion WHIP/RTP/DTLS/SRTP/Opus terminator 与共享 Agent session factory 已完成
+  loopback；仍需真实 TURN、Media Edge 到 bridge 的 mTLS 部署，以及真实
+  FunASR/LLM/TTS/浏览器跨主机音频会话证据；
 - coturn relay 比例、Redis 多实例故障切换和 Media Edge drain；
-- Linux 麦克风/扬声器实际 AEC 校准、儿童授权语料（150--300 条）和全部 SLO；
+- Linux 麦克风/扬声器实际 AEC 校准、最终不少于 200 条儿童授权语料和全部 SLO；
 - 签名 OTA 的 A/B 分区断电回滚与设备物理静音验收。
 
 在这些外部证据齐全前，不得把 `MEDIA_RUNTIME_DEFAULT` 改为 `streamcore`；LiveKit

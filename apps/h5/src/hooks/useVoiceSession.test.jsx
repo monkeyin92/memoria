@@ -223,6 +223,7 @@ async function renderStartedHook({
         state: "ready",
         turn_id: 0,
         generation_id: 0,
+        tool_epoch: 0,
       }),
       { isAgent: true },
       null,
@@ -446,6 +447,7 @@ describe("useVoiceSession production edges", () => {
           state: "ready",
           turn_id: 0,
           generation_id: 0,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,
@@ -571,6 +573,311 @@ describe("useVoiceSession production edges", () => {
       omni.instances[0].callbacks.onDiagnostic("omni_response_created");
     });
     expect(container.querySelector("audio").muted).toBe(false);
+  });
+
+  it("patches one provisional StreamCore turn and persists only its committed owner view", async () => {
+    api.createSession.mockResolvedValueOnce({
+      session_id: "streamcore-session",
+      media_runtime: "streamcore",
+      fallback_runtime: "livekit",
+      stream_epoch: 1,
+      streamcore: {
+        whip_url: "https://media.example/whip",
+        token: "short-token",
+        stream_epoch: 1,
+      },
+    });
+    vi.stubGlobal("RTCPeerConnection", BrowserFactPeerConnection);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        text: vi.fn().mockResolvedValue("v=0\\no=answer"),
+      }),
+    );
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({
+          getAudioTracks: () => [{ enabled: true, stop: vi.fn() }],
+          getTracks: () => [{ stop: vi.fn() }],
+        }),
+      },
+    });
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const onFinalTranscript = vi.fn();
+    const { result } = renderHook(() =>
+      useVoiceSession({
+        userId: "anonymous-user",
+        onFinalTranscript,
+        voiceReplyEnabled: true,
+      }),
+    );
+    result.current.audioContainerRef.current = document.createElement("div");
+    await act(async () => {
+      await result.current.start();
+    });
+    const peer = streamCorePeers[0];
+    const emit = (event) => peer.channel.onmessage({ data: JSON.stringify(event) });
+    const evidence = {
+      speaker_class: "owner",
+      reason_code: "voice_match",
+      authority_verified: true,
+    };
+
+    act(() => emit(streamCoreEvent({
+      type: "turn.provisional.started",
+      sequence: 0,
+      turnId: 0,
+      generationId: 0,
+      payload: {
+        provisional_id: "p-1",
+        stream_epoch: 1,
+        provisional_turn_id: 1,
+        projection_revision: 1,
+        text: "你",
+        speaker: "user",
+        speaker_evidence: evidence,
+        floor_state: "user_holds_floor",
+        persist_as_turn: false,
+        history_eligible: false,
+      },
+    })));
+    expect(result.current.transcripts).toHaveLength(1);
+    expect(result.current.latestTranscript).toMatchObject({
+      text: "你",
+      provisional: true,
+      final: false,
+      generationId: 0,
+      toolEpoch: 0,
+    });
+    expect(onFinalTranscript).not.toHaveBeenCalled();
+
+    // The old raw ASR event remains a fallback for old servers, but is hidden
+    // while the new server has an active projection for the same speech.
+    act(() => emit(streamCoreEvent({
+      type: "user.transcript.final",
+      sequence: 1,
+      turnId: 0,
+      generationId: 0,
+      payload: { speaker: "user", text: "原始终稿", final: true },
+    })));
+    expect(result.current.transcripts).toHaveLength(1);
+    expect(result.current.latestTranscript.text).toBe("你");
+
+    act(() => emit(streamCoreEvent({
+      type: "turn.provisional.patch",
+      sequence: 2,
+      turnId: 0,
+      generationId: 0,
+      payload: {
+        provisional_id: "p-1",
+        stream_epoch: 1,
+        provisional_turn_id: 1,
+        projection_revision: 2,
+        text: "你好",
+        speaker: "user",
+        speaker_evidence: evidence,
+        floor_state: "uncertain",
+        persist_as_turn: false,
+        history_eligible: false,
+      },
+    })));
+    expect(result.current.transcripts).toHaveLength(1);
+    expect(result.current.latestTranscript.text).toBe("你好");
+    expect(onFinalTranscript).not.toHaveBeenCalled();
+
+    act(() => emit(streamCoreEvent({
+      type: "turn.committed",
+      sequence: 3,
+      turnId: 1,
+      generationId: 1,
+      payload: {
+        provisional_id: "p-1",
+        stream_epoch: 1,
+        projection_revision: 3,
+        turn_revision: 3,
+        text: "你好",
+        speaker: "user",
+        final: true,
+        speaker_evidence: evidence,
+        persist_as_turn: true,
+        history_eligible: true,
+      },
+    })));
+    expect(result.current.transcripts).toHaveLength(1);
+    expect(result.current.latestTranscript).toMatchObject({
+      text: "你好",
+      authoritative: true,
+      final: true,
+    });
+    expect(onFinalTranscript).toHaveBeenCalledTimes(1);
+
+    // The legacy authoritative event is idempotent at the projection's
+    // revision and cannot persist the same turn twice.
+    act(() => emit(streamCoreEvent({
+      type: "transcript_delta",
+      sequence: 4,
+      turnId: 1,
+      generationId: 1,
+      payload: {
+        speaker: "user",
+        text: "你好",
+        final: true,
+        history_eligible: true,
+        turn_revision: 3,
+      },
+    })));
+    expect(onFinalTranscript).toHaveBeenCalledTimes(1);
+
+    act(() => emit(streamCoreEvent({
+      type: "turn.provisional.started",
+      sequence: 5,
+      turnId: 1,
+      generationId: 1,
+      payload: {
+        provisional_id: "p-2",
+        stream_epoch: 1,
+        provisional_turn_id: 2,
+        projection_revision: 1,
+        text: "等等",
+        speaker: "user",
+        speaker_evidence: evidence,
+        floor_state: "user_holds_floor",
+        persist_as_turn: false,
+        history_eligible: false,
+      },
+    })));
+    expect(result.current.latestTranscript.provisional).toBe(true);
+    act(() => emit(streamCoreEvent({
+      type: "turn.provisional.discarded",
+      sequence: 6,
+      turnId: 1,
+      generationId: 1,
+      payload: {
+        provisional_id: "p-2",
+        stream_epoch: 1,
+        provisional_turn_id: 2,
+        projection_revision: 2,
+        text: "等等",
+        speaker: "user",
+        speaker_evidence: evidence,
+        persist_as_turn: false,
+        history_eligible: false,
+        reason: "backchannel",
+      },
+    })));
+    expect(result.current.transcripts).toHaveLength(1);
+    expect(result.current.latestTranscript.text).toBe("你好");
+    expect(onFinalTranscript).toHaveBeenCalledTimes(1);
+
+    // A discarded backchannel does not advance the authoritative turn. The
+    // next provisional therefore keeps the same turn hint but must use a new
+    // identity and a revision above the discard tombstone.
+    act(() => emit(streamCoreEvent({
+      type: "turn.provisional.started",
+      sequence: 7,
+      turnId: 1,
+      generationId: 1,
+      payload: {
+        provisional_id: "p-3",
+        stream_epoch: 1,
+        provisional_turn_id: 2,
+        projection_revision: 3,
+        text: "下一句",
+        speaker: "user",
+        speaker_evidence: evidence,
+        floor_state: "user_holds_floor",
+        persist_as_turn: false,
+        history_eligible: false,
+      },
+    })));
+    expect(result.current.latestTranscript).toMatchObject({
+      text: "下一句",
+      provisional: true,
+      provisionalId: "p-3",
+      turnRevision: 3,
+    });
+
+    act(() => emit(streamCoreEvent({
+      type: "turn.committed",
+      sequence: 8,
+      turnId: 2,
+      generationId: 2,
+      payload: {
+        provisional_id: "p-3",
+        stream_epoch: 1,
+        projection_revision: 4,
+        turn_revision: 4,
+        text: "下一句",
+        speaker: "user",
+        final: true,
+        speaker_evidence: evidence,
+        persist_as_turn: true,
+        history_eligible: true,
+      },
+    })));
+    expect(result.current.latestTranscript).toMatchObject({
+      text: "下一句",
+      authoritative: true,
+      final: true,
+    });
+    expect(onFinalTranscript).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the current typed Floor state from StreamCore", async () => {
+    api.createSession.mockResolvedValueOnce({
+      session_id: "streamcore-session",
+      media_runtime: "streamcore",
+      stream_epoch: 1,
+      streamcore: {
+        whip_url: "https://media.example/whip",
+        token: "short-token",
+        stream_epoch: 1,
+      },
+    });
+    vi.stubGlobal("RTCPeerConnection", BrowserFactPeerConnection);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        text: vi.fn().mockResolvedValue("v=0\\no=answer"),
+      }),
+    );
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({
+          getAudioTracks: () => [{ enabled: true, stop: vi.fn() }],
+          getTracks: () => [{ stop: vi.fn() }],
+        }),
+      },
+    });
+    const { result } = renderHook(() =>
+      useVoiceSession({
+        userId: "anonymous-user",
+        onFinalTranscript: vi.fn(),
+        voiceReplyEnabled: true,
+      }),
+    );
+    result.current.audioContainerRef.current = document.createElement("div");
+    await act(async () => {
+      await result.current.start();
+    });
+    const peer = streamCorePeers[0];
+    act(() => peer.channel.onmessage({
+      data: JSON.stringify(streamCoreEvent({
+        type: "floor.state",
+        sequence: 0,
+        turnId: 0,
+        generationId: 0,
+        payload: { floor_state: "user_holds_floor", floor_epoch: 1 },
+      })),
+    }));
+
+    expect(result.current.floorState).toBe("user_holds_floor");
   });
 
   it("derives StreamCore playback ACKs from browser media progress per generation", async () => {
@@ -728,6 +1035,31 @@ describe("useVoiceSession production edges", () => {
     )).toHaveLength(ackCountBeforeMutedGeneration);
     element.muted = false;
 
+    act(() => emit(firstPeer, streamCoreEvent({
+      type: "playback.duck",
+      sequence: 5,
+      turnId: 4,
+      generationId: 4,
+      payload: { gain: 0 },
+    })));
+    expect(element.volume).toBe(0);
+    act(() => emit(firstPeer, streamCoreEvent({
+      type: "playback.restore",
+      sequence: 6,
+      turnId: 4,
+      generationId: 4,
+      payload: { gain: 1 },
+    })));
+    expect(element.volume).toBe(1);
+    act(() => emit(firstPeer, streamCoreEvent({
+      type: "playback.duck",
+      sequence: 7,
+      turnId: 4,
+      generationId: 4,
+      payload: { gain: "0" },
+    })));
+    expect(element.volume).toBe(0.15);
+
     act(() => {
       firstPeer.connectionState = "failed";
       firstPeer.onconnectionstatechange();
@@ -784,6 +1116,7 @@ describe("useVoiceSession production edges", () => {
             state,
             turn_id: 0,
             generation_id: 0,
+            tool_epoch: 0,
           }),
           { isAgent: true },
           null,
@@ -802,6 +1135,7 @@ describe("useVoiceSession production edges", () => {
           state: "ready",
           turn_id: 0,
           generation_id: 0,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,
@@ -872,6 +1206,7 @@ describe("useVoiceSession production edges", () => {
           state: "ready",
           turn_id: 0,
           generation_id: 0,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,
@@ -925,6 +1260,7 @@ describe("useVoiceSession production edges", () => {
           state: "ready",
           turn_id: 0,
           generation_id: 0,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,
@@ -979,6 +1315,7 @@ describe("useVoiceSession production edges", () => {
           state: "ready",
           turn_id: 0,
           generation_id: 0,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,
@@ -1026,6 +1363,7 @@ describe("useVoiceSession production edges", () => {
           state: "listening",
           turn_id: 1,
           generation_id: 1,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,
@@ -1048,6 +1386,7 @@ describe("useVoiceSession production edges", () => {
           state: "speaking",
           turn_id: 1,
           generation_id: 0,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,
@@ -1107,6 +1446,7 @@ describe("useVoiceSession production edges", () => {
           state: "listening",
           turn_id: 2,
           generation_id: 2,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,
@@ -1592,6 +1932,7 @@ describe("useVoiceSession production edges", () => {
         state: "speaking",
         turn_id: 1,
         generation_id: 1,
+        tool_epoch: 0,
       });
     });
     expect(result.current.uiState).toBe("speaking");
@@ -1609,6 +1950,7 @@ describe("useVoiceSession production edges", () => {
         state: "listening",
         turn_id: 1,
         generation_id: 1,
+        tool_epoch: 0,
       });
       emit({
         type: "assistant_expression",
@@ -1628,6 +1970,7 @@ describe("useVoiceSession production edges", () => {
         state: "speaking",
         turn_id: 2,
         generation_id: 2,
+        tool_epoch: 0,
       });
       emit({
         type: "assistant_expression",
@@ -1638,6 +1981,416 @@ describe("useVoiceSession production edges", () => {
         tool_epoch: 0,
       });
     });
+    expect(result.current.assistantExpression).toBeNull();
+  });
+
+  it("rejects a stale assistant state from an older tool epoch and accepts the same generation at a newer tool epoch", async () => {
+    const { result, room } = await renderStartedHook();
+    const agent = { isAgent: true };
+    const emit = (event) =>
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent(event),
+        agent,
+        null,
+        "voice-agent.ui",
+      );
+
+    act(() => {
+      emit({
+        type: "assistant_state",
+        session_id: "session-1",
+        state: "thinking",
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 0,
+      });
+      emit({
+        type: "assistant_state",
+        session_id: "session-1",
+        state: "speaking",
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 2,
+      });
+    });
+    expect(result.current.uiState).toBe("speaking");
+
+    // Same generation/turn with an older tool epoch must not overwrite the
+    // speaking state or its fence.
+    act(() => {
+      emit({
+        type: "assistant_state",
+        session_id: "session-1",
+        state: "listening",
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 1,
+      });
+    });
+    expect(result.current.uiState).toBe("speaking");
+
+    // The same generation may legitimately advance to a newer tool epoch.
+    act(() => {
+      emit({
+        type: "assistant_state",
+        session_id: "session-1",
+        state: "listening",
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 3,
+      });
+    });
+    expect(result.current.uiState).toBe("listening");
+
+    // An expression from the superseded tool epoch cannot reactivate the
+    // cleared expression.
+    act(() => {
+      emit({
+        type: "assistant_expression",
+        session_id: "session-1",
+        expression: "happy",
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 2,
+      });
+    });
+    expect(result.current.assistantExpression).toBeNull();
+  });
+
+  it("does not let an older tool epoch rewrite an authoritative transcript", async () => {
+    const { result, room } = await renderStartedHook();
+    const agent = { isAgent: true };
+    const emit = (event) =>
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent(event),
+        agent,
+        null,
+        "voice-agent.ui",
+      );
+
+    act(() => {
+      emit({
+        type: "assistant_state",
+        session_id: "session-1",
+        state: "speaking",
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 2,
+      });
+      emit({
+        type: "transcript_delta",
+        session_id: "session-1",
+        speaker: "assistant",
+        text: "旧工具结果",
+        final: true,
+        heard: true,
+        history_eligible: false,
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 1,
+        turn_revision: 1,
+      });
+    });
+    expect(result.current.latestTranscript).toBeNull();
+
+    act(() => {
+      emit({
+        type: "transcript_delta",
+        session_id: "session-1",
+        speaker: "assistant",
+        text: "当前工具结果",
+        final: true,
+        heard: true,
+        history_eligible: false,
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 2,
+        turn_revision: 1,
+      });
+    });
+    expect(result.current.latestTranscript.text).toBe("当前工具结果");
+  });
+
+  it("normalizes StreamCore client events and fences expressions to speaking", async () => {
+    api.createSession.mockResolvedValueOnce({
+      session_id: "streamcore-session",
+      media_runtime: "streamcore",
+      fallback_runtime: "livekit",
+      stream_epoch: 1,
+      streamcore: {
+        whip_url: "https://media.example/whip",
+        token: "short-token",
+        stream_epoch: 1,
+      },
+    });
+    vi.stubGlobal("RTCPeerConnection", BrowserFactPeerConnection);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        text: vi.fn().mockResolvedValue("v=0\\no=answer"),
+      }),
+    );
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({
+          getAudioTracks: () => [{ enabled: true, stop: vi.fn() }],
+          getTracks: () => [{ stop: vi.fn() }],
+        }),
+      },
+    });
+    const { result } = renderHook(() =>
+      useVoiceSession({
+        userId: "anonymous-user",
+        onFinalTranscript: vi.fn(),
+        voiceReplyEnabled: true,
+      }),
+    );
+    result.current.audioContainerRef.current = document.createElement("div");
+
+    await act(async () => {
+      await result.current.start();
+    });
+    const peer = streamCorePeers[0];
+    const emit = (event) => peer.channel.onmessage({ data: JSON.stringify(event) });
+
+    act(() => emit(streamCoreEvent({
+      type: "audio_trace",
+      sequence: 0,
+      turnId: 0,
+      generationId: 0,
+      payload: {
+        session_id: "forged-payload-session",
+        name: "streamcore_agent_trace",
+        status: "ok",
+        turn_id: 99,
+        generation_id: 99,
+        tool_epoch: 99,
+      },
+    })));
+    expect(
+      result.current.audioDiagnostics.find(
+        (event) => event.name === "streamcore_agent_trace",
+      ),
+    ).toBeUndefined();
+    act(() => emit(streamCoreEvent({
+      type: "audio_trace",
+      sequence: 0,
+      turnId: 0,
+      generationId: 0,
+      payload: {
+        name: "streamcore_agent_trace",
+        status: "ok",
+      },
+    })));
+    expect(
+      result.current.audioDiagnostics.find(
+        (event) => event.name === "streamcore_agent_trace",
+      ),
+    ).toMatchObject({
+      session_id: "streamcore-session",
+      turn_id: 0,
+      generation_id: 0,
+      tool_epoch: 0,
+    });
+
+    act(() => {
+      emit(streamCoreEvent({
+        type: "user.transcript.final",
+        sequence: 1,
+        turnId: 1,
+        generationId: 1,
+        payload: {
+          speaker: "user",
+          text: "最近有点累",
+          final: true,
+        },
+      }));
+      emit(streamCoreEvent({
+        type: "emotion_observation",
+        sequence: 2,
+        turnId: 1,
+        generationId: 1,
+        payload: {
+          session_id: "forged-payload-session",
+          label: "sad",
+          persist: false,
+          turn_id: 99,
+          generation_id: 99,
+          tool_epoch: 99,
+          expires_after_ms: 30_000,
+        },
+      }));
+    });
+    expect(result.current.emotionHint).toBeNull();
+    act(() => emit(streamCoreEvent({
+      type: "emotion_observation",
+      sequence: 2,
+      turnId: 1,
+      generationId: 1,
+      payload: {
+        label: "sad",
+        persist: false,
+        expires_after_ms: 30_000,
+      },
+    })));
+    expect(result.current.emotionHint).toEqual({
+      label: "sad",
+      turnId: 1,
+      generationId: 1,
+    });
+
+    act(() => emit(streamCoreEvent({
+      type: "assistant.state",
+      sequence: 3,
+      turnId: 1,
+      generationId: 1,
+      toolEpoch: 2,
+      payload: { state: "speaking" },
+    })));
+    expect(result.current.uiState).toBe("speaking");
+
+    act(() => emit(streamCoreEvent({
+      type: "assistant_expression",
+      sequence: 4,
+      turnId: 1,
+      generationId: 1,
+      toolEpoch: 2,
+      payload: {
+        session_id: "forged-payload-session",
+        expression: "caring",
+        turn_id: 99,
+        generation_id: 99,
+        tool_epoch: 99,
+      },
+    })));
+    expect(result.current.assistantExpression).toBeNull();
+    act(() => emit(streamCoreEvent({
+      type: "assistant_expression",
+      sequence: 4,
+      turnId: 1,
+      generationId: 1,
+      toolEpoch: 2,
+      payload: { expression: "caring" },
+    })));
+    expect(result.current.assistantExpression).toEqual({
+      expression: "caring",
+      turnId: 1,
+      generationId: 1,
+      toolEpoch: 2,
+    });
+
+    // A stale expression from tool epoch 0 must not display while the state
+    // fence is already at tool epoch 2.
+    act(() => emit(streamCoreEvent({
+      type: "assistant_expression",
+      sequence: 5,
+      turnId: 1,
+      generationId: 1,
+      toolEpoch: 0,
+      payload: {
+        session_id: "streamcore-session",
+        expression: "happy",
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 0,
+      },
+    })));
+    expect(result.current.assistantExpression?.expression).toBe("caring");
+
+    // The same generation at a newer tool epoch advances the fence.
+    act(() => emit(streamCoreEvent({
+      type: "assistant.state",
+      sequence: 6,
+      turnId: 1,
+      generationId: 1,
+      toolEpoch: 3,
+      payload: { state: "listening" },
+    })));
+    expect(result.current.uiState).toBe("listening");
+    expect(result.current.assistantExpression).toBeNull();
+
+    act(() => {
+      emit(streamCoreEvent({
+        type: "assistant.state",
+        sequence: 7,
+        turnId: 2,
+        generationId: 2,
+        payload: { state: "speaking" },
+      }));
+      emit(streamCoreEvent({
+        type: "assistant_expression",
+        sequence: 8,
+        turnId: 2,
+        generationId: 2,
+        payload: { expression: "curious" },
+      }));
+    });
+    expect(result.current.assistantExpression?.expression).toBe("curious");
+    act(() => emit(streamCoreEvent({
+      type: "assistant.state",
+      sequence: 9,
+      turnId: 2,
+      generationId: 2,
+      payload: { state: "interrupted" },
+    })));
+    expect(result.current.uiState).toBe("interrupted");
+    expect(result.current.assistantExpression).toBeNull();
+
+    act(() => {
+      emit(streamCoreEvent({
+        type: "assistant.state",
+        sequence: 10,
+        turnId: 3,
+        generationId: 3,
+        payload: { state: "speaking" },
+      }));
+      emit(streamCoreEvent({
+        type: "assistant_expression",
+        sequence: 11,
+        turnId: 3,
+        generationId: 3,
+        payload: { expression: "happy" },
+      }));
+    });
+    expect(result.current.assistantExpression?.expression).toBe("happy");
+    act(() => emit(streamCoreEvent({
+      type: "playback.flush",
+      sequence: 12,
+      turnId: 3,
+      generationId: 3,
+      payload: { reason: "interrupt" },
+    })));
+    expect(result.current.assistantExpression).toBeNull();
+
+    act(() => {
+      emit(streamCoreEvent({
+        type: "assistant.state",
+        sequence: 13,
+        turnId: 4,
+        generationId: 4,
+        payload: { state: "speaking" },
+      }));
+      emit(streamCoreEvent({
+        type: "assistant_expression",
+        sequence: 14,
+        turnId: 4,
+        generationId: 4,
+        payload: { expression: "neutral" },
+      }));
+    });
+    expect(result.current.assistantExpression?.expression).toBe("neutral");
+    act(() => emit(streamCoreEvent({
+      type: "session.closed",
+      sequence: 15,
+      turnId: 4,
+      generationId: 4,
+    })));
+    expect(result.current.uiState).toBe("closed");
     expect(result.current.assistantExpression).toBeNull();
   });
 
@@ -2002,6 +2755,7 @@ describe("useVoiceSession production edges", () => {
           state: "listening",
           turn_id: 2,
           generation_id: 2,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,
@@ -2113,6 +2867,7 @@ describe("useVoiceSession production edges", () => {
           state: "speaking",
           turn_id: 1,
           generation_id: 1,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,
@@ -2136,6 +2891,7 @@ describe("useVoiceSession production edges", () => {
           state: "interrupted",
           turn_id: 1,
           generation_id: 2,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,
@@ -2234,6 +2990,7 @@ describe("useVoiceSession production edges", () => {
           state: "ready",
           turn_id: 0,
           generation_id: 0,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,
@@ -2283,6 +3040,7 @@ describe("useVoiceSession production edges", () => {
           state: "ready",
           turn_id: 0,
           generation_id: 0,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,
@@ -2386,6 +3144,7 @@ describe("useVoiceSession production edges", () => {
           state: "ready",
           turn_id: 0,
           generation_id: 0,
+          tool_epoch: 0,
         }),
         { isAgent: true },
         null,

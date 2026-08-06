@@ -26,6 +26,7 @@ from services.agent.src.providers.doubao_voice_catalog import (
 )
 from services.agent.src.providers.funasr_protocol import timestamps_monotonic
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
+from services.agent.src.providers.handlers import build_realtime_search_resolver
 from services.agent.src.providers.interrupt_semantic_classifier import (
     InterruptSemanticClassifier,
     InterruptSemanticClassifierConfig,
@@ -278,6 +279,21 @@ async def smoke_llm() -> str:
     return label
 
 
+async def smoke_realtime_search(settings: AgentSettings) -> None:
+    """Exercise the isolated Qwen source used for fenced DEEP_RESULT work."""
+
+    resolver = build_realtime_search_resolver(settings=settings)
+    if resolver is None:
+        raise AssertionError("Qwen realtime search resolver is unavailable")
+    try:
+        result = await resolver.resolve(query="请联网查询今天的日期，只用一句中文回答。")
+    finally:
+        await resolver.aclose()
+    if not result:
+        raise AssertionError("Qwen realtime search returned no public result")
+    print("Qwen realtime-search smoke: PASS (forced public search, non-empty result)")
+
+
 async def smoke_interrupt_semantic() -> None:
     settings = AgentSettings()
     if not settings.interrupt_semantic_enabled:
@@ -364,6 +380,7 @@ async def main() -> int:
         print("provider_smoke_test FAIL: Doubao style control is required but disabled")
         return 1
     try:
+        await smoke_realtime_search(settings)
         samples = await smoke_doubao()
         for pcm_16k, expected_markers, forbidden_markers in samples:
             await smoke_funasr(
@@ -376,7 +393,10 @@ async def main() -> int:
     except Exception as exc:
         print(f"provider_smoke_test FAIL: {type(exc).__name__}: {exc}")
         return 1
-    print(f"provider_smoke_test PASS: FunASR, {llm_label}, Doubao, InterruptSemantic")
+    print(
+        "provider_smoke_test PASS: FunASR, QwenRealtimeSearch, "
+        f"{llm_label}, Doubao, InterruptSemantic"
+    )
     return 0
 
 

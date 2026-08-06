@@ -372,10 +372,27 @@ async def test_response_plan_requires_its_own_token_and_returns_bounded_companio
             json=body,
         )
         planned = await client.post("/v1/interaction/response-plan", headers=token, json=body)
+        prefetch_body = {
+            "session_id": session_id,
+            "query": "你好",
+            "speaker_decision": body["speaker_decision"],
+        }
+        prefetched = await client.post(
+            "/v1/interaction/context-prefetch",
+            headers=token,
+            json=prefetch_body,
+        )
 
     assert denied.status_code == 401
     assert wrong_token.status_code == 401
     assert planned.status_code == 200
+    assert prefetched.status_code == 200
+    assert prefetched.json() == {
+        "speaker_class": "owner",
+        "grounded_items": [],
+        "persona_version_id": None,
+        "persona_version_number": None,
+    }
     payload = planned.json()
     assert payload["fence"] == body["fence"]
     assert payload["epistemic_status"] == "unknown"
@@ -400,7 +417,9 @@ async def test_response_plan_grounds_clock_and_requires_a_city_for_weather(
 ) -> None:
     _configure(monkeypatch, tmp_path)
     fixed_now = datetime(2026, 7, 30, 18, 42, tzinfo=ZoneInfo("Asia/Shanghai"))
-    monkeypatch.setattr(interaction_routes, "_local_now", lambda _settings: fixed_now, raising=False)
+    monkeypatch.setattr(
+        interaction_routes, "_local_now", lambda _settings: fixed_now, raising=False
+    )
     app = create_app()
     token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

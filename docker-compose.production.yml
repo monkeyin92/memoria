@@ -227,10 +227,10 @@ services:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
 
   # The media-runtime profile is intentionally opt-in. It wires the self-owned
-  # Go edge to the self-owned Python media-v1 bridge, but still requires a
-  # reviewed WHIP/WebRTC terminator and the full Agent response-orchestrator
-  # factory. The media bridge fails readiness rather than bypassing product
-  # memory/persona/permission/tool policy with a second LLM entry point.
+  # Go edge to the self-owned Python media-v1 bridge and Pion terminator. It
+  # still requires external media acceptance. The shared Agent session factory
+  # keeps memory/persona/permission/tool policy on the established product path
+  # instead of creating a second LLM entry point.
   voice-core-media-bridge:
     profiles:
       - media-runtime
@@ -247,8 +247,7 @@ services:
       MEDIA_BRIDGE_GRPC_ENABLED: "true"
       MEDIA_BRIDGE_GRPC_ADDR: "0.0.0.0:7001"
       MEDIA_BRIDGE_MTLS: "true"
-      MEDIA_BRIDGE_PROVIDER_FACTORY: "services.agent.src.voice_core.provider_adapter:build_production_provider_factory"
-      MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY: "${MEDIA_BRIDGE_ORCHESTRATED_LLM_FACTORY:-}"
+      MEDIA_BRIDGE_SESSION_FACTORY: "services.agent.src.media_agent_factory:build_production_media_session_factory"
     command:
       - /app/scripts/run_media_bridge.py
     expose:
@@ -259,6 +258,9 @@ services:
         source: /etc/memoria-media-runtime
         target: /etc/memoria-media-runtime
         read_only: true
+      - type: bind
+        source: /var/lib/memoria-agent
+        target: /data
     healthcheck:
       test:
         - CMD

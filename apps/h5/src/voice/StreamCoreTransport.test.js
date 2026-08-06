@@ -124,6 +124,189 @@ function mediaEvent({
 }
 
 describe("StreamCoreTransport", () => {
+  it("exposes the server-selected interaction authority from session.ready", async () => {
+    const onState = vi.fn();
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+      onState,
+    });
+    await transport.connect({
+      session_id: "authority-session",
+      whip_url: "https://media.example/whip",
+      token: "token",
+      stream_epoch: 1,
+    });
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "session.ready",
+        session_id: "authority-session",
+        stream_epoch: 1,
+        sequence: 0,
+        payload: {
+          state: "ready",
+          interaction_authority: "go_shadow",
+        },
+      })),
+    });
+
+    expect(transport.interactionAuthority).toBe("go_shadow");
+    expect(onState).toHaveBeenCalledWith(
+      "ready",
+      expect.objectContaining({ interaction_authority: "go_shadow" }),
+    );
+  });
+
+  it("consumes only monotonic typed floor effects for the current media stream", async () => {
+    const onFloor = vi.fn();
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+      onFloor,
+    });
+    await transport.connect({
+      session_id: "floor-session",
+      whip_url: "https://media.example/whip",
+      token: "token",
+      stream_epoch: 1,
+    });
+
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "floor.state",
+        session_id: "floor-session",
+        stream_epoch: 1,
+        sequence: 0,
+        payload: { floor_state: "user_holds_floor", floor_epoch: 1 },
+      })),
+    });
+    expect(onFloor).toHaveBeenCalledWith(
+      "user_holds_floor",
+      expect.objectContaining({ sequence: 0, turn_id: 0, generation_id: 0 }),
+    );
+
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "floor.state",
+        session_id: "floor-session",
+        stream_epoch: 1,
+        sequence: 1,
+        payload: { floor_state: "silence", floor_epoch: 1 },
+      })),
+    });
+    expect(onFloor).toHaveBeenCalledTimes(1);
+
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "floor.state",
+        session_id: "floor-session",
+        stream_epoch: 1,
+        sequence: 2,
+        payload: { floor_state: "invalid", floor_epoch: 2 },
+      })),
+    });
+    expect(transport.lastEventSequence).toBe(0);
+
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "floor.state",
+        session_id: "floor-session",
+        stream_epoch: 1,
+        sequence: 3,
+        payload: { floor_state: "silence", floor_epoch: 2 },
+      })),
+    });
+    expect(onFloor).toHaveBeenLastCalledWith(
+      "silence",
+      expect.objectContaining({ sequence: 3 }),
+    );
+  });
+
+  it("routes projection events separately from legacy transcript fallback", async () => {
+    const onProjection = vi.fn();
+    const onTranscript = vi.fn();
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+      onProjection,
+      onTranscript,
+    });
+    await transport.connect({
+      session_id: "projection-session",
+      whip_url: "https://media.example/whip",
+      token: "token",
+      stream_epoch: 1,
+    });
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "turn.provisional.started",
+        session_id: "projection-session",
+        stream_epoch: 1,
+        sequence: 0,
+        payload: {
+          provisional_id: "p-1",
+          stream_epoch: 1,
+          projection_revision: 1,
+        },
+      })),
+    });
+    expect(onProjection).toHaveBeenCalledWith(expect.objectContaining({
+      type: "turn.provisional.started",
+      provisional_id: "p-1",
+      envelope_stream_epoch: 1,
+    }));
+
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "user.transcript.final",
+        session_id: "projection-session",
+        stream_epoch: 1,
+        sequence: 1,
+        payload: { speaker: "user", text: "legacy", final: true },
+      })),
+    });
+    expect(onTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      event_type: "user.transcript.final",
+      text: "legacy",
+    }));
+  });
+
+  it("rejects a projection payload that forges the envelope stream epoch", async () => {
+    const onProjection = vi.fn();
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+      onProjection,
+    });
+    await transport.connect({
+      session_id: "projection-epoch-session",
+      whip_url: "https://media.example/whip",
+      token: "token",
+      stream_epoch: 3,
+    });
+
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "turn.provisional.patch",
+        session_id: "projection-epoch-session",
+        stream_epoch: 3,
+        sequence: 0,
+        payload: {
+          provisional_id: "p-forged",
+          stream_epoch: 99,
+          projection_revision: 1,
+        },
+      })),
+    });
+
+    expect(onProjection).not.toHaveBeenCalled();
+    expect(transport.lastEventSequence).toBe(-1);
+  });
+
   it("negotiates a server-issued WHIP session and fences events", async () => {
     const media = stream();
     const onState = vi.fn();
@@ -174,6 +357,100 @@ describe("StreamCoreTransport", () => {
     expect(onTranscript).toHaveBeenCalledTimes(1);
     expect(onTranscript).toHaveBeenCalledWith(
       expect.objectContaining({ text: "你好", final: true, speaker: "user" }),
+    );
+  });
+
+  it("propagates task/context versions and rejects stale same-fence events", async () => {
+    const onTranscript = vi.fn();
+    const transport = new StreamCoreTransport({
+      RTCPeerConnectionImpl: FakePeerConnection,
+      getUserMedia: vi.fn(async () => stream()),
+      exchangeSdp: vi.fn(async () => "v=0\\no=answer"),
+      onTranscript,
+    });
+    await transport.connect({
+      session_id: "session-version-fence",
+      whip_url: "https://media.example/whip",
+      token: "token",
+      stream_epoch: 1,
+    });
+
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "assistant.text.final",
+        session_id: "session-version-fence",
+        stream_epoch: 1,
+        sequence: 0,
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 0,
+        task_epoch: 3,
+        context_version: 7,
+        payload: { text: "最新结果" },
+      })),
+    });
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "assistant.audio.frame",
+        session_id: "session-version-fence",
+        stream_epoch: 1,
+        sequence: 1,
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 0,
+        task_epoch: 3,
+        context_version: 7,
+        payload: {
+          sequence: 0,
+          source_start_sample: 0,
+          frame_samples: 480,
+          final: false,
+        },
+      })),
+    });
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "assistant.audio.frame",
+        session_id: "session-version-fence",
+        stream_epoch: 1,
+        sequence: 2,
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 0,
+        task_epoch: 2,
+        context_version: 6,
+        payload: {
+          sequence: 1,
+          source_start_sample: 480,
+          frame_samples: 480,
+          final: true,
+        },
+      })),
+    });
+    transport.channel.onmessage({
+      data: JSON.stringify(mediaEvent({
+        type: "assistant.text.final",
+        session_id: "session-version-fence",
+        stream_epoch: 1,
+        sequence: 3,
+        turn_id: 1,
+        generation_id: 1,
+        tool_epoch: 0,
+        task_epoch: 2,
+        context_version: 6,
+        payload: { text: "迟到结果" },
+      })),
+    });
+
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(onTranscript).toHaveBeenLastCalledWith(
+      expect.objectContaining({ task_epoch: 3, context_version: 7, text: "最新结果" }),
+    );
+    expect(transport.lastAudioSequence).toBe(0);
+    expect(transport.lastAudioSampleEnd).toBe(480);
+    await transport.publishData({ type: "client.trace", payload: {} });
+    expect(transport.channel.sent.at(-1)).toEqual(
+      expect.objectContaining({ task_epoch: 3, context_version: 7 }),
     );
   });
 
@@ -251,7 +528,7 @@ describe("StreamCoreTransport", () => {
     expect(onDisconnected).toHaveBeenCalledTimes(1);
   });
 
-  it("drops invalid, stale, future, and cross-session events", async () => {
+  it("drops invalid, stale, and cross-session events while ignoring future fields", async () => {
     const onTranscript = vi.fn();
     const transport = new StreamCoreTransport({
       RTCPeerConnectionImpl: FakePeerConnection,
@@ -295,7 +572,6 @@ describe("StreamCoreTransport", () => {
       { ...valid, stream_epoch: 3 },
       { ...valid, stream_epoch: 5 },
       { ...valid, payload: null },
-      { ...valid, unexpected: true },
       {
         ...valid,
         payload: { ...valid.payload, generation_id: 1 },
@@ -304,6 +580,10 @@ describe("StreamCoreTransport", () => {
       transport.channel.onmessage({ data: JSON.stringify(data) });
     }
     expect(onTranscript).not.toHaveBeenCalled();
+    transport.channel.onmessage({
+      data: JSON.stringify({ ...valid, future_extension: true }),
+    });
+    expect(onTranscript).toHaveBeenCalledTimes(1);
   });
 
   it("drops events that omit the complete media fence", async () => {
@@ -827,6 +1107,8 @@ describe("StreamCoreTransport", () => {
     const heartbeatSession = vi.fn(async () => ({
       stream_epoch: 4,
       expires_at: new Date(Date.now() + 60_000).toISOString(),
+      token: "renewed-token",
+      token_expires_at: new Date(Date.now() + 30_000).toISOString(),
     }));
     const transport = new StreamCoreTransport({
       RTCPeerConnectionImpl: FakePeerConnection,
@@ -848,6 +1130,7 @@ describe("StreamCoreTransport", () => {
       expect.objectContaining({ signal: expect.any(AbortSignal), timeoutMs: 10_000 }),
     );
     expect(transport.session.streamcore.expires_at).not.toBe("old");
+    expect(transport.session.streamcore.token).toBe("renewed-token");
     expect(transport.streamEpoch).toBe(4);
     await transport.close();
   });

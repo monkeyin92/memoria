@@ -163,6 +163,24 @@ async def test_false_barge_in_restores_playback_after_immediate_mute() -> None:
 
 
 @pytest.mark.asyncio
+async def test_backchannel_uses_interaction_plane_when_playback_guard_is_disabled() -> None:
+    runtime = DuplexRuntime.create(input_guard_enabled=False)
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("我正在说一段话。")
+    runtime.on_user_voice_started(now_ns=1_000_000_000)
+
+    decision = runtime.observe_user_transcript(
+        "嗯",
+        final=True,
+        now_ns=1_300_000_000,
+    )
+
+    assert decision is PlaybackInputDecision.IGNORE
+    assert runtime.accept_user_turn("嗯") == (False, "backchannel")
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_uncertain_user_evidence_carries_shadow_owner_provenance() -> None:
     evidence: list[dict[str, object]] = []
 
@@ -228,6 +246,35 @@ async def test_playback_end_clears_unanchored_echo_before_the_next_vad() -> None
     runtime.on_user_voice_started()
     runtime.observe_user_transcript("真正的新问题", final=True)
     assert runtime.consume_canonical_user_turn("真正的新问题") == "真正的新问题"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_post_playback_weekday_echo_cannot_start_a_follow_up_turn() -> None:
+    runtime = DuplexRuntime.create(
+        session_id="post-playback-weekday-echo",
+        input_guard_enabled=True,
+    )
+    await runtime.orchestrator.ready()
+    await runtime.on_turn_committed("今天星期几")
+    answer = "今天是2026年8月6日，星期四。"
+    runtime.update_pending_assistant_text(answer)
+    await runtime.on_playback_started()
+    await runtime.on_assistant_reply_completed(answer)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x01\x00" * 8_000)
+    runtime.on_user_voice_stopped()
+    runtime.observe_user_transcript("星期四", final=True)
+
+    accepted, reason = runtime.accept_user_turn(
+        "星期四",
+        input_modality="audio",
+        speech_anchored=True,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+
+    assert accepted is False
+    assert reason == "assistant_echo"
     await runtime.close()
 
 
@@ -1627,13 +1674,11 @@ async def test_stale_control_final_does_not_repeat_yield_over_new_speech() -> No
     assert reason == "stale_control_epoch"
     assert said == []
     assert not any(
-        event.get("type") == "audio_trace"
-        and event.get("name") == "interrupt_yield_started"
+        event.get("type") == "audio_trace" and event.get("name") == "interrupt_yield_started"
         for event in published
     )
     assert any(
-        event.get("type") == "audio_trace"
-        and event.get("name") == "control_turn_stale"
+        event.get("type") == "audio_trace" and event.get("name") == "control_turn_stale"
         for event in published
     )
     await runtime.close()
@@ -2095,6 +2140,42 @@ async def test_runtime_publishes_one_fence_bound_assistant_expression() -> None:
         "at": "",
     }
     assert isinstance(expressions[0]["at"], str)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_generation_cannot_commit_speaking_state_or_expression() -> None:
+    runtime = DuplexRuntime.create(session_id="stale-speaking-session")
+    published: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime.set_event_publisher(publish)
+    await runtime.orchestrator.ready()
+    fence = await runtime.on_turn_committed("第一条问题")
+    replacement = fence.bump_generation()
+    assert await runtime.accept_media_generation(replacement, cause="test_superseded")
+    state = runtime.orchestrator.state
+    published.clear()
+
+    assert not await runtime.on_assistant_speaking(
+        "已经失效的回答",
+        expected_fence=fence,
+    )
+    await asyncio.sleep(0)
+
+    assert runtime.fence.matches(replacement)
+    assert runtime.orchestrator.state is state
+    assert runtime.orchestrator.state is not ConversationState.SPEAKING
+    assert runtime._pending_assistant_text == ""
+    assert runtime._was_speaking is False
+    assert runtime._assistant_expression_fence is None
+    assert not any(
+        event.get("type") == "assistant_expression"
+        or (event.get("type") == "assistant_state" and event.get("state") == "speaking")
+        for event in published
+    )
     await runtime.close()
 
 
@@ -2677,6 +2758,7 @@ async def test_controlled_turn_runtime_publishes_monotonic_input_policy() -> Non
         await task
 
     policies = [event for event in published if event["type"] == "input_policy"]
+    states = [event for event in published if event["type"] == "assistant_state"]
     assert [
         (event["capture_allowed"], event["policy_epoch"], event["reason"]) for event in policies
     ] == [
@@ -2686,6 +2768,7 @@ async def test_controlled_turn_runtime_publishes_monotonic_input_policy() -> Non
     ]
     assert all(event["session_id"] == runtime.session_id for event in policies)
     assert all(event["generation_id"] == runtime.fence.generation_id for event in policies)
+    assert all(event["tool_epoch"] == runtime.fence.tool_epoch for event in states)
 
 
 @pytest.mark.asyncio

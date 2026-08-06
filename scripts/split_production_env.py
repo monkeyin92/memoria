@@ -75,6 +75,7 @@ _MEDIA_EDGE_EXTRA_KEYS = frozenset(
         "MEDIA_EDGE_ALLOW_INSECURE_DEVELOPMENT",
         "MEDIA_EDGE_HEALTHCHECK_URL",
         "MEDIA_EDGE_HTTP_ADDR",
+        "MEDIA_EDGE_INTERACTION_AUTHORITY",
         "MEDIA_EDGE_JWT_AUDIENCE",
         "MEDIA_EDGE_JWT_ISSUER",
         "MEDIA_EDGE_JWT_SECRET",
@@ -87,6 +88,10 @@ _MEDIA_EDGE_EXTRA_KEYS = frozenset(
         "MEDIA_EDGE_VOICE_CORE_CONNECT_TIMEOUT_MS",
         "MEDIA_EDGE_VOICE_CORE_REQUIRED",
         "MEDIA_EDGE_VOICE_CORE_SERVER_NAME",
+        "MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON",
+        "MEDIA_EDGE_WEBRTC_PUBLIC_IPS",
+        "MEDIA_EDGE_WEBRTC_UDP_PORT_MAX",
+        "MEDIA_EDGE_WEBRTC_UDP_PORT_MIN",
     }
 )
 
@@ -129,6 +134,12 @@ def split_env(
     if values.get("ENVIRONMENT", "").strip().lower() == "production":
         if values.get("MEMORIA_ARCHIVE_INTERNAL_TOKEN", "").strip():
             raise ValueError("production forbids the legacy all-access internal token")
+        streamcore_secret = values.get("STREAMCORE_TOKEN_SECRET", "").strip()
+        media_edge_secret = values.get("MEDIA_EDGE_JWT_SECRET", "").strip()
+        if (streamcore_secret or media_edge_secret) and streamcore_secret != media_edge_secret:
+            raise ValueError(
+                "production StreamCore and Media Edge token secrets must both be set and match"
+            )
         encryption_keys = [
             values.get(name, "").strip()
             for name in (
