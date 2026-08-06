@@ -86,8 +86,9 @@ func (s *Server) Close() error {
 	// Ensure every pre-drain creator has registered before waiting for its
 	// expensive bridge/provider work to finish.
 	s.openMu.Lock()
+	opening := &s.opening
 	s.openMu.Unlock()
-	s.opening.Wait()
+	opening.Wait()
 	s.openMu.Lock()
 	defer s.openMu.Unlock()
 	s.bridgeMu.Lock()
