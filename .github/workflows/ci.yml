@@ -50,7 +50,7 @@ jobs:
         working-directory: packages/proto
         run: |
           mkdir -p /tmp/memoria-proto-base
-          git archive "${{ github.event.pull_request.base.sha }}" packages/proto \
+          git -C "$(git rev-parse --show-toplevel)" archive "${{ github.event.pull_request.base.sha }}" packages/proto \
             | tar -x -C /tmp/memoria-proto-base --strip-components=2
           buf breaking --against /tmp/memoria-proto-base
       - name: Media bridge contract smoke
