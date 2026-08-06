@@ -646,6 +646,8 @@ class MockDoubaoServer:
     ) -> None:
         full_text = "".join(texts) or "你好"
         samples = max(480, len(full_text) * 240)
+        if self.scenario in {"scaled_ts", "degraded_ts"}:
+            samples = max(samples, 24_000)
         pcm = struct.pack(f"<{samples}h", *([1200] * samples))
         self.pcm = pcm
         if self.scenario == "split_pcm":
@@ -668,9 +670,9 @@ class MockDoubaoServer:
             )
         if self.scenario != "empty_ts":
             duration_s = samples / 24000
-            # scaled_ts keeps the mismatch inside the spec's scaled band
-            # (>120ms and <=300ms); degraded_ts exceeds it so the provider
-            # must mark the alignment degraded rather than scaled.
+            # A realistic long utterance can be linearly normalized when its
+            # 200ms drift remains below the relative-error gate.  A 500ms
+            # drift at this duration must remain degraded.
             if self.scenario == "scaled_ts":
                 subtitle_duration_s = duration_s + 0.2
             elif self.scenario == "degraded_ts":

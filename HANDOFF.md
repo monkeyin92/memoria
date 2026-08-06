@@ -1,6 +1,6 @@
 # 项目交接
 
-## 2026-08-06：评审整改阶段收口与天气实时查询（候选 20260806-201007 已回滚；修复待发布）
+## 2026-08-06：评审整改阶段收口与天气实时查询（候选 20260806-201007 / 20260806-211652 已回滚；213522 待发布）
 
 - `20260806-201007` 的 source/images/H5 均完成验签，隔离 server smoke 通过，但 production
   Control API 在启动时无条件要求尚未验收的 `COTURN_URLS`，导致 healthcheck 失败。runtime 与
@@ -9,7 +9,12 @@
 - 修复把 coturn 的 production 必需校验限制到实际 StreamCore rollout
   （`streamcore + percent > 0 + !kill_switch`）。LiveKit/0% 保持空 `ice_servers`，StreamCore
   真正启用时仍会因缺 COTURN_URLS/独立 secret fail closed。`test_session_api.py` 与 strict mypy
-  已通过，下一候选为 `20260806-211652`。
+  已通过。`20260806-211652` 的候选 runtime 已启动且 LiveKit smoke 通过，但 Doubao 五音色
+  provider gate 因旧 300 ms 单一绝对字幕门禁失败；已原子恢复到 `20260802-142257`，H5 未切换。
+- 新候选 `20260806-213522` 将字幕规则收敛为绝对+相对门禁：`ok` 需 `<=120 ms` 与 `<=20%`，
+  `scaled` 需 `<=700 ms` 与 `<=20%`。真实 `calm_guide/low_magnetic` 的 340–514 ms、最高
+  16.2% 漂移会被安全缩放；短音频的大比例误差和超过 700 ms 的偏差仍为 `degraded`，不写入
+  精确 actual-heard。候选尚未切 runtime/H5。
 
 - 天气/实时查询已接入生产 Provider factory：天气问题优先走无密钥 Open-Meteo，其他主题在有 `DASHSCOPE_API_KEY` 时走 Qwen forced search；先播“稍等，我查询一下。”，后台查询完成后按 generation fence 回告。实时意图会覆盖规划器的静态“我不知道”，但危害/危机混合语句仍由固定安全回复优先；无结果保持安全拒答，不猜测。真实 Open-Meteo 南京 canary 已成功返回实时数据。
 - Python Voice Core 的 session singleflight、有限 Audio Pump、Adaptive Endpoint/尾超时、有序 ASR LRU、gRPC Critical/Reliable/Coalescing lane 已通过定向与全量回归；`uv run ruff check services/agent services/control_api services/common` 和 `uv run mypy services --strict` 通过（237 files）。

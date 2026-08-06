@@ -129,25 +129,45 @@ def test_request_payloads_and_pcm_duration() -> None:
     assert json.loads(params["additions"])["disable_markdown_filter"] is True
     assert build_task_request_payload("你好")["req_params"]["text"] == "你好"
     assert pcm_duration_ms(b"\0" * 48000) == 1000
-    words = parse_subtitle_words({"words": [{"word": "你", "startTime": 0, "endTime": 0.5}]})
-    aligned, status = align_subtitle_words(words, pcm_duration_ms_value=700)
+    words = parse_subtitle_words({"words": [{"word": "你", "startTime": 0, "endTime": 1.0}]})
+    aligned, status = align_subtitle_words(words, pcm_duration_ms_value=1200)
     assert status == "scaled"
-    assert aligned[-1].end_ms == 700
+    assert aligned[-1].end_ms == 1200
 
 
-def test_subtitle_alignment_only_uses_raw_timing_within_120ms() -> None:
+def test_subtitle_alignment_uses_raw_timing_only_within_both_tolerances() -> None:
     words = parse_subtitle_words({"words": [{"word": "你", "startTime": 0, "endTime": 1.0}]})
 
     exact, exact_status = align_subtitle_words(words, pcm_duration_ms_value=1120)
     scaled, scaled_status = align_subtitle_words(words, pcm_duration_ms_value=1121)
-    degraded, degraded_status = align_subtitle_words(words, pcm_duration_ms_value=1301)
+    degraded, degraded_status = align_subtitle_words(words, pcm_duration_ms_value=1500)
 
     assert exact_status == "ok"
     assert exact[-1].end_ms == 1000
     assert scaled_status == "scaled"
     assert scaled[-1].end_ms == 1121
     assert degraded_status == "degraded"
-    assert degraded[-1].end_ms == 1301
+    assert degraded[-1].end_ms == 1500
+
+
+def test_subtitle_alignment_scales_only_long_proportional_drift() -> None:
+    long_words = parse_subtitle_words(
+        {"words": [{"word": "你", "startTime": 0, "endTime": 3.0}]}
+    )
+    short_words = parse_subtitle_words(
+        {"words": [{"word": "你", "startTime": 0, "endTime": 1.0}]}
+    )
+
+    scaled, scaled_status = align_subtitle_words(long_words, pcm_duration_ms_value=3500)
+    short, short_status = align_subtitle_words(short_words, pcm_duration_ms_value=1500)
+    absolute, absolute_status = align_subtitle_words(long_words, pcm_duration_ms_value=3801)
+
+    assert scaled_status == "scaled"
+    assert scaled[-1].end_ms == 3500
+    assert short_status == "degraded"
+    assert short[-1].end_ms == 1500
+    assert absolute_status == "degraded"
+    assert absolute[-1].end_ms == 3801
 
 
 def test_rejects_truncated_or_compressed_frames() -> None:
