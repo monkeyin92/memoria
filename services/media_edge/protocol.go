@@ -47,6 +47,7 @@ type AudioFrame struct {
 	ToolEpoch          uint64 `json:"tool_epoch"`
 	PayloadB64         string `json:"payload_b64"`
 	Discontinuity      bool   `json:"discontinuity,omitempty"`
+	Final              bool   `json:"final,omitempty"`
 }
 
 func (f AudioFrame) Payload() ([]byte, error) {

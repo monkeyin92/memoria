@@ -191,6 +191,8 @@ async def test_streamcore_reconnect_gets_authoritative_epoch_and_rotated_token(
     assert body["streamcore"]["token"] != created.json()["streamcore"]["token"]
     assert heartbeat.status_code == 200
     assert heartbeat.json()["stream_epoch"] == 2
+    assert heartbeat.json()["token"] != body["streamcore"]["token"]
+    assert heartbeat.json()["token_expires_at"]
     assert stop.status_code == 200
     assert stop.json()["media_runtime"] == "streamcore"
     assert stop.json()["generation_id"] == 1

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from collections.abc import AsyncIterator
 from dataclasses import replace
@@ -296,13 +297,45 @@ async def test_exact_response_plan_is_the_only_system_prompt_and_owner_can_use_t
             shadow_low_sensitivity_persona=True,
         )
     )
+    runtime._speaker_class = "owner"
     await runtime.orchestrator.ready()
     await runtime.on_turn_committed("今天有点累")
+
+    async def tool_handler(
+        _arguments: dict[str, Any],
+        _cancel: asyncio.Event,
+    ) -> str:
+        return "ok"
+
+    runtime.orchestrator.task_manager.register(
+        agent_mod.ToolSpec(
+            name="tool",
+            description="测试工具",
+            input_schema={"type": "object"},
+            cancellable=True,
+            idempotent=True,
+            timeout_s=1,
+            side_effect_policy="read_only",
+        ),
+        tool_handler,
+    )
+
+    async def direct_tool(_raw_arguments: dict[str, object]) -> str:
+        return "ok"
+
+    tool = llm.function_tool(
+        direct_tool,
+        raw_schema={
+            "name": "tool",
+            "description": "测试工具",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    )
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
     agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan(runtime)
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
 
-    assert [item async for item in agent.llm_node(llm.ChatContext.empty(), ["tool"], None)] == [
+    assert [item async for item in agent.llm_node(llm.ChatContext.empty(), [tool], None)] == [
         "我在。"
     ]
     system_text = "\n".join(
@@ -311,7 +344,8 @@ async def test_exact_response_plan_is_the_only_system_prompt_and_owner_can_use_t
     assert "按当前控制计划自然回答" in system_text
     assert "冻结的陪伴方式" not in system_text
     assert len([message for message in captured["ctx"].messages() if message.role == "system"]) == 1
-    assert captured["tools"] == ["tool"]
+    assert len(captured["tools"]) == 1
+    assert captured["tools"][0].info.name == "tool"
     await runtime.close()
 
 

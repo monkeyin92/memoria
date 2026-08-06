@@ -14,6 +14,7 @@ from typing import Literal
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.voice_core.generation_controller import GenerationController
+from services.agent.src.voice_core.interaction_authority import InteractionAuthority
 from services.agent.src.voice_core.media_protocol import AudioFrame, MediaEnvelope, SessionIdentity
 from services.agent.src.voice_core.speech_timeline import SpeechTimeline
 
@@ -32,6 +33,8 @@ class PCMFrame:
     pcm_s16le: bytes
     first: bool = False
     final: bool = False
+    task_epoch: int = 0
+    context_version: int = 0
 
     def __post_init__(self) -> None:
         if min(
@@ -40,6 +43,8 @@ class PCMFrame:
             self.tool_epoch,
             self.sequence,
             self.source_start_sample,
+            self.task_epoch,
+            self.context_version,
         ) < 0:
             raise ValueError("PCM frame metadata must be non-negative")
         if (
@@ -55,6 +60,8 @@ class PCMFrame:
 class MediaBridgeSession:
     identity: SessionIdentity
     max_pending_audio_frames: int = 100
+    traceparent: str = ""
+    interaction_authority: InteractionAuthority = InteractionAuthority.PYTHON_AUTHORITATIVE
     state: BridgeState = "connected"
     generation: GenerationController = field(init=False)
     timeline: SpeechTimeline = field(default_factory=SpeechTimeline)
@@ -74,6 +81,8 @@ class MediaBridgeSession:
     generation_active: bool = True
     stale_downlink_count: int = 0
     overflow_count: int = 0
+    task_epoch: int = 0
+    context_version: int = 0
     _last_client_event_sequence: int = -1
     _last_client_event_id: str | None = None
     _last_client_progress_fingerprint: tuple[object, ...] | None = None
@@ -83,8 +92,19 @@ class MediaBridgeSession:
     def __post_init__(self) -> None:
         if self.max_pending_audio_frames <= 0:
             raise ValueError("max_pending_audio_frames must be positive")
+        if len(self.traceparent) > 128:
+            raise ValueError("traceparent must be a short string")
         self.generation = GenerationController(session_id=self.identity.session_id)
         self.timeline.start_stream_epoch(self.identity.stream_epoch)
+
+    def observe_versions(self, task_epoch: int, context_version: int) -> tuple[int, int]:
+        """Keep the monotonic versions carried by every Core-to-Media event."""
+
+        if task_epoch < 0 or context_version < 0:
+            raise ValueError("media event versions must be non-negative")
+        self.task_epoch = max(self.task_epoch, task_epoch)
+        self.context_version = max(self.context_version, context_version)
+        return self.task_epoch, self.context_version
 
     @property
     def fence(self) -> GenerationFence:
@@ -432,12 +452,20 @@ class MediaBridgeServer:
     max_pending_audio_frames: int = 100
     sessions: dict[str, MediaBridgeSession] = field(default_factory=dict)
 
-    def open(self, identity: SessionIdentity) -> MediaBridgeSession:
+    def open(
+        self,
+        identity: SessionIdentity,
+        *,
+        traceparent: str = "",
+        interaction_authority: InteractionAuthority = InteractionAuthority.PYTHON_AUTHORITATIVE,
+    ) -> MediaBridgeSession:
         if identity.session_id in self.sessions:
             raise ValueError("media session already exists")
         session = MediaBridgeSession(
             identity=identity,
             max_pending_audio_frames=self.max_pending_audio_frames,
+            traceparent=traceparent,
+            interaction_authority=interaction_authority,
         )
         self.sessions[identity.session_id] = session
         return session

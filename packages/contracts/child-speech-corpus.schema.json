@@ -36,7 +36,7 @@
         "required": ["consent_artifact"],
         "properties": {
           "fixtures": {
-            "minItems": 150,
+            "minItems": 200,
             "items": {"required": ["audio_path"]}
           }
         }

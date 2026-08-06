@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from services.agent.src.contracts.events import TimedWord
@@ -295,36 +296,68 @@ def test_stable_prefix_empty_incomplete_and_rewrite_rejection() -> None:
 @pytest.mark.asyncio
 async def test_task_manager_errors_timeout_cancel_and_summaries() -> None:
     tm = TaskManager()
+    expires_at_ms = int(time.time() * 1_000) + 10_000
+
+    async def start(name: str):
+        return await tm.start(
+            name,
+            {},
+            _fence(),
+            task_epoch=1,
+            context_version=0,
+            expires_at_ms=expires_at_ms,
+            side_effect_policy="read_only",
+            committed=True,
+        )
+
+    def accept(task_id: str):
+        return tm.accept_result(
+            task_id,
+            _fence(),
+            current_task_epoch=1,
+            current_context_version=0,
+            now_ms=int(time.time() * 1_000),
+            relevant=True,
+            current_side_effect_policy="read_only",
+        )
+
     with pytest.raises(KeyError):
-        await tm.start("missing", {}, _fence())
+        await start("missing")
 
     async def timeout_handler(args: dict[str, object], event: asyncio.Event) -> None:
         _ = args, event
         await asyncio.sleep(1)
 
-    tm.register(ToolSpec("timeout", "", {}, True, True, 0.001), timeout_handler)
-    timeout_rec = await tm.start("timeout", {}, _fence())
-    assert await tm.wait_result(timeout_rec.tool_task_id, _fence()) == {
+    tm.register(
+        ToolSpec("timeout", "", {}, True, True, 0.001, side_effect_policy="read_only"),
+        timeout_handler,
+    )
+    timeout_rec = await start("timeout")
+    await timeout_rec.task
+    assert accept(timeout_rec.tool_task_id) == {
         "error": "tool_timeout",
         "tool": "timeout",
     }
-    assert tm.accept_result("missing", _fence()) is None
+    assert accept("missing") is None
 
     async def stubborn(args: dict[str, object], event: asyncio.Event) -> None:
         _ = args, event
         await asyncio.sleep(1)
 
-    tm.register(ToolSpec("stubborn", "", {}, True, True, 2), stubborn)
-    rec = await tm.start("stubborn", {}, _fence())
+    tm.register(
+        ToolSpec("stubborn", "", {}, True, True, 2, side_effect_policy="read_only"),
+        stubborn,
+    )
+    rec = await start("stubborn")
     assert tm.active_count() == 1
     await tm.cancel_cancellable(_fence())
     assert rec.cancelled is True
-    assert await tm.wait_result(rec.tool_task_id, _fence()) is None
+    assert accept(rec.tool_task_id) is None
 
     assert spoken_result_summarizer({"error": "x"}).startswith("刚才")
     assert spoken_result_summarizer({"spoken": "一句"}) == "一句。"
     assert spoken_result_summarizer({"a": 1, "b": "二"}) == "1，二。"
-    assert spoken_result_summarizer({}) == "结果已经出来了。"
+    assert spoken_result_summarizer({}) == ""
     assert spoken_result_summarizer({"summary": "一。二。三。四。"}) == "一。二。三。"
     assert new_idempotency_key() != new_idempotency_key()
 

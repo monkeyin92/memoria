@@ -13,6 +13,7 @@ import weakref
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any
 
 import websockets
@@ -30,9 +31,9 @@ from livekit.agents.types import (
 )
 from websockets.asyncio.client import ClientConnection
 
+from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
 from services.agent.src.orchestration.stable_prefix import StablePrefixTracker
 from services.agent.src.providers.funasr_protocol import (
-    ASRResult,
     FunASRSentence,
     FunASRServerEvent,
     build_continue_task_context,
@@ -44,6 +45,7 @@ from services.agent.src.providers.funasr_protocol import (
     sentence_to_asr_result,
 )
 from services.agent.src.providers.reliability import CircuitBreaker
+from services.agent.src.voice_core.speech_timeline import ASRResult
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +104,14 @@ class FunASRConfig:
 class FunASRSession:
     """Standalone streaming FunASR session (mock or real WS). Used by offline path & stream."""
 
-    def __init__(self, config: FunASRConfig) -> None:
+    def __init__(
+        self,
+        config: FunASRConfig,
+        *,
+        metrics: MetricsRegistry | None = None,
+    ) -> None:
         self.config = config
+        self.metrics = metrics
         self.task_id: str | None = None
         self._ws: ClientConnection | None = None
         self._started = asyncio.Event()
@@ -126,6 +134,17 @@ class FunASRSession:
         self._last_provider_acked_sample = 0
         self._last_committed_sample = 0
         self._last_emitted_final_sample = 0
+        self._metrics_ws_active = False
+
+    def _mark_ws_connected(self) -> None:
+        if self.metrics is not None and not self._metrics_ws_active:
+            self.metrics.add_provider_ws_active("asr", 1)
+            self._metrics_ws_active = True
+
+    def _mark_ws_disconnected(self) -> None:
+        if self.metrics is not None and self._metrics_ws_active:
+            self.metrics.add_provider_ws_active("asr", -1)
+            self._metrics_ws_active = False
 
     @property
     def failed(self) -> bool:
@@ -187,6 +206,7 @@ class FunASRSession:
         self._failed = False
         self._started.set()
         self._ready.set()
+        self._mark_ws_connected()
         for ev in startup_events:
             await self.events.put(ev)
         self._recv_task = asyncio.create_task(self._recv_loop(), name="funasr-recv-loop")
@@ -279,10 +299,12 @@ class FunASRSession:
                                 min(ack, self._last_sent_sample),
                             )
                     if ev.event in ("task-finished", "task-failed"):
+                        self._mark_ws_disconnected()
+                        self._ready.clear()
+                        with contextlib.suppress(Exception):
+                            await ws.close()
                         if ev.event == "task-failed":
-                            self._ready.clear()
-                            with contextlib.suppress(Exception):
-                                await ws.close()
+                            self._failed = True
                         return
                 if self._closed:
                     return
@@ -308,12 +330,15 @@ class FunASRSession:
             if self._ws is not failed_ws and self._ready.is_set():
                 return True
             self._ready.clear()
+            self._mark_ws_disconnected()
             with contextlib.suppress(Exception):
                 await failed_ws.close()
             started_at = asyncio.get_running_loop().time()
             try:
                 replay_start = self.replay_start_sample()
                 self._breaker.before_request()
+                if self.metrics is not None:
+                    self.metrics.inc_provider_ws_reconnect("asr")
                 ws, task_id, startup_events = await self._open_with_retry()
             except Exception:
                 self._breaker.record_failure()
@@ -324,6 +349,7 @@ class FunASRSession:
                 self._task_epoch += 1
                 self._task_sample_origin = replay_start
                 self._failed = False
+                self._mark_ws_connected()
                 for ev in startup_events:
                     await self.events.put(ev)
                 if asyncio.get_running_loop().time() - started_at <= 2.0:
@@ -334,6 +360,7 @@ class FunASRSession:
                     await ws.send(json.dumps(build_finish_task(task_id), ensure_ascii=False))
             except Exception:
                 self._failed = True
+                self._mark_ws_disconnected()
                 with contextlib.suppress(Exception):
                     await ws.close()
                 self._breaker.record_failure()
@@ -397,11 +424,17 @@ class FunASRSession:
         ws = self._ws
         if ws is None:
             raise RuntimeError("FunASR session not connected")
+        started = monotonic()
         try:
             await ws.send(pcm)
         except Exception:
             if not await self._recover(ws):
                 raise APIConnectionError("FunASR reconnect failed") from None
+        if self.metrics is not None:
+            self.metrics.set_media_metric(
+                "asr_send_lag_ms",
+                (monotonic() - started) * 1000.0,
+            )
 
     async def update_context(self, context: tuple[dict[str, object], ...]) -> None:
         self._context = context
@@ -412,7 +445,7 @@ class FunASRSession:
         await self._ws.send(json.dumps(msg, ensure_ascii=False))
 
     async def finish(self) -> None:
-        if self._ws is None or self.task_id is None:
+        if self._finishing or self._ws is None or self.task_id is None:
             return
         self._finishing = True
         await self._ready.wait()
@@ -426,6 +459,7 @@ class FunASRSession:
 
     async def aclose(self) -> None:
         self._closed = True
+        self._mark_ws_disconnected()
         self._ready.clear()
         if self._recv_task is not None:
             self._recv_task.cancel()
@@ -537,7 +571,10 @@ class FunASRRecognizeStream(stt.RecognizeStream):
         self._context_updates.put_nowait(self._pending_context)
 
     async def _run(self) -> None:
-        session = FunASRSession(self._config)
+        session = FunASRSession(
+            self._config,
+            metrics=getattr(self._stt_instance, "metrics", None),
+        )
         session._context = self._pending_context
         self._session = session
         try:
@@ -666,13 +703,20 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                     sent.sentence_id,
                 )
                 continue
-            if sent.sentence_end and asr_result.capture_end_sample <= self._last_emitted_final_sample:
+            if (
+                sent.sentence_end
+                and asr_result.capture_end_sample <= self._last_emitted_final_sample
+            ):
                 logger.info(
                     "duplicate FunASR final behind sample watermark ignored sentence_id=%s",
                     sent.sentence_id,
                 )
                 continue
-            if sent.sentence_end and sent.sentence_id > 0 and sentence_key in self._final_sentence_ids:
+            if (
+                sent.sentence_end
+                and sent.sentence_id > 0
+                and sentence_key in self._final_sentence_ids
+            ):
                 logger.info(
                     "duplicate FunASR final ignored sentence_id=%s",
                     sent.sentence_id,
@@ -740,7 +784,12 @@ class FunASRRecognizeStream(stt.RecognizeStream):
 class FunASRSTT(stt.STT[Any]):
     """LiveKit STT plugin for Alibaba FunASR Realtime."""
 
-    def __init__(self, config: FunASRConfig) -> None:
+    def __init__(
+        self,
+        config: FunASRConfig,
+        *,
+        metrics: MetricsRegistry | None = None,
+    ) -> None:
         super().__init__(
             capabilities=stt.STTCapabilities(
                 streaming=True,
@@ -753,16 +802,15 @@ class FunASRSTT(stt.STT[Any]):
             )
         )
         self._config = config
+        self.metrics = metrics
         self._context_items: deque[dict[str, object]] = deque(maxlen=10)
         self._streams: weakref.WeakSet[FunASRRecognizeStream] = weakref.WeakSet()
         self._pcm_observer: Callable[[bytes], None] | None = None
-        self._trace_callback: (
-            Callable[[str, str, dict[str, int]], None] | None
-        ) = None
+        self._trace_callback: Callable[[str, str, dict[str, int]], None] | None = None
 
     @classmethod
     def from_env(cls) -> FunASRSTT:
-        return cls(FunASRConfig.from_env())
+        return cls(FunASRConfig.from_env(), metrics=GLOBAL_METRICS)
 
     @property
     def provider(self) -> str:
@@ -852,7 +900,7 @@ class FunASRSTT(stt.STT[Any]):
         return stream
 
     def create_session(self) -> FunASRSession:
-        session = FunASRSession(self._config)
+        session = FunASRSession(self._config, metrics=self.metrics)
         session._context = tuple(self._context_items)
         return session
 

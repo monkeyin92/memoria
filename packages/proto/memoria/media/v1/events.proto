@@ -15,4 +15,7 @@ message EventEnvelope {
   uint64 generation_id = 8;
   uint64 server_monotonic_ms = 9;
   bytes json_payload = 10;
+  uint64 tool_epoch = 11;
+  uint64 task_epoch = 12;
+  uint64 context_version = 13;
 }

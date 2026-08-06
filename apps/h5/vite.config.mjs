@@ -13,6 +13,18 @@ export default defineConfig({
       allow: [".."],
     },
     port: 4173,
+    proxy: {
+      "/memoria-api": {
+        target: process.env.VITE_CONTROL_API_PROXY || "http://127.0.0.1:8000",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/memoria-api/, ""),
+        // The upstream API sees /v1/auth after rewrite. Expose the refresh
+        // cookie on the browser-facing proxy path so reload keeps the session.
+        cookiePathRewrite: {
+          "/v1/auth": "/memoria-api/v1/auth",
+        },
+      },
+    },
     warmup: {
       clientFiles: ["./src/main.jsx"],
     },

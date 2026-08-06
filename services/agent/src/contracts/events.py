@@ -20,6 +20,10 @@ UI_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "speaker_enroll_result",
         "speaker_reject",
         "transcript_delta",
+        "turn.committed",
+        "turn.provisional.discarded",
+        "turn.provisional.patch",
+        "turn.provisional.started",
     }
 )
 

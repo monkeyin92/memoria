@@ -722,13 +722,15 @@ curl -fsS http://127.0.0.1:8791/health/ready
 
 ```text
 livekit_smoke_test PASS: authenticated room-service access
-provider_smoke_test PASS: FunASR, DeepSeek, Doubao, InterruptSemantic
+provider_smoke_test PASS: FunASR, QwenRealtimeSearch, DeepSeek, Doubao, InterruptSemantic
 readiness refresh PASS: $RELEASE_TAG (bailian_deepseek)
 ```
 
 `Doubao` 通过必须同时满足：双向增量文本合成返回非空 24 kHz、单声道、
 PCM signed 16-bit little-endian 音频，字级时间戳非空且单调，并将同一段合成音频降采样后
 送入 FunASR，最终文本命中测试语义。任何一项失败都不能写入 readiness evidence。
+`QwenRealtimeSearch` 必须用隔离的强制公网检索返回非空结果；它不携带用户身份、历史或
+私有上下文，失败时同样不得写入 readiness evidence。
 `InterruptSemantic` 还必须用 `deepseek-v4-flash` 通过五类严格枚举样本：真实污染、
 控制词+真实内容、引用助手原话的追问、明确问题，以及控制词+助手回声；任一返回
 `UNSURE`、非法枚举或与预期不符均不得写入 readiness evidence。

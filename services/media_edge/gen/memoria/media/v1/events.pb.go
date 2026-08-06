@@ -33,6 +33,9 @@ type EventEnvelope struct {
 	GenerationId      uint64                 `protobuf:"varint,8,opt,name=generation_id,json=generationId,proto3" json:"generation_id,omitempty"`
 	ServerMonotonicMs uint64                 `protobuf:"varint,9,opt,name=server_monotonic_ms,json=serverMonotonicMs,proto3" json:"server_monotonic_ms,omitempty"`
 	JsonPayload       []byte                 `protobuf:"bytes,10,opt,name=json_payload,json=jsonPayload,proto3" json:"json_payload,omitempty"`
+	ToolEpoch         uint64                 `protobuf:"varint,11,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
+	TaskEpoch         uint64                 `protobuf:"varint,12,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
+	ContextVersion    uint64                 `protobuf:"varint,13,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -137,11 +140,32 @@ func (x *EventEnvelope) GetJsonPayload() []byte {
 	return nil
 }
 
+func (x *EventEnvelope) GetToolEpoch() uint64 {
+	if x != nil {
+		return x.ToolEpoch
+	}
+	return 0
+}
+
+func (x *EventEnvelope) GetTaskEpoch() uint64 {
+	if x != nil {
+		return x.TaskEpoch
+	}
+	return 0
+}
+
+func (x *EventEnvelope) GetContextVersion() uint64 {
+	if x != nil {
+		return x.ContextVersion
+	}
+	return 0
+}
+
 var File_memoria_media_v1_events_proto protoreflect.FileDescriptor
 
 const file_memoria_media_v1_events_proto_rawDesc = "" +
 	"\n" +
-	"\x1dmemoria/media/v1/events.proto\x12\x10memoria.media.v1\"\xc7\x02\n" +
+	"\x1dmemoria/media/v1/events.proto\x12\x10memoria.media.v1\"\xae\x03\n" +
 	"\rEventEnvelope\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x19\n" +
@@ -154,7 +178,12 @@ const file_memoria_media_v1_events_proto_rawDesc = "" +
 	"\rgeneration_id\x18\b \x01(\x04R\fgenerationId\x12.\n" +
 	"\x13server_monotonic_ms\x18\t \x01(\x04R\x11serverMonotonicMs\x12!\n" +
 	"\fjson_payload\x18\n" +
-	" \x01(\fR\vjsonPayloadBBZ@github.com/monkeyin92/memoria-media-runtime/gen/media/v1;mediav1b\x06proto3"
+	" \x01(\fR\vjsonPayload\x12\x1d\n" +
+	"\n" +
+	"tool_epoch\x18\v \x01(\x04R\ttoolEpoch\x12\x1d\n" +
+	"\n" +
+	"task_epoch\x18\f \x01(\x04R\ttaskEpoch\x12'\n" +
+	"\x0fcontext_version\x18\r \x01(\x04R\x0econtextVersionBBZ@github.com/monkeyin92/memoria-media-runtime/gen/media/v1;mediav1b\x06proto3"
 
 var (
 	file_memoria_media_v1_events_proto_rawDescOnce sync.Once

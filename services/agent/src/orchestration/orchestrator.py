@@ -22,6 +22,8 @@ from services.agent.src.orchestration.context_manager import (
     ContextManager,
     SpeakerScope,
 )
+from services.agent.src.orchestration.context_snapshot_manager import ContextSnapshotManager
+from services.agent.src.orchestration.delegation_coordinator import DelegationCoordinator
 from services.agent.src.orchestration.generation_fence import FenceGate
 from services.agent.src.orchestration.handlers import (
     LanguageModelHandler,
@@ -64,7 +66,7 @@ class PlaybackController:
     pcm_played: bytearray = field(default_factory=bytearray)
     stop_latency_ns: int = 5_000_000  # 5ms simulated stop
 
-    async def start(self) -> None:
+    def start(self) -> None:
         self.playing = True
         self.started_mono_ns = time.monotonic_ns()
         self.stopped_mono_ns = None
@@ -102,6 +104,8 @@ class Orchestrator:
         default_factory=lambda: ContextManager(system_prompt=VOICE_SYSTEM_PROMPT)
     )
     task_manager: TaskManager = field(default_factory=TaskManager)
+    delegation: DelegationCoordinator = field(init=False)
+    context_snapshots: ContextSnapshotManager = field(init=False)
     interruption_guard: ChineseInterruptionGuard = field(default_factory=ChineseInterruptionGuard)
     playback: PlaybackController = field(default_factory=PlaybackController)
     tts_pool: TTSPoolHandle = field(default_factory=TTSPoolHandle)
@@ -118,14 +122,20 @@ class Orchestrator:
     _pending_interrupted_to: GenerationFence | None = None
     _pending_interrupted_message: ChatMessage | None = None
     _speaker_scope_by_turn: dict[int, SpeakerScope] = field(default_factory=dict)
+    _context_version_by_fence: dict[GenerationFence, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        self.delegation = DelegationCoordinator(self.task_manager)
+        self.context_snapshots = ContextSnapshotManager(metrics=self.metrics)
+        snapshot = self.context_snapshots.initialize(self.session_id)
+        self.delegation.activate_context_version(self.session_id, snapshot.version)
         fence = GenerationFence(
             session_id=self.session_id,
             turn_id=0,
             generation_id=0,
             tool_epoch=0,
         )
+        self._context_version_by_fence[fence] = snapshot.version
         if self.state_machine is None:
             self.state_machine = DuplexStateMachine(
                 session_id=self.session_id,
@@ -150,6 +160,37 @@ class Orchestrator:
     def speaker_scope_for_fence(self, fence: GenerationFence) -> SpeakerScope:
         """Resolve scope from the originating turn, never from the latest speaker."""
         return self._speaker_scope_by_turn.get(fence.turn_id, "public")
+
+    def context_version_for_fence(self, fence: GenerationFence) -> int:
+        try:
+            return self._context_version_by_fence[fence]
+        except KeyError as exc:
+            raise ValueError("context version is not bound to this fence") from exc
+
+    def bind_context_version(self, fence: GenerationFence, version: int) -> bool:
+        """Freeze the locally activated snapshot onto the current generation."""
+
+        if (
+            version < 0
+            or not self.fence.matches(fence)
+            or self.context_snapshots.current(self.session_id).version != version
+        ):
+            return False
+        self._context_version_by_fence[fence] = version
+        return True
+
+    def _inherit_context_version(
+        self,
+        previous: GenerationFence,
+        current: GenerationFence,
+    ) -> bool:
+        version = self._context_version_by_fence.get(previous)
+        if version is None:
+            return False
+        self._context_version_by_fence[current] = version
+        while len(self._context_version_by_fence) > self.context.max_turns:
+            self._context_version_by_fence.pop(next(iter(self._context_version_by_fence)))
+        return True
 
     async def ready(self) -> None:
         assert self.state_machine is not None
@@ -221,8 +262,13 @@ class Orchestrator:
             self.heard_tracker.reset()
             self.context.add_user(user_text, speaker_scope=speaker_scope)
             self._speaker_scope_by_turn[new_fence.turn_id] = speaker_scope
+            self._context_version_by_fence[new_fence] = self.context_snapshots.current(
+                self.session_id
+            ).version
             while len(self._speaker_scope_by_turn) > self.context.max_turns:
                 self._speaker_scope_by_turn.pop(next(iter(self._speaker_scope_by_turn)))
+            while len(self._context_version_by_fence) > self.context.max_turns:
+                self._context_version_by_fence.pop(next(iter(self._context_version_by_fence)))
             self._tts_cancel = asyncio.Event()
             return new_fence
 
@@ -270,8 +316,7 @@ class Orchestrator:
             if (
                 fence.turn_id < current.turn_id
                 or (
-                    fence.turn_id == current.turn_id
-                    and fence.generation_id < current.generation_id
+                    fence.turn_id == current.turn_id and fence.generation_id < current.generation_id
                 )
                 or (
                     fence.turn_id == current.turn_id
@@ -282,6 +327,8 @@ class Orchestrator:
                 return False
             if fence.matches(current):
                 return True
+            if not self._inherit_context_version(current, fence):
+                return False
 
             # Cancellation is a correctness fence, not a queue-clearing hint.
             self._tts_cancel.set()
@@ -312,6 +359,37 @@ class Orchestrator:
                     new_fence=fence,
                 )
             return True
+
+    async def begin_auxiliary_output(
+        self,
+        expected_fence: GenerationFence,
+    ) -> GenerationFence | None:
+        """Advance a completed media reply into one fenced follow-up output.
+
+        A queued tool/deep/ack source must not masquerade as a new user turn.
+        It inherits the original turn's frozen context while moving the state
+        back through THINKING so the normal speaking/playback lifecycle stays
+        authoritative.
+        """
+
+        assert self.state_machine is not None
+        assert self.fence_gate is not None
+        async with self._state_lock:
+            if not self.fence.matches(expected_fence) or self.state is not ConversationState.LISTENING:
+                return None
+            next_fence = expected_fence.bump_generation()
+            if not self._inherit_context_version(expected_fence, next_fence):
+                return None
+            self.state_machine.apply(
+                TransitionEvent.OUTPUT_READY,
+                cause="media_auxiliary_output",
+                new_fence=next_fence,
+            )
+            self.fence_gate.update(next_fence)
+            if self.segmenter is not None:
+                self.segmenter.reset(next_fence)
+            self._tts_cancel = asyncio.Event()
+            return next_fence
 
     @staticmethod
     def _generation_fence(
@@ -386,19 +464,49 @@ class Orchestrator:
         return self._tts_cancel
 
     async def begin_speaking(
-        self, words: list[TimedWord] | tuple[TimedWord, ...], full_text: str
-    ) -> None:
+        self,
+        words: list[TimedWord] | tuple[TimedWord, ...],
+        full_text: str,
+        *,
+        expected_fence: GenerationFence | None = None,
+        precondition: Callable[[], bool] | None = None,
+    ) -> bool:
         assert self.state_machine is not None
         async with self._state_lock:
+            if expected_fence is not None and not self.fence.matches(expected_fence):
+                return False
+            if precondition is not None and not precondition():
+                return False
+            self.playback.start()
             if self.state_machine.can_transition(TransitionEvent.FIRST_PHRASE_READY):
                 self.state_machine.apply(TransitionEvent.FIRST_PHRASE_READY)
-        self.heard_tracker.set_full_text(full_text)
-        self.heard_tracker.add_words(words)
-        await self.playback.start()
-        if self.playback.started_mono_ns is not None:
-            self.heard_tracker.mark_playback_started(self.playback.started_mono_ns)
-        # Invariant: mic/VAD/ASR stay open while speaking
-        assert self.mic_open and self.vad_active and self.asr_active
+            self.heard_tracker.set_full_text(full_text)
+            self.heard_tracker.add_words(words)
+            if self.playback.started_mono_ns is not None:
+                self.heard_tracker.mark_playback_started(self.playback.started_mono_ns)
+            # Invariant: mic/VAD/ASR stay open while speaking
+            assert self.mic_open and self.vad_active and self.asr_active
+            return True
+
+    async def abandon_response(
+        self,
+        expected_fence: GenerationFence,
+        *,
+        cause: str,
+        precondition: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Return the current failed/empty response to listening without bumping its fence."""
+
+        assert self.state_machine is not None
+        async with self._state_lock:
+            if not self.fence.matches(expected_fence):
+                return False
+            if precondition is not None and not precondition():
+                return False
+            if not self.state_machine.can_transition(TransitionEvent.STOP_RESPONSE):
+                return False
+            self.state_machine.apply(TransitionEvent.STOP_RESPONSE, cause=cause)
+            return True
 
     async def finish_speaking(self, *, tools_active: bool = False) -> None:
         await self.finish_livekit_playback(tools_active=tools_active)
@@ -477,6 +585,8 @@ class Orchestrator:
 
             old = self.fence
             new_fence = old.bump_generation()
+            if not self._inherit_context_version(old, new_fence):
+                raise RuntimeError("current generation has no frozen context version")
             self.state_machine.fence = new_fence
             self.fence_gate.update(new_fence)
             if cause != "rtc_recovered":
@@ -624,7 +734,10 @@ class Orchestrator:
         assert self.state_machine is not None
         assert self.fence_gate is not None
         async with self._state_lock:
-            new_fence = self.fence.bump_tool_epoch()
+            old_fence = self.fence
+            new_fence = old_fence.bump_tool_epoch()
+            if not self._inherit_context_version(old_fence, new_fence):
+                raise RuntimeError("current generation has no frozen context version")
             self.state_machine.fence = new_fence
             self.fence_gate.update(new_fence)
             if self.state_machine.can_transition(TransitionEvent.USER_CHANGED_TOOL_CONDITIONS):

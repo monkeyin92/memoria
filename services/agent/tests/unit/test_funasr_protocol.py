@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from services.agent.src.providers.funasr_protocol import (
-    ASRResult,
     build_continue_task_context,
     build_finish_task,
     build_run_task,
@@ -12,6 +11,7 @@ from services.agent.src.providers.funasr_protocol import (
     timestamps_monotonic,
     words_to_seconds,
 )
+from services.agent.src.voice_core.speech_timeline import ASRResult, ASRTimingCoverage
 
 
 def test_run_task_shape() -> None:
@@ -95,6 +95,84 @@ def test_sentence_to_asr_result_uses_sample_clock() -> None:
     offset = sentence_to_asr_result(sentence, task_epoch=2, sample_offset=10_000)
     assert offset.capture_start_sample == 12_720
     assert offset.capture_end_sample == 24_720
+
+
+def test_sentence_to_asr_result_downgrades_malformed_word_timing() -> None:
+    sentence = parse_server_message(
+        {
+            "header": {"event": "result-generated", "task_id": "t1"},
+            "payload": {
+                "sentence": {
+                    "sentence_id": 4,
+                    "begin_time": 0,
+                    "end_time": 100,
+                    "text": "你好",
+                    "sentence_end": True,
+                    "words": [
+                        {"begin_ms": 60, "end_ms": 80, "text": "好"},
+                        {"begin_ms": 10, "end_ms": 30, "text": "你"},
+                    ],
+                }
+            },
+        }
+    ).sentence
+    assert sentence is not None
+
+    result = sentence_to_asr_result(sentence, task_epoch=1)
+    assert result.text == "你好"
+    assert result.timing_evidence is not None
+    assert result.timing_evidence.coverage is ASRTimingCoverage.INVALID
+
+
+def test_negative_provider_word_timing_does_not_fail_sentence_parsing() -> None:
+    sentence = parse_server_message(
+        {
+            "header": {"event": "result-generated", "task_id": "t1"},
+            "payload": {
+                "sentence": {
+                    "sentence_id": 5,
+                    "begin_time": 0,
+                    "end_time": 100,
+                    "text": "你好",
+                    "sentence_end": True,
+                    "words": [
+                        {"begin_time": -10, "end_time": 30, "text": "你"},
+                        {"begin_time": 30, "end_time": 60, "text": "好"},
+                    ],
+                }
+            },
+        }
+    ).sentence
+    assert sentence is not None
+    assert not sentence.word_timing_valid
+
+    result = sentence_to_asr_result(sentence, task_epoch=1)
+    assert result.text == "你好"
+    assert result.timing_evidence.coverage is ASRTimingCoverage.INVALID
+
+
+def test_sentence_to_asr_result_downgrades_word_outside_sentence_range() -> None:
+    sentence = parse_server_message(
+        {
+            "header": {"event": "result-generated", "task_id": "t1"},
+            "payload": {
+                "sentence": {
+                    "sentence_id": 5,
+                    "begin_time": 0,
+                    "end_time": 20,
+                    "text": "你好",
+                    "sentence_end": True,
+                    "words": [{"begin_ms": 0, "end_ms": 40, "text": "你好"}],
+                }
+            },
+        }
+    ).sentence
+    assert sentence is not None
+
+    result = sentence_to_asr_result(sentence, task_epoch=1)
+    assert result.capture_end_sample == 320
+    assert result.timing_evidence is not None
+    assert result.timing_evidence.coverage is ASRTimingCoverage.INVALID
 
 
 def test_context_redaction() -> None:

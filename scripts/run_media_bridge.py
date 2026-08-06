@@ -13,6 +13,7 @@ import importlib
 import logging
 import os
 import signal
+import sys
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -26,6 +27,26 @@ from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
 logger = logging.getLogger("memoria.media_bridge")
 
 
+def _load_session_factory(settings: Any) -> Callable[[SessionIdentity], Any] | None:
+    """Load the single session-scoped production Agent composition root."""
+
+    reference = os.getenv("MEDIA_BRIDGE_SESSION_FACTORY", "").strip()
+    if not reference:
+        if getattr(settings, "environment", "development") == "production":
+            raise ValueError("production media bridge requires MEDIA_BRIDGE_SESSION_FACTORY")
+        return None
+    module_name, separator, attribute = reference.partition(":")
+    if not separator or not module_name or not attribute:
+        raise ValueError("MEDIA_BRIDGE_SESSION_FACTORY must be module:callable")
+    builder = getattr(importlib.import_module(module_name), attribute, None)
+    if not callable(builder):
+        raise ValueError("MEDIA_BRIDGE_SESSION_FACTORY is not callable")
+    session_factory = builder(settings)
+    if not callable(session_factory):
+        raise ValueError("media bridge session factory did not return a callable")
+    return cast(Callable[[SessionIdentity], Any], session_factory)
+
+
 def _load_provider_factory(
     settings: Any,
 ) -> Callable[[SessionIdentity], Any] | None:
@@ -34,9 +55,7 @@ def _load_provider_factory(
     reference = os.getenv("MEDIA_BRIDGE_PROVIDER_FACTORY", "").strip()
     if not reference:
         if getattr(settings, "environment", "development") == "production":
-            raise ValueError(
-                "production media bridge requires MEDIA_BRIDGE_PROVIDER_FACTORY"
-            )
+            raise ValueError("production media bridge requires MEDIA_BRIDGE_PROVIDER_FACTORY")
         return None
     module_name, separator, attribute = reference.partition(":")
     if not separator or not module_name or not attribute:
@@ -58,9 +77,7 @@ def _load_runtime_factory(
     reference = os.getenv("MEDIA_BRIDGE_RUNTIME_FACTORY", "").strip()
     if not reference:
         if getattr(settings, "environment", "development") == "production":
-            raise ValueError(
-                "production media bridge requires MEDIA_BRIDGE_RUNTIME_FACTORY"
-            )
+            raise ValueError("production media bridge requires MEDIA_BRIDGE_RUNTIME_FACTORY")
         return None
     module_name, separator, attribute = reference.partition(":")
     if not separator or not module_name or not attribute:
@@ -106,43 +123,78 @@ async def run() -> None:
     server = MediaBridgeGrpcServer(
         max_pending_audio_frames=settings.media_bridge_max_pending_audio_frames,
         max_pending_messages=settings.media_bridge_max_pending_messages,
+        allow_go_shadow=settings.media_bridge_go_shadow_enabled,
     )
-    provider_factory = _load_provider_factory(settings)
-    runtime_factory = _load_runtime_factory(settings)
-    registry: MediaVoiceCoreRegistry | None = None
-    if provider_factory is not None:
-        registry = MediaVoiceCoreRegistry(
-            bridge=server,
-            provider_factory=provider_factory,
-            **({"runtime_factory": runtime_factory} if runtime_factory is not None else {}),
-        )
-        registry.install()
-        logger.info("media bridge Voice Core provider registry installed")
-    else:
-        logger.warning(
-            "media bridge is running provider-neutral; no Voice Core provider factory configured"
-        )
-    tls = _tls_for_settings(settings)
-    port = await server.start(settings.media_bridge_grpc_addr, tls=tls)
-    logger.info(
-        "media bridge listening address=%s bound_port=%s mtls=%s",
-        settings.media_bridge_grpc_addr,
-        port,
-        tls is not None,
-    )
-    stopped = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for signum in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(signum, stopped.set)
-        except (NotImplementedError, RuntimeError):
-            # Windows and embedded event loops may not expose POSIX handlers.
-            pass
+    session_factory = _load_session_factory(settings)
     try:
+        registry: MediaVoiceCoreRegistry | None = None
+        if session_factory is not None:
+            registry = MediaVoiceCoreRegistry(
+                bridge=server,
+                session_factory=session_factory,
+            )
+            registry.install()
+            logger.info("media bridge shared Agent session registry installed")
+        else:
+            provider_factory = _load_provider_factory(settings)
+            runtime_factory = _load_runtime_factory(settings)
+        if session_factory is None and provider_factory is not None:
+            registry = (
+                MediaVoiceCoreRegistry(
+                    bridge=server,
+                    provider_factory=provider_factory,
+                    runtime_factory=runtime_factory,
+                )
+                if runtime_factory is not None
+                else MediaVoiceCoreRegistry(
+                    bridge=server,
+                    provider_factory=provider_factory,
+                )
+            )
+            registry.install()
+            logger.info("media bridge Voice Core provider registry installed")
+        elif session_factory is None:
+            logger.warning(
+                "media bridge is running provider-neutral; no Voice Core provider factory configured"
+            )
+        tls = _tls_for_settings(settings)
+        port = await server.start(settings.media_bridge_grpc_addr, tls=tls)
+        logger.info(
+            "media bridge listening address=%s bound_port=%s mtls=%s",
+            settings.media_bridge_grpc_addr,
+            port,
+            tls is not None,
+        )
+        stopped = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(signum, stopped.set)
+            except (NotImplementedError, RuntimeError):
+                # Windows and embedded event loops may not expose POSIX handlers.
+                pass
         await stopped.wait()
     finally:
-        _ = registry
-        await server.stop()
+        primary_error = sys.exception()
+        stop_error: BaseException | None = None
+        try:
+            await server.stop()
+        except BaseException as exc:
+            stop_error = exc
+            logger.error("media bridge server shutdown failed", exc_info=True)
+        close_factory = getattr(session_factory, "aclose", None)
+        close_error: BaseException | None = None
+        if callable(close_factory):
+            try:
+                await close_factory()
+            except BaseException as exc:
+                close_error = exc
+                logger.error("media bridge session factory shutdown failed", exc_info=True)
+        if primary_error is None:
+            if stop_error is not None:
+                raise stop_error
+            if close_error is not None:
+                raise close_error
 
 
 def main() -> None:

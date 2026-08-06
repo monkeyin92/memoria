@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -21,24 +22,31 @@ from services.agent.src.agent import (
     is_miniprogram_session,
     should_enable_legacy_speaker_verifier,
 )
-from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.contracts.ids import CancellationContext, GenerationFence
 from services.agent.src.duplex_runtime import (
     DuplexRuntime,
     KeywordSpotterBinding,
     PendingRealtimeRequest,
 )
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.orchestration.context_snapshot_manager import (
+    MemoryCapsule,
+    MemoryCapsuleEntry,
+    PersonaCapsule,
+)
+from services.agent.src.orchestration.handlers import LanguageModelRequest
 from services.agent.src.orchestration.prosody import SpeechPlan
 from services.agent.src.orchestration.state_machine import ConversationState
 from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
 from services.agent.src.response_planner_client import (
+    ContextPrefetchFetch,
     ResponseGroundedItem,
     ResponsePlan,
     ResponsePlanFetch,
     ResponseProvenance,
     ResponseVoiceTarget,
 )
-from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
+from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY, SAFE_UNKNOWN_REPLY
 from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
     MINIPROGRAM_AGENT_DISPATCH_METADATA,
@@ -49,6 +57,145 @@ from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 async def _text_source(*parts: str) -> AsyncIterator[str]:
     for part in parts:
         yield part
+
+
+async def _collect_strings(source: AsyncIterator[str]) -> list[str]:
+    return [item async for item in source]
+
+
+@pytest.mark.asyncio
+async def test_agent_prepares_and_streams_a_media_turn_through_the_response_plan() -> None:
+    runtime = DuplexRuntime.create(session_id="media-agent-session")
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=False,
+            shadow_low_sensitivity_persona=False,
+        )
+    )
+    runtime.authenticate_text_owner()
+
+    class Planner:
+        async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
+            speaker = kwargs["speaker_decision"]
+            assert isinstance(speaker, SpeakerDecision)
+            plan = _plan_for_fence(
+                kwargs["fence"],  # type: ignore[arg-type]
+                instructions="只回答已授权内容。",
+                direct_text="这是经过完整响应计划的回答。",
+            )
+            return ResponsePlanFetch(
+                replace(
+                    plan,
+                    provenance=replace(
+                        plan.provenance,
+                        speaker_reason_code=speaker.reason_code,
+                        speaker_profile_id=speaker.profile_id,
+                        speaker_model_version=speaker.model_version,
+                        speaker_template_version=speaker.template_version,
+                    ),
+                ),
+                "ok",
+            )
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=Planner(),  # type: ignore[arg-type]
+    )
+
+    fence = await agent.prepare_committed_turn("请回答")
+    output = [
+        token
+        async for token in agent.stream(
+            LanguageModelRequest(
+                user_text="请回答",
+                cancellation=CancellationContext.capture(fence),
+            )
+        )
+    ]
+
+    assert output == ["这是经过完整响应计划的回答。"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_media_agent_streams_the_configured_llm_without_a_livekit_session() -> None:
+    runtime = DuplexRuntime.create(session_id="standalone-media-agent")
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=False,
+            shadow_low_sensitivity_persona=False,
+        )
+    )
+    runtime.authenticate_text_owner()
+
+    class Planner:
+        async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
+            speaker = kwargs["speaker_decision"]
+            assert isinstance(speaker, SpeakerDecision)
+            plan = _plan_for_fence(
+                kwargs["fence"],  # type: ignore[arg-type]
+                instructions="简洁回答。",
+            )
+            return ResponsePlanFetch(
+                replace(
+                    plan,
+                    provenance=replace(
+                        plan.provenance,
+                        speaker_reason_code=speaker.reason_code,
+                        speaker_profile_id=speaker.profile_id,
+                        speaker_model_version=speaker.model_version,
+                        speaker_template_version=speaker.template_version,
+                    ),
+                ),
+                "ok",
+            )
+
+    class TokenStream:
+        async def __aenter__(self) -> TokenStream:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        def __aiter__(self) -> AsyncIterator[str]:
+            return _text_source("第一句。", "第二句。")
+
+    class StandaloneLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def chat(self, **_kwargs: object) -> TokenStream:
+            self.calls += 1
+            return TokenStream()
+
+    model = StandaloneLLM()
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=Planner(),  # type: ignore[arg-type]
+        standalone_llm=model,
+    )
+
+    fence = await agent.prepare_committed_turn("请回答")
+    output = [
+        token
+        async for token in agent.stream(
+            LanguageModelRequest("请回答", CancellationContext.capture(fence))
+        )
+    ]
+
+    assert output == ["第一句。", "第二句。"]
+    assert model.calls == 1
+    await runtime.close()
 
 
 @pytest.mark.asyncio
@@ -313,13 +460,31 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = DuplexRuntime.create()
-    await runtime.on_turn_committed("当前问题")
     runtime.orchestrator.context.commit_assistant_heard(
         "实际听到的旧回复",
         speaker_scope="public",
     )
+    runtime.authenticate_text_owner()
+    await runtime.on_turn_committed("当前问题")
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
     agent._current_speaker_class = "owner"
+    snapshot = await runtime.freeze_context_capsules_for_generation(
+        runtime.fence,
+        memory_capsule=MemoryCapsule(
+            (
+                MemoryCapsuleEntry(
+                    item_id="claim-1",
+                    kind="memory_claim",
+                    content="已确认资料：他在杭州读过书。",
+                    source_refs=("event-1",),
+                    confidence=0.9,
+                    sharing_scope="private",
+                ),
+            )
+        ),
+        persona_capsule=PersonaCapsule(),
+    )
+    assert snapshot is not None
     agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
         runtime.fence,
         instructions="【控制计划】只使用当前已确认上下文；不要复述未听到的旧回答。",
@@ -388,6 +553,311 @@ async def test_agent_llm_node_uses_heard_history_and_phrase_segments(
 
 
 @pytest.mark.asyncio
+async def test_livekit_tool_executes_only_through_registered_coordinator_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="coordinated-livekit-tool")
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=False,
+            shadow_low_sensitivity_persona=False,
+        )
+    )
+    runtime._speaker_class = "owner"
+    await runtime.on_turn_committed("查询南京档案")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="使用已核验的工具结果。",
+    )
+    calls: list[dict[str, object]] = []
+
+    async def handler(
+        arguments: dict[str, Any],
+        _cancel: asyncio.Event,
+    ) -> dict[str, str]:
+        calls.append(dict(arguments))
+        return {"summary": "南京晴。"}
+
+    runtime.orchestrator.task_manager.register(
+        agent_mod.ToolSpec(
+            name="weather_lookup",
+            description="查询天气",
+            input_schema={"type": "object", "required": ["city"]},
+            cancellable=True,
+            idempotent=True,
+            timeout_s=1,
+            side_effect_policy="read_only",
+        ),
+        handler,
+    )
+
+    async def direct_tool(raw_arguments: dict[str, object]) -> str:
+        raise AssertionError(f"direct LiveKit handler bypassed coordinator: {raw_arguments}")
+
+    tool = llm.function_tool(
+        direct_tool,
+        raw_schema={
+            "name": "weather_lookup",
+            "description": "查询天气",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
+        },
+    )
+
+    async def fake_llm_node(
+        _agent: Any,
+        _safe_ctx: Any,
+        tools: list[Any],
+        _settings: Any,
+    ) -> AsyncIterator[str]:
+        assert len(tools) == 1
+        yield await tools[0](raw_arguments={"city": "南京"})
+
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="查询南京档案")
+
+    output = [item async for item in agent.llm_node(chat_ctx, [tool], None)]
+
+    assert output == ["南京晴。"]
+    assert calls == [{"city": "南京"}]
+    await runtime.close()
+
+
+def test_livekit_high_risk_tool_is_not_exposed_without_explicit_confirmation() -> None:
+    runtime = DuplexRuntime.create(session_id="high-risk-tool-blocked")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+
+    async def handler(
+        _arguments: dict[str, Any],
+        _cancel: asyncio.Event,
+    ) -> str:
+        return "should not run"
+
+    runtime.orchestrator.task_manager.register(
+        agent_mod.ToolSpec(
+            name="send_message",
+            description="发送消息",
+            input_schema={"type": "object"},
+            cancellable=True,
+            idempotent=False,
+            timeout_s=1,
+            side_effect_policy="high_risk",
+        ),
+        handler,
+    )
+
+    async def direct_tool(_raw_arguments: dict[str, object]) -> str:
+        return "should not run"
+
+    tool = llm.function_tool(
+        direct_tool,
+        raw_schema={
+            "name": "send_message",
+            "description": "发送消息",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    )
+
+    assert agent._coordinated_livekit_tools([tool], fence=runtime.fence) == []
+
+
+@pytest.mark.asyncio
+async def test_response_plan_capsules_are_frozen_for_the_current_generation() -> None:
+    runtime = DuplexRuntime.create(session_id="response-plan-context-snapshot")
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=False,
+            shadow_low_sensitivity_persona=False,
+        )
+    )
+    runtime._speaker_class = "owner"
+
+    class Planner:
+        async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
+            fence = kwargs["fence"]
+            assert isinstance(fence, GenerationFence)
+            return ResponsePlanFetch(
+                plan=_plan_for_fence(
+                    fence,
+                    instructions="依据已核验资料回答。",
+                    grounded_items=(
+                        ResponseGroundedItem(
+                            kind="memory_claim",
+                            item_id="memory-1",
+                            content="喜欢桂花。",
+                            use_as="fact",
+                            source_event_ids=("event-1",),
+                            confidence=0.95,
+                            sharing_scope="private",
+                        ),
+                        ResponseGroundedItem(
+                            kind="persona_trait",
+                            item_id="persona-1",
+                            content="日常表达偏好短句。",
+                            use_as="style",
+                            source_event_ids=("event-2",),
+                            confidence=0.9,
+                            sharing_scope="private",
+                        ),
+                    ),
+                ),
+                reason="ok",
+            )
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=Planner(),  # type: ignore[arg-type]
+    )
+    first = await agent._prepare_committed_turn(
+        text="你还记得我喜欢什么吗？",
+        speaker=SimpleNamespace(),
+        input_modality="text",
+    )
+    snapshot = runtime.orchestrator.context_snapshots.current(runtime.session_id)
+
+    assert runtime.orchestrator.context_version_for_fence(first) == snapshot.version
+    assert snapshot.version > 0
+    assert snapshot.memory_capsule.entries[0].content == "喜欢桂花。"
+    assert snapshot.persona_capsule.prompt_fragment == "日常表达偏好短句。"
+    assert snapshot.tool_permission is True
+    assert runtime.orchestrator.task_manager.tasks == {}
+    assert runtime.orchestrator.task_manager.accepted_broadcast_count == 1
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_partial_transcript_prefetches_real_context_before_commit() -> None:
+    runtime = DuplexRuntime.create(session_id="context-prefetch-before-commit")
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=False,
+            voice_profile=False,
+            shadow_low_sensitivity_persona=False,
+        )
+    )
+    runtime.authenticate_text_owner()
+    calls: list[str] = []
+
+    class Planner:
+        async def prefetch_context(self, **kwargs: object) -> ContextPrefetchFetch:
+            calls.append(str(kwargs["query"]))
+            return ContextPrefetchFetch(
+                grounded_items=(
+                    ResponseGroundedItem(
+                        kind="memory_claim",
+                        item_id="memory-prefetch",
+                        content="喜欢桂花。",
+                        use_as="fact",
+                        source_event_ids=("event-prefetch",),
+                        confidence=1.0,
+                        sharing_scope="private",
+                    ),
+                ),
+                persona_version_id=None,
+                persona_version_number=None,
+                reason="ok",
+            )
+
+    DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=Planner(),  # type: ignore[arg-type]
+    )
+    runtime.on_user_voice_started()
+    runtime.authenticate_text_owner()
+    assert runtime.observe_user_transcript("桂花", final=False).value == "accept"
+    for _ in range(4):
+        await asyncio.sleep(0)
+
+    assert calls == ["桂花"]
+    assert runtime._pending_context_snapshot is not None
+    assert (
+        runtime._pending_context_snapshot.candidate.memory_capsule.entries[0].item_id
+        == "memory-prefetch"
+    )
+    assert runtime.fence.turn_id == 0
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_build_failure_keeps_call_on_safe_fallback() -> None:
+    runtime = DuplexRuntime.create(session_id="snapshot-build-fallback")
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=False,
+            shadow_low_sensitivity_persona=False,
+        )
+    )
+    await runtime.on_turn_committed("seed", input_modality="text")
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    runtime._activate_pending_context_snapshot()
+    manager = runtime.orchestrator.context_snapshots
+    base_version = manager.current(runtime.session_id).version
+    manager.max_snapshot_chars = manager.current(runtime.session_id).size_chars + 1
+
+    class Planner:
+        async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
+            fence = kwargs["fence"]
+            assert isinstance(fence, GenerationFence)
+            return ResponsePlanFetch(
+                _plan_for_fence(
+                    fence,
+                    instructions="使用过大的 grounding。",
+                    grounded_items=(
+                        ResponseGroundedItem(
+                            kind="memory_claim",
+                            item_id="large",
+                            content="这段资料会超过快照大小限制。",
+                            use_as="fact",
+                            source_event_ids=("event-large",),
+                            confidence=1.0,
+                            sharing_scope="private",
+                        ),
+                    ),
+                ),
+                "ok",
+            )
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=Planner(),  # type: ignore[arg-type]
+    )
+    fence = await agent._prepare_committed_turn(
+        text="当前问题",
+        speaker=SimpleNamespace(classification="owner"),
+        input_modality="text",
+    )
+    plan = agent._response_plan_by_fence[agent._response_plan_key(fence)]
+
+    assert agent._is_local_safe_plan(plan)
+    assert runtime.orchestrator.context_version_for_fence(fence) == base_version
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("nudge", ("人呢？", "你不能帮我查吗？"))
 async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
     nudge: str,
@@ -413,9 +883,7 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
 
     agent._realtime_search_resolver = SearchResolver()
     first_spoken = [
-        item
-        async for item in agent.llm_node(chat_ctx, [], None)
-        if isinstance(item, str)
+        item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)
     ]
     assert first_spoken == ["我不知道。"]
 
@@ -432,11 +900,7 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
     )
     chat_ctx.add_message(role="user", content=nudge)
 
-    follow_up = [
-        item
-        async for item in agent.llm_node(chat_ctx, [], None)
-        if isinstance(item, str)
-    ]
+    follow_up = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
 
     assert "".join(follow_up) == "南京今天多云，最高气温三十二度。"
     assert runtime.pending_realtime_request is None
@@ -452,7 +916,11 @@ async def test_realtime_search_timeout_then_nudge_resumes_the_public_request(
         ("今天南京的天气我暂时不清楚呢，要不你查一下实时天气预报呀？", "我不知道。", True),
         ("我确实没办法直接查实时天气。", "我不知道。", True),
         ("我查一下。南京今天多云，最高气温三十二度。", "南京今天多云，最高气温三十二度。", False),
-        ("我查了一下，美元兑人民币最新汇率是七点一八。", "我查了一下，美元兑人民币最新汇率是七点一八。", False),
+        (
+            "我查了一下，美元兑人民币最新汇率是七点一八。",
+            "我查了一下，美元兑人民币最新汇率是七点一八。",
+            False,
+        ),
         ("我在这里查到南京今天晴。", "我在这里查到南京今天晴。", False),
         ("南京今天稍后有阵雨，最高气温三十二度。", "南京今天稍后有阵雨，最高气温三十二度。", False),
     ),
@@ -480,11 +948,7 @@ async def test_realtime_terminal_reply_never_leaves_bridge_or_error(
 
     agent._realtime_search_resolver = SearchResolver()
 
-    output = [
-        item
-        async for item in agent.llm_node(chat_ctx, [], None)
-        if isinstance(item, str)
-    ]
+    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
     assert "".join(output) == expected
     assert (runtime.pending_realtime_request is not None) is pending
 
@@ -521,11 +985,7 @@ async def test_realtime_request_uses_public_only_forced_search_resolver(
 
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(unexpected_default_llm))
 
-    output = [
-        item
-        async for item in agent.llm_node(chat_ctx, [], None)
-        if isinstance(item, str)
-    ]
+    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
 
     assert queries == ["今天南京天气怎么样"]
     assert "".join(output) == "南京今天多云，最高气温三十二度。"
@@ -565,15 +1025,171 @@ async def test_failed_forced_search_does_not_fall_back_to_shared_chat_context(
 
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(unexpected_default_llm))
 
-    output = [
-        item
-        async for item in agent.llm_node(chat_ctx, [], None)
-        if isinstance(item, str)
-    ]
+    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
 
     assert queries == ["今天南京天气怎么样"]
     assert "".join(output) == "我不知道。"
     assert runtime.pending_realtime_request is not None
+
+
+@pytest.mark.asyncio
+async def test_committed_realtime_delegation_starts_early_and_is_reused() -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-prefetch")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    queries: list[str] = []
+
+    class SlowResolver:
+        async def resolve(self, *, query: str) -> str:
+            queries.append(query)
+            started.set()
+            await release.wait()
+            return "南京今天多云。"
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        realtime_search_resolver=SlowResolver(),
+    )
+    fence = await runtime.on_turn_committed("今天南京天气怎么样")
+    await asyncio.wait_for(started.wait(), timeout=1)
+    request, _ = runtime.resolve_realtime_request(fence=fence, direct_text=None)
+    assert request is not None
+
+    output_task = asyncio.create_task(
+        _collect_strings(agent._forced_realtime_search_stream(query=request.query))
+    )
+    release.set()
+
+    assert await output_task == ["南京今天多云。"]
+    assert queries == ["今天南京天气怎么样"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_media_delegation_uses_public_resolver_without_advancing_outer_task_epoch() -> None:
+    runtime = DuplexRuntime.create(session_id="media-delegation-direct")
+    fence = await runtime.on_turn_committed("今天南京天气怎么样")
+    queries: list[str] = []
+
+    class Resolver:
+        async def resolve(self, *, query: str) -> str:
+            queries.append(query)
+            return "南京今天多云。"
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        realtime_search_resolver=Resolver(),
+    )
+
+    assert await agent.resolve_media_delegation("今天南京天气怎么样", fence) == "南京今天多云。"
+    assert queries == ["今天南京天气怎么样"]
+    assert runtime.orchestrator.delegation.current_task_epoch(fence.session_id) == 0
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_media_delegation_returns_a_safe_reply_when_the_resolver_has_no_result() -> None:
+    runtime = DuplexRuntime.create(session_id="media-delegation-no-result")
+    fence = await runtime.on_turn_committed("今天南京天气怎么样")
+
+    class EmptyResolver:
+        async def resolve(self, *, query: str) -> None:
+            assert query == "今天南京天气怎么样"
+            return None
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        realtime_search_resolver=EmptyResolver(),
+    )
+
+    assert await agent.resolve_media_delegation("今天南京天气怎么样", fence) == SAFE_UNKNOWN_REPLY
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_media_delegation_drops_a_result_after_its_fence_changes() -> None:
+    runtime = DuplexRuntime.create(session_id="media-delegation-stale")
+    fence = await runtime.on_turn_committed("今天南京天气怎么样")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class Resolver:
+        async def resolve(self, *, query: str) -> str:
+            assert query == "今天南京天气怎么样"
+            started.set()
+            await release.wait()
+            return "南京今天多云。"
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        realtime_search_resolver=Resolver(),
+    )
+    runtime.set_delegation_starter(None)
+    task = asyncio.create_task(agent.resolve_media_delegation("今天南京天气怎么样", fence))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    await runtime.on_turn_committed("换一个问题")
+    release.set()
+
+    assert await task is None
+    assert runtime.orchestrator.delegation.current_task_epoch(fence.session_id) == 0
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_slow_realtime_delegation_uses_admitted_allowlisted_bridge() -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-bridge-intent")
+    release = asyncio.Event()
+
+    class SlowResolver:
+        async def resolve(self, *, query: str) -> str:
+            assert query == "今天南京天气怎么样"
+            await release.wait()
+            return "南京今天多云。"
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        realtime_search_resolver=SlowResolver(),
+    )
+    await runtime.on_turn_committed("今天南京天气怎么样")
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="南京天气必须先联网查询，查询失败不得猜测。",
+        speaker_class="uncertain",
+    )
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="今天南京天气怎么样")
+
+    output = agent.llm_node(chat_ctx, [], None)
+    assert await asyncio.wait_for(anext(output), timeout=1) == "可以，我先帮你核对。"
+    release.set()
+    assert [item async for item in output if isinstance(item, str)] == ["南京今天多云。"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_committed_turn_calls_provider_fast_model_prewarm() -> None:
+    runtime = DuplexRuntime.create(session_id="fast-model-prewarm")
+    calls = 0
+
+    def prewarm() -> None:
+        nonlocal calls
+        calls += 1
+
+    DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        fast_model_warmer=prewarm,
+    )
+    await runtime.on_turn_committed("你好")
+    await asyncio.sleep(0)
+
+    assert calls == 1
+    await runtime.close()
 
 
 @pytest.mark.asyncio
@@ -598,11 +1214,7 @@ async def test_realtime_request_without_a_verified_search_resolver_fails_closed(
 
     monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(unexpected_default_llm))
 
-    output = [
-        item
-        async for item in agent.llm_node(chat_ctx, [], None)
-        if isinstance(item, str)
-    ]
+    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
 
     assert "".join(output) == "我不知道。"
     assert runtime.pending_realtime_request is not None
@@ -668,11 +1280,9 @@ async def test_realtime_buffered_reply_respects_the_voice_budget(
 
     monkeypatch.setattr(agent, "_forced_realtime_search_stream", search_stream)
 
-    spoken = "".join([
-        item
-        async for item in agent.llm_node(chat_ctx, [], None)
-        if isinstance(item, str)
-    ])
+    spoken = "".join(
+        [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+    )
 
     assert sum(char.isalnum() for char in spoken) <= 8
     assert advanced_past_budget is False

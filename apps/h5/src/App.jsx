@@ -120,6 +120,14 @@ function homeStatusLabel(voice) {
   }[voice.uiState] || "文字对话中";
 }
 
+function provisionalSpeakerLabel(line, floorState = "silence") {
+  if (!line.provisional) return "你";
+  const currentFloor = line.floorState || floorState;
+  if (currentFloor === "user_holds_floor") return "你 · 正在说";
+  if (currentFloor === "uncertain") return "你 · 正在确认";
+  return "你 · 正在听";
+}
+
 function normalizeMemoryDay(item) {
   const summary = item.summary || {};
   const moodMap = {
@@ -1207,7 +1215,10 @@ export function App() {
               </div>
               {voice.latestTranscript ? (
                 <div
-                  className={`transcript-card ${voice.latestTranscript.speaker}`}
+                  className={`transcript-card ${voice.latestTranscript.speaker}${
+                    voice.latestTranscript.provisional ? " provisional" : ""
+                  }`}
+                  aria-busy={voice.latestTranscript.provisional === true}
                 >
                   <span>
                   {voice.latestTranscript.speaker === "assistant"
@@ -1216,7 +1227,9 @@ export function App() {
                       : legacySession
                         ? "冻结数字分身"
                         : sessionCompanion.name
-                    : "你"}
+                    : voice.latestTranscript.provisional
+                      ? provisionalSpeakerLabel(voice.latestTranscript, voice.floorState)
+                      : "你"}
                   </span>
                   <p>{voice.latestTranscript.text}</p>
                 </div>

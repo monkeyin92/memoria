@@ -8,7 +8,8 @@ import hashlib
 import json
 import logging
 import os
-from collections.abc import AsyncGenerator, AsyncIterable, Callable
+import time
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -25,8 +26,25 @@ from services.agent.src.duplex_runtime import (
     KeywordSpotterBinding,
 )
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.orchestration.context_manager import ChatMessage
+from services.agent.src.orchestration.context_snapshot_manager import (
+    ContextSnapshot,
+    ContextSnapshotDraft,
+    ContextTurn,
+    MemoryCapsule,
+    MemoryCapsuleEntry,
+    PersonaCapsule,
+    scope_context_snapshot_draft,
+)
+from services.agent.src.orchestration.delegation_coordinator import (
+    DelegationRequest,
+    SideEffectPolicy,
+    TaskHandle,
+)
+from services.agent.src.orchestration.handlers import LanguageModelRequest
+from services.agent.src.orchestration.task_manager import ToolSpec
 from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
-from services.agent.src.prompts import VOICE_SYSTEM_PROMPT
+from services.agent.src.prompts import BRIDGE_PHRASES, VOICE_SYSTEM_PROMPT
 from services.agent.src.providers.doubao_voice_catalog import resolve_approved_voice
 from services.agent.src.providers.interrupt_semantic_classifier import (
     InterruptSemanticClassifier,
@@ -36,10 +54,12 @@ from services.agent.src.response_planner_client import (
     CANONICAL_PLANNER_POLICY_VERSION,
     Disclosure,
     ResponsePlan,
+    ResponsePlanFetch,
     ResponsePlannerClient,
     ResponseProvenance,
     ResponseVoiceTarget,
 )
+from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient, VoiceRuntimeProfile
 from services.common.companion_response_safety import (
     CRISIS_SUPPORT_REPLY,
@@ -62,12 +82,14 @@ from services.common.realtime_information import (
     is_incomplete_realtime_reply,
     is_safe_realtime_reply,
     realtime_instruction,
+    requires_realtime_lookup,
     strip_realtime_bridge_prefix,
 )
 
 if TYPE_CHECKING:
     pass
 
+media_pb2: Any = _media_pb2
 logger = logging.getLogger(__name__)
 
 # Voice replies stay shorter than chat, but 96/3 cut creative answers mid-stream.
@@ -397,6 +419,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         response_planner_client: ResponsePlannerClient | None = None,
         realtime_search_resolver: Any = None,
         realtime_search_model: str | None = None,
+        standalone_llm: Any = None,
+        fast_model_warmer: Callable[[], Any] | None = None,
         llm_provider: str = "unknown",
         llm_model: str = "unknown",
         tts_provider: str = "unknown",
@@ -406,11 +430,13 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         if _HAS_LIVEKIT:
             super().__init__(instructions=instructions)
         self._runtime = runtime
+        self._standalone_instructions = instructions
         _ = (persona_client, memory_context_client)
         self._voice_profile_client = voice_profile_client
         self._response_planner_client = response_planner_client
         self._realtime_search_resolver = realtime_search_resolver
         self._realtime_search_model = realtime_search_model
+        self._standalone_llm = standalone_llm
         self._llm_provider = llm_provider
         self._llm_model = llm_model
         self._tts_provider = tts_provider
@@ -419,12 +445,100 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         self._context_assembler = ContextAssembler()
         self._llm_text_buf = ""
         self._response_plan_by_fence: dict[tuple[str, int, int, int], ResponsePlan] = {}
+        self._response_planner_tool_registered = False
+        self._context_ready_by_fence: dict[GenerationFence, asyncio.Event] = {}
+        self._realtime_delegation_lock = asyncio.Lock()
+        self._realtime_delegations: dict[
+            GenerationFence,
+            tuple[str, TaskHandle],
+        ] = {}
+        self._realtime_tool_registered = False
+        if callable(getattr(response_planner_client, "prefetch_context", None)):
+            runtime.orchestrator.context_snapshots.builder = self._build_prefetched_context_snapshot
+        runtime.set_fast_model_warmer(fast_model_warmer)
+        runtime.set_delegation_starter(self._start_committed_delegation)
         alignment_setter = getattr(runtime.tts, "set_alignment_callback", None)
         if callable(alignment_setter):
             alignment_setter(self._observe_tts_alignment)
         fallback_setter = getattr(runtime.tts, "set_voice_fallback_callback", None)
         if callable(fallback_setter):
             fallback_setter(self._observe_tts_voice_fallback)
+
+    async def prepare_committed_turn(self, text: str) -> GenerationFence:
+        """Prepare one already-authorized media turn through the normal Agent policy path."""
+
+        return await self._prepare_committed_turn(
+            text=text,
+            speaker=self._runtime.current_speaker_decision,
+            input_modality="audio",
+            publish_user_transcript=False,
+        )
+
+    def stream(self, request: LanguageModelRequest) -> AsyncIterator[str]:
+        return self._stream_media_response(request)
+
+    async def resolve_media_delegation(
+        self,
+        text: str,
+        fence: GenerationFence,
+    ) -> str | None:
+        """Resolve one fenced public query for the MediaSession-owned task."""
+
+        query = text.strip() if isinstance(text, str) else ""
+        if not query or not requires_realtime_lookup(query):
+            return None
+        if not self._can_start_realtime_delegation(fence):
+            return None
+        resolver = self._realtime_search_resolver
+        if resolver is None:
+            return None
+        try:
+            result = await resolver.resolve(query=query)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "media realtime resolver failed session_id=%s turn_id=%s",
+                fence.session_id,
+                fence.turn_id,
+                exc_info=True,
+            )
+            result = None
+        if not self._runtime.fence.matches(fence):
+            return None
+        return result.strip() if isinstance(result, str) and result.strip() else SAFE_UNKNOWN_REPLY
+
+    async def _stream_media_response(
+        self,
+        request: LanguageModelRequest,
+    ) -> AsyncGenerator[str, None]:
+        if not request.cancellation.is_current(self._runtime.fence):
+            return
+        if not _HAS_LIVEKIT:
+            raise RuntimeError("media Agent language model requires LiveKit LLM contracts")
+        chat_ctx = llm.ChatContext.empty()
+        chat_ctx.add_message(role="system", content=self._standalone_instructions)
+        for turn in self._runtime.orchestrator.context.turns:
+            if turn.role in {"user", "assistant"} and turn.content:
+                chat_ctx.add_message(role=turn.role, content=turn.content)
+        async for item in self.llm_node(chat_ctx, [], None):
+            text = _chunk_text(item)
+            if text:
+                yield text
+
+    async def _standalone_model_stream(
+        self,
+        chat_ctx: Any,
+        tools: list[Any],
+    ) -> AsyncGenerator[Any, None]:
+        if self._standalone_llm is None:
+            raise RuntimeError("standalone language model is not configured")
+        async with self._standalone_llm.chat(
+            chat_ctx=chat_ctx,
+            tools=tools,
+        ) as stream:
+            async for chunk in stream:
+                yield chunk
 
     @staticmethod
     def _response_plan_key(fence: GenerationFence) -> tuple[str, int, int, int]:
@@ -1013,6 +1127,151 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         while len(self._response_plan_by_fence) > 32:
             self._response_plan_by_fence.pop(next(iter(self._response_plan_by_fence)))
 
+    def _register_response_planner_tool(self) -> bool:
+        if self._response_planner_tool_registered or self._response_planner_client is None:
+            return self._response_planner_tool_registered
+        client = self._response_planner_client
+
+        async def _fetch(arguments: dict[str, Any], cancel: asyncio.Event) -> Any:
+            if cancel.is_set():
+                return ResponsePlanFetch(None, "cancelled")
+            return await client.fetch(
+                session_id=str(arguments["session_id"]),
+                query=str(arguments["query"]),
+                fence=cast(GenerationFence, arguments["fence"]),
+                speaker_decision=arguments["speaker_decision"],
+            )
+
+        self._runtime.orchestrator.task_manager.register(
+            ToolSpec(
+                name="response_planner",
+                description="build the fenced response and grounding control plan",
+                input_schema={"type": "object", "required": ["query"]},
+                cancellable=True,
+                idempotent=True,
+                timeout_s=2.0,
+                contains_sensitive_data=True,
+                side_effect_policy=SideEffectPolicy.READ_ONLY.value,
+            ),
+            _fetch,
+        )
+        self._response_planner_tool_registered = True
+        return True
+
+    async def _build_prefetched_context_snapshot(
+        self,
+        base: ContextSnapshot,
+        committed_turns: tuple[ContextTurn, ...],
+    ) -> ContextSnapshotDraft:
+        client = self._response_planner_client
+        prefetch = getattr(client, "prefetch_context", None)
+        query = self._runtime.context_prefetch_text
+        policy = self._runtime.mode_policy
+        speaker_decision = self._runtime.current_speaker_decision
+        speaker_class = speaker_decision.classification
+        fallback = scope_context_snapshot_draft(
+            ContextSnapshotDraft(
+                recent_committed_turns=committed_turns,
+                memory_capsule=base.memory_capsule,
+                persona_capsule=base.persona_capsule,
+                relationship_policy=policy,
+                tool_permission=policy.allows_tools(speaker_class),
+                speaker_class=speaker_class,
+                summary=base.summary,
+            )
+        )
+        if not callable(prefetch) or not query:
+            return fallback
+        fetched = await prefetch(
+            session_id=self._runtime.session_id,
+            query=query,
+            speaker_decision=speaker_decision,
+        )
+        if not fetched.available or self._runtime.current_speaker_decision != speaker_decision:
+            return fallback
+        memory = MemoryCapsule(
+            tuple(
+                MemoryCapsuleEntry(
+                    item_id=item.item_id,
+                    kind=item.kind,
+                    content=item.content,
+                    source_refs=item.source_event_ids,
+                    use_as=item.use_as,
+                    confidence=item.confidence,
+                    sharing_scope=item.sharing_scope,
+                )
+                for item in fetched.grounded_items
+                if item.kind != "persona_trait"
+            )
+        )
+        persona = PersonaCapsule(
+            version_id=fetched.persona_version_id,
+            version_number=fetched.persona_version_number,
+            prompt_fragment="\n".join(
+                item.content for item in fetched.grounded_items if item.kind == "persona_trait"
+            ),
+        )
+        return scope_context_snapshot_draft(
+            ContextSnapshotDraft(
+                recent_committed_turns=committed_turns,
+                memory_capsule=memory,
+                persona_capsule=persona,
+                relationship_policy=policy,
+                tool_permission=policy.allows_tools(speaker_class),
+                speaker_class=speaker_class,
+                summary=base.summary,
+            )
+        )
+
+    async def _fetch_response_plan(
+        self,
+        *,
+        text: str,
+        speaker: Any,
+        fence: GenerationFence,
+    ) -> ResponsePlanFetch:
+        if not self._register_response_planner_tool():
+            return ResponsePlanFetch(None, "missing_response_planner_client")
+        coordinator = self._runtime.orchestrator.delegation
+        context_version = self._runtime.orchestrator.context_version_for_fence(fence)
+        handle = await coordinator.delegate(
+            DelegationRequest(
+                tool_name="response_planner",
+                arguments={
+                    "session_id": self._runtime.session_id,
+                    "query": text,
+                    "fence": fence,
+                    "speaker_decision": speaker,
+                },
+                fence=fence,
+                task_epoch=coordinator.next_task_epoch(fence.session_id),
+                context_version=context_version,
+                expires_at_ms=int(time.time() * 1_000) + 2_000,
+                side_effect_policy=SideEffectPolicy.READ_ONLY,
+                committed=True,
+                relevance=lambda: self._runtime.fence.matches(fence),
+                output_kind=media_pb2.OUTPUT_INTENT_KIND_UNSPECIFIED,
+            )
+        )
+        async for _event in coordinator.events(handle):
+            pass
+        accepted = coordinator.accept_control_result(
+            handle,
+            current_fence=self._runtime.fence,
+            current_task_epoch=handle.request.task_epoch,
+            current_context_version=coordinator.current_context_version(fence.session_id),
+            relevant=self._runtime.fence.matches(fence),
+        )
+        return (
+            accepted
+            if isinstance(accepted, ResponsePlanFetch)
+            else ResponsePlanFetch(None, "delegation_rejected")
+        )
+
+    def _mark_context_ready(self, fence: GenerationFence) -> None:
+        event = self._context_ready_by_fence.setdefault(fence, asyncio.Event())
+        event.set()
+
     def _observe_tts_alignment(
         self,
         fence: GenerationFence,
@@ -1028,6 +1287,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         text: str,
         speaker: Any,
         input_modality: Literal["audio", "text"],
+        publish_user_transcript: bool = True,
     ) -> GenerationFence:
         policy = self._runtime.mode_policy
         if (
@@ -1060,33 +1320,31 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 fence.generation_id,
             )
             raise StopResponse()
-        self._runtime.publish_transcript(
-            speaker="user",
-            text=text,
-            final=True,
-            fence=fence,
-        )
+        if publish_user_transcript:
+            self._runtime.publish_transcript(
+                speaker="user",
+                text=text,
+                final=True,
+                fence=fence,
+            )
         self._llm_text_buf = ""
-        fetch_reason = "missing_response_planner_client"
-        plan = None
-        if self._response_planner_client is not None:
-            try:
-                fetch = await self._response_planner_client.fetch(
-                    session_id=self._runtime.session_id,
-                    query=text,
-                    fence=fence,
-                    speaker_decision=speaker,
-                )
-                plan = fetch.plan
-                fetch_reason = fetch.reason
-            except Exception:
-                logger.warning(
-                    "response plan fetch failed closed session_id=%s turn_id=%s",
-                    self._runtime.session_id,
-                    fence.turn_id,
-                    exc_info=True,
-                )
-                fetch_reason = "request_exception"
+        try:
+            fetch = await self._fetch_response_plan(
+                text=text,
+                speaker=speaker,
+                fence=fence,
+            )
+            plan = fetch.plan
+            fetch_reason = fetch.reason
+        except Exception:
+            logger.warning(
+                "response plan fetch failed closed session_id=%s turn_id=%s",
+                self._runtime.session_id,
+                fence.turn_id,
+                exc_info=True,
+            )
+            plan = None
+            fetch_reason = "request_exception"
         if not fence.matches(self._runtime.fence):
             logger.info(
                 "stale response plan dropped session_id=%s turn_id=%s reason=runtime_fence",
@@ -1143,7 +1401,58 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 fence.generation_id,
             )
             raise StopResponse()
+        try:
+            snapshot = await self._runtime.freeze_context_capsules_for_generation(
+                fence,
+                memory_capsule=MemoryCapsule(
+                    tuple(
+                        MemoryCapsuleEntry(
+                            item_id=item.item_id,
+                            kind=item.kind,
+                            content=item.content,
+                            source_refs=item.source_event_ids,
+                            use_as=item.use_as,
+                            confidence=item.confidence,
+                            sharing_scope=item.sharing_scope,
+                        )
+                        for item in plan.grounded_items
+                        if item.kind != "persona_trait"
+                    )
+                ),
+                persona_capsule=PersonaCapsule(
+                    version_id=plan.provenance.persona_version_id,
+                    version_number=plan.provenance.persona_version_number,
+                    prompt_fragment="\n".join(
+                        item.content for item in plan.grounded_items if item.kind == "persona_trait"
+                    ),
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "context snapshot build failed; using safe fallback session_id=%s turn_id=%s",
+                self._runtime.session_id,
+                fence.turn_id,
+                exc_info=True,
+            )
+            snapshot = None
+        if snapshot is None:
+            plan = self._local_safe_plan(
+                fence=fence,
+                speaker=speaker,
+                reason="context_snapshot_unavailable",
+                query=text,
+            )
+            if (
+                input_modality == "audio"
+                and policy.mode in {"self_preview", "legacy"}
+                and not self._ensure_generation_voice_matches_plan(fence, plan, policy)
+            ):
+                raise StopResponse()
+            snapshot = self._runtime.freeze_current_context_for_generation(fence)
+            if snapshot is None:
+                raise StopResponse()
         self._cache_response_plan(plan)
+        self._mark_context_ready(fence)
         logger.info(
             "response_plan_cached reason=%s mode=%s direct_text=%s fallback=%s "
             "session_id=%s turn_id=%s input_modality=%s",
@@ -1307,12 +1616,285 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
     ) -> AsyncGenerator[str, None]:
         """Resolve one public fresh-information request without chat history."""
 
-        resolver = self._realtime_search_resolver
-        if resolver is None:
+        fence = self._runtime.fence
+        handle = await self._get_or_start_realtime_delegation(query=query, fence=fence)
+        if handle is None:
             return
-        result = await resolver.resolve(query=query)
-        if isinstance(result, str) and result.strip():
-            yield result.strip()
+
+        coordinator = self._runtime.orchestrator.delegation
+        try:
+            async for _event in coordinator.events(handle):
+                pass
+        finally:
+            async with self._realtime_delegation_lock:
+                if self._realtime_delegations.get(fence) == (query, handle):
+                    self._realtime_delegations.pop(fence, None)
+        intent = coordinator.output_intent(
+            handle,
+            current_fence=self._runtime.fence,
+            current_task_epoch=handle.request.task_epoch,
+            current_context_version=coordinator.current_context_version(fence.session_id),
+            relevant=self._realtime_delegation_relevant(query=query, fence=fence),
+        )
+        if intent is not None and intent.tts_source.strip():
+            spoken = coordinator.admit_output_intent(
+                intent,
+                current_fence=self._runtime.fence,
+                current_context_version=coordinator.current_context_version(fence.session_id),
+                floor_allows_output=self._runtime.output_floor_allows_assistant,
+            )
+            if spoken is not None:
+                try:
+                    yield spoken
+                finally:
+                    coordinator.complete_output_intent(
+                        intent,
+                        current_fence=self._runtime.fence,
+                        current_context_version=coordinator.current_context_version(
+                            fence.session_id
+                        ),
+                        floor_allows_output=self._runtime.output_floor_allows_assistant,
+                        reason="deep_result_emitted",
+                    )
+
+    def _register_realtime_delegation_tool(self) -> bool:
+        if self._realtime_tool_registered or self._realtime_search_resolver is None:
+            return self._realtime_tool_registered
+        manager = self._runtime.orchestrator.task_manager
+
+        async def _resolve(
+            arguments: dict[str, Any],
+            cancel: asyncio.Event,
+        ) -> Any:
+            resolver = self._realtime_search_resolver
+            if resolver is None or cancel.is_set():
+                return None
+            return await resolver.resolve(query=str(arguments["query"]))
+
+        manager.register(
+            ToolSpec(
+                name="realtime_search",
+                description="public realtime information lookup",
+                input_schema={"type": "object", "required": ["query"]},
+                cancellable=True,
+                idempotent=True,
+                timeout_s=20.0,
+                side_effect_policy=SideEffectPolicy.READ_ONLY.value,
+            ),
+            _resolve,
+        )
+        self._realtime_tool_registered = True
+        return True
+
+    def _realtime_delegation_relevant(
+        self,
+        *,
+        query: str,
+        fence: GenerationFence,
+    ) -> bool:
+        pending = self._runtime.pending_realtime_request
+        return bool(
+            self._runtime.fence.matches(fence) and (pending is None or pending.query == query)
+        )
+
+    async def _start_committed_delegation(
+        self,
+        text: str,
+        fence: GenerationFence,
+    ) -> None:
+        if self._response_planner_client is None:
+            if requires_realtime_lookup(text):
+                await self._get_or_start_realtime_delegation(query=text, fence=fence)
+            return
+        ready = self._context_ready_by_fence.setdefault(fence, asyncio.Event())
+        try:
+            await asyncio.wait_for(ready.wait(), timeout=2.5)
+        except TimeoutError:
+            return
+        finally:
+            self._context_ready_by_fence.pop(fence, None)
+        if not self._runtime.fence.matches(fence):
+            return
+        if requires_realtime_lookup(text):
+            await self._get_or_start_realtime_delegation(query=text, fence=fence)
+
+    async def _get_or_start_realtime_delegation(
+        self,
+        *,
+        query: str,
+        fence: GenerationFence,
+    ) -> TaskHandle | None:
+        if not self._can_start_realtime_delegation(fence):
+            return None
+        if not self._register_realtime_delegation_tool():
+            return None
+        coordinator = self._runtime.orchestrator.delegation
+        async with self._realtime_delegation_lock:
+            existing = self._realtime_delegations.get(fence)
+            if existing is not None and existing[0] == query:
+                return existing[1]
+            self._realtime_delegations = {
+                bound_fence: delegated
+                for bound_fence, delegated in self._realtime_delegations.items()
+                if self._runtime.fence.matches(bound_fence)
+            }
+            task_epoch = coordinator.next_task_epoch(fence.session_id)
+            handle = await coordinator.delegate(
+                DelegationRequest(
+                    tool_name="realtime_search",
+                    arguments={"query": query},
+                    fence=fence,
+                    task_epoch=task_epoch,
+                    context_version=self._runtime.orchestrator.context_version_for_fence(fence),
+                    expires_at_ms=int(time.time() * 1_000) + 20_000,
+                    side_effect_policy=SideEffectPolicy.READ_ONLY,
+                    committed=True,
+                    relevance=lambda: self._realtime_delegation_relevant(
+                        query=query,
+                        fence=fence,
+                    ),
+                )
+            )
+            self._realtime_delegations[fence] = (query, handle)
+            return handle
+
+    def _can_start_realtime_delegation(self, fence: GenerationFence) -> bool:
+        if not self._runtime.fence.matches(fence):
+            return False
+        if self._runtime.mode_policy_enforced:
+            try:
+                snapshot = self._runtime.context_snapshot_for_fence(fence)
+                policy = self._runtime.mode_policy_for_fence(fence)
+            except ValueError:
+                return False
+            if not snapshot.tool_permission or not policy.allows_tools(
+                self._runtime.current_speaker_class
+            ):
+                logger.warning(
+                    "realtime delegation blocked by frozen tool policy session_id=%s turn_id=%s",
+                    fence.session_id,
+                    fence.turn_id,
+                )
+                return False
+        return True
+
+    def _coordinated_livekit_tools(
+        self,
+        tools: list[Any],
+        *,
+        fence: GenerationFence,
+    ) -> list[Any]:
+        """Expose only tools whose authoritative handler is registered with TaskManager."""
+
+        manager = self._runtime.orchestrator.task_manager
+        coordinator = self._runtime.orchestrator.delegation
+        coordinated: list[Any] = []
+        for tool in tools:
+            if isinstance(tool, llm.RawFunctionTool):
+                schema = dict(tool.info.raw_schema)
+                flags = tool.info.flags
+                on_duplicate = tool.info.on_duplicate
+                name = tool.info.name
+            elif isinstance(tool, llm.FunctionTool):
+                schema = llm.utils.build_legacy_openai_schema(
+                    tool,
+                    internally_tagged=True,
+                )
+                flags = tool.info.flags
+                on_duplicate = tool.info.on_duplicate
+                name = tool.info.name
+            else:
+                logger.error("unsupported LiveKit tool blocked tool=%r", tool)
+                continue
+            spec = manager.specs.get(name)
+            if spec is None or name not in manager.handlers:
+                logger.error("unregistered LiveKit tool blocked tool=%s", name)
+                continue
+            try:
+                policy = SideEffectPolicy(spec.side_effect_policy)
+            except ValueError:
+                logger.error(
+                    "LiveKit tool without authoritative side-effect policy blocked tool=%s", name
+                )
+                continue
+            if policy is SideEffectPolicy.HIGH_RISK:
+                logger.error(
+                    "high-risk LiveKit tool blocked without explicit confirmation tool=%s",
+                    name,
+                )
+                continue
+
+            def build_dispatch(
+                tool_name: str,
+                tool_spec: ToolSpec,
+                side_effect_policy: SideEffectPolicy,
+                raw_schema: dict[str, Any],
+                tool_flags: Any,
+                duplicate_policy: Any,
+            ) -> Any:
+                async def dispatch(raw_arguments: dict[str, object]) -> str:
+                    if not self._runtime.fence.matches(fence):
+                        raise StopResponse()
+                    context_version = self._runtime.orchestrator.context_version_for_fence(fence)
+                    handle = await coordinator.delegate(
+                        DelegationRequest(
+                            tool_name=tool_name,
+                            arguments=dict(raw_arguments),
+                            fence=fence,
+                            task_epoch=coordinator.next_task_epoch(fence.session_id),
+                            context_version=context_version,
+                            expires_at_ms=(
+                                int(time.time() * 1_000) + int(tool_spec.timeout_s * 1_000)
+                            ),
+                            side_effect_policy=side_effect_policy,
+                            committed=True,
+                            relevance=lambda: self._runtime.fence.matches(fence),
+                            output_kind=media_pb2.OUTPUT_INTENT_KIND_TOOL_RESULT,
+                        )
+                    )
+                    async for _event in coordinator.events(handle):
+                        pass
+                    intent = coordinator.output_intent(
+                        handle,
+                        current_fence=self._runtime.fence,
+                        current_task_epoch=handle.request.task_epoch,
+                        current_context_version=coordinator.current_context_version(
+                            fence.session_id
+                        ),
+                        relevant=self._runtime.fence.matches(fence),
+                    )
+                    if intent is None:
+                        raise StopResponse()
+                    spoken = coordinator.admit_output_intent(
+                        intent,
+                        current_fence=self._runtime.fence,
+                        current_context_version=coordinator.current_context_version(
+                            fence.session_id
+                        ),
+                        floor_allows_output=self._runtime.output_floor_allows_assistant,
+                    )
+                    if spoken is None:
+                        raise StopResponse()
+                    coordinator.complete_output_intent(
+                        intent,
+                        current_fence=self._runtime.fence,
+                        current_context_version=coordinator.current_context_version(
+                            fence.session_id
+                        ),
+                        floor_allows_output=self._runtime.output_floor_allows_assistant,
+                        reason="tool_result_consumed",
+                    )
+                    return spoken
+
+                return llm.function_tool(
+                    dispatch,
+                    raw_schema=raw_schema,
+                    flags=tool_flags,
+                    on_duplicate=duplicate_policy,
+                )
+
+            coordinated.append(build_dispatch(name, spec, policy, schema, flags, on_duplicate))
+        return coordinated
 
     async def _llm_node_impl(
         self,
@@ -1521,10 +2103,13 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                                 break
                             yield accepted_segment
                 return
+            context_snapshot = self._runtime.context_snapshot_for_fence(fence)
+            frozen_session_turns = [
+                ChatMessage(turn.role, turn.content, turn.speaker_scope)
+                for turn in context_snapshot.recent_committed_turns
+            ]
             heard_assistant = [
-                turn.content
-                for turn in self._runtime.orchestrator.context.turns
-                if turn.role == "assistant"
+                turn.content for turn in frozen_session_turns if turn.role == "assistant"
             ]
             owner_salutation = policy.owner_salutation if speaker_class == "owner" else None
             safe_chat_ctx = self._context_assembler.assemble(
@@ -1538,8 +2123,11 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     self._is_local_safe_plan(response_plan)
                     and (speaker_class == "owner" or resume_interrupted_reply)
                 ),
-                session_turns=self._runtime.orchestrator.context.turns,
+                session_turns=frozen_session_turns,
                 delivery_instruction=speech_plan.llm_instruction,
+                context_snapshot=(
+                    None if self._is_local_safe_plan(response_plan) else context_snapshot
+                ),
             )
             if resume_realtime_request and realtime_request is not None:
                 safe_chat_ctx.add_message(
@@ -1577,17 +2165,71 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             if longform:
                 max_chars = MAX_VOICE_REPLY_CHARS_LONGFORM
                 max_sentences = MAX_VOICE_REPLY_SENTENCES_LONGFORM
-            safe_tools = (
+            safe_tools: list[Any] = []
+            if (
                 tools
-                if policy.allows_tools(speaker_class)
+                and context_snapshot.tool_permission
+                and policy.allows_tools(speaker_class)
                 and not self._is_local_safe_plan(response_plan)
-                else []
-            )
-            stream = (
-                self._forced_realtime_search_stream(query=realtime_request.query)
-                if realtime_request is not None
-                else Agent.default.llm_node(self, safe_chat_ctx, safe_tools, model_settings)
-            )
+            ):
+                safe_tools = self._coordinated_livekit_tools(
+                    tools,
+                    fence=fence,
+                )
+            if realtime_request is not None and not resume_realtime_request:
+                handle = await self._get_or_start_realtime_delegation(
+                    query=realtime_request.query,
+                    fence=fence,
+                )
+                if handle is not None and not handle.record.task.done():
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(
+                            asyncio.shield(handle.record.task),
+                            timeout=0.02,
+                        )
+                if handle is not None and not handle.record.task.done():
+                    bridge_intent = self._runtime.orchestrator.delegation.bridge_acknowledgement(
+                        BRIDGE_PHRASES[1],
+                        fence=fence,
+                        context_version=handle.request.context_version,
+                        expires_at_ms=int(time.time() * 1_000) + 5_000,
+                    )
+                    bridge = self._runtime.orchestrator.delegation.admit_output_intent(
+                        bridge_intent,
+                        current_fence=self._runtime.fence,
+                        current_context_version=(
+                            self._runtime.orchestrator.delegation.current_context_version(
+                                fence.session_id
+                            )
+                        ),
+                        floor_allows_output=self._runtime.output_floor_allows_assistant,
+                    )
+                    if bridge is not None:
+                        try:
+                            self._llm_text_buf += bridge
+                            for segment in segmenter.push_token(bridge):
+                                accepted_segment = _ready_segment(segment.text)
+                                if accepted_segment is None:
+                                    break
+                                yield accepted_segment
+                        finally:
+                            self._runtime.orchestrator.delegation.complete_output_intent(
+                                bridge_intent,
+                                current_fence=self._runtime.fence,
+                                current_context_version=(
+                                    self._runtime.orchestrator.delegation.current_context_version(
+                                        fence.session_id
+                                    )
+                                ),
+                                floor_allows_output=self._runtime.output_floor_allows_assistant,
+                                reason="bridge_acknowledgement_emitted",
+                            )
+            if realtime_request is not None:
+                stream = self._forced_realtime_search_stream(query=realtime_request.query)
+            elif self._standalone_llm is not None:
+                stream = self._standalone_model_stream(safe_chat_ctx, safe_tools)
+            else:
+                stream = Agent.default.llm_node(self, safe_chat_ctx, safe_tools, model_settings)
             # default may return async gen or coroutine of async gen
             if asyncio.iscoroutine(stream):
                 stream = await stream
@@ -2508,6 +3150,7 @@ async def entrypoint(ctx: Any) -> None:
             "\n\n当前客户端是受控半双工小程序。普通回答只说一到三句、最多一百二十个"
             "中英文数字字符，优先先给完整结论；只有用户明确要求故事、朗读、详细方案或继续时才展开。"
         )
+    fast_model_warmer = getattr(llm_plugin, "prewarm", None)
     agent = DuplexVoiceAgent(
         instructions=agent_instructions,
         runtime=runtime,
@@ -2515,6 +3158,7 @@ async def entrypoint(ctx: Any) -> None:
         response_planner_client=response_planner_client,
         realtime_search_resolver=realtime_search_resolver,
         realtime_search_model=realtime_search_model,
+        fast_model_warmer=fast_model_warmer if callable(fast_model_warmer) else None,
         llm_provider=runtime_settings.llm_provider,
         llm_model=runtime_settings.llm_fast_model,
         tts_provider="volcengine_doubao",

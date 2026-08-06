@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from services.agent.src.orchestration.context_manager import ChatMessage, SpeakerScope
+from services.agent.src.orchestration.context_snapshot_manager import ContextSnapshot
 from services.agent.src.response_planner_client import ResponsePlan
 
 logger = logging.getLogger(__name__)
@@ -149,6 +150,7 @@ class ContextAssembler:
         force_current_user_only: bool = False,
         session_turns: Sequence[ChatMessage] = (),
         delivery_instruction: str = "",
+        context_snapshot: ContextSnapshot | None = None,
     ) -> Any:
         if force_current_user_only:
             safe = current_user_only_chat_context(chat_ctx)
@@ -174,6 +176,7 @@ class ContextAssembler:
                 response_plan,
                 resume_interrupted_reply=resume_interrupted_reply,
                 delivery_instruction=delivery_instruction,
+                context_snapshot=context_snapshot,
             ),
         )
         if speaker_class == "owner" and _safe_salutation(owner_salutation):
@@ -199,6 +202,7 @@ class ContextAssembler:
         *,
         resume_interrupted_reply: bool,
         delivery_instruction: str,
+        context_snapshot: ContextSnapshot | None,
     ) -> str:
         instructions = response_plan.instructions
         if delivery_instruction.strip():
@@ -209,21 +213,55 @@ class ContextAssembler:
                 "从中断处自然续接，不要重开话题、重复已听内容，"
                 "也不要询问用户想继续什么。"
             )
+        if context_snapshot is None:
+            grounded_items = [
+                {
+                    "kind": item.kind,
+                    "item_id": item.item_id,
+                    "content": item.content,
+                    "use_as": item.use_as,
+                    "source_event_ids": list(item.source_event_ids),
+                    "confidence": item.confidence,
+                    "sharing_scope": item.sharing_scope,
+                }
+                for item in response_plan.grounded_items
+            ]
+            context_version = None
+            summary = ""
+        else:
+            grounded_items = [
+                {
+                    "kind": item.kind,
+                    "item_id": item.item_id,
+                    "content": item.content,
+                    "use_as": item.use_as,
+                    "source_event_ids": list(item.source_refs),
+                    "confidence": item.confidence,
+                    "sharing_scope": item.sharing_scope,
+                }
+                for item in context_snapshot.memory_capsule.entries
+            ]
+            persona = context_snapshot.persona_capsule
+            if persona.prompt_fragment:
+                grounded_items.append(
+                    {
+                        "kind": "persona_trait",
+                        "item_id": persona.version_id or "persona-capsule",
+                        "content": persona.prompt_fragment,
+                        "use_as": "style",
+                        "source_event_ids": [],
+                        "confidence": None,
+                        "sharing_scope": None,
+                    }
+                )
+            context_version = context_snapshot.version
+            summary = context_snapshot.summary
         payload: dict[str, Any] = {
             "instructions": instructions,
             "DATA": {
-                "grounded_items": [
-                    {
-                        "kind": item.kind,
-                        "item_id": item.item_id,
-                        "content": item.content,
-                        "use_as": item.use_as,
-                        "source_event_ids": list(item.source_event_ids),
-                        "confidence": item.confidence,
-                        "sharing_scope": item.sharing_scope,
-                    }
-                    for item in response_plan.grounded_items
-                ]
+                "context_version": context_version,
+                "summary": summary,
+                "grounded_items": grounded_items,
             },
             "disclosures": list(response_plan.disclosures),
         }

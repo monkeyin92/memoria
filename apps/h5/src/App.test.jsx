@@ -336,7 +336,7 @@ describe("App identity and profile preferences", () => {
       start,
     }));
 
-    render(<App />);
+    const view = render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 
     expect(screen.getAllByRole("button", { name: "开始语音对话" }))
@@ -362,7 +362,7 @@ describe("App identity and profile preferences", () => {
       stopAssistant,
     }));
 
-    render(<App />);
+    const view = render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 
     fireEvent.click(screen.getByRole("button", { name: "停止回答" }));
@@ -442,6 +442,43 @@ describe("App identity and profile preferences", () => {
     expect(
       screen.queryByText("这句用户内容随后应被替换"),
     ).not.toBeInTheDocument();
+  });
+
+  it("reflects the provisional floor state on the current speaker label", async () => {
+    const provisionalLine = {
+      key: "provisional:p-1",
+      speaker: "user",
+      text: "你",
+      final: false,
+      provisional: true,
+      floorState: "user_holds_floor",
+    };
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      access_token: "token",
+    });
+    mocks.useVoiceSession.mockImplementation(() => ({
+      ...voiceState(),
+      session: { session_id: "voice-session" },
+      uiState: "listening",
+      transcripts: [provisionalLine],
+      latestTranscript: provisionalLine,
+    }));
+
+    const view = render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    expect(screen.getByText("你 · 正在说")).toBeInTheDocument();
+
+    mocks.useVoiceSession.mockImplementation(() => ({
+      ...voiceState(),
+      session: { session_id: "voice-session" },
+      uiState: "listening",
+      transcripts: [{ ...provisionalLine, floorState: "uncertain" }],
+      latestTranscript: { ...provisionalLine, floorState: "uncertain" },
+    }));
+    view.rerender(<App />);
+    expect(screen.getByText("你 · 正在确认")).toBeInTheDocument();
   });
 
   it("does not load user data or expose the app before identity is ready", async () => {

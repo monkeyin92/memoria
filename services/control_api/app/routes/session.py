@@ -856,12 +856,20 @@ async def create_session(
             ),
         )
 
-    token, ttl = mint_participant_token(
-        settings,
-        room_name=room_name,
-        identity=identity,
-        agent_name=settings.livekit_agent_name,
-    )
+    try:
+        token, ttl = mint_participant_token(
+            settings,
+            room_name=room_name,
+            identity=identity,
+            agent_name=settings.livekit_agent_name,
+        )
+    except RuntimeError as exc:
+        code = (
+            "livekit_credentials_missing"
+            if not settings.livekit_api_key or not settings.livekit_api_secret
+            else "livekit_token_unavailable"
+        )
+        raise HTTPException(status_code=503, detail={"code": code}) from exc
     media_runtime = (
         await _decide_media_runtime(
             request,
@@ -1558,12 +1566,28 @@ async def renew_media_session(
         raise HTTPException(status_code=409, detail="media route epoch changed") from exc
     except SessionDirectoryUnavailable as exc:
         raise HTTPException(status_code=503, detail="media session directory unavailable") from exc
-    return {
+    response: dict[str, Any] = {
         "session_id": session_id,
         "media_runtime": route.media_runtime,
         "stream_epoch": route.stream_epoch,
         "expires_at": route.expires_at.isoformat().replace("+00:00", "Z"),
     }
+    if route.media_runtime == "streamcore":
+        device_id = None if route.device_id == "h5" else route.device_id
+        try:
+            token, token_expires_at = mint_streamcore_token(
+                request.app.state.settings,
+                session_id=session_id,
+                user_id=user.user_id,
+                client_platform="h5",
+                device_id=device_id,
+                stream_epoch=route.stream_epoch,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=503, detail="StreamCore token unavailable") from exc
+        response["token"] = token
+        response["token_expires_at"] = token_expires_at.isoformat().replace("+00:00", "Z")
+    return response
 
 
 def get_stop_requests() -> list[dict[str, Any]]:

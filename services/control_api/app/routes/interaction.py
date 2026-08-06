@@ -77,13 +77,13 @@ router = APIRouter(prefix="/v1/interaction", tags=["interaction"])
 logger = logging.getLogger(__name__)
 _RESPONSE_PLAN_CACHE_MAX_ENTRIES = 256
 _ResponsePlanCacheKey = tuple[str, int, int, int]
+
+
 def _local_now(settings: ControlSettings) -> datetime:
     return current_local_time(settings.memoria_timezone)
 
 
-def _fixed_reply_for_query(
-    *, query: str, frozen: FrozenMode, now: datetime
-) -> str | None:
+def _fixed_reply_for_query(*, query: str, frozen: FrozenMode, now: datetime) -> str | None:
     companion = companion_definition(frozen.companion_style_id)
     safety_reply = fixed_companion_reply(
         query=query,
@@ -379,6 +379,14 @@ class ResponsePlanRequest(BaseModel):
         return self
 
 
+class ContextPrefetchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    session_id: str = Field(min_length=1, max_length=128)
+    query: str = Field(min_length=1, max_length=4000)
+    speaker_decision: ResponsePlanSpeakerDecision
+
+
 def _response_plan_unavailable() -> HTTPException:
     return HTTPException(status_code=409, detail={"code": "response_plan_unavailable"})
 
@@ -557,9 +565,7 @@ async def _response_plan_context(
         ):
             raise _response_plan_unavailable()
         purpose: Literal["owner_preview", "grantee_session"] = (
-            "owner_preview"
-            if frozen.legacy_actor_role == "owner_preview"
-            else "grantee_session"
+            "owner_preview" if frozen.legacy_actor_role == "owner_preview" else "grantee_session"
         )
         try:
             legacy_access = await _legacy_registry(request).resolve_access(
@@ -576,16 +582,13 @@ async def _response_plan_context(
             raise _response_plan_unavailable() from exc
         if (
             not _legacy_access_matches_session(frozen, legacy_access)
-            or legacy_grant.grant_snapshot_sha256
-            != legacy_access.grant_snapshot_sha256
+            or legacy_grant.grant_snapshot_sha256 != legacy_access.grant_snapshot_sha256
             or legacy_grant.scope_sha256 != legacy_access.scope_sha256
             or legacy_grant.allowed_items != legacy_access.allowed_items
             or _store(request).is_account_unavailable(
                 user_id=legacy_access.resource_owner_account_id
             )
-            or _store(request).is_account_unavailable(
-                user_id=legacy_access.grantee_account_id
-            )
+            or _store(request).is_account_unavailable(user_id=legacy_access.grantee_account_id)
         ):
             raise _response_plan_unavailable()
         resource_owner_account_id = legacy_access.resource_owner_account_id
@@ -894,10 +897,7 @@ def _response_plan_payload(
         if (
             frozen.interaction_mode in {"self_preview", "legacy"}
             and version is not None
-            and (
-                frozen.interaction_mode != "legacy"
-                or frozen.legacy_voice_allowed is True
-            )
+            and (frozen.interaction_mode != "legacy" or frozen.legacy_voice_allowed is True)
             and _frozen_personal_voice_matches(frozen, version)
         )
         else {
@@ -954,38 +954,28 @@ def _response_plan_payload(
                 frozen.actor_account_id if frozen.interaction_mode == "legacy" else None
             ),
             "resource_owner_account_id": (
-                frozen.resource_owner_account_id
-                if frozen.interaction_mode == "legacy"
-                else None
+                frozen.resource_owner_account_id if frozen.interaction_mode == "legacy" else None
             ),
             "legacy_actor_role": (
                 frozen.legacy_actor_role if frozen.interaction_mode == "legacy" else None
             ),
             "legacy_grantee_account_id": (
-                frozen.legacy_grantee_account_id
-                if frozen.interaction_mode == "legacy"
-                else None
+                frozen.legacy_grantee_account_id if frozen.interaction_mode == "legacy" else None
             ),
             "legacy_grant_id": (
                 frozen.legacy_grant_id if frozen.interaction_mode == "legacy" else None
             ),
             "legacy_grant_snapshot_sha256": (
-                frozen.legacy_grant_snapshot_sha256
-                if frozen.interaction_mode == "legacy"
-                else None
+                frozen.legacy_grant_snapshot_sha256 if frozen.interaction_mode == "legacy" else None
             ),
             "legacy_scope_sha256": (
-                frozen.legacy_scope_sha256
-                if frozen.interaction_mode == "legacy"
-                else None
+                frozen.legacy_scope_sha256 if frozen.interaction_mode == "legacy" else None
             ),
             "legacy_shell_id": (
                 frozen.legacy_shell_id if frozen.interaction_mode == "legacy" else None
             ),
             "legacy_voice_allowed": (
-                frozen.legacy_voice_allowed
-                if frozen.interaction_mode == "legacy"
-                else None
+                frozen.legacy_voice_allowed if frozen.interaction_mode == "legacy" else None
             ),
             "legacy_expires_at": (
                 frozen.legacy_expires_at if frozen.interaction_mode == "legacy" else None
@@ -1116,13 +1106,9 @@ async def response_plan(
             actor=PlannerActor(
                 account_id=account_id,
                 resource_owner_account_id=(
-                    legacy_access.resource_owner_account_id
-                    if legacy_access is not None
-                    else None
+                    legacy_access.resource_owner_account_id if legacy_access is not None else None
                 ),
-                legacy_actor_role=(
-                    legacy_access.actor_role if legacy_access is not None else None
-                ),
+                legacy_actor_role=(legacy_access.actor_role if legacy_access is not None else None),
                 legacy_allowed_items=(
                     frozenset((item.kind, item.item_id) for item in legacy_access.allowed_items)
                     if legacy_access is not None
@@ -1160,3 +1146,51 @@ async def response_plan(
                 plan=plan,
             )
         return await cache.put(key, fingerprint, payload)
+
+
+@router.post("/context-prefetch")
+async def context_prefetch(
+    body: ContextPrefetchRequest,
+    request: Request,
+    _: Annotated[None, Depends(_require_response_plan_token)],
+) -> dict[str, Any]:
+    """Prepare bounded context data without creating an authoritative turn."""
+
+    frozen, account_id, _version, _relationship, _legacy_access = await _response_plan_context(
+        request, body.session_id
+    )
+    if frozen.interaction_mode != "companion":
+        return {
+            "speaker_class": body.speaker_decision.classification,
+            "grounded_items": [],
+            "persona_version_id": None,
+            "persona_version_number": None,
+        }
+    items, persona = await _companion_items(
+        request=request,
+        frozen=frozen,
+        account_id=account_id,
+        query=body.query,
+        speaker=body.speaker_decision,
+    )
+    return {
+        "speaker_class": body.speaker_decision.classification,
+        "grounded_items": [
+            {
+                "kind": item.kind,
+                "item_id": item.item_id,
+                "content": item.content,
+                "use_as": "style" if item.kind == "persona_trait" else "fact",
+                "source_event_ids": [
+                    str(source_event_id)[:128]
+                    for ref in item.source_refs[:4]
+                    for source_event_id in ref.source_event_ids[:8]
+                ][:16],
+                "confidence": None,
+                "sharing_scope": None,
+            }
+            for item in items[:32]
+        ],
+        "persona_version_id": persona.version_id if persona is not None else None,
+        "persona_version_number": persona.version_number if persona is not None else None,
+    }

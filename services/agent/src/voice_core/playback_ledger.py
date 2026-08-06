@@ -261,18 +261,18 @@ class PlaybackLedger:
         return tuple(span for span in self._spans.get(fence, ()) if span.acknowledged)
 
     def is_fully_acknowledged(self, fence: GenerationFence) -> bool:
-        """Return true once rendered audio can no longer advance this generation.
+        """Return true once all registered audio and text spans are rendered.
 
         Text spans determine what may enter actual-heard history.  They are
         optional provider metadata, however, so an empty/invalid transcript
         must not leave a fully played response stuck in ``SPEAKING``.
         """
 
-        spans = self._spans.get(fence, ())
-        if spans:
-            return all(span.acknowledged for span in spans)
         received_end = self._received_sample_end.get(fence, 0)
-        return received_end > 0 and self._rendered_sample_end.get(fence, 0) >= received_end
+        if received_end <= 0 or self._rendered_sample_end.get(fence, 0) < received_end:
+            return False
+        spans = self._spans.get(fence, ())
+        return all(span.acknowledged for span in spans)
 
     def actual_heard_text(self, fence: GenerationFence) -> str:
         """Return only text whose complete mapped span was actually rendered."""

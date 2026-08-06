@@ -39,6 +39,42 @@ func (v JWTVerifier) Verify(token, sessionID string, expectedEpoch ...uint64) er
 	return v.VerifyIdentity(token, identity)
 }
 
+// ParseIdentity authenticates a bearer token and returns the identity needed
+// to create a WHIP session. Claims are decoded once to discover the expected
+// identity, then VerifyIdentity validates the signature, issuer, audience,
+// expiry and every discovered field before any value is returned.
+func (v JWTVerifier) ParseIdentity(token string) (MediaTokenIdentity, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return MediaTokenIdentity{}, fmt.Errorf("invalid media token")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return MediaTokenIdentity{}, fmt.Errorf("invalid media token claims")
+	}
+	var claims struct {
+		SessionID   string `json:"session_id"`
+		Subject     string `json:"sub"`
+		DeviceID    string `json:"device_id"`
+		ClientType  string `json:"client_type"`
+		StreamEpoch uint64 `json:"stream_epoch"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return MediaTokenIdentity{}, fmt.Errorf("invalid media token claims")
+	}
+	identity := MediaTokenIdentity{
+		SessionID: claims.SessionID, AccountID: claims.Subject, DeviceID: claims.DeviceID,
+		ClientType: claims.ClientType, StreamEpoch: claims.StreamEpoch,
+	}
+	if err := v.VerifyIdentity(token, identity); err != nil {
+		return MediaTokenIdentity{}, err
+	}
+	if err := OpenSessionRequest(identity).Validate(); err != nil {
+		return MediaTokenIdentity{}, fmt.Errorf("invalid media token identity: %w", err)
+	}
+	return identity, nil
+}
+
 // VerifyIdentity validates the token and, when supplied, binds all account,
 // device, client-type and stream-epoch claims to the current media identity.
 func (v JWTVerifier) VerifyIdentity(token string, expected MediaTokenIdentity) error {

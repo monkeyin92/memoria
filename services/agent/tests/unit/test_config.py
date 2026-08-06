@@ -48,6 +48,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.media_bridge_grpc_enabled is False
     assert s.media_bridge_mtls is False
     assert s.media_bridge_max_pending_audio_frames == 100
+    assert s.media_bridge_go_shadow_enabled is False
     assert s.media_slo_report_enabled is False
     assert s.media_slo_metrics_url == "http://agent:9090/"
     assert s.media_slo_report_interval_s == 30.0
@@ -91,6 +92,7 @@ def test_media_bridge_limits_and_tls_paths_are_loaded(
     monkeypatch.setenv("MEDIA_BRIDGE_CLIENT_CA_FILE", str(tmp_path / "client-ca.crt"))
     monkeypatch.setenv("MEDIA_BRIDGE_MAX_PENDING_AUDIO_FRAMES", "64")
     monkeypatch.setenv("MEDIA_BRIDGE_MAX_PENDING_MESSAGES", "256")
+    monkeypatch.setenv("MEDIA_BRIDGE_GO_SHADOW_ENABLED", "true")
 
     settings = AgentSettings()
 
@@ -98,6 +100,7 @@ def test_media_bridge_limits_and_tls_paths_are_loaded(
     assert settings.media_bridge_mtls is True
     assert settings.media_bridge_max_pending_audio_frames == 64
     assert settings.media_bridge_max_pending_messages == 256
+    assert settings.media_bridge_go_shadow_enabled is True
 
 
 def test_funasr_vocabulary_and_noise_threshold_are_explicit(

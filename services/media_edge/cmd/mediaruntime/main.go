@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/pion/webrtc/v4"
 
 	mediaedge "memoria/services/media_edge"
 	mediav1 "memoria/services/media_edge/gen/memoria/media/v1"
@@ -54,6 +58,76 @@ func envDuration(name string, fallback time.Duration) time.Duration {
 	return time.Duration(value) * time.Millisecond
 }
 
+func requestedInteractionAuthority() (mediav1.InteractionAuthority, error) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("MEDIA_EDGE_INTERACTION_AUTHORITY"))) {
+	case "", "python", "python_authoritative":
+		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE, nil
+	case "go_shadow":
+		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW, nil
+	case "go_authoritative":
+		// A6 is intentionally unavailable until parity/SLO/rollback evidence is
+		// wired as a separate promotion gate.
+		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE, nil
+	default:
+		return mediav1.InteractionAuthority_INTERACTION_AUTHORITY_UNSPECIFIED,
+			fmt.Errorf("invalid MEDIA_EDGE_INTERACTION_AUTHORITY")
+	}
+}
+
+func buildWebRTCConfig(production bool) (mediaedge.WebRTCTerminatorConfig, error) {
+	var iceServers []webrtc.ICEServer
+	if raw := strings.TrimSpace(os.Getenv("MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &iceServers); err != nil {
+			return mediaedge.WebRTCTerminatorConfig{}, fmt.Errorf("invalid MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON: %w", err)
+		}
+	}
+	var publicIPs []string
+	for _, value := range strings.Split(os.Getenv("MEDIA_EDGE_WEBRTC_PUBLIC_IPS"), ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			publicIPs = append(publicIPs, value)
+		}
+	}
+	portMin := envInt("MEDIA_EDGE_WEBRTC_UDP_PORT_MIN", 0)
+	portMax := envInt("MEDIA_EDGE_WEBRTC_UDP_PORT_MAX", 0)
+	if (portMin == 0) != (portMax == 0) || portMin > portMax || portMax > 65535 {
+		return mediaedge.WebRTCTerminatorConfig{}, errors.New("WebRTC UDP port range must provide valid min and max values")
+	}
+	hasTURN := false
+	for _, server := range iceServers {
+		for _, url := range server.URLs {
+			hasTURN = hasTURN || strings.HasPrefix(url, "turn:") || strings.HasPrefix(url, "turns:")
+		}
+	}
+	if production && !hasTURN && (len(publicIPs) == 0 || portMin == 0) {
+		return mediaedge.WebRTCTerminatorConfig{}, errors.New("production WebRTC requires TURN or public IP plus a bounded UDP port range")
+	}
+	settingEngine := webrtc.SettingEngine{}
+	if portMin > 0 {
+		if err := settingEngine.SetEphemeralUDPPortRange(uint16(portMin), uint16(portMax)); err != nil {
+			return mediaedge.WebRTCTerminatorConfig{}, err
+		}
+	}
+	if len(publicIPs) > 0 {
+		if err := settingEngine.SetICEAddressRewriteRules(webrtc.ICEAddressRewriteRule{
+			External:        publicIPs,
+			AsCandidateType: webrtc.ICECandidateTypeHost,
+			Mode:            webrtc.ICEAddressRewriteReplace,
+		}); err != nil {
+			return mediaedge.WebRTCTerminatorConfig{}, fmt.Errorf("configure public ICE address rewrite: %w", err)
+		}
+	}
+	configuration := webrtc.Configuration{ICEServers: iceServers}
+	if production && hasTURN {
+		configuration.ICETransportPolicy = webrtc.ICETransportPolicyRelay
+	}
+	return mediaedge.WebRTCTerminatorConfig{
+		API:                   webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine)),
+		Configuration:         configuration,
+		RequireRelayCandidate: production && hasTURN,
+		OnError:               func(err error) { log.Printf("media edge WebRTC error: %v", err) },
+	}, nil
+}
+
 func buildVoiceCoreBridge() (*mediaedge.VoiceCoreBridge, error) {
 	address := strings.TrimSpace(os.Getenv("MEDIA_EDGE_VOICE_CORE_ADDR"))
 	production := strings.EqualFold(strings.TrimSpace(os.Getenv("ENVIRONMENT")), "production")
@@ -85,8 +159,13 @@ func buildVoiceCoreBridge() (*mediaedge.VoiceCoreBridge, error) {
 		context.Background(), envDuration("MEDIA_EDGE_VOICE_CORE_CONNECT_TIMEOUT_MS", 5*time.Second),
 	)
 	defer cancel()
+	interactionAuthority, err := requestedInteractionAuthority()
+	if err != nil {
+		return nil, err
+	}
 	return mediaedge.DialVoiceCore(connectContext, mediaedge.VoiceCoreBridgeConfig{
 		Address: address, TLS: tlsConfig, AllowInsecureDevelopment: allowInsecure,
+		InteractionAuthority: interactionAuthority,
 	})
 }
 
@@ -105,15 +184,19 @@ func main() {
 	}
 	server := mediaedge.NewServer(verifier, envInt("MEDIA_EDGE_MAX_PENDING_FRAMES", 100))
 	server.AllowInsecureDevelopment = !production && envBool("MEDIA_EDGE_ALLOW_INSECURE_DEVELOPMENT")
-	// This binary currently exposes only the development HTTP queue. Production
-	// stays fail-closed until a real WHIP/WebRTC/RTP terminator supplies a
-	// DownlinkSenderFactory. There is deliberately no environment-variable
-	// escape hatch: readiness must be backed by the sender actually passed into
-	// every Voice Core runtime.
-	server.RequireExternalDownlinkSender = production
-	if production {
-		log.Print("production media edge has no installed downlink sender factory; readiness stays fail-closed until a real terminator is linked")
+	webrtcConfig, err := buildWebRTCConfig(production)
+	if err != nil {
+		log.Fatal(err)
 	}
+	terminator, err := mediaedge.NewWebRTCTerminator(server, verifier, webrtcConfig)
+	if err != nil {
+		log.Fatal(err)
+	}
+	server.WHIPHandler = terminator.Handler()
+	server.DownlinkSenderFactory = terminator.DownlinkSender
+	server.DownlinkReadyProbe = terminator.Ready
+	server.SessionCloseHook = terminator.CloseSession
+	server.RequireExternalDownlinkSender = production
 	voiceCore, err := buildVoiceCoreBridge()
 	if err != nil {
 		log.Fatal(err)
@@ -142,10 +225,12 @@ func main() {
 			}
 			onError := func(bridgeErr error) {
 				log.Printf("media edge Voice Core stream failed session=%s err=%v", request.SessionID, bridgeErr)
+				terminator.HandleBridgeError(request, bridgeErr)
 			}
 			if sender != nil {
 				return mediaedge.NewVoiceCoreMediaRuntimeWithDownlinkSender(
-					context.Background(), session, core, sender, nil, onError,
+					context.Background(), session, core, sender,
+					func(event *mediav1.CoreToMedia) { terminator.ForwardCoreEvent(request, event) }, onError,
 				)
 			}
 			return mediaedge.NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, onError)
@@ -171,8 +256,11 @@ func main() {
 		}
 	case <-stopContext.Done():
 		server.Draining.Store(true)
+		_ = terminator.Close()
 		_ = server.Close()
-		_ = voiceCore.Close()
+		if voiceCore != nil {
+			_ = voiceCore.Close()
+		}
 		shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = httpServer.Shutdown(shutdownContext)
 		cancel()

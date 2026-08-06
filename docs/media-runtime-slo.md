@@ -8,6 +8,10 @@
 - 建连失败率默认不超过 2%；
 - stale generation 与跨轮 ASR final 必须为 0。
 
+其中 250 ms 是 StreamCore 早期灰度的 fail-closed 回滚门槛，不放宽
+`full_duplex_voice_agent_architecture_zh.md` 的产品 DoD：明确打断开始 duck P95
+仍需 `<=80 ms`，完全停止 P95 仍需 `<=180 ms`。
+
 任一门禁失败都会产生 `rollback_required=true`。Control API 只需返回
 `media_runtime=livekit` 即可回滚，不需要重新发布 H5；`STREAMCORE_KILL_SWITCH`
 仍是人工紧急开关。

@@ -89,6 +89,9 @@ async def test_provider_smoke_runs_doubao_funasr_and_llm_without_network(
         calls.append("doubao")
         return [(b"\x00\x00", ("测试",), ())]
 
+    async def fake_realtime_search(_settings: object) -> None:
+        calls.append("realtime-search")
+
     async def fake_funasr(
         pcm: bytes,
         *,
@@ -108,6 +111,7 @@ async def test_provider_smoke_runs_doubao_funasr_and_llm_without_network(
         calls.append("interrupt-semantic")
 
     monkeypatch.setattr(provider_smoke_test, "smoke_doubao", fake_doubao)
+    monkeypatch.setattr(provider_smoke_test, "smoke_realtime_search", fake_realtime_search)
     monkeypatch.setattr(provider_smoke_test, "smoke_funasr", fake_funasr)
     monkeypatch.setattr(provider_smoke_test, "smoke_llm", fake_llm)
     monkeypatch.setattr(
@@ -117,8 +121,63 @@ async def test_provider_smoke_runs_doubao_funasr_and_llm_without_network(
     )
 
     assert await provider_smoke_test.main() == 0
-    assert calls == ["doubao", "funasr", "llm", "interrupt-semantic"]
+    assert calls == ["realtime-search", "doubao", "funasr", "llm", "interrupt-semantic"]
     assert (
-        "provider_smoke_test PASS: FunASR, DeepSeek, Doubao, InterruptSemantic"
+        "provider_smoke_test PASS: FunASR, QwenRealtimeSearch, DeepSeek, Doubao, InterruptSemantic"
         in capsys.readouterr().out
     )
+
+
+@pytest.mark.asyncio
+async def test_realtime_search_smoke_uses_isolated_resolver_and_closes_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queries: list[str] = []
+    closed = False
+
+    class Resolver:
+        async def resolve(self, *, query: str) -> str:
+            queries.append(query)
+            return "今天是测试日期。"
+
+        async def aclose(self) -> None:
+            nonlocal closed
+            closed = True
+
+    monkeypatch.setattr(
+        provider_smoke_test,
+        "build_realtime_search_resolver",
+        lambda *, settings: Resolver(),
+    )
+
+    await provider_smoke_test.smoke_realtime_search(object())
+
+    assert queries == ["请联网查询今天的日期，只用一句中文回答。"]
+    assert closed
+
+
+@pytest.mark.asyncio
+async def test_realtime_search_smoke_fails_closed_on_empty_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed = False
+
+    class Resolver:
+        async def resolve(self, *, query: str) -> None:
+            assert query
+            return None
+
+        async def aclose(self) -> None:
+            nonlocal closed
+            closed = True
+
+    monkeypatch.setattr(
+        provider_smoke_test,
+        "build_realtime_search_resolver",
+        lambda *, settings: Resolver(),
+    )
+
+    with pytest.raises(AssertionError, match="returned no public result"):
+        await provider_smoke_test.smoke_realtime_search(object())
+
+    assert closed

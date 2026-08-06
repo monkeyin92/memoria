@@ -24,6 +24,13 @@ DEVICE_TOPICS = frozenset(
     }
 )
 
+DEVICE_EVENT_TYPES = frozenset(
+    {
+        "button",
+        "network_status",
+    }
+)
+
 DeviceCommandStatus = Literal["applied", "rejected", "expired", "failed"]
 
 
@@ -153,4 +160,41 @@ class DeviceCommandAck:
         )
 
 
-__all__ = ["DEVICE_TOPICS", "DeviceCommand", "DeviceCommandAck", "DeviceCommandStatus"]
+@dataclass(frozen=True, slots=True)
+class DeviceEvent:
+    event_type: Literal["button", "network_status"]
+    device_monotonic_ms: int
+    payload: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        if self.event_type not in DEVICE_EVENT_TYPES:
+            raise ValueError("device event type is not allowlisted")
+        if self.device_monotonic_ms < 0:
+            raise ValueError("device_monotonic_ms must be non-negative")
+        if not isinstance(self.payload, dict):
+            raise ValueError("device event payload must be an object")
+
+    def to_json(self) -> bytes:
+        return json.dumps(
+            {
+                "v": 1,
+                "type": "client.device.event",
+                "event_type": self.event_type,
+                "device_monotonic_ms": self.device_monotonic_ms,
+                "payload": self.payload,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+
+
+__all__ = [
+    "DEVICE_EVENT_TYPES",
+    "DEVICE_TOPICS",
+    "DeviceCommand",
+    "DeviceCommandAck",
+    "DeviceCommandStatus",
+    "DeviceEvent",
+]

@@ -40,6 +40,18 @@ const ASSISTANT_EXPRESSIONS = new Set([
   "curious",
   "caring",
 ]);
+const PROJECTION_EVENT_TYPES = new Set([
+  "turn.provisional.started",
+  "turn.provisional.patch",
+  "turn.provisional.discarded",
+  "turn.committed",
+]);
+const STREAMCORE_CLIENT_EVENT_TYPES = new Set([
+  "audio_trace",
+  "assistant_audio",
+  "emotion_observation",
+  "assistant_expression",
+]);
 /** End-to-end realtime backends (not LiveKit cascade). */
 const REALTIME_BACKENDS = new Set(["qwen_omni"]);
 
@@ -160,16 +172,91 @@ function mapServerState(state) {
   return null;
 }
 
+function parseProjectionEvent(event) {
+  if (!event || !PROJECTION_EVENT_TYPES.has(event.type)) return null;
+  const committed = event.type === "turn.committed";
+  const turnId = Number.isInteger(event.turn_id)
+    ? event.turn_id
+    : event.envelope_turn_id;
+  const generationId = Number.isInteger(event.generation_id)
+    ? event.generation_id
+    : event.envelope_generation_id;
+  const toolEpoch = Number.isInteger(event.tool_epoch)
+    ? event.tool_epoch
+    : event.envelope_tool_epoch;
+  if (
+    typeof event.session_id !== "string" ||
+    !event.session_id ||
+    typeof event.provisional_id !== "string" ||
+    !event.provisional_id ||
+    !Number.isInteger(event.stream_epoch) ||
+    event.stream_epoch < 1 ||
+    !Number.isInteger(event.projection_revision) ||
+    event.projection_revision < 1 ||
+    typeof event.text !== "string" ||
+    event.text.length > 5_000 ||
+    event.speaker !== "user" ||
+    !event.speaker_evidence ||
+    typeof event.speaker_evidence !== "object" ||
+    !["owner", "guest", "uncertain"].includes(
+      event.speaker_evidence.speaker_class,
+    ) ||
+    typeof event.speaker_evidence.reason_code !== "string" ||
+    !event.speaker_evidence.reason_code ||
+    typeof event.speaker_evidence.authority_verified !== "boolean"
+  ) {
+    return null;
+  }
+  if (committed) {
+    if (
+      event.final !== true ||
+      event.persist_as_turn !== true ||
+      typeof event.history_eligible !== "boolean" ||
+      !Number.isInteger(turnId) ||
+      turnId < 1 ||
+      !Number.isInteger(generationId) ||
+      generationId < 1 ||
+      !Number.isInteger(toolEpoch) ||
+      toolEpoch < 0 ||
+      !Number.isInteger(event.turn_revision) ||
+      event.turn_revision < 1 ||
+      (event.history_eligible === true &&
+        (event.speaker_evidence.speaker_class !== "owner" ||
+          event.speaker_evidence.authority_verified !== true))
+    ) {
+      return null;
+    }
+  } else if (
+    event.persist_as_turn !== false ||
+    event.history_eligible !== false ||
+    !Number.isInteger(event.provisional_turn_id) ||
+    event.provisional_turn_id < 1
+  ) {
+    return null;
+  }
+  return {
+    ...event,
+    turn_id: turnId,
+    generation_id: generationId,
+    tool_epoch: toolEpoch,
+  };
+}
+
 function parseEvent(payload) {
   try {
     const event = JSON.parse(new TextDecoder().decode(payload));
     if (!event || typeof event.type !== "string") return null;
+    if (PROJECTION_EVENT_TYPES.has(event.type)) {
+      return parseProjectionEvent(event);
+    }
     if (event.type === "assistant_state") {
       if (
         typeof event.session_id !== "string" ||
         typeof event.state !== "string" ||
         !Number.isInteger(event.turn_id) ||
-        !Number.isInteger(event.generation_id)
+        !Number.isInteger(event.generation_id) ||
+        !Number.isInteger(event.tool_epoch) ||
+        event.tool_epoch < 0
       ) {
         return null;
       }
@@ -186,6 +273,8 @@ function parseEvent(payload) {
           typeof event.text_delivered !== "boolean") ||
         !Number.isInteger(event.turn_id) ||
         !Number.isInteger(event.generation_id) ||
+        (event.tool_epoch !== undefined &&
+          (!Number.isInteger(event.tool_epoch) || event.tool_epoch < 0)) ||
         (event.turn_revision !== undefined &&
           (!Number.isInteger(event.turn_revision) || event.turn_revision < 1))
       ) {
@@ -264,6 +353,27 @@ function parseEvent(payload) {
   return null;
 }
 
+function normalizeStreamCoreClientEvent(event) {
+  if (
+    !event ||
+    typeof event !== "object" ||
+    !STREAMCORE_CLIENT_EVENT_TYPES.has(event.type) ||
+    !event.payload ||
+    typeof event.payload !== "object" ||
+    Array.isArray(event.payload)
+  ) {
+    return null;
+  }
+  return {
+    ...event.payload,
+    type: event.type,
+    session_id: event.session_id,
+    turn_id: event.turn_id,
+    generation_id: event.generation_id,
+    tool_epoch: event.tool_epoch,
+  };
+}
+
 export function useVoiceSession({
   userId,
   onFinalTranscript,
@@ -288,6 +398,7 @@ export function useVoiceSession({
   const [emotionHint, setEmotionHint] = useState(null);
   const [assistantExpression, setAssistantExpression] = useState(null);
   const [inputMode, setInputMode] = useState("voice");
+  const [floorState, setFloorState] = useState("silence");
   const roomRef = useRef(null);
   const cascadeTransportRef = useRef(null);
   const omniTransportRef = useRef(null);
@@ -309,6 +420,9 @@ export function useVoiceSession({
   const intentionalEndRef = useRef(false);
   const persistedRef = useRef(new Set());
   const transcriptRevisionRef = useRef(new Map());
+  const provisionalRevisionRef = useRef(new Map());
+  const activeProvisionalRef = useRef(new Set());
+  const provisionalEpochRef = useRef(0);
   const finalTranscriptRef = useRef(onFinalTranscript);
   const audioDiagnosticsRef = useRef([]);
   const traceStartedAtRef = useRef(0);
@@ -323,6 +437,7 @@ export function useVoiceSession({
   const emotionTimerRef = useRef(null);
   const pendingAssistantExpressionRef = useRef(null);
   const activeAssistantExpressionRef = useRef(null);
+  const toolEpochRef = useRef(0);
   const assistantStateFenceRef = useRef(null);
   const setUiState = useCallback((status, options = {}) => {
     dispatchVoiceSession({
@@ -394,6 +509,16 @@ export function useVoiceSession({
     setAssistantExpression(null);
   }, []);
 
+  const isFenceStale = useCallback(
+    (turnId, generationId, toolEpoch) =>
+      turnId < turnRef.current ||
+      (turnId === turnRef.current &&
+        (generationId < generationRef.current ||
+          (generationId === generationRef.current &&
+            toolEpoch < toolEpochRef.current))),
+    [],
+  );
+
   const clearEmotionHint = useCallback(() => {
     if (emotionTimerRef.current !== null) {
       window.clearTimeout(emotionTimerRef.current);
@@ -425,19 +550,21 @@ export function useVoiceSession({
   }, []);
 
   const applyTranscript = useCallback((line, { authoritative = true } = {}) => {
-    if (line.generation_id < generationRef.current) return;
+    const toolEpoch = Number.isInteger(line.tool_epoch) ? line.tool_epoch : 0;
+    if (isFenceStale(line.turn_id, line.generation_id, toolEpoch)) return;
     const key = `${line.speaker}:${line.turn_id}:${line.generation_id}`;
+    const revisionKey = `${key}:${toolEpoch}`;
     const revision =
       Number.isInteger(line.turn_revision) && line.turn_revision >= 1
       ? line.turn_revision
       : null;
     if (authoritative) {
-      const latestRevision = transcriptRevisionRef.current.get(key);
+      const latestRevision = transcriptRevisionRef.current.get(revisionKey);
       if (revision === null) {
         if (latestRevision !== undefined) return;
       } else {
         if (latestRevision !== undefined && revision <= latestRevision) return;
-        transcriptRevisionRef.current.set(key, revision);
+        transcriptRevisionRef.current.set(revisionKey, revision);
       }
     }
     generationRef.current = Math.max(
@@ -470,7 +597,7 @@ export function useVoiceSession({
     setTranscripts((current) => {
       const source =
         authoritative && line.speaker === "user"
-          ? current.filter((item) => !item.optimistic)
+          ? current.filter((item) => !item.optimistic && !item.provisional)
           : current;
       const index = source.findIndex((item) => item.key === key);
       if (index >= 0 && !authoritative && source[index].authoritative) {
@@ -527,7 +654,86 @@ export function useVoiceSession({
         generation_id: line.generation_id,
       });
     }
-  }, [activateEmotionHint, clearEmotionHint]);
+  }, [activateEmotionHint, clearEmotionHint, isFenceStale]);
+
+  const clearProvisionalTranscripts = useCallback(() => {
+    provisionalRevisionRef.current.clear();
+    activeProvisionalRef.current.clear();
+    provisionalEpochRef.current = 0;
+    setTranscripts((current) => current.filter((item) => !item.provisional));
+  }, []);
+
+  const applyProjection = useCallback((rawEvent) => {
+    const event = parseProjectionEvent(rawEvent);
+    if (!event || event.session_id !== sessionRef.current?.session_id) return;
+    const currentEpoch = provisionalEpochRef.current;
+    if (currentEpoch > 0 && event.stream_epoch < currentEpoch) return;
+    if (event.stream_epoch > currentEpoch) {
+      provisionalRevisionRef.current.clear();
+      activeProvisionalRef.current.clear();
+      provisionalEpochRef.current = event.stream_epoch;
+      setTranscripts((current) => current.filter((item) => !item.provisional));
+    }
+
+    const key = `provisional:${event.provisional_id}`;
+    const latestRevision = provisionalRevisionRef.current.get(event.provisional_id) || 0;
+    if (event.projection_revision <= latestRevision) return;
+    provisionalRevisionRef.current.set(
+      event.provisional_id,
+      event.projection_revision,
+    );
+
+    if (event.type === "turn.provisional.discarded") {
+      activeProvisionalRef.current.delete(event.provisional_id);
+      setTranscripts((current) => current.filter((item) => item.key !== key));
+      return;
+    }
+    if (event.type === "turn.committed") {
+      activeProvisionalRef.current.delete(event.provisional_id);
+      setTranscripts((current) => current.filter((item) => item.key !== key));
+      applyTranscript(
+        {
+          speaker: "user",
+          text: event.text,
+          final: true,
+          history_eligible: event.history_eligible === true,
+          turn_id: event.turn_id,
+          generation_id: event.generation_id,
+          tool_epoch: event.tool_epoch,
+          turn_revision: event.turn_revision,
+        },
+        { authoritative: true },
+      );
+      return;
+    }
+
+    activeProvisionalRef.current.add(event.provisional_id);
+    const provisional = {
+      key,
+      speaker: "user",
+      text: event.text,
+      final: false,
+      turnId: event.provisional_turn_id,
+      generationId: event.generation_id,
+      turnRevision: event.projection_revision,
+      toolEpoch: event.tool_epoch,
+      authoritative: false,
+      provisional: true,
+      provisionalId: event.provisional_id,
+      streamEpoch: event.stream_epoch,
+      floorState: event.floor_state,
+    };
+    setTranscripts((current) => {
+      const source = current.filter(
+        (item) => !item.provisional || item.key === key,
+      );
+      const index = source.findIndex((item) => item.key === key);
+      if (index < 0) return [...source.slice(-11), provisional];
+      const copy = [...source];
+      copy[index] = provisional;
+      return copy;
+    });
+  }, [applyTranscript]);
 
   const publishAudioDiagnostic = useCallback((room, event) => {
     if (
@@ -948,8 +1154,10 @@ export function useVoiceSession({
     setAudioBlocked(false);
     setUiState("connecting", { attempt, generation: 0 });
     setTranscripts([]);
+    setFloorState("silence");
     generationRef.current = 0;
     turnRef.current = 0;
+    toolEpochRef.current = 0;
     const requestedInputMode =
       overrides.inputMode === "text" ? "text" : "voice";
     inputModeRef.current = requestedInputMode;
@@ -958,6 +1166,9 @@ export function useVoiceSession({
     setMicEnabledState(requestedInputMode === "voice");
     persistedRef.current.clear();
     transcriptRevisionRef.current.clear();
+    provisionalRevisionRef.current.clear();
+    activeProvisionalRef.current.clear();
+    provisionalEpochRef.current = 0;
     traceStartedAtRef.current = performance.now();
     firstPlaybackRef.current = false;
     audioGainRef.current = 1;
@@ -1148,6 +1359,10 @@ export function useVoiceSession({
       if (!isCurrent() || !participant?.isAgent || topic !== UI_TOPIC) return;
       const event = parseEvent(payload);
       if (!event) return;
+      if (PROJECTION_EVENT_TYPES.has(event.type)) {
+        applyProjection(event);
+        return;
+      }
       if (event.type === "audio_trace") {
         if (event.session_id !== sessionRef.current?.session_id) return;
         if (event.generation_id < generationRef.current) return;
@@ -1199,6 +1414,9 @@ export function useVoiceSession({
         if (!initialReadyRef.current) return;
         if (event.session_id !== sessionRef.current?.session_id) return;
         if (event.generation_id < generationRef.current) return;
+        if (isFenceStale(event.turn_id, event.generation_id, event.tool_epoch)) {
+          return;
+        }
         const stateFence = assistantStateFenceRef.current;
         if (
           stateFence &&
@@ -1218,7 +1436,8 @@ export function useVoiceSession({
         if (
           stateFence?.state === "speaking" &&
           stateFence.turnId === event.turn_id &&
-          stateFence.generationId === event.generation_id
+          stateFence.generationId === event.generation_id &&
+          stateFence.toolEpoch === event.tool_epoch
         ) {
           activateAssistantExpression(event);
         } else {
@@ -1229,6 +1448,9 @@ export function useVoiceSession({
       if (event.type === "assistant_state") {
         if (event.session_id !== sessionRef.current?.session_id) return;
         if (event.generation_id < generationRef.current) return;
+        if (isFenceStale(event.turn_id, event.generation_id, event.tool_epoch)) {
+          return;
+        }
         const mappedState = mapServerState(event.state);
         if (!mappedState) return;
         if (!initialReadyRef.current) {
@@ -1242,17 +1464,20 @@ export function useVoiceSession({
         clearReconnectTimer();
         generationRef.current = event.generation_id;
         turnRef.current = event.turn_id;
+        toolEpochRef.current = event.tool_epoch;
         assistantStateFenceRef.current = {
           state: mappedState,
           turnId: event.turn_id,
           generationId: event.generation_id,
+          toolEpoch: event.tool_epoch,
         };
         if (mappedState === "speaking") {
           const pending = pendingAssistantExpressionRef.current;
           if (
             pending &&
             pending.turn_id === event.turn_id &&
-            pending.generation_id === event.generation_id
+            pending.generation_id === event.generation_id &&
+            pending.tool_epoch === event.tool_epoch
           ) {
             pendingAssistantExpressionRef.current = null;
             activateAssistantExpression(pending);
@@ -1293,23 +1518,57 @@ export function useVoiceSession({
     };
     const onStreamCoreState = (state, event = {}) => {
       if (!isCurrent()) return;
+      if (
+        Number.isInteger(event.turn_id) &&
+        Number.isInteger(event.generation_id) &&
+        Number.isInteger(event.tool_epoch)
+      ) {
+        const payload = new TextEncoder().encode(JSON.stringify({
+          type: "assistant_state",
+          session_id: event.session_id,
+          state,
+          turn_id: event.turn_id,
+          generation_id: event.generation_id,
+          tool_epoch: event.tool_epoch,
+        }));
+        onDataReceived(payload, { isAgent: true }, null, UI_TOPIC);
+        return;
+      }
       const mappedState = mapServerState(state) || state;
       if (state === "ready" || state === "speaker_enroll") {
         initialReadyRef.current = true;
         clearAgentReadyTimer();
       }
-      if (Number.isInteger(event.generation_id)) {
-        if (event.generation_id < generationRef.current) return;
-        generationRef.current = event.generation_id;
+      if (mappedState !== "speaking") {
+        clearAssistantExpression();
       }
-      if (Number.isInteger(event.turn_id)) turnRef.current = event.turn_id;
       setUiState(mappedState);
     };
     const onStreamCoreTranscript = (event) => {
       if (!isCurrent() || !initialReadyRef.current) return;
+      if (
+        event?.speaker === "user" &&
+        event.event_type?.startsWith("user.transcript.") &&
+        activeProvisionalRef.current.size > 0
+      ) {
+        return;
+      }
       if (event?.speaker === "user" && event.final !== true) return;
       if (event?.session_id !== sessionRef.current?.session_id) return;
       applyTranscript(event, { authoritative: true });
+    };
+    const onStreamCoreProjection = (event) => {
+      if (!isCurrent() || !initialReadyRef.current) return;
+      applyProjection(event);
+    };
+    const onStreamCoreFloor = (state) => {
+      if (!isCurrent()) return;
+      setFloorState(state);
+      setTranscripts((current) =>
+        current.map((item) =>
+          item.provisional ? { ...item, floorState: state } : item,
+        ),
+      );
     };
     const resumeStreamCorePlayback = (event) => {
       const flushed = playbackFlushFenceRef.current;
@@ -1346,15 +1605,22 @@ export function useVoiceSession({
     const onStreamCoreDataReceived = (event) => {
       if (!event || typeof event !== "object") return;
       resumeStreamCorePlayback(event);
-      const payload = new TextEncoder().encode(JSON.stringify(event));
+      const clientEvent = normalizeStreamCoreClientEvent(event);
+      if (!clientEvent) return;
+      const payload = new TextEncoder().encode(JSON.stringify(clientEvent));
       onDataReceived(payload, { isAgent: true }, null, UI_TOPIC);
     };
     const onStreamCoreDiagnostic = (name, status = "ok", detail = undefined) => {
       if (isCurrent()) recordAudioDiagnostic(name, status, detail);
     };
-    const onStreamCoreDuck = (ducked) => {
+    const onStreamCoreDuck = (ducked, payload = {}) => {
       if (!isCurrent()) return;
-      audioGainRef.current = ducked ? 0.15 : 1;
+      const effectGain = typeof payload?.gain === "number" ? payload.gain : null;
+      audioGainRef.current = ducked && Number.isFinite(effectGain) && effectGain >= 0 && effectGain <= 1
+        ? effectGain
+        : ducked
+          ? 0.15
+          : 1;
       const elements = audioContainerRef.current?.querySelectorAll("audio") || [];
       elements.forEach((element) => {
         element.volume = audioGainRef.current;
@@ -1395,6 +1661,8 @@ export function useVoiceSession({
       recordAudioDiagnostic("playback_flushed");
     };
     const onStreamCoreDisconnected = (reason = "media_disconnected") => {
+      setFloorState("silence");
+      clearProvisionalTranscripts();
       if (
         !isCurrent() ||
         intentionalEndRef.current ||
@@ -1446,6 +1714,7 @@ export function useVoiceSession({
     };
     const onReconnecting = () => {
       if (!isCurrent()) return;
+      clearProvisionalTranscripts();
       recoveryEpochRef.current += 1;
       recoveryInFlightRef.current = false;
       roomConnectedRef.current = false;
@@ -1506,6 +1775,8 @@ export function useVoiceSession({
     };
     const onDisconnected = () => {
       if (!isCurrent()) return;
+      setFloorState("silence");
+      clearProvisionalTranscripts();
       attemptRef.current += 1;
       const wasIntentional = intentionalEndRef.current;
       void disconnectRoom(transport?.room || null);
@@ -1591,6 +1862,8 @@ export function useVoiceSession({
               onMicrophoneTrack: (track) => observeMicrophoneTrack(track, isCurrent),
               onState: onStreamCoreState,
               onTranscript: onStreamCoreTranscript,
+              onProjection: onStreamCoreProjection,
+              onFloor: onStreamCoreFloor,
               onRemoteStream: (stream) => attachOmniAudio(stream, isCurrent, transport),
               getPlaybackTime: () => omniAudioElementRef.current?.currentTime ?? null,
               isPlaybackAudible: () => {
@@ -1702,6 +1975,7 @@ export function useVoiceSession({
           attemptRef.current += 1;
           sessionRef.current = null;
           resetEmotionState();
+          setFloorState("silence");
           setSession(null);
           const denied =
             caught instanceof DOMException && caught.name === "NotAllowedError";
@@ -1719,6 +1993,7 @@ export function useVoiceSession({
       }
     })();
   }, [
+    applyProjection,
     applyTranscript,
     activateAssistantExpression,
     activateEmotionHint,
@@ -1726,6 +2001,7 @@ export function useVoiceSession({
     attachOmniAudio,
     clearAgentReadyTimer,
     clearAssistantExpression,
+    clearProvisionalTranscripts,
     clearReconnectTimer,
     disconnectOmni,
     disconnectRoom,
@@ -1848,6 +2124,8 @@ export function useVoiceSession({
     const omniTransport = omniTransportRef.current;
     sessionRef.current = null;
     resetEmotionState();
+    clearProvisionalTranscripts();
+    setFloorState("silence");
     setSession(null);
     setAudioBlocked(false);
     setUiState("closed");
@@ -1855,7 +2133,12 @@ export function useVoiceSession({
     setInputMode("voice");
     disconnectOmni(omniTransport);
     await disconnectRoom(room);
-  }, [disconnectOmni, disconnectRoom, resetEmotionState]);
+  }, [
+    clearProvisionalTranscripts,
+    disconnectOmni,
+    disconnectRoom,
+    resetEmotionState,
+  ]);
 
   const reset = useCallback(async () => {
     attemptRef.current += 1;
@@ -1866,15 +2149,20 @@ export function useVoiceSession({
     resetEmotionState();
     generationRef.current = 0;
     turnRef.current = 0;
+    toolEpochRef.current = 0;
     micEnabledRef.current = true;
     inputModeRef.current = "voice";
     persistedRef.current.clear();
+    provisionalRevisionRef.current.clear();
+    activeProvisionalRef.current.clear();
+    provisionalEpochRef.current = 0;
     audioDiagnosticsRef.current = [];
     setSession(null);
     resetUiState(attemptRef.current);
     setMicEnabledState(true);
     setInputMode("voice");
     setTranscripts([]);
+    setFloorState("silence");
     setError("");
     setAudioBlocked(false);
     setAudioDiagnostics([]);
@@ -1908,6 +2196,7 @@ export function useVoiceSession({
     emotionHint,
     assistantExpression,
     inputMode,
+    floorState,
     audioContainerRef,
     start,
     resumeAudio,

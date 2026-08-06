@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
@@ -25,20 +26,46 @@ async def test_tool_result_requires_complete_generation_fence(
 ) -> None:
     tm = TaskManager()
 
-    async def tool(
-        args: dict[str, object], cancel_event: asyncio.Event
-    ) -> dict[str, object]:
+    async def tool(args: dict[str, object], cancel_event: asyncio.Event) -> dict[str, object]:
         _ = args, cancel_event
         return {"summary": "current"}
 
     tm.register(
-        ToolSpec("lookup", "lookup", {}, True, True, 1.0),
+        ToolSpec(
+            "lookup",
+            "lookup",
+            {},
+            True,
+            True,
+            1.0,
+            side_effect_policy="read_only",
+        ),
         tool,
     )
-    rec = await tm.start("lookup", {}, GenerationFence("s", 1, 1, 0))
+    rec = await tm.start(
+        "lookup",
+        {},
+        GenerationFence("s", 1, 1, 0),
+        task_epoch=1,
+        context_version=0,
+        expires_at_ms=int(time.time() * 1_000) + 10_000,
+        side_effect_policy="read_only",
+        committed=True,
+    )
     await rec.task
 
-    assert tm.accept_result(rec.tool_task_id, current) is None
+    assert (
+        tm.accept_result(
+            rec.tool_task_id,
+            current,
+            current_task_epoch=1,
+            current_context_version=0,
+            now_ms=int(time.time() * 1_000),
+            relevant=True,
+            current_side_effect_policy="read_only",
+        )
+        is None
+    )
     assert tm.stale_broadcast_count == 1
 
 
@@ -48,7 +75,9 @@ async def test_100_tool_condition_changes_zero_stale() -> None:
     await orch.ready()
     tm = orch.task_manager
 
-    async def slow_search(args: dict[str, object], cancel_event: asyncio.Event) -> dict[str, object]:
+    async def slow_search(
+        args: dict[str, object], cancel_event: asyncio.Event
+    ) -> dict[str, object]:
         for _ in range(50):
             if cancel_event.is_set():
                 return {"error": "cancelled"}
@@ -63,6 +92,7 @@ async def test_100_tool_condition_changes_zero_stale() -> None:
             cancellable=True,
             idempotent=True,
             timeout_s=5.0,
+            side_effect_policy="read_only",
         ),
         slow_search,
     )
@@ -71,7 +101,16 @@ async def test_100_tool_condition_changes_zero_stale() -> None:
     for i in range(100):
         fence = orch.fence
         # start tool under current epoch
-        task = await tm.start("search", {"q": f"old-{i}"}, fence)
+        task = await tm.start(
+            "search",
+            {"q": f"old-{i}"},
+            fence,
+            task_epoch=1,
+            context_version=0,
+            expires_at_ms=int(time.time() * 1_000) + 10_000,
+            side_effect_policy="read_only",
+            committed=True,
+        )
         # user changes conditions → bump tool_epoch
         # move to tool_waiting-like path if needed
         from services.agent.src.orchestration.state_machine import (
@@ -90,7 +129,15 @@ async def test_100_tool_condition_changes_zero_stale() -> None:
             await asyncio.wait_for(task.task, timeout=2)
         except (TimeoutError, asyncio.CancelledError):
             pass
-        accepted = tm.accept_result(task.tool_task_id, new_fence)
+        accepted = tm.accept_result(
+            task.tool_task_id,
+            new_fence,
+            current_task_epoch=1,
+            current_context_version=0,
+            now_ms=int(time.time() * 1_000),
+            relevant=True,
+            current_side_effect_policy="read_only",
+        )
         if accepted is not None:
             stale += 1
         # also gate via orchestrator full fence

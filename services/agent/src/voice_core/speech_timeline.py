@@ -7,7 +7,9 @@ provider result shape required to map a result to that clock.
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from services.agent.src.orchestration.speech_timeline import (
     ASRLogicalVersion,
@@ -16,6 +18,98 @@ from services.agent.src.orchestration.speech_timeline import (
     SpeechSegment,
     SpeechTimeline,
 )
+
+
+class ASRTimingCoverage(StrEnum):
+    """How much of the provider transcript the word evidence proves."""
+
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+    INVALID = "invalid"
+
+
+@dataclass(frozen=True, slots=True)
+class ASRTimingEvidence:
+    """Validated word evidence; only ``COMPLETE`` is safe for watermark trim."""
+
+    words: tuple[ASRWordTiming, ...] = ()
+    coverage: ASRTimingCoverage = ASRTimingCoverage.INVALID
+    normalized_text: str = ""
+    word_text_spans: tuple[tuple[int, int], ...] = ()
+
+    def __post_init__(self) -> None:
+        if len(self.word_text_spans) > len(self.words):
+            raise ValueError("timing evidence cannot have more spans than words")
+        if any(start < 0 or end <= start for start, end in self.word_text_spans):
+            raise ValueError("timing evidence text spans must be ordered ranges")
+
+
+def _normalized_text_with_offsets(text: str) -> tuple[str, tuple[int, ...]]:
+    """Normalize comparison text while retaining source offsets for safe tails."""
+
+    normalized: list[str] = []
+    offsets: list[int] = []
+    for index, source_char in enumerate(text):
+        for char in unicodedata.normalize("NFKC", source_char):
+            if char.isspace():
+                continue
+            normalized.append(char)
+            offsets.append(index)
+    return "".join(normalized), tuple(offsets)
+
+
+def build_asr_timing_evidence(
+    text: str,
+    words: tuple[ASRWordTiming, ...],
+    *,
+    capture_start_sample: int,
+    capture_end_sample: int,
+) -> ASRTimingEvidence:
+    """Validate timing order, range and transcript coverage without raising."""
+
+    if not words:
+        return ASRTimingEvidence()
+    previous_end = capture_start_sample
+    for word in words:
+        if (
+            word.capture_start_sample < capture_start_sample
+            or word.capture_end_sample > capture_end_sample
+            or word.capture_start_sample < previous_end
+        ):
+            return ASRTimingEvidence()
+        previous_end = word.capture_end_sample
+
+    normalized_text, source_offsets = _normalized_text_with_offsets(text)
+    normalized_words: list[str] = []
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    for word in words:
+        normalized_word, _ = _normalized_text_with_offsets(word.text)
+        if not normalized_word:
+            return ASRTimingEvidence()
+        start = normalized_text.find(normalized_word, cursor)
+        if start < 0:
+            return ASRTimingEvidence(
+                words=words,
+                coverage=ASRTimingCoverage.PARTIAL,
+                normalized_text=normalized_text,
+                word_text_spans=(),
+            )
+        end = start + len(normalized_word)
+        spans.append((source_offsets[start], source_offsets[end - 1] + 1))
+        normalized_words.append(normalized_word)
+        cursor = end
+    coverage = (
+        ASRTimingCoverage.COMPLETE
+        if "".join(normalized_words) == normalized_text and cursor == len(normalized_text)
+        else ASRTimingCoverage.PARTIAL
+    )
+    return ASRTimingEvidence(
+        words=words,
+        coverage=coverage,
+        normalized_text=normalized_text,
+        word_text_spans=tuple(spans),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +130,7 @@ class ASRResult:
     # Optional reliable word boundaries projected onto the absolute sample
     # clock. Supervisor uses these only for committed-watermark straddles.
     word_timings: tuple[ASRWordTiming, ...] = ()
+    timing_evidence: ASRTimingEvidence = field(init=False)
     # Reconnected providers can trim an expanded sentence to a new tail. Keep
     # the provider sentence id for reconciliation while giving that tail its
     # own timeline replacement identity so it cannot erase the accepted
@@ -71,15 +166,19 @@ class ASRResult:
             and self.provider_end_ms < self.provider_begin_ms
         ):
             raise ValueError("provider_end_ms must not precede provider_begin_ms")
-        previous_end = self.capture_start_sample
         for word in self.word_timings:
             if not isinstance(word, ASRWordTiming):
                 raise ValueError("word_timings must contain ASRWordTiming values")
-            if word.capture_start_sample < previous_end:
-                raise ValueError("word timings must be ordered within the result")
-            if word.capture_end_sample > self.capture_end_sample:
-                raise ValueError("word timing must fit inside the result range")
-            previous_end = word.capture_end_sample
+        object.__setattr__(
+            self,
+            "timing_evidence",
+            build_asr_timing_evidence(
+                self.text,
+                self.word_timings,
+                capture_start_sample=self.capture_start_sample,
+                capture_end_sample=self.capture_end_sample,
+            ),
+        )
 
     @property
     def segment_id(self) -> str:
@@ -160,9 +259,12 @@ __all__ = [
     "ASRResult",
     "ASRFinalInterval",
     "ASRLogicalVersion",
+    "ASRTimingCoverage",
+    "ASRTimingEvidence",
     "ASRWordTiming",
     "SegmentKind",
     "SpeechSegment",
     "SpeechTimeline",
     "asr_result_to_segment",
+    "build_asr_timing_evidence",
 ]

@@ -135,3 +135,26 @@ def test_wait_alias_cannot_bypass_assistant_echo_guard() -> None:
             )
             == "assistant_echo"
         )
+
+
+def test_short_weekday_echo_cannot_bypass_assistant_echo_guard() -> None:
+    guard = PlaybackInputGuard(enabled=True)
+    assistant_text = "今天是2026年8月6日，星期四。"
+
+    for text in ("星期四", "今天是星期四", "周四"):
+        assert (
+            guard.guarded_reason(
+                text,
+                duration_ms=900,
+                assistant_text=assistant_text,
+            )
+            == "assistant_echo"
+        )
+    assert (
+        guard.guarded_reason(
+            "星期四我有安排",
+            duration_ms=900,
+            assistant_text=assistant_text,
+        )
+        is None
+    )

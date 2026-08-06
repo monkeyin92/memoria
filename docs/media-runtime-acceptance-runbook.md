@@ -28,6 +28,20 @@ H5 还必须通过 `npm test -- --run` 和 `npm run build`。Go bindings 由
 `scripts/generate_media_go_proto.sh` 从仓库自己的 proto 生成；生成工具版本和
 `services/media_edge/go.mod` 需与 CI 的 Go 版本保持兼容。
 
+### 1.1 真实 Provider smoke（仅受控环境）
+
+CI 使用 `OFFLINE_MOCK=true`，该模式只能证明脚本会明确跳过，不能作为 Provider 验收。把
+`DASHSCOPE_API_KEY` 与 Doubao TTS 认证通过受控 secret 注入到独立验收环境后，运行：
+
+```bash
+OFFLINE_MOCK=false MEMORIA_PROVIDER_SMOKE_REQUIRED=true \
+  uv run python scripts/provider_smoke_test.py
+```
+
+命令必须返回 `PASS`；它会检查 FunASR、隔离的 Qwen realtime-search、主 LLM、Doubao 与
+播放期语义分类。缺少认证或 `SKIP` 结果均为未通过。日志只保留 provider 名称、fence、
+时间戳和通过/失败原因，不记录 token、原始音频或完整转写。
+
 ## 2. 真实环境验收顺序
 
 1. 先保持 `MEDIA_RUNTIME_DEFAULT=livekit`、`STREAMCORE_EXPERIMENT_PERCENT=0`，记录
@@ -40,16 +54,17 @@ H5 还必须通过 `npm test -- --run` 和 `npm run build`。Go bindings 由
    启动前确认 `/etc/memoria-media-runtime/` 中的 Voice Core server/client cert、key
    和 CA 与两端 env 路径一致；edge `/readyz` 必须在 Core gRPC stream 可达后才返回 200。
 4. 注入现有 FunASR/Qwen/Doubao provider adapter，执行：正常话轮、两段 VAD 合并、
-   ASR 断线重连、迟到 final、TTS 取消、重复 Stop、播放 ACK 覆盖部分/全部文本。
-   证据必须带 `session_id + stream_epoch + turn_id + generation_id + tool_epoch`，
-   不要保存原始音频。
+   ASR 断线重连、迟到 final、TTS 取消、重复 Stop、播放 ACK 覆盖部分/全部文本。对
+   `DEEP_RESULT` 还必须在 resolver 已开始后触发新话轮或 Stop，证明旧 fence 的结果没有
+   产生下行 PCM 或新的 playout ACK。证据必须带 `session_id + stream_epoch + turn_id +
+   generation_id + tool_epoch`，不要保存原始音频。
 5. 在 H5 和 Linux 设备分别测：用户开口 duck、硬停止延迟、旧 generation 不播、断网
    新 epoch 重连、StreamCore 失败后的 CAS LiveKit fallback、TURN relay 比例、DataChannel
    关闭后的 HTTP stop fallback；fallback 后再次点击停止必须仍能到达 LiveKit room。
 6. Linux 设备再做真实 ALSA/I2S/DMA 播放进度、外放 AEC、物理静音、设备证书吊销和
    A/B OTA 断电测试。`voice_core/ota.py` 只是 boot metadata 状态机，不能替代真实
    bootloader 的双分区验收。
-7. 使用监护人授权的 150--300 条儿童语料，单独记录 CER、Stop/KWS 召回率、附和误
+7. 使用监护人授权且最终不少于 200 条的儿童语料（建议 200--300 条），单独记录 CER、Stop/KWS 召回率、附和误
    打断率、电视/远场负例和隐私删除证明。仓库的 synthetic manifest 不满足此项。
 
 ## 3. 灰度与回滚

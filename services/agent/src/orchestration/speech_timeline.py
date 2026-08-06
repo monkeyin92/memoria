@@ -179,39 +179,11 @@ class SpeechTimeline:
         if current is None:
             self.start_stream_epoch(segment.stream_epoch)
             current = segment.stream_epoch
-        if segment.stream_epoch != current:
-            self._dropped_epoch += 1
-            return False
-        if segment.capture_end_sample <= self._committed_sample:
-            self._dropped_late += 1
-            return False
-
-        key = (segment.stream_epoch, segment.segment_id)
-        previous_version = self._last_segment_revision.get(key)
-        segment_version = segment.logical_version
-        if previous_version is not None and segment_version < previous_version:
-            self._dropped_late += 1
-            return False
-
-        previous = next(
-            (
-                item
-                for item in self._segments
-                if item.stream_epoch == segment.stream_epoch
-                and item.segment_id == segment.segment_id
-            ),
-            None,
-        )
-        # A provider may reuse a revision while changing only its final bit.
-        # Once a final exists, an equal-revision partial must never roll it
-        # back into the canonical timeline.
-        if (
-            previous is not None
-            and previous_version == segment_version
-            and previous.final
-            and not segment.final
-        ):
-            self._dropped_late += 1
+        if not self.can_add(segment):
+            if segment.stream_epoch != current:
+                self._dropped_epoch += 1
+            else:
+                self._dropped_late += 1
             return False
 
         # Replace the provider's previous revision rather than concatenating
@@ -219,10 +191,14 @@ class SpeechTimeline:
         self._segments = [
             item
             for item in self._segments
-            if not (item.stream_epoch == segment.stream_epoch and item.segment_id == segment.segment_id)
+            if not (
+                item.stream_epoch == segment.stream_epoch and item.segment_id == segment.segment_id
+            )
         ]
         self._segments.append(segment)
-        self._last_segment_revision[key] = segment_version
+        self._last_segment_revision[(segment.stream_epoch, segment.segment_id)] = (
+            segment.logical_version
+        )
         self._segments.sort(
             key=lambda item: (
                 item.capture_start_sample,
@@ -232,6 +208,46 @@ class SpeechTimeline:
             )
         )
         return True
+
+    def can_add(self, segment: SpeechSegment) -> bool:
+        """Return whether ``add`` would accept the segment, without mutation."""
+
+        current = self._current_stream_epoch
+        if current is not None and segment.stream_epoch != current:
+            return False
+        if segment.capture_end_sample <= self._committed_sample:
+            return False
+        key = (segment.stream_epoch, segment.segment_id)
+        previous_version = self._last_segment_revision.get(key)
+        if previous_version is not None and segment.logical_version < previous_version:
+            return False
+        previous = next(
+            (
+                item
+                for item in self._segments
+                if item.stream_epoch == segment.stream_epoch
+                and item.segment_id == segment.segment_id
+            ),
+            None,
+        )
+        return not (
+            previous is not None
+            and previous_version == segment.logical_version
+            and previous.final
+            and not segment.final
+        )
+
+    def latest_task_epoch(self, stream_epoch: int) -> int:
+        """Return the highest provider task version observed in one stream."""
+
+        return max(
+            (
+                version.task_epoch
+                for (epoch, _), version in self._last_segment_revision.items()
+                if epoch == stream_epoch
+            ),
+            default=0,
+        )
 
     def commit_range(
         self,
@@ -247,12 +263,10 @@ class SpeechTimeline:
         if self._current_stream_epoch != stream_epoch:
             self._dropped_epoch += 1
             return ()
-        matched = tuple(
-            item
-            for item in self._segments
-            if item.stream_epoch == stream_epoch
-            and item.capture_end_sample > start_sample
-            and item.capture_start_sample < end_sample
+        matched = self.segments_in_range(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
         )
         self._committed_sample = max(self._committed_sample, end_sample)
         self._segments = [
@@ -264,6 +278,59 @@ class SpeechTimeline:
             )
         ]
         return matched
+
+    def segments_in_range(
+        self,
+        *,
+        stream_epoch: int,
+        start_sample: int,
+        end_sample: int,
+    ) -> tuple[SpeechSegment, ...]:
+        """Read overlapping pending segments without advancing the watermark."""
+
+        if start_sample < 0 or end_sample <= start_sample:
+            raise ValueError("projection range must be a positive sample interval")
+        if self._current_stream_epoch != stream_epoch:
+            return ()
+        return tuple(
+            item
+            for item in self._segments
+            if item.stream_epoch == stream_epoch
+            and item.capture_end_sample > start_sample
+            and item.capture_start_sample < end_sample
+        )
+
+    @staticmethod
+    def _canonical_text_from_segments(segments: tuple[SpeechSegment, ...]) -> str:
+        selected: dict[tuple[int, int], SpeechSegment] = {}
+        for segment in segments:
+            if not segment.text.strip():
+                continue
+            key = (segment.capture_start_sample, segment.capture_end_sample)
+            current = selected.get(key)
+            if current is None or (segment.final, segment.logical_version) > (
+                current.final,
+                current.logical_version,
+            ):
+                selected[key] = segment
+        return " ".join(item.text.strip() for item in selected.values()).strip()
+
+    def projected_text(
+        self,
+        *,
+        stream_epoch: int,
+        start_sample: int,
+        end_sample: int,
+    ) -> str:
+        """Project the current canonical text without committing the range."""
+
+        return self._canonical_text_from_segments(
+            self.segments_in_range(
+                stream_epoch=stream_epoch,
+                start_sample=start_sample,
+                end_sample=end_sample,
+            )
+        )
 
     def canonical_text(
         self,
@@ -279,15 +346,4 @@ class SpeechTimeline:
             start_sample=start_sample,
             end_sample=end_sample,
         )
-        selected: dict[tuple[int, int], SpeechSegment] = {}
-        for segment in segments:
-            if not segment.text.strip():
-                continue
-            key = (segment.capture_start_sample, segment.capture_end_sample)
-            current = selected.get(key)
-            if current is None or (segment.final, segment.logical_version) > (
-                current.final,
-                current.logical_version,
-            ):
-                selected[key] = segment
-        return " ".join(item.text.strip() for item in selected.values()).strip()
+        return self._canonical_text_from_segments(segments)

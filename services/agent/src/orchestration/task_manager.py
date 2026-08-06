@@ -23,6 +23,7 @@ class ToolSpec:
     idempotent: bool
     timeout_s: float
     contains_sensitive_data: bool = False
+    side_effect_policy: str = "unspecified"
 
 
 @dataclass
@@ -33,6 +34,12 @@ class ToolTask:
     cancellable: bool
     task: asyncio.Task[Any]
     cancel_event: asyncio.Event
+    task_epoch: int
+    context_version: int
+    expires_at_ms: int
+    side_effect_policy: str
+    committed: bool
+    relevance: Callable[[], bool] | None = None
     started_mono_ns: int = field(default_factory=time.monotonic_ns)
     cancelled: bool = False
     finished: bool = False
@@ -61,10 +68,25 @@ class TaskManager:
         tool_name: str,
         args: dict[str, Any],
         fence: GenerationFence,
+        *,
+        task_epoch: int,
+        context_version: int,
+        expires_at_ms: int,
+        side_effect_policy: str,
+        committed: bool,
+        relevance: Callable[[], bool] | None = None,
     ) -> ToolTask:
         if tool_name not in self.handlers:
             raise KeyError(f"unknown tool: {tool_name}")
+        if task_epoch < 0 or context_version < 0:
+            raise ValueError("task metadata must be non-negative")
         spec = self.specs[tool_name]
+        if expires_at_ms <= int(time.time() * 1_000):
+            raise ValueError("task expiry must be in the future")
+        if side_effect_policy != spec.side_effect_policy:
+            raise PermissionError("task side-effect policy does not match tool authority")
+        if side_effect_policy == "high_risk" and not committed:
+            raise PermissionError("high-risk task requires a committed turn")
         cancel_event = asyncio.Event()
         tool_task_id = new_task_id()
 
@@ -87,6 +109,12 @@ class TaskManager:
             cancellable=spec.cancellable,
             task=aio_task,
             cancel_event=cancel_event,
+            task_epoch=task_epoch,
+            context_version=context_version,
+            expires_at_ms=expires_at_ms,
+            side_effect_policy=side_effect_policy,
+            committed=committed,
+            relevance=relevance,
         )
         self.tasks[tool_task_id] = rec
 
@@ -125,29 +153,78 @@ class TaskManager:
         self,
         tool_task_id: str,
         current_fence: GenerationFence,
+        *,
+        current_task_epoch: int,
+        current_context_version: int,
+        now_ms: int,
+        relevant: bool,
+        current_side_effect_policy: str,
     ) -> Any | None:
-        """Return payload only when the complete generation fence matches."""
+        """Return payload only when every supplied authority gate matches."""
         rec = self.tasks.get(tool_task_id)
-        if rec is None:
+        if rec is None or not rec.finished or rec.cancelled or rec.error is not None:
             return None
-        if not rec.fence.matches(current_fence):
+        try:
+            relevance_current = rec.relevance is None or rec.relevance()
+        except Exception:
+            relevance_current = False
+        stale = (
+            not rec.fence.matches(current_fence)
+            or rec.task_epoch != current_task_epoch
+            or rec.context_version != current_context_version
+            or now_ms >= rec.expires_at_ms
+            or rec.side_effect_policy != current_side_effect_policy
+            or not rec.committed
+            or not relevant
+            or not relevance_current
+        )
+        if stale:
             self.stale_broadcast_count += 1
             self.metrics.inc_stale_result_dropped("tool")
             return None
         self.accepted_broadcast_count += 1
         return rec.result
 
+    async def cancel(self, tool_task_id: str) -> bool:
+        rec = self.tasks.get(tool_task_id)
+        if rec is None or rec.task.done() or not rec.cancellable:
+            return False
+        rec.cancel_event.set()
+        rec.cancelled = True
+        try:
+            await asyncio.wait_for(asyncio.shield(rec.task), timeout=0.15)
+        except (TimeoutError, asyncio.CancelledError):
+            if not rec.task.done():
+                rec.task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await rec.task
+        return True
+
     async def wait_result(
         self,
         tool_task_id: str,
         current_fence: GenerationFence,
+        *,
+        current_task_epoch: int,
+        current_context_version: int,
+        now_ms: int,
+        relevant: bool,
+        current_side_effect_policy: str,
     ) -> Any | None:
         rec = self.tasks[tool_task_id]
         try:
             await rec.task
         except asyncio.CancelledError:
             return None
-        return self.accept_result(tool_task_id, current_fence)
+        return self.accept_result(
+            tool_task_id,
+            current_fence,
+            current_task_epoch=current_task_epoch,
+            current_context_version=current_context_version,
+            now_ms=now_ms,
+            relevant=relevant,
+            current_side_effect_policy=current_side_effect_policy,
+        )
 
     def active_count(self) -> int:
         return sum(1 for t in self.tasks.values() if not t.finished and not t.cancelled)
@@ -164,7 +241,7 @@ def spoken_result_summarizer(payload: dict[str, Any], *, max_sentences: int = 3)
     else:
         # Pick a few short string values
         parts = [str(v) for v in payload.values() if isinstance(v, str | int | float)][:3]
-        text = "，".join(parts) if parts else "结果已经出来了。"
+        text = "，".join(parts) if parts else ""
     # Keep at most max_sentences by strong punctuation.
     chunks: list[str] = []
     buf = ""

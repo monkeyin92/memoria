@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
 from services.agent.src.orchestration.handlers import (
     LanguageModelRequest,
     SpeechSynthesisRequest,
@@ -16,6 +17,7 @@ from services.agent.src.providers.funasr_protocol import (
     FunASRServerEvent,
 )
 from services.agent.src.voice_core.asr_stream_supervisor import ASRStreamSupervisor
+from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
 from services.agent.src.voice_core.provider_adapter import (
     ExistingVoiceProviderAdapter,
@@ -70,6 +72,16 @@ class FakeASR:
 
 
 class FakeLLM:
+    def __init__(self) -> None:
+        self.delegations: list[tuple[str, GenerationFence]] = []
+        self.output_intents: list[Any] = []
+
+    async def start_delegation(self, text: str, fence: GenerationFence) -> None:
+        self.delegations.append((text, fence))
+
+    async def accept_output_intent(self, intent: Any) -> None:
+        self.output_intents.append(intent)
+
     def stream(self, request: LanguageModelRequest) -> AsyncIterator[str]:
         _ = request
 
@@ -108,6 +120,70 @@ class FakeTTS:
     async def synthesize(self, request: SpeechSynthesisRequest) -> Any:
         assert request.phrases
         return SimpleNamespace(pcm=b"\x00\x00" * 8)
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_renders_tts_and_pcm_output_sources() -> None:
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: FakeASR()),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("direct-output-sources", stream_epoch=1)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+
+    tts_intent = media_pb2.OutputIntent(tts_source="提示一下")
+    tts_chunks = await _collect(
+        adapter.generate_output(
+            identity,
+            tts_intent,
+            fence,
+            work_id="tts-work",
+            source_start_sample=7,
+        )
+    )
+    assert len(tts_chunks) == 1
+    assert tts_chunks[0].source_start_sample == 7
+    assert tts_chunks[0].frame_samples == adapter.output_frame_samples
+    assert tts_chunks[0].first is True
+    assert tts_chunks[0].final is True
+    assert tts_chunks[0].assistant_text_delta == "提示一下"
+
+    pcm_intent = media_pb2.OutputIntent(pcm_s16le=b"\x01\x00\x02\x00")
+    pcm_chunks = await _collect(
+        adapter.generate_output(
+            identity,
+            pcm_intent,
+            fence,
+            work_id="pcm-work",
+            source_start_sample=adapter.output_frame_samples + 7,
+        )
+    )
+    assert len(pcm_chunks) == 1
+    assert pcm_chunks[0].source_start_sample == adapter.output_frame_samples + 7
+    assert pcm_chunks[0].frame_samples == adapter.output_frame_samples
+    assert pcm_chunks[0].pcm_s16le[:4] == b"\x01\x00\x02\x00"
+    assert pcm_chunks[0].first is True
+    assert pcm_chunks[0].final is True
+
+
+@pytest.mark.asyncio
+async def test_provider_forwards_committed_turn_preparation_to_the_shared_agent() -> None:
+    identity = SessionIdentity("prepared-provider")
+    expected = GenerationFence(identity.session_id, 1, 1, 0)
+
+    class PreparingLLM(FakeLLM):
+        async def prepare_committed_turn(self, text: str) -> GenerationFence:
+            assert text == "帮我制定计划"
+            return expected
+
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=FakeASR,  # type: ignore[arg-type]
+        language_model=PreparingLLM(),
+        speech_synthesis=FakeTTS(),
+    )
+
+    assert await adapter.prepare_committed_turn(identity, "帮我制定计划") == expected
 
 
 class SizedTTS:
@@ -382,8 +458,9 @@ class FakeProductionLLM:
 class FakeProductionTTS:
     instances: list[FakeProductionTTS] = []
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: Any, *, metrics: Any = None) -> None:
         self.config = config
+        self.metrics = metrics
         self.fence: GenerationFence | None = None
         self.closed = False
         type(self).instances.append(self)
@@ -433,6 +510,69 @@ async def test_existing_provider_adapter_maps_asr_and_streams_existing_handlers(
     assert chunks[0].assistant_text_delta == "你好。"
     await adapter.close(identity)
     assert asr.closed
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_records_partial_sample_age() -> None:
+    class PartialASR(FakeASR):
+        last_sent_sample = 640
+
+        async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+            self.sent.append((pcm, capture_start_sample))
+            await self.events.put(
+                FunASRServerEvent(
+                    event="result-generated",
+                    task_id=self.task_id,
+                    sentence=FunASRSentence(
+                        sentence_id=7,
+                        text="你",
+                        begin_ms=0,
+                        end_ms=20,
+                        sentence_end=False,
+                        heartbeat=False,
+                        words=(),
+                    ),
+                )
+            )
+
+    metrics = MetricsRegistry()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, PartialASR),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+        metrics=metrics,
+    )
+    identity = SessionIdentity("partial-age", stream_epoch=1)
+
+    await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 640, b"\x00\x00" * 640),
+    )
+
+    assert metrics.get("asr_partial_age_ms") == pytest.approx(20.0)
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_records_tts_frame_queue_age(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.agent.src.voice_core import provider_adapter as adapter_module
+
+    ticks = iter((20.0, 20.015))
+    monkeypatch.setattr(adapter_module, "monotonic", lambda: next(ticks))
+    metrics = MetricsRegistry()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, FakeASR),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, SizedTTS(8)),
+        metrics=metrics,
+    )
+    identity = SessionIdentity("tts-frame-age", stream_epoch=1)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+
+    assert [chunk async for chunk in adapter.generate_reply(identity, "hi", fence)]
+
+    assert metrics.get("tts_frame_age_ms") == pytest.approx(15.0)
 
 
 @pytest.mark.asyncio
@@ -840,6 +980,49 @@ async def test_existing_provider_adapter_accepts_same_interval_correction() -> N
 
 
 @pytest.mark.asyncio
+async def test_existing_provider_adapter_keeps_revision_monotonic_when_begin_moves() -> None:
+    class BeginCorrectingASR(FakeASR):
+        async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+            self.sent.append((pcm, capture_start_sample))
+            begin_ms = 10 if len(self.sent) == 1 else 0
+            await self.events.put(
+                FunASRServerEvent(
+                    event="result-generated",
+                    task_id=self.task_id,
+                    sentence=FunASRSentence(
+                        sentence_id=7,
+                        text="你好",
+                        begin_ms=begin_ms,
+                        end_ms=20,
+                        sentence_end=True,
+                        heartbeat=False,
+                        words=(),
+                    ),
+                )
+            )
+
+    asr = BeginCorrectingASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("asr-begin-correction", stream_epoch=1)
+    first = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+    second = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 1, 320, 320, b"\x00\x00" * 320),
+    )
+
+    assert first[0].revision == 1
+    assert second[0].revision == 2
+    assert first[0].capture_start_sample != second[0].capture_start_sample
+
+
+@pytest.mark.asyncio
 async def test_existing_provider_adapter_drops_asr_without_task_identity() -> None:
     asr = FakeASR()
     await asr.events.put(
@@ -1056,13 +1239,51 @@ async def test_production_provider_factory_owns_session_tts_and_uses_injected_or
     second = factory(second_identity)
 
     assert first.speech_synthesis is not second.speech_synthesis
+    assert first.asr_session_factory().metrics is GLOBAL_METRICS
+    assert cast(FakeProductionTTS, first.speech_synthesis).metrics is GLOBAL_METRICS
     fence = GenerationFence(first_identity.session_id, 1, 1, 0)
+    await first.start_delegation("你好", fence)
+    assert cast(FakeLLM, first.language_model).delegations == [("你好", fence)]
     chunks = [chunk async for chunk in first.generate_reply(first_identity, "你好", fence)]
     assert [chunk.text for chunk in chunks] == [""]
     assert [chunk.assistant_text_delta for chunk in chunks] == ["你好。"]
     assert cast(FakeProductionTTS, first.speech_synthesis).fence == fence
     await first.close(first_identity)
     assert cast(FakeProductionTTS, first.speech_synthesis).closed
+
+    class MissingOutputIntentAcceptor:
+        async def stream(self, _request: Any) -> AsyncIterator[str]:
+            yield ""
+
+        async def start_delegation(self, _text: str, _fence: GenerationFence) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "services.agent.src.voice_core.provider_adapter.importlib.import_module",
+        lambda _name: SimpleNamespace(
+            build=lambda _settings: lambda _identity: MissingOutputIntentAcceptor()
+        ),
+    )
+    rejecting_factory = build_production_provider_factory(cast(Any, settings))
+    with pytest.raises(ValueError, match="accept_output_intent"):
+        rejecting_factory(SessionIdentity("production-missing-output-intent", stream_epoch=1))
+
+    class MissingDelegationStarter:
+        async def stream(self, _request: Any) -> AsyncIterator[str]:
+            yield ""
+
+        async def accept_output_intent(self, _intent: Any) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "services.agent.src.voice_core.provider_adapter.importlib.import_module",
+        lambda _name: SimpleNamespace(
+            build=lambda _settings: lambda _identity: MissingDelegationStarter()
+        ),
+    )
+    rejecting_factory = build_production_provider_factory(cast(Any, settings))
+    with pytest.raises(ValueError, match="start_delegation"):
+        rejecting_factory(SessionIdentity("production-missing-delegation", stream_epoch=1))
 
 
 def test_production_provider_factory_fails_closed_without_production_keys(

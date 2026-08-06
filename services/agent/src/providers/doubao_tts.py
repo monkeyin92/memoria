@@ -22,7 +22,7 @@ from websockets.asyncio.client import ClientConnection
 from services.agent.src.config import validate_doubao_auth
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.observability.metrics import MetricsRegistry
+from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
 from services.agent.src.providers.doubao_protocol import (
     EventType,
     MessageType,
@@ -297,6 +297,7 @@ class DoubaoTTSPool:
         self._lock = asyncio.Lock()
         self._closing = False
         self._refill_tasks: set[asyncio.Task[None]] = set()
+        self._metered_connection_ids: set[str] = set()
         self._breaker = CircuitBreaker()
         self.active_by_fence: dict[str, PooledConnection] = {}
         self.discarded_count = 0
@@ -345,7 +346,19 @@ class DoubaoTTSPool:
             resource_id=self.config.resource_id,
         )
         self._all[connect_id] = conn
+        self._report_connection_opened(conn)
         return conn
+
+    def _report_connection_opened(self, conn: PooledConnection) -> None:
+        if conn.conn_id not in self._metered_connection_ids:
+            self._metered_connection_ids.add(conn.conn_id)
+            self.metrics.add_provider_ws_active("tts", 1)
+
+    def _remove_connection(self, conn: PooledConnection) -> None:
+        self._all.pop(conn.conn_id, None)
+        if conn.conn_id in self._metered_connection_ids:
+            self._metered_connection_ids.remove(conn.conn_id)
+            self.metrics.add_provider_ws_active("tts", -1)
 
     async def acquire(self, *, wait_s: float = 0.3) -> PooledConnection:
         self._breaker.before_request()
@@ -396,19 +409,20 @@ class DoubaoTTSPool:
         with contextlib.suppress(Exception):
             await conn.ws.close()
         conn.closed = True
-        self._all.pop(conn.conn_id, None)
+        self._remove_connection(conn)
         self.metrics.set_tts_pool_available(self.available_approx)
 
     async def discard(self, conn: PooledConnection, *, reason: str) -> None:
         self._unbind_connection(conn)
-        if conn.closed:
+        was_closed = conn.closed
+        if was_closed and conn.conn_id not in self._all:
             return
         conn.failed = True
         conn.closed = True
         conn.in_use = False
         self.discarded_count += 1
         self.metrics.inc_tts_connections_discarded(reason)
-        if reason == "cancel" and conn.session_id:
+        if not was_closed and reason == "cancel" and conn.session_id:
             try:
                 await conn.ws.send(
                     build_client_message(
@@ -420,16 +434,17 @@ class DoubaoTTSPool:
                 logger.warning("Doubao CancelSession send failed", exc_info=True)
             else:
                 conn.cancel_sent = True
-        elif reason == "shutdown" and not conn.session_id:
+        elif not was_closed and reason == "shutdown" and not conn.session_id:
             with contextlib.suppress(Exception):
                 await conn.ws.send(build_client_message(EventType.FINISH_CONNECTION))
         if reason not in {"cancel", "shutdown"}:
             self._breaker.record_failure()
-        self._all.pop(conn.conn_id, None)
+        self._remove_connection(conn)
         conn.session_id = ""
         self.metrics.set_tts_pool_available(self.available_approx)
-        with contextlib.suppress(Exception):
-            await conn.ws.close()
+        if not was_closed:
+            with contextlib.suppress(Exception):
+                await conn.ws.close()
         if not self._closing:
             task = asyncio.create_task(self._refill_one(), name="doubao-tts-pool-refill")
             self._refill_tasks.add(task)
@@ -444,6 +459,7 @@ class DoubaoTTSPool:
                 if self._closing:
                     await self.discard(conn, reason="shutdown")
                     return
+                self.metrics.inc_provider_ws_reconnect("tts")
                 await self._available.put(conn)
                 self.metrics.set_tts_pool_available(self.available_approx)
 
@@ -861,7 +877,13 @@ class DoubaoSynthesizeStream(tts.SynthesizeStream):
 
 
 class DoubaoTTS(tts.TTS[Any]):
-    def __init__(self, config: DoubaoTTSConfig, pool: DoubaoTTSPool | None = None) -> None:
+    def __init__(
+        self,
+        config: DoubaoTTSConfig,
+        pool: DoubaoTTSPool | None = None,
+        *,
+        metrics: MetricsRegistry | None = None,
+    ) -> None:
         baseline_config = replace(config)
         super().__init__(
             capabilities=tts.TTSCapabilities(streaming=True, aligned_transcript=True),
@@ -876,7 +898,7 @@ class DoubaoTTS(tts.TTS[Any]):
         self._voice_kind = "designed"
         if pool is not None and pool.config.resource_id != self._baseline_resource_id:
             raise ValueError("injected Doubao TTS pool must use the baseline resource")
-        baseline_pool = pool or DoubaoTTSPool(replace(baseline_config))
+        baseline_pool = pool or DoubaoTTSPool(replace(baseline_config), metrics=metrics)
         self._pools = DoubaoTTSPoolRouter(baseline_config, baseline_pool)
         self._active_fence: GenerationFence | None = None
         self._speech_configs_by_fence: dict[GenerationFence, DoubaoTTSConfig] = {}
@@ -889,7 +911,7 @@ class DoubaoTTS(tts.TTS[Any]):
     @classmethod
     def from_env(cls) -> DoubaoTTS:
         config = DoubaoTTSConfig.from_env()
-        return cls(config, DoubaoTTSPool(config))
+        return cls(config, metrics=GLOBAL_METRICS)
 
     @property
     def provider(self) -> str:

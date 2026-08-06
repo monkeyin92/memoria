@@ -62,6 +62,10 @@ class TransitionEvent(StrEnum):
     PLAYBACK_DONE = "playback_done"
     PLAYBACK_DONE_TOOLS_ACTIVE = "playback_done_tools_active"
     TOOL_RESULT_VALID = "tool_result_valid"
+    # A fenced, non-user-initiated audible source is about to take the floor.
+    # This is intentionally separate from TURN_END: no user text or context
+    # mutation occurs when an already-authorized output work is resumed.
+    OUTPUT_READY = "output_ready"
     USER_CHANGED_TOOL_CONDITIONS = "user_changed_tool_conditions"
     RECOVERABLE_ERROR = "recoverable_error"
     RECOVERED = "recovered"
@@ -108,6 +112,7 @@ _TRANSITIONS: dict[tuple[ConversationState, TransitionEvent], ConversationState]
         TransitionEvent.PLAYBACK_DONE_TOOLS_ACTIVE,
     ): ConversationState.TOOL_WAITING,
     (ConversationState.TOOL_WAITING, TransitionEvent.TOOL_RESULT_VALID): ConversationState.THINKING,
+    (ConversationState.LISTENING, TransitionEvent.OUTPUT_READY): ConversationState.THINKING,
     (
         ConversationState.TOOL_WAITING,
         TransitionEvent.USER_CHANGED_TOOL_CONDITIONS,
