@@ -2,7 +2,10 @@
 
 ## 当前状态（2026-08-07，已发布）
 
-- 生产 runtime/H5 均为 `20260807-124256`，四个应用容器 healthy，`/health/ready` 对该 tag 为 ready；直接 runtime/H5 回滚点为 `20260806-213522`。
+- 生产 runtime/H5 均为 `20260807-144153`，四个应用容器 healthy，`/health/ready` 对该 tag 为 ready；直接 runtime/H5 回滚点为 `20260807-124256`。完整发布证据见 `docs/releases/20260807-144153.md`。
+- 本次发布修复实时检索回复的简洁整理、播放期“好了/知道了”打断恢复，以及 H5 回顾的今天日期持久显示和消息保存 fence。公网 Chrome 登录态验收确认回顾接口无失败，切换旧日期不会移除 8 月 7 日入口。
+- 生产账号当前语音话轮仍以 uncertain/shadow 说话人状态为主，故当天可能显示 `0 段`；只有 Agent 权威终稿的 `history_eligible=true` 主人话轮才会进入主人回顾，不能通过客户端绕过该隐私边界。
+- 发布工件已在服务器完成验签、导入和隔离 smoke；runtime/H5 软链、4 个容器镜像标签与 readiness 均精确绑定 `20260807-144153`。数据库回滚备份为 `/var/backups/memoria/memoria-pre-20260807-144153.sqlite3`，SHA-256 `d419c8034e9d91bd796ebde195327589ad2ea4fde95fe7fc87bf64116f6708e1`。
 - 候选 `20260807-113413` 在上传前因独立审阅发现 `explicit-memory-v1` 会把出生日期/婚姻等敏感事实自动确认而被拒绝，未部署。后续 `explicit-memory-v2` 使用完整 token grammar，安全偏好后拼接的敏感尾缀也会 fail closed，重新走门禁和工件发布。
 - `20260807-115142` 的验签、镜像导入与隔离 smoke 都通过，但其 Control API 镜像遗漏 projection rebuild 脚本；维护命令在 truncate 前退出，writer 自动恢复，runtime/H5 已回滚到 `20260806-213522`，Archive evidence manifest 保持 `608562844dd3b188a7209dd9562629c0b565bdfe4d8c79debb24b02cadf73639`。不得复用该 tag。
 - `20260807-124256` 修复 full/delta Dockerfile copy、模块入口和 runbook，并恢复 H5 QA Docker context guard；完整 amd64 工件、远端 verifier、隔离 smoke、projection rebuild、RLS/orphan、中文评测、provider readiness、immutable H5 union 和公网路由验收均已通过。
