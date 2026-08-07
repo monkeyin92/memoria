@@ -1782,6 +1782,68 @@ describe("useVoiceSession production edges", () => {
     expect(onFinalTranscript).toHaveBeenCalledTimes(2);
   });
 
+  it("waits for final transcript persistence before disconnecting", async () => {
+    const save = deferred();
+    const onFinalTranscript = vi.fn(() => save.promise);
+    const rendered = renderHook(() =>
+      useVoiceSession({
+        userId: "anonymous-user",
+        onFinalTranscript,
+        voiceReplyEnabled: true,
+      }),
+    );
+    rendered.result.current.audioContainerRef.current = document.createElement("div");
+    await act(async () => {
+      await rendered.result.current.start();
+    });
+    const room = liveKit.instances.at(-1);
+    act(() => {
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "assistant_state",
+          session_id: "session-1",
+          state: "ready",
+          turn_id: 0,
+          generation_id: 0,
+          tool_epoch: 0,
+        }),
+        { isAgent: true },
+        null,
+        "voice-agent.ui",
+      );
+      room.emit(
+        liveKit.RoomEvent.DataReceived,
+        encodeEvent({
+          type: "transcript_delta",
+          session_id: "session-1",
+          speaker: "user",
+          text: "今天的对话",
+          final: true,
+          history_eligible: true,
+          turn_id: 1,
+          generation_id: 1,
+        }),
+        { isAgent: true },
+        null,
+        "voice-agent.ui",
+      );
+    });
+
+    let ending;
+    await act(async () => {
+      ending = rendered.result.current.end();
+      await Promise.resolve();
+    });
+    expect(room.disconnect).not.toHaveBeenCalled();
+
+    await act(async () => {
+      save.resolve();
+      await ending;
+    });
+    expect(room.disconnect).toHaveBeenCalledTimes(1);
+  });
+
   it("shows sent text immediately and replaces it when the assistant streams", async () => {
     const pendingSend = deferred();
     const { result, room, onFinalTranscript } = await renderStartedHook({

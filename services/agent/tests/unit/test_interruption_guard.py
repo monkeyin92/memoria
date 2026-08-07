@@ -6,6 +6,7 @@ from services.agent.src.orchestration.interruption_guard import (
     PlaybackInputDecision,
     PlaybackInputGuard,
     is_backchannel,
+    is_completion_ack_only,
     is_explicit_interrupt,
 )
 
@@ -21,6 +22,8 @@ def test_explicit_interrupt_prefixes() -> None:
     assert is_explicit_interrupt("停一下")
     assert is_explicit_interrupt("我问的是下周三")
     assert is_explicit_interrupt("别说了")
+    assert is_explicit_interrupt("好了，知道了")
+    assert is_completion_ack_only("好了，知道了。")
 
 
 def test_interrupt_ack_phrase_by_semantics() -> None:
@@ -38,6 +41,7 @@ def test_interrupt_ack_phrase_by_semantics() -> None:
     assert interrupt_ack_phrase("暂停") == "好的。"
     assert interrupt_ack_phrase("停下") == "好的。"
     assert interrupt_ack_phrase("不要说了") == "好的。"
+    assert interrupt_ack_phrase("好了，知道了") == "好的。"
     assert interrupt_ack_phrase("") == "嗯，你说。"
 
     assert is_interrupt_command_only("等等") is True
@@ -45,6 +49,7 @@ def test_interrupt_ack_phrase_by_semantics() -> None:
     assert is_interrupt_command_only("等一下") is True
     assert is_interrupt_command_only("等下。") is True
     assert is_interrupt_command_only("别说了") is True
+    assert is_interrupt_command_only("好了，知道了") is True
     assert is_interrupt_command_only("等一下我想问下周三") is False
     assert is_interrupt_command_only("等下我想问下周三") is False
     assert is_interrupt_command_only("我等下") is False

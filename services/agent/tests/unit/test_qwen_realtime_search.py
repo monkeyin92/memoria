@@ -37,5 +37,7 @@ async def test_qwen_realtime_search_sends_only_the_public_query_with_forced_sear
     assert payload["model"] == "qwen-deep"
     assert payload["enable_search"] is True
     assert payload["search_options"] == {"forced_search": True, "search_strategy": "turbo"}
+    assert payload["max_tokens"] == 160
+    assert "联网结果必须由你先整理后再回答用户" in payload["messages"][0]["content"]
     assert payload["messages"][1] == {"role": "user", "content": "今天南京天气怎么样"}
     await client.aclose()

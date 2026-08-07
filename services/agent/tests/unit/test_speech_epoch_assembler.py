@@ -84,6 +84,20 @@ def test_unanchored_playback_prefix_is_removed_from_the_next_real_final() -> Non
     assert turn.text == "介绍一下南京"
 
 
+def test_accepted_barge_in_final_survives_a_playback_contaminated_endpoint() -> None:
+    assembler = SpeechEpochAssembler()
+    assembler.start_epoch(1)
+    assembler.observe_final("好了，知道了", accepted=True, contaminated=True)
+
+    turn = assembler.consume(
+        "根据提供的数据和指示来协助。好了，知道了。",
+        fallback_epoch=None,
+    )
+
+    assert turn.text == "好了，知道了"
+    assert turn.discarded_epochs == ()
+
+
 def test_unmatched_pending_segment_cannot_leak_into_a_later_callback() -> None:
     assembler = SpeechEpochAssembler()
     assembler.start_epoch(1)

@@ -2909,6 +2909,7 @@ class DuplexRuntime:
         ):
             self._speech_epoch_assembler.mark_contaminated(text)
         if final:
+            candidate_started_during_playback = self.input_guard.candidate_during_playback
             current_vad_epoch = (
                 self.input_guard.candidate_vad_anchored
                 and self._speech_epoch_assembler.current_epoch == self._speaker_epoch
@@ -2917,7 +2918,14 @@ class DuplexRuntime:
                 self._speech_epoch_assembler.observe_final(
                     text,
                     accepted=decision is PlaybackInputDecision.ACCEPT,
-                    contaminated=decision is PlaybackInputDecision.IGNORE,
+                    # An accepted barge-in final can still contain a prefix of
+                    # the assistant playback.  Preserve it as a contaminated
+                    # candidate so the later LiveKit endpoint can match the
+                    # real user phrase instead of discarding the whole epoch.
+                    contaminated=(
+                        decision is PlaybackInputDecision.IGNORE
+                        or candidate_started_during_playback
+                    ),
                 )
             if decision is PlaybackInputDecision.ACCEPT and not current_vad_epoch:
                 self.mark_audio_event(

@@ -149,6 +149,30 @@ function normalizeMemoryDay(item) {
   };
 }
 
+function addPersistedMemoryMessage(days, date) {
+  const index = days.findIndex((day) => day.date === date);
+  if (index < 0) {
+    return [
+      {
+        date,
+        message_count: 1,
+        source: null,
+        title: null,
+        summary: null,
+        highlights: [],
+        mood: "neutral",
+        suggestion: null,
+      },
+      ...days,
+    ];
+  }
+  return days.map((day, dayIndex) =>
+    dayIndex === index
+      ? { ...day, message_count: (day.message_count || 0) + 1 }
+      : day,
+  );
+}
+
 function latestFidelityEvaluations(items) {
   const latest = {};
   for (const evaluation of Array.isArray(items) ? items : []) {
@@ -241,6 +265,9 @@ export function App() {
   const [textTurnPending, setTextTurnPending] = useState(false);
   const activeUserIdRef = useRef("");
   const growthCompletionIdsRef = useRef({});
+  const pendingMessageSavesRef = useRef(new Set());
+  const persistedMemoryMessageKeysRef = useRef(new Set());
+  const memoryLoadEpochRef = useRef(0);
   const userId = identity?.user_id || "";
 
   const setCurrentIdentity = useCallback((nextIdentity) => {
@@ -264,7 +291,7 @@ export function App() {
   }, [loadIdentity]);
 
   const handleFinalTranscript = useCallback(
-    async (line) => {
+    (line) => {
       if (
         !userId ||
         activeUserIdRef.current !== userId ||
@@ -280,11 +307,27 @@ export function App() {
         emotion: nextEmotion,
         history_eligible: true,
       };
-      try {
-        await saveMessage(message);
-      } catch {
-        if (activeUserIdRef.current === userId) cachePendingMessage(message);
-      }
+      const messageKey = `${line.speaker}:${line.turn_id}:${line.generation_id}:${line.text}`;
+      const pending = (async () => {
+        try {
+          await saveMessage(message);
+          if (
+            activeUserIdRef.current === userId &&
+            !persistedMemoryMessageKeysRef.current.has(messageKey)
+          ) {
+            persistedMemoryMessageKeysRef.current.add(messageKey);
+            setMemoryDays((current) => addPersistedMemoryMessage(current, today()));
+          }
+        } catch {
+          if (activeUserIdRef.current === userId) cachePendingMessage(message);
+        }
+      })();
+      pendingMessageSavesRef.current.add(pending);
+      void pending.then(
+        () => pendingMessageSavesRef.current.delete(pending),
+        () => pendingMessageSavesRef.current.delete(pending),
+      );
+      return pending;
     },
     [userId],
   );
@@ -308,6 +351,15 @@ export function App() {
   });
   const textInputReady =
     voice.uiState === "ready" || voice.uiState === "listening";
+
+  const waitForPendingMessageSaves = useCallback(async () => {
+    await voice.flushPersistence?.();
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const pending = [...pendingMessageSavesRef.current];
+      if (!pending.length) return;
+      await Promise.allSettled(pending);
+    }
+  }, [voice.flushPersistence]);
 
   useEffect(() => {
     if (
@@ -439,13 +491,22 @@ export function App() {
   const loadMemories = useCallback(async () => {
     if (!userId) return;
     const requestedUserId = userId;
+    const loadEpoch = memoryLoadEpochRef.current + 1;
+    memoryLoadEpochRef.current = loadEpoch;
     setMemoryLoading(true);
     setMemoryError("");
     try {
       await flushPendingMessages();
-      if (activeUserIdRef.current !== requestedUserId) return;
+      await waitForPendingMessageSaves();
+      if (
+        activeUserIdRef.current !== requestedUserId ||
+        memoryLoadEpochRef.current !== loadEpoch
+      ) return;
       const result = await getMemoryDays(requestedUserId);
-      if (activeUserIdRef.current !== requestedUserId) return;
+      if (
+        activeUserIdRef.current !== requestedUserId ||
+        memoryLoadEpochRef.current !== loadEpoch
+      ) return;
       const rawDays = Array.isArray(result) ? result : result.items || [];
       const days = rawDays.map(normalizeMemoryDay);
       setMemoryDays(days);
@@ -453,17 +514,29 @@ export function App() {
         days.some((day) => day.date === current) ? current : today(),
       );
     } catch {
-      if (activeUserIdRef.current === requestedUserId) {
+      if (
+        activeUserIdRef.current === requestedUserId &&
+        memoryLoadEpochRef.current === loadEpoch
+      ) {
         setMemoryError("暂时没有连上回顾服务，对话内容会先安全保存在本机。");
       }
     } finally {
-      if (activeUserIdRef.current === requestedUserId) setMemoryLoading(false);
+      if (
+        activeUserIdRef.current === requestedUserId &&
+        memoryLoadEpochRef.current === loadEpoch
+      ) {
+        setMemoryLoading(false);
+      }
     }
-  }, [userId]);
+  }, [userId, waitForPendingMessageSaves]);
 
   useEffect(() => {
     if (!userId) return;
     const requestedUserId = userId;
+    persistedMemoryMessageKeysRef.current.clear();
+    memoryLoadEpochRef.current += 1;
+    setMemoryDays([]);
+    setSelectedDay(today());
     setPreferenceSaving(false);
     setPreferenceError("");
     setProfileReady(false);
@@ -534,6 +607,7 @@ export function App() {
     setSummaryRunning(true);
     setMemoryError("");
     try {
+      await waitForPendingMessageSaves();
       await summarizeDay(userId, today());
       await loadMemories();
       setSelectedDay(today());
@@ -837,6 +911,7 @@ export function App() {
       return;
     }
     await voice.end();
+    await waitForPendingMessageSaves();
     if (
       activeGrowthTask?.kind === "natural_chat" &&
       activeGrowthTask.status === "active" &&
@@ -884,6 +959,7 @@ export function App() {
         // The conversation still ends cleanly when summary service is unavailable.
       }
     }
+    await loadMemories();
   };
 
   const togglePreference = async (field) => {

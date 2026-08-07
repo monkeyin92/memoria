@@ -420,6 +420,7 @@ export function useVoiceSession({
   const agentReadyTimerRef = useRef(null);
   const intentionalEndRef = useRef(false);
   const persistedRef = useRef(new Set());
+  const pendingPersistenceRef = useRef(new Set());
   const transcriptRevisionRef = useRef(new Map());
   const provisionalRevisionRef = useRef(new Map());
   const activeProvisionalRef = useRef(new Set());
@@ -551,6 +552,26 @@ export function useVoiceSession({
     }, event.expires_after_ms);
   }, []);
 
+  const trackPersistence = useCallback((result) => {
+    if (!result || typeof result.then !== "function") return;
+    const tracked = Promise.resolve(result);
+    pendingPersistenceRef.current.add(tracked);
+    void tracked.then(
+      () => pendingPersistenceRef.current.delete(tracked),
+      () => pendingPersistenceRef.current.delete(tracked),
+    );
+  }, []);
+
+  const flushPersistence = useCallback(async () => {
+    // A final transcript can arrive while the transport is closing. Drain
+    // every observed save before the caller starts a daily summary.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const pending = [...pendingPersistenceRef.current];
+      if (!pending.length) return;
+      await Promise.allSettled(pending);
+    }
+  }, []);
+
   const applyTranscript = useCallback((line, { authoritative = true } = {}) => {
     const toolEpoch = Number.isInteger(line.tool_epoch) ? line.tool_epoch : 0;
     if (isFenceStale(line.turn_id, line.generation_id, toolEpoch)) return;
@@ -648,15 +669,22 @@ export function useVoiceSession({
     const persistKey = `${line.speaker}:${line.turn_id}:${line.generation_id}`;
     if (shouldPersist && !persistedRef.current.has(persistKey)) {
       persistedRef.current.add(persistKey);
-      finalTranscriptRef.current?.({
-        speaker: line.speaker,
-        text: line.text.trim(),
-        history_eligible: true,
-        turn_id: line.turn_id,
-        generation_id: line.generation_id,
-      });
+      trackPersistence(
+        finalTranscriptRef.current?.({
+          speaker: line.speaker,
+          text: line.text.trim(),
+          history_eligible: true,
+          turn_id: line.turn_id,
+          generation_id: line.generation_id,
+        }),
+      );
     }
-  }, [activateEmotionHint, clearEmotionHint, isFenceStale]);
+  }, [
+    activateEmotionHint,
+    clearEmotionHint,
+    isFenceStale,
+    trackPersistence,
+  ]);
 
   const clearProvisionalTranscripts = useCallback(() => {
     provisionalRevisionRef.current.clear();
@@ -2213,12 +2241,14 @@ export function useVoiceSession({
     setUiState("closed");
     inputModeRef.current = "voice";
     setInputMode("voice");
+    await flushPersistence();
     disconnectOmni(omniTransport);
     await disconnectRoom(room);
   }, [
     clearProvisionalTranscripts,
     disconnectOmni,
     disconnectRoom,
+    flushPersistence,
     resetEmotionState,
   ]);
 
@@ -2248,9 +2278,16 @@ export function useVoiceSession({
     setError("");
     setAudioBlocked(false);
     setAudioDiagnostics([]);
+    await flushPersistence();
     disconnectOmni(omniTransport);
     await disconnectRoom(room);
-  }, [disconnectOmni, disconnectRoom, resetEmotionState, resetUiState]);
+  }, [
+    disconnectOmni,
+    disconnectRoom,
+    flushPersistence,
+    resetEmotionState,
+    resetUiState,
+  ]);
 
   useEffect(
     () => () => {
@@ -2285,6 +2322,7 @@ export function useVoiceSession({
     toggleMic,
     stopAssistant,
     sendText,
+    flushPersistence,
     end,
     reset,
   };

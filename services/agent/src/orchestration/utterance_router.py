@@ -15,6 +15,7 @@ from typing import Literal
 
 from services.agent.src.orchestration.interruption_guard import (
     interrupt_ack_phrase,
+    is_completion_ack_only,
     is_explicit_interrupt,
     is_interrupt_command_only,
     is_resume_command_only,
@@ -226,8 +227,9 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 3) Pure control phrases — do not let LLM answer「怎么了？」
-    if is_interrupt_command_only(text):
+    # 3) Pure control phrases — do not let LLM answer「怎么了？」.  A
+    # completion acknowledgement such as「好了，知道了」also ends playback.
+    if is_interrupt_command_only(text) or is_completion_ack_only(text):
         return UtteranceRoute(
             intent=UtteranceIntent.INTERRUPT_COMMAND,
             reason="interrupt_command_only",

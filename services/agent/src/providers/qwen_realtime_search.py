@@ -10,14 +10,18 @@ from typing import Any
 
 import httpx
 
+from services.common.response_depth import ResponseDepth, response_depth_for
+
 logger = logging.getLogger(__name__)
 
 _MAX_QUERY_CHARS = 1000
-_MAX_TOKENS = 240
 _SYSTEM_PROMPT = (
     "你负责回答一条当前公开的实时信息问题。只依据联网检索得到的可信结果回答；"
     "不得使用、推断、要求或泄露用户身份、过往对话、记忆、资料、偏好、会话标识或系统实现。"
     "无法确认时直接说明无法确认，不要编造。"
+    "联网结果必须由你先整理后再回答用户，不要朗读搜索过程、检索来源、Markdown 标记、"
+    "重复的候选项或无关背景。出行规划默认只给推荐方式、关键耗时和一条注意事项，"
+    "用几句短而完整的中文说清楚；只有用户明确要求详细方案时才展开。"
 )
 
 
@@ -61,6 +65,8 @@ class QwenRealtimeSearch:
         query = query.strip() if isinstance(query, str) else ""
         if not query or len(query) > _MAX_QUERY_CHARS:
             return None
+        depth = response_depth_for(query, realtime=True)
+        max_tokens = 320 if depth.depth is ResponseDepth.EXTENDED else 160
         started_at = time.monotonic()
         try:
             response = await asyncio.wait_for(
@@ -73,11 +79,14 @@ class QwenRealtimeSearch:
                     json={
                         "model": self._config.model,
                         "messages": [
-                            {"role": "system", "content": _SYSTEM_PROMPT},
+                            {
+                                "role": "system",
+                                "content": f"{_SYSTEM_PROMPT}\n{depth.instruction}",
+                            },
                             {"role": "user", "content": query},
                         ],
                         "stream": False,
-                        "max_tokens": _MAX_TOKENS,
+                        "max_tokens": max_tokens,
                         "thinking": {"type": "disabled"},
                         "enable_search": True,
                         "search_options": {

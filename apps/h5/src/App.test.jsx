@@ -1643,9 +1643,58 @@ describe("App identity and profile preferences", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /2 段/ }));
     expect(await screen.findByText("旧日回顾")).toBeInTheDocument();
+    expect(currentDayButton).toBeInTheDocument();
+    expect(currentDayButton).toHaveAttribute("data-date", currentDate);
     expect(screen.getByRole("heading", { name: "当天的重要片刻" }))
       .toBeInTheDocument();
     expect(screen.getByText("由 LLM 从当日对话中整理"))
       .toBeInTheDocument();
+  });
+
+  it("waits for a final voice save before generating the daily review", async () => {
+    const save = deferred();
+    let voiceOptions = null;
+    let activeSession = true;
+    const end = vi.fn(async () => {
+      activeSession = false;
+    });
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      access_token: "token",
+    });
+    mocks.saveMessage.mockReturnValue(save.promise);
+    mocks.useVoiceSession.mockImplementation((options) => {
+      voiceOptions = options;
+      return {
+        ...voiceState(),
+        session: activeSession ? { session_id: "voice-session" } : null,
+        uiState: activeSession ? "ready" : "closed",
+        end,
+      };
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    let persistence;
+    await act(async () => {
+      persistence = voiceOptions.onFinalTranscript({
+        speaker: "user",
+        text: "今天完成了对话",
+        history_eligible: true,
+        turn_id: 1,
+        generation_id: 1,
+      });
+      await Promise.resolve();
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "结束对话" }));
+    await waitFor(() => expect(end).toHaveBeenCalledOnce());
+    expect(mocks.summarizeDay).not.toHaveBeenCalled();
+
+    await act(async () => {
+      save.resolve({});
+      await persistence;
+    });
+    await waitFor(() => expect(mocks.summarizeDay).toHaveBeenCalledOnce());
+    expect(mocks.getMemoryDays).toHaveBeenCalled();
   });
 });

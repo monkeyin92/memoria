@@ -144,6 +144,27 @@ _YIELD_FLOOR_PHRASES = (
     "先别",
 )
 
+# A completion acknowledgement is different from a normal backchannel: while
+# the assistant is speaking, phrases such as「好了，知道了」mean “stop here”
+# and should receive one fixed acknowledgement instead of another LLM turn.
+_COMPLETION_ACK_ONLY = frozenset(
+    {
+        "好了知道了",
+        "好了我知道了",
+        "好的知道了",
+        "好的我知道了",
+        "行了知道了",
+        "行了我知道了",
+        "可以了知道了",
+        "可以了我知道了",
+        "不用了知道了",
+        "不用再说了",
+        "我知道了不用说了",
+        "够了知道了",
+        "知道了好了",
+    }
+)
+
 _NON_TARGET_SCRIPT = re.compile(r"[\u3040-\u30ff\uac00-\ud7af]")
 _CANTONESE_MARKERS = frozenset("佢嘅咁冇喺啲咗嚟噉唔仲俾")
 _LANGUAGE_ACTION = r"(?:学|教|练|说|用|翻译|切换|作为|充当|培训|教学|老师)"
@@ -174,7 +195,13 @@ def is_backchannel(text: str, *, duration_ms: int) -> bool:
 
 
 def is_explicit_interrupt(text: str) -> bool:
-    return _interrupt_prefix(text) is not None
+    return _interrupt_prefix(text) is not None or is_completion_ack_only(text)
+
+
+def is_completion_ack_only(text: str) -> bool:
+    """True for an explicit acknowledgement that ends the current reply."""
+
+    return _compact_interrupt_text(text) in _COMPLETION_ACK_ONLY
 
 
 def _strip_leading_interrupt_fillers(text: str) -> str:
@@ -235,6 +262,8 @@ def interrupt_ack_phrase(text: str) -> str:
     t = normalize_short(text)
     if not t:
         return "嗯，你说。"
+    if is_completion_ack_only(t):
+        return "好的。"
     for p in _STOP_TALKING_PHRASES:
         if t.startswith(p) or p in t:
             return "好的。"
@@ -285,6 +314,8 @@ def is_interrupt_command_only(text: str) -> bool:
     e.g. 「等等」「嗯，等等，等等。」「等一下」→ True
          「等一下我想问下周三」→ False (has content beyond the command)
     """
+    if is_completion_ack_only(text):
+        return True
     remainder = _strip_leading_interrupt_fillers(_compact_interrupt_text(text))
     if not remainder or _interrupt_prefix(remainder) is None:
         return False

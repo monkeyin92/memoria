@@ -89,6 +89,7 @@ from services.common.realtime_information import (
     requires_realtime_lookup,
     strip_realtime_bridge_prefix,
 )
+from services.common.response_depth import ResponseDepth, response_depth_for
 
 if TYPE_CHECKING:
     pass
@@ -99,38 +100,13 @@ logger = logging.getLogger(__name__)
 # Voice replies stay shorter than chat, but 96/3 cut creative answers mid-stream.
 MAX_VOICE_REPLY_SENTENCES = 8
 MAX_VOICE_REPLY_CHARS = 320
+MAX_REALTIME_REPLY_SENTENCES = 5
+MAX_REALTIME_REPLY_CHARS = 180
 MAX_CONTROLLED_VOICE_REPLY_SENTENCES = 3
 MAX_CONTROLLED_VOICE_REPLY_CHARS = 120
 # Longer budget when user asks for writing / plans / multi-step content.
 MAX_VOICE_REPLY_CHARS_LONGFORM = 560
 MAX_VOICE_REPLY_SENTENCES_LONGFORM = 12
-_LONGFORM_HINTS = (
-    "创作",
-    "写一",
-    "写个",
-    "写段",
-    "故事",
-    "小说",
-    "文案",
-    "诗",
-    "歌词",
-    "详细",
-    "完整",
-    "长一点",
-    "继续写",
-    "大纲",
-    "方案",
-    "计划",
-    "步骤",
-)
-_CONTROLLED_LONGFORM_HINTS = (
-    "故事",
-    "朗读",
-    "详细",
-    "完整",
-    "长一点",
-    "继续",
-)
 _SENTENCE_ENDINGS = frozenset("。！？；!?")
 TELEMETRY_TOPIC = "voice-agent.telemetry"
 CASCADE_OPUS_MAX_BITRATE = 64_000
@@ -2155,6 +2131,27 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 turn.content for turn in frozen_session_turns if turn.role == "assistant"
             ]
             owner_salutation = policy.owner_salutation if speaker_class == "owner" else None
+            user_turns = [
+                turn.content
+                for turn in self._runtime.orchestrator.context.turns
+                if turn.role == "user" and turn.content
+            ]
+            last_user = (
+                user_turns[-2]
+                if resume_interrupted_reply and len(user_turns) >= 2
+                else user_turns[-1]
+                if user_turns
+                else ""
+            )
+            depth_policy = response_depth_for(
+                last_user,
+                realtime=realtime_request is not None,
+                controlled=not self._runtime.barge_in_enabled,
+            )
+            delivery_instruction = speech_plan.llm_instruction.strip()
+            if delivery_instruction:
+                delivery_instruction += "\n"
+            delivery_instruction += depth_policy.instruction
             safe_chat_ctx = self._context_assembler.assemble(
                 chat_ctx=chat_ctx,
                 heard_assistant=heard_assistant,
@@ -2167,7 +2164,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     and (speaker_class == "owner" or resume_interrupted_reply)
                 ),
                 session_turns=frozen_session_turns,
-                delivery_instruction=speech_plan.llm_instruction,
+                delivery_instruction=delivery_instruction,
                 context_snapshot=(
                     None if self._is_local_safe_plan(response_plan) else context_snapshot
                 ),
@@ -2186,28 +2183,22 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                         )
                     ),
                 )
-            user_turns = [
-                turn.content
-                for turn in self._runtime.orchestrator.context.turns
-                if turn.role == "user" and turn.content
-            ]
-            last_user = (
-                user_turns[-2]
-                if resume_interrupted_reply and len(user_turns) >= 2
-                else user_turns[-1]
-                if user_turns
-                else ""
-            )
-            longform_hints = (
-                _LONGFORM_HINTS if self._runtime.barge_in_enabled else _CONTROLLED_LONGFORM_HINTS
-            )
-            longform = any(hint in last_user for hint in longform_hints) or (
-                self._runtime.barge_in_enabled
-                and speech_plan.delivery_mode in {"deliberative", "supportive"}
-            )
-            if longform:
+            if depth_policy.depth is ResponseDepth.EXTENDED:
                 max_chars = MAX_VOICE_REPLY_CHARS_LONGFORM
                 max_sentences = MAX_VOICE_REPLY_SENTENCES_LONGFORM
+            elif depth_policy.depth is ResponseDepth.BRIEF:
+                if not self._runtime.barge_in_enabled:
+                    max_chars = min(max_chars, MAX_CONTROLLED_VOICE_REPLY_CHARS)
+                    max_sentences = min(
+                        max_sentences,
+                        MAX_CONTROLLED_VOICE_REPLY_SENTENCES,
+                    )
+                elif realtime_request is not None:
+                    max_chars = min(max_chars, MAX_REALTIME_REPLY_CHARS)
+                    max_sentences = min(max_sentences, MAX_REALTIME_REPLY_SENTENCES)
+                else:
+                    max_chars = min(max_chars, MAX_VOICE_REPLY_CHARS)
+                    max_sentences = min(max_sentences, MAX_VOICE_REPLY_SENTENCES)
             safe_tools: list[Any] = []
             if (
                 tools
