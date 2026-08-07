@@ -21,6 +21,7 @@ from services.archive.postgres_skill_catalog import PostgresSkillCatalog
 from services.archive.restore_drill import (
     LocalObjectRestorePlan,
     copy_and_verify_local_objects,
+    rebuild_postgres_memory_projections,
     run_postgres_restore_drill,
 )
 from services.archive.skill_domain import (
@@ -48,6 +49,14 @@ class RestoreSkillTools:
     ) -> object:
         del account_id, run_id, step_id, tool_name, arguments, compensation
         return {"ok": True}
+
+
+class RebuildEmbedderStub:
+    model = "rebuild-vector-test-v1"
+    dimensions = 2
+
+    async def embed(self, text: str) -> tuple[float, ...]:
+        return (1.0, 0.0) if "杭州" in text else (0.0, 1.0)
 
 
 @pytest.mark.asyncio
@@ -426,3 +435,94 @@ async def test_postgres_restore_drill_rebuilds_reviewed_projection_and_rls(
             admin_dsn,
             f'DROP DATABASE IF EXISTS "{source_database}" WITH (FORCE)',
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("MEMORIA_TEST_POSTGRES_DSN"),
+    reason="set MEMORIA_TEST_POSTGRES_DSN for the pgvector projection rebuild contract",
+)
+async def test_projection_rebuild_requires_and_recreates_pgvector_documents() -> None:
+    admin_dsn = os.environ["MEMORIA_TEST_POSTGRES_DSN"]
+    database = f"memoria_rebuild_vector_{uuid.uuid4().hex[:12]}"
+    dsn = _database_dsn(admin_dsn, database)
+    account_id = "rebuild-vector-owner"
+    archive: PostgresLifeArchive | None = None
+    catalog: PostgresMemoryCatalog | None = None
+    await _database_command(admin_dsn, f'CREATE DATABASE "{database}"')
+    try:
+        archive = PostgresLifeArchive(dsn)
+        catalog = PostgresMemoryCatalog(
+            dsn,
+            extractor=RuleBasedMemoryExtractor(),
+            embedder=RebuildEmbedderStub(),
+            require_vector=True,
+        )
+        await archive.initialize()
+        await catalog.initialize()
+        await archive.record(
+            EvidenceEvent(
+                event_id="rebuild-vector-event",
+                account_id=account_id,
+                event_type="speech.utterance_finalized",
+                occurred_at=datetime(2026, 8, 7, tzinfo=UTC),
+                speaker_class="owner",
+                source="rebuild-vector-test",
+                payload={
+                    "text": "我在杭州读过书。",
+                    "interaction_mode": "companion",
+                    "prompt_kind": "spontaneous",
+                    "owner_projection_eligible": True,
+                },
+            )
+        )
+        await catalog.compile_pending(limit=100)
+        connection = await asyncpg.connect(dsn)
+        try:
+            assert (
+                await connection.fetchval(
+                    "SELECT count(*) FROM memory_vector_documents WHERE account_id = $1",
+                    account_id,
+                )
+                > 0
+            )
+            with pytest.raises(ValueError, match="requires an embedder"):
+                await rebuild_postgres_memory_projections(dsn, require_vector=True)
+            assert (
+                await connection.fetchval(
+                    "SELECT count(*) FROM memory_vector_documents WHERE account_id = $1",
+                    account_id,
+                )
+                > 0
+            )
+        finally:
+            await connection.close()
+
+        report = await rebuild_postgres_memory_projections(
+            dsn,
+            extractor=RuleBasedMemoryExtractor(),
+            embedder=RebuildEmbedderStub(),
+            require_vector=True,
+        )
+        connection = await asyncpg.connect(dsn)
+        try:
+            models = await connection.fetch(
+                """
+                SELECT DISTINCT embedding_model, embedding_dimensions
+                FROM memory_vector_documents WHERE account_id = $1
+                """,
+                account_id,
+            )
+        finally:
+            await connection.close()
+
+        assert report.failed_events == 0
+        assert {
+            (str(row["embedding_model"]), int(row["embedding_dimensions"])) for row in models
+        } == {("rebuild-vector-test-v1", 2)}
+    finally:
+        if catalog is not None:
+            await catalog.close()
+        if archive is not None:
+            await archive.close()
+        await _database_command(admin_dsn, f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')

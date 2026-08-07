@@ -10,10 +10,24 @@ import os
 from dataclasses import asdict
 
 from services.archive.restore_drill import rebuild_postgres_memory_projections
+from services.control_api.app.config import ControlSettings
+from services.control_api.app.memory_components import build_memory_embedder, build_memory_extractor
 
 
 async def _run(dsn: str) -> dict[str, int]:
-    report = await rebuild_postgres_memory_projections(dsn)
+    settings = ControlSettings()
+    embedder = build_memory_embedder(settings)
+    if embedder is None:
+        raise ValueError(
+            "projection rebuild requires MEMORIA_MEMORY_EMBEDDING_URL, "
+            "MEMORIA_MEMORY_EMBEDDING_API_KEY and MEMORIA_MEMORY_EMBEDDING_MODEL"
+        )
+    report = await rebuild_postgres_memory_projections(
+        dsn,
+        extractor=build_memory_extractor(settings),
+        embedder=embedder,
+        require_vector=True,
+    )
     return {key: int(value) for key, value in asdict(report).items()}
 
 

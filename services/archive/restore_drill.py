@@ -19,6 +19,7 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 
 import asyncpg
 
+from services.archive.memory_domain import MemoryEmbedder, MemoryExtractor
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.object_store import EncryptedLocalObjectStore, ObjectRef
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
@@ -513,7 +514,23 @@ async def snapshot_postgres(dsn: str) -> PostgresSnapshot:
         await connection.close()
 
 
-async def rebuild_postgres_memory_projections(dsn: str) -> ProjectionRebuildReport:
+async def rebuild_postgres_memory_projections(
+    dsn: str,
+    *,
+    extractor: MemoryExtractor | None = None,
+    embedder: MemoryEmbedder | None = None,
+    require_vector: bool = False,
+) -> ProjectionRebuildReport:
+    """Rebuild derived projections with the same components as the serving runtime."""
+
+    if require_vector and embedder is None:
+        raise ValueError("pgvector projection rebuild requires an embedder")
+    catalog = PostgresMemoryCatalog(
+        dsn,
+        extractor=extractor or RuleBasedMemoryExtractor(),
+        embedder=embedder,
+        require_vector=require_vector,
+    )
     connection = await asyncpg.connect(dsn)
     skill_account_ids: tuple[str, ...] = ()
     try:
@@ -532,6 +549,7 @@ async def rebuild_postgres_memory_projections(dsn: str) -> ProjectionRebuildRepo
             raise PermissionError(
                 "memory projection rebuild requires a maintenance role that bypasses RLS"
             )
+        await catalog.initialize()
         protected_identity_projections = (
             {
                 "person_entities",
@@ -589,12 +607,13 @@ async def rebuild_postgres_memory_projections(dsn: str) -> ProjectionRebuildRepo
                 WHERE task_type = 'compile_evidence'
                 """
             )
+    except BaseException:
+        await catalog.close()
+        raise
     finally:
         await connection.close()
-
-    catalog = PostgresMemoryCatalog(dsn, extractor=RuleBasedMemoryExtractor())
-    compiled = ignored = failed = 0
     try:
+        compiled = ignored = failed = 0
         for _ in range(100_000):
             report = await catalog.compile_pending(limit=1000)
             compiled += report.compiled_events

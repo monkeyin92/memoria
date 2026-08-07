@@ -22,7 +22,10 @@ from services.archive.memory_domain import (
     MemoryExtractor,
     MemorySensitivity,
 )
-from services.archive.memory_write_policy import explicit_remember_content
+from services.archive.memory_write_policy import (
+    explicit_remember_content,
+    low_risk_self_fact_predicate,
+)
 
 
 class MemoryExtractionError(RuntimeError):
@@ -159,6 +162,9 @@ parenting_principle、life_wisdom、daily_life。它只表示主题，不表示�
 同一现实事件跨会话再次出现时使用同一个简短 canonical_key；不能确认时留空。
 entity_keys/participant_keys 只能引用本次 people 的 canonical_key。
 适用条件和反例没有证据时必须为空字符串。
+对于句首“请/帮我记住……”后的低风险偏好或习惯，且只有原文明确为非敏感日常偏好/习惯时，
+claim predicate 使用 preference 或 habit；出生日期、年龄、地点、关系、健康、金融、法律、
+生物特征或不确定内容不能使用这两个 predicate。
 
 严格结构：
 {{
@@ -210,7 +216,11 @@ class QwenMemoryExtractor:
         text = str(event.payload.get("text") or "").strip()
         if not text:
             return MemoryExtraction(extractor_version=self.version)
-        text = explicit_remember_content(text) or text
+        explicit_content = explicit_remember_content(text)
+        text = explicit_content or text
+        explicit_predicate = (
+            low_risk_self_fact_predicate(text) if explicit_content is not None else None
+        )
         headers = {"Authorization": f"Bearer {self._api_key}"}
         if self._workspace_id:
             headers["X-DashScope-WorkSpace"] = self._workspace_id
@@ -259,7 +269,11 @@ class QwenMemoryExtractor:
                 ExtractedClaim(
                     domain_category=item.domain_category,
                     subject_key=item.subject_key,
-                    predicate=item.predicate,
+                    predicate=(
+                        explicit_predicate
+                        if explicit_predicate is not None and item.subject_key == "self"
+                        else item.predicate
+                    ),
                     value=item.value,
                     confidence=item.confidence,
                     sensitive_domain=item.sensitive_domain,

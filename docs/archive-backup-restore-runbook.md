@@ -76,14 +76,43 @@ COPY (
 
 ### 3.1 仅重建 memory projection
 
-当检索上下文格式、显式记忆策略或编译器版本变化，但不需要完整数据库恢复时，在维护窗口将应用切为只读，然后运行：
+当检索上下文格式、显式记忆策略或编译器版本变化，但不需要完整数据库恢复时，不能只把客户端
+切成“只读”：Control API 会运行 compiler worker，Agent/Gateway 也可能继续写入 evidence。先在
+已切换到候选 runtime、但 H5 尚未激活的维护窗口停止全部 archive 写入者和 compiler：
 
 ```bash
-MEMORIA_MEMORY_REBUILD_DATABASE_URL='<maintenance postgres dsn>' \
-   uv run python scripts/rebuild_memory_projections.py --confirm-rebuild
+RUNTIME_COMPOSE_DIR=/opt/memoria/current
+cd "$RUNTIME_COMPOSE_DIR"
+sudo docker compose -f docker-compose.production.yml stop \
+  agent control-api miniprogram-gateway
+for service in agent control-api miniprogram-gateway; do
+  ! sudo docker compose -f docker-compose.production.yml \
+    ps --status running --services | grep -Fxq "$service"
+done
+
+# 在 root-only maintenance shell 中安全导出 MEMORIA_MEMORY_REBUILD_DATABASE_URL；
+# 不把 DSN 写入历史、日志或命令参数。control-api 的 env_file 提供与线上一致的
+# extractor/embedding 配置，-e 仅透传该 maintenance DSN。
+sudo -E docker compose -f docker-compose.production.yml run --rm --no-deps \
+  -e MEMORIA_MEMORY_REBUILD_DATABASE_URL \
+  --entrypoint /app/.venv/bin/python control-api \
+  scripts/rebuild_memory_projections.py --confirm-rebuild
+unset MEMORIA_MEMORY_REBUILD_DATABASE_URL
+
+sudo docker compose -f docker-compose.production.yml up -d --no-build \
+  control-api agent miniprogram-gateway
 ```
 
-该命令只清空并重建可派生的 memory projection，immutable `archive_evidence_events` 不会被修改；policy confirmation evidence 也会按原顺序重放。它会在截断前验证当前 maintenance role 具备 RLS bypass，在结束时验证没有未完成的 compile outbox；普通 app/compiler DSN 会在修改前被拒绝。若存在 `self_model_relationship_profiles`，其外键引用的 `person_entities`/`relationships` 稳定行会被保留，未被权威 profile 引用的其余行才会删除，随后由账本重放补齐派生数据。输出中的 `failed_events` 必须为 0，随后重新执行固定中文记忆评测、权限/冲突泄漏门禁、`postgres_orphan_counts` 和 RLS 检查。不要在有并发写入的生产库上执行，也不要把 DSN 或 payload 写入日志。
+若启用了 media-runtime profile，也必须先停止其 Voice Core/bridge 写入者，并在 rebuild 完成后恢复；
+不要停止 PostgreSQL/MinIO。该命令只清空并重建可派生的 memory projection，immutable
+`archive_evidence_events` 不会被修改；policy confirmation evidence 也会按原顺序重放。它在任何
+截断前验证 maintenance role 的 RLS bypass、pgvector 和 production embedder，并复用 Control API
+相同的 Qwen+fallback extractor/embedding 配置；普通 app/compiler DSN 或缺失 embedding 配置会在
+修改前被拒绝。若存在 `self_model_relationship_profiles`，其外键引用的 `person_entities`/
+`relationships` 稳定行会被保留，未被权威 profile 引用的其余行才会删除，随后由账本重放补齐派生
+数据。输出中的 `failed_events` 必须为 0，随后重新执行固定中文记忆评测、权限/冲突泄漏门禁、
+`postgres_orphan_counts` 和 RLS 检查。不要在有并发写入的生产库上执行，也不要把 DSN 或 payload
+写入日志。
 
 ## 4. 必过验收
 

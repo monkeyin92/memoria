@@ -22,19 +22,15 @@ from services.archive.memory_domain import (
     AccountWriteGuard,
     AccountWriteRejectedError,
     MemoryCatalogPort,
-    MemoryEmbedder,
-    MemoryExtractor,
 )
-from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.object_store import (
     EncryptedLocalObjectStore,
     EncryptedS3ObjectStore,
     ObjectStore,
 )
 from services.archive.postgres_archive import PostgresLifeArchive
-from services.archive.postgres_memory_catalog import PostgresMemoryCatalog, QwenMemoryEmbedder
+from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 from services.archive.postgres_skill_catalog import PostgresSkillCatalog
-from services.archive.qwen_memory_extractor import FallbackMemoryExtractor, QwenMemoryExtractor
 from services.archive.skill_catalog import SkillCatalog
 from services.archive.skill_domain import SkillCatalogPort
 from services.control_api.app.account_gate import AccountDeletingError, AccountOperationGate
@@ -43,6 +39,7 @@ from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_registry import DeviceRegistry
 from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.media_slo import MediaSLOGate
+from services.control_api.app.memory_components import build_memory_embedder, build_memory_extractor
 from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import auth as auth_routes
 from services.control_api.app.routes import digital_self as digital_self_routes
@@ -140,19 +137,6 @@ def _memory_account_guard(
     return guard
 
 
-def _memory_embedder(settings: ControlSettings) -> MemoryEmbedder | None:
-    api_key = settings.memory_embedding_api_key.get_secret_value()
-    if not settings.memory_embedding_url or not api_key or not settings.memory_embedding_model:
-        return None
-    return QwenMemoryEmbedder(
-        endpoint=settings.memory_embedding_url,
-        api_key=api_key,
-        model=settings.memory_embedding_model,
-        dimensions=settings.memory_embedding_dimensions,
-        timeout_s=settings.memory_embedding_timeout_s,
-    )
-
-
 def _speaker_authority(settings: ControlSettings) -> SpeakerAuthorityPort:
     configured_key = settings.speaker_template_key.get_secret_value()
     template_key = configured_key or base64.urlsafe_b64encode(
@@ -188,23 +172,6 @@ def _speaker_authority(settings: ControlSettings) -> SpeakerAuthorityPort:
         owner_threshold=settings.speaker_owner_threshold,
         guest_threshold=settings.speaker_guest_threshold,
         classify_timeout_s=settings.speaker_embedding_timeout_s,
-    )
-
-
-def _memory_extractor(settings: ControlSettings) -> MemoryExtractor:
-    fallback = RuleBasedMemoryExtractor()
-    api_key = settings.dashscope_api_key.get_secret_value()
-    if settings.offline_mock or not api_key:
-        return fallback
-    return FallbackMemoryExtractor(
-        QwenMemoryExtractor(
-            api_key=api_key,
-            base_url=settings.dashscope_base_url,
-            model=settings.memory_extraction_model,
-            timeout_s=settings.memory_extraction_timeout_s,
-            workspace_id=settings.dashscope_workspace_id,
-        ),
-        fallback,
     )
 
 
@@ -484,9 +451,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     memory_catalog: MemoryCatalogPort
     skill_catalog: SkillCatalogPort
     persona_engine: PersonaEnginePort
-    extractor = _memory_extractor(settings)
+    extractor = build_memory_extractor(settings)
     persona_extractor = _persona_extractor(settings)
-    embedder = _memory_embedder(settings)
+    embedder = build_memory_embedder(settings)
     account_guard = _memory_account_guard(app.state.account_operations, store)
     if archive_url:
         postgres_archive = PostgresLifeArchive(archive_url)
@@ -694,7 +661,7 @@ def create_app() -> FastAPI:
     app.state.life_archive = LifeArchive.sqlite(settings.memoria_db_path)
     app.state.memory_catalog = MemoryCatalog.sqlite(
         settings.memoria_db_path,
-        extractor=_memory_extractor(settings),
+        extractor=build_memory_extractor(settings),
         account_guard=_memory_account_guard(
             app.state.account_operations,
             app.state.memory_store,

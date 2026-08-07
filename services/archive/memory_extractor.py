@@ -14,7 +14,10 @@ from services.archive.memory_domain import (
     ExtractedTimeline,
     MemoryExtraction,
 )
-from services.archive.memory_write_policy import explicit_remember_content
+from services.archive.memory_write_policy import (
+    explicit_remember_content,
+    low_risk_self_fact_predicate,
+)
 
 _RELATION_ALIASES = {
     "妈妈": ("mother", ("妈妈", "母亲")),
@@ -60,13 +63,16 @@ class RuleBasedMemoryExtractor:
         if explicit_content is not None:
             text = explicit_content
         category = _category(text)
+        explicit_predicate = (
+            low_risk_self_fact_predicate(text) if explicit_content is not None else None
+        )
         people: list[ExtractedPerson] = []
         relationships: list[ExtractedRelationship] = []
         claims: list[ExtractedClaim] = [
             ExtractedClaim(
                 domain_category=category,
                 subject_key="self",
-                predicate=category,
+                predicate=explicit_predicate or category,
                 value=text,
                 confidence=0.95 if explicit_content is not None else 0.62,
                 valid_from=event.occurred_at,

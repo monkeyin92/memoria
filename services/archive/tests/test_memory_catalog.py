@@ -150,7 +150,7 @@ async def _record(
     if explicit_memory:
         payload["memory_write_intent"] = {
             "kind": "explicit_remember",
-            "policy_version": "explicit-memory-v1",
+            "policy_version": "explicit-memory-v2",
         }
     await archive.record(
         EvidenceEvent(
@@ -455,7 +455,7 @@ async def test_explicit_low_sensitivity_memory_is_immediately_confirmed(
         "action": "confirm",
         "previous_value": "我喜欢雨天散步。",
         "source_event_id": "explicit-memory-low-risk",
-        "policy_version": "explicit-memory-v1",
+        "policy_version": "explicit-memory-v2",
         "reason": "explicit-memory-low-risk",
         "tool_epoch": 0,
     }
@@ -539,7 +539,113 @@ async def test_explicit_sensitive_or_conflicting_memory_stays_in_review_queue(
     await conflict_catalog.compile_pending()
 
     queue = await conflict_catalog.review_queue(account_id="account-memory")
-    assert [(item.value, item.status) for item in queue] == [("61", "candidate")]
+    assert [(item.value, item.status) for item in queue] == [
+        ("60", "candidate"),
+        ("61", "candidate"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_explicit_auto_confirmation_uses_a_closed_low_risk_allowlist(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    cases = (
+        ("explicit-birth-date", "请记住我出生于1990年1月1日。"),
+        ("explicit-marriage", "请记住我结婚了。"),
+        ("explicit-health", "请记住我患有糖尿病。"),
+        ("explicit-finance", "请记住我的收入是100万元。"),
+        ("explicit-legal", "请记住我正在打官司。"),
+        ("explicit-biometric", "请记住我的声纹已经录入。"),
+        ("explicit-sensitive-suffix", "请记住我喜欢咖啡因为我患有糖尿病。"),
+    )
+    for minute, (event_id, text) in enumerate(cases):
+        await _record(
+            archive,
+            event_id=event_id,
+            text=text,
+            minute=minute,
+            explicit_memory=True,
+        )
+    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+
+    await catalog.compile_pending()
+    queue = await catalog.review_queue(account_id="account-memory")
+    confirmed = await catalog.context(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            include_candidates=False,
+        )
+    )
+
+    assert [item.source_event_id for item in queue] == [event_id for event_id, _ in cases]
+    assert all(item.status == "candidate" for item in queue)
+    assert confirmed.items == ()
+
+
+@pytest.mark.asyncio
+async def test_legacy_v1_policy_confirmation_cannot_promote_a_rebuilt_claim(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await archive.record(
+        EvidenceEvent(
+            event_id="legacy-v1-source",
+            account_id="account-memory",
+            session_id="session-memory",
+            turn_id=1,
+            generation_id=1,
+            event_type="speech.utterance_finalized",
+            occurred_at=datetime(2026, 8, 7, tzinfo=UTC),
+            speaker_class="owner",
+            source="legacy-policy-test",
+            payload={
+                "text": "请记住我喜欢雨天散步。",
+                "interaction_mode": "companion",
+                "prompt_kind": "spontaneous",
+                "owner_projection_eligible": True,
+                "tool_epoch": 0,
+                "memory_write_intent": {
+                    "kind": "explicit_remember",
+                    "policy_version": "explicit-memory-v1",
+                },
+            },
+        )
+    )
+    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    await catalog.compile_pending()
+    claim = (await catalog.review_queue(account_id="account-memory"))[0]
+    await archive.record(
+        EvidenceEvent(
+            event_id="legacy-v1-confirmation",
+            account_id="account-memory",
+            session_id="session-memory",
+            turn_id=1,
+            generation_id=1,
+            event_type="memory.claim_reviewed",
+            occurred_at=datetime(2026, 8, 7, tzinfo=UTC),
+            speaker_class="system",
+            source="system.memory_write_policy",
+            payload={
+                "target_id": claim.item_id,
+                "action": "confirm",
+                "previous_value": claim.value,
+                "source_event_id": "legacy-v1-source",
+                "policy_version": "explicit-memory-v1",
+                "reason": "explicit-memory-low-risk",
+                "tool_epoch": 0,
+            },
+        )
+    )
+
+    replay = await catalog.compile_pending()
+    queue = await catalog.review_queue(account_id="account-memory")
+
+    assert replay.ignored_events == 1
+    assert [(item.item_id, item.status) for item in queue] == [(claim.item_id, "candidate")]
 
 
 @pytest.mark.asyncio

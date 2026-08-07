@@ -728,7 +728,7 @@ async def test_explicit_memory_intent_is_server_owned_and_owner_only(
     }
     assert payloads["explicit-owner"]["memory_write_intent"] == {
         "kind": "explicit_remember",
-        "policy_version": "explicit-memory-v1",
+        "policy_version": "explicit-memory-v2",
     }
     assert "memory_write_intent" not in payloads["spoofed-ordinary"]
     assert "memory_write_intent" not in payloads["explicit-guest"]

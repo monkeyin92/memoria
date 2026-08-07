@@ -13,7 +13,7 @@ from services.archive.memory_domain import MemoryExtraction
 from services.common.evidence_policy import contribution_for
 from services.common.redaction import redact_pii
 
-EXPLICIT_MEMORY_POLICY_VERSION = "explicit-memory-v1"
+EXPLICIT_MEMORY_POLICY_VERSION = "explicit-memory-v2"
 EXPLICIT_MEMORY_CONFIRM_REASON = "explicit-memory-low-risk"
 EXPLICIT_MEMORY_INTENT = {
     "kind": "explicit_remember",
@@ -21,6 +21,7 @@ EXPLICIT_MEMORY_INTENT = {
 }
 POLICY_CONFIRMATION_SOURCE = "system.memory_write_policy"
 SINGLE_VALUE_PREDICATES = frozenset({"age", "birth_date", "birth_place"})
+LOW_RISK_AUTO_CONFIRM_PREDICATES = frozenset({"preference", "habit"})
 
 _EXPLICIT_REMEMBER = re.compile(
     r"^(?:请帮我|请|帮我)记住(?:一下)?(?:这件事)?(?:[：:,，]\s*|\s+)?(?P<content>.+)$"
@@ -65,6 +66,59 @@ _SENSITIVE_TERMS = (
     "家人",
     "离婚",
     "婚外",
+)
+_LOW_RISK_TEMPLATES = (
+    (
+        "preference",
+        re.compile(r"^我(?:最|很|非常|比较|更)?(?:喜欢|不喜欢|偏好)(?P<value>.+)$"),
+    ),
+    (
+        "habit",
+        re.compile(r"^我(?:平时|通常|一直)?习惯(?P<value>.+)$"),
+    ),
+)
+_LOW_RISK_VALUE_TOKENS = (
+    "散步",
+    "跑步",
+    "运动",
+    "阅读",
+    "看书",
+    "音乐",
+    "电影",
+    "旅行",
+    "咖啡",
+    "茶",
+    "烹饪",
+    "做饭",
+    "每天",
+    "早起",
+    "早睡",
+    "日记",
+    "写作",
+    "绘画",
+    "摄影",
+    "园艺",
+    "植物",
+    "宠物",
+    "游戏",
+    "晴天",
+    "雨天",
+    "颜色",
+    "蓝色",
+    "绿色",
+    "红色",
+    "清淡",
+    "甜食",
+)
+_LOW_RISK_VALUE_SEQUENCE = re.compile(
+    "(?:"
+    + "|".join(re.escape(token) for token in sorted(_LOW_RISK_VALUE_TOKENS, key=len, reverse=True))
+    + ")+"
+)
+_SENSITIVE_SELF_FACT = re.compile(
+    r"(?:出生|生日|年龄|年纪|\d{1,3}\s*岁|"
+    r"\d{4}\s*(?:年|[-/.])\s*\d{1,2}|"
+    r"\d{1,2}\s*月\s*\d{1,2}\s*日)"
 )
 
 
@@ -114,6 +168,29 @@ def _traceable_to(value: str, source: str) -> bool:
 
 def _contains_sensitive_text(value: str) -> bool:
     return redact_pii(value) != value or any(term in value for term in _SENSITIVE_TERMS)
+
+
+def _is_closed_low_risk_value(value: str) -> bool:
+    segments = re.split(r"[、，,和与或]", re.sub(r"\s+", "", value))
+    return bool(segments) and all(
+        segment and _LOW_RISK_VALUE_SEQUENCE.fullmatch(segment) for segment in segments
+    )
+
+
+def low_risk_self_fact_predicate(value: object) -> str | None:
+    """Return the only server-verifiable facts eligible for auto-confirmation."""
+
+    content = unicodedata.normalize("NFKC", str(value or "")).strip().rstrip("。.!！?")
+    if not content or _contains_sensitive_text(content) or _SENSITIVE_SELF_FACT.search(content):
+        return None
+    for predicate, template in _LOW_RISK_TEMPLATES:
+        match = template.fullmatch(content)
+        if match is None:
+            continue
+        fact_value = match.group("value").strip()
+        if _is_closed_low_risk_value(fact_value):
+            return predicate
+    return None
 
 
 def _complete_nonnegative_int(value: object) -> bool:
@@ -191,6 +268,9 @@ class MemoryWritePolicy:
         content = explicit_remember_content(event.payload.get("text"))
         if content is None:
             return MemoryWriteDecision(False, "invalid_explicit_command")
+        low_risk_predicate = low_risk_self_fact_predicate(content)
+        if low_risk_predicate is None:
+            return MemoryWriteDecision(False, "auto_confirm_not_allowlisted", content)
         if len(extraction.claims) != 1:
             return MemoryWriteDecision(False, "single_claim_required", content)
         claim = extraction.claims[0]
@@ -203,6 +283,11 @@ class MemoryWritePolicy:
             or any(item.entity_keys for item in extraction.knowledge)
         ):
             return MemoryWriteDecision(False, "self_claim_required", content)
+        if (
+            claim.predicate not in LOW_RISK_AUTO_CONFIRM_PREDICATES
+            or claim.predicate != low_risk_predicate
+        ):
+            return MemoryWriteDecision(False, "auto_confirm_predicate_mismatch", content)
         if claim.confidence * contribution.factor < 0.9:
             return MemoryWriteDecision(False, "insufficient_confidence", content)
         if not _traceable_to(claim.value, content):
