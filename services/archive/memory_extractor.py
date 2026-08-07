@@ -14,6 +14,7 @@ from services.archive.memory_domain import (
     ExtractedTimeline,
     MemoryExtraction,
 )
+from services.archive.memory_write_policy import explicit_remember_content
 
 _RELATION_ALIASES = {
     "妈妈": ("mother", ("妈妈", "母亲")),
@@ -55,6 +56,9 @@ class RuleBasedMemoryExtractor:
         text = str(event.payload.get("text") or "").strip()
         if not text:
             return MemoryExtraction(extractor_version=self.version)
+        explicit_content = explicit_remember_content(text)
+        if explicit_content is not None:
+            text = explicit_content
         category = _category(text)
         people: list[ExtractedPerson] = []
         relationships: list[ExtractedRelationship] = []
@@ -64,7 +68,7 @@ class RuleBasedMemoryExtractor:
                 subject_key="self",
                 predicate=category,
                 value=text,
-                confidence=0.62,
+                confidence=0.95 if explicit_content is not None else 0.62,
                 valid_from=event.occurred_at,
             )
         ]
@@ -102,13 +106,17 @@ class RuleBasedMemoryExtractor:
                     )
                 )
         knowledge = (
-            ExtractedKnowledge(
-                domain_category=category,
-                question="这段经历或原则是什么？",
-                answer=text,
-                entity_keys=tuple(person.canonical_key for person in people),
-            ),
-        ) if category != "daily_life" else ()
+            (
+                ExtractedKnowledge(
+                    domain_category=category,
+                    question="这段经历或原则是什么？",
+                    answer=text,
+                    entity_keys=tuple(person.canonical_key for person in people),
+                ),
+            )
+            if category != "daily_life"
+            else ()
+        )
         return MemoryExtraction(
             claims=tuple(claims),
             people=tuple(people),

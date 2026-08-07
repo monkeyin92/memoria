@@ -634,7 +634,7 @@ class DuplexRuntime:
                 relationship_policy=policy,
                 tool_permission=policy.allows_tools(self.current_speaker_class),
                 speaker_class=self.current_speaker_class,
-                summary=self.orchestrator.context.business_summary,
+                summary=self.orchestrator.context.context_summary(),
             )
         )
 

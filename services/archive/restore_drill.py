@@ -521,6 +521,25 @@ async def rebuild_postgres_memory_projections(dsn: str) -> ProjectionRebuildRepo
         projections = tuple(table for table in _PROJECTION_TABLES if table in present)
         if not projections or "archive_processing_outbox" not in present:
             raise RuntimeError("memory projection schema is incomplete")
+        role = await connection.fetchrow(
+            """
+            SELECT rolsuper, rolbypassrls
+            FROM pg_roles
+            WHERE rolname = current_user
+            """
+        )
+        if role is None or not (bool(role["rolsuper"]) or bool(role["rolbypassrls"])):
+            raise PermissionError(
+                "memory projection rebuild requires a maintenance role that bypasses RLS"
+            )
+        protected_identity_projections = (
+            {
+                "person_entities",
+                "relationships",
+            }
+            if "self_model_relationship_profiles" in present
+            else set()
+        )
         if "skill_definitions" in present:
             skill_account_ids = tuple(
                 str(row["account_id"])
@@ -529,9 +548,39 @@ async def rebuild_postgres_memory_projections(dsn: str) -> ProjectionRebuildRepo
                 )
             )
         async with connection.transaction():
-            await connection.execute(
-                "TRUNCATE TABLE " + ", ".join(_quote_identifier(table) for table in projections)
+            truncatable = tuple(
+                table for table in projections if table not in protected_identity_projections
             )
+            if truncatable:
+                await connection.execute(
+                    "TRUNCATE TABLE " + ", ".join(_quote_identifier(table) for table in truncatable)
+                )
+            if protected_identity_projections:
+                await connection.execute(
+                    """
+                    DELETE FROM relationships relationship
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM self_model_relationship_profiles profile
+                        WHERE profile.relationship_id = relationship.relationship_id
+                    )
+                    """
+                )
+                await connection.execute(
+                    """
+                    DELETE FROM person_entities person
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM self_model_relationship_profiles profile
+                        WHERE profile.person_id = person.person_id
+                    )
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM relationships relationship
+                          WHERE relationship.person_id = person.person_id
+                      )
+                    """
+                )
             await connection.execute(
                 """
                 UPDATE archive_processing_outbox
@@ -557,13 +606,25 @@ async def rebuild_postgres_memory_projections(dsn: str) -> ProjectionRebuildRepo
             raise RuntimeError("projection rebuild exceeded its safety bound")
     finally:
         await catalog.close()
+    connection = await asyncpg.connect(dsn)
+    try:
+        incomplete = int(
+            await connection.fetchval(
+                """
+                SELECT count(*) FROM archive_processing_outbox
+                WHERE task_type = 'compile_evidence' AND status != 'completed'
+                """
+            )
+        )
+    finally:
+        await connection.close()
+    if incomplete:
+        raise RuntimeError(f"memory projection rebuild left {incomplete} incomplete events")
     skills = PostgresSkillCatalog(dsn)
     rebuilt_skills = 0
     try:
         for account_id in skill_account_ids:
-            rebuilt_skills += await skills.rebuild_search_projections(
-                account_id=account_id
-            )
+            rebuilt_skills += await skills.rebuild_search_projections(account_id=account_id)
     finally:
         await skills.close()
     return ProjectionRebuildReport(

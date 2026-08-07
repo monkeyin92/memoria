@@ -5,7 +5,7 @@ import {
   Sparkle,
 } from "@phosphor-icons/react";
 
-import { formatDay } from "../lib/date.js";
+import { formatDay, localDateKey } from "../lib/date.js";
 import { emotionMeta } from "../lib/emotion.js";
 import { LifeArchivePanel } from "./LifeArchivePanel.jsx";
 
@@ -20,6 +20,11 @@ export function MemoryScreen({
   onRunSummary,
   onStartChat,
 }) {
+  const selectedIsToday = selectedDay === localDateKey();
+  const visibleDays = days.some((day) => day.date === selectedDay)
+    ? days
+    : [{ date: selectedDay, message_count: 0 }, ...days];
+
   return (
     <section className="screen memory-screen" aria-label="每日回顾">
       <header className="topbar page-topbar">
@@ -38,12 +43,13 @@ export function MemoryScreen({
         </button>
       </header>
 
-      {days.length > 0 && (
+      {visibleDays.length > 0 && (
         <div className="day-strip" role="group" aria-label="选择日期">
-          {days.slice(0, 7).map((day) => (
+          {visibleDays.slice(0, 7).map((day) => (
             <button
               type="button"
               key={day.date}
+              data-date={day.date}
               className={day.date === selectedDay ? "active" : ""}
               aria-pressed={day.date === selectedDay}
               onClick={() => onSelectDay(day.date)}
@@ -81,22 +87,27 @@ export function MemoryScreen({
                   {emotionMeta[activeMemory.mood]?.label || "平静"}
                 </span>
               </div>
-              <h2>{activeMemory.title || "今天的你，值得被看见"}</h2>
+              <h2>
+                {activeMemory.title ||
+                  (selectedIsToday ? "今天的你，值得被看见" : "这一天的你，值得被看见")}
+              </h2>
               <p>
                 {activeMemory.summary ||
-                  "今天的对话已经被好好收起，等你想回看的时候，我都在。"}
+                  (selectedIsToday
+                    ? "今天的对话已经被好好收起，等你想回看的时候，我都在。"
+                    : "这一天的对话已经被好好收起，等你想回看的时候，我都在。")}
               </p>
               <div className="summary-source">
                 <Brain size={16} weight="fill" />
                 {activeMemory.source === "llm"
-                  ? "由 LLM 从今日对话中整理"
+                  ? `由 LLM 从${selectedIsToday ? "今日" : "当日"}对话中整理`
                   : "本地安全摘要，接通模型后会进一步优化"}
               </div>
             </article>
 
             <section className="memory-section">
               <div className="section-heading">
-                <h3>今天的重要片刻</h3>
+                <h3>{selectedIsToday ? "今天的重要片刻" : "当天的重要片刻"}</h3>
                 <span>{activeMemory.highlights.length}</span>
               </div>
               <div className="highlight-list">

@@ -8,6 +8,7 @@ import threading
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -27,6 +28,7 @@ from services.archive.memory_domain import (
     DomainCategory,
     MemoryCategory,
     MemoryClaimReview,
+    MemoryExtraction,
     MemoryExtractor,
     MemoryKind,
     MemorySearchItem,
@@ -38,8 +40,16 @@ from services.archive.memory_domain import (
     ReviewedClaim,
     ReviewQueueItem,
     TimelineItem,
+    lexical_query_terms,
+)
+from services.archive.memory_write_policy import (
+    SINGLE_VALUE_PREDICATES,
+    MemoryWriteDecision,
+    MemoryWritePolicy,
+    is_policy_confirmation_event,
 )
 from services.common.evidence_policy import contribution_for
+from services.common.redaction import redact_pii
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS memory_compile_receipts (
@@ -258,7 +268,7 @@ CREATE TABLE IF NOT EXISTS memory_search_document_sources (
 );
 """
 
-_SINGLE_VALUE_PREDICATES = frozenset({"age", "birth_date", "birth_place"})
+_SINGLE_VALUE_PREDICATES = SINGLE_VALUE_PREDICATES
 _REVIEW_STATUS: dict[str, MemoryStatus] = {
     "confirm": "confirmed",
     "dispute": "disputed",
@@ -294,10 +304,7 @@ def _ensure_columns(
     table: str,
     columns: dict[str, str],
 ) -> None:
-    existing = {
-        str(row[1])
-        for row in connection.execute(f"PRAGMA table_info({table})")
-    }
+    existing = {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
     for name, definition in columns.items():
         if name not in existing:
             connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
@@ -353,6 +360,7 @@ class MemoryCatalog:
         self._extractor = extractor
         self._account_guard = account_guard or _allow_account_write
         self._episode_consolidator = episode_consolidator or EpisodeConsolidator()
+        self._memory_write_policy = MemoryWritePolicy()
         self._initialized = False
         self._initialize_lock = threading.Lock()
 
@@ -642,7 +650,9 @@ class MemoryCatalog:
             )
 
         event = self._event_from_row(row)
-        if event.event_type == "memory.claim_reviewed" and event.source == "user.memory_review":
+        if event.event_type == "memory.claim_reviewed" and (
+            event.source == "user.memory_review" or is_policy_confirmation_event(event)
+        ):
             try:
                 with self._connect() as connection:
                     self._replay_review_event(connection, event)
@@ -661,8 +671,25 @@ class MemoryCatalog:
 
         try:
             extraction = await self._extractor.extract(event)
+            if not isinstance(extraction, MemoryExtraction):
+                raise TypeError("memory extractor returned an invalid result")
             with self._connect() as connection:
+                decision = self._memory_write_policy.decide(
+                    event,
+                    extraction,
+                    existing_values=self._existing_single_value_claims(
+                        connection,
+                        event=event,
+                        extraction=extraction,
+                    ),
+                )
                 self._write_extraction(connection, event, extraction)
+                self._apply_memory_write_decision(
+                    connection,
+                    event=event,
+                    extraction=extraction,
+                    decision=decision,
+                )
                 self._record_receipt(
                     connection,
                     event,
@@ -692,8 +719,6 @@ class MemoryCatalog:
         event: EvidenceEvent,
         extraction: object,
     ) -> None:
-        from services.archive.memory_domain import MemoryExtraction
-
         if not isinstance(extraction, MemoryExtraction):
             raise TypeError("memory extractor returned an invalid result")
         created_at = datetime.now(UTC).isoformat()
@@ -806,7 +831,10 @@ class MemoryCatalog:
                 kind="claim",
                 memory_kind="semantic",
                 title=claim.value[:80],
-                body=claim.value,
+                body=(
+                    f"subject:{claim.subject_key} predicate:{claim.predicate} "
+                    f"value:{claim.value} context:{redact_pii(str(event.payload.get('text') or ''))[:240]}"
+                )[:8000],
                 domain_category=claim.domain_category,
                 entity_ids=entity_ids,
                 source_event_ids=(event.event_id,),
@@ -968,15 +996,18 @@ class MemoryCatalog:
                 kind="knowledge",
                 memory_kind="procedural",
                 title=knowledge.question,
-                body=" ".join(
-                    part
-                    for part in (
-                        knowledge.answer,
-                        knowledge.applicability,
-                        knowledge.counterexample,
+                body=(
+                    " ".join(
+                        part
+                        for part in (
+                            knowledge.answer,
+                            knowledge.applicability,
+                            knowledge.counterexample,
+                        )
+                        if part
                     )
-                    if part
-                ),
+                    + f"\n[retrieval-context] {redact_pii(str(event.payload.get('text') or ''))[:240]}"
+                )[:8000],
                 domain_category=knowledge.domain_category,
                 entity_ids=entity_ids,
                 source_event_ids=(event.event_id,),
@@ -989,6 +1020,57 @@ class MemoryCatalog:
                 sensitivity=knowledge.sensitivity,
                 conflict_state="none",
             )
+
+    @staticmethod
+    def _existing_single_value_claims(
+        connection: sqlite3.Connection,
+        *,
+        event: EvidenceEvent,
+        extraction: MemoryExtraction,
+    ) -> tuple[str, ...]:
+        if len(extraction.claims) != 1:
+            return ()
+        claim = extraction.claims[0]
+        if claim.predicate not in SINGLE_VALUE_PREDICATES:
+            return ()
+        rows = connection.execute(
+            """
+            SELECT value, source_event_id FROM memory_claims
+            WHERE account_id = ? AND subject_key = ? AND predicate = ?
+              AND status != 'retracted'
+            """,
+            (event.account_id, claim.subject_key, claim.predicate),
+        ).fetchall()
+        return tuple(str(row["value"]) for row in rows)
+
+    def _apply_memory_write_decision(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        event: EvidenceEvent,
+        extraction: MemoryExtraction,
+        decision: MemoryWriteDecision,
+    ) -> None:
+        if not decision.confirmed:
+            return
+        claim = extraction.claims[0]
+        claim_id = _stable_id("claim", event.event_id, 0)
+        review_event = decision.confirmation_event(
+            source=event,
+            claim_id=claim_id,
+            claim_value=claim.value,
+        )
+        self._insert_evidence(connection, review_event, if_absent=True)
+        self._write_review_projection(
+            connection,
+            account_id=event.account_id,
+            claim_id=claim_id,
+            status="confirmed",
+            projection_status="confirmed",
+            title=claim.value[:80],
+            value=claim.value,
+            review_event_id=review_event.event_id,
+        )
 
     @staticmethod
     def _episode_candidates(
@@ -1112,40 +1194,42 @@ class MemoryCatalog:
         else:
             status = "retracted"
         active_source_event_ids = tuple(
-            str(row["source_event_id"])
-            for row in evidence
-            if str(row["status"]) != "retracted"
+            str(row["source_event_id"]) for row in evidence if str(row["status"]) != "retracted"
         )
         retracted_source_event_ids = tuple(
-            str(row["source_event_id"])
-            for row in evidence
-            if str(row["status"]) == "retracted"
+            str(row["source_event_id"]) for row in evidence if str(row["status"]) == "retracted"
         )
         source_event_ids = (
             *active_source_event_ids,
             *retracted_source_event_ids,
         )
-        active_timelines = [
-            row for row in timelines if str(row["status"]) != "retracted"
-        ]
+        active_timelines = [row for row in timelines if str(row["status"]) != "retracted"]
         surfaced_timelines = active_timelines or list(timelines)
-        titles = tuple(
-            dict.fromkeys(str(row["title"]) for row in surfaced_timelines)
-        )
+        titles = tuple(dict.fromkeys(str(row["title"]) for row in surfaced_timelines))
         title = max(titles, key=lambda value: (len(value), value))
-        body = "；".join(titles)[:8000]
-        starts = [
-            datetime.fromisoformat(str(row["event_start"]))
-            for row in surfaced_timelines
-        ]
+        source_texts: list[str] = []
+        for source_event_id in source_event_ids:
+            source_row = connection.execute(
+                "SELECT payload_json FROM evidence_events WHERE event_id = ?",
+                (source_event_id,),
+            ).fetchone()
+            if source_row is None:
+                continue
+            try:
+                payload = json.loads(str(source_row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            if isinstance(payload, dict) and str(payload.get("text") or "").strip():
+                source_texts.append(redact_pii(str(payload["text"]))[:240])
+        body = f"{';'.join(titles)}\n[retrieval-context] {'；'.join(source_texts)}"[:8000]
+        starts = [datetime.fromisoformat(str(row["event_start"])) for row in surfaced_timelines]
         ends = [
             datetime.fromisoformat(str(row["event_end"]))
             for row in surfaced_timelines
             if row["event_end"] is not None
         ]
         observations = [
-            datetime.fromisoformat(str(row["observed_at"]))
-            for row in surfaced_timelines
+            datetime.fromisoformat(str(row["observed_at"])) for row in surfaced_timelines
         ]
         entity_ids = tuple(
             sorted(
@@ -1157,8 +1241,7 @@ class MemoryCatalog:
             )
         )
         sensitivities = [
-            cast(MemorySensitivity, str(row["sensitivity"]))
-            for row in surfaced_timelines
+            cast(MemorySensitivity, str(row["sensitivity"])) for row in surfaced_timelines
         ]
         sensitivity = max(
             sensitivities,
@@ -1167,9 +1250,7 @@ class MemoryCatalog:
         evidence_count = len(source_event_ids)
         active_evidence_count = len(active_source_event_ids)
         stability = (
-            min(0.95, 0.5 + 0.1 * (active_evidence_count - 1))
-            if active_evidence_count
-            else 0.0
+            min(0.95, 0.5 + 0.1 * (active_evidence_count - 1)) if active_evidence_count else 0.0
         )
         salience = max(float(row["salience"]) for row in surfaced_timelines)
         event_start = min(starts)
@@ -1303,10 +1384,7 @@ class MemoryCatalog:
                 document_id, account_id, source_event_id
             ) VALUES (?, ?, ?)
             """,
-            [
-                (document_id, account_id, source_event_id)
-                for source_event_id in source_event_ids
-            ],
+            [(document_id, account_id, source_event_id) for source_event_id in source_event_ids],
         )
 
     def _record_receipt(
@@ -1366,27 +1444,27 @@ class MemoryCatalog:
         else:
             clauses.append("document.status != 'retracted'")
         if query.text.strip():
-            escaped = (
-                query.text.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            )
-            clauses.append(
-                "(document.title LIKE ? ESCAPE '\\' OR document.body LIKE ? ESCAPE '\\')"
-            )
-            parameters.extend((f"%{escaped}%", f"%{escaped}%"))
+            terms = lexical_query_terms(query.text)
+            if not terms:
+                clauses.append("1 = 0")
+            else:
+                term_clauses: list[str] = []
+                for term in terms:
+                    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    term_clauses.append(
+                        "(document.title LIKE ? ESCAPE '\\' OR document.body LIKE ? ESCAPE '\\')"
+                    )
+                    parameters.extend((f"%{escaped}%", f"%{escaped}%"))
+                clauses.append("(" + " OR ".join(term_clauses) + ")")
         if query.kinds:
-            clauses.append(
-                f"document.kind IN ({','.join('?' for _ in query.kinds)})"
-            )
+            clauses.append(f"document.kind IN ({','.join('?' for _ in query.kinds)})")
             parameters.extend(query.kinds)
         if query.memory_kinds:
-            clauses.append(
-                f"document.memory_kind IN ({','.join('?' for _ in query.memory_kinds)})"
-            )
+            clauses.append(f"document.memory_kind IN ({','.join('?' for _ in query.memory_kinds)})")
             parameters.extend(query.memory_kinds)
         if query.domain_categories:
             clauses.append(
-                "document.domain_category IN "
-                f"({','.join('?' for _ in query.domain_categories)})"
+                f"document.domain_category IN ({','.join('?' for _ in query.domain_categories)})"
             )
             parameters.extend(query.domain_categories)
         if query.entity_ids:
@@ -1405,14 +1483,12 @@ class MemoryCatalog:
             parameters.extend((valid_at, valid_at))
         if query.sensitivities:
             clauses.append(
-                "document.sensitivity IN "
-                f"({','.join('?' for _ in query.sensitivities)})"
+                f"document.sensitivity IN ({','.join('?' for _ in query.sensitivities)})"
             )
             parameters.extend(query.sensitivities)
         if query.conflict_states:
             clauses.append(
-                "document.conflict_state IN "
-                f"({','.join('?' for _ in query.conflict_states)})"
+                f"document.conflict_state IN ({','.join('?' for _ in query.conflict_states)})"
             )
             parameters.extend(query.conflict_states)
         if query.occurred_after is not None:
@@ -1425,7 +1501,7 @@ class MemoryCatalog:
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
-                SELECT document.*,
+                SELECT document.*, claim.value AS claim_value,
                        (0.35 * document.stability + 0.65 * document.salience) AS score,
                        (
                            SELECT json_group_array(source_event_id)
@@ -1437,14 +1513,41 @@ class MemoryCatalog:
                            )
                        ) AS source_event_ids_json
                 FROM memory_search_documents document
-                WHERE {' AND '.join(clauses)}
+                LEFT JOIN memory_claims claim
+                  ON document.kind = 'claim'
+                 AND claim.claim_id = document.item_id
+                 AND claim.account_id = document.account_id
+                WHERE {" AND ".join(clauses)}
                 ORDER BY CASE document.status WHEN 'confirmed' THEN 0 ELSE 1 END,
                          score DESC, document.observed_at DESC, document.document_id
                 LIMIT ?
                 """,
                 parameters,
             ).fetchall()
-        return MemorySearchResult(items=tuple(self._search_item(row) for row in rows))
+            items = tuple(self._search_item(row) for row in rows)
+        if query.text.strip() and items:
+            terms = lexical_query_terms(query.text)
+            ranked = sorted(
+                (
+                    (
+                        sum(
+                            1
+                            for term in terms
+                            if term in str(row["title"]).lower() or term in str(row["body"]).lower()
+                        )
+                        + item.score * 0.1,
+                        item,
+                    )
+                    for row, item in zip(rows, items, strict=True)
+                ),
+                key=lambda scored: (
+                    scored[0],
+                    scored[1].observed_at,
+                ),
+                reverse=True,
+            )
+            items = tuple(replace(item, score=score) for score, item in ranked)
+        return MemorySearchResult(items=items)
 
     async def timeline(self, *, account_id: str, limit: int = 50) -> tuple[TimelineItem, ...]:
         if not account_id.strip() or not 1 <= limit <= 100:
@@ -1508,9 +1611,9 @@ class MemoryCatalog:
                 aliases = connection.execute(
                     """
                     SELECT DISTINCT alias FROM person_aliases
-                    WHERE person_id = ? AND status != 'retracted' ORDER BY alias
+                    WHERE person_id = ? AND status = ? ORDER BY alias
                     """,
-                    (row["person_id"],),
+                    (row["person_id"], row["status"]),
                 ).fetchall()
                 people.append(
                     PersonItem(
@@ -1592,11 +1695,7 @@ class MemoryCatalog:
                     "target_id": command.claim_id,
                     "action": command.action,
                     "previous_value": previous_value,
-                    **(
-                        {"corrected_value": value}
-                        if command.action == "correct"
-                        else {}
-                    ),
+                    **({"corrected_value": value} if command.action == "correct" else {}),
                 },
             )
             self._insert_evidence(connection, review_event)
@@ -1630,13 +1729,17 @@ class MemoryCatalog:
             raise ValueError("invalid memory review evidence") from exc
         row = connection.execute(
             """
-            SELECT value FROM memory_claims
+            SELECT value, source_event_id FROM memory_claims
             WHERE claim_id = ? AND account_id = ?
             """,
             (target_id, event.account_id),
         ).fetchone()
         if row is None:
             raise EvidenceNotFoundError(target_id)
+        if is_policy_confirmation_event(event) and str(row["source_event_id"]) != str(
+            event.payload.get("source_event_id")
+        ):
+            raise ValueError("memory policy confirmation source does not match its claim")
         value = str(row["value"])
         if action == "correct":
             value = str(event.payload.get("corrected_value", "")).strip()
@@ -1678,6 +1781,21 @@ class MemoryCatalog:
         source_event_id = str(source["source_event_id"])
         subject_key = str(source["subject_key"])
         predicate = str(source["predicate"])
+        source_event = connection.execute(
+            "SELECT payload_json FROM evidence_events WHERE event_id = ?",
+            (source_event_id,),
+        ).fetchone()
+        source_text = ""
+        if source_event is not None:
+            try:
+                payload = json.loads(str(source_event["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            if isinstance(payload, dict):
+                source_text = redact_pii(str(payload.get("text") or ""))[:240]
+        contextual_body = (
+            f"subject:{subject_key} predicate:{predicate} value:{value} context:{source_text}"
+        )[:8000]
         episode_rows = connection.execute(
             """
             SELECT episode_id FROM episode_evidence
@@ -1717,7 +1835,7 @@ class MemoryCatalog:
                 END
             WHERE kind = 'claim' AND item_id = ? AND account_id = ?
             """,
-            (status, title, value, status, status, claim_id, account_id),
+            (status, title, contextual_body, status, status, claim_id, account_id),
         )
         for table in _SOURCE_STATUS_TABLES:
             connection.execute(
@@ -1749,11 +1867,17 @@ class MemoryCatalog:
         )
 
     @staticmethod
-    def _insert_evidence(connection: sqlite3.Connection, event: EvidenceEvent) -> None:
+    def _insert_evidence(
+        connection: sqlite3.Connection,
+        event: EvidenceEvent,
+        *,
+        if_absent: bool = False,
+    ) -> None:
         recorded_at = datetime.now(UTC).isoformat()
+        insert = "INSERT OR IGNORE" if if_absent else "INSERT"
         connection.execute(
-            """
-            INSERT INTO evidence_events (
+            f"""
+            {insert} INTO evidence_events (
                 event_id, account_id, session_id, turn_id, generation_id,
                 event_type, schema_version, occurred_at, recorded_at,
                 speaker_identity_id, speaker_class, source, consent_grant_id,
@@ -1780,8 +1904,8 @@ class MemoryCatalog:
             ),
         )
         connection.execute(
-            """
-            INSERT INTO processing_outbox (
+            f"""
+            {insert} INTO processing_outbox (
                 outbox_id, account_id, event_id, task_type, available_at, created_at
             ) VALUES (?, ?, ?, 'compile_evidence', ?, ?)
             """,
@@ -1816,11 +1940,17 @@ class MemoryCatalog:
     @staticmethod
     def _search_item(row: sqlite3.Row) -> MemorySearchItem:
         source_event_ids = _row_ids(row["source_event_ids_json"])
+        claim_value = row["claim_value"]
+        body = str(row["body"]).split("\n[retrieval-context]", 1)[0]
         return MemorySearchItem(
             item_id=str(row["item_id"]),
             kind=str(row["kind"]),
             title=str(row["title"]),
-            snippet=str(row["body"]),
+            snippet=(
+                str(claim_value)
+                if str(row["kind"]) == "claim" and claim_value is not None
+                else body
+            ),
             category=cast(MemoryCategory, row["category"]),
             status=cast(MemoryStatus, row["status"]),
             source_event_id=str(row["source_event_id"]),

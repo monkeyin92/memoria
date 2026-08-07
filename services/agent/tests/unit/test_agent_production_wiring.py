@@ -30,6 +30,8 @@ from services.agent.src.duplex_runtime import (
 )
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.context_snapshot_manager import (
+    ContextSnapshotDraft,
+    ContextTurn,
     MemoryCapsule,
     MemoryCapsuleEntry,
     PersonaCapsule,
@@ -121,6 +123,82 @@ async def test_agent_prepares_and_streams_a_media_turn_through_the_response_plan
     ]
 
     assert output == ["这是经过完整响应计划的回答。"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_response_plan_receives_bounded_owner_recall_context_only() -> None:
+    runtime = DuplexRuntime.create(session_id="response-plan-recall-context")
+    policy = ModePolicy.companion_for_test(
+        policy_version="test-policy",
+        private_context=True,
+        owner_evidence=True,
+        tools=True,
+        voice_profile=False,
+        shadow_low_sensitivity_persona=False,
+    )
+    runtime.set_mode_policy(policy)
+    runtime.authenticate_text_owner()
+    runtime.orchestrator.context_snapshots.seed_initial(
+        runtime.session_id,
+        ContextSnapshotDraft(
+            recent_committed_turns=tuple(
+                ContextTurn("user", f"第{index}轮提到的安排", "owner")
+                for index in range(1, 7)
+            ),
+            relationship_policy=policy,
+            tool_permission=True,
+            speaker_class="owner",
+        ),
+    )
+    observed: dict[str, object] = {}
+
+    class Planner:
+        async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
+            observed.update(kwargs)
+            speaker = kwargs["speaker_decision"]
+            assert isinstance(speaker, SpeakerDecision)
+            plan = _plan_for_fence(kwargs["fence"], instructions="按历史上下文回答。")  # type: ignore[arg-type]
+            return ResponsePlanFetch(
+                replace(
+                    plan,
+                    provenance=replace(
+                        plan.provenance,
+                        speaker_reason_code=speaker.reason_code,
+                        speaker_profile_id=speaker.profile_id,
+                        speaker_model_version=speaker.model_version,
+                        speaker_template_version=speaker.template_version,
+                    ),
+                ),
+                "ok",
+            )
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        response_planner_client=Planner(),  # type: ignore[arg-type]
+    )
+    result = await agent._fetch_response_plan(
+        text="现在还记得之前的安排吗？",
+        speaker=runtime.current_speaker_decision,
+        fence=runtime.fence,
+    )
+
+    assert result.available
+    assert observed["recall_context"] == (
+        "第3轮提到的安排",
+        "第4轮提到的安排",
+        "第5轮提到的安排",
+        "第6轮提到的安排",
+    )
+    uncertain = replace(
+        runtime.current_speaker_decision,
+        classification="uncertain",
+        reason_code="owner_mismatch",
+        profile_id=None,
+        permissions=permissions_for_speaker("uncertain"),
+    )
+    assert agent._recall_context_for_fence(runtime.fence, speaker=uncertain) == ()
     await runtime.close()
 
 
@@ -1157,6 +1235,41 @@ async def test_media_delegation_uses_public_resolver_without_advancing_outer_tas
     assert await agent.resolve_media_delegation("今天南京天气怎么样", fence) == "南京今天多云。"
     assert queries == ["今天南京天气怎么样"]
     assert runtime.orchestrator.delegation.current_task_epoch(fence.session_id) == 0
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_public_weather_lookup_is_available_without_owner_tool_permission() -> None:
+    runtime = DuplexRuntime.create(session_id="public-weather-lookup")
+    runtime.set_mode_policy(
+        ModePolicy.companion_for_test(
+            policy_version="test-policy",
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=False,
+            shadow_low_sensitivity_persona=False,
+        )
+    )
+    queries: list[str] = []
+
+    class Resolver:
+        async def resolve(self, *, query: str) -> str:
+            queries.append(query)
+            return "南京今天晴，最高气温三十五度。"
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        realtime_search_resolver=Resolver(),
+    )
+    runtime.set_delegation_starter(None)
+    fence = await runtime.on_turn_committed("查南京今天天气")
+
+    result = await agent.resolve_media_delegation("查南京今天天气", fence)
+
+    assert result == "南京今天晴，最高气温三十五度。"
+    assert queries == ["查南京今天天气"]
     await runtime.close()
 
 

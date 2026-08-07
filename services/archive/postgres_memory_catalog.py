@@ -43,10 +43,18 @@ from services.archive.memory_domain import (
     ReviewedClaim,
     ReviewQueueItem,
     TimelineItem,
+    lexical_query_terms,
+)
+from services.archive.memory_write_policy import (
+    SINGLE_VALUE_PREDICATES,
+    MemoryWriteDecision,
+    MemoryWritePolicy,
+    is_policy_confirmation_event,
 )
 from services.common.evidence_policy import contribution_for
+from services.common.redaction import redact_pii
 
-_SINGLE_VALUE_PREDICATES = frozenset({"age", "birth_date", "birth_place"})
+_SINGLE_VALUE_PREDICATES = SINGLE_VALUE_PREDICATES
 _REVIEW_STATUS: dict[str, MemoryStatus] = {
     "confirm": "confirmed",
     "dispute": "disputed",
@@ -143,9 +151,8 @@ class QwenMemoryEmbedder:
             raise MemoryEmbeddingUnavailableError(
                 "memory embedding service returned an invalid response"
             ) from exc
-        if (
-            len(embedding) != self.dimensions
-            or any(not math.isfinite(value) for value in embedding)
+        if len(embedding) != self.dimensions or any(
+            not math.isfinite(value) for value in embedding
         ):
             raise MemoryEmbeddingUnavailableError(
                 "memory embedding service returned an invalid vector dimension"
@@ -182,6 +189,7 @@ class PostgresMemoryCatalog:
         self._embedder = embedder
         self._require_vector = require_vector
         self._episode_consolidator = episode_consolidator or EpisodeConsolidator()
+        self._memory_write_policy = MemoryWritePolicy()
         self._vector_enabled = False
         self._pool: asyncpg.Pool | None = None
         self._compiler_pool: asyncpg.Pool | None = None
@@ -252,9 +260,9 @@ class PostgresMemoryCatalog:
     async def _ensure_vector_index(self, connection: asyncpg.Connection) -> None:
         if self._embedder is None:
             return
-        digest = sha256(
-            f"{self._embedder.model}:{self._embedder.dimensions}".encode()
-        ).hexdigest()[:12]
+        digest = sha256(f"{self._embedder.model}:{self._embedder.dimensions}".encode()).hexdigest()[
+            :12
+        ]
         index_name = f"idx_memory_vector_hnsw_{digest}"
         model = self._embedder.model.replace("'", "''")
         dimensions = self._embedder.dimensions
@@ -352,7 +360,9 @@ class PostgresMemoryCatalog:
             await self._fail_outbox(account_id, outbox_id, "EvidenceNotFound")
             return "failed"
         event = self._event_from_row(row)
-        if event.event_type == "memory.claim_reviewed" and event.source == "user.memory_review":
+        if event.event_type == "memory.claim_reviewed" and (
+            event.source == "user.memory_review" or is_policy_confirmation_event(event)
+        ):
             try:
                 async with pool.acquire() as connection, connection.transaction():
                     await self._scope(connection, account_id)
@@ -376,7 +386,22 @@ class PostgresMemoryCatalog:
                 raise TypeError("memory extractor returned an invalid result")
             async with pool.acquire() as connection, connection.transaction():
                 await self._scope(connection, account_id)
+                decision = self._memory_write_policy.decide(
+                    event,
+                    extraction,
+                    existing_values=await self._existing_single_value_claims(
+                        connection,
+                        event=event,
+                        extraction=extraction,
+                    ),
+                )
                 await self._write_extraction(connection, event, extraction)
+                await self._apply_memory_write_decision(
+                    connection,
+                    event=event,
+                    extraction=extraction,
+                    decision=decision,
+                )
                 await self._record_receipt(
                     connection,
                     event,
@@ -521,7 +546,10 @@ class PostgresMemoryCatalog:
                 kind="claim",
                 memory_kind="semantic",
                 title=claim.value[:80],
-                body=claim.value,
+                body=(
+                    f"subject:{claim.subject_key} predicate:{claim.predicate} "
+                    f"value:{claim.value} context:{redact_pii(str(event.payload.get('text') or ''))[:240]}"
+                )[:8000],
                 domain_category=claim.domain_category,
                 entity_ids=entity_ids,
                 source_event_ids=(event.event_id,),
@@ -675,15 +703,18 @@ class PostgresMemoryCatalog:
                 knowledge.salience,
                 knowledge.sensitivity,
             )
-            body = " ".join(
-                part
-                for part in (
-                    knowledge.answer,
-                    knowledge.applicability,
-                    knowledge.counterexample,
+            body = (
+                " ".join(
+                    part
+                    for part in (
+                        knowledge.answer,
+                        knowledge.applicability,
+                        knowledge.counterexample,
+                    )
+                    if part
                 )
-                if part
-            )
+                + f"\n[retrieval-context] {redact_pii(str(event.payload.get('text') or ''))[:240]}"
+            )[:8000]
             await self._insert_search_document(
                 connection,
                 account_id=event.account_id,
@@ -704,6 +735,59 @@ class PostgresMemoryCatalog:
                 sensitivity=knowledge.sensitivity,
                 conflict_state="none",
             )
+
+    @staticmethod
+    async def _existing_single_value_claims(
+        connection: asyncpg.Connection,
+        *,
+        event: EvidenceEvent,
+        extraction: MemoryExtraction,
+    ) -> tuple[str, ...]:
+        if len(extraction.claims) != 1:
+            return ()
+        claim = extraction.claims[0]
+        if claim.predicate not in SINGLE_VALUE_PREDICATES:
+            return ()
+        rows = await connection.fetch(
+            """
+            SELECT value FROM memory_claims
+            WHERE account_id = $1 AND subject_key = $2 AND predicate = $3
+              AND status != 'retracted'
+            """,
+            event.account_id,
+            claim.subject_key,
+            claim.predicate,
+        )
+        return tuple(str(row["value"]) for row in rows)
+
+    async def _apply_memory_write_decision(
+        self,
+        connection: asyncpg.Connection,
+        *,
+        event: EvidenceEvent,
+        extraction: MemoryExtraction,
+        decision: MemoryWriteDecision,
+    ) -> None:
+        if not decision.confirmed:
+            return
+        claim = extraction.claims[0]
+        claim_id = _stable_uuid("claim", event.event_id, 0)
+        review_event = decision.confirmation_event(
+            source=event,
+            claim_id=str(claim_id),
+            claim_value=claim.value,
+        )
+        await self._insert_evidence(connection, review_event, if_absent=True)
+        await self._write_review_projection(
+            connection,
+            account_id=event.account_id,
+            claim_id=claim_id,
+            status="confirmed",
+            projection_status="confirmed",
+            title=claim.value[:80],
+            value=claim.value,
+            review_event_id=review_event.event_id,
+        )
 
     @staticmethod
     async def _episode_candidates(
@@ -830,37 +914,41 @@ class PostgresMemoryCatalog:
         else:
             status = "retracted"
         active_source_event_ids = tuple(
-            str(row["source_event_id"])
-            for row in evidence
-            if str(row["status"]) != "retracted"
+            str(row["source_event_id"]) for row in evidence if str(row["status"]) != "retracted"
         )
         retracted_source_event_ids = tuple(
-            str(row["source_event_id"])
-            for row in evidence
-            if str(row["status"]) == "retracted"
+            str(row["source_event_id"]) for row in evidence if str(row["status"]) == "retracted"
         )
         source_event_ids = (
             *active_source_event_ids,
             *retracted_source_event_ids,
         )
-        active_timelines = [
-            row for row in timelines if str(row["status"]) != "retracted"
-        ]
+        active_timelines = [row for row in timelines if str(row["status"]) != "retracted"]
         surfaced_timelines = active_timelines or list(timelines)
-        titles = tuple(
-            dict.fromkeys(str(row["title"]) for row in surfaced_timelines)
-        )
+        titles = tuple(dict.fromkeys(str(row["title"]) for row in surfaced_timelines))
         title = max(titles, key=lambda value: (len(value), value))
-        body = "；".join(titles)[:8000]
+        source_rows = await connection.fetch(
+            """
+            SELECT payload->>'text' AS text
+            FROM archive_evidence_events
+            WHERE event_id = ANY($1::text[])
+            ORDER BY event_id
+            """,
+            list(source_event_ids),
+        )
+        source_texts = [
+            redact_pii(str(row["text"]))[:240]
+            for row in source_rows
+            if str(row["text"] or "").strip()
+        ]
+        body = f"{';'.join(titles)}\n[retrieval-context] {'；'.join(source_texts)}"[:8000]
         starts = [cast(datetime, row["event_start"]) for row in surfaced_timelines]
         ends = [
             cast(datetime, row["event_end"])
             for row in surfaced_timelines
             if row["event_end"] is not None
         ]
-        observations = [
-            cast(datetime, row["observed_at"]) for row in surfaced_timelines
-        ]
+        observations = [cast(datetime, row["observed_at"]) for row in surfaced_timelines]
         entity_ids = tuple(
             sorted(
                 {
@@ -872,8 +960,7 @@ class PostgresMemoryCatalog:
             )
         )
         sensitivities = [
-            cast(MemorySensitivity, str(row["sensitivity"]))
-            for row in surfaced_timelines
+            cast(MemorySensitivity, str(row["sensitivity"])) for row in surfaced_timelines
         ]
         sensitivity = max(
             sensitivities,
@@ -882,9 +969,7 @@ class PostgresMemoryCatalog:
         evidence_count = len(source_event_ids)
         active_evidence_count = len(active_source_event_ids)
         stability = (
-            min(0.95, 0.5 + 0.1 * (active_evidence_count - 1))
-            if active_evidence_count
-            else 0.0
+            min(0.95, 0.5 + 0.1 * (active_evidence_count - 1)) if active_evidence_count else 0.0
         )
         salience = max(float(row["salience"]) for row in surfaced_timelines)
         event_start = min(starts)
@@ -1016,10 +1101,7 @@ class PostgresMemoryCatalog:
             ) VALUES ($1, $2, $3)
             ON CONFLICT DO NOTHING
             """,
-            [
-                (document_id, account_id, source_event_id)
-                for source_event_id in source_event_ids
-            ],
+            [(document_id, account_id, source_event_id) for source_event_id in source_event_ids],
         )
         if self._vector_enabled and self._embedder is not None:
             try:
@@ -1128,10 +1210,22 @@ class PostgresMemoryCatalog:
             )
             parameters.append(f"%{escaped}%")
             like_index = len(parameters)
+            term_like_indexes: list[int] = []
+            for term in lexical_query_terms(query.text):
+                term_escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                parameters.append(f"%{term_escaped}%")
+                term_like_indexes.append(len(parameters))
+            sparse_match = " OR ".join(
+                f"document.title ILIKE ${index} ESCAPE '\\' "
+                f"OR document.body ILIKE ${index} ESCAPE '\\'"
+                for index in term_like_indexes
+            )
             text_match = (
                 "(document.search_vector @@ websearch_to_tsquery('simple', "
                 f"${text_index}) OR document.title ILIKE ${like_index} ESCAPE '\\' "
-                f"OR document.body ILIKE ${like_index} ESCAPE '\\')"
+                f"OR document.body ILIKE ${like_index} ESCAPE '\\'"
+                + (f" OR {sparse_match}" if sparse_match else "")
+                + ")"
             )
             text_score = (
                 "GREATEST(ts_rank(document.search_vector, "
@@ -1144,8 +1238,7 @@ class PostgresMemoryCatalog:
                 except MemoryEmbeddingUnavailableError:
                     clauses.append(text_match)
                     score_expression = (
-                        f"(0.8 * {text_score} + 0.2 * {metadata_score})"
-                        "::double precision"
+                        f"(0.8 * {text_score} + 0.2 * {metadata_score})::double precision"
                     )
                 else:
                     parameters.append(self._embedder.model)
@@ -1228,7 +1321,8 @@ class PostgresMemoryCatalog:
             rows = await connection.fetch(
                 f"""
                 {semantic_cte}
-                SELECT document.*, {score_expression} AS score,
+                SELECT document.*, claim.value AS claim_value,
+                       {score_expression} AS score,
                        ARRAY(
                            SELECT source.source_event_id
                            FROM memory_search_document_sources source
@@ -1236,6 +1330,10 @@ class PostgresMemoryCatalog:
                            ORDER BY source.source_event_id
                        ) AS source_event_ids
                 FROM memory_search_documents document
+                LEFT JOIN memory_claims claim
+                  ON document.kind = 'claim'
+                 AND claim.claim_id = document.item_id
+                 AND claim.account_id = document.account_id
                 {semantic_join}
                 WHERE {" AND ".join(clauses)}
                 ORDER BY CASE document.status WHEN 'confirmed' THEN 0 ELSE 1 END,
@@ -1302,7 +1400,7 @@ class PostgresMemoryCatalog:
                 FROM person_entities entity
                 LEFT JOIN person_aliases alias
                   ON alias.person_id = entity.person_id
-                 AND alias.status != 'retracted'
+                 AND alias.status = entity.status
                 WHERE entity.account_id = $1 AND entity.status != 'retracted'
                 GROUP BY entity.person_id
                 ORDER BY entity.created_at, entity.person_id
@@ -1436,7 +1534,7 @@ class PostgresMemoryCatalog:
             raise ValueError("invalid memory review evidence") from exc
         row = await connection.fetchrow(
             """
-            SELECT value FROM memory_claims
+            SELECT value, source_event_id FROM memory_claims
             WHERE claim_id = $1 AND account_id = $2
             FOR UPDATE
             """,
@@ -1445,6 +1543,10 @@ class PostgresMemoryCatalog:
         )
         if row is None:
             raise EvidenceNotFoundError(target_id)
+        if is_policy_confirmation_event(event) and str(row["source_event_id"]) != str(
+            event.payload.get("source_event_id")
+        ):
+            raise ValueError("memory policy confirmation source does not match its claim")
         value = str(row["value"])
         if action == "correct":
             value = str(event.payload.get("corrected_value", "")).strip()
@@ -1486,6 +1588,14 @@ class PostgresMemoryCatalog:
         source_event_id = str(source["source_event_id"])
         subject_key = str(source["subject_key"])
         predicate = str(source["predicate"])
+        source_event = await connection.fetchrow(
+            "SELECT payload->>'text' AS text FROM archive_evidence_events WHERE event_id = $1",
+            source_event_id,
+        )
+        source_text = redact_pii(str(source_event["text"] or "") if source_event else "")[:240]
+        contextual_body = (
+            f"subject:{subject_key} predicate:{predicate} value:{value} context:{source_text}"
+        )[:8000]
         episode_ids = await connection.fetch(
             """
             SELECT episode_id FROM episode_evidence
@@ -1545,7 +1655,7 @@ class PostgresMemoryCatalog:
             """,
             status,
             title,
-            value,
+            contextual_body,
             claim_id,
             account_id,
         )
@@ -1565,9 +1675,12 @@ class PostgresMemoryCatalog:
     async def _insert_evidence(
         connection: asyncpg.Connection,
         event: EvidenceEvent,
+        *,
+        if_absent: bool = False,
     ) -> None:
+        conflict_clause = "ON CONFLICT DO NOTHING" if if_absent else ""
         await connection.execute(
-            """
+            f"""
             INSERT INTO archive_evidence_events (
                 event_id, account_id, session_id, turn_id, generation_id,
                 event_type, schema_version, occurred_at, speaker_identity_id,
@@ -1577,6 +1690,7 @@ class PostgresMemoryCatalog:
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
                 $13::jsonb, $14, $15
             )
+            {conflict_clause}
             """,
             event.event_id,
             event.account_id,
@@ -1595,10 +1709,11 @@ class PostgresMemoryCatalog:
             event.supersedes_event_id,
         )
         await connection.execute(
-            """
+            f"""
             INSERT INTO archive_processing_outbox (
                 outbox_id, account_id, event_id, task_type
             ) VALUES ($1, $2, $3, 'compile_evidence')
+            {conflict_clause}
             """,
             _stable_uuid("outbox", event.event_id),
             event.account_id,
@@ -1629,11 +1744,17 @@ class PostgresMemoryCatalog:
 
     @staticmethod
     def _search_item(row: asyncpg.Record) -> MemorySearchItem:
+        claim_value = row["claim_value"]
+        body = str(row["body"]).split("\n[retrieval-context]", 1)[0]
         return MemorySearchItem(
             item_id=str(row["item_id"]),
             kind=str(row["kind"]),
             title=str(row["title"]),
-            snippet=str(row["body"]),
+            snippet=(
+                str(claim_value)
+                if str(row["kind"]) == "claim" and claim_value is not None
+                else body
+            ),
             category=cast(MemoryCategory, row["category"]),
             status=cast(MemoryStatus, row["status"]),
             source_event_id=str(row["source_event_id"]),

@@ -52,6 +52,9 @@ from services.agent.src.providers.interrupt_semantic_classifier import (
 )
 from services.agent.src.response_planner_client import (
     CANONICAL_PLANNER_POLICY_VERSION,
+    RECALL_CONTEXT_ITEM_MAX_CHARS,
+    RECALL_CONTEXT_MAX_ITEMS,
+    RECALL_CONTEXT_TOTAL_MAX_CHARS,
     Disclosure,
     ResponsePlan,
     ResponsePlanFetch,
@@ -1145,6 +1148,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 query=str(arguments["query"]),
                 fence=cast(GenerationFence, arguments["fence"]),
                 speaker_decision=arguments["speaker_decision"],
+                recall_context=cast(tuple[str, ...], arguments.get("recall_context", ())),
             )
 
         self._runtime.orchestrator.task_manager.register(
@@ -1239,6 +1243,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             return ResponsePlanFetch(None, "missing_response_planner_client")
         coordinator = self._runtime.orchestrator.delegation
         context_version = self._runtime.orchestrator.context_version_for_fence(fence)
+        recall_context = self._recall_context_for_fence(fence, speaker=speaker)
         handle = await coordinator.delegate(
             DelegationRequest(
                 tool_name="response_planner",
@@ -1247,6 +1252,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     "query": text,
                     "fence": fence,
                     "speaker_decision": speaker,
+                    "recall_context": recall_context,
                 },
                 fence=fence,
                 task_epoch=coordinator.next_task_epoch(fence.session_id),
@@ -1272,6 +1278,39 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             if isinstance(accepted, ResponsePlanFetch)
             else ResponsePlanFetch(None, "delegation_rejected")
         )
+
+    def _recall_context_for_fence(
+        self,
+        fence: GenerationFence,
+        *,
+        speaker: Any,
+    ) -> tuple[str, ...]:
+        """Keep only recent owner utterances from the fence's frozen snapshot."""
+
+        if getattr(speaker, "classification", None) != "owner":
+            return ()
+        try:
+            snapshot = self._runtime.context_snapshot_for_fence(fence)
+        except (RuntimeError, ValueError):
+            return ()
+        if snapshot.speaker_class != "owner":
+            return ()
+        selected: list[str] = []
+        total_chars = 0
+        for turn in reversed(snapshot.recent_committed_turns):
+            if turn.role != "user" or turn.speaker_scope != "owner":
+                continue
+            text = turn.content.strip()[:RECALL_CONTEXT_ITEM_MAX_CHARS]
+            if not text:
+                continue
+            if total_chars + len(text) > RECALL_CONTEXT_TOTAL_MAX_CHARS:
+                break
+            selected.append(text)
+            total_chars += len(text)
+            if len(selected) >= RECALL_CONTEXT_MAX_ITEMS:
+                break
+        selected.reverse()
+        return tuple(selected)
 
     def _mark_context_ready(self, fence: GenerationFence) -> None:
         event = self._context_ready_by_fence.setdefault(fence, asyncio.Event())
@@ -1772,11 +1811,10 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 policy = self._runtime.mode_policy_for_fence(fence)
             except ValueError:
                 return False
-            if not snapshot.tool_permission or not policy.allows_tools(
-                self._runtime.current_speaker_class
-            ):
+            if not policy.allows_conversation(snapshot.speaker_class):
                 logger.warning(
-                    "realtime delegation blocked by frozen tool policy session_id=%s turn_id=%s",
+                    "realtime delegation blocked by frozen conversation policy "
+                    "session_id=%s turn_id=%s",
                     fence.session_id,
                     fence.turn_id,
                 )

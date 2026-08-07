@@ -14,9 +14,10 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from services.archive.memory_domain import MemoryCatalogPort, MemorySearchQuery, MemorySearchResult
+from services.archive.recall_planner import RecallPlanner
 from services.common.companion_response_safety import fixed_companion_reply
 from services.common.companions import (
     COMPANION_STYLE_VERSION,
@@ -77,6 +78,9 @@ router = APIRouter(prefix="/v1/interaction", tags=["interaction"])
 logger = logging.getLogger(__name__)
 _RESPONSE_PLAN_CACHE_MAX_ENTRIES = 256
 _ResponsePlanCacheKey = tuple[str, int, int, int]
+_RECALL_CONTEXT_MAX_ITEMS = 4
+_RECALL_CONTEXT_ITEM_MAX_CHARS = 240
+_RECALL_CONTEXT_TOTAL_MAX_CHARS = 960
 
 
 def _local_now(settings: ControlSettings) -> datetime:
@@ -369,8 +373,24 @@ class ResponsePlanRequest(BaseModel):
 
     session_id: str = Field(min_length=1, max_length=128)
     query: str = Field(min_length=1, max_length=4000)
+    recall_context: list[str] = Field(default_factory=list, max_length=_RECALL_CONTEXT_MAX_ITEMS)
     fence: ResponsePlanFence
     speaker_decision: ResponsePlanSpeakerDecision
+
+    @field_validator("recall_context")
+    @classmethod
+    def validate_recall_context(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        total_chars = 0
+        for item in value:
+            text = item.strip()
+            if not text or len(text) > _RECALL_CONTEXT_ITEM_MAX_CHARS:
+                raise ValueError("recall_context items must be non-empty and bounded")
+            total_chars += len(text)
+            if total_chars > _RECALL_CONTEXT_TOTAL_MAX_CHARS:
+                raise ValueError("recall_context is too large")
+            normalized.append(text)
+        return normalized
 
     @model_validator(mode="after")
     def require_matching_fence_session(self) -> ResponsePlanRequest:
@@ -705,6 +725,8 @@ async def _companion_items(
     account_id: str,
     query: str,
     speaker: ResponsePlanSpeakerDecision,
+    now: datetime,
+    recall_context: tuple[str, ...] = (),
 ) -> tuple[tuple[GroundedItem, ...], PersonaCapsule | None]:
     trusted = ModePolicy.trusted_context(
         frozen,
@@ -712,21 +734,27 @@ async def _companion_items(
         reason_code=speaker.reason_code,
     )
     capabilities = trusted["capabilities"]
-    memory_task = (
-        asyncio.create_task(
-            _catalog(request).context(
-                MemorySearchQuery(
-                    account_id=account_id,
-                    speaker_class="owner",
-                    text=query,
-                    include_candidates=False,
-                    limit=8,
-                )
+
+    async def fetch_memory() -> MemorySearchResult:
+        people = await _catalog(request).people(account_id=account_id, limit=100)
+        recall = RecallPlanner.plan(query=query, now=now, people=people)
+        memory_query = recall.text
+        if recall_context:
+            memory_query = ("\n".join((memory_query, *recall_context))).strip()[:4000]
+        return await _catalog(request).context(
+            MemorySearchQuery(
+                account_id=account_id,
+                speaker_class="owner",
+                text=memory_query,
+                entity_ids=recall.entity_ids,
+                occurred_after=recall.occurred_after,
+                occurred_before=recall.occurred_before,
+                include_candidates=False,
+                limit=8,
             )
         )
-        if capabilities["private_memory"]
-        else None
-    )
+
+    memory_task = asyncio.create_task(fetch_memory()) if capabilities["private_memory"] else None
     persona_task = (
         asyncio.create_task(
             _persona_engine(request).capsule(
@@ -1097,6 +1125,8 @@ async def response_plan(
                 account_id=account_id,
                 query=body.query,
                 speaker=body.speaker_decision,
+                now=now,
+                recall_context=tuple(body.recall_context),
             )
             if frozen.interaction_mode == "companion" and fixed_reply is None
             else ((), None)
@@ -1172,6 +1202,7 @@ async def context_prefetch(
         account_id=account_id,
         query=body.query,
         speaker=body.speaker_decision,
+        now=_local_now(cast(ControlSettings, request.app.state.settings)),
     )
     return {
         "speaker_class": body.speaker_decision.classification,

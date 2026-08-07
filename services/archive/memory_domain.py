@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
@@ -10,6 +12,36 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from services.archive.domain import EvidenceEvent, SpeakerClass
+
+
+def lexical_query_terms(text: str, *, max_terms: int = 48) -> tuple[str, ...]:
+    """Return bounded exact/Chinese n-gram terms for sparse memory fallback."""
+
+    normalized = unicodedata.normalize("NFKC", text or "").strip().lower()
+    if not normalized or max_terms < 1:
+        return ()
+    chunks = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", normalized)
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        if len(value) < 2 or value in seen:
+            return
+        seen.add(value)
+        terms.append(value)
+
+    for chunk in chunks:
+        if re.fullmatch(r"[a-z0-9]+", chunk):
+            add(chunk)
+            continue
+        if len(chunk) <= 12:
+            add(chunk)
+        for size in (3, 2):
+            for start in range(0, len(chunk) - size + 1):
+                add(chunk[start : start + size])
+                if len(terms) >= max_terms:
+                    return tuple(terms)
+    return tuple(terms[:max_terms])
 
 DomainCategory = Literal[
     "life_story",

@@ -40,7 +40,7 @@ LiveKit 容器的 8443；H5、Control API 与 LiveKit 正式入口仍为 8443。
 
 ## TLS 与自动续期
 
-新服务器公网 IPv4 入口使用 Let's Encrypt 短期证书：SAN 为 `122.51.108.140`，当前证书有效至 2026-07-26 21:15:49 UTC。`aigcnice.com` 与 `www.aigcnice.com` 使用同机 TrustAsia 域名证书，当前有效至 2026-10-18 03:59:59 UTC；`127.0.0.1:9443` 的两个证书虚拟主机复用 `/etc/nginx/snippets/memoria-site-common.conf`，IP/无 SNI 默认选择 IP 证书，域名 SNI 选择域名证书。`snap.certbot.renew.timer` 为 enabled/active；deploy hook 安装于 `/etc/letsencrypt/renewal-hooks/deploy/50-memoria-reload-nginx`，先运行 `nginx -t`，只有成功才 reload Nginx。
+新服务器公网 IPv4 入口使用 Let's Encrypt 短期证书，SAN 应包含 `122.51.108.140`；`aigcnice.com` 与 `www.aigcnice.com` 使用同机域名证书。证书有效期、issuer 与 SAN 必须在每次发布时通过下方命令从服务器实时读取，不能依赖本文的历史日期。`127.0.0.1:9443` 的两个证书虚拟主机复用 `/etc/nginx/snippets/memoria-site-common.conf`，IP/无 SNI 默认选择 IP 证书，域名 SNI 选择域名证书。`snap.certbot.renew.timer` 为 enabled/active；deploy hook 安装于 `/etc/letsencrypt/renewal-hooks/deploy/50-memoria-reload-nginx`，先运行 `nginx -t`，只有成功才 reload Nginx。
 
 运维检查：
 
@@ -911,7 +911,7 @@ curl -fsS https://122.51.108.140:8443/wms/
 curl -fsS https://aigcnice.com/wms/
 ```
 
-验收标准：公网 8443 的根 H5、兼容 H5、SPA、live、ready 和 WMS 静态页均为 200；ready 的 release 必须等于本次唯一 `RELEASE_TAG`、LLM 为 `qwen`、TTS 为 `doubao` 且 9 项 core check 全 ready；internal、PocketSparks 与 Goods Invoice 原路径为 404；IP 证书 SAN 必须精确包含 `122.51.108.140`，域名 SNI 必须返回包含 `aigcnice.com` 与 `www.aigcnice.com` 的域名证书。`/rtc`、`/agent`、`/twirp/` 必须命中自建 LiveKit，真实浏览器 participant 必须为 `active` 且 `connectionType=tcp` 或 `udp`，不能是 `unknown`。服务器本机用 SNI/loopback 额外确认 443 根路径仍由 WMS 虚拟主机提供。WMS 应为 `enabled`；服务在正常运行期为 `active`，明确的资源让渡期允许为 `inactive`，但 Memoria 不得改动其目录或数据。
+验收标准：公网 8443 的根 H5、兼容 H5、SPA、live、ready 和 WMS 静态页均为 200；ready 的 release 必须等于本次唯一 `RELEASE_TAG`，LLM/TTS provider 必须与本次已验签的 production 配置一致，且 9 项 core check 全 ready；internal、PocketSparks 与 Goods Invoice 原路径为 404；IP 证书 SAN 必须精确包含 `122.51.108.140`，域名 SNI 必须返回包含 `aigcnice.com` 与 `www.aigcnice.com` 的域名证书。`/rtc`、`/agent`、`/twirp/` 必须命中自建 LiveKit，真实浏览器 participant 必须为 `active` 且 `connectionType=tcp` 或 `udp`，不能是 `unknown`。服务器本机用 SNI/loopback 额外确认 443 根路径仍由 WMS 虚拟主机提供。WMS 应为 `enabled`；服务在正常运行期为 `active`，明确的资源让渡期允许为 `inactive`，但 Memoria 不得改动其目录或数据。
 
 标准 443 候选路由仍须使用无效 header ticket 完成 WebSocket Upgrade，并由 Gateway 按协议
 关闭为 `4401`；HTTP `404` 表示 WMS 443 未安装精确媒体路由。它只有在同一真机关闭 VPN 后

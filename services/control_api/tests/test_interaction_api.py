@@ -8,7 +8,12 @@ from zoneinfo import ZoneInfo
 import pytest
 from httpx import ASGITransport, AsyncClient
 from services.agent.src.response_planner_client import ResponsePlannerClient
-from services.archive.memory_domain import MemorySearchItem, MemorySearchResult
+from services.archive.memory_domain import (
+    MemorySearchItem,
+    MemorySearchQuery,
+    MemorySearchResult,
+    PersonItem,
+)
 from services.control_api.app.main import create_app
 from services.control_api.app.routes import interaction as interaction_routes
 from services.digital_self.domain import (
@@ -208,7 +213,16 @@ class _Registry:
 
 
 class _MemoryCatalog:
-    async def context(self, _: object) -> MemorySearchResult:
+    def __init__(self) -> None:
+        self.queries: list[object] = []
+        self.people_items: tuple[PersonItem, ...] = ()
+
+    async def people(self, *, account_id: str, limit: int = 100) -> tuple[PersonItem, ...]:
+        del account_id, limit
+        return self.people_items
+
+    async def context(self, query: object) -> MemorySearchResult:
+        self.queries.append(query)
         return MemorySearchResult(
             items=(
                 MemorySearchItem(
@@ -229,6 +243,10 @@ class _MemoryCatalog:
 class _ChangingMemoryCatalog:
     def __init__(self) -> None:
         self.calls = 0
+
+    async def people(self, *, account_id: str, limit: int = 100) -> tuple[object, ...]:
+        del account_id, limit
+        return ()
 
     async def context(self, _: object) -> MemorySearchResult:
         self.calls += 1
@@ -633,7 +651,8 @@ async def test_response_plan_is_the_single_owner_context_path_and_matches_agent_
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
-    app.state.memory_catalog = _MemoryCatalog()
+    catalog = _MemoryCatalog()
+    app.state.memory_catalog = catalog
     app.state.persona_engine = _PersonaEngine()
     token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -643,6 +662,7 @@ async def test_response_plan_is_the_single_owner_context_path_and_matches_agent_
         ]
         body = _response_plan_body(session_id)
         body["query"] = "我在杭州的求学经历是什么？"
+        body["recall_context"] = ["前几轮聊到周六去苏州。", "还想看看附近的展览。"]
         response = await client.post(
             "/v1/interaction/response-plan",
             headers=token,
@@ -662,6 +682,68 @@ async def test_response_plan_is_the_single_owner_context_path_and_matches_agent_
     }
     assert "表达直接、语气平静" in parsed.instructions
     assert "score" not in str(payload)
+    assert len(catalog.queries) == 1
+    memory_query = catalog.queries[0]
+    assert isinstance(memory_query, MemorySearchQuery)
+    assert "我在杭州的求学经历是什么？" in memory_query.text
+    assert "周六去苏州" in memory_query.text
+
+
+@pytest.mark.asyncio
+async def test_response_plan_applies_relative_time_and_confirmed_entity_filters(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    now = datetime(2026, 8, 7, 15, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(interaction_routes, "_local_now", lambda _: now)
+    app = create_app()
+    catalog = _MemoryCatalog()
+    catalog.people_items = (
+        PersonItem(
+            person_id="15c1ea15-8465-4cdf-92a8-90ac860c6aac",
+            display_name="李梅",
+            relationship_to_owner="mother",
+            aliases=("妈妈", "母亲", "李梅"),
+            status="confirmed",
+            source_event_id="mother-source",
+        ),
+    )
+    app.state.memory_catalog = catalog
+    app.state.persona_engine = _PersonaEngine()
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        body = _response_plan_body(session_id)
+        body["query"] = "昨天妈妈提到的南京旅行"
+        response = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=body,
+        )
+
+    assert response.status_code == 200
+    assert len(catalog.queries) == 1
+    memory_query = catalog.queries[0]
+    assert isinstance(memory_query, MemorySearchQuery)
+    assert memory_query.entity_ids == ("15c1ea15-8465-4cdf-92a8-90ac860c6aac",)
+    assert memory_query.occurred_after == datetime(2026, 8, 5, 16, tzinfo=UTC)
+    assert memory_query.occurred_before == datetime(
+        2026,
+        8,
+        6,
+        15,
+        59,
+        59,
+        999999,
+        tzinfo=UTC,
+    )
+    assert "昨天" not in memory_query.text
+    assert "妈妈" not in memory_query.text
+    assert "南京旅行" in memory_query.text
 
 
 @pytest.mark.asyncio
@@ -807,6 +889,8 @@ async def test_response_plan_never_grants_companion_private_context_to_non_owner
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
+    catalog = _MemoryCatalog()
+    app.state.memory_catalog = catalog
     token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         _, user_headers = await _identity(client)
@@ -824,6 +908,7 @@ async def test_response_plan_never_grants_companion_private_context_to_non_owner
     assert payload["grounded_items"] == []
     assert payload["provenance"]["speaker_class"] == classification
     assert payload["provenance"]["source_refs"] == []
+    assert catalog.queries == []
 
 
 @pytest.mark.asyncio

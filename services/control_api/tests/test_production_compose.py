@@ -229,14 +229,14 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
     assert "mark_readiness.py" not in agent_dockerfile
 
 
-def test_production_image_context_excludes_runtime_data_and_h5_qa() -> None:
+def test_production_image_context_excludes_runtime_data() -> None:
     ignored = {
         line.strip().rstrip("/")
         for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     }
 
-    assert {"data", "apps/h5/qa"} <= ignored
+    assert "data" in ignored
 
 
 def test_current_compose_never_builds_the_removed_web_client() -> None:

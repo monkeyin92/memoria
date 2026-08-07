@@ -8,6 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { localDateKey } from "./lib/date.js";
 
 const mocks = vi.hoisted(() => ({
   approveDigitalSelfVersion: vi.fn(),
@@ -1574,6 +1575,7 @@ describe("App identity and profile preferences", () => {
   });
 
   it("labels both Qwen-backed daily summaries as LLM output", async () => {
+    const currentDate = localDateKey();
     mocks.bootstrapIdentity.mockResolvedValue({
       user_id: "anonymous-user",
       access_token: "token",
@@ -1581,7 +1583,7 @@ describe("App identity and profile preferences", () => {
     mocks.getMemoryDays.mockResolvedValue({
       items: [
         {
-          day: "2026-07-15",
+          day: currentDate,
           message_count: 2,
           source: "qwen",
           summary: {
@@ -1599,6 +1601,51 @@ describe("App identity and profile preferences", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "回顾" }));
     expect(await screen.findByText("由 LLM 从今日对话中整理"))
+      .toBeInTheDocument();
+  });
+
+  it("opens the review on the current local date without relabeling an older day as today", async () => {
+    const now = new Date();
+    const currentDate = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, "0"),
+      String(now.getDate()).padStart(2, "0"),
+    ].join("-");
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      access_token: "token",
+    });
+    mocks.getMemoryDays.mockResolvedValue({
+      items: [
+        {
+          day: "2024-12-18",
+          message_count: 2,
+          source: "qwen",
+          summary: {
+            title: "旧日回顾",
+            overview: "这是较早的一天。",
+            highlights: ["完成了旧计划"],
+            mood: "calm",
+            suggestion: "继续保持。",
+          },
+        },
+      ],
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "回顾" }));
+
+    const currentDayButton = await screen.findByRole("button", { name: /0 段/ });
+    expect(currentDayButton).toHaveAttribute("aria-pressed", "true");
+    expect(currentDayButton).toHaveAttribute("data-date", currentDate);
+    expect(screen.queryByText("旧日回顾")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /2 段/ }));
+    expect(await screen.findByText("旧日回顾")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "当天的重要片刻" }))
+      .toBeInTheDocument();
+    expect(screen.getByText("由 LLM 从当日对话中整理"))
       .toBeInTheDocument();
   });
 });

@@ -12,7 +12,9 @@ from services.archive.memory_catalog import MemoryCatalog
 from services.archive.memory_domain import (
     AccountWriteRejectedError,
     ExtractedClaim,
+    ExtractedKnowledge,
     ExtractedPerson,
+    ExtractedTimeline,
     MemoryClaimReview,
     MemoryExtraction,
     MemorySearchQuery,
@@ -73,6 +75,56 @@ class CountingExtractor:
         return MemoryExtraction(extractor_version=self.version)
 
 
+class ContextualClaimExtractor:
+    version = "contextual-claim-v1"
+
+    async def extract(self, event: EvidenceEvent) -> MemoryExtraction:
+        return MemoryExtraction(
+            claims=(
+                ExtractedClaim(
+                    domain_category="daily_life",
+                    subject_key="self",
+                    predicate="travel_destination",
+                    value="南京",
+                    confidence=0.95,
+                ),
+            ),
+            timeline=(
+                ExtractedTimeline(
+                    title="南京散心",
+                    domain_category="daily_life",
+                    event_start=event.occurred_at,
+                ),
+            ),
+            knowledge=(
+                ExtractedKnowledge(
+                    domain_category="daily_life",
+                    question="旅行目的地是什么？",
+                    answer="南京",
+                ),
+            ),
+            extractor_version=self.version,
+        )
+
+
+class SingleValueClaimExtractor:
+    version = "single-value-claim-v1"
+
+    async def extract(self, event: EvidenceEvent) -> MemoryExtraction:
+        return MemoryExtraction(
+            claims=(
+                ExtractedClaim(
+                    domain_category="life_story",
+                    subject_key="self",
+                    predicate="age",
+                    value="60" if event.event_id.endswith("60") else "61",
+                    confidence=0.95,
+                ),
+            ),
+            extractor_version=self.version,
+        )
+
+
 @asynccontextmanager
 async def _reject_account_write(_: str) -> AsyncIterator[None]:
     raise AccountWriteRejectedError("account deletion is in progress")
@@ -86,23 +138,32 @@ async def _record(
     text: str,
     speaker_class: str = "owner",
     minute: int = 0,
+    explicit_memory: bool = False,
 ) -> None:
+    payload: dict[str, object] = {
+        "text": text,
+        "interaction_mode": "companion",
+        "prompt_kind": "spontaneous",
+        "owner_projection_eligible": speaker_class == "owner",
+        "tool_epoch": 0,
+    }
+    if explicit_memory:
+        payload["memory_write_intent"] = {
+            "kind": "explicit_remember",
+            "policy_version": "explicit-memory-v1",
+        }
     await archive.record(
         EvidenceEvent(
             event_id=event_id,
             account_id="account-memory",
             session_id="session-memory",
             turn_id=minute + 1,
+            generation_id=minute + 1,
             event_type="speech.utterance_finalized",
             occurred_at=datetime(2026, 7, 19, 10, minute, tzinfo=UTC),
             speaker_class=speaker_class,  # type: ignore[arg-type]
             source="test",
-            payload={
-                "text": text,
-                "interaction_mode": "companion",
-                "prompt_kind": "spontaneous",
-                "owner_projection_eligible": speaker_class == "owner",
-            },
+            payload=payload,
         )
     )
 
@@ -126,9 +187,7 @@ async def test_compiler_rejects_a_pending_event_after_the_account_deletion_fence
     assert report.failed_events == 1
     assert extractor.calls == 0
     assert (
-        await catalog.search(
-            MemorySearchQuery(account_id="account-memory", speaker_class="owner")
-        )
+        await catalog.search(MemorySearchQuery(account_id="account-memory", speaker_class="owner"))
     ).items == ()
 
 
@@ -292,6 +351,198 @@ async def test_claim_review_controls_context_and_retraction_propagates_to_search
 
 
 @pytest.mark.asyncio
+async def test_contextual_source_text_supports_a_natural_cross_day_recall_query(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await _record(
+        archive,
+        event_id="contextual-source-001",
+        text="前几天聊到旅行，我说下次想去南京。",
+    )
+    catalog = MemoryCatalog.sqlite(path, extractor=ContextualClaimExtractor())
+    await catalog.compile_pending()
+    claim = (await catalog.review_queue(account_id="account-memory"))[0]
+    await catalog.review(
+        MemoryClaimReview(
+            account_id="account-memory",
+            claim_id=claim.item_id,
+            action="confirm",
+        )
+    )
+
+    result = await catalog.context(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="之前聊的旅行最后想去哪？",
+            include_candidates=False,
+        )
+    )
+
+    assert result.items
+    assert result.items[0].item_id == claim.item_id
+    assert result.items[0].snippet == "南京"
+    assert "前几天聊到旅行" not in result.items[0].snippet
+    assert result.items[0].source_event_ids == ("contextual-source-001",)
+
+
+@pytest.mark.asyncio
+async def test_episode_and_knowledge_context_improve_recall_without_leaking_the_prefix(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await _record(
+        archive,
+        event_id="contextual-projections-001",
+        text="前几天聊到旅行，最后还是想去南京散散心。",
+    )
+    catalog = MemoryCatalog.sqlite(path, extractor=ContextualClaimExtractor())
+    await catalog.compile_pending()
+    claim = (await catalog.review_queue(account_id="account-memory"))[0]
+    await catalog.review(
+        MemoryClaimReview(
+            account_id="account-memory",
+            claim_id=claim.item_id,
+            action="confirm",
+        )
+    )
+
+    result = await catalog.context(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="前几天聊到旅行",
+            kinds=("episode", "knowledge"),
+            include_candidates=False,
+        )
+    )
+
+    assert {(item.kind, item.snippet) for item in result.items} == {
+        ("episode", "南京散心"),
+        ("knowledge", "南京"),
+    }
+    assert all("前几天聊到旅行" not in item.snippet for item in result.items)
+
+
+@pytest.mark.asyncio
+async def test_explicit_low_sensitivity_memory_is_immediately_confirmed(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await _record(
+        archive,
+        event_id="explicit-memory-low-risk",
+        text="请记住我喜欢雨天散步。",
+        explicit_memory=True,
+    )
+    catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+
+    await catalog.compile_pending()
+    audit_events = tuple(
+        event
+        for event in (
+            await archive.context(ContextQuery(account_id="account-memory", speaker_class="owner"))
+        ).evidence
+        if event.source == "system.memory_write_policy"
+    )
+    assert len(audit_events) == 1
+    assert dict(audit_events[0].payload) == {
+        "target_id": audit_events[0].payload["target_id"],
+        "action": "confirm",
+        "previous_value": "我喜欢雨天散步。",
+        "source_event_id": "explicit-memory-low-risk",
+        "policy_version": "explicit-memory-v1",
+        "reason": "explicit-memory-low-risk",
+        "tool_epoch": 0,
+    }
+    replay = await catalog.compile_pending()
+    assert (replay.compiled_events, replay.failed_events) == (1, 0)
+    context = await catalog.context(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="雨天散步",
+            kinds=("claim",),
+            include_candidates=False,
+        )
+    )
+
+    assert [(item.status, item.source_event_id) for item in context.items] == [
+        ("confirmed", "explicit-memory-low-risk")
+    ]
+    assert await catalog.review_queue(account_id="account-memory") == ()
+
+
+@pytest.mark.asyncio
+async def test_explicit_sensitive_or_conflicting_memory_stays_in_review_queue(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "archive.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await _record(
+        archive,
+        event_id="explicit-memory-sensitive",
+        text="请记住我的银行卡号是6222021234567890123。",
+        explicit_memory=True,
+    )
+    await _record(
+        archive,
+        event_id="explicit-memory-relationship",
+        text="请记住我和妈妈周末一起散步。",
+        explicit_memory=True,
+        minute=1,
+    )
+    sensitive_catalog = MemoryCatalog.sqlite(path, extractor=RuleBasedMemoryExtractor())
+    await sensitive_catalog.compile_pending()
+
+    sensitive_context = await sensitive_catalog.context(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="银行卡",
+            kinds=("claim",),
+            include_candidates=False,
+        )
+    )
+    sensitive_queue = await sensitive_catalog.review_queue(account_id="account-memory")
+
+    assert sensitive_context.items == ()
+    assert [item.source_event_id for item in sensitive_queue] == [
+        "explicit-memory-sensitive",
+        "explicit-memory-relationship",
+    ]
+
+    conflict_path = tmp_path / "conflict.sqlite3"
+    conflict_archive = LifeArchive.sqlite(conflict_path)
+    await _record(
+        conflict_archive,
+        event_id="explicit-age-60",
+        text="请记住我今年60岁。",
+        explicit_memory=True,
+    )
+    conflict_catalog = MemoryCatalog.sqlite(
+        conflict_path,
+        extractor=SingleValueClaimExtractor(),
+    )
+    await conflict_catalog.compile_pending()
+    await _record(
+        conflict_archive,
+        event_id="explicit-age-61",
+        text="请记住我今年61岁。",
+        minute=1,
+        explicit_memory=True,
+    )
+    await conflict_catalog.compile_pending()
+
+    queue = await conflict_catalog.review_queue(account_id="account-memory")
+    assert [(item.value, item.status) for item in queue] == [("61", "candidate")]
+
+
+@pytest.mark.asyncio
 async def test_archive_evidence_review_is_not_replayed_as_a_memory_claim_review(
     tmp_path: Path,
 ) -> None:
@@ -360,16 +611,12 @@ async def test_claim_review_moves_same_event_life_projections_without_promoting_
     confirmed_timeline = await catalog.timeline(account_id="account-memory")
     confirmed_people = await catalog.people(account_id="account-memory")
 
-    assert {
-        (item.kind, item.source_event_id, item.status) for item in confirmed_context.items
-    } == {
+    assert {(item.kind, item.source_event_id, item.status) for item in confirmed_context.items} == {
         ("claim", "reviewed-family-001", "confirmed"),
         ("knowledge", "reviewed-family-001", "confirmed"),
         ("episode", "reviewed-family-001", "confirmed"),
     }
-    assert {
-        (item.source_event_id, item.status) for item in confirmed_timeline
-    } == {
+    assert {(item.source_event_id, item.status) for item in confirmed_timeline} == {
         ("reviewed-family-001", "confirmed"),
         ("unreviewed-life-001", "candidate"),
     }
@@ -420,14 +667,22 @@ async def test_retracting_one_source_hides_only_its_alias_from_a_confirmed_perso
         item.source_event_id: item
         for item in await catalog.review_queue(account_id="account-memory")
     }
-    for source_event_id in ("alias-source-001", "alias-source-002"):
-        await catalog.review(
-            MemoryClaimReview(
-                account_id="account-memory",
-                claim_id=claims[source_event_id].item_id,
-                action="confirm",
-            )
+    await catalog.review(
+        MemoryClaimReview(
+            account_id="account-memory",
+            claim_id=claims["alias-source-001"].item_id,
+            action="confirm",
         )
+    )
+    partially_confirmed = await catalog.people(account_id="account-memory")
+    assert partially_confirmed[0].aliases == ("妈妈",)
+    await catalog.review(
+        MemoryClaimReview(
+            account_id="account-memory",
+            claim_id=claims["alias-source-002"].item_id,
+            action="confirm",
+        )
+    )
 
     confirmed = await catalog.people(account_id="account-memory")
     assert confirmed[0].status == "confirmed"

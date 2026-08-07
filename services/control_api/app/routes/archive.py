@@ -40,13 +40,19 @@ from services.archive.memory_domain import (
     MemorySearchQuery,
     MemorySensitivity,
 )
+from services.archive.memory_write_policy import (
+    EXPLICIT_MEMORY_INTENT,
+    explicit_remember_content,
+)
 from services.archive.object_store import ObjectRef, ObjectStore
+from services.archive.recall_planner import RecallPlanner
 from services.common.companions import (
     DEFAULT_COMPANION_ID,
     DESIGNED_VOICE_MODEL,
     designed_voice_profile,
     designed_voice_speaker_sha256,
 )
+from services.common.realtime_information import current_local_time
 from services.control_api.app.account_gate import (
     AccountDeletingError,
     AccountOperationGate,
@@ -110,6 +116,7 @@ SERVER_OWNED_EVENT_TYPES = frozenset(
         "owner.action_recorded",
         "learning.task_created",
         "learning.task_transitioned",
+        "memory.claim_reviewed",
     }
 )
 SERVER_INTERACTION_PAYLOAD_KEYS = frozenset(
@@ -123,6 +130,7 @@ SERVER_INTERACTION_PAYLOAD_KEYS = frozenset(
         "prompt_kind",
         "learning_task_id",
         "learning_task_kind",
+        "memory_write_intent",
         "response_provenance",
         "tool_epoch",
     }
@@ -344,9 +352,7 @@ class ResponseProvenanceCreate(BaseModel):
             self.legacy_voice_allowed,
             self.legacy_expires_at,
         )
-        if self.interaction_mode != "legacy" and any(
-            value is not None for value in legacy_values
-        ):
+        if self.interaction_mode != "legacy" and any(value is not None for value in legacy_values):
             raise ValueError("Legacy provenance is forbidden outside Legacy mode")
         if bool(self.persona_version_id) != (self.persona_version_number is not None):
             raise ValueError("persona provenance version fields must be paired")
@@ -746,7 +752,11 @@ async def _canonical_response_provenance(
             status_code=409,
             detail={"code": "response_provenance_private_source_denied"},
         )
-    if legacy_access is None and (parent is None or parent.speaker_class != "owner") and source_refs:
+    if (
+        legacy_access is None
+        and (parent is None or parent.speaker_class != "owner")
+        and source_refs
+    ):
         raise HTTPException(
             status_code=409,
             detail={"code": "response_provenance_private_source_denied"},
@@ -1268,9 +1278,7 @@ async def _append_legacy_shell_event(
         ) from exc
     if shell_role == "digital_self":
         disclosures = (
-            response_provenance.get("disclosures")
-            if response_provenance is not None
-            else None
+            response_provenance.get("disclosures") if response_provenance is not None else None
         )
         if not isinstance(disclosures, list):
             disclosures = []
@@ -1554,6 +1562,18 @@ async def append_session_event(
         payload["tool_epoch"] = tool_epoch
     if canonical_response_provenance is not None:
         payload["response_provenance"] = canonical_response_provenance
+    if (
+        body.event_type == "speech.utterance_finalized"
+        and body.speaker_class == "owner"
+        and body.turn_id is not None
+        and body.generation_id is not None
+        and tool_epoch is not None
+        and trusted_interaction["interaction_mode"] == "companion"
+        and trusted_interaction["simulated_output"] is False
+        and trusted_interaction["owner_projection_eligible"] is True
+        and explicit_remember_content(payload.get("text")) is not None
+    ):
+        payload["memory_write_intent"] = dict(EXPLICIT_MEMORY_INTENT)
     if legacy_access is not None:
         return await _append_legacy_shell_event(
             request,
@@ -1791,11 +1811,20 @@ async def session_memory_context(
     )
     if not trusted_interaction["capabilities"]["private_memory"]:
         return {"items": []}
+    settings = cast(ControlSettings, request.app.state.settings)
+    recall = RecallPlanner.plan(
+        query=body.topic,
+        now=current_local_time(settings.memoria_timezone),
+        people=await _catalog(request).people(account_id=str(session["user_id"]), limit=100),
+    )
     result = await _catalog(request).context(
         MemorySearchQuery(
             account_id=str(session["user_id"]),
             speaker_class=body.speaker_class,
-            text=body.topic,
+            text=recall.text,
+            entity_ids=recall.entity_ids,
+            occurred_after=recall.occurred_after,
+            occurred_before=recall.occurred_before,
             include_candidates=False,
             limit=body.limit,
         )
@@ -2089,9 +2118,7 @@ async def _verify_deletion_action(
             body.wechat_login_code,
         )
     except WechatAuthError as exc:
-        status_code = (
-            503 if exc.code == "wechat_credentials_missing" else 502
-        )
+        status_code = 503 if exc.code == "wechat_credentials_missing" else 502
         raise HTTPException(
             status_code=status_code,
             detail={"code": exc.code},

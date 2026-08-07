@@ -77,6 +77,31 @@ def test_context_redaction_summary_trim_and_asr_items() -> None:
     ]
 
 
+def test_trimmed_turns_remain_in_a_bounded_rolling_context() -> None:
+    ctx = ContextManager(system_prompt="system", max_turns=4)
+    ctx.add_user("第一轮我说周六去苏州", speaker_scope="owner")
+    ctx.commit_assistant_heard("记下了周六去苏州", speaker_scope="owner")
+    ctx.add_user("访客提到的私人行程", speaker_scope="public")
+    ctx.commit_assistant_heard("不应带入主人后续上下文", speaker_scope="public")
+    for index in range(2, 6):
+        ctx.add_user(f"第{index}轮普通对话", speaker_scope="owner")
+        ctx.commit_assistant_heard(f"第{index}轮普通回复", speaker_scope="owner")
+
+    messages = ctx.build_messages(current_user_final="我周六去哪？")
+    rolling = next(
+        message["content"]
+        for message in messages
+        if message["role"] == "system" and message["content"].startswith("较早会话原文摘录：")
+    )
+
+    assert "用户：第一轮我说周六去苏州" in rolling
+    assert "助手：记下了周六去苏州" in rolling
+    assert "访客提到的私人行程" not in rolling
+    assert "不应带入主人后续上下文" not in rolling
+    assert len(ctx.turns) == 4
+    assert len(rolling) <= 1_220
+
+
 def test_tts_reference_context_is_actual_heard_redacted_and_scope_bounded() -> None:
     ctx = ContextManager(system_prompt="system")
     ctx.add_user("主人说了私密安排", speaker_scope="owner")

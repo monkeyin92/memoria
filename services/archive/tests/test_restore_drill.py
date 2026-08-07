@@ -31,6 +31,8 @@ from services.archive.skill_domain import (
     skill_input_sha256,
 )
 from services.archive.skill_executor import SkillExecutor
+from services.self_model.domain import SourceInput
+from services.self_model.postgres_registry import PostgresSelfModelRegistry
 
 
 class RestoreSkillTools:
@@ -136,6 +138,7 @@ async def test_postgres_restore_drill_rebuilds_reviewed_projection_and_rls(
         for account_id, event_id, text in (
             ("restore-owner-a", "restore-event-a", "我们家的家训是说到做到。"),
             ("restore-owner-b", "restore-event-b", "我做项目时先确认目标。"),
+            ("restore-owner-a", "restore-event-person", "我的朋友小林今年30岁。"),
         ):
             await archive.record(
                 EvidenceEvent(
@@ -154,6 +157,46 @@ async def test_postgres_restore_drill_rebuilds_reviewed_projection_and_rls(
                 )
             )
         await catalog.compile_pending(limit=100)
+        self_model = PostgresSelfModelRegistry(source_dsn)
+        await self_model.initialize()
+        try:
+            identity = await asyncpg.connect(source_dsn)
+            try:
+                person = await identity.fetchrow(
+                    """
+                    SELECT person_id
+                    FROM person_entities
+                    WHERE account_id = $1 AND canonical_key = $2
+                    """,
+                    "restore-owner-a",
+                    "friend:小林",
+                )
+                relationship = await identity.fetchrow(
+                    """
+                    SELECT relationship_id
+                    FROM relationships
+                    WHERE account_id = $1 AND person_id = $2
+                    """,
+                    "restore-owner-a",
+                    person["person_id"] if person is not None else None,
+                )
+            finally:
+                await identity.close()
+            assert person is not None
+            assert relationship is not None
+            await self_model.create_relationship_profile(
+                account_id="restore-owner-a",
+                idempotency_key="restore-profile-a",
+                person_id=str(person["person_id"]),
+                relationship_id=str(relationship["relationship_id"]),
+                salutation="小林",
+                tone="温和",
+                advice_style="先倾听再建议",
+                boundaries=("不分享私密经历",),
+                sources=(SourceInput(source_event_id="restore-event-person"),),
+            )
+        finally:
+            await self_model.close()
         candidate = await skills.propose(
             SkillProposal(
                 account_id="restore-owner-a",
@@ -302,6 +345,7 @@ async def test_postgres_restore_drill_rebuilds_reviewed_projection_and_rls(
             extractor=RuleBasedMemoryExtractor(),
         )
         restored_skills = PostgresSkillCatalog(restore_dsn)
+        restored_self_model = PostgresSelfModelRegistry(restore_dsn)
         try:
             result = await restored.context(
                 MemorySearchQuery(
@@ -321,7 +365,38 @@ async def test_postgres_restore_drill_rebuilds_reviewed_projection_and_rls(
                 account_id="restore-owner-a",
                 run_id=skill_run_id,
             )
+            profiles = await restored_self_model.relationship_profiles(
+                account_id="restore-owner-a", effective_only=False
+            )
+            restored_identity = await asyncpg.connect(restore_dsn)
+            try:
+                profile_refs = await restored_identity.fetchrow(
+                    """
+                    SELECT person_id, relationship_id
+                    FROM self_model_relationship_profiles
+                    WHERE account_id = $1
+                    """,
+                    "restore-owner-a",
+                )
+                assert profile_refs is not None
+                assert (
+                    await restored_identity.fetchval(
+                        "SELECT 1 FROM person_entities WHERE person_id = $1",
+                        profile_refs["person_id"],
+                    )
+                    == 1
+                )
+                assert (
+                    await restored_identity.fetchval(
+                        "SELECT 1 FROM relationships WHERE relationship_id = $1",
+                        profile_refs["relationship_id"],
+                    )
+                    == 1
+                )
+            finally:
+                await restored_identity.close()
         finally:
+            await restored_self_model.close()
             await restored_skills.close()
             await restored.close()
 
@@ -335,10 +410,10 @@ async def test_postgres_restore_drill_rebuilds_reviewed_projection_and_rls(
         assert report.rls.passed is True
         assert all(count == 0 for count in report.orphan_counts.values())
         assert [item.title for item in result.items] == ["我们家的家训是答应的事一定做到。"]
-        assert [(item.kind, item.status) for item in skill_result.items] == [
-            ("skill", "confirmed")
-        ]
+        assert [(item.kind, item.status) for item in skill_result.items] == [("skill", "confirmed")]
         assert restored_run.status == "succeeded"
+        assert len(profiles) == 1
+        assert profiles[0].salutation == "小林"
         assert (archive_restore_root / object_reference.object_key).read_bytes() == (
             archive_source_root / object_reference.object_key
         ).read_bytes()

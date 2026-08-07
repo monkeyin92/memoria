@@ -120,6 +120,7 @@ async def test_fetch_sends_only_bounded_fence_and_non_biometric_speaker_metadata
             query="我在哪里读过书？",
             fence=fence,
             speaker_decision=_speaker(),
+            recall_context=("前几轮聊到周六去苏州。", "还想看看附近的展览。"),
         )
 
     assert result.available is True
@@ -138,6 +139,7 @@ async def test_fetch_sends_only_bounded_fence_and_non_biometric_speaker_metadata
         "profile_id": "speaker-profile",
         "template_version": 2,
     }
+    assert body["recall_context"] == ["前几轮聊到周六去苏州。", "还想看看附近的展览。"]
     assert "score" not in json.dumps(body)
     assert "quality_score" not in json.dumps(body)
 
@@ -504,8 +506,22 @@ async def test_request_validation_rejects_bad_session_or_query_without_network()
             fence=GenerationFence("session-1", 1, 2, 0),
             speaker_decision=_speaker(),
         )
+        oversized = await client.fetch(
+            session_id="session-1",
+            query="问题",
+            fence=GenerationFence("session-1", 1, 2, 0),
+            speaker_decision=_speaker(),
+            recall_context=("x" * 241,),
+        )
+        too_many = await client.fetch(
+            session_id="session-1",
+            query="问题",
+            fence=GenerationFence("session-1", 1, 2, 0),
+            speaker_decision=_speaker(),
+            recall_context=("一", "二", "三", "四", "五"),
+        )
 
-    assert wrong_session.reason == blank.reason == "request_invalid"
+    assert wrong_session.reason == blank.reason == oversized.reason == too_many.reason == "request_invalid"
     assert calls == 0
 
 

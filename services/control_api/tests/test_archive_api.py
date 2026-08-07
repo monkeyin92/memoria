@@ -668,6 +668,76 @@ async def test_session_prompt_kind_accepts_valid_internal_value_and_defaults_inv
 
 
 @pytest.mark.asyncio
+async def test_explicit_memory_intent_is_server_owned_and_owner_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (await client.post("/v1/auth/anonymous")).json()
+        bearer = {"Authorization": f"Bearer {identity['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=bearer, json={})).json()
+        base = {
+            "session_id": session["session_id"],
+            "event_type": "speech.utterance_finalized",
+            "occurred_at": datetime.now(UTC).isoformat(),
+            "source": "test",
+        }
+        cases = (
+            ("explicit-owner", "owner", "请记住我喜欢雨天散步。", 1, 0),
+            ("spoofed-ordinary", "owner", "今天天气不错。", 2, 0),
+            ("explicit-guest", "guest", "请记住我喜欢咖啡。", 3, 0),
+            ("quoted-owner", "owner", "朋友说请记住他喜欢咖啡。", 4, 0),
+            ("question-owner", "owner", "请记住我喜欢咖啡吗？", 5, 0),
+            ("missing-fence-owner", "owner", "请记住我喜欢咖啡。", 6, None),
+        )
+        for event_id, speaker_class, text, turn_id, tool_epoch in cases:
+            response = await client.post(
+                "/v1/archive/session-events",
+                headers=internal,
+                json={
+                    **base,
+                    "event_id": event_id,
+                    "turn_id": turn_id,
+                    "generation_id": turn_id,
+                    "tool_epoch": tool_epoch,
+                    "speaker_class": speaker_class,
+                    "payload": {
+                        "text": text,
+                        "memory_write_intent": {
+                            "kind": "client_spoof",
+                            "policy_version": "untrusted",
+                        },
+                    },
+                },
+            )
+            assert response.status_code == 201
+        archived = {
+            event_id: await app.state.life_archive.event(
+                account_id=identity["user_id"],
+                event_id=event_id,
+            )
+            for event_id, *_ in cases
+        }
+
+    assert all(event is not None for event in archived.values())
+    payloads = {
+        event_id: dict(event.payload) for event_id, event in archived.items() if event is not None
+    }
+    assert payloads["explicit-owner"]["memory_write_intent"] == {
+        "kind": "explicit_remember",
+        "policy_version": "explicit-memory-v1",
+    }
+    assert "memory_write_intent" not in payloads["spoofed-ordinary"]
+    assert "memory_write_intent" not in payloads["explicit-guest"]
+    assert "memory_write_intent" not in payloads["quoted-owner"]
+    assert "memory_write_intent" not in payloads["question-owner"]
+    assert "memory_write_intent" not in payloads["missing-fence-owner"]
+
+
+@pytest.mark.asyncio
 async def test_generic_speech_event_requires_a_session_and_cannot_trigger_persona(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -717,9 +787,14 @@ async def test_generic_speech_event_requires_a_session_and_cannot_trigger_person
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "event_type",
-    ["owner.action_recorded", "learning.task_created", "learning.task_transitioned"],
+    [
+        "owner.action_recorded",
+        "learning.task_created",
+        "learning.task_transitioned",
+        "memory.claim_reviewed",
+    ],
 )
-async def test_generic_archive_rejects_server_owned_growth_events(
+async def test_generic_archive_rejects_server_owned_events(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     event_type: str,
@@ -2927,8 +3002,7 @@ async def test_legacy_session_events_only_append_actual_heard_turns_to_the_grant
     )
     assert legacy.runtime_audits[1]["reason"] == "privacy_refusal"
     assert all(
-        audit["fence"] == LegacyFence(session_id, "1", "2", 0)
-        for audit in legacy.runtime_audits
+        audit["fence"] == LegacyFence(session_id, "1", "2", 0) for audit in legacy.runtime_audits
     )
     assert provenance["source_refs"] == []
     for account_id in (access.grantee_account_id, access.resource_owner_account_id):

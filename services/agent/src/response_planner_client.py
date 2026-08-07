@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Final, Literal, cast
@@ -103,6 +104,9 @@ _PROVENANCE_KEYS = frozenset(
     }
 )
 _SOURCE_REF_KEYS = frozenset({"kind", "item_id", "source_event_ids"})
+RECALL_CONTEXT_MAX_ITEMS: Final = 4
+RECALL_CONTEXT_ITEM_MAX_CHARS: Final = 240
+RECALL_CONTEXT_TOTAL_MAX_CHARS: Final = 960
 _CONTEXT_PREFETCH_KEYS = frozenset(
     {
         "speaker_class",
@@ -282,6 +286,32 @@ class ContextPrefetchFetch:
         return self.reason == "ok"
 
 
+def _normalize_recall_context(
+    values: Sequence[str] | None,
+) -> tuple[str, ...] | None:
+    if values is None:
+        return ()
+    try:
+        items = tuple(values)
+    except TypeError:
+        return None
+    if len(items) > RECALL_CONTEXT_MAX_ITEMS:
+        return None
+    normalized: list[str] = []
+    total_chars = 0
+    for item in items:
+        if not isinstance(item, str):
+            return None
+        text = item.strip()
+        if not text or len(text) > RECALL_CONTEXT_ITEM_MAX_CHARS:
+            return None
+        total_chars += len(text)
+        if total_chars > RECALL_CONTEXT_TOTAL_MAX_CHARS:
+            return None
+        normalized.append(text)
+    return tuple(normalized)
+
+
 class ResponsePlannerClient:
     """Fetch exactly one bounded plan; failures never expose cached private context."""
 
@@ -302,13 +332,16 @@ class ResponsePlannerClient:
         query: str,
         fence: GenerationFence,
         speaker_decision: SpeakerDecision,
+        recall_context: Sequence[str] = (),
     ) -> ResponsePlanFetch:
         normalized_query = query.strip()
+        normalized_recall_context = _normalize_recall_context(recall_context)
         if (
             not session_id.strip()
             or session_id != fence.session_id
             or not normalized_query
             or len(normalized_query) > 4000
+            or normalized_recall_context is None
         ):
             return ResponsePlanFetch(None, "request_invalid")
         try:
@@ -318,6 +351,7 @@ class ResponsePlannerClient:
                 json={
                     "session_id": session_id,
                     "query": normalized_query,
+                    "recall_context": list(normalized_recall_context),
                     "fence": {
                         "session_id": fence.session_id,
                         "turn_id": fence.turn_id,

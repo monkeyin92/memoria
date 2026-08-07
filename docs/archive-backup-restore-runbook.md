@@ -74,6 +74,17 @@ COPY (
 5. 使用与生产相同的 schema/编译器版本，从 `archive_processing_outbox` 和 `archive_evidence_events` 重建人物、时间线、知识、向量和人格投影。
 6. 执行第 4 节验收；通过前不切换生产读写。
 
+### 3.1 仅重建 memory projection
+
+当检索上下文格式、显式记忆策略或编译器版本变化，但不需要完整数据库恢复时，在维护窗口将应用切为只读，然后运行：
+
+```bash
+MEMORIA_MEMORY_REBUILD_DATABASE_URL='<maintenance postgres dsn>' \
+   uv run python scripts/rebuild_memory_projections.py --confirm-rebuild
+```
+
+该命令只清空并重建可派生的 memory projection，immutable `archive_evidence_events` 不会被修改；policy confirmation evidence 也会按原顺序重放。它会在截断前验证当前 maintenance role 具备 RLS bypass，在结束时验证没有未完成的 compile outbox；普通 app/compiler DSN 会在修改前被拒绝。若存在 `self_model_relationship_profiles`，其外键引用的 `person_entities`/`relationships` 稳定行会被保留，未被权威 profile 引用的其余行才会删除，随后由账本重放补齐派生数据。输出中的 `failed_events` 必须为 0，随后重新执行固定中文记忆评测、权限/冲突泄漏门禁、`postgres_orphan_counts` 和 RLS 检查。不要在有并发写入的生产库上执行，也不要把 DSN 或 payload 写入日志。
+
 ## 4. 必过验收
 
 数据库一致性：

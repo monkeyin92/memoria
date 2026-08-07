@@ -22,6 +22,7 @@ from services.archive.memory_domain import (
     MemoryExtractor,
     MemorySensitivity,
 )
+from services.archive.memory_write_policy import explicit_remember_content
 
 
 class MemoryExtractionError(RuntimeError):
@@ -136,19 +137,11 @@ class _ExtractionPayload(BaseModel):
         valid_subjects = {"self", *person_keys}
         if any(claim.subject_key not in valid_subjects for claim in self.claims):
             raise ValueError("claim references an unknown subject_key")
-        referenced_keys = {
-            key
-            for claim in self.claims
-            for key in claim.entity_keys
-        } | {
-            key
-            for timeline in self.timeline
-            for key in timeline.participant_keys
-        } | {
-            key
-            for knowledge in self.knowledge
-            for key in knowledge.entity_keys
-        }
+        referenced_keys = (
+            {key for claim in self.claims for key in claim.entity_keys}
+            | {key for timeline in self.timeline for key in timeline.participant_keys}
+            | {key for knowledge in self.knowledge for key in knowledge.entity_keys}
+        )
         if not referenced_keys <= person_keys:
             raise ValueError("memory projection references an unknown person_key")
         return self
@@ -217,6 +210,7 @@ class QwenMemoryExtractor:
         text = str(event.payload.get("text") or "").strip()
         if not text:
             return MemoryExtraction(extractor_version=self.version)
+        text = explicit_remember_content(text) or text
         headers = {"Authorization": f"Bearer {self._api_key}"}
         if self._workspace_id:
             headers["X-DashScope-WorkSpace"] = self._workspace_id
@@ -250,7 +244,14 @@ class QwenMemoryExtractor:
                 input_tokens=max(0, int(raw_usage.get("prompt_tokens") or 0)),
                 output_tokens=max(0, int(raw_usage.get("completion_tokens") or 0)),
             )
-        except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
+        except (
+            httpx.HTTPError,
+            json.JSONDecodeError,
+            KeyError,
+            IndexError,
+            TypeError,
+            ValueError,
+        ) as exc:
             raise MemoryExtractionError("Qwen returned an invalid memory extraction") from exc
 
         return MemoryExtraction(

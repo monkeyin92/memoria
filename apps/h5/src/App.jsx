@@ -450,9 +450,7 @@ export function App() {
       const days = rawDays.map(normalizeMemoryDay);
       setMemoryDays(days);
       setSelectedDay((current) =>
-        days.length && !days.some((day) => day.date === current)
-          ? days[0].date
-          : current,
+        days.some((day) => day.date === current) ? current : today(),
       );
     } catch {
       if (activeUserIdRef.current === requestedUserId) {
@@ -514,8 +512,7 @@ export function App() {
     if (activeTab !== "home") void loadMemories();
   }, [activeTab, loadMemories]);
 
-  const activeMemory =
-    memoryDays.find((day) => day.date === selectedDay) || memoryDays[0] || null;
+  const activeMemory = memoryDays.find((day) => day.date === selectedDay) || null;
   const activeCompanion = companionById(profile.companion_id);
   const sessionCompanion = companionById(
     voice.session?.interaction?.companion_style_id || profile.companion_id,

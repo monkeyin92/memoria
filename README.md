@@ -8,14 +8,13 @@
 
 - H5：<https://122.51.108.140:8443/>
 - Control API：<https://122.51.108.140:8443/memoria-api/>
-- 当前 runtime release：`20260721-224804`
-- 当前 H5 release：`20260721-224804`
-- 最新发布记录：`docs/releases/20260721-224804.md`；历史证据保留在 `docs/releases/`
+- 当前 runtime/H5 release：以生产软链和 [`HANDOFF.md`](./HANDOFF.md) 为准
+- 发布记录：按时间保留在 [`docs/releases/`](./docs/releases/)
 - TLS：公网 IP `122.51.108.140` 使用 Let's Encrypt 短期证书；当前公网入口为 8443，443 继续由既有 WMS 使用。任何 Nginx reload 前都必须先通过 `nginx -t`。
 
 当前线上 H5 使用用户名/密码稳定账号和短期 LiveKit participant token；旧匿名身份仍可在注册时原地升级。消息、个人资料、偏好、会话控制和 readiness evidence 按用户隔离；PII 在持久化或发送 Provider 上下文前统一脱敏。浏览器 bundle 不包含永久凭据。
 
-> 生产状态边界：P0.5、P1-P6 工程能力底座随 `20260720-140053` 部署，当前 runtime/H5 为 `20260721-224804`；“过滤明显旁人（实验）”默认开启，只拒绝明确 guest，ambiguous 为避免误静音主人可聊天但无主人历史或私人权限。正式声纹仍为 shadow-only，复刻声音尚未通过授权真人盲测。同机 PostgreSQL/MinIO 没有异地副本/KMS/PITR，不能宣传为已完成规模化声纹验收或“永不丢失”。
+> 生产状态边界：“过滤明显旁人（实验）”默认开启，只拒绝明确 guest，ambiguous 为避免误静音主人可聊天但无主人历史或私人权限。正式声纹仍为 shadow-only，复刻声音尚未通过授权真人盲测。同机 PostgreSQL/MinIO 没有异地副本/KMS/PITR，不能宣传为已完成规模化声纹验收或“永不丢失”。
 
 P0.5～P6 工程切片已完成并部署；声纹模型使用独立 `speaker-model` 容器承载固定 CAM++ ONNX 版本，Control API readiness 会校验模型健康与版本。CAM++ 不提供 anti-spoof，因此当前只允许 shadow/`uncertain` 结果，不能把模型冒烟当作生产主人识别。
 
@@ -68,7 +67,7 @@ npm --prefix apps/h5 run build
 
 本地默认使用 `/memoria-h5/` base path；生产 Control API 通过同源 `/memoria-api` 访问，永久密钥不会进入浏览器 bundle。H5 通过 `/v1/auth/me` 恢复稳定账号身份；只有服务端返回 401/403 才清理失效身份，临时网络故障不会切换用户数据归属。
 
-当前本地交付已通过 H5 232 项测试、production build 和移动端浏览器回归；注册后选角、
+当前本地交付已通过 H5 自动化、production build 和移动端浏览器回归；注册后选角、
 表情与设计音色试听、四种说话状态声纹登记、匿名注册原地升级、跨账号 Profile 隔离、默认
 “过滤明显旁人（实验）”、主人历史 fail-closed、无横向溢出和 console 0 warning/error
 均已验收。声纹登记仍为 shadow-only，不代表已启用强身份认证。
@@ -152,8 +151,7 @@ API secret 永远只放控制 API 与 Agent 服务端；H5 只接收短期 parti
 H5 的生产 Compose、自建 LiveKit、IP TLS、Nginx 路由、Provider 门禁、备份和回滚步骤见
 `docs/production-deployment.md`。`https://122.51.108.140:8443/` 直接交付 H5；同一端口还通过
 Nginx stream 复用为 LiveKit RTC/TCP 回退，`/wms/` 保留给既有 WMS。静态资源与 API 继续
-使用 `/memoria-h5/`、`/memoria-api/` 独立路径。当前生产证据见
-`docs/releases/20260727-170628.md`；历史迁移、热修与回滚证据保留在 `docs/releases/`。
+使用 `/memoria-h5/`、`/memoria-api/` 独立路径。生产与回滚证据保留在 `docs/releases/`。
 
 ## 实现偏差
 
@@ -173,6 +171,6 @@ Nginx stream 复用为 LiveKit RTC/TCP 回退，`/wms/` 保留给既有 WMS。�
 
 ## 验收
 
-当前本地工程质量门为 Ruff、mypy strict、全量 pytest、Doubao 离线 E2E、Control API/Agent 镜像构建；本 release 的 `uv run pytest -q` 退出码为 0（`730 tests collected`），H5 为 `138/138`。最近一次覆盖率证据 `82.05%` 仍低于既有 85% 门槛，必须保留 waiver。完整追踪矩阵见 `docs/requirements_traceability_matrix.md`，终身记忆架构与阶段状态见 `docs/memory-persona-architecture-v1.md` 和 `docs/memory-persona-implementation-plan.md`。
+当前本地工程质量门为 Ruff、mypy strict、全量 pytest、Doubao 离线 E2E、Control API/Agent 镜像构建；每个 release 的具体结果写入对应的 `docs/releases/` 记录。完整追踪矩阵见 `docs/requirements_traceability_matrix.md`，终身记忆架构与阶段状态见 `docs/memory-persona-architecture-v1.md` 和 `docs/memory-persona-implementation-plan.md`。
 
 只要出现 **旧 generation 误播** 或 **旧 tool epoch 误播**，发布结论必须是 **REJECT**。

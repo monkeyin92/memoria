@@ -22,8 +22,10 @@ class ChatMessage:
 class ContextManager:
     system_prompt: str
     business_summary: str = ""
+    rolling_summary: str = ""
     turns: list[ChatMessage] = field(default_factory=list)
     max_turns: int = 16  # 8 user + 8 assistant pairs ≈ 16 messages
+    max_rolling_summary_chars: int = 1_200
 
     def add_user(self, text: str, *, speaker_scope: SpeakerScope = "public") -> None:
         self.turns.append(
@@ -87,8 +89,32 @@ class ContextManager:
         return self.commit_assistant_heard(text, speaker_scope=speaker_scope)
 
     def _trim(self) -> None:
-        if len(self.turns) > self.max_turns:
-            self.turns = self.turns[-self.max_turns :]
+        overflow = len(self.turns) - self.max_turns
+        if overflow <= 0:
+            return
+        dropped = self.turns[:overflow]
+        self.turns = self.turns[overflow:]
+        additions = [
+            f"{'用户' if message.role == 'user' else '助手'}：{message.content[:240]}"
+            for message in dropped
+            if (
+                message.speaker_scope == "owner"
+                and message.role in {"user", "assistant"}
+                and message.content
+            )
+        ]
+        combined = "\n".join(
+            part for part in (self.rolling_summary, *additions) if part
+        )
+        self.rolling_summary = combined[-self.max_rolling_summary_chars :]
+
+    def context_summary(self) -> str:
+        parts = []
+        if self.business_summary:
+            parts.append(f"当前业务状态摘要：{self.business_summary[:600]}")
+        if self.rolling_summary:
+            parts.append(f"较早会话原文摘录：{self.rolling_summary}")
+        return "\n".join(parts)
 
     def build_messages(
         self,
@@ -105,6 +131,13 @@ class ContextManager:
                 {
                     "role": "system",
                     "content": f"当前业务状态摘要：{summary}",
+                }
+            )
+        if self.rolling_summary:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": f"较早会话原文摘录：{self.rolling_summary}",
                 }
             )
         for m in self.turns:
