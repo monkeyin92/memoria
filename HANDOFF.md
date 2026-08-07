@@ -2,10 +2,10 @@
 
 ## 当前状态（2026-08-07，已发布）
 
-- 生产 runtime/H5 均为 `20260807-144153`，四个应用容器 healthy，`/health/ready` 对该 tag 为 ready；直接 runtime/H5 回滚点为 `20260807-124256`。完整发布证据见 `docs/releases/20260807-144153.md`。
-- 本次发布修复实时检索回复的简洁整理、播放期“好了/知道了”打断恢复，以及 H5 回顾的今天日期持久显示和消息保存 fence。公网 Chrome 登录态验收确认回顾接口无失败，切换旧日期不会移除 8 月 7 日入口。
+- 生产 runtime/H5 均为 `20260807-163916`，四个应用容器 healthy，`/health/ready` 对该 tag 为 ready；直接 runtime/H5 回滚点为 `20260807-144153`。完整发布证据见 `docs/releases/20260807-163916.md`。
+- 本次发布修复天气回答冗长、明天预报被错误读取为今天、静态“不知道”抢先阻断实时查询，以及长对话后播放回声/迟到 ASR 污染 canonical final。`够了/好了/行了/可以了/不用了` 统一进入 `UtteranceRouter` 控制路径，Cascade 与 Omni 词表同步。
 - 生产账号当前语音话轮仍以 uncertain/shadow 说话人状态为主，故当天可能显示 `0 段`；只有 Agent 权威终稿的 `history_eligible=true` 主人话轮才会进入主人回顾，不能通过客户端绕过该隐私边界。
-- 发布工件已在服务器完成验签、导入和隔离 smoke；runtime/H5 软链、4 个容器镜像标签与 readiness 均精确绑定 `20260807-144153`。数据库回滚备份为 `/var/backups/memoria/memoria-pre-20260807-144153.sqlite3`，SHA-256 `d419c8034e9d91bd796ebde195327589ad2ea4fde95fe7fc87bf64116f6708e1`。
+- 发布工件已在服务器完成验签、导入和隔离 smoke；runtime/H5 软链、4 个容器镜像标签与 readiness 均精确绑定 `20260807-163916`。数据库回滚备份为 `/var/backups/memoria/memoria-pre-20260807-163916.sqlite3`，SHA-256 `5760056e1149c1d44181dbc076f46f7c15da40bd06306ca25e807bb00db50ccf`。
 - 候选 `20260807-113413` 在上传前因独立审阅发现 `explicit-memory-v1` 会把出生日期/婚姻等敏感事实自动确认而被拒绝，未部署。后续 `explicit-memory-v2` 使用完整 token grammar，安全偏好后拼接的敏感尾缀也会 fail closed，重新走门禁和工件发布。
 - `20260807-115142` 的验签、镜像导入与隔离 smoke 都通过，但其 Control API 镜像遗漏 projection rebuild 脚本；维护命令在 truncate 前退出，writer 自动恢复，runtime/H5 已回滚到 `20260806-213522`，Archive evidence manifest 保持 `608562844dd3b188a7209dd9562629c0b565bdfe4d8c79debb24b02cadf73639`。不得复用该 tag。
 - `20260807-124256` 修复 full/delta Dockerfile copy、模块入口和 runbook，并恢复 H5 QA Docker context guard；完整 amd64 工件、远端 verifier、隔离 smoke、projection rebuild、RLS/orphan、中文评测、provider readiness、immutable H5 union 和公网路由验收均已通过。
@@ -16,10 +16,10 @@
 
 ## 已验证
 
-- Python 全量 `uv run pytest -q`、Ruff、strict mypy；H5 `301 passed` 与 production build。
+- Python 全量 `uv run pytest -q`、Ruff、strict mypy；H5 `304 passed` 与 production build。
 - 固定中文记忆评测 13/13 通过：`Recall@5/10=0.7692`、`nDCG@10=0.6727`、时间正确率 `1.0`，candidate/冲突/跨账户泄漏均为 `0`。
 - 本地 PostgreSQL 17/pgvector projection rebuild、联合恢复和 self-model 外键保护合同通过。
-- Open-Meteo 实际南京天气查询成功；H5 回顾页的今天占位和历史日期文案由组件回归覆盖。
+- Open-Meteo 实际上海明天查询成功，返回目标日期短句预报；H5 注册页公网加载无 console error、无横向溢出。真实登录后语音/手机声学验收仍未代替。
 
 ## 发布注意
 
