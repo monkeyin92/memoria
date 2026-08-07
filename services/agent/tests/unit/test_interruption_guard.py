@@ -88,23 +88,23 @@ def test_playback_input_guard_opens_feedback_circuit_on_third_rapid_turn() -> No
         guard.start(during_playback=True, now_ns=now)
         assert (
             guard.observe(
-                "这是完整的新问题？",
+                "嗯哈",
                 final=True,
                 assistant_text="当前回答。",
                 now_ns=now + 100_000_000,
             )
             is PlaybackInputDecision.ACCEPT
         )
-        assert guard.accept_turn("这是完整的新问题？", now_ns=now)[0] is True
+        assert guard.accept_turn("嗯哈", now_ns=now)[0] is True
 
     guard.start(during_playback=True, now_ns=3_000_000_000)
     guard.observe(
-        "这是第三次新问题？",
+        "嗯哈",
         final=True,
         assistant_text="当前回答。",
         now_ns=3_100_000_000,
     )
-    assert guard.accept_turn("这是第三次新问题？", now_ns=3_000_000_000) == (
+    assert guard.accept_turn("嗯哈", now_ns=3_000_000_000) == (
         False,
         "feedback_circuit_open",
     )
@@ -122,6 +122,28 @@ def test_unanchored_playback_transcript_cannot_bypass_echo_guard_as_interrupt() 
 
     assert decision is PlaybackInputDecision.IGNORE
     assert guard.candidate_reason == "unanchored_playback_transcript"
+
+
+def test_final_content_replaces_a_short_interim_backchannel_decision() -> None:
+    guard = PlaybackInputGuard(enabled=True)
+    guard.start(during_playback=True, now_ns=1_000_000_000)
+
+    assert (
+        guard.observe(
+            "好的",
+            final=False,
+            assistant_text="我还在继续回答。",
+            now_ns=1_100_000_000,
+        )
+        is PlaybackInputDecision.WAIT
+    )
+    assert guard.candidate_reason == "backchannel"
+
+    assert guard.accept_turn(
+        "好的，我想问一下明天上海的天气",
+        now_ns=2_500_000_000,
+        assistant_text="我还在继续回答。",
+    ) == (True, None)
 
 
 def test_wait_alias_cannot_bypass_assistant_echo_guard() -> None:
@@ -163,3 +185,55 @@ def test_short_weekday_echo_cannot_bypass_assistant_echo_guard() -> None:
         )
         is None
     )
+
+
+def test_playback_guard_quarantines_low_information_decoder_fragments() -> None:
+    guard = PlaybackInputGuard(enabled=True)
+
+    assert (
+        guard.guarded_reason(
+            "其。",
+            duration_ms=900,
+            assistant_text="我还在继续回答。",
+        )
+        == "low_information_fragment"
+    )
+    assert (
+        guard.guarded_reason(
+            "对谢ght.",
+            duration_ms=900,
+            assistant_text="我还在继续回答。",
+        )
+        == "low_information_fragment"
+    )
+    assert guard.guarded_reason("我爱GPT", duration_ms=900, assistant_text="") is None
+    assert guard.guarded_reason("我用BERT", duration_ms=900, assistant_text="") is None
+    assert guard.guarded_reason("谁？", duration_ms=900, assistant_text="") is None
+    assert guard.guarded_reason("停", duration_ms=900, assistant_text="") is None
+
+
+def test_meaningful_follow_up_does_not_consume_feedback_circuit() -> None:
+    guard = PlaybackInputGuard(enabled=True, max_feedback_turns=1)
+    guard.start(during_playback=True, now_ns=1_000_000_000)
+    assert (
+        guard.observe(
+            "这是一个完整的新问题？",
+            final=True,
+            assistant_text="当前回答。",
+            now_ns=1_100_000_000,
+        )
+        is PlaybackInputDecision.ACCEPT
+    )
+    assert guard.accept_turn("这是一个完整的新问题？", now_ns=1_100_000_000)[0] is True
+
+    guard.start(during_playback=True, now_ns=2_000_000_000)
+    assert (
+        guard.observe(
+            "这是另一个完整的新问题？",
+            final=True,
+            assistant_text="当前回答。",
+            now_ns=2_100_000_000,
+        )
+        is PlaybackInputDecision.ACCEPT
+    )
+    assert guard.accept_turn("这是另一个完整的新问题？", now_ns=2_100_000_000)[0] is True

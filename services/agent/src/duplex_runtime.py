@@ -271,6 +271,7 @@ class DuplexRuntime:
     _interrupt_semantic_result: InterruptSemanticVerdict | None = None
     _interaction_decision_epoch: int | None = None
     _interaction_decision: InteractionDecision | None = None
+    _interaction_decision_text: str = ""
     _last_committed_user_text_normalized: str = ""
     _trusted_unanchored_control_epoch: int | None = None
     _trusted_unanchored_playback_epoch: int | None = None
@@ -564,9 +565,13 @@ class DuplexRuntime:
         # Fresh-information intent outranks a planner's static fallback (for
         # example ``我不知道。``). The resolver is the only authority allowed
         # to produce a current weather/news result.
-        static_reply_is_fallback = direct_text is None or direct_text == SAFE_UNKNOWN_REPLY or (
-            isinstance(direct_text, str)
-            and is_incomplete_realtime_reply(direct_text, query=query)
+        static_reply_is_fallback = (
+            direct_text is None
+            or direct_text == SAFE_UNKNOWN_REPLY
+            or (
+                isinstance(direct_text, str)
+                and is_incomplete_realtime_reply(direct_text, query=query)
+            )
         )
         if static_reply_is_fallback and requires_realtime_lookup(query):
             request = PendingRealtimeRequest(query, speaker_scope, fence)
@@ -1486,6 +1491,7 @@ class DuplexRuntime:
         self._interrupt_semantic_result = None
         self._interaction_decision_epoch = None
         self._interaction_decision = None
+        self._interaction_decision_text = ""
         self.input_guard.candidate_decision = PlaybackInputDecision.IGNORE
         self.input_guard.candidate_reason = reason
 
@@ -2980,6 +2986,7 @@ class DuplexRuntime:
             self.input_guard.candidate_decision = decision
             self._interaction_decision_epoch = self._speaker_epoch
             self._interaction_decision = interaction
+            self._interaction_decision_text = text
         elif (
             not final
             and decision is PlaybackInputDecision.ACCEPT
@@ -3001,6 +3008,7 @@ class DuplexRuntime:
             self.apply_interaction_decision(interaction, text=text)
             self._interaction_decision_epoch = self._speaker_epoch
             self._interaction_decision = interaction
+            self._interaction_decision_text = text
         if final:
             self._cancel_listener_cue_candidate()
         elif (
@@ -3203,6 +3211,7 @@ class DuplexRuntime:
             self._interaction_decision
             if self._interaction_decision_epoch == self._speaker_epoch
             and (canonical_speech_epoch is None or canonical_speech_epoch == self._speaker_epoch)
+            and normalize_short(self._interaction_decision_text) == normalize_short(text)
             else None
         )
         if interaction is not None and interaction.continue_output:
@@ -3366,7 +3375,10 @@ class DuplexRuntime:
         if input_modality == "text":
             self.input_guard.candidate_active = False
             self.input_guard.candidate_decision = PlaybackInputDecision.ACCEPT
-        accepted, reason = self.input_guard.accept_turn(text)
+        accepted, reason = self.input_guard.accept_turn(
+            text,
+            assistant_text=self._pending_assistant_text or self._played_assistant_text,
+        )
         if not accepted:
             self.orchestrator.metrics.inc_guarded_user_input(reason or "unknown")
         else:

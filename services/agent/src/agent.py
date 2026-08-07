@@ -1593,6 +1593,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                             "backchannel",
                             "assistant_echo",
                             "non_target_language",
+                            "low_information_fragment",
                             "speaker_mismatch",
                             "interrupt_command_only",
                             "interrupt_replayed_previous_turn",

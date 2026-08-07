@@ -128,6 +128,11 @@ _STOP_TALKING_PHRASES = (
     "停下",
     "先停",
     "你先停",
+    "够了",
+    "好了",
+    "行了",
+    "可以了",
+    "不用了",
 )
 _YIELD_FLOOR_PHRASES = (
     "停一下",
@@ -149,14 +154,22 @@ _YIELD_FLOOR_PHRASES = (
 # and should receive one fixed acknowledgement instead of another LLM turn.
 _COMPLETION_ACK_ONLY = frozenset(
     {
+        "好了",
+        "好了好了",
         "好了知道了",
         "好了我知道了",
+        "够了",
+        "够了够了",
         "好的知道了",
         "好的我知道了",
+        "行了",
+        "行了行了",
         "行了知道了",
         "行了我知道了",
         "可以了知道了",
         "可以了我知道了",
+        "可以了",
+        "不用了",
         "不用了知道了",
         "不用再说了",
         "我知道了不用说了",
@@ -237,10 +250,7 @@ def _interrupt_prefix(text: str) -> str | None:
         return None
     if normalized == "停":
         return "停"
-    if any(
-        normalized.startswith(prefix)
-        for prefix in _NEGATED_PROPOSITION_PREFIXES
-    ):
+    if any(normalized.startswith(prefix) for prefix in _NEGATED_PROPOSITION_PREFIXES):
         return None
     return next(
         (
@@ -386,6 +396,32 @@ def _is_short_non_target(text: str) -> bool:
     )
 
 
+def _is_low_information_fragment(text: str, *, multilingual: bool) -> bool:
+    """Reject likely playback/ASR debris without blocking normal short acks."""
+
+    if multilingual or is_explicit_interrupt(text):
+        return False
+    raw_content = text.strip(_PUNCTUATION).replace(" ", "")
+    content = raw_content.lower()
+    if not content or content in BACKCHANNEL_WHITELIST:
+        return False
+    cjk = count_cjk_chars(content)
+    latin_chars = "".join(char for char in raw_content if char.isascii() and char.isalnum())
+    latin = len(latin_chars)
+    # A single non-ack CJK character (e.g. production's ``其。``) is not a
+    # reliable conversational turn after playback. Mixed-script fragments
+    # such as ``对谢ght`` are the same echo/decoder failure in another form.
+    if cjk == 1 and len(content) == 1:
+        return "?" not in text and "？" not in text
+    if not (cjk > 0 and latin > 0 and len(content) <= 8 and cjk <= 2):
+        return False
+    # Short product/model names are legitimate mixed-language content; the
+    # production failure was a lowercase decoder tail (``ght``), not ``GPT``.
+    if latin_chars.casefold() in {"ai", "api", "app", "gpt", "http", "url", "wifi"}:
+        return False
+    return not any(char.isupper() for char in latin_chars)
+
+
 def _looks_like_assistant_echo(text: str, assistant_text: str) -> bool:
     content = _content(text)
     spoken = _content(assistant_text)
@@ -394,8 +430,7 @@ def _looks_like_assistant_echo(text: str, assistant_text: str) -> bool:
     weekday_echo = _WEEKDAY_ECHO.fullmatch(content)
     if weekday_echo is not None:
         return any(
-            token.group(1) == weekday_echo.group(1)
-            for token in _WEEKDAY_TOKEN.finditer(spoken)
+            token.group(1) == weekday_echo.group(1) for token in _WEEKDAY_TOKEN.finditer(spoken)
         )
     if len(content) < 4 or not spoken:
         return False
@@ -415,6 +450,8 @@ def guarded_input_reason(
         return "backchannel"
     if not multilingual and _is_short_non_target(text):
         return "non_target_language"
+    if _is_low_information_fragment(text, multilingual=multilingual):
+        return "low_information_fragment"
     if _looks_like_assistant_echo(text, assistant_text):
         return "assistant_echo"
     return None
@@ -495,6 +532,11 @@ class PlaybackInputGuard:
     candidate_reason: str | None = None
     _feedback_turns_ns: deque[int] = field(default_factory=deque)
 
+    @staticmethod
+    def _meaningful_turn(text: str) -> bool:
+        content = _content(text)
+        return count_cjk_chars(content) >= 3 or len(content) >= 5
+
     def start(
         self,
         *,
@@ -570,11 +612,47 @@ class PlaybackInputGuard:
             self.candidate_decision = PlaybackInputDecision.WAIT
         return self.candidate_decision
 
-    def accept_turn(self, text: str, *, now_ns: int | None = None) -> tuple[bool, str | None]:
+    def accept_turn(
+        self,
+        text: str,
+        *,
+        now_ns: int | None = None,
+        assistant_text: str = "",
+    ) -> tuple[bool, str | None]:
         now = now_ns if now_ns is not None else time.monotonic_ns()
         decision = self.candidate_decision
         during_playback = self.candidate_active and self.candidate_during_playback
         self.candidate_active = False
+
+        if during_playback:
+            # LiveKit can deliver the endpoint callback after the last ASR
+            # interim. Re-evaluate the canonical final instead of carrying a
+            # short ``好的``/echo decision into a real follow-up question.
+            started = self.candidate_started_ns if self.candidate_started_ns is not None else now
+            elapsed_ms = max(0, int((now - started) / 1_000_000))
+            fresh_reason = self.guarded_reason(
+                text,
+                duration_ms=elapsed_ms,
+                assistant_text=assistant_text,
+            )
+            stale_reason = self.candidate_reason in {
+                "backchannel",
+                "assistant_echo",
+                "non_target_language",
+                "low_information_fragment",
+            }
+            if (
+                stale_reason
+                or self.candidate_reason is None
+                or decision is PlaybackInputDecision.WAIT
+            ):
+                self.candidate_reason = fresh_reason
+                decision = (
+                    PlaybackInputDecision.IGNORE
+                    if fresh_reason is not None
+                    else PlaybackInputDecision.ACCEPT
+                )
+                self.candidate_decision = decision
 
         if during_playback and decision is not PlaybackInputDecision.ACCEPT:
             return False, self.candidate_reason or "playback_noise"
@@ -582,9 +660,15 @@ class PlaybackInputGuard:
             cutoff = now - int(self.feedback_window_s * 1_000_000_000)
             while self._feedback_turns_ns and self._feedback_turns_ns[0] < cutoff:
                 self._feedback_turns_ns.popleft()
-            if len(self._feedback_turns_ns) >= self.max_feedback_turns:
-                return False, "feedback_circuit_open"
-            self._feedback_turns_ns.append(now)
+            if self._meaningful_turn(text):
+                # A complete, revalidated final is evidence of a real user
+                # turn, not another feedback pulse. It must not consume the
+                # short-candidate circuit budget.
+                self._feedback_turns_ns.clear()
+            else:
+                if len(self._feedback_turns_ns) >= self.max_feedback_turns:
+                    return False, "feedback_circuit_open"
+                self._feedback_turns_ns.append(now)
         else:
             self._feedback_turns_ns.clear()
 

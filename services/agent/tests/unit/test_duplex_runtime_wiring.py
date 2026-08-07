@@ -181,6 +181,58 @@ async def test_backchannel_uses_interaction_plane_when_playback_guard_is_disable
 
 
 @pytest.mark.asyncio
+async def test_canonical_follow_up_revalidates_an_interim_backchannel() -> None:
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    await runtime.orchestrator.ready()
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("我还在继续回答。")
+    runtime.on_user_voice_started(now_ns=1_000_000_000)
+
+    assert (
+        runtime.observe_user_transcript(
+            "好的",
+            final=False,
+            now_ns=1_100_000_000,
+        )
+        is PlaybackInputDecision.IGNORE
+    )
+    accepted, reason = runtime.accept_user_turn(
+        "好的，我想问一下明天上海的天气",
+        speech_anchored=True,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+
+    assert (accepted, reason) == (True, None)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_playback_decoder_fragment_is_not_committed_as_a_user_turn() -> None:
+    runtime = DuplexRuntime.create(input_guard_enabled=True)
+    await runtime.orchestrator.ready()
+    runtime._was_speaking = True
+    runtime.update_pending_assistant_text("我还在继续回答。")
+    runtime.on_user_voice_started(now_ns=1_000_000_000)
+    assert (
+        runtime.observe_user_transcript(
+            "其。",
+            final=True,
+            now_ns=1_500_000_000,
+        )
+        is PlaybackInputDecision.IGNORE
+    )
+
+    accepted, reason = runtime.accept_user_turn(
+        "其。",
+        speech_anchored=True,
+        canonical_speech_epoch=runtime._speaker_epoch,
+    )
+
+    assert (accepted, reason) == (False, "low_information_fragment")
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_uncertain_user_evidence_carries_shadow_owner_provenance() -> None:
     evidence: list[dict[str, object]] = []
 
@@ -2343,6 +2395,7 @@ def test_runtime_accepts_only_bounded_microphone_capabilities(
     event["detail"] = {"device_id": "must-not-enter-logs"}
     assert runtime.observe_client_audio_trace(event) is False
     assert "must-not-enter-logs" not in caplog.text
+
 
 def test_runtime_accepts_only_bounded_miniprogram_playback_metrics(
     caplog: pytest.LogCaptureFixture,

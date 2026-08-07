@@ -145,6 +145,34 @@ const OMNI_STOP_PREFIXES = new Set([
   "闭嘴",
   "安静",
   "先别",
+  "够了",
+  "好了",
+  "行了",
+  "可以了",
+  "不用了",
+]);
+const OMNI_COMPLETION_ACKS = new Set([
+  "够了",
+  "够了够了",
+  "够了知道了",
+  "好了",
+  "好了好了",
+  "好了知道了",
+  "好了我知道了",
+  "好的知道了",
+  "好的我知道了",
+  "行了",
+  "行了行了",
+  "行了知道了",
+  "行了我知道了",
+  "可以了",
+  "可以了知道了",
+  "可以了我知道了",
+  "不用了",
+  "不用了知道了",
+  "不用再说了",
+  "我知道了不用说了",
+  "知道了好了",
 ]);
 
 function stripOmniLeadingFillers(text) {
@@ -191,6 +219,9 @@ export function classifyOmniControlUtterance(text) {
   }
 
   const compact = raw.replace(/[。.!！?？,，、\s「」""''…·~～]/g, "");
+  if (OMNI_COMPLETION_ACKS.has(compact)) {
+    return { kind: "interrupt_only", ack: "好的。" };
+  }
   let remainder = stripOmniLeadingFillers(compact);
   let prefix = omniInterruptPrefix(remainder);
   const shortTruncatedWait =

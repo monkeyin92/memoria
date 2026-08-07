@@ -39,6 +39,11 @@ _LOCATION_STOPWORDS = (
     "想知道",
     "的",
 )
+_WEATHER_DAY_OFFSETS = (
+    ("后天", 2, "后天"),
+    ("明天", 1, "明天"),
+    ("今天", 0, "今天"),
+)
 _WMO_CONDITIONS = {
     0: "晴",
     1: "大部晴朗",
@@ -76,6 +81,21 @@ def is_weather_query(query: str) -> bool:
     return bool(compact) and any(marker in compact for marker in _WEATHER_MARKERS)
 
 
+def _weather_day(query: str) -> tuple[int, str]:
+    compact = re.sub(r"\s", "", query or "")
+    for marker, offset, label in _WEATHER_DAY_OFFSETS:
+        if marker in compact:
+            return offset, label
+    return 0, "今天"
+
+
+def _wants_current_conditions(query: str, *, day_offset: int) -> bool:
+    if day_offset != 0:
+        return False
+    compact = re.sub(r"\s", "", query or "")
+    return "现在" in compact or "当前" in compact
+
+
 def _location_candidates(query: str) -> tuple[str, ...]:
     """Return bounded suffixes so leading conversational filler cannot poison geocoding."""
 
@@ -103,7 +123,10 @@ class OpenMeteoWeatherConfig:
     timeout_s: float = 8.0
 
     def __post_init__(self) -> None:
-        for name, value in (("geocoding_url", self.geocoding_url), ("forecast_url", self.forecast_url)):
+        for name, value in (
+            ("geocoding_url", self.geocoding_url),
+            ("forecast_url", self.forecast_url),
+        ):
             parsed = urlsplit(value)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise ValueError(f"{name} must be an HTTP(S) URL")
@@ -136,16 +159,27 @@ class OpenMeteoWeather:
         candidates = _location_candidates(query)
         if not candidates:
             return None
+        day_offset, day_label = _weather_day(query)
+        include_current = _wants_current_conditions(query, day_offset=day_offset)
         started = time.monotonic()
         try:
             location = await self._geocode(candidates)
             if location is None:
                 return None
-            forecast = await self._forecast(location)
-            result = self._format(location, forecast)
+            forecast = await self._forecast(
+                location, day_offset=day_offset, include_current=include_current
+            )
+            result = self._format(
+                location,
+                forecast,
+                day_offset=day_offset,
+                day_label=day_label,
+                include_current=include_current,
+            )
             logger.info(
-                "open meteo weather lookup completed model=%s elapsed_ms=%s",
+                "open meteo weather lookup completed model=%s day_offset=%s elapsed_ms=%s",
                 self.model,
+                day_offset,
                 round((time.monotonic() - started) * 1000),
             )
             return result
@@ -178,24 +212,33 @@ class OpenMeteoWeather:
                     return first
         return None
 
-    async def _forecast(self, location: dict[str, object]) -> dict[str, object]:
+    async def _forecast(
+        self,
+        location: dict[str, object],
+        *,
+        day_offset: int,
+        include_current: bool,
+    ) -> dict[str, object]:
         latitude = location.get("latitude")
         longitude = location.get("longitude")
         if not self._finite_number(latitude) or not self._finite_number(longitude):
             raise ValueError("weather location is missing coordinates")
+        params: dict[str, str | int | float] = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "daily": (
+                "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+            ),
+            "forecast_days": max(1, day_offset + 1),
+            "timezone": "auto",
+        }
+        if include_current:
+            params["current"] = (
+                "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation"
+            )
         response = await self._client.get(
             self.config.forecast_url,
-            params={
-                "latitude": latitude,
-                "longitude": longitude,
-                "current": (
-                    "temperature_2m,apparent_temperature,weather_code,"
-                    "wind_speed_10m,precipitation"
-                ),
-                "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
-                "forecast_days": 1,
-                "timezone": "auto",
-            },
+            params=params,
             timeout=self.config.timeout_s,
         )
         response.raise_for_status()
@@ -205,40 +248,68 @@ class OpenMeteoWeather:
         return payload
 
     @classmethod
-    def _format(cls, location: dict[str, object], forecast: dict[str, object]) -> str:
+    def _format(
+        cls,
+        location: dict[str, object],
+        forecast: dict[str, object],
+        *,
+        day_offset: int,
+        day_label: str,
+        include_current: bool,
+    ) -> str:
         current = forecast.get("current")
         daily = forecast.get("daily")
-        if not isinstance(current, dict) or not isinstance(daily, dict):
-            raise ValueError("weather response is missing current or daily data")
-        temperature = cls._number(current.get("temperature_2m"))
-        apparent = cls._number(current.get("apparent_temperature"))
-        wind = cls._number(current.get("wind_speed_10m"))
+        if not isinstance(daily, dict):
+            raise ValueError("weather response is missing daily data")
         max_values = daily.get("temperature_2m_max")
         min_values = daily.get("temperature_2m_min")
         probability_values = daily.get("precipitation_probability_max")
-        code = current.get("weather_code")
-        if not isinstance(max_values, list) or not max_values or not isinstance(min_values, list) or not min_values:
+        codes = daily.get("weather_code")
+        if (
+            not isinstance(max_values, list)
+            or len(max_values) <= day_offset
+            or not isinstance(min_values, list)
+            or len(min_values) <= day_offset
+            or not isinstance(codes, list)
+            or len(codes) <= day_offset
+        ):
             raise ValueError("weather response is missing daily temperatures")
-        if not isinstance(probability_values, list) or not probability_values:
+        if not isinstance(probability_values, list) or len(probability_values) <= day_offset:
             raise ValueError("weather response is missing precipitation probability")
-        if temperature is None or apparent is None or wind is None:
-            raise ValueError("weather response contains invalid current values")
-        maximum = cls._number(max_values[0])
-        minimum = cls._number(min_values[0])
-        probability = cls._number(probability_values[0])
+        maximum = cls._number(max_values[day_offset])
+        minimum = cls._number(min_values[day_offset])
+        probability = cls._number(probability_values[day_offset])
         if maximum is None or minimum is None or probability is None:
             raise ValueError("weather response contains invalid daily values")
-        condition = _WMO_CONDITIONS.get(int(code), "天气情况待确认") if isinstance(code, (int, float)) else "天气情况待确认"
+        code = codes[day_offset]
+        condition = (
+            _WMO_CONDITIONS.get(int(code), "天气情况待确认")
+            if isinstance(code, (int, float)) and not isinstance(code, bool)
+            else "天气情况待确认"
+        )
         name = str(location.get("name") or location.get("admin2") or "该城市")
+        if not include_current:
+            return f"{name}{day_label}{condition}，{minimum}到{maximum}度，降水概率{probability}%。"
+        if not isinstance(current, dict):
+            raise ValueError("weather response is missing current data")
+        temperature = cls._number(current.get("temperature_2m"))
+        if temperature is None:
+            raise ValueError("weather response contains invalid current values")
+        current_code = current.get("weather_code")
+        if isinstance(current_code, (int, float)) and not isinstance(current_code, bool):
+            condition = _WMO_CONDITIONS.get(int(current_code), "天气情况待确认")
         return (
-            f"{name}现在{condition}，气温{temperature}摄氏度，体感{apparent}摄氏度，"
-            f"风速约{wind}公里每小时。今天最高{maximum}摄氏度，最低{minimum}摄氏度，"
+            f"{name}现在{condition}，{temperature}度；今天{minimum}到{maximum}度，"
             f"降水概率{probability}%。"
         )
 
     @staticmethod
     def _finite_number(value: object) -> TypeGuard[int | float]:
-        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+        )
 
     @classmethod
     def _number(cls, value: object) -> str | None:
@@ -246,4 +317,6 @@ class OpenMeteoWeather:
             return None
         number = float(value)
         return str(int(round(number))) if number.is_integer() else f"{number:.1f}"
+
+
 __all__ = ["OpenMeteoWeather", "OpenMeteoWeatherConfig", "is_weather_query"]

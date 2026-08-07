@@ -143,8 +143,7 @@ async def test_response_plan_receives_bounded_owner_recall_context_only() -> Non
         runtime.session_id,
         ContextSnapshotDraft(
             recent_committed_turns=tuple(
-                ContextTurn("user", f"第{index}轮提到的安排", "owner")
-                for index in range(1, 7)
+                ContextTurn("user", f"第{index}轮提到的安排", "owner") for index in range(1, 7)
             ),
             relationship_policy=policy,
             tool_permission=True,
@@ -1106,6 +1105,38 @@ async def test_realtime_lookup_overrides_static_planner_fallback() -> None:
     output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
 
     assert "".join(output) == "稍等，我查询一下。南京今天多云，最高气温三十二度。"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_realtime_lookup_overrides_a_natural_unknown_weather_fallback() -> None:
+    query = "明天上海的天气怎么样"
+    runtime = DuplexRuntime.create(session_id="realtime-natural-unknown-fallback")
+    await runtime.on_turn_committed(query)
+
+    class Resolver:
+        async def resolve(self, *, query: str) -> str:
+            assert query == "明天上海的天气怎么样"
+            return "上海明天小雨，26到31度，降水概率65%。"
+
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        realtime_search_resolver=Resolver(),
+    )
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="天气必须先联网查询，查询失败不得猜测。",
+        direct_text="明天上海的天气我不知道。",
+        speaker_class="uncertain",
+    )
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content=query)
+
+    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+
+    assert "".join(output) == "稍等，我查询一下。上海明天小雨，26到31度，降水概率65%。"
+    assert runtime.pending_realtime_request is None
     await runtime.close()
 
 

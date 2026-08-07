@@ -90,6 +90,9 @@ _FAILURE_REPLY_MARKERS = (
     "出错",
     "错误",
     "失败",
+    "不知道",
+    "不清楚",
+    "不确定",
 )
 _GENERIC_REALTIME_REPLY = re.compile(
     r"^(?:(?:你是在问谁呀[呢吗嘛]?|我在(?:这儿|这里|呢)(?:陪着你)?[呢呀啊]?|"
@@ -122,8 +125,7 @@ def _asks_for_date(query: str) -> bool:
 def _asks_for_time(query: str) -> bool:
     compact = _normalized(query)
     return any(
-        marker in compact
-        for marker in ("现在几点", "几点了", "当前时间", "现在时间", "现在是几点")
+        marker in compact for marker in ("现在几点", "几点了", "当前时间", "现在时间", "现在是几点")
     )
 
 

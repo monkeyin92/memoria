@@ -124,6 +124,15 @@ _INTERRUPTION_CORPUS = json.loads(
             True,
             "interrupt_command_only",
         ),
+        (
+            "够了！够了！",
+            SpeakerGateState.ENROLLED,
+            UtteranceIntent.INTERRUPT_COMMAND,
+            False,
+            True,
+            True,
+            "interrupt_command_only",
+        ),
         # 4) interrupt wording + content → chat after interrupt
         (
             "等一下我想问下周三",
@@ -250,6 +259,10 @@ def test_interrupt_command_ack_phrases() -> None:
     completion_route = route_utterance("好了，知道了")
     assert completion_route.intent is UtteranceIntent.INTERRUPT_COMMAND
     assert completion_route.ack_phrase == "好的。"
+
+    completed_route = route_utterance("够了！够了！")
+    assert completed_route.intent is UtteranceIntent.INTERRUPT_COMMAND
+    assert completed_route.ack_phrase == "好的。"
 
 
 def test_interrupt_then_chat_has_no_control_ack() -> None:

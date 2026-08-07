@@ -147,6 +147,26 @@ describe("QwenOmniWebRTCTransport", () => {
     }
   });
 
+  it("routes completion acknowledgements to one quiet stop ack", () => {
+    for (const text of [
+      "够了知道了",
+      "好了，知道了",
+      "好了我知道了",
+      "好的我知道了",
+      "行了知道了",
+      "可以了知道了",
+      "不用了知道了",
+      "不用再说了",
+      "我知道了不用说了",
+      "知道了好了",
+    ]) {
+      expect(classifyOmniControlUtterance(text), text).toEqual({
+        kind: "interrupt_only",
+        ack: "好的。",
+      });
+    }
+  });
+
   it("keeps only allowlisted numeric inbound audio metrics", () => {
     const report = new Map([
       [
