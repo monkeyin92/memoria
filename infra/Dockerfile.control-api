@@ -30,7 +30,7 @@ RUN uv export --frozen --no-dev --no-emit-project --no-header --no-annotate \
 COPY README.md ./
 COPY services ./services
 COPY packages ./packages
-COPY scripts/mark_readiness.py ./scripts/mark_readiness.py
+COPY scripts/mark_readiness.py scripts/rebuild_memory_projections.py ./scripts/
 # Historical CosyVoice previews initialize their approved baseline before applying a clone.
 COPY infra/voices/designed_voice_ids.json ./infra/voices/designed_voice_ids.json
 RUN mkdir -p /data \

@@ -96,7 +96,7 @@ done
 sudo -E docker compose -f docker-compose.production.yml run --rm --no-deps \
   -e MEMORIA_MEMORY_REBUILD_DATABASE_URL \
   --entrypoint /app/.venv/bin/python control-api \
-  scripts/rebuild_memory_projections.py --confirm-rebuild
+  -m scripts.rebuild_memory_projections --confirm-rebuild
 unset MEMORIA_MEMORY_REBUILD_DATABASE_URL
 
 sudo docker compose -f docker-compose.production.yml up -d --no-build \

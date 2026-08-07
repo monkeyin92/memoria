@@ -1,9 +1,11 @@
 # 项目交接
 
-## 当前状态（2026-08-07，待发布）
+## 当前状态（2026-08-07，patch release 待发布）
 
 - 生产基线：runtime/H5 均为 `20260806-213522`，`memoria-prod` 四个应用容器 healthy，`/health/ready` 为 9/9 ready；直接回滚点也是该 tag。
 - 候选 `20260807-113413` 在上传前因独立审阅发现 `explicit-memory-v1` 会把出生日期/婚姻等敏感事实自动确认而被拒绝，未部署。后续 `explicit-memory-v2` 使用完整 token grammar，安全偏好后拼接的敏感尾缀也会 fail closed，重新走门禁和工件发布。
+- `20260807-115142` 的验签、镜像导入与隔离 smoke 都通过，但其 Control API 镜像遗漏 projection rebuild 脚本；维护命令在 truncate 前退出，writer 自动恢复，runtime/H5 已回滚到 `20260806-213522`，Archive evidence manifest 保持 `608562844dd3b188a7209dd9562629c0b565bdfe4d8c79debb24b02cadf73639`。不得复用该 tag。
+- 新候选 `20260807-124256` 同时修复 full/delta Dockerfile copy、模块入口和 runbook，并恢复 H5 QA Docker context guard；须重新构建完整 amd64 镜像、验签和执行 projection rebuild 后才能切流。
 - 本轮范围：同会话滚动上下文、跨天 owner 记忆召回、显式低风险记忆写入、时间/人物过滤、中文检索上下文前缀；同时修复公共南京天气查询与 H5 回顾日期。
 - 跨天记忆只使用 confirmed owner material；“请/帮我记住……”的低风险自我事实可自动确认，敏感、关系、冲突、缺 fence 或不确定内容保持 candidate。
 - 新增 `scripts/rebuild_memory_projections.py`。生产 PostgreSQL 现有 evidence 需要在维护窗口以 `memoria_admin` maintenance DSN 执行 projection rebuild；应用 DSN 没有 BYPASSRLS，不能替代。重建复用 Control API 的 extractor/embedder，且必须先停止 Control API compiler、Agent、Gateway 和任何启用的 media-runtime writer，不能只切客户端只读；完成后重跑中文记忆评测、权限泄漏、orphan 与 RLS 门禁。

@@ -221,12 +221,25 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
 
     control_dockerfile = (ROOT / "infra" / "Dockerfile.control-api").read_text(encoding="utf-8")
     delta_builder = (ROOT / "scripts" / "delta_build_images.sh").read_text(encoding="utf-8")
-    copy_line = "COPY scripts/mark_readiness.py ./scripts/mark_readiness.py"
-    assert copy_line in control_dockerfile
-    assert copy_line in delta_builder
+    maintenance_scripts = (
+        "COPY scripts/mark_readiness.py scripts/rebuild_memory_projections.py ./scripts/"
+    )
+    assert maintenance_scripts in control_dockerfile
+    assert maintenance_scripts in delta_builder
 
     agent_dockerfile = (ROOT / "infra" / "Dockerfile.agent").read_text(encoding="utf-8")
     assert "mark_readiness.py" not in agent_dockerfile
+
+
+def test_memory_projection_rebuild_uses_the_control_api_module_entrypoint() -> None:
+    archive_runbook = (ROOT / "docs" / "archive-backup-restore-runbook.md").read_text(
+        encoding="utf-8"
+    )
+    production_runbook = (ROOT / "docs" / "production-deployment.md").read_text(encoding="utf-8")
+    module_entrypoint = "-m scripts.rebuild_memory_projections --confirm-rebuild"
+
+    assert module_entrypoint in archive_runbook
+    assert module_entrypoint in production_runbook
 
 
 def test_production_image_context_excludes_runtime_data() -> None:
@@ -236,7 +249,7 @@ def test_production_image_context_excludes_runtime_data() -> None:
         if line.strip() and not line.lstrip().startswith("#")
     }
 
-    assert "data" in ignored
+    assert {"data", "apps/h5/qa"}.issubset(ignored)
 
 
 def test_current_compose_never_builds_the_removed_web_client() -> None:

@@ -711,6 +711,38 @@ sudo docker ps --filter name=memoria
 
 此时 `/var/www/memoria-h5` 仍必须指向旧 H5。
 
+#### Memory projection rebuild（按 release 要求执行）
+
+若本次 release 变更 memory projection 的编译器、检索格式或显式记忆策略，须在 H5
+切换前停掉 archive writer，再从候选 Control API 镜像重建派生 projection。维护 DSN 只在
+root-only shell 中导出，不能写入命令行、日志或 env 文件；普通 app/compiler DSN 没有
+`BYPASSRLS`，不能替代。详情与重建后数据库验收见
+`docs/archive-backup-restore-runbook.md` 的“仅重建 memory projection”。
+
+```bash
+cd "$RUNTIME_COMPOSE_DIR"
+sudo docker compose -f docker-compose.production.yml stop \
+  agent control-api miniprogram-gateway
+for service in agent control-api miniprogram-gateway; do
+  ! sudo docker compose -f docker-compose.production.yml \
+    ps --status running --services | grep -Fxq "$service"
+done
+
+# 在 root-only maintenance shell 中安全导出 MEMORIA_MEMORY_REBUILD_DATABASE_URL。
+sudo -E docker compose -f docker-compose.production.yml run --rm --no-deps \
+  -e MEMORIA_MEMORY_REBUILD_DATABASE_URL \
+  --entrypoint /app/.venv/bin/python control-api \
+  -m scripts.rebuild_memory_projections --confirm-rebuild
+unset MEMORIA_MEMORY_REBUILD_DATABASE_URL
+
+sudo docker compose -f docker-compose.production.yml up -d --no-build \
+  control-api agent miniprogram-gateway
+```
+
+若启用了 media-runtime profile，也必须先停止其 Voice Core/bridge writer，且 rebuild 输出的
+`failed_events` 必须为 `0` 后才能恢复服务。不要直接执行
+`scripts/rebuild_memory_projections.py`：镜像中的项目根目录以模块入口加载。
+
 ### 5. 强制 Provider 与 readiness 门禁
 
 ```bash
