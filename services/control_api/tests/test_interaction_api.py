@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -23,6 +23,7 @@ from services.digital_self.domain import (
     VersionNotFoundError,
     VoiceProfileManifestRef,
 )
+from services.evolution.domain import CandidateArtifact, GateResult, ValidationReport
 from services.persona.domain import PersonaCapsule, PersonaCapsuleEntry
 
 
@@ -41,6 +42,7 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         "MEMORIA_INTERACTION_POLICY_TOKEN", "interaction-policy-token-that-is-long-enough"
     )
     monkeypatch.setenv("MEMORIA_RESPONSE_PLAN_TOKEN", "response-plan-token-that-is-long-enough")
+    monkeypatch.setenv("MEMORIA_EVOLUTION_CONTROL_TOKEN", "evolution-control-token-test")
 
 
 async def _identity(client: AsyncClient) -> tuple[str, dict[str, str]]:
@@ -200,6 +202,63 @@ def _response_plan_body(session_id: str, *, classification: str = "owner") -> di
             "template_version": 1,
         },
     }
+
+
+def _install_stable_prompt(
+    app: Any,
+    *,
+    account_id: str,
+    candidate_id: str = "weather-evolution-v1",
+    task_family: str = "weather",
+    match_terms: tuple[str, ...] = ("天气",),
+    instruction: str = "回答天气时必须校验并使用用户请求的目标日期。",
+) -> CandidateArtifact:
+    now = datetime.now(UTC)
+    candidate = CandidateArtifact(
+        candidate_id=candidate_id,
+        task_family=task_family,
+        kind="prompt",
+        scope="owner_private",
+        account_id=account_id,
+        version=1,
+        payload={
+            "proposal": {
+                "instruction": instruction,
+                "match_terms": list(match_terms),
+            }
+        },
+        source_signal_ids=(f"{candidate_id}-signal-a", f"{candidate_id}-signal-b"),
+        expected_behavior="apply the reviewed rule to matching owner requests",
+        regression_guards=("privacy_leakage_zero", "retention"),
+        risk="low",
+        trusted_root_sha256=app.state.settings.evolution_trusted_root(),
+        created_at=now,
+        updated_at=now,
+    )
+    store = app.state.evolution_store
+    store.create_candidate(candidate)
+    store.record_validation(
+        ValidationReport(
+            validation_id=f"validation-{candidate_id}",
+            candidate_id=candidate_id,
+            gates=tuple(
+                GateResult(name, True, (f"{name}-evidence",))
+                for name in ("failure_replay", "retention", "transfer", "safety")
+            ),
+        )
+    )
+    store.transition_candidate(candidate_id, "validated")
+    store.transition_candidate(candidate_id, "canary")
+    for index in range(3):
+        store.record_activation(
+            candidate_id=candidate_id,
+            task_id=f"{candidate_id}-task-{index}",
+            activated=True,
+            adhered=True,
+            outcome_passed=True,
+            evidence_event_id=f"{candidate_id}-event-{index}",
+        )
+    return cast(CandidateArtifact, store.transition_candidate(candidate_id, "stable"))
 
 
 class _Registry:
@@ -376,7 +435,10 @@ async def test_response_plan_requires_its_own_token_and_returns_bounded_companio
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
-    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    token = {
+        "X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough",
+        "X-Memoria-Evolution-Protocol": "v1",
+    }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         _, user_headers = await _identity(client)
         session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
@@ -427,6 +489,129 @@ async def test_response_plan_requires_its_own_token_and_returns_bounded_companio
     assert "score" not in str(payload)
     assert "每一轮只根据用户当前语义" in payload["instructions"]
     assert "危机支持 > 语言学习 > 引导式学习 > 普通陪伴" in payload["instructions"]
+
+
+@pytest.mark.asyncio
+async def test_response_plan_consumes_reviewed_prompt_with_exact_provenance_and_owner_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    token = {
+        "X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough",
+        "X-Memoria-Evolution-Protocol": "v1",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        account_id, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        evolution_instruction = "回答天气时必须校验并使用用户请求的目标日期。"
+        candidate = _install_stable_prompt(
+            app,
+            account_id=account_id,
+            instruction=evolution_instruction,
+        )
+        owner = _response_plan_body(session_id)
+        owner["query"] = "杭州明天天气怎么样？"
+        owner_response = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=owner,
+        )
+        guest = _response_plan_body(session_id, classification="guest")
+        guest["query"] = "杭州明天天气怎么样？"
+        guest["fence"]["turn_id"] = 8
+        guest_response = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=guest,
+        )
+        legacy_client = _response_plan_body(session_id)
+        legacy_client["query"] = "杭州明天天气怎么样？"
+        legacy_client["fence"]["turn_id"] = 9
+        legacy_response = await client.post(
+            "/v1/interaction/response-plan",
+            headers={"X-Memoria-Internal-Token": token["X-Memoria-Internal-Token"]},
+            json=legacy_client,
+        )
+        app.state.evolution_store.mark_account_deleting(account_id)
+        cached_deleting_response = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=owner,
+        )
+        deleting_client = _response_plan_body(session_id)
+        deleting_client["query"] = "杭州明天天气怎么样？"
+        deleting_client["fence"]["turn_id"] = 10
+        deleting_response = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=deleting_client,
+        )
+
+    assert owner_response.status_code == 200
+    owner_payload = owner_response.json()
+    assert evolution_instruction in owner_payload["instructions"]
+    assert owner_payload["provenance"]["evolution_artifacts"] == [
+        {
+            "candidate_id": candidate.candidate_id,
+            "version": candidate.version,
+            "kind": "prompt",
+            "status": "stable",
+            "artifact_hash": candidate.artifact_hash,
+        }
+    ]
+    assert owner_payload["provenance"]["evolution_contract_version"] == "v1"
+    assert owner_payload["provenance"]["evolution_receipt"]["version"] == (
+        "evolution-resolution-v1"
+    )
+    assert guest_response.status_code == 200
+    assert guest_response.json()["provenance"].get("evolution_artifacts", []) == []
+    assert evolution_instruction not in guest_response.json()["instructions"]
+    assert legacy_response.status_code == 200
+    assert "evolution_artifacts" not in legacy_response.json()["provenance"]
+    assert evolution_instruction not in legacy_response.json()["instructions"]
+    assert cached_deleting_response.status_code == 409
+    assert cached_deleting_response.json()["detail"] == "account deletion is in progress"
+    assert deleting_response.status_code == 409
+    assert deleting_response.json()["detail"] == "account deletion is in progress"
+
+
+@pytest.mark.asyncio
+async def test_response_plan_keeps_base_behavior_when_evolution_store_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+
+    class UnavailableEvolutionResolver:
+        def resolve(self, **_: object) -> tuple[object, ...]:
+            raise RuntimeError("evolution store unavailable")
+
+    app.state.evolution_resolver = UnavailableEvolutionResolver()
+    token = {
+        "X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough",
+        "X-Memoria-Evolution-Protocol": "v1",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        body = _response_plan_body(session_id)
+        body["query"] = "普通陪伴问题"
+        response = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=body,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["provenance"].get("evolution_artifacts", []) == []
+    assert response.json()["instructions"]
 
 
 @pytest.mark.asyncio
@@ -489,8 +674,13 @@ async def test_response_plan_short_circuits_identity_and_prohibited_requests(
         async def capsule(self, _: object) -> PersonaCapsule:
             raise AssertionError("fixed replies must not load persona")
 
+    class NoEvolutionLookup:
+        def resolve(self, **_: object) -> tuple[object, ...]:
+            raise AssertionError("fixed replies must not resolve evolution artifacts")
+
     app.state.memory_catalog = NoMemoryLookup()
     app.state.persona_engine = NoPersonaLookup()
+    app.state.evolution_resolver = NoEvolutionLookup()
     token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         _, user_headers = await _identity(client)

@@ -77,7 +77,18 @@ MEMORIA_VOICE_RESOLUTION_TOKEN
 MEMORIA_VOICE_CLEANUP_TOKEN
 MEMORIA_INTERACTION_POLICY_TOKEN
 MEMORIA_RESPONSE_PLAN_TOKEN
+MEMORIA_EVOLUTION_CONTROL_TOKEN
+MEMORIA_EVOLUTION_VALIDATOR_TOKEN
 ```
+
+`MEMORIA_EVOLUTION_DATABASE_URL` 必须使用独立的 `memoria_evolution` PostgreSQL 角色，不能回退到
+`MEMORIA_ARCHIVE_DATABASE_URL`。候选控制与独立验证分别使用上述两个 token；验证器不得与业务 Agent
+共用凭据。`MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256` 必须对应本次发布清单的可信根摘要。
+`MEMORIA_EVOLUTION_RUNTIME_PROMPT_FAMILIES` 是精确任务族 allowlist，不是通配符；当前生产默认只允许
+`weather`。即使候选已经写入或被直接改成 `canary/stable`，只有 `low` risk、`prompt` 类型且命中该
+allowlist 的候选才可被运行时解析。`identity_privacy`、`privacy`、`permission(s)`、
+`speaker_authority`、`tool_permission` 和 `voice_control` 属于确定性保护路径，配置阶段即拒绝作为
+运行时 prompt 开放。
 
 `MEMORIA_SPEAKER_INTERNAL_TOKEN` 也必须独立，不能与上述任一 token 或旧 `MEMORIA_ARCHIVE_INTERNAL_TOKEN` 复用。旧 token 只用于非生产兼容；不得写入 H5 环境、构建参数、浏览器存储或 Nginx 返回头。
 
@@ -100,6 +111,29 @@ MEMORIA_AUTH_SECRET
 `/etc/memoria-agent.env`；双向 WebSocket 不使用 Secret Key，禁止把
 `DOUBAO_TTS_SECRET_KEY` 写入运维源、候选 env 或服务器配置。候选文件安装后仍必须保持
 `root:root 0600`。
+
+### Evolution PostgreSQL 首次安装与已有数据卷升级
+
+`memoria_evolution` 是运行时控制角色，只保留 `USAGE` 以及已安装表的最小 DML 权限，
+不应拥有 `public` schema 的 `CREATE`。新的 data Compose 已把
+`services/evolution/postgres_schema.sql` 作为第二个 init 文件挂载；生产 Control API
+启动时只检查表、`ENABLE/FORCE ROW LEVEL SECURITY` 和 controller policy，不再用运行角色
+执行 DDL。
+
+已有 PostgreSQL 数据卷不会自动重新执行 `/docker-entrypoint-initdb.d`。升级 data Compose
+并确认 `MEMORIA_DB_EVOLUTION_PASSWORD` 已进入 PostgreSQL 管理 env 后，先在维护窗口执行：
+
+```bash
+POSTGRES_CONTAINER=memoria-postgres-1 \
+MEMORIA_DB_APP_PASSWORD='当前 app 密码' \
+MEMORIA_DB_COMPILER_PASSWORD='当前 compiler 密码' \
+MEMORIA_DB_EVOLUTION_PASSWORD='新的 evolution 密码' \
+  ./scripts/upgrade_evolution_postgres.sh
+```
+
+脚本幂等地创建角色、安装 schema/强制 RLS 并撤销 evolution schema DDL；随后才重启
+Control API。若 readiness 返回 `evolution_store=unavailable`，禁止切流，应先检查角色、
+表 owner、policy 和 `relforcerowsecurity`，不要临时给运行角色补 `CREATE` 或 `BYPASSRLS`。
 
 当前生产 runtime 的非 secret 配置：
 
@@ -259,7 +293,7 @@ LiveKit transport 连接不代表 Agent 可用：
 
 该协议由 H5 自动化回归覆盖。
 
-P0～P6 发布后，Control API `/health/ready` 还必须同时返回以下 9 个 core check：Control DB、LifeArchive、MemoryCatalog、Persona、SpeakerAuthority、VoiceProfile、档案对象存储、声音对象存储和独立 `speaker-model`。前 8 项必须为 `ready`；`speaker-model` 必须实时请求 `/health/ready`，验证 HTTP 200、`status=ready` 和精确 `model_version`。此外，Agent 必须每 10 秒使用独立 capability token 上报 release、boot ID、worker 与 LiveKit 注册状态；心跳缺失、未就绪、版本不符或超过 45 秒都会令 readiness 返回 503。对象存储检查执行最小加密 `put/get/delete` canary；空账户或尚无 active 声音档案可以 ready，但缺组件、数据库/模型异常、版本漂移或对象 canary 失败必须返回 503。开发/离线未配置模型时只允许明确显示 `skipped`，不代表生产 ready。
+P0～P6 发布后，Control API `/health/ready` 还必须同时返回以下 10 个 core check：Control DB、Evolution store、LifeArchive、MemoryCatalog、Persona、SpeakerAuthority、VoiceProfile、档案对象存储、声音对象存储和独立 `speaker-model`。前 9 项必须为 `ready`；`speaker-model` 必须实时请求 `/health/ready`，验证 HTTP 200、`status=ready` 和精确 `model_version`。此外，Agent 必须每 10 秒使用独立 capability token 上报 release、boot ID、worker 与 LiveKit 注册状态；心跳缺失、未就绪、版本不符或超过 45 秒都会令 readiness 返回 503。对象存储检查执行最小加密 `put/get/delete` canary；空账户或尚无 active 声音档案可以 ready，但缺组件、数据库/模型异常、版本漂移或对象 canary 失败必须返回 503。开发/离线未配置模型时只允许明确显示 `skipped`，不代表生产 ready。
 
 Compose 的 Control API 容器健康检查固定使用 `/health/live`：Agent 必须先等 Control 的进程可接收心跳，不能拿依赖 Agent 心跳的 `/health/ready` 做启动门禁。相对地，Agent 容器健康检查调用 `python -m services.agent.src.heartbeat --check-health`，它同时验证 LiveKit SDK 本机 `8081` 返回 2xx，以及 `/tmp/memoria-agent-heartbeat.json` 中同一 release 的最近一次已被 Control 接受的 ready 心跳（30 秒内）。POST、鉴权、响应失败或 LiveKit 正在重连都不会刷新该无 secret 的原子状态文件；配合 10 秒检查间隔、3 秒超时和 2 次重试，最迟在最后一次 ready 心跳后的 60 秒内把 Agent 容器标为 unhealthy。Control `/health/ready` 的心跳 freshness 仍为 45 秒，两者分工不变。
 
@@ -273,6 +307,37 @@ Agent 的注册探针绑定当前固定版本 `livekit-agents==1.6.5` 的私有�
 2. 当前低成本底座为同机 PostgreSQL、WAL archive、MinIO 和备份；PITR、异地副本与 KMS 仍是下一阶段可靠性门槛，不能把同机恢复演练描述为异地容灾。
 3. 使用授权样本完成 SpeakerAuthority 指标报告和历史 CosyVoice 复刻声音真人盲测前，不得激活正式声纹模板或复刻声音；当前豆包主链只使用已审核的原生 TTS 2.0 音色。
 4. 账户删除 worker、LiveKit 房间删除权限、对象全版本删除权限和供应商声音删除权限必须同时具备；缺任一权限时删除只能保持 `deleting`，不得伪报完成。
+
+## Agent 自我进化发布门禁
+
+本地 synthetic 三臂和 `--runtime-control-plane` 只验证评测代码、控制面生命周期与 resolver 接线，
+不能证明真实任务、真实手机、AEC、弱网或生产账号已经受益。候选从 `canary` 进入 `stable` 前，必须由
+独立 evaluator 在固定中文 holdout 上输出无 transcript 的结果包，并执行：
+
+```bash
+uv run python scripts/evaluate_self_evolution.py \
+  --holdout-results /root/evolution-holdout-results.json \
+  --minimum-device-cases 2
+```
+
+当前固定数据集为 `evolution-holdout-zh-v1`，canonical `dataset_sha256` 为
+`786745165a3a1df963ece667375ca94d23786733721f4bd8460fd9406a6d32a9`。数据集有任何修改时，结果包必须
+使用重新计算的摘要；版本相同但摘要不同也会 fail closed。结果包顶层只允许以下字段：
+
+```json
+{
+  "dataset_version": "evolution-holdout-zh-v1",
+  "dataset_sha256": "786745165a3a1df963ece667375ca94d23786733721f4bd8460fd9406a6d32a9",
+  "adapter": "independent-device-evaluator-v1",
+  "observations": []
+}
+```
+
+`observations` 必须对 `static / append_only / evolving` 三臂的每个 case 各覆盖一次，且每条使用唯一
+`evidence_id`；仅允许 case/arm/evidence mode、result/process/quality、activation/adherence/outcome、
+latency 和 token 计数，不得包含 transcript、模型输出、私密上下文或额外字段。命令只有在 safety、
+process、retention、negative transfer、正迁移、规则替换、激活/遵循/结果和设备数量全部通过时返回 0；
+返回 2 时禁止推进 `stable`。
 5. 每个后续候选仍必须通过完整 PostgreSQL 合同、联合恢复、core readiness、Provider smoke、镜像 secret 扫描和真实 H5 浏览器检查，再按“runtime 先、H5 最后”顺序切流；原生 iOS 客户端已从仓库移除。
 
 ## 发布原则
@@ -382,6 +447,17 @@ python3 scripts/create_release_manifest.py \
   --images-archive "$ARTIFACT_DIR/images.tar" \
   --h5-artifact "$ARTIFACT_DIR/h5-dist.tar.gz" \
   --output "$ARTIFACT_DIR/release-manifest.json"
+MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256="$(python3 - "$ARTIFACT_DIR/release-manifest.json" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+digest = manifest.get("digest")
+if not isinstance(digest, str) or len(digest) != 64:
+    raise SystemExit("release manifest digest is invalid")
+print(digest)
+PY
+)"
 if command -v sha256sum >/dev/null 2>&1; then
   MEMORIA_RELEASE_MANIFEST_SHA256="$(sha256sum "$ARTIFACT_DIR/release-manifest.json" | cut -d ' ' -f1)"
 else
@@ -389,6 +465,8 @@ else
 fi
 printf 'copy this manifest hash into the authenticated server shell: %s\n' \
   "$MEMORIA_RELEASE_MANIFEST_SHA256"
+printf 'bind MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256 to manifest digest: %s\n' \
+  "$MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256"
 ```
 
 增量构建要求上一健康 release 的四个镜像齐全且共享同一 commit/tag/role。脚本会自动
@@ -658,6 +736,10 @@ fi
 if sudo test -e "$MEDIA_EDGE_ENV_BACKUP"; then
   sudo sha256sum "$MEDIA_EDGE_ENV_BACKUP"
 fi
+: "${MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256:?copy the digest field from the verified manifest}"
+sudo grep -Fxq \
+  "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256=$MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256" \
+  "$CONTROL_ENV_CANDIDATE"
 sudo install -o root -g root -m 0600 "$CONTROL_ENV_CANDIDATE" "$CONTROL_ENV"
 sudo install -o root -g root -m 0600 "$AGENT_ENV_CANDIDATE" "$AGENT_ENV"
 sudo install -o root -g root -m 0600 "$SPEAKER_MODEL_ENV_CANDIDATE" "$SPEAKER_MODEL_ENV"
@@ -943,7 +1025,7 @@ curl -fsS https://122.51.108.140:8443/wms/
 curl -fsS https://aigcnice.com/wms/
 ```
 
-验收标准：公网 8443 的根 H5、兼容 H5、SPA、live、ready 和 WMS 静态页均为 200；ready 的 release 必须等于本次唯一 `RELEASE_TAG`，LLM/TTS provider 必须与本次已验签的 production 配置一致，且 9 项 core check 全 ready；internal、PocketSparks 与 Goods Invoice 原路径为 404；IP 证书 SAN 必须精确包含 `122.51.108.140`，域名 SNI 必须返回包含 `aigcnice.com` 与 `www.aigcnice.com` 的域名证书。`/rtc`、`/agent`、`/twirp/` 必须命中自建 LiveKit，真实浏览器 participant 必须为 `active` 且 `connectionType=tcp` 或 `udp`，不能是 `unknown`。服务器本机用 SNI/loopback 额外确认 443 根路径仍由 WMS 虚拟主机提供。WMS 应为 `enabled`；服务在正常运行期为 `active`，明确的资源让渡期允许为 `inactive`，但 Memoria 不得改动其目录或数据。
+验收标准：公网 8443 的根 H5、兼容 H5、SPA、live、ready 和 WMS 静态页均为 200；ready 的 release 必须等于本次唯一 `RELEASE_TAG`，LLM/TTS provider 必须与本次已验签的 production 配置一致，且 10 项 core check 全 ready；internal、PocketSparks 与 Goods Invoice 原路径为 404；IP 证书 SAN 必须精确包含 `122.51.108.140`，域名 SNI 必须返回包含 `aigcnice.com` 与 `www.aigcnice.com` 的域名证书。`/rtc`、`/agent`、`/twirp/` 必须命中自建 LiveKit，真实浏览器 participant 必须为 `active` 且 `connectionType=tcp` 或 `udp`，不能是 `unknown`。服务器本机用 SNI/loopback 额外确认 443 根路径仍由 WMS 虚拟主机提供。WMS 应为 `enabled`；服务在正常运行期为 `active`，明确的资源让渡期允许为 `inactive`，但 Memoria 不得改动其目录或数据。
 
 标准 443 候选路由仍须使用无效 header ticket 完成 WebSocket Upgrade，并由 Gateway 按协议
 关闭为 `4401`；HTTP `404` 表示 WMS 443 未安装精确媒体路由。它只有在同一真机关闭 VPN 后

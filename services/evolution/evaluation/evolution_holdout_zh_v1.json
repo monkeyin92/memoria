@@ -1,0 +1,85 @@
+{
+  "version": "evolution-holdout-zh-v1",
+  "cases": [
+    {
+      "case_id": "weather-target-date-paraphrase",
+      "scenario": "weather_target_date_paraphrase",
+      "phase": "transfer",
+      "task_family": "weather",
+      "evidence_mode": "archive_replay",
+      "safety_critical": false
+    },
+    {
+      "case_id": "weather-local-timezone-paraphrase",
+      "scenario": "weather_local_timezone_paraphrase",
+      "phase": "transfer",
+      "task_family": "weather",
+      "evidence_mode": "device",
+      "safety_critical": false
+    },
+    {
+      "case_id": "weather-rule-replacement",
+      "scenario": "weather_rule_replacement",
+      "phase": "change",
+      "task_family": "weather",
+      "evidence_mode": "archive_replay",
+      "safety_critical": false
+    },
+    {
+      "case_id": "weather-rule-recovery",
+      "scenario": "weather_rule_recovery",
+      "phase": "change",
+      "task_family": "weather",
+      "evidence_mode": "device",
+      "safety_critical": false
+    },
+    {
+      "case_id": "public-followup-context",
+      "scenario": "public_followup_context",
+      "phase": "transfer",
+      "task_family": "public_context",
+      "evidence_mode": "archive_replay",
+      "safety_critical": false
+    },
+    {
+      "case_id": "playback-echo-keeps-control-path",
+      "scenario": "playback_echo_control_path",
+      "phase": "retention",
+      "task_family": "voice_control",
+      "evidence_mode": "device",
+      "safety_critical": true
+    },
+    {
+      "case_id": "late-final-keeps-generation-fence",
+      "scenario": "late_final_generation_fence",
+      "phase": "retention",
+      "task_family": "voice_control",
+      "evidence_mode": "archive_replay",
+      "safety_critical": true
+    },
+    {
+      "case_id": "guest-never-loads-owner-private-rule",
+      "scenario": "guest_owner_private_isolation",
+      "phase": "safety",
+      "task_family": "identity_privacy",
+      "evidence_mode": "archive_replay",
+      "safety_critical": true
+    },
+    {
+      "case_id": "tool-confirmation-never-relaxes",
+      "scenario": "tool_confirmation_preserved",
+      "phase": "safety",
+      "task_family": "tool_permission",
+      "evidence_mode": "device",
+      "safety_critical": true
+    },
+    {
+      "case_id": "unrelated-chat-has-no-negative-transfer",
+      "scenario": "unrelated_chat_negative_transfer",
+      "phase": "negative",
+      "task_family": "general_chat",
+      "evidence_mode": "archive_replay",
+      "safety_critical": false
+    }
+  ]
+}

@@ -90,6 +90,7 @@ def _plan_payload(**overrides: object) -> dict[str, object]:
             "epistemic_status": "fact",
             "epistemic_reason_codes": ["exact_owner_source"],
             "disclosures": [],
+            "evolution_artifacts": [],
         },
     }
     payload.update(overrides)
@@ -103,6 +104,9 @@ async def test_fetch_sends_only_bounded_fence_and_non_biometric_speaker_metadata
     async def handler(request: httpx.Request) -> httpx.Response:
         observed["path"] = request.url.path
         observed["token"] = request.headers.get("X-Memoria-Internal-Token")
+        observed["evolution_protocol"] = request.headers.get(
+            "X-Memoria-Evolution-Protocol"
+        )
         observed["body"] = json.loads(request.content)
         return httpx.Response(200, json=_plan_payload())
 
@@ -130,6 +134,7 @@ async def test_fetch_sends_only_bounded_fence_and_non_biometric_speaker_metadata
     assert result.plan.provenance.source_refs[0].source_event_ids == ("event-1",)
     assert observed["path"] == "/v1/interaction/response-plan"
     assert observed["token"] == "response-plan-token"
+    assert observed["evolution_protocol"] == "v1"
     body = observed["body"]
     assert isinstance(body, dict)
     assert body["speaker_decision"] == {
@@ -597,3 +602,111 @@ def test_archive_payload_contains_only_bounded_ids_and_model_metadata() -> None:
     encoded = json.dumps(payload, ensure_ascii=False)
     assert "我在杭州读过书" not in encoded
     assert "instructions" not in encoded
+
+
+def test_evolution_artifact_is_strictly_parsed_and_preserved_in_archive_provenance() -> None:
+    response = _plan_payload()
+    provenance = response["provenance"]
+    assert isinstance(provenance, dict)
+    reference = {
+        "candidate_id": "weather-evolution-v2",
+        "version": 2,
+        "kind": "prompt",
+        "status": "canary",
+        "artifact_hash": "a" * 64,
+    }
+    provenance["evolution_contract_version"] = "v1"
+    provenance["evolution_artifacts"] = [reference]
+    provenance["evolution_receipt"] = {
+        "version": "evolution-resolution-v1",
+        "issued_at": "2026-08-08T10:00:00+00:00",
+        "query_sha256": "b" * 64,
+        "signature": "c" * 64,
+    }
+
+    plan = ResponsePlannerClient._parse(response)
+    payload = plan.provenance.archive_payload(
+        fence=plan.fence,
+        llm_provider="qwen",
+        llm_model="qwen-plus",
+        tts_provider="doubao",
+        tts_model="seed-tts-2.0",
+        actual_voice_profile_id=None,
+    )
+
+    assert payload["evolution_artifacts"] == [reference]
+    assert payload["evolution_receipt"] == provenance["evolution_receipt"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("version", 0),
+        ("kind", "harness"),
+        ("status", "candidate"),
+        ("artifact_hash", "not-a-digest"),
+    ],
+)
+def test_evolution_artifact_rejects_noncanonical_fields(field: str, value: object) -> None:
+    response = _plan_payload()
+    provenance = response["provenance"]
+    assert isinstance(provenance, dict)
+    reference: dict[str, object] = {
+        "candidate_id": "weather-evolution-v2",
+        "version": 2,
+        "kind": "prompt",
+        "status": "stable",
+        "artifact_hash": "a" * 64,
+    }
+    reference[field] = value
+    provenance["evolution_contract_version"] = "v1"
+    provenance["evolution_artifacts"] = [reference]
+    provenance["evolution_receipt"] = {
+        "version": "evolution-resolution-v1",
+        "issued_at": "2026-08-08T10:00:00+00:00",
+        "query_sha256": "b" * 64,
+        "signature": "c" * 64,
+    }
+
+    with pytest.raises(ValueError, match="evolution artifact"):
+        ResponsePlannerClient._parse(response)
+
+
+def test_parse_legacy_plan_without_evolution_fields_remains_rolling_compatible() -> None:
+    response = _plan_payload()
+    provenance = response["provenance"]
+    assert isinstance(provenance, dict)
+    provenance.pop("evolution_artifacts")
+
+    plan = ResponsePlannerClient._parse(response)
+    archived = plan.provenance.archive_payload(
+        fence=plan.fence,
+        llm_provider=None,
+        llm_model=None,
+        tts_provider=None,
+        tts_model=None,
+        actual_voice_profile_id=None,
+    )
+
+    assert plan.provenance.evolution_contract_version is None
+    assert plan.provenance.evolution_artifacts == ()
+    assert "evolution_artifacts" not in archived
+    assert "evolution_receipt" not in archived
+
+
+def test_parse_rejects_nonempty_evolution_artifacts_without_negotiated_contract() -> None:
+    response = _plan_payload()
+    provenance = response["provenance"]
+    assert isinstance(provenance, dict)
+    provenance["evolution_artifacts"] = [
+        {
+            "candidate_id": "weather-evolution-v2",
+            "version": 2,
+            "kind": "prompt",
+            "status": "stable",
+            "artifact_hash": "a" * 64,
+        }
+    ]
+
+    with pytest.raises(ValueError, match="contract is incomplete"):
+        ResponsePlannerClient._parse(response)

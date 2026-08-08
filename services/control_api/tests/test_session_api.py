@@ -1036,7 +1036,10 @@ def test_production_config_requires_immutable_release_tag() -> None:
         MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-long-enough",
+        MEMORIA_EVOLUTION_CONTROL_TOKEN="test-evolution-control-material-long-enough",
+        MEMORIA_EVOLUTION_VALIDATOR_TOKEN="test-evolution-validator-material-long-enough",
         MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
+        MEMORIA_EVOLUTION_DATABASE_URL="postgresql://memoria_evolution:test@db/memoria",
         MEMORIA_SPEAKER_INTERNAL_TOKEN="test-speaker-material-that-is-long-enough",
         MEMORIA_SPEAKER_EMBEDDING_TOKEN="test-embedding-material-that-is-long-enough",
         MEMORIA_SPEAKER_TEMPLATE_KEY=Fernet.generate_key().decode("ascii"),
@@ -1072,7 +1075,11 @@ def _valid_archive_pipeline_settings(**overrides: str) -> ControlSettings:
         "MEMORIA_VOICE_CLEANUP_TOKEN": "test-voice-cleanup-material-long-enough",
         "MEMORIA_INTERACTION_POLICY_TOKEN": "test-interaction-policy-material-long-enough",
         "MEMORIA_RESPONSE_PLAN_TOKEN": "test-response-plan-material-long-enough",
+        "MEMORIA_EVOLUTION_CONTROL_TOKEN": "test-evolution-control-material-long-enough",
+        "MEMORIA_EVOLUTION_VALIDATOR_TOKEN": "test-evolution-validator-material-long-enough",
+        "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256": "a" * 64,
         "MEMORIA_ARCHIVE_DATABASE_URL": "postgresql://archive:test@db/memoria",
+        "MEMORIA_EVOLUTION_DATABASE_URL": "postgresql://memoria_evolution:test@db/memoria",
         "MEMORIA_SPEAKER_INTERNAL_TOKEN": "test-speaker-material-that-is-long-enough",
         "MEMORIA_SPEAKER_EMBEDDING_TOKEN": "test-embedding-material-that-is-long-enough",
         "MEMORIA_SPEAKER_TEMPLATE_KEY": Fernet.generate_key().decode("ascii"),
@@ -1101,6 +1108,21 @@ def test_livekit_production_does_not_require_streamcore_coturn() -> None:
     settings.validate_production()
 
 
+def test_production_requires_independent_evolution_database_role() -> None:
+    settings = _valid_archive_pipeline_settings(
+        MEMORIA_ARCHIVE_COMPILER_DATABASE_URL=("postgresql://memoria-compiler:test@db/memoria"),
+        MEMORIA_ARCHIVE_COMPILER_ROLE="memoria-compiler",
+        MEMORIA_EVOLUTION_DATABASE_URL="postgresql://archive:test@db/memoria",
+        MEMORIA_MEMORY_EMBEDDING_URL="http://embedding:8000/v1/embeddings",
+        MEMORIA_MEMORY_EMBEDDING_API_KEY="embedding-api-key",
+        MEMORIA_MEMORY_EMBEDDING_MODEL="embedding-test",
+        MEMORIA_MEMORY_EMBEDDING_DIMENSIONS="3",
+    )
+
+    with pytest.raises(ValueError, match="independent memoria_evolution role"):
+        settings.validate_production()
+
+
 def test_streamcore_production_requires_coturn_when_rollout_is_enabled() -> None:
     settings = _valid_archive_pipeline_settings(
         MEMORIA_ARCHIVE_COMPILER_DATABASE_URL=("postgresql://memoria-compiler:test@db/memoria"),
@@ -1124,7 +1146,21 @@ def test_streamcore_production_requires_coturn_when_rollout_is_enabled() -> None
 def test_production_requires_a_response_plan_capability_token() -> None:
     settings = _valid_archive_pipeline_settings(MEMORIA_RESPONSE_PLAN_TOKEN="")
 
-    with pytest.raises(ValueError, match="eight capability-scoped"):
+    with pytest.raises(ValueError, match="ten capability-scoped"):
+        settings.validate_production()
+
+
+def test_production_requires_an_evolution_control_capability_token() -> None:
+    settings = _valid_archive_pipeline_settings(MEMORIA_EVOLUTION_CONTROL_TOKEN="")
+
+    with pytest.raises(ValueError, match="ten capability-scoped"):
+        settings.validate_production()
+
+
+def test_production_requires_an_evolution_validator_capability_token() -> None:
+    settings = _valid_archive_pipeline_settings(MEMORIA_EVOLUTION_VALIDATOR_TOKEN="")
+
+    with pytest.raises(ValueError, match="ten capability-scoped"):
         settings.validate_production()
 
 
@@ -1187,6 +1223,8 @@ def test_production_rejects_reused_internal_capability_tokens() -> None:
         MEMORIA_VOICE_CLEANUP_TOKEN=shared,
         MEMORIA_INTERACTION_POLICY_TOKEN=shared,
         MEMORIA_RESPONSE_PLAN_TOKEN=shared,
+        MEMORIA_EVOLUTION_CONTROL_TOKEN=shared,
+        MEMORIA_EVOLUTION_VALIDATOR_TOKEN=shared,
     )
 
     with pytest.raises(ValueError, match="capability tokens must be independent"):
@@ -1212,6 +1250,8 @@ def test_production_requires_an_independent_message_idempotency_secret() -> None
         MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-that-is-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-that-is-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-that-is-long-enough",
+        MEMORIA_EVOLUTION_CONTROL_TOKEN="test-evolution-control-material-long-enough",
+        MEMORIA_EVOLUTION_VALIDATOR_TOKEN="test-evolution-validator-material-long-enough",
     )
 
     with pytest.raises(ValueError, match="MEMORIA_MESSAGE_IDEMPOTENCY_SECRET"):
@@ -1235,6 +1275,8 @@ def test_production_rejects_the_development_message_idempotency_secret() -> None
         MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-long-enough",
+        MEMORIA_EVOLUTION_CONTROL_TOKEN="test-evolution-control-material-long-enough",
+        MEMORIA_EVOLUTION_VALIDATOR_TOKEN="test-evolution-validator-material-long-enough",
     )
 
     with pytest.raises(ValueError, match="MEMORIA_MESSAGE_IDEMPOTENCY_SECRET"):
@@ -1289,7 +1331,10 @@ def test_production_config_requires_an_independent_archive_object_key() -> None:
         MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-long-enough",
+        MEMORIA_EVOLUTION_CONTROL_TOKEN="test-evolution-control-material-long-enough",
+        MEMORIA_EVOLUTION_VALIDATOR_TOKEN="test-evolution-validator-material-long-enough",
         MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
+        MEMORIA_EVOLUTION_DATABASE_URL="postgresql://memoria_evolution:test@db/memoria",
         MEMORIA_SPEAKER_INTERNAL_TOKEN="test-speaker-material-that-is-long-enough",
         MEMORIA_SPEAKER_EMBEDDING_TOKEN="test-embedding-material-that-is-long-enough",
         MEMORIA_SPEAKER_TEMPLATE_KEY=Fernet.generate_key().decode("ascii"),
@@ -1336,7 +1381,10 @@ def test_production_rejects_reused_voice_sample_and_speaker_template_key() -> No
         MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-long-enough",
+        MEMORIA_EVOLUTION_CONTROL_TOKEN="test-evolution-control-material-long-enough",
+        MEMORIA_EVOLUTION_VALIDATOR_TOKEN="test-evolution-validator-material-long-enough",
         MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
+        MEMORIA_EVOLUTION_DATABASE_URL="postgresql://memoria_evolution:test@db/memoria",
         MEMORIA_SPEAKER_INTERNAL_TOKEN="test-speaker-material-that-is-long-enough",
         MEMORIA_SPEAKER_EMBEDDING_TOKEN="test-embedding-material-that-is-long-enough",
         MEMORIA_SPEAKER_TEMPLATE_KEY=shared_biometric_key,
@@ -1374,7 +1422,10 @@ def test_production_rejects_a_shared_archive_and_voice_object_bucket() -> None:
         MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-long-enough",
+        MEMORIA_EVOLUTION_CONTROL_TOKEN="test-evolution-control-material-long-enough",
+        MEMORIA_EVOLUTION_VALIDATOR_TOKEN="test-evolution-validator-material-long-enough",
         MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
+        MEMORIA_EVOLUTION_DATABASE_URL="postgresql://memoria_evolution:test@db/memoria",
         MEMORIA_SPEAKER_INTERNAL_TOKEN="test-speaker-material-that-is-long-enough",
         MEMORIA_SPEAKER_EMBEDDING_TOKEN="test-embedding-material-that-is-long-enough",
         MEMORIA_SPEAKER_TEMPLATE_KEY=Fernet.generate_key().decode("ascii"),
@@ -1411,7 +1462,10 @@ def test_production_config_requires_formal_speaker_secrets_and_model() -> None:
         MEMORIA_VOICE_CLEANUP_TOKEN="test-voice-cleanup-material-long-enough",
         MEMORIA_INTERACTION_POLICY_TOKEN="test-interaction-policy-material-long-enough",
         MEMORIA_RESPONSE_PLAN_TOKEN="test-response-plan-material-long-enough",
+        MEMORIA_EVOLUTION_CONTROL_TOKEN="test-evolution-control-material-long-enough",
+        MEMORIA_EVOLUTION_VALIDATOR_TOKEN="test-evolution-validator-material-long-enough",
         MEMORIA_ARCHIVE_DATABASE_URL="postgresql://test:test@db/memoria",
+        MEMORIA_EVOLUTION_DATABASE_URL="postgresql://memoria_evolution:test@db/memoria",
         MEMORIA_RELEASE_TAG="release-speaker-test",
     )
     with pytest.raises(ValueError, match="speaker"):

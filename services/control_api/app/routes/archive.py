@@ -79,6 +79,9 @@ from services.digital_self.domain import (
     VersionNotFoundError,
 )
 from services.digital_self.response_planner import PLANNER_POLICY_VERSION
+from services.evolution.receipt import verify_resolution_receipt
+from services.evolution.account_fence import AccountWriteBlockedError
+from services.evolution.store import EvolutionNotFoundError, EvolutionStore
 from services.governance.account_data import (
     AccountDataGovernance,
     AccountDeletionIncompleteError,
@@ -131,6 +134,7 @@ SERVER_INTERACTION_PAYLOAD_KEYS = frozenset(
         "learning_task_id",
         "learning_task_kind",
         "memory_write_intent",
+        "evolution_observation",
         "response_provenance",
         "tool_epoch",
     }
@@ -264,6 +268,25 @@ class ResponseGenerationFenceCreate(BaseModel):
     tool_epoch: int = Field(ge=0, le=2**31 - 1)
 
 
+class EvolutionArtifactRefCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    candidate_id: str = Field(min_length=1, max_length=128)
+    version: int = Field(ge=1)
+    kind: Literal["prompt"]
+    status: Literal["canary", "stable"]
+    artifact_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class EvolutionReceiptCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    version: Literal["evolution-resolution-v1"]
+    issued_at: str = Field(min_length=1, max_length=64)
+    query_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    signature: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class ResponseProvenanceCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -303,6 +326,9 @@ class ResponseProvenanceCreate(BaseModel):
     persona_version_number: int | None = Field(default=None, ge=1)
     persona_style_only: bool = False
     source_refs: list[ResponseSourceRefCreate] = Field(default_factory=list, max_length=32)
+    evolution_contract_version: Literal["v1"] | None = None
+    evolution_artifacts: list[EvolutionArtifactRefCreate] = Field(default_factory=list, max_length=8)
+    evolution_receipt: EvolutionReceiptCreate | None = None
     epistemic_status: Literal["not_applicable", "fact", "inference", "unknown", "mixed"]
     epistemic_reason_codes: list[str] = Field(default_factory=list, max_length=16)
     disclosures: list[Literal["digital_identity", "inference", "unknown", "privacy_refusal"]] = (
@@ -358,6 +384,11 @@ class ResponseProvenanceCreate(BaseModel):
             raise ValueError("persona provenance version fields must be paired")
         if self.persona_style_only and self.persona_version_id is None:
             raise ValueError("persona style-only provenance requires a persona snapshot")
+        if self.evolution_contract_version is None:
+            if self.evolution_artifacts or self.evolution_receipt is not None:
+                raise ValueError("evolution provenance requires a negotiated contract")
+        elif bool(self.evolution_artifacts) == (self.evolution_receipt is None):
+            raise ValueError("evolution provenance receipt does not match artifacts")
         has_tts = self.tts_provider is not None or self.tts_model is not None
         if has_tts and (self.tts_provider is None or self.tts_model is None):
             raise ValueError("tts provenance fields must be paired")
@@ -645,6 +676,98 @@ def _canonical_actual_voice(
     return profile_id, profile_version, resource_id, provider_expires_at, speaker_sha256
 
 
+async def _canonical_evolution_artifacts(
+    request: Request,
+    *,
+    submitted: list[EvolutionArtifactRefCreate],
+    contract_version: Literal["v1"] | None,
+    receipt: EvolutionReceiptCreate | None,
+    account_id: str,
+    session_id: str,
+    turn_id: int,
+    generation_id: int,
+    tool_epoch: int,
+    interaction_mode: str,
+    parent: EvidenceEvent | None,
+    local_safe_plan: bool,
+) -> list[dict[str, Any]]:
+    if not submitted:
+        return []
+    query = parent.payload.get("text") if parent is not None else None
+    if (
+        contract_version != "v1"
+        or receipt is None
+        or local_safe_plan
+        or interaction_mode != "companion"
+        or parent is None
+        or parent.speaker_class not in {"owner", "guest", "uncertain"}
+        or not isinstance(query, str)
+        or not query.strip()
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_evolution_invalid"},
+        )
+    actual = [artifact.model_dump() for artifact in submitted]
+    settings = cast(ControlSettings, request.app.state.settings)
+    if not verify_resolution_receipt(
+        settings.evolution_internal_token(),
+        receipt.model_dump(),
+        account_id=account_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        generation_id=generation_id,
+        tool_epoch=tool_epoch,
+        speaker_class=cast(Any, parent.speaker_class),
+        query=query,
+        artifacts=actual,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_evolution_invalid"},
+        )
+    evolution_store = cast(EvolutionStore, request.app.state.evolution_store)
+    try:
+        candidates = await asyncio.gather(
+            *(
+                asyncio.to_thread(evolution_store.get_candidate, artifact.candidate_id)
+                for artifact in submitted
+            )
+        )
+    except EvolutionNotFoundError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "response_provenance_evolution_invalid"},
+        ) from exc
+    owner_projection_eligible = (
+        parent.speaker_class == "owner"
+        and parent.payload.get("history_eligible") is True
+        and parent.payload.get("owner_projection_eligible") is True
+    )
+    for artifact, candidate in zip(submitted, candidates, strict=True):
+        if (
+            candidate.kind != "prompt"
+            or candidate.version != artifact.version
+            or candidate.artifact_hash != artifact.artifact_hash
+            or (
+                candidate.scope == "owner_private"
+                and (
+                    not owner_projection_eligible
+                    or candidate.account_id != account_id
+                )
+            )
+            or (
+                candidate.scope == "global_redacted"
+                and candidate.account_id is not None
+            )
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "response_provenance_evolution_invalid"},
+            )
+    return actual
+
+
 async def _canonical_response_provenance(
     request: Request,
     *,
@@ -912,6 +1035,20 @@ async def _canonical_response_provenance(
         session=session,
         interaction_mode=interaction_mode,
     )
+    evolution_artifacts = await _canonical_evolution_artifacts(
+        request,
+        submitted=submitted.evolution_artifacts,
+        contract_version=submitted.evolution_contract_version,
+        receipt=submitted.evolution_receipt,
+        account_id=account_id,
+        session_id=str(session["session_id"]),
+        turn_id=submitted.fence.turn_id,
+        generation_id=submitted.fence.generation_id,
+        tool_epoch=submitted.fence.tool_epoch,
+        interaction_mode=interaction_mode,
+        parent=parent,
+        local_safe_plan=local_safe_plan,
+    )
     canonical = {
         "fence": submitted.fence.model_dump(),
         "planner_policy_version": (
@@ -941,6 +1078,13 @@ async def _canonical_response_provenance(
         "epistemic_status": epistemic_status,
         "epistemic_reason_codes": epistemic_reason_codes,
         "disclosures": disclosures,
+        "evolution_contract_version": submitted.evolution_contract_version,
+        "evolution_artifacts": evolution_artifacts,
+        "evolution_receipt": (
+            submitted.evolution_receipt.model_dump()
+            if submitted.evolution_receipt is not None
+            else None
+        ),
         "llm_provider": submitted.llm_provider,
         "llm_model": submitted.llm_model,
         "tts_provider": submitted.tts_provider,
@@ -990,7 +1134,7 @@ async def _account_write(request: Request, account_id: str) -> AsyncIterator[Non
         async with gate.write(account_id):
             _ensure_account_writable(request, account_id)
             yield
-    except AccountDeletingError as exc:
+    except (AccountDeletingError, AccountWriteBlockedError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
@@ -1611,6 +1755,9 @@ async def append_session_event(
             event, result = await record_event()
     else:
         event, result = await record_event()
+    # ``actual_heard`` is evidence that playout completed, not evidence that a
+    # user task succeeded.  Offline trajectory replay loads this canonical pair
+    # later and appends a LearningSignal only after independent evaluation.
     _wake_compiler(request)
     if trusted_interaction["capabilities"]["learning"]:
         _schedule_persona_observation(
@@ -2142,7 +2289,10 @@ async def export_archive(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> JSONResponse:
     _verify_sensitive_action(request, user, body.password)
-    exported = await _governance(request).export_account(user.user_id)
+    try:
+        exported = await _governance(request).export_account(user.user_id)
+    except AccountDeletingError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     logger.info(
         "archive export completed account_hash=%s manifest=%s",
         _account_audit_hash(user.user_id),

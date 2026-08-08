@@ -44,6 +44,7 @@ def _upgrade_inputs(
         "DOUBAO_TTS_RESOURCE_ID": "seed-tts-2.0",
         "DOUBAO_TTS_SAMPLE_RATE": "24000",
         "MEMORIA_AUTH_SECRET": "auth-secret-material-that-is-long-enough",
+        "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256": "a" * 64,
         "WECHAT_MINIPROGRAM_APPID": "wx-test",
         "WECHAT_MINIPROGRAM_APPSECRET": "wechat-secret",
         "QWEN_OMNI_PLUS_VAD_THRESHOLD": "ignored-legacy-key",
@@ -59,6 +60,7 @@ def _upgrade_inputs(
     postgres = {
         "MEMORIA_DB_APP_PASSWORD": "app-pass",
         "MEMORIA_DB_COMPILER_PASSWORD": "compiler-pass",
+        "MEMORIA_DB_EVOLUTION_PASSWORD": "evolution-pass",
     }
     minio = {
         "MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY": "archive-access",
@@ -147,6 +149,11 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert agent["MEMORIA_INTERACTION_POLICY_TOKEN"] != agent["MEMORIA_AGENT_HEARTBEAT_TOKEN"]
     assert len(control["MEMORIA_RESPONSE_PLAN_TOKEN"]) >= 32
     assert control["MEMORIA_RESPONSE_PLAN_TOKEN"] != control["MEMORIA_INTERACTION_POLICY_TOKEN"]
+    assert len(control["MEMORIA_EVOLUTION_CONTROL_TOKEN"]) >= 32
+    assert len(control["MEMORIA_EVOLUTION_VALIDATOR_TOKEN"]) >= 32
+    assert control["MEMORIA_EVOLUTION_RUNTIME_PROMPT_FAMILIES"] == "weather"
+    assert "MEMORIA_EVOLUTION_CONTROL_TOKEN" not in agent
+    assert "MEMORIA_EVOLUTION_VALIDATOR_TOKEN" not in agent
     assert len(control["MEMORIA_VOICE_CLEANUP_TOKEN"]) >= 32
     assert "MEMORIA_VOICE_CLEANUP_TOKEN" not in agent
     assert speaker_model == {
@@ -266,6 +273,8 @@ def test_upgrade_env_cli_does_not_print_preserved_keys(
             str(minio_path),
             "--release-tag",
             "20260722-no-secret-output",
+            "--evolution-trusted-root",
+            "b" * 64,
             "--control",
             str(tmp_path / "control.env"),
             "--agent",
@@ -283,6 +292,9 @@ def test_upgrade_env_cli_does_not_print_preserved_keys(
     captured = capsys.readouterr()
     assert secret not in captured.out
     assert secret not in captured.err
+    assert _env_values(tmp_path / "control.env")[
+        "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256"
+    ] == "b" * 64
 
 
 def test_upgrade_env_rejects_missing_doubao_authentication() -> None:

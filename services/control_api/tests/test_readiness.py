@@ -110,6 +110,7 @@ async def test_local_readiness_checks_core_services_without_active_profiles(
     assert body["status"] == "ready"
     assert body["checks"]["core"] == {
         "control_database": "ready",
+        "evolution_store": "ready",
         "memory_archive": "ready",
         "memory_catalog": "ready",
         "persona": "ready",
@@ -208,6 +209,26 @@ async def test_online_readiness_reports_unavailable_control_database_as_503(
     assert response.status_code == 503
     assert response.json()["smokes"] == "unavailable"
     assert response.json()["checks"]["core"]["control_database"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_readiness_fails_closed_when_evolution_store_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_local(monkeypatch, tmp_path)
+    app = create_app()
+
+    class UnavailableEvolutionStore:
+        def healthcheck(self) -> None:
+            raise RuntimeError("evolution store unavailable")
+
+    app.state.evolution_store = UnavailableEvolutionStore()
+    status, body = await _ready(app)
+
+    assert status == 503
+    assert body["status"] == "not_ready"
+    assert body["checks"]["core"]["evolution_store"] == "unavailable"
 
 
 @pytest.mark.asyncio

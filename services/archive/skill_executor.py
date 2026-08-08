@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from typing import Protocol
 
 from services.archive.skill_domain import (
     SkillCatalogPort,
@@ -17,10 +19,32 @@ from services.archive.skill_domain import (
 )
 
 
+class SkillRunObserver(Protocol):
+    async def on_run(
+        self,
+        request: SkillRunRequest,
+        run: SkillRun,
+        *,
+        succeeded: bool,
+    ) -> None: ...
+
+
 class SkillExecutor:
-    def __init__(self, *, catalog: SkillCatalogPort, tools: SkillToolPort) -> None:
+    def __init__(
+        self,
+        *,
+        catalog: SkillCatalogPort,
+        tools: SkillToolPort,
+        observer: SkillRunObserver | None = None,
+    ) -> None:
         self._catalog = catalog
         self._tools = tools
+        self._observer = observer
+
+    async def _notify(self, request: SkillRunRequest, run: SkillRun, *, succeeded: bool) -> None:
+        if self._observer is not None:
+            with contextlib.suppress(Exception):
+                await self._observer.on_run(request, run, succeeded=succeeded)
 
     async def execute(self, request: SkillRunRequest) -> SkillRun:
         version = await self._catalog.get_version(
@@ -97,7 +121,7 @@ class SkillExecutor:
                 completed=completed,
                 outputs=outputs,
             )
-            await self._catalog.finish_run(
+            finished = await self._catalog.finish_run(
                 run_id=run.run_id,
                 account_id=request.account_id,
                 status="failed",
@@ -106,8 +130,9 @@ class SkillExecutor:
                 error_code=type(exc).__name__,
                 completed_at=datetime.now(UTC),
             )
+            await self._notify(request, finished, succeeded=False)
             raise SkillExecutionError(run.run_id, f"skill execution failed: {type(exc).__name__}") from exc
-        return await self._catalog.finish_run(
+        finished = await self._catalog.finish_run(
             run_id=run.run_id,
             account_id=request.account_id,
             status="succeeded",
@@ -116,6 +141,8 @@ class SkillExecutor:
             error_code=None,
             completed_at=datetime.now(UTC),
         )
+        await self._notify(request, finished, succeeded=True)
+        return finished
 
     async def _rollback(
         self,

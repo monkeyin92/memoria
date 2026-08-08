@@ -19,6 +19,7 @@ from services.archive.memory_domain import MemoryCatalogPort
 from services.archive.object_store import ObjectStore
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
+from services.evolution.store import EvolutionStore
 from services.persona.domain import PersonaEnginePort
 from services.speaker.domain import SpeakerAuthorityPort
 from services.voice_profile.domain import VoiceProfilePort
@@ -208,6 +209,15 @@ async def _core_checks(
             llm_provider=settings.llm_provider,
         )
 
+    async def evolution_store() -> object:
+        evolution = cast(EvolutionStore, _component(request, "evolution_store"))
+        trusted_root = settings.evolution_trusted_root()
+        if len(trusted_root) != 64:
+            raise RuntimeError("evolution trusted root is invalid")
+        # This is intentionally read-only. Candidate generation and lifecycle
+        # transitions must remain outside the readiness probe.
+        return await to_thread(evolution.healthcheck)
+
     async def memory_archive() -> object:
         archive = cast(LifeArchivePort, _component(request, "life_archive"))
         return await archive.context(
@@ -244,6 +254,7 @@ async def _core_checks(
 
     probes: tuple[tuple[str, Callable[[], Awaitable[object]]], ...] = (
         ("control_database", control_database),
+        ("evolution_store", evolution_store),
         ("memory_archive", memory_archive),
         ("memory_catalog", memory_catalog),
         ("persona", persona),

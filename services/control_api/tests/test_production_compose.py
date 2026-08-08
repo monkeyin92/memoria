@@ -153,12 +153,14 @@ def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> No
     assert "archive_mode=on" in compose
     assert "memoria_app" in postgres_init
     assert "memoria_archive_compiler" in postgres_init
+    assert "ALTER ROLE memoria_evolution PASSWORD" in postgres_init
     assert "NOBYPASSRLS" in postgres_init
     assert "mc version enable local/memoria-archive" in minio_init
     assert "mc version enable local/memoria-voice" in minio_init
     assert "s3:DeleteObjectVersion" in minio_init
     assert "MC_CONFIG_DIR: /tmp/.mc" in compose
-    assert compose.count("create_host_path: false") == 2
+    assert compose.count("create_host_path: false") == 3
+    assert "002-evolution-schema.sql" in compose
 
 
 def test_production_runbook_pins_data_compose_path_and_network_bootstrap_order() -> None:

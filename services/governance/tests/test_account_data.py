@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -37,6 +38,11 @@ from services.digital_self.preview import (
     SelfPreviewRegistry,
 )
 from services.digital_self.registry import DigitalSelfRegistry
+from services.evolution.account_fence import AccountWriteBlockedError
+from services.evolution.account_repository import SqliteEvolutionAccountRepository
+from services.evolution.curation import EvolutionControlPlane
+from services.evolution.domain import FenceSnapshot, LayerVerdict, LearningSignal, SpeakerSnapshot
+from services.evolution.store import EvolutionStore
 from services.governance.account_data import (
     AccountDataGovernance,
     AccountDeletionIncompleteError,
@@ -234,6 +240,9 @@ class LateArchiveWriteRepository:
     async def object_references(self, account_id: str):  # type: ignore[no-untyped-def]
         return await self._delegate.object_references(account_id)
 
+    async def mark_account_deleting(self, *, account_id: str, started_at: str) -> None:
+        await self._delegate.mark_account_deleting(account_id=account_id, started_at=started_at)
+
     async def delete_account(self, account_id: str) -> dict[str, int]:
         counts = await self._delegate.delete_account(account_id)
         self.delete_calls += 1
@@ -253,6 +262,58 @@ class LateArchiveWriteRepository:
 
     async def remaining_account_rows(self, account_id: str) -> dict[str, int]:
         return await self._delegate.remaining_account_rows(account_id)
+
+
+class FailingEvolutionDeleteRepository:
+    """Leave evolution rows pending once, then allow the saga to finish."""
+
+    def __init__(self, delegate: SqliteEvolutionAccountRepository) -> None:
+        self._delegate = delegate
+        self.delete_calls = 0
+
+    async def export_account(self, account_id: str):  # type: ignore[no-untyped-def]
+        return await self._delegate.export_account(account_id)
+
+    async def object_references(self, account_id: str):  # type: ignore[no-untyped-def]
+        return await self._delegate.object_references(account_id)
+
+    async def delete_account(self, account_id: str) -> dict[str, int]:
+        self.delete_calls += 1
+        if self.delete_calls == 1:
+            raise RuntimeError("evolution backend temporarily unavailable")
+        return await self._delegate.delete_account(account_id)
+
+    async def remaining_account_rows(self, account_id: str) -> dict[str, int]:
+        return await self._delegate.remaining_account_rows(account_id)
+
+
+def _seed_evolution_signal(path: Path, account_id: str) -> None:
+    now = datetime.now(UTC)
+    speaker = SpeakerSnapshot(
+        classification="owner",
+        reason_code="formal_owner",
+        history_eligible=True,
+        owner_projection_eligible=True,
+    )
+    store = EvolutionStore(path)
+    store.append_signal(
+        LearningSignal(
+            signal_id="governance-evolution-signal",
+            task_family="account-deletion",
+            scope="owner_private",
+            account_id=account_id,
+            fence=FenceSnapshot("governance-session", 1, 1, 0),
+            speaker=speaker,
+            source_event_ids=("governance-evolution-event",),
+            result=LayerVerdict("fail", reason_codes=("test_failure",)),
+            process=LayerVerdict("pass"),
+            quality=LayerVerdict("fail", reason_codes=("test_quality",)),
+            environment_version="governance-test-v1",
+            failure_code="test_failure",
+            diagnosis="account deletion retry fixture",
+            created_at=now,
+        )
+    )
 
 
 class LegacyDeleteRetryProbe:
@@ -681,10 +742,38 @@ async def _fixture(
         memory_store=store,
         archive_repository=SqliteAccountRepository.archive(database_path),
         speaker_repository=SqliteAccountRepository.speaker(speaker_path),
+        evolution_repository=SqliteEvolutionAccountRepository(tmp_path / "evolution.sqlite3"),
         voice_profiles=voice,
         archive_object_store=archive_objects,
         session_terminator=session_terminator,
     )
+
+
+@pytest.mark.asyncio
+async def test_export_fails_closed_when_deletion_has_begun(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "memoria.sqlite3"
+    MemoryStore(database_path).initialize()
+    speaker_path = tmp_path / "speaker.sqlite3"
+    SpeakerAuthority(speaker_path).initialize()
+    archive = LifeArchive.sqlite(database_path)
+    await archive.initialize()
+    evolution_path = tmp_path / "evolution.sqlite3"
+    EvolutionStore(evolution_path).mark_account_deleting("deleting-export")
+    governance = AccountDataGovernance(
+        memory_store=MemoryStore(database_path),
+        archive_repository=SqliteAccountRepository.archive(database_path),
+        speaker_repository=SqliteAccountRepository.speaker(speaker_path),
+        evolution_repository=SqliteEvolutionAccountRepository(evolution_path),
+        voice_profiles=LocalVoiceProfile(),
+        archive_object_store=TestingObjectStore(),
+        session_terminator=None,
+        account_read_guard=AccountOperationGate().sync_read,
+    )
+
+    with pytest.raises(AccountWriteBlockedError, match="account deletion is in progress"):
+        await governance.export_account("deleting-export")
     return (
         governance,
         store,
@@ -803,6 +892,7 @@ async def test_account_export_and_owner_deletion_cover_complete_legacy_lifecycle
         memory_store=store,
         archive_repository=SqliteAccountRepository.archive(store.path),
         speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
+        evolution_repository=SqliteEvolutionAccountRepository(tmp_path / "evolution.sqlite3"),
         voice_profiles=voice,
         legacy_registry=legacy,
         archive_object_store=archive_objects,
@@ -868,6 +958,7 @@ async def test_grantee_deletion_removes_shared_legacy_data_without_owner_core(
         memory_store=store,
         archive_repository=SqliteAccountRepository.archive(store.path),
         speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
+        evolution_repository=SqliteEvolutionAccountRepository(tmp_path / "evolution.sqlite3"),
         voice_profiles=voice,
         legacy_registry=legacy,
         archive_object_store=archive_objects,
@@ -920,6 +1011,7 @@ async def test_legacy_deletion_is_retried_and_rechecked_before_verified_empty(
         memory_store=store,
         archive_repository=SqliteAccountRepository.archive(store.path),
         speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
+        evolution_repository=SqliteEvolutionAccountRepository(tmp_path / "evolution.sqlite3"),
         voice_profiles=voice,
         legacy_registry=probe,  # type: ignore[arg-type]
         archive_object_store=archive_objects,
@@ -949,6 +1041,8 @@ async def test_provider_failure_keeps_account_retryable_until_external_asset_is_
     governance, store, archive, _speaker, _voice, provider, terminator, *_ = await _fixture(
         tmp_path
     )
+    evolution_path = tmp_path / "evolution.sqlite3"
+    _seed_evolution_signal(evolution_path, "account-governance")
     provider.delete_fails = True
 
     with pytest.raises(AccountDeletionIncompleteError):
@@ -965,6 +1059,31 @@ async def test_provider_failure_keeps_account_retryable_until_external_asset_is_
     assert (
         await archive.context(ContextQuery(account_id="account-governance", speaker_class="owner"))
     ).evidence
+
+    # The evolution tombstone is durable before the saga reaches this failed
+    # provider step. A fresh control-plane instance must reject private writes
+    # while a pending deletion remains, regardless of its in-memory gate.
+    restarted_evolution = EvolutionStore(evolution_path)
+    restarted_plane = EvolutionControlPlane(
+        restarted_evolution,
+        trusted_root_sha256="f" * 64,
+    )
+    existing_signal = restarted_evolution.get_signal("governance-evolution-signal")
+    with pytest.raises(AccountWriteBlockedError, match="account deletion"):
+        restarted_plane.append_signal(
+            replace(
+                existing_signal,
+                signal_id="late-private",
+                account_id="account-governance",
+            )
+        )
+    global_signal = replace(
+        existing_signal,
+        signal_id="late-global",
+        scope="global_redacted",
+        account_id=None,
+    )
+    assert restarted_plane.append_signal(global_signal).scope == "global_redacted"
 
     provider.delete_fails = False
     retried = await governance.delete_account("account-governance")
@@ -1014,6 +1133,7 @@ async def test_pending_deletion_resumes_after_process_restart(
         memory_store=store,
         archive_repository=SqliteAccountRepository.archive(store.path),
         speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
+        evolution_repository=SqliteEvolutionAccountRepository(tmp_path / "evolution.sqlite3"),
         voice_profiles=voice,
         archive_object_store=objects,
         session_terminator=terminator,
@@ -1022,6 +1142,49 @@ async def test_pending_deletion_resumes_after_process_restart(
     completed = await restarted.retry_pending_deletions()
 
     assert completed == 1
+    assert store.is_account_deleted(user_id="account-governance") is True
+
+
+@pytest.mark.asyncio
+async def test_evolution_backend_failure_is_checkpointed_and_retried(
+    tmp_path: Path,
+) -> None:
+    (
+        _governance,
+        store,
+        _archive,
+        _speaker,
+        voice,
+        _provider,
+        terminator,
+        objects,
+        _archive_reference,
+    ) = await _fixture(tmp_path)
+    evolution_path = tmp_path / "evolution.sqlite3"
+    _seed_evolution_signal(evolution_path, "account-governance")
+    evolution = FailingEvolutionDeleteRepository(SqliteEvolutionAccountRepository(evolution_path))
+    governance = AccountDataGovernance(
+        memory_store=store,
+        archive_repository=SqliteAccountRepository.archive(store.path),
+        speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
+        evolution_repository=evolution,  # type: ignore[arg-type]
+        voice_profiles=voice,
+        archive_object_store=objects,
+        session_terminator=terminator,
+    )
+
+    with pytest.raises(RuntimeError, match="evolution backend temporarily unavailable"):
+        await governance.delete_account("account-governance")
+
+    pending = store.get_account_deletion(user_id="account-governance")
+    assert pending is not None
+    assert pending["step"] == "speaker_rows_deleted"
+    assert pending["last_error"] == "RuntimeError"
+    assert await evolution._delegate.remaining_account_rows("account-governance")  # noqa: SLF001
+
+    assert await governance.retry_pending_deletions() == 1
+    assert evolution.delete_calls == 2
+    assert await evolution._delegate.remaining_account_rows("account-governance") == {}  # noqa: SLF001
     assert store.is_account_deleted(user_id="account-governance") is True
 
 
@@ -1038,6 +1201,7 @@ async def test_deletion_rechecks_every_projection_and_removes_a_late_archive_wri
         memory_store=store,
         archive_repository=late_archive,  # type: ignore[arg-type]
         speaker_repository=SqliteAccountRepository.speaker(tmp_path / "speakers.sqlite3"),
+        evolution_repository=SqliteEvolutionAccountRepository(tmp_path / "evolution.sqlite3"),
         voice_profiles=voice,
         archive_object_store=objects,
         session_terminator=terminator,

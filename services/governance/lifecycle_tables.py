@@ -1,4 +1,10 @@
-"""Single catalog for PostgreSQL account-scoped lifecycle tables."""
+"""Single catalog for PostgreSQL account-scoped lifecycle tables.
+
+Most tables carry ``account_id`` directly.  Evolution evidence is deliberately
+kept in a controller-only schema and the dependent audit rows inherit account
+ownership through their candidate or signal, so it is listed explicitly here
+instead of being discovered from a column scan.
+"""
 
 from __future__ import annotations
 
@@ -56,7 +62,29 @@ POSTGRES_PROJECTION_ACCOUNT_TABLES = (
     "memory_compile_receipts",
 )
 
+POSTGRES_EVOLUTION_ACCOUNT_TABLES = (
+    "evolution_learning_signals",
+    "evolution_candidates",
+    "evolution_validations",
+    "evolution_activation_events",
+    "evolution_lifecycle_events",
+    "evolution_sleep_signal_receipts",
+)
+
+# Control state is controller-owned but intentionally absent from account
+# lifecycle deletion because it never contains owner-private account rows.
+POSTGRES_EVOLUTION_CONTROLLER_TABLES = (
+    *POSTGRES_EVOLUTION_ACCOUNT_TABLES,
+    "evolution_control_state",
+    "evolution_account_deletion_fences",
+)
+
+# These tables have RLS for the privileged evolution controller, not the
+# application ``app.account_id`` contract audited by the account-scope probe.
+POSTGRES_CONTROLLER_ONLY_RLS_TABLES = POSTGRES_EVOLUTION_CONTROLLER_TABLES
+
 POSTGRES_ACCOUNT_LIFECYCLE_TABLES = (
     *POSTGRES_AUTHORITATIVE_ACCOUNT_TABLES,
     *POSTGRES_PROJECTION_ACCOUNT_TABLES,
+    *POSTGRES_EVOLUTION_ACCOUNT_TABLES,
 )

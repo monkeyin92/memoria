@@ -1,0 +1,173 @@
+"""Auditable offline self-evolution contracts for Memoria."""
+
+from services.evolution.account_fence import (
+    AccountReadGuard,
+    AccountWriteBlockedError,
+    AccountWriteGuard,
+)
+from services.evolution.curation import EvolutionControlPlane, SleepCycleReport, SleepLearningPolicy
+from services.evolution.diagnosis import (
+    CandidateGenerator,
+    FailureCluster,
+    aggregate_failure_clusters,
+)
+from services.evolution.domain import (
+    REQUIRED_VALIDATION_GATES,
+    ArtifactKind,
+    CandidateArtifact,
+    CandidateStatus,
+    EvidenceRef,
+    FenceSnapshot,
+    GateResult,
+    LayerVerdict,
+    LearningSignal,
+    SignalScope,
+    SpeakerSnapshot,
+    ValidationReport,
+    Verdict,
+)
+from services.evolution.evaluation import (
+    EvolutionEvaluationReport,
+    EvolutionMetrics,
+    EvolutionTask,
+    RuntimeControlPlaneMetrics,
+    RuntimeControlPlaneReport,
+    default_evolution_tasks,
+    evaluate_all_modes,
+    evaluate_runtime_control_plane_all_modes,
+    run_evolution_evaluation,
+    run_runtime_control_plane_evaluation,
+    runtime_control_plane_report_json,
+)
+from services.evolution.longitudinal_evaluation import (
+    ArmMetrics,
+    EvolutionHoldoutCase,
+    EvolutionHoldoutDataset,
+    EvolutionReleaseDecision,
+    EvolutionReleaseGate,
+    LongitudinalEvaluationReport,
+    LongitudinalObservation,
+    RecordedObservationAdapter,
+    decide_evolution_release,
+    load_longitudinal_dataset,
+    load_recorded_observation_bundle,
+    run_longitudinal_evaluation,
+)
+from services.evolution.postgres_store import PostgresEvolutionStore
+from services.evolution.receipt import (
+    EvolutionResolutionReceipt,
+    sign_resolution_receipt,
+    verify_resolution_receipt,
+)
+from services.evolution.release_policy import (
+    EvolutionReleasePolicy,
+    parse_runtime_prompt_families,
+)
+from services.evolution.replay import (
+    OfflineTrajectoryEvaluator,
+    OfflineTrajectoryReplayRequest,
+    OfflineTrajectoryReplayResult,
+    OfflineTrajectoryReplayWorker,
+)
+from services.evolution.resolver import EvolutionResolver, ResolvedEvolutionArtifact
+from services.evolution.runtime import EvolutionRuntimeCapture, pending_key
+from services.evolution.skill import SkillActivationObserver
+from services.evolution.store import (
+    MIN_STABLE_CANARY_OBSERVATIONS,
+    EvolutionConflictError,
+    EvolutionNotFoundError,
+    EvolutionStore,
+    EvolutionTransitionError,
+)
+from services.evolution.trajectory import (
+    CanonicalTrajectory,
+    CanonicalTrajectoryError,
+    EvaluatedToolAction,
+    TrajectoryAssessment,
+    TrajectoryReplayInput,
+    evaluation_signal_id,
+)
+from services.evolution.verifier import (
+    TrajectoryObservation,
+    VerificationReport,
+    verify_trajectory,
+)
+from services.evolution.worker import EvolutionSleepWorker
+
+__all__ = [
+    "ArtifactKind",
+    "AccountReadGuard",
+    "AccountWriteBlockedError",
+    "AccountWriteGuard",
+    "CandidateArtifact",
+    "CandidateStatus",
+    "CandidateGenerator",
+    "EvolutionConflictError",
+    "EvolutionControlPlane",
+    "EvolutionEvaluationReport",
+    "EvolutionMetrics",
+    "EvolutionNotFoundError",
+    "EvolutionStore",
+    "EvolutionTask",
+    "EvolutionTransitionError",
+    "RuntimeControlPlaneMetrics",
+    "RuntimeControlPlaneReport",
+    "EvolutionRuntimeCapture",
+    "EvolutionResolver",
+    "CanonicalTrajectory",
+    "CanonicalTrajectoryError",
+    "EvaluatedToolAction",
+    "OfflineTrajectoryEvaluator",
+    "OfflineTrajectoryReplayRequest",
+    "OfflineTrajectoryReplayResult",
+    "OfflineTrajectoryReplayWorker",
+    "PostgresEvolutionStore",
+    "EvidenceRef",
+    "FailureCluster",
+    "FenceSnapshot",
+    "GateResult",
+    "LayerVerdict",
+    "LearningSignal",
+    "MIN_STABLE_CANARY_OBSERVATIONS",
+    "REQUIRED_VALIDATION_GATES",
+    "ResolvedEvolutionArtifact",
+    "SignalScope",
+    "SkillActivationObserver",
+    "EvolutionSleepWorker",
+    "ArmMetrics",
+    "EvolutionHoldoutCase",
+    "EvolutionHoldoutDataset",
+    "EvolutionReleaseDecision",
+    "EvolutionReleaseGate",
+    "EvolutionReleasePolicy",
+    "EvolutionResolutionReceipt",
+    "LongitudinalEvaluationReport",
+    "LongitudinalObservation",
+    "RecordedObservationAdapter",
+    "decide_evolution_release",
+    "load_longitudinal_dataset",
+    "load_recorded_observation_bundle",
+    "run_longitudinal_evaluation",
+    "SpeakerSnapshot",
+    "SleepCycleReport",
+    "SleepLearningPolicy",
+    "TrajectoryObservation",
+    "TrajectoryAssessment",
+    "TrajectoryReplayInput",
+    "evaluation_signal_id",
+    "ValidationReport",
+    "Verdict",
+    "VerificationReport",
+    "verify_trajectory",
+    "aggregate_failure_clusters",
+    "default_evolution_tasks",
+    "evaluate_all_modes",
+    "evaluate_runtime_control_plane_all_modes",
+    "run_evolution_evaluation",
+    "run_runtime_control_plane_evaluation",
+    "runtime_control_plane_report_json",
+    "pending_key",
+    "parse_runtime_prompt_families",
+    "sign_resolution_receipt",
+    "verify_resolution_receipt",
+]

@@ -43,6 +43,7 @@ from services.control_api.app.memory_components import build_memory_embedder, bu
 from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import auth as auth_routes
 from services.control_api.app.routes import digital_self as digital_self_routes
+from services.control_api.app.routes import evolution as evolution_routes
 from services.control_api.app.routes import growth as growth_routes
 from services.control_api.app.routes import interaction as interaction_routes
 from services.control_api.app.routes import legacy as legacy_routes
@@ -71,9 +72,25 @@ from services.digital_self.domain import RegistryPort
 from services.digital_self.postgres_registry import PostgresDigitalSelfRegistry
 from services.digital_self.preview import SelfPreviewRegistry
 from services.digital_self.registry import DigitalSelfRegistry
+from services.evolution.account_fence import AccountWriteGuard as EvolutionAccountWriteGuard
+from services.evolution.account_repository import (
+    PostgresEvolutionAccountRepository,
+    SqliteEvolutionAccountRepository,
+)
+from services.evolution.curation import EvolutionControlPlane, SleepLearningPolicy
+from services.evolution.postgres_store import PostgresEvolutionStore
+from services.evolution.release_policy import (
+    EvolutionReleasePolicy,
+    parse_runtime_prompt_families,
+)
+from services.evolution.resolver import EvolutionResolver
+from services.evolution.runtime import EvolutionRuntimeCapture
+from services.evolution.store import EvolutionStore
+from services.evolution.worker import EvolutionSleepWorker
 from services.governance.account_data import (
     AccountDataGovernance,
     AccountDeletionWorker,
+    AccountRepository,
     PostgresAccountRepository,
     SqliteAccountRepository,
 )
@@ -377,6 +394,7 @@ def _account_data_governance(
     realtime_connections: RealtimeConnectionRegistry,
     account_operations: AccountOperationGate,
     legacy_registry: LegacyRegistryPort,
+    evolution_repository: AccountRepository,
 ) -> AccountDataGovernance:
     archive_url = settings.archive_database_url.get_secret_value()
     archive_repository = (
@@ -394,6 +412,7 @@ def _account_data_governance(
         memory_store=store,
         archive_repository=archive_repository,
         speaker_repository=speaker_repository,
+        evolution_repository=evolution_repository,
         voice_profiles=voice_profiles,
         legacy_registry=legacy_registry,
         archive_object_store=archive_object_store,
@@ -403,6 +422,32 @@ def _account_data_governance(
             close_room=LiveKitRoomCloser(settings),
         ),
         operation_blocker=account_operations,
+        account_read_guard=account_operations.sync_read,
+    )
+
+
+def _evolution_release_policy(settings: ControlSettings) -> EvolutionReleasePolicy:
+    return EvolutionReleasePolicy(
+        parse_runtime_prompt_families(settings.evolution_runtime_prompt_families)
+    )
+
+
+def _evolution_plane(
+    settings: ControlSettings,
+    store: EvolutionStore,
+    *,
+    account_write_guard: EvolutionAccountWriteGuard | None = None,
+) -> EvolutionControlPlane:
+    return EvolutionControlPlane(
+        store,
+        trusted_root_sha256=settings.evolution_trusted_root(),
+        policy=SleepLearningPolicy(
+            min_new_signals=settings.evolution_min_new_signals,
+            min_failure_support=settings.evolution_min_failure_support,
+            stale_after_days=settings.evolution_stale_after_days,
+        ),
+        release_policy=_evolution_release_policy(settings),
+        account_write_guard=account_write_guard,
     )
 
 
@@ -447,6 +492,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     postgres_self_model: PostgresSelfModelRegistry | None = None
     postgres_legacy: PostgresLegacyRegistry | None = None
     postgres_skills: PostgresSkillCatalog | None = None
+    postgres_evolution: PostgresEvolutionStore | None = None
     archive: LifeArchivePort
     memory_catalog: MemoryCatalogPort
     skill_catalog: SkillCatalogPort
@@ -503,6 +549,42 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.memory_catalog = memory_catalog
     app.state.skill_catalog = skill_catalog
     app.state.persona_engine = persona_engine
+    configured_evolution_url = settings.evolution_database_url.get_secret_value().strip()
+    if settings.environment == "production" and not configured_evolution_url:
+        # ``validate_production`` normally catches this first; keep the
+        # lifecycle fail-closed if a caller constructs settings directly.
+        raise ValueError("production requires MEMORIA_EVOLUTION_DATABASE_URL")
+    evolution_url = configured_evolution_url or archive_url
+    if evolution_url:
+        postgres_evolution = PostgresEvolutionStore(
+            evolution_url,
+            initialize_schema=settings.environment != "production",
+        )
+        await to_thread(postgres_evolution.initialize)
+        evolution_store: EvolutionStore = postgres_evolution
+    else:
+        evolution_store = EvolutionStore(settings.evolution_sqlite_path())
+    evolution_control_plane = _evolution_plane(
+        settings,
+        evolution_store,
+        account_write_guard=app.state.account_operations.sync_write,
+    )
+    app.state.evolution_store = evolution_store
+    app.state.evolution_control_plane = evolution_control_plane
+    app.state.evolution_runtime_capture = EvolutionRuntimeCapture(evolution_control_plane)
+    app.state.evolution_resolver = EvolutionResolver(
+        evolution_store,
+        trusted_root_sha256=settings.evolution_trusted_root(),
+        canary_percent=settings.evolution_canary_percent,
+        release_policy=_evolution_release_policy(settings),
+        account_read_guard=app.state.account_operations.sync_read,
+    )
+    evolution_sleep_worker = EvolutionSleepWorker(
+        evolution_control_plane,
+        interval_s=settings.evolution_sleep_interval_s,
+    )
+    evolution_sleep_worker.start()
+    app.state.evolution_sleep_worker = evolution_sleep_worker
     digital_self_registry: RegistryPort
     if archive_url:
         postgres_digital_self = PostgresDigitalSelfRegistry(archive_url)
@@ -592,6 +674,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         realtime_connections=app.state.realtime_connections,
         account_operations=app.state.account_operations,
         legacy_registry=legacy_registry,
+        evolution_repository=(
+            PostgresEvolutionAccountRepository(evolution_url)
+            if evolution_url
+            else SqliteEvolutionAccountRepository(settings.evolution_sqlite_path())
+        ),
     )
     deletion_worker = AccountDeletionWorker(app.state.account_data_governance)
     deletion_worker.start()
@@ -599,6 +686,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await evolution_sleep_worker.stop()
         await deletion_worker.stop()
         await compiler_worker.stop()
         await session_directory.close()
@@ -617,6 +705,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await postgres_catalog.close()
         if postgres_skills is not None:
             await postgres_skills.close()
+        if postgres_evolution is not None:
+            await to_thread(postgres_evolution.close)
         if postgres_archive is not None:
             await postgres_archive.close()
         if postgres_speaker is not None:
@@ -676,6 +766,22 @@ def create_app() -> FastAPI:
     app.state.self_preview_registry = SelfPreviewRegistry.sqlite(settings.memoria_db_path)
     app.state.self_model_registry = SelfModelRegistry.sqlite(settings.memoria_db_path)
     app.state.legacy_registry = LegacyRegistry.sqlite(settings.memoria_db_path)
+    evolution_store = EvolutionStore(settings.evolution_sqlite_path())
+    evolution_control_plane = _evolution_plane(
+        settings,
+        evolution_store,
+        account_write_guard=app.state.account_operations.sync_write,
+    )
+    app.state.evolution_store = evolution_store
+    app.state.evolution_control_plane = evolution_control_plane
+    app.state.evolution_runtime_capture = EvolutionRuntimeCapture(evolution_control_plane)
+    app.state.evolution_resolver = EvolutionResolver(
+        evolution_store,
+        trusted_root_sha256=settings.evolution_trusted_root(),
+        canary_percent=settings.evolution_canary_percent,
+        release_policy=_evolution_release_policy(settings),
+        account_read_guard=app.state.account_operations.sync_read,
+    )
     app.state.growth_reader = GrowthReader.sqlite(
         settings.memoria_db_path,
         self_model_registry=app.state.self_model_registry,
@@ -698,6 +804,7 @@ def create_app() -> FastAPI:
         realtime_connections=app.state.realtime_connections,
         account_operations=app.state.account_operations,
         legacy_registry=app.state.legacy_registry,
+        evolution_repository=SqliteEvolutionAccountRepository(settings.evolution_sqlite_path()),
     )
     app.add_middleware(
         CORSMiddleware,
@@ -719,6 +826,7 @@ def create_app() -> FastAPI:
     app.include_router(memory_routes.router)
     app.include_router(persona_routes.router)
     app.include_router(digital_self_routes.router)
+    app.include_router(evolution_routes.router)
     app.include_router(self_preview_routes.router)
     app.include_router(self_model_routes.router)
     app.include_router(growth_routes.router)

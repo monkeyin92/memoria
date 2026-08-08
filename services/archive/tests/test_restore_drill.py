@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -19,7 +20,9 @@ from services.archive.postgres_archive import PostgresLifeArchive
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 from services.archive.postgres_skill_catalog import PostgresSkillCatalog
 from services.archive.restore_drill import (
+    ControllerRLSRestoreReport,
     LocalObjectRestorePlan,
+    _controller_rls_metadata_failures,
     copy_and_verify_local_objects,
     rebuild_postgres_memory_projections,
     run_postgres_restore_drill,
@@ -32,6 +35,20 @@ from services.archive.skill_domain import (
     skill_input_sha256,
 )
 from services.archive.skill_executor import SkillExecutor
+from services.evolution.domain import (
+    CandidateArtifact,
+    FenceSnapshot,
+    GateResult,
+    LayerVerdict,
+    LearningSignal,
+    SpeakerSnapshot,
+    ValidationReport,
+)
+from services.evolution.postgres_store import PostgresEvolutionStore
+from services.governance.lifecycle_tables import (
+    POSTGRES_CONTROLLER_ONLY_RLS_TABLES,
+    POSTGRES_EVOLUTION_ACCOUNT_TABLES,
+)
 from services.self_model.domain import SourceInput
 from services.self_model.postgres_registry import PostgresSelfModelRegistry
 
@@ -57,6 +74,46 @@ class RebuildEmbedderStub:
 
     async def embed(self, text: str) -> tuple[float, ...]:
         return (1.0, 0.0) if "杭州" in text else (0.0, 1.0)
+
+
+def test_evolution_controller_rls_metadata_contract_includes_control_state() -> None:
+    schema = (Path(__file__).resolve().parents[2] / "evolution" / "postgres_schema.sql").read_text(
+        encoding="utf-8"
+    )
+    assert "evolution_control_state" in POSTGRES_CONTROLLER_ONLY_RLS_TABLES
+    assert "evolution_control_state" not in POSTGRES_EVOLUTION_ACCOUNT_TABLES
+    for table in POSTGRES_CONTROLLER_ONLY_RLS_TABLES:
+        assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;" in schema
+        assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY;" in schema
+    assert schema.count("TO memoria_evolution USING (true) WITH CHECK (true);") == len(
+        POSTGRES_CONTROLLER_ONLY_RLS_TABLES
+    )
+
+    rows = tuple(
+        {
+            "table_name": table,
+            "table_exists": True,
+            "rls_enabled": True,
+            "force_rls": True,
+            "controller_policy": True,
+        }
+        for table in POSTGRES_CONTROLLER_ONLY_RLS_TABLES
+    )
+    assert (
+        _controller_rls_metadata_failures(
+            rows,
+            controller_role={"rolsuper": False, "rolbypassrls": False},
+        )
+        == ()
+    )
+    missing_force = tuple(
+        {**row, "force_rls": False} if row["table_name"] == "evolution_control_state" else row
+        for row in rows
+    )
+    assert "evolution_control_state:force_rls_disabled" in _controller_rls_metadata_failures(
+        missing_force,
+        controller_role={"rolsuper": False, "rolbypassrls": False},
+    )
 
 
 @pytest.mark.asyncio
@@ -117,6 +174,146 @@ async def _database_command(admin_dsn: str, sql: str) -> None:
         await connection.close()
 
 
+async def _seed_evolution_restore_data(dsn: str, suffix: str) -> tuple[str, str]:
+    """Seed both account-private and redacted controller evidence for restore."""
+
+    store = PostgresEvolutionStore(dsn)
+    store.initialize()
+    now = datetime(2026, 7, 19, 12, 3, tzinfo=UTC)
+    owner_account = f"restore-evolution-owner-{suffix}"
+    owner_signal_id = f"restore-evolution-signal-owner-{suffix}"
+    global_signal_id = f"restore-evolution-signal-global-{suffix}"
+    owner_candidate_id = f"restore-evolution-candidate-owner-{suffix}"
+    global_candidate_id = f"restore-evolution-candidate-global-{suffix}"
+
+    owner_speaker = SpeakerSnapshot(
+        classification="owner",
+        reason_code="formal_owner",
+        history_eligible=True,
+        owner_projection_eligible=True,
+    )
+    global_speaker = SpeakerSnapshot(
+        classification="uncertain",
+        reason_code="redacted_global",
+        history_eligible=False,
+        owner_projection_eligible=False,
+    )
+
+    def signal(
+        signal_id: str,
+        *,
+        scope: str,
+        account_id: str | None,
+        speaker: SpeakerSnapshot,
+    ) -> LearningSignal:
+        event_id = f"restore-evolution-event-{signal_id}"
+        return LearningSignal(
+            signal_id=signal_id,
+            task_family="restore-evolution-contract",
+            scope=scope,  # type: ignore[arg-type]
+            account_id=account_id,
+            fence=FenceSnapshot(f"restore-evolution-session-{signal_id}", 1, 1, 0),
+            speaker=speaker,
+            source_event_ids=(event_id,),
+            result=LayerVerdict("fail", reason_codes=("restore_fixture",)),
+            process=LayerVerdict("pass"),
+            quality=LayerVerdict("fail", reason_codes=("restore_fixture",)),
+            environment_version="restore-evolution-v1",
+            failure_code="restore_fixture",
+            diagnosis="joint restore fixture",
+            created_at=now,
+        )
+
+    await asyncio.gather(
+        asyncio.to_thread(
+            store.append_signal,
+            signal(owner_signal_id, scope="owner_private", account_id=owner_account, speaker=owner_speaker),
+        ),
+        asyncio.to_thread(
+            store.append_signal,
+            signal(global_signal_id, scope="global_redacted", account_id=None, speaker=global_speaker),
+        ),
+    )
+    await asyncio.to_thread(
+        store.mark_signals_processed,
+        (owner_signal_id, global_signal_id),
+        processed_at=now,
+    )
+
+    def candidate(
+        candidate_id: str,
+        *,
+        scope: str,
+        account_id: str | None,
+        source_signal_id: str,
+    ) -> CandidateArtifact:
+        return CandidateArtifact(
+            candidate_id=candidate_id,
+            task_family="restore-evolution-contract",
+            kind="prompt",
+            scope=scope,  # type: ignore[arg-type]
+            account_id=account_id,
+            version=1,
+            payload={
+                "proposal": {
+                    "instruction": "restore fixture",
+                    "match_terms": ["restore fixture"],
+                }
+            },
+            source_signal_ids=(source_signal_id,),
+            expected_behavior="retain evolution evidence after restore",
+            regression_guards=("retention", "privacy"),
+            risk="low",
+            trusted_root_sha256="b" * 64,
+            created_at=now,
+            updated_at=now,
+        )
+
+    for artifact in (
+        candidate(
+            owner_candidate_id,
+            scope="owner_private",
+            account_id=owner_account,
+            source_signal_id=owner_signal_id,
+        ),
+        candidate(
+            global_candidate_id,
+            scope="global_redacted",
+            account_id=None,
+            source_signal_id=global_signal_id,
+        ),
+    ):
+        await asyncio.to_thread(store.create_candidate, artifact)
+        validation = ValidationReport(
+            validation_id=f"restore-evolution-validation-{artifact.candidate_id}",
+            candidate_id=artifact.candidate_id,
+            gates=tuple(
+                GateResult(name, True, (f"restore-evolution-{name}",))
+                for name in ("failure_replay", "retention", "transfer", "safety")
+            ),
+            created_at=now,
+        )
+        await asyncio.to_thread(store.record_validation, validation)
+        await asyncio.to_thread(store.transition_candidate, artifact.candidate_id, "validated")
+        await asyncio.to_thread(store.transition_candidate, artifact.candidate_id, "canary")
+        await asyncio.to_thread(
+            store.record_activation,
+            candidate_id=artifact.candidate_id,
+            task_id=f"restore-evolution-task-{artifact.candidate_id}",
+            activated=True,
+            adhered=True,
+            outcome_passed=True,
+            evidence_event_id=f"restore-evolution-activation-{artifact.candidate_id}",
+        )
+    await asyncio.to_thread(
+        store.set_control_state,
+        f"restore-evolution-control-{suffix}",
+        {"candidate_id": owner_candidate_id},
+        updated_at=now,
+    )
+    return owner_candidate_id, global_candidate_id
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     not os.getenv("MEMORIA_TEST_POSTGRES_DSN") or not os.getenv("MEMORIA_TEST_POSTGRES_CONTAINER"),
@@ -140,10 +337,30 @@ async def test_postgres_restore_drill_rebuilds_reviewed_projection_and_rls(
     catalog = PostgresMemoryCatalog(source_dsn, extractor=RuleBasedMemoryExtractor())
     skills = PostgresSkillCatalog(source_dsn)
     skill_run_id = ""
+    evolution_candidate_ids: tuple[str, str] = ("", "")
     try:
+        await _database_command(
+            admin_dsn,
+            """
+            DO $evolution_role$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_roles WHERE rolname = 'memoria_evolution'
+                ) THEN
+                    CREATE ROLE memoria_evolution
+                        NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+                END IF;
+            END
+            $evolution_role$
+            """,
+        )
         await archive.initialize()
         await catalog.initialize()
         await skills.initialize()
+        evolution_candidate_ids = await _seed_evolution_restore_data(
+            source_dsn,
+            suffix,
+        )
         for account_id, event_id, text in (
             ("restore-owner-a", "restore-event-a", "我们家的家训是说到做到。"),
             ("restore-owner-b", "restore-event-b", "我做项目时先确认目标。"),
@@ -417,7 +634,48 @@ async def test_postgres_restore_drill_rebuilds_reviewed_projection_and_rls(
         assert report.objects["archive"].object_count == 1
         assert archive_key not in json.dumps(report.as_dict(), ensure_ascii=False)
         assert report.rls.passed is True
+        assert isinstance(report.rls.controller_only, ControllerRLSRestoreReport)
+        assert report.rls.controller_only.passed is True
+        assert report.rls.controller_only.tables_checked == len(
+            POSTGRES_CONTROLLER_ONLY_RLS_TABLES
+        )
+        assert report.rls.controller_only.unauthorized_roles_checked == 2
+        assert report.rls.controller_only.visibility_probes == 2 * len(
+            POSTGRES_CONTROLLER_ONLY_RLS_TABLES
+        )
+        assert report.rls.controller_only.nonempty_tables_probed > 0
+        assert report.rls.controller_only.failures == ()
         assert all(count == 0 for count in report.orphan_counts.values())
+        assert all(
+            report.source.counts.get(table, 0) == report.restored.counts.get(table, 0) > 0
+            for table in POSTGRES_EVOLUTION_ACCOUNT_TABLES
+        )
+        restored_evolution = await asyncpg.connect(restore_dsn)
+        try:
+            await restored_evolution.execute("SET ROLE memoria_evolution")
+            assert (
+                await restored_evolution.fetchval(
+                    "SELECT count(*) FROM evolution_control_state"
+                )
+                >= 1
+            )
+            await restored_evolution.execute("RESET ROLE")
+            assert (
+                await restored_evolution.fetchval(
+                    "SELECT count(*) FROM evolution_candidates WHERE candidate_id = ANY($1::text[])",
+                    list(evolution_candidate_ids),
+                )
+                == 2
+            )
+            assert (
+                await restored_evolution.fetchval(
+                    "SELECT count(*) FROM evolution_control_state WHERE state_key = $1",
+                    f"restore-evolution-control-{suffix}",
+                )
+                == 1
+            )
+        finally:
+            await restored_evolution.close()
         assert [item.title for item in result.items] == ["我们家的家训是答应的事一定做到。"]
         assert [(item.kind, item.status) for item in skill_result.items] == [("skill", "confirmed")]
         assert restored_run.status == "succeeded"

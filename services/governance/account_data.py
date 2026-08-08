@@ -10,6 +10,7 @@ import re
 import sqlite3
 import uuid
 from collections.abc import Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -20,6 +21,7 @@ import asyncpg
 
 from services.archive.object_store import ObjectRef, ObjectStore
 from services.control_api.app.database import MemoryStore
+from services.evolution.account_fence import AccountReadGuard, AccountWriteBlockedError
 from services.legacy.domain import LegacyAccountExport, LegacyRegistryPort
 from services.voice_profile.domain import VoiceProfilePort
 
@@ -275,8 +277,9 @@ _DELETION_STEP_RANK = {
     "archive_objects_deleted": 4,
     "archive_rows_deleted": 5,
     "speaker_rows_deleted": 6,
-    "verified_empty": 7,
-    "completed": 8,
+    "evolution_rows_deleted": 7,
+    "verified_empty": 8,
+    "completed": 9,
 }
 
 
@@ -751,49 +754,62 @@ class AccountDataGovernance:
         memory_store: MemoryStore,
         archive_repository: AccountRepository,
         speaker_repository: AccountRepository,
+        evolution_repository: AccountRepository,
         voice_profiles: VoiceProfilePort,
         legacy_registry: LegacyRegistryPort | None = None,
         archive_object_store: ObjectStore | None = None,
         session_terminator: AccountSessionTerminator | None = None,
         operation_blocker: AccountOperationBlocker | None = None,
+        account_read_guard: AccountReadGuard | None = None,
     ) -> None:
         self._memory_store = memory_store
         self._archive_repository = archive_repository
         self._speaker_repository = speaker_repository
+        self._evolution_repository = evolution_repository
         self._voice_profiles = voice_profiles
         self._legacy_registry = legacy_registry
         self._archive_object_store = archive_object_store
         self._session_terminator = session_terminator
         self._operation_blocker = operation_blocker
+        self._account_read_guard = account_read_guard or _unguarded_read
         # ponytail: deletion is rare; one lock avoids a per-account lock lifecycle.
         self._deletion_lock = asyncio.Lock()
 
     async def export_account(self, account_id: str) -> dict[str, Any]:
-        control, archive, speaker, legacy = await asyncio.gather(
-            asyncio.to_thread(self._memory_store.export_account_data, user_id=account_id),
-            self._archive_repository.export_account(account_id),
-            self._speaker_repository.export_account(account_id),
-            self._export_legacy(account_id),
-        )
-        body: dict[str, Any] = {
-            "format_version": 1,
-            "generated_at": datetime.now(UTC).isoformat(),
-            "account_id": account_id,
-            "sections": {
-                "conversation": control,
-                "archive": archive,
-                "speaker": speaker,
-                "legacy": legacy,
-            },
-        }
-        canonical = json.dumps(
-            body,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        body["manifest_sha256"] = hashlib.sha256(canonical).hexdigest()
-        return body
+        # Export contains the same owner-private material protected by the
+        # runtime read lease. Keep the snapshot and manifest construction in
+        # one lease so deletion cannot race a partially exported account.
+        with self._account_read_guard(account_id):
+            deletion_check = getattr(self._evolution_repository, "is_account_deleting", None)
+            if deletion_check is not None and await deletion_check(account_id):
+                raise AccountWriteBlockedError("account deletion is in progress")
+            control, archive, speaker, evolution, legacy = await asyncio.gather(
+                asyncio.to_thread(self._memory_store.export_account_data, user_id=account_id),
+                self._archive_repository.export_account(account_id),
+                self._speaker_repository.export_account(account_id),
+                self._evolution_repository.export_account(account_id),
+                self._export_legacy(account_id),
+            )
+            body: dict[str, Any] = {
+                "format_version": 1,
+                "generated_at": datetime.now(UTC).isoformat(),
+                "account_id": account_id,
+                "sections": {
+                    "conversation": control,
+                    "archive": archive,
+                    "speaker": speaker,
+                    "evolution": evolution,
+                    "legacy": legacy,
+                },
+            }
+            canonical = json.dumps(
+                body,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            body["manifest_sha256"] = hashlib.sha256(canonical).hexdigest()
+            return body
 
     async def _export_legacy(self, account_id: str) -> dict[str, Any]:
         return _portable_legacy_export(await self._legacy_snapshot(account_id))
@@ -827,9 +843,15 @@ class AccountDataGovernance:
         return completed
 
     async def _delete_account(self, account_id: str) -> dict[str, Any]:
+        started_at = datetime.now(UTC).isoformat()
+        # Set the durable evolution tombstone before the primary account saga
+        # becomes visible. A fresh process/worker then fails closed even if it
+        # has no in-memory AccountOperationGate state.
+        mark_deleting = getattr(self._evolution_repository, "mark_account_deleting", None)
+        if mark_deleting is not None:
+            await mark_deleting(account_id=account_id, started_at=started_at)
         if self._operation_blocker is not None:
             await self._operation_blocker.block_account(account_id)
-        started_at = datetime.now(UTC).isoformat()
         deletion = await asyncio.to_thread(
             self._memory_store.begin_account_deletion,
             user_id=account_id,
@@ -928,13 +950,28 @@ class AccountDataGovernance:
                 )
                 await checkpoint("speaker_rows_deleted")
 
+            if _DELETION_STEP_RANK[step] < _DELETION_STEP_RANK["evolution_rows_deleted"]:
+                evolution_counts = await self._evolution_repository.delete_account(account_id)
+                progress.update(
+                    {f"evolution.{key}": value for key, value in evolution_counts.items()}
+                )
+                await checkpoint("evolution_rows_deleted")
+
             # Catch any asset or projection that arrived just before the deleting fence.
-            late_profiles, late_references, late_archive_rows, late_speaker_rows, late_legacy = (
+            (
+                late_profiles,
+                late_references,
+                late_archive_rows,
+                late_speaker_rows,
+                late_evolution_rows,
+                late_legacy,
+            ) = (
                 await asyncio.gather(
                     self._voice_profiles.profiles(account_id=account_id),
                     self._archive_repository.object_references(account_id),
                     self._archive_repository.remaining_account_rows(account_id),
                     self._speaker_repository.remaining_account_rows(account_id),
+                    self._evolution_repository.remaining_account_rows(account_id),
                     self._legacy_snapshot(account_id),
                 )
             )
@@ -943,6 +980,7 @@ class AccountDataGovernance:
                 or late_references
                 or late_archive_rows
                 or late_speaker_rows
+                or late_evolution_rows
                 or _legacy_export_has_rows(late_legacy)
             ):
                 progress["voice.profiles"] += await delete_voice_profiles()
@@ -952,14 +990,23 @@ class AccountDataGovernance:
                 for prefix, counts in (
                     ("archive", await self._archive_repository.delete_account(account_id)),
                     ("speaker", await self._speaker_repository.delete_account(account_id)),
+                    ("evolution", await self._evolution_repository.delete_account(account_id)),
                 ):
                     for key, value in counts.items():
                         progress[f"{prefix}.{key}"] = progress.get(f"{prefix}.{key}", 0) + value
-            profiles, references, archive_rows, speaker_rows, legacy_rows = await asyncio.gather(
+            (
+                profiles,
+                references,
+                archive_rows,
+                speaker_rows,
+                evolution_rows,
+                legacy_rows,
+            ) = await asyncio.gather(
                 self._voice_profiles.profiles(account_id=account_id),
                 self._archive_repository.object_references(account_id),
                 self._archive_repository.remaining_account_rows(account_id),
                 self._speaker_repository.remaining_account_rows(account_id),
+                self._evolution_repository.remaining_account_rows(account_id),
                 self._legacy_snapshot(account_id),
             )
             if (
@@ -967,6 +1014,7 @@ class AccountDataGovernance:
                 or references
                 or archive_rows
                 or speaker_rows
+                or evolution_rows
                 or _legacy_export_has_rows(legacy_rows)
             ):
                 raise AccountDeletionIncompleteError(
@@ -1020,3 +1068,8 @@ def _portable_legacy_export(value: LegacyAccountExport) -> dict[str, Any]:
         "shell_turns": portable(value.shell_turns),
         "audit_events": portable(value.audit_events),
     }
+
+
+def _unguarded_read(account_id: str) -> AbstractContextManager[None]:
+    del account_id
+    return nullcontext()

@@ -229,6 +229,7 @@ async def test_actual_heard_assistant_binds_bounded_response_provenance_to_exact
         "epistemic_status": "fact",
         "epistemic_reason_codes": ["exact_owner_source"],
         "disclosures": [],
+        "evolution_artifacts": [],
     }
     runtime.set_evidence_publisher(capture)
 

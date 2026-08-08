@@ -25,6 +25,7 @@ from services.archive.domain import (
 from services.archive.object_store import ObjectRef
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.common.companions import designed_voice_speaker_sha256
+from services.common.redaction import redact_pii
 from services.control_api.app.main import create_app
 from services.control_api.app.routes.archive import (
     ResponseProvenanceCreate,
@@ -38,6 +39,7 @@ from services.digital_self.domain import (
     RelationshipProfileManifestEntry,
 )
 from services.digital_self.response_planner import PLANNER_POLICY_VERSION
+from services.evolution.domain import CandidateArtifact, GateResult, ValidationReport
 from services.legacy.domain import (
     LegacyAccessDeniedError,
     LegacyAccessSnapshot,
@@ -618,6 +620,275 @@ async def test_account_can_append_and_read_an_idempotent_evidence_event(
     assert duplicate.status_code == 200
     assert duplicate.json()["duplicate"] is True
     assert [item["event_id"] for item in timeline.json()["items"]] == ["event-api-001"]
+
+
+@pytest.mark.asyncio
+async def test_canonical_session_pair_keeps_actual_heard_as_delivery_telemetry_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {
+        "X-Memoria-Internal-Token": "test-internal-archive-token",
+        "X-Memoria-Evolution-Protocol": "v1",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "evolution-owner", "password": "safe-password"},
+            )
+        ).json()
+        bearer = {"Authorization": f"Bearer {identity['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=bearer, json={})).json()
+        occurred_at = datetime.now(UTC).isoformat()
+        user_event = {
+            "event_id": "evolution-user-event",
+            "session_id": session["session_id"],
+            "event_type": "speech.utterance_finalized",
+            "occurred_at": occurred_at,
+            "speaker_class": "owner",
+            "source": "funasr.authoritative_final",
+            "turn_id": 1,
+            "generation_id": 1,
+            "tool_epoch": 0,
+            "payload": {"text": "明天南京天气如何？", "speaker_reason_code": "formal_owner"},
+        }
+        assistant_event = {
+            "event_id": "evolution-assistant-event",
+            "session_id": session["session_id"],
+            "event_type": "assistant.playout_stopped",
+            "occurred_at": occurred_at,
+            "speaker_class": "assistant",
+            "source": "generation_fence.actual_heard",
+            "turn_id": 1,
+            "generation_id": 1,
+            "tool_epoch": 0,
+            "payload": {
+                "text": "明天有雨。",
+                "actual_heard": True,
+                "evolution_observation": {
+                    "task_family": "weather",
+                    "task_completed": True,
+                    "quality_dimensions": {"factuality": "pass"},
+                },
+            },
+        }
+        user = await client.post(
+            "/v1/archive/session-events", headers=internal, json=user_event
+        )
+        assistant = await client.post(
+            "/v1/archive/session-events", headers=internal, json=assistant_event
+        )
+        duplicate = await client.post(
+            "/v1/archive/session-events", headers=internal, json=assistant_event
+        )
+
+    signals = app.state.evolution_store.list_signals()
+    assert (user.status_code, assistant.status_code, duplicate.status_code) == (201, 201, 200)
+    # A completed playout is only delivery evidence.  It must not become a
+    # task-success or failure signal until an offline evaluator replays the
+    # canonical pair through the separate evolution endpoint/worker.
+    assert signals == ()
+    stored_assistant = await app.state.life_archive.event(
+        account_id=identity["user_id"],
+        event_id="evolution-assistant-event",
+    )
+    assert stored_assistant is not None
+    assert "evolution_observation" not in stored_assistant.payload
+
+
+@pytest.mark.asyncio
+async def test_archive_accepts_only_the_exact_runtime_evolution_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {
+        "X-Memoria-Internal-Token": "test-internal-archive-token",
+        "X-Memoria-Evolution-Protocol": "v1",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "evolution-provenance-owner", "password": "safe-password"},
+            )
+        ).json()
+        bearer = {"Authorization": f"Bearer {identity['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=bearer, json={})).json()
+        now = datetime.now(UTC)
+        candidate = CandidateArtifact(
+            candidate_id="archive-evolution-v1",
+            task_family="weather",
+            kind="prompt",
+            scope="owner_private",
+            account_id=identity["user_id"],
+            version=1,
+            payload={
+                "proposal": {
+                    "instruction": "回答天气时使用用户请求的目标日期。",
+                    "match_terms": ["天气"],
+                }
+            },
+            source_signal_ids=("archive-failure-a", "archive-failure-b"),
+            expected_behavior="use target date",
+            regression_guards=("privacy_leakage_zero", "retention"),
+            risk="low",
+            trusted_root_sha256=app.state.settings.evolution_trusted_root(),
+            created_at=now,
+            updated_at=now,
+        )
+        store = app.state.evolution_store
+        store.create_candidate(candidate)
+        store.record_validation(
+            ValidationReport(
+                validation_id="archive-evolution-validation",
+                candidate_id=candidate.candidate_id,
+                gates=tuple(
+                    GateResult(name, True, (name,))
+                    for name in ("failure_replay", "retention", "transfer", "safety")
+                ),
+            )
+        )
+        store.transition_candidate(candidate.candidate_id, "validated")
+        store.transition_candidate(candidate.candidate_id, "canary")
+        for index in range(3):
+            store.record_activation(
+                candidate_id=candidate.candidate_id,
+                task_id=f"archive-canary-{index}",
+                activated=True,
+                adhered=True,
+                outcome_passed=True,
+                evidence_event_id=f"archive-canary-event-{index}",
+            )
+        candidate = store.transition_candidate(candidate.candidate_id, "stable")
+        fence = {
+            "session_id": session["session_id"],
+            "turn_id": 40,
+            "generation_id": 3,
+            "tool_epoch": 1,
+        }
+        query = "我的手机号是13812345678，南京明天天气如何？"
+        archived_query = redact_pii(query)
+        plan = await client.post(
+            "/v1/interaction/response-plan",
+            headers=internal,
+            json={
+                "session_id": session["session_id"],
+                "query": query,
+                "fence": fence,
+                "speaker_decision": {
+                    "classification": "owner",
+                    "reason_code": "formal_owner",
+                    "model_version": "campplus-test",
+                    "profile_id": "owner-profile",
+                    "template_version": 1,
+                },
+            },
+        )
+        # Archive validation is bound to the generation snapshot. A reviewed
+        # candidate can be retired while the already planned audio is playing.
+        store.transition_candidate(candidate.candidate_id, "retired")
+        user = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "archive-evolution-user",
+                **fence,
+                "event_type": "speech.utterance_finalized",
+                "occurred_at": now.isoformat(),
+                "speaker_class": "owner",
+                "source": "funasr.authoritative_final",
+                "payload": {
+                    "text": archived_query,
+                    "speaker_reason_code": "formal_owner",
+                    "speaker_model_version": "campplus-test",
+                    "speaker_profile_id": "owner-profile",
+                    "speaker_template_version": 1,
+                },
+            },
+        )
+        assert plan.status_code == 200
+        assert user.status_code == 201
+        plan_payload = plan.json()
+        provenance = {
+            **plan_payload["provenance"],
+            "fence": fence,
+            "llm_provider": "qwen",
+            "llm_model": "qwen-plus",
+            "tts_provider": None,
+            "tts_model": None,
+        }
+        forged_provenance = dict(provenance)
+        forged_provenance["evolution_artifacts"] = [
+            {
+                **provenance["evolution_artifacts"][0],
+                "artifact_hash": "0" * 64,
+            }
+        ]
+        assistant_base = {
+            **fence,
+            "event_type": "assistant.playout_stopped",
+            "occurred_at": now.isoformat(),
+            "speaker_class": "assistant",
+            "source": "generation_fence.actual_heard",
+        }
+        forged = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "archive-evolution-forged",
+                **assistant_base,
+                "payload": {
+                    "text": "明天有雨。",
+                    "actual_heard": True,
+                    "response_provenance": forged_provenance,
+                },
+            },
+        )
+        accepted = await client.post(
+            "/v1/archive/session-events",
+            headers=internal,
+            json={
+                "event_id": "archive-evolution-assistant",
+                **assistant_base,
+                "payload": {
+                    "text": "明天有雨。",
+                    "actual_heard": True,
+                    "response_provenance": provenance,
+                },
+            },
+        )
+
+    assert plan_payload["provenance"]["evolution_artifacts"] == [
+        {
+            "candidate_id": candidate.candidate_id,
+            "version": candidate.version,
+            "kind": "prompt",
+            "status": "stable",
+            "artifact_hash": candidate.artifact_hash,
+        }
+    ]
+    assert plan_payload["provenance"]["evolution_receipt"]["version"] == (
+        "evolution-resolution-v1"
+    )
+    assert forged.status_code == 409
+    assert forged.json()["detail"] == {"code": "response_provenance_evolution_invalid"}
+    assert accepted.status_code == 201
+    stored = await app.state.life_archive.event(
+        account_id=identity["user_id"],
+        event_id="archive-evolution-assistant",
+    )
+    assert stored is not None
+    assert stored.payload["response_provenance"]["evolution_artifacts"] == plan_payload[
+        "provenance"
+    ]["evolution_artifacts"]
+    assert stored.payload["response_provenance"]["evolution_receipt"] == plan_payload[
+        "provenance"
+    ]["evolution_receipt"]
 
 
 @pytest.mark.asyncio

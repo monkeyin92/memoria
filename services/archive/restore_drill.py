@@ -24,14 +24,22 @@ from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.object_store import EncryptedLocalObjectStore, ObjectRef
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 from services.archive.postgres_skill_catalog import PostgresSkillCatalog
+from services.evolution.postgres_store import PostgresEvolutionStore
 from services.governance.lifecycle_tables import (
     POSTGRES_AUTHORITATIVE_ACCOUNT_TABLES,
+    POSTGRES_CONTROLLER_ONLY_RLS_TABLES,
     POSTGRES_PROJECTION_ACCOUNT_TABLES,
 )
 
 _DATABASE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
-_AUTHORITATIVE_TABLES = POSTGRES_AUTHORITATIVE_ACCOUNT_TABLES
+_EVOLUTION_CONTROLLER_ROLE = "memoria_evolution"
+# Evolution evidence has inherited account ownership but is stored behind a
+# separate controller-only RLS contract; the restore snapshot must still cover
+# it (including control state and deletion fences).
+_AUTHORITATIVE_TABLES = tuple(
+    dict.fromkeys((*POSTGRES_AUTHORITATIVE_ACCOUNT_TABLES, *POSTGRES_CONTROLLER_ONLY_RLS_TABLES))
+)
 _PROJECTION_TABLES = POSTGRES_PROJECTION_ACCOUNT_TABLES
 _ORPHAN_QUERIES: Mapping[str, tuple[tuple[str, ...], str]] = {
     "archive_blobs_without_event": (
@@ -243,10 +251,21 @@ class ProjectionRebuildReport:
 
 
 @dataclass(frozen=True, slots=True)
+class ControllerRLSRestoreReport:
+    passed: bool
+    tables_checked: int
+    unauthorized_roles_checked: int
+    visibility_probes: int
+    nonempty_tables_probed: int
+    failures: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class RLSRestoreReport:
     passed: bool
     tables_checked: int
     account_scopes_checked: int
+    controller_only: ControllerRLSRestoreReport
     failures: tuple[str, ...] = ()
 
 
@@ -681,11 +700,113 @@ async def postgres_orphan_counts(dsn: str) -> dict[str, int]:
         await connection.close()
 
 
+def _controller_rls_metadata_failures(
+    rows: Iterable[Mapping[str, object]],
+    *,
+    controller_role: Mapping[str, object] | None,
+) -> tuple[str, ...]:
+    """Validate the controller-only RLS contract from PostgreSQL catalog rows."""
+
+    failures: list[str] = []
+    if controller_role is None:
+        failures.append(f"{_EVOLUTION_CONTROLLER_ROLE}:role_missing")
+    else:
+        if bool(controller_role["rolsuper"]):
+            failures.append(f"{_EVOLUTION_CONTROLLER_ROLE}:superuser")
+        if bool(controller_role["rolbypassrls"]):
+            failures.append(f"{_EVOLUTION_CONTROLLER_ROLE}:bypassrls")
+
+    by_table = {str(row["table_name"]): row for row in rows}
+    for table in POSTGRES_CONTROLLER_ONLY_RLS_TABLES:
+        row = by_table.get(table)
+        if row is None or not bool(row["table_exists"]):
+            failures.append(f"{table}:missing")
+            continue
+        if not bool(row["rls_enabled"]):
+            failures.append(f"{table}:rls_disabled")
+        if not bool(row["force_rls"]):
+            failures.append(f"{table}:force_rls_disabled")
+        if not bool(row["controller_policy"]):
+            failures.append(f"{table}:{_EVOLUTION_CONTROLLER_ROLE}_policy_missing")
+    return tuple(failures)
+
+
 async def verify_postgres_rls(dsn: str) -> RLSRestoreReport:
     connection = await asyncpg.connect(dsn)
-    role = f"memoria_restore_audit_{os.urandom(6).hex()}"
-    created = False
+    account_role = f"memoria_restore_app_probe_{os.urandom(6).hex()}"
+    audit_role = f"memoria_restore_audit_probe_{os.urandom(6).hex()}"
+    created_roles: list[str] = []
     try:
+        current_role = await connection.fetchrow(
+            """
+            SELECT rolsuper, rolbypassrls
+            FROM pg_roles WHERE rolname = current_user
+            """
+        )
+        if current_role is None or not (
+            bool(current_role["rolsuper"]) or bool(current_role["rolbypassrls"])
+        ):
+            raise PermissionError("RLS restore audit requires a BYPASSRLS database role")
+
+        controller_role = await connection.fetchrow(
+            """
+            SELECT rolsuper, rolbypassrls
+            FROM pg_roles WHERE rolname = $1
+            """,
+            _EVOLUTION_CONTROLLER_ROLE,
+        )
+        controller_metadata_rows = await connection.fetch(
+            """
+            WITH expected(table_name) AS (
+                SELECT unnest($1::text[])
+            )
+            SELECT expected.table_name,
+                   class.oid IS NOT NULL AS table_exists,
+                   COALESCE(class.relrowsecurity, false) AS rls_enabled,
+                   COALESCE(class.relforcerowsecurity, false) AS force_rls,
+                   EXISTS (
+                       SELECT 1
+                       FROM pg_policy policy
+                       JOIN pg_roles policy_role
+                         ON policy_role.oid = ANY(policy.polroles)
+                       WHERE policy.polrelid = class.oid
+                         AND policy_role.rolname = $2
+                         AND policy.polcmd = '*'
+                         AND policy.polqual IS NOT NULL
+                         AND policy.polwithcheck IS NOT NULL
+                         AND pg_get_expr(policy.polqual, policy.polrelid) = 'true'
+                         AND pg_get_expr(policy.polwithcheck, policy.polrelid) = 'true'
+                   ) AS controller_policy
+            FROM expected
+            LEFT JOIN pg_namespace namespace
+              ON namespace.nspname = 'public'
+            LEFT JOIN pg_class class
+              ON class.relnamespace = namespace.oid
+             AND class.relname = expected.table_name
+             AND class.relkind IN ('r', 'p')
+            ORDER BY expected.table_name
+            """,
+            list(POSTGRES_CONTROLLER_ONLY_RLS_TABLES),
+            _EVOLUTION_CONTROLLER_ROLE,
+        )
+        controller_failures = list(
+            _controller_rls_metadata_failures(
+                (dict(row) for row in controller_metadata_rows),
+                controller_role=dict(controller_role) if controller_role is not None else None,
+            )
+        )
+        controller_tables = tuple(
+            str(row["table_name"])
+            for row in controller_metadata_rows
+            if bool(row["table_exists"])
+        )
+        controller_counts = {
+            table: int(
+                await connection.fetchval(f"SELECT count(*) FROM {_quote_identifier(table)}")
+            )
+            for table in controller_tables
+        }
+
         rows = await connection.fetch(
             """
             SELECT DISTINCT class.relname
@@ -697,8 +818,10 @@ async def verify_postgres_rls(dsn: str) -> RLSRestoreReport:
               AND class.relrowsecurity
               AND attribute.attname = 'account_id'
               AND NOT attribute.attisdropped
+              AND class.relname <> ALL($1::text[])
             ORDER BY class.relname
-            """
+            """,
+            list(POSTGRES_CONTROLLER_ONLY_RLS_TABLES),
         )
         tables = tuple(str(row["relname"]) for row in rows)
         expected: dict[str, tuple[tuple[str, int], ...]] = {}
@@ -714,19 +837,28 @@ async def verify_postgres_rls(dsn: str) -> RLSRestoreReport:
                 (str(row["account_id"]), int(row["row_count"])) for row in account_rows
             )
 
-        await connection.execute(
-            f"CREATE ROLE {_quote_identifier(role)} NOLOGIN NOSUPERUSER NOBYPASSRLS"
-        )
-        created = True
-        await connection.execute(f"GRANT USAGE ON SCHEMA public TO {_quote_identifier(role)}")
+        for probe_role in (account_role, audit_role):
+            await connection.execute(
+                f"CREATE ROLE {_quote_identifier(probe_role)} NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT"
+            )
+            created_roles.append(probe_role)
+            await connection.execute(
+                f"GRANT USAGE ON SCHEMA public TO {_quote_identifier(probe_role)}"
+            )
         for table in tables:
             await connection.execute(
-                f"GRANT SELECT ON TABLE {_quote_identifier(table)} TO {_quote_identifier(role)}"
+                f"GRANT SELECT ON TABLE {_quote_identifier(table)} TO {_quote_identifier(account_role)}"
             )
-        await connection.execute(f"SET ROLE {_quote_identifier(role)}")
-        passed = True
-        failures: list[str] = []
+        for table in controller_tables:
+            for probe_role in (account_role, audit_role):
+                await connection.execute(
+                    f"GRANT SELECT ON TABLE {_quote_identifier(table)} TO {_quote_identifier(probe_role)}"
+                )
+
+        account_passed = True
+        account_failures: list[str] = []
         scopes_checked = 0
+        await connection.execute(f"SET ROLE {_quote_identifier(account_role)}")
         for table in tables:
             await connection.execute(
                 "SELECT set_config('app.account_id', $1, false)",
@@ -736,8 +868,8 @@ async def verify_postgres_rls(dsn: str) -> RLSRestoreReport:
                 await connection.fetchval(f"SELECT count(*) FROM {_quote_identifier(table)}")
             )
             if visible != 0:
-                passed = False
-                failures.append(f"{table}:unscoped_visible")
+                account_passed = False
+                account_failures.append(f"{table}:unscoped_visible")
             for scope_index, (account_id, expected_count) in enumerate(expected[table]):
                 await connection.execute(
                     "SELECT set_config('app.account_id', $1, false)", account_id
@@ -752,23 +884,52 @@ async def verify_postgres_rls(dsn: str) -> RLSRestoreReport:
                     """
                 )
                 if visible_count != expected_count:
-                    passed = False
-                    failures.append(f"{table}:scope_{scope_index}:count")
+                    account_passed = False
+                    account_failures.append(f"{table}:scope_{scope_index}:count")
                 if {str(row["account_id"]) for row in visible_accounts} != {account_id}:
-                    passed = False
-                    failures.append(f"{table}:scope_{scope_index}:cross_account")
+                    account_passed = False
+                    account_failures.append(f"{table}:scope_{scope_index}:cross_account")
                 scopes_checked += 1
         await connection.execute("RESET ROLE")
+        visibility_probes = 0
+        nonempty_tables_probed = sum(count > 0 for count in controller_counts.values())
+        for label, probe_role in (("app", account_role), ("audit", audit_role)):
+            await connection.execute(f"SET ROLE {_quote_identifier(probe_role)}")
+            for table in controller_tables:
+                active = bool(
+                    await connection.fetchval(
+                        "SELECT row_security_active($1::regclass)",
+                        f"public.{table}",
+                    )
+                )
+                if not active:
+                    controller_failures.append(f"{table}:{label}_row_security_inactive")
+                visible = int(
+                    await connection.fetchval(f"SELECT count(*) FROM {_quote_identifier(table)}")
+                )
+                if visible != 0:
+                    controller_failures.append(f"{table}:{label}_visible")
+                visibility_probes += 1
+            await connection.execute("RESET ROLE")
+        controller_report = ControllerRLSRestoreReport(
+            passed=not controller_failures,
+            tables_checked=len(POSTGRES_CONTROLLER_ONLY_RLS_TABLES),
+            unauthorized_roles_checked=2,
+            visibility_probes=visibility_probes,
+            nonempty_tables_probed=nonempty_tables_probed,
+            failures=tuple(controller_failures),
+        )
         return RLSRestoreReport(
-            passed=passed,
+            passed=account_passed and controller_report.passed,
             tables_checked=len(tables),
             account_scopes_checked=scopes_checked,
-            failures=tuple(failures),
+            controller_only=controller_report,
+            failures=tuple((*account_failures, *controller_failures)),
         )
     finally:
         with contextlib.suppress(Exception):
             await connection.execute("RESET ROLE")
-        if created:
+        for role in reversed(created_roles):
             with contextlib.suppress(Exception):
                 await connection.execute(f"DROP OWNED BY {_quote_identifier(role)}")
             with contextlib.suppress(Exception):
@@ -912,6 +1073,9 @@ async def run_postgres_restore_drill(
     await _create_restore_database(admin_dsn, restore_database)
     restore_dsn = _database_dsn(admin_dsn, restore_database)
     await asyncio.to_thread(_run_pg_restore, restore_dsn, dump_path, postgres_container)
+    # The dump intentionally omits ACLs; replay Evolution's schema so the
+    # dedicated controller role gets its grants and controller-only policies.
+    await asyncio.to_thread(PostgresEvolutionStore(restore_dsn).initialize)
     restored = await snapshot_postgres(restore_dsn)
     if restored != source:
         raise RuntimeError("restored authoritative PostgreSQL snapshot does not match source")

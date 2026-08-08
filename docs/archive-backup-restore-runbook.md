@@ -137,7 +137,14 @@ SELECT count(*) AS voice_quality_measurements FROM voice_quality_measurements;
 - 对 owner、guest、uncertain 各执行一次权限查询，guest/uncertain 不得读到主人私人档案。
 - 重建投影后抽样打开来源话轮；孤立无来源结论必须为 0。
 - 对账户生命周期清单中的全部权威表和投影表执行孤儿/未验证外键检查；声音登记 operation、盲测和质量探针不得悬空。
-- 对全部启用 RLS 的表检查 `relrowsecurity/relforcerowsecurity`，再以非 owner 应用角色逐项验证账户 A 不能读取账户 B。
+- 对全部启用账号 RLS 的表检查 `relrowsecurity/relforcerowsecurity`，再以非 owner 应用角色逐项验证账户 A 不能读取账户 B。
+- Evolution 控制器表（`evolution_learning_signals`、`evolution_candidates`、`evolution_validations`、
+  `evolution_activation_events`、`evolution_lifecycle_events`、`evolution_sleep_signal_receipts`、
+  `evolution_control_state` 和 `evolution_account_deletion_fences`）必须单独检查：每张表都应有
+  `relrowsecurity=true`、`relforcerowsecurity=true`，并存在 `TO memoria_evolution USING (true)
+  WITH CHECK (true)` policy；`memoria_evolution` 不能是 superuser 或 `BYPASSRLS`。恢复演练会给
+  两个无继承、无 bypass 的临时 app/audit 角色授予只读权限，逐表确认它们看不到任何 controller
+  行。`evolution_control_state` 和 deletion fence 是控制器治理状态，不属于账号导出/删除清单。
 - 在恢复实例执行 `ANALYZE` 后再测检索与时间线，不以冷缓存首轮延迟作容量结论。
 
 ### 4.1 P6 本地联合恢复证据

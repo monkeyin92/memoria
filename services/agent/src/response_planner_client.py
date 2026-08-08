@@ -10,6 +10,7 @@ from typing import Any, Final, Literal, cast
 import httpx
 
 from services.agent.src.contracts.ids import GenerationFence
+from services.evolution.receipt import EvolutionResolutionReceipt
 from services.speaker.domain import SpeakerDecision
 
 EpistemicStatus = Literal["not_applicable", "fact", "inference", "unknown", "mixed"]
@@ -30,6 +31,7 @@ GroundedUse = Literal[
 Disclosure = Literal["digital_identity", "inference", "unknown", "privacy_refusal"]
 VoiceTargetKind = Literal["companion", "approved_personal", "fallback"]
 CANONICAL_PLANNER_POLICY_VERSION: Final = "digital-self-response-planner-v2"
+EVOLUTION_PROTOCOL_VERSION: Final = "v1"
 
 _EPISTEMIC_STATUSES = frozenset({"not_applicable", "fact", "inference", "unknown", "mixed"})
 _GROUNDED_KINDS = frozenset(
@@ -103,7 +105,17 @@ _PROVENANCE_KEYS = frozenset(
         "disclosures",
     }
 )
+_OPTIONAL_EVOLUTION_PROVENANCE_KEYS = frozenset(
+    {
+        "evolution_contract_version",
+        "evolution_artifacts",
+        "evolution_receipt",
+    }
+)
 _SOURCE_REF_KEYS = frozenset({"kind", "item_id", "source_event_ids"})
+_EVOLUTION_ARTIFACT_KEYS = frozenset(
+    {"candidate_id", "version", "kind", "status", "artifact_hash"}
+)
 RECALL_CONTEXT_MAX_ITEMS: Final = 4
 RECALL_CONTEXT_ITEM_MAX_CHARS: Final = 240
 RECALL_CONTEXT_TOTAL_MAX_CHARS: Final = 960
@@ -159,6 +171,15 @@ class ResponseVoiceTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class ResponseEvolutionArtifact:
+    candidate_id: str
+    version: int
+    kind: Literal["prompt"]
+    status: Literal["canary", "stable"]
+    artifact_hash: str
+
+
+@dataclass(frozen=True, slots=True)
 class ResponseProvenance:
     planner_policy_version: str
     interaction_mode: str
@@ -179,6 +200,9 @@ class ResponseProvenance:
     epistemic_status: EpistemicStatus
     epistemic_reason_codes: tuple[str, ...]
     disclosures: tuple[Disclosure, ...]
+    evolution_contract_version: Literal["v1"] | None = None
+    evolution_artifacts: tuple[ResponseEvolutionArtifact, ...] = ()
+    evolution_receipt: EvolutionResolutionReceipt | None = None
     actor_account_id: str | None = None
     resource_owner_account_id: str | None = None
     legacy_actor_role: Literal["owner_preview", "grantee"] | None = None
@@ -200,7 +224,11 @@ class ResponseProvenance:
         tts_model: str | None,
         actual_voice_profile_id: str | None,
     ) -> dict[str, Any]:
-        return {
+        if self.evolution_contract_version is None and (
+            self.evolution_artifacts or self.evolution_receipt is not None
+        ):
+            raise ValueError("evolution provenance requires a negotiated contract")
+        payload: dict[str, Any] = {
             "fence": {
                 "session_id": fence.session_id,
                 "turn_id": fence.turn_id,
@@ -249,6 +277,28 @@ class ResponseProvenance:
             "tts_model": tts_model,
             "actual_voice_profile_id": actual_voice_profile_id,
         }
+        if self.evolution_contract_version == EVOLUTION_PROTOCOL_VERSION and self.evolution_artifacts:
+            payload.update(
+                {
+                    "evolution_contract_version": self.evolution_contract_version,
+                    "evolution_artifacts": [
+                        {
+                            "candidate_id": artifact.candidate_id,
+                            "version": artifact.version,
+                            "kind": artifact.kind,
+                            "status": artifact.status,
+                            "artifact_hash": artifact.artifact_hash,
+                        }
+                        for artifact in self.evolution_artifacts
+                    ],
+                    "evolution_receipt": (
+                        self.evolution_receipt.to_dict()
+                        if self.evolution_receipt is not None
+                        else None
+                    ),
+                }
+            )
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,7 +397,10 @@ class ResponsePlannerClient:
         try:
             response = await self._client.post(
                 self._config.endpoint,
-                headers={"X-Memoria-Internal-Token": self._config.internal_token},
+                headers={
+                    "X-Memoria-Internal-Token": self._config.internal_token,
+                    "X-Memoria-Evolution-Protocol": EVOLUTION_PROTOCOL_VERSION,
+                },
                 json={
                     "session_id": session_id,
                     "query": normalized_query,
@@ -556,7 +609,11 @@ class ResponsePlannerClient:
     def _provenance(cls, value: Any) -> ResponseProvenance:
         if not isinstance(value, dict):
             raise ValueError("response provenance is invalid")
-        cls._require_keys(value, _PROVENANCE_KEYS, label="response provenance")
+        fields = set(value)
+        if not _PROVENANCE_KEYS.issubset(fields) or not fields.issubset(
+            _PROVENANCE_KEYS | _OPTIONAL_EVOLUTION_PROVENANCE_KEYS
+        ):
+            raise ValueError("response provenance fields are invalid")
         source_refs_raw = value.get("source_refs")
         if not isinstance(source_refs_raw, list) or len(source_refs_raw) > 32:
             raise ValueError("response provenance source refs are invalid")
@@ -675,6 +732,32 @@ class ResponsePlannerClient:
             or template_version < 1
         ):
             raise ValueError("response provenance speaker template is invalid")
+        contract_version = value.get("evolution_contract_version")
+        if contract_version is not None and contract_version != EVOLUTION_PROTOCOL_VERSION:
+            raise ValueError("response provenance evolution contract is invalid")
+        evolution_raw = value.get("evolution_artifacts", [])
+        if not isinstance(evolution_raw, list) or len(evolution_raw) > 8:
+            raise ValueError("response provenance evolution artifacts are invalid")
+        evolution_artifacts = tuple(cls._evolution_artifact(item) for item in evolution_raw)
+        if len({artifact.candidate_id for artifact in evolution_artifacts}) != len(
+            evolution_artifacts
+        ):
+            raise ValueError("response provenance evolution artifacts must be unique")
+        receipt_raw = value.get("evolution_receipt")
+        if contract_version is None:
+            if evolution_artifacts or receipt_raw is not None:
+                raise ValueError("response provenance evolution contract is incomplete")
+            evolution_receipt = None
+        else:
+            if not _OPTIONAL_EVOLUTION_PROVENANCE_KEYS.issubset(fields):
+                raise ValueError("response provenance evolution contract is incomplete")
+            if bool(evolution_artifacts) == (receipt_raw is None):
+                raise ValueError("response provenance evolution receipt is invalid")
+            evolution_receipt = (
+                EvolutionResolutionReceipt.from_mapping(receipt_raw)
+                if receipt_raw is not None
+                else None
+            )
         return ResponseProvenance(
             planner_policy_version=planner_policy_version,
             interaction_mode=interaction_mode,
@@ -728,6 +811,9 @@ class ResponsePlannerClient:
                     max_items=4,
                 )
             ),
+            evolution_contract_version=cast(Literal["v1"] | None, contract_version),
+            evolution_artifacts=evolution_artifacts,
+            evolution_receipt=evolution_receipt,
             actor_account_id=actor_account_id,
             resource_owner_account_id=resource_owner_account_id,
             legacy_actor_role=cast(
@@ -741,6 +827,31 @@ class ResponsePlannerClient:
             legacy_shell_id=legacy_shell_id,
             legacy_voice_allowed=legacy_voice_allowed,
             legacy_expires_at=legacy_expires_at,
+        )
+
+    @classmethod
+    def _evolution_artifact(cls, value: Any) -> ResponseEvolutionArtifact:
+        if not isinstance(value, dict):
+            raise ValueError("response evolution artifact is invalid")
+        cls._require_keys(value, _EVOLUTION_ARTIFACT_KEYS, label="response evolution artifact")
+        version = value.get("version")
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise ValueError("response evolution artifact version is invalid")
+        artifact_hash = cls._text(value, "artifact_hash", 64)
+        if len(artifact_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in artifact_hash
+        ):
+            raise ValueError("response evolution artifact digest is invalid")
+        kind = value.get("kind")
+        status = value.get("status")
+        if kind != "prompt" or status not in {"canary", "stable"}:
+            raise ValueError("response evolution artifact is invalid")
+        return ResponseEvolutionArtifact(
+            candidate_id=cls._text(value, "candidate_id", 128),
+            version=version,
+            kind=cast(Literal["prompt"], kind),
+            status=cast(Literal["canary", "stable"], status),
+            artifact_hash=artifact_hash,
         )
 
     @classmethod

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -16,6 +18,7 @@ from services.common.security_constants import (
     DEV_MESSAGE_IDEMPOTENCY_SECRET,
     DEV_MINIPROGRAM_GATEWAY_TICKET_SECRET,
 )
+from services.evolution.release_policy import parse_runtime_prompt_families
 
 
 def _read_key_map(value: str, *, label: str) -> dict[str, str]:
@@ -133,6 +136,52 @@ class ControlSettings(BaseSettings):
         alias="MEMORIA_ARCHIVE_COMPILER_DATABASE_URL",
     )
     archive_compiler_role: str = Field(default="", alias="MEMORIA_ARCHIVE_COMPILER_ROLE")
+    evolution_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_EVOLUTION_DATABASE_URL",
+    )
+    evolution_db_path: str = Field(
+        default="",
+        alias="MEMORIA_EVOLUTION_DB_PATH",
+    )
+    evolution_trusted_root_sha256: str = Field(
+        default="",
+        alias="MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256",
+    )
+    evolution_min_new_signals: int = Field(
+        default=10,
+        ge=1,
+        le=10_000,
+        alias="MEMORIA_EVOLUTION_MIN_NEW_SIGNALS",
+    )
+    evolution_min_failure_support: int = Field(
+        default=2,
+        ge=2,
+        le=100,
+        alias="MEMORIA_EVOLUTION_MIN_FAILURE_SUPPORT",
+    )
+    evolution_stale_after_days: int = Field(
+        default=30,
+        ge=1,
+        le=3650,
+        alias="MEMORIA_EVOLUTION_STALE_AFTER_DAYS",
+    )
+    evolution_canary_percent: int = Field(
+        default=0,
+        ge=0,
+        le=100,
+        alias="MEMORIA_EVOLUTION_CANARY_PERCENT",
+    )
+    evolution_runtime_prompt_families: str = Field(
+        default="weather",
+        alias="MEMORIA_EVOLUTION_RUNTIME_PROMPT_FAMILIES",
+    )
+    evolution_sleep_interval_s: float = Field(
+        default=3600.0,
+        ge=0,
+        le=86_400,
+        alias="MEMORIA_EVOLUTION_SLEEP_INTERVAL_S",
+    )
     memoria_timezone: str = Field(default="Asia/Shanghai", alias="MEMORIA_TIMEZONE")
     memoria_archive_internal_token: SecretStr = Field(
         default=SecretStr(""),
@@ -169,6 +218,14 @@ class ControlSettings(BaseSettings):
     memoria_response_plan_token: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_RESPONSE_PLAN_TOKEN",
+    )
+    memoria_evolution_control_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_EVOLUTION_CONTROL_TOKEN",
+    )
+    memoria_evolution_validator_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_EVOLUTION_VALIDATOR_TOKEN",
     )
     archive_object_store_path: str = Field(
         default="data/archive-objects",
@@ -561,6 +618,12 @@ class ControlSettings(BaseSettings):
     def coturn_urls_list(self) -> list[str]:
         return [url.strip() for url in self.coturn_urls.split(",") if url.strip()]
 
+    @field_validator("evolution_runtime_prompt_families")
+    @classmethod
+    def validate_evolution_runtime_prompt_families(cls, value: str) -> str:
+        parse_runtime_prompt_families(value)
+        return value
+
     @field_validator("legacy_auth_compat_until", mode="before")
     @classmethod
     def require_absolute_utc_legacy_auth_cutoff(cls, value: object) -> datetime | None:
@@ -604,6 +667,43 @@ class ControlSettings(BaseSettings):
             self.archive_object_read_keys.get_secret_value(),
             label="archive object",
         )
+
+    def evolution_trusted_root(self) -> str:
+        """Return an immutable release anchor for candidate manifests.
+
+        Operators should set ``MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256`` to the
+        reviewed release manifest digest.  Development and older deployments
+        fall back to a deterministic digest of the immutable release tag, so
+        candidate records remain auditable without silently accepting an empty
+        trust root.
+        """
+
+        configured = self.evolution_trusted_root_sha256.strip().lower()
+        if configured:
+            if len(configured) != 64 or any(character not in "0123456789abcdef" for character in configured):
+                raise ValueError("MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256 must be a sha256 digest")
+            return configured
+        release_tag = self.memoria_release_tag.strip() or "development"
+        return hashlib.sha256(f"memoria:evolution:{release_tag}".encode()).hexdigest()
+
+    def evolution_internal_token(self) -> str:
+        configured = self.memoria_evolution_control_token.get_secret_value().strip()
+        if configured or self.environment == "production":
+            return configured
+        return self.memoria_archive_internal_token.get_secret_value()
+
+    def evolution_validator_token(self) -> str:
+        configured = self.memoria_evolution_validator_token.get_secret_value().strip()
+        if configured or self.environment == "production":
+            return configured
+        return self.evolution_internal_token()
+
+    def evolution_sqlite_path(self) -> str:
+        configured = self.evolution_db_path.strip()
+        if configured:
+            return configured
+        memory_path = Path(self.memoria_db_path)
+        return str(memory_path.with_name(f"{memory_path.stem}-evolution.sqlite3"))
 
     def voice_sample_read_key_map(self) -> dict[str, str]:
         return _read_key_map(
@@ -724,9 +824,11 @@ class ControlSettings(BaseSettings):
             "MEMORIA_VOICE_CLEANUP_TOKEN": self.internal_token("voice_cleanup"),
             "MEMORIA_INTERACTION_POLICY_TOKEN": self.internal_token("interaction_policy"),
             "MEMORIA_RESPONSE_PLAN_TOKEN": self.internal_token("response_plan"),
+            "MEMORIA_EVOLUTION_CONTROL_TOKEN": self.evolution_internal_token(),
+            "MEMORIA_EVOLUTION_VALIDATOR_TOKEN": self.evolution_validator_token(),
         }
         if any(len(token) < 32 for token in capability_tokens.values()):
-            raise ValueError("production requires eight capability-scoped internal tokens")
+            raise ValueError("production requires ten capability-scoped internal tokens")
         if len(set(capability_tokens.values())) != len(capability_tokens) or any(
             token in {auth_secret, self.livekit_api_secret} for token in capability_tokens.values()
         ):
@@ -760,6 +862,22 @@ class ControlSettings(BaseSettings):
         archive_url = self.archive_database_url.get_secret_value()
         if not archive_url.startswith(("postgresql://", "postgres://")):
             raise ValueError("production requires MEMORIA_ARCHIVE_DATABASE_URL for PostgreSQL")
+        evolution_url = self.evolution_database_url.get_secret_value()
+        if not evolution_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError(
+                "production requires MEMORIA_EVOLUTION_DATABASE_URL for PostgreSQL"
+            )
+        evolution_user = urlsplit(evolution_url).username or ""
+        archive_user = urlsplit(archive_url).username or ""
+        if (
+            evolution_url == archive_url
+            or evolution_user != "memoria_evolution"
+            or evolution_user == archive_user
+        ):
+            raise ValueError(
+                "production requires MEMORIA_EVOLUTION_DATABASE_URL to use the independent "
+                "memoria_evolution role"
+            )
         speaker_token = self.speaker_internal_token.get_secret_value()
         embedding_token = self.speaker_embedding_token.get_secret_value()
         template_key = self.speaker_template_key.get_secret_value()
@@ -886,6 +1004,12 @@ class ControlSettings(BaseSettings):
         release_tag = self.memoria_release_tag.strip().lower()
         if release_tag in ("", "latest", "development"):
             raise ValueError("production requires an immutable MEMORIA_RELEASE_TAG")
+        if not self.evolution_trusted_root_sha256.strip():
+            raise ValueError(
+                "production requires MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256 from the release manifest"
+            )
+        if self.evolution_sleep_interval_s == 0:
+            raise ValueError("production requires an enabled evolution sleep scheduler")
         compiler_url = self.archive_compiler_database_url.get_secret_value()
         if not compiler_url.startswith(("postgresql://", "postgres://")):
             raise ValueError(
@@ -893,7 +1017,6 @@ class ControlSettings(BaseSettings):
             )
         compiler_role = self.archive_compiler_role.strip()
         compiler_user = urlsplit(compiler_url).username or ""
-        archive_user = urlsplit(archive_url).username or ""
         if (
             compiler_url == archive_url
             or not compiler_role

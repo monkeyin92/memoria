@@ -74,6 +74,7 @@ def prepare(
     postgres: dict[str, str],
     minio: dict[str, str],
     release_tag: str,
+    evolution_trusted_root: str | None = None,
 ) -> tuple[
     dict[str, str],
     dict[str, str],
@@ -102,6 +103,7 @@ def prepare(
     _required(values, "WECHAT_MINIPROGRAM_APPSECRET")
     app_password = _required(postgres, "MEMORIA_DB_APP_PASSWORD")
     compiler_password = _required(postgres, "MEMORIA_DB_COMPILER_PASSWORD")
+    evolution_password = _required(postgres, "MEMORIA_DB_EVOLUTION_PASSWORD")
     archive_access = _required(minio, "MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY")
     archive_secret = _required(minio, "MEMORIA_ARCHIVE_OBJECT_SECRET_KEY")
     voice_access = _required(minio, "MEMORIA_VOICE_OBJECT_ACCESS_KEY")
@@ -114,6 +116,15 @@ def prepare(
         "seed-icl-2.0" if voice_clone_provider == "volcengine_doubao" else "cosyvoice-v3.5-flash"
     )
     public_base_url = _required(values, "PUBLIC_BASE_URL")
+    evolution_trusted_root = (
+        evolution_trusted_root.strip()
+        if evolution_trusted_root is not None
+        else _required(values, "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256")
+    )
+    if len(evolution_trusted_root) != 64 or any(
+        character not in "0123456789abcdef" for character in evolution_trusted_root.lower()
+    ):
+        raise ValueError("MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256 must be a sha256 digest")
     gateway_url = (
         values.get("MINIPROGRAM_MEDIA_GATEWAY_URL", "").strip()
         or _miniprogram_gateway_url(public_base_url)
@@ -138,6 +149,11 @@ def prepare(
             "DEEPSEEK_FAST_MODEL": "deepseek-v4-flash",
             "DEEPSEEK_DEEP_MODEL": "deepseek-v4-flash",
             "MEMORIA_RELEASE_TAG": release_tag,
+            "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256": evolution_trusted_root.lower(),
+            "MEMORIA_EVOLUTION_RUNTIME_PROMPT_FAMILIES": values.get(
+                "MEMORIA_EVOLUTION_RUNTIME_PROMPT_FAMILIES",
+                "weather",
+            ),
             # Control API signs StreamCore tokens; the Go edge verifies the
             # same short-lived credential in its own least-privilege env.
             "STREAMCORE_TOKEN_SECRET": streamcore_token_secret,
@@ -179,6 +195,9 @@ def prepare(
             "MEMORIA_ARCHIVE_COMPILER_DATABASE_URL": _postgres_dsn(
                 user="memoria_compiler", password=compiler_password
             ),
+            "MEMORIA_EVOLUTION_DATABASE_URL": _postgres_dsn(
+                user="memoria_evolution", password=evolution_password
+            ),
             "MEMORIA_ARCHIVE_COMPILER_ROLE": "memoria_compiler",
             "MEMORIA_ARCHIVE_WRITE_TOKEN": _token(),
             "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET": _keep_or_create(
@@ -194,6 +213,8 @@ def prepare(
             "MEMORIA_VOICE_CLEANUP_TOKEN": _token(),
             "MEMORIA_INTERACTION_POLICY_TOKEN": _token(),
             "MEMORIA_RESPONSE_PLAN_TOKEN": _token(),
+            "MEMORIA_EVOLUTION_CONTROL_TOKEN": _token(),
+            "MEMORIA_EVOLUTION_VALIDATOR_TOKEN": _token(),
             "MEMORIA_RESPONSE_PLAN_URL": "http://control-api:8000/v1/interaction/response-plan",
             "MEMORIA_RESPONSE_PLAN_TIMEOUT_S": "0.8",
             "MINIPROGRAM_MEDIA_GATEWAY_URL": gateway_url,
@@ -303,6 +324,11 @@ def main() -> int:
     parser.add_argument("--postgres", required=True, type=Path)
     parser.add_argument("--minio", required=True, type=Path)
     parser.add_argument("--release-tag", required=True)
+    parser.add_argument(
+        "--evolution-trusted-root",
+        required=True,
+        help="digest field from the verified canonical release manifest",
+    )
     parser.add_argument("--control", required=True, type=Path)
     parser.add_argument("--agent", required=True, type=Path)
     parser.add_argument("--speaker-model", required=True, type=Path)
@@ -317,6 +343,7 @@ def main() -> int:
         postgres=_read_env(args.postgres),
         minio=_read_env(args.minio),
         release_tag=args.release_tag,
+        evolution_trusted_root=args.evolution_trusted_root,
     )
     _write_env(args.control, control)
     _write_env(args.agent, agent)

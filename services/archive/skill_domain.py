@@ -147,6 +147,7 @@ class SkillRunRequest:
     version: int
     confirmation_event_id: str
     inputs: Mapping[str, object]
+    evolution_candidate_id: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -157,6 +158,10 @@ class SkillRunRequest:
         ):
             raise ValueError("skill run requires account, version and confirmation evidence")
         _json_text(dict(self.inputs))
+        if self.evolution_candidate_id is not None and (
+            not self.evolution_candidate_id.strip() or len(self.evolution_candidate_id) > 128
+        ):
+            raise ValueError("evolution_candidate_id must be a bounded non-empty id")
 
 
 @dataclass(frozen=True, slots=True)
