@@ -8,7 +8,8 @@ token、LiveKit API secret 或其他服务端密钥。
 
 1. 用微信开发者工具导入 `apps/miniprogram/`。
 2. 将 `project.config.example.json` 复制为 `project.config.json`，再把其中的 `touristappid`
-   替换为已备案的小程序 AppID；不要提交真实 AppID、密钥或证书。
+   替换为已备案的小程序 AppID；不要提交本机项目配置、上传私钥或证书。AppID 不是密钥，项目内
+   上传脚本会固定经过审阅的 Memoria AppID，防止把源码误传到另一个合法微信项目。
 3. 按环境调整 `config.js` 的 Control API HTTPS 地址。服务端生成的 gateway WSS 地址来自
    `MINIPROGRAM_MEDIA_GATEWAY_URL`，不是由小程序拼接。
 4. 在微信公众平台配置 request、downloadFile/media 和 socket 合法域名。当前生产候选分别是

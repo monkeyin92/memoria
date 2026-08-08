@@ -120,20 +120,12 @@ MEMORIA_AUTH_SECRET
 启动时只检查表、`ENABLE/FORCE ROW LEVEL SECURITY` 和 controller policy，不再用运行角色
 执行 DDL。
 
-已有 PostgreSQL 数据卷不会自动重新执行 `/docker-entrypoint-initdb.d`。升级 data Compose
-并确认 `MEMORIA_DB_EVOLUTION_PASSWORD` 已进入 PostgreSQL 管理 env 后，先在维护窗口执行：
-
-```bash
-POSTGRES_CONTAINER=memoria-postgres-1 \
-MEMORIA_DB_APP_PASSWORD='当前 app 密码' \
-MEMORIA_DB_COMPILER_PASSWORD='当前 compiler 密码' \
-MEMORIA_DB_EVOLUTION_PASSWORD='新的 evolution 密码' \
-  ./scripts/upgrade_evolution_postgres.sh
-```
-
-脚本幂等地创建角色、安装 schema/强制 RLS 并撤销 evolution schema DDL；随后才重启
-Control API。若 readiness 返回 `evolution_store=unavailable`，禁止切流，应先检查角色、
-表 owner、policy 和 `relforcerowsecurity`，不要临时给运行角色补 `CREATE` 或 `BYPASSRLS`。
+已有 PostgreSQL 数据卷不会自动重新执行 `/docker-entrypoint-initdb.d`。生产唯一升级入口是本文
+“3.1 PostgreSQL forward-only schema 升级”：它先完成联合备份和 env 备份，再停止 writer、等待
+候选 PostgreSQL healthy，并从 root-only `/etc/memoria-postgres.env` 读取密码。禁止在命令行传密码或
+脱离 3.1 单独运行升级脚本。脚本幂等地创建角色、安装 schema/强制 RLS 并撤销 evolution schema
+DDL；若 readiness 返回 `evolution_store=unavailable`，禁止切流，应先检查角色、表 owner、policy
+和 `relforcerowsecurity`，不要临时给运行角色补 `CREATE` 或 `BYPASSRLS`。
 
 当前生产 runtime 的非 secret 配置：
 
@@ -342,7 +334,11 @@ process、retention、negative transfer、正迁移、规则替换、激活/遵�
 
 ## 发布原则
 
-H5 必须最后激活。标准顺序是：本机构建并校验工件 → 暂存 release 与 H5 → 创建并验证数据快照 → 服务器导入镜像 → 原子切 runtime → 容器/Provider/readiness 门禁 → Nginx 与证书检查 → 最后原子切 H5 → 公网验收。这样既避免小内存服务器构建卡死，也避免新 H5 连接尚未 ready 的 runtime。
+H5 必须最后激活。标准顺序是：本机构建并校验工件 → 上传并在服务器验签、导入镜像 → 暂存
+release 与 H5、合并 immutable 资源 → 隔离 smoke → 创建并验证数据快照与 env 备份 → 按 release
+要求执行 forward-only 数据库升级 → 原子切 runtime → 容器/Provider/readiness 门禁 → Nginx 与证书
+检查 → 最后原子切 H5 → 公网验收。这样既避免小内存服务器构建卡死，也避免新 H5 连接尚未
+ready 的 runtime。
 
 下面命令沿用已验证的生产目录布局。执行前必须读取并记录当前 runtime/H5 软链，再在 shell 显式设置一个非空、唯一、不可复用的新 `RELEASE_TAG`；示例块会在缺失时立即失败。
 
@@ -577,14 +573,6 @@ sudo test -f "$H5_DIR/index.html"
 
 只有本机构建环境不可用且已确认服务器有足够资源时，才允许把服务器构建作为显式回退；不得把它恢复为默认发布路径。导入校验成功后，候选 runtime 必须从 `$UPLOAD_DIR/memoria`（即 source archive 解包结果）安装，不能把本机 checkout 或仅 release 文档当作 source evidence。
 
-镜像和候选 H5 暂存后、切流前运行隔离 server smoke。脚本使用候选 H5、临时 SQLite、
-`18791/18891`，不会占用在线 Control API 的 `8791`：
-
-```bash
-sudo /opt/memoria/releases/$RELEASE_TAG/scripts/smoke_server_deployment.sh \
-  "$RELEASE_TAG"
-```
-
 ### 2. 暂存工件，不切公网软链
 
 把完整 release 放入 `$RELEASE_DIR`，把 production build 放入 `$H5_DIR`。此阶段不得修改 `/opt/memoria/current` 或 `/var/www/memoria-h5`。
@@ -658,6 +646,14 @@ done
 ```
 
 若碰到 collision，必须把变更后的资源改为内容哈希文件名，或保持该 URL 字节完全不变后再发布；不能为了发布而覆盖它。清理旧 H5 release 时也不得删除当前候选 union 中的资源；在 `/assets/` 仍为一年 immutable 缓存期间，H5 资源集合按追加式保留。
+
+release、候选 H5 和 immutable union 都已落盘后、切流前运行隔离 server smoke。脚本使用候选
+H5、临时 SQLite、`18791/18891`，不会占用在线 Control API 的 `8791`。不得在 `$RELEASE_DIR`
+创建前提前执行这个命令：
+
+```bash
+sudo "$RELEASE_DIR/scripts/smoke_server_deployment.sh" "$RELEASE_TAG"
+```
 
 ### 3. 创建发布前 SQLite 快照
 
@@ -750,6 +746,99 @@ fi
 ```
 
 保护副本放在 root-only `/var/backups/memoria`，避免与容器 bind 目录共享暴露面；`/var/lib/memoria` 中的原始快照继续保留，作为独立的第二份回滚副本。先在可信运维环境生成五份候选 env；`split_production_env.py` 只做最小权限分流，不能替代 endpointing 精确值门禁。启用 `media-runtime` profile 前必须安装并核对 `/etc/memoria-media-edge.env`，以及 `/etc/memoria-media-runtime/` 下的 Voice Core mTLS 文件；默认 LiveKit 发布不需要这两项。再执行上述“校验候选 → 备份已有 env → 安装候选”顺序。前三份旧 env 是既有 runtime 的强制前提；gateway 与 media-edge 只在首次启用对应 profile 前不存在，因此分别条件备份。数据库、候选 env 和已有 env 备份都必须为 `root:root 0600`，不得为了容器读取而放宽权限。
+
+### 3.1 PostgreSQL forward-only schema 升级（按 release 要求执行）
+
+只有 release 文档明确要求 PostgreSQL schema/role 升级时执行本节。必须先完成 PostgreSQL/WAL/MinIO
+联合备份门禁和上面的 SQLite/env 备份。已有 volume 不会重新执行 init 文件；必须先让候选 data
+Compose 把新脚本只读挂载到现有 PostgreSQL 容器，再运行候选 release 中的幂等升级脚本。旧 runtime
+writer 在整个 DDL 窗口保持停止，升级成功后直接进入下一节切换新 runtime；失败则恢复已备份 env 并
+重启旧 runtime，不切 H5，也不回滚已经提交的 forward-only DDL：
+
+```bash
+CURRENT_RUNTIME_DIR="$(readlink -f /opt/memoria/current)"
+CURRENT_RUNTIME_TAG="$(basename "$CURRENT_RUNTIME_DIR")"
+CANDIDATE_DATA_COMPOSE_DIR="$RELEASE_DIR/infra"
+
+sudo bash -ceu '
+set -o pipefail
+current_runtime_dir=$1
+current_runtime_tag=$2
+candidate_data_dir=$3
+release_dir=$4
+control_backup=$5
+agent_backup=$6
+speaker_backup=$7
+gateway_backup=$8
+media_edge_backup=$9
+
+restore_previous_runtime() {
+  trap - ERR
+  echo "PostgreSQL upgrade failed; restoring previous runtime env and services" >&2
+  install -o root -g root -m 0600 "$control_backup" /etc/memoria-control-api.env
+  install -o root -g root -m 0600 "$agent_backup" /etc/memoria-agent.env
+  install -o root -g root -m 0600 "$speaker_backup" /etc/memoria-speaker-model.env
+  if [ -e "$gateway_backup" ]; then
+    install -o root -g root -m 0600 \
+      "$gateway_backup" /etc/memoria-miniprogram-gateway.env
+  else
+    rm -f /etc/memoria-miniprogram-gateway.env
+  fi
+  if [ -e "$media_edge_backup" ]; then
+    install -o root -g root -m 0600 \
+      "$media_edge_backup" /etc/memoria-media-edge.env
+  else
+    rm -f /etc/memoria-media-edge.env
+  fi
+  cd "$current_runtime_dir"
+  env MEMORIA_RELEASE_TAG="$current_runtime_tag" \
+    docker compose -f docker-compose.production.yml \
+    up -d --no-build --wait --wait-timeout 120
+}
+on_upgrade_error() {
+  status=$?
+  restore_previous_runtime
+  exit "$status"
+}
+trap on_upgrade_error ERR
+
+cd "$current_runtime_dir"
+docker compose -f docker-compose.production.yml stop \
+  agent control-api miniprogram-gateway
+running_services="$(docker compose -f docker-compose.production.yml \
+  ps --status running --services)"
+for service in agent control-api miniprogram-gateway; do
+  if grep -Fxq "$service" <<<"$running_services"; then
+    echo "writer still running: $service" >&2
+    false  # Trigger ERR trap so previous env and services are restored.
+  fi
+done
+
+docker compose --project-directory "$candidate_data_dir" \
+  -f "$candidate_data_dir/memoria-data.production.yml" config --quiet
+docker compose --project-directory "$candidate_data_dir" \
+  -f "$candidate_data_dir/memoria-data.production.yml" \
+  up -d --no-build --wait --wait-timeout 120 postgres
+
+set -a
+. /etc/memoria-postgres.env
+set +a
+export POSTGRES_CONTAINER=memoria-data-postgres-1
+"$release_dir/scripts/upgrade_evolution_postgres.sh"
+unset MEMORIA_DB_APP_PASSWORD MEMORIA_DB_COMPILER_PASSWORD \
+  MEMORIA_DB_EVOLUTION_PASSWORD POSTGRES_CONTAINER
+docker exec memoria-data-postgres-1 pg_isready -U memoria_admin -d postgres
+trap - ERR
+' bash \
+  "$CURRENT_RUNTIME_DIR" "$CURRENT_RUNTIME_TAG" \
+  "$CANDIDATE_DATA_COMPOSE_DIR" "$RELEASE_DIR" \
+  "$CONTROL_ENV_BACKUP" "$AGENT_ENV_BACKUP" "$SPEAKER_MODEL_ENV_BACKUP" \
+  "$GATEWAY_ENV_BACKUP" "$MEDIA_EDGE_ENV_BACKUP"
+```
+
+`/etc/memoria-postgres.env` 必须仍为 `root:root 0600`，并已包含当前 app/compiler 密码及本次新建的
+独立 evolution 角色密码；脚本和命令不得打印这些值。升级脚本成功不等于新 runtime 可切流，下一节
+仍必须启动 commit/tag 绑定镜像，并在 readiness 中取得 `evolution_store=ready` 和 10/10 core。
 
 ### 4. 原子激活 runtime
 

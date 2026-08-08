@@ -4,6 +4,10 @@
   "version": "0.1.0",
   "description": "Memoria native WeChat Mini Program client",
   "scripts": {
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "upload:test": "node ../../scripts/upload_miniprogram_test.js"
+  },
+  "devDependencies": {
+    "miniprogram-ci": "^2.1.31"
   }
 }

@@ -71,17 +71,20 @@ _POSTGRES_EXPORT_QUERIES: Mapping[str, str] = {
         ORDER BY validation.created_at, validation.validation_id
     """,
     "evolution_activation_events": """
-        SELECT activation_id::text AS activation_id, activation.candidate_id, task_id,
-               activated, adhered, outcome_passed, evidence_event_id,
+        SELECT activation.activation_id::text AS activation_id,
+               activation.candidate_id, activation.task_id,
+               activation.activated, activation.adhered, activation.outcome_passed,
+               activation.evidence_event_id,
                activation.created_at::text AS created_at
         FROM evolution_activation_events activation
         JOIN evolution_candidates candidate ON candidate.candidate_id = activation.candidate_id
         WHERE candidate.scope = 'owner_private' AND candidate.account_id = $1
-        ORDER BY activation.created_at, activation_id
+        ORDER BY activation.created_at, activation.activation_id
     """,
     "evolution_lifecycle_events": """
         SELECT lifecycle.sequence, lifecycle.event_id::text AS event_id, lifecycle.candidate_id,
-               event_type, from_status, to_status, reason, related_candidate_id,
+               lifecycle.event_type, lifecycle.from_status, lifecycle.to_status,
+               lifecycle.reason, lifecycle.related_candidate_id,
                lifecycle.created_at::text AS created_at
         FROM evolution_lifecycle_events lifecycle
         JOIN evolution_candidates candidate ON candidate.candidate_id = lifecycle.candidate_id

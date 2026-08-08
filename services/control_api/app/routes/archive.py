@@ -79,8 +79,8 @@ from services.digital_self.domain import (
     VersionNotFoundError,
 )
 from services.digital_self.response_planner import PLANNER_POLICY_VERSION
-from services.evolution.receipt import verify_resolution_receipt
 from services.evolution.account_fence import AccountWriteBlockedError
+from services.evolution.receipt import verify_resolution_receipt
 from services.evolution.store import EvolutionNotFoundError, EvolutionStore
 from services.governance.account_data import (
     AccountDataGovernance,

@@ -747,33 +747,6 @@ async def _fixture(
         archive_object_store=archive_objects,
         session_terminator=session_terminator,
     )
-
-
-@pytest.mark.asyncio
-async def test_export_fails_closed_when_deletion_has_begun(
-    tmp_path: Path,
-) -> None:
-    database_path = tmp_path / "memoria.sqlite3"
-    MemoryStore(database_path).initialize()
-    speaker_path = tmp_path / "speaker.sqlite3"
-    SpeakerAuthority(speaker_path).initialize()
-    archive = LifeArchive.sqlite(database_path)
-    await archive.initialize()
-    evolution_path = tmp_path / "evolution.sqlite3"
-    EvolutionStore(evolution_path).mark_account_deleting("deleting-export")
-    governance = AccountDataGovernance(
-        memory_store=MemoryStore(database_path),
-        archive_repository=SqliteAccountRepository.archive(database_path),
-        speaker_repository=SqliteAccountRepository.speaker(speaker_path),
-        evolution_repository=SqliteEvolutionAccountRepository(evolution_path),
-        voice_profiles=LocalVoiceProfile(),
-        archive_object_store=TestingObjectStore(),
-        session_terminator=None,
-        account_read_guard=AccountOperationGate().sync_read,
-    )
-
-    with pytest.raises(AccountWriteBlockedError, match="account deletion is in progress"):
-        await governance.export_account("deleting-export")
     return (
         governance,
         store,
@@ -785,6 +758,18 @@ async def test_export_fails_closed_when_deletion_has_begun(
         archive_objects,
         archive_reference,
     )
+
+
+@pytest.mark.asyncio
+async def test_export_fails_closed_when_deletion_has_begun(
+    tmp_path: Path,
+) -> None:
+    governance, *_ = await _fixture(tmp_path)
+    evolution_path = tmp_path / "evolution.sqlite3"
+    EvolutionStore(evolution_path).mark_account_deleting("account-governance")
+
+    with pytest.raises(AccountWriteBlockedError, match="account deletion is in progress"):
+        await governance.export_account("account-governance")
 
 
 @pytest.mark.asyncio
