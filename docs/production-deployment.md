@@ -356,16 +356,20 @@ AGENT_ENV=/etc/memoria-agent.env
 SPEAKER_MODEL_ENV=/etc/memoria-speaker-model.env
 GATEWAY_ENV=/etc/memoria-miniprogram-gateway.env
 MEDIA_EDGE_ENV=/etc/memoria-media-edge.env
+POSTGRES_ENV=/etc/memoria-postgres.env
 CONTROL_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/control-api.env
 AGENT_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/agent.env
 SPEAKER_MODEL_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/speaker-model.env
 GATEWAY_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/gateway.env
 MEDIA_EDGE_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/media-edge.env
+POSTGRES_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/postgres.env
 CONTROL_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-control-api.env-pre-$RELEASE_TAG
 AGENT_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-agent.env-pre-$RELEASE_TAG
 SPEAKER_MODEL_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-speaker-model.env-pre-$RELEASE_TAG
 GATEWAY_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-miniprogram-gateway.env-pre-$RELEASE_TAG
 MEDIA_EDGE_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-media-edge.env-pre-$RELEASE_TAG
+POSTGRES_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-postgres.env-pre-$RELEASE_TAG
+ROLLBACK_RECEIPT=$PROTECTED_BACKUP_DIR/rollback-$RELEASE_TAG.env
 ```
 
 ### 1. 本机构建、打包并增量上传固定工件
@@ -598,7 +602,7 @@ sudo find "$RELEASE_DIR" "$H5_DIR" -type d -exec chmod 0755 {} +
 因此每个候选 H5 的 `assets/` 都是追加式的 immutable URL 命名空间：候选构建自己的文件优先，历史 release 只补入不存在的文件，绝不覆盖候选文件。切换 `/var/www/memoria-h5` 前执行以下命令。它先拒绝同一路径但字节不同的资源（这违反 immutable URL 约定），再无覆盖合并历史 `assets/`；不能用 `cp -f`、`rsync --delete` 或清空候选 `assets/` 替代。
 
 ```bash
-sudo bash -ceu '
+sudo bash -cEeu '
 release_root=/var/www/memoria-releases
 candidate=$1
 candidate_assets=$candidate/assets
@@ -655,6 +659,160 @@ H5、临时 SQLite、`18791/18891`，不会占用在线 Control API 的 `8791`�
 sudo "$RELEASE_DIR/scripts/smoke_server_deployment.sh" "$RELEASE_TAG"
 ```
 
+#### 冻结回滚目标（所有 env 安装和软链切换之前）
+
+回滚目标不能在故障后通过 `current` 重新推断；那时软链可能已经指向失败候选。隔离 smoke 通过后，
+立即把旧 runtime/H5、源码 commit、可选 env 是否原先存在，以及 `media-runtime` 原运行状态写入
+root-only receipt；同时冻结“旧入口文件 + 新旧 immutable assets 并集”的 H5 回滚目录。receipt 只含
+版本、受限目录名、manifest SHA-256 和布尔状态，不含 secret；同一 release 禁止覆盖已有 receipt：
+
+```bash
+sudo install -d -o root -g root -m 0700 "$PROTECTED_BACKUP_DIR"
+sudo bash -cEeu '
+set -o pipefail
+release_tag=$1
+receipt=$2
+release_root=/var/www/memoria-releases
+rollback_dirname=rollback-$release_tag
+rollback_h5=$release_root/$rollback_dirname
+candidate_h5=$release_root/$release_tag
+
+case "$release_tag" in
+  ""|*[!A-Za-z0-9._-]*) echo "invalid release tag" >&2; exit 1 ;;
+esac
+test ! -e "$receipt"
+test ! -e "$rollback_h5"
+
+previous_runtime_dir="$(readlink -f /opt/memoria/current)"
+previous_h5_dir="$(readlink -f /var/www/memoria-h5)"
+previous_runtime_tag="$(basename "$previous_runtime_dir")"
+previous_h5_dirname="$(basename "$previous_h5_dir")"
+test "$previous_runtime_tag" != "$release_tag"
+test "$previous_h5_dirname" != "$release_tag"
+test -f "$previous_runtime_dir/.env"
+test -f "$previous_h5_dir/memoria-release.json"
+test -f "$previous_h5_dir/index.html"
+test -d "$candidate_h5/assets" && test ! -L "$candidate_h5/assets"
+
+previous_runtime_commit="$(awk -F= '\''$1 == "MEMORIA_RELEASE_COMMIT" {print $2}'\'' \
+  "$previous_runtime_dir/.env")"
+read -r previous_h5_release_tag previous_h5_commit < <(
+  python3 - "$previous_h5_dir/memoria-release.json" <<'\''PY'\''
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+print(payload["release_tag"], payload["commit"])
+PY
+)
+[[ "$previous_runtime_commit" =~ ^[0-9a-f]{40}$ ]]
+case "$previous_runtime_tag" in
+  ""|*[!A-Za-z0-9._-]*) echo "invalid previous runtime tag" >&2; exit 1 ;;
+esac
+case "$previous_h5_dirname" in
+  ""|*[!A-Za-z0-9._-]*) echo "invalid previous H5 dirname" >&2; exit 1 ;;
+esac
+case "$previous_h5_release_tag" in
+  ""|*[!A-Za-z0-9._-]*) echo "invalid previous H5 provenance" >&2; exit 1 ;;
+esac
+[[ "$previous_h5_commit" =~ ^[0-9a-f]{40}$ ]]
+
+for image in agent control-api speaker-model miniprogram-gateway; do
+  labels="$(docker image inspect "memoria-$image:$previous_runtime_tag" \
+    --format '\''{{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}}'\'')"
+  test "$labels" = "$previous_runtime_commit $previous_runtime_tag $image"
+done
+
+media_runtime_running_count=0
+for service in media-slo-reporter voice-core-media-bridge media-edge; do
+  if docker ps -q \
+    --filter label=com.docker.compose.project=memoria \
+    --filter "label=com.docker.compose.service=$service" | grep -q .; then
+    media_runtime_running_count=$((media_runtime_running_count + 1))
+  fi
+done
+case "$media_runtime_running_count" in
+  0) media_runtime_was_running=0 ;;
+  3)
+    echo "active media-runtime requires a five-image release manifest; this flow has four" >&2
+    exit 1
+    ;;
+  *) echo "partial media-runtime state is not releasable" >&2; exit 1 ;;
+esac
+test -f /etc/memoria-postgres.env && test ! -L /etc/memoria-postgres.env
+test "$(stat -c "%U:%G:%a" /etc/memoria-postgres.env)" = root:root:600
+
+present() { if [ -e "$1" ]; then printf 1; else printf 0; fi; }
+umask 077
+temporary="$(mktemp "$(dirname "$receipt")/.rollback-${release_tag}.XXXXXX")"
+temporary_h5="$(mktemp -d "$release_root/.rollback-${release_tag}.XXXXXX")"
+rollback_installed=0
+cleanup_receipt() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  rm -f -- "$temporary"
+  rm -rf -- "$temporary_h5"
+  if [ "$rollback_installed" = 1 ]; then rm -rf -- "$rollback_h5"; fi
+  exit "$status"
+}
+trap '\''exit 129'\'' HUP
+trap '\''exit 130'\'' INT
+trap '\''exit 143'\'' TERM
+trap cleanup_receipt EXIT
+
+# Freeze the old entry files together with the candidate append-only asset union.
+# A browser that cached either old or new code can then finish loading after rollback.
+find "$previous_h5_dir" -mindepth 1 -maxdepth 1 ! -name assets \
+  -exec cp -a --no-dereference -- {} "$temporary_h5/" \;
+cp -a --no-dereference -- "$candidate_h5/assets" "$temporary_h5/assets"
+chown -R root:root "$temporary_h5"
+find "$temporary_h5" -type d -exec chmod 0755 {} +
+find "$temporary_h5" -type f -exec chmod 0644 {} +
+test -z "$(find "$temporary_h5" -type l -print -quit)"
+cmp -s "$previous_h5_dir/index.html" "$temporary_h5/index.html"
+cmp -s "$previous_h5_dir/memoria-release.json" "$temporary_h5/memoria-release.json"
+(
+  cd "$temporary_h5"
+  test -n "$(find . -type f ! -name "._*" -print -quit)"
+  find . -type f ! -name "._*" ! -name .memoria-rollback-manifest.sha256 -print0 \
+    | LC_ALL=C sort -z \
+    | xargs -0 sha256sum >.memoria-rollback-manifest.sha256
+  chmod 0600 .memoria-rollback-manifest.sha256
+  sha256sum -c .memoria-rollback-manifest.sha256 >/dev/null
+)
+rollback_manifest_sha="$(sha256sum \
+  "$temporary_h5/.memoria-rollback-manifest.sha256" | cut -d " " -f1)"
+[[ "$rollback_manifest_sha" =~ ^[0-9a-f]{64}$ ]]
+
+{
+  printf "RELEASE_TAG=%s\n" "$release_tag"
+  printf "PREV_RUNTIME_TAG=%s\n" "$previous_runtime_tag"
+  printf "PREV_RUNTIME_COMMIT=%s\n" "$previous_runtime_commit"
+  printf "PREV_H5_DIRNAME=%s\n" "$previous_h5_dirname"
+  printf "PREV_H5_RELEASE_TAG=%s\n" "$previous_h5_release_tag"
+  printf "PREV_H5_COMMIT=%s\n" "$previous_h5_commit"
+  printf "ROLLBACK_H5_DIRNAME=%s\n" "$rollback_dirname"
+  printf "ROLLBACK_H5_MANIFEST_SHA256=%s\n" "$rollback_manifest_sha"
+  printf "CONTROL_ENV_PRESENT=%s\n" "$(present /etc/memoria-control-api.env)"
+  printf "AGENT_ENV_PRESENT=%s\n" "$(present /etc/memoria-agent.env)"
+  printf "SPEAKER_MODEL_ENV_PRESENT=%s\n" "$(present /etc/memoria-speaker-model.env)"
+  printf "GATEWAY_ENV_PRESENT=%s\n" "$(present /etc/memoria-miniprogram-gateway.env)"
+  printf "MEDIA_EDGE_ENV_PRESENT=%s\n" "$(present /etc/memoria-media-edge.env)"
+  printf "POSTGRES_ENV_PRESENT=%s\n" "$(present /etc/memoria-postgres.env)"
+  printf "MEDIA_RUNTIME_WAS_RUNNING=%s\n" "$media_runtime_was_running"
+} >"$temporary"
+chown root:root "$temporary"
+chmod 0600 "$temporary"
+mv -T "$temporary_h5" "$rollback_h5"
+rollback_installed=1
+mv -T "$temporary" "$receipt"
+rollback_installed=0
+trap - EXIT HUP INT TERM
+' bash "$RELEASE_TAG" "$ROLLBACK_RECEIPT"
+sudo test "$(stat -c '%U:%G:%a' "$ROLLBACK_RECEIPT")" = "root:root:600"
+sudo sha256sum "$ROLLBACK_RECEIPT"
+```
+
 ### 3. 创建发布前 SQLite 快照
 
 SQLite 使用 WAL，禁止只复制主文件。使用 SQLite backup API 创建一致快照并立即做只读完整性检查：
@@ -697,185 +855,579 @@ sudo test "$(sha256sum "$BACKUP" | cut -d ' ' -f1)" = \
   "$(sha256sum "$PROTECTED_BACKUP" | cut -d ' ' -f1)"
 sudo sha256sum "$BACKUP" "$PROTECTED_BACKUP"
 
-sudo test "$(stat -c '%U:%G:%a' "$CONTROL_ENV_CANDIDATE")" = "root:root:600"
-sudo test "$(stat -c '%U:%G:%a' "$AGENT_ENV_CANDIDATE")" = "root:root:600"
-sudo test "$(stat -c '%U:%G:%a' "$SPEAKER_MODEL_ENV_CANDIDATE")" = "root:root:600"
-sudo test "$(stat -c '%U:%G:%a' "$GATEWAY_ENV_CANDIDATE")" = "root:root:600"
-if sudo test -e "$MEDIA_EDGE_ENV_CANDIDATE"; then
-  sudo test "$(stat -c '%U:%G:%a' "$MEDIA_EDGE_ENV_CANDIDATE")" = "root:root:600"
+# PostgreSQL candidate must exist before any application candidate is derived:
+# prepare_production_upgrade_env.py reads this exact file to build every DSN.
+: "${LEGACY_ENV_SOURCE:?set the canonical root-only merged production env source}"
+sudo bash -cEeu '
+set -o pipefail
+requested_release=$1
+candidate_dir=/run/memoria-env/$requested_release
+postgres_candidate=$candidate_dir/postgres.env
+
+secure_file() {
+  test -f "$1" && test ! -L "$1"
+  test "$(stat -c "%U:%G:%a" "$1")" = root:root:600
+}
+
+test ! -e "$postgres_candidate"
+secure_file /etc/memoria-postgres.env
+install -d -o root -g root -m 0700 "$candidate_dir"
+temporary=
+postgres_candidate_committed=0
+cleanup_postgres_candidate() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  rm -f -- "$temporary"
+  if [ "$postgres_candidate_committed" = 0 ]; then rm -f -- "$postgres_candidate"; fi
+  exit "$status"
+}
+trap '\''exit 129'\'' HUP
+trap '\''exit 130'\'' INT
+trap '\''exit 143'\'' TERM
+trap cleanup_postgres_candidate EXIT
+install -o root -g root -m 0600 /etc/memoria-postgres.env "$postgres_candidate"
+if ! grep -Eq "^MEMORIA_DB_EVOLUTION_PASSWORD=.{32,}$" "$postgres_candidate"; then
+  temporary="$(mktemp "$candidate_dir/.postgres.XXXXXX")"
+  awk '\''!/^MEMORIA_DB_EVOLUTION_PASSWORD=/'\'' "$postgres_candidate" >"$temporary"
+  evolution_password="$(openssl rand -hex 48)"
+  printf "MEMORIA_DB_EVOLUTION_PASSWORD=%s\n" "$evolution_password" >>"$temporary"
+  unset evolution_password
+  chown root:root "$temporary"
+  chmod 0600 "$temporary"
+  mv -T "$temporary" "$postgres_candidate"
+  temporary=
 fi
-sudo grep -qx 'ENDPOINTING_MIN_DELAY_S=1.50' "$AGENT_ENV_CANDIDATE"
-sudo grep -qx 'ENDPOINTING_MAX_DELAY_S=2.20' "$AGENT_ENV_CANDIDATE"
-sudo grep -qx 'FALSE_INTERRUPTION_TIMEOUT_S=1.70' "$AGENT_ENV_CANDIDATE"
-sudo grep -qx 'INTERRUPT_SEMANTIC_ENABLED=true' "$AGENT_ENV_CANDIDATE"
-sudo grep -qx 'INTERRUPT_SEMANTIC_MODEL=deepseek-v4-flash' "$AGENT_ENV_CANDIDATE"
-sudo grep -qx 'INTERRUPT_SEMANTIC_TIMEOUT_S=1.2' "$AGENT_ENV_CANDIDATE"
-for current_env in "$CONTROL_ENV" "$AGENT_ENV" "$SPEAKER_MODEL_ENV"; do
-  sudo test -e "$current_env"
-  sudo test "$(stat -c '%U:%G:%a' "$current_env")" = "root:root:600"
-done
-sudo install -o root -g root -m 0600 "$CONTROL_ENV" "$CONTROL_ENV_BACKUP"
-sudo install -o root -g root -m 0600 "$AGENT_ENV" "$AGENT_ENV_BACKUP"
-sudo install -o root -g root -m 0600 "$SPEAKER_MODEL_ENV" "$SPEAKER_MODEL_ENV_BACKUP"
-if sudo test -e "$GATEWAY_ENV"; then
-  sudo test "$(stat -c '%U:%G:%a' "$GATEWAY_ENV")" = "root:root:600"
-  sudo install -o root -g root -m 0600 "$GATEWAY_ENV" "$GATEWAY_ENV_BACKUP"
-fi
-if sudo test -e "$MEDIA_EDGE_ENV"; then
-  sudo test "$(stat -c '%U:%G:%a' "$MEDIA_EDGE_ENV")" = "root:root:600"
-  sudo install -o root -g root -m 0600 "$MEDIA_EDGE_ENV" "$MEDIA_EDGE_ENV_BACKUP"
-fi
-sudo sha256sum "$CONTROL_ENV_BACKUP" "$AGENT_ENV_BACKUP" "$SPEAKER_MODEL_ENV_BACKUP"
-if sudo test -e "$GATEWAY_ENV_BACKUP"; then
-  sudo sha256sum "$GATEWAY_ENV_BACKUP"
-fi
-if sudo test -e "$MEDIA_EDGE_ENV_BACKUP"; then
-  sudo sha256sum "$MEDIA_EDGE_ENV_BACKUP"
-fi
+secure_file "$postgres_candidate"
+postgres_candidate_committed=1
+trap - EXIT HUP INT TERM
+' bash "$RELEASE_TAG"
+
 : "${MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256:?copy the digest field from the verified manifest}"
-sudo grep -Fxq \
-  "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256=$MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256" \
-  "$CONTROL_ENV_CANDIDATE"
-sudo install -o root -g root -m 0600 "$CONTROL_ENV_CANDIDATE" "$CONTROL_ENV"
-sudo install -o root -g root -m 0600 "$AGENT_ENV_CANDIDATE" "$AGENT_ENV"
-sudo install -o root -g root -m 0600 "$SPEAKER_MODEL_ENV_CANDIDATE" "$SPEAKER_MODEL_ENV"
-sudo install -o root -g root -m 0600 "$GATEWAY_ENV_CANDIDATE" "$GATEWAY_ENV"
-if sudo test -e "$MEDIA_EDGE_ENV_CANDIDATE"; then
-  sudo install -o root -g root -m 0600 "$MEDIA_EDGE_ENV_CANDIDATE" "$MEDIA_EDGE_ENV"
-fi
+sudo test -f "$LEGACY_ENV_SOURCE" && sudo test ! -L "$LEGACY_ENV_SOURCE"
+sudo test "$(sudo stat -c '%U:%G:%a' "$LEGACY_ENV_SOURCE")" = root:root:600
+sudo test "$(sudo stat -c '%U:%G:%a' /etc/memoria-minio.env)" = root:root:600
+sudo docker run --rm --network none --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev \
+  --user 0:0 --cap-drop ALL --security-opt no-new-privileges \
+  --env PYTHONPATH=/release \
+  --mount "type=bind,src=/opt/memoria/releases/$RELEASE_TAG,dst=/release,readonly" \
+  --mount "type=bind,src=$LEGACY_ENV_SOURCE,dst=/run/input/legacy.env,readonly" \
+  --mount type=bind,src=/etc/memoria-minio.env,dst=/run/input/minio.env,readonly \
+  --mount "type=bind,src=/run/memoria-env/$RELEASE_TAG,dst=/run/output" \
+  --entrypoint /app/.venv/bin/python "memoria-agent:$RELEASE_TAG" \
+  -m scripts.prepare_production_upgrade_env \
+  --legacy /run/input/legacy.env \
+  --postgres /run/output/postgres.env \
+  --minio /run/input/minio.env \
+  --release-tag "$RELEASE_TAG" \
+  --evolution-trusted-root "$MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256" \
+  --control /run/output/control-api.env \
+  --agent /run/output/agent.env \
+  --speaker-model /run/output/speaker-model.env \
+  --gateway /run/output/gateway.env \
+  --media-edge /run/output/media-edge.env
+
+sudo bash -cEeu '
+set -o pipefail
+requested_release=$1
+receipt=$2
+trusted_root=$3
+candidate_dir=/run/memoria-env/$requested_release
+backup_dir=/var/backups/memoria
+
+secure_file() {
+  test -f "$1" && test ! -L "$1"
+  test "$(stat -c "%U:%G:%a" "$1")" = root:root:600
+}
+secure_file "$receipt"
+# shellcheck disable=SC1090 -- receipt was generated above by this runbook.
+. "$receipt"
+test "$RELEASE_TAG" = "$requested_release"
+for value in "$CONTROL_ENV_PRESENT" "$AGENT_ENV_PRESENT" \
+  "$SPEAKER_MODEL_ENV_PRESENT" "$GATEWAY_ENV_PRESENT" \
+  "$MEDIA_EDGE_ENV_PRESENT" "$POSTGRES_ENV_PRESENT" \
+  "$MEDIA_RUNTIME_WAS_RUNNING"; do
+  case "$value" in 0|1) ;; *) echo "invalid rollback receipt" >&2; exit 1 ;; esac
+done
+
+postgres_candidate=$candidate_dir/postgres.env
+secure_file "$postgres_candidate"
+grep -Eq "^MEMORIA_DB_EVOLUTION_PASSWORD=.{32,}$" "$postgres_candidate"
+
+currents=(
+  /etc/memoria-control-api.env /etc/memoria-agent.env
+  /etc/memoria-speaker-model.env /etc/memoria-miniprogram-gateway.env
+  /etc/memoria-postgres.env /etc/memoria-media-edge.env
+)
+candidates=(
+  "$candidate_dir/control-api.env" "$candidate_dir/agent.env"
+  "$candidate_dir/speaker-model.env" "$candidate_dir/gateway.env"
+  "$postgres_candidate" "$candidate_dir/media-edge.env"
+)
+backups=(
+  "$backup_dir/memoria-control-api.env-pre-$requested_release"
+  "$backup_dir/memoria-agent.env-pre-$requested_release"
+  "$backup_dir/memoria-speaker-model.env-pre-$requested_release"
+  "$backup_dir/memoria-miniprogram-gateway.env-pre-$requested_release"
+  "$backup_dir/memoria-postgres.env-pre-$requested_release"
+  "$backup_dir/memoria-media-edge.env-pre-$requested_release"
+)
+present=(
+  "$CONTROL_ENV_PRESENT" "$AGENT_ENV_PRESENT" "$SPEAKER_MODEL_ENV_PRESENT"
+  "$GATEWAY_ENV_PRESENT" "$POSTGRES_ENV_PRESENT" "$MEDIA_EDGE_ENV_PRESENT"
+)
+
+# Phase 1: validate every candidate and every frozen current state before writing
+# any backup. Live env is installed only inside the guarded DDL/activation transactions.
+for candidate in "${candidates[@]}"; do secure_file "$candidate"; done
+grep -qx "ENDPOINTING_MIN_DELAY_S=1.50" "$candidate_dir/agent.env"
+grep -qx "ENDPOINTING_MAX_DELAY_S=2.20" "$candidate_dir/agent.env"
+grep -qx "FALSE_INTERRUPTION_TIMEOUT_S=1.70" "$candidate_dir/agent.env"
+grep -qx "INTERRUPT_SEMANTIC_ENABLED=true" "$candidate_dir/agent.env"
+grep -qx "INTERRUPT_SEMANTIC_MODEL=deepseek-v4-flash" "$candidate_dir/agent.env"
+grep -qx "INTERRUPT_SEMANTIC_TIMEOUT_S=1.2" "$candidate_dir/agent.env"
+grep -Fxq "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256=$trusted_root" \
+  "$candidate_dir/control-api.env"
+for key in POSTGRES_PASSWORD MEMORIA_DB_APP_PASSWORD \
+  MEMORIA_DB_COMPILER_PASSWORD MEMORIA_DB_EVOLUTION_PASSWORD; do
+  grep -Eq "^${key}=.+$" "$postgres_candidate"
+done
+for index in "${!currents[@]}"; do
+  if [ "${present[$index]}" = 1 ]; then
+    secure_file "${currents[$index]}"
+    if [ -e "${backups[$index]}" ]; then
+      secure_file "${backups[$index]}"
+      cmp -s "${currents[$index]}" "${backups[$index]}"
+    fi
+  else
+    test ! -e "${currents[$index]}"
+    test ! -e "${backups[$index]}"
+  fi
+done
+
+# Phase 2: back up every prior file; do not mutate /etc in this block.
+for index in "${!currents[@]}"; do
+  if [ "${present[$index]}" = 1 ] && [ ! -e "${backups[$index]}" ]; then
+    install -o root -g root -m 0600 \
+      "${currents[$index]}" "${backups[$index]}"
+  fi
+done
+for index in "${!currents[@]}"; do
+  if [ "${present[$index]}" = 1 ]; then
+    secure_file "${backups[$index]}"
+    cmp -s "${currents[$index]}" "${backups[$index]}"
+  fi
+done
+
+for index in "${!backups[@]}"; do
+  if [ "${present[$index]}" = 1 ]; then sha256sum "${backups[$index]}"; fi
+done
+' bash "$RELEASE_TAG" "$ROLLBACK_RECEIPT" \
+  "$MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256"
 ```
 
-保护副本放在 root-only `/var/backups/memoria`，避免与容器 bind 目录共享暴露面；`/var/lib/memoria` 中的原始快照继续保留，作为独立的第二份回滚副本。先在可信运维环境生成五份候选 env；`split_production_env.py` 只做最小权限分流，不能替代 endpointing 精确值门禁。启用 `media-runtime` profile 前必须安装并核对 `/etc/memoria-media-edge.env`，以及 `/etc/memoria-media-runtime/` 下的 Voice Core mTLS 文件；默认 LiveKit 发布不需要这两项。再执行上述“校验候选 → 备份已有 env → 安装候选”顺序。前三份旧 env 是既有 runtime 的强制前提；gateway 与 media-edge 只在首次启用对应 profile 前不存在，因此分别条件备份。数据库、候选 env 和已有 env 备份都必须为 `root:root 0600`，不得为了容器读取而放宽权限。
+保护副本放在 root-only `/var/backups/memoria`，避免与容器 bind 目录共享暴露面；`/var/lib/memoria` 中的原始快照继续保留，作为独立的第二份回滚副本。PostgreSQL candidate 先生成唯一 evolution 密码，五份应用 candidate 再从这同一文件派生；media-edge candidate 总是生成和备份，但文件存在本身不会启用 profile。当前四镜像工件流程只允许 receipt 记录 `MEDIA_RUNTIME_WAS_RUNNING=0`；启用该 profile 前必须先把 media-edge 纳入 build/save/manifest/verifier 全链。`split_production_env.py` 只做最小权限分流，不能替代 endpointing 精确值门禁。数据库、全部候选 env 和备份都必须为 regular `root:root 0600`，不得使用 symlink，也不得为了容器读取而放宽权限。
 
 ### 3.1 PostgreSQL forward-only schema 升级（按 release 要求执行）
 
 只有 release 文档明确要求 PostgreSQL schema/role 升级时执行本节。必须先完成 PostgreSQL/WAL/MinIO
 联合备份门禁和上面的 SQLite/env 备份。已有 volume 不会重新执行 init 文件；必须先让候选 data
 Compose 把新脚本只读挂载到现有 PostgreSQL 容器，再运行候选 release 中的幂等升级脚本。旧 runtime
-writer 在整个 DDL 窗口保持停止，升级成功后直接进入下一节切换新 runtime；失败则恢复已备份 env 并
-重启旧 runtime，不切 H5，也不回滚已经提交的 forward-only DDL：
+writer 在整个 DDL 窗口保持停止；无论升级成功、失败、SSH 断开或收到终止信号，本事务都会恢复冻结的
+旧 env/data/runtime 后再退出。成功只保留 additive DDL，下一节在独立受保护事务中重新安装同一组
+candidate env 并切换 runtime；失败不切 H5，也不回滚已经提交的 forward-only DDL：
 
 ```bash
-CURRENT_RUNTIME_DIR="$(readlink -f /opt/memoria/current)"
-CURRENT_RUNTIME_TAG="$(basename "$CURRENT_RUNTIME_DIR")"
-CANDIDATE_DATA_COMPOSE_DIR="$RELEASE_DIR/infra"
-
-sudo bash -ceu '
+sudo bash -cEeu '
 set -o pipefail
-current_runtime_dir=$1
-current_runtime_tag=$2
-candidate_data_dir=$3
-release_dir=$4
-control_backup=$5
-agent_backup=$6
-speaker_backup=$7
-gateway_backup=$8
-media_edge_backup=$9
+requested_release=$1
+receipt=$2
+candidate_release=/opt/memoria/releases/$requested_release
+backup_dir=/var/backups/memoria
 
-restore_previous_runtime() {
-  trap - ERR
-  echo "PostgreSQL upgrade failed; restoring previous runtime env and services" >&2
-  install -o root -g root -m 0600 "$control_backup" /etc/memoria-control-api.env
-  install -o root -g root -m 0600 "$agent_backup" /etc/memoria-agent.env
-  install -o root -g root -m 0600 "$speaker_backup" /etc/memoria-speaker-model.env
-  if [ -e "$gateway_backup" ]; then
-    install -o root -g root -m 0600 \
-      "$gateway_backup" /etc/memoria-miniprogram-gateway.env
-  else
-    rm -f /etc/memoria-miniprogram-gateway.env
-  fi
-  if [ -e "$media_edge_backup" ]; then
-    install -o root -g root -m 0600 \
-      "$media_edge_backup" /etc/memoria-media-edge.env
-  else
-    rm -f /etc/memoria-media-edge.env
-  fi
-  cd "$current_runtime_dir"
-  env MEMORIA_RELEASE_TAG="$current_runtime_tag" \
-    docker compose -f docker-compose.production.yml \
-    up -d --no-build --wait --wait-timeout 120
+secure_file() {
+  test -f "$1" && test ! -L "$1"
+  test "$(stat -c "%U:%G:%a" "$1")" = root:root:600
 }
-on_upgrade_error() {
-  status=$?
-  restore_previous_runtime
-  exit "$status"
+restore_one() {
+  target=$1 backup=$2 was_present=$3
+  if [ "$was_present" = 1 ]; then
+    secure_file "$backup"
+    install -o root -g root -m 0600 "$backup" "$target"
+  else
+    rm -f "$target"
+  fi
 }
-trap on_upgrade_error ERR
-
-cd "$current_runtime_dir"
-docker compose -f docker-compose.production.yml stop \
-  agent control-api miniprogram-gateway
-running_services="$(docker compose -f docker-compose.production.yml \
-  ps --status running --services)"
-for service in agent control-api miniprogram-gateway; do
-  if grep -Fxq "$service" <<<"$running_services"; then
-    echo "writer still running: $service" >&2
-    false  # Trigger ERR trap so previous env and services are restored.
+stop_current_runtime() {
+  for service in agent control-api speaker-model miniprogram-gateway \
+    media-slo-reporter voice-core-media-bridge media-edge; do
+    if ! ids="$(docker ps -q \
+      --filter label=com.docker.compose.project=memoria \
+      --filter "label=com.docker.compose.service=$service")"; then
+      return 1
+    fi
+    if [ -n "$ids" ]; then docker stop $ids >/dev/null; fi
+  done
+  for service in agent control-api speaker-model miniprogram-gateway \
+    media-slo-reporter voice-core-media-bridge media-edge; do
+    if docker ps -q \
+      --filter label=com.docker.compose.project=memoria \
+      --filter "label=com.docker.compose.service=$service" | grep -q .; then
+      echo "runtime service still running: $service" >&2
+      return 1
+    fi
+  done
+}
+secure_file "$receipt"
+# shellcheck disable=SC1090 -- root-generated receipt with validated ownership/mode.
+. "$receipt"
+test "$RELEASE_TAG" = "$requested_release"
+old_release=/opt/memoria/releases/$PREV_RUNTIME_TAG
+old_data=$old_release/infra
+candidate_data=$candidate_release/infra
+candidate_postgres=/run/memoria-env/$requested_release/postgres.env
+test -d "$old_release" && test -d "$old_data" && test -d "$candidate_data"
+test "$(readlink -f /opt/memoria/current)" = "$old_release"
+test "$(awk -F= '\''$1 == "MEMORIA_RELEASE_COMMIT" {print $2}'\'' \
+  "$old_release/.env")" = "$PREV_RUNTIME_COMMIT"
+test "$(awk -F= '\''$1 == "MEMORIA_RELEASE_TAG" {print $2}'\'' \
+  "$old_release/.env")" = "$PREV_RUNTIME_TAG"
+for image in agent control-api speaker-model miniprogram-gateway; do
+  labels="$(docker image inspect "memoria-$image:$PREV_RUNTIME_TAG" \
+    --format '\''{{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}}'\'')"
+  test "$labels" = "$PREV_RUNTIME_COMMIT $PREV_RUNTIME_TAG $image"
+done
+cd "$old_release"
+env MEMORIA_RELEASE_TAG="$PREV_RUNTIME_TAG" \
+  docker compose -f docker-compose.production.yml config --quiet
+docker compose --project-directory "$old_data" \
+  -f "$old_data/memoria-data.production.yml" config --quiet
+docker compose --project-directory "$candidate_data" \
+  -f "$candidate_data/memoria-data.production.yml" config --quiet
+secure_file "$candidate_postgres"
+for item in \
+  "control-api:$CONTROL_ENV_PRESENT" "agent:$AGENT_ENV_PRESENT" \
+  "speaker-model:$SPEAKER_MODEL_ENV_PRESENT" \
+  "miniprogram-gateway:$GATEWAY_ENV_PRESENT" \
+  "postgres:$POSTGRES_ENV_PRESENT" "media-edge:$MEDIA_EDGE_ENV_PRESENT"; do
+  name=${item%%:*}
+  was_present=${item##*:}
+  current=/etc/memoria-$name.env
+  backup=$backup_dir/memoria-$name.env-pre-$requested_release
+  if [ "$was_present" = 1 ]; then
+    secure_file "$backup"
+    secure_file "$current"
+    cmp -s "$backup" "$current"
+  else
+    test ! -e "$current"
   fi
 done
 
-docker compose --project-directory "$candidate_data_dir" \
-  -f "$candidate_data_dir/memoria-data.production.yml" config --quiet
-docker compose --project-directory "$candidate_data_dir" \
-  -f "$candidate_data_dir/memoria-data.production.yml" \
-  up -d --no-build --wait --wait-timeout 120 postgres
+restore_previous_runtime() {
+  echo "restoring frozen data/runtime target after PostgreSQL maintenance" >&2
 
+  # The old data control plane must be healthy before any old writer returns.
+  restore_one /etc/memoria-postgres.env \
+    "$backup_dir/memoria-postgres.env-pre-$requested_release" \
+    "$POSTGRES_ENV_PRESENT"
+  secure_file /etc/memoria-postgres.env
+  docker compose --project-directory "$old_data" \
+    -f "$old_data/memoria-data.production.yml" \
+    up -d --no-build --wait --wait-timeout 120 postgres
+  docker exec memoria-data-postgres-1 pg_isready -U memoria_admin -d postgres
+
+  restore_one /etc/memoria-control-api.env \
+    "$backup_dir/memoria-control-api.env-pre-$requested_release" "$CONTROL_ENV_PRESENT"
+  restore_one /etc/memoria-agent.env \
+    "$backup_dir/memoria-agent.env-pre-$requested_release" "$AGENT_ENV_PRESENT"
+  restore_one /etc/memoria-speaker-model.env \
+    "$backup_dir/memoria-speaker-model.env-pre-$requested_release" \
+    "$SPEAKER_MODEL_ENV_PRESENT"
+  restore_one /etc/memoria-miniprogram-gateway.env \
+    "$backup_dir/memoria-miniprogram-gateway.env-pre-$requested_release" \
+    "$GATEWAY_ENV_PRESENT"
+  restore_one /etc/memoria-media-edge.env \
+    "$backup_dir/memoria-media-edge.env-pre-$requested_release" "$MEDIA_EDGE_ENV_PRESENT"
+
+  rm -f "/opt/memoria/.current.restore-$requested_release"
+  ln -s "releases/$PREV_RUNTIME_TAG" "/opt/memoria/.current.restore-$requested_release"
+  mv -Tf "/opt/memoria/.current.restore-$requested_release" /opt/memoria/current
+  test "$(readlink -f /opt/memoria/current)" = "$old_release"
+  cd "$old_release"
+  env MEMORIA_RELEASE_TAG="$PREV_RUNTIME_TAG" \
+    docker compose -f docker-compose.production.yml \
+    up -d --no-build --wait --wait-timeout 120
+  if [ "$MEDIA_RUNTIME_WAS_RUNNING" = 1 ]; then
+    env MEMORIA_RELEASE_TAG="$PREV_RUNTIME_TAG" \
+      docker compose --profile media-runtime -f docker-compose.production.yml \
+      up -d --no-build --wait --wait-timeout 120 \
+      media-edge voice-core-media-bridge media-slo-reporter
+  fi
+  "$old_release/scripts/refresh_readiness.sh"
+  curl -fsS http://127.0.0.1:8791/health/ready >/dev/null
+}
+on_upgrade_exit() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  restore_previous_runtime
+  exit "$status"
+}
+trap '\''exit 129'\'' HUP
+trap '\''exit 130'\'' INT
+trap '\''exit 143'\'' TERM
+trap on_upgrade_exit EXIT
+
+stop_current_runtime
+install -o root -g root -m 0600 "$candidate_postgres" /etc/memoria-postgres.env
+secure_file /etc/memoria-postgres.env
+
+docker compose --project-directory "$candidate_data" \
+  -f "$candidate_data/memoria-data.production.yml" config --quiet
+docker compose --project-directory "$candidate_data" \
+  -f "$candidate_data/memoria-data.production.yml" \
+  up -d --no-build --wait --wait-timeout 120 postgres
+docker exec memoria-data-postgres-1 pg_isready -U memoria_admin -d postgres
+
+secure_file /etc/memoria-postgres.env
 set -a
+# shellcheck disable=SC1091 -- validated root-only production env.
 . /etc/memoria-postgres.env
 set +a
 export POSTGRES_CONTAINER=memoria-data-postgres-1
-"$release_dir/scripts/upgrade_evolution_postgres.sh"
+"$candidate_release/scripts/upgrade_evolution_postgres.sh"
 unset MEMORIA_DB_APP_PASSWORD MEMORIA_DB_COMPILER_PASSWORD \
-  MEMORIA_DB_EVOLUTION_PASSWORD POSTGRES_CONTAINER
+  MEMORIA_DB_EVOLUTION_PASSWORD POSTGRES_PASSWORD POSTGRES_CONTAINER
 docker exec memoria-data-postgres-1 pg_isready -U memoria_admin -d postgres
-trap - ERR
-' bash \
-  "$CURRENT_RUNTIME_DIR" "$CURRENT_RUNTIME_TAG" \
-  "$CANDIDATE_DATA_COMPOSE_DIR" "$RELEASE_DIR" \
-  "$CONTROL_ENV_BACKUP" "$AGENT_ENV_BACKUP" "$SPEAKER_MODEL_ENV_BACKUP" \
-  "$GATEWAY_ENV_BACKUP" "$MEDIA_EDGE_ENV_BACKUP"
+' bash "$RELEASE_TAG" "$ROLLBACK_RECEIPT"
 ```
 
-`/etc/memoria-postgres.env` 必须仍为 `root:root 0600`，并已包含当前 app/compiler 密码及本次新建的
-独立 evolution 角色密码；脚本和命令不得打印这些值。升级脚本成功不等于新 runtime 可切流，下一节
-仍必须启动 commit/tag 绑定镜像，并在 readiness 中取得 `evolution_store=ready` 和 10/10 core。
+事务执行期间临时安装的 PostgreSQL candidate 必须为 `root:root 0600`，并包含当前 app/compiler
+密码及本次唯一 evolution 角色密码；脚本和命令不得打印这些值。事务退出时 `/etc` 已恢复旧值，唯一
+candidate 仍保留在 `/run/memoria-env/$RELEASE_TAG/postgres.env`，由下一节与其余五份 candidate 一起
+原子安装。升级成功不等于新 runtime 可切流；仍须启动 commit/tag 绑定镜像，并在 readiness 中取得
+`evolution_store=ready` 和 10/10 core。
 
 ### 4. 原子激活 runtime
 
 ```bash
-sudo test "$(stat -c '%U:%G:%a' /etc/memoria-control-api.env)" = "root:root:600"
-sudo test "$(stat -c '%U:%G:%a' /etc/memoria-agent.env)" = "root:root:600"
-sudo test "$(stat -c '%U:%G:%a' /etc/memoria-speaker-model.env)" = "root:root:600"
-sudo test "$(stat -c '%U:%G:%a' /etc/memoria-miniprogram-gateway.env)" = "root:root:600"
-if sudo test -e /etc/memoria-media-edge.env; then
-  sudo test "$(stat -c '%U:%G:%a' /etc/memoria-media-edge.env)" = "root:root:600"
+sudo bash -cEeu '
+set -o pipefail
+requested_release=$1
+receipt=$2
+candidate=/opt/memoria/releases/$requested_release
+candidate_data=$candidate/infra
+candidate_env=/run/memoria-env/$requested_release
+backup_dir=/var/backups/memoria
+ready_file=
+activation_committed=0
+
+secure_file() {
+  test -f "$1" && test ! -L "$1"
+  test "$(stat -c "%U:%G:%a" "$1")" = root:root:600
+}
+restore_one() {
+  target=$1 backup=$2 was_present=$3
+  if [ "$was_present" = 1 ]; then
+    secure_file "$backup"
+    install -o root -g root -m 0600 "$backup" "$target"
+  else
+    rm -f "$target"
+  fi
+}
+stop_current_runtime() {
+  for service in agent control-api speaker-model miniprogram-gateway \
+    media-slo-reporter voice-core-media-bridge media-edge; do
+    if ! ids="$(docker ps -q \
+      --filter label=com.docker.compose.project=memoria \
+      --filter "label=com.docker.compose.service=$service")"; then
+      return 1
+    fi
+    if [ -n "$ids" ]; then docker stop $ids >/dev/null; fi
+  done
+  for service in agent control-api speaker-model miniprogram-gateway \
+    media-slo-reporter voice-core-media-bridge media-edge; do
+    if docker ps -q \
+      --filter label=com.docker.compose.project=memoria \
+      --filter "label=com.docker.compose.service=$service" | grep -q .; then
+      echo "runtime service still running: $service" >&2
+      return 1
+    fi
+  done
+}
+restore_old_runtime() {
+  echo "runtime activation failed; restoring frozen target" >&2
+  stop_current_runtime
+  restore_one /etc/memoria-postgres.env \
+    "$backup_dir/memoria-postgres.env-pre-$requested_release" "$POSTGRES_ENV_PRESENT"
+  restore_one /etc/memoria-control-api.env \
+    "$backup_dir/memoria-control-api.env-pre-$requested_release" "$CONTROL_ENV_PRESENT"
+  restore_one /etc/memoria-agent.env \
+    "$backup_dir/memoria-agent.env-pre-$requested_release" "$AGENT_ENV_PRESENT"
+  restore_one /etc/memoria-speaker-model.env \
+    "$backup_dir/memoria-speaker-model.env-pre-$requested_release" \
+    "$SPEAKER_MODEL_ENV_PRESENT"
+  restore_one /etc/memoria-miniprogram-gateway.env \
+    "$backup_dir/memoria-miniprogram-gateway.env-pre-$requested_release" \
+    "$GATEWAY_ENV_PRESENT"
+  restore_one /etc/memoria-media-edge.env \
+    "$backup_dir/memoria-media-edge.env-pre-$requested_release" "$MEDIA_EDGE_ENV_PRESENT"
+
+  old_release=/opt/memoria/releases/$PREV_RUNTIME_TAG
+  old_data=$old_release/infra
+  docker compose --project-directory "$old_data" \
+    -f "$old_data/memoria-data.production.yml" \
+    up -d --no-build --wait --wait-timeout 120 postgres
+  docker exec memoria-data-postgres-1 pg_isready -U memoria_admin -d postgres
+  rm -f "/opt/memoria/.current.restore-$requested_release"
+  ln -s "releases/$PREV_RUNTIME_TAG" "/opt/memoria/.current.restore-$requested_release"
+  mv -Tf "/opt/memoria/.current.restore-$requested_release" /opt/memoria/current
+  test "$(readlink -f /opt/memoria/current)" = "$old_release"
+  cd "$old_release"
+  env MEMORIA_RELEASE_TAG="$PREV_RUNTIME_TAG" \
+    docker compose -f docker-compose.production.yml \
+    up -d --no-build --wait --wait-timeout 120
+  if [ "$MEDIA_RUNTIME_WAS_RUNNING" = 1 ]; then
+    env MEMORIA_RELEASE_TAG="$PREV_RUNTIME_TAG" \
+      docker compose --profile media-runtime -f docker-compose.production.yml \
+      up -d --no-build --wait --wait-timeout 120 \
+      media-edge voice-core-media-bridge media-slo-reporter
+  fi
+  "$old_release/scripts/refresh_readiness.sh"
+  curl -fsS http://127.0.0.1:8791/health/ready >/dev/null
+}
+on_activation_exit() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  rm -f -- "$ready_file"
+  if [ "$activation_committed" = 1 ]; then exit "$status"; fi
+  restore_old_runtime
+  exit "$status"
+}
+
+secure_file "$receipt"
+# shellcheck disable=SC1090 -- root-generated receipt with validated ownership/mode.
+. "$receipt"
+test "$RELEASE_TAG" = "$requested_release"
+for value in "$CONTROL_ENV_PRESENT" "$AGENT_ENV_PRESENT" \
+  "$SPEAKER_MODEL_ENV_PRESENT" "$GATEWAY_ENV_PRESENT" \
+  "$MEDIA_EDGE_ENV_PRESENT" "$POSTGRES_ENV_PRESENT" \
+  "$MEDIA_RUNTIME_WAS_RUNNING"; do
+  case "$value" in 0|1) ;; *) echo "invalid rollback receipt" >&2; exit 1 ;; esac
+done
+test -d "$candidate" && test -d "$candidate_data" && test -d "$candidate_env"
+test "$(readlink -f /opt/memoria/current)" = \
+  "/opt/memoria/releases/$PREV_RUNTIME_TAG"
+test "$(readlink -f /var/www/memoria-h5)" = \
+  "/var/www/memoria-releases/$PREV_H5_DIRNAME"
+old_runtime=/opt/memoria/releases/$PREV_RUNTIME_TAG
+old_data=$old_runtime/infra
+test -d "$old_runtime" && test -d "$old_data"
+test "$(awk -F= '\''$1 == "MEMORIA_RELEASE_COMMIT" {print $2}'\'' \
+  "$old_runtime/.env")" = "$PREV_RUNTIME_COMMIT"
+test "$(awk -F= '\''$1 == "MEMORIA_RELEASE_TAG" {print $2}'\'' \
+  "$old_runtime/.env")" = "$PREV_RUNTIME_TAG"
+for image in agent control-api speaker-model miniprogram-gateway; do
+  labels="$(docker image inspect "memoria-$image:$PREV_RUNTIME_TAG" \
+    --format '\''{{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}}'\'')"
+  test "$labels" = "$PREV_RUNTIME_COMMIT $PREV_RUNTIME_TAG $image"
+done
+cd "$old_runtime"
+env MEMORIA_RELEASE_TAG="$PREV_RUNTIME_TAG" \
+  docker compose -f docker-compose.production.yml config --quiet
+
+targets=(control-api agent speaker-model miniprogram-gateway postgres media-edge)
+candidates=(
+  "$candidate_env/control-api.env" "$candidate_env/agent.env"
+  "$candidate_env/speaker-model.env" "$candidate_env/gateway.env"
+  "$candidate_env/postgres.env" "$candidate_env/media-edge.env"
+)
+present=(
+  "$CONTROL_ENV_PRESENT" "$AGENT_ENV_PRESENT" "$SPEAKER_MODEL_ENV_PRESENT"
+  "$GATEWAY_ENV_PRESENT" "$POSTGRES_ENV_PRESENT" "$MEDIA_EDGE_ENV_PRESENT"
+)
+for index in "${!targets[@]}"; do
+  current=/etc/memoria-${targets[$index]}.env
+  backup=$backup_dir/memoria-${targets[$index]}.env-pre-$requested_release
+  secure_file "${candidates[$index]}"
+  if [ "${present[$index]}" = 1 ]; then
+    secure_file "$backup"
+    secure_file "$current"
+    cmp -s "$backup" "$current"
+  else
+    test ! -e "$current"
+  fi
+done
+
+trap '\''exit 129'\'' HUP
+trap '\''exit 130'\'' INT
+trap '\''exit 143'\'' TERM
+trap on_activation_exit EXIT
+stop_current_runtime
+for index in "${!targets[@]}"; do
+  install -o root -g root -m 0600 \
+    "${candidates[$index]}" "/etc/memoria-${targets[$index]}.env"
+done
+for index in "${!targets[@]}"; do
+  secure_file "/etc/memoria-${targets[$index]}.env"
+done
+
+test ! -e "/opt/memoria/.current.$requested_release"
+ln -s "releases/$requested_release" "/opt/memoria/.current.$requested_release"
+mv -Tf "/opt/memoria/.current.$requested_release" /opt/memoria/current
+test "$(readlink -f /opt/memoria/current)" = "$candidate"
+
+# Let Compose create the labelled shared network; never create it by hand.
+if ! docker network inspect memoria_default >/dev/null 2>&1; then
+  cd "$candidate"
+  env MEMORIA_RELEASE_TAG="$requested_release" \
+    docker compose -f docker-compose.production.yml create --no-build
 fi
-sudo ln -s "releases/$RELEASE_TAG" "/opt/memoria/.current.$RELEASE_TAG"
-sudo mv -Tf "/opt/memoria/.current.$RELEASE_TAG" /opt/memoria/current
+docker compose --project-directory "$candidate_data" \
+  -f "$candidate_data/memoria-data.production.yml" config --quiet
+docker compose --project-directory "$candidate_data" \
+  -f "$candidate_data/memoria-data.production.yml" \
+  up -d --no-build --wait --wait-timeout 120
+docker compose --project-directory /opt/livekit -f /opt/livekit/compose.yml \
+  up -d --wait --wait-timeout 120
 
-RUNTIME_COMPOSE_DIR=/opt/memoria/current
-DATA_COMPOSE_DIR=/opt/memoria/current/infra
-
-# 首次部署时让 runtime Compose 创建带有正确 Compose label 的共享网络。
-# 不要手工执行 `docker network create memoria_default`。
-if ! sudo docker network inspect memoria_default >/dev/null 2>&1; then
-  cd "$RUNTIME_COMPOSE_DIR"
-  MEMORIA_RELEASE_TAG="$RELEASE_TAG" \
-  sudo -E docker compose -f docker-compose.production.yml create --no-build
+cd "$candidate"
+env MEMORIA_RELEASE_TAG="$requested_release" \
+  docker compose -f docker-compose.production.yml \
+  up -d --no-build --wait --wait-timeout 120
+if [ "$MEDIA_RUNTIME_WAS_RUNNING" = 1 ]; then
+  env MEMORIA_RELEASE_TAG="$requested_release" \
+    docker compose --profile media-runtime -f docker-compose.production.yml \
+    up -d --no-build --wait --wait-timeout 120 \
+    media-edge voice-core-media-bridge media-slo-reporter
+else
+  env MEMORIA_RELEASE_TAG="$requested_release" \
+    docker compose --profile media-runtime -f docker-compose.production.yml stop \
+    media-edge voice-core-media-bridge media-slo-reporter
 fi
+test "$(readlink -f /opt/memoria/current)" = "$candidate"
 
-# data compose 的项目目录必须是 infra；否则相对 bind mount 可能被创建为目录。
-sudo docker compose --project-directory "$DATA_COMPOSE_DIR" \
-  -f "$DATA_COMPOSE_DIR/memoria-data.production.yml" config --quiet
-sudo docker compose --project-directory "$DATA_COMPOSE_DIR" \
-  -f "$DATA_COMPOSE_DIR/memoria-data.production.yml" up -d --no-build
-sudo docker compose --project-directory /opt/livekit \
-  -f /opt/livekit/compose.yml up -d
+"$candidate/scripts/refresh_readiness.sh"
+ready_file="$(mktemp /run/memoria-ready.XXXXXX)"
+curl -fsS http://127.0.0.1:8791/health/ready >"$ready_file"
+python3 - "$ready_file" "$requested_release" <<'\''PY'\''
+import json
+import sys
 
-cd "$RUNTIME_COMPOSE_DIR"
-MEMORIA_RELEASE_TAG="$RELEASE_TAG" \
-sudo -E docker compose -f docker-compose.production.yml up -d --no-build
-sudo docker ps --filter name=memoria
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+expected = sys.argv[2]
+core = payload["checks"]["core"]
+agent = payload["checks"]["agent"]
+if payload["release_tag"] != expected:
+    raise SystemExit("readiness release mismatch")
+if agent["release_tag"] != expected or agent["status"] != "ready":
+    raise SystemExit("Agent readiness release mismatch")
+if len(core) != 10 or any(value != "ready" for value in core.values()):
+    raise SystemExit("core readiness is not 10/10")
+PY
+rm -f "$ready_file"
+ready_file=
+activation_committed=1
+trap - EXIT HUP INT TERM
+' bash "$RELEASE_TAG" "$ROLLBACK_RECEIPT"
 ```
 
 `memoria-data.production.yml` 的脚本 bind mount 已设置 `create_host_path: false`；路径或项目目录错误时应立即失败，不得让 Docker 静默创建同名目录。后续发布若共享网络已存在，跳过 `create` 分支即可，但仍必须保留 `DATA_COMPOSE_DIR=/opt/memoria/current/infra`。
@@ -891,23 +1443,76 @@ root-only shell 中导出，不能写入命令行、日志或 env 文件；普�
 `docs/archive-backup-restore-runbook.md` 的“仅重建 memory projection”。
 
 ```bash
-cd "$RUNTIME_COMPOSE_DIR"
-sudo docker compose -f docker-compose.production.yml stop \
-  agent control-api miniprogram-gateway
-for service in agent control-api miniprogram-gateway; do
-  ! sudo docker compose -f docker-compose.production.yml \
-    ps --status running --services | grep -Fxq "$service"
+# 先在 root-only maintenance shell 中导出 MEMORIA_MEMORY_REBUILD_DATABASE_URL；
+# 值不写入命令行、日志或任何 env 文件。
+sudo -E bash -cEeu '
+set -o pipefail
+requested_release=$1
+receipt=$2
+candidate=/opt/memoria/releases/$requested_release
+
+test -f "$receipt" && test ! -L "$receipt"
+test "$(stat -c "%U:%G:%a" "$receipt")" = root:root:600
+# shellcheck disable=SC1090 -- root-generated receipt.
+. "$receipt"
+test "$RELEASE_TAG" = "$requested_release"
+test "$(readlink -f /opt/memoria/current)" = "$candidate"
+: "${MEMORIA_MEMORY_REBUILD_DATABASE_URL:?set in this root-only shell}"
+
+restore_candidate() {
+  cd "$candidate"
+  env MEMORIA_RELEASE_TAG="$requested_release" \
+    docker compose -f docker-compose.production.yml \
+    up -d --no-build --wait --wait-timeout 120 \
+    control-api agent miniprogram-gateway
+  if [ "$MEDIA_RUNTIME_WAS_RUNNING" = 1 ]; then
+    env MEMORIA_RELEASE_TAG="$requested_release" \
+      docker compose --profile media-runtime -f docker-compose.production.yml \
+      up -d --no-build --wait --wait-timeout 120 \
+      media-edge voice-core-media-bridge media-slo-reporter
+  else
+    env MEMORIA_RELEASE_TAG="$requested_release" \
+      docker compose --profile media-runtime -f docker-compose.production.yml stop \
+      media-edge voice-core-media-bridge media-slo-reporter
+  fi
+  "$candidate/scripts/refresh_readiness.sh"
+  curl -fsS http://127.0.0.1:8791/health/ready >/dev/null
+}
+on_rebuild_exit() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  restore_candidate
+  exit "$status"
+}
+trap '\''exit 129'\'' HUP
+trap '\''exit 130'\'' INT
+trap '\''exit 143'\'' TERM
+trap on_rebuild_exit EXIT
+
+cd "$candidate"
+env MEMORIA_RELEASE_TAG="$requested_release" \
+  docker compose --profile media-runtime -f docker-compose.production.yml stop \
+  agent control-api miniprogram-gateway media-slo-reporter \
+  voice-core-media-bridge media-edge
+running="$(env MEMORIA_RELEASE_TAG="$requested_release" \
+  docker compose --profile media-runtime -f docker-compose.production.yml \
+  ps --status running --services)"
+for service in agent control-api miniprogram-gateway media-slo-reporter \
+  voice-core-media-bridge media-edge; do
+  case $'\''\n'\''"$running"$'\''\n'\'' in
+    *$'\''\n'\''$service$'\''\n'\''*) echo "writer still running: $service" >&2; false ;;
+  esac
 done
 
-# 在 root-only maintenance shell 中安全导出 MEMORIA_MEMORY_REBUILD_DATABASE_URL。
-sudo -E docker compose -f docker-compose.production.yml run --rm --no-deps \
+rebuild_output="$(env MEMORIA_RELEASE_TAG="$requested_release" \
+  docker compose -f docker-compose.production.yml run --rm --no-deps \
   -e MEMORIA_MEMORY_REBUILD_DATABASE_URL \
   --entrypoint /app/.venv/bin/python control-api \
-  -m scripts.rebuild_memory_projections --confirm-rebuild
-unset MEMORIA_MEMORY_REBUILD_DATABASE_URL
-
-sudo docker compose -f docker-compose.production.yml up -d --no-build \
-  control-api agent miniprogram-gateway
+  -m scripts.rebuild_memory_projections --confirm-rebuild)"
+python3 -c '\''import json,sys; report=json.loads(sys.stdin.read()); assert report["failed_events"] == 0'\'' \
+  <<<"$rebuild_output"
+unset MEMORIA_MEMORY_REBUILD_DATABASE_URL rebuild_output
+' bash "$RELEASE_TAG" "$ROLLBACK_RECEIPT"
 ```
 
 若启用了 media-runtime profile，也必须先停止其 Voice Core/bridge writer，且 rebuild 输出的
@@ -1061,38 +1666,178 @@ sudo ss -ltnp | grep -E ':(8788|18080|19000|15432)\b' || true
 前六步全部通过后才执行：
 
 ```bash
-sudo test -f "$H5_DIR/index.html"
-sudo find "$H5_DIR" -maxdepth 2 -type f \
-  \( -name index.html -o -name '*.js' -o -name '*.css' \) \
-  -exec sha256sum {} +
-sudo ln -s "memoria-releases/$RELEASE_TAG" "/var/www/.memoria-h5.$RELEASE_TAG"
-sudo mv -Tf "/var/www/.memoria-h5.$RELEASE_TAG" /var/www/memoria-h5
-sudo readlink -f /var/www/memoria-h5
-```
-
-`mv -T` 在同一文件系统内完成原子替换；不得用覆盖目录内容的方式激活。
-
-紧接着验证历史 release 的每个静态资源均可经新软链返回。`/memoria-h5/assets/` 的 Nginx location 对缺失文件明确返回 404，不会落到 SPA fallback；该检查因此覆盖旧主脚本未在 `index.html` 中直接列出的所有动态 import。任一请求失败时立即按“回滚”章节切回上一个 H5 release，先保留失败候选目录供排查。
-
-```bash
-sudo bash -ceu '
+sudo bash -cEeu '
+set -o pipefail
+requested_release=$1
+receipt=$2
 release_root=/var/www/memoria-releases
-candidate=$1
+candidate=$release_root/$requested_release
 base=https://122.51.108.140:8443
 
+test -f "$receipt" && test ! -L "$receipt"
+test "$(stat -c "%U:%G:%a" "$receipt")" = root:root:600
+# shellcheck disable=SC1090 -- root-generated receipt.
+. "$receipt"
+test "$RELEASE_TAG" = "$requested_release"
+for dirname in "$PREV_H5_DIRNAME" "$ROLLBACK_H5_DIRNAME"; do
+  case "$dirname" in
+    ""|*[!A-Za-z0-9._-]*) echo "invalid H5 dirname in receipt" >&2; exit 1 ;;
+  esac
+done
+[[ "$ROLLBACK_H5_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+old_h5=$release_root/$PREV_H5_DIRNAME
+rollback_h5=$release_root/$ROLLBACK_H5_DIRNAME
+test "$(readlink -f /var/www/memoria-h5)" = "$old_h5"
+
+validate_rollback_h5() {
+  manifest=$rollback_h5/.memoria-rollback-manifest.sha256
+  test -d "$rollback_h5" && test ! -L "$rollback_h5"
+  test "$(readlink -f "$rollback_h5")" = "$rollback_h5"
+  test -z "$(find "$rollback_h5" -type l -print -quit)"
+  test -z "$(find "$rollback_h5" -type d ! -perm 0755 -print -quit)"
+  test -z "$(find "$rollback_h5" -type f \
+    ! -name .memoria-rollback-manifest.sha256 ! -perm 0644 -print -quit)"
+  test -f "$manifest" && test ! -L "$manifest"
+  test "$(stat -c "%U:%G:%a" "$manifest")" = root:root:600
+  test "$(sha256sum "$manifest" | cut -d " " -f1)" = \
+    "$ROLLBACK_H5_MANIFEST_SHA256"
+  (
+    cd "$rollback_h5"
+    sha256sum -c .memoria-rollback-manifest.sha256 >/dev/null
+  )
+  python3 - "$rollback_h5/memoria-release.json" \
+    "$PREV_H5_RELEASE_TAG" "$PREV_H5_COMMIT" <<'\''PY'\''
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+if payload.get("release_tag") != sys.argv[2] or payload.get("commit") != sys.argv[3]:
+    raise SystemExit("rollback H5 provenance mismatch")
+PY
+}
+assert_runtime_ready() {
+  runtime=/opt/memoria/releases/$requested_release
+  test "$(readlink -f /opt/memoria/current)" = "$runtime"
+  local ready
+  ready="$(mktemp /run/memoria-h5-ready.XXXXXX)"
+  if ! curl -fsS http://127.0.0.1:8791/health/ready >"$ready"; then
+    rm -f "$ready"
+    return 1
+  fi
+  if ! python3 - "$ready" "$requested_release" <<'\''PY'\''
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+expected = sys.argv[2]
+core = payload["checks"]["core"]
+agent = payload["checks"]["agent"]
+if payload.get("release_tag") != expected:
+    raise SystemExit("runtime release mismatch before H5 switch")
+if agent.get("release_tag") != expected or agent.get("status") != "ready":
+    raise SystemExit("Agent readiness mismatch before H5 switch")
+if len(core) != 10 or any(value != "ready" for value in core.values()):
+    raise SystemExit("runtime core readiness is not 10/10")
+PY
+  then
+    rm -f "$ready"
+    return 1
+  fi
+  rm -f "$ready"
+}
+restore_old_h5() {
+  validate_rollback_h5
+  rm -f "/var/www/.memoria-h5.$requested_release"
+  rm -f "/var/www/.memoria-h5.restore-$requested_release"
+  ln -s "memoria-releases/$ROLLBACK_H5_DIRNAME" \
+    "/var/www/.memoria-h5.restore-$requested_release"
+  mv -Tf "/var/www/.memoria-h5.restore-$requested_release" /var/www/memoria-h5
+  test "$(readlink -f /var/www/memoria-h5)" = "$rollback_h5"
+}
+h5_committed=0
+on_h5_exit() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  if [ "$h5_committed" = 1 ]; then exit "$status"; fi
+  restore_old_h5
+  exit "$status"
+}
+
+test -d "$candidate" && test -f "$candidate/index.html"
+test -f "$candidate/memoria-release.json"
+validate_rollback_h5
+python3 - "$candidate/memoria-release.json" "$old_h5/memoria-release.json" \
+  "$requested_release" "$PREV_H5_RELEASE_TAG" "$PREV_H5_COMMIT" \
+  "/opt/memoria/releases/$requested_release/.env" <<'\''PY'\''
+import json
+import re
+import sys
+
+candidate_path, old_path, release, old_release, old_commit, runtime_env = sys.argv[1:]
+candidate = json.load(open(candidate_path, encoding="utf-8"))
+old = json.load(open(old_path, encoding="utf-8"))
+runtime = dict(
+    line.rstrip("\n").split("=", 1)
+    for line in open(runtime_env, encoding="utf-8")
+    if "=" in line and not line.lstrip().startswith("#")
+)
+commit = candidate.get("commit", "")
+if candidate.get("release_tag") != release or not re.fullmatch(r"[0-9a-f]{40}", commit):
+    raise SystemExit("candidate H5 provenance mismatch")
+if runtime.get("MEMORIA_RELEASE_COMMIT") != commit:
+    raise SystemExit("H5/runtime commit mismatch")
+if old.get("release_tag") != old_release or old.get("commit") != old_commit:
+    raise SystemExit("frozen H5 provenance mismatch")
+PY
+find "$candidate" -maxdepth 2 -type f ! -name "._*" \
+  \( -name index.html -o -name "*.js" -o -name "*.css" \) \
+  -exec sha256sum {} +
+
+# Validate the complete historical immutable union before touching the symlink.
 for source in "$release_root"/*/assets; do
   [ -d "$source" ] || continue
   [ "$(readlink -f "$source/..")" = "$(readlink -f "$candidate")" ] && continue
   while IFS= read -r -d "" old_asset; do
     relative=${old_asset#"$source"/}
     test -f "$candidate/assets/$relative"
+  done < <(find "$source" -type f ! -name "._*" -print0)
+done
+
+assert_runtime_ready
+trap '\''exit 129'\'' HUP
+trap '\''exit 130'\'' INT
+trap '\''exit 143'\'' TERM
+trap on_h5_exit EXIT
+assert_runtime_ready
+test ! -e "/var/www/.memoria-h5.$requested_release"
+ln -s "memoria-releases/$requested_release" "/var/www/.memoria-h5.$requested_release"
+mv -Tf "/var/www/.memoria-h5.$requested_release" /var/www/memoria-h5
+test "$(readlink -f /var/www/memoria-h5)" = "$candidate"
+assert_runtime_ready
+curl -fsS --connect-timeout 5 --max-time 15 \
+  --resolve 122.51.108.140:8443:127.0.0.1 "$base/" >/dev/null
+
+# Every historical asset must now be served through the new symlink; 404 cannot
+# fall through to the SPA route.
+for source in "$release_root"/*/assets; do
+  [ -d "$source" ] || continue
+  [ "$(readlink -f "$source/..")" = "$(readlink -f "$candidate")" ] && continue
+  while IFS= read -r -d "" old_asset; do
+    relative=${old_asset#"$source"/}
     curl -fsSI --connect-timeout 5 --max-time 15 \
       --resolve 122.51.108.140:8443:127.0.0.1 \
       "$base/memoria-h5/assets/$relative" >/dev/null
-  done < <(find "$source" -type f -print0)
+  done < <(find "$source" -type f ! -name "._*" -print0)
 done
-' bash "$H5_DIR"
+assert_runtime_ready
+h5_committed=1
+trap - EXIT HUP INT TERM
+' bash "$RELEASE_TAG" "$ROLLBACK_RECEIPT"
 ```
+
+`mv -T` 在同一文件系统内完成原子替换；不得用覆盖目录内容的方式激活。候选 provenance、软链
+realpath、候选与历史 immutable assets 以及切换后的 HTTP 读取处于同一 fail-closed 控制面；任一门禁
+失败都立即原子恢复 receipt 冻结的旧 H5，失败候选目录保留供排查。
 
 ## 公网上线验收
 
@@ -1167,68 +1912,234 @@ curl -fsS https://aigcnice.com/wms/
 
 ## 回滚
 
-禁止在 runbook 中长期硬编码“当前”回滚版本。每次发布在切软链前记录真实目标，并把
-四份基础服务 env；若启用 `media-runtime` profile，再加上 media-edge env；全部备份到同一
-release tag 命名的 root-only 文件：
+禁止从故障后的 `current` 软链重新推断回滚版本，也禁止在 runbook 中硬编码“当前”版本。以下命令
+只消费 env 安装和切流前已冻结的 root-only receipt；若 receipt 缺失、被替换、版本不匹配，回滚立即
+失败并要求人工核对。
+
+### 仅回滚 H5
+
+H5-only 故障不改 runtime、env 或数据 Compose：
 
 ```bash
-PREV_RUNTIME_TAG="$(basename "$(readlink -f /opt/memoria/current)")"
-PREV_H5_TAG="$(basename "$(readlink -f /var/www/memoria-h5)")"
-CONTROL_ENV_BACKUP="/var/backups/memoria/memoria-control-api.env-pre-$RELEASE_TAG"
-AGENT_ENV_BACKUP="/var/backups/memoria/memoria-agent.env-pre-$RELEASE_TAG"
-SPEAKER_MODEL_ENV_BACKUP="/var/backups/memoria/memoria-speaker-model.env-pre-$RELEASE_TAG"
-GATEWAY_ENV_BACKUP="/var/backups/memoria/memoria-miniprogram-gateway.env-pre-$RELEASE_TAG"
-MEDIA_EDGE_ENV_BACKUP="/var/backups/memoria/memoria-media-edge.env-pre-$RELEASE_TAG"
+: "${RELEASE_TAG:?set the failed release tag}"
+ROLLBACK_RECEIPT=/var/backups/memoria/rollback-$RELEASE_TAG.env
+sudo bash -cEeu '
+set -o pipefail
+requested_release=$1
+receipt=$2
+release_root=/var/www/memoria-releases
+test -f "$receipt" && test ! -L "$receipt"
+test "$(stat -c "%U:%G:%a" "$receipt")" = root:root:600
+# shellcheck disable=SC1090 -- root-generated receipt.
+. "$receipt"
+test "$RELEASE_TAG" = "$requested_release"
+case "$ROLLBACK_H5_DIRNAME" in
+  ""|*[!A-Za-z0-9._-]*) echo "invalid rollback H5 dirname" >&2; exit 1 ;;
+esac
+[[ "$ROLLBACK_H5_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+rollback_h5=$release_root/$ROLLBACK_H5_DIRNAME
+manifest=$rollback_h5/.memoria-rollback-manifest.sha256
+test -d "$rollback_h5" && test ! -L "$rollback_h5"
+test "$(readlink -f "$rollback_h5")" = "$rollback_h5"
+test -z "$(find "$rollback_h5" -type l -print -quit)"
+test -z "$(find "$rollback_h5" -type d ! -perm 0755 -print -quit)"
+test -z "$(find "$rollback_h5" -type f \
+  ! -name .memoria-rollback-manifest.sha256 ! -perm 0644 -print -quit)"
+test -f "$manifest" && test ! -L "$manifest"
+test "$(stat -c "%U:%G:%a" "$manifest")" = root:root:600
+test "$(sha256sum "$manifest" | cut -d " " -f1)" = \
+  "$ROLLBACK_H5_MANIFEST_SHA256"
+(cd "$rollback_h5" && sha256sum -c .memoria-rollback-manifest.sha256 >/dev/null)
+python3 - "$rollback_h5/memoria-release.json" \
+  "$PREV_H5_RELEASE_TAG" "$PREV_H5_COMMIT" <<'\''PY'\''
+import json
+import sys
 
-sudo test -d "/opt/memoria/releases/$PREV_RUNTIME_TAG"
-sudo test -d "/var/www/memoria-releases/$PREV_H5_TAG"
-sudo docker image inspect "memoria-agent:$PREV_RUNTIME_TAG" >/dev/null
-sudo docker image inspect "memoria-control-api:$PREV_RUNTIME_TAG" >/dev/null
-sudo docker image inspect "memoria-speaker-model:$PREV_RUNTIME_TAG" >/dev/null
-sudo test "$(stat -c '%U:%G:%a' "$CONTROL_ENV_BACKUP")" = root:root:600
-sudo test "$(stat -c '%U:%G:%a' "$AGENT_ENV_BACKUP")" = root:root:600
-sudo test "$(stat -c '%U:%G:%a' "$SPEAKER_MODEL_ENV_BACKUP")" = root:root:600
-if sudo test -e "$MEDIA_EDGE_ENV_BACKUP"; then
-  sudo test "$(stat -c '%U:%G:%a' "$MEDIA_EDGE_ENV_BACKUP")" = root:root:600
-fi
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+if payload.get("release_tag") != sys.argv[2] or payload.get("commit") != sys.argv[3]:
+    raise SystemExit("rollback H5 provenance mismatch")
+PY
+rm -f "/var/www/.memoria-h5.rollback-$requested_release"
+ln -s "memoria-releases/$ROLLBACK_H5_DIRNAME" \
+  "/var/www/.memoria-h5.rollback-$requested_release"
+mv -Tf "/var/www/.memoria-h5.rollback-$requested_release" /var/www/memoria-h5
+test "$(readlink -f /var/www/memoria-h5)" = "$rollback_h5"
+' bash "$RELEASE_TAG" "$ROLLBACK_RECEIPT"
 ```
 
-H5-only 故障只切回发布前记录的 H5；runtime、Provider 或 readiness 故障必须先恢复
-Control API、Agent 与 Speaker Model env；如果存在 gateway 备份也一并恢复，再切回发布前
-runtime。旧 runtime 不能读取新 release 的 provider 配置：
+### 完整回滚 runtime 与 H5
+
+runtime、Provider 或 readiness 故障使用下面独立控制面。它先预检 receipt、旧四个基础镜像和全部
+应存在的备份；再恢复 PostgreSQL env/data，恢复应用 env，切旧 runtime 并按 receipt 恢复可选
+`media-runtime`，最后切旧 H5。原先不存在的可选 env 必须删除，不能把候选值留给旧 runtime：
 
 ```bash
-sudo ln -s "memoria-releases/$PREV_H5_TAG" \
-  "/var/www/.memoria-h5.rollback-$RELEASE_TAG"
-sudo mv -Tf "/var/www/.memoria-h5.rollback-$RELEASE_TAG" /var/www/memoria-h5
+: "${RELEASE_TAG:?set the failed release tag}"
+ROLLBACK_RECEIPT=/var/backups/memoria/rollback-$RELEASE_TAG.env
+sudo bash -cEeu '
+set -o pipefail
+requested_release=$1
+receipt=$2
+backup_dir=/var/backups/memoria
 
-sudo install -o root -g root -m 0600 \
-  "$CONTROL_ENV_BACKUP" /etc/memoria-control-api.env
-sudo install -o root -g root -m 0600 \
-  "$AGENT_ENV_BACKUP" /etc/memoria-agent.env
-sudo install -o root -g root -m 0600 \
-  "$SPEAKER_MODEL_ENV_BACKUP" /etc/memoria-speaker-model.env
-if sudo test -e "$GATEWAY_ENV_BACKUP"; then
-  sudo install -o root -g root -m 0600 \
-    "$GATEWAY_ENV_BACKUP" /etc/memoria-miniprogram-gateway.env
-else
-  sudo rm -f /etc/memoria-miniprogram-gateway.env
-fi
-if sudo test -e "$MEDIA_EDGE_ENV_BACKUP"; then
-  sudo install -o root -g root -m 0600 \
-    "$MEDIA_EDGE_ENV_BACKUP" /etc/memoria-media-edge.env
-fi
+secure_file() {
+  test -f "$1" && test ! -L "$1"
+  test "$(stat -c "%U:%G:%a" "$1")" = root:root:600
+}
+restore_one() {
+  target=$1 backup=$2 was_present=$3
+  if [ "$was_present" = 1 ]; then
+    secure_file "$backup"
+    install -o root -g root -m 0600 "$backup" "$target"
+  else
+    rm -f "$target"
+  fi
+}
+stop_current_runtime() {
+  for service in agent control-api speaker-model miniprogram-gateway \
+    media-slo-reporter voice-core-media-bridge media-edge; do
+    if ! ids="$(docker ps -q \
+      --filter label=com.docker.compose.project=memoria \
+      --filter "label=com.docker.compose.service=$service")"; then
+      return 1
+    fi
+    if [ -n "$ids" ]; then docker stop $ids >/dev/null; fi
+  done
+  for service in agent control-api speaker-model miniprogram-gateway \
+    media-slo-reporter voice-core-media-bridge media-edge; do
+    if docker ps -q \
+      --filter label=com.docker.compose.project=memoria \
+      --filter "label=com.docker.compose.service=$service" | grep -q .; then
+      echo "runtime service still running: $service" >&2
+      return 1
+    fi
+  done
+}
 
-sudo ln -s "releases/$PREV_RUNTIME_TAG" \
-  "/opt/memoria/.current.rollback-$RELEASE_TAG"
-sudo mv -Tf "/opt/memoria/.current.rollback-$RELEASE_TAG" /opt/memoria/current
+secure_file "$receipt"
+# shellcheck disable=SC1090 -- root-generated receipt.
+. "$receipt"
+test "$RELEASE_TAG" = "$requested_release"
+for value in "$CONTROL_ENV_PRESENT" "$AGENT_ENV_PRESENT" \
+  "$SPEAKER_MODEL_ENV_PRESENT" "$GATEWAY_ENV_PRESENT" \
+  "$MEDIA_EDGE_ENV_PRESENT" "$POSTGRES_ENV_PRESENT" \
+  "$MEDIA_RUNTIME_WAS_RUNNING"; do
+  case "$value" in 0|1) ;; *) echo "invalid rollback receipt" >&2; exit 1 ;; esac
+done
+case "$ROLLBACK_H5_DIRNAME" in
+  ""|*[!A-Za-z0-9._-]*) echo "invalid rollback H5 dirname" >&2; exit 1 ;;
+esac
+[[ "$ROLLBACK_H5_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+old_runtime=/opt/memoria/releases/$PREV_RUNTIME_TAG
+old_data=$old_runtime/infra
+rollback_h5=/var/www/memoria-releases/$ROLLBACK_H5_DIRNAME
+rollback_manifest=$rollback_h5/.memoria-rollback-manifest.sha256
+test -d "$old_runtime" && test -d "$old_data"
+test -d "$rollback_h5" && test ! -L "$rollback_h5"
+test "$(readlink -f "$rollback_h5")" = "$rollback_h5"
+test -z "$(find "$rollback_h5" -type l -print -quit)"
+test -z "$(find "$rollback_h5" -type d ! -perm 0755 -print -quit)"
+test -z "$(find "$rollback_h5" -type f \
+  ! -name .memoria-rollback-manifest.sha256 ! -perm 0644 -print -quit)"
+test -f "$rollback_manifest" && test ! -L "$rollback_manifest"
+test "$(stat -c "%U:%G:%a" "$rollback_manifest")" = root:root:600
+test "$(sha256sum "$rollback_manifest" | cut -d " " -f1)" = \
+  "$ROLLBACK_H5_MANIFEST_SHA256"
+(cd "$rollback_h5" && sha256sum -c .memoria-rollback-manifest.sha256 >/dev/null)
+python3 - "$rollback_h5/memoria-release.json" \
+  "$PREV_H5_RELEASE_TAG" "$PREV_H5_COMMIT" <<'\''PY'\''
+import json
+import sys
 
-cd /opt/memoria/current
-MEMORIA_RELEASE_TAG="$PREV_RUNTIME_TAG" \
-sudo -E docker compose -f docker-compose.production.yml \
-  up -d --no-build --wait --wait-timeout 120
-sudo /opt/memoria/current/scripts/refresh_readiness.sh
-curl -fsS http://127.0.0.1:8791/health/ready
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+if payload.get("release_tag") != sys.argv[2] or payload.get("commit") != sys.argv[3]:
+    raise SystemExit("rollback H5 provenance mismatch")
+PY
+test "$(awk -F= '\''$1 == "MEMORIA_RELEASE_COMMIT" {print $2}'\'' \
+  "$old_runtime/.env")" = "$PREV_RUNTIME_COMMIT"
+test "$(awk -F= '\''$1 == "MEMORIA_RELEASE_TAG" {print $2}'\'' \
+  "$old_runtime/.env")" = "$PREV_RUNTIME_TAG"
+for image in agent control-api speaker-model miniprogram-gateway; do
+  labels="$(docker image inspect "memoria-$image:$PREV_RUNTIME_TAG" \
+    --format '\''{{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "org.opencontainers.image.version"}} {{index .Config.Labels "com.memoria.release.role"}}'\'')"
+  test "$labels" = "$PREV_RUNTIME_COMMIT $PREV_RUNTIME_TAG $image"
+done
+cd "$old_runtime"
+env MEMORIA_RELEASE_TAG="$PREV_RUNTIME_TAG" \
+  docker compose -f docker-compose.production.yml config --quiet
+
+targets=(control-api agent speaker-model miniprogram-gateway postgres media-edge)
+present=("$CONTROL_ENV_PRESENT" "$AGENT_ENV_PRESENT" \
+  "$SPEAKER_MODEL_ENV_PRESENT" "$GATEWAY_ENV_PRESENT" "$POSTGRES_ENV_PRESENT" \
+  "$MEDIA_EDGE_ENV_PRESENT")
+for index in "${!targets[@]}"; do
+  if [ "${present[$index]}" = 1 ]; then
+    secure_file "$backup_dir/memoria-${targets[$index]}.env-pre-$requested_release"
+  fi
+done
+
+complete_full_rollback() {
+  stop_current_runtime
+  restore_one /etc/memoria-postgres.env \
+    "$backup_dir/memoria-postgres.env-pre-$requested_release" "$POSTGRES_ENV_PRESENT"
+  secure_file /etc/memoria-postgres.env
+  docker compose --project-directory "$old_data" \
+    -f "$old_data/memoria-data.production.yml" \
+    up -d --no-build --wait --wait-timeout 120 postgres
+  docker exec memoria-data-postgres-1 pg_isready -U memoria_admin -d postgres
+
+  restore_one /etc/memoria-control-api.env \
+    "$backup_dir/memoria-control-api.env-pre-$requested_release" "$CONTROL_ENV_PRESENT"
+  restore_one /etc/memoria-agent.env \
+    "$backup_dir/memoria-agent.env-pre-$requested_release" "$AGENT_ENV_PRESENT"
+  restore_one /etc/memoria-speaker-model.env \
+    "$backup_dir/memoria-speaker-model.env-pre-$requested_release" \
+    "$SPEAKER_MODEL_ENV_PRESENT"
+  restore_one /etc/memoria-miniprogram-gateway.env \
+    "$backup_dir/memoria-miniprogram-gateway.env-pre-$requested_release" \
+    "$GATEWAY_ENV_PRESENT"
+  restore_one /etc/memoria-media-edge.env \
+    "$backup_dir/memoria-media-edge.env-pre-$requested_release" "$MEDIA_EDGE_ENV_PRESENT"
+
+  rm -f "/opt/memoria/.current.rollback-$requested_release"
+  ln -s "releases/$PREV_RUNTIME_TAG" "/opt/memoria/.current.rollback-$requested_release"
+  mv -Tf "/opt/memoria/.current.rollback-$requested_release" /opt/memoria/current
+  test "$(readlink -f /opt/memoria/current)" = "$old_runtime"
+  cd "$old_runtime"
+  env MEMORIA_RELEASE_TAG="$PREV_RUNTIME_TAG" \
+    docker compose -f docker-compose.production.yml \
+    up -d --no-build --wait --wait-timeout 120
+  if [ "$MEDIA_RUNTIME_WAS_RUNNING" = 1 ]; then
+    env MEMORIA_RELEASE_TAG="$PREV_RUNTIME_TAG" \
+      docker compose --profile media-runtime -f docker-compose.production.yml \
+      up -d --no-build --wait --wait-timeout 120 \
+      media-edge voice-core-media-bridge media-slo-reporter
+  fi
+  "$old_runtime/scripts/refresh_readiness.sh"
+  curl -fsS http://127.0.0.1:8791/health/ready >/dev/null
+
+  rm -f "/var/www/.memoria-h5.rollback-$requested_release"
+  ln -s "memoria-releases/$ROLLBACK_H5_DIRNAME" \
+    "/var/www/.memoria-h5.rollback-$requested_release"
+  mv -Tf "/var/www/.memoria-h5.rollback-$requested_release" /var/www/memoria-h5
+  test "$(readlink -f /var/www/memoria-h5)" = "$rollback_h5"
+}
+rollback_committed=0
+on_full_rollback_exit() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  if [ "$rollback_committed" = 1 ]; then exit "$status"; fi
+  complete_full_rollback
+  exit "$status"
+}
+trap '\''exit 129'\'' HUP
+trap '\''exit 130'\'' INT
+trap '\''exit 143'\'' TERM
+trap on_full_rollback_exit EXIT
+complete_full_rollback
+rollback_committed=1
+trap - EXIT HUP INT TERM
+' bash "$RELEASE_TAG" "$ROLLBACK_RECEIPT"
 ```
 
 随后验证旧 H5、API live/ready、匿名兼容、创建 session 和持久数据。不要自动回滚
@@ -1242,5 +2153,5 @@ SQLite、PostgreSQL 或 MinIO；只有数据格式确实不兼容时，才在另
   8443 媒体入口可用，443 候选路由不被误设为生产下发地址，旧项目没有被意外启动并占用
   Memoria 端口。
 - 证书续期后验证 SAN、有效期、deploy hook 和 Nginx reload 日志。
-- 每次发布记录 release tag、镜像 ID、H5/Nginx SHA-256、证书指纹、两份 SQLite 快照 SHA-256、基础四份 env 备份 SHA-256（启用 media-runtime 时再记录 edge env）、完整性与 foreign-key 检查、激活时间和回滚点；不得记录 secret。
+- 每次发布记录 release tag、镜像 ID、H5/Nginx SHA-256、证书指纹、两份 SQLite 快照 SHA-256、基础四份应用 env 与 PostgreSQL env 备份 SHA-256（启用 media-runtime 时再记录 edge env）、receipt SHA-256、完整性与 foreign-key 检查、激活时间和回滚点；不得记录 secret。
 - 200 条真实中文录音、AEC 设备矩阵和第 21 章 SLO 是规模化上线门禁，不阻塞当前 H5 成品交付。

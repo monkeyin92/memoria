@@ -1,28 +1,41 @@
 # 项目交接
 
-## 当前状态（2026-08-07，已发布）
+## 当前状态（2026-08-08）
 
-- 生产 runtime/H5 均为 `20260807-163916`，四个应用容器 healthy，`/health/ready` 对该 tag 为 ready；直接 runtime/H5 回滚点为 `20260807-144153`。完整发布证据见 `docs/releases/20260807-163916.md`。
-- 本次发布修复天气回答冗长、明天预报被错误读取为今天、静态“不知道”抢先阻断实时查询，以及长对话后播放回声/迟到 ASR 污染 canonical final。`够了/好了/行了/可以了/不用了` 统一进入 `UtteranceRouter` 控制路径，Cascade 与 Omni 词表同步。
-- 生产账号当前语音话轮仍以 uncertain/shadow 说话人状态为主，故当天可能显示 `0 段`；只有 Agent 权威终稿的 `history_eligible=true` 主人话轮才会进入主人回顾，不能通过客户端绕过该隐私边界。
-- 发布工件已在服务器完成验签、导入和隔离 smoke；runtime/H5 软链、4 个容器镜像标签与 readiness 均精确绑定 `20260807-163916`。数据库回滚备份为 `/var/backups/memoria/memoria-pre-20260807-163916.sqlite3`，SHA-256 `5760056e1149c1d44181dbc076f46f7c15da40bd06306ca25e807bb00db50ccf`。
-- 候选 `20260807-113413` 在上传前因独立审阅发现 `explicit-memory-v1` 会把出生日期/婚姻等敏感事实自动确认而被拒绝，未部署。后续 `explicit-memory-v2` 使用完整 token grammar，安全偏好后拼接的敏感尾缀也会 fail closed，重新走门禁和工件发布。
-- `20260807-115142` 的验签、镜像导入与隔离 smoke 都通过，但其 Control API 镜像遗漏 projection rebuild 脚本；维护命令在 truncate 前退出，writer 自动恢复，runtime/H5 已回滚到 `20260806-213522`，Archive evidence manifest 保持 `608562844dd3b188a7209dd9562629c0b565bdfe4d8c79debb24b02cadf73639`。不得复用该 tag。
-- `20260807-124256` 修复 full/delta Dockerfile copy、模块入口和 runbook，并恢复 H5 QA Docker context guard；完整 amd64 工件、远端 verifier、隔离 smoke、projection rebuild、RLS/orphan、中文评测、provider readiness、immutable H5 union 和公网路由验收均已通过。
-- 本轮范围：同会话滚动上下文、跨天 owner 记忆召回、显式低风险记忆写入、时间/人物过滤、中文检索上下文前缀；同时修复公共南京天气查询与 H5 回顾日期。
-- 跨天记忆只使用 confirmed owner material；“请/帮我记住……”的低风险自我事实可自动确认，敏感、关系、冲突、缺 fence 或不确定内容保持 candidate。
-- 新增 `scripts/rebuild_memory_projections.py`。生产 PostgreSQL 现有 evidence 需要在维护窗口以 `memoria_admin` maintenance DSN 执行 projection rebuild；应用 DSN 没有 BYPASSRLS，不能替代。重建复用 Control API 的 extractor/embedder，且必须先停止 Control API compiler、Agent、Gateway 和任何启用的 media-runtime writer，不能只切客户端只读；完成后重跑中文记忆评测、权限泄漏、orphan 与 RLS 门禁。
-- 本次重放为 `compiled=4 / ignored=1126 / failed=0`；historical owner 内容没有可确认的记忆，因此当前 claim/search/vector projection 仍为 0。未来完整 owner fence 的对话会按新策略写入并作为跨会话上下文召回，不能把 guest/uncertain 历史升级为主人记忆。
+- 生产 runtime/H5 均为 `20260808-171749`，源码 commit
+  `9812fac155ef4f46a74d0d8dbfaf197fe9c5fa5a`；直接回滚目标为 `20260807-163916`。完整证据见
+  `docs/releases/20260808-171749.md`。
+- 四个应用容器及 PostgreSQL/MinIO 均 healthy；真实 LiveKit、QwenRealtimeSearch、DeepSeek、
+  Doubao、FunASR、InterruptSemantic smoke 通过，readiness 绑定新 tag，core 10/10 ready。
+- PostgreSQL 已 forward-only 安装独立 `memoria_evolution` 角色、8 张表、8/8 FORCE RLS 与 8/8
+  controller policy。不要为代码回滚删除这些对象；旧 runtime 可与 additive schema 共存。
+- H5 已最后切流；240 个 immutable URL 全部 HTTPS 200，历史 4776 条资源引用均可用。公网正向路由
+  为 200，internal/PocketSparks/Goods Invoice 为 404；390x844 与 667x375 浏览器无横向溢出、
+  console warning/error 为 0。
+- 小程序 `0.8.66` 尚未上传成功：Node 25 与 `miniprogram-ci@2.1.31` 的 Web Storage feature
+  detection 不兼容已由上传器 fail-fast 并加入真实 compile-only dry-run；Node 24.16 可编译 82 个文件。
+  当前唯一外部阻断是微信 CI 白名单缺少出口 IP `112.20.18.77`。加入后使用 Node 24 重跑
+  `upload:test`；只创建体验版，不提审、不正式发布。
 
-## 已验证
+## 回滚与备份
 
-- Python 全量 `uv run pytest -q`、Ruff、strict mypy；H5 `304 passed` 与 production build。
-- 固定中文记忆评测 13/13 通过：`Recall@5/10=0.7692`、`nDCG@10=0.6727`、时间正确率 `1.0`，candidate/冲突/跨账户泄漏均为 `0`。
-- 本地 PostgreSQL 17/pgvector projection rebuild、联合恢复和 self-model 外键保护合同通过。
-- Open-Meteo 实际上海明天查询成功，返回目标日期短句预报；H5 注册页公网加载无 console error、无横向溢出。真实登录后语音/手机声学验收仍未代替。
+- 可执行回滚 receipt：`/var/backups/memoria/rollback-20260808-171749.env`，`root:root 0600`；它由
+  上线前冻结的 legacy receipt 安全转换，未从切流后的 `current` 反推旧版本。原
+  `release-state-pre-20260808-171749` 继续保留。
+- H5 回滚 snapshot：`/var/www/memoria-releases/rollback-20260808-171749`，使用旧入口/provenance
+  与当前 240 个 immutable assets；manifest SHA-256：
+  `4f37ea9952463ef556aaf28e241c9d5244acf6a1236a46f49a5b968702890169`，逐文件验签与
+  `www-data` 可读门禁通过。
+- SQLite 双副本 SHA-256：`6443bde9695697296413ed9d7486b744bc52bc52162670d158529bbf4d1577af`。
+- PostgreSQL dump SHA-256：`209b09028fdc31be2f2d5d8763b3fe456d34a625c8c43777827c815875cb3fdf`；
+  MinIO 对象清单 SHA-256：`c7e273671460428a5fa9183841134a2eae6ded9814c0aeffab3fb6d5ee6155ff`。
+- 旧 PostgreSQL/Control/Agent/Speaker/Gateway env 均已 root-only 备份。Runtime 故障先恢复旧 data
+  Compose 与全部 env，再切旧软链和四应用；H5-only 故障只切 H5。
 
-## 发布注意
+## 仍需完成
 
-- release 工件必须绑定干净 commit 与新 annotated tag，完整步骤见 `docs/production-deployment.md`。
-- 不删除 `docs/releases/`、ADR、`docs/restore-drills/`、`services/legacy/` 或仍受产品契约覆盖的 CosyVoice/Qwen Omni 兼容路径。
-- 已清理无引用的 H5 视觉 QA 产物、早期首页原型和被替代的旧实施计划；README 改为指向当前运行状态与 release 记录，而不再硬编码过期版本号。
+- 微信后台把 `112.20.18.77` 加入代码上传 IP 白名单，重试 `0.8.66` 并记录微信返回的包体/时间。
+- 最新体验版需在真实 iOS/Android 上覆盖麦克风、扬声器/AEC、弱网、前后台与蓝牙；H5 仍需真实
+  登录后语音验收。现有单测、浏览器、WSS、Provider smoke 或上传成功都不能替代。
+- 成功上传并确认回滚工件后，精确清理旧 incoming 大归档；保留当前 `20260808-171749` basis、
+  `20260807-163916` runtime/H5/镜像以及全部备份。
