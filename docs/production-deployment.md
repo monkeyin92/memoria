@@ -1374,22 +1374,26 @@ test ! -e "/opt/memoria/.current.$requested_release"
 ln -s "releases/$requested_release" "/opt/memoria/.current.$requested_release"
 mv -Tf "/opt/memoria/.current.$requested_release" /opt/memoria/current
 test "$(readlink -f /opt/memoria/current)" = "$candidate"
+RUNTIME_COMPOSE_DIR=/opt/memoria/current
+DATA_COMPOSE_DIR=/opt/memoria/current/infra
+test "$(readlink -f "$RUNTIME_COMPOSE_DIR")" = "$candidate"
+test "$(readlink -f "$DATA_COMPOSE_DIR")" = "$candidate_data"
 
 # Let Compose create the labelled shared network; never create it by hand.
 if ! docker network inspect memoria_default >/dev/null 2>&1; then
-  cd "$candidate"
+  cd "$RUNTIME_COMPOSE_DIR"
   env MEMORIA_RELEASE_TAG="$requested_release" \
     docker compose -f docker-compose.production.yml create --no-build
 fi
-docker compose --project-directory "$candidate_data" \
-  -f "$candidate_data/memoria-data.production.yml" config --quiet
-docker compose --project-directory "$candidate_data" \
-  -f "$candidate_data/memoria-data.production.yml" \
+docker compose --project-directory "$DATA_COMPOSE_DIR" \
+  -f "$DATA_COMPOSE_DIR/memoria-data.production.yml" config --quiet
+docker compose --project-directory "$DATA_COMPOSE_DIR" \
+  -f "$DATA_COMPOSE_DIR/memoria-data.production.yml" \
   up -d --no-build --wait --wait-timeout 120
 docker compose --project-directory /opt/livekit -f /opt/livekit/compose.yml \
   up -d --wait --wait-timeout 120
 
-cd "$candidate"
+cd "$RUNTIME_COMPOSE_DIR"
 env MEMORIA_RELEASE_TAG="$requested_release" \
   docker compose -f docker-compose.production.yml \
   up -d --no-build --wait --wait-timeout 120
