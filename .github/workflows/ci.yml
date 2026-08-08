@@ -153,6 +153,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/miniprogram/package-lock.json
+      - name: Install
+        run: npm --prefix apps/miniprogram ci --ignore-scripts
       - name: Test
         run: npm --prefix apps/miniprogram test
       - name: Syntax
