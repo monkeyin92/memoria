@@ -19,7 +19,11 @@ from services.common.companions import (
     DESIGNED_VOICE_MODEL,
     designed_voice_profile,
 )
-from services.control_api.app.account_gate import require_writable_account
+from services.control_api.app.account_gate import (
+    require_capability_for_account_id,
+    require_capability_for_subject,
+    require_writable_account,
+)
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.mode_policy import FrozenMode
@@ -172,6 +176,7 @@ async def grant_consent(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "voice_clone", store=_store(request))
     _require_registered(request, user)
     consent = await _manager(request).grant_consent(
         account_id=user.user_id,
@@ -229,6 +234,7 @@ async def enroll_voice(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "voice_clone", store=_store(request))
     _require_registered(request, user)
     try:
         audio = base64.b64decode(body.audio_base64, validate=True)
@@ -261,6 +267,7 @@ async def list_profiles(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "voice_clone", store=_store(request))
     manager = _manager(request)
     consent = await manager.consent(account_id=user.user_id)
     profiles = await manager.profiles(account_id=user.user_id)
@@ -301,6 +308,7 @@ async def create_blind_trial(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "voice_clone", store=_store(request))
     try:
         trial = await _manager(request).create_blind_trial(
             account_id=user.user_id,
@@ -334,6 +342,7 @@ async def preview_blind_trial(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> Response:
+    require_capability_for_subject(user, "voice_clone", store=_store(request))
     try:
         target = await _manager(request).blind_preview_target(
             account_id=user.user_id,
@@ -374,6 +383,7 @@ async def evaluate_profile(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "voice_clone", store=_store(request))
     try:
         manager = _manager(request)
         candidate_preferred = await manager.resolve_blind_preference(
@@ -431,6 +441,7 @@ async def record_quality_measurement(
     manager = _manager(request)
     try:
         account_id = await manager.account_id_for_profile(profile_id=profile_id)
+        require_capability_for_account_id(account_id, "voice_clone", store=_store(request))
         measurement = await manager.record_quality_measurement(
             VoiceQualityMeasurementRequest(
                 account_id=account_id,
@@ -461,6 +472,7 @@ async def activate_profile(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "voice_clone", store=_store(request))
     settings = cast(ControlSettings, request.app.state.settings)
     if settings.tts_provider == "doubao":
         profiles = await _manager(request).profiles(account_id=user.user_id)
@@ -628,9 +640,19 @@ async def session_resolution(
                 and frozen.voice_speaker_sha256 == manifest_voice.speaker_sha256
             )
             resolution_account_id = access.resource_owner_account_id
+            require_capability_for_account_id(
+                access.grantee_account_id,
+                "legacy_receive",
+                store=_store(request),
+            )
         else:
             personal_allowed = True
             resolution_account_id = account_id
+        require_capability_for_account_id(
+            resolution_account_id,
+            "voice_clone",
+            store=_store(request),
+        )
         resolution = (
             await _manager(request).resolve(account_id=resolution_account_id)
             if personal_allowed
@@ -706,6 +728,11 @@ async def provider_sample(
         raise HTTPException(status_code=404, detail="voice sample not found")
     try:
         sample = await _manager(request).provider_sample(sample_id=sample_id)
+        require_capability_for_account_id(
+            sample.account_id,
+            "voice_clone",
+            store=_store(request),
+        )
     except VoiceConsentRequiredError as exc:
         raise HTTPException(status_code=404, detail="voice sample not found") from exc
     return Response(

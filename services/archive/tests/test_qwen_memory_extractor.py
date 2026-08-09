@@ -32,6 +32,8 @@ async def test_qwen_extractor_accepts_only_strict_traceable_json() -> None:
         assert request.headers["Authorization"] == "Bearer test-key"
         assert payload["response_format"] == {"type": "json_object"}
         assert "不得补充" in payload["messages"][1]["content"]
+        assert "study_progress" in payload["messages"][1]["content"]
+        assert "不能从一次行为推断" in payload["messages"][1]["content"]
         extraction = {
             "claims": [
                 {
@@ -79,7 +81,7 @@ async def test_qwen_extractor_accepts_only_strict_traceable_json() -> None:
 
     result = await extractor.extract(_event("我妈妈叫李梅，今年60岁。"))
 
-    assert result.extractor_version == "qwen-json:qwen-test:v1"
+    assert result.extractor_version == "qwen-json:qwen-test:v2"
     assert result.claims[0].subject_key == result.people[0].canonical_key
     assert result.people[0].aliases == ("李梅", "妈妈", "母亲")
     assert result.timeline[0].event_start == datetime(2026, 7, 19, 12, 0, tzinfo=UTC)
@@ -113,5 +115,5 @@ async def test_invalid_qwen_entity_reference_falls_back_to_local_rules() -> None
 
     result = await extractor.extract(_event("我们家的家训是说到做到。"))
 
-    assert result.extractor_version == "rules-zh-v1"
+    assert result.extractor_version == "rules-zh-v2"
     assert result.claims[0].category == "family_principle"

@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from services.archive.domain import EvidenceEvent
 from services.control_api.app.main import create_app
@@ -24,6 +25,17 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEMORIA_EVOLUTION_VALIDATOR_TOKEN", "evolution-validator-token")
     monkeypatch.setenv("MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256", "a" * 64)
     monkeypatch.setenv("OFFLINE_MOCK", "true")
+
+
+def _register_adult_profile(app: FastAPI, account_id: str) -> None:
+    now = datetime.now(UTC).isoformat()
+    app.state.memory_store.register_account(
+        user_id=account_id,
+        username=f"test-{account_id}",
+        username_normalized=f"test-{account_id}".casefold(),
+        password_hash="not-used-by-internal-route-tests",
+        now=now,
+    )
 
 
 def _candidate(candidate_id: str, account_id: str) -> CandidateArtifact:
@@ -72,6 +84,64 @@ def _failed_signal(signal_id: str, account_id: str, *, family: str = "weather") 
         environment_version="test",
         failure_code="target_date_mismatch",
     )
+
+
+@pytest.mark.asyncio
+async def test_minor_account_evolution_routes_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "minor-evolution", "password": "safe-password"},
+            )
+        ).json()
+        app.state.memory_store.update_subject_profile(
+            user_id=identity["user_id"],
+            subject_category="minor",
+            birth_year_band="14_to_17",
+            now=datetime.now(UTC).isoformat(),
+        )
+        refreshed = (
+            await client.post(
+                "/v1/auth/login",
+                json={"username": "minor-evolution", "password": "safe-password"},
+            )
+        ).json()
+        listed = await client.get(
+            "/v1/evolution/candidates",
+            headers={"Authorization": f"Bearer {refreshed['access_token']}"},
+        )
+        created = await client.post(
+            "/v1/evolution/candidates",
+            headers={"X-Memoria-Internal-Token": "evolution-control-token"},
+            json={
+                "candidate_id": "minor-private-candidate",
+                "task_family": "weather",
+                "kind": "prompt",
+                "scope": "owner_private",
+                "account_id": identity["user_id"],
+                "version": 1,
+                "payload": {
+                    "proposal": {"instruction": "use target date", "match_terms": ["weather"]}
+                },
+                "source_signal_ids": ["minor-signal-a", "minor-signal-b"],
+                "expected_behavior": "use the requested date",
+                "regression_guards": ["privacy_leakage_zero"],
+                "risk": "low",
+            },
+        )
+
+    for response in (listed, created):
+        assert response.status_code == 403
+        assert response.json()["detail"] == {
+            "code": "minor_forbidden",
+            "capability": "account_evolution",
+        }
 
 
 @pytest.mark.asyncio
@@ -199,6 +269,7 @@ async def test_evolution_transition_rejects_incomplete_validation(
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
+    _register_adult_profile(app, "account-a")
     app.state.evolution_store.create_candidate(_candidate("incomplete", "account-a"))
     control = {"X-Memoria-Internal-Token": "evolution-control-token"}
     validator = {"X-Memoria-Internal-Token": "evolution-validator-token"}
@@ -234,6 +305,7 @@ async def test_candidate_creation_binds_trusted_root_and_requires_matching_faile
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
+    _register_adult_profile(app, "account-a")
     app.state.evolution_store.append_signal(_failed_signal("failed-a", "account-a"))
     app.state.evolution_store.append_signal(_failed_signal("failed-b", "account-a"))
     app.state.evolution_store.append_signal(
@@ -285,6 +357,7 @@ async def test_activation_rejects_missing_or_forged_canonical_evidence(
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
+    _register_adult_profile(app, "account-a")
     candidate = _candidate("activation-evidence", "account-a")
     app.state.evolution_store.create_candidate(candidate)
     from services.evolution.domain import GateResult, ValidationReport
@@ -348,6 +421,7 @@ async def test_independent_validator_records_structured_signal_from_canonical_pa
     app = create_app()
     now = datetime.now(UTC)
     account_id = "account-evaluated"
+    _register_adult_profile(app, account_id)
     user_event = EvidenceEvent(
         event_id="evaluated-user",
         account_id=account_id,
@@ -480,6 +554,7 @@ async def test_replay_bundle_removes_guest_identity_and_transcript(
     app = create_app()
     now = datetime.now(UTC)
     account_id = "account-guest-replay"
+    _register_adult_profile(app, account_id)
     await app.state.life_archive.record(
         EvidenceEvent(
             event_id="guest-replay-user",

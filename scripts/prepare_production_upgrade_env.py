@@ -104,6 +104,7 @@ def prepare(
     app_password = _required(postgres, "MEMORIA_DB_APP_PASSWORD")
     compiler_password = _required(postgres, "MEMORIA_DB_COMPILER_PASSWORD")
     evolution_password = _required(postgres, "MEMORIA_DB_EVOLUTION_PASSWORD")
+    guardian_password = _required(postgres, "MEMORIA_DB_GUARDIAN_PASSWORD")
     archive_access = _required(minio, "MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY")
     archive_secret = _required(minio, "MEMORIA_ARCHIVE_OBJECT_SECRET_KEY")
     voice_access = _required(minio, "MEMORIA_VOICE_OBJECT_ACCESS_KEY")
@@ -144,6 +145,9 @@ def prepare(
             "INTERRUPT_SEMANTIC_ENABLED": "true",
             "INTERRUPT_SEMANTIC_MODEL": "deepseek-v4-flash",
             "INTERRUPT_SEMANTIC_TIMEOUT_S": "1.2",
+            "CRISIS_SEMANTIC_ENABLED": "true",
+            "CRISIS_SEMANTIC_MODEL": "deepseek-v4-flash",
+            "CRISIS_SEMANTIC_TIMEOUT_S": "0.8",
             "DASHSCOPE_SUMMARY_MODEL": "deepseek-v4-flash",
             "MEMORIA_MEMORY_EXTRACTION_MODEL": "deepseek-v4-flash",
             "DEEPSEEK_FAST_MODEL": "deepseek-v4-flash",
@@ -197,6 +201,9 @@ def prepare(
             ),
             "MEMORIA_EVOLUTION_DATABASE_URL": _postgres_dsn(
                 user="memoria_evolution", password=evolution_password
+            ),
+            "MEMORIA_GUARDIAN_DATABASE_URL": _postgres_dsn(
+                user="memoria_guardian", password=guardian_password
             ),
             "MEMORIA_ARCHIVE_COMPILER_ROLE": "memoria_compiler",
             "MEMORIA_ARCHIVE_WRITE_TOKEN": _token(),

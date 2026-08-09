@@ -780,6 +780,7 @@ class VoiceProfileManager:
             raise VoiceConsentRequiredError("voice sample is unavailable")
         reference = self._reference(row)
         return ProviderSample(
+            account_id=str(row["account_id"]),
             data=await self._object_store.get(reference),
             media_type=str(row["media_type"]),
         )

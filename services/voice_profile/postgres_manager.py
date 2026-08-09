@@ -634,6 +634,7 @@ class PostgresVoiceProfileManager:
         if allowed is None:
             raise VoiceConsentRequiredError("voice sample is unavailable")
         return ProviderSample(
+            account_id=account_id,
             data=await self._object_store.get(self._reference(row)),
             media_type=str(row["media_type"]),
         )

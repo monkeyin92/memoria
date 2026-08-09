@@ -61,6 +61,7 @@ def _upgrade_inputs(
         "MEMORIA_DB_APP_PASSWORD": "app-pass",
         "MEMORIA_DB_COMPILER_PASSWORD": "compiler-pass",
         "MEMORIA_DB_EVOLUTION_PASSWORD": "evolution-pass",
+        "MEMORIA_DB_GUARDIAN_PASSWORD": "guardian-pass",
     }
     minio = {
         "MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY": "archive-access",
@@ -122,6 +123,10 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert agent["LLM_PROVIDER"] == "bailian_deepseek"
     assert agent["INTERRUPT_SEMANTIC_MODEL"] == "deepseek-v4-flash"
     assert agent["INTERRUPT_SEMANTIC_TIMEOUT_S"] == "1.2"
+    assert control["CRISIS_SEMANTIC_ENABLED"] == "true"
+    assert control["CRISIS_SEMANTIC_MODEL"] == "deepseek-v4-flash"
+    assert control["CRISIS_SEMANTIC_TIMEOUT_S"] == "0.8"
+    assert "CRISIS_SEMANTIC_ENABLED" not in agent
     assert agent["DOUBAO_TTS_APP_ID"] == "doubao-app-id"
     assert agent["DOUBAO_TTS_ACCESS_TOKEN"] == "doubao-access-token"
     assert media_edge["MEDIA_EDGE_JWT_SECRET"] == control["STREAMCORE_TOKEN_SECRET"]
@@ -152,6 +157,9 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert len(control["MEMORIA_EVOLUTION_CONTROL_TOKEN"]) >= 32
     assert len(control["MEMORIA_EVOLUTION_VALIDATOR_TOKEN"]) >= 32
     assert control["MEMORIA_EVOLUTION_RUNTIME_PROMPT_FAMILIES"] == "weather"
+    assert control["MEMORIA_GUARDIAN_DATABASE_URL"].startswith(
+        "postgresql://memoria_guardian:"
+    )
     assert "MEMORIA_EVOLUTION_CONTROL_TOKEN" not in agent
     assert "MEMORIA_EVOLUTION_VALIDATOR_TOKEN" not in agent
     assert len(control["MEMORIA_VOICE_CLEANUP_TOKEN"]) >= 32

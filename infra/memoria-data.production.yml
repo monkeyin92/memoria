@@ -39,6 +39,12 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source: ../services/guardian/postgres_schema.sql
+        target: /docker-entrypoint-initdb.d/003-guardian-schema.sql
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       memoria:
         aliases:
@@ -113,6 +119,77 @@ services:
     mem_limit: 128m
     cpus: 0.5
 
+  postgres-base-backup:
+    profiles: ["offsite-backup"]
+    image: "pgvector/pgvector:0.8.1-pg17-bookworm"
+    pull_policy: never
+    env_file:
+      - ${MEMORIA_POSTGRES_ENV_FILE:-/etc/memoria-postgres.env}
+      - ${MEMORIA_OFFSITE_BACKUP_ENV_FILE:-/etc/memoria-offsite-backup.env}
+    entrypoint: ["/bin/sh", "/backup/postgres-base-backup.sh"]
+    volumes:
+      - postgres_backup_staging:/backup-staging
+      - type: bind
+        source: ./backup/postgres-base-backup.sh
+        target: /backup/postgres-base-backup.sh
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - memoria
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    mem_limit: 256m
+    cpus: 0.5
+
+  offsite-mirror:
+    profiles: ["offsite-backup"]
+    image: "minio/mc:RELEASE.2025-04-16T18-13-26Z"
+    pull_policy: never
+    env_file:
+      - ${MEMORIA_MINIO_ENV_FILE:-/etc/memoria-minio.env}
+      - ${MEMORIA_OFFSITE_BACKUP_ENV_FILE:-/etc/memoria-offsite-backup.env}
+    environment:
+      MC_CONFIG_DIR: /tmp/.mc
+    entrypoint: ["/bin/sh", "/backup/offsite-mirror.sh"]
+    volumes:
+      - postgres_backup_staging:/backup-staging:ro
+      - postgres_wal_archive:/wal-archive
+      - type: bind
+        source: ./backup/offsite-mirror.sh
+        target: /backup/offsite-mirror.sh
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      postgres-base-backup:
+        condition: service_started
+      minio:
+        condition: service_healthy
+      minio-provision:
+        condition: service_completed_successfully
+    networks:
+      - memoria
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    mem_limit: 128m
+    cpus: 0.25
+
 networks:
   memoria:
     external: true
@@ -121,4 +198,5 @@ networks:
 volumes:
   postgres_data:
   postgres_wal_archive:
+  postgres_backup_staging:
   minio_data:

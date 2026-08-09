@@ -140,10 +140,12 @@ class ArchiveSink:
             or len(pcm) > MAX_RAW_VOICE_PCM_BYTES
         ):
             return await self.publish(event)
-        shared_event = {
-            **event,
-            "consent_grant_id": consent["consent_grant_id"],
-        }
+        corpus_recording = consent.get("archive_purpose") == "corpus_recording"
+        shared_event = (
+            dict(event)
+            if corpus_recording
+            else {**event, "consent_grant_id": consent["consent_grant_id"]}
+        )
         transcript_delivered = await self.publish(shared_event)
         wav = self._wav(pcm, sample_rate=sample_rate)
         raw_event = {
@@ -152,6 +154,13 @@ class ArchiveSink:
             "media_type": "audio/wav",
             "retention_policy": consent["retention_policy"],
         }
+        if corpus_recording:
+            raw_event.update(
+                {
+                    "consent_grant_id": consent["consent_grant_id"],
+                    "archive_purpose": "corpus_recording",
+                }
+            )
         try:
             raw_delivered = await self.publish(raw_event, target="raw_audio")
         except ArchiveSpoolFullError:
@@ -179,12 +188,24 @@ class ArchiveSink:
             payload = response.json()
         except ValueError:
             return None
-        if not isinstance(payload, dict) or payload.get("allowed") is not True:
+        if not isinstance(payload, dict):
+            return None
+        subject_category = payload.get("subject_category")
+        archive_purpose = payload.get("archive_purpose", "raw_voice_archive")
+        if subject_category == "minor" and archive_purpose != "corpus_recording":
+            return None
+        if subject_category not in {None, "adult", "minor"}:
+            return None
+        if subject_category in {None, "adult"} and archive_purpose != "raw_voice_archive":
+            return None
+        if payload.get("allowed") is not True:
             return None
         required = ("consent_grant_id", "retention_policy")
         if any(not isinstance(payload.get(key), str) or not payload[key] for key in required):
             return None
-        return {key: str(payload[key]) for key in required}
+        result = {key: str(payload[key]) for key in required}
+        result["archive_purpose"] = str(archive_purpose)
+        return result
 
     @staticmethod
     def _wav(pcm: bytes, *, sample_rate: int) -> bytes:

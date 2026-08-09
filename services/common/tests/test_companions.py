@@ -15,6 +15,8 @@ def test_each_companion_has_a_distinct_in_character_welcome_and_delivery() -> No
         "mianmian": "耐心",
         "axu": "沉稳",
         "xuanmo": "克制",
+        "zhiyao": "耐心引导",
+        "yanxi": "清晰启发",
     }
     welcomes: set[str] = set()
     voice_rates: set[float] = set()

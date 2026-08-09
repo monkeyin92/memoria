@@ -9,6 +9,7 @@ const defaultProfile = {
   gentle_reminders: false,
   reject_non_owner_voice: true,
   companion_id: defaultCompanionId,
+  subject_category: null,
 };
 
 const DELETE_CONFIRMATION_TEXT = "永久删除我的全部数据";
@@ -76,6 +77,8 @@ Page({
     deleteError: "",
     deleteConfirmText: DELETE_CONFIRMATION_TEXT,
     authenticated: false,
+    canUseAdultCapabilities: false,
+    isMinor: false,
   },
 
   onLoad() {
@@ -116,6 +119,8 @@ Page({
       deleteConfirmation: "",
       deleting: false,
       deleteError: "",
+      canUseAdultCapabilities: false,
+      isMinor: false,
     });
   },
 
@@ -127,9 +132,12 @@ Page({
     try {
       const profile = { ...defaultProfile, ...(await api.getProfile(identity.user_id)) };
       if (!api.isAuthEpochCurrent(authEpoch)) return;
+      const canUseAdultCapabilities = profile.subject_category === "adult";
       this.setData({
         profile,
         profileFaceStyle: profileFaceStyleFor(profile.companion_id),
+        canUseAdultCapabilities,
+        isMinor: profile.subject_category === "minor",
       });
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
@@ -194,12 +202,37 @@ Page({
 
   async openDigitalSelf() {
     if (!(await requireLogin({ reason: "view_profile" }))) return;
+    if (!this._allowAdultExperience()) return;
     wx.navigateTo({ url: "/pages/digital-self/index" });
   },
 
   async openSpeakerEnrollment() {
     if (!(await requireLogin({ reason: "edit_profile" }))) return;
+    if (!this._allowAdultExperience()) return;
     wx.navigateTo({ url: "/pages/speaker-enrollment/index" });
+  },
+
+  async openGuardianSummary() {
+    if (!(await requireLogin({ reason: "view_guardian_summary" }))) return;
+    if (!["adult", "minor"].includes(this.data.profile.subject_category)) {
+      wx.showToast({ title: "账号资料尚未加载完成", icon: "none" });
+      return;
+    }
+    wx.navigateTo({ url: "/pages/guardian/index" });
+  },
+
+  _allowAdultExperience() {
+    if (this.data.canUseAdultCapabilities && this.data.profile.subject_category === "adult") {
+      return true;
+    }
+    wx.showToast({
+      title:
+        this.data.profile.subject_category === "minor"
+          ? "学生账号暂不开放此功能"
+          : "账号资料尚未加载完成",
+      icon: "none",
+    });
+    return false;
   },
 
   openPrivacy() {

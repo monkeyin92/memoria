@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from services.agent.src.providers.crisis_semantic_classifier import CrisisSemanticVerdict
 from services.agent.src.response_planner_client import ResponsePlannerClient
 from services.archive.memory_domain import (
     MemorySearchItem,
@@ -114,6 +115,47 @@ async def test_only_companion_creates_voice_sessions_and_keeps_preview_server_ow
     assert session["digital_self_version_id"] is None
     assert session["relationship_profile_id"] is None
     assert session["legacy_grant_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_tutor_focus_is_frozen_in_storage_and_internal_agent_policy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, headers = await _identity(client)
+        created = await client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={"session_focus": "tutor_english"},
+        )
+        invalid = await client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={"session_focus": "client_defined"},
+        )
+        cross_mode = await client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={"interaction_mode": "archive", "session_focus": "tutor_homework"},
+        )
+        policy = await client.post(
+            "/v1/interaction/session-policy",
+            headers={"X-Memoria-Internal-Token": "interaction-policy-token-that-is-long-enough"},
+            json={"session_id": created.json()["session_id"]},
+        )
+
+    assert created.status_code == 200
+    assert created.json()["interaction"]["session_focus"] == "tutor_english"
+    frozen = app.state.memory_store.get_voice_session_by_id(
+        session_id=created.json()["session_id"]
+    )
+    assert frozen is not None and frozen["session_focus"] == "tutor_english"
+    assert policy.status_code == 200
+    assert policy.json()["session_focus"] == "tutor_english"
+    assert invalid.status_code == 422
+    assert cross_mode.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -489,6 +531,97 @@ async def test_response_plan_requires_its_own_token_and_returns_bounded_companio
     assert "score" not in str(payload)
     assert "每一轮只根据用户当前语义" in payload["instructions"]
     assert "危机支持 > 语言学习 > 引导式学习 > 普通陪伴" in payload["instructions"]
+
+
+@pytest.mark.asyncio
+async def test_tutor_turn_policy_requires_two_stuck_turns_and_crisis_still_wins(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, user_headers = await _identity(client)
+        session_id = (
+            await client.post(
+                "/v1/sessions",
+                headers=user_headers,
+                json={"session_focus": "tutor_homework"},
+            )
+        ).json()["session_id"]
+        first = _response_plan_body(session_id)
+        first.update({"query": "我不会，提示一下", "utterance_intent": "request_hint"})
+        first["fence"]["turn_id"] = 1
+        first_response = await client.post(
+            "/v1/interaction/response-plan", headers=token, json=first
+        )
+        first_replay = await client.post(
+            "/v1/interaction/response-plan", headers=token, json=first
+        )
+        second = _response_plan_body(session_id)
+        second.update({"query": "还是没思路", "utterance_intent": "request_hint"})
+        second["fence"]["turn_id"] = 2
+        second_response = await client.post(
+            "/v1/interaction/response-plan", headers=token, json=second
+        )
+        crisis = _response_plan_body(session_id)
+        crisis.update(
+            {
+                "query": "我不会做题。我不想活了",
+                "utterance_intent": "request_hint",
+            }
+        )
+        crisis["fence"]["turn_id"] = 3
+        crisis_response = await client.post(
+            "/v1/interaction/response-plan", headers=token, json=crisis
+        )
+
+    assert first_response.status_code == 200
+    assert first_replay.json() == first_response.json()
+    assert "第一次" in first_response.json()["instructions"]
+    assert "不要给具体提示或答案" in first_response.json()["instructions"]
+    assert "连续两次" in second_response.json()["instructions"]
+    assert "只允许给一个" in second_response.json()["instructions"]
+    assert crisis_response.json()["direct_text"] is not None
+    assert "急救或报警" in crisis_response.json()["direct_text"]
+    assert "【导师话轮约束】" not in crisis_response.json()["instructions"]
+
+
+@pytest.mark.asyncio
+async def test_response_plan_consumes_bounded_crisis_semantic_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+
+    class SemanticEvidence:
+        calls: list[str] = []
+
+        async def classify(self, *, current_text: str) -> CrisisSemanticVerdict:
+            self.calls.append(current_text)
+            return CrisisSemanticVerdict.SELF_CRISIS
+
+    evidence = SemanticEvidence()
+    app.state.crisis_semantic_classifier = evidence
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, user_headers = await _identity(client)
+        session_id = (
+            await client.post("/v1/sessions", headers=user_headers, json={})
+        ).json()["session_id"]
+        body = _response_plan_body(session_id)
+        body["query"] = "我真的找不到活下去的理由"
+        response = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=body,
+        )
+
+    assert response.status_code == 200
+    assert evidence.calls == ["我真的找不到活下去的理由"]
+    assert "急救或报警" in response.json()["direct_text"]
 
 
 @pytest.mark.asyncio
@@ -1098,6 +1231,40 @@ async def test_response_plan_never_grants_companion_private_context_to_non_owner
     assert payload["grounded_items"] == []
     assert payload["provenance"]["speaker_class"] == classification
     assert payload["provenance"]["source_refs"] == []
+    assert catalog.queries == []
+
+
+@pytest.mark.asyncio
+async def test_minor_without_memory_retention_cannot_read_private_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    catalog = _MemoryCatalog()
+    app.state.memory_catalog = catalog
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        session_id = (
+            await client.post("/v1/sessions", headers=user_headers, json={})
+        ).json()["session_id"]
+        app.state.memory_store.update_subject_profile(
+            user_id=user_id,
+            subject_category="minor",
+            birth_year_band="14_to_17",
+            now=datetime.now(UTC).isoformat(),
+        )
+        body = _response_plan_body(session_id)
+        body["query"] = "我们以前聊过什么？"
+        response = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=body,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["grounded_items"] == []
     assert catalog.queries == []
 
 

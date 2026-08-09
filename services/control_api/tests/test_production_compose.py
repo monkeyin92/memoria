@@ -146,7 +146,7 @@ def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> No
     assert 'pgvector/pgvector:0.8.1-pg17-bookworm"' in compose
     assert 'minio/minio:RELEASE.2025-04-22T22-12-26Z"' in compose
     assert 'minio/mc:RELEASE.2025-04-16T18-13-26Z"' in compose
-    assert compose.count("pull_policy: never") == 3
+    assert compose.count("pull_policy: never") == 5
     assert "ports:" not in compose
     assert "pocketsparks" not in compose
     assert "memoria_default" in compose
@@ -154,13 +154,49 @@ def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> No
     assert "memoria_app" in postgres_init
     assert "memoria_archive_compiler" in postgres_init
     assert "ALTER ROLE memoria_evolution PASSWORD" in postgres_init
+    assert "ALTER ROLE memoria_guardian PASSWORD" in postgres_init
     assert "NOBYPASSRLS" in postgres_init
     assert "mc version enable local/memoria-archive" in minio_init
     assert "mc version enable local/memoria-voice" in minio_init
     assert "s3:DeleteObjectVersion" in minio_init
     assert "MC_CONFIG_DIR: /tmp/.mc" in compose
-    assert compose.count("create_host_path: false") == 3
+    assert compose.count("create_host_path: false") == 6
     assert "002-evolution-schema.sql" in compose
+    assert "003-guardian-schema.sql" in compose
+
+
+def test_offsite_backup_profile_covers_base_backup_wal_and_critical_objects() -> None:
+    compose = (ROOT / "infra" / "memoria-data.production.yml").read_text(encoding="utf-8")
+    base_backup = (ROOT / "infra" / "backup" / "postgres-base-backup.sh").read_text(
+        encoding="utf-8"
+    )
+    mirror = (ROOT / "infra" / "backup" / "offsite-mirror.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert compose.count('profiles: ["offsite-backup"]') == 2
+    assert "pg_basebackup" in base_backup
+    assert "--manifest-checksums=SHA256" in base_backup
+    assert "--format=plain" in base_backup
+    assert "--format=tar" not in base_backup
+    assert "postgres_backup_staging:/backup-staging:ro" in compose
+    assert "postgres_wal_archive:/wal-archive" in compose
+    assert "offsite/$MEMORIA_OFFSITE_S3_BUCKET/postgres/base" in mirror
+    assert "offsite/$MEMORIA_OFFSITE_S3_BUCKET/postgres/wal" in mirror
+    assert "local/memoria-archive" in mirror
+    assert "local/memoria-voice" in mirror
+    assert "mc version info" in mirror
+    for forbidden in ("localhost", "127.0.0.1", "memoria-minio", "host.docker.internal"):
+        assert f"*{forbidden}*" in mirror
+
+    drill = (ROOT / "scripts" / "run_offsite_restore_drill.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "pg_verifybackup" in drill
+    assert "--network none" in drill
+    assert "archive_evidence_blobs" in drill
+    assert "voice_samples" in drill
+    assert '"passed":true' in drill
 
 
 def test_production_runbook_pins_data_compose_path_and_network_bootstrap_order() -> None:

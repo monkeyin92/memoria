@@ -1,4 +1,4 @@
-.PHONY: install verify dev-api dev-agent dev-h5 test e2e smoke lint typecheck offline
+.PHONY: install verify dev-api dev-agent dev-h5 test e2e smoke lint module-budget typecheck offline
 
 install:
 	uv sync --frozen --all-extras
@@ -22,11 +22,15 @@ dev-h5:
 lint:
 	uv run ruff check .
 
+module-budget:
+	uv run python scripts/check_module_budget.py check
+
 typecheck:
 	uv run mypy services --strict
 
 test:
 	uv run ruff check .
+	uv run python scripts/check_module_budget.py check
 	uv run mypy services --strict
 	uv run pytest
 	npm --prefix apps/h5 test

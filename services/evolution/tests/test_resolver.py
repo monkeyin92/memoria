@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from services.evolution.account_fence import AccountSubjectBlockedError
 from services.evolution.domain import CandidateArtifact, GateResult, ValidationReport
 from services.evolution.resolver import EvolutionResolver
 from services.evolution.store import EvolutionStore
@@ -180,6 +181,35 @@ def test_resolver_discards_candidates_when_fence_commits_after_scoped_read(tmp_p
         session_id="session-a",
         speaker_class="owner",
         query="明天天气怎么样？",
+    ) == ()
+
+
+def test_resolver_fails_closed_before_reading_for_a_blocked_subject(tmp_path: Path) -> None:
+    class NoReadForMinorStore(EvolutionStore):
+        def list_candidates_for_account(
+            self,
+            account_id: str,
+            **kwargs: object,
+        ) -> tuple[CandidateArtifact, ...]:
+            raise AssertionError("blocked subjects must not read evolution artifacts")
+
+    store = NoReadForMinorStore(tmp_path / "evolution.sqlite3")
+
+    def block_minor(account_id: str) -> None:
+        assert account_id == "minor-account"
+        raise AccountSubjectBlockedError("minor accounts cannot use account evolution")
+
+    resolver = EvolutionResolver(
+        store,
+        trusted_root_sha256="a" * 64,
+        account_subject_guard=block_minor,
+    )
+
+    assert resolver.resolve(
+        account_id="minor-account",
+        session_id="session-a",
+        speaker_class="owner",
+        query="天气",
     ) == ()
 
 

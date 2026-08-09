@@ -46,6 +46,17 @@ _GROUNDED_KINDS = frozenset(
 _GROUNDED_USES = frozenset({"fact", "style", "decision_precedent", "relationship_rule", "boundary"})
 _DISCLOSURES = frozenset({"digital_identity", "inference", "unknown", "privacy_refusal"})
 _VOICE_TARGET_KINDS = frozenset({"companion", "approved_personal", "fallback"})
+_UTTERANCE_INTENTS = frozenset(
+    {
+        "chat",
+        "request_hint",
+        "request_repeat",
+        "pace_control",
+        "give_up",
+        "interrupt_then_chat",
+        "resume",
+    }
+)
 _PLAN_KEYS = frozenset(
     {
         "fence",
@@ -383,6 +394,7 @@ class ResponsePlannerClient:
         fence: GenerationFence,
         speaker_decision: SpeakerDecision,
         recall_context: Sequence[str] = (),
+        utterance_intent: str = "chat",
     ) -> ResponsePlanFetch:
         normalized_query = query.strip()
         normalized_recall_context = _normalize_recall_context(recall_context)
@@ -392,6 +404,7 @@ class ResponsePlannerClient:
             or not normalized_query
             or len(normalized_query) > 4000
             or normalized_recall_context is None
+            or utterance_intent not in _UTTERANCE_INTENTS
         ):
             return ResponsePlanFetch(None, "request_invalid")
         try:
@@ -404,6 +417,7 @@ class ResponsePlannerClient:
                 json={
                     "session_id": session_id,
                     "query": normalized_query,
+                    "utterance_intent": utterance_intent,
                     "recall_context": list(normalized_recall_context),
                     "fence": {
                         "session_id": fence.session_id,

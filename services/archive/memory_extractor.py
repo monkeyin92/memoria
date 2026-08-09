@@ -39,6 +39,33 @@ _AGE = re.compile(r"(?:今年)?(?P<age>\d{1,3})岁")
 
 
 def _category(text: str) -> DomainCategory:
+    if any(
+        phrase in text
+        for phrase in (
+            "学习时我喜欢",
+            "我喜欢先学",
+            "我喜欢边学",
+            "我更喜欢跟读",
+            "我习惯先复习",
+            "讲慢一点我更容易",
+        )
+    ):
+        return "learning_preference"
+    if any(
+        word in text
+        for word in (
+            "英语口语",
+            "发音",
+            "过去式",
+            "单词",
+            "作业",
+            "练习了",
+            "掌握了",
+            "薄弱点",
+            "这道题卡",
+        )
+    ):
+        return "study_progress"
     if any(word in text for word in ("家训", "家风", "我们家", "做人要")):
         return "family_principle"
     if any(word in text for word in ("育儿", "孩子", "教育孩子", "当父母")):
@@ -53,7 +80,7 @@ def _category(text: str) -> DomainCategory:
 
 
 class RuleBasedMemoryExtractor:
-    version = "rules-zh-v1"
+    version = "rules-zh-v2"
 
     async def extract(self, event: EvidenceEvent) -> MemoryExtraction:
         text = str(event.payload.get("text") or "").strip()

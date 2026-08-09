@@ -282,6 +282,7 @@ class VoiceEnrollmentOperation:
 
 @dataclass(frozen=True, slots=True)
 class ProviderSample:
+    account_id: str
     data: bytes
     media_type: str
 

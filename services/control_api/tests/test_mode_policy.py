@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 import pytest
+from services.common.companions import COMPANIONS
 from services.control_api.app.mode_policy import (
     LEGACY_POLICY_VERSION,
     FrozenMode,
@@ -59,6 +60,20 @@ def test_legacy_is_available_only_from_a_complete_frozen_contract() -> None:
         "learning": False,
         "voice_profile": False,
     }
+
+
+def test_companion_focus_is_frozen_and_non_companion_focus_fails_closed() -> None:
+    tutor = ModePolicy.freeze_companion(
+        COMPANIONS["zhiyao"],
+        session_focus="tutor_homework",
+    )
+
+    assert tutor.session_focus == "tutor_homework"
+    assert ModePolicy.session_context(tutor)["session_focus"] == "tutor_homework"
+    assert ModePolicy.availability(tutor).status == "available"
+    assert ModePolicy.availability(replace(_legacy(), session_focus="tutor_english")).status == (
+        "blocked"
+    )
 
 
 @pytest.mark.parametrize(

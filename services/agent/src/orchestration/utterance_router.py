@@ -22,6 +22,7 @@ from services.agent.src.orchestration.interruption_guard import (
     normalize_short,
 )
 from services.agent.src.orchestration.speaker_verify import SpeakerGateState
+from services.tutor.domain import SessionFocus
 
 
 class UtteranceIntent(StrEnum):
@@ -39,6 +40,11 @@ class UtteranceIntent(StrEnum):
     RESUME = "resume"
     # Normal conversational turn.
     CHAT = "chat"
+    # Tutor-focus learning semantics; all remain ordinary LLM turns.
+    REQUEST_HINT = "request_hint"
+    REQUEST_REPEAT = "request_repeat"
+    PACE_CONTROL = "pace_control"
+    GIVE_UP = "give_up"
     # Empty / whitespace-only ASR.
     EMPTY = "empty"
 
@@ -164,6 +170,56 @@ class UtteranceRoute:
     normalized_text: str
 
 
+_TUTOR_RULES: tuple[tuple[UtteranceIntent, str, tuple[str, ...]], ...] = (
+    (
+        UtteranceIntent.GIVE_UP,
+        "tutor_give_up",
+        ("我放弃", "不想学了", "不想做了", "学不下去", "做不下去", "这题算了"),
+    ),
+    (
+        UtteranceIntent.REQUEST_REPEAT,
+        "tutor_request_repeat",
+        ("再讲一遍", "再说一遍", "重新讲", "没听懂", "没有听懂", "没听清"),
+    ),
+    (
+        UtteranceIntent.PACE_CONTROL,
+        "tutor_pace_control",
+        ("慢一点", "慢点", "说慢些", "讲慢些", "太快了"),
+    ),
+    (
+        UtteranceIntent.REQUEST_HINT,
+        "tutor_request_hint",
+        ("我不会", "不会做", "提示一下", "给点提示", "没思路", "没有思路", "卡住了"),
+    ),
+)
+
+
+def _tutor_route(
+    text: str,
+    normalized: str,
+    session_focus: SessionFocus | None,
+) -> UtteranceRoute | None:
+    if session_focus not in {"tutor_english", "tutor_homework"}:
+        return None
+    compact = "".join(
+        character
+        for character in text
+        if not character.isspace() and character not in "，,。！？!?；;：:"
+    )
+    for intent, reason, phrases in _TUTOR_RULES:
+        if any(phrase in compact for phrase in phrases):
+            return UtteranceRoute(
+                intent=intent,
+                reason=reason,
+                enter_chat=True,
+                should_interrupt=False,
+                speaker_gate_override=False,
+                ack_phrase=None,
+                normalized_text=normalized,
+            )
+    return None
+
+
 def _as_speaker_state(
     speaker_state: SpeakerGateState | str | None,
 ) -> SpeakerGateState | None:
@@ -185,6 +241,7 @@ def route_utterance(
     sticky_interrupt_route: UtteranceRoute | None = None,
     previous_committed_text_normalized: str = "",
     semantic_verdict: InterruptSemanticVerdict | None = None,
+    session_focus: SessionFocus | None = None,
 ) -> UtteranceRoute:
     """Classify one utterance. First matching rule wins (see tests for the table).
 
@@ -197,7 +254,8 @@ def route_utterance(
       6. explicit interrupt + content → interrupt_then_chat
       7. remaining sticky interrupt → monotonic prior route
       8. empty text → empty
-      9. default → chat
+      9. frozen tutor-focus rule table → tutor learning intent
+      10. default → chat
     """
     normalized = normalize_short(text)
     state = _as_speaker_state(speaker_state)
@@ -317,7 +375,12 @@ def route_utterance(
             normalized_text=normalized,
         )
 
-    # 9) Normal chat
+    # 9) Tutor semantics are focus-scoped and never execute side effects here.
+    tutor_route = _tutor_route(text, normalized, session_focus)
+    if tutor_route is not None:
+        return tutor_route
+
+    # 10) Normal chat
     return UtteranceRoute(
         intent=UtteranceIntent.CHAT,
         reason="chat",

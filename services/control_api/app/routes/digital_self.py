@@ -9,7 +9,11 @@ from typing import Annotated, Any, NoReturn, cast
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from services.control_api.app.account_gate import AccountDeletingError, AccountOperationGate
+from services.control_api.app.account_gate import (
+    AccountDeletingError,
+    AccountOperationGate,
+    require_capability_for_subject,
+)
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.security import (
     AuthenticatedUser,
@@ -66,6 +70,7 @@ def _error(status_code: int, code: str) -> HTTPException:
 
 
 def _require_registered(request: Request, user: AuthenticatedUser) -> dict[str, Any]:
+    require_capability_for_subject(user, "digital_self", store=_store(request))
     if _store(request).is_account_unavailable(user_id=user.user_id):
         raise _error(status.HTTP_409_CONFLICT, "account_deletion_in_progress")
     account = _store(request).get_account(user_id=user.user_id)

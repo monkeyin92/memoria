@@ -1,0 +1,39 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+
+const root = path.resolve(__dirname, "..");
+
+test("guardian page covers child confirmation, granular consent, summary, and alerts", () => {
+  const appConfig = JSON.parse(fs.readFileSync(path.join(root, "app.json"), "utf8"));
+  const script = fs.readFileSync(path.join(root, "pages/guardian/index.js"), "utf8");
+  const template = fs.readFileSync(path.join(root, "pages/guardian/index.wxml"), "utf8");
+
+  assert.ok(appConfig.pages.includes("pages/guardian/index"));
+  assert.match(script, /createGuardianLink/);
+  assert.match(script, /confirmGuardianLink/);
+  assert.match(script, /grantGuardianConsent/);
+  assert.match(script, /revokeGuardianConsent/);
+  assert.match(script, /getGuardianNotifications/);
+  assert.match(template, /输入 8 位绑定码/);
+  assert.match(script, /语音陪伴/);
+  assert.match(script, /学习与成长记录/);
+  assert.match(script, /每周成长小结/);
+  assert.match(template, /不含对话原文/);
+  assert.doesNotMatch(template, /心理监测|心理诊断评分|严重度分级/);
+});
+
+test("student entry and tutor focus remain explicit client choices", () => {
+  const profile = fs.readFileSync(path.join(root, "pages/profile/index.wxml"), "utf8");
+  const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
+  const homeScript = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
+  const api = fs.readFileSync(path.join(root, "utils/api.js"), "utf8");
+
+  assert.match(profile, /canUseAdultCapabilities \|\| isMinor/);
+  assert.match(profile, /学生模式与监护授权/);
+  assert.match(homeScript, /英语口语/);
+  assert.match(homeScript, /作业陪伴/);
+  assert.match(homeScript, /sessionFocus: this\.data\.sessionFocus/);
+  assert.match(api, /session_focus: interactionMode === "companion" \? sessionFocus : "chat"/);
+});

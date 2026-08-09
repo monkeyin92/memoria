@@ -198,6 +198,16 @@ class LifeArchivePort(Protocol):
         event_type: str,
     ) -> EvidenceEvent | None: ...
 
+    async def evidence_window(
+        self,
+        *,
+        account_id: str,
+        occurred_after: datetime,
+        occurred_before: datetime,
+        event_types: tuple[str, ...] = (),
+        limit: int = 10_000,
+    ) -> tuple[EvidenceEvent, ...]: ...
+
     async def context(self, query: ContextQuery) -> ContextBundle: ...
 
     async def review(self, command: MemoryReview) -> ReviewedMemory: ...

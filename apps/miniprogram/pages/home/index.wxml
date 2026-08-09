@@ -82,6 +82,19 @@
   <view class="control-deck">
     <text class="mascot-caption">{{active ? (inputMode === 'text' ? '不打开麦克风，也不播放声音，只用文字和你聊。' : '正在听你说话；想结束时，再点一次下方按钮。') : companion.description}}</text>
     <block wx:if="{{!active}}">
+      <view class="focus-picker">
+        <view
+          wx:for="{{sessionFocusOptions}}"
+          wx:key="value"
+          class="focus-option {{sessionFocus === item.value ? 'is-selected' : ''}}"
+          data-focus="{{item.value}}"
+          bindtap="selectSessionFocus"
+        >
+          <text class="focus-label">{{item.label}}</text>
+          <text class="focus-desc">{{item.description}}</text>
+        </view>
+      </view>
+      <text wx:if="{{profile.subject_category === 'minor'}}" class="student-session-notice">每周会给爸爸妈妈一份不含对话原文的成长小结。</text>
       <button
         class="primary-button start-button"
         loading="{{connecting && inputMode === 'voice'}}"

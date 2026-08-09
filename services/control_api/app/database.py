@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import threading
 import uuid
@@ -13,7 +14,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+from services.guardian.domain import (
+    BirthYearBand,
+    SubjectCategory,
+    validate_subject_transition,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS profiles (
@@ -24,7 +31,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     phone_number_masked TEXT NOT NULL DEFAULT '',
     companion_id TEXT CHECK (
         companion_id IS NULL OR companion_id IN (
-            'starlight', 'taoxi', 'mianmian', 'axu', 'xuanmo'
+            'starlight', 'taoxi', 'mianmian', 'axu', 'xuanmo', 'zhiyao', 'yanxi'
         )
     ),
     timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
@@ -33,6 +40,11 @@ CREATE TABLE IF NOT EXISTS profiles (
     gentle_reminders INTEGER NOT NULL DEFAULT 0 CHECK (gentle_reminders IN (0, 1)),
     reject_non_owner_voice INTEGER NOT NULL DEFAULT 1
         CHECK (reject_non_owner_voice IN (0, 1)),
+    subject_category TEXT NOT NULL DEFAULT 'adult'
+        CHECK (subject_category IN ('adult', 'minor')),
+    birth_year_band TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (birth_year_band IN ('unknown', 'under_14', '14_to_17', '18_or_over')),
+    subject_revision INTEGER NOT NULL DEFAULT 0 CHECK (subject_revision >= 0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -141,6 +153,8 @@ CREATE TABLE IF NOT EXISTS voice_sessions (
         CHECK (omni_sdp_exchanges >= 0),
     interaction_mode TEXT NOT NULL DEFAULT 'companion'
         CHECK (interaction_mode IN ('companion', 'self_preview', 'legacy', 'archive')),
+    session_focus TEXT NOT NULL DEFAULT 'chat'
+        CHECK (session_focus IN ('chat', 'tutor_english', 'tutor_homework')),
     mode_policy_version TEXT NOT NULL DEFAULT 's2-v1',
     digital_self_version_id TEXT,
     digital_self_manifest_sha256 TEXT,
@@ -249,6 +263,17 @@ _PROFILE_BOOLEAN_COLUMNS = {
     "reject_non_owner_voice": (
         "INTEGER NOT NULL DEFAULT 1 CHECK (reject_non_owner_voice IN (0, 1))"
     ),
+}
+
+_PROFILE_SUBJECT_COLUMNS = {
+    "subject_category": (
+        "TEXT NOT NULL DEFAULT 'adult' CHECK (subject_category IN ('adult', 'minor'))"
+    ),
+    "birth_year_band": (
+        "TEXT NOT NULL DEFAULT 'unknown' "
+        "CHECK (birth_year_band IN ('unknown', 'under_14', '14_to_17', '18_or_over'))"
+    ),
+    "subject_revision": "INTEGER NOT NULL DEFAULT 0 CHECK (subject_revision >= 0)",
 }
 
 
@@ -366,6 +391,9 @@ class MemoryStore:
                 for name, definition in _PROFILE_BOOLEAN_COLUMNS.items():
                     if name not in existing_columns:
                         connection.execute(f"ALTER TABLE profiles ADD COLUMN {name} {definition}")
+                for name, definition in _PROFILE_SUBJECT_COLUMNS.items():
+                    if name not in existing_columns:
+                        connection.execute(f"ALTER TABLE profiles ADD COLUMN {name} {definition}")
                 if "companion_id" not in existing_columns:
                     connection.execute("ALTER TABLE profiles ADD COLUMN companion_id TEXT")
                     # Preserve the existing experience for accounts created before
@@ -376,6 +404,7 @@ class MemoryStore:
                         WHERE user_id IN (SELECT user_id FROM accounts)
                         """
                     )
+                self._migrate_profile_companion_constraint(connection)
                 message_columns = {
                     str(row[1]) for row in connection.execute("PRAGMA table_info(messages)")
                 }
@@ -404,6 +433,7 @@ class MemoryStore:
                     )
                 frozen_columns = {
                     "interaction_mode": "TEXT NOT NULL DEFAULT 'companion'",
+                    "session_focus": "TEXT NOT NULL DEFAULT 'chat'",
                     "mode_policy_version": "TEXT NOT NULL DEFAULT 's2-v1'",
                     "digital_self_version_id": "TEXT",
                     "digital_self_manifest_sha256": "TEXT",
@@ -471,6 +501,8 @@ class MemoryStore:
                                 CHECK (omni_sdp_exchanges >= 0),
                             interaction_mode TEXT NOT NULL DEFAULT 'companion'
                                 CHECK (interaction_mode IN ('companion', 'self_preview', 'legacy', 'archive')),
+                            session_focus TEXT NOT NULL DEFAULT 'chat'
+                                CHECK (session_focus IN ('chat', 'tutor_english', 'tutor_homework')),
                             mode_policy_version TEXT NOT NULL DEFAULT 's2-v1',
                             digital_self_version_id TEXT,
                             digital_self_manifest_sha256 TEXT,
@@ -507,7 +539,8 @@ class MemoryStore:
                         INSERT INTO voice_sessions (
                             session_id, user_id, resource_owner_account_id,
                             room_name, voice_backend,
-                            omni_sdp_exchanges, interaction_mode, mode_policy_version,
+                            omni_sdp_exchanges, interaction_mode, session_focus,
+                            mode_policy_version,
                             digital_self_version_id, digital_self_manifest_sha256,
                             preview_grant_id, self_preview_perspective,
                             relationship_profile_id, relationship_profile_version,
@@ -534,7 +567,7 @@ class MemoryStore:
                                 ELSE voice_backend
                             END,
                             COALESCE(omni_sdp_exchanges, 0),
-                            'companion', 's2-v1', NULL, NULL, NULL, NULL,
+                            'companion', 'chat', 's2-v1', NULL, NULL, NULL, NULL,
                             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
                             NULL, 'starlight', 'companion-v1',
                             NULL, NULL, NULL, NULL, NULL, NULL, NULL,
@@ -581,6 +614,70 @@ class MemoryStore:
                         """
                     )
             self._initialized = True
+
+    @staticmethod
+    def _migrate_profile_companion_constraint(connection: sqlite3.Connection) -> None:
+        """Expand the historical five-companion CHECK without losing profile data.
+
+        SQLite cannot alter a CHECK constraint in place.  The original CREATE
+        statement is transformed narrowly, preserving every current/future
+        column and constraint, then copied under ``legacy_alter_table`` so all
+        child foreign keys continue to reference ``profiles``.
+        """
+
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'profiles'"
+        ).fetchone()
+        definition = str(row[0]) if row and row[0] else ""
+        if "'zhiyao'" in definition and "'yanxi'" in definition:
+            return
+        old_values = (
+            r"'starlight'\s*,\s*'taoxi'\s*,\s*'mianmian'\s*,\s*"
+            r"'axu'\s*,\s*'xuanmo'"
+        )
+        replacement = (
+            "'starlight', 'taoxi', 'mianmian', 'axu', 'xuanmo', 'zhiyao', 'yanxi'"
+        )
+        migrated_definition, replacements = re.subn(
+            old_values,
+            replacement,
+            definition,
+            count=1,
+        )
+        # Profiles created before companion constraints existed already accept
+        # the new ids. There is no reason to rebuild an unconstrained table.
+        if replacements == 0:
+            return
+        columns = [
+            str(column[1]) for column in connection.execute("PRAGMA table_info(profiles)")
+        ]
+        if not columns:
+            raise RuntimeError("profiles schema is unavailable")
+        quoted_columns = ", ".join(
+            f'"{column.replace(chr(34), chr(34) * 2)}"' for column in columns
+        )
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute("PRAGMA legacy_alter_table=ON")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("ALTER TABLE profiles RENAME TO profiles_legacy")
+            connection.execute(migrated_definition)
+            connection.execute(
+                f"INSERT INTO profiles ({quoted_columns}) "
+                f"SELECT {quoted_columns} FROM profiles_legacy"
+            )
+            connection.execute("DROP TABLE profiles_legacy")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA legacy_alter_table=OFF")
+            connection.execute("PRAGMA foreign_keys=ON")
+        violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError("profiles migration failed foreign_key_check")
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -897,6 +994,17 @@ class MemoryStore:
                 (provider, subject_hash),
             ).fetchone()
         return str(row["user_id"]) if row is not None else None
+
+    def has_external_identity(self, *, user_id: str, provider: str) -> bool:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM external_identities
+                WHERE user_id = ? AND provider = ?
+                """,
+                (user_id, provider),
+            ).fetchone()
+        return row is not None
 
     def bind_external_identities(
         self,
@@ -1392,6 +1500,7 @@ class MemoryStore:
                 SELECT user_id, display_name, bio, avatar_url, phone_number_masked,
                        companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
+                       subject_category, birth_year_band, subject_revision,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
                 """,
@@ -1420,7 +1529,8 @@ class MemoryStore:
             ).fetchall()
             sessions = connection.execute(
                 """
-                SELECT session_id, voice_backend, interaction_mode, mode_policy_version,
+                SELECT session_id, voice_backend, interaction_mode, session_focus,
+                       mode_policy_version,
                        resource_owner_account_id,
                        digital_self_version_id, digital_self_manifest_sha256,
                        preview_grant_id, self_preview_perspective,
@@ -1679,6 +1789,7 @@ class MemoryStore:
         created_at: str,
         interaction_mode: str,
         mode_policy_version: str,
+        session_focus: str = "chat",
         digital_self_version_id: str | None,
         digital_self_manifest_sha256: str | None = None,
         preview_grant_id: str | None = None,
@@ -1714,7 +1825,7 @@ class MemoryStore:
                 """
                 INSERT INTO voice_sessions (
                     session_id, user_id, resource_owner_account_id,
-                    room_name, voice_backend, interaction_mode,
+                    room_name, voice_backend, interaction_mode, session_focus,
                     mode_policy_version, digital_self_version_id,
                     digital_self_manifest_sha256, preview_grant_id,
                     self_preview_perspective, relationship_profile_id,
@@ -1729,7 +1840,7 @@ class MemoryStore:
                     fallback_voice_provider, fallback_voice_model,
                     fallback_voice_resource_id,
                     learning_task_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -1738,6 +1849,7 @@ class MemoryStore:
                     room_name,
                     voice_backend,
                     interaction_mode,
+                    session_focus,
                     mode_policy_version,
                     digital_self_version_id,
                     digital_self_manifest_sha256,
@@ -1773,7 +1885,7 @@ class MemoryStore:
             row = connection.execute(
                 """
                 SELECT session_id, user_id, resource_owner_account_id,
-                       room_name, voice_backend, interaction_mode,
+                       room_name, voice_backend, interaction_mode, session_focus,
                        mode_policy_version, digital_self_version_id,
                        digital_self_manifest_sha256, preview_grant_id,
                        self_preview_perspective, relationship_profile_id,
@@ -1796,12 +1908,88 @@ class MemoryStore:
             raise RuntimeError("voice session insert failed")
         return dict(row)
 
+    def update_subject_profile(
+        self,
+        *,
+        user_id: str,
+        subject_category: SubjectCategory,
+        birth_year_band: BirthYearBand,
+        now: str,
+        age_eligible: bool = False,
+        guardian_confirmed: bool = False,
+    ) -> dict[str, Any]:
+        """Apply the subject ratchet and invalidate every existing auth capability.
+
+        Capability routes always re-read the profile, while revoking all auth
+        sessions makes already-minted access and refresh tokens unusable on
+        their next request.  The category, age band, revision, and revocation
+        are committed in one SQLite transaction.
+        """
+
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._ensure_profile(connection, user_id, now)
+            current = connection.execute(
+                """
+                SELECT subject_category, birth_year_band, subject_revision
+                FROM profiles WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if current is None:  # pragma: no cover
+                raise RuntimeError("profile initialization failed")
+            current_category = cast(SubjectCategory, str(current["subject_category"]))
+            current_band = cast(BirthYearBand, str(current["birth_year_band"]))
+            validate_subject_transition(
+                current_category=current_category,
+                current_birth_year_band=current_band,
+                target_category=subject_category,
+                target_birth_year_band=birth_year_band,
+                age_eligible=age_eligible,
+                guardian_confirmed=guardian_confirmed,
+            )
+            changed = (
+                current_category != subject_category or current_band != birth_year_band
+            )
+            if changed:
+                connection.execute(
+                    """
+                    UPDATE profiles
+                    SET subject_category = ?, birth_year_band = ?,
+                        subject_revision = subject_revision + 1, updated_at = ?
+                    WHERE user_id = ?
+                    """,
+                    (subject_category, birth_year_band, now, user_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE auth_sessions
+                    SET revoked_at = COALESCE(revoked_at, ?), updated_at = ?
+                    WHERE user_id = ?
+                    """,
+                    (now, now, user_id),
+                )
+            row = connection.execute(
+                """
+                SELECT user_id, display_name, bio, avatar_url, phone_number_masked,
+                       companion_id, timezone,
+                       auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
+                       subject_category, birth_year_band, subject_revision,
+                       created_at, updated_at
+                FROM profiles WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        if row is None:  # pragma: no cover
+            raise RuntimeError("subject profile update failed")
+        return dict(row)
+
     def get_voice_session(self, *, session_id: str, user_id: str) -> dict[str, Any] | None:
         with self._connection() as connection:
             row = connection.execute(
                 """
                 SELECT session_id, user_id, resource_owner_account_id,
-                       room_name, voice_backend, interaction_mode,
+                       room_name, voice_backend, interaction_mode, session_focus,
                        mode_policy_version, digital_self_version_id,
                        digital_self_manifest_sha256, preview_grant_id,
                        self_preview_perspective, relationship_profile_id,
@@ -1829,7 +2017,7 @@ class MemoryStore:
             row = connection.execute(
                 """
                 SELECT session_id, user_id, resource_owner_account_id,
-                       room_name, voice_backend, interaction_mode,
+                       room_name, voice_backend, interaction_mode, session_focus,
                        mode_policy_version, digital_self_version_id,
                        digital_self_manifest_sha256, preview_grant_id,
                        self_preview_perspective, relationship_profile_id,
@@ -1855,7 +2043,7 @@ class MemoryStore:
             rows = connection.execute(
                 """
                 SELECT session_id, user_id, resource_owner_account_id,
-                       room_name, voice_backend, interaction_mode,
+                       room_name, voice_backend, interaction_mode, session_focus,
                        mode_policy_version, digital_self_version_id,
                        digital_self_manifest_sha256, preview_grant_id,
                        self_preview_perspective, relationship_profile_id,
@@ -2082,6 +2270,7 @@ class MemoryStore:
                 SELECT user_id, display_name, bio, avatar_url, phone_number_masked,
                        companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
+                       subject_category, birth_year_band, subject_revision,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
                 """,
@@ -2090,6 +2279,20 @@ class MemoryStore:
         if row is None:  # pragma: no cover - ensured in the same transaction
             raise RuntimeError("profile initialization failed")
         return dict(row)
+
+    def get_subject_profile(self, *, user_id: str) -> dict[str, Any] | None:
+        """Read the capability root without creating a default-adult profile."""
+
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT user_id, display_name, companion_id, subject_category,
+                       birth_year_band, subject_revision
+                FROM profiles WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     def update_profile(
         self,
@@ -2138,6 +2341,7 @@ class MemoryStore:
                 SELECT user_id, display_name, bio, avatar_url, phone_number_masked,
                        companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
+                       subject_category, birth_year_band, subject_revision,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
                 """,

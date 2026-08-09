@@ -318,7 +318,7 @@ async def test_claim_review_controls_context_and_retraction_propagates_to_search
             action="confirm",
         )
     )
-    context = await catalog.context(
+    context = await catalog.search(
         MemorySearchQuery(
             account_id="account-memory",
             speaker_class="owner",
@@ -475,6 +475,70 @@ async def test_explicit_low_sensitivity_memory_is_immediately_confirmed(
         ("confirmed", "explicit-memory-low-risk")
     ]
     assert await catalog.review_queue(account_id="account-memory") == ()
+
+
+@pytest.mark.asyncio
+async def test_minor_projection_uses_authoritative_category_and_drops_sensitive_candidates(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "minor-memory.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await _record(
+        archive,
+        event_id="minor-family-conflict",
+        text="我和爸爸最近总吵架。",
+    )
+    catalog = MemoryCatalog.sqlite(
+        path,
+        extractor=RuleBasedMemoryExtractor(),
+        subject_category_resolver=lambda _: "minor",
+    )
+
+    report = await catalog.compile_pending()
+    context = await catalog.context(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="爸爸 吵架",
+            include_candidates=True,
+        )
+    )
+
+    assert report.failed_events == 0
+    assert context.items == ()
+
+
+@pytest.mark.asyncio
+async def test_minor_projection_keeps_safe_study_progress(tmp_path: Path) -> None:
+    path = tmp_path / "minor-study.sqlite3"
+    archive = LifeArchive.sqlite(path)
+    await _record(
+        archive,
+        event_id="minor-study-progress",
+        text="我今天练习了英语口语，过去式还是薄弱点。",
+    )
+    catalog = MemoryCatalog.sqlite(
+        path,
+        extractor=RuleBasedMemoryExtractor(),
+        subject_category_resolver=lambda _: "minor",
+    )
+
+    report = await catalog.compile_pending()
+    context = await catalog.search(
+        MemorySearchQuery(
+            account_id="account-memory",
+            speaker_class="owner",
+            text="过去式",
+            include_candidates=True,
+        )
+    )
+
+    assert report.failed_events == 0
+    assert [(item.domain_category, item.source_event_id) for item in context.items] == [
+        ("study_progress", "minor-study-progress"),
+        ("study_progress", "minor-study-progress"),
+        ("study_progress", "minor-study-progress"),
+    ]
 
 
 @pytest.mark.asyncio

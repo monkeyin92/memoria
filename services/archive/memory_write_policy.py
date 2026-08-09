@@ -22,6 +22,9 @@ EXPLICIT_MEMORY_INTENT = {
 POLICY_CONFIRMATION_SOURCE = "system.memory_write_policy"
 SINGLE_VALUE_PREDICATES = frozenset({"age", "birth_date", "birth_place"})
 LOW_RISK_AUTO_CONFIRM_PREDICATES = frozenset({"preference", "habit"})
+MINOR_LONG_TERM_DOMAIN_ALLOWLIST = frozenset(
+    {"study_progress", "learning_preference", "daily_life"}
+)
 
 _EXPLICIT_REMEMBER = re.compile(
     r"^(?:请帮我|请|帮我)记住(?:一下)?(?:这件事)?(?:[：:,，]\s*|\s+)?(?P<content>.+)$"
@@ -55,6 +58,10 @@ _SENSITIVE_TERMS = (
     "指纹",
     "人脸",
     "虹膜",
+    "身高",
+    "体重",
+    "身体特征",
+    "青春期",
     "妈妈",
     "爸爸",
     "父母",
@@ -193,6 +200,66 @@ def low_risk_self_fact_predicate(value: object) -> str | None:
     return None
 
 
+def filter_extraction_for_subject(
+    event: EvidenceEvent,
+    extraction: MemoryExtraction,
+    *,
+    subject_category: str | None,
+) -> MemoryExtraction:
+    """Keep the first-release minor long-term projection deliberately narrow."""
+
+    if subject_category != "minor":
+        return extraction
+    text = str(event.payload.get("text") or "").strip()
+    if not text or _contains_sensitive_text(text):
+        return MemoryExtraction(
+            extractor_version=extraction.extractor_version,
+            usage=extraction.usage,
+        )
+    low_risk_daily = low_risk_self_fact_predicate(text) is not None
+    claims = tuple(
+        claim
+        for claim in extraction.claims
+        if claim.subject_key == "self"
+        and not claim.entity_keys
+        and claim.domain_category in MINOR_LONG_TERM_DOMAIN_ALLOWLIST
+        and (
+            claim.domain_category != "daily_life"
+            or (
+                low_risk_daily
+                and claim.predicate in {"daily_life", "preference", "habit"}
+            )
+        )
+        and str(claim.sensitive_domain).casefold() in {"public", "personal"}
+        and not _contains_sensitive_text(claim.value)
+    )
+    timeline = tuple(
+        item
+        for item in extraction.timeline
+        if not item.participant_keys
+        and item.domain_category in MINOR_LONG_TERM_DOMAIN_ALLOWLIST
+        and (item.domain_category != "daily_life" or low_risk_daily)
+        and item.sensitivity in {"public", "personal"}
+        and not _contains_sensitive_text(item.title)
+    )
+    knowledge = tuple(
+        item
+        for item in extraction.knowledge
+        if not item.entity_keys
+        and item.domain_category in {"study_progress", "learning_preference"}
+        and item.sensitivity in {"public", "personal"}
+        and not _contains_sensitive_text(item.question)
+        and not _contains_sensitive_text(item.answer)
+    )
+    return MemoryExtraction(
+        claims=claims,
+        timeline=timeline,
+        knowledge=knowledge,
+        extractor_version=extraction.extractor_version,
+        usage=extraction.usage,
+    )
+
+
 def _complete_nonnegative_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
@@ -252,6 +319,7 @@ class MemoryWritePolicy:
         extraction: MemoryExtraction,
         *,
         existing_values: Collection[str] = (),
+        subject_category: str | None = None,
     ) -> MemoryWriteDecision:
         if not has_exact_explicit_memory_intent(event.payload):
             return MemoryWriteDecision(False, "explicit_intent_missing")
@@ -268,6 +336,8 @@ class MemoryWritePolicy:
         content = explicit_remember_content(event.payload.get("text"))
         if content is None:
             return MemoryWriteDecision(False, "invalid_explicit_command")
+        if subject_category == "minor" and _contains_sensitive_text(content):
+            return MemoryWriteDecision(False, "minor_long_term_boundary", content)
         low_risk_predicate = low_risk_self_fact_predicate(content)
         if low_risk_predicate is None:
             return MemoryWriteDecision(False, "auto_confirm_not_allowlisted", content)

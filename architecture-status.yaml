@@ -5,6 +5,12 @@ production_runtime: python_authoritative
 production_media: livekit
 go_shadow_enabled: false
 go_authoritative_allowed: false
+student_track: p3_local_software_complete_external_release_gates_pending
+student_track_as_of: 2026-08-09_local_worktree
+
+module_budgets:
+  services/agent/src/duplex_runtime.py: 4748
+  services/agent/src/agent.py: 3450
 
 stages:
   python_voice_core: implemented_local
@@ -17,6 +23,11 @@ stages:
   prioritized_data_channels: implemented_local_backward_compatible
   asymmetric_media_jwt: implemented_local_optional_migration
   media_public_internal_listeners: implemented_local_optional_split
+  student_account_guardian_boundary: implemented_local
+  student_authorized_corpus_retention: implemented_local
+  student_tutor: implemented_local
+  student_weekly_report_and_crisis_outbox: implemented_local
+  student_offsite_backup_tooling: implemented_local_not_operated
   multi_instance_ownership: pending
   authority_migration: blocked_by_external_gates
 
@@ -24,8 +35,9 @@ gates:
   ci: pending_remote_run
   local_strict_mypy: passed
   local_proto_generation: passed
-  local_python_tests: passed
+  local_python_tests: passed_2108_2_skipped_coverage_87_10
   local_h5_tests: passed
+  local_miniprogram_tests: passed_90_upload_dry_run_only
   local_go_tests: passed
   local_go_race: passed
   local_go_vet: passed
@@ -34,6 +46,18 @@ gates:
   weather_public_api_canary: passed
   redis_lua_single_node_canary: passed
   real_provider: passed
+  student_capability_matrix: passed_local
+  student_tutor_e2e: passed_local
+  student_crisis_response_priority: passed_local
+  student_crisis_outbox: passed_local_not_wechat_delivery
+  student_guardian_ui: passed_local_build
+  student_guardian_postgres_contract: passed_local_7_of_7_force_rls
+  student_guardian_postgres_install: pending_production_upgrade
+  student_offsite_backup_restore: pending_remote_execution
+  student_wechat_subscription_delivery: pending_template_and_live_delivery
+  student_crisis_script_professional_review: pending_external
+  student_pia_legal_algorithm_review: pending_external
+  student_ios_android_voice_acceptance: pending_real_devices
   turn_cross_host_e2e: pending
   browser_playout_ack: pending
   hardware_aec: pending

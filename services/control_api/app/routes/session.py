@@ -17,7 +17,11 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.common.companions import DEFAULT_COMPANION_ID, companion_definition
-from services.control_api.app.account_gate import require_writable_account
+from services.control_api.app.account_gate import (
+    SubjectCapability,
+    require_capability_for_account_id,
+    require_writable_account,
+)
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.media_runtime import (
     decide_media_runtime,
@@ -62,6 +66,7 @@ from services.digital_self.preview import (
     PreviewNotFoundError,
     SelfPreviewRegistryPort,
 )
+from services.guardian.domain import GuardianStorePort
 from services.legacy.domain import (
     LegacyAccessDeniedError,
     LegacyAccessSnapshot,
@@ -76,6 +81,7 @@ from services.self_model.domain import (
     SelfModelRegistryPort,
 )
 from services.speaker.domain import SpeakerAuthorityPort
+from services.tutor.domain import SessionFocus
 from services.voice_profile.domain import VoiceProfilePort, VoiceResolution
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
@@ -229,6 +235,7 @@ class CreateSessionRequest(BaseModel):
     user_id: str | None = Field(default=None, min_length=1, max_length=128)
     voice_backend: Literal["cascade", "qwen_omni"] = "cascade"
     interaction_mode: Literal["companion", "self_preview", "legacy", "archive"] = "companion"
+    session_focus: SessionFocus = "chat"
     # Owner/version/relationship remain server-owned. Legacy accepts only the
     # opaque grant id and resolves every other authority server-side.
     digital_self_version_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -257,6 +264,8 @@ class CreateSessionRequest(BaseModel):
             raise ValueError("legacy requires a server-issued grant id")
         if self.interaction_mode != "legacy" and self.legacy_grant_id is not None:
             raise ValueError("legacy_grant_id is only valid for legacy")
+        if self.interaction_mode != "companion" and self.session_focus != "chat":
+            raise ValueError("tutor session_focus is only valid for companion mode")
         return self
 
 
@@ -407,6 +416,28 @@ async def create_session(
 ) -> CreateSessionResponse | CreateOmniSessionResponse | CreateMiniProgramSessionResponse:
     settings = request.app.state.settings
     user_id = require_matching_user(body.user_id, user) if body.user_id else user.user_id
+    store = cast(MemoryStore, request.app.state.memory_store)
+    capability: SubjectCapability = (
+        "self_preview"
+        if body.interaction_mode == "self_preview"
+        else "legacy_receive"
+        if body.interaction_mode == "legacy"
+        else "tutor"
+        if body.session_focus in {"tutor_english", "tutor_homework"}
+        else "companion_chat"
+    )
+    profile = require_capability_for_account_id(user_id, capability, store=store)
+    if profile.get("subject_category") == "minor":
+        guardian = cast(GuardianStorePort, request.app.state.guardian_store)
+        consent = await guardian.active_consent(
+            minor_user_id=user_id,
+            consent_kind="minor_voice_session",
+        )
+        if consent is None:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "guardian_consent_required", "capability": "minor_voice_session"},
+            )
     mini_program = body.client.platform == MINIPROGRAM_CLIENT_PLATFORM
     availability = ModePolicy.availability(body.interaction_mode)
     if not availability.conversational:
@@ -437,10 +468,9 @@ async def create_session(
             status_code=409,
             detail={"code": f"{body.interaction_mode}_requires_controlled_backend"},
         )
-    store = cast(MemoryStore, request.app.state.memory_store)
     created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     companion = companion_definition(
-        store.get_profile(user_id=user_id, now=created_at).get("companion_id")
+        profile.get("companion_id")
         or DEFAULT_COMPANION_ID
     )
     if companion is None:
@@ -481,6 +511,11 @@ async def create_session(
                 user_id=legacy_access.resource_owner_account_id
             ) or store.is_account_unavailable(user_id=legacy_access.grantee_account_id):
                 raise LegacyAccessDeniedError("legacy account is unavailable")
+            require_capability_for_account_id(
+                legacy_access.resource_owner_account_id,
+                "legacy_grant",
+                store=store,
+            )
             version = await request.app.state.digital_self_registry.get(
                 account_id=legacy_access.resource_owner_account_id,
                 version_id=legacy_access.version_id,
@@ -685,7 +720,7 @@ async def create_session(
     elif legacy_frozen is not None:
         frozen = legacy_frozen
     else:
-        frozen = ModePolicy.freeze_companion(companion)
+        frozen = ModePolicy.freeze_companion(companion, session_focus=body.session_focus)
 
     async def persist_voice_session() -> str | None:
         learning_task_id: str | None = None
@@ -718,6 +753,7 @@ async def create_session(
                     created_at=created_at,
                     interaction_mode=frozen.interaction_mode,
                     mode_policy_version=frozen.mode_policy_version,
+                    session_focus=frozen.session_focus or "chat",
                     digital_self_version_id=frozen.digital_self_version_id,
                     digital_self_manifest_sha256=frozen.manifest_sha256,
                     preview_grant_id=frozen.preview_grant_id,
@@ -757,6 +793,7 @@ async def create_session(
             created_at=created_at,
             interaction_mode=frozen.interaction_mode,
             mode_policy_version=frozen.mode_policy_version,
+            session_focus=frozen.session_focus or "chat",
             digital_self_version_id=frozen.digital_self_version_id,
             digital_self_manifest_sha256=frozen.manifest_sha256,
             preview_grant_id=frozen.preview_grant_id,

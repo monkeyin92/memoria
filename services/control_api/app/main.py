@@ -5,15 +5,20 @@ from __future__ import annotations
 import base64
 import hashlib
 from asyncio import Lock, to_thread
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import cast
 from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from services.agent.src.providers.crisis_semantic_classifier import (
+    CrisisSemanticClassifier,
+    CrisisSemanticClassifierConfig,
+)
 from services.archive.compiler_worker import MemoryCompilerWorker
 from services.archive.domain import LifeArchivePort
 from services.archive.life_archive import LifeArchive
@@ -45,6 +50,7 @@ from services.control_api.app.routes import auth as auth_routes
 from services.control_api.app.routes import digital_self as digital_self_routes
 from services.control_api.app.routes import evolution as evolution_routes
 from services.control_api.app.routes import growth as growth_routes
+from services.control_api.app.routes import guardian as guardian_routes
 from services.control_api.app.routes import interaction as interaction_routes
 from services.control_api.app.routes import legacy as legacy_routes
 from services.control_api.app.routes import media as media_routes
@@ -56,6 +62,7 @@ from services.control_api.app.routes import self_preview as self_preview_routes
 from services.control_api.app.routes import session as session_routes
 from services.control_api.app.routes import skills as skill_routes
 from services.control_api.app.routes import speaker as speaker_routes
+from services.control_api.app.routes import tutor as tutor_routes
 from services.control_api.app.routes import voice as voice_routes
 from services.control_api.app.session_directory import (
     InMemorySessionDirectory,
@@ -73,6 +80,7 @@ from services.digital_self.postgres_registry import PostgresDigitalSelfRegistry
 from services.digital_self.preview import SelfPreviewRegistry
 from services.digital_self.registry import DigitalSelfRegistry
 from services.evolution.account_fence import AccountWriteGuard as EvolutionAccountWriteGuard
+from services.evolution.account_fence import require_account_evolution_subject
 from services.evolution.account_repository import (
     PostgresEvolutionAccountRepository,
     SqliteEvolutionAccountRepository,
@@ -96,6 +104,16 @@ from services.governance.account_data import (
 )
 from services.growth.postgres_reader import PostgresGrowthReader
 from services.growth.reader import GrowthReader
+from services.guardian.consent import ConsentRevocationHook, GuardianConsentService
+from services.guardian.corpus import (
+    CorpusRetentionService,
+    CorpusRetentionWorker,
+    CorpusSampleStorePort,
+)
+from services.guardian.crisis import CrisisNotificationService, CrisisNotificationStorePort
+from services.guardian.domain import ConsentKind, GuardianStorePort
+from services.guardian.postgres_store import PostgresGuardianStore
+from services.guardian.sqlite_store import SqliteGuardianStore
 from services.legacy.domain import LegacyRegistryPort
 from services.legacy.postgres_registry import PostgresLegacyRegistry
 from services.legacy.registry import LegacyRegistry
@@ -154,6 +172,15 @@ def _memory_account_guard(
     return guard
 
 
+def _subject_category_resolver(store: MemoryStore) -> Callable[[str], str | None]:
+    def resolve(account_id: str) -> str | None:
+        profile = store.get_subject_profile(user_id=account_id)
+        value = profile.get("subject_category") if profile is not None else None
+        return str(value) if value in {"adult", "minor"} else None
+
+    return resolve
+
+
 def _speaker_authority(settings: ControlSettings) -> SpeakerAuthorityPort:
     configured_key = settings.speaker_template_key.get_secret_value()
     template_key = configured_key or base64.urlsafe_b64encode(
@@ -206,6 +233,22 @@ def _persona_extractor(settings: ControlSettings) -> PersonaExtractor:
             workspace_id=settings.dashscope_workspace_id,
         ),
         fallback,
+    )
+
+
+def _crisis_semantic_classifier(
+    settings: ControlSettings,
+) -> CrisisSemanticClassifier | None:
+    api_key = settings.dashscope_api_key.get_secret_value()
+    if settings.offline_mock or not settings.crisis_semantic_enabled or not api_key:
+        return None
+    return CrisisSemanticClassifier(
+        CrisisSemanticClassifierConfig(
+            api_key=api_key,
+            base_url=settings.dashscope_base_url,
+            model=settings.crisis_semantic_model,
+            timeout_s=settings.crisis_semantic_timeout_s,
+        )
     )
 
 
@@ -385,6 +428,16 @@ def _voice_preview_renderer(settings: ControlSettings) -> VoicePreviewRenderer:
     return CosyVoicePreviewRenderer()
 
 
+def _guardian_revocation_hook(
+    terminator: AccountSessionTerminator,
+) -> ConsentRevocationHook:
+    async def on_revoked(account_id: str, kind: ConsentKind) -> None:
+        if kind in {"minor_voice_session", "memory_retention"}:
+            await terminator.terminate_account(account_id)
+
+    return on_revoked
+
+
 def _account_data_governance(
     settings: ControlSettings,
     *,
@@ -395,6 +448,9 @@ def _account_data_governance(
     account_operations: AccountOperationGate,
     legacy_registry: LegacyRegistryPort,
     evolution_repository: AccountRepository,
+    guardian_repository: GuardianStorePort,
+    corpus_retention_service: CorpusRetentionService,
+    session_terminator: AccountSessionTerminator,
 ) -> AccountDataGovernance:
     archive_url = settings.archive_database_url.get_secret_value()
     archive_repository = (
@@ -413,14 +469,12 @@ def _account_data_governance(
         archive_repository=archive_repository,
         speaker_repository=speaker_repository,
         evolution_repository=evolution_repository,
+        guardian_repository=guardian_repository,
+        corpus_retention_service=corpus_retention_service,
         voice_profiles=voice_profiles,
         legacy_registry=legacy_registry,
         archive_object_store=archive_object_store,
-        session_terminator=AccountSessionTerminator(
-            store=store,
-            connections=realtime_connections,
-            close_room=LiveKitRoomCloser(settings),
-        ),
+        session_terminator=session_terminator,
         operation_blocker=account_operations,
         account_read_guard=account_operations.sync_read,
     )
@@ -436,6 +490,7 @@ def _evolution_plane(
     settings: ControlSettings,
     store: EvolutionStore,
     *,
+    profile_store: MemoryStore,
     account_write_guard: EvolutionAccountWriteGuard | None = None,
 ) -> EvolutionControlPlane:
     return EvolutionControlPlane(
@@ -448,6 +503,10 @@ def _evolution_plane(
         ),
         release_policy=_evolution_release_policy(settings),
         account_write_guard=account_write_guard,
+        account_subject_guard=lambda account_id: require_account_evolution_subject(
+            account_id,
+            resolve_subject_category=_subject_category_resolver(profile_store),
+        ),
     )
 
 
@@ -461,6 +520,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             raise
         app.state.config_warning = str(exc)
     app.state.settings = settings
+    crisis_semantic_classifier = _crisis_semantic_classifier(settings)
+    app.state.crisis_semantic_classifier = crisis_semantic_classifier
     media_stop_dispatcher = _build_media_stop_dispatcher(settings)
     if media_stop_dispatcher is not None:
         app.state.media_stop_dispatcher = media_stop_dispatcher
@@ -482,6 +543,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store,
         challenge_ttl_ms=settings.device_challenge_ttl_ms,
     )
+    session_terminator = AccountSessionTerminator(
+        store=store,
+        connections=app.state.realtime_connections,
+        close_room=LiveKitRoomCloser(settings),
+    )
+    app.state.session_terminator = session_terminator
+    guardian_url = settings.guardian_database_url.get_secret_value().strip()
+    postgres_guardian: PostgresGuardianStore | None = None
+    if guardian_url:
+        postgres_guardian = PostgresGuardianStore(
+            guardian_url,
+            initialize_schema=settings.environment != "production",
+        )
+        await postgres_guardian.initialize()
+        guardian_store: GuardianStorePort = postgres_guardian
+    else:
+        sqlite_guardian = SqliteGuardianStore(settings.memoria_db_path)
+        await to_thread(sqlite_guardian.initialize)
+        guardian_store = sqlite_guardian
+    app.state.guardian_store = guardian_store
+    app.state.tutor_store = guardian_store
     archive_url = settings.archive_database_url.get_secret_value()
     compiler_url = settings.archive_compiler_database_url.get_secret_value()
     postgres_archive: PostgresLifeArchive | None = None
@@ -511,6 +593,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             compiler_dsn=compiler_url or None,
             compiler_role=settings.archive_compiler_role or None,
             account_guard=account_guard,
+            subject_category_resolver=_subject_category_resolver(store),
             embedder=embedder,
             require_vector=settings.environment == "production",
         )
@@ -533,6 +616,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             settings.memoria_db_path,
             extractor=extractor,
             account_guard=account_guard,
+            subject_category_resolver=_subject_category_resolver(store),
         )
         await to_thread(sqlite_catalog.initialize)
         memory_catalog = sqlite_catalog
@@ -546,6 +630,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await to_thread(sqlite_persona.initialize)
         persona_engine = sqlite_persona
     app.state.life_archive = archive
+    app.state.crisis_notification_service = CrisisNotificationService(
+        cast(CrisisNotificationStorePort, guardian_store),
+        archive,
+    )
+    app.state.guardian_consent_service = GuardianConsentService(
+        guardian_store,
+        archive,
+        on_revoked=_guardian_revocation_hook(session_terminator),
+    )
     app.state.memory_catalog = memory_catalog
     app.state.skill_catalog = skill_catalog
     app.state.persona_engine = persona_engine
@@ -567,6 +660,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     evolution_control_plane = _evolution_plane(
         settings,
         evolution_store,
+        profile_store=store,
         account_write_guard=app.state.account_operations.sync_write,
     )
     app.state.evolution_store = evolution_store
@@ -577,6 +671,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         trusted_root_sha256=settings.evolution_trusted_root(),
         canary_percent=settings.evolution_canary_percent,
         release_policy=_evolution_release_policy(settings),
+        account_subject_guard=lambda account_id: require_account_evolution_subject(
+            account_id,
+            resolve_subject_category=_subject_category_resolver(store),
+        ),
         account_read_guard=app.state.account_operations.sync_read,
     )
     evolution_sleep_worker = EvolutionSleepWorker(
@@ -666,6 +764,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.speaker_authority = speaker_authority
     archive_object_store = _archive_object_store(settings)
     app.state.archive_object_store = archive_object_store
+    corpus_retention_service = CorpusRetentionService(
+        cast(CorpusSampleStorePort, guardian_store),
+        archive_object_store,
+    )
+    corpus_retention_worker = CorpusRetentionWorker(
+        corpus_retention_service,
+        interval_s=settings.corpus_retention_interval_s,
+    )
+    corpus_retention_worker.start()
+    app.state.corpus_retention_service = corpus_retention_service
+    app.state.corpus_retention_worker = corpus_retention_worker
     app.state.account_data_governance = _account_data_governance(
         settings,
         store=store,
@@ -679,6 +788,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             if evolution_url
             else SqliteEvolutionAccountRepository(settings.evolution_sqlite_path())
         ),
+        guardian_repository=guardian_store,
+        corpus_retention_service=corpus_retention_service,
+        session_terminator=session_terminator,
     )
     deletion_worker = AccountDeletionWorker(app.state.account_data_governance)
     deletion_worker.start()
@@ -686,6 +798,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await corpus_retention_worker.stop()
+        if crisis_semantic_classifier is not None:
+            await crisis_semantic_classifier.aclose()
         await evolution_sleep_worker.stop()
         await deletion_worker.stop()
         await compiler_worker.stop()
@@ -713,6 +828,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await postgres_speaker.close()
         if postgres_voice is not None:
             await postgres_voice.close()
+        if postgres_guardian is not None:
+            await postgres_guardian.close()
 
 
 def create_app() -> FastAPI:
@@ -728,6 +845,7 @@ def create_app() -> FastAPI:
     )
     # Eager defaults so tests without lifespan still work.
     app.state.settings = settings
+    app.state.crisis_semantic_classifier = _crisis_semantic_classifier(settings)
     app.state.session_directory = (
         RedisSessionDirectory(settings.redis_url)
         if settings.redis_url.strip()
@@ -748,7 +866,26 @@ def create_app() -> FastAPI:
         app.state.memory_store,
         challenge_ttl_ms=settings.device_challenge_ttl_ms,
     )
+    guardian_store = SqliteGuardianStore(settings.memoria_db_path)
+    guardian_store.initialize()
+    app.state.guardian_store = guardian_store
+    app.state.tutor_store = guardian_store
+    session_terminator = AccountSessionTerminator(
+        store=app.state.memory_store,
+        connections=app.state.realtime_connections,
+        close_room=LiveKitRoomCloser(settings),
+    )
+    app.state.session_terminator = session_terminator
     app.state.life_archive = LifeArchive.sqlite(settings.memoria_db_path)
+    app.state.crisis_notification_service = CrisisNotificationService(
+        guardian_store,
+        app.state.life_archive,
+    )
+    app.state.guardian_consent_service = GuardianConsentService(
+        guardian_store,
+        app.state.life_archive,
+        on_revoked=_guardian_revocation_hook(session_terminator),
+    )
     app.state.memory_catalog = MemoryCatalog.sqlite(
         settings.memoria_db_path,
         extractor=build_memory_extractor(settings),
@@ -756,6 +893,7 @@ def create_app() -> FastAPI:
             app.state.account_operations,
             app.state.memory_store,
         ),
+        subject_category_resolver=_subject_category_resolver(app.state.memory_store),
     )
     app.state.skill_catalog = SkillCatalog.sqlite(settings.memoria_db_path)
     app.state.persona_engine = PersonaEngine.sqlite(
@@ -770,6 +908,7 @@ def create_app() -> FastAPI:
     evolution_control_plane = _evolution_plane(
         settings,
         evolution_store,
+        profile_store=app.state.memory_store,
         account_write_guard=app.state.account_operations.sync_write,
     )
     app.state.evolution_store = evolution_store
@@ -780,6 +919,10 @@ def create_app() -> FastAPI:
         trusted_root_sha256=settings.evolution_trusted_root(),
         canary_percent=settings.evolution_canary_percent,
         release_policy=_evolution_release_policy(settings),
+        account_subject_guard=lambda account_id: require_account_evolution_subject(
+            account_id,
+            resolve_subject_category=_subject_category_resolver(app.state.memory_store),
+        ),
         account_read_guard=app.state.account_operations.sync_read,
     )
     app.state.growth_reader = GrowthReader.sqlite(
@@ -796,6 +939,11 @@ def create_app() -> FastAPI:
     app.state.voice_preview_renderer = _voice_preview_renderer(settings)
     archive_object_store = _archive_object_store(settings)
     app.state.archive_object_store = archive_object_store
+    corpus_retention_service = CorpusRetentionService(
+        guardian_store,
+        archive_object_store,
+    )
+    app.state.corpus_retention_service = corpus_retention_service
     app.state.account_data_governance = _account_data_governance(
         settings,
         store=app.state.memory_store,
@@ -805,6 +953,9 @@ def create_app() -> FastAPI:
         account_operations=app.state.account_operations,
         legacy_registry=app.state.legacy_registry,
         evolution_repository=SqliteEvolutionAccountRepository(settings.evolution_sqlite_path()),
+        guardian_repository=guardian_store,
+        corpus_retention_service=corpus_retention_service,
+        session_terminator=session_terminator,
     )
     app.add_middleware(
         CORSMiddleware,
@@ -830,6 +981,8 @@ def create_app() -> FastAPI:
     app.include_router(self_preview_routes.router)
     app.include_router(self_model_routes.router)
     app.include_router(growth_routes.router)
+    app.include_router(guardian_routes.router)
+    app.include_router(tutor_routes.router)
     app.include_router(voice_routes.router)
     app.include_router(readiness_routes.router)
 

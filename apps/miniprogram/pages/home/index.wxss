@@ -779,3 +779,33 @@
     transform: scale(0.75);
   }
 }
+.focus-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12rpx;
+  margin: 6rpx 0 22rpx;
+}
+
+.focus-option {
+  min-width: 0;
+  padding: 18rpx 12rpx;
+  border: 1rpx solid rgba(112, 135, 202, 0.24);
+  border-radius: 22rpx;
+  background: rgba(7, 13, 38, 0.62);
+  text-align: center;
+}
+
+.focus-option.is-selected {
+  border-color: rgba(73, 230, 255, 0.62);
+  background: linear-gradient(145deg, rgba(34, 229, 255, 0.12), rgba(129, 92, 255, 0.12));
+  box-shadow: 0 0 24rpx rgba(34, 229, 255, 0.12);
+}
+
+.focus-label,
+.focus-desc {
+  display: block;
+}
+
+.focus-label { color: #edf4ff; font-size: 25rpx; font-weight: 700; }
+.focus-desc { margin-top: 7rpx; color: #8592bc; font-size: 19rpx; line-height: 1.4; }
+.student-session-notice { display: block; margin: -6rpx 0 18rpx; color: #c991da; font-size: 21rpx; text-align: center; }

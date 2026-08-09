@@ -157,7 +157,9 @@ def _prompt(text: str, occurred_at: datetime) -> str:
 "关系英文:姓名"，主人本人使用 subject_key="self"。所有结论只是 candidate。
 
 domain_category 只能是：life_story、work_experience、family_principle、
-parenting_principle、life_wisdom、daily_life。它只表示主题，不表示记忆种类。
+parenting_principle、life_wisdom、daily_life、study_progress、learning_preference。
+study_progress 只记录原话明确表达的练习、掌握或薄弱点；learning_preference 只记录
+原话明确表达的学习方式或节奏偏好，不能从一次行为推断。主题类别不表示记忆种类。
 时间不明确时 event_start 设为 null，time_precision 使用 conversation_time。
 同一现实事件跨会话再次出现时使用同一个简短 canonical_key；不能确认时留空。
 entity_keys/participant_keys 只能引用本次 people 的 canonical_key。
@@ -210,7 +212,7 @@ class QwenMemoryExtractor:
         self._timeout_s = timeout_s
         self._workspace_id = workspace_id.strip()
         self._transport = transport
-        self.version = f"qwen-json:{self._model}:v1"
+        self.version = f"qwen-json:{self._model}:v2"
 
     async def extract(self, event: EvidenceEvent) -> MemoryExtraction:
         text = str(event.payload.get("text") or "").strip()

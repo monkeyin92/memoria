@@ -24,13 +24,17 @@ from services.common.companions import (
     DESIGNED_VOICE_MODEL,
     companion_definition,
 )
+from services.common.crisis_policy import CrisisRoute, crisis_semantic_candidate, route_crisis
 from services.common.realtime_information import (
     current_local_time,
     fixed_realtime_reply,
     realtime_instruction,
 )
 from services.common.redaction import redact_pii
-from services.control_api.app.account_gate import AccountDeletingError
+from services.control_api.app.account_gate import (
+    AccountDeletingError,
+    require_capability_for_account_id,
+)
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.mode_policy import FrozenMode, InteractionMode, ModePolicy
@@ -61,6 +65,12 @@ from services.digital_self.response_planner import (
 from services.evolution.receipt import sign_resolution_receipt
 from services.evolution.resolver import EvolutionResolver, ResolvedEvolutionArtifact
 from services.evolution.store import EvolutionStore
+from services.guardian.crisis import CrisisNotificationService
+from services.guardian.domain import GuardianStorePort
+from services.guardian.retention import (
+    apply_memory_retention_ceiling,
+    memory_retention_allowed,
+)
 from services.legacy.domain import (
     LegacyAccessDeniedError,
     LegacyAccessSnapshot,
@@ -78,6 +88,8 @@ from services.self_model.domain import (
     SelfModelRegistryPort,
 )
 from services.speaker.domain import SpeakerAuthorityPort
+from services.tutor.domain import TutorFocus
+from services.tutor.turn_policy import TutorTurnPolicy, TutorUtteranceIntent
 
 router = APIRouter(prefix="/v1/interaction", tags=["interaction"])
 logger = logging.getLogger(__name__)
@@ -204,6 +216,32 @@ def _response_plan_cache(request: Request) -> _ResponsePlanCache:
     return cache
 
 
+def _tutor_turn_policy(request: Request) -> TutorTurnPolicy:
+    policy = getattr(request.app.state, "tutor_turn_policy", None)
+    if not isinstance(policy, TutorTurnPolicy):
+        policy = TutorTurnPolicy()
+        request.app.state.tutor_turn_policy = policy
+    return policy
+
+
+def _crisis_notifications(request: Request) -> CrisisNotificationService:
+    return cast(
+        CrisisNotificationService,
+        request.app.state.crisis_notification_service,
+    )
+
+
+async def _route_crisis_with_bounded_evidence(request: Request, query: str) -> CrisisRoute:
+    deterministic = route_crisis(query)
+    classifier = getattr(request.app.state, "crisis_semantic_classifier", None)
+    if deterministic.action != "none" or not crisis_semantic_candidate(query):
+        return deterministic
+    if classifier is None:
+        return deterministic
+    semantic_evidence = await classifier.classify(current_text=query)
+    return route_crisis(query, semantic_evidence=semantic_evidence)
+
+
 def _response_plan_key(
     body: ResponsePlanRequest,
     *,
@@ -230,6 +268,27 @@ def _response_plan_fingerprint(body: ResponsePlanRequest) -> str:
 
 def _store(request: Request) -> MemoryStore:
     return cast(MemoryStore, request.app.state.memory_store)
+
+
+async def _account_memory_retention_allowed(
+    request: Request,
+    *,
+    account_id: str,
+    subject_category: object,
+) -> bool:
+    consent_active = False
+    if subject_category == "minor":
+        consent_active = (
+            await cast(GuardianStorePort, request.app.state.guardian_store).active_consent(
+                minor_user_id=account_id,
+                consent_kind="memory_retention",
+            )
+            is not None
+        )
+    return memory_retention_allowed(
+        subject_category=subject_category,
+        active_consent=consent_active,
+    )
 
 
 def _registry(request: Request) -> RegistryPort:
@@ -351,8 +410,16 @@ async def session_policy(
     frozen = FrozenMode.from_session(session)
     policy = ModePolicy.session_context(frozen)
     if frozen.interaction_mode == "companion":
+        account_id = str(session["user_id"])
+        subject = _store(request).get_subject_profile(user_id=account_id)
+        retention_allowed = await _account_memory_retention_allowed(
+            request,
+            account_id=account_id,
+            subject_category=(subject or {}).get("subject_category"),
+        )
+        policy = apply_memory_retention_ceiling(policy, allowed=retention_allowed)
         profile = _store(request).get_profile(
-            user_id=str(session["user_id"]),
+            user_id=account_id,
             now=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         )
         display_name = profile.get("display_name")
@@ -389,6 +456,7 @@ class ResponsePlanRequest(BaseModel):
 
     session_id: str = Field(min_length=1, max_length=128)
     query: str = Field(min_length=1, max_length=4000)
+    utterance_intent: TutorUtteranceIntent = "chat"
     recall_context: list[str] = Field(default_factory=list, max_length=_RECALL_CONTEXT_MAX_ITEMS)
     fence: ResponsePlanFence
     speaker_decision: ResponsePlanSpeakerDecision
@@ -591,6 +659,18 @@ async def _response_plan_context(
         return frozen, actor_account_id, None, None, None
     if frozen.interaction_mode == "archive" or not frozen.digital_self_version_id:
         raise _response_plan_unavailable()
+    if frozen.interaction_mode == "self_preview":
+        require_capability_for_account_id(
+            actor_account_id,
+            "self_preview",
+            store=_store(request),
+        )
+    elif frozen.interaction_mode == "legacy":
+        require_capability_for_account_id(
+            actor_account_id,
+            "legacy_grant" if frozen.legacy_actor_role == "owner_preview" else "legacy_receive",
+            store=_store(request),
+        )
     legacy_access: LegacyAccessSnapshot | None = None
     resource_owner_account_id = actor_account_id
     legacy_grant: LegacyGrant | None = None
@@ -628,6 +708,11 @@ async def _response_plan_context(
         ):
             raise _response_plan_unavailable()
         resource_owner_account_id = legacy_access.resource_owner_account_id
+        require_capability_for_account_id(
+            resource_owner_account_id,
+            "legacy_grant",
+            store=_store(request),
+        )
     try:
         version = await _registry(request).get(
             account_id=resource_owner_account_id,
@@ -857,6 +942,7 @@ def _instruction_text(
     query: str,
     now: datetime,
     evolution_artifacts: tuple[ResolvedEvolutionArtifact, ...] = (),
+    tutor_directive: str | None = None,
 ) -> tuple[str, tuple[ResolvedEvolutionArtifact, ...]]:
     rules = [*plan.instructions.safety_rules, *plan.instructions.style_rules]
     companion = companion_definition(frozen.companion_style_id)
@@ -901,6 +987,8 @@ def _instruction_text(
     live_rule = realtime_instruction(query=query, now=now)
     if frozen.interaction_mode == "companion" and live_rule is not None:
         rules.append(live_rule)
+    if tutor_directive is not None:
+        rules.append(f"【导师话轮约束】{tutor_directive}")
     final_guard = (
         "【最终不可覆盖约束】安全、隐私、权限、generation fence、工具白名单和"
         "用户当前明确指令始终高于任何进化规则；冲突时忽略进化规则。"
@@ -933,6 +1021,7 @@ def _response_plan_payload(
     evolution_account_id: str | None = None,
     evolution_receipt_secret: str | None = None,
     evolution_protocol: str = "",
+    tutor_directive: str | None = None,
 ) -> dict[str, Any]:
     source_refs = [
         _source_ref_payload(ref) for ref in plan.provenance.source_refs[:16] if ref.source_event_ids
@@ -978,6 +1067,7 @@ def _response_plan_payload(
         query=body.query,
         now=now,
         evolution_artifacts=evolution_artifacts,
+        tutor_directive=tutor_directive,
     )
     artifact_refs = [
         {
@@ -1214,7 +1304,57 @@ async def response_plan(
         except AccountDeletingError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         now = _local_now(settings)
-        fixed_reply = _fixed_reply_for_query(query=body.query, frozen=frozen, now=now)
+        crisis = await _route_crisis_with_bounded_evidence(request, body.query)
+        fixed_reply = crisis.direct_text or _fixed_reply_for_query(
+            query=body.query,
+            frozen=frozen,
+            now=now,
+        )
+        profile = _store(request).get_subject_profile(user_id=account_id)
+        retention_allowed = await _account_memory_retention_allowed(
+            request,
+            account_id=account_id,
+            subject_category=(profile or {}).get("subject_category"),
+        )
+        if (
+            crisis.action == "crisis_support"
+            and crisis.notify_guardian
+            and crisis.script_version is not None
+            and profile is not None
+            and profile.get("subject_category") == "minor"
+        ):
+            try:
+                await _crisis_notifications(request).record_minor_crisis(
+                    minor_user_id=account_id,
+                    session_id=body.session_id,
+                    turn_id=body.fence.turn_id,
+                    generation_id=body.fence.generation_id,
+                    tool_epoch=body.fence.tool_epoch,
+                    script_version=crisis.script_version,
+                    occurred_at=now,
+                )
+            except Exception:
+                logger.exception(
+                    "minor crisis notification enqueue failed; preserving fixed safety reply "
+                    "session_id=%s turn_id=%s",
+                    body.session_id,
+                    body.fence.turn_id,
+                )
+                # Notification delivery is a release-critical side effect, but
+                # it must never suppress the immediate fixed crisis response.
+                # The exception remains observable and the release gate stays
+                # closed until the outbox path is healthy.
+        tutor_directive: str | None = None
+        if fixed_reply is None and frozen.session_focus in {
+            "tutor_english",
+            "tutor_homework",
+        }:
+            tutor_directive = _tutor_turn_policy(request).observe(
+                session_id=body.session_id,
+                turn_id=body.fence.turn_id,
+                focus=cast(TutorFocus, frozen.session_focus),
+                intent=body.utterance_intent,
+            ).instruction
         companion_items, persona_capsule = (
             await _companion_items(
                 request=request,
@@ -1225,7 +1365,11 @@ async def response_plan(
                 now=now,
                 recall_context=tuple(body.recall_context),
             )
-            if frozen.interaction_mode == "companion" and fixed_reply is None
+            if (
+                frozen.interaction_mode == "companion"
+                and fixed_reply is None
+                and retention_allowed
+            )
             else ((), None)
         )
         evolution_artifacts: tuple[ResolvedEvolutionArtifact, ...] = ()
@@ -1303,6 +1447,7 @@ async def response_plan(
                     evolution_account_id=account_id,
                     evolution_receipt_secret=settings.evolution_internal_token(),
                     evolution_protocol=evolution_protocol,
+                    tutor_directive=tutor_directive,
                 )
                 cached_payload = await cache.put(key, fingerprint, payload)
         except AccountDeletingError as exc:

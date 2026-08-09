@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import httpx
 
 from services.common.companions import COMPANION_STYLE_VERSION, companion_definition
+from services.tutor.domain import SESSION_FOCUSES, SessionFocus
 
 InteractionMode = Literal["companion", "self_preview", "legacy", "archive"]
 SpeakerClass = Literal["owner", "guest", "uncertain"]
@@ -68,6 +69,7 @@ class ModePolicy:
     capabilities: tuple[tuple[str, bool], ...]
     companion_style: CompanionStyle | None
     unavailable_reason: str | None = None
+    session_focus: SessionFocus | None = "chat"
 
     @property
     def available(self) -> bool:
@@ -150,6 +152,7 @@ class ModePolicy:
             capabilities=(),
             companion_style=None,
             unavailable_reason=reason,
+            session_focus=None,
         )
 
     @classmethod
@@ -162,6 +165,7 @@ class ModePolicy:
         tools: bool,
         voice_profile: bool,
         shadow_low_sensitivity_persona: bool,
+        session_focus: SessionFocus = "chat",
     ) -> ModePolicy:
         return cls(
             mode="companion",
@@ -180,6 +184,7 @@ class ModePolicy:
                 ("voice_profile", voice_profile),
             ),
             companion_style=_style_for("starlight", COMPANION_STYLE_VERSION),
+            session_focus=session_focus,
         )
 
 
@@ -258,6 +263,7 @@ class ModePolicyClient:
         if not (required_voice_fields | required_legacy_fields).issubset(payload):
             return ModePolicy.unavailable("payload_invalid")
         mode = payload.get("interaction_mode")
+        session_focus = payload.get("session_focus")
         policy_version = payload.get("mode_policy_version")
         style_id = payload.get("companion_style_id")
         style_version = payload.get("companion_style_version")
@@ -421,6 +427,8 @@ class ModePolicyClient:
         )
         if (
             mode not in {"companion", "self_preview", "legacy", "archive"}
+            or session_focus not in SESSION_FOCUSES
+            or (mode != "companion" and session_focus != "chat")
             or policy_scope != "session"
             or not _bounded_string(policy_version)
             or not _optional_bounded_string(style_id)
@@ -494,6 +502,7 @@ class ModePolicyClient:
             references=tuple(sorted(references.items())),
             capabilities=tuple(sorted(capabilities.items())),
             companion_style=style,
+            session_focus=cast(SessionFocus, session_focus),
         )
 
 

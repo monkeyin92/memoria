@@ -219,6 +219,15 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
     class Runtime:
         session_id = "archive-session"
         orchestrator = Orchestrator()
+        mode_policy = ModePolicy.companion_for_test(
+            policy_version="archive-test-policy",
+            private_context=False,
+            owner_evidence=False,
+            tools=False,
+            voice_profile=False,
+            shadow_low_sensitivity_persona=False,
+            session_focus="chat",
+        )
 
         def set_evidence_publisher(self, publisher: object) -> None:
             assert callable(publisher)

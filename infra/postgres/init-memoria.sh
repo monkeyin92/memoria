@@ -4,12 +4,14 @@ set -eu
 : "${MEMORIA_DB_APP_PASSWORD:?MEMORIA_DB_APP_PASSWORD is required}"
 : "${MEMORIA_DB_COMPILER_PASSWORD:?MEMORIA_DB_COMPILER_PASSWORD is required}"
 : "${MEMORIA_DB_EVOLUTION_PASSWORD:?MEMORIA_DB_EVOLUTION_PASSWORD is required}"
+: "${MEMORIA_DB_GUARDIAN_PASSWORD:?MEMORIA_DB_GUARDIAN_PASSWORD is required}"
 
 psql \
   --set=ON_ERROR_STOP=1 \
   --set=app_password="$MEMORIA_DB_APP_PASSWORD" \
   --set=compiler_password="$MEMORIA_DB_COMPILER_PASSWORD" \
   --set=evolution_password="$MEMORIA_DB_EVOLUTION_PASSWORD" \
+  --set=guardian_password="$MEMORIA_DB_GUARDIAN_PASSWORD" \
   --username "$POSTGRES_USER" \
   --dbname postgres <<'SQL'
 SELECT format(
@@ -45,18 +47,33 @@ SELECT format('ALTER ROLE memoria_evolution PASSWORD %L', :'evolution_password')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'memoria_evolution')
 \gexec
 
+SELECT format(
+    'CREATE ROLE memoria_guardian LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS',
+    :'guardian_password'
+)
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'memoria_guardian')
+\gexec
+
+SELECT format('ALTER ROLE memoria_guardian PASSWORD %L', :'guardian_password')
+WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'memoria_guardian')
+\gexec
+
 SELECT 'CREATE DATABASE memoria OWNER memoria_app'
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'memoria')
 \gexec
 
 REVOKE CONNECT ON DATABASE memoria FROM PUBLIC;
-GRANT CONNECT ON DATABASE memoria TO memoria_app, memoria_compiler, memoria_evolution;
+GRANT CONNECT ON DATABASE memoria
+TO memoria_app, memoria_compiler, memoria_evolution, memoria_guardian;
 
 \connect memoria
 CREATE EXTENSION IF NOT EXISTS vector;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE, CREATE ON SCHEMA public TO memoria_app;
 GRANT USAGE ON SCHEMA public TO memoria_evolution;
+GRANT USAGE ON SCHEMA public TO memoria_guardian;
 \i /docker-entrypoint-initdb.d/002-evolution-schema.sql
+\i /docker-entrypoint-initdb.d/003-guardian-schema.sql
 REVOKE CREATE ON SCHEMA public FROM memoria_evolution;
+REVOKE CREATE ON SCHEMA public FROM memoria_guardian;
 SQL

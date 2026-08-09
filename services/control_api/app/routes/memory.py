@@ -134,6 +134,9 @@ class ProfileRecord(BaseModel):
     voice_reply: bool
     gentle_reminders: bool
     reject_non_owner_voice: bool
+    subject_category: Literal["adult", "minor"]
+    birth_year_band: Literal["unknown", "under_14", "14_to_17", "18_or_over"]
+    subject_revision: int = Field(ge=0)
     created_at: datetime
     updated_at: datetime
 

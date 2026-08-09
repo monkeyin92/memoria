@@ -1,4 +1,5 @@
 const { CONTROL_API_BASE_URL } = require("../config");
+const { normalizeGuardianLinks, normalizeGuardianSummary } = require("./guardian");
 
 class ApiError extends Error {
   constructor(message, { status = 0, code = null } = {}) {
@@ -78,6 +79,20 @@ function errorFromResponse(response) {
                 ? "小程序语音入口暂未部署，请稍后再试。"
                 : code === "miniprogram_requires_cascade"
                   ? "小程序当前只支持级联语音服务。"
+                  : code === "guardian_summary_projection_unavailable"
+                    ? "成长小结服务正在准备中。"
+                  : code === "guardian_link_required"
+                      ? "你还没有查看这份成长小结的权限。"
+                      : code === "guardian_consent_required"
+                        ? "这份成长小结尚未获得授权。"
+                        : code === "guardian_wechat_identity_required"
+                          ? "请先完成微信身份登录，再管理监护关系。"
+                          : code === "guardian_link_confirmation_rejected"
+                            ? "绑定码无效、已过期或年龄段不符合要求。"
+                            : code === "guardian_consent_conflict"
+                              ? "这项授权已经存在，请刷新后再试。"
+                              : code === "minor_forbidden"
+                                ? "学生账号不开放这项能力。"
                   : response.statusCode === 429
                     ? "操作太频繁，请稍后再试。"
                     : `请求未完成（${response.statusCode || 0}）`;
@@ -89,12 +104,14 @@ function rawRequest(path, options = {}) {
     method = "GET",
     data,
     authenticated = true,
+    idempotencyKey = "",
   } = options;
   if (authenticated) requireAuthenticatedIdentity();
   const headers = {
     Accept: "application/json",
     ...(data === undefined ? {} : { "content-type": "application/json" }),
     ...(authenticated ? { Authorization: `Bearer ${currentAccessToken()}` } : {}),
+    ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
   };
   return new Promise((resolve, reject) => {
     wx.request({
@@ -219,13 +236,19 @@ async function requestAccountDeletion({ confirmation }) {
   });
 }
 
-function createMiniProgramSession({ userId, learningTaskId = null, interactionMode = "companion" }) {
+function createMiniProgramSession({
+  userId,
+  learningTaskId = null,
+  interactionMode = "companion",
+  sessionFocus = "chat",
+}) {
   return rawRequest("/v1/sessions", {
     method: "POST",
     data: {
       user_id: userId,
       voice_backend: "cascade",
       interaction_mode: interactionMode,
+      session_focus: interactionMode === "companion" ? sessionFocus : "chat",
       learning_task_id: interactionMode === "companion" ? learningTaskId : null,
       locale: "zh-CN",
       client: {
@@ -280,6 +303,59 @@ function enrollSpeakerProfiles(samples) {
 
 function getProfile(userId) {
   return rawRequest(`/v1/memory/profile/${encodeURIComponent(userId)}`);
+}
+
+function getGuardianLinks() {
+  return rawRequest("/v1/guardian/links").then(normalizeGuardianLinks);
+}
+
+function getGuardianSummary(minorUserId) {
+  const cleanMinorUserId = encodeURIComponent(minorUserId);
+  return rawRequest(`/v1/guardian/minors/${cleanMinorUserId}/summary`).then((payload) =>
+    normalizeGuardianSummary(payload, minorUserId),
+  );
+}
+
+function createGuardianLink({ minorUserId, relation = "parent", idempotencyKey }) {
+  return rawRequest("/v1/guardian/links", {
+    method: "POST",
+    idempotencyKey,
+    data: { minor_user_id: minorUserId, relation },
+  });
+}
+
+function confirmGuardianLink({ linkId, bindingCode, birthYearBand }) {
+  return rawRequest(`/v1/guardian/links/${encodeURIComponent(linkId)}/confirm`, {
+    method: "POST",
+    data: { binding_code: bindingCode, birth_year_band: birthYearBand },
+  });
+}
+
+function getGuardianConsents(linkId) {
+  return rawRequest(`/v1/guardian/links/${encodeURIComponent(linkId)}/consents`);
+}
+
+function grantGuardianConsent({ linkId, consentKind, policyVersion, idempotencyKey }) {
+  return rawRequest(`/v1/guardian/links/${encodeURIComponent(linkId)}/consents`, {
+    method: "POST",
+    idempotencyKey,
+    data: { consent_kind: consentKind, policy_version: policyVersion },
+  });
+}
+
+function revokeGuardianConsent({ linkId, consentId, idempotencyKey }) {
+  return rawRequest(
+    `/v1/guardian/links/${encodeURIComponent(linkId)}/consents/${encodeURIComponent(consentId)}`,
+    { method: "DELETE", idempotencyKey },
+  );
+}
+
+function getGuardianNotifications() {
+  return rawRequest("/v1/guardian/notifications");
+}
+
+function getTutorLessons(focus = "tutor_english") {
+  return rawRequest(`/v1/tutor/lessons?focus=${encodeURIComponent(focus)}`);
 }
 
 function updateProfile(userId, profile) {
@@ -366,6 +442,15 @@ module.exports = {
   notifyRtcRecovered,
   enrollSpeakerProfiles,
   getProfile,
+  getGuardianLinks,
+  getGuardianSummary,
+  createGuardianLink,
+  confirmGuardianLink,
+  getGuardianConsents,
+  grantGuardianConsent,
+  revokeGuardianConsent,
+  getGuardianNotifications,
+  getTutorLessons,
   updateProfile,
   getMemoryDays,
   summarizeDay,

@@ -14,10 +14,15 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from services.archive.domain import EvidenceEvent, LifeArchivePort
-from services.control_api.app.account_gate import AccountDeletingError, AccountOperationGate
+from services.control_api.app.account_gate import (
+    AccountDeletingError,
+    AccountOperationGate,
+    SubjectProfileStore,
+    require_capability_for_account_id,
+)
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
-from services.evolution.account_fence import AccountWriteBlockedError
+from services.evolution.account_fence import AccountSubjectBlockedError, AccountWriteBlockedError
 from services.evolution.curation import EvolutionControlPlane, SleepCycleReport
 from services.evolution.domain import (
     CandidateArtifact,
@@ -255,6 +260,14 @@ def _runtime_capture(request: Request) -> EvolutionRuntimeCapture:
     return cast(EvolutionRuntimeCapture, request.app.state.evolution_runtime_capture)
 
 
+def _require_account_evolution(request: Request, account_id: str) -> None:
+    require_capability_for_account_id(
+        account_id,
+        "account_evolution",
+        store=cast(SubjectProfileStore, request.app.state.memory_store),
+    )
+
+
 @asynccontextmanager
 async def _evolution_read_lease(request: Request, account_id: str) -> AsyncIterator[None]:
     """Hold the same short read lease used by runtime resolution.
@@ -264,6 +277,9 @@ async def _evolution_read_lease(request: Request, account_id: str) -> AsyncItera
     archive rows while a validator is still assembling owner-private input.
     """
 
+    if await asyncio.to_thread(_store(request).is_account_deleting, account_id):
+        raise HTTPException(status_code=409, detail="account deletion is in progress")
+    _require_account_evolution(request, account_id)
     gate = cast(AccountOperationGate | None, getattr(request.app.state, "account_operations", None))
     if gate is None:
         yield
@@ -576,6 +592,11 @@ async def record_trajectory_evaluation(
                 evaluation_id=body.evaluation_id,
                 evaluation=_evaluation_payload(body),
             )
+        except AccountSubjectBlockedError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "minor_forbidden", "capability": "account_evolution"},
+            ) from exc
         except (AccountWriteBlockedError, EvolutionConflictError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
@@ -605,6 +626,8 @@ async def create_candidate(
     settings = cast(ControlSettings, request.app.state.settings)
     now = datetime.now(UTC)
     try:
+        if body.scope == "owner_private" and body.account_id is not None:
+            _require_account_evolution(request, body.account_id)
         candidate = CandidateArtifact(
             candidate_id=body.candidate_id,
             task_family=body.task_family,
@@ -624,6 +647,11 @@ async def create_candidate(
         stored = await asyncio.to_thread(_plane(request).create_candidate, candidate)
     except EvolutionNotFoundError as exc:
         raise HTTPException(status_code=422, detail="candidate source signal not found") from exc
+    except AccountSubjectBlockedError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "minor_forbidden", "capability": "account_evolution"},
+        ) from exc
     except AccountWriteBlockedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except EvolutionConflictError as exc:
@@ -712,6 +740,9 @@ async def record_validation(
     _: Annotated[None, Depends(_require_evolution_validator_token)],
 ) -> dict[str, object]:
     try:
+        candidate = await asyncio.to_thread(_candidate_or_404, request, candidate_id)
+        if candidate.scope == "owner_private" and candidate.account_id is not None:
+            _require_account_evolution(request, candidate.account_id)
         report = ValidationReport(
             validation_id=body.validation_id,
             candidate_id=candidate_id,
@@ -731,6 +762,11 @@ async def record_validation(
         stored = await asyncio.to_thread(_plane(request).record_validation, report)
     except EvolutionNotFoundError as exc:
         raise HTTPException(status_code=404, detail="evolution candidate not found") from exc
+    except AccountSubjectBlockedError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "minor_forbidden", "capability": "account_evolution"},
+        ) from exc
     except AccountWriteBlockedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except EvolutionConflictError as exc:
@@ -768,6 +804,11 @@ async def record_activation(
             )
         except EvolutionTransitionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except AccountSubjectBlockedError as exc:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "minor_forbidden", "capability": "account_evolution"},
+            ) from exc
         except AccountWriteBlockedError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except EvolutionConflictError as exc:
@@ -785,6 +826,9 @@ async def transition_candidate(
     _: Annotated[None, Depends(_require_evolution_control_token)],
 ) -> dict[str, object]:
     try:
+        current = await asyncio.to_thread(_candidate_or_404, request, candidate_id)
+        if current.scope == "owner_private" and current.account_id is not None:
+            _require_account_evolution(request, current.account_id)
         candidate = await asyncio.to_thread(
             _plane(request).transition,
             candidate_id,
@@ -795,6 +839,11 @@ async def transition_candidate(
         raise HTTPException(status_code=404, detail="evolution candidate not found") from exc
     except EvolutionTransitionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AccountSubjectBlockedError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "minor_forbidden", "capability": "account_evolution"},
+        ) from exc
     except AccountWriteBlockedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _candidate_payload(candidate)
@@ -808,6 +857,9 @@ async def rollback_candidate(
     _: Annotated[None, Depends(_require_evolution_control_token)],
 ) -> dict[str, object]:
     try:
+        current = await asyncio.to_thread(_candidate_or_404, request, candidate_id)
+        if current.scope == "owner_private" and current.account_id is not None:
+            _require_account_evolution(request, current.account_id)
         candidate = await asyncio.to_thread(
             _plane(request).rollback,
             candidate_id,
@@ -817,6 +869,11 @@ async def rollback_candidate(
         raise HTTPException(status_code=404, detail="evolution candidate not found") from exc
     except EvolutionTransitionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AccountSubjectBlockedError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "minor_forbidden", "capability": "account_evolution"},
+        ) from exc
     except AccountWriteBlockedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _candidate_payload(candidate)

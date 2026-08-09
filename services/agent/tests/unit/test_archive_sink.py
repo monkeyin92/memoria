@@ -507,6 +507,59 @@ async def test_missing_or_revoked_raw_consent_keeps_the_transcript_without_audio
 
 
 @pytest.mark.asyncio
+async def test_minor_corpus_consent_keeps_transcript_separate_from_bounded_audio(
+    tmp_path: Path,
+) -> None:
+    requests: list[tuple[str, dict[str, object]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "allowed": True,
+                    "subject_category": "minor",
+                    "archive_purpose": "corpus_recording",
+                    "consent_grant_id": "corpus-consent-001",
+                    "retention_policy": "corpus_time_bounded",
+                },
+            )
+        requests.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(201)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    sink = ArchiveSink(
+        ArchiveSinkConfig(
+            endpoint="https://control.test/v1/archive/session-events",
+            internal_token="internal-test-token",
+            spool_path=tmp_path / "archive.spool",
+            spool_key=Fernet.generate_key().decode("ascii"),
+        ),
+        client=client,
+    )
+    event = {
+        "event_id": "minor-corpus-event",
+        "session_id": "minor-session",
+        "event_type": "speech.utterance_finalized",
+        "occurred_at": "2026-08-09T08:00:00+00:00",
+        "speaker_class": "owner",
+        "source": "funasr.authoritative_final",
+        "payload": {"text": "授权语料的转写仍按普通未成年人边界处理。"},
+    }
+
+    assert await sink.publish_owner_turn(
+        event,
+        pcm=b"\x00\x00" * 1600,
+        sample_rate=16_000,
+    )
+    assert requests[0] == ("/v1/archive/session-events", event)
+    assert requests[1][0] == "/v1/archive/session-raw-audio"
+    assert requests[1][1]["archive_purpose"] == "corpus_recording"
+    assert requests[1][1]["consent_grant_id"] == "corpus-consent-001"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_permanent_raw_rejection_does_not_block_later_transcript_replay(
     tmp_path: Path,
 ) -> None:

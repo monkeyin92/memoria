@@ -112,11 +112,21 @@
     </view>
   </view>
 
-  <view class="card nav-card" bindtap="openSpeakerEnrollment">
+  <view wx:if="{{isMinor}}" class="card student-notice">
+    <text class="student-notice-badge">成长小结知情说明</text>
+    <text class="student-notice-title">每周会给爸爸妈妈一份成长小结</text>
+    <text class="student-notice-copy">只分享一周的情绪趋势、学习时长和话题分布，你和伙伴聊过的具体内容不会出现在小结里。</text>
+  </view>
+
+  <view wx:if="{{canUseAdultCapabilities || isMinor}}" class="card nav-card guardian-entry" bindtap="openGuardianSummary">
+    <view><text class="settings-title">{{isMinor ? '学生模式与监护授权' : '家长成长小结'}}</text><text class="setting-desc">{{isMinor ? '确认家长绑定并了解已授权的内容' : '查看已绑定孩子一周的情绪趋势、学习时长和话题分布'}}</text></view>
+    <view class="nav-arrow"><text class="nav-arrow-icon">›</text></view>
+  </view>
+  <view wx:if="{{canUseAdultCapabilities}}" class="card nav-card" bindtap="openSpeakerEnrollment">
     <view><text class="settings-title">主人声纹</text><text class="setting-desc">用自然、轻声、带笑和稳重语气各录一次，提高边缘场景识别稳定性</text></view>
     <view class="nav-arrow"><text class="nav-arrow-icon">›</text></view>
   </view>
-  <view class="card nav-card" bindtap="openDigitalSelf">
+  <view wx:if="{{canUseAdultCapabilities}}" class="card nav-card" bindtap="openDigitalSelf">
     <view><text class="settings-title">数字分身成长</text><text class="setting-desc">查看服务端的成长维度、Persona 与版本状态</text></view>
     <view class="nav-arrow"><text class="nav-arrow-icon">›</text></view>
   </view>

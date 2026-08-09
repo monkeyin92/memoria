@@ -260,6 +260,16 @@ def _add_legacy_voice_session(app: object, access: LegacyAccessSnapshot) -> str:
     ).manifest.source_summary.voice_profile
     assert voice is not None
     session_id = "legacy-voice-session"
+    for account_id in (
+        access.resource_owner_account_id,
+        access.grantee_account_id,
+    ):
+        app.state.memory_store.update_subject_profile(  # type: ignore[attr-defined]
+            user_id=account_id,
+            subject_category="adult",
+            birth_year_band="unknown",
+            now=datetime.now(UTC).isoformat(),
+        )
     app.state.memory_store.add_voice_session(  # type: ignore[attr-defined]
         session_id=session_id,
         user_id=access.grantee_account_id,

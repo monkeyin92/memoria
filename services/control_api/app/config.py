@@ -140,6 +140,10 @@ class ControlSettings(BaseSettings):
         default=SecretStr(""),
         alias="MEMORIA_EVOLUTION_DATABASE_URL",
     )
+    guardian_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_GUARDIAN_DATABASE_URL",
+    )
     evolution_db_path: str = Field(
         default="",
         alias="MEMORIA_EVOLUTION_DB_PATH",
@@ -272,6 +276,12 @@ class ControlSettings(BaseSettings):
         ge=1,
         le=1000,
         alias="MEMORIA_ARCHIVE_COMPILE_BATCH_SIZE",
+    )
+    corpus_retention_interval_s: float = Field(
+        default=300.0,
+        ge=10.0,
+        le=3600.0,
+        alias="MEMORIA_CORPUS_RETENTION_INTERVAL_S",
     )
     memory_embedding_url: str = Field(default="", alias="MEMORIA_MEMORY_EMBEDDING_URL")
     memory_embedding_api_key: SecretStr = Field(
@@ -493,6 +503,21 @@ class ControlSettings(BaseSettings):
         ge=1.0,
         le=120.0,
         alias="DASHSCOPE_SUMMARY_TIMEOUT_S",
+    )
+    crisis_semantic_enabled: bool = Field(
+        default=True,
+        alias="CRISIS_SEMANTIC_ENABLED",
+    )
+    crisis_semantic_model: str = Field(
+        default="deepseek-v4-flash",
+        min_length=1,
+        alias="CRISIS_SEMANTIC_MODEL",
+    )
+    crisis_semantic_timeout_s: float = Field(
+        default=0.8,
+        gt=0.0,
+        le=2.0,
+        alias="CRISIS_SEMANTIC_TIMEOUT_S",
     )
     memory_extraction_model: str = Field(
         default="deepseek-v4-flash",
@@ -877,6 +902,21 @@ class ControlSettings(BaseSettings):
             raise ValueError(
                 "production requires MEMORIA_EVOLUTION_DATABASE_URL to use the independent "
                 "memoria_evolution role"
+            )
+        guardian_url = self.guardian_database_url.get_secret_value()
+        if not guardian_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError(
+                "production requires MEMORIA_GUARDIAN_DATABASE_URL for PostgreSQL"
+            )
+        guardian_user = urlsplit(guardian_url).username or ""
+        if (
+            guardian_url in {archive_url, evolution_url}
+            or guardian_user != "memoria_guardian"
+            or guardian_user in {archive_user, evolution_user}
+        ):
+            raise ValueError(
+                "production requires MEMORIA_GUARDIAN_DATABASE_URL to use the independent "
+                "memoria_guardian role"
             )
         speaker_token = self.speaker_internal_token.get_secret_value()
         embedding_token = self.speaker_embedding_token.get_secret_value()

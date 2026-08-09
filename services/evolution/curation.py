@@ -9,7 +9,12 @@ from datetime import UTC, datetime, timedelta
 from threading import RLock
 from typing import Literal
 
-from services.evolution.account_fence import AccountWriteBlockedError, AccountWriteGuard
+from services.evolution.account_fence import (
+    AccountSubjectBlockedError,
+    AccountSubjectGuard,
+    AccountWriteBlockedError,
+    AccountWriteGuard,
+)
 from services.evolution.diagnosis import (
     CandidateGenerator,
     FailureCluster,
@@ -72,6 +77,7 @@ class EvolutionControlPlane:
         policy: SleepLearningPolicy | None = None,
         release_policy: EvolutionReleasePolicy | None = None,
         account_write_guard: AccountWriteGuard | None = None,
+        account_subject_guard: AccountSubjectGuard | None = None,
     ) -> None:
         self.store = store
         self.policy = policy or SleepLearningPolicy()
@@ -80,6 +86,7 @@ class EvolutionControlPlane:
         self._generator = CandidateGenerator(trusted_root_sha256=trusted_root_sha256)
         self._sleep_lock = RLock()
         self._account_write_guard = account_write_guard or _unguarded_account_write
+        self._account_subject_guard = account_subject_guard or _unguarded_account_subject
 
     def observe(self, observation: TrajectoryObservation) -> VerificationReport:
         report = verify_trajectory(observation)
@@ -173,6 +180,13 @@ class EvolutionControlPlane:
         )
         candidates: list[CandidateArtifact] = []
         for cluster in clusters:
+            if cluster.scope == "owner_private" and cluster.account_id:
+                try:
+                    self._account_subject_guard(cluster.account_id)
+                except AccountSubjectBlockedError:
+                    # Historical adult signals must not create new private
+                    # artifacts after the account enters the minor boundary.
+                    continue
             effective_kind = _candidate_kind_for_cluster(cluster, candidate_kind)
             existing = self.store.list_candidates(
                 task_family=cluster.task_family,
@@ -325,6 +339,7 @@ class EvolutionControlPlane:
         if not account_id:
             raise ValueError("owner-private evolution writes require an account")
         try:
+            self._account_subject_guard(account_id)
             with self._account_write_guard(account_id):
                 # This check is intentionally inside the in-process lease. The
                 # database trigger remains the cross-process atomic backstop.
@@ -350,6 +365,10 @@ __all__ = [
 def _unguarded_account_write(account_id: str) -> AbstractContextManager[None]:
     del account_id
     return nullcontext()
+
+
+def _unguarded_account_subject(account_id: str) -> None:
+    del account_id
 
 
 def _signal_key(signal: LearningSignal) -> tuple[str, str]:

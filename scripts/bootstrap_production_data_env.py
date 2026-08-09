@@ -46,6 +46,7 @@ def main() -> int:
             "MEMORIA_DB_APP_PASSWORD": _secret(),
             "MEMORIA_DB_COMPILER_PASSWORD": _secret(),
             "MEMORIA_DB_EVOLUTION_PASSWORD": _secret(),
+            "MEMORIA_DB_GUARDIAN_PASSWORD": _secret(),
         },
     )
     _write_new(

@@ -33,6 +33,7 @@ from services.agent.src.response_planner_client import (
     ResponsePlannerClient,
     ResponsePlannerClientConfig,
 )
+from services.agent.src.tutor_session import voice_system_prompt
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.media_session import MediaSessionResources
 from services.agent.src.voice_core.provider_adapter import (
@@ -130,7 +131,7 @@ class ProductionMediaSessionFactory:
             await runtime.orchestrator.ready()
             warmer = getattr(language_model, "prewarm", None)
             agent = DuplexVoiceAgent(
-                instructions=self._voice_instructions(),
+                instructions=voice_system_prompt(runtime.mode_policy.session_focus),
                 runtime=runtime,
                 voice_profile_client=voice_profile_client,
                 response_planner_client=response_planner_client,
@@ -344,12 +345,6 @@ class ProductionMediaSessionFactory:
                 )
             )
         runtime.mark_audio_event("agent_runtime_created")
-
-    @staticmethod
-    def _voice_instructions() -> str:
-        from services.agent.src.prompts import VOICE_SYSTEM_PROMPT
-
-        return VOICE_SYSTEM_PROMPT
 
     async def aclose(self) -> None:
         if self.archive_sink is not None:

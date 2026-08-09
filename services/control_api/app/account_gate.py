@@ -1,4 +1,4 @@
-"""Single-worker write drain used before irreversible account deletion."""
+"""Account lifecycle and subject-capability gates."""
 
 from __future__ import annotations
 
@@ -6,12 +6,99 @@ import asyncio
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from threading import Condition
-from typing import Annotated, cast
+from types import MappingProxyType
+from typing import Annotated, Any, Literal, Protocol, cast
 
 from fastapi import Depends, HTTPException, Request
 
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
 from services.evolution.account_fence import AccountWriteBlockedError
+
+SubjectCapability = Literal[
+    "companion_chat",
+    "memory_ledger",
+    "emotion_expression",
+    "tutor",
+    "voice_clone",
+    "digital_self",
+    "self_preview",
+    "legacy_grant",
+    "legacy_receive",
+    "account_evolution",
+    "speaker_enrollment",
+    "raw_voice_archive",
+    "guardian_manage",
+    "guardian_weekly_report",
+]
+
+SUBJECT_CAPABILITY_RULES = MappingProxyType(
+    {
+        "companion_chat": frozenset({"adult", "minor"}),
+        "memory_ledger": frozenset({"adult", "minor"}),
+        "emotion_expression": frozenset({"adult", "minor"}),
+        "tutor": frozenset({"adult", "minor"}),
+        "voice_clone": frozenset({"adult"}),
+        "digital_self": frozenset({"adult"}),
+        "self_preview": frozenset({"adult"}),
+        "legacy_grant": frozenset({"adult"}),
+        "legacy_receive": frozenset({"adult"}),
+        "account_evolution": frozenset({"adult"}),
+        "speaker_enrollment": frozenset({"adult"}),
+        "raw_voice_archive": frozenset({"adult"}),
+        "guardian_manage": frozenset({"adult"}),
+        "guardian_weekly_report": frozenset({"minor"}),
+    }
+)
+
+
+class SubjectProfileStore(Protocol):
+    def get_subject_profile(self, *, user_id: str) -> dict[str, Any] | None: ...
+
+
+def require_capability_for_account_id(
+    account_id: str,
+    capability: SubjectCapability,
+    *,
+    store: SubjectProfileStore,
+) -> dict[str, Any]:
+    """Resolve the authoritative profile and enforce the single capability matrix."""
+
+    allowed_categories = SUBJECT_CAPABILITY_RULES.get(capability)
+    if allowed_categories is None:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "subject_capability_unconfigured", "capability": capability},
+        )
+    try:
+        profile = store.get_subject_profile(user_id=account_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "subject_category_unavailable", "capability": capability},
+        ) from exc
+    if profile is None:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "subject_category_unavailable", "capability": capability},
+        )
+    category = profile.get("subject_category")
+    if category not in allowed_categories:
+        code = "minor_forbidden" if category == "minor" else "subject_capability_forbidden"
+        raise HTTPException(
+            status_code=403,
+            detail={"code": code, "capability": capability},
+        )
+    return profile
+
+
+def require_capability_for_subject(
+    user: AuthenticatedUser,
+    capability: SubjectCapability,
+    *,
+    store: SubjectProfileStore,
+) -> AuthenticatedUser:
+    require_capability_for_account_id(user.user_id, capability, store=store)
+    return user
 
 
 class AccountDeletingError(AccountWriteBlockedError):

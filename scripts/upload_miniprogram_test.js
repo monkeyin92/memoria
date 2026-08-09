@@ -11,7 +11,13 @@ const { assertCompatibleMiniprogramCiRuntime } = require("./miniprogram_ci_runti
 const repoRoot = path.resolve(__dirname, "..");
 const projectPath = path.join(repoRoot, "apps", "miniprogram");
 const configPath = path.join(projectPath, "project.config.json");
-const defaultKeyPath = path.join(repoRoot, "private.wx20a3a044b52fcbb7.key");
+const defaultKeyPath = path.join(
+  os.homedir(),
+  ".config",
+  "memoria",
+  "secrets",
+  "private.wx20a3a044b52fcbb7.key",
+);
 const expectedAppid = "wx20a3a044b52fcbb7";
 const compilePreflightScript = path.join(__dirname, "compile_miniprogram_preflight.js");
 
@@ -19,7 +25,9 @@ function usage(exitCode = 0) {
   console[exitCode ? "error" : "log"](`用法：
   npm --prefix apps/miniprogram run upload:test -- --version <版本号> --desc <说明> [--robot 1] [--dry-run]
 
-要求 Node 20–24；dry-run 会真实编译但不签名或上传。
+要求 Node 20–24；上传密钥通过 MINIPROGRAM_CI_PRIVATE_KEY 指定，或放在
+~/.config/memoria/secrets/private.wx20a3a044b52fcbb7.key（目录 700、文件 600）。
+dry-run 会真实编译但不签名或上传。
 真实执行只上传微信小程序开发版本（体验版）；不会提交审核或正式发布。`);
   process.exit(exitCode);
 }

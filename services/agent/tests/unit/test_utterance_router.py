@@ -431,6 +431,37 @@ def test_route_has_no_duplicate_speaker_authority_policy() -> None:
 
 
 @pytest.mark.parametrize(
+    ("text", "intent", "reason"),
+    [
+        ("我不会，提示一下", UtteranceIntent.REQUEST_HINT, "tutor_request_hint"),
+        ("这部分再讲一遍", UtteranceIntent.REQUEST_REPEAT, "tutor_request_repeat"),
+        ("说慢一点，太快了", UtteranceIntent.PACE_CONTROL, "tutor_pace_control"),
+        ("我真的做不下去了", UtteranceIntent.GIVE_UP, "tutor_give_up"),
+    ],
+)
+def test_tutor_focus_routes_learning_semantics_without_executing_side_effects(
+    text: str,
+    intent: UtteranceIntent,
+    reason: str,
+) -> None:
+    route = route_utterance(text, session_focus="tutor_homework")
+
+    assert route.intent is intent
+    assert route.reason == reason
+    assert route.enter_chat is True
+    assert route.should_interrupt is False
+    assert route.ack_phrase is None
+
+
+def test_tutor_phrases_remain_chat_without_a_frozen_tutor_focus() -> None:
+    assert route_utterance("我不会，提示一下").intent is UtteranceIntent.CHAT
+    assert (
+        route_utterance("再讲一遍", session_focus="tutor_english").intent
+        is UtteranceIntent.REQUEST_REPEAT
+    )
+
+
+@pytest.mark.parametrize(
     ("score_reason", "allowed", "reason"),
     [
         ("mismatch", True, "guest_mismatch"),

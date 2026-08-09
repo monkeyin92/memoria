@@ -22,6 +22,7 @@ import asyncpg
 from services.archive.object_store import ObjectRef, ObjectStore
 from services.control_api.app.database import MemoryStore
 from services.evolution.account_fence import AccountReadGuard, AccountWriteBlockedError
+from services.guardian.corpus import CorpusRetentionService
 from services.legacy.domain import LegacyAccountExport, LegacyRegistryPort
 from services.voice_profile.domain import VoiceProfilePort
 
@@ -291,6 +292,16 @@ class AccountRepository(Protocol):
     async def delete_account(self, account_id: str) -> dict[str, int]: ...
 
     async def remaining_account_rows(self, account_id: str) -> dict[str, int]: ...
+
+
+class AccountProjectionRepository(Protocol):
+    async def export_for_account(self, *, account_id: str) -> dict[str, object]: ...
+
+    async def delete_for_account(self, *, account_id: str) -> dict[str, int]: ...
+
+    async def remaining_account_rows(self, *, account_id: str) -> dict[str, int]: ...
+
+    async def related_minor_accounts(self, *, guardian_user_id: str) -> tuple[str, ...]: ...
 
 
 class AccountSessionTerminator(Protocol):
@@ -756,6 +767,8 @@ class AccountDataGovernance:
         speaker_repository: AccountRepository,
         evolution_repository: AccountRepository,
         voice_profiles: VoiceProfilePort,
+        guardian_repository: AccountProjectionRepository | None = None,
+        corpus_retention_service: CorpusRetentionService | None = None,
         legacy_registry: LegacyRegistryPort | None = None,
         archive_object_store: ObjectStore | None = None,
         session_terminator: AccountSessionTerminator | None = None,
@@ -766,6 +779,8 @@ class AccountDataGovernance:
         self._archive_repository = archive_repository
         self._speaker_repository = speaker_repository
         self._evolution_repository = evolution_repository
+        self._guardian_repository = guardian_repository
+        self._corpus_retention_service = corpus_retention_service
         self._voice_profiles = voice_profiles
         self._legacy_registry = legacy_registry
         self._archive_object_store = archive_object_store
@@ -783,12 +798,13 @@ class AccountDataGovernance:
             deletion_check = getattr(self._evolution_repository, "is_account_deleting", None)
             if deletion_check is not None and await deletion_check(account_id):
                 raise AccountWriteBlockedError("account deletion is in progress")
-            control, archive, speaker, evolution, legacy = await asyncio.gather(
+            control, archive, speaker, evolution, legacy, guardian = await asyncio.gather(
                 asyncio.to_thread(self._memory_store.export_account_data, user_id=account_id),
                 self._archive_repository.export_account(account_id),
                 self._speaker_repository.export_account(account_id),
                 self._evolution_repository.export_account(account_id),
                 self._export_legacy(account_id),
+                self._export_guardian(account_id),
             )
             body: dict[str, Any] = {
                 "format_version": 1,
@@ -800,6 +816,7 @@ class AccountDataGovernance:
                     "speaker": speaker,
                     "evolution": evolution,
                     "legacy": legacy,
+                    "guardian": guardian,
                 },
             }
             canonical = json.dumps(
@@ -810,6 +827,11 @@ class AccountDataGovernance:
             ).encode("utf-8")
             body["manifest_sha256"] = hashlib.sha256(canonical).hexdigest()
             return body
+
+    async def _export_guardian(self, account_id: str) -> dict[str, object]:
+        if self._guardian_repository is None:
+            return {}
+        return await self._guardian_repository.export_for_account(account_id=account_id)
 
     async def _export_legacy(self, account_id: str) -> dict[str, Any]:
         return _portable_legacy_export(await self._legacy_snapshot(account_id))
@@ -951,6 +973,30 @@ class AccountDataGovernance:
                 await checkpoint("speaker_rows_deleted")
 
             if _DELETION_STEP_RANK[step] < _DELETION_STEP_RANK["evolution_rows_deleted"]:
+                if self._guardian_repository is not None:
+                    affected_minors = await self._guardian_repository.related_minor_accounts(
+                        guardian_user_id=account_id
+                    )
+                    if self._corpus_retention_service is not None:
+                        deleted_corpus_objects = 0
+                        for minor_account_id in dict.fromkeys(
+                            (account_id, *affected_minors)
+                        ):
+                            deleted_corpus_objects += (
+                                await self._corpus_retention_service.purge_minor(
+                                    minor_user_id=minor_account_id
+                                )
+                            )
+                        progress["guardian.corpus_objects"] = deleted_corpus_objects
+                    if self._session_terminator is not None:
+                        for minor_account_id in affected_minors:
+                            await self._session_terminator.terminate_account(minor_account_id)
+                    guardian_counts = await self._guardian_repository.delete_for_account(
+                        account_id=account_id
+                    )
+                    progress.update(
+                        {f"guardian.{key}": value for key, value in guardian_counts.items()}
+                    )
                 evolution_counts = await self._evolution_repository.delete_account(account_id)
                 progress.update(
                     {f"evolution.{key}": value for key, value in evolution_counts.items()}
@@ -965,6 +1011,7 @@ class AccountDataGovernance:
                 late_speaker_rows,
                 late_evolution_rows,
                 late_legacy,
+                late_guardian_rows,
             ) = (
                 await asyncio.gather(
                     self._voice_profiles.profiles(account_id=account_id),
@@ -973,6 +1020,11 @@ class AccountDataGovernance:
                     self._speaker_repository.remaining_account_rows(account_id),
                     self._evolution_repository.remaining_account_rows(account_id),
                     self._legacy_snapshot(account_id),
+                    (
+                        self._guardian_repository.remaining_account_rows(account_id=account_id)
+                        if self._guardian_repository is not None
+                        else _empty_projection_rows()
+                    ),
                 )
             )
             if (
@@ -981,12 +1033,33 @@ class AccountDataGovernance:
                 or late_archive_rows
                 or late_speaker_rows
                 or late_evolution_rows
-                or _legacy_export_has_rows(late_legacy)
+                or _legacy_export_has_rows(cast(LegacyAccountExport, late_legacy))
+                or late_guardian_rows
             ):
                 progress["voice.profiles"] += await delete_voice_profiles()
                 progress["archive.objects"] += await delete_archive_objects()
                 if self._legacy_registry is not None:
                     await self._legacy_registry.delete_for_account(account_id=account_id)
+                if self._guardian_repository is not None:
+                    if self._corpus_retention_service is not None:
+                        affected_minors = await self._guardian_repository.related_minor_accounts(
+                            guardian_user_id=account_id
+                        )
+                        for minor_account_id in dict.fromkeys(
+                            (account_id, *affected_minors)
+                        ):
+                            progress["guardian.corpus_objects"] = progress.get(
+                                "guardian.corpus_objects", 0
+                            ) + await self._corpus_retention_service.purge_minor(
+                                minor_user_id=minor_account_id
+                            )
+                    counts = await self._guardian_repository.delete_for_account(
+                        account_id=account_id
+                    )
+                    for key, value in counts.items():
+                        progress[f"guardian.{key}"] = (
+                            progress.get(f"guardian.{key}", 0) + value
+                        )
                 for prefix, counts in (
                     ("archive", await self._archive_repository.delete_account(account_id)),
                     ("speaker", await self._speaker_repository.delete_account(account_id)),
@@ -1001,6 +1074,7 @@ class AccountDataGovernance:
                 speaker_rows,
                 evolution_rows,
                 legacy_rows,
+                guardian_rows,
             ) = await asyncio.gather(
                 self._voice_profiles.profiles(account_id=account_id),
                 self._archive_repository.object_references(account_id),
@@ -1008,6 +1082,11 @@ class AccountDataGovernance:
                 self._speaker_repository.remaining_account_rows(account_id),
                 self._evolution_repository.remaining_account_rows(account_id),
                 self._legacy_snapshot(account_id),
+                (
+                    self._guardian_repository.remaining_account_rows(account_id=account_id)
+                    if self._guardian_repository is not None
+                    else _empty_projection_rows()
+                ),
             )
             if (
                 profiles
@@ -1015,7 +1094,8 @@ class AccountDataGovernance:
                 or archive_rows
                 or speaker_rows
                 or evolution_rows
-                or _legacy_export_has_rows(legacy_rows)
+                or _legacy_export_has_rows(cast(LegacyAccountExport, legacy_rows))
+                or guardian_rows
             ):
                 raise AccountDeletionIncompleteError(
                     "assets or projections appeared while account deletion was running"
@@ -1040,6 +1120,10 @@ class AccountDataGovernance:
             "deleted_counts": finalized,
             "terminate_sessions": True,
         }
+
+
+async def _empty_projection_rows() -> dict[str, int]:
+    return {}
 
 
 def _empty_legacy_export() -> LegacyAccountExport:

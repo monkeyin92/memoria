@@ -14,7 +14,11 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from services.control_api.app.account_gate import require_writable_account
+from services.control_api.app.account_gate import (
+    require_capability_for_account_id,
+    require_capability_for_subject,
+    require_writable_account,
+)
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.security import (
@@ -125,6 +129,7 @@ async def enroll(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "speaker_enrollment", store=_store(request))
     _require_registered_account(request, user)
     samples = tuple(
         EnrollmentSample(
@@ -159,6 +164,7 @@ async def profiles(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "speaker_enrollment", store=_store(request))
     return {"items": [asdict(item) for item in await _authority(request).profiles(user.user_id)]}
 
 
@@ -169,6 +175,11 @@ async def activate(
     request: Request,
     _: Annotated[None, Depends(_require_internal_token)],
 ) -> Response:
+    require_capability_for_account_id(
+        body.account_id,
+        "speaker_enrollment",
+        store=_store(request),
+    )
     try:
         await _authority(request).activate(
             profile_id,
@@ -198,6 +209,11 @@ async def classify(
 ) -> dict[str, Any]:
     session = require_active_voice_session(request, body.session_id)
     account_id = str(session["user_id"])
+    require_capability_for_account_id(
+        account_id,
+        "speaker_enrollment",
+        store=_store(request),
+    )
     decision = await _authority(request).classify(
         SpeakerSample(
             account_id=account_id,

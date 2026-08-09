@@ -114,6 +114,44 @@ class PostgresLifeArchive:
             raise IdempotencyConflictError("turn has multiple canonical evidence events")
         return self._event_from_row(rows[0]) if rows else None
 
+    async def evidence_window(
+        self,
+        *,
+        account_id: str,
+        occurred_after: datetime,
+        occurred_before: datetime,
+        event_types: tuple[str, ...] = (),
+        limit: int = 10_000,
+    ) -> tuple[EvidenceEvent, ...]:
+        if not account_id.strip() or not 1 <= limit <= 10_000:
+            raise ValueError("evidence window requires account_id and limit 1..10000")
+        if occurred_after.tzinfo is None or occurred_before.tzinfo is None:
+            raise ValueError("evidence window timestamps must include timezone")
+        start = occurred_after.astimezone(UTC)
+        end = occurred_before.astimezone(UTC)
+        if start > end:
+            raise ValueError("evidence window start must not follow end")
+        if any(not value.strip() for value in event_types):
+            raise ValueError("evidence event types must not be blank")
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._scope(connection, account_id)
+            rows = await connection.fetch(
+                """
+                SELECT * FROM archive_evidence_events
+                WHERE account_id = $1 AND occurred_at >= $2 AND occurred_at <= $3
+                  AND (cardinality($4::text[]) = 0 OR event_type = ANY($4::text[]))
+                ORDER BY occurred_at, event_id
+                LIMIT $5
+                """,
+                account_id,
+                start,
+                end,
+                list(event_types),
+                limit,
+            )
+        return tuple(self._event_from_row(row) for row in rows)
+
     async def grant_raw_voice_consent(
         self,
         *,

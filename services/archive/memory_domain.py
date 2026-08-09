@@ -50,6 +50,8 @@ DomainCategory = Literal[
     "parenting_principle",
     "life_wisdom",
     "daily_life",
+    "study_progress",
+    "learning_preference",
 ]
 MemoryCategory = DomainCategory
 MemoryKind = Literal["semantic", "episodic", "procedural", "relationship"]

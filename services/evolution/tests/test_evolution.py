@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Barrier
 
 import pytest
-from services.evolution.account_fence import AccountWriteBlockedError
+from services.evolution.account_fence import AccountSubjectBlockedError, AccountWriteBlockedError
 from services.evolution.curation import EvolutionControlPlane, SleepLearningPolicy
 from services.evolution.diagnosis import CandidateGenerator, aggregate_failure_clusters
 from services.evolution.domain import (
@@ -173,6 +173,31 @@ def test_deletion_fence_hides_owner_signals_from_sleep_cycle_reads(tmp_path: Pat
 
     assert store.list_signals() == (global_signal,)
     assert store.unprocessed_signals() == (global_signal,)
+
+
+def test_sleep_cycle_skips_historical_private_signals_after_subject_becomes_minor(
+    tmp_path: Path,
+) -> None:
+    store = EvolutionStore(tmp_path / "evolution.sqlite3")
+    store.append_signal(verify_trajectory(_observation("minor-old-a")).learning_signal())
+    store.append_signal(verify_trajectory(_observation("minor-old-b")).learning_signal())
+
+    def block_minor(account_id: str) -> None:
+        assert account_id == "account-a"
+        raise AccountSubjectBlockedError("minor accounts cannot use account evolution")
+
+    plane = EvolutionControlPlane(
+        store,
+        trusted_root_sha256="a" * 64,
+        policy=SleepLearningPolicy(min_new_signals=2, min_failure_support=2),
+        account_subject_guard=block_minor,
+    )
+
+    report = plane.sleep_cycle()
+
+    assert report.ran is True
+    assert report.candidates == ()
+    assert store.unprocessed_signals() == ()
 
 
 def test_process_privacy_and_fence_fail_closed() -> None:

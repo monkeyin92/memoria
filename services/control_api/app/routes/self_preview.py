@@ -12,7 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.archive.domain import EvidenceEvent, IdempotencyConflictError, LifeArchivePort
-from services.control_api.app.account_gate import require_writable_account
+from services.control_api.app.account_gate import (
+    require_capability_for_subject,
+    require_writable_account,
+)
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.security import (
     AuthenticatedUser,
@@ -76,6 +79,7 @@ def _error(status_code: int, code: str) -> HTTPException:
 
 
 def _registered(request: Request, user: AuthenticatedUser) -> dict[str, Any]:
+    require_capability_for_subject(user, "self_preview", store=_store(request))
     account = _store(request).get_account(user_id=user.user_id)
     if account is None:
         raise _error(status.HTTP_403_FORBIDDEN, "account_not_registered")
@@ -429,6 +433,7 @@ async def preview_sources(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
     tool_epoch: int = Query(ge=0),
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "self_preview", store=_store(request))
     session = require_active_voice_session(request, session_id)
     if str(session["user_id"]) != user.user_id:
         raise _error(status.HTTP_404_NOT_FOUND, "preview_session_not_found")
@@ -484,6 +489,7 @@ async def preview_feedback(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "self_preview", store=_store(request))
     session = require_active_voice_session(request, body.session_id)
     if (
         str(session["user_id"]) != user.user_id
@@ -857,6 +863,7 @@ async def list_fidelity(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "self_preview", store=_store(request))
     return {
         "items": [
             _evaluation_payload(item)
@@ -873,6 +880,7 @@ async def get_fidelity(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "self_preview", store=_store(request))
     evaluation = await _preview(request).get_evaluation(
         account_id=user.user_id, evaluation_id=evaluation_id
     )
@@ -896,6 +904,7 @@ async def choose_fidelity(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "self_preview", store=_store(request))
     try:
         evaluation = await _preview(request).submit_trial_choice(
             account_id=user.user_id,
@@ -926,6 +935,7 @@ async def complete_fidelity(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "self_preview", store=_store(request))
     try:
         evaluation = await _preview(request).complete_evaluation(
             account_id=user.user_id,

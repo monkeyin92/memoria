@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -49,6 +49,7 @@ from services.archive.memory_write_policy import (
     SINGLE_VALUE_PREDICATES,
     MemoryWriteDecision,
     MemoryWritePolicy,
+    filter_extraction_for_subject,
     is_policy_confirmation_event,
 )
 from services.common.evidence_policy import contribution_for
@@ -172,6 +173,7 @@ class PostgresMemoryCatalog:
         embedder: MemoryEmbedder | None = None,
         require_vector: bool = False,
         episode_consolidator: EpisodeConsolidator | None = None,
+        subject_category_resolver: Callable[[str], str | None] | None = None,
     ) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("memory catalog DSN must use PostgreSQL")
@@ -190,6 +192,7 @@ class PostgresMemoryCatalog:
         self._require_vector = require_vector
         self._episode_consolidator = episode_consolidator or EpisodeConsolidator()
         self._memory_write_policy = MemoryWritePolicy()
+        self._subject_category_resolver = subject_category_resolver or (lambda _: None)
         self._vector_enabled = False
         self._pool: asyncpg.Pool | None = None
         self._compiler_pool: asyncpg.Pool | None = None
@@ -384,6 +387,12 @@ class PostgresMemoryCatalog:
             extraction = await self._extractor.extract(event)
             if not isinstance(extraction, MemoryExtraction):
                 raise TypeError("memory extractor returned an invalid result")
+            subject_category = self._subject_category_resolver(event.account_id)
+            extraction = filter_extraction_for_subject(
+                event,
+                extraction,
+                subject_category=subject_category,
+            )
             async with pool.acquire() as connection, connection.transaction():
                 await self._scope(connection, account_id)
                 decision = self._memory_write_policy.decide(
@@ -394,6 +403,7 @@ class PostgresMemoryCatalog:
                         event=event,
                         extraction=extraction,
                     ),
+                    subject_category=subject_category,
                 )
                 await self._write_extraction(connection, event, extraction)
                 await self._apply_memory_write_decision(

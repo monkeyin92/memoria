@@ -8,7 +8,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Literal, cast
 
-from services.evolution.account_fence import AccountReadGuard
+from services.evolution.account_fence import AccountReadGuard, AccountSubjectGuard
 from services.evolution.domain import CandidateArtifact
 from services.evolution.release_policy import EvolutionReleasePolicy
 from services.evolution.store import EvolutionStore
@@ -43,6 +43,7 @@ class EvolutionResolver:
         max_total_chars: int = 2000,
         release_policy: EvolutionReleasePolicy | None = None,
         account_read_guard: AccountReadGuard | None = None,
+        account_subject_guard: AccountSubjectGuard | None = None,
     ) -> None:
         if len(trusted_root_sha256) != 64:
             raise ValueError("evolution resolver trusted root must be sha256")
@@ -57,6 +58,7 @@ class EvolutionResolver:
         self._max_total_chars = max_total_chars
         self._release_policy = release_policy or EvolutionReleasePolicy()
         self._account_read_guard = account_read_guard or _unguarded_read
+        self._account_subject_guard = account_subject_guard or _unguarded_subject
 
     def resolve(
         self,
@@ -69,6 +71,13 @@ class EvolutionResolver:
         if not account_id.strip() or not session_id.strip() or not query.strip():
             return ()
         account_id = account_id.strip()
+        try:
+            self._account_subject_guard(account_id)
+        except Exception:
+            # Account category is an authorization input. Missing profiles,
+            # minors, and resolver outages all disable account evolution while
+            # leaving the reviewed base response planner available.
+            return ()
         with self._account_read_guard(account_id):
             # Deletion fences are durable and survive a worker restart. Check
             # before and after the scoped read, then once more before releasing
@@ -202,3 +211,7 @@ __all__ = ["EvolutionResolver", "ResolvedEvolutionArtifact"]
 def _unguarded_read(account_id: str) -> AbstractContextManager[None]:
     del account_id
     return nullcontext()
+
+
+def _unguarded_subject(account_id: str) -> None:
+    del account_id

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Final, Literal, cast
 
 from services.common.companions import COMPANION_STYLE_VERSION, CompanionDefinition
+from services.tutor.domain import SESSION_FOCUSES, SessionFocus
 
 InteractionMode = Literal["companion", "self_preview", "legacy", "archive"]
 SpeakerClass = Literal["owner", "guest", "uncertain"]
@@ -50,11 +51,13 @@ class FrozenMode:
     fallback_voice_provider: str | None = None
     fallback_voice_model: str | None = None
     fallback_voice_resource_id: str | None = None
+    session_focus: SessionFocus | None = "chat"
 
     def payload(self) -> dict[str, object]:
         return {
             "interaction_mode": self.interaction_mode,
             "mode_policy_version": self.mode_policy_version,
+            "session_focus": self.session_focus,
             "digital_self_version_id": self.digital_self_version_id,
             "manifest_sha256": self.manifest_sha256,
             "preview_grant_id": self.preview_grant_id,
@@ -93,6 +96,7 @@ class FrozenMode:
         return cls(
             interaction_mode=interaction_mode,
             mode_policy_version=str(session["mode_policy_version"]),
+            session_focus=_session_focus(session.get("session_focus", "chat")),
             digital_self_version_id=_optional(session.get("digital_self_version_id")),
             manifest_sha256=_optional(session.get("digital_self_manifest_sha256")),
             preview_grant_id=_optional(session.get("preview_grant_id")),
@@ -171,6 +175,10 @@ def _legacy_actor_role(value: object) -> LegacyActorRole | None:
     return cast(LegacyActorRole, value) if value in {"owner_preview", "grantee"} else None
 
 
+def _session_focus(value: object) -> SessionFocus | None:
+    return cast(SessionFocus, value) if isinstance(value, str) and value in SESSION_FOCUSES else None
+
+
 @dataclass(frozen=True, slots=True)
 class EffectiveCapabilities:
     conversation: bool
@@ -206,6 +214,11 @@ class ModePolicy:
     def availability(mode: InteractionMode | FrozenMode) -> ModeAvailability:
         frozen = mode if isinstance(mode, FrozenMode) else None
         interaction_mode = frozen.interaction_mode if frozen is not None else mode
+        if frozen is not None and (
+            frozen.session_focus not in SESSION_FOCUSES
+            or (interaction_mode != "companion" and frozen.session_focus != "chat")
+        ):
+            return ModeAvailability("blocked", True, ("valid_session_focus",))
         if interaction_mode == "companion":
             return ModeAvailability("available", True)
         if interaction_mode == "archive":
@@ -221,7 +234,13 @@ class ModePolicy:
         )
 
     @staticmethod
-    def freeze_companion(definition: CompanionDefinition) -> FrozenMode:
+    def freeze_companion(
+        definition: CompanionDefinition,
+        *,
+        session_focus: SessionFocus = "chat",
+    ) -> FrozenMode:
+        if session_focus not in SESSION_FOCUSES:
+            raise ValueError("companion session focus is invalid")
         return FrozenMode(
             interaction_mode="companion",
             mode_policy_version=MODE_POLICY_VERSION,
@@ -244,6 +263,7 @@ class ModePolicy:
             fallback_voice_provider=None,
             fallback_voice_model=None,
             fallback_voice_resource_id=None,
+            session_focus=session_focus,
         )
 
     @staticmethod
@@ -543,6 +563,7 @@ def _voice_contract_valid(frozen: FrozenMode) -> bool:
 def _legacy_contract_valid(frozen: FrozenMode) -> bool:
     if (
         frozen.interaction_mode != "legacy"
+        or frozen.session_focus != "chat"
         or frozen.mode_policy_version != LEGACY_POLICY_VERSION
         or any(
             value is not None

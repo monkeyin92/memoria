@@ -13,6 +13,7 @@ from services.agent.src.mode_policy_client import (
 def _payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "interaction_mode": "companion",
+        "session_focus": "chat",
         "mode_policy_version": "mode-policy-3",
         "companion_style_id": "starlight",
         "companion_style_version": "companion-v1",
@@ -86,6 +87,7 @@ async def test_fetch_freezes_companion_policy_from_the_authoritative_session_res
     }
     assert policy.available is True
     assert policy.mode == "companion"
+    assert policy.session_focus == "chat"
     assert policy.policy_version == "mode-policy-3"
     assert policy.companion_style_prompt is not None
     assert "价值观" in policy.companion_style_prompt
@@ -99,6 +101,17 @@ def test_owner_salutation_is_only_available_from_a_valid_companion_policy() -> N
     assert not ModePolicyClient._parse(_payload(owner_display_name=True)).available
 
 
+def test_tutor_focus_is_frozen_and_invalid_or_cross_mode_focus_fails_closed() -> None:
+    tutor = ModePolicyClient._parse(_payload(session_focus="tutor_english"))
+
+    assert tutor.available is True
+    assert tutor.session_focus == "tutor_english"
+    assert not ModePolicyClient._parse(_payload(session_focus="unknown")).available
+    assert not ModePolicyClient._parse(
+        _payload(interaction_mode="archive", session_focus="tutor_homework")
+    ).available
+
+
 @pytest.mark.parametrize(
     ("companion_id", "question_frequency", "interview_depth"),
     [
@@ -107,6 +120,8 @@ def test_owner_salutation_is_only_available_from_a_valid_companion_policy() -> N
         ("mianmian", "rare", "light"),
         ("axu", "rare", "light"),
         ("xuanmo", "rare", "on_explicit_invitation"),
+        ("zhiyao", "frequent", "structured"),
+        ("yanxi", "frequent", "structured"),
     ],
 )
 def test_companion_style_catalog_parity_reaches_the_agent_prompt(

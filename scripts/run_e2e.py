@@ -122,11 +122,58 @@ async def run_offline() -> dict[str, Any]:
         tts_srv.stop()
 
 
+def run_tutor() -> dict[str, Any]:
+    from services.agent.src.orchestration.utterance_router import (
+        UtteranceIntent,
+        route_utterance,
+    )
+    from services.common.crisis_policy import route_crisis
+    from services.tutor.turn_policy import TutorTurnPolicy
+
+    first_route = route_utterance("我不会，提示一下", session_focus="tutor_homework")
+    second_route = route_utterance("还是没思路", session_focus="tutor_homework")
+    if first_route.intent is not UtteranceIntent.REQUEST_HINT:
+        raise AssertionError("first tutor hint request did not use the Router")
+    if second_route.intent is not UtteranceIntent.REQUEST_HINT:
+        raise AssertionError("second tutor hint request did not use the Router")
+    policy = TutorTurnPolicy()
+    first = policy.observe(
+        session_id="tutor-e2e",
+        turn_id=1,
+        focus="tutor_homework",
+        intent="request_hint",
+    )
+    second = policy.observe(
+        session_id="tutor-e2e",
+        turn_id=2,
+        focus="tutor_homework",
+        intent="request_hint",
+    )
+    if first.minimal_hint_allowed or not second.minimal_hint_allowed:
+        raise AssertionError("minimal hint was not gated behind two stuck turns")
+    crisis_text = "我不会做题。我不想活了"
+    crisis_route = route_utterance(crisis_text, session_focus="tutor_homework")
+    crisis = route_crisis(crisis_text)
+    if crisis_route.intent is not UtteranceIntent.REQUEST_HINT:
+        raise AssertionError("tutor crisis fixture no longer exercises an intent collision")
+    if crisis.action != "crisis_support" or not crisis.direct_text:
+        raise AssertionError("crisis support did not override the tutor intent")
+    return {
+        "profile": "tutor",
+        "router_intent": first_route.intent,
+        "first_stuck": first.reason,
+        "second_stuck": second.reason,
+        "crisis_action": crisis.action,
+        "crisis_fixed_reply": True,
+        "status": "PASS",
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--profile",
-        choices=["offline", "provider-smoke"],
+        choices=["offline", "provider-smoke", "tutor"],
         default="offline",
     )
     args = parser.parse_args()
@@ -135,6 +182,13 @@ def main() -> int:
         from scripts.provider_smoke_test import main as smoke_main
 
         return asyncio.run(smoke_main())
+
+    if args.profile == "tutor":
+        result = run_tutor()
+        print("run_e2e tutor PASS")
+        for key, value in result.items():
+            print(f"  {key}: {value}")
+        return 0
 
     result = asyncio.run(run_offline())
     print("run_e2e offline PASS")

@@ -14,7 +14,14 @@ const defaultProfile = {
   display_name: "新朋友",
   companion_id: defaultCompanionId,
   voice_reply: true,
+  subject_category: null,
 };
+
+const SESSION_FOCUS_OPTIONS = Object.freeze([
+  { value: "chat", label: "自在陪伴", description: "像平常一样聊聊" },
+  { value: "tutor_english", label: "英语口语", description: "情景对话与温和纠音" },
+  { value: "tutor_homework", label: "作业陪伴", description: "讲思路，不直接给答案" },
+]);
 
 // 与 H5（apps/h5/src/lib/emotion.js）一致：负面声学标签统一表现为关切，
 // 不机械镜像愤怒或厌恶；其余回落 neutral。
@@ -122,6 +129,8 @@ Page({
     textTurnPending: false,
     micEnabled: true,
     sessionId: "",
+    sessionFocus: "chat",
+    sessionFocusOptions: SESSION_FOCUS_OPTIONS,
     connecting: false,
     active: false,
     authenticated: false,
@@ -191,6 +200,14 @@ Page({
     return this._startConversation("text");
   },
 
+  selectSessionFocus(event) {
+    if (this.data.active || this.data.connecting) return;
+    const focus = event.currentTarget.dataset.focus;
+    if (SESSION_FOCUS_OPTIONS.some((item) => item.value === focus)) {
+      this.setData({ sessionFocus: focus, error: "" });
+    }
+  },
+
   _startConversation(inputMode) {
     if (this._startConversationPromise) return this._startConversationPromise;
     if (this.data.connecting || this.data.active) return Promise.resolve();
@@ -236,7 +253,10 @@ Page({
         await authorizationForRecord();
         if (!this._isVoiceAttemptCurrent(attemptId)) return;
       }
-      const session = await api.createMiniProgramSession({ userId: identity.user_id });
+      const session = await api.createMiniProgramSession({
+        userId: identity.user_id,
+        sessionFocus: this.data.sessionFocus,
+      });
       if (!this._isVoiceAttemptCurrent(attemptId)) return;
       this._session = session;
       this.setData({ sessionId: session.session_id });
@@ -294,6 +314,7 @@ Page({
       textTurnPending: false,
       micEnabled: true,
       sessionId: "",
+      sessionFocus: "chat",
       connecting: false,
       active: false,
     });

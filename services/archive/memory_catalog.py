@@ -6,7 +6,7 @@ import json
 import sqlite3
 import threading
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -46,6 +46,7 @@ from services.archive.memory_write_policy import (
     SINGLE_VALUE_PREDICATES,
     MemoryWriteDecision,
     MemoryWritePolicy,
+    filter_extraction_for_subject,
     is_policy_confirmation_event,
 )
 from services.common.evidence_policy import contribution_for
@@ -355,12 +356,14 @@ class MemoryCatalog:
         extractor: MemoryExtractor,
         account_guard: AccountWriteGuard | None = None,
         episode_consolidator: EpisodeConsolidator | None = None,
+        subject_category_resolver: Callable[[str], str | None] | None = None,
     ) -> None:
         self._path = sqlite_path.expanduser().resolve()
         self._extractor = extractor
         self._account_guard = account_guard or _allow_account_write
         self._episode_consolidator = episode_consolidator or EpisodeConsolidator()
         self._memory_write_policy = MemoryWritePolicy()
+        self._subject_category_resolver = subject_category_resolver or (lambda _: None)
         self._initialized = False
         self._initialize_lock = threading.Lock()
 
@@ -372,12 +375,14 @@ class MemoryCatalog:
         extractor: MemoryExtractor,
         account_guard: AccountWriteGuard | None = None,
         episode_consolidator: EpisodeConsolidator | None = None,
+        subject_category_resolver: Callable[[str], str | None] | None = None,
     ) -> MemoryCatalog:
         return cls(
             Path(path),
             extractor=extractor,
             account_guard=account_guard,
             episode_consolidator=episode_consolidator,
+            subject_category_resolver=subject_category_resolver,
         )
 
     def initialize(self) -> None:
@@ -673,6 +678,12 @@ class MemoryCatalog:
             extraction = await self._extractor.extract(event)
             if not isinstance(extraction, MemoryExtraction):
                 raise TypeError("memory extractor returned an invalid result")
+            subject_category = self._subject_category_resolver(event.account_id)
+            extraction = filter_extraction_for_subject(
+                event,
+                extraction,
+                subject_category=subject_category,
+            )
             with self._connect() as connection:
                 decision = self._memory_write_policy.decide(
                     event,
@@ -682,6 +693,7 @@ class MemoryCatalog:
                         event=event,
                         extraction=extraction,
                     ),
+                    subject_category=subject_category,
                 )
                 self._write_extraction(connection, event, extraction)
                 self._apply_memory_write_decision(

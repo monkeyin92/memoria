@@ -1764,7 +1764,6 @@ class DuplexRuntime:
         *,
         semantic_verdict: InterruptSemanticVerdict | None = None,
     ) -> UtteranceRoute:
-        """Classify utterance via the shared control-plane router."""
         sticky_route = (
             self._sticky_interrupt_route
             if self._sticky_interrupt_epoch == self._speaker_epoch
@@ -1785,6 +1784,7 @@ class DuplexRuntime:
                 else ""
             ),
             semantic_verdict=semantic_verdict,
+            session_focus=self._mode_policy.session_focus,
         )
 
     def _is_explicit_owner_interrupt_cmd(self) -> bool:

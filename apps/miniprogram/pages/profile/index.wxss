@@ -444,6 +444,43 @@
   font-weight: 300;
 }
 
+.guardian-entry {
+  border-color: rgba(255, 126, 219, 0.24);
+  background: linear-gradient(135deg, rgba(255, 77, 219, 0.08), rgba(34, 229, 255, 0.07));
+}
+
+.student-notice {
+  border-color: rgba(255, 126, 219, 0.3);
+  background: linear-gradient(135deg, rgba(123, 92, 255, 0.13), rgba(255, 77, 219, 0.08));
+}
+
+.student-notice-badge,
+.student-notice-title,
+.student-notice-copy {
+  display: block;
+}
+
+.student-notice-badge {
+  color: #f0a6e0;
+  font-size: 22rpx;
+  letter-spacing: 2rpx;
+}
+
+.student-notice-title {
+  margin-top: 12rpx;
+  color: #f2f5ff;
+  font-size: 31rpx;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.student-notice-copy {
+  margin-top: 12rpx;
+  color: #9aa6cf;
+  font-size: 25rpx;
+  line-height: 1.7;
+}
+
 /* ——— 账户与设备 ——— */
 .account-row {
   display: flex;

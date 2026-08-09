@@ -159,6 +159,33 @@ SELECT count(*) AS voice_quality_measurements FROM voice_quality_measurements;
 
 该报告使用本地容器、Fernet 测试密钥和本地加密对象目录，只证明工具、schema 和验收合同可执行。它不证明生产 WAL/PITR、异地对象版本、真实 KMS 权限或生产数据量下的 RPO/RTO。
 
+### 4.2 异地备份 profile 与独立恢复演练
+
+仓库提供 opt-in 的 `offsite-backup` profile。它每 24 小时生成一份带 SHA-256
+manifest 的 PostgreSQL plain base backup，每分钟上传已完成的 base backup 与 WAL，并镜像
+`memoria-archive`、`memoria-voice` 两个版本化 bucket。远端端点若指向 localhost、同机
+MinIO 或 Docker host 会直接拒绝启动，远端 bucket 未启用版本控制也会拒绝同步。
+
+1. 将 [`infra/memoria-offsite-backup.env.example`](../infra/memoria-offsite-backup.env.example)
+   填写为另一地域/主机的 S3 兼容存储，安装到 `/etc/memoria-offsite-backup.env`，保持
+   `root:root 0600`；
+2. 使用 `docker compose --profile offsite-backup -f infra/memoria-data.production.yml up -d`
+   启动；
+3. 在与生产主机独立、装有 Docker 的恢复机上运行：
+
+```bash
+export MEMORIA_OFFSITE_BACKUP_ENV_FILE=/etc/memoria-offsite-backup.env
+export MEMORIA_OFFSITE_RESTORE_ROOT=/var/lib/memoria-restore/$(date -u +%Y%m%dT%H%M%SZ)
+export MEMORIA_OFFSITE_RESTORE_REPORT=/var/lib/memoria-restore/reports/$(date -u +%Y%m%dT%H%M%SZ).json
+./scripts/run_offsite_restore_drill.sh
+```
+
+脚本从远端 `LATEST` 指向的完整 base backup 恢复一个 `--network none` 的全新 PostgreSQL
+容器，先执行 `pg_verifybackup`，再检查 archive/guardian/tutor 表，并逐个核对数据库中的档案与
+声音对象 key 在远端镜像中存在。之后仍须按本章第 4 节运行
+`scripts/run_archive_restore_drill.py` 的账本哈希、解密、RLS、投影重建与抽样验收。只有两份
+不可变报告都来自独立恢复环境，才能关闭生产异地容灾门禁；仅启动 profile 或本机演练不算完成。
+
 ## 5. 失败与回退
 
 - 任一数据库计数、清单哈希、对象哈希或密钥版本不一致，演练失败，不切流。

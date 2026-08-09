@@ -44,7 +44,7 @@ from services.agent.src.orchestration.delegation_coordinator import (
 from services.agent.src.orchestration.handlers import LanguageModelRequest
 from services.agent.src.orchestration.task_manager import ToolSpec
 from services.agent.src.orchestration.utterance_router import InterruptSemanticVerdict
-from services.agent.src.prompts import BRIDGE_PHRASES, VOICE_SYSTEM_PROMPT
+from services.agent.src.prompts import BRIDGE_PHRASES
 from services.agent.src.providers.doubao_voice_catalog import resolve_approved_voice
 from services.agent.src.providers.interrupt_semantic_classifier import (
     InterruptSemanticClassifier,
@@ -62,6 +62,7 @@ from services.agent.src.response_planner_client import (
     ResponseProvenance,
     ResponseVoiceTarget,
 )
+from services.agent.src.tutor_session import voice_system_prompt
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient, VoiceRuntimeProfile
 from services.common.companion_response_safety import (
@@ -391,8 +392,6 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         *,
         instructions: str,
         runtime: DuplexRuntime,
-        # Kept as ignored compatibility keywords for older callers.  Realtime
-        # never creates or reads the legacy persona/memory clients.
         persona_client: Any = None,
         memory_context_client: Any = None,
         voice_profile_client: VoiceProfileClient | None = None,
@@ -1125,6 +1124,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 fence=cast(GenerationFence, arguments["fence"]),
                 speaker_decision=arguments["speaker_decision"],
                 recall_context=cast(tuple[str, ...], arguments.get("recall_context", ())),
+                utterance_intent=str(arguments.get("utterance_intent", "chat")),
             )
 
         self._runtime.orchestrator.task_manager.register(
@@ -1229,6 +1229,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                     "fence": fence,
                     "speaker_decision": speaker,
                     "recall_context": recall_context,
+                    "utterance_intent": self._runtime.route_user_turn(text).intent,
                 },
                 fence=fence,
                 task_epoch=coordinator.next_task_epoch(fence.session_id),
@@ -3180,8 +3181,7 @@ async def entrypoint(ctx: Any) -> None:
         runtime._spawn(_apply_control(), name=f"duplex-{event_type.replace('_', '-')}")
 
     ctx.room.on("data_received", _on_control_packet)
-
-    agent_instructions = VOICE_SYSTEM_PROMPT
+    agent_instructions = voice_system_prompt(runtime.mode_policy.session_focus)
     if miniprogram_session:
         agent_instructions += (
             "\n\n当前客户端是受控半双工小程序。普通回答只说一到三句、最多一百二十个"

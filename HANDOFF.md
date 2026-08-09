@@ -1,6 +1,23 @@
 # 项目交接
 
-## 当前状态（2026-08-08）
+## 当前状态（2026-08-09）
+
+### 学生线本地工作区（未提交、未部署、未发布）
+
+- `implementation-plan-20260808-student-first-remediation.md` 的 P0、P1 仓库能力、P2 导师域和 P3
+  本地软件链路已实现并逐项回填；外部/生产门禁仍保持未完成，不能据此创建对外学生体验版。
+- 未成年账号能力由 `account_gate.py` 单点 fail-closed；guardian 绑定/孩子确认/分项同意/撤销、
+  tutor focus/Router/进度投影、周报、危机固定回复 + Evidence/outbox、授权儿童语料限额/到期删除均已接线。
+- guardian/tutor PostgreSQL FORCE RLS schema 与 forward-only 升级脚本、WAL/base backup、异地对象镜像
+  和独立恢复演练脚本已进入仓库；这些只证明可执行能力，不证明生产已安装、远端持续上传或完成恢复。
+- CI 等价本地 PostgreSQL 环境为 `2108 passed, 2 skipped`（两项为需显式 CAM++ 模型/官方 WAV 的
+  真实 ONNX 测试），总覆盖率 `87.0985%`，编排层 `90%`、
+  provider 协议层 `97%`；ruff、strict mypy、module budget、tutor E2E、H5 304 项、小程序 90 项与
+  Node 24 的 87 文件 upload dry-run 均通过。
+- 仍阻塞发布：PIA/法务/算法备案确认、危机话术专业评审、真实微信订阅消息、生产 guardian 升级、
+  真实异地备份与独立恢复报告、iOS/Android 完整语音链、ESP32/AEC、200 条真实授权儿童语料。
+
+### 当前生产基线（未切换）
 
 - 生产 runtime/H5 均为 `20260808-171749`，源码 commit
   `9812fac155ef4f46a74d0d8dbfaf197fe9c5fa5a`；直接回滚目标为 `20260807-163916`。完整证据见
@@ -36,6 +53,10 @@
 
 ## 仍需完成
 
+- 先完成学生线全部外部门禁并把证据写入 `docs/acceptance/` / `docs/releases/`；当前危机通知只有本地
+  outbox 与家长页提醒，不能宣称微信订阅消息已送达，也不能用自动化代替真实 iOS/Android 声学验收。
+- 在任何学生数据进入生产前，先执行 guardian forward-only 升级，配置真实远端备份 endpoint，验证
+  WAL/base backup 与关键 bucket 持续同步，并在独立主机完成恢复演练；仓库脚本通过不是生产证据。
 - 后续为恢复项目脚本真实上传，可把 `112.20.18.77` 加入微信代码上传 IP 白名单；这不再阻塞
   `0.8.66` 体验版交付。
 - `0.8.66` 仍需在真实 iOS/Android 上覆盖麦克风、扬声器/AEC、弱网、前后台与蓝牙；H5 仍需真实

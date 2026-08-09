@@ -8,7 +8,11 @@ from typing import Annotated, Any, Literal, NoReturn, cast
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from services.control_api.app.account_gate import require_writable_account
+from services.control_api.app.account_gate import (
+    require_capability_for_account_id,
+    require_capability_for_subject,
+    require_writable_account,
+)
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.security import (
     AuthenticatedUser,
@@ -188,6 +192,7 @@ async def issue_grant(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "legacy_grant", store=_store(request))
     owner = _registered(request, user)
     _step_up(owner, body.password)
     store = _store(request)
@@ -200,6 +205,11 @@ async def issue_grant(
         or store.is_account_unavailable(user_id=str(grantee["user_id"]))
     ):
         raise _error(status.HTTP_404_NOT_FOUND, "legacy_grantee_not_found")
+    require_capability_for_account_id(
+        str(grantee["user_id"]),
+        "legacy_receive",
+        store=store,
+    )
     try:
         version = await _versions(request).get(
             account_id=user.user_id,
@@ -242,6 +252,11 @@ async def list_grants(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
     role: Annotated[Literal["owner", "grantee"], Query()],
 ) -> dict[str, Any]:
+    require_capability_for_subject(
+        user,
+        "legacy_grant" if role == "owner" else "legacy_receive",
+        store=_store(request),
+    )
     _registered(request, user)
     try:
         grants = await _legacy(request).list_grants(
@@ -277,10 +292,28 @@ async def _transition(
     request: Request,
     user: AuthenticatedUser,
 ) -> dict[str, Any]:
+    require_capability_for_subject(
+        user,
+        "legacy_grant",
+        store=_store(request),
+    )
     account = _registered(request, user)
     _step_up(account, body.password)
     try:
         registry = _legacy(request)
+        if action == "activate":
+            visible = await registry.list_grants(
+                actor_account_id=user.user_id,
+                role="owner",
+            )
+            pending = next((item for item in visible if item.grant_id == grant_id), None)
+            if pending is None:
+                raise LegacyNotFoundError("legacy grant not found")
+            require_capability_for_account_id(
+                pending.grantee_account_id,
+                "legacy_receive",
+                store=_store(request),
+            )
         transition = registry.activate if action == "activate" else registry.revoke
         grant = await transition(
             actor_account_id=user.user_id,
@@ -324,6 +357,7 @@ async def get_shell_preferences(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "legacy_receive", store=_store(request))
     _registered(request, user)
     try:
         shell = await _legacy(request).get_shell(
@@ -343,6 +377,7 @@ async def update_shell_preferences(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(user, "legacy_receive", store=_store(request))
     _registered(request, user)
     try:
         shell = await _legacy(request).update_shell_preferences(
