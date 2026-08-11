@@ -33,6 +33,31 @@ async def _register(client: AsyncClient, username: str, password: str = "safe-pa
     return response.json()
 
 
+async def _register_verified_adult(
+    client: AsyncClient,
+    app: object,
+    *,
+    username: str,
+    password: str = "safe-password",
+) -> dict[str, str]:
+    registered = await _register(client, username, password=password)
+    app.state.memory_store.update_subject_profile(
+        user_id=registered["user_id"],
+        subject_category="adult",
+        birth_year_band="adult",
+        age_evidence_status="verified",
+        now=datetime.now(UTC).isoformat(),
+    )
+    response = await client.post(
+        "/v1/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert response.status_code == 200
+    logged_in = response.json()
+    assert logged_in["user_id"] == registered["user_id"]
+    return logged_in
+
+
 async def _seed_confirmed_owner_memory(
     app: object,
     path: Path,
@@ -118,7 +143,9 @@ async def test_digital_self_build_rejects_empty_source_and_lists_nothing(
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        owner = await _register(client, "digital-self-empty")
+        owner = await _register_verified_adult(
+            client, app, username="digital-self-empty"
+        )
         headers = _headers(owner)
         built = await client.post("/v1/digital-self/versions", headers=headers)
         listed = await client.get("/v1/digital-self/versions", headers=headers)
@@ -137,7 +164,9 @@ async def test_digital_self_build_list_get_and_lifecycle_step_up(
     app = create_app()
     password = " safe-password "
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        owner = await _register(client, "digital-self-owner", password=password)
+        owner = await _register_verified_adult(
+            client, app, username="digital-self-owner", password=password
+        )
         headers = _headers(owner)
         await _seed_confirmed_owner_memory(app, path, account_id=owner["user_id"])
         built = await client.post("/v1/digital-self/versions", headers=headers)
@@ -230,8 +259,12 @@ async def test_digital_self_cross_account_versions_are_not_found(
     path = _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        owner = await _register(client, "digital-self-owner")
-        other = await _register(client, "digital-self-other")
+        owner = await _register_verified_adult(
+            client, app, username="digital-self-owner"
+        )
+        other = await _register_verified_adult(
+            client, app, username="digital-self-other"
+        )
         await _seed_confirmed_owner_memory(app, path, account_id=owner["user_id"])
         version_id = (
             await client.post("/v1/digital-self/versions", headers=_headers(owner))
@@ -253,7 +286,9 @@ async def test_digital_self_deleting_account_is_rejected(
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        owner = await _register(client, "digital-self-deleting")
+        owner = await _register_verified_adult(
+            client, app, username="digital-self-deleting"
+        )
         await app.state.account_operations.block_account(owner["user_id"])
         response = await client.post("/v1/digital-self/versions", headers=_headers(owner))
 
@@ -269,7 +304,9 @@ async def test_digital_self_source_correction_creates_new_version_without_mutati
     path = _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        owner = await _register(client, "digital-self-history")
+        owner = await _register_verified_adult(
+            client, app, username="digital-self-history"
+        )
         headers = _headers(owner)
         claim_id = await _seed_confirmed_owner_memory(app, path, account_id=owner["user_id"])
         first = (await client.post("/v1/digital-self/versions", headers=headers)).json()

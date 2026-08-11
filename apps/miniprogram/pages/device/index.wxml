@@ -1,0 +1,96 @@
+<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
+
+<view class="page-shell">
+  <text class="eyebrow">设备与成员</text>
+  <text class="page-title">谁在用，由谁决定</text>
+  <text class="page-subtitle">首次绑定只决定默认用途；当前使用者与敏感能力由服务端 Runtime Profile 决定。</text>
+
+  <view wx:if="{{loading}}" class="card">
+    <text class="loading-text">正在读取设备状态…</text>
+  </view>
+
+  <!-- 未绑定 -->
+  <block wx:elif="{{!hasBinding}}">
+    <view class="card empty-card">
+      <text class="empty-badge">还没有绑定设备</text>
+      <text class="empty-copy">扫描机器人上的二维码开始首次绑定。绑定会建立主体档案与关系，之后的敏感能力都由服务端按当前主体授权。</text>
+      <button class="primary-button empty-button" bindtap="openBindPage">绑定设备</button>
+    </view>
+  </block>
+
+  <!-- 已绑定 -->
+  <block wx:else>
+    <view class="card">
+      <text class="settings-title">绑定信息</text>
+      <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{bindingModeLabel}}</text></view>
+      <view class="summary-row"><text class="summary-key">绑定编号</text><text class="summary-value summary-mono">{{binding.binding_id}}</text></view>
+      <view wx:if="{{binding.binding_version}}" class="summary-row"><text class="summary-key">版本</text><text class="summary-value">v{{binding.binding_version}}</text></view>
+      <view wx:if="{{bindingRoles.length > 0}}" class="summary-row">
+        <text class="summary-key">角色</text>
+        <text class="summary-value">{{bindingRoles}}</text>
+      </view>
+      <text class="form-note">更换主要使用者会产生新的绑定版本，旧版本保留用于审计；购买者不自动获得内容读取权限。</text>
+    </view>
+
+    <!-- 当前使用者 -->
+    <view class="card">
+      <text class="settings-title">当前使用者</text>
+      <view wx:if="{{currentUserLabel}}" class="current-user-chip">
+        <text class="current-user-name">{{currentUserLabel}}</text>
+        <text class="current-user-state">已确认</text>
+      </view>
+
+      <block wx:if="{{candidates.length > 0 && !currentUserLabel}}">
+        <text class="setting-desc">无法自动确认是谁在使用，请选择并确认：</text>
+        <view wx:for="{{candidates}}" wx:key="person_id" class="candidate-row {{selectedCandidateId === item.person_id ? 'candidate-selected' : ''}}" data-person-id="{{item.person_id}}" bindtap="selectCandidate">
+          <view class="candidate-copy">
+            <text class="candidate-name">{{item.display_name}}</text>
+            <text wx:if="{{item.relationship_label}}" class="candidate-relation">{{item.relationship_label}}</text>
+          </view>
+          <view class="candidate-confidence">
+            <view class="confidence-track"><view class="confidence-value {{item.confidence >= 0.5 ? 'confidence-high' : 'confidence-low'}}" style="width: {{item.confidence * 100}}%;"></view></view>
+            <text class="confidence-label {{item.confidence >= 0.5 ? '' : 'confidence-low-text'}}">{{item.confidence >= 0.5 ? '置信度 ' + Math.round(item.confidence * 100) + '%' : '置信度较低'}}</text>
+          </view>
+        </view>
+        <button class="primary-button confirm-button" loading="{{switching}}" disabled="{{!canConfirmWithApp}}" bindtap="confirmSubject">确认是我</button>
+        <text wx:if="{{!canConfirmWithApp}}" class="form-note">当前会话需要通过语音确认身份，应用内切换暂不可用。</text>
+      </block>
+
+      <view wx:if="{{candidates.length === 0 && !currentUserLabel}}" class="current-user-empty">
+        <text class="empty-copy">暂时没有可确认的成员档案。</text>
+      </view>
+    </view>
+
+    <!-- 可解释降级 -->
+    <view wx:if="{{degradation}}" class="card degradation-card">
+      <text class="degradation-badge">安全模式</text>
+      <text wx:for="{{degradation.reasons}}" wx:key="*this" class="degradation-reason">{{item}}</text>
+      <view class="degradation-columns">
+        <view class="degradation-column">
+          <text class="degradation-column-title">仍然可用</text>
+          <text wx:for="{{degradation.allowed}}" wx:key="*this" class="degradation-item">{{item}}</text>
+        </view>
+        <view class="degradation-column">
+          <text class="degradation-column-title">受限</text>
+          <text wx:for="{{degradation.restricted}}" wx:key="*this" class="degradation-item">{{item}}</text>
+        </view>
+        <view class="degradation-column">
+          <text class="degradation-column-title degradation-forbidden-title">保持关闭</text>
+          <text wx:for="{{degradation.forbidden}}" wx:key="*this" class="degradation-item degradation-forbidden">{{item}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 敏感入口由服务端 capabilities 驱动 -->
+    <view wx:if="{{sensitiveEntries.length > 0}}" class="card">
+      <text class="settings-title">可用能力</text>
+      <text class="setting-desc">以下入口由服务端按当前主体授权，而不是由本机推断年龄。</text>
+      <view wx:for="{{sensitiveEntries}}" wx:key="key" class="nav-card" data-page="{{item.page}}" bindtap="openEntry">
+        <view><text class="setting-name">{{item.title}}</text><text class="setting-desc">{{item.description}}</text></view>
+        <view class="nav-arrow"><text class="nav-arrow-icon">›</text></view>
+      </view>
+    </view>
+
+    <text wx:if="{{error}}" class="error-text device-error">{{error}}</text>
+  </block>
+</view>

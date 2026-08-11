@@ -5,18 +5,8 @@ import asyncio
 import pytest
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
-
-
-def _companion_policy() -> ModePolicy:
-    return ModePolicy.companion_for_test(
-        policy_version="mode-policy-3",
-        private_context=True,
-        owner_evidence=True,
-        tools=True,
-        voice_profile=True,
-        shadow_low_sensitivity_persona=True,
-    )
 
 
 def _decision(classification: str, *, reason_code: str | None = None) -> SpeakerDecision:
@@ -46,7 +36,7 @@ async def _set_speaker(runtime: DuplexRuntime, classification: str, *, reason_co
 @pytest.mark.asyncio
 async def test_policy_provenance_is_frozen_per_fence_and_owner_evidence_is_server_gated() -> None:
     runtime = DuplexRuntime.create(session_id="session-policy")
-    runtime.set_mode_policy(_companion_policy())
+    bind_owner_policy(runtime, policy_version="mode-policy-3", shadow_low_sensitivity_persona=True)
     await runtime.orchestrator.ready()
     await _set_speaker(runtime, "owner")
     accepted, _ = runtime.accept_user_turn("这是一个足够长的主人真实表达。")
@@ -95,7 +85,7 @@ async def test_guest_uncertain_and_shadow_cannot_become_owner_projection(
     classification: str, reason_code: str
 ) -> None:
     runtime = DuplexRuntime.create(session_id=f"session-{classification}-{reason_code}")
-    runtime.set_mode_policy(_companion_policy())
+    bind_owner_policy(runtime, policy_version="mode-policy-3", shadow_low_sensitivity_persona=True)
     await runtime.orchestrator.ready()
     await _set_speaker(runtime, classification, reason_code=reason_code)
     accepted, _ = runtime.accept_user_turn("这是当前说话人的一句完整表达。")
@@ -116,7 +106,7 @@ async def test_guest_uncertain_and_shadow_cannot_become_owner_projection(
 @pytest.mark.asyncio
 async def test_shadow_owner_candidate_keeps_only_low_sensitivity_persona_without_owner_history() -> None:
     runtime = DuplexRuntime.create(session_id="session-shadow-owner")
-    runtime.set_mode_policy(_companion_policy())
+    bind_owner_policy(runtime, policy_version="mode-policy-3", shadow_low_sensitivity_persona=True)
     await runtime.orchestrator.ready()
     await _set_speaker(runtime, "uncertain", reason_code="shadow_owner_candidate")
     accepted, _ = runtime.accept_user_turn("这是主人在本轮留下的完整表达。")
@@ -138,7 +128,14 @@ async def test_shadow_owner_candidate_keeps_only_low_sensitivity_persona_without
 
 
 def test_shadow_owner_reason_cannot_upgrade_a_guest_classification() -> None:
-    policy = _companion_policy()
+    policy = ModePolicy.companion_for_test(
+        policy_version="mode-policy-3",
+        private_context=True,
+        owner_evidence=True,
+        tools=True,
+        voice_profile=True,
+        shadow_low_sensitivity_persona=True,
+    )
 
     assert policy.history_eligible(
         "guest", reason_code="shadow_owner_candidate"

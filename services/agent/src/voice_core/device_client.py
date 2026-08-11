@@ -24,6 +24,7 @@ from services.agent.src.voice_core.device_protocol import (
     DeviceCommand,
     DeviceCommandAck,
     DeviceEvent,
+    decide_remote_mute,
 )
 from services.agent.src.voice_core.device_runtime import AudioDeviceConfig, LinuxAudioPipeline
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
@@ -267,13 +268,16 @@ class LinuxMediaDeviceClient:
             )
             return
         if command.topic == "audio.mute.set":
-            muted = command.payload.get("muted")
-            if not isinstance(muted, bool):
-                status = "rejected"
-                message = "muted must be boolean"
-            else:
-                self.muted = muted
+            if decide_remote_mute(command.payload) == "engage":
+                # Remote control may only tighten mute; it never touches the
+                # local hardware seam and can never release a physical mute.
+                self.muted = True
                 status = "applied"
+                message = ""
+            else:
+                # Fail closed with a generic reason: the ack must not disclose
+                # the security rule, and state must stay unchanged.
+                status = "rejected"
                 message = ""
         elif self.on_command is None:
             status = "rejected"
@@ -456,7 +460,16 @@ class LinuxMediaDeviceClient:
         if channel is not None:
             await channel.close()
 
-    def set_muted(self, muted: bool) -> None:
+    def apply_local_hardware_mute(self, muted: bool) -> None:
+        """Controlled entry point for a real local physical mute event.
+
+        Intended to be driven by device-side wiring from a hardware switch,
+        local button or physical key; the actual physical mute path is not yet
+        verified on real hardware.  The remote ``audio.mute.set`` command path
+        is fully isolated from this seam: it never calls it, and it can only
+        engage mute (set ``True``).
+        """
+
         self.muted = bool(muted)
 
     def _proto_identity(self) -> Any:

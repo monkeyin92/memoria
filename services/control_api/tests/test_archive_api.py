@@ -10,6 +10,7 @@ import wave
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import asyncpg
 import pytest
@@ -196,6 +197,44 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEMORIA_AUTH_SECRET", "test-auth-material-that-is-long-enough")
     monkeypatch.setenv("MEMORIA_ARCHIVE_INTERNAL_TOKEN", "test-internal-archive-token")
     monkeypatch.setenv("OFFLINE_MOCK", "true")
+
+
+async def _register_verified_adult(
+    client: AsyncClient,
+    app: Any,
+    *,
+    username: str,
+    password: str = "safe-password",
+) -> dict[str, object]:
+    """Create the adult fixture, apply the profile ratchet, then re-login.
+
+    Updating the subject profile revokes the registration session by design.
+    Adult Archive/Raw Voice/Memory/Persona tests must therefore use the token
+    minted after the ratchet, while unknown-safe tests continue to use the
+    anonymous flow directly.
+    """
+
+    registered_response = await client.post(
+        "/v1/auth/register",
+        json={"username": username, "password": password},
+    )
+    assert registered_response.status_code == 201
+    registered = registered_response.json()
+    app.state.memory_store.update_subject_profile(
+        user_id=registered["user_id"],
+        subject_category="adult",
+        birth_year_band="adult",
+        age_evidence_status="verified",
+        now=datetime.now(UTC).isoformat(),
+    )
+    logged_in_response = await client.post(
+        "/v1/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert logged_in_response.status_code == 200
+    logged_in = logged_in_response.json()
+    assert logged_in["user_id"] == registered["user_id"]
+    return logged_in
 
 
 def _wav(pcm: bytes = b"\x00\x00" * 1600) -> bytes:
@@ -623,6 +662,86 @@ async def test_account_can_append_and_read_an_idempotent_evidence_event(
 
 
 @pytest.mark.asyncio
+async def test_agent_memory_write_fence_is_accepted_and_canonicalized_for_projection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The production Agent envelope must not be rejected as unknown input.
+
+    The archive boundary keeps the outer claims out of the public evidence
+    model and emits one server-owned projection candidate.  The PostgreSQL
+    projector independently revalidates this candidate against Session and
+    Policy authority before it can become capture evidence.
+    """
+
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="archive-fence-adult",
+        )
+        bearer = {"Authorization": f"Bearer {identity['access_token']}"}
+        session = (await client.post("/v1/sessions", headers=bearer, json={})).json()
+        event = {
+            "event_id": "agent-memory-fence-001",
+            "session_id": session["session_id"],
+            "event_type": "speech.utterance_finalized",
+            "occurred_at": datetime.now(UTC).isoformat(),
+            "speaker_class": "owner",
+            "source": "funasr.authoritative_final",
+            "turn_id": 3,
+            "generation_id": 4,
+            "tool_epoch": 2,
+            "session_epoch": 1,
+            "device_id": "device-1",
+            "subject_revision": 7,
+            "active_subject_id": identity["user_id"],
+            "runtime_profile_id": "profile-1",
+            "actor_id": identity["user_id"],
+            "binding_id": "binding-1",
+            "binding_version": 2,
+            "memory_scope": "personal_private",
+            "policy_receipt_id": None,
+            "raw_audio_receipt_id": None,
+            "training_receipt_id": None,
+            "no_model_training": True,
+            "event_sequence": 9,
+            "payload": {"text": "请记住我喜欢杭州。"},
+        }
+        response = await client.post(
+            "/v1/archive/session-events",
+            headers={"X-Memoria-Internal-Token": "test-internal-archive-token"},
+            json=event,
+        )
+
+    archived = await app.state.life_archive.event(
+        account_id=identity["user_id"],
+        event_id=event["event_id"],
+    )
+    assert response.status_code == 201
+    assert archived is not None
+    candidate = archived.payload["memory_capture_candidate_v1"]
+    assert candidate == {
+        "active_subject_id": identity["user_id"],
+        "actor_id": identity["user_id"],
+        "binding_id": "binding-1",
+        "binding_version": 2,
+        "device_id": "device-1",
+        "event_sequence": 9,
+        "generation_id": 4,
+        "memory_scope": "personal_private",
+        "runtime_profile_id": "profile-1",
+        "session_id": session["session_id"],
+        "session_epoch": 1,
+        "subject_revision": 7,
+        "tool_epoch": 2,
+        "turn_id": 3,
+    }
+
+
+@pytest.mark.asyncio
 async def test_canonical_session_pair_keeps_actual_heard_as_delivery_telemetry_only(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -711,12 +830,11 @@ async def test_archive_accepts_only_the_exact_runtime_evolution_provenance(
         "X-Memoria-Evolution-Protocol": "v1",
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "evolution-provenance-owner", "password": "safe-password"},
-            )
-        ).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="evolution-provenance-owner",
+        )
         bearer = {"Authorization": f"Bearer {identity['access_token']}"}
         session = (await client.post("/v1/sessions", headers=bearer, json={})).json()
         now = datetime.now(UTC)
@@ -947,7 +1065,11 @@ async def test_explicit_memory_intent_is_server_owned_and_owner_only(
     app = create_app()
     internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (await client.post("/v1/auth/anonymous")).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="explicit-memory-owner",
+        )
         bearer = {"Authorization": f"Bearer {identity['access_token']}"}
         session = (await client.post("/v1/sessions", headers=bearer, json={})).json()
         base = {
@@ -1164,12 +1286,11 @@ async def test_raw_voice_consent_archives_owner_audio_and_revocation_deletes_blo
     wav = _wav()
     changed_wav = _wav(b"\x01\x00" * 1600)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "raw-voice-owner", "password": "safe-password"},
-            )
-        ).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="raw-voice-owner",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
         empty = await client.get("/v1/archive/raw-voice-consent", headers=headers)
@@ -1293,12 +1414,11 @@ async def test_raw_audio_waits_for_an_existing_canonical_owner_transcript(
     app.state.archive_object_store = objects
     internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "missing-raw-parent", "password": "safe-password"},
-            )
-        ).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="missing-raw-parent",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         session = (await client.post("/v1/sessions", headers=headers, json={})).json()
         grant = (
@@ -1341,12 +1461,11 @@ async def test_raw_voice_revocation_cannot_orphan_a_concurrent_upload(
     objects = TrackingArchiveObjectStore()
     app.state.archive_object_store = objects
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as setup:
-        identity = (
-            await setup.post(
-                "/v1/auth/register",
-                json={"username": "raw-voice-race", "password": "safe-password"},
-            )
-        ).json()
+        identity = await _register_verified_adult(
+            setup,
+            app,
+            username="raw-voice-race",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
         session = (await setup.post("/v1/sessions", headers=headers, json={})).json()
@@ -1412,12 +1531,11 @@ async def test_raw_voice_revocation_keeps_manifest_until_object_deletion_retries
     app.state.archive_object_store = objects
     archive = app.state.life_archive
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "raw-voice-retry", "password": "safe-password"},
-            )
-        ).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="raw-voice-retry",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
         session = (await client.post("/v1/sessions", headers=headers, json={})).json()
@@ -1487,18 +1605,16 @@ async def test_raw_voice_upload_rejects_another_accounts_consent_grant(
     objects = TrackingArchiveObjectStore()
     app.state.archive_object_store = objects
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        first = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "raw-voice-first", "password": "safe-password"},
-            )
-        ).json()
-        second = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "raw-voice-second", "password": "safe-password"},
-            )
-        ).json()
+        first = await _register_verified_adult(
+            client,
+            app,
+            username="raw-voice-first",
+        )
+        second = await _register_verified_adult(
+            client,
+            app,
+            username="raw-voice-second",
+        )
         first_headers = {"Authorization": f"Bearer {first['access_token']}"}
         second_headers = {"Authorization": f"Bearer {second['access_token']}"}
         session = (await client.post("/v1/sessions", headers=first_headers, json={})).json()
@@ -1564,15 +1680,11 @@ async def test_postgres_control_api_raw_voice_contract_matches_sqlite(
             transport=ASGITransport(app=app),
             base_url="http://test",
         ) as client:
-            identity = (
-                await client.post(
-                    "/v1/auth/register",
-                    json={
-                        "username": "postgres-http-raw-owner",
-                        "password": "safe-password",
-                    },
-                )
-            ).json()
+            identity = await _register_verified_adult(
+                client,
+                app,
+                username="postgres-http-raw-owner",
+            )
             account_id = str(identity["user_id"])
             headers = {"Authorization": f"Bearer {identity['access_token']}"}
             internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
@@ -1656,12 +1768,11 @@ async def test_cancelled_raw_audio_request_deletes_the_uncommitted_object(
     objects = TrackingArchiveObjectStore()
     app.state.archive_object_store = objects
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "cancel-raw-owner", "password": "safe-password"},
-            )
-        ).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="cancel-raw-owner",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
         session = (await client.post("/v1/sessions", headers=headers, json={})).json()
@@ -1794,7 +1905,11 @@ async def test_agent_records_session_event_without_trusting_an_account_id(
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (await client.post("/v1/auth/anonymous")).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="archive-session-event-owner",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         session = (
             await client.post(
@@ -2464,7 +2579,14 @@ async def test_session_events_canonicalize_the_user_and_assistant_permission_mat
         "caller_forged": True,
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (await client.post("/v1/auth/anonymous")).json()
+        if expected_history or expected_low_sensitivity:
+            identity = await _register_verified_adult(
+                client,
+                app,
+                username=f"archive-matrix-{speaker_class}",
+            )
+        else:
+            identity = (await client.post("/v1/auth/anonymous")).json()
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         session = (await client.post("/v1/sessions", headers=headers, json={})).json()
         user_event = await client.post(
@@ -2563,7 +2685,11 @@ async def test_session_event_retry_ignores_delivery_timestamp_but_rejects_semant
     internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
     occurred_at = datetime(2026, 7, 20, 11, 0, tzinfo=UTC)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        owner = (await client.post("/v1/auth/anonymous")).json()
+        owner = await _register_verified_adult(
+            client,
+            app,
+            username="archive-retry-owner",
+        )
         owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
         session = (await client.post("/v1/sessions", headers=owner_headers, json={})).json()
         other_session = (await client.post("/v1/sessions", headers=owner_headers, json={})).json()
@@ -2621,7 +2747,11 @@ async def test_account_can_search_review_and_trace_compiled_life_memory(
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (await client.post("/v1/auth/anonymous")).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="compiled-memory-owner",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         internal_headers = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
         session = (await client.post("/v1/sessions", headers=headers, json={})).json()
@@ -2728,8 +2858,16 @@ async def test_agent_gets_only_confirmed_owner_memory_from_the_session_account(
     app = create_app()
     internal_headers = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        first = (await client.post("/v1/auth/anonymous")).json()
-        second = (await client.post("/v1/auth/anonymous")).json()
+        first = await _register_verified_adult(
+            client,
+            app,
+            username="confirmed-memory-first",
+        )
+        second = await _register_verified_adult(
+            client,
+            app,
+            username="confirmed-memory-second",
+        )
         first_headers = {"Authorization": f"Bearer {first['access_token']}"}
         second_headers = {"Authorization": f"Bearer {second['access_token']}"}
         first_session = (
@@ -2841,12 +2979,11 @@ async def test_owner_acoustic_metrics_reach_persona_through_an_allowlist(
     app = create_app()
     internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "persona-metrics-owner", "password": "safe-password"},
-            )
-        ).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="persona-metrics-owner",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         await client.post(
             "/v1/persona/consent",

@@ -13,8 +13,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 
-SubjectCategory = Literal["adult", "minor"]
-BirthYearBand = Literal["unknown", "under_14", "14_to_17", "18_or_over"]
+from packages.contracts.generated.python.multi_subject_contracts import (
+    AgeBandValue,
+    AgeEvidenceStatusValue,
+    SubjectCategoryValue,
+)
+
+type SubjectCategory = SubjectCategoryValue
+type BirthYearBand = AgeBandValue
+type AgeEvidenceStatus = AgeEvidenceStatusValue
 Relation = Literal["parent", "legal_guardian"]
 GuardianLinkStatus = Literal["pending", "active", "revoked"]
 VerifiedVia = Literal["wechat_identity", "manual_review"]
@@ -59,37 +66,49 @@ def validate_subject_transition(
     *,
     current_category: SubjectCategory,
     current_birth_year_band: BirthYearBand,
+    current_age_evidence_status: AgeEvidenceStatus,
     target_category: SubjectCategory,
     target_birth_year_band: BirthYearBand,
+    target_age_evidence_status: AgeEvidenceStatus,
     age_eligible: bool = False,
     guardian_confirmed: bool = False,
 ) -> None:
     """Validate a policy-relevant profile update.
 
-    ``adult -> minor`` is the corrective path used when a parent registers a
-    child under the adult default.  ``minor -> adult`` is deliberately a
-    one-way ratchet: both an age authority and the active guardian relationship
-    must confirm the migration.  Merely changing the age band never upgrades
-    capabilities.
+    ``unknown -> adult`` requires verified adult evidence. ``minor -> adult``
+    additionally requires age eligibility and guardian confirmation. Merely
+    changing an age band never upgrades capabilities.
     """
 
-    if current_category not in {"adult", "minor"}:
+    if current_category not in {"unknown", "adult", "minor"}:
         raise SubjectTransitionError("current subject category is invalid")
-    if target_category not in {"adult", "minor"}:
+    if target_category not in {"unknown", "adult", "minor"}:
         raise SubjectTransitionError("target subject category is invalid")
-    valid_bands = {"unknown", "under_14", "14_to_17", "18_or_over"}
+    valid_bands = {"unknown", "under_14", "14_17", "adult"}
     if current_birth_year_band not in valid_bands:
         raise SubjectTransitionError("current birth year band is invalid")
     if target_birth_year_band not in valid_bands:
         raise SubjectTransitionError("target birth year band is invalid")
+    valid_evidence = {"unverified", "verified", "disputed"}
+    if current_age_evidence_status not in valid_evidence:
+        raise SubjectTransitionError("current age evidence status is invalid")
+    if target_age_evidence_status not in valid_evidence:
+        raise SubjectTransitionError("target age evidence status is invalid")
+    if target_category == "unknown" and target_birth_year_band != "unknown":
+        raise SubjectTransitionError("unknown subjects require an unknown age band")
     if target_category == "minor" and target_birth_year_band not in {
         "under_14",
-        "14_to_17",
+        "14_17",
     }:
         raise SubjectTransitionError("minor accounts require a minor age band")
+    if target_category == "adult" and (
+        target_birth_year_band != "adult"
+        or target_age_evidence_status != "verified"
+    ):
+        raise SubjectTransitionError(
+            "adult migration requires verified adult age evidence"
+        )
     if current_category == "minor" and target_category == "adult":
-        if target_birth_year_band != "18_or_over":
-            raise SubjectTransitionError("adult migration requires the 18_or_over band")
         if not age_eligible or not guardian_confirmed:
             raise SubjectTransitionError(
                 "minor to adult migration requires age eligibility and guardian confirmation"
@@ -97,7 +116,7 @@ def validate_subject_transition(
     if (
         current_category == "minor"
         and target_category == "minor"
-        and target_birth_year_band == "18_or_over"
+        and target_birth_year_band == "adult"
     ):
         raise SubjectTransitionError("an adult age band cannot remain a minor profile")
 
@@ -264,7 +283,12 @@ class GuardianStorePort(Protocol):
         minor_user_id: str,
     ) -> tuple[GuardianLink, ...]: ...
 
-    async def grant_consent(self, record: ConsentRecord) -> ConsentRecord: ...
+    async def grant_consent(
+        self,
+        record: ConsentRecord,
+        *,
+        actor_user_id: str | None = None,
+    ) -> ConsentRecord: ...
 
     async def get_consent(
         self,

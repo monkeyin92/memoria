@@ -13,9 +13,10 @@ test("profile exposes a dedicated four-condition owner voiceprint flow", () => {
   assert.match(profile, /bindtap="openSpeakerEnrollment"[\s\S]*主人声纹/);
 });
 
-test("owner voiceprint records sequential PCM prototypes and submits only speaker enrollment", async () => {
+test("owner voiceprint records sequential PCM prototypes and refuses submission via the config seam", async () => {
   const api = require("../utils/api");
   const originalEnroll = api.enrollSpeakerProfiles;
+  const originalRequireCapability = api.requireRuntimeCapability;
   const previousPage = global.Page;
   const previousWx = global.wx;
   const previousGetApp = global.getApp;
@@ -51,6 +52,7 @@ test("owner voiceprint records sequential PCM prototypes and submits only speake
     submitted = samples;
     return { profile_id: "speaker-shadow-2", status: "shadow" };
   };
+  api.requireRuntimeCapability = async () => ({ allowed: true, reason: "allowed" });
 
   const pagePath = require.resolve("../pages/speaker-enrollment/index");
   delete require.cache[pagePath];
@@ -61,6 +63,7 @@ test("owner voiceprint records sequential PCM prototypes and submits only speake
       data: JSON.parse(JSON.stringify(page.data)),
       setData(update) { Object.assign(this.data, update); },
     };
+    instance.data.capabilityAllowed = true;
     page.onLoad.call(instance);
     page.onConsentChange.call(instance, { detail: { value: ["accepted"] } });
     page.startRecording.call(instance, { currentTarget: { dataset: { index: 0 } } });
@@ -93,16 +96,83 @@ test("owner voiceprint records sequential PCM prototypes and submits only speake
     }));
     await page.submit.call(instance);
 
-    assert.equal(submitted.length, 4);
-    assert.deepEqual(
-      submitted.map((sample) => sample.scene),
-      ["owner-natural", "owner-soft", "owner-bright", "owner-steady"],
-    );
-    assert.equal(navigatedBack, 1);
+    // 声纹档案提交是配置动作：consent 决策接口接入前由 config seam fail-closed。
+    assert.equal(submitted, null, "config seam 未放行时不得提交声纹样本");
+    assert.equal(navigatedBack, 0);
+    assert.ok(instance.data.error.includes("尚未接入"));
     assert.equal(api.updateProfile, require("../utils/api").updateProfile);
     page.onUnload.call(instance);
   } finally {
     api.enrollSpeakerProfiles = originalEnroll;
+    api.requireRuntimeCapability = originalRequireCapability;
+    delete require.cache[pagePath];
+    if (previousPage === undefined) delete global.Page;
+    else global.Page = previousPage;
+    if (previousWx === undefined) delete global.wx;
+    else global.wx = previousWx;
+    if (previousGetApp === undefined) delete global.getApp;
+    else global.getApp = previousGetApp;
+  }
+});
+
+test("submit fails closed via the config seam regardless of capability flag", async () => {
+  const api = require("../utils/api");
+  const originalEnroll = api.enrollSpeakerProfiles;
+  const originalRequireCapability = api.requireRuntimeCapability;
+  const previousPage = global.Page;
+  const previousWx = global.wx;
+  const previousGetApp = global.getApp;
+  let enrollCalls = 0;
+
+  global.Page = (definition) => {
+    global.__speakerPage = definition;
+  };
+  global.getApp = () => ({ subscribeAuthCleared: () => () => {} });
+  global.wx = {
+    getRecorderManager: () => ({
+      onStart() {},
+      onStop() {},
+      onFrameRecorded() {},
+      onError() {},
+      onInterruptionBegin() {},
+      offStart() {},
+      offStop() {},
+      offFrameRecorded() {},
+      offError() {},
+      offInterruptionBegin() {},
+      start() {},
+      stop() {},
+    }),
+    showToast() {},
+    navigateBack() {},
+  };
+  api.enrollSpeakerProfiles = async () => {
+    enrollCalls += 1;
+  };
+  api.requireRuntimeCapability = async () => ({ allowed: true, reason: "allowed" });
+
+  const pagePath = require.resolve("../pages/speaker-enrollment/index");
+  delete require.cache[pagePath];
+  try {
+    require(pagePath);
+    const instance = {
+      ...global.__speakerPage,
+      data: JSON.parse(JSON.stringify(global.__speakerPage.data)),
+      setData(update) { Object.assign(this.data, update); },
+    };
+    instance.data.capabilityAllowed = true; // 即使页面展示态允许，提交时仍走 fresh gate。
+    instance.data.consent = true;
+    instance.data.recordings = instance.data.recordings.map((item) => ({
+      ...item,
+      ready: true,
+      sample: { audio_base64: "AQIDBA==", scene: item.scene },
+    }));
+    await global.__speakerPage.submit.call(instance);
+    assert.equal(enrollCalls, 0, "未授权时不得提交声纹样本");
+    assert.ok(instance.data.error.includes("尚未接入"), "config seam 必须给出可解释 fail-closed");
+  } finally {
+    api.enrollSpeakerProfiles = originalEnroll;
+    api.requireRuntimeCapability = originalRequireCapability;
     delete require.cache[pagePath];
     if (previousPage === undefined) delete global.Page;
     else global.Page = previousPage;

@@ -78,6 +78,23 @@ def _policy_with_references() -> ModePolicy:
     )
 
 
+def _bind_policy_with_references(runtime: object) -> None:
+    policy = _policy_with_references()
+    from dataclasses import replace as _replace
+
+    from services.agent.tests.unit.runtime_profile_test_helpers import (
+        install_playback_stop_seam,
+        install_static_refresher,
+        owner_profile_for_session,
+    )
+
+    install_static_refresher(runtime)
+    install_playback_stop_seam(runtime)
+    runtime.set_mode_policy(
+        _replace(policy, runtime_profile=owner_profile_for_session(runtime.session_id))
+    )
+
+
 def _self_preview_policy(*, references: tuple[tuple[str, str | None], ...]) -> ModePolicy:
     return ModePolicy(
         mode="self_preview",
@@ -208,9 +225,26 @@ def _legacy_fallback_turn(
     *, fallback_profile_id: str = "bright_peer"
 ) -> tuple[DuplexRuntime, SwitchableTTS, DuplexVoiceAgent]:
     tts = SwitchableTTS()
-    runtime = DuplexRuntime.create(session_id="legacy-plan-voice-race")
+    runtime = DuplexRuntime.create(
+        session_id="legacy-plan-voice-race", device_id="dev_01J_test"
+    )
     runtime.tts = tts
-    runtime.set_mode_policy(_runtime_legacy_policy(fallback_profile_id=fallback_profile_id))
+    from services.agent.tests.unit.runtime_profile_test_helpers import (
+        install_playback_stop_seam,
+        install_static_refresher,
+        personal_voice_profile,
+    )
+
+    install_static_refresher(runtime)
+    install_playback_stop_seam(runtime)
+    runtime.set_mode_policy(
+        replace(
+            _runtime_legacy_policy(fallback_profile_id=fallback_profile_id),
+            runtime_profile=personal_voice_profile(
+                "legacy-plan-voice-race", mode="legacy_access"
+            ),
+        )
+    )
 
     async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
         return SpeakerDecision(
@@ -406,8 +440,10 @@ async def test_explicitly_failed_policy_blocks_llm_generation(
 
 @pytest.mark.asyncio
 async def test_policy_mismatched_fetched_plan_downgrades_to_local_safe_plan() -> None:
-    runtime = DuplexRuntime.create(session_id="response-plan-policy-fallback")
-    runtime.set_mode_policy(_policy_with_references())
+    runtime = DuplexRuntime.create(
+        session_id="response-plan-policy-fallback", device_id="dev_01J_test"
+    )
+    _bind_policy_with_references(runtime)
 
     class Message:
         def text_content(self) -> str:

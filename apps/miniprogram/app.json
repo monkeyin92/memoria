@@ -7,7 +7,9 @@
     "pages/speaker-enrollment/index",
     "pages/auth/index",
     "pages/digital-self/index",
-    "pages/privacy/index"
+    "pages/privacy/index",
+    "pages/bind/index",
+    "pages/device/index"
   ],
   "window": {
     "backgroundColor": "#070b1a",

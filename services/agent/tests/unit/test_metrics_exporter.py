@@ -77,3 +77,54 @@ def test_provider_connection_gauge_aggregates_independent_connections() -> None:
     metrics.add_provider_ws_active("asr", -1)
 
     assert metrics.get("provider_ws_active", {"provider": "asr"}) == 1
+
+
+def test_trust_metrics_are_bounded_low_cardinality_and_exported() -> None:
+    """Remediation doc 14.2: trust counters with no session/person labels."""
+
+    metrics = MetricsRegistry()
+    metrics.inc_subject_resolution("confirmed")
+    metrics.inc_subject_resolution("unknown")
+    metrics.inc_subject_resolution("unknown")
+    metrics.inc_runtime_profile_expired_use_attempt("expired_at_use")
+    metrics.inc_runtime_profile_expired_use_attempt("expired_at_parse")
+    metrics.inc_persona_identity_confusion_event("user_identity_confusion")
+    metrics.inc_persona_identity_confusion_event("relative_impersonation")
+
+    assert metrics.get("subject_resolution_total", {"status": "confirmed"}) == 1
+    assert metrics.get("subject_resolution_total", {"status": "unknown"}) == 2
+    assert (
+        metrics.get("runtime_profile_expired_use_attempts_total", {"reason": "expired_at_use"})
+        == 1
+    )
+    assert (
+        metrics.get(
+            "persona_identity_confusion_events_total",
+            {"reason": "relative_impersonation"},
+        )
+        == 1
+    )
+
+    body = metrics.render_prometheus().decode()
+    assert 'subject_resolution_total{status="confirmed"} 1.0' in body
+    assert 'subject_resolution_total{status="unknown"} 2.0' in body
+    assert 'runtime_profile_expired_use_attempts_total{reason="expired_at_use"} 1.0' in body
+    assert 'persona_identity_confusion_events_total{reason="relative_impersonation"} 1.0' in body
+    # Forbidden high-cardinality labels must never appear.
+    assert "session_id" not in body
+    assert "person_id" not in body
+    assert "subject_id" not in body
+
+
+def test_trust_metrics_reject_unknown_label_values() -> None:
+    metrics = MetricsRegistry()
+    for call in (
+        lambda: metrics.inc_subject_resolution("maybe"),
+        lambda: metrics.inc_runtime_profile_expired_use_attempt("later"),
+        lambda: metrics.inc_persona_identity_confusion_event("any"),
+    ):
+        try:
+            call()
+        except ValueError:
+            continue
+        raise AssertionError("unknown trust-metric label value must be rejected")

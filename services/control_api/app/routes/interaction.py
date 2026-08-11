@@ -14,8 +14,16 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from packages.contracts.generated.python.multi_subject_contracts import (
+    CapabilityValue,
+    DataClassification,
+    PolicyReceiptV2,
+    RuntimeProfileSignedV2,
+    SafetyState,
+)
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from services.agent.src.prompts import AI_IDENTITY_RULE_TRANSPARENT
 from services.archive.memory_domain import MemoryCatalogPort, MemorySearchQuery, MemorySearchResult
 from services.archive.recall_planner import RecallPlanner
 from services.common.companion_response_safety import fixed_companion_reply
@@ -86,6 +94,17 @@ from services.self_model.domain import (
     RelationshipProfile,
     SelfModelNotFoundError,
     SelfModelRegistryPort,
+)
+from services.session_runtime.postgres_store import SessionRuntimeConflict
+from services.session_runtime.profile_service import (
+    PROFILE_ISSUE_DEFERRED_CAPABILITIES,
+)
+from services.session_runtime.service import (
+    CommitToolEffectCommand,
+    PersistentSessionDenied,
+    PersistentSessionNotFound,
+    PersistentSessionUnavailable,
+    PostgresSessionRuntimeService,
 )
 from services.speaker.domain import SpeakerAuthorityPort
 from services.tutor.domain import TutorFocus
@@ -400,6 +419,133 @@ class SessionPolicyRequest(BaseModel):
     speaker_class: Literal["owner", "guest", "uncertain"] | None = None
 
 
+async def _current_persistent_runtime_profile(
+    request: Request,
+    session: dict[str, Any],
+    *,
+    session_id: str,
+) -> dict[str, Any]:
+    """Read and cross-check the signed profile from the persistent authority."""
+
+    runtime_service = cast(
+        PostgresSessionRuntimeService | None,
+        getattr(request.app.state, "session_runtime_service", None),
+    )
+    if runtime_service is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_authority_unavailable"},
+        )
+    actor_id = session.get("user_id")
+    if not isinstance(actor_id, str) or not actor_id.strip():
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_context_unavailable"},
+        )
+    try:
+        profile, context = await runtime_service.current(
+            actor_id=actor_id,
+            session_id=session_id,
+            now=datetime.now(UTC),
+        )
+    except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
+        logger.warning(
+            "persistent Runtime Profile unavailable session_id=%s reason=%s",
+            session_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_authority_unavailable"},
+        ) from exc
+    except Exception as exc:
+        logger.exception(
+            "persistent Runtime Profile read failed session_id=%s",
+            session_id,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_authority_unavailable"},
+        ) from exc
+
+    expected = {
+        "session_id": session_id,
+        "actor_id": actor_id,
+        "device_id": context.device_id,
+        "binding_id": context.binding_id,
+        "binding_version": context.binding_version,
+        "active_subject_id": context.active_subject_id,
+        "subject_revision": context.subject_revision,
+        "session_epoch": context.session_epoch,
+        "runtime_profile_id": context.current_runtime_profile_id,
+    }
+    actual = {
+        "session_id": getattr(profile, "session_id", None),
+        "actor_id": getattr(profile, "actor_id", None),
+        "device_id": getattr(profile, "device_id", None),
+        "binding_id": getattr(profile, "binding_id", None),
+        "binding_version": getattr(profile, "binding_version", None),
+        "active_subject_id": getattr(profile, "active_subject_id", None),
+        "subject_revision": getattr(profile, "subject_revision", None),
+        "session_epoch": getattr(profile, "session_epoch", None),
+        "runtime_profile_id": getattr(profile, "runtime_profile_id", None),
+    }
+    if actual != expected:
+        logger.error(
+            "persistent Runtime Profile/context mismatch session_id=%s expected=%s actual=%s",
+            session_id,
+            expected,
+            actual,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_profile_binding_mismatch"},
+        )
+    now = datetime.now(UTC)
+    issued_at = getattr(profile, "issued_at", None)
+    expires_at = getattr(profile, "expires_at", None)
+    if (
+        not isinstance(issued_at, datetime)
+        or not isinstance(expires_at, datetime)
+        or issued_at.tzinfo is None
+        or expires_at.tzinfo is None
+        or now < issued_at
+        or now >= expires_at
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_profile_expired"},
+        )
+    if (
+        getattr(profile, "active_subject_id", None) is None
+        or getattr(profile, "speaker_state", None) != "confirmed"
+        or getattr(profile, "subject_category", None) == "unknown"
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_subject_unavailable"},
+        )
+    try:
+        payload = profile.model_dump(mode="json")
+    except (AttributeError, TypeError, ValueError):
+        logger.exception(
+            "persistent Runtime Profile serialization failed session_id=%s",
+            session_id,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_profile_unavailable"},
+        ) from None
+    signature = getattr(profile, "signature", None)
+    if not isinstance(payload, dict) or not isinstance(signature, str) or not signature:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_profile_unavailable"},
+        )
+    payload["signature"] = signature
+    return payload
+
+
 @router.post("/session-policy")
 async def session_policy(
     body: SessionPolicyRequest,
@@ -407,6 +553,11 @@ async def session_policy(
     _: Annotated[None, Depends(_require_policy_token)],
 ) -> dict[str, Any]:
     session = require_active_voice_session(request, body.session_id)
+    runtime_profile = await _current_persistent_runtime_profile(
+        request,
+        session,
+        session_id=body.session_id,
+    )
     frozen = FrozenMode.from_session(session)
     policy = ModePolicy.session_context(frozen)
     if frozen.interaction_mode == "companion":
@@ -427,7 +578,409 @@ async def session_policy(
             # This stays on the internal Agent policy path. The Agent adds it
             # only after the current speaker is confirmed as the account owner.
             policy["owner_display_name"] = display_name.strip()
+    profile_capabilities = {
+        str(value)
+        for value in runtime_profile.get("capabilities", ())
+        if isinstance(value, str)
+    }
+    profile_obligations = {
+        str(value.get("code"))
+        for value in runtime_profile.get("obligations", ())
+        if isinstance(value, dict) and isinstance(value.get("code"), str)
+    }
+    service_mode = runtime_profile.get("service_mode")
+    if not isinstance(service_mode, str):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_profile_unavailable"},
+        )
+    interaction_mode_by_service_mode = {
+        "student_minor": "companion",
+        "adult_companion": "companion",
+        "senior_companion": "companion",
+        "family_shared": "companion",
+        "adult_archive": "archive",
+        "self_preview": "self_preview",
+        "legacy_access": "legacy",
+        "unknown_safe": "unknown_safe",
+    }
+    interaction_mode = interaction_mode_by_service_mode.get(service_mode)
+    if interaction_mode is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_profile_unavailable"},
+        )
+    policy.update(
+        {
+            "interaction_mode": interaction_mode,
+            "mode_policy_version": runtime_profile.get(
+                "policy_bundle_version", policy["mode_policy_version"]
+            ),
+            "simulated_output": interaction_mode != "companion",
+            "history_eligible": "memory_recall_private" in profile_capabilities,
+            "owner_projection_eligible": "memory_recall_private" in profile_capabilities,
+            "capabilities": {
+                "conversation": "chat" in profile_capabilities,
+                "private_memory": "memory_recall_private" in profile_capabilities,
+                "persona": False,
+                "persona_low_sensitivity": False,
+                "tools": False,
+                "history": "memory_recall_private" in profile_capabilities,
+                "learning": (
+                    (
+                        "tutor" in profile_capabilities
+                        or "english_practice" in profile_capabilities
+                    )
+                    and "DO_NOT_WRITE_LEARNING_PROGRESS" not in profile_obligations
+                ),
+                "voice_profile": False,
+            },
+            "runtime_profile": runtime_profile,
+        }
+    )
     return policy
+
+
+class ActionPolicyRequest(BaseModel):
+    """One deferred action at an exact generation fence.
+
+    The Agent action executor supplies the action capability and the exact
+    generation/turn/tool epoch it is about to execute.  The actor is never
+    accepted from the caller: it is always derived from the Voice Session and
+    cross-checked against the signed Runtime Profile.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    session_id: str = Field(min_length=1, max_length=128)
+    runtime_profile_id: str = Field(min_length=1, max_length=128)
+    capability: CapabilityValue
+    session_epoch: int = Field(ge=1, le=2**31 - 1)
+    generation_id: int = Field(ge=0, le=2**31 - 1)
+    turn_id: int = Field(ge=0, le=2**31 - 1)
+    tool_epoch: int = Field(ge=0, le=2**31 - 1)
+    data_classification: DataClassification
+    safety_state: SafetyState
+
+
+class ToolEffectFenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    session_id: str = Field(min_length=1, max_length=128)
+    session_epoch: int = Field(ge=1, le=2**31 - 1)
+    generation_id: int = Field(ge=0, le=2**31 - 1)
+    turn_id: int = Field(ge=0, le=2**31 - 1)
+    tool_epoch: int = Field(ge=0, le=2**31 - 1)
+
+
+class ToolEffectCommitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    session_id: str = Field(min_length=1, max_length=128)
+    fence: ToolEffectFenceRequest
+    runtime_profile: dict[str, object]
+    policy_receipt: dict[str, object]
+    capability: str = Field(min_length=1, max_length=128)
+    purpose: str = Field(min_length=1, max_length=128)
+    resource_id: str = Field(min_length=1, max_length=128)
+    evidence_refs: tuple[str, ...] = Field(min_length=1, max_length=64)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+    intent: str = Field(min_length=1, max_length=512)
+    payload: dict[str, object]
+    payload_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    fence_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class ToolEffectReconcileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+@router.post("/action-policy")
+async def action_policy(
+    body: ActionPolicyRequest,
+    request: Request,
+    _: Annotated[None, Depends(_require_policy_token)],
+) -> dict[str, Any]:
+    """Authorize one deferred action at an exact action fence.
+
+    Fail-closed semantics: 401 without the internal token, 404/410 for a
+    missing/tombstoned Voice Session, 503 when the persistent Runtime
+    authority is unavailable, 403 for a forged actor/Profile/fence or a
+    capability that must stay profile-issued, and 409 for a stale fence.
+    The returned body is the complete immutable ``PolicyReceiptV2`` for the
+    action, including the exact fence and all evidence identities.
+    """
+    session = require_active_voice_session(request, body.session_id)
+    actor_id = session.get("user_id")
+    if not isinstance(actor_id, str) or not actor_id.strip():
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_context_unavailable"},
+        )
+    runtime_service = cast(
+        PostgresSessionRuntimeService | None,
+        getattr(request.app.state, "session_runtime_service", None),
+    )
+    if runtime_service is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_authority_unavailable"},
+        )
+    authorize_action = getattr(runtime_service, "authorize_action", None)
+    if not callable(authorize_action):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_authority_unavailable"},
+        )
+    # Resource-scoped and other deferred capabilities are authorized only at
+    # action time; session-level capabilities must stay profile-issued.
+    if body.capability not in PROFILE_ISSUE_DEFERRED_CAPABILITIES:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "action_capability_not_deferred"},
+        )
+    try:
+        profile, context = await runtime_service.current(
+            actor_id=actor_id,
+            session_id=body.session_id,
+            now=datetime.now(UTC),
+        )
+    except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
+        logger.warning(
+            "action-policy Runtime Profile unavailable session_id=%s reason=%s",
+            body.session_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_authority_unavailable"},
+        ) from exc
+    except Exception as exc:
+        logger.exception(
+            "action-policy Runtime Profile read failed session_id=%s",
+            body.session_id,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_authority_unavailable"},
+        ) from exc
+    if (
+        getattr(profile, "session_id", None) != body.session_id
+        or getattr(profile, "actor_id", None) != actor_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "action_actor_forged"},
+        )
+    if getattr(profile, "runtime_profile_id", None) != body.runtime_profile_id:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "action_profile_forged"},
+        )
+    if body.session_epoch != context.session_epoch:
+        if body.session_epoch < context.session_epoch:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "action_fence_stale"},
+            )
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "action_fence_forged"},
+        )
+    if (
+        body.generation_id < context.generation_id
+        or body.turn_id < context.turn_id
+        or body.tool_epoch < context.tool_epoch
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "action_fence_stale"},
+        )
+    try:
+        receipt = await authorize_action(
+            actor_id=actor_id,
+            session_id=body.session_id,
+            runtime_profile_id=body.runtime_profile_id,
+            capability=body.capability,
+            session_epoch=body.session_epoch,
+            generation_id=body.generation_id,
+            turn_id=body.turn_id,
+            tool_epoch=body.tool_epoch,
+            data_classification=body.data_classification,
+            safety_state=body.safety_state,
+            now=datetime.now(UTC),
+        )
+    except PersistentSessionDenied as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "action_denied"},
+        ) from exc
+    except SessionRuntimeConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "action_fence_conflict"},
+        ) from exc
+    except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
+        logger.warning(
+            "action-policy authority unavailable session_id=%s reason=%s",
+            body.session_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_authority_unavailable"},
+        ) from exc
+    except Exception as exc:
+        logger.exception(
+            "action-policy authorization failed session_id=%s",
+            body.session_id,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "action_authorization_unavailable"},
+        ) from exc
+    if not isinstance(receipt, PolicyReceiptV2):
+        logger.error(
+            "action-policy authority returned a non-receipt session_id=%s",
+            body.session_id,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "action_receipt_unavailable"},
+        )
+    return receipt.model_dump(mode="json")
+
+
+@router.post("/tool-effect/commit")
+async def commit_tool_effect(
+    body: ToolEffectCommitRequest,
+    request: Request,
+    _: Annotated[None, Depends(_require_policy_token)],
+) -> dict[str, object]:
+    """Commit one Agent-prepared effect through the action transaction port."""
+    session = require_active_voice_session(request, body.session_id)
+    actor_id = session.get("user_id")
+    if not isinstance(actor_id, str) or not actor_id.strip():
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_context_unavailable"},
+        )
+    if body.fence.session_id != body.session_id:
+        raise HTTPException(status_code=403, detail={"code": "tool_effect_fence_forged"})
+    runtime_service = cast(
+        PostgresSessionRuntimeService | None,
+        getattr(request.app.state, "session_runtime_service", None),
+    )
+    if runtime_service is None or not callable(
+        getattr(runtime_service, "commit_tool_effect", None)
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "tool_effect_authority_unavailable"},
+        )
+    try:
+        profile = RuntimeProfileSignedV2.model_validate(body.runtime_profile)
+        receipt = PolicyReceiptV2.model_validate(body.policy_receipt)
+        command = CommitToolEffectCommand(
+            actor_id=actor_id,
+            session_id=body.session_id,
+            runtime_profile=profile,
+            policy_receipt=receipt,
+            session_epoch=body.fence.session_epoch,
+            generation_id=body.fence.generation_id,
+            turn_id=body.fence.turn_id,
+            tool_epoch=body.fence.tool_epoch,
+            capability=body.capability,
+            purpose=body.purpose,
+            resource_id=body.resource_id,
+            evidence_refs=body.evidence_refs,
+            idempotency_key=body.idempotency_key,
+            intent=body.intent,
+            payload=body.payload,
+            payload_sha256=body.payload_sha256,
+            fence_fingerprint=body.fence_fingerprint,
+            now=datetime.now(UTC),
+        )
+        result = await runtime_service.commit_tool_effect(command)
+    except PersistentSessionDenied as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "tool_effect_denied"},
+        ) from exc
+    except SessionRuntimeConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "tool_effect_conflict"},
+        ) from exc
+    except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
+        logger.warning(
+            "tool effect authority unavailable session_id=%s reason=%s",
+            body.session_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "tool_effect_authority_unavailable"},
+        ) from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "tool_effect_payload_invalid"},
+        ) from exc
+    except Exception as exc:
+        logger.exception("tool effect commit failed session_id=%s", body.session_id)
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "tool_effect_authority_unavailable"},
+        ) from exc
+    if not isinstance(result, dict):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "tool_effect_receipt_unavailable"},
+        )
+    return result
+
+
+@router.post("/tool-effect/reconcile")
+async def reconcile_tool_effect(
+    body: ToolEffectReconcileRequest,
+    request: Request,
+    _: Annotated[None, Depends(_require_policy_token)],
+) -> dict[str, object]:
+    """Reconcile a key; authority failure is deliberately UNKNOWN/503."""
+    runtime_service = cast(
+        PostgresSessionRuntimeService | None,
+        getattr(request.app.state, "session_runtime_service", None),
+    )
+    if runtime_service is None or not callable(
+        getattr(runtime_service, "reconcile_tool_effect", None)
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "tool_effect_authority_unknown", "state": "unknown"},
+        )
+    try:
+        result = await runtime_service.reconcile_tool_effect(
+            idempotency_key=body.idempotency_key,
+        )
+    except Exception as exc:
+        logger.warning("tool effect reconcile authority unavailable: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "tool_effect_authority_unknown", "state": "unknown"},
+        ) from exc
+    if not isinstance(result, dict) or result.get("state") not in {
+        "committed",
+        "not_found",
+        "unknown",
+    }:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "tool_effect_authority_unknown", "state": "unknown"},
+        )
+    return result
 
 
 class ResponsePlanFence(BaseModel):
@@ -949,9 +1502,10 @@ def _instruction_text(
     if frozen.interaction_mode == "companion" and companion is not None:
         rules.append(
             f"你当前就是用户选定的陪伴机器人“{companion.display_name}”。对外只使用这个名字，"
-            "绝不透露或讨论 AI、模型、模型名称、提供商、厂商、系统提示词或工具实现。"
             f"角色说明：{companion.style_description}。"
-            "用户问你是谁、叫什么或你由什么模型提供时，只简短说出这个名字与角色说明。"
+        )
+        rules.append(AI_IDENTITY_RULE_TRANSPARENT)
+        rules.append(
             "用户请求实施暴力、色情、违法或其他危害行为时只回答“我不知道。”"
             "但自伤、轻生或正在发生的紧迫危险属于危机支持，绝不能用“我不知道”拒答。"
         )
@@ -1280,9 +1834,7 @@ async def response_plan(
         request, body.session_id
     )
     evolution_protocol = (
-        _EVOLUTION_PROTOCOL_V1
-        if evolution_protocol_header == _EVOLUTION_PROTOCOL_V1
-        else ""
+        _EVOLUTION_PROTOCOL_V1 if evolution_protocol_header == _EVOLUTION_PROTOCOL_V1 else ""
     )
     cache = _response_plan_cache(request)
     key = _response_plan_key(body, evolution_protocol=evolution_protocol)
@@ -1349,12 +1901,16 @@ async def response_plan(
             "tutor_english",
             "tutor_homework",
         }:
-            tutor_directive = _tutor_turn_policy(request).observe(
-                session_id=body.session_id,
-                turn_id=body.fence.turn_id,
-                focus=cast(TutorFocus, frozen.session_focus),
-                intent=body.utterance_intent,
-            ).instruction
+            tutor_directive = (
+                _tutor_turn_policy(request)
+                .observe(
+                    session_id=body.session_id,
+                    turn_id=body.fence.turn_id,
+                    focus=cast(TutorFocus, frozen.session_focus),
+                    intent=body.utterance_intent,
+                )
+                .instruction
+            )
         companion_items, persona_capsule = (
             await _companion_items(
                 request=request,
@@ -1366,9 +1922,7 @@ async def response_plan(
                 recall_context=tuple(body.recall_context),
             )
             if (
-                frozen.interaction_mode == "companion"
-                and fixed_reply is None
-                and retention_allowed
+                frozen.interaction_mode == "companion" and fixed_reply is None and retention_allowed
             )
             else ((), None)
         )

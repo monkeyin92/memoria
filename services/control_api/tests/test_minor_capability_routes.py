@@ -32,7 +32,7 @@ async def test_every_minor_forbidden_route_family_uses_the_subject_matrix(
         app.state.memory_store.update_subject_profile(
             user_id=identity["user_id"],
             subject_category="minor",
-            birth_year_band="14_to_17",
+            birth_year_band="14_17",
             now=datetime.now(UTC).isoformat(),
         )
         refreshed = (

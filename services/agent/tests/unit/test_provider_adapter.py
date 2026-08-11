@@ -1196,6 +1196,42 @@ async def test_existing_provider_adapter_evicts_terminal_generations_without_rep
 
 
 @pytest.mark.asyncio
+async def test_generation_eviction_floor_is_epoch_scoped() -> None:
+    """P0-3: same turn/generation/tool numbers under a new subject (higher
+    session_epoch) are never misjudged as already evicted by the old floor."""
+
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: FakeASR()),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, SizedTTS(8)),
+        config=ExistingVoiceProviderConfig(max_generation_history=2),
+    )
+    identity = SessionIdentity("epoch-scoped-evictions", stream_epoch=1)
+
+    def fence(epoch: int, generation: int) -> GenerationFence:
+        return GenerationFence(
+            identity.session_id,
+            turn_id=generation,
+            generation_id=generation,
+            tool_epoch=0,
+            session_epoch=epoch,
+        )
+
+    # Old subject (epoch 1) fills the history and advances the eviction floor.
+    for generation in range(1, 5):
+        assert [chunk async for chunk in adapter.generate_reply(identity, "hi", fence(1, generation))]
+    assert len(adapter._generation_started) <= 2
+    assert adapter._generation_eviction_floor is not None
+    # New subject reuses the same turn/generation numbers at epoch 2: it must
+    # be accepted, not rejected by the epoch-1 eviction floor.
+    for generation in range(1, 3):
+        assert [
+            chunk async for chunk in adapter.generate_reply(identity, "hi", fence(2, generation))
+        ]
+    assert len(adapter._generation_started) <= 2
+
+
+@pytest.mark.asyncio
 async def test_production_provider_factory_owns_session_tts_and_uses_injected_orchestrator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

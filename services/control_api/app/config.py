@@ -54,9 +54,7 @@ class ControlSettings(BaseSettings):
     # TURN password. URLs are comma-separated (turn:/turns:).
     coturn_urls: str = Field(default="", alias="COTURN_URLS")
     coturn_realm: str = Field(default="memoria", alias="COTURN_REALM")
-    coturn_shared_secret: SecretStr = Field(
-        default=SecretStr(""), alias="COTURN_SHARED_SECRET"
-    )
+    coturn_shared_secret: SecretStr = Field(default=SecretStr(""), alias="COTURN_SHARED_SECRET")
     coturn_credential_ttl_s: int = Field(
         default=300, ge=30, le=3600, alias="COTURN_CREDENTIAL_TTL_S"
     )
@@ -70,15 +68,11 @@ class ControlSettings(BaseSettings):
         default=0, ge=0, le=100, alias="STREAMCORE_EXPERIMENT_PERCENT"
     )
     streamcore_kill_switch: bool = Field(default=False, alias="STREAMCORE_KILL_SWITCH")
-    streamcore_slo_gate_enabled: bool = Field(
-        default=False, alias="STREAMCORE_SLO_GATE_ENABLED"
-    )
+    streamcore_slo_gate_enabled: bool = Field(default=False, alias="STREAMCORE_SLO_GATE_ENABLED")
     media_slo_snapshot_ttl_s: int = Field(
         default=120, ge=30, le=900, alias="MEDIA_SLO_SNAPSHOT_TTL_S"
     )
-    media_slo_report_token: SecretStr = Field(
-        default=SecretStr(""), alias="MEDIA_SLO_REPORT_TOKEN"
-    )
+    media_slo_report_token: SecretStr = Field(default=SecretStr(""), alias="MEDIA_SLO_REPORT_TOKEN")
     streamcore_whip_url: str = Field(default="", alias="STREAMCORE_WHIP_URL")
     media_edge_control_url: str = Field(default="", alias="MEDIA_EDGE_CONTROL_URL")
     media_edge_control_timeout_s: float = Field(
@@ -96,12 +90,8 @@ class ControlSettings(BaseSettings):
     streamcore_token_private_key_pem: SecretStr = Field(
         default=SecretStr(""), alias="STREAMCORE_TOKEN_PRIVATE_KEY_PEM"
     )
-    streamcore_token_key_id: str = Field(
-        default="streamcore-1", alias="STREAMCORE_TOKEN_KEY_ID"
-    )
-    streamcore_token_ttl_s: int = Field(
-        default=120, ge=30, le=300, alias="STREAMCORE_TOKEN_TTL_S"
-    )
+    streamcore_token_key_id: str = Field(default="streamcore-1", alias="STREAMCORE_TOKEN_KEY_ID")
+    streamcore_token_ttl_s: int = Field(default=120, ge=30, le=300, alias="STREAMCORE_TOKEN_TTL_S")
     device_challenge_ttl_ms: int = Field(
         default=120_000, ge=10_000, le=600_000, alias="DEVICE_CHALLENGE_TTL_MS"
     )
@@ -143,6 +133,93 @@ class ControlSettings(BaseSettings):
     guardian_database_url: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_GUARDIAN_DATABASE_URL",
+    )
+    # PR-13 governance roles: separate LOGIN/NOBYPASSRLS credentials for the
+    # account export/delete path and the outbox worker.  Never reuse the API
+    # guardian DSN; unset means those operations fail closed (503/error).
+    guardian_maintenance_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_GUARDIAN_MAINTENANCE_DATABASE_URL",
+    )
+    guardian_worker_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_GUARDIAN_WORKER_DATABASE_URL",
+    )
+    identity_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_IDENTITY_DATABASE_URL",
+    )
+    consent_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_CONSENT_DATABASE_URL",
+    )
+    identity_registration_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_IDENTITY_REGISTRATION_DATABASE_URL",
+    )
+    session_runtime_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_SESSION_RUNTIME_DATABASE_URL",
+    )
+    action_executor_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_ACTION_EXECUTOR_DATABASE_URL",
+    )
+    memory_api_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_MEMORY_API_DATABASE_URL",
+    )
+    memory_worker_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_MEMORY_WORKER_DATABASE_URL",
+    )
+    memory_bootstrap_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_MEMORY_BOOTSTRAP_DATABASE_URL",
+    )
+    memory_schema_managed_externally: bool = Field(
+        default=False,
+        alias="MEMORIA_MEMORY_SCHEMA_MANAGED_EXTERNALLY",
+    )
+    session_runtime_bootstrap_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_SESSION_RUNTIME_BOOTSTRAP_DATABASE_URL",
+    )
+    session_runtime_schema_managed_externally: bool = Field(
+        default=False,
+        alias="MEMORIA_SESSION_RUNTIME_SCHEMA_MANAGED_EXTERNALLY",
+    )
+    session_runtime_projector_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_SESSION_RUNTIME_PROJECTOR_DATABASE_URL",
+    )
+    session_runtime_worker_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_SESSION_RUNTIME_WORKER_DATABASE_URL",
+    )
+    session_runtime_maintenance_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_SESSION_RUNTIME_MAINTENANCE_DATABASE_URL",
+    )
+    identity_db_path: str = Field(
+        default="",
+        alias="MEMORIA_IDENTITY_DB_PATH",
+    )
+    consent_db_path: str = Field(
+        default="",
+        alias="MEMORIA_CONSENT_DB_PATH",
+    )
+    runtime_profile_signing_secret: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET",
+    )
+    device_binding_token_secret: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_DEVICE_BINDING_TOKEN_SECRET",
+    )
+    transfer_evidence_secret: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_TRANSFER_EVIDENCE_SECRET",
     )
     evolution_db_path: str = Field(
         default="",
@@ -276,6 +353,30 @@ class ControlSettings(BaseSettings):
         ge=1,
         le=1000,
         alias="MEMORIA_ARCHIVE_COMPILE_BATCH_SIZE",
+    )
+    archive_compile_lease_s: float = Field(
+        default=300.0,
+        ge=5.0,
+        le=3600.0,
+        alias="MEMORIA_ARCHIVE_COMPILE_LEASE_S",
+    )
+    archive_compile_max_attempts: int = Field(
+        default=8,
+        ge=1,
+        le=100,
+        alias="MEMORIA_ARCHIVE_COMPILE_MAX_ATTEMPTS",
+    )
+    archive_compile_retry_base_s: float = Field(
+        default=2.0,
+        ge=0.1,
+        le=300.0,
+        alias="MEMORIA_ARCHIVE_COMPILE_RETRY_BASE_S",
+    )
+    archive_compile_retry_max_s: float = Field(
+        default=300.0,
+        ge=0.1,
+        le=3600.0,
+        alias="MEMORIA_ARCHIVE_COMPILE_RETRY_MAX_S",
     )
     corpus_retention_interval_s: float = Field(
         default=300.0,
@@ -683,9 +784,7 @@ class ControlSettings(BaseSettings):
         return self.memoria_auth_secret.get_secret_value()
 
     def wechat_avatar_base_url(self) -> str:
-        return (
-            self.wechat_avatar_public_base_url.strip() or self.public_base_url
-        ).rstrip("/")
+        return (self.wechat_avatar_public_base_url.strip() or self.public_base_url).rstrip("/")
 
     def archive_object_read_key_map(self) -> dict[str, str]:
         return _read_key_map(
@@ -705,7 +804,9 @@ class ControlSettings(BaseSettings):
 
         configured = self.evolution_trusted_root_sha256.strip().lower()
         if configured:
-            if len(configured) != 64 or any(character not in "0123456789abcdef" for character in configured):
+            if len(configured) != 64 or any(
+                character not in "0123456789abcdef" for character in configured
+            ):
                 raise ValueError("MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256 must be a sha256 digest")
             return configured
         release_tag = self.memoria_release_tag.strip() or "development"
@@ -729,6 +830,42 @@ class ControlSettings(BaseSettings):
             return configured
         memory_path = Path(self.memoria_db_path)
         return str(memory_path.with_name(f"{memory_path.stem}-evolution.sqlite3"))
+
+    def identity_sqlite_path(self) -> str:
+        configured = self.identity_db_path.strip()
+        if configured:
+            return configured
+        memory_path = Path(self.memoria_db_path)
+        return str(memory_path.with_name(f"{memory_path.stem}-identity.sqlite3"))
+
+    def consent_sqlite_path(self) -> str:
+        configured = self.consent_db_path.strip()
+        if configured:
+            return configured
+        memory_path = Path(self.memoria_db_path)
+        return str(memory_path.with_name(f"{memory_path.stem}-consent.sqlite3"))
+
+    def runtime_profile_signing_key(self) -> bytes:
+        configured = self.runtime_profile_signing_secret.get_secret_value().strip()
+        if configured:
+            return configured.encode("utf-8")
+        if self.environment == "production":
+            return b""
+        return self.memoria_auth_secret.get_secret_value().encode("utf-8")
+
+    def device_binding_token_key(self) -> bytes:
+        configured = self.device_binding_token_secret.get_secret_value().strip()
+        if configured:
+            return configured.encode("utf-8")
+        if self.environment == "production":
+            return b""
+        return self.memoria_auth_secret.get_secret_value().encode("utf-8")
+
+    def transfer_evidence_key(self) -> bytes:
+        configured = self.transfer_evidence_secret.get_secret_value().strip()
+        if configured:
+            return configured.encode("utf-8")
+        return b""
 
     def voice_sample_read_key_map(self) -> dict[str, str]:
         return _read_key_map(
@@ -794,7 +931,9 @@ class ControlSettings(BaseSettings):
             if has_private_key and not self.streamcore_token_key_id.strip():
                 raise ValueError("production StreamCore rollout requires STREAMCORE_TOKEN_KEY_ID")
             if not self.streamcore_slo_gate_enabled:
-                raise ValueError("production StreamCore rollout requires STREAMCORE_SLO_GATE_ENABLED")
+                raise ValueError(
+                    "production StreamCore rollout requires STREAMCORE_SLO_GATE_ENABLED"
+                )
             if len(self.media_slo_report_token.get_secret_value()) < 32:
                 raise ValueError("production StreamCore rollout requires MEDIA_SLO_REPORT_TOKEN")
         auth_secret = self.memoria_auth_secret.get_secret_value()
@@ -889,9 +1028,7 @@ class ControlSettings(BaseSettings):
             raise ValueError("production requires MEMORIA_ARCHIVE_DATABASE_URL for PostgreSQL")
         evolution_url = self.evolution_database_url.get_secret_value()
         if not evolution_url.startswith(("postgresql://", "postgres://")):
-            raise ValueError(
-                "production requires MEMORIA_EVOLUTION_DATABASE_URL for PostgreSQL"
-            )
+            raise ValueError("production requires MEMORIA_EVOLUTION_DATABASE_URL for PostgreSQL")
         evolution_user = urlsplit(evolution_url).username or ""
         archive_user = urlsplit(archive_url).username or ""
         if (
@@ -905,10 +1042,82 @@ class ControlSettings(BaseSettings):
             )
         guardian_url = self.guardian_database_url.get_secret_value()
         if not guardian_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError("production requires MEMORIA_GUARDIAN_DATABASE_URL for PostgreSQL")
+        identity_url = self.identity_database_url.get_secret_value()
+        if not identity_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError("production requires MEMORIA_IDENTITY_DATABASE_URL for PostgreSQL")
+        consent_url = self.consent_database_url.get_secret_value()
+        if not consent_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError("production requires MEMORIA_CONSENT_DATABASE_URL for PostgreSQL")
+        consent_user = urlsplit(consent_url).username or ""
+        if (
+            consent_user != "memoria_consent"
+            or consent_url
+            in {
+                archive_url,
+                evolution_url,
+                guardian_url,
+                identity_url,
+            }
+            or consent_user
+            in {
+                archive_user,
+                evolution_user,
+                urlsplit(guardian_url).username or "",
+                urlsplit(identity_url).username or "",
+            }
+        ):
             raise ValueError(
-                "production requires MEMORIA_GUARDIAN_DATABASE_URL for PostgreSQL"
+                "production requires MEMORIA_CONSENT_DATABASE_URL to use the "
+                "independent memoria_consent role"
+            )
+        identity_registration_url = self.identity_registration_database_url.get_secret_value()
+        if not identity_registration_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError(
+                "production requires MEMORIA_IDENTITY_REGISTRATION_DATABASE_URL "
+                "(dedicated memoria_identity_registration role) for PostgreSQL "
+                "person registration; missing registration authority fails closed"
+            )
+        identity_registration_user = urlsplit(identity_registration_url).username or ""
+        if identity_registration_user != "memoria_identity_registration":
+            raise ValueError(
+                "production requires MEMORIA_IDENTITY_REGISTRATION_DATABASE_URL "
+                "to use the independent memoria_identity_registration role"
+            )
+        runtime_profile_secret = self.runtime_profile_signing_secret.get_secret_value()
+        device_binding_secret = self.device_binding_token_secret.get_secret_value()
+        transfer_secret = self.transfer_evidence_secret.get_secret_value()
+        if len(runtime_profile_secret) < 32 or runtime_profile_secret in {
+            auth_secret,
+            self.livekit_api_secret,
+            *capability_tokens.values(),
+        }:
+            raise ValueError(
+                "production requires an independent "
+                "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET (>=32 chars)"
+            )
+        if len(device_binding_secret) < 32 or device_binding_secret in {
+            auth_secret,
+            self.livekit_api_secret,
+            runtime_profile_secret,
+            *capability_tokens.values(),
+        }:
+            raise ValueError(
+                "production requires an independent "
+                "MEMORIA_DEVICE_BINDING_TOKEN_SECRET (>=32 chars)"
+            )
+        if len(transfer_secret) < 32 or transfer_secret in {
+            auth_secret,
+            self.livekit_api_secret,
+            runtime_profile_secret,
+            device_binding_secret,
+            *capability_tokens.values(),
+        }:
+            raise ValueError(
+                "production requires an independent MEMORIA_TRANSFER_EVIDENCE_SECRET (>=32 chars)"
             )
         guardian_user = urlsplit(guardian_url).username or ""
+        identity_user = urlsplit(identity_url).username or ""
         if (
             guardian_url in {archive_url, evolution_url}
             or guardian_user != "memoria_guardian"
@@ -917,6 +1126,47 @@ class ControlSettings(BaseSettings):
             raise ValueError(
                 "production requires MEMORIA_GUARDIAN_DATABASE_URL to use the independent "
                 "memoria_guardian role"
+            )
+        guardian_maintenance_url = self.guardian_maintenance_database_url.get_secret_value()
+        if not guardian_maintenance_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError(
+                "production requires MEMORIA_GUARDIAN_MAINTENANCE_DATABASE_URL for "
+                "PostgreSQL (dedicated memoria_guardian_maintenance role); account "
+                "export/delete fails closed without it"
+            )
+        guardian_worker_url = self.guardian_worker_database_url.get_secret_value()
+        if not guardian_worker_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError(
+                "production requires MEMORIA_GUARDIAN_WORKER_DATABASE_URL for "
+                "PostgreSQL (dedicated memoria_guardian_worker role); outbox "
+                "delivery fails closed without it"
+            )
+        guardian_maintenance_user = urlsplit(guardian_maintenance_url).username or ""
+        guardian_worker_user = urlsplit(guardian_worker_url).username or ""
+        if (
+            guardian_maintenance_user != "memoria_guardian_maintenance"
+            or guardian_worker_user != "memoria_guardian_worker"
+            or guardian_maintenance_url == guardian_url
+            or guardian_worker_url == guardian_url
+            or guardian_maintenance_url == guardian_worker_url
+            or guardian_maintenance_user == guardian_user
+            or guardian_worker_user == guardian_user
+            or guardian_maintenance_user == guardian_worker_user
+        ):
+            raise ValueError(
+                "production requires MEMORIA_GUARDIAN_MAINTENANCE_DATABASE_URL and "
+                "MEMORIA_GUARDIAN_WORKER_DATABASE_URL to use the independent "
+                "memoria_guardian_maintenance / memoria_guardian_worker roles, "
+                "distinct from each other and from the API memoria_guardian role"
+            )
+        if (
+            identity_url in {archive_url, evolution_url, guardian_url}
+            or identity_user != "memoria_identity"
+            or identity_user in {archive_user, evolution_user, guardian_user}
+        ):
+            raise ValueError(
+                "production requires MEMORIA_IDENTITY_DATABASE_URL to use the independent "
+                "memoria_identity role"
             )
         speaker_token = self.speaker_internal_token.get_secret_value()
         embedding_token = self.speaker_embedding_token.get_secret_value()
@@ -1044,6 +1294,150 @@ class ControlSettings(BaseSettings):
         release_tag = self.memoria_release_tag.strip().lower()
         if release_tag in ("", "latest", "development"):
             raise ValueError("production requires an immutable MEMORIA_RELEASE_TAG")
+        session_runtime_url = self.session_runtime_database_url.get_secret_value().strip()
+        action_executor_url = self.action_executor_database_url.get_secret_value().strip()
+        session_runtime_bootstrap_url = (
+            self.session_runtime_bootstrap_database_url.get_secret_value().strip()
+        )
+        session_runtime_projector_url = (
+            self.session_runtime_projector_database_url.get_secret_value().strip()
+        )
+        session_runtime_worker_url = (
+            self.session_runtime_worker_database_url.get_secret_value().strip()
+        )
+        session_runtime_maintenance_url = (
+            self.session_runtime_maintenance_database_url.get_secret_value().strip()
+        )
+        session_runtime_dsns = {
+            "MEMORIA_SESSION_RUNTIME_DATABASE_URL": (
+                session_runtime_url,
+                "memoria_session_api",
+            ),
+            "MEMORIA_ACTION_EXECUTOR_DATABASE_URL": (
+                action_executor_url,
+                "memoria_action_executor",
+            ),
+            "MEMORIA_SESSION_RUNTIME_PROJECTOR_DATABASE_URL": (
+                session_runtime_projector_url,
+                "memoria_session_projector",
+            ),
+            "MEMORIA_SESSION_RUNTIME_WORKER_DATABASE_URL": (
+                session_runtime_worker_url,
+                "memoria_session_worker",
+            ),
+            "MEMORIA_SESSION_RUNTIME_MAINTENANCE_DATABASE_URL": (
+                session_runtime_maintenance_url,
+                "memoria_session_maintenance",
+            ),
+        }
+        for field_name, (dsn, expected_role) in session_runtime_dsns.items():
+            if not dsn.startswith(("postgresql://", "postgres://")):
+                raise ValueError(
+                    f"production requires {field_name} for PostgreSQL "
+                    f"(dedicated {expected_role} role)"
+                )
+            if (urlsplit(dsn).username or "") != expected_role:
+                raise ValueError(
+                    f"production requires {field_name} to use the independent {expected_role} role"
+                )
+        externally_managed = self.session_runtime_schema_managed_externally
+        has_bootstrap_url = session_runtime_bootstrap_url.startswith(
+            ("postgresql://", "postgres://")
+        )
+        if has_bootstrap_url == externally_managed:
+            raise ValueError(
+                "production requires exactly one Session Runtime schema management "
+                "mode: MEMORIA_SESSION_RUNTIME_BOOTSTRAP_DATABASE_URL or "
+                "MEMORIA_SESSION_RUNTIME_SCHEMA_MANAGED_EXTERNALLY=true"
+            )
+        runtime_roles = {expected_role for _, expected_role in session_runtime_dsns.values()}
+        runtime_users = {urlsplit(dsn).username or "" for dsn, _ in session_runtime_dsns.values()}
+        if len(runtime_users) != len(runtime_roles):
+            raise ValueError("production Session Runtime PostgreSQL roles must be distinct")
+        existing_domain_roles = {
+            archive_user,
+            evolution_user,
+            urlsplit(guardian_url).username or "",
+            identity_user,
+            identity_registration_user,
+            consent_user,
+            urlsplit(self.archive_compiler_database_url.get_secret_value()).username or "",
+        }
+        if runtime_users & existing_domain_roles:
+            raise ValueError(
+                "production Session Runtime PostgreSQL roles must not be reused "
+                "by archive, evolution, guardian, identity, or compiler"
+            )
+        if has_bootstrap_url:
+            bootstrap_user = urlsplit(session_runtime_bootstrap_url).username or ""
+            if (
+                not bootstrap_user
+                or bootstrap_user in runtime_roles
+                or session_runtime_bootstrap_url
+                in {dsn for dsn, _ in session_runtime_dsns.values()}
+            ):
+                raise ValueError(
+                    "production requires an independent Session Runtime bootstrap "
+                    "owner/admin DSN distinct from all runtime login roles"
+                )
+        memory_api_url = self.memory_api_database_url.get_secret_value().strip()
+        memory_worker_url = self.memory_worker_database_url.get_secret_value().strip()
+        memory_bootstrap_url = (
+            self.memory_bootstrap_database_url.get_secret_value().strip()
+        )
+        memory_dsns = {
+            "MEMORIA_MEMORY_API_DATABASE_URL": (
+                memory_api_url,
+                "memoria_memory_api",
+            ),
+            "MEMORIA_MEMORY_WORKER_DATABASE_URL": (
+                memory_worker_url,
+                "memoria_memory_worker",
+            ),
+        }
+        for field_name, (dsn, expected_role) in memory_dsns.items():
+            if not dsn.startswith(("postgresql://", "postgres://")):
+                raise ValueError(
+                    f"production requires {field_name} for PostgreSQL "
+                    f"(dedicated {expected_role} role)"
+                )
+            if (urlsplit(dsn).username or "") != expected_role:
+                raise ValueError(
+                    f"production requires {field_name} to use the independent "
+                    f"{expected_role} role"
+                )
+        memory_external = self.memory_schema_managed_externally
+        has_memory_bootstrap = memory_bootstrap_url.startswith(
+            ("postgresql://", "postgres://")
+        )
+        if has_memory_bootstrap == memory_external:
+            raise ValueError(
+                "production requires exactly one MemoryScope schema management "
+                "mode: MEMORIA_MEMORY_BOOTSTRAP_DATABASE_URL or "
+                "MEMORIA_MEMORY_SCHEMA_MANAGED_EXTERNALLY=true"
+            )
+        memory_users = {
+            urlsplit(memory_api_url).username or "",
+            urlsplit(memory_worker_url).username or "",
+        }
+        if len(memory_users) != 2 or memory_users & (
+            runtime_users | existing_domain_roles
+        ):
+            raise ValueError(
+                "production MemoryScope PostgreSQL roles must be distinct and "
+                "must not reuse another domain role"
+            )
+        if has_memory_bootstrap:
+            memory_bootstrap_user = urlsplit(memory_bootstrap_url).username or ""
+            if (
+                not memory_bootstrap_user
+                or memory_bootstrap_user in memory_users
+                or memory_bootstrap_user in runtime_users
+            ):
+                raise ValueError(
+                    "production requires an independent MemoryScope bootstrap "
+                    "owner/admin DSN"
+                )
         if not self.evolution_trusted_root_sha256.strip():
             raise ValueError(
                 "production requires MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256 from the release manifest"

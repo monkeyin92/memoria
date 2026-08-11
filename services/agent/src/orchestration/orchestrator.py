@@ -16,6 +16,7 @@ from services.agent.src.contracts.ids import (
     GenerationFence,
     new_session_id,
 )
+from services.agent.src.identity_state import drain_epoch_rotation
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.context_manager import (
     ChatMessage,
@@ -44,6 +45,7 @@ from services.agent.src.orchestration.state_machine import (
 )
 from services.agent.src.orchestration.task_manager import TaskManager
 from services.agent.src.prompts import VOICE_SYSTEM_PROMPT
+from services.agent.src.runtime_profile_gate import RuntimeProfileGate
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,7 @@ class TTSPoolHandle:
 @dataclass
 class Orchestrator:
     session_id: str = field(default_factory=new_session_id)
+    device_id: str | None = None
     metrics: MetricsRegistry = field(default_factory=MetricsRegistry)
     state_machine: DuplexStateMachine | None = None
     fence_gate: FenceGate | None = None
@@ -109,6 +112,8 @@ class Orchestrator:
     interruption_guard: ChineseInterruptionGuard = field(default_factory=ChineseInterruptionGuard)
     playback: PlaybackController = field(default_factory=PlaybackController)
     tts_pool: TTSPoolHandle = field(default_factory=TTSPoolHandle)
+    playback_stop_seam: Callable[[], Awaitable[Any]] | None = None
+    epoch_drain_timeout_s: float = 2.0
     mic_open: bool = True  # MUST remain true while assistant speaks
     vad_active: bool = True
     asr_active: bool = True
@@ -123,6 +128,7 @@ class Orchestrator:
     _pending_interrupted_message: ChatMessage | None = None
     _speaker_scope_by_turn: dict[int, SpeakerScope] = field(default_factory=dict)
     _context_version_by_fence: dict[GenerationFence, int] = field(default_factory=dict)
+    runtime_profiles: RuntimeProfileGate = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.delegation = DelegationCoordinator(self.task_manager)
@@ -146,6 +152,12 @@ class Orchestrator:
             self.fence_gate = FenceGate(current=fence, metrics=self.metrics)
         if self.segmenter is None:
             self.segmenter = PhraseSegmenter(fence=fence)
+        self.runtime_profiles = RuntimeProfileGate(
+            metrics=self.metrics,
+            bump_epoch=self.bump_session_epoch,
+            expected_session_id=self.session_id,
+            expected_device_id=self.device_id,
+        )
 
     @property
     def state(self) -> ConversationState:
@@ -191,6 +203,59 @@ class Orchestrator:
         while len(self._context_version_by_fence) > self.context.max_turns:
             self._context_version_by_fence.pop(next(iter(self._context_version_by_fence)))
         return True
+
+    def bump_session_epoch(self, epoch: int) -> GenerationFence:
+        """Advance the identity epoch and clear the private working context.
+
+        Called when a new RuntimeProfile with a higher ``session_epoch`` is
+        frozen (remediation doc PR-08: subject switch clears private context,
+        late results from the previous epoch are rejected by the fence gate).
+        Synchronous on purpose: it must run between turns (no awaits inside),
+        so a single-threaded event loop observes it atomically.
+        """
+
+        assert self.state_machine is not None
+        assert self.fence_gate is not None
+        assert self.segmenter is not None
+        if epoch <= self.fence.session_epoch:
+            raise ValueError(
+                f"session epoch must strictly advance: {epoch} <= {self.fence.session_epoch}"
+            )
+        if self.state is ConversationState.CLOSED:
+            raise RuntimeError("cannot bump session epoch on a closed session")
+        new_fence = self.fence.with_session_epoch(epoch)
+        self.state_machine.fence = new_fence
+        self.fence_gate.update(new_fence)
+        self.segmenter.reset(new_fence)
+        self.heard_tracker.reset()
+        self.context.reset_identity()
+        self._speaker_scope_by_turn.clear()
+        self._context_version_by_fence.clear()
+        # Epoch rotation is a correctness fence, not a hint: synchronously
+        # signal/cancel every old-fence async owner (TTS, LLM, cancellable
+        # tool/delegation work) so the old subject cannot keep consuming
+        # private data or committing side effects after the switch.  All
+        # old-fence records are marked cancelled so a late commit is refused.
+        self._tts_cancel.set()
+        for task in (self._active_llm_task, self._active_tts_task):
+            if task is not None and not task.done():
+                task.cancel()
+        for record in self.task_manager.tasks.values():
+            if record.finished or record.fence.session_epoch >= new_fence.session_epoch:
+                continue
+            record.cancel_event.set()
+            record.cancelled = True
+            if record.cancellable and not record.task.done():
+                record.task.cancel()
+        fresh = self.context_snapshots.reset_identity(self.session_id)
+        self.delegation.activate_context_version(self.session_id, fresh.version)
+        self._context_version_by_fence[new_fence] = fresh.version
+        return new_fence
+
+    async def drain_epoch_rotation(self, old_fence: GenerationFence) -> None:
+        """Async drain barrier after a synchronous epoch bump (PR-08)."""
+
+        await drain_epoch_rotation(self, old_fence)
 
     async def ready(self) -> None:
         assert self.state_machine is not None
@@ -403,11 +468,13 @@ class Orchestrator:
         token: str,
     ) -> str | None:
         assert self.fence_gate is not None
-        return self.fence_gate.gate(
-            self._generation_fence(cancellation),
-            token,
-            source="llm",
-        )
+        fence = self._generation_fence(cancellation)
+        gated = self.fence_gate.gate(fence, token, source="llm")
+        if gated is None or not self.runtime_profiles.output_allowed(
+            fence, current_fence=self.fence
+        ):
+            return None
+        return gated
 
     def gate_tts_audio(
         self,
@@ -420,6 +487,9 @@ class Orchestrator:
         if out is None:
             self.stale_audio_outputs += 1
             return None
+        if not self.runtime_profiles.output_allowed(fence, current_fence=self.fence):
+            self.stale_audio_outputs += 1
+            return None
         self.published_audio_generations.append(fence.generation_id)
         return out
 
@@ -430,11 +500,13 @@ class Orchestrator:
     ) -> Any | None:
         assert self.fence_gate is not None
         # Full fence including tool_epoch
-        return self.fence_gate.gate(
-            self._generation_fence(cancellation),
-            payload,
-            source="tool",
-        )
+        fence = self._generation_fence(cancellation)
+        gated = self.fence_gate.gate(fence, payload, source="tool")
+        if gated is None or not self.runtime_profiles.output_allowed(
+            fence, current_fence=self.fence
+        ):
+            return None
+        return gated
 
     def set_active_llm_task(self, task: asyncio.Task[Any] | None) -> None:
         """Register the in-flight LLM generation task for atomic interrupt cancel."""

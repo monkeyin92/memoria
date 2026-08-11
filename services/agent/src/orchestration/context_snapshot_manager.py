@@ -162,6 +162,58 @@ class ContextSnapshotManager:
         self.metrics.set_context_snapshot_size(snapshot.size_chars)
         return snapshot
 
+    def reset_identity(self, session_id: str) -> ContextSnapshot:
+        """Create a fresh empty snapshot at a new version (identity reset).
+
+        The old subject's memory/persona/summary snapshot is replaced atomically
+        with an empty draft at version + 1, so the new epoch can never bind the
+        previous subject's context (P0-3).
+        """
+
+        current = self.current(session_id)
+        snapshot = self._snapshot(session_id, current.version + 1, ContextSnapshotDraft())
+        self._current[session_id] = snapshot
+        self.metrics.set_context_snapshot_size(snapshot.size_chars)
+        return snapshot
+
+    def rebind_identity(self, session_id: str, draft: ContextSnapshotDraft) -> ContextSnapshot:
+        """Replace an empty identity-reset snapshot with the current draft."""
+
+        current = self.current(session_id)
+        snapshot = self._snapshot(session_id, current.version + 1, draft)
+        self._current[session_id] = snapshot
+        self.metrics.set_context_snapshot_size(snapshot.size_chars)
+        return snapshot
+
+    def seed_or_rebind_if_empty(
+        self,
+        session_id: str,
+        *,
+        first_turn: bool,
+        draft_factory: Callable[[], ContextSnapshotDraft],
+        delegation: object,
+    ) -> bool:
+        """Seed (or rebind) the initial snapshot only while it is empty."""
+
+        if not first_turn:
+            return False
+        snap = self.current(session_id)
+        if snap.version != 0 and (
+            snap.recent_committed_turns
+            or snap.memory_capsule.entries
+            or snap.persona_capsule.prompt_fragment
+            or snap.summary
+        ):
+            return False
+        draft = draft_factory()
+        fresh = (
+            self.seed_initial(session_id, draft)
+            if snap.version == 0
+            else self.rebind_identity(session_id, draft)
+        )
+        delegation.activate_context_version(session_id, fresh.version)  # type: ignore[attr-defined]
+        return True
+
     async def prepare_next(
         self,
         session_id: str,

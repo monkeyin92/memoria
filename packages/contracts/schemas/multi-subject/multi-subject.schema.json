@@ -1,0 +1,1913 @@
+{
+  "$id": "memoria://contracts/multi-subject.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Memoria multi-subject canonical contracts",
+  "description": "多主体 schema v2 单一权威。基础域、关系、策略、通知、记忆与会话的所有枚举及对象形状均由本文件生成到 Python/TypeScript/Go/固件；objects 下禁止内嵌第二套 enum。",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 2,
+      "description": "合同版本。任何取值变更（增删值、改默认、改 fail-closed 策略）必须递增并同步更新 ADR-0033。"
+    },
+    "DeviceDeclaredMode": {
+      "$ref": "#/$defs/DeviceDeclaredMode"
+    },
+    "ServiceMode": {
+      "$ref": "#/$defs/ServiceMode"
+    },
+    "SubjectCategory": {
+      "$ref": "#/$defs/SubjectCategory"
+    },
+    "AgeBand": {
+      "$ref": "#/$defs/AgeBand"
+    },
+    "AgeEvidenceStatus": {
+      "$ref": "#/$defs/AgeEvidenceStatus"
+    },
+    "BindingRole": {
+      "$ref": "#/$defs/BindingRole"
+    },
+    "RelationshipType": {
+      "$ref": "#/$defs/RelationshipType"
+    },
+    "RelationshipStatus": {
+      "$ref": "#/$defs/RelationshipStatus"
+    },
+    "SpeakerState": {
+      "$ref": "#/$defs/SpeakerState"
+    },
+    "MemoryScope": {
+      "$ref": "#/$defs/MemoryScope"
+    },
+    "PolicyEffect": {
+      "$ref": "#/$defs/PolicyEffect"
+    },
+    "PolicyObligation": {
+      "$ref": "#/$defs/PolicyObligation"
+    },
+    "Capability": {
+      "$ref": "#/$defs/Capability"
+    },
+    "Purpose": {
+      "$ref": "#/$defs/Purpose"
+    },
+    "DeviceTrust": {
+      "$ref": "#/$defs/DeviceTrust"
+    },
+    "SafetyState": {
+      "$ref": "#/$defs/SafetyState"
+    },
+    "DataClassification": {
+      "$ref": "#/$defs/DataClassification"
+    },
+    "BindingStatus": {
+      "$ref": "#/$defs/BindingStatus"
+    },
+    "BindingReason": {
+      "$ref": "#/$defs/BindingReason"
+    },
+    "IntentKind": {
+      "$ref": "#/$defs/IntentKind"
+    },
+    "RecipientRole": {
+      "$ref": "#/$defs/RecipientRole"
+    },
+    "Channel": {
+      "$ref": "#/$defs/Channel"
+    },
+    "TemplateKey": {
+      "$ref": "#/$defs/TemplateKey"
+    },
+    "ReasonCode": {
+      "$ref": "#/$defs/ReasonCode"
+    },
+    "IntentStatus": {
+      "$ref": "#/$defs/IntentStatus"
+    },
+    "RecipientStatus": {
+      "$ref": "#/$defs/RecipientStatus"
+    },
+    "CancelReason": {
+      "$ref": "#/$defs/CancelReason"
+    },
+    "ResolutionKind": {
+      "$ref": "#/$defs/ResolutionKind"
+    },
+    "ConfirmationMethod": {
+      "$ref": "#/$defs/ConfirmationMethod"
+    },
+    "MemoryEventType": {
+      "$ref": "#/$defs/MemoryEventType"
+    },
+    "SessionEventType": {
+      "$ref": "#/$defs/SessionEventType"
+    },
+    "SharedMemoryProposalStatus": {
+      "$ref": "#/$defs/SharedMemoryProposalStatus"
+    },
+    "SharedMemoryConfirmationDecision": {
+      "$ref": "#/$defs/SharedMemoryConfirmationDecision"
+    },
+    "DeviceCertificateStatus": {"$ref": "#/$defs/DeviceCertificateStatus"},
+    "DeviceLifecycleStatus": {"$ref": "#/$defs/DeviceLifecycleStatus"},
+    "DeviceCapability": {"$ref": "#/$defs/DeviceCapability"},
+    "PhysicalMuteState": {"$ref": "#/$defs/PhysicalMuteState"},
+    "PrivacyLightState": {"$ref": "#/$defs/PrivacyLightState"},
+    "SimLifecycleStatus": {"$ref": "#/$defs/SimLifecycleStatus"},
+    "OtaAssignmentStatus": {"$ref": "#/$defs/OtaAssignmentStatus"},
+    "OtaBootStatus": {"$ref": "#/$defs/OtaBootStatus"},
+    "OtaSlotName": {"$ref": "#/$defs/OtaSlotName"},
+    "RemoteDeviceCommandType": {"$ref": "#/$defs/RemoteDeviceCommandType"},
+    "objects": {
+      "$ref": "#/objects"
+    }
+  },
+  "objects": {
+    "title": "Memoria multi-subject object contracts (PR-01 / section 9.6)",
+    "description": "objects_version 2 单一对象权威：Binding/Runtime/Policy/Subject/Memory/Notification/Session 与 Device Fleet 合同、机器 lifecycle 和跨字段 fence 均在此定义。所有对象闭合属性、required 显式、未知枚举/缺失/越界/非法一律 fail closed；所有枚举只引用根 canonical $defs，不允许对象内第二套 enum。v1 RuntimeProfile/PolicyReceipt 仅为 migration-only consumer，new producer 由 contracts lifecycle 记录机器拒绝。",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["objects_version", "definitions", "contracts"],
+    "properties": {
+      "objects_version": {
+        "const": 2,
+        "description": "对象合同版本。任何对象字段/枚举/约束变更必须递增并同步更新 ADR-0033 与生成器固定期望。"
+      },
+      "definitions": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "对象与复用片段。所有枚举统一引用根 $defs，文档序即生成序。",
+        "properties": {
+          "ManifestRole": {
+            "title": "ManifestRole",
+            "description": "BindingManifest 内的角色条目（services/identity ManifestRole.to_dict）。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["person_id", "role", "permissions"],
+            "properties": {
+              "person_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "主体 id"},
+              "role": {"$ref": "#/$defs/BindingRole"},
+              "permissions": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 64}, "maxItems": 64, "uniqueItems": true, "description": "角色权限点（identity Permission 集合）"}
+            }
+          },
+          "PersonaSnapshot": {
+            "title": "PersonaSnapshot",
+            "description": "RuntimeProfile 内嵌 Persona 快照（services/session_runtime PersonaAssignment 的 wire 形状）。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["persona_id", "version", "relationship_stage"],
+            "properties": {
+              "persona_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Persona id"},
+              "version": {"type": "integer", "minimum": 1, "description": "Persona 版本号"},
+              "relationship_stage": {"type": "string", "minLength": 1, "maxLength": 64, "description": "关系阶段（如 new/familiar）"}
+            }
+          },
+          "CandidateSubject": {
+            "title": "CandidateSubject",
+            "description": "主体解析候选（§9.2；Control resolve-subject 响应形状：person_id + display_name + confidence）。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["person_id", "display_name", "confidence"],
+            "properties": {
+              "person_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "候选主体 id"},
+              "display_name": {"type": "string", "minLength": 1, "maxLength": 128, "description": "候选主体展示名（最小必要信息）"},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "声纹/证据置信度 0..1"}
+            }
+          },
+          "ObligationParams": {
+            "title": "ObligationParams",
+            "description": "Policy Engine V2 的可审计义务参数 wire；字段与 obligations.obligation_params_to_json 一致，未知参数 fail closed。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["max_session_seconds", "retention_ttl_seconds", "quiet_hours", "extras"],
+            "properties": {
+              "max_session_seconds": {"type": ["integer", "null"], "minimum": 1, "maximum": 86400},
+              "retention_ttl_seconds": {"type": ["integer", "null"], "minimum": 1, "maximum": 315576000},
+              "quiet_hours": {
+                "anyOf": [
+                  {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string", "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"}},
+                  {"type": "null"}
+                ]
+              },
+              "extras": {
+                "type": "array",
+                "maxItems": 32,
+                "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string", "minLength": 1, "maxLength": 128}}
+              }
+            }
+          },
+          "PolicyObligationSpec": {
+            "title": "PolicyObligationSpec",
+            "description": "结构化策略义务：canonical code + 完整参数；V2 wire 禁止退化为仅字符串数组。数组去重按整项结构进行，完全相同的 code+params 项拒绝；同 code 但 params 不同仍视为不同项。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "params"],
+            "properties": {
+              "code": {"$ref": "#/$defs/PolicyObligation"},
+              "params": {"$ref": "#/objects/properties/definitions/properties/ObligationParams"}
+            }
+          },
+          "NotificationFence": {
+            "title": "NotificationFence",
+            "description": "通知意图的会话/绑定/档案栅栏（services/notification NotificationFence；指纹绑定 policy receipt）。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["session_id", "epoch", "device_id", "binding_id", "binding_version", "runtime_profile_id", "actor_person_id", "subject_person_id", "subject_revision", "generation_id", "turn_id", "tool_epoch", "issued_at", "valid_until", "fingerprint"],
+            "x-memoria-time-order": [{"earlier_path": "issued_at", "later_path": "valid_until", "strict": true}],
+            "properties": {
+              "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "epoch": {"type": "integer", "minimum": 1, "description": "会话 epoch（已签发 profile 后 >= 1；换主体必须递增，0 仅在签发前 lifecycle 事件允许且不能授权敏感行为）"},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_version": {"type": "integer", "minimum": 1, "description": "绑定 manifest 版本；string/0/null 一律 fail closed"},
+              "runtime_profile_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "actor_person_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "发起动作的人"},
+              "subject_person_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "数据主体"},
+              "subject_revision": {"type": "integer", "minimum": 0},
+              "generation_id": {"type": "integer", "minimum": 0},
+              "turn_id": {"type": "integer", "minimum": 0},
+              "tool_epoch": {"type": "integer", "minimum": 0},
+              "issued_at": {"type": "string", "format": "date-time", "description": "栅栏签发时间"},
+              "valid_until": {"type": "string", "format": "date-time", "description": "敏感通知栅栏必须有界，过期 fail closed"},
+              "fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$", "description": "sha256 指纹，绑定 policy receipt 的 context_hash"}
+            }
+          },
+          "RelationshipSnapshot": {
+            "title": "RelationshipSnapshot",
+            "description": "objects_version=2 当前权威的有向关系证据。source_person_id -> target_person_id 与 relation_type 共同表达语义；旧 subject_person_id/person_id/role 无向镜像仅是待迁移消费者，不能进入本合同。snapshot/revision、有效期、关系 canonical hash 和绑定证据共同形成 TOCTOU fence。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["relationship_id", "snapshot_id", "revision", "relation_type", "status", "source_person_id", "target_person_id", "binding_id", "binding_version", "binding_canonical_hash", "canonical_hash", "valid_from", "valid_until"],
+            "properties": {
+              "relationship_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "snapshot_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "revision": {"type": "integer", "minimum": 1},
+              "relation_type": {"$ref": "#/$defs/RelationshipType"},
+              "status": {"$ref": "#/$defs/RelationshipStatus"},
+              "source_person_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "target_person_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_version": {"type": "integer", "minimum": 1},
+              "binding_canonical_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "canonical_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "valid_from": {"type": "string", "format": "date-time"},
+              "valid_until": {"type": ["string", "null"], "format": "date-time"}
+            }
+          },
+          "RecipientSnapshot": {
+            "title": "RecipientSnapshot",
+            "description": "通知事件内的收件人快照（RecipientBinding 的身份相关子集；投递状态机在 service 内部推进）。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["recipient_id", "person_id", "role", "relationship_id", "relationship_snapshot_id", "relationship_revision", "relationship_status", "channels", "channel_index", "status", "valid_from", "valid_until"],
+            "properties": {
+              "recipient_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "person_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "role": {"$ref": "#/$defs/RecipientRole"},
+              "relationship_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "relationship_snapshot_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "relationship_revision": {"type": "integer", "minimum": 1},
+              "relationship_status": {"$ref": "#/$defs/RelationshipStatus"},
+              "channels": {"type": "array", "items": {"$ref": "#/$defs/Channel"}, "maxItems": 8, "uniqueItems": true},
+              "channel_index": {"type": "integer", "minimum": 0, "description": "当前尝试渠道下标"},
+              "status": {"$ref": "#/$defs/RecipientStatus"},
+              "valid_from": {"type": ["string", "null"], "format": "date-time"},
+              "valid_until": {"type": ["string", "null"], "format": "date-time"}
+            }
+          },
+          "BindingManifest": {
+            "title": "BindingManifest",
+            "description": "版本化绑定合同（§2.3/§8.2-8.4；services/identity BindingManifest.to_dict 形状）。status/reason/roles/persona/service/policy 全部快照进 manifest，消费方不得自行推导角色。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["binding_id", "device_id", "declared_mode", "binding_version", "status", "reason", "supersedes_binding_id", "family_space_id", "account_owner_id", "device_admin_ids", "primary_subject_ids", "guardian_ids", "delegate_ids", "emergency_contact_ids", "member_ids", "roles", "service_profile_version", "policy_bundle_version", "consent_snapshot_id", "persona_assignment_id", "valid_from", "valid_until", "created_at"],
+            "properties": {
+              "binding_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "declared_mode": {"$ref": "#/$defs/DeviceDeclaredMode"},
+              "binding_version": {"type": "integer", "minimum": 1},
+              "status": {"$ref": "#/$defs/BindingStatus"},
+              "reason": {"$ref": "#/$defs/BindingReason"},
+              "supersedes_binding_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "family_space_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "account_owner_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "device_admin_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "maxItems": 64, "uniqueItems": true},
+              "primary_subject_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "maxItems": 64, "uniqueItems": true},
+              "guardian_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "maxItems": 64, "uniqueItems": true},
+              "delegate_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "maxItems": 64, "uniqueItems": true},
+              "emergency_contact_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "maxItems": 64, "uniqueItems": true},
+              "member_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "maxItems": 64, "uniqueItems": true},
+              "roles": {"type": "array", "items": {"$ref": "#/objects/properties/definitions/properties/ManifestRole"}, "maxItems": 64},
+              "service_profile_version": {"type": "string", "minLength": 1, "maxLength": 128},
+              "policy_bundle_version": {"type": "string", "minLength": 1, "maxLength": 128},
+              "consent_snapshot_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "persona_assignment_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "valid_from": {"type": "string", "format": "date-time"},
+              "valid_until": {"type": ["string", "null"], "format": "date-time"},
+              "created_at": {"type": "string", "format": "date-time"}
+            }
+          },
+          "RuntimeProfile": {
+            "title": "RuntimeProfile",
+            "description": "会话级 Runtime Profile wire payload（§7.3/§9.3；与 services/session_runtime profile_service.runtime_profile_wire_payload 字段完全一致，signature 不在此模型内）。subject_category/age_band/speaker_state/service_mode 均为 canonical 枚举，未知值拒绝。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["signature_schema", "runtime_profile_id", "device_id", "session_id", "actor_id", "binding_id", "binding_version", "active_subject_id", "subject_revision", "subject_category", "age_band", "speaker_state", "speaker_confidence", "service_mode", "persona_assignment_id", "persona", "policy_bundle_version", "capabilities", "obligations", "policy_receipt_ids", "session_epoch", "issued_at", "expires_at"],
+            "properties": {
+              "signature_schema": {"type": "string", "const": "runtime-profile-v1", "description": "签名载荷模式标识（const）。"},
+              "runtime_profile_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "actor_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "发起签发的 actor（不一定是数据主体）"},
+              "binding_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_version": {"type": "integer", "minimum": 1},
+              "active_subject_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "description": "当前确认主体；unconfirmed/unknown_safe 时为 null"},
+              "subject_revision": {"type": "integer", "minimum": 0, "description": "主体资料修订号"},
+              "subject_category": {"$ref": "#/$defs/SubjectCategory"},
+              "age_band": {"$ref": "#/$defs/AgeBand"},
+              "speaker_state": {"$ref": "#/$defs/SpeakerState"},
+              "speaker_confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+              "service_mode": {"$ref": "#/$defs/ServiceMode"},
+              "persona_assignment_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "persona": {"$ref": "#/objects/properties/definitions/properties/PersonaSnapshot"},
+              "policy_bundle_version": {"type": "string", "minLength": 1, "maxLength": 128},
+              "capabilities": {"type": "array", "items": {"$ref": "#/$defs/Capability"}, "maxItems": 32, "uniqueItems": true},
+              "obligations": {"type": "array", "items": {"$ref": "#/$defs/PolicyObligation"}, "maxItems": 32, "uniqueItems": true},
+              "policy_receipt_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 192}, "maxItems": 64, "uniqueItems": true},
+              "session_epoch": {"type": "integer", "minimum": 1, "description": "会话身份 epoch（Control 签发即为 1，换主体递增；0 禁止出现在已签发 profile 上）"},
+              "issued_at": {"type": "string", "format": "date-time"},
+              "expires_at": {"type": "string", "format": "date-time"}
+            }
+          },
+          "RuntimeProfileSigned": {
+            "title": "RuntimeProfileSigned",
+            "description": "RuntimeProfile 公开线缆载荷 + 签名信封。本定义是 RuntimeProfile 的继承模型（x-memoria-extends），字段必须是基座严格超集（生成器强制防漂移），未知属性闭合由本定义 unevaluatedProperties:false 强制。签名对除 signature 外的完整载荷（含嵌套 persona）重建 canonical bytes 校验（sort_keys、紧凑分隔符，与 sign_runtime_profile_payload 一致）；无签名、非 hex64 或签名不匹配一律 fail closed。",
+            "type": "object",
+            "x-memoria-extends": "RuntimeProfile",
+            "unevaluatedProperties": false,
+            "required": ["signature_schema", "runtime_profile_id", "device_id", "session_id", "actor_id", "binding_id", "binding_version", "active_subject_id", "subject_revision", "subject_category", "age_band", "speaker_state", "speaker_confidence", "service_mode", "persona_assignment_id", "persona", "policy_bundle_version", "capabilities", "obligations", "policy_receipt_ids", "session_epoch", "issued_at", "expires_at", "signature"],
+            "properties": {
+              "signature_schema": {"type": "string", "const": "runtime-profile-v1", "description": "签名载荷模式标识（const）。"},
+              "runtime_profile_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "actor_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "发起签发的 actor（不一定是数据主体）"},
+              "binding_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_version": {"type": "integer", "minimum": 1},
+              "active_subject_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "description": "当前确认主体；unconfirmed/unknown_safe 时为 null"},
+              "subject_revision": {"type": "integer", "minimum": 0, "description": "主体资料修订号"},
+              "subject_category": {"$ref": "#/$defs/SubjectCategory"},
+              "age_band": {"$ref": "#/$defs/AgeBand"},
+              "speaker_state": {"$ref": "#/$defs/SpeakerState"},
+              "speaker_confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+              "service_mode": {"$ref": "#/$defs/ServiceMode"},
+              "persona_assignment_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "persona": {"$ref": "#/objects/properties/definitions/properties/PersonaSnapshot"},
+              "policy_bundle_version": {"type": "string", "minLength": 1, "maxLength": 128},
+              "capabilities": {"type": "array", "items": {"$ref": "#/$defs/Capability"}, "maxItems": 32, "uniqueItems": true},
+              "obligations": {"type": "array", "items": {"$ref": "#/$defs/PolicyObligation"}, "maxItems": 32, "uniqueItems": true},
+              "policy_receipt_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 192}, "maxItems": 64, "uniqueItems": true},
+              "session_epoch": {"type": "integer", "minimum": 1, "description": "会话身份 epoch（Control 签发即为 1，换主体递增；0 禁止出现在已签发 profile 上）"},
+              "issued_at": {"type": "string", "format": "date-time"},
+              "expires_at": {"type": "string", "format": "date-time"},
+              "signature": {"type": "string", "pattern": "^[a-f0-9]{64}$", "description": "HMAC-SHA256(payload, signing_key) 十六进制签名"}
+            }
+          },
+          "RuntimeProfileV2": {
+            "title": "RuntimeProfileV2",
+            "description": "runtime-profile-v2 当前目标 wire。保留 v1 所有 required consumer fields，只把 obligations 升级为与 PolicyReceiptV2 相同的结构化 code+params；v1 继续作为 Control/Agent 迁移兼容合同。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["signature_schema", "runtime_profile_id", "device_id", "session_id", "actor_id", "binding_id", "binding_version", "active_subject_id", "subject_revision", "subject_category", "age_band", "speaker_state", "speaker_confidence", "service_mode", "persona_assignment_id", "persona", "policy_bundle_version", "capabilities", "obligations", "policy_receipt_ids", "session_epoch", "issued_at", "expires_at"],
+            "properties": {
+              "signature_schema": {"type": "string", "const": "runtime-profile-v2"},
+              "runtime_profile_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "actor_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_version": {"type": "integer", "minimum": 1},
+              "active_subject_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "subject_revision": {"type": "integer", "minimum": 0},
+              "subject_category": {"$ref": "#/$defs/SubjectCategory"},
+              "age_band": {"$ref": "#/$defs/AgeBand"},
+              "speaker_state": {"$ref": "#/$defs/SpeakerState"},
+              "speaker_confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+              "service_mode": {"$ref": "#/$defs/ServiceMode"},
+              "persona_assignment_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "persona": {"$ref": "#/objects/properties/definitions/properties/PersonaSnapshot"},
+              "policy_bundle_version": {"type": "string", "minLength": 1, "maxLength": 128},
+              "capabilities": {"type": "array", "items": {"$ref": "#/$defs/Capability"}, "maxItems": 32, "uniqueItems": true},
+              "obligations": {"type": "array", "items": {"$ref": "#/objects/properties/definitions/properties/PolicyObligationSpec"}, "maxItems": 32, "uniqueItems": true},
+              "policy_receipt_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 192}, "maxItems": 64, "uniqueItems": true},
+              "session_epoch": {"type": "integer", "minimum": 1},
+              "issued_at": {"type": "string", "format": "date-time"},
+              "expires_at": {"type": "string", "format": "date-time"}
+            }
+          },
+          "RuntimeProfileSignedV2": {
+            "title": "RuntimeProfileSignedV2",
+            "description": "RuntimeProfileV2 的签名信封；signature 是必填 hex64，未知字段拒绝。",
+            "type": "object",
+            "x-memoria-extends": "RuntimeProfileV2",
+            "unevaluatedProperties": false,
+            "required": ["signature_schema", "runtime_profile_id", "device_id", "session_id", "actor_id", "binding_id", "binding_version", "active_subject_id", "subject_revision", "subject_category", "age_band", "speaker_state", "speaker_confidence", "service_mode", "persona_assignment_id", "persona", "policy_bundle_version", "capabilities", "obligations", "policy_receipt_ids", "session_epoch", "issued_at", "expires_at", "signature"],
+            "properties": {
+              "signature_schema": {"type": "string", "const": "runtime-profile-v2"},
+              "runtime_profile_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "actor_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_version": {"type": "integer", "minimum": 1},
+              "active_subject_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "subject_revision": {"type": "integer", "minimum": 0},
+              "subject_category": {"$ref": "#/$defs/SubjectCategory"},
+              "age_band": {"$ref": "#/$defs/AgeBand"},
+              "speaker_state": {"$ref": "#/$defs/SpeakerState"},
+              "speaker_confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+              "service_mode": {"$ref": "#/$defs/ServiceMode"},
+              "persona_assignment_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "persona": {"$ref": "#/objects/properties/definitions/properties/PersonaSnapshot"},
+              "policy_bundle_version": {"type": "string", "minLength": 1, "maxLength": 128},
+              "capabilities": {"type": "array", "items": {"$ref": "#/$defs/Capability"}, "maxItems": 32, "uniqueItems": true},
+              "obligations": {"type": "array", "items": {"$ref": "#/objects/properties/definitions/properties/PolicyObligationSpec"}, "maxItems": 32, "uniqueItems": true},
+              "policy_receipt_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 192}, "maxItems": 64, "uniqueItems": true},
+              "session_epoch": {"type": "integer", "minimum": 1},
+              "issued_at": {"type": "string", "format": "date-time"},
+              "expires_at": {"type": "string", "format": "date-time"},
+              "signature": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+            }
+          },
+          "PolicyApprovalSnapshotFence": {
+            "title": "PolicyApprovalSnapshotFence",
+            "description": "Policy family promotion action fence 内的一票不可变 approval snapshot。subject/snapshot/revision/hash 四元组是精确授权集合的一部分，替换 revision 或 hash 必须产生新的 promotion 决策。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["subject_id", "snapshot_id", "revision", "canonical_hash"],
+            "properties": {
+              "subject_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "snapshot_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "revision": {"type": "integer", "minimum": 1},
+              "canonical_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+            }
+          },
+          "PolicyActionResourceFence": {
+            "title": "PolicyActionResourceFence",
+            "description": "Policy V2 对精确 action/resource 的有界 fence。context_hash 必须覆盖本对象的 canonical bytes；家庭 proposal/approval/promotion 分别绑定预生成 proposal、confirm voter 和完整 approval snapshot 集合，不能跨提案或跨 revision 重放。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["action_fence_schema", "capability", "purpose", "action_resource_id", "action_revision", "action_evidence_hash", "canonical_hash", "family_space_id", "family_owner_subject_id", "proposal_id", "proposal_revision", "voter_subject_id", "approval_decision", "required_approval_subject_ids", "approval_snapshots", "capture_evidence_ids", "capture_evidence_hash", "consent_snapshot_id", "consent_snapshot_revision", "consent_snapshot_hash", "membership_snapshot_id", "membership_snapshot_revision", "membership_snapshot_hash", "generation_id", "turn_id", "tool_epoch", "issued_at", "valid_until"],
+            "x-memoria-value-pairs": [
+              {
+                "left_field": "capability",
+                "right_field": "purpose",
+                "bidirectional": true,
+                "pairs": {
+                  "memory_capture": "memory_capture",
+                  "memory_promotion": "memory_promotion",
+                  "family_shared_memory_proposal": "family_shared_memory_proposal",
+                  "family_shared_memory_approval": "family_shared_memory_approval",
+                  "family_shared_memory_promotion": "family_shared_memory_promotion"
+                }
+              }
+            ],
+            "x-memoria-conditional-fields": [
+              {
+                "when": {"path": "capability", "equals": "family_shared_memory_proposal"},
+                "require_non_null": ["family_space_id", "family_owner_subject_id", "proposal_id", "proposal_revision", "capture_evidence_hash", "consent_snapshot_id", "consent_snapshot_revision", "consent_snapshot_hash", "membership_snapshot_id", "membership_snapshot_revision", "membership_snapshot_hash"],
+                "require_null": ["voter_subject_id", "approval_decision"],
+                "require_non_empty": ["required_approval_subject_ids", "capture_evidence_ids"],
+                "require_empty": ["approval_snapshots"]
+              },
+              {
+                "when": {"path": "capability", "equals": "family_shared_memory_approval"},
+                "require_non_null": ["family_space_id", "family_owner_subject_id", "proposal_id", "proposal_revision", "voter_subject_id", "approval_decision", "consent_snapshot_id", "consent_snapshot_revision", "consent_snapshot_hash", "membership_snapshot_id", "membership_snapshot_revision", "membership_snapshot_hash"],
+                "require_null": ["capture_evidence_hash"],
+                "require_non_empty": ["required_approval_subject_ids"],
+                "require_empty": ["approval_snapshots", "capture_evidence_ids"],
+                "require_equals": {"approval_decision": "confirm"}
+              },
+              {
+                "when": {"path": "capability", "equals": "family_shared_memory_promotion"},
+                "require_non_null": ["family_space_id", "family_owner_subject_id", "proposal_id", "proposal_revision", "consent_snapshot_id", "consent_snapshot_revision", "consent_snapshot_hash", "membership_snapshot_id", "membership_snapshot_revision", "membership_snapshot_hash"],
+                "require_null": ["voter_subject_id", "approval_decision", "capture_evidence_hash"],
+                "require_non_empty": ["required_approval_subject_ids", "approval_snapshots"],
+                "require_empty": ["capture_evidence_ids"]
+              }
+            ],
+            "x-memoria-equal-paths": [{"paths": ["action_resource_id", "proposal_id"], "when": {"path": "capability", "in": ["family_shared_memory_proposal", "family_shared_memory_approval", "family_shared_memory_promotion"]}}],
+            "x-memoria-record-coverage": [
+              {"required_ids_path": "required_approval_subject_ids", "records_path": "approval_snapshots", "record_id_field": "subject_id", "when": {"path": "capability", "equals": "family_shared_memory_promotion"}}
+            ],
+            "x-memoria-sorted-unique-by": [{"field": "approval_snapshots", "item_field": "subject_id"}],
+            "x-memoria-time-order": [{"earlier_path": "issued_at", "later_path": "valid_until", "strict": true}],
+            "properties": {
+              "action_fence_schema": {"type": "string", "const": "policy-action-resource-fence-v1"},
+              "capability": {"$ref": "#/$defs/Capability"},
+              "purpose": {"$ref": "#/$defs/Purpose"},
+              "action_resource_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "action_revision": {"type": "integer", "minimum": 1},
+              "action_evidence_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "canonical_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "family_space_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "family_owner_subject_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "proposal_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "proposal_revision": {"type": ["integer", "null"], "minimum": 1},
+              "voter_subject_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "approval_decision": {"anyOf": [{"$ref": "#/$defs/SharedMemoryConfirmationDecision"}, {"type": "null"}]},
+              "required_approval_subject_ids": {"type": "array", "maxItems": 33, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+              "approval_snapshots": {"type": "array", "maxItems": 33, "items": {"$ref": "#/objects/properties/definitions/properties/PolicyApprovalSnapshotFence"}},
+              "capture_evidence_ids": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+              "capture_evidence_hash": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+              "consent_snapshot_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "consent_snapshot_revision": {"type": ["integer", "null"], "minimum": 1},
+              "consent_snapshot_hash": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+              "membership_snapshot_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "membership_snapshot_revision": {"type": ["integer", "null"], "minimum": 1},
+              "membership_snapshot_hash": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+              "generation_id": {"type": "integer", "minimum": 0},
+              "turn_id": {"type": "integer", "minimum": 0},
+              "tool_epoch": {"type": "integer", "minimum": 0},
+              "issued_at": {"type": "string", "format": "date-time"},
+              "valid_until": {"type": "string", "format": "date-time"}
+            }
+          },
+          "PolicyDecision": {
+            "title": "PolicyDecision",
+            "description": "策略决策响应（§9.4；services/policy PolicyDecision 的 wire 形状，effect 默认 deny、未知拒绝）。context_hash 为决策上下文 sha256。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["capability", "purpose", "effect", "reason_code", "obligations", "policy_version", "receipt_id", "context_hash", "action_resource_fence", "action_fence_hash", "created_at", "expires_at"],
+            "x-memoria-equal-paths": [["action_fence_hash", "action_resource_fence.canonical_hash"], ["capability", "action_resource_fence.capability"], ["purpose", "action_resource_fence.purpose"]],
+            "x-memoria-context-hash-inputs": ["action_resource_fence"],
+            "x-memoria-time-order": [{"earlier_path": "created_at", "later_path": "expires_at", "strict": true}],
+            "properties": {
+              "capability": {"$ref": "#/$defs/Capability"},
+              "purpose": {"$ref": "#/$defs/Purpose"},
+              "effect": {"$ref": "#/$defs/PolicyEffect"},
+              "reason_code": {"type": "string", "minLength": 1, "maxLength": 256},
+              "obligations": {"type": "array", "items": {"$ref": "#/objects/properties/definitions/properties/PolicyObligationSpec"}, "maxItems": 32, "uniqueItems": true},
+              "policy_version": {"type": "string", "minLength": 1, "maxLength": 128},
+              "receipt_id": {"type": "string", "minLength": 1, "maxLength": 192},
+              "context_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "action_resource_fence": {"$ref": "#/objects/properties/definitions/properties/PolicyActionResourceFence"},
+              "action_fence_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "created_at": {"type": "string", "format": "date-time"},
+              "expires_at": {"type": "string", "format": "date-time"}
+            }
+          },
+          "PolicyReceipt": {
+            "title": "PolicyReceipt",
+            "description": "策略回执（§8.6 表 + services/policy/receipts.py PolicyReceipt 栅栏字段）。每个敏感副作用必须引用回执；actor/subject/device/binding/session/epoch/profile/指纹不一致即失效。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["receipt_id", "actor_id", "subject_id", "device_id", "capability", "effect", "reason_code", "obligations", "policy_version", "context_hash", "binding_id", "binding_version", "session_id", "session_epoch", "runtime_profile_id", "subject_revision", "created_at", "expires_at"],
+            "properties": {
+              "receipt_id": {"type": "string", "minLength": 1, "maxLength": 192},
+              "actor_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "subject_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "capability": {"$ref": "#/$defs/Capability"},
+              "purpose": {"type": ["string", "null"], "minLength": 1, "maxLength": 256, "description": "用途（§8.6 列；当前引擎尚未写入，后续补齐）"},
+              "effect": {"$ref": "#/$defs/PolicyEffect"},
+              "reason_code": {"type": "string", "minLength": 1, "maxLength": 256},
+              "obligations": {"type": "array", "items": {"$ref": "#/$defs/PolicyObligation"}, "maxItems": 32, "uniqueItems": true},
+              "policy_version": {"type": "string", "minLength": 1, "maxLength": 128},
+              "context_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "binding_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_version": {"type": "integer", "minimum": 1},
+              "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "session_epoch": {"type": "integer", "minimum": 1, "description": "会话身份 epoch（已签发 profile 后 >= 1）"},
+              "runtime_profile_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "subject_revision": {"type": "integer", "minimum": 0},
+              "created_at": {"type": "string", "format": "date-time"},
+              "expires_at": {"type": "string", "format": "date-time"}
+            }
+          },
+          "PolicyReceiptV2": {
+            "title": "PolicyReceiptV2",
+            "description": "Policy Engine V2 完整不可变 wire。purpose/resource owner/结构化义务/同意与关系 revision/绑定 canonical hash/会话与 profile fence 均参与授权；legacy PolicyReceipt 仅为旧 consumer 迁移保留。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["receipt_id", "actor_id", "subject_id", "resource_owner_id", "device_id", "capability", "purpose", "effect", "reason_code", "obligations", "policy_version", "context_hash", "action_resource_fence", "action_fence_hash", "consent_snapshot_ids", "consent_snapshot_revisions", "relationship_snapshot_ids", "relationship_snapshot_revisions", "binding_id", "binding_version", "binding_canonical_hash", "session_id", "session_epoch", "runtime_profile_id", "subject_revision", "device_trust", "data_classification", "safety_state", "jurisdiction", "created_at", "expires_at", "exact_fence"],
+            "x-memoria-paired-arrays": [
+              ["consent_snapshot_ids", "consent_snapshot_revisions"],
+              ["relationship_snapshot_ids", "relationship_snapshot_revisions"]
+            ],
+            "x-memoria-value-pairs": [
+              {
+                "left_field": "capability",
+                "right_field": "purpose",
+                "bidirectional": true,
+                "pairs": {
+                  "memory_capture": "memory_capture",
+                  "memory_promotion": "memory_promotion",
+                  "family_shared_memory_proposal": "family_shared_memory_proposal",
+                  "family_shared_memory_approval": "family_shared_memory_approval",
+                  "family_shared_memory_promotion": "family_shared_memory_promotion"
+                }
+              }
+            ],
+            "x-memoria-non-null-if": [
+              {"field": "exact_fence", "equals": true, "non_null_fields": ["binding_canonical_hash"]}
+            ],
+            "x-memoria-conditional-fields": [
+              {
+                "when": {"path": "capability", "in": ["family_shared_memory_proposal", "family_shared_memory_approval", "family_shared_memory_promotion"]},
+                "require_non_null": ["subject_id", "resource_owner_id", "binding_canonical_hash"],
+                "require_equals": {"exact_fence": true}
+              }
+            ],
+            "x-memoria-equal-paths": [["action_fence_hash", "action_resource_fence.canonical_hash"], ["capability", "action_resource_fence.capability"], ["purpose", "action_resource_fence.purpose"]],
+            "x-memoria-context-hash-inputs": ["action_resource_fence", "binding_canonical_hash", "consent_snapshot_ids", "consent_snapshot_revisions", "relationship_snapshot_ids", "relationship_snapshot_revisions"],
+            "x-memoria-time-order": [{"earlier_path": "created_at", "later_path": "expires_at", "strict": true}],
+            "properties": {
+              "receipt_id": {"type": "string", "minLength": 1, "maxLength": 192},
+              "actor_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "subject_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "resource_owner_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "capability": {"$ref": "#/$defs/Capability"},
+              "purpose": {"$ref": "#/$defs/Purpose"},
+              "effect": {"$ref": "#/$defs/PolicyEffect"},
+              "reason_code": {"type": "string", "minLength": 1, "maxLength": 256},
+              "obligations": {"type": "array", "items": {"$ref": "#/objects/properties/definitions/properties/PolicyObligationSpec"}, "maxItems": 32, "uniqueItems": true},
+              "policy_version": {"type": "string", "minLength": 1, "maxLength": 128},
+              "context_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "action_resource_fence": {"$ref": "#/objects/properties/definitions/properties/PolicyActionResourceFence"},
+              "action_fence_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "consent_snapshot_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "maxItems": 64, "uniqueItems": true},
+              "consent_snapshot_revisions": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 64},
+              "relationship_snapshot_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "maxItems": 64, "uniqueItems": true},
+              "relationship_snapshot_revisions": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 64},
+              "binding_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_version": {"type": "integer", "minimum": 1},
+              "binding_canonical_hash": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+              "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "session_epoch": {"type": "integer", "minimum": 1},
+              "runtime_profile_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "subject_revision": {"type": "integer", "minimum": 0},
+              "device_trust": {"$ref": "#/$defs/DeviceTrust"},
+              "data_classification": {"$ref": "#/$defs/DataClassification"},
+              "safety_state": {"$ref": "#/$defs/SafetyState"},
+              "jurisdiction": {"type": "string", "minLength": 2, "maxLength": 32, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]+$"},
+              "created_at": {"type": "string", "format": "date-time"},
+              "expires_at": {"type": "string", "format": "date-time"},
+              "exact_fence": {"type": "boolean"}
+            }
+          },
+          "SubjectResolution": {
+            "title": "SubjectResolution",
+            "description": "主体解析响应（§9.2；与 Control POST /v1/sessions/resolve-subject 响应形状一致）。confirmation_required 时 active_subject 未确认，temporary_service_mode 必须为 unknown_safe。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["resolution", "candidate_subjects", "temporary_service_mode", "allowed_confirmation_methods", "runtime_profile_id"],
+            "properties": {
+              "resolution": {"$ref": "#/$defs/ResolutionKind"},
+              "candidate_subjects": {"type": "array", "items": {"$ref": "#/objects/properties/definitions/properties/CandidateSubject"}, "maxItems": 16},
+              "temporary_service_mode": {"$ref": "#/$defs/ServiceMode"},
+              "allowed_confirmation_methods": {"type": "array", "items": {"$ref": "#/$defs/ConfirmationMethod"}, "maxItems": 8, "uniqueItems": true},
+              "runtime_profile_id": {"type": "string", "minLength": 1, "maxLength": 128}
+            }
+          },
+          "MemoryWriteFence": {
+            "title": "MemoryWriteFence",
+            "description": "持久化记忆写入栅栏（§6.2/§8.7/§11.5；services/memory_scope WriteFence）。fingerprint 绑定 policy receipt 的 context_hash；epoch 提升/换 binding/换 profile/过期/actor≠subject 全部 fail closed。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["session_id", "epoch", "device_id", "binding_id", "binding_role", "runtime_profile_id", "actor_subject_id", "active_subject_id", "subject_revision", "binding_version", "family_space_id", "generation_id", "turn_id", "tool_epoch", "issued_at", "valid_until", "fingerprint"],
+            "x-memoria-time-order": [{"earlier_path": "issued_at", "later_path": "valid_until", "strict": true}],
+            "properties": {
+              "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "epoch": {"type": "integer", "minimum": 1, "description": "写入栅栏 epoch（已签发 profile 后 >= 1）"},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_role": {"$ref": "#/$defs/BindingRole"},
+              "runtime_profile_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "actor_subject_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "发起写入的 actor"},
+              "active_subject_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "记忆归属的确认主体"},
+              "subject_revision": {"type": "integer", "minimum": 0},
+              "binding_version": {"type": "integer", "minimum": 1, "description": "绑定 manifest 版本；string/0/null 一律 fail closed"},
+              "family_space_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "generation_id": {"type": "integer", "minimum": 0},
+              "turn_id": {"type": "integer", "minimum": 0},
+              "tool_epoch": {"type": "integer", "minimum": 0},
+              "issued_at": {"type": "string", "format": "date-time"},
+              "valid_until": {"type": "string", "format": "date-time"},
+              "fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+            }
+          },
+          "MemoryEvent": {
+            "title": "MemoryEvent",
+            "description": "记忆事件（§11.5 事件信封 + §8.7 memory_item 字段）。所有客户端与 Agent 事件至少携带 session_id/epoch/generation_id/turn_id/event_sequence/active_subject_id/runtime_profile_id；换主体必须提升 epoch。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event_id", "event_type", "session_id", "session_epoch", "generation_id", "turn_id", "event_sequence", "actor_id", "active_subject_id", "binding_id", "binding_version", "runtime_profile_id", "scope", "policy_receipt_id", "occurred_at", "payload"],
+            "properties": {
+              "event_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "event_type": {"$ref": "#/$defs/MemoryEventType"},
+              "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "session_epoch": {"type": "integer", "minimum": 1, "description": "会话身份 epoch（记忆事件为签发后事件，>= 1）"},
+              "generation_id": {"type": ["integer", "null"], "minimum": 0},
+              "turn_id": {"type": ["integer", "null"], "minimum": 0},
+              "event_sequence": {"type": "integer", "minimum": 0},
+              "actor_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "active_subject_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "binding_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_version": {"type": "integer", "minimum": 1, "description": "绑定 manifest 版本；string/0/null 一律 fail closed"},
+              "runtime_profile_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "scope": {"$ref": "#/$defs/MemoryScope"},
+              "policy_receipt_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "occurred_at": {"type": "string", "format": "date-time"},
+              "payload": {"type": "object", "maxProperties": 64, "additionalProperties": true, "description": "记忆内容（内容字段由生产方定义；信封字段不受影响）"}
+            }
+          },
+          "SharedMemoryConfirmationEvidence": {
+            "title": "SharedMemoryConfirmationEvidence",
+            "description": "家庭共享提案的一票不可变 confirm/object 证据。两类决定都必须有 actor authentication + action fence；只有 confirm 需要 family_shared_memory_approval allow receipt/fence。object 是隐私 fail-closed 动作，approval 字段必须显式 null，不能因缺 allow receipt 被阻断。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["evidence_id", "proposal_id", "proposal_revision", "subject_id", "decision", "authentication_evidence_id", "authentication_evidence_hash", "action_evidence_hash", "action_fence", "approval_snapshot_id", "approval_snapshot_revision", "approval_snapshot_hash", "approval_policy_receipt_id", "approval_policy_receipt", "approval_fence", "proposal_status_before", "proposal_status_after", "occurred_at"],
+            "x-memoria-conditional-fields": [
+              {
+                "when": {"path": "decision", "equals": "confirm"},
+                "require_non_null": ["approval_snapshot_id", "approval_snapshot_revision", "approval_snapshot_hash", "approval_policy_receipt_id", "approval_policy_receipt", "approval_fence"],
+                "require_in": {"proposal_status_before": ["pending"], "proposal_status_after": ["pending", "approvals_complete"]}
+              },
+              {
+                "when": {"path": "decision", "equals": "object"},
+                "require_null": ["approval_snapshot_id", "approval_snapshot_revision", "approval_snapshot_hash", "approval_policy_receipt_id", "approval_policy_receipt", "approval_fence"],
+                "require_in": {"proposal_status_before": ["pending", "approvals_complete"], "proposal_status_after": ["frozen"]}
+              }
+            ],
+            "x-memoria-equal-paths": [
+              ["subject_id", "action_fence.actor_subject_id", "action_fence.active_subject_id"],
+              ["action_evidence_hash", "action_fence.fingerprint"],
+              {"paths": ["approval_policy_receipt_id", "approval_policy_receipt.receipt_id"], "when": {"path": "decision", "equals": "confirm"}},
+              {"paths": ["approval_fence", "approval_policy_receipt.action_resource_fence"], "when": {"path": "decision", "equals": "confirm"}},
+              {"paths": ["proposal_id", "approval_fence.proposal_id", "approval_fence.action_resource_id"], "when": {"path": "decision", "equals": "confirm"}},
+              {"paths": ["proposal_revision", "approval_fence.proposal_revision", "approval_fence.action_revision"], "when": {"path": "decision", "equals": "confirm"}},
+              {"paths": ["subject_id", "approval_fence.voter_subject_id", "approval_policy_receipt.actor_id", "approval_policy_receipt.subject_id"], "when": {"path": "decision", "equals": "confirm"}},
+              {"paths": ["decision", "approval_fence.approval_decision"], "when": {"path": "decision", "equals": "confirm"}}
+            ],
+            "x-memoria-time-order": [
+              {"earlier_path": "action_fence.issued_at", "later_path": "occurred_at", "strict": false},
+              {"earlier_path": "occurred_at", "later_path": "action_fence.valid_until", "strict": true},
+              {"earlier_path": "approval_policy_receipt.created_at", "later_path": "occurred_at", "strict": false, "when": {"path": "decision", "equals": "confirm"}},
+              {"earlier_path": "occurred_at", "later_path": "approval_policy_receipt.expires_at", "strict": true, "when": {"path": "decision", "equals": "confirm"}},
+              {"earlier_path": "occurred_at", "later_path": "approval_fence.valid_until", "strict": true, "when": {"path": "decision", "equals": "confirm"}}
+            ],
+            "properties": {
+              "evidence_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "proposal_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "proposal_revision": {"type": "integer", "minimum": 1},
+              "subject_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "decision": {"$ref": "#/$defs/SharedMemoryConfirmationDecision"},
+              "authentication_evidence_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "authentication_evidence_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "action_evidence_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "action_fence": {"$ref": "#/objects/properties/definitions/properties/MemoryWriteFence"},
+              "approval_snapshot_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "approval_snapshot_revision": {"type": ["integer", "null"], "minimum": 1},
+              "approval_snapshot_hash": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+              "approval_policy_receipt_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 192},
+              "approval_policy_receipt": {"anyOf": [{"$ref": "#/objects/properties/definitions/properties/PolicyReceiptV2"}, {"type": "null"}]},
+              "approval_fence": {"anyOf": [{"$ref": "#/objects/properties/definitions/properties/PolicyActionResourceFence"}, {"type": "null"}]},
+              "proposal_status_before": {"$ref": "#/$defs/SharedMemoryProposalStatus"},
+              "proposal_status_after": {"$ref": "#/$defs/SharedMemoryProposalStatus"},
+              "occurred_at": {"type": "string", "format": "date-time"}
+            }
+          },
+          "SharedMemoryProposal": {
+            "title": "SharedMemoryProposal",
+            "description": "待确认家庭共享提案。创建时状态恒为 pending；内嵌 proposal PolicyReceiptV2 必须精确绑定预生成 proposal id/revision、family owner、required subjects、capture evidence、consent/membership revision，且绝不能被复用为 approval/promotion 授权。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["proposal_id", "proposal_revision", "family_space_id", "family_owner_subject_id", "proposer_subject_id", "co_subject_ids", "required_approval_subject_ids", "source_evidence_ids", "capture_evidence_hash", "consent_snapshot_id", "consent_snapshot_revision", "consent_snapshot_hash", "membership_snapshot_id", "membership_snapshot_revision", "membership_snapshot_hash", "proposal_policy_receipt_id", "proposal_policy_receipt", "proposal_fence", "status", "created_at", "expires_at", "payload"],
+            "x-memoria-approval-subjects": {"proposer_field": "proposer_subject_id", "co_subjects_field": "co_subject_ids", "required_field": "required_approval_subject_ids"},
+            "x-memoria-equal-paths": [
+              ["proposal_policy_receipt_id", "proposal_policy_receipt.receipt_id"],
+              ["proposal_id", "proposal_policy_receipt.action_resource_fence.proposal_id", "proposal_policy_receipt.action_resource_fence.action_resource_id"],
+              ["proposal_revision", "proposal_policy_receipt.action_resource_fence.proposal_revision", "proposal_policy_receipt.action_resource_fence.action_revision"],
+              ["family_space_id", "proposal_policy_receipt.action_resource_fence.family_space_id"],
+              ["family_owner_subject_id", "proposal_policy_receipt.resource_owner_id", "proposal_policy_receipt.action_resource_fence.family_owner_subject_id"],
+              ["capture_evidence_hash", "proposal_policy_receipt.action_resource_fence.capture_evidence_hash"],
+              ["consent_snapshot_id", "proposal_policy_receipt.action_resource_fence.consent_snapshot_id"],
+              ["consent_snapshot_revision", "proposal_policy_receipt.action_resource_fence.consent_snapshot_revision"],
+              ["consent_snapshot_hash", "proposal_policy_receipt.action_resource_fence.consent_snapshot_hash"],
+              ["membership_snapshot_id", "proposal_policy_receipt.action_resource_fence.membership_snapshot_id"],
+              ["membership_snapshot_revision", "proposal_policy_receipt.action_resource_fence.membership_snapshot_revision"],
+              ["membership_snapshot_hash", "proposal_policy_receipt.action_resource_fence.membership_snapshot_hash"]
+            ],
+            "x-memoria-set-equal-paths": [["required_approval_subject_ids", "proposal_policy_receipt.action_resource_fence.required_approval_subject_ids"], ["source_evidence_ids", "proposal_policy_receipt.action_resource_fence.capture_evidence_ids"]],
+            "x-memoria-conditional-fields": [{"when": {"path": "status", "equals": "pending"}, "require_equals": {"proposal_policy_receipt.capability": "family_shared_memory_proposal", "proposal_policy_receipt.purpose": "family_shared_memory_proposal"}}],
+            "x-memoria-time-order": [
+              {"earlier_path": "created_at", "later_path": "expires_at", "strict": true},
+              {"earlier_path": "created_at", "later_path": "proposal_fence.valid_until", "strict": true},
+              {"earlier_path": "created_at", "later_path": "proposal_policy_receipt.expires_at", "strict": true}
+            ],
+            "properties": {
+              "proposal_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "proposal_revision": {"type": "integer", "minimum": 1},
+              "family_space_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "family_owner_subject_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "proposer_subject_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "co_subject_ids": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+              "required_approval_subject_ids": {"type": "array", "minItems": 2, "maxItems": 33, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+              "source_evidence_ids": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+              "capture_evidence_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "consent_snapshot_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "consent_snapshot_revision": {"type": "integer", "minimum": 1},
+              "consent_snapshot_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "membership_snapshot_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "membership_snapshot_revision": {"type": "integer", "minimum": 1},
+              "membership_snapshot_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "proposal_policy_receipt_id": {"type": "string", "minLength": 1, "maxLength": 192},
+              "proposal_policy_receipt": {"$ref": "#/objects/properties/definitions/properties/PolicyReceiptV2"},
+              "proposal_fence": {"$ref": "#/objects/properties/definitions/properties/MemoryWriteFence"},
+              "status": {"type": "string", "const": "pending"},
+              "created_at": {"type": "string", "format": "date-time"},
+              "expires_at": {"type": "string", "format": "date-time"},
+              "payload": {"type": "object", "maxProperties": 64, "additionalProperties": true}
+            }
+          },
+          "SharedMemoryWithdrawalEvidence": {
+            "title": "SharedMemoryWithdrawalEvidence",
+            "description": "家庭共享提案撤回的不可变认证动作证据。withdraw 是隐私 fail-closed 动作，不依赖 proposal/approval/promotion allow receipt；它只要求当前主体认证、精确 proposal revision 与有界 action fence。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["withdrawal_evidence_id", "proposal_id", "proposal_revision", "subject_id", "authentication_evidence_id", "authentication_evidence_hash", "action_evidence_hash", "action_fence", "proposal_status_before", "proposal_status_after", "reason_code", "occurred_at"],
+            "x-memoria-conditional-fields": [{"when": {"path": "proposal_status_after", "equals": "withdrawn"}, "require_in": {"proposal_status_before": ["pending", "approvals_complete", "frozen"]}}],
+            "x-memoria-equal-paths": [["subject_id", "action_fence.actor_subject_id", "action_fence.active_subject_id"], ["action_evidence_hash", "action_fence.fingerprint"]],
+            "x-memoria-time-order": [{"earlier_path": "action_fence.issued_at", "later_path": "occurred_at", "strict": false}, {"earlier_path": "occurred_at", "later_path": "action_fence.valid_until", "strict": true}],
+            "properties": {
+              "withdrawal_evidence_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "proposal_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "proposal_revision": {"type": "integer", "minimum": 1},
+              "subject_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "authentication_evidence_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "authentication_evidence_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "action_evidence_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "action_fence": {"$ref": "#/objects/properties/definitions/properties/MemoryWriteFence"},
+              "proposal_status_before": {"$ref": "#/$defs/SharedMemoryProposalStatus"},
+              "proposal_status_after": {"type": "string", "const": "withdrawn"},
+              "reason_code": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"},
+              "occurred_at": {"type": "string", "format": "date-time"}
+            }
+          },
+          "SharedMemoryPromotion": {
+            "title": "SharedMemoryPromotion",
+            "description": "家庭共享最终晋升凭据。保留原 proposal receipt 仅供审计，promotion_policy_receipt_id 与 promotion_fence 必须是晋升时重新决策的新鲜授权；全体 confirmation evidence 必须恰好覆盖 required subjects 且全部 confirm。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["promotion_id", "proposal_id", "proposal_revision", "family_space_id", "proposal_policy_receipt_id", "promotion_policy_receipt_id", "promotion_policy_receipt", "promotion_fence", "proposal_status_before", "proposal_status_after", "required_approval_subject_ids", "confirmation_evidence", "current_consent_snapshot_id", "current_consent_snapshot_revision", "current_consent_snapshot_hash", "current_membership_snapshot_id", "current_membership_snapshot_revision", "current_membership_snapshot_hash", "promoted_record_id", "promoted_at"],
+            "x-memoria-distinct-fields": [["proposal_policy_receipt_id", "promotion_policy_receipt_id"]],
+            "x-memoria-confirmation-coverage": {"required_subject_ids_field": "required_approval_subject_ids", "evidence_field": "confirmation_evidence", "evidence_subject_field": "subject_id", "evidence_decision_field": "decision", "accepted_decision": "confirm", "evidence_receipt_field": "approval_policy_receipt_id", "evidence_receipts_distinct_from_fields": ["proposal_policy_receipt_id", "promotion_policy_receipt_id"], "require_unique_evidence_receipts": true},
+            "x-memoria-equal-paths": [
+              ["promotion_policy_receipt_id", "promotion_policy_receipt.receipt_id"],
+              ["proposal_id", "promotion_policy_receipt.action_resource_fence.proposal_id", "promotion_policy_receipt.action_resource_fence.action_resource_id"],
+              ["proposal_revision", "promotion_policy_receipt.action_resource_fence.proposal_revision", "promotion_policy_receipt.action_resource_fence.action_revision"],
+              ["family_space_id", "promotion_policy_receipt.action_resource_fence.family_space_id"],
+              ["current_consent_snapshot_id", "promotion_policy_receipt.action_resource_fence.consent_snapshot_id"],
+              ["current_consent_snapshot_revision", "promotion_policy_receipt.action_resource_fence.consent_snapshot_revision"],
+              ["current_consent_snapshot_hash", "promotion_policy_receipt.action_resource_fence.consent_snapshot_hash"],
+              ["current_membership_snapshot_id", "promotion_policy_receipt.action_resource_fence.membership_snapshot_id"],
+              ["current_membership_snapshot_revision", "promotion_policy_receipt.action_resource_fence.membership_snapshot_revision"],
+              ["current_membership_snapshot_hash", "promotion_policy_receipt.action_resource_fence.membership_snapshot_hash"]
+            ],
+            "x-memoria-set-equal-paths": [["required_approval_subject_ids", "promotion_policy_receipt.action_resource_fence.required_approval_subject_ids"]],
+            "x-memoria-record-set-equals": [{"left_path": "confirmation_evidence", "right_path": "promotion_policy_receipt.action_resource_fence.approval_snapshots", "left_fields": ["subject_id", "approval_snapshot_id", "approval_snapshot_revision", "approval_snapshot_hash"], "right_fields": ["subject_id", "snapshot_id", "revision", "canonical_hash"]}],
+            "x-memoria-conditional-fields": [{"when": {"path": "proposal_status_before", "equals": "approvals_complete"}, "require_equals": {"promotion_policy_receipt.capability": "family_shared_memory_promotion", "promotion_policy_receipt.purpose": "family_shared_memory_promotion", "proposal_status_after": "promoted"}}],
+            "x-memoria-time-order": [
+              {"earlier_path": "promotion_policy_receipt.created_at", "later_path": "promoted_at", "strict": false},
+              {"earlier_path": "promoted_at", "later_path": "promotion_policy_receipt.expires_at", "strict": true},
+              {"earlier_path": "promoted_at", "later_path": "promotion_policy_receipt.action_resource_fence.valid_until", "strict": true},
+              {"earlier_path": "promotion_fence.issued_at", "later_path": "promoted_at", "strict": false},
+              {"earlier_path": "promoted_at", "later_path": "promotion_fence.valid_until", "strict": true}
+            ],
+            "properties": {
+              "promotion_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "proposal_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "proposal_revision": {"type": "integer", "minimum": 1},
+              "family_space_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "proposal_policy_receipt_id": {"type": "string", "minLength": 1, "maxLength": 192},
+              "promotion_policy_receipt_id": {"type": "string", "minLength": 1, "maxLength": 192},
+              "promotion_policy_receipt": {"$ref": "#/objects/properties/definitions/properties/PolicyReceiptV2"},
+              "promotion_fence": {"$ref": "#/objects/properties/definitions/properties/MemoryWriteFence"},
+              "proposal_status_before": {"type": "string", "const": "approvals_complete"},
+              "proposal_status_after": {"type": "string", "const": "promoted"},
+              "required_approval_subject_ids": {"type": "array", "minItems": 2, "maxItems": 33, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+              "confirmation_evidence": {"type": "array", "minItems": 2, "maxItems": 33, "items": {"$ref": "#/objects/properties/definitions/properties/SharedMemoryConfirmationEvidence"}},
+              "current_consent_snapshot_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "current_consent_snapshot_revision": {"type": "integer", "minimum": 1},
+              "current_consent_snapshot_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "current_membership_snapshot_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "current_membership_snapshot_revision": {"type": "integer", "minimum": 1},
+              "current_membership_snapshot_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "promoted_record_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "promoted_at": {"type": "string", "format": "date-time"}
+            }
+          },
+          "NotificationIntent": {
+            "title": "NotificationIntent",
+            "description": "通知意图事件（§6.5/§10.6；services/notification NotificationIntent 形状 + 强制 fence/关系快照/收件人快照 + 幂等键）。policy_receipt_id 必填；account_owner/device_admin 等非收件人角色在任何 intent kind 下都被拒。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["intent_id", "idempotency_key", "intent_kind", "subject_person_id", "source_event_id", "policy_receipt_id", "template_key", "template_params", "reason_code", "script_version", "occurred_at", "status", "created_at", "updated_at", "cancelled_reason", "cancelled_at", "delivered_at", "fence", "relationship_snapshots", "recipients"],
+            "properties": {
+              "intent_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128, "description": "幂等键：重放参与比对，终态不可再 claim/重放"},
+              "intent_kind": {"$ref": "#/$defs/IntentKind"},
+              "subject_person_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "source_event_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "policy_receipt_id": {"type": "string", "minLength": 1, "maxLength": 192},
+              "template_key": {"$ref": "#/$defs/TemplateKey"},
+              "template_params": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 256}, "maxProperties": 16, "description": "模板参数白名单由 notification TEMPLATE_FIELDS 控制"},
+              "reason_code": {"$ref": "#/$defs/ReasonCode"},
+              "script_version": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$"},
+              "occurred_at": {"type": "string", "format": "date-time"},
+              "status": {"$ref": "#/$defs/IntentStatus"},
+              "created_at": {"type": "string", "format": "date-time"},
+              "updated_at": {"type": "string", "format": "date-time"},
+              "cancelled_reason": {"anyOf": [{"$ref": "#/$defs/CancelReason"}, {"type": "null"}]},
+              "cancelled_at": {"type": ["string", "null"], "format": "date-time"},
+              "delivered_at": {"type": ["string", "null"], "format": "date-time"},
+              "fence": {"$ref": "#/objects/properties/definitions/properties/NotificationFence"},
+              "relationship_snapshots": {"type": "array", "items": {"$ref": "#/objects/properties/definitions/properties/RelationshipSnapshot"}, "maxItems": 32},
+              "recipients": {"type": "array", "items": {"$ref": "#/objects/properties/definitions/properties/RecipientSnapshot"}, "maxItems": 32}
+            }
+          },
+          "DeviceAttestation": {
+            "title": "DeviceAttestation",
+            "description": "固件/secure element 签发的紧凑设备证明。unknown/unattested/mismatch 可被表达但不能授权敏感能力；软件 boolean 不能替代物理断麦或隐私灯事实。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["attestation_schema", "attestation_id", "device_id", "certificate_id", "certificate_status", "device_lifecycle_status", "binding_id", "binding_version", "firmware_version", "firmware_security_version", "firmware_sha256", "bootloader_version", "capability_manifest_hash", "capabilities", "attested_capabilities", "physical_mute_state", "privacy_light_state", "sim_status", "active_ota_slot", "ota_boot_status", "anti_rollback_floor_version", "anti_rollback_floor_security_version", "monotonic_counter", "last_command_sequence", "nonce", "occurred_at", "expires_at", "signer_key_id", "signature_algorithm", "signature"],
+            "x-memoria-conditional-fields": [
+              {"when": {"path": "device_lifecycle_status", "in": ["manufactured", "provisioned", "unknown", "wiped", "retired"]}, "require_null": ["binding_id", "binding_version"], "require_empty": ["attested_capabilities"]},
+              {"when": {"path": "device_lifecycle_status", "in": ["bound", "suspended", "revoked", "wipe_pending"]}, "require_non_null": ["binding_id", "binding_version"]},
+              {"when": {"path": "device_lifecycle_status", "not_equals": "bound"}, "require_empty": ["attested_capabilities"]},
+              {"when": {"path": "certificate_status", "not_equals": "active"}, "require_empty": ["attested_capabilities"]},
+              {"when": {"path": "physical_mute_state", "in": ["unknown", "unattested", "mismatch"]}, "require_empty": ["attested_capabilities"]},
+              {"when": {"path": "privacy_light_state", "in": ["unknown", "unattested", "mismatch"]}, "require_empty": ["attested_capabilities"]}
+            ],
+            "x-memoria-requires-capability": [
+              {"state_path": "physical_mute_state", "state_values": ["engaged"], "capabilities_path": "capabilities", "capability": "physical_microphone_cut"},
+              {"state_path": "privacy_light_state", "state_values": ["on"], "capabilities_path": "capabilities", "capability": "hardware_privacy_light"}
+            ],
+            "x-memoria-subset-paths": [["attested_capabilities", "capabilities"]],
+            "x-memoria-integer-order": [{"left_path": "firmware_security_version", "operator": ">=", "right_path": "anti_rollback_floor_security_version"}],
+            "x-memoria-time-order": [{"earlier_path": "occurred_at", "later_path": "expires_at", "strict": true}],
+            "properties": {
+              "attestation_schema": {"type": "string", "const": "device-attestation-v1"},
+              "attestation_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "certificate_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "certificate_status": {"$ref": "#/$defs/DeviceCertificateStatus"},
+              "device_lifecycle_status": {"$ref": "#/$defs/DeviceLifecycleStatus"},
+              "binding_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "binding_version": {"type": ["integer", "null"], "minimum": 1},
+              "firmware_version": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"},
+              "firmware_security_version": {"type": "integer", "minimum": 1, "maximum": 2147483647, "description": "安全全序版本；anti-rollback 只比较此整数，不比较 semver 字符串"},
+              "firmware_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "bootloader_version": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"},
+              "capability_manifest_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "capabilities": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"$ref": "#/$defs/DeviceCapability"}},
+              "attested_capabilities": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"$ref": "#/$defs/DeviceCapability"}, "description": "可进入敏感授权评估的已证明能力子集；证书/绑定/硬件状态不可信时必须为空"},
+              "physical_mute_state": {"$ref": "#/$defs/PhysicalMuteState"},
+              "privacy_light_state": {"$ref": "#/$defs/PrivacyLightState"},
+              "sim_status": {"$ref": "#/$defs/SimLifecycleStatus"},
+              "active_ota_slot": {"$ref": "#/$defs/OtaSlotName"},
+              "ota_boot_status": {"$ref": "#/$defs/OtaBootStatus"},
+              "anti_rollback_floor_version": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"},
+              "anti_rollback_floor_security_version": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+              "monotonic_counter": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+              "last_command_sequence": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+              "nonce": {"type": "string", "minLength": 16, "maxLength": 128, "pattern": "^[A-Za-z0-9_-]+$"},
+              "occurred_at": {"type": "string", "format": "date-time"},
+              "expires_at": {"type": "string", "format": "date-time"},
+              "signer_key_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"},
+              "signature_algorithm": {"type": "string", "const": "ed25519"},
+              "signature": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}
+            }
+          },
+          "OtaAssignment": {
+            "title": "OtaAssignment",
+            "description": "服务端签名 OTA assignment；target slot 必须是明确 A/B，anti-rollback floor 禁止接受旧版本。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["assignment_id", "device_id", "target_slot", "target_version", "target_firmware_security_version", "artifact_sha256", "artifact_size_bytes", "min_bootloader_version", "anti_rollback_floor_version", "anti_rollback_floor_security_version", "channel", "status", "assigned_at", "expires_at", "signer_key_id", "signature_algorithm", "signature"],
+            "x-memoria-forbidden-values": [{"field": "target_slot", "values": ["unknown"]}],
+            "x-memoria-integer-order": [{"left_path": "target_firmware_security_version", "operator": ">=", "right_path": "anti_rollback_floor_security_version"}],
+            "x-memoria-time-order": [{"earlier_path": "assigned_at", "later_path": "expires_at", "strict": true}],
+            "properties": {
+              "assignment_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "target_slot": {"$ref": "#/$defs/OtaSlotName"},
+              "target_version": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"},
+              "target_firmware_security_version": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+              "artifact_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "artifact_size_bytes": {"type": "integer", "minimum": 1, "maximum": 4294967295},
+              "min_bootloader_version": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"},
+              "anti_rollback_floor_version": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"},
+              "anti_rollback_floor_security_version": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+              "channel": {"type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[A-Za-z0-9._-]+$"},
+              "status": {"$ref": "#/$defs/OtaAssignmentStatus"},
+              "assigned_at": {"type": "string", "format": "date-time"},
+              "expires_at": {"type": "string", "format": "date-time"},
+              "signer_key_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"},
+              "signature_algorithm": {"type": "string", "const": "ed25519"},
+              "signature": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}
+            }
+          },
+          "OtaSlotState": {
+            "title": "OtaSlotState",
+            "description": "单个 A/B 槽的持久 boot metadata。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["slot", "boot_status", "firmware_version", "firmware_security_version", "artifact_sha256", "boot_attempts", "confirmed_at", "last_error_code"],
+            "properties": {
+              "slot": {"$ref": "#/$defs/OtaSlotName"},
+              "boot_status": {"$ref": "#/$defs/OtaBootStatus"},
+              "firmware_version": {"type": ["string", "null"], "minLength": 1, "maxLength": 64, "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"},
+              "firmware_security_version": {"type": ["integer", "null"], "minimum": 1, "maximum": 2147483647},
+              "artifact_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+              "boot_attempts": {"type": "integer", "minimum": 0, "maximum": 16},
+              "confirmed_at": {"type": ["string", "null"], "format": "date-time"},
+              "last_error_code": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"}
+            }
+          },
+          "OtaStateReceipt": {
+            "title": "OtaStateReceipt",
+            "description": "设备签名的持久 OTA/boot receipt：记录最高接受版本、反回滚地板、A/B 槽、启动尝试、确认和回滚。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["receipt_id", "device_id", "certificate_id", "assignment_id", "highest_accepted_version", "highest_accepted_firmware_security_version", "anti_rollback_floor_version", "anti_rollback_floor_security_version", "active_slot", "pending_slot", "boot_status", "slots", "max_boot_attempts", "rollback_from_version", "rollback_to_version", "monotonic_counter", "occurred_at", "signer_key_id", "signature_algorithm", "signature"],
+            "x-memoria-forbidden-values": [{"field": "active_slot", "values": ["unknown"]}],
+            "x-memoria-unique-by": [{"field": "slots", "item_field": "slot"}],
+            "x-memoria-integer-order": [{"left_path": "highest_accepted_firmware_security_version", "operator": ">=", "right_path": "anti_rollback_floor_security_version"}],
+            "x-memoria-selected-record-integer-order": [
+              {"selector_path": "active_slot", "records_path": "slots", "record_selector_field": "slot", "record_value_field": "firmware_security_version", "operator": ">=", "other_path": "anti_rollback_floor_security_version"},
+              {"selector_path": "active_slot", "records_path": "slots", "record_selector_field": "slot", "record_value_field": "firmware_security_version", "operator": "<=", "other_path": "highest_accepted_firmware_security_version"}
+            ],
+            "properties": {
+              "receipt_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "certificate_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "assignment_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "highest_accepted_version": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"},
+              "highest_accepted_firmware_security_version": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+              "anti_rollback_floor_version": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"},
+              "anti_rollback_floor_security_version": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+              "active_slot": {"$ref": "#/$defs/OtaSlotName"},
+              "pending_slot": {"anyOf": [{"$ref": "#/$defs/OtaSlotName"}, {"type": "null"}]},
+              "boot_status": {"$ref": "#/$defs/OtaBootStatus"},
+              "slots": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/objects/properties/definitions/properties/OtaSlotState"}},
+              "max_boot_attempts": {"type": "integer", "minimum": 1, "maximum": 16},
+              "rollback_from_version": {"type": ["string", "null"], "minLength": 1, "maxLength": 64, "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"},
+              "rollback_to_version": {"type": ["string", "null"], "minLength": 1, "maxLength": 64, "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"},
+              "monotonic_counter": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+              "occurred_at": {"type": "string", "format": "date-time"},
+              "signer_key_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"},
+              "signature_algorithm": {"type": "string", "const": "ed25519"},
+              "signature": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}
+            }
+          },
+          "RemoteDeviceCommand": {
+            "title": "RemoteDeviceCommand",
+            "description": "短期签名远程设备命令。command_type 来自收紧型白名单，不存在可覆盖物理断麦的 unmute。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command_id", "idempotency_key", "device_id", "actor_id", "command_type", "reason_code", "ota_assignment_id", "parameters_hash", "signer_key_id", "signature_algorithm", "target_certificate_id", "expected_binding_id", "expected_binding_version", "expected_monotonic_counter", "expected_firmware_security_version", "command_sequence", "issued_at", "expires_at", "signature"],
+            "x-memoria-non-null-if": [{"field": "command_type", "equals": "assign_ota", "non_null_fields": ["ota_assignment_id"]}],
+            "x-memoria-time-order": [{"earlier_path": "issued_at", "later_path": "expires_at", "strict": true}],
+            "properties": {
+              "command_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "actor_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "command_type": {"$ref": "#/$defs/RemoteDeviceCommandType"},
+              "reason_code": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"},
+              "ota_assignment_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "parameters_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "signer_key_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"},
+              "signature_algorithm": {"type": "string", "const": "ed25519"},
+              "target_certificate_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "expected_binding_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "expected_binding_version": {"type": "integer", "minimum": 1},
+              "expected_monotonic_counter": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+              "expected_firmware_security_version": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+              "command_sequence": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+              "issued_at": {"type": "string", "format": "date-time"},
+              "expires_at": {"type": "string", "format": "date-time"},
+              "signature": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}
+            }
+          },
+          "RemoteDeviceCommandExecution": {
+            "title": "RemoteDeviceCommandExecution",
+            "description": "设备执行远程命令前的 fail-closed 对账合同。命令必须精确命中当前 device/certificate/binding/security version/monotonic counter，command_sequence 必须高于设备已处理序号；换证、转赠、旧绑定、迟到或重放全部拒绝。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["execution_id", "command", "current_attestation", "accepted_at"],
+            "x-memoria-equal-paths": [
+              ["command.device_id", "current_attestation.device_id"],
+              ["command.target_certificate_id", "current_attestation.certificate_id"],
+              ["command.expected_binding_id", "current_attestation.binding_id"],
+              ["command.expected_binding_version", "current_attestation.binding_version"],
+              ["command.expected_monotonic_counter", "current_attestation.monotonic_counter"],
+              ["command.expected_firmware_security_version", "current_attestation.firmware_security_version"]
+            ],
+            "x-memoria-required-values": {"current_attestation.certificate_status": "active", "current_attestation.device_lifecycle_status": "bound"},
+            "x-memoria-integer-order": [{"left_path": "command.command_sequence", "operator": ">", "right_path": "current_attestation.last_command_sequence"}],
+            "x-memoria-time-order": [
+              {"earlier_path": "command.issued_at", "later_path": "accepted_at", "strict": false},
+              {"earlier_path": "accepted_at", "later_path": "command.expires_at", "strict": true},
+              {"earlier_path": "current_attestation.occurred_at", "later_path": "accepted_at", "strict": false},
+              {"earlier_path": "accepted_at", "later_path": "current_attestation.expires_at", "strict": true}
+            ],
+            "properties": {
+              "execution_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "command": {"$ref": "#/objects/properties/definitions/properties/RemoteDeviceCommand"},
+              "current_attestation": {"$ref": "#/objects/properties/definitions/properties/DeviceAttestation"},
+              "accepted_at": {"type": "string", "format": "date-time"}
+            }
+          },
+          "SessionEpochFence": {
+            "title": "SessionEpochFence",
+            "description": "会话身份 epoch 栅栏（§11.5/PR-08；services/agent GenerationFence + session_epoch + runtime_profile）。换主体/换 profile 必须提升 epoch；迟到结果（LLM/TTS/工具/上下文）在旧 epoch 下全部失效。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["session_id", "session_epoch", "device_id", "binding_id", "binding_version", "generation_id", "turn_id", "tool_epoch", "runtime_profile_id", "actor_id", "active_subject_id", "subject_revision", "issued_at", "valid_until", "fingerprint"],
+            "x-memoria-time-order": [{"earlier_path": "issued_at", "later_path": "valid_until", "strict": true}],
+            "properties": {
+              "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "session_epoch": {"type": "integer", "minimum": 1, "description": "会话身份 epoch（fence 绑定已签发 profile，>= 1）"},
+              "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "binding_version": {"type": "integer", "minimum": 1},
+              "generation_id": {"type": "integer", "minimum": 0},
+              "turn_id": {"type": "integer", "minimum": 0},
+              "tool_epoch": {"type": "integer", "minimum": 0},
+              "runtime_profile_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "actor_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "active_subject_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "subject_revision": {"type": "integer", "minimum": 0},
+              "issued_at": {"type": "string", "format": "date-time"},
+              "valid_until": {"type": "string", "format": "date-time"},
+              "fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+            }
+          },
+          "SessionEvent": {
+            "title": "SessionEvent",
+            "description": "objects_version=2 完整 §11.5 会话事件。epoch 0 仅表达签发前 lifecycle，所有授权身份字段必须显式 null 且不得授权敏感行为；epoch>=1 事件携带完整 device/binding/profile/subject/generation/turn/tool fence。",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event_id", "event_type", "session_id", "session_epoch", "device_id", "binding_id", "binding_version", "generation_id", "turn_id", "tool_epoch", "event_sequence", "active_subject_id", "runtime_profile_id", "actor_id", "subject_revision", "occurred_at", "payload"],
+            "x-memoria-epoch-semantics": {
+              "epoch_field": "session_epoch",
+              "zero_event_values": ["reconnected", "degraded_offline", "session_closed", "session_failed"],
+              "zero_null_fields": ["device_id", "binding_id", "binding_version", "generation_id", "turn_id", "tool_epoch", "active_subject_id", "runtime_profile_id", "actor_id", "subject_revision"],
+              "positive_non_null_fields": ["device_id", "binding_id", "binding_version", "generation_id", "turn_id", "tool_epoch", "runtime_profile_id", "actor_id", "subject_revision"]
+            },
+            "properties": {
+              "event_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "event_type": {"$ref": "#/$defs/SessionEventType"},
+              "session_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "session_epoch": {"type": "integer", "minimum": 0, "description": "会话身份 epoch：0 仅用于签发前 lifecycle 事件（断线/降级/失败），此类事件不得授权任何敏感行为；已签发 profile 的事件 >= 1"},
+              "device_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "binding_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "binding_version": {"type": ["integer", "null"], "minimum": 1},
+              "generation_id": {"type": ["integer", "null"], "minimum": 0},
+              "turn_id": {"type": ["integer", "null"], "minimum": 0},
+              "tool_epoch": {"type": ["integer", "null"], "minimum": 0},
+              "event_sequence": {"type": "integer", "minimum": 0},
+              "active_subject_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "runtime_profile_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "actor_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+              "subject_revision": {"type": ["integer", "null"], "minimum": 0},
+              "occurred_at": {"type": "string", "format": "date-time"},
+              "payload": {"type": "object", "maxProperties": 64, "additionalProperties": true, "description": "事件附加数据（生产方定义；信封字段不受影响）"}
+            }
+          }
+        }
+      },
+      "contracts": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "lifecycle", "consumer_mode", "new_producer", "replacement"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1, "maxLength": 128},
+            "lifecycle": {"type": "string", "description": "current 或 deprecated；未知值由生成器 fail closed"},
+            "consumer_mode": {"type": "string", "description": "canonical 或 migration_only"},
+            "new_producer": {"type": "string", "description": "allowed 或 forbidden"},
+            "replacement": {"type": ["string", "null"], "minLength": 1, "maxLength": 128}
+          }
+        },
+        "minItems": 1,
+        "uniqueItems": true,
+        "description": "顶层对象合同与唯一 machine-readable lifecycle 权威（生成顺序即文档顺序）。deprecated/migration_only/forbidden 合同只允许 legacy consumer 解码，任何新 producer 必须使用 replacement。",
+        "const": [
+          {"name": "BindingManifest", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "RuntimeProfile", "lifecycle": "deprecated", "consumer_mode": "migration_only", "new_producer": "forbidden", "replacement": "RuntimeProfileV2"},
+          {"name": "RuntimeProfileSigned", "lifecycle": "deprecated", "consumer_mode": "migration_only", "new_producer": "forbidden", "replacement": "RuntimeProfileSignedV2"},
+          {"name": "RuntimeProfileV2", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "RuntimeProfileSignedV2", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "PolicyDecision", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "PolicyReceipt", "lifecycle": "deprecated", "consumer_mode": "migration_only", "new_producer": "forbidden", "replacement": "PolicyReceiptV2"},
+          {"name": "PolicyReceiptV2", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "SubjectResolution", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "MemoryWriteFence", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "MemoryEvent", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "SharedMemoryConfirmationEvidence", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "SharedMemoryWithdrawalEvidence", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "SharedMemoryProposal", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "SharedMemoryPromotion", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "NotificationFence", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "RelationshipSnapshot", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "RecipientSnapshot", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "NotificationIntent", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "DeviceAttestation", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "OtaAssignment", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "OtaStateReceipt", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "RemoteDeviceCommand", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "RemoteDeviceCommandExecution", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "SessionEpochFence", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null},
+          {"name": "SessionEvent", "lifecycle": "current", "consumer_mode": "canonical", "new_producer": "allowed", "replacement": null}
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "DeviceDeclaredMode": {
+      "$id": "#/$defs/DeviceDeclaredMode",
+      "title": "DeviceDeclaredMode",
+      "description": "首次绑定时声明的设备主要用途（决策 D-02：产品一级分流入口）。只是默认值，不永久锁死设备，也不决定任何敏感能力的授权（决策 D-03/D-07）。",
+      "type": "string",
+      "enum": ["parent_for_child", "self_use", "child_for_parent", "family_shared"],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 D-02 / §2.1 / §2.2",
+        "missing_value_policy": "fail_closed",
+        "value_notes": {
+          "parent_for_child": "给孩子使用：建立儿童主体与监护关系",
+          "self_use": "给自己使用：建立本人主体",
+          "child_for_parent": "给父母使用：区分购买者/设备管理员与实际使用者",
+          "family_shared": "家庭共同使用：建立家庭空间与成员独立档案"
+        }
+      }
+    },
+    "ServiceMode": {
+      "$id": "#/$defs/ServiceMode",
+      "title": "ServiceMode",
+      "description": "当前会话实际采用的服务模式（决策 D-04：服务模式决定产品目标、能力集合与默认交互流程；人格不决定权限）。无法确认说话人/主体时必须以 unknown_safe 兜底，禁止推断为成人模式。",
+      "type": "string",
+      "enum": [
+        "student_minor",
+        "adult_companion",
+        "senior_companion",
+        "family_shared",
+        "adult_archive",
+        "self_preview",
+        "legacy_access",
+        "unknown_safe"
+      ],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §4.1",
+        "missing_value_policy": "fail_closed",
+        "default": "unknown_safe",
+        "value_notes": {
+          "student_minor": "儿童/学生学习陪伴",
+          "adult_companion": "成人个人陪伴",
+          "senior_companion": "适老陪伴",
+          "family_shared": "家庭共享",
+          "adult_archive": "人生档案",
+          "self_preview": "本人数字自我预览",
+          "legacy_access": "授权传承访问",
+          "unknown_safe": "说话人或主体不明确时的安全模式（默认兜底）"
+        }
+      }
+    },
+    "SubjectCategory": {
+      "$id": "#/$defs/SubjectCategory",
+      "title": "SubjectCategory",
+      "description": "主体类别。默认必须为 unknown，禁止把历史 adult 默认值当作已验证成年人（§8.1/§8.8）。",
+      "type": "string",
+      "enum": ["unknown", "minor", "adult"],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §8.1",
+        "missing_value_policy": "fail_closed",
+        "default": "unknown",
+        "value_notes": {
+          "unknown": "未确认类别（默认，fail-closed）",
+          "minor": "未成年主体",
+          "adult": "成年主体"
+        }
+      }
+    },
+    "AgeBand": {
+      "$id": "#/$defs/AgeBand",
+      "title": "AgeBand",
+      "description": "年龄带。默认 unknown；任何未成年年龄带主体不能获得成人专属能力。",
+      "type": "string",
+      "enum": ["unknown", "under_14", "14_17", "adult"],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §8.1",
+        "missing_value_policy": "fail_closed",
+        "default": "unknown",
+        "value_notes": {
+          "unknown": "未确认年龄带（默认，fail-closed）",
+          "under_14": "14 岁以下",
+          "14_17": "14-17 岁",
+          "adult": "18 岁及以上（需年龄证据支撑）"
+        }
+      }
+    },
+    "AgeEvidenceStatus": {
+      "$id": "#/$defs/AgeEvidenceStatus",
+      "title": "AgeEvidenceStatus",
+      "description": "年龄证据状态（§8.1/PR-02）。只有 verified 才能支撑成人专属能力；unverified/disputed 一律按未成年或 unknown 处理。",
+      "type": "string",
+      "enum": ["unverified", "verified", "disputed"],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §8.1 / PR-02",
+        "missing_value_policy": "fail_closed",
+        "default": "unverified",
+        "value_notes": {
+          "unverified": "未验证（默认，fail-closed）",
+          "verified": "已验证",
+          "disputed": "存在争议"
+        }
+      }
+    },
+    "BindingRole": {
+      "$id": "#/$defs/BindingRole",
+      "title": "BindingRole",
+      "description": "设备绑定角色（§8.3 CHECK 约束的权威集合；决策 D-06：付款人、设备管理员、主要使用者与数据主体不是同一概念）。beneficiary 属于 Relationship（beneficiary_of）/Legacy 域，不在此集合；active_speaker 属于会话级 SpeakerState/active_subject，不在此集合。",
+      "type": "string",
+      "enum": [
+        "account_owner",
+        "device_admin",
+        "primary_subject",
+        "guardian",
+        "delegate",
+        "emergency_contact",
+        "member"
+      ],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 D-06 / §8.3",
+        "missing_value_policy": "fail_closed",
+        "value_notes": {
+          "account_owner": "账号或付费关系的持有人",
+          "device_admin": "有权管理设备网络、固件和绑定的人",
+          "primary_subject": "主要被服务、被记录和形成长期记忆的人",
+          "guardian": "未成年主体的监护人",
+          "delegate": "经主体授权的代理人",
+          "emergency_contact": "紧急联系人",
+          "member": "家庭共享空间成员"
+        }
+      }
+    },
+    "RelationshipType": {
+      "$id": "#/$defs/RelationshipType",
+      "title": "RelationshipType",
+      "description": "Identity 权威的完整有向关系词汇；source_person_id -> target_person_id 的方向不可由角色名反推。",
+      "type": "string",
+      "enum": ["self", "parent_of", "child_of", "guardian_of", "ward_of", "spouse_of", "sibling_of", "caregiver_of", "emergency_contact_for", "delegate_for", "beneficiary_of", "co_subject_of", "family_member_of"],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §5.2；Identity directed relationship authority",
+        "missing_value_policy": "fail_closed",
+        "value_notes": {
+          "self": "同一人物自身关系，端点必须相同",
+          "parent_of": "source 是 target 的父母",
+          "child_of": "source 是 target 的子女",
+          "guardian_of": "source 是 target 的监护人",
+          "ward_of": "source 是 target 的被监护人",
+          "spouse_of": "source 是 target 的配偶",
+          "sibling_of": "source 是 target 的兄弟姐妹",
+          "caregiver_of": "source 是 target 的照护者",
+          "emergency_contact_for": "source 是 target 的紧急联系人",
+          "delegate_for": "source 是 target 的受托代理人",
+          "beneficiary_of": "source 是 target 的传承受益人",
+          "co_subject_of": "source 与 target 是共同记忆主体",
+          "family_member_of": "source 是 target 所代表家庭关系域的成员"
+        }
+      }
+    },
+    "RelationshipStatus": {
+      "$id": "#/$defs/RelationshipStatus",
+      "title": "RelationshipStatus",
+      "description": "关系状态（§5.2）。只有 active 关系才能参与权限授予；其余状态不得自动赋予权限。",
+      "type": "string",
+      "enum": ["pending", "active", "suspended", "revoked", "expired", "disputed"],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §5.2",
+        "missing_value_policy": "fail_closed",
+        "value_notes": {
+          "pending": "待确认（邀请待接受）",
+          "active": "生效中",
+          "suspended": "暂停",
+          "revoked": "已撤销",
+          "expired": "已过期",
+          "disputed": "存在争议"
+        }
+      }
+    },
+    "SpeakerState": {
+      "$id": "#/$defs/SpeakerState",
+      "title": "SpeakerState",
+      "description": "当前说话人识别状态。unconfirmed/unknown 时禁止私人记忆读写与敏感能力（§13.4 属性测试），设备默认值不得是 confirmed。",
+      "type": "string",
+      "enum": ["unknown", "unconfirmed", "confirmed"],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §7.3 / §13.4",
+        "missing_value_policy": "fail_closed",
+        "default": "unknown",
+        "value_notes": {
+          "unknown": "无可用说话人信息（默认，fail-closed）",
+          "unconfirmed": "有候选主体但未确认",
+          "confirmed": "高置信度确认"
+        }
+      }
+    },
+    "MemoryScope": {
+      "$id": "#/$defs/MemoryScope",
+      "title": "MemoryScope",
+      "description": "记忆写入/检索域（§6.1 五类记忆空间）。unknown 为 fail-closed 兜底；归属不明的历史记忆进入 quarantine（memory_item.status），不落入任何 scope。",
+      "type": "string",
+      "enum": [
+        "unknown",
+        "session_ephemeral",
+        "personal_private",
+        "guardian_summary",
+        "family_shared",
+        "legacy_archive"
+      ],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §6.1 / §8.7 / §8.8",
+        "missing_value_policy": "fail_closed",
+        "default": "unknown",
+        "value_notes": {
+          "unknown": "未解析（默认，fail-closed，禁止写入）",
+          "session_ephemeral": "会话临时：会话结束后按策略删除",
+          "personal_private": "个人私域：仅主体及明确授权者",
+          "guardian_summary": "监护治理投影：监护人看到最小化摘要",
+          "family_shared": "家庭共享：经相关主体确认后可见",
+          "legacy_archive": "传承档案：按本人授权与传承规则"
+        }
+      }
+    },
+    "PolicyEffect": {
+      "$id": "#/$defs/PolicyEffect",
+      "title": "PolicyEffect",
+      "description": "策略决策结果（§5.3 PolicyDecision.effect）。默认 deny，fail-closed；任何规则表未声明的能力按 deny 处理。",
+      "type": "string",
+      "enum": ["deny", "allow", "allow_with_obligations"],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §5.3",
+        "missing_value_policy": "fail_closed",
+        "default": "deny",
+        "value_notes": {
+          "deny": "拒绝（默认，fail-closed）",
+          "allow": "允许",
+          "allow_with_obligations": "允许但附带义务（obligations 非空）"
+        }
+      }
+    },
+    "PolicyObligation": {
+      "$id": "#/$defs/PolicyObligation",
+      "title": "PolicyObligation",
+      "description": "策略义务（§5.3 典型义务列表）。语义义务由 PolicyEngine 产出、PersonaRenderer 表达，模型不得自行判断是否提醒（§11.4/ADR-0022 精神）。",
+      "type": "string",
+      "enum": [
+        "DO_NOT_PERSIST",
+        "DO_NOT_WRITE_LEARNING_PROGRESS",
+        "PERSIST_AGGREGATE_ONLY",
+        "REDACT_TRANSCRIPT",
+        "MINIMAL_NOTIFICATION_CONTENT",
+        "REQUIRE_SPEAKER_CONFIRMATION",
+        "REQUIRE_GUARDIAN_APPROVAL",
+        "REQUIRE_SUBJECT_APPROVAL",
+        "REQUIRE_STEP_UP_AUTH",
+        "MAX_SESSION_SECONDS",
+        "QUIET_HOURS",
+        "DEPENDENCY_GUARD",
+        "REALITY_REMINDER",
+        "AI_IDENTITY_CLARIFICATION",
+        "NO_MODEL_TRAINING",
+        "RETENTION_TTL",
+        "NOTIFY_EMERGENCY_CONTACT",
+        "WRITE_SUBJECT_SCOPED_PROGRESS",
+        "WRITE_POLICY_RECEIPT"
+      ],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §5.3",
+        "missing_value_policy": "fail_closed",
+        "value_notes": {
+          "DO_NOT_PERSIST": "不持久化",
+          "DO_NOT_WRITE_LEARNING_PROGRESS": "禁止写入学习进度",
+          "PERSIST_AGGREGATE_ONLY": "仅保留聚合",
+          "REDACT_TRANSCRIPT": "移除逐字对话内容",
+          "MINIMAL_NOTIFICATION_CONTENT": "通知仅包含最小必要内容",
+          "REQUIRE_SPEAKER_CONFIRMATION": "需要说话人确认",
+          "REQUIRE_GUARDIAN_APPROVAL": "需要监护人批准",
+          "REQUIRE_SUBJECT_APPROVAL": "需要主体批准",
+          "REQUIRE_STEP_UP_AUTH": "需要升级认证",
+          "MAX_SESSION_SECONDS": "会话时长上限",
+          "QUIET_HOURS": "安静时段",
+          "DEPENDENCY_GUARD": "避免排他依赖并在事件触发时提供现实连接提醒",
+          "REALITY_REMINDER": "现实提醒",
+          "AI_IDENTITY_CLARIFICATION": "AI 身份澄清",
+          "NO_MODEL_TRAINING": "禁止模型训练用途",
+          "RETENTION_TTL": "保留期限",
+          "NOTIFY_EMERGENCY_CONTACT": "通知紧急联系人",
+          "WRITE_SUBJECT_SCOPED_PROGRESS": "学习进度仅写入当前主体投影",
+          "WRITE_POLICY_RECEIPT": "写入策略回执"
+        }
+      }
+    },
+    "Capability": {
+      "$id": "#/$defs/Capability",
+      "title": "Capability",
+      "description": "策略引擎可决策的能力（§9.4 敏感能力清单 + §7.3 RuntimeProfile 示例的常规能力）。敏感能力必须依据当前主体、年龄证据、关系、同意、设备可信度与会话风险状态重新决策（决策 D-07），不能仅凭设备声明模式开放。",
+      "type": "string",
+      "enum": [
+        "chat",
+        "tutor",
+        "english_practice",
+        "memory_capture",
+        "memory_promotion",
+        "family_shared_memory_proposal",
+        "family_shared_memory_approval",
+        "family_shared_memory_promotion",
+        "memory_recall_private",
+        "guardian_summary_view",
+        "voice_profile_create",
+        "voice_clone_use",
+        "digital_self_preview",
+        "legacy_grant_create",
+        "payment",
+        "raw_audio_retention",
+        "model_training_contribution",
+        "crisis_notification",
+        "device_ownership_transfer"
+      ],
+      "x-memoria": {
+        "contract_version": 2,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §9.4 / §7.3",
+        "missing_value_policy": "fail_closed",
+        "value_notes": {
+          "chat": "普通聊天（常规能力）",
+          "tutor": "学习指导（常规能力）",
+          "english_practice": "英语口语陪练（常规能力）",
+          "memory_capture": "证据采集到会话/候选区；不能授权长期晋升或家庭共享晋升",
+          "memory_promotion": "把候选记忆晋升到主体私域的独立敏感能力",
+          "family_shared_memory_proposal": "创建家庭共享记忆提案的独立敏感能力",
+          "family_shared_memory_approval": "共同主体对家庭共享提案逐票确认/异议的独立敏感能力",
+          "family_shared_memory_promotion": "相关主体确认后晋升家庭共享记忆的独立敏感能力",
+          "memory_recall_private": "私人记忆检索（敏感）",
+          "guardian_summary_view": "监护摘要查看（敏感）",
+          "voice_profile_create": "声纹档案创建（敏感）",
+          "voice_clone_use": "声音复刻使用（敏感，默认禁止）",
+          "digital_self_preview": "数字自我预览（敏感）",
+          "legacy_grant_create": "传承授权创建（敏感）",
+          "payment": "支付/购买（敏感）",
+          "raw_audio_retention": "原始音频留存（敏感）",
+          "model_training_contribution": "模型训练语料贡献（敏感）",
+          "crisis_notification": "危机通知（敏感，独立安全路径）",
+          "device_ownership_transfer": "设备所有权转移（敏感）"
+        }
+      }
+    },
+    "Purpose": {
+      "$id": "#/$defs/Purpose",
+      "title": "Purpose",
+      "description": "策略与同意的受限用途。记忆采集、私域晋升、家庭共享提案和家庭共享晋升是四个不可互换的用途。",
+      "type": "string",
+      "enum": ["user_request", "runtime_profile_issue", "runtime_sensitive_action", "voice_profile", "voice_clone", "digital_self", "legacy", "payment", "raw_audio", "model_training", "device_transfer", "memory_capture", "memory_promotion", "family_shared_memory_proposal", "family_shared_memory_approval", "family_shared_memory_promotion", "memory_recall", "guardian_summary", "crisis_response"],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §5.3/§6.2/§8.6；PolicyContext/Consent authority",
+        "missing_value_policy": "fail_closed",
+        "value_notes": {
+          "user_request": "普通用户请求",
+          "runtime_profile_issue": "签发会话 Runtime Profile",
+          "runtime_sensitive_action": "运行时敏感副作用",
+          "voice_profile": "声纹档案用途",
+          "voice_clone": "声音复刻用途",
+          "digital_self": "数字自我用途",
+          "legacy": "传承授权用途",
+          "payment": "支付用途",
+          "raw_audio": "原始音频用途",
+          "model_training": "模型训练用途",
+          "device_transfer": "设备转移用途",
+          "memory_capture": "只采集证据/候选，不授权长期晋升",
+          "memory_promotion": "候选记忆晋升到个人私域",
+          "family_shared_memory_proposal": "创建待全体确认的家庭共享提案",
+          "family_shared_memory_approval": "一个共同主体独立确认或异议提案",
+          "family_shared_memory_promotion": "使用新鲜全体确认与 promotion receipt 晋升家庭共享记录",
+          "memory_recall": "记忆检索用途",
+          "guardian_summary": "监护最小化摘要用途",
+          "crisis_response": "危机响应与最小化通知用途"
+        }
+      }
+    },
+    "DeviceTrust": {
+      "$id": "#/$defs/DeviceTrust",
+      "title": "DeviceTrust",
+      "description": "策略上下文中的设备可信状态；缺失或未知值不得推断为 trusted/verified。",
+      "type": "string",
+      "enum": ["trusted", "verified", "offline", "untrusted", "revoked"],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 D-07/§5.3/PR-16；PolicyContext",
+        "missing_value_policy": "fail_closed",
+        "value_notes": {
+          "trusted": "已建立受信设备链路",
+          "verified": "本次设备证据已验证",
+          "offline": "离线，仅允许降级能力",
+          "untrusted": "设备不可信，敏感能力拒绝",
+          "revoked": "设备证书或授权已撤销"
+        }
+      }
+    },
+    "SafetyState": {
+      "$id": "#/$defs/SafetyState",
+      "title": "SafetyState",
+      "description": "策略评估时的安全状态；仅规则/权威分类器产出，不能由 Persona 或客户端自报。",
+      "type": "string",
+      "enum": ["normal", "concern", "elevated_risk", "self_crisis"],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §5.3/§10.6；PolicyContext",
+        "missing_value_policy": "fail_closed",
+        "value_notes": {
+          "normal": "未观察到专门安全信号",
+          "concern": "需要适度关注",
+          "elevated_risk": "升高风险，触发加强义务",
+          "self_crisis": "明确危机路径，仅允许最小必要处置"
+        }
+      }
+    },
+    "DataClassification": {
+      "$id": "#/$defs/DataClassification",
+      "title": "DataClassification",
+      "description": "策略决策的数据分类，决定最小化、保留、训练与通知边界。",
+      "type": "string",
+      "enum": ["ephemeral", "public", "private", "biometric", "aggregate", "safety_minimum", "study_progress"],
+      "x-memoria": {
+        "contract_version": 1,
+        "frozen_by": "ADR-0033",
+        "source": "调整方案 §5.3/§6/§8；PolicyContext",
+        "missing_value_policy": "fail_closed",
+        "value_notes": {
+          "ephemeral": "仅会话临时处理",
+          "public": "主体明确公开的数据",
+          "private": "主体私密数据",
+          "biometric": "声纹等生物特征数据",
+          "aggregate": "最小化聚合数据",
+          "safety_minimum": "危机路径最小必要数据",
+          "study_progress": "主体隔离的学习进度"
+        }
+      }
+    },
+    "BindingStatus": {
+      "$id": "#/$defs/BindingStatus",
+      "title": "BindingStatus",
+      "description": "设备绑定版本状态。",
+      "type": "string",
+      "enum": ["active", "superseded", "revoked", "expired"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "Identity BindingManifest", "missing_value_policy": "fail_closed", "value_notes": {"active": "当前生效", "superseded": "已被新版本替代", "revoked": "已撤销", "expired": "已过期"}}
+    },
+    "BindingReason": {
+      "$id": "#/$defs/BindingReason",
+      "title": "BindingReason",
+      "description": "绑定版本产生或终止原因。",
+      "type": "string",
+      "enum": ["create", "supersede", "transfer", "unbind", "expire"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "Identity BindingManifest", "missing_value_policy": "fail_closed", "value_notes": {"create": "首次创建", "supersede": "版本替代", "transfer": "主体或所有权转移", "unbind": "正式解绑", "expire": "有效期结束"}}
+    },
+    "IntentKind": {
+      "$id": "#/$defs/IntentKind",
+      "title": "IntentKind",
+      "description": "通知意图类别。",
+      "type": "string",
+      "enum": ["crisis_safety", "emergency", "care_alert"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "Notification PR-15", "missing_value_policy": "fail_closed", "value_notes": {"crisis_safety": "危机安全通知", "emergency": "紧急事件通知", "care_alert": "照护提醒"}}
+    },
+    "RecipientRole": {
+      "$id": "#/$defs/RecipientRole",
+      "title": "RecipientRole",
+      "description": "允许成为通知收件人的 BindingRole 子集。",
+      "type": "string",
+      "enum": ["guardian", "emergency_contact", "delegate"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "Notification PR-15", "missing_value_policy": "fail_closed", "value_notes": {"guardian": "未成年主体的有效监护人", "emergency_contact": "主体的有效紧急联系人", "delegate": "主体的有效受托代理人"}}
+    },
+    "Channel": {
+      "$id": "#/$defs/Channel",
+      "title": "Channel",
+      "description": "通知投递渠道逻辑标识，不包含渠道凭据。",
+      "type": "string",
+      "enum": ["wechat_subscription", "sms", "phone_call"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "Notification PR-15", "missing_value_policy": "fail_closed", "value_notes": {"wechat_subscription": "微信订阅消息", "sms": "短信", "phone_call": "电话呼叫"}}
+    },
+    "TemplateKey": {
+      "$id": "#/$defs/TemplateKey",
+      "title": "TemplateKey",
+      "description": "最小化通知模板键。",
+      "type": "string",
+      "enum": ["crisis_safety_notice", "emergency_notice", "care_alert_notice"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "Notification PR-15", "missing_value_policy": "fail_closed", "value_notes": {"crisis_safety_notice": "危机安全最小化模板", "emergency_notice": "紧急事件模板", "care_alert_notice": "照护提醒模板"}}
+    },
+    "ReasonCode": {
+      "$id": "#/$defs/ReasonCode",
+      "title": "ReasonCode",
+      "description": "通知触发原因代码。",
+      "type": "string",
+      "enum": ["safety_concern", "emergency_alert", "care_reminder"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "Notification PR-15", "missing_value_policy": "fail_closed", "value_notes": {"safety_concern": "安全关注", "emergency_alert": "紧急告警", "care_reminder": "照护提醒"}}
+    },
+    "IntentStatus": {
+      "$id": "#/$defs/IntentStatus",
+      "title": "IntentStatus",
+      "description": "通知意图聚合状态。",
+      "type": "string",
+      "enum": ["pending", "in_progress", "delivered", "dead_lettered", "cancelled"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "Notification PR-15", "missing_value_policy": "fail_closed", "value_notes": {"pending": "待投递", "in_progress": "投递中", "delivered": "已送达", "dead_lettered": "进入死信", "cancelled": "已取消"}}
+    },
+    "RecipientStatus": {
+      "$id": "#/$defs/RecipientStatus",
+      "title": "RecipientStatus",
+      "description": "单收件人的投递状态。",
+      "type": "string",
+      "enum": ["pending", "in_progress", "delivered", "failed", "dead_lettered", "cancelled"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "Notification PR-15", "missing_value_policy": "fail_closed", "value_notes": {"pending": "待投递", "in_progress": "投递中", "delivered": "已送达", "failed": "本次失败可重试", "dead_lettered": "重试耗尽", "cancelled": "已取消"}}
+    },
+    "CancelReason": {
+      "$id": "#/$defs/CancelReason",
+      "title": "CancelReason",
+      "description": "通知取消原因；关系证据或策略授权失效都必须停止投递。",
+      "type": "string",
+      "enum": ["wrong_contact", "relationship_revoked", "relationship_expired", "relationship_disputed", "authorization_revoked", "authorization_expired", "operator_override", "user_request"],
+      "x-memoria": {"contract_version": 2, "frozen_by": "ADR-0033", "source": "Notification PR-15/TOCTOU review", "missing_value_policy": "fail_closed", "value_notes": {"wrong_contact": "错误联系人", "relationship_revoked": "关系已撤销", "relationship_expired": "关系已过期", "relationship_disputed": "关系存在争议", "authorization_revoked": "策略或同意授权已撤销", "authorization_expired": "策略或同意授权已过期", "operator_override": "经审计的操作员取消", "user_request": "用户请求取消"}}
+    },
+    "ResolutionKind": {
+      "$id": "#/$defs/ResolutionKind",
+      "title": "ResolutionKind",
+      "description": "会话主体解析结果。",
+      "type": "string",
+      "enum": ["confirmed", "confirmation_required"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 §9.2", "missing_value_policy": "fail_closed", "value_notes": {"confirmed": "主体已确认", "confirmation_required": "必须经交互或 App 再确认"}}
+    },
+    "ConfirmationMethod": {
+      "$id": "#/$defs/ConfirmationMethod",
+      "title": "ConfirmationMethod",
+      "description": "主体确认方式。",
+      "type": "string",
+      "enum": ["voice_question", "app_confirm"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 §9.2", "missing_value_policy": "fail_closed", "value_notes": {"voice_question": "设备语音询问", "app_confirm": "受信 App 确认"}}
+    },
+    "MemoryEventType": {
+      "$id": "#/$defs/MemoryEventType",
+      "title": "MemoryEventType",
+      "description": "记忆采集、提案、晋升和撤销事件类型。",
+      "type": "string",
+      "enum": ["memory_captured", "memory_proposed", "memory_promoted", "memory_confirmed", "memory_withdrawn", "memory_revoked", "scope_resolved"],
+      "x-memoria": {"contract_version": 2, "frozen_by": "ADR-0033", "source": "调整方案 §6.2/PR-12/PR-14", "missing_value_policy": "fail_closed", "value_notes": {"memory_captured": "证据或候选已采集", "memory_proposed": "家庭共享提案已创建", "memory_promoted": "使用独立 promotion receipt 完成晋升", "memory_confirmed": "主体确认候选或提案", "memory_withdrawn": "提案或共享记录已撤回", "memory_revoked": "记录已撤销", "scope_resolved": "记忆作用域已解析"}}
+    },
+    "SessionEventType": {
+      "$id": "#/$defs/SessionEventType",
+      "title": "SessionEventType",
+      "description": "会话身份、profile 与 lifecycle 事件类型。",
+      "type": "string",
+      "enum": ["subject_resolved", "subject_switched", "profile_rotated", "epoch_bumped", "reconnected", "degraded_offline", "session_closed", "session_failed"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 §10.2/§11.5", "missing_value_policy": "fail_closed", "value_notes": {"subject_resolved": "主体解析完成", "subject_switched": "活动主体切换", "profile_rotated": "Runtime Profile 轮换", "epoch_bumped": "身份 epoch 提升", "reconnected": "连接恢复", "degraded_offline": "进入离线降级", "session_closed": "会话关闭", "session_failed": "会话失败"}}
+    },
+    "SharedMemoryProposalStatus": {
+      "$id": "#/$defs/SharedMemoryProposalStatus",
+      "title": "SharedMemoryProposalStatus",
+      "description": "家庭共享提案状态；approvals_complete 仍未授权 promotion，只有新鲜 promotion receipt 成功后才能进入 promoted。",
+      "type": "string",
+      "enum": ["pending", "approvals_complete", "frozen", "withdrawn", "promoted"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 PR-14；跨域 promotion 决策", "missing_value_policy": "fail_closed", "value_notes": {"pending": "等待逐主体确认", "approvals_complete": "确认齐备但尚未执行独立晋升授权", "frozen": "异议或授权失效后冻结", "withdrawn": "相关主体已撤回", "promoted": "使用独立新鲜 promotion receipt 完成晋升"}}
+    },
+    "SharedMemoryConfirmationDecision": {
+      "$id": "#/$defs/SharedMemoryConfirmationDecision",
+      "title": "SharedMemoryConfirmationDecision",
+      "description": "一个共同主体对家庭共享提案的不可变逐票决定。",
+      "type": "string",
+      "enum": ["confirm", "object"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 PR-14", "missing_value_policy": "fail_closed", "value_notes": {"confirm": "明确确认该提案", "object": "提出异议并冻结晋升"}}
+    },
+    "DeviceCertificateStatus": {
+      "$id": "#/$defs/DeviceCertificateStatus",
+      "title": "DeviceCertificateStatus",
+      "description": "设备证书生命周期；unknown 是缺证据默认值，只有 active 可参与受信 attestation。",
+      "type": "string",
+      "enum": ["unknown", "pending", "active", "revoked", "expired"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 PR-16", "missing_value_policy": "fail_closed", "default": "unknown", "value_notes": {"unknown": "证书状态未知", "pending": "待签发或待激活", "active": "证书有效", "revoked": "证书已撤销", "expired": "证书已过期"}}
+    },
+    "DeviceLifecycleStatus": {
+      "$id": "#/$defs/DeviceLifecycleStatus",
+      "title": "DeviceLifecycleStatus",
+      "description": "设备从制造、配置、绑定到擦除/退役的长期状态。",
+      "type": "string",
+      "enum": ["unknown", "manufactured", "provisioned", "bound", "suspended", "revoked", "wipe_pending", "wiped", "retired"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 PR-16/红队设备转赠", "missing_value_policy": "fail_closed", "default": "unknown", "value_notes": {"unknown": "生命周期状态未知", "manufactured": "已制造未配置", "provisioned": "已写入设备身份", "bound": "已绑定主体合同", "suspended": "暂时停用", "revoked": "设备身份已撤销", "wipe_pending": "等待可信擦除确认", "wiped": "已完成可信擦除", "retired": "永久退役"}}
+    },
+    "DeviceCapability": {
+      "$id": "#/$defs/DeviceCapability",
+      "title": "DeviceCapability",
+      "description": "PR-16 最小固件能力清单；声明本身不是硬件证明，必须由签名 DeviceAttestation 绑定 capability manifest hash。",
+      "type": "string",
+      "enum": ["device_certificate", "secure_element", "audio_capture", "audio_playback", "acoustic_echo_cancellation", "physical_microphone_cut", "hardware_privacy_light", "wifi", "lte", "ab_ota", "anti_rollback", "remote_attestation", "secure_wipe"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 PR-16/§13.6/§15.6", "missing_value_policy": "fail_closed", "value_notes": {"device_certificate": "每设备唯一证书", "secure_element": "私钥位于安全元件", "audio_capture": "音频采集", "audio_playback": "音频播放", "acoustic_echo_cancellation": "声学回声消除", "physical_microphone_cut": "物理断麦链路", "hardware_privacy_light": "硬件驱动隐私灯", "wifi": "Wi-Fi 网络", "lte": "LTE/流量卡网络", "ab_ota": "A/B 固件更新", "anti_rollback": "反回滚版本地板", "remote_attestation": "签名设备证明", "secure_wipe": "可信数据擦除"}}
+    },
+    "PhysicalMuteState": {
+      "$id": "#/$defs/PhysicalMuteState",
+      "title": "PhysicalMuteState",
+      "description": "物理断麦硬件状态；软件 boolean 不构成该事实。",
+      "type": "string",
+      "enum": ["unknown", "unattested", "engaged", "disengaged", "mismatch"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 §13.6/PR-16", "missing_value_policy": "fail_closed", "default": "unknown", "value_notes": {"unknown": "无状态信息", "unattested": "有软件报告但无硬件证明", "engaged": "物理断麦已接通", "disengaged": "物理断麦未接通", "mismatch": "硬件事实与软件状态冲突"}}
+    },
+    "PrivacyLightState": {
+      "$id": "#/$defs/PrivacyLightState",
+      "title": "PrivacyLightState",
+      "description": "硬件隐私灯状态；软件绘制或普通 GPIO 自报不能冒充硬件证明。",
+      "type": "string",
+      "enum": ["unknown", "unattested", "on", "off", "mismatch"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 §13.6/PR-16", "missing_value_policy": "fail_closed", "default": "unknown", "value_notes": {"unknown": "无状态信息", "unattested": "有软件报告但无硬件证明", "on": "硬件隐私灯亮", "off": "硬件隐私灯灭", "mismatch": "采集链路与隐私灯事实冲突"}}
+    },
+    "SimLifecycleStatus": {
+      "$id": "#/$defs/SimLifecycleStatus",
+      "title": "SimLifecycleStatus",
+      "description": "SIM/流量卡生命周期状态。",
+      "type": "string",
+      "enum": ["unknown", "absent", "inactive", "active", "suspended", "revoked", "expired"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 PR-16/§13.6", "missing_value_policy": "fail_closed", "default": "unknown", "value_notes": {"unknown": "SIM 状态未知", "absent": "无 SIM", "inactive": "存在但未激活", "active": "已激活", "suspended": "已暂停", "revoked": "已远程失效", "expired": "套餐或凭据过期"}}
+    },
+    "OtaAssignmentStatus": {
+      "$id": "#/$defs/OtaAssignmentStatus",
+      "title": "OtaAssignmentStatus",
+      "description": "服务端 OTA assignment 状态。",
+      "type": "string",
+      "enum": ["unknown", "pending", "downloading", "staged", "activated", "cancelled", "failed", "superseded"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 PR-16", "missing_value_policy": "fail_closed", "default": "unknown", "value_notes": {"unknown": "assignment 状态未知", "pending": "等待设备领取", "downloading": "正在下载", "staged": "已校验并写入非活动槽", "activated": "已设为待启动镜像", "cancelled": "已取消", "failed": "下载或校验失败", "superseded": "已被更新 assignment 替代"}}
+    },
+    "OtaBootStatus": {
+      "$id": "#/$defs/OtaBootStatus",
+      "title": "OtaBootStatus",
+      "description": "A/B 槽启动、确认和回滚状态。",
+      "type": "string",
+      "enum": ["unknown", "empty", "staged", "booting", "confirmed", "failed", "rollback_pending", "rolled_back"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 PR-16；voice_core OTA reference", "missing_value_policy": "fail_closed", "default": "unknown", "value_notes": {"unknown": "启动状态未知", "empty": "槽为空", "staged": "镜像已校验待激活", "booting": "新镜像试启动未确认", "confirmed": "健康检查后确认", "failed": "启动或健康检查失败", "rollback_pending": "达到阈值等待回滚", "rolled_back": "已回滚到最后确认版本"}}
+    },
+    "OtaSlotName": {
+      "$id": "#/$defs/OtaSlotName",
+      "title": "OtaSlotName",
+      "description": "A/B OTA 槽名；unknown 只用于缺失证明的状态读取，不能作为 assignment target。",
+      "type": "string",
+      "enum": ["unknown", "a", "b"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 PR-16", "missing_value_policy": "fail_closed", "default": "unknown", "value_notes": {"unknown": "槽信息未知", "a": "A 槽", "b": "B 槽"}}
+    },
+    "RemoteDeviceCommandType": {
+      "$id": "#/$defs/RemoteDeviceCommandType",
+      "title": "RemoteDeviceCommandType",
+      "description": "远程设备命令白名单，只允许收紧/治理动作；刻意不存在 remote unmute，远程命令永远不能覆盖物理断麦。",
+      "type": "string",
+      "enum": ["force_mute", "revoke_device", "secure_wipe", "assign_ota", "collect_diagnostics"],
+      "x-memoria": {"contract_version": 1, "frozen_by": "ADR-0033", "source": "调整方案 PR-16/物理隐私门禁", "missing_value_policy": "fail_closed", "value_notes": {"force_mute": "远程强制进入软件静音并等待硬件证明", "revoke_device": "撤销设备证书/会话", "secure_wipe": "请求可信擦除", "assign_ota": "分配签名 OTA", "collect_diagnostics": "采集最小化诊断信息"}}
+    }
+  }
+}

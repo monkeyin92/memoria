@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 UserId = str
 SummarySource = Literal["qwen", "deepseek", "fallback"]
+_LEGACY_MEMORY_WRITE_UNAVAILABLE_DETAIL = (
+    "legacy memory writes are unavailable in production"
+)
 
 
 def _clean_user_id(value: str) -> str:
@@ -134,8 +137,9 @@ class ProfileRecord(BaseModel):
     voice_reply: bool
     gentle_reminders: bool
     reject_non_owner_voice: bool
-    subject_category: Literal["adult", "minor"]
-    birth_year_band: Literal["unknown", "under_14", "14_to_17", "18_or_over"]
+    subject_category: Literal["unknown", "adult", "minor"]
+    birth_year_band: Literal["unknown", "under_14", "14_17", "adult"]
+    age_evidence_status: Literal["unverified", "verified", "disputed"]
     subject_revision: int = Field(ge=0)
     created_at: datetime
     updated_at: datetime
@@ -190,6 +194,15 @@ def _store(request: Request) -> MemoryStore:
 
 def _settings(request: Request) -> ControlSettings:
     return cast(ControlSettings, request.app.state.settings)
+
+
+def _reject_legacy_memory_write_in_production(request: Request) -> None:
+    settings = _settings(request)
+    if settings.environment == "production":
+        raise HTTPException(
+            status_code=503,
+            detail=_LEGACY_MEMORY_WRITE_UNAVAILABLE_DETAIL,
+        )
 
 
 def _message_request_fingerprint(
@@ -363,6 +376,7 @@ def create_message(
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
     response: Response,
 ) -> dict[str, Any]:
+    _reject_legacy_memory_write_in_production(request)
     user_id = require_matching_user(body.user_id, user)
     settings = _settings(request)
     client_message_id = body.client_message_id
@@ -420,6 +434,7 @@ async def generate_daily_summary(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    _reject_legacy_memory_write_in_production(request)
     user_id = require_matching_user(body.user_id, user)
     store = _store(request)
     messages = store.list_messages(user_id=user_id, summary_date=summary_date.isoformat())

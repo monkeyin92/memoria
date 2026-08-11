@@ -1,6 +1,8 @@
 const api = require("../../utils/api");
 const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
 const { requireLogin } = require("../../utils/auth-gate");
+const { readBindingManifest } = require("../../utils/device-binding");
+const contracts = require("../../utils/multi-subject-contracts");
 
 const defaultProfile = {
   display_name: "新朋友",
@@ -77,8 +79,14 @@ Page({
     deleteError: "",
     deleteConfirmText: DELETE_CONFIRMATION_TEXT,
     authenticated: false,
-    canUseAdultCapabilities: false,
     isMinor: false,
+    hasRuntimeProfile: false,
+    runtimeCapabilities: [],
+    speakerEntryAllowed: false,
+    digitalSelfEntryAllowed: false,
+    guardianEntryAllowed: false,
+    rawVoiceEntryAllowed: false,
+    profileUnavailableReason: "",
   },
 
   onLoad() {
@@ -119,8 +127,14 @@ Page({
       deleteConfirmation: "",
       deleting: false,
       deleteError: "",
-      canUseAdultCapabilities: false,
       isMinor: false,
+      hasRuntimeProfile: false,
+      runtimeCapabilities: [],
+      speakerEntryAllowed: false,
+      digitalSelfEntryAllowed: false,
+      guardianEntryAllowed: false,
+      rawVoiceEntryAllowed: false,
+      profileUnavailableReason: "",
     });
   },
 
@@ -132,12 +146,13 @@ Page({
     try {
       const profile = { ...defaultProfile, ...(await api.getProfile(identity.user_id)) };
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      const canUseAdultCapabilities = profile.subject_category === "adult";
+      const capabilityState = await this.loadRuntimeCapabilities();
+      if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({
         profile,
         profileFaceStyle: profileFaceStyleFor(profile.companion_id),
-        canUseAdultCapabilities,
         isMinor: profile.subject_category === "minor",
+        ...capabilityState,
       });
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
@@ -147,9 +162,78 @@ Page({
     }
   },
 
+  async loadRuntimeCapabilities() {
+    const binding = readBindingManifest();
+    if (!binding || typeof binding.device_id !== "string") {
+      return {
+        hasRuntimeProfile: false,
+        runtimeCapabilities: [],
+        speakerEntryAllowed: false,
+        digitalSelfEntryAllowed: false,
+        guardianEntryAllowed: false,
+        rawVoiceEntryAllowed: false,
+        profileUnavailableReason: "还没有绑定设备，无法取得 Runtime Profile。",
+      };
+    }
+    try {
+      const profile = await api.getRuntimeProfile(binding.device_id);
+      if (profile === null) {
+        // 晚到响应：保持现有状态，不覆盖更新的结果。
+        return this._lastCapabilityState || {
+          hasRuntimeProfile: false,
+          runtimeCapabilities: [],
+          speakerEntryAllowed: false,
+          digitalSelfEntryAllowed: false,
+          guardianEntryAllowed: false,
+          rawVoiceEntryAllowed: false,
+          profileUnavailableReason: "能力状态正在刷新，请稍后重试。",
+        };
+      }
+      if (profile.valid !== true) {
+        return {
+          hasRuntimeProfile: false,
+          runtimeCapabilities: [],
+          speakerEntryAllowed: false,
+          digitalSelfEntryAllowed: false,
+          guardianEntryAllowed: false,
+          rawVoiceEntryAllowed: false,
+          profileUnavailableReason: "服务端返回的 Runtime Profile 校验失败，敏感能力已关闭。",
+        };
+      }
+      const capabilities = profile?.capabilities || [];
+      const state = {
+        hasRuntimeProfile: true,
+        runtimeCapabilities: capabilities,
+        speakerEntryAllowed: capabilities.includes(contracts.Capability.VoiceProfileCreate),
+        digitalSelfEntryAllowed: capabilities.includes(contracts.Capability.DigitalSelfPreview),
+        guardianEntryAllowed: capabilities.includes(contracts.Capability.GuardianSummaryView),
+        rawVoiceEntryAllowed: capabilities.includes(contracts.Capability.RawAudioRetention),
+        profileUnavailableReason: "",
+      };
+      this._lastCapabilityState = state;
+      return state;
+    } catch {
+      return {
+        hasRuntimeProfile: false,
+        runtimeCapabilities: [],
+        speakerEntryAllowed: false,
+        digitalSelfEntryAllowed: false,
+        guardianEntryAllowed: false,
+        rawVoiceEntryAllowed: false,
+        profileUnavailableReason: "Runtime Profile 获取失败，敏感能力入口已关闭。",
+      };
+    }
+  },
+
   async loadStats() {
     const identity = api.currentIdentity();
     if (!identity) return;
+    // 私人回顾统计也是 memory_recall_private 敏感动作：未授权时保持 0，不请求。
+    const gate = await api.requireRuntimeCapability(contracts.Capability.MemoryRecallPrivate);
+    if (!gate.allowed) {
+      this.setData({ stats: { totalDays: 0, moments: 0, streak: 0 } });
+      return;
+    }
     const authEpoch = api.currentAuthEpoch();
     try {
       const result = await api.getMemoryDays(identity.user_id, 30);
@@ -202,40 +286,37 @@ Page({
 
   async openDigitalSelf() {
     if (!(await requireLogin({ reason: "view_profile" }))) return;
-    if (!this._allowAdultExperience()) return;
+    if (!this._allowSensitiveEntry("数字分身", contracts.Capability.DigitalSelfPreview)) return;
     wx.navigateTo({ url: "/pages/digital-self/index" });
   },
 
   async openSpeakerEnrollment() {
     if (!(await requireLogin({ reason: "edit_profile" }))) return;
-    if (!this._allowAdultExperience()) return;
+    if (!this._allowSensitiveEntry("主人声纹", contracts.Capability.VoiceProfileCreate)) return;
     wx.navigateTo({ url: "/pages/speaker-enrollment/index" });
+  },
+
+  openDevice() {
+    wx.navigateTo({ url: "/pages/device/index" });
   },
 
   async openGuardianSummary() {
     if (!(await requireLogin({ reason: "view_guardian_summary" }))) return;
-    if (!["adult", "minor"].includes(this.data.profile.subject_category)) {
-      wx.showToast({ title: "账号资料尚未加载完成", icon: "none" });
-      return;
-    }
+    if (!this._allowSensitiveEntry("成长小结", contracts.Capability.GuardianSummaryView)) return;
     wx.navigateTo({ url: "/pages/guardian/index" });
   },
 
-  _allowAdultExperience() {
-    if (this.data.canUseAdultCapabilities && this.data.profile.subject_category === "adult") {
-      return true;
-    }
-    wx.showToast({
-      title:
-        this.data.profile.subject_category === "minor"
-          ? "学生账号暂不开放此功能"
-          : "账号资料尚未加载完成",
-      icon: "none",
-    });
+  _allowSensitiveEntry(label, capability) {
+    if (this.data.runtimeCapabilities.includes(capability)) return true;
+    const reason = this.data.profileUnavailableReason || "服务端未按当前主体授权";
+    wx.showToast({ title: `${label}暂未开放：${reason}`, icon: "none" });
     return false;
   },
 
   openPrivacy() {
+    if (!this._allowSensitiveEntry("原始语音授权", contracts.Capability.RawAudioRetention)) {
+      return;
+    }
     wx.navigateTo({ url: "/pages/privacy/index" });
   },
 

@@ -335,6 +335,7 @@ class MediaSessionLifecycleMixin:
                     _run_deep_work,
                 )
 
+
                 async def _start_delegation(text: str, fence: GenerationFence) -> None:
                     if not requires_realtime_lookup(text):
                         return

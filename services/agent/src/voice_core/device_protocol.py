@@ -32,6 +32,20 @@ DEVICE_EVENT_TYPES = frozenset(
 )
 
 DeviceCommandStatus = Literal["applied", "rejected", "expired", "failed"]
+RemoteMuteDecision = Literal["engage", "reject"]
+
+
+def decide_remote_mute(payload: dict[str, Any]) -> RemoteMuteDecision:
+    """Decide a remote ``audio.mute.set`` request (single decision point).
+
+    Remote control may only *engage* mute: any payload other than the exact
+    JSON literal ``true`` (including ``false``, numbers, strings, ``null`` and
+    a missing key) is rejected.  Releasing a physical mute is reserved for
+    explicit local hardware control, so a remote release can never silently
+    succeed or fall through to a custom handler.
+    """
+
+    return "engage" if payload.get("muted") is True else "reject"
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,4 +211,6 @@ __all__ = [
     "DeviceCommandAck",
     "DeviceCommandStatus",
     "DeviceEvent",
+    "RemoteMuteDecision",
+    "decide_remote_mute",
 ]

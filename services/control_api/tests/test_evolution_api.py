@@ -27,15 +27,36 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("OFFLINE_MOCK", "true")
 
 
-def _register_adult_profile(app: FastAPI, account_id: str) -> None:
-    now = datetime.now(UTC).isoformat()
-    app.state.memory_store.register_account(
-        user_id=account_id,
-        username=f"test-{account_id}",
-        username_normalized=f"test-{account_id}".casefold(),
-        password_hash="not-used-by-internal-route-tests",
-        now=now,
+async def _register_verified_adult(
+    client: AsyncClient,
+    app: FastAPI,
+    *,
+    username: str,
+    password: str = "safe-password",
+) -> dict[str, str]:
+    """Register, ratchet to a verified adult, and mint a fresh session."""
+
+    registered_response = await client.post(
+        "/v1/auth/register",
+        json={"username": username, "password": password},
     )
+    assert registered_response.status_code == 201
+    registered = registered_response.json()
+    app.state.memory_store.update_subject_profile(
+        user_id=registered["user_id"],
+        subject_category="adult",
+        birth_year_band="adult",
+        age_evidence_status="verified",
+        now=datetime.now(UTC).isoformat(),
+    )
+    login_response = await client.post(
+        "/v1/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert login_response.status_code == 200
+    logged_in = login_response.json()
+    assert logged_in["user_id"] == registered["user_id"]
+    return logged_in
 
 
 def _candidate(candidate_id: str, account_id: str) -> CandidateArtifact:
@@ -103,7 +124,7 @@ async def test_minor_account_evolution_routes_fail_closed(
         app.state.memory_store.update_subject_profile(
             user_id=identity["user_id"],
             subject_category="minor",
-            birth_year_band="14_to_17",
+            birth_year_band="14_17",
             now=datetime.now(UTC).isoformat(),
         )
         refreshed = (
@@ -158,7 +179,30 @@ async def test_evolution_control_api_scopes_candidates_and_enforces_lifecycle(
                 json={"username": "evolution-api-owner", "password": "safe-password"},
             )
         ).json()
-        bearer = {"Authorization": f"Bearer {identity['access_token']}"}
+        unknown_bearer = {"Authorization": f"Bearer {identity['access_token']}"}
+        unknown_listed = await client.get(
+            "/v1/evolution/candidates",
+            headers=unknown_bearer,
+        )
+        assert unknown_listed.status_code == 403
+        assert unknown_listed.json()["detail"] == {
+            "code": "subject_capability_forbidden",
+            "capability": "account_evolution",
+        }
+        app.state.memory_store.update_subject_profile(
+            user_id=identity["user_id"],
+            subject_category="adult",
+            birth_year_band="adult",
+            age_evidence_status="verified",
+            now=datetime.now(UTC).isoformat(),
+        )
+        refreshed = (
+            await client.post(
+                "/v1/auth/login",
+                json={"username": "evolution-api-owner", "password": "safe-password"},
+            )
+        ).json()
+        bearer = {"Authorization": f"Bearer {refreshed['access_token']}"}
         app.state.evolution_store.create_candidate(
             _candidate("visible-candidate", identity["user_id"])
         )
@@ -269,11 +313,17 @@ async def test_evolution_transition_rejects_incomplete_validation(
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
-    _register_adult_profile(app, "account-a")
-    app.state.evolution_store.create_candidate(_candidate("incomplete", "account-a"))
     control = {"X-Memoria-Internal-Token": "evolution-control-token"}
     validator = {"X-Memoria-Internal-Token": "evolution-validator-token"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="evolution-incomplete-adult",
+        )
+        app.state.evolution_store.create_candidate(
+            _candidate("incomplete", identity["user_id"])
+        )
         report = await client.post(
             "/v1/evolution/candidates/incomplete/validations",
             headers=validator,
@@ -305,32 +355,37 @@ async def test_candidate_creation_binds_trusted_root_and_requires_matching_faile
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
-    _register_adult_profile(app, "account-a")
-    app.state.evolution_store.append_signal(_failed_signal("failed-a", "account-a"))
-    app.state.evolution_store.append_signal(_failed_signal("failed-b", "account-a"))
-    app.state.evolution_store.append_signal(
-        _failed_signal("other-family", "account-a", family="reliability")
-    )
     control = {"X-Memoria-Internal-Token": "evolution-control-token"}
-    body = {
-        "candidate_id": "created-through-control-plane",
-        "task_family": "weather",
-        "kind": "prompt",
-        "scope": "owner_private",
-        "account_id": "account-a",
-        "version": 1,
-        "payload": {
-            "proposal": {
-                "instruction": "回答天气时校验目标日期。",
-                "match_terms": ["天气"],
-            }
-        },
-        "source_signal_ids": ["failed-a", "failed-b"],
-        "expected_behavior": "use the target forecast date",
-        "regression_guards": ["privacy_leakage_zero", "retention"],
-        "risk": "medium",
-    }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="evolution-candidate-adult",
+        )
+        account_id = identity["user_id"]
+        app.state.evolution_store.append_signal(_failed_signal("failed-a", account_id))
+        app.state.evolution_store.append_signal(_failed_signal("failed-b", account_id))
+        app.state.evolution_store.append_signal(
+            _failed_signal("other-family", account_id, family="reliability")
+        )
+        body = {
+            "candidate_id": "created-through-control-plane",
+            "task_family": "weather",
+            "kind": "prompt",
+            "scope": "owner_private",
+            "account_id": account_id,
+            "version": 1,
+            "payload": {
+                "proposal": {
+                    "instruction": "回答天气时校验目标日期。",
+                    "match_terms": ["天气"],
+                }
+            },
+            "source_signal_ids": ["failed-a", "failed-b"],
+            "expected_behavior": "use the target forecast date",
+            "regression_guards": ["privacy_leakage_zero", "retention"],
+            "risk": "medium",
+        }
         created = await client.post("/v1/evolution/candidates", headers=control, json=body)
         mismatched_body = dict(body)
         mismatched_body["candidate_id"] = "mismatched-source"
@@ -357,43 +412,48 @@ async def test_activation_rejects_missing_or_forged_canonical_evidence(
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
-    _register_adult_profile(app, "account-a")
-    candidate = _candidate("activation-evidence", "account-a")
-    app.state.evolution_store.create_candidate(candidate)
     from services.evolution.domain import GateResult, ValidationReport
 
-    app.state.evolution_store.record_validation(
-        ValidationReport(
-            validation_id="activation-validation",
-            candidate_id=candidate.candidate_id,
-            gates=tuple(
-                GateResult(name, True, (name,))
-                for name in ("failure_replay", "retention", "transfer", "safety")
-            ),
-        )
-    )
-    app.state.evolution_store.transition_candidate(candidate.candidate_id, "validated")
-    app.state.evolution_store.transition_candidate(candidate.candidate_id, "canary")
-    await app.state.life_archive.record(
-        EvidenceEvent(
-            event_id="forged-evidence",
-            account_id="account-a",
-            event_type="assistant.playout_stopped",
-            occurred_at=datetime.now(UTC),
-            speaker_class="assistant",
-            source="test.evolution.canary",
-            payload={"response_provenance": {"evolution_artifacts": []}},
-        )
-    )
     validator = {"X-Memoria-Internal-Token": "evolution-validator-token"}
-    base = {
-        "account_id": "account-a",
-        "task_id": "task-a",
-        "activated": True,
-        "adhered": True,
-        "outcome_passed": True,
-    }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="evolution-activation-adult",
+        )
+        account_id = identity["user_id"]
+        candidate = _candidate("activation-evidence", account_id)
+        app.state.evolution_store.create_candidate(candidate)
+        app.state.evolution_store.record_validation(
+            ValidationReport(
+                validation_id="activation-validation",
+                candidate_id=candidate.candidate_id,
+                gates=tuple(
+                    GateResult(name, True, (name,))
+                    for name in ("failure_replay", "retention", "transfer", "safety")
+                ),
+            )
+        )
+        app.state.evolution_store.transition_candidate(candidate.candidate_id, "validated")
+        app.state.evolution_store.transition_candidate(candidate.candidate_id, "canary")
+        await app.state.life_archive.record(
+            EvidenceEvent(
+                event_id="forged-evidence",
+                account_id=account_id,
+                event_type="assistant.playout_stopped",
+                occurred_at=datetime.now(UTC),
+                speaker_class="assistant",
+                source="test.evolution.canary",
+                payload={"response_provenance": {"evolution_artifacts": []}},
+            )
+        )
+        base = {
+            "account_id": account_id,
+            "task_id": "task-a",
+            "activated": True,
+            "adhered": True,
+            "outcome_passed": True,
+        }
         missing = await client.post(
             f"/v1/evolution/candidates/{candidate.candidate_id}/activations",
             headers=validator,
@@ -420,72 +480,76 @@ async def test_independent_validator_records_structured_signal_from_canonical_pa
     _configure(monkeypatch, tmp_path)
     app = create_app()
     now = datetime.now(UTC)
-    account_id = "account-evaluated"
-    _register_adult_profile(app, account_id)
-    user_event = EvidenceEvent(
-        event_id="evaluated-user",
-        account_id=account_id,
-        event_type="speech.utterance_finalized",
-        occurred_at=now,
-        speaker_class="owner",
-        source="funasr.authoritative_final",
-        session_id="evaluated-session",
-        turn_id=2,
-        generation_id=4,
-        payload={
-            "text": "不应进入学习信号的原始问题",
-            "tool_epoch": 1,
-            "history_eligible": True,
-            "owner_projection_eligible": True,
-            "speaker_reason_code": "formal_owner",
-            "speaker_profile_id": "owner-profile",
-        },
-    )
-    assistant_event = EvidenceEvent(
-        event_id="evaluated-assistant",
-        account_id=account_id,
-        event_type="assistant.playout_stopped",
-        occurred_at=now,
-        speaker_class="assistant",
-        source="generation_fence.actual_heard",
-        session_id="evaluated-session",
-        turn_id=2,
-        generation_id=4,
-        payload={
-            "text": "不应进入学习信号的原始回答",
-            "tool_epoch": 1,
-            "actual_heard": True,
-        },
-    )
-    await app.state.life_archive.record(user_event)
-    await app.state.life_archive.record(assistant_event)
-    body = {
-        "evaluation_id": "weather-eval-001",
-        "evaluator_version": "offline-rubric-v1",
-        "account_id": account_id,
-        "user_event_id": user_event.event_id,
-        "assistant_event_id": assistant_event.event_id,
-        "task_family": "weather",
-        "task_completed": False,
-        "expected_state": {"target_date": "requested"},
-        "actual_state": {"target_date": "today"},
-        "actions": [],
-        "allowed_tools": ["weather.lookup"],
-        "forbidden_tools": [],
-        "privacy_violation": False,
-        "authorization_violation": False,
-        "stale_fence": False,
-        "commitment_action_consistent": True,
-        "quality_dimensions": {"factuality": "fail", "clarity": "pass"},
-        "environment_version": "weather-eval-v1",
-        "failure_code": "target_date_mismatch",
-        "diagnosis_code": "forecast_date_not_bound",
-        "input_tokens": 20,
-        "output_tokens": 12,
-        "latency_ms": 350,
-    }
     validator = {"X-Memoria-Internal-Token": "evolution-validator-token"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="evolution-evaluated-adult",
+        )
+        account_id = identity["user_id"]
+        user_event = EvidenceEvent(
+            event_id="evaluated-user",
+            account_id=account_id,
+            event_type="speech.utterance_finalized",
+            occurred_at=now,
+            speaker_class="owner",
+            source="funasr.authoritative_final",
+            session_id="evaluated-session",
+            turn_id=2,
+            generation_id=4,
+            payload={
+                "text": "不应进入学习信号的原始问题",
+                "tool_epoch": 1,
+                "history_eligible": True,
+                "owner_projection_eligible": True,
+                "speaker_reason_code": "formal_owner",
+                "speaker_profile_id": "owner-profile",
+            },
+        )
+        assistant_event = EvidenceEvent(
+            event_id="evaluated-assistant",
+            account_id=account_id,
+            event_type="assistant.playout_stopped",
+            occurred_at=now,
+            speaker_class="assistant",
+            source="generation_fence.actual_heard",
+            session_id="evaluated-session",
+            turn_id=2,
+            generation_id=4,
+            payload={
+                "text": "不应进入学习信号的原始回答",
+                "tool_epoch": 1,
+                "actual_heard": True,
+            },
+        )
+        await app.state.life_archive.record(user_event)
+        await app.state.life_archive.record(assistant_event)
+        body = {
+            "evaluation_id": "weather-eval-001",
+            "evaluator_version": "offline-rubric-v1",
+            "account_id": account_id,
+            "user_event_id": user_event.event_id,
+            "assistant_event_id": assistant_event.event_id,
+            "task_family": "weather",
+            "task_completed": False,
+            "expected_state": {"target_date": "requested"},
+            "actual_state": {"target_date": "today"},
+            "actions": [],
+            "allowed_tools": ["weather.lookup"],
+            "forbidden_tools": [],
+            "privacy_violation": False,
+            "authorization_violation": False,
+            "stale_fence": False,
+            "commitment_action_consistent": True,
+            "quality_dimensions": {"factuality": "fail", "clarity": "pass"},
+            "environment_version": "weather-eval-v1",
+            "failure_code": "target_date_mismatch",
+            "diagnosis_code": "forecast_date_not_bound",
+            "input_tokens": 20,
+            "output_tokens": 12,
+            "latency_ms": 350,
+        }
         replay_bundle = await client.post(
             "/v1/evolution/trajectory-replay-bundles",
             headers=validator,
@@ -553,48 +617,51 @@ async def test_replay_bundle_removes_guest_identity_and_transcript(
     _configure(monkeypatch, tmp_path)
     app = create_app()
     now = datetime.now(UTC)
-    account_id = "account-guest-replay"
-    _register_adult_profile(app, account_id)
-    await app.state.life_archive.record(
-        EvidenceEvent(
-            event_id="guest-replay-user",
-            account_id=account_id,
-            event_type="speech.utterance_finalized",
-            occurred_at=now,
-            speaker_class="guest",
-            source="funasr.authoritative_final",
-            session_id="guest-replay-session",
-            turn_id=1,
-            generation_id=1,
-            payload={
-                "text": "访客原始文本不得进入 bundle",
-                "tool_epoch": 0,
-                "history_eligible": False,
-                "owner_projection_eligible": False,
-                "speaker_reason_code": "手机号13812345678",
-            },
-        )
-    )
-    await app.state.life_archive.record(
-        EvidenceEvent(
-            event_id="guest-replay-assistant",
-            account_id=account_id,
-            event_type="assistant.playout_stopped",
-            occurred_at=now,
-            speaker_class="assistant",
-            source="generation_fence.actual_heard",
-            session_id="guest-replay-session",
-            turn_id=1,
-            generation_id=1,
-            payload={
-                "text": "助手原始文本也不得进入 bundle",
-                "tool_epoch": 0,
-                "actual_heard": True,
-            },
-        )
-    )
-
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="evolution-guest-replay-adult",
+        )
+        account_id = identity["user_id"]
+        await app.state.life_archive.record(
+            EvidenceEvent(
+                event_id="guest-replay-user",
+                account_id=account_id,
+                event_type="speech.utterance_finalized",
+                occurred_at=now,
+                speaker_class="guest",
+                source="funasr.authoritative_final",
+                session_id="guest-replay-session",
+                turn_id=1,
+                generation_id=1,
+                payload={
+                    "text": "访客原始文本不得进入 bundle",
+                    "tool_epoch": 0,
+                    "history_eligible": False,
+                    "owner_projection_eligible": False,
+                    "speaker_reason_code": "手机号13812345678",
+                },
+            )
+        )
+        await app.state.life_archive.record(
+            EvidenceEvent(
+                event_id="guest-replay-assistant",
+                account_id=account_id,
+                event_type="assistant.playout_stopped",
+                occurred_at=now,
+                speaker_class="assistant",
+                source="generation_fence.actual_heard",
+                session_id="guest-replay-session",
+                turn_id=1,
+                generation_id=1,
+                payload={
+                    "text": "助手原始文本也不得进入 bundle",
+                    "tool_epoch": 0,
+                    "actual_heard": True,
+                },
+            )
+        )
         response = await client.post(
             "/v1/evolution/trajectory-replay-bundles",
             headers={"X-Memoria-Internal-Token": "evolution-validator-token"},

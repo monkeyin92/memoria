@@ -180,6 +180,7 @@ _SPEAKER_DELETE_ORDER = (
 _POSTGRES_ARCHIVE_EXPORT_TABLES = (
     TableSpec("archive_evidence_events", json_columns=frozenset({"payload"})),
     TableSpec("archive_consent_grants"),
+    TableSpec("archive_outbox_replay_audit"),
     TableSpec(
         "archive_evidence_blobs",
         excluded_columns=frozenset({"object_key", "encryption_key_version"}),
@@ -258,16 +259,19 @@ _POSTGRES_ARCHIVE_EXPORT_TABLES = (
     TableSpec("voice_quality_measurements"),
 )
 
-_POSTGRES_ARCHIVE_DELETE_ORDER = tuple(
-    {
-        "evidence_events": "archive_evidence_events",
-        "processing_outbox": "archive_processing_outbox",
-        "consent_grants": "archive_consent_grants",
-        "evidence_blobs": "archive_evidence_blobs",
-        "transcript_versions": "archive_transcript_versions",
-    }.get(table, table)
-    for table in _ARCHIVE_DELETE_ORDER
-    if table != "self_model_sources"
+_POSTGRES_ARCHIVE_DELETE_ORDER = (
+    "archive_outbox_replay_audit",
+    *(
+        {
+            "evidence_events": "archive_evidence_events",
+            "processing_outbox": "archive_processing_outbox",
+            "consent_grants": "archive_consent_grants",
+            "evidence_blobs": "archive_evidence_blobs",
+            "transcript_versions": "archive_transcript_versions",
+        }.get(table, table)
+        for table in _ARCHIVE_DELETE_ORDER
+        if table != "self_model_sources"
+    ),
 )
 
 _DELETION_STEP_RANK = {

@@ -13,6 +13,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callab
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from services.agent.src.action_policy_client import is_action_policy_capability
 from services.agent.src.config import load_turn_timing
 from services.agent.src.context_assembler import (
     ContextAssembler,
@@ -62,7 +63,7 @@ from services.agent.src.response_planner_client import (
     ResponseProvenance,
     ResponseVoiceTarget,
 )
-from services.agent.src.tutor_session import voice_system_prompt
+from services.agent.src.tutor_session import production_system_prompt
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient, VoiceRuntimeProfile
 from services.common.companion_response_safety import (
@@ -423,7 +424,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         self._legacy_actual_voice_profile_id = actual_voice_profile_id
         self._context_assembler = ContextAssembler()
         self._llm_text_buf = ""
-        self._response_plan_by_fence: dict[tuple[str, int, int, int], ResponsePlan] = {}
+        self._response_plan_by_fence: dict[GenerationFence, ResponsePlan] = {}
         self._response_planner_tool_registered = False
         self._context_ready_by_fence: dict[GenerationFence, asyncio.Event] = {}
         self._realtime_delegation_lock = asyncio.Lock()
@@ -524,10 +525,6 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 yield chunk
 
     @staticmethod
-    def _response_plan_key(fence: GenerationFence) -> tuple[str, int, int, int]:
-        return (fence.session_id, fence.turn_id, fence.generation_id, fence.tool_epoch)
-
-    @staticmethod
     def _generation_voice_matches_target(
         voice: GenerationVoiceSnapshot | None,
         target: ResponseVoiceTarget,
@@ -552,12 +549,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         if policy.mode not in {"self_preview", "legacy"} or plan.voice_target.kind != "fallback":
             return False
         fallback = _frozen_designed_fallback(policy)
-        if (
-            fallback is None
-            or fallback.profile_id != plan.voice_target.profile_id
-            or fallback.model != plan.voice_target.model
-            or self._runtime.tts is None
-        ):
+        if fallback is None or fallback.profile_id != plan.voice_target.profile_id or fallback.model != plan.voice_target.model or self._runtime.tts is None:
             return False
         apply_profile = getattr(self._runtime.tts, "apply_voice_profile", None)
         if not callable(apply_profile):
@@ -634,16 +626,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         resource_id = getattr(tts_plugin, "current_model", None)
         speaker = getattr(tts_plugin, "current_voice", None)
         voice_kind = getattr(tts_plugin, "current_voice_kind", None)
-        if (
-            not isinstance(profile_id, str)
-            or not profile_id
-            or not isinstance(resource_id, str)
-            or not resource_id
-            or not isinstance(speaker, str)
-            or not speaker
-            or not isinstance(voice_kind, str)
-            or not voice_kind
-        ):
+        if not isinstance(profile_id, str) or not profile_id or not isinstance(resource_id, str) or not resource_id or not isinstance(speaker, str) or not speaker or not isinstance(voice_kind, str) or not voice_kind:
             return False
         archive_profile_id = self._archive_voice_profile_id(
             fence,
@@ -850,21 +833,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
 
     @staticmethod
     def _legacy_provenance_absent(provenance: ResponseProvenance) -> bool:
-        return all(
-            value is None
-            for value in (
-                provenance.actor_account_id,
-                provenance.resource_owner_account_id,
-                provenance.legacy_actor_role,
-                provenance.legacy_grantee_account_id,
-                provenance.legacy_grant_id,
-                provenance.legacy_grant_snapshot_sha256,
-                provenance.legacy_scope_sha256,
-                provenance.legacy_shell_id,
-                provenance.legacy_voice_allowed,
-                provenance.legacy_expires_at,
-            )
-        )
+        return all(value is None for value in (provenance.actor_account_id, provenance.resource_owner_account_id, provenance.legacy_actor_role, provenance.legacy_grantee_account_id, provenance.legacy_grant_id, provenance.legacy_grant_snapshot_sha256, provenance.legacy_scope_sha256, provenance.legacy_shell_id, provenance.legacy_voice_allowed, provenance.legacy_expires_at))
 
     @staticmethod
     def _legacy_provenance_matches(
@@ -877,8 +846,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             and provenance.legacy_actor_role == references.get("legacy_actor_role")
             and provenance.legacy_grantee_account_id == references.get("legacy_grantee_account_id")
             and provenance.legacy_grant_id == references.get("legacy_grant_id")
-            and provenance.legacy_grant_snapshot_sha256
-            == references.get("legacy_grant_snapshot_sha256")
+            and provenance.legacy_grant_snapshot_sha256 == references.get("legacy_grant_snapshot_sha256")
             and provenance.legacy_scope_sha256 == references.get("legacy_scope_sha256")
             and provenance.legacy_shell_id == references.get("legacy_shell_id")
             and provenance.legacy_voice_allowed == references.get("legacy_voice_allowed")
@@ -1106,9 +1074,13 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         )
 
     def _cache_response_plan(self, plan: ResponsePlan) -> None:
-        self._response_plan_by_fence[self._response_plan_key(plan.fence)] = plan
+        self._response_plan_by_fence[plan.fence] = plan
         while len(self._response_plan_by_fence) > 32:
             self._response_plan_by_fence.pop(next(iter(self._response_plan_by_fence)))
+
+    @staticmethod
+    def _response_plan_key(fence: GenerationFence) -> GenerationFence:
+        return fence
 
     def _register_response_planner_tool(self) -> bool:
         if self._response_planner_tool_registered or self._response_planner_client is None:
@@ -1137,6 +1109,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 timeout_s=2.0,
                 contains_sensitive_data=True,
                 side_effect_policy=SideEffectPolicy.READ_ONLY.value,
+                required_capability="memory_recall_private",
             ),
             _fetch,
         )
@@ -1160,18 +1133,14 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 memory_capsule=base.memory_capsule,
                 persona_capsule=base.persona_capsule,
                 relationship_policy=policy,
-                tool_permission=policy.allows_tools(speaker_class),
+                tool_permission=base.tool_permission,
                 speaker_class=speaker_class,
                 summary=base.summary,
             )
         )
-        if not callable(prefetch) or not query:
+        if not callable(prefetch) or not query or not self._runtime.profile_permits(self._runtime.fence, capability="memory_recall_private"):
             return fallback
-        fetched = await prefetch(
-            session_id=self._runtime.session_id,
-            query=query,
-            speaker_decision=speaker_decision,
-        )
+        fetched = await prefetch(session_id=self._runtime.session_id, query=query, speaker_decision=speaker_decision)
         if not fetched.available or self._runtime.current_speaker_decision != speaker_decision:
             return fallback
         memory = MemoryCapsule(
@@ -1202,7 +1171,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 memory_capsule=memory,
                 persona_capsule=persona,
                 relationship_policy=policy,
-                tool_permission=policy.allows_tools(speaker_class),
+                tool_permission=base.tool_permission,
                 speaker_class=speaker_class,
                 summary=base.summary,
             )
@@ -1215,8 +1184,10 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         speaker: Any,
         fence: GenerationFence,
     ) -> ResponsePlanFetch:
-        if not self._register_response_planner_tool():
-            return ResponsePlanFetch(None, "missing_response_planner_client")
+        if not self._register_response_planner_tool() or not self._runtime.profile_permits(
+            fence, capability="memory_recall_private"
+        ):
+            return ResponsePlanFetch(None, "no_verified_runtime_profile")
         coordinator = self._runtime.orchestrator.delegation
         context_version = self._runtime.orchestrator.context_version_for_fence(fence)
         recall_context = self._recall_context_for_fence(fence, speaker=speaker)
@@ -1315,7 +1286,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             input_modality == "audio"
             and self._voice_profile_client is not None
             and self._runtime.tts is not None
-            and (policy.allows_voice_profile() or policy.mode == "legacy")
+            and self._runtime.profile_permits(self._runtime.fence, capability="voice_clone_use")
         ):
             await self._runtime.wait_for_voice_profile_refresh()
             _apply_cached_voice_profile(
@@ -1828,8 +1799,28 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 logger.error("unsupported LiveKit tool blocked tool=%r", tool)
                 continue
             spec = manager.specs.get(name)
-            if spec is None or name not in manager.handlers:
+            if spec is None or (name not in manager.handlers and name not in manager.preparers):
                 logger.error("unregistered LiveKit tool blocked tool=%s", name)
+                continue
+            if (spec.contains_sensitive_data or spec.side_effect_policy != "read_only") and spec.required_capability is None:
+                logger.error(
+                    "sensitive tool without capability mapping blocked tool=%s",
+                    name,
+                )
+                continue
+            if (
+                spec.required_capability is not None
+                and not is_action_policy_capability(spec.required_capability)
+                and not self._runtime.profile_permits(
+                    fence, capability=spec.required_capability
+                )
+            ):
+                # Sensitive tools need the exact-fence capability before exposure or execution.
+                logger.error(
+                    "tool without required capability blocked tool=%s cap=%s",
+                    name,
+                    spec.required_capability,
+                )
                 continue
             try:
                 policy = SideEffectPolicy(spec.side_effect_policy)
@@ -1856,7 +1847,17 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 async def dispatch(raw_arguments: dict[str, object]) -> str:
                     if not self._runtime.fence.matches(fence):
                         raise StopResponse()
-                    context_version = self._runtime.orchestrator.context_version_for_fence(fence)
+                    if (
+                        tool_spec.required_capability is not None
+                        and not is_action_policy_capability(
+                            tool_spec.required_capability
+                        )
+                        and not self._runtime.profile_permits(
+                            fence, capability=tool_spec.required_capability
+                        )
+                    ):
+                        raise StopResponse()
+                    context_version = coordinator.current_context_version(fence.session_id)
                     handle = await coordinator.delegate(
                         DelegationRequest(
                             tool_name=tool_name,
@@ -1950,7 +1951,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         task = asyncio.current_task()
         self._runtime.orchestrator.set_active_llm_task(task)
         self._llm_text_buf = ""
-        response_plan = self._response_plan_by_fence.get(self._response_plan_key(fence))
+        response_plan = self._response_plan_by_fence.get(fence)
         if response_plan is None or not response_plan.fence.matches(fence):
             logger.error(
                 "llm request blocked without exact response plan session_id=%s "
@@ -2205,7 +2206,6 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             if (
                 tools
                 and context_snapshot.tool_permission
-                and policy.allows_tools(speaker_class)
                 and not self._is_local_safe_plan(response_plan)
             ):
                 safe_tools = self._coordinated_livekit_tools(
@@ -2672,47 +2672,18 @@ async def entrypoint(ctx: Any) -> None:
             )
 
         runtime.set_interrupt_semantic_resolver(_resolve_interrupt_semantic)
-    mode_policy_client = None
-    interaction_policy_token = runtime_settings.internal_token("interaction_policy")
-    if interaction_policy_token and not offline:
-        from services.agent.src.mode_policy_client import (
-            ModePolicyClient,
-            ModePolicyClientConfig,
-        )
+    from services.agent.src.policy_runtime_wiring import (
+        install_runtime_policy_clients,
+    )
 
-        mode_policy_client = ModePolicyClient(
-            ModePolicyClientConfig(
-                endpoint=runtime_settings.interaction_policy_url,
-                internal_token=interaction_policy_token,
-                timeout_s=runtime_settings.interaction_policy_timeout_s,
-            )
+    mode_policy_client, action_policy_client, effect_commit_client = (
+        await install_runtime_policy_clients(
+            runtime=runtime,
+            settings=runtime_settings,
+            session_id=runtime_session_id,
+            offline=offline,
         )
-        policy = await mode_policy_client.fetch(session_id=runtime_session_id)
-        runtime.set_mode_policy(policy)
-        if not policy.available:
-            logger.error(
-                "interaction policy unavailable; session is fail-closed session_id=%s reason=%s",
-                runtime_session_id,
-                policy.unavailable_reason,
-            )
-    else:
-        runtime.set_mode_policy(
-            ModePolicy.unavailable(
-                "missing_interaction_policy_token"
-                if not interaction_policy_token
-                else "offline_mock"
-            )
-        )
-        logger.error(
-            "interaction policy unavailable; session is fail-closed session_id=%s",
-            runtime_session_id,
-        )
-    if not runtime.mode_policy.allows_conversation():
-        if mode_policy_client is not None:
-            await mode_policy_client.aclose()
-        raise RuntimeError(
-            "interaction policy does not authorize a companion conversation; refusing session start"
-        )
+    )
     if runtime_settings.speaker_authority_enabled and not offline:
         from services.agent.src.speaker_authority_client import (
             SpeakerAuthorityClient,
@@ -2814,7 +2785,7 @@ async def entrypoint(ctx: Any) -> None:
     if (
         runtime_settings.voice_profile_enabled
         and voice_token
-        and (runtime.mode_policy.allows_voice_profile() or runtime.mode_policy.mode == "legacy")
+        and runtime.profile_permits(runtime.fence, capability="voice_clone_use")
         and not offline
     ):
         from services.agent.src.voice_profile_client import VoiceProfileClientConfig
@@ -2940,7 +2911,7 @@ async def entrypoint(ctx: Any) -> None:
     runtime.attach_session_events(session)
 
     original_interrupt = session.interrupt
-
+    runtime.set_playback_stop_seam(lambda: original_interrupt())
     def _interrupt_wrapped(*args: Any, **kwargs: Any) -> Any:
         async def _stop_livekit() -> str | None:
             await original_interrupt(*args, **kwargs)
@@ -3181,7 +3152,8 @@ async def entrypoint(ctx: Any) -> None:
         runtime._spawn(_apply_control(), name=f"duplex-{event_type.replace('_', '-')}")
 
     ctx.room.on("data_received", _on_control_packet)
-    agent_instructions = voice_system_prompt(runtime.mode_policy.session_focus)
+    # Persona/ServiceMode come from the frozen signed RuntimeProfile (runtime_profile_gate.py).
+    agent_instructions = production_system_prompt(runtime)
     if miniprogram_session:
         agent_instructions += (
             "\n\n当前客户端是受控半双工小程序。普通回答只说一到三句、最多一百二十个"
@@ -3269,6 +3241,10 @@ async def entrypoint(ctx: Any) -> None:
             await _close_component("voice_profile_client", voice_profile_client.close())
         if mode_policy_client is not None:
             await _close_component("mode_policy_client", mode_policy_client.aclose())
+        if action_policy_client is not None:
+            await _close_component("action_policy_client", action_policy_client.aclose())
+        if effect_commit_client is not None:
+            await _close_component("effect_commit_client", effect_commit_client.aclose())
         if archive_sink is not None:
             await _close_component("archive_sink", archive_sink.close())
         if shutdown_errors:

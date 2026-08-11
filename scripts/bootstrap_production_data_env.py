@@ -9,6 +9,8 @@ import secrets
 import tempfile
 from pathlib import Path
 
+from scripts.production_postgres_roles import PRODUCTION_POSTGRES_ROLES
+
 
 def _write_new(path: Path, values: dict[str, str]) -> None:
     if path.exists():
@@ -43,10 +45,7 @@ def main() -> int:
         args.postgres,
         {
             "POSTGRES_PASSWORD": _secret(),
-            "MEMORIA_DB_APP_PASSWORD": _secret(),
-            "MEMORIA_DB_COMPILER_PASSWORD": _secret(),
-            "MEMORIA_DB_EVOLUTION_PASSWORD": _secret(),
-            "MEMORIA_DB_GUARDIAN_PASSWORD": _secret(),
+            **{role.password_env: _secret() for role in PRODUCTION_POSTGRES_ROLES},
         },
     )
     _write_new(

@@ -9,8 +9,10 @@ import pytest
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.media_agent_factory import build_production_media_session_factory
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.handlers import SpeechSynthesisRequest
 from services.agent.src.response_planner_client import ResponsePlanFetch
+from services.agent.src.runtime_profile_gate import RuntimeProfileGate
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 
 
@@ -213,12 +215,32 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
             return None
 
     class Orchestrator:
+        def __init__(self) -> None:
+            self.metrics = MetricsRegistry()
+            self.runtime_profiles = RuntimeProfileGate(
+                metrics=self.metrics,
+                bump_epoch=lambda epoch: GenerationFence(
+                    session_id="archive-session",
+                    turn_id=0,
+                    generation_id=0,
+                    tool_epoch=0,
+                    session_epoch=epoch,
+                ),
+                expected_session_id="archive-session",
+            )
+
         async def ready(self) -> None:
             return None
 
     class Runtime:
         session_id = "archive-session"
         orchestrator = Orchestrator()
+        fence = GenerationFence(
+            session_id="archive-session",
+            turn_id=0,
+            generation_id=0,
+            tool_epoch=0,
+        )
         mode_policy = ModePolicy.companion_for_test(
             policy_version="archive-test-policy",
             private_context=False,
@@ -229,11 +251,17 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
             session_focus="chat",
         )
 
+        def mode_policy_for_fence(self, _fence: object) -> ModePolicy:
+            return self.mode_policy
+
         def set_evidence_publisher(self, publisher: object) -> None:
             assert callable(publisher)
 
         def set_owner_turn_publisher(self, publisher: object) -> None:
             assert callable(publisher)
+
+        def set_runtime_profile_refresher(self, refresher: object) -> None:
+            assert callable(refresher)
 
     class TTS:
         pool = None
@@ -251,7 +279,7 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
     monkeypatch.setattr(
         factory_module.ProductionMediaSessionFactory,
         "_new_runtime",
-        lambda self, session_id, tts: runtime,
+        lambda self, session_id, tts, **kwargs: runtime,
     )
 
     async def bind_mode_policy(self: object, bound_runtime: object) -> Closeable:

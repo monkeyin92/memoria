@@ -154,7 +154,25 @@ SERVER_INTERACTION_PAYLOAD_KEYS = frozenset(
         "tool_epoch",
         "subject_category",
         "memory_retention",
+        "memory_capture_candidate_v1",
     }
+)
+
+AGENT_MEMORY_WRITE_FENCE_FIELDS = (
+    "session_epoch",
+    "device_id",
+    "subject_revision",
+    "active_subject_id",
+    "runtime_profile_id",
+    "actor_id",
+    "binding_id",
+    "binding_version",
+    "memory_scope",
+    "policy_receipt_id",
+    "raw_audio_receipt_id",
+    "training_receipt_id",
+    "no_model_training",
+    "event_sequence",
 )
 
 
@@ -200,6 +218,32 @@ class SessionEvidenceEventCreate(BaseModel):
     turn_id: int | None = Field(default=None, ge=0)
     generation_id: int | None = Field(default=None, ge=0)
     tool_epoch: int | None = Field(default=None, ge=0)
+    # Agent-owned MemoryWriteFence envelope.  These claims are accepted at
+    # the transport boundary so the real Agent event is not rejected, but
+    # they are never copied directly into archive evidence.  The route emits
+    # a bounded server-owned projection candidate and the PostgreSQL Memory
+    # projector independently revalidates Session + Policy authority.
+    session_epoch: int | None = Field(default=None, ge=0)
+    device_id: str | None = Field(default=None, max_length=128)
+    subject_revision: int | None = Field(default=None, ge=0)
+    active_subject_id: str | None = Field(default=None, max_length=128)
+    runtime_profile_id: str | None = Field(default=None, max_length=128)
+    actor_id: str | None = Field(default=None, max_length=128)
+    binding_id: str | None = Field(default=None, max_length=128)
+    binding_version: int | None = Field(default=None, ge=1)
+    memory_scope: Literal[
+        "unknown",
+        "session_ephemeral",
+        "personal_private",
+        "guardian_summary",
+        "family_shared",
+        "legacy_archive",
+    ] = "unknown"
+    policy_receipt_id: str | None = Field(default=None, max_length=128)
+    raw_audio_receipt_id: str | None = Field(default=None, max_length=128)
+    training_receipt_id: str | None = Field(default=None, max_length=128)
+    no_model_training: bool = True
+    event_sequence: int | None = Field(default=None, ge=1)
     speaker_identity_id: str | None = Field(default=None, max_length=128)
     consent_grant_id: str | None = Field(default=None, max_length=128)
     schema_version: int = Field(default=1, ge=1, le=100)
@@ -1560,6 +1604,86 @@ def _require_memory_read_token(
     _require_internal_token(request, "memory_read", token)
 
 
+def _memory_capture_candidate(
+    *,
+    body: SessionEvidenceEventCreate,
+    claims: dict[str, Any],
+    trusted_interaction: dict[str, Any],
+    retention_allowed: bool,
+) -> dict[str, object] | None:
+    """Return only the bounded input for the durable authority projector.
+
+    This is deliberately a *candidate*, not authority.  The action-executor
+    PostgreSQL port checks the current Session profile and the exact Policy
+    receipt before inserting ``memory_capture_evidence``.  Keeping the raw
+    Agent claims out of the archive payload also prevents a nested caller
+    field from becoming trusted by accident.
+    """
+
+    if not (
+        body.event_type == "speech.utterance_finalized"
+        and body.speaker_class == "owner"
+        and body.turn_id is not None
+        and body.generation_id is not None
+        and body.tool_epoch is not None
+        and retention_allowed
+        and trusted_interaction.get("interaction_mode") == "companion"
+        and trusted_interaction.get("simulated_output") is False
+        and trusted_interaction.get("owner_projection_eligible") is True
+    ):
+        return None
+    required_text = (
+        "device_id",
+        "active_subject_id",
+        "runtime_profile_id",
+        "actor_id",
+        "binding_id",
+    )
+    if any(
+        not isinstance(claims.get(field), str)
+        or not cast(str, claims[field]).strip()
+        for field in required_text
+    ):
+        return None
+    if claims.get("memory_scope") not in {
+        "personal_private",
+        "guardian_summary",
+        "family_shared",
+    }:
+        return None
+    required_positive = ("session_epoch", "binding_version", "event_sequence")
+    if any(
+        not isinstance(claims.get(field), int)
+        or isinstance(claims[field], bool)
+        or cast(int, claims[field]) < 1
+        for field in required_positive
+    ):
+        return None
+    subject_revision = claims.get("subject_revision")
+    if (
+        not isinstance(subject_revision, int)
+        or isinstance(subject_revision, bool)
+        or subject_revision < 0
+    ):
+        return None
+    return {
+        "active_subject_id": cast(str, claims["active_subject_id"]),
+        "actor_id": cast(str, claims["actor_id"]),
+        "binding_id": cast(str, claims["binding_id"]),
+        "binding_version": cast(int, claims["binding_version"]),
+        "device_id": cast(str, claims["device_id"]),
+        "event_sequence": cast(int, claims["event_sequence"]),
+        "generation_id": body.generation_id,
+        "memory_scope": cast(str, claims["memory_scope"]),
+        "runtime_profile_id": cast(str, claims["runtime_profile_id"]),
+        "session_id": body.session_id,
+        "session_epoch": cast(int, claims["session_epoch"]),
+        "subject_revision": subject_revision,
+        "tool_epoch": body.tool_epoch,
+        "turn_id": body.turn_id,
+    }
+
+
 @router.post("/events")
 async def append_event(
     body: EvidenceEventCreate,
@@ -1628,6 +1752,9 @@ async def append_session_event(
     )
     values = body.model_dump()
     tool_epoch = values.pop("tool_epoch")
+    memory_write_fence = {
+        field: values.pop(field) for field in AGENT_MEMORY_WRITE_FENCE_FIELDS
+    }
     values["account_id"] = account_id
     payload = dict(values["payload"])
     reason_code = payload.get("speaker_reason_code") or payload.get("reason_code")
@@ -1765,6 +1892,14 @@ async def append_session_event(
         payload["tool_epoch"] = tool_epoch
     if canonical_response_provenance is not None:
         payload["response_provenance"] = canonical_response_provenance
+    memory_capture_candidate = _memory_capture_candidate(
+        body=body,
+        claims=memory_write_fence,
+        trusted_interaction=trusted_interaction,
+        retention_allowed=retention_allowed,
+    )
+    if memory_capture_candidate is not None:
+        payload["memory_capture_candidate_v1"] = memory_capture_candidate
     if (
         body.event_type == "speech.utterance_finalized"
         and body.speaker_class == "owner"

@@ -819,9 +819,56 @@ describe("DigitalSelfPanel", () => {
       .not.toBeInTheDocument();
     expect(mocks.reviewPersonaTrait).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "撤销人格学习授权" }));
+    // 确定性等待：撤销入口只在 run() 内 reload 回读 learning_allowed=true
+    // 之后才出现。之前用 waitFor(API mock) 后立即 getByRole 会在全量套件
+    // 时序下竞态（grant 调用先于 reload 应用），这里以“UI 状态”为准。
+    fireEvent.click(
+      await screen.findByRole("button", { name: "撤销人格学习授权" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "确认撤销人格学习" }));
     await waitFor(() => expect(mocks.revokePersonaConsent).toHaveBeenCalledOnce());
+    // 撤销后同样以回读状态为准：同意复选框重新出现。
+    expect(
+      await screen.findByLabelText("我同意 Memoria 学习我的表达与思维偏好"),
+    ).toBeInTheDocument();
+  });
+
+  it("never shows the revoke control before the refetched status confirms learning is on", async () => {
+    // 回归：撤销入口的可见性必须由 run() 后的状态回读驱动，而不是由
+    // “grant 接口被调用”驱动。即使 grant 成功，若回读仍为 false，
+    // 撤销按钮不得出现（UI 不乐观显示服务端未确认的状态）。
+    personaTraits = [
+      {
+        trait_id: "trait-1",
+        category: "verbal_tic",
+        description: "常用“慢慢来”安慰别人",
+        confidence: 0.82,
+        observation_count: 6,
+        status: "candidate",
+        version_id: null,
+      },
+    ];
+    let statusCalls = 0;
+    mocks.getPersonaStatus.mockImplementation(async () => {
+      statusCalls += 1;
+      // 第一次回读 false；grant 成功后的回读仍 false（模拟服务端尚未确认）。
+      return { learning_allowed: false };
+    });
+    mocks.grantPersonaConsent.mockResolvedValue({ ok: true });
+    render(<DigitalSelfPanel onBack={vi.fn()} />);
+
+    const consent = await screen.findByLabelText("我同意 Memoria 学习我的表达与思维偏好");
+    fireEvent.click(consent);
+    fireEvent.click(screen.getByRole("button", { name: "开启人格学习" }));
+    await waitFor(() => expect(mocks.grantPersonaConsent).toHaveBeenCalledOnce());
+    await waitFor(() => expect(statusCalls).toBeGreaterThanOrEqual(2));
+
+    expect(
+      screen.queryByRole("button", { name: "撤销人格学习授权" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByLabelText("我同意 Memoria 学习我的表达与思维偏好"),
+    ).toBeInTheDocument();
   });
 
   it("does not expose sensitive decision candidates for customer confirmation", async () => {

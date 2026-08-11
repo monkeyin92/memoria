@@ -24,13 +24,42 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return path
 
 
-async def _register(client: AsyncClient, username: str) -> dict[str, str]:
+async def _register(
+    client: AsyncClient,
+    username: str,
+    password: str = "safe-password",
+) -> dict[str, str]:
     response = await client.post(
         "/v1/auth/register",
-        json={"username": username, "password": "safe-password"},
+        json={"username": username, "password": password},
     )
     assert response.status_code == 201
     return response.json()
+
+
+async def _register_verified_adult(
+    client: AsyncClient,
+    app: object,
+    *,
+    username: str,
+    password: str = "safe-password",
+) -> dict[str, str]:
+    registered = await _register(client, username, password=password)
+    app.state.memory_store.update_subject_profile(
+        user_id=registered["user_id"],
+        subject_category="adult",
+        birth_year_band="adult",
+        age_evidence_status="verified",
+        now=datetime.now(UTC).isoformat(),
+    )
+    response = await client.post(
+        "/v1/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert response.status_code == 200
+    logged_in = response.json()
+    assert logged_in["user_id"] == registered["user_id"]
+    return logged_in
 
 
 async def _approved_version(
@@ -177,7 +206,9 @@ async def test_owner_preview_grant_freezes_self_preview_session_and_is_one_time(
 
     app.state.speaker_authority = _ActiveSpeaker()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        owner = await _register(client, "preview-owner")
+        owner = await _register_verified_adult(
+            client, app, username="preview-owner"
+        )
         headers = {"Authorization": f"Bearer {owner['access_token']}"}
         version = await _approved_version(app, client, path, owner)
         issued = await client.post(

@@ -11,6 +11,7 @@ from cryptography.fernet import Fernet
 from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -29,8 +30,8 @@ def _owner_decision() -> SpeakerDecision:
 
 def _provenance(*, owner_projection_eligible: bool = False) -> dict[str, object]:
     return {
-        "interaction_mode": "companion" if owner_projection_eligible else "unavailable",
-        "mode_policy_version": "test-policy" if owner_projection_eligible else "unavailable",
+        "interaction_mode": "companion",
+        "mode_policy_version": "test-policy",
         "simulated_output": False,
         "history_eligible": owner_projection_eligible,
         "owner_projection_eligible": owner_projection_eligible,
@@ -38,15 +39,14 @@ def _provenance(*, owner_projection_eligible: bool = False) -> dict[str, object]
 
 
 def _enable_owner_projection(runtime: DuplexRuntime) -> None:
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=True,
-            shadow_low_sensitivity_persona=True,
-        )
+    bind_owner_policy(
+        runtime,
+        private_context=True,
+        owner_evidence=True,
+        tools=True,
+        voice_profile=True,
+        shadow_low_sensitivity_persona=True,
+        include_raw_audio=True,
     )
 
 
@@ -112,6 +112,7 @@ def _legacy_voice_policy(*, voice_allowed: bool) -> ModePolicy:
 @pytest.mark.asyncio
 async def test_only_final_user_and_actual_heard_assistant_text_become_evidence() -> None:
     runtime = DuplexRuntime.create(session_id="session-001")
+    bind_owner_policy(runtime)
     published: list[dict[str, object]] = []
 
     async def capture(event: dict[str, object]) -> None:
@@ -120,12 +121,15 @@ async def test_only_final_user_and_actual_heard_assistant_text_become_evidence()
     runtime.set_evidence_publisher(capture)
     runtime.publish_transcript(speaker="user", text="还没说完", final=False)
     runtime.publish_transcript(speaker="assistant", text="未播放完整回答", final=True)
-    runtime.publish_transcript(speaker="user", text="我在杭州读过书。", final=True)
+    runtime.publish_transcript(
+        speaker="user", text="我在杭州读过书。", final=True, fence=runtime.fence
+    )
     runtime.publish_transcript(
         speaker="assistant",
         text="原来你在杭州读过书。",
         final=True,
         heard=True,
+        fence=runtime.fence,
     )
     await asyncio.sleep(0)
 
@@ -152,6 +156,7 @@ async def test_only_final_user_and_actual_heard_assistant_text_become_evidence()
 @pytest.mark.asyncio
 async def test_actual_heard_assistant_prompt_kind_is_consumed_by_next_user_turn() -> None:
     runtime = DuplexRuntime.create(session_id="session-prompt-kind")
+    bind_owner_policy(runtime)
     published: list[dict[str, object]] = []
 
     async def capture(event: dict[str, object]) -> None:
@@ -163,6 +168,7 @@ async def test_actual_heard_assistant_prompt_kind_is_consumed_by_next_user_turn(
         text="你是不是更喜欢安静？",
         final=True,
         heard=True,
+        fence=runtime.fence,
     )
     first_user_fence = runtime.fence.bump_turn()
     second_user_fence = first_user_fence.bump_turn()
@@ -195,6 +201,7 @@ async def test_actual_heard_assistant_prompt_kind_is_consumed_by_next_user_turn(
 @pytest.mark.asyncio
 async def test_actual_heard_assistant_binds_bounded_response_provenance_to_exact_fence() -> None:
     runtime = DuplexRuntime.create(session_id="session-response-plan")
+    bind_owner_policy(runtime)
     published: list[dict[str, object]] = []
 
     async def capture(event: dict[str, object]) -> None:
@@ -254,6 +261,7 @@ async def test_actual_heard_assistant_binds_bounded_response_provenance_to_exact
         text="你曾经说过会先确认事实。",
         final=True,
         heard=True,
+        fence=runtime.fence,
     )
     await asyncio.sleep(0)
 
@@ -295,8 +303,21 @@ def test_generation_voice_snapshot_is_hashed_and_rejects_stale_fences() -> None:
 
 
 def test_self_preview_generation_voice_requires_frozen_personal_digest_and_fallback() -> None:
-    runtime = DuplexRuntime.create(session_id="session-self-preview-voice")
-    runtime.set_mode_policy(_self_preview_voice_policy())
+    runtime = DuplexRuntime.create(
+        session_id="session-self-preview-voice", device_id="dev_01J_test"
+    )
+    from dataclasses import replace
+
+    from services.agent.tests.unit.runtime_profile_test_helpers import personal_voice_profile
+
+    runtime.set_mode_policy(
+        replace(
+            _self_preview_voice_policy(),
+            runtime_profile=personal_voice_profile(
+                "session-self-preview-voice", mode="self_preview"
+            ),
+        )
+    )
     fence = runtime.fence
 
     assert not runtime.bind_generation_voice(
@@ -337,8 +358,19 @@ def test_self_preview_generation_voice_requires_frozen_personal_digest_and_fallb
 
 
 def test_legacy_generation_voice_accepts_only_authorized_personal_or_frozen_fallback() -> None:
-    runtime = DuplexRuntime.create(session_id="session-legacy-voice")
-    runtime.set_mode_policy(_legacy_voice_policy(voice_allowed=True))
+    runtime = DuplexRuntime.create(session_id="session-legacy-voice", device_id="dev_01J_test")
+    from dataclasses import replace
+
+    from services.agent.tests.unit.runtime_profile_test_helpers import personal_voice_profile
+
+    runtime.set_mode_policy(
+        replace(
+            _legacy_voice_policy(voice_allowed=True),
+            runtime_profile=personal_voice_profile(
+                "session-legacy-voice", mode="legacy_access"
+            ),
+        )
+    )
     fence = runtime.fence
 
     assert runtime.bind_generation_voice(
@@ -422,6 +454,7 @@ async def test_verified_owner_turn_snapshots_pcm_for_the_shared_archive_sink() -
 @pytest.mark.asyncio
 async def test_archived_transcripts_are_redacted_before_fingerprinting_and_delivery() -> None:
     runtime = DuplexRuntime.create(session_id="session-redaction")
+    bind_owner_policy(runtime)
     published: list[dict[str, object]] = []
 
     async def capture(event: dict[str, object]) -> None:
@@ -432,12 +465,14 @@ async def test_archived_transcripts_are_redacted_before_fingerprinting_and_deliv
         speaker="user",
         text="我的手机号是13800138000，邮箱是owner@example.com。",
         final=True,
+        fence=runtime.fence,
     )
     runtime.publish_transcript(
         speaker="assistant",
         text="我记下了13800138000。",
         final=True,
         heard=True,
+        fence=runtime.fence,
     )
     await asyncio.sleep(0)
 
@@ -457,6 +492,7 @@ async def test_archived_transcripts_are_redacted_before_fingerprinting_and_deliv
 @pytest.mark.asyncio
 async def test_runtime_close_drains_durable_evidence_instead_of_canceling_it() -> None:
     runtime = DuplexRuntime.create(session_id="session-close-drain")
+    bind_owner_policy(runtime)
     started = asyncio.Event()
     release = asyncio.Event()
     published: list[dict[str, object]] = []
@@ -467,7 +503,9 @@ async def test_runtime_close_drains_durable_evidence_instead_of_canceling_it() -
         published.append(event)
 
     runtime.set_evidence_publisher(capture)
-    runtime.publish_transcript(speaker="user", text="关机前也要保存。", final=True)
+    runtime.publish_transcript(
+        speaker="user", text="关机前也要保存。", final=True, fence=runtime.fence
+    )
     await started.wait()
 
     close_task = asyncio.create_task(runtime.close())
@@ -511,12 +549,15 @@ async def test_runtime_close_timeout_spools_inflight_evidence(tmp_path: Path) ->
     )
     runtime = DuplexRuntime.create(session_id="session-close-timeout")
     runtime._evidence_drain_timeout_s = 0.01
+    bind_owner_policy(runtime)
 
     async def publish(event: dict[str, object]) -> None:
         await sink.publish(event)
 
     runtime.set_evidence_publisher(publish)
-    runtime.publish_transcript(speaker="user", text="超时也必须落盘。", final=True)
+    runtime.publish_transcript(
+        speaker="user", text="超时也必须落盘。", final=True, fence=runtime.fence
+    )
     await delivery_started.wait()
     await runtime.close()
 
@@ -534,3 +575,102 @@ async def test_runtime_close_timeout_spools_inflight_evidence(tmp_path: Path) ->
         }
     ]
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_transcript_without_caller_fence_degrades_to_ui_only() -> None:
+    """Audit: archive evidence requires the caller's original fence; a
+    fence-less transcript is explicitly degraded to UI-only (never archived)."""
+
+    runtime = DuplexRuntime.create(session_id="session-no-fence")
+    bind_owner_policy(runtime)
+    ui: list[dict[str, object]] = []
+    archived: list[dict[str, object]] = []
+
+    async def capture_ui(event: dict[str, object]) -> None:
+        ui.append(event)
+
+    async def capture_archive(event: dict[str, object]) -> None:
+        archived.append(event)
+
+    runtime.set_event_publisher(capture_ui)
+    runtime.set_evidence_publisher(capture_archive)
+    assert (
+        runtime.publish_transcript(speaker="user", text="没有原始fence。", final=True)
+        is True
+    )
+    await asyncio.sleep(0)
+
+    assert archived == []
+    deltas = [event for event in ui if event.get("type") == "transcript_delta"]
+    assert len(deltas) == 1
+    # The delta carries an epoch-0 lifecycle envelope, never the current fence.
+    assert deltas[0]["session_epoch"] == 0
+    assert deltas[0]["active_subject_id"] is None
+    assert deltas[0]["runtime_profile_id"] is None
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_epoch_transcript_never_reaches_archive() -> None:
+    """A transcript frozen under an old session epoch is not archived: the
+    persistence decision fails closed for a pre-switch fence."""
+
+    runtime = DuplexRuntime.create(session_id="session-stale-epoch")
+    bind_owner_policy(runtime)
+    archived: list[dict[str, object]] = []
+
+    async def capture_archive(event: dict[str, object]) -> None:
+        archived.append(event)
+
+    runtime.set_evidence_publisher(capture_archive)
+    from dataclasses import replace
+
+    stale_fence = replace(runtime.fence, session_epoch=0)
+    assert runtime.fence.session_epoch == 1
+    runtime.publish_transcript(
+        speaker="user",
+        text="旧主体的话轮。",
+        final=True,
+        fence=stale_fence,
+    )
+    await asyncio.sleep(0)
+
+    assert archived == []
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_archived_evidence_carries_verifiable_memory_write_fence() -> None:
+    """Evidence carries device + subject revision + exact capability receipt so
+    the archive can re-verify the write against the signed RuntimeProfile."""
+
+    runtime = DuplexRuntime.create(session_id="session-write-fence")
+    bind_owner_policy(runtime)
+    archived: list[dict[str, object]] = []
+
+    async def capture_archive(event: dict[str, object]) -> None:
+        archived.append(event)
+
+    runtime.set_evidence_publisher(capture_archive)
+    runtime.publish_transcript(
+        speaker="user",
+        text="这条要归档。",
+        final=True,
+        fence=runtime.fence,
+    )
+    await asyncio.sleep(0)
+
+    assert len(archived) == 1
+    event = archived[0]
+    assert event["session_id"] == "session-write-fence"
+    assert event["session_epoch"] == runtime.fence.session_epoch
+    assert event["turn_id"] == runtime.fence.turn_id
+    assert event["generation_id"] == runtime.fence.generation_id
+    assert event["tool_epoch"] == runtime.fence.tool_epoch
+    assert event["device_id"] == "dev_01J_test"
+    assert event["subject_revision"] == 1
+    assert event["active_subject_id"] == "person_owner"
+    assert event["policy_receipt_id"] is not None
+    assert event["event_sequence"] >= 1
+    await runtime.close()

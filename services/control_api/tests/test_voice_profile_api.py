@@ -200,6 +200,28 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("TTS_PROVIDER", "cosyvoice")
 
 
+async def _verified_adult_headers(
+    app: object,
+    client: AsyncClient,
+    *,
+    user_id: str,
+    username: str,
+) -> dict[str, str]:
+    app.state.memory_store.update_subject_profile(  # type: ignore[attr-defined]
+        user_id=user_id,
+        subject_category="adult",
+        birth_year_band="adult",
+        age_evidence_status="verified",
+        now=datetime.now(UTC).isoformat(),
+    )
+    login = await client.post(
+        "/v1/auth/login",
+        json={"username": username, "password": "safe-password"},
+    )
+    assert login.status_code == 200
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
 def _legacy_access(*, voice_allowed: bool, expired: bool = False) -> LegacyAccessSnapshot:
     return LegacyAccessSnapshot(
         actor_role="grantee",
@@ -267,7 +289,8 @@ def _add_legacy_voice_session(app: object, access: LegacyAccessSnapshot) -> str:
         app.state.memory_store.update_subject_profile(  # type: ignore[attr-defined]
             user_id=account_id,
             subject_category="adult",
-            birth_year_band="unknown",
+            birth_year_band="adult",
+            age_evidence_status="verified",
             now=datetime.now(UTC).isoformat(),
         )
     app.state.memory_store.add_voice_session(  # type: ignore[attr-defined]
@@ -380,7 +403,12 @@ async def test_legacy_active_clone_resolves_to_selected_doubao_companion(
                 json={"username": "legacy-voice-owner", "password": "safe-password"},
             )
         ).json()
-        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        headers = await _verified_adult_headers(
+            app,
+            client,
+            user_id=identity["user_id"],
+            username="legacy-voice-owner",
+        )
         selected = await client.put(
             f"/v1/memory/profile/{identity['user_id']}",
             headers=headers,
@@ -442,6 +470,12 @@ async def test_self_preview_resolution_requires_exact_frozen_voice_ref(
                 json={"username": "frozen-preview-owner", "password": "safe-password"},
             )
         ).json()
+        await _verified_adult_headers(
+            app,
+            client,
+            user_id=identity["user_id"],
+            username="frozen-preview-owner",
+        )
         app.state.memory_store.add_voice_session(
             session_id="frozen-preview-session",
             user_id=identity["user_id"],
@@ -637,9 +671,15 @@ async def test_doubao_runtime_rejects_new_cosyvoice_clone_activation(
                 json={"username": "doubao-voice-owner", "password": "safe-password"},
             )
         ).json()
+        headers = await _verified_adult_headers(
+            app,
+            client,
+            user_id=identity["user_id"],
+            username="doubao-voice-owner",
+        )
         response = await client.post(
             "/v1/voices/profiles/legacy-cosyvoice-profile/activate",
-            headers={"Authorization": f"Bearer {identity['access_token']}"},
+            headers=headers,
         )
 
     assert response.status_code == 409
@@ -665,9 +705,15 @@ async def test_doubao_runtime_allows_seed_icl_personal_clone_activation(
                 json={"username": "doubao-seed-icl-owner", "password": "safe-password"},
             )
         ).json()
+        headers = await _verified_adult_headers(
+            app,
+            client,
+            user_id=identity["user_id"],
+            username="doubao-seed-icl-owner",
+        )
         response = await client.post(
             "/v1/voices/profiles/doubao-personal-profile/activate",
-            headers={"Authorization": f"Bearer {identity['access_token']}"},
+            headers=headers,
         )
 
     assert response.status_code == 200
@@ -711,7 +757,12 @@ async def test_voice_clone_consent_candidate_evaluation_activation_and_revoke(
                 json={"username": "voice-owner", "password": "safe-password"},
             )
         ).json()
-        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        headers = await _verified_adult_headers(
+            app,
+            client,
+            user_id=identity["user_id"],
+            username="voice-owner",
+        )
         consent = await client.post(
             "/v1/voices/consent",
             headers=headers,
@@ -901,7 +952,12 @@ async def test_voice_profile_revocation_returns_503_until_provider_cleanup_compl
                 json={"username": "voice-profile-revoke", "password": "safe-password"},
             )
         ).json()
-        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        headers = await _verified_adult_headers(
+            app,
+            client,
+            user_id=identity["user_id"],
+            username="voice-profile-revoke",
+        )
         await client.post(
             "/v1/voices/consent",
             headers=headers,
@@ -964,7 +1020,12 @@ async def test_voice_consent_revocation_returns_503_until_provider_cleanup_compl
                 json={"username": "voice-revoke-owner", "password": "safe-password"},
             )
         ).json()
-        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        headers = await _verified_adult_headers(
+            app,
+            client,
+            user_id=identity["user_id"],
+            username="voice-revoke-owner",
+        )
         await client.post(
             "/v1/voices/consent",
             headers=headers,
@@ -1053,7 +1114,12 @@ async def test_blind_voice_trial_requires_server_quality_evidence_before_activat
                 json={"username": "blind-owner", "password": "safe-password"},
             )
         ).json()
-        headers = {"Authorization": f"Bearer {identity['access_token']}"}
+        headers = await _verified_adult_headers(
+            app,
+            client,
+            user_id=identity["user_id"],
+            username="blind-owner",
+        )
         await client.post(
             "/v1/voices/consent",
             headers=headers,

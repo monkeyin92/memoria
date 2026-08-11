@@ -7,6 +7,7 @@ import sqlite3
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 import jwt
@@ -46,6 +47,34 @@ def _configure_test_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     monkeypatch.setenv("MEMORIA_DB_PATH", str(tmp_path / "memoria.sqlite3"))
     monkeypatch.setenv("MEMORIA_AUTH_SECRET", "test-auth-material-that-is-long-enough")
     monkeypatch.setenv("OFFLINE_MOCK", "true")
+
+
+async def _register_verified_adult(
+    client: AsyncClient,
+    app: Any,
+    *,
+    username: str,
+    password: str,
+) -> dict[str, object]:
+    registered = (
+        await client.post(
+            "/v1/auth/register",
+            json={"username": username, "password": password},
+        )
+    ).json()
+    app.state.memory_store.update_subject_profile(
+        user_id=registered["user_id"],
+        subject_category="adult",
+        birth_year_band="adult",
+        age_evidence_status="verified",
+        now=datetime.now(UTC).isoformat(),
+    )
+    logged_in = await client.post(
+        "/v1/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert logged_in.status_code == 200
+    return logged_in.json()
 
 
 def test_legacy_auth_compat_cutoff_is_absolute_utc_and_closes_at_the_boundary() -> None:
@@ -1021,12 +1050,12 @@ async def test_registered_identity_keeps_chat_speaker_and_voice_data_after_resta
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        account = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "persistent-owner", "password": "safe-passphrase"},
-            )
-        ).json()
+        account = await _register_verified_adult(
+            client,
+            app,
+            username="persistent-owner",
+            password="safe-passphrase",
+        )
         original_headers = {"Authorization": f"Bearer {account['access_token']}"}
         message = await client.post(
             "/v1/memory/messages",

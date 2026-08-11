@@ -3,9 +3,11 @@ import {
   Bell,
   Brain,
   CaretRight,
+  DeviceMobile,
   Fingerprint,
   ShieldCheck,
   SignOut,
+  UsersThree,
   Trash,
   Waveform,
   X,
@@ -28,6 +30,11 @@ export function ProfileScreen({
   speakerEnrollmentNotice,
   onOpenDigitalSelf,
   onOpenPrivacyData,
+  deviceSummary,
+  sensitiveGates,
+  gateMessage,
+  onOpenDevicePanel,
+  onOpenBindFlow,
   onLogoutCurrent,
   onLogoutAll,
   onAccountDeleted,
@@ -151,44 +158,110 @@ export function ProfileScreen({
           {preferenceError && <p className="inline-error" role="alert">{preferenceError}</p>}
         </section>
 
-        <button
-          type="button"
-          className="privacy-card owner-voiceprint-entry"
-          disabled={voiceSessionActive}
-          onClick={onOpenSpeakerEnrollment}
-        >
-          <span className="privacy-icon"><Fingerprint size={22} weight="fill" /></span>
-          <span>
-            <strong>主人声纹</strong>
-            <small>
-              {voiceSessionActive
-                ? "请先结束当前对话，再使用麦克风录取"
-                : "补充自然、轻声、带笑等日常说话状态"}
-            </small>
-          </span>
-          <CaretRight size={19} weight="bold" />
-        </button>
+        {sensitiveGates.speaker_enrollment ? (
+          <button
+            type="button"
+            className="privacy-card owner-voiceprint-entry"
+            disabled={voiceSessionActive}
+            onClick={onOpenSpeakerEnrollment}
+          >
+            <span className="privacy-icon"><Fingerprint size={22} weight="fill" /></span>
+            <span>
+              <strong>主人声纹</strong>
+              <small>
+                {voiceSessionActive
+                  ? "请先结束当前对话，再使用麦克风录取"
+                  : "补充自然、轻声、带笑等日常说话状态"}
+              </small>
+            </span>
+            <CaretRight size={19} weight="bold" />
+          </button>
+        ) : (
+          <div className="privacy-card privacy-card-gated">
+            <span className="privacy-icon"><Fingerprint size={22} weight="fill" /></span>
+            <span>
+              <strong>主人声纹</strong>
+              <small>{gateMessage("speaker_enrollment")}</small>
+            </span>
+          </div>
+        )}
         {speakerEnrollmentNotice && (
           <p className="profile-success" role="status">
             {speakerEnrollmentNotice}
           </p>
         )}
 
+        {sensitiveGates.digital_self ? (
+          <button
+            type="button"
+            className="privacy-card digital-self-entry"
+            onClick={onOpenDigitalSelf}
+          >
+            <span className="privacy-icon"><Brain size={22} weight="fill" /></span>
+            <span><strong>数字心智与声音</strong><small>人格学习、声纹识别与声音复刻</small></span>
+            <CaretRight size={19} weight="bold" />
+          </button>
+        ) : (
+          <div className="privacy-card privacy-card-gated">
+            <span className="privacy-icon"><Brain size={22} weight="fill" /></span>
+            <span>
+              <strong>数字心智与声音</strong>
+              <small>{gateMessage("digital_self")}</small>
+            </span>
+          </div>
+        )}
+
+        {sensitiveGates.raw_voice_consent ? (
+          <button type="button" className="privacy-card" onClick={onOpenPrivacyData}>
+            <span className="privacy-icon"><ShieldCheck size={22} weight="fill" /></span>
+            <span><strong>隐私与数据</strong><small>专属凭证保护你的对话</small></span>
+            <CaretRight size={19} weight="bold" />
+          </button>
+        ) : (
+          <div className="privacy-card privacy-card-gated">
+            <span className="privacy-icon"><ShieldCheck size={22} weight="fill" /></span>
+            <span>
+              <strong>隐私与数据</strong>
+              <small>{gateMessage("raw_voice_consent")}</small>
+            </span>
+          </div>
+        )}
+
         <button
           type="button"
-          className="privacy-card digital-self-entry"
-          onClick={onOpenDigitalSelf}
+          className="privacy-card device-entry"
+          onClick={onOpenDevicePanel}
         >
-          <span className="privacy-icon"><Brain size={22} weight="fill" /></span>
-          <span><strong>数字心智与声音</strong><small>人格学习、声纹识别与声音复刻</small></span>
+          <span className="privacy-icon"><DeviceMobile size={22} weight="fill" /></span>
+          <span>
+            <strong>设备与成员</strong>
+            <small>
+              {deviceSummary
+                ? deviceSummary.degraded
+                  ? `${deviceSummary.modeTitle} · 安全模式中`
+                  : `${deviceSummary.modeTitle} · ${
+                      deviceSummary.activeSubjectLabel || "等待确认使用人"
+                    }`
+                : "首次绑定机器人，区分家人与使用人"}
+            </small>
+          </span>
           <CaretRight size={19} weight="bold" />
         </button>
 
-        <button type="button" className="privacy-card" onClick={onOpenPrivacyData}>
-          <span className="privacy-icon"><ShieldCheck size={22} weight="fill" /></span>
-          <span><strong>隐私与数据</strong><small>专属凭证保护你的对话</small></span>
-          <CaretRight size={19} weight="bold" />
-        </button>
+        {!deviceSummary && (
+          <button
+            type="button"
+            className="privacy-card bind-entry"
+            onClick={onOpenBindFlow}
+          >
+            <span className="privacy-icon"><UsersThree size={22} weight="fill" /></span>
+            <span>
+              <strong>开始首次绑定</strong>
+              <small>选择给孩子、自己、父母或家庭共同使用</small>
+            </span>
+            <CaretRight size={19} weight="bold" />
+          </button>
+        )}
 
         <section className="account-session-card" aria-labelledby="account-session-title">
           <h3 id="account-session-title">账户与设备</h3>

@@ -1,0 +1,6885 @@
+{
+  "schema": "memoria://contracts/multi-subject.schema.json",
+  "schema_version": 2,
+  "objects_version": 2,
+  "source_hash": "bc3ac9594d39868621de5fe4007a3e70d4058136924038199a89f0ad8e397fb9",
+  "generated_by": "scripts/generate_multi_subject_contracts.py",
+  "contract_lifecycle": [
+    {
+      "name": "BindingManifest",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "RuntimeProfile",
+      "lifecycle": "deprecated",
+      "consumer_mode": "migration_only",
+      "new_producer": "forbidden",
+      "replacement": "RuntimeProfileV2"
+    },
+    {
+      "name": "RuntimeProfileSigned",
+      "lifecycle": "deprecated",
+      "consumer_mode": "migration_only",
+      "new_producer": "forbidden",
+      "replacement": "RuntimeProfileSignedV2"
+    },
+    {
+      "name": "RuntimeProfileV2",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "RuntimeProfileSignedV2",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "PolicyDecision",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "PolicyReceipt",
+      "lifecycle": "deprecated",
+      "consumer_mode": "migration_only",
+      "new_producer": "forbidden",
+      "replacement": "PolicyReceiptV2"
+    },
+    {
+      "name": "PolicyReceiptV2",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "SubjectResolution",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "MemoryWriteFence",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "MemoryEvent",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "SharedMemoryConfirmationEvidence",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "SharedMemoryWithdrawalEvidence",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "SharedMemoryProposal",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "SharedMemoryPromotion",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "NotificationFence",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "RelationshipSnapshot",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "RecipientSnapshot",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "NotificationIntent",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "DeviceAttestation",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "OtaAssignment",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "OtaStateReceipt",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "RemoteDeviceCommand",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "RemoteDeviceCommandExecution",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "SessionEpochFence",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    },
+    {
+      "name": "SessionEvent",
+      "lifecycle": "current",
+      "consumer_mode": "canonical",
+      "new_producer": "allowed",
+      "replacement": null
+    }
+  ],
+  "canonical_producer_contracts": [
+    "BindingManifest",
+    "RuntimeProfileV2",
+    "RuntimeProfileSignedV2",
+    "PolicyDecision",
+    "PolicyReceiptV2",
+    "SubjectResolution",
+    "MemoryWriteFence",
+    "MemoryEvent",
+    "SharedMemoryConfirmationEvidence",
+    "SharedMemoryWithdrawalEvidence",
+    "SharedMemoryProposal",
+    "SharedMemoryPromotion",
+    "NotificationFence",
+    "RelationshipSnapshot",
+    "RecipientSnapshot",
+    "NotificationIntent",
+    "DeviceAttestation",
+    "OtaAssignment",
+    "OtaStateReceipt",
+    "RemoteDeviceCommand",
+    "RemoteDeviceCommandExecution",
+    "SessionEpochFence",
+    "SessionEvent"
+  ],
+  "migration_only_contracts": [
+    "RuntimeProfile",
+    "RuntimeProfileSigned",
+    "PolicyReceipt"
+  ],
+  "enums": [
+    {
+      "name": "DeviceDeclaredMode",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "parent_for_child",
+        "self_use",
+        "child_for_parent",
+        "family_shared"
+      ]
+    },
+    {
+      "name": "ServiceMode",
+      "missing_value_policy": "fail_closed",
+      "default": "unknown_safe",
+      "values": [
+        "student_minor",
+        "adult_companion",
+        "senior_companion",
+        "family_shared",
+        "adult_archive",
+        "self_preview",
+        "legacy_access",
+        "unknown_safe"
+      ]
+    },
+    {
+      "name": "SubjectCategory",
+      "missing_value_policy": "fail_closed",
+      "default": "unknown",
+      "values": [
+        "unknown",
+        "minor",
+        "adult"
+      ]
+    },
+    {
+      "name": "AgeBand",
+      "missing_value_policy": "fail_closed",
+      "default": "unknown",
+      "values": [
+        "unknown",
+        "under_14",
+        "14_17",
+        "adult"
+      ]
+    },
+    {
+      "name": "AgeEvidenceStatus",
+      "missing_value_policy": "fail_closed",
+      "default": "unverified",
+      "values": [
+        "unverified",
+        "verified",
+        "disputed"
+      ]
+    },
+    {
+      "name": "BindingRole",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "account_owner",
+        "device_admin",
+        "primary_subject",
+        "guardian",
+        "delegate",
+        "emergency_contact",
+        "member"
+      ]
+    },
+    {
+      "name": "RelationshipType",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "self",
+        "parent_of",
+        "child_of",
+        "guardian_of",
+        "ward_of",
+        "spouse_of",
+        "sibling_of",
+        "caregiver_of",
+        "emergency_contact_for",
+        "delegate_for",
+        "beneficiary_of",
+        "co_subject_of",
+        "family_member_of"
+      ]
+    },
+    {
+      "name": "RelationshipStatus",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "pending",
+        "active",
+        "suspended",
+        "revoked",
+        "expired",
+        "disputed"
+      ]
+    },
+    {
+      "name": "SpeakerState",
+      "missing_value_policy": "fail_closed",
+      "default": "unknown",
+      "values": [
+        "unknown",
+        "unconfirmed",
+        "confirmed"
+      ]
+    },
+    {
+      "name": "MemoryScope",
+      "missing_value_policy": "fail_closed",
+      "default": "unknown",
+      "values": [
+        "unknown",
+        "session_ephemeral",
+        "personal_private",
+        "guardian_summary",
+        "family_shared",
+        "legacy_archive"
+      ]
+    },
+    {
+      "name": "PolicyEffect",
+      "missing_value_policy": "fail_closed",
+      "default": "deny",
+      "values": [
+        "deny",
+        "allow",
+        "allow_with_obligations"
+      ]
+    },
+    {
+      "name": "PolicyObligation",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "DO_NOT_PERSIST",
+        "DO_NOT_WRITE_LEARNING_PROGRESS",
+        "PERSIST_AGGREGATE_ONLY",
+        "REDACT_TRANSCRIPT",
+        "MINIMAL_NOTIFICATION_CONTENT",
+        "REQUIRE_SPEAKER_CONFIRMATION",
+        "REQUIRE_GUARDIAN_APPROVAL",
+        "REQUIRE_SUBJECT_APPROVAL",
+        "REQUIRE_STEP_UP_AUTH",
+        "MAX_SESSION_SECONDS",
+        "QUIET_HOURS",
+        "DEPENDENCY_GUARD",
+        "REALITY_REMINDER",
+        "AI_IDENTITY_CLARIFICATION",
+        "NO_MODEL_TRAINING",
+        "RETENTION_TTL",
+        "NOTIFY_EMERGENCY_CONTACT",
+        "WRITE_SUBJECT_SCOPED_PROGRESS",
+        "WRITE_POLICY_RECEIPT"
+      ]
+    },
+    {
+      "name": "Capability",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "chat",
+        "tutor",
+        "english_practice",
+        "memory_capture",
+        "memory_promotion",
+        "family_shared_memory_proposal",
+        "family_shared_memory_approval",
+        "family_shared_memory_promotion",
+        "memory_recall_private",
+        "guardian_summary_view",
+        "voice_profile_create",
+        "voice_clone_use",
+        "digital_self_preview",
+        "legacy_grant_create",
+        "payment",
+        "raw_audio_retention",
+        "model_training_contribution",
+        "crisis_notification",
+        "device_ownership_transfer"
+      ]
+    },
+    {
+      "name": "Purpose",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "user_request",
+        "runtime_profile_issue",
+        "runtime_sensitive_action",
+        "voice_profile",
+        "voice_clone",
+        "digital_self",
+        "legacy",
+        "payment",
+        "raw_audio",
+        "model_training",
+        "device_transfer",
+        "memory_capture",
+        "memory_promotion",
+        "family_shared_memory_proposal",
+        "family_shared_memory_approval",
+        "family_shared_memory_promotion",
+        "memory_recall",
+        "guardian_summary",
+        "crisis_response"
+      ]
+    },
+    {
+      "name": "DeviceTrust",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "trusted",
+        "verified",
+        "offline",
+        "untrusted",
+        "revoked"
+      ]
+    },
+    {
+      "name": "SafetyState",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "normal",
+        "concern",
+        "elevated_risk",
+        "self_crisis"
+      ]
+    },
+    {
+      "name": "DataClassification",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "ephemeral",
+        "public",
+        "private",
+        "biometric",
+        "aggregate",
+        "safety_minimum",
+        "study_progress"
+      ]
+    },
+    {
+      "name": "BindingStatus",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "active",
+        "superseded",
+        "revoked",
+        "expired"
+      ]
+    },
+    {
+      "name": "BindingReason",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "create",
+        "supersede",
+        "transfer",
+        "unbind",
+        "expire"
+      ]
+    },
+    {
+      "name": "IntentKind",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "crisis_safety",
+        "emergency",
+        "care_alert"
+      ]
+    },
+    {
+      "name": "RecipientRole",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "guardian",
+        "emergency_contact",
+        "delegate"
+      ]
+    },
+    {
+      "name": "Channel",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "wechat_subscription",
+        "sms",
+        "phone_call"
+      ]
+    },
+    {
+      "name": "TemplateKey",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "crisis_safety_notice",
+        "emergency_notice",
+        "care_alert_notice"
+      ]
+    },
+    {
+      "name": "ReasonCode",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "safety_concern",
+        "emergency_alert",
+        "care_reminder"
+      ]
+    },
+    {
+      "name": "IntentStatus",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "pending",
+        "in_progress",
+        "delivered",
+        "dead_lettered",
+        "cancelled"
+      ]
+    },
+    {
+      "name": "RecipientStatus",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "pending",
+        "in_progress",
+        "delivered",
+        "failed",
+        "dead_lettered",
+        "cancelled"
+      ]
+    },
+    {
+      "name": "CancelReason",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "wrong_contact",
+        "relationship_revoked",
+        "relationship_expired",
+        "relationship_disputed",
+        "authorization_revoked",
+        "authorization_expired",
+        "operator_override",
+        "user_request"
+      ]
+    },
+    {
+      "name": "ResolutionKind",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "confirmed",
+        "confirmation_required"
+      ]
+    },
+    {
+      "name": "ConfirmationMethod",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "voice_question",
+        "app_confirm"
+      ]
+    },
+    {
+      "name": "MemoryEventType",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "memory_captured",
+        "memory_proposed",
+        "memory_promoted",
+        "memory_confirmed",
+        "memory_withdrawn",
+        "memory_revoked",
+        "scope_resolved"
+      ]
+    },
+    {
+      "name": "SessionEventType",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "subject_resolved",
+        "subject_switched",
+        "profile_rotated",
+        "epoch_bumped",
+        "reconnected",
+        "degraded_offline",
+        "session_closed",
+        "session_failed"
+      ]
+    },
+    {
+      "name": "SharedMemoryProposalStatus",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "pending",
+        "approvals_complete",
+        "frozen",
+        "withdrawn",
+        "promoted"
+      ]
+    },
+    {
+      "name": "SharedMemoryConfirmationDecision",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "confirm",
+        "object"
+      ]
+    },
+    {
+      "name": "DeviceCertificateStatus",
+      "missing_value_policy": "fail_closed",
+      "default": "unknown",
+      "values": [
+        "unknown",
+        "pending",
+        "active",
+        "revoked",
+        "expired"
+      ]
+    },
+    {
+      "name": "DeviceLifecycleStatus",
+      "missing_value_policy": "fail_closed",
+      "default": "unknown",
+      "values": [
+        "unknown",
+        "manufactured",
+        "provisioned",
+        "bound",
+        "suspended",
+        "revoked",
+        "wipe_pending",
+        "wiped",
+        "retired"
+      ]
+    },
+    {
+      "name": "DeviceCapability",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "device_certificate",
+        "secure_element",
+        "audio_capture",
+        "audio_playback",
+        "acoustic_echo_cancellation",
+        "physical_microphone_cut",
+        "hardware_privacy_light",
+        "wifi",
+        "lte",
+        "ab_ota",
+        "anti_rollback",
+        "remote_attestation",
+        "secure_wipe"
+      ]
+    },
+    {
+      "name": "PhysicalMuteState",
+      "missing_value_policy": "fail_closed",
+      "default": "unknown",
+      "values": [
+        "unknown",
+        "unattested",
+        "engaged",
+        "disengaged",
+        "mismatch"
+      ]
+    },
+    {
+      "name": "PrivacyLightState",
+      "missing_value_policy": "fail_closed",
+      "default": "unknown",
+      "values": [
+        "unknown",
+        "unattested",
+        "on",
+        "off",
+        "mismatch"
+      ]
+    },
+    {
+      "name": "SimLifecycleStatus",
+      "missing_value_policy": "fail_closed",
+      "default": "unknown",
+      "values": [
+        "unknown",
+        "absent",
+        "inactive",
+        "active",
+        "suspended",
+        "revoked",
+        "expired"
+      ]
+    },
+    {
+      "name": "OtaAssignmentStatus",
+      "missing_value_policy": "fail_closed",
+      "default": "unknown",
+      "values": [
+        "unknown",
+        "pending",
+        "downloading",
+        "staged",
+        "activated",
+        "cancelled",
+        "failed",
+        "superseded"
+      ]
+    },
+    {
+      "name": "OtaBootStatus",
+      "missing_value_policy": "fail_closed",
+      "default": "unknown",
+      "values": [
+        "unknown",
+        "empty",
+        "staged",
+        "booting",
+        "confirmed",
+        "failed",
+        "rollback_pending",
+        "rolled_back"
+      ]
+    },
+    {
+      "name": "OtaSlotName",
+      "missing_value_policy": "fail_closed",
+      "default": "unknown",
+      "values": [
+        "unknown",
+        "a",
+        "b"
+      ]
+    },
+    {
+      "name": "RemoteDeviceCommandType",
+      "missing_value_policy": "fail_closed",
+      "values": [
+        "force_mute",
+        "revoke_device",
+        "secure_wipe",
+        "assign_ota",
+        "collect_diagnostics"
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "name": "ManifestRole",
+      "kind": "object",
+      "required": [
+        "person_id",
+        "role",
+        "permissions"
+      ],
+      "properties": [
+        {
+          "name": "person_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "role",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/BindingRole"
+        },
+        {
+          "name": "permissions",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 64
+          },
+          "items_type": "string"
+        }
+      ]
+    },
+    {
+      "name": "PersonaSnapshot",
+      "kind": "object",
+      "required": [
+        "persona_id",
+        "version",
+        "relationship_stage"
+      ],
+      "properties": [
+        {
+          "name": "persona_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "relationship_stage",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 64
+        }
+      ]
+    },
+    {
+      "name": "CandidateSubject",
+      "kind": "object",
+      "required": [
+        "person_id",
+        "display_name",
+        "confidence"
+      ],
+      "properties": [
+        {
+          "name": "person_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "display_name",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "confidence",
+          "json_type": "number",
+          "nullable": false,
+          "required": true,
+          "minimum": 0,
+          "maximum": 1
+        }
+      ]
+    },
+    {
+      "name": "ObligationParams",
+      "kind": "object",
+      "required": [
+        "max_session_seconds",
+        "retention_ttl_seconds",
+        "quiet_hours",
+        "extras"
+      ],
+      "properties": [
+        {
+          "name": "max_session_seconds",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 1,
+          "maximum": 86400
+        },
+        {
+          "name": "retention_ttl_seconds",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 1,
+          "maximum": 315576000
+        },
+        {
+          "name": "quiet_hours",
+          "json_type": "array",
+          "nullable": true,
+          "required": true,
+          "min_items": 2,
+          "max_items": 2,
+          "items": {
+            "json_type": "string",
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "extras",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "items": {
+            "json_type": "array",
+            "min_items": 2,
+            "max_items": 2,
+            "items": {
+              "json_type": "string",
+              "min_length": 1,
+              "max_length": 128
+            }
+          },
+          "items_type": "array"
+        }
+      ]
+    },
+    {
+      "name": "PolicyObligationSpec",
+      "kind": "object",
+      "required": [
+        "code",
+        "params"
+      ],
+      "properties": [
+        {
+          "name": "code",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/PolicyObligation"
+        },
+        {
+          "name": "params",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/ObligationParams"
+        }
+      ]
+    },
+    {
+      "name": "NotificationFence",
+      "kind": "object",
+      "required": [
+        "session_id",
+        "epoch",
+        "device_id",
+        "binding_id",
+        "binding_version",
+        "runtime_profile_id",
+        "actor_person_id",
+        "subject_person_id",
+        "subject_revision",
+        "generation_id",
+        "turn_id",
+        "tool_epoch",
+        "issued_at",
+        "valid_until",
+        "fingerprint"
+      ],
+      "properties": [
+        {
+          "name": "session_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "runtime_profile_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "actor_person_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "subject_person_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "subject_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "generation_id",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "turn_id",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "tool_epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "issued_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "valid_until",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "fingerprint",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "time_order",
+          "earlier_path": "issued_at",
+          "later_path": "valid_until",
+          "strict": true
+        }
+      ]
+    },
+    {
+      "name": "RelationshipSnapshot",
+      "kind": "object",
+      "required": [
+        "relationship_id",
+        "snapshot_id",
+        "revision",
+        "relation_type",
+        "status",
+        "source_person_id",
+        "target_person_id",
+        "binding_id",
+        "binding_version",
+        "binding_canonical_hash",
+        "canonical_hash",
+        "valid_from",
+        "valid_until"
+      ],
+      "properties": [
+        {
+          "name": "relationship_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "snapshot_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "relation_type",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/RelationshipType"
+        },
+        {
+          "name": "status",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/RelationshipStatus"
+        },
+        {
+          "name": "source_person_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "target_person_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "binding_canonical_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "canonical_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "valid_from",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "valid_until",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "format": "date-time"
+        }
+      ]
+    },
+    {
+      "name": "RecipientSnapshot",
+      "kind": "object",
+      "required": [
+        "recipient_id",
+        "person_id",
+        "role",
+        "relationship_id",
+        "relationship_snapshot_id",
+        "relationship_revision",
+        "relationship_status",
+        "channels",
+        "channel_index",
+        "status",
+        "valid_from",
+        "valid_until"
+      ],
+      "properties": [
+        {
+          "name": "recipient_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "person_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "role",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/RecipientRole"
+        },
+        {
+          "name": "relationship_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "relationship_snapshot_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "relationship_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "relationship_status",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/RelationshipStatus"
+        },
+        {
+          "name": "channels",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 8,
+          "unique_items": true,
+          "items": {
+            "ref": "#/$defs/Channel"
+          },
+          "items_ref": "#/$defs/Channel"
+        },
+        {
+          "name": "channel_index",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "status",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/RecipientStatus"
+        },
+        {
+          "name": "valid_from",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "valid_until",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "format": "date-time"
+        }
+      ]
+    },
+    {
+      "name": "BindingManifest",
+      "kind": "object",
+      "required": [
+        "binding_id",
+        "device_id",
+        "declared_mode",
+        "binding_version",
+        "status",
+        "reason",
+        "supersedes_binding_id",
+        "family_space_id",
+        "account_owner_id",
+        "device_admin_ids",
+        "primary_subject_ids",
+        "guardian_ids",
+        "delegate_ids",
+        "emergency_contact_ids",
+        "member_ids",
+        "roles",
+        "service_profile_version",
+        "policy_bundle_version",
+        "consent_snapshot_id",
+        "persona_assignment_id",
+        "valid_from",
+        "valid_until",
+        "created_at"
+      ],
+      "properties": [
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "declared_mode",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/DeviceDeclaredMode"
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "status",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/BindingStatus"
+        },
+        {
+          "name": "reason",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/BindingReason"
+        },
+        {
+          "name": "supersedes_binding_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "family_space_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "account_owner_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "device_admin_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "primary_subject_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "guardian_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "delegate_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "emergency_contact_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "member_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "roles",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "items": {
+            "ref": "#/objects/properties/definitions/properties/ManifestRole"
+          },
+          "items_ref": "#/objects/properties/definitions/properties/ManifestRole"
+        },
+        {
+          "name": "service_profile_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "policy_bundle_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "consent_snapshot_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "persona_assignment_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "valid_from",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "valid_until",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "created_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        }
+      ]
+    },
+    {
+      "name": "RuntimeProfile",
+      "kind": "object",
+      "required": [
+        "signature_schema",
+        "runtime_profile_id",
+        "device_id",
+        "session_id",
+        "actor_id",
+        "binding_id",
+        "binding_version",
+        "active_subject_id",
+        "subject_revision",
+        "subject_category",
+        "age_band",
+        "speaker_state",
+        "speaker_confidence",
+        "service_mode",
+        "persona_assignment_id",
+        "persona",
+        "policy_bundle_version",
+        "capabilities",
+        "obligations",
+        "policy_receipt_ids",
+        "session_epoch",
+        "issued_at",
+        "expires_at"
+      ],
+      "properties": [
+        {
+          "name": "signature_schema",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "runtime-profile-v1"
+        },
+        {
+          "name": "runtime_profile_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "session_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "actor_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "active_subject_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "subject_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "subject_category",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SubjectCategory"
+        },
+        {
+          "name": "age_band",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/AgeBand"
+        },
+        {
+          "name": "speaker_state",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SpeakerState"
+        },
+        {
+          "name": "speaker_confidence",
+          "json_type": "number",
+          "nullable": true,
+          "required": true,
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "name": "service_mode",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/ServiceMode"
+        },
+        {
+          "name": "persona_assignment_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "persona",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/PersonaSnapshot"
+        },
+        {
+          "name": "policy_bundle_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "capabilities",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "ref": "#/$defs/Capability"
+          },
+          "items_ref": "#/$defs/Capability"
+        },
+        {
+          "name": "obligations",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "ref": "#/$defs/PolicyObligation"
+          },
+          "items_ref": "#/$defs/PolicyObligation"
+        },
+        {
+          "name": "policy_receipt_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 192
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "session_epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "issued_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "expires_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        }
+      ]
+    },
+    {
+      "name": "RuntimeProfileSigned",
+      "kind": "object",
+      "extends": "#/objects/properties/definitions/properties/RuntimeProfile",
+      "required": [
+        "signature_schema",
+        "runtime_profile_id",
+        "device_id",
+        "session_id",
+        "actor_id",
+        "binding_id",
+        "binding_version",
+        "active_subject_id",
+        "subject_revision",
+        "subject_category",
+        "age_band",
+        "speaker_state",
+        "speaker_confidence",
+        "service_mode",
+        "persona_assignment_id",
+        "persona",
+        "policy_bundle_version",
+        "capabilities",
+        "obligations",
+        "policy_receipt_ids",
+        "session_epoch",
+        "issued_at",
+        "expires_at",
+        "signature"
+      ],
+      "properties": [
+        {
+          "name": "signature_schema",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "runtime-profile-v1"
+        },
+        {
+          "name": "runtime_profile_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "session_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "actor_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "active_subject_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "subject_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "subject_category",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SubjectCategory"
+        },
+        {
+          "name": "age_band",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/AgeBand"
+        },
+        {
+          "name": "speaker_state",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SpeakerState"
+        },
+        {
+          "name": "speaker_confidence",
+          "json_type": "number",
+          "nullable": true,
+          "required": true,
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "name": "service_mode",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/ServiceMode"
+        },
+        {
+          "name": "persona_assignment_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "persona",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/PersonaSnapshot"
+        },
+        {
+          "name": "policy_bundle_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "capabilities",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "ref": "#/$defs/Capability"
+          },
+          "items_ref": "#/$defs/Capability"
+        },
+        {
+          "name": "obligations",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "ref": "#/$defs/PolicyObligation"
+          },
+          "items_ref": "#/$defs/PolicyObligation"
+        },
+        {
+          "name": "policy_receipt_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 192
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "session_epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "issued_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "expires_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "signature",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      ]
+    },
+    {
+      "name": "RuntimeProfileV2",
+      "kind": "object",
+      "required": [
+        "signature_schema",
+        "runtime_profile_id",
+        "device_id",
+        "session_id",
+        "actor_id",
+        "binding_id",
+        "binding_version",
+        "active_subject_id",
+        "subject_revision",
+        "subject_category",
+        "age_band",
+        "speaker_state",
+        "speaker_confidence",
+        "service_mode",
+        "persona_assignment_id",
+        "persona",
+        "policy_bundle_version",
+        "capabilities",
+        "obligations",
+        "policy_receipt_ids",
+        "session_epoch",
+        "issued_at",
+        "expires_at"
+      ],
+      "properties": [
+        {
+          "name": "signature_schema",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "runtime-profile-v2"
+        },
+        {
+          "name": "runtime_profile_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "session_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "actor_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "active_subject_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "subject_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "subject_category",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SubjectCategory"
+        },
+        {
+          "name": "age_band",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/AgeBand"
+        },
+        {
+          "name": "speaker_state",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SpeakerState"
+        },
+        {
+          "name": "speaker_confidence",
+          "json_type": "number",
+          "nullable": true,
+          "required": true,
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "name": "service_mode",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/ServiceMode"
+        },
+        {
+          "name": "persona_assignment_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "persona",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/PersonaSnapshot"
+        },
+        {
+          "name": "policy_bundle_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "capabilities",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "ref": "#/$defs/Capability"
+          },
+          "items_ref": "#/$defs/Capability"
+        },
+        {
+          "name": "obligations",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "ref": "#/objects/properties/definitions/properties/PolicyObligationSpec"
+          },
+          "items_ref": "#/objects/properties/definitions/properties/PolicyObligationSpec"
+        },
+        {
+          "name": "policy_receipt_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 192
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "session_epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "issued_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "expires_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        }
+      ]
+    },
+    {
+      "name": "RuntimeProfileSignedV2",
+      "kind": "object",
+      "extends": "#/objects/properties/definitions/properties/RuntimeProfileV2",
+      "required": [
+        "signature_schema",
+        "runtime_profile_id",
+        "device_id",
+        "session_id",
+        "actor_id",
+        "binding_id",
+        "binding_version",
+        "active_subject_id",
+        "subject_revision",
+        "subject_category",
+        "age_band",
+        "speaker_state",
+        "speaker_confidence",
+        "service_mode",
+        "persona_assignment_id",
+        "persona",
+        "policy_bundle_version",
+        "capabilities",
+        "obligations",
+        "policy_receipt_ids",
+        "session_epoch",
+        "issued_at",
+        "expires_at",
+        "signature"
+      ],
+      "properties": [
+        {
+          "name": "signature_schema",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "runtime-profile-v2"
+        },
+        {
+          "name": "runtime_profile_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "session_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "actor_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "active_subject_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "subject_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "subject_category",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SubjectCategory"
+        },
+        {
+          "name": "age_band",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/AgeBand"
+        },
+        {
+          "name": "speaker_state",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SpeakerState"
+        },
+        {
+          "name": "speaker_confidence",
+          "json_type": "number",
+          "nullable": true,
+          "required": true,
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "name": "service_mode",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/ServiceMode"
+        },
+        {
+          "name": "persona_assignment_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "persona",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/PersonaSnapshot"
+        },
+        {
+          "name": "policy_bundle_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "capabilities",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "ref": "#/$defs/Capability"
+          },
+          "items_ref": "#/$defs/Capability"
+        },
+        {
+          "name": "obligations",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "ref": "#/objects/properties/definitions/properties/PolicyObligationSpec"
+          },
+          "items_ref": "#/objects/properties/definitions/properties/PolicyObligationSpec"
+        },
+        {
+          "name": "policy_receipt_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 192
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "session_epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "issued_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "expires_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "signature",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      ]
+    },
+    {
+      "name": "PolicyApprovalSnapshotFence",
+      "kind": "object",
+      "required": [
+        "subject_id",
+        "snapshot_id",
+        "revision",
+        "canonical_hash"
+      ],
+      "properties": [
+        {
+          "name": "subject_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "snapshot_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "canonical_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      ]
+    },
+    {
+      "name": "PolicyActionResourceFence",
+      "kind": "object",
+      "required": [
+        "action_fence_schema",
+        "capability",
+        "purpose",
+        "action_resource_id",
+        "action_revision",
+        "action_evidence_hash",
+        "canonical_hash",
+        "family_space_id",
+        "family_owner_subject_id",
+        "proposal_id",
+        "proposal_revision",
+        "voter_subject_id",
+        "approval_decision",
+        "required_approval_subject_ids",
+        "approval_snapshots",
+        "capture_evidence_ids",
+        "capture_evidence_hash",
+        "consent_snapshot_id",
+        "consent_snapshot_revision",
+        "consent_snapshot_hash",
+        "membership_snapshot_id",
+        "membership_snapshot_revision",
+        "membership_snapshot_hash",
+        "generation_id",
+        "turn_id",
+        "tool_epoch",
+        "issued_at",
+        "valid_until"
+      ],
+      "properties": [
+        {
+          "name": "action_fence_schema",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "policy-action-resource-fence-v1"
+        },
+        {
+          "name": "capability",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/Capability"
+        },
+        {
+          "name": "purpose",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/Purpose"
+        },
+        {
+          "name": "action_resource_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "action_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "action_evidence_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "canonical_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "family_space_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "family_owner_subject_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "proposal_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "proposal_revision",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "voter_subject_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "approval_decision",
+          "json_type": "ref",
+          "nullable": true,
+          "required": true,
+          "ref": "#/$defs/SharedMemoryConfirmationDecision"
+        },
+        {
+          "name": "required_approval_subject_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 33,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "approval_snapshots",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 33,
+          "items": {
+            "ref": "#/objects/properties/definitions/properties/PolicyApprovalSnapshotFence"
+          },
+          "items_ref": "#/objects/properties/definitions/properties/PolicyApprovalSnapshotFence"
+        },
+        {
+          "name": "capture_evidence_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "capture_evidence_hash",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "consent_snapshot_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "consent_snapshot_revision",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "consent_snapshot_hash",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "membership_snapshot_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "membership_snapshot_revision",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "membership_snapshot_hash",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "generation_id",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "turn_id",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "tool_epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "issued_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "valid_until",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "value_pairs",
+          "left_field": "capability",
+          "right_field": "purpose",
+          "bidirectional": true,
+          "pairs": {
+            "memory_capture": "memory_capture",
+            "memory_promotion": "memory_promotion",
+            "family_shared_memory_proposal": "family_shared_memory_proposal",
+            "family_shared_memory_approval": "family_shared_memory_approval",
+            "family_shared_memory_promotion": "family_shared_memory_promotion"
+          }
+        },
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "capability",
+            "equals": "family_shared_memory_proposal"
+          },
+          "require_non_null": [
+            "family_space_id",
+            "family_owner_subject_id",
+            "proposal_id",
+            "proposal_revision",
+            "capture_evidence_hash",
+            "consent_snapshot_id",
+            "consent_snapshot_revision",
+            "consent_snapshot_hash",
+            "membership_snapshot_id",
+            "membership_snapshot_revision",
+            "membership_snapshot_hash"
+          ],
+          "require_null": [
+            "voter_subject_id",
+            "approval_decision"
+          ],
+          "require_non_empty": [
+            "required_approval_subject_ids",
+            "capture_evidence_ids"
+          ],
+          "require_empty": [
+            "approval_snapshots"
+          ]
+        },
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "capability",
+            "equals": "family_shared_memory_approval"
+          },
+          "require_non_null": [
+            "family_space_id",
+            "family_owner_subject_id",
+            "proposal_id",
+            "proposal_revision",
+            "voter_subject_id",
+            "approval_decision",
+            "consent_snapshot_id",
+            "consent_snapshot_revision",
+            "consent_snapshot_hash",
+            "membership_snapshot_id",
+            "membership_snapshot_revision",
+            "membership_snapshot_hash"
+          ],
+          "require_null": [
+            "capture_evidence_hash"
+          ],
+          "require_non_empty": [
+            "required_approval_subject_ids"
+          ],
+          "require_empty": [
+            "approval_snapshots",
+            "capture_evidence_ids"
+          ],
+          "require_equals": {
+            "approval_decision": "confirm"
+          }
+        },
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "capability",
+            "equals": "family_shared_memory_promotion"
+          },
+          "require_non_null": [
+            "family_space_id",
+            "family_owner_subject_id",
+            "proposal_id",
+            "proposal_revision",
+            "consent_snapshot_id",
+            "consent_snapshot_revision",
+            "consent_snapshot_hash",
+            "membership_snapshot_id",
+            "membership_snapshot_revision",
+            "membership_snapshot_hash"
+          ],
+          "require_null": [
+            "voter_subject_id",
+            "approval_decision",
+            "capture_evidence_hash"
+          ],
+          "require_non_empty": [
+            "required_approval_subject_ids",
+            "approval_snapshots"
+          ],
+          "require_empty": [
+            "capture_evidence_ids"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "action_resource_id",
+            "proposal_id"
+          ],
+          "when": {
+            "path": "capability",
+            "in": [
+              "family_shared_memory_proposal",
+              "family_shared_memory_approval",
+              "family_shared_memory_promotion"
+            ]
+          }
+        },
+        {
+          "kind": "record_coverage",
+          "required_ids_path": "required_approval_subject_ids",
+          "records_path": "approval_snapshots",
+          "record_id_field": "subject_id",
+          "when": {
+            "path": "capability",
+            "equals": "family_shared_memory_promotion"
+          }
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "issued_at",
+          "later_path": "valid_until",
+          "strict": true
+        },
+        {
+          "kind": "sorted_unique_by",
+          "field": "approval_snapshots",
+          "item_field": "subject_id"
+        }
+      ]
+    },
+    {
+      "name": "PolicyDecision",
+      "kind": "object",
+      "required": [
+        "capability",
+        "purpose",
+        "effect",
+        "reason_code",
+        "obligations",
+        "policy_version",
+        "receipt_id",
+        "context_hash",
+        "action_resource_fence",
+        "action_fence_hash",
+        "created_at",
+        "expires_at"
+      ],
+      "properties": [
+        {
+          "name": "capability",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/Capability"
+        },
+        {
+          "name": "purpose",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/Purpose"
+        },
+        {
+          "name": "effect",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/PolicyEffect"
+        },
+        {
+          "name": "reason_code",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 256
+        },
+        {
+          "name": "obligations",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "ref": "#/objects/properties/definitions/properties/PolicyObligationSpec"
+          },
+          "items_ref": "#/objects/properties/definitions/properties/PolicyObligationSpec"
+        },
+        {
+          "name": "policy_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "receipt_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 192
+        },
+        {
+          "name": "context_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "action_resource_fence",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/PolicyActionResourceFence"
+        },
+        {
+          "name": "action_fence_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "created_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "expires_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "equal",
+          "paths": [
+            "action_fence_hash",
+            "action_resource_fence.canonical_hash"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "capability",
+            "action_resource_fence.capability"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "purpose",
+            "action_resource_fence.purpose"
+          ]
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "created_at",
+          "later_path": "expires_at",
+          "strict": true
+        }
+      ],
+      "context_hash_inputs": [
+        "action_resource_fence"
+      ]
+    },
+    {
+      "name": "PolicyReceipt",
+      "kind": "object",
+      "required": [
+        "receipt_id",
+        "actor_id",
+        "subject_id",
+        "device_id",
+        "capability",
+        "effect",
+        "reason_code",
+        "obligations",
+        "policy_version",
+        "context_hash",
+        "binding_id",
+        "binding_version",
+        "session_id",
+        "session_epoch",
+        "runtime_profile_id",
+        "subject_revision",
+        "created_at",
+        "expires_at"
+      ],
+      "properties": [
+        {
+          "name": "receipt_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 192
+        },
+        {
+          "name": "actor_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "subject_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "capability",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/Capability"
+        },
+        {
+          "name": "purpose",
+          "json_type": "string",
+          "nullable": true,
+          "required": false,
+          "min_length": 1,
+          "max_length": 256
+        },
+        {
+          "name": "effect",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/PolicyEffect"
+        },
+        {
+          "name": "reason_code",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 256
+        },
+        {
+          "name": "obligations",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "ref": "#/$defs/PolicyObligation"
+          },
+          "items_ref": "#/$defs/PolicyObligation"
+        },
+        {
+          "name": "policy_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "context_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "session_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "session_epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "runtime_profile_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "subject_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "created_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "expires_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        }
+      ]
+    },
+    {
+      "name": "PolicyReceiptV2",
+      "kind": "object",
+      "required": [
+        "receipt_id",
+        "actor_id",
+        "subject_id",
+        "resource_owner_id",
+        "device_id",
+        "capability",
+        "purpose",
+        "effect",
+        "reason_code",
+        "obligations",
+        "policy_version",
+        "context_hash",
+        "action_resource_fence",
+        "action_fence_hash",
+        "consent_snapshot_ids",
+        "consent_snapshot_revisions",
+        "relationship_snapshot_ids",
+        "relationship_snapshot_revisions",
+        "binding_id",
+        "binding_version",
+        "binding_canonical_hash",
+        "session_id",
+        "session_epoch",
+        "runtime_profile_id",
+        "subject_revision",
+        "device_trust",
+        "data_classification",
+        "safety_state",
+        "jurisdiction",
+        "created_at",
+        "expires_at",
+        "exact_fence"
+      ],
+      "properties": [
+        {
+          "name": "receipt_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 192
+        },
+        {
+          "name": "actor_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "subject_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "resource_owner_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "capability",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/Capability"
+        },
+        {
+          "name": "purpose",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/Purpose"
+        },
+        {
+          "name": "effect",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/PolicyEffect"
+        },
+        {
+          "name": "reason_code",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 256
+        },
+        {
+          "name": "obligations",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "ref": "#/objects/properties/definitions/properties/PolicyObligationSpec"
+          },
+          "items_ref": "#/objects/properties/definitions/properties/PolicyObligationSpec"
+        },
+        {
+          "name": "policy_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "context_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "action_resource_fence",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/PolicyActionResourceFence"
+        },
+        {
+          "name": "action_fence_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "consent_snapshot_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "consent_snapshot_revisions",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "items": {
+            "json_type": "integer",
+            "minimum": 1
+          },
+          "items_type": "integer"
+        },
+        {
+          "name": "relationship_snapshot_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "relationship_snapshot_revisions",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 64,
+          "items": {
+            "json_type": "integer",
+            "minimum": 1
+          },
+          "items_type": "integer"
+        },
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "binding_canonical_hash",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "session_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "session_epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "runtime_profile_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "subject_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "device_trust",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/DeviceTrust"
+        },
+        {
+          "name": "data_classification",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/DataClassification"
+        },
+        {
+          "name": "safety_state",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SafetyState"
+        },
+        {
+          "name": "jurisdiction",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 2,
+          "max_length": 32,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]+$"
+        },
+        {
+          "name": "created_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "expires_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "exact_fence",
+          "json_type": "boolean",
+          "nullable": false,
+          "required": true
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "paired_arrays",
+          "left_path": "consent_snapshot_ids",
+          "right_path": "consent_snapshot_revisions"
+        },
+        {
+          "kind": "paired_arrays",
+          "left_path": "relationship_snapshot_ids",
+          "right_path": "relationship_snapshot_revisions"
+        },
+        {
+          "kind": "value_pairs",
+          "left_field": "capability",
+          "right_field": "purpose",
+          "bidirectional": true,
+          "pairs": {
+            "memory_capture": "memory_capture",
+            "memory_promotion": "memory_promotion",
+            "family_shared_memory_proposal": "family_shared_memory_proposal",
+            "family_shared_memory_approval": "family_shared_memory_approval",
+            "family_shared_memory_promotion": "family_shared_memory_promotion"
+          }
+        },
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "exact_fence",
+            "equals": true
+          },
+          "require_non_null": [
+            "binding_canonical_hash"
+          ]
+        },
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "capability",
+            "in": [
+              "family_shared_memory_proposal",
+              "family_shared_memory_approval",
+              "family_shared_memory_promotion"
+            ]
+          },
+          "require_non_null": [
+            "subject_id",
+            "resource_owner_id",
+            "binding_canonical_hash"
+          ],
+          "require_equals": {
+            "exact_fence": true
+          }
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "action_fence_hash",
+            "action_resource_fence.canonical_hash"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "capability",
+            "action_resource_fence.capability"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "purpose",
+            "action_resource_fence.purpose"
+          ]
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "created_at",
+          "later_path": "expires_at",
+          "strict": true
+        }
+      ],
+      "context_hash_inputs": [
+        "action_resource_fence",
+        "binding_canonical_hash",
+        "consent_snapshot_ids",
+        "consent_snapshot_revisions",
+        "relationship_snapshot_ids",
+        "relationship_snapshot_revisions"
+      ]
+    },
+    {
+      "name": "SubjectResolution",
+      "kind": "object",
+      "required": [
+        "resolution",
+        "candidate_subjects",
+        "temporary_service_mode",
+        "allowed_confirmation_methods",
+        "runtime_profile_id"
+      ],
+      "properties": [
+        {
+          "name": "resolution",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/ResolutionKind"
+        },
+        {
+          "name": "candidate_subjects",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 16,
+          "items": {
+            "ref": "#/objects/properties/definitions/properties/CandidateSubject"
+          },
+          "items_ref": "#/objects/properties/definitions/properties/CandidateSubject"
+        },
+        {
+          "name": "temporary_service_mode",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/ServiceMode"
+        },
+        {
+          "name": "allowed_confirmation_methods",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 8,
+          "unique_items": true,
+          "items": {
+            "ref": "#/$defs/ConfirmationMethod"
+          },
+          "items_ref": "#/$defs/ConfirmationMethod"
+        },
+        {
+          "name": "runtime_profile_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        }
+      ]
+    },
+    {
+      "name": "MemoryWriteFence",
+      "kind": "object",
+      "required": [
+        "session_id",
+        "epoch",
+        "device_id",
+        "binding_id",
+        "binding_role",
+        "runtime_profile_id",
+        "actor_subject_id",
+        "active_subject_id",
+        "subject_revision",
+        "binding_version",
+        "family_space_id",
+        "generation_id",
+        "turn_id",
+        "tool_epoch",
+        "issued_at",
+        "valid_until",
+        "fingerprint"
+      ],
+      "properties": [
+        {
+          "name": "session_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_role",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/BindingRole"
+        },
+        {
+          "name": "runtime_profile_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "actor_subject_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "active_subject_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "subject_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "family_space_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "generation_id",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "turn_id",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "tool_epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "issued_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "valid_until",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "fingerprint",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "time_order",
+          "earlier_path": "issued_at",
+          "later_path": "valid_until",
+          "strict": true
+        }
+      ]
+    },
+    {
+      "name": "MemoryEvent",
+      "kind": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "session_id",
+        "session_epoch",
+        "generation_id",
+        "turn_id",
+        "event_sequence",
+        "actor_id",
+        "active_subject_id",
+        "binding_id",
+        "binding_version",
+        "runtime_profile_id",
+        "scope",
+        "policy_receipt_id",
+        "occurred_at",
+        "payload"
+      ],
+      "properties": [
+        {
+          "name": "event_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "event_type",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/MemoryEventType"
+        },
+        {
+          "name": "session_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "session_epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "generation_id",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "turn_id",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "event_sequence",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "actor_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "active_subject_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "runtime_profile_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "scope",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/MemoryScope"
+        },
+        {
+          "name": "policy_receipt_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "occurred_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "payload",
+          "json_type": "object",
+          "nullable": false,
+          "required": true,
+          "max_properties": 64
+        }
+      ]
+    },
+    {
+      "name": "SharedMemoryConfirmationEvidence",
+      "kind": "object",
+      "required": [
+        "evidence_id",
+        "proposal_id",
+        "proposal_revision",
+        "subject_id",
+        "decision",
+        "authentication_evidence_id",
+        "authentication_evidence_hash",
+        "action_evidence_hash",
+        "action_fence",
+        "approval_snapshot_id",
+        "approval_snapshot_revision",
+        "approval_snapshot_hash",
+        "approval_policy_receipt_id",
+        "approval_policy_receipt",
+        "approval_fence",
+        "proposal_status_before",
+        "proposal_status_after",
+        "occurred_at"
+      ],
+      "properties": [
+        {
+          "name": "evidence_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "proposal_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "proposal_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "subject_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "decision",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SharedMemoryConfirmationDecision"
+        },
+        {
+          "name": "authentication_evidence_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "authentication_evidence_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "action_evidence_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "action_fence",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/MemoryWriteFence"
+        },
+        {
+          "name": "approval_snapshot_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "approval_snapshot_revision",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "approval_snapshot_hash",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "approval_policy_receipt_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 192
+        },
+        {
+          "name": "approval_policy_receipt",
+          "json_type": "ref",
+          "nullable": true,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/PolicyReceiptV2"
+        },
+        {
+          "name": "approval_fence",
+          "json_type": "ref",
+          "nullable": true,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/PolicyActionResourceFence"
+        },
+        {
+          "name": "proposal_status_before",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SharedMemoryProposalStatus"
+        },
+        {
+          "name": "proposal_status_after",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SharedMemoryProposalStatus"
+        },
+        {
+          "name": "occurred_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "decision",
+            "equals": "confirm"
+          },
+          "require_non_null": [
+            "approval_snapshot_id",
+            "approval_snapshot_revision",
+            "approval_snapshot_hash",
+            "approval_policy_receipt_id",
+            "approval_policy_receipt",
+            "approval_fence"
+          ],
+          "require_in": {
+            "proposal_status_before": [
+              "pending"
+            ],
+            "proposal_status_after": [
+              "pending",
+              "approvals_complete"
+            ]
+          }
+        },
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "decision",
+            "equals": "object"
+          },
+          "require_null": [
+            "approval_snapshot_id",
+            "approval_snapshot_revision",
+            "approval_snapshot_hash",
+            "approval_policy_receipt_id",
+            "approval_policy_receipt",
+            "approval_fence"
+          ],
+          "require_in": {
+            "proposal_status_before": [
+              "pending",
+              "approvals_complete"
+            ],
+            "proposal_status_after": [
+              "frozen"
+            ]
+          }
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "subject_id",
+            "action_fence.actor_subject_id",
+            "action_fence.active_subject_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "action_evidence_hash",
+            "action_fence.fingerprint"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "approval_policy_receipt_id",
+            "approval_policy_receipt.receipt_id"
+          ],
+          "when": {
+            "path": "decision",
+            "equals": "confirm"
+          }
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "approval_fence",
+            "approval_policy_receipt.action_resource_fence"
+          ],
+          "when": {
+            "path": "decision",
+            "equals": "confirm"
+          }
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "proposal_id",
+            "approval_fence.proposal_id",
+            "approval_fence.action_resource_id"
+          ],
+          "when": {
+            "path": "decision",
+            "equals": "confirm"
+          }
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "proposal_revision",
+            "approval_fence.proposal_revision",
+            "approval_fence.action_revision"
+          ],
+          "when": {
+            "path": "decision",
+            "equals": "confirm"
+          }
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "subject_id",
+            "approval_fence.voter_subject_id",
+            "approval_policy_receipt.actor_id",
+            "approval_policy_receipt.subject_id"
+          ],
+          "when": {
+            "path": "decision",
+            "equals": "confirm"
+          }
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "decision",
+            "approval_fence.approval_decision"
+          ],
+          "when": {
+            "path": "decision",
+            "equals": "confirm"
+          }
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "action_fence.issued_at",
+          "later_path": "occurred_at",
+          "strict": false
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "occurred_at",
+          "later_path": "action_fence.valid_until",
+          "strict": true
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "approval_policy_receipt.created_at",
+          "later_path": "occurred_at",
+          "strict": false,
+          "when": {
+            "path": "decision",
+            "equals": "confirm"
+          }
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "occurred_at",
+          "later_path": "approval_policy_receipt.expires_at",
+          "strict": true,
+          "when": {
+            "path": "decision",
+            "equals": "confirm"
+          }
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "occurred_at",
+          "later_path": "approval_fence.valid_until",
+          "strict": true,
+          "when": {
+            "path": "decision",
+            "equals": "confirm"
+          }
+        }
+      ]
+    },
+    {
+      "name": "SharedMemoryProposal",
+      "kind": "object",
+      "required": [
+        "proposal_id",
+        "proposal_revision",
+        "family_space_id",
+        "family_owner_subject_id",
+        "proposer_subject_id",
+        "co_subject_ids",
+        "required_approval_subject_ids",
+        "source_evidence_ids",
+        "capture_evidence_hash",
+        "consent_snapshot_id",
+        "consent_snapshot_revision",
+        "consent_snapshot_hash",
+        "membership_snapshot_id",
+        "membership_snapshot_revision",
+        "membership_snapshot_hash",
+        "proposal_policy_receipt_id",
+        "proposal_policy_receipt",
+        "proposal_fence",
+        "status",
+        "created_at",
+        "expires_at",
+        "payload"
+      ],
+      "properties": [
+        {
+          "name": "proposal_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "proposal_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "family_space_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "family_owner_subject_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "proposer_subject_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "co_subject_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "min_items": 1,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "required_approval_subject_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "min_items": 2,
+          "max_items": 33,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "source_evidence_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "min_items": 1,
+          "max_items": 64,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "capture_evidence_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "consent_snapshot_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "consent_snapshot_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "consent_snapshot_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "membership_snapshot_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "membership_snapshot_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "membership_snapshot_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "proposal_policy_receipt_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 192
+        },
+        {
+          "name": "proposal_policy_receipt",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/PolicyReceiptV2"
+        },
+        {
+          "name": "proposal_fence",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/MemoryWriteFence"
+        },
+        {
+          "name": "status",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "pending"
+        },
+        {
+          "name": "created_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "expires_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "payload",
+          "json_type": "object",
+          "nullable": false,
+          "required": true,
+          "max_properties": 64
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "approval_subjects",
+          "proposer_field": "proposer_subject_id",
+          "co_subjects_field": "co_subject_ids",
+          "required_field": "required_approval_subject_ids"
+        },
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "status",
+            "equals": "pending"
+          },
+          "require_equals": {
+            "proposal_policy_receipt.capability": "family_shared_memory_proposal",
+            "proposal_policy_receipt.purpose": "family_shared_memory_proposal"
+          }
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "proposal_policy_receipt_id",
+            "proposal_policy_receipt.receipt_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "proposal_id",
+            "proposal_policy_receipt.action_resource_fence.proposal_id",
+            "proposal_policy_receipt.action_resource_fence.action_resource_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "proposal_revision",
+            "proposal_policy_receipt.action_resource_fence.proposal_revision",
+            "proposal_policy_receipt.action_resource_fence.action_revision"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "family_space_id",
+            "proposal_policy_receipt.action_resource_fence.family_space_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "family_owner_subject_id",
+            "proposal_policy_receipt.resource_owner_id",
+            "proposal_policy_receipt.action_resource_fence.family_owner_subject_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "capture_evidence_hash",
+            "proposal_policy_receipt.action_resource_fence.capture_evidence_hash"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "consent_snapshot_id",
+            "proposal_policy_receipt.action_resource_fence.consent_snapshot_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "consent_snapshot_revision",
+            "proposal_policy_receipt.action_resource_fence.consent_snapshot_revision"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "consent_snapshot_hash",
+            "proposal_policy_receipt.action_resource_fence.consent_snapshot_hash"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "membership_snapshot_id",
+            "proposal_policy_receipt.action_resource_fence.membership_snapshot_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "membership_snapshot_revision",
+            "proposal_policy_receipt.action_resource_fence.membership_snapshot_revision"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "membership_snapshot_hash",
+            "proposal_policy_receipt.action_resource_fence.membership_snapshot_hash"
+          ]
+        },
+        {
+          "kind": "set_equal",
+          "paths": [
+            "required_approval_subject_ids",
+            "proposal_policy_receipt.action_resource_fence.required_approval_subject_ids"
+          ]
+        },
+        {
+          "kind": "set_equal",
+          "paths": [
+            "source_evidence_ids",
+            "proposal_policy_receipt.action_resource_fence.capture_evidence_ids"
+          ]
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "created_at",
+          "later_path": "expires_at",
+          "strict": true
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "created_at",
+          "later_path": "proposal_fence.valid_until",
+          "strict": true
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "created_at",
+          "later_path": "proposal_policy_receipt.expires_at",
+          "strict": true
+        }
+      ]
+    },
+    {
+      "name": "SharedMemoryWithdrawalEvidence",
+      "kind": "object",
+      "required": [
+        "withdrawal_evidence_id",
+        "proposal_id",
+        "proposal_revision",
+        "subject_id",
+        "authentication_evidence_id",
+        "authentication_evidence_hash",
+        "action_evidence_hash",
+        "action_fence",
+        "proposal_status_before",
+        "proposal_status_after",
+        "reason_code",
+        "occurred_at"
+      ],
+      "properties": [
+        {
+          "name": "withdrawal_evidence_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "proposal_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "proposal_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "subject_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "authentication_evidence_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "authentication_evidence_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "action_evidence_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "action_fence",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/MemoryWriteFence"
+        },
+        {
+          "name": "proposal_status_before",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SharedMemoryProposalStatus"
+        },
+        {
+          "name": "proposal_status_after",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "withdrawn"
+        },
+        {
+          "name": "reason_code",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        {
+          "name": "occurred_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "proposal_status_after",
+            "equals": "withdrawn"
+          },
+          "require_in": {
+            "proposal_status_before": [
+              "pending",
+              "approvals_complete",
+              "frozen"
+            ]
+          }
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "subject_id",
+            "action_fence.actor_subject_id",
+            "action_fence.active_subject_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "action_evidence_hash",
+            "action_fence.fingerprint"
+          ]
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "action_fence.issued_at",
+          "later_path": "occurred_at",
+          "strict": false
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "occurred_at",
+          "later_path": "action_fence.valid_until",
+          "strict": true
+        }
+      ]
+    },
+    {
+      "name": "SharedMemoryPromotion",
+      "kind": "object",
+      "required": [
+        "promotion_id",
+        "proposal_id",
+        "proposal_revision",
+        "family_space_id",
+        "proposal_policy_receipt_id",
+        "promotion_policy_receipt_id",
+        "promotion_policy_receipt",
+        "promotion_fence",
+        "proposal_status_before",
+        "proposal_status_after",
+        "required_approval_subject_ids",
+        "confirmation_evidence",
+        "current_consent_snapshot_id",
+        "current_consent_snapshot_revision",
+        "current_consent_snapshot_hash",
+        "current_membership_snapshot_id",
+        "current_membership_snapshot_revision",
+        "current_membership_snapshot_hash",
+        "promoted_record_id",
+        "promoted_at"
+      ],
+      "properties": [
+        {
+          "name": "promotion_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "proposal_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "proposal_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "family_space_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "proposal_policy_receipt_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 192
+        },
+        {
+          "name": "promotion_policy_receipt_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 192
+        },
+        {
+          "name": "promotion_policy_receipt",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/PolicyReceiptV2"
+        },
+        {
+          "name": "promotion_fence",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/MemoryWriteFence"
+        },
+        {
+          "name": "proposal_status_before",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "approvals_complete"
+        },
+        {
+          "name": "proposal_status_after",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "promoted"
+        },
+        {
+          "name": "required_approval_subject_ids",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "min_items": 2,
+          "max_items": 33,
+          "unique_items": true,
+          "items": {
+            "json_type": "string",
+            "min_length": 1,
+            "max_length": 128
+          },
+          "items_type": "string"
+        },
+        {
+          "name": "confirmation_evidence",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "min_items": 2,
+          "max_items": 33,
+          "items": {
+            "ref": "#/objects/properties/definitions/properties/SharedMemoryConfirmationEvidence"
+          },
+          "items_ref": "#/objects/properties/definitions/properties/SharedMemoryConfirmationEvidence"
+        },
+        {
+          "name": "current_consent_snapshot_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "current_consent_snapshot_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "current_consent_snapshot_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "current_membership_snapshot_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "current_membership_snapshot_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "current_membership_snapshot_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "promoted_record_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "promoted_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "distinct",
+          "paths": [
+            "proposal_policy_receipt_id",
+            "promotion_policy_receipt_id"
+          ]
+        },
+        {
+          "kind": "confirmation_coverage",
+          "required_subject_ids_field": "required_approval_subject_ids",
+          "evidence_field": "confirmation_evidence",
+          "evidence_subject_field": "subject_id",
+          "evidence_decision_field": "decision",
+          "accepted_decision": "confirm",
+          "evidence_receipt_field": "approval_policy_receipt_id",
+          "evidence_receipts_distinct_from_fields": [
+            "proposal_policy_receipt_id",
+            "promotion_policy_receipt_id"
+          ],
+          "require_unique_evidence_receipts": true
+        },
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "proposal_status_before",
+            "equals": "approvals_complete"
+          },
+          "require_equals": {
+            "promotion_policy_receipt.capability": "family_shared_memory_promotion",
+            "promotion_policy_receipt.purpose": "family_shared_memory_promotion",
+            "proposal_status_after": "promoted"
+          }
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "promotion_policy_receipt_id",
+            "promotion_policy_receipt.receipt_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "proposal_id",
+            "promotion_policy_receipt.action_resource_fence.proposal_id",
+            "promotion_policy_receipt.action_resource_fence.action_resource_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "proposal_revision",
+            "promotion_policy_receipt.action_resource_fence.proposal_revision",
+            "promotion_policy_receipt.action_resource_fence.action_revision"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "family_space_id",
+            "promotion_policy_receipt.action_resource_fence.family_space_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "current_consent_snapshot_id",
+            "promotion_policy_receipt.action_resource_fence.consent_snapshot_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "current_consent_snapshot_revision",
+            "promotion_policy_receipt.action_resource_fence.consent_snapshot_revision"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "current_consent_snapshot_hash",
+            "promotion_policy_receipt.action_resource_fence.consent_snapshot_hash"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "current_membership_snapshot_id",
+            "promotion_policy_receipt.action_resource_fence.membership_snapshot_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "current_membership_snapshot_revision",
+            "promotion_policy_receipt.action_resource_fence.membership_snapshot_revision"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "current_membership_snapshot_hash",
+            "promotion_policy_receipt.action_resource_fence.membership_snapshot_hash"
+          ]
+        },
+        {
+          "kind": "set_equal",
+          "paths": [
+            "required_approval_subject_ids",
+            "promotion_policy_receipt.action_resource_fence.required_approval_subject_ids"
+          ]
+        },
+        {
+          "kind": "record_set_equal",
+          "left_path": "confirmation_evidence",
+          "right_path": "promotion_policy_receipt.action_resource_fence.approval_snapshots",
+          "left_fields": [
+            "subject_id",
+            "approval_snapshot_id",
+            "approval_snapshot_revision",
+            "approval_snapshot_hash"
+          ],
+          "right_fields": [
+            "subject_id",
+            "snapshot_id",
+            "revision",
+            "canonical_hash"
+          ]
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "promotion_policy_receipt.created_at",
+          "later_path": "promoted_at",
+          "strict": false
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "promoted_at",
+          "later_path": "promotion_policy_receipt.expires_at",
+          "strict": true
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "promoted_at",
+          "later_path": "promotion_policy_receipt.action_resource_fence.valid_until",
+          "strict": true
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "promotion_fence.issued_at",
+          "later_path": "promoted_at",
+          "strict": false
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "promoted_at",
+          "later_path": "promotion_fence.valid_until",
+          "strict": true
+        }
+      ]
+    },
+    {
+      "name": "NotificationIntent",
+      "kind": "object",
+      "required": [
+        "intent_id",
+        "idempotency_key",
+        "intent_kind",
+        "subject_person_id",
+        "source_event_id",
+        "policy_receipt_id",
+        "template_key",
+        "template_params",
+        "reason_code",
+        "script_version",
+        "occurred_at",
+        "status",
+        "created_at",
+        "updated_at",
+        "cancelled_reason",
+        "cancelled_at",
+        "delivered_at",
+        "fence",
+        "relationship_snapshots",
+        "recipients"
+      ],
+      "properties": [
+        {
+          "name": "intent_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "idempotency_key",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "intent_kind",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/IntentKind"
+        },
+        {
+          "name": "subject_person_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "source_event_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "policy_receipt_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 192
+        },
+        {
+          "name": "template_key",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/TemplateKey"
+        },
+        {
+          "name": "template_params",
+          "json_type": "object",
+          "nullable": false,
+          "required": true,
+          "max_properties": 16,
+          "additional_properties": "string"
+        },
+        {
+          "name": "reason_code",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/ReasonCode"
+        },
+        {
+          "name": "script_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[A-Za-z0-9._-]{1,64}$"
+        },
+        {
+          "name": "occurred_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "status",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/IntentStatus"
+        },
+        {
+          "name": "created_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "updated_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "cancelled_reason",
+          "json_type": "ref",
+          "nullable": true,
+          "required": true,
+          "ref": "#/$defs/CancelReason"
+        },
+        {
+          "name": "cancelled_at",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "delivered_at",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "fence",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/NotificationFence"
+        },
+        {
+          "name": "relationship_snapshots",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "items": {
+            "ref": "#/objects/properties/definitions/properties/RelationshipSnapshot"
+          },
+          "items_ref": "#/objects/properties/definitions/properties/RelationshipSnapshot"
+        },
+        {
+          "name": "recipients",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "items": {
+            "ref": "#/objects/properties/definitions/properties/RecipientSnapshot"
+          },
+          "items_ref": "#/objects/properties/definitions/properties/RecipientSnapshot"
+        }
+      ]
+    },
+    {
+      "name": "DeviceAttestation",
+      "kind": "object",
+      "required": [
+        "attestation_schema",
+        "attestation_id",
+        "device_id",
+        "certificate_id",
+        "certificate_status",
+        "device_lifecycle_status",
+        "binding_id",
+        "binding_version",
+        "firmware_version",
+        "firmware_security_version",
+        "firmware_sha256",
+        "bootloader_version",
+        "capability_manifest_hash",
+        "capabilities",
+        "attested_capabilities",
+        "physical_mute_state",
+        "privacy_light_state",
+        "sim_status",
+        "active_ota_slot",
+        "ota_boot_status",
+        "anti_rollback_floor_version",
+        "anti_rollback_floor_security_version",
+        "monotonic_counter",
+        "last_command_sequence",
+        "nonce",
+        "occurred_at",
+        "expires_at",
+        "signer_key_id",
+        "signature_algorithm",
+        "signature"
+      ],
+      "properties": [
+        {
+          "name": "attestation_schema",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "device-attestation-v1"
+        },
+        {
+          "name": "attestation_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "certificate_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "certificate_status",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/DeviceCertificateStatus"
+        },
+        {
+          "name": "device_lifecycle_status",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/DeviceLifecycleStatus"
+        },
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "firmware_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        {
+          "name": "firmware_security_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        {
+          "name": "firmware_sha256",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "bootloader_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        {
+          "name": "capability_manifest_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "capabilities",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "ref": "#/$defs/DeviceCapability"
+          },
+          "items_ref": "#/$defs/DeviceCapability"
+        },
+        {
+          "name": "attested_capabilities",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "max_items": 32,
+          "unique_items": true,
+          "items": {
+            "ref": "#/$defs/DeviceCapability"
+          },
+          "items_ref": "#/$defs/DeviceCapability"
+        },
+        {
+          "name": "physical_mute_state",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/PhysicalMuteState"
+        },
+        {
+          "name": "privacy_light_state",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/PrivacyLightState"
+        },
+        {
+          "name": "sim_status",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SimLifecycleStatus"
+        },
+        {
+          "name": "active_ota_slot",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/OtaSlotName"
+        },
+        {
+          "name": "ota_boot_status",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/OtaBootStatus"
+        },
+        {
+          "name": "anti_rollback_floor_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        {
+          "name": "anti_rollback_floor_security_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        {
+          "name": "monotonic_counter",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        {
+          "name": "last_command_sequence",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        {
+          "name": "nonce",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 16,
+          "max_length": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        {
+          "name": "occurred_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "expires_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "signer_key_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        {
+          "name": "signature_algorithm",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "ed25519"
+        },
+        {
+          "name": "signature",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "device_lifecycle_status",
+            "in": [
+              "manufactured",
+              "provisioned",
+              "unknown",
+              "wiped",
+              "retired"
+            ]
+          },
+          "require_null": [
+            "binding_id",
+            "binding_version"
+          ],
+          "require_empty": [
+            "attested_capabilities"
+          ]
+        },
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "device_lifecycle_status",
+            "in": [
+              "bound",
+              "suspended",
+              "revoked",
+              "wipe_pending"
+            ]
+          },
+          "require_non_null": [
+            "binding_id",
+            "binding_version"
+          ]
+        },
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "device_lifecycle_status",
+            "not_equals": "bound"
+          },
+          "require_empty": [
+            "attested_capabilities"
+          ]
+        },
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "certificate_status",
+            "not_equals": "active"
+          },
+          "require_empty": [
+            "attested_capabilities"
+          ]
+        },
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "physical_mute_state",
+            "in": [
+              "unknown",
+              "unattested",
+              "mismatch"
+            ]
+          },
+          "require_empty": [
+            "attested_capabilities"
+          ]
+        },
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "privacy_light_state",
+            "in": [
+              "unknown",
+              "unattested",
+              "mismatch"
+            ]
+          },
+          "require_empty": [
+            "attested_capabilities"
+          ]
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "occurred_at",
+          "later_path": "expires_at",
+          "strict": true
+        },
+        {
+          "kind": "integer_order",
+          "left_path": "firmware_security_version",
+          "operator": ">=",
+          "right_path": "anti_rollback_floor_security_version"
+        },
+        {
+          "kind": "requires_capability",
+          "state_path": "physical_mute_state",
+          "state_values": [
+            "engaged"
+          ],
+          "capabilities_path": "capabilities",
+          "capability": "physical_microphone_cut"
+        },
+        {
+          "kind": "requires_capability",
+          "state_path": "privacy_light_state",
+          "state_values": [
+            "on"
+          ],
+          "capabilities_path": "capabilities",
+          "capability": "hardware_privacy_light"
+        },
+        {
+          "kind": "subset",
+          "subset_path": "attested_capabilities",
+          "superset_path": "capabilities"
+        }
+      ]
+    },
+    {
+      "name": "OtaAssignment",
+      "kind": "object",
+      "required": [
+        "assignment_id",
+        "device_id",
+        "target_slot",
+        "target_version",
+        "target_firmware_security_version",
+        "artifact_sha256",
+        "artifact_size_bytes",
+        "min_bootloader_version",
+        "anti_rollback_floor_version",
+        "anti_rollback_floor_security_version",
+        "channel",
+        "status",
+        "assigned_at",
+        "expires_at",
+        "signer_key_id",
+        "signature_algorithm",
+        "signature"
+      ],
+      "properties": [
+        {
+          "name": "assignment_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "target_slot",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/OtaSlotName"
+        },
+        {
+          "name": "target_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        {
+          "name": "target_firmware_security_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        {
+          "name": "artifact_sha256",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "artifact_size_bytes",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        {
+          "name": "min_bootloader_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        {
+          "name": "anti_rollback_floor_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        {
+          "name": "anti_rollback_floor_security_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        {
+          "name": "channel",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 32,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        {
+          "name": "status",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/OtaAssignmentStatus"
+        },
+        {
+          "name": "assigned_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "expires_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "signer_key_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        {
+          "name": "signature_algorithm",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "ed25519"
+        },
+        {
+          "name": "signature",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "forbidden_values",
+          "field": "target_slot",
+          "values": [
+            "unknown"
+          ]
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "assigned_at",
+          "later_path": "expires_at",
+          "strict": true
+        },
+        {
+          "kind": "integer_order",
+          "left_path": "target_firmware_security_version",
+          "operator": ">=",
+          "right_path": "anti_rollback_floor_security_version"
+        }
+      ]
+    },
+    {
+      "name": "OtaSlotState",
+      "kind": "object",
+      "required": [
+        "slot",
+        "boot_status",
+        "firmware_version",
+        "firmware_security_version",
+        "artifact_sha256",
+        "boot_attempts",
+        "confirmed_at",
+        "last_error_code"
+      ],
+      "properties": [
+        {
+          "name": "slot",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/OtaSlotName"
+        },
+        {
+          "name": "boot_status",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/OtaBootStatus"
+        },
+        {
+          "name": "firmware_version",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        {
+          "name": "firmware_security_version",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        {
+          "name": "artifact_sha256",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "boot_attempts",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0,
+          "maximum": 16
+        },
+        {
+          "name": "confirmed_at",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "last_error_code",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        }
+      ]
+    },
+    {
+      "name": "OtaStateReceipt",
+      "kind": "object",
+      "required": [
+        "receipt_id",
+        "device_id",
+        "certificate_id",
+        "assignment_id",
+        "highest_accepted_version",
+        "highest_accepted_firmware_security_version",
+        "anti_rollback_floor_version",
+        "anti_rollback_floor_security_version",
+        "active_slot",
+        "pending_slot",
+        "boot_status",
+        "slots",
+        "max_boot_attempts",
+        "rollback_from_version",
+        "rollback_to_version",
+        "monotonic_counter",
+        "occurred_at",
+        "signer_key_id",
+        "signature_algorithm",
+        "signature"
+      ],
+      "properties": [
+        {
+          "name": "receipt_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "certificate_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "assignment_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "highest_accepted_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        {
+          "name": "highest_accepted_firmware_security_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        {
+          "name": "anti_rollback_floor_version",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        {
+          "name": "anti_rollback_floor_security_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        {
+          "name": "active_slot",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/OtaSlotName"
+        },
+        {
+          "name": "pending_slot",
+          "json_type": "ref",
+          "nullable": true,
+          "required": true,
+          "ref": "#/$defs/OtaSlotName"
+        },
+        {
+          "name": "boot_status",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/OtaBootStatus"
+        },
+        {
+          "name": "slots",
+          "json_type": "array",
+          "nullable": false,
+          "required": true,
+          "min_items": 2,
+          "max_items": 2,
+          "items": {
+            "ref": "#/objects/properties/definitions/properties/OtaSlotState"
+          },
+          "items_ref": "#/objects/properties/definitions/properties/OtaSlotState"
+        },
+        {
+          "name": "max_boot_attempts",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1,
+          "maximum": 16
+        },
+        {
+          "name": "rollback_from_version",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        {
+          "name": "rollback_to_version",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "pattern": "^v?[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        {
+          "name": "monotonic_counter",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        {
+          "name": "occurred_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "signer_key_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        {
+          "name": "signature_algorithm",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "ed25519"
+        },
+        {
+          "name": "signature",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "forbidden_values",
+          "field": "active_slot",
+          "values": [
+            "unknown"
+          ]
+        },
+        {
+          "kind": "unique_by",
+          "field": "slots",
+          "item_field": "slot"
+        },
+        {
+          "kind": "integer_order",
+          "left_path": "highest_accepted_firmware_security_version",
+          "operator": ">=",
+          "right_path": "anti_rollback_floor_security_version"
+        },
+        {
+          "kind": "selected_record_integer_order",
+          "selector_path": "active_slot",
+          "records_path": "slots",
+          "record_selector_field": "slot",
+          "record_value_field": "firmware_security_version",
+          "operator": ">=",
+          "other_path": "anti_rollback_floor_security_version"
+        },
+        {
+          "kind": "selected_record_integer_order",
+          "selector_path": "active_slot",
+          "records_path": "slots",
+          "record_selector_field": "slot",
+          "record_value_field": "firmware_security_version",
+          "operator": "<=",
+          "other_path": "highest_accepted_firmware_security_version"
+        }
+      ]
+    },
+    {
+      "name": "RemoteDeviceCommand",
+      "kind": "object",
+      "required": [
+        "command_id",
+        "idempotency_key",
+        "device_id",
+        "actor_id",
+        "command_type",
+        "reason_code",
+        "ota_assignment_id",
+        "parameters_hash",
+        "signer_key_id",
+        "signature_algorithm",
+        "target_certificate_id",
+        "expected_binding_id",
+        "expected_binding_version",
+        "expected_monotonic_counter",
+        "expected_firmware_security_version",
+        "command_sequence",
+        "issued_at",
+        "expires_at",
+        "signature"
+      ],
+      "properties": [
+        {
+          "name": "command_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "idempotency_key",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "actor_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "command_type",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/RemoteDeviceCommandType"
+        },
+        {
+          "name": "reason_code",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        {
+          "name": "ota_assignment_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "parameters_hash",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "name": "signer_key_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        {
+          "name": "signature_algorithm",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "const": "ed25519"
+        },
+        {
+          "name": "target_certificate_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "expected_binding_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "expected_binding_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "expected_monotonic_counter",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        {
+          "name": "expected_firmware_security_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        {
+          "name": "command_sequence",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        {
+          "name": "issued_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "expires_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "signature",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "conditional",
+          "when": {
+            "path": "command_type",
+            "equals": "assign_ota"
+          },
+          "require_non_null": [
+            "ota_assignment_id"
+          ]
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "issued_at",
+          "later_path": "expires_at",
+          "strict": true
+        }
+      ]
+    },
+    {
+      "name": "RemoteDeviceCommandExecution",
+      "kind": "object",
+      "required": [
+        "execution_id",
+        "command",
+        "current_attestation",
+        "accepted_at"
+      ],
+      "properties": [
+        {
+          "name": "execution_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "command",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/RemoteDeviceCommand"
+        },
+        {
+          "name": "current_attestation",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/objects/properties/definitions/properties/DeviceAttestation"
+        },
+        {
+          "name": "accepted_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "equal",
+          "paths": [
+            "command.device_id",
+            "current_attestation.device_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "command.target_certificate_id",
+            "current_attestation.certificate_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "command.expected_binding_id",
+            "current_attestation.binding_id"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "command.expected_binding_version",
+            "current_attestation.binding_version"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "command.expected_monotonic_counter",
+            "current_attestation.monotonic_counter"
+          ]
+        },
+        {
+          "kind": "equal",
+          "paths": [
+            "command.expected_firmware_security_version",
+            "current_attestation.firmware_security_version"
+          ]
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "command.issued_at",
+          "later_path": "accepted_at",
+          "strict": false
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "accepted_at",
+          "later_path": "command.expires_at",
+          "strict": true
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "current_attestation.occurred_at",
+          "later_path": "accepted_at",
+          "strict": false
+        },
+        {
+          "kind": "time_order",
+          "earlier_path": "accepted_at",
+          "later_path": "current_attestation.expires_at",
+          "strict": true
+        },
+        {
+          "kind": "integer_order",
+          "left_path": "command.command_sequence",
+          "operator": ">",
+          "right_path": "current_attestation.last_command_sequence"
+        },
+        {
+          "kind": "required_values",
+          "values": {
+            "current_attestation.certificate_status": "active",
+            "current_attestation.device_lifecycle_status": "bound"
+          }
+        }
+      ]
+    },
+    {
+      "name": "SessionEpochFence",
+      "kind": "object",
+      "required": [
+        "session_id",
+        "session_epoch",
+        "device_id",
+        "binding_id",
+        "binding_version",
+        "generation_id",
+        "turn_id",
+        "tool_epoch",
+        "runtime_profile_id",
+        "actor_id",
+        "active_subject_id",
+        "subject_revision",
+        "issued_at",
+        "valid_until",
+        "fingerprint"
+      ],
+      "properties": [
+        {
+          "name": "session_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "session_epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "generation_id",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "turn_id",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "tool_epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "runtime_profile_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "actor_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "active_subject_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "subject_revision",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "issued_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "valid_until",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "fingerprint",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "time_order",
+          "earlier_path": "issued_at",
+          "later_path": "valid_until",
+          "strict": true
+        }
+      ]
+    },
+    {
+      "name": "SessionEvent",
+      "kind": "object",
+      "required": [
+        "event_id",
+        "event_type",
+        "session_id",
+        "session_epoch",
+        "device_id",
+        "binding_id",
+        "binding_version",
+        "generation_id",
+        "turn_id",
+        "tool_epoch",
+        "event_sequence",
+        "active_subject_id",
+        "runtime_profile_id",
+        "actor_id",
+        "subject_revision",
+        "occurred_at",
+        "payload"
+      ],
+      "properties": [
+        {
+          "name": "event_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "event_type",
+          "json_type": "ref",
+          "nullable": false,
+          "required": true,
+          "ref": "#/$defs/SessionEventType"
+        },
+        {
+          "name": "session_id",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "session_epoch",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "device_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "binding_version",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 1
+        },
+        {
+          "name": "generation_id",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "turn_id",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "tool_epoch",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "event_sequence",
+          "json_type": "integer",
+          "nullable": false,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "active_subject_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "runtime_profile_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "actor_id",
+          "json_type": "string",
+          "nullable": true,
+          "required": true,
+          "min_length": 1,
+          "max_length": 128
+        },
+        {
+          "name": "subject_revision",
+          "json_type": "integer",
+          "nullable": true,
+          "required": true,
+          "minimum": 0
+        },
+        {
+          "name": "occurred_at",
+          "json_type": "string",
+          "nullable": false,
+          "required": true,
+          "format": "date-time"
+        },
+        {
+          "name": "payload",
+          "json_type": "object",
+          "nullable": false,
+          "required": true,
+          "max_properties": 64
+        }
+      ],
+      "invariants": [
+        {
+          "kind": "epoch_semantics",
+          "epoch_field": "session_epoch",
+          "zero_event_values": [
+            "reconnected",
+            "degraded_offline",
+            "session_closed",
+            "session_failed"
+          ],
+          "zero_null_fields": [
+            "device_id",
+            "binding_id",
+            "binding_version",
+            "generation_id",
+            "turn_id",
+            "tool_epoch",
+            "active_subject_id",
+            "runtime_profile_id",
+            "actor_id",
+            "subject_revision"
+          ],
+          "positive_non_null_fields": [
+            "device_id",
+            "binding_id",
+            "binding_version",
+            "generation_id",
+            "turn_id",
+            "tool_epoch",
+            "runtime_profile_id",
+            "actor_id",
+            "subject_revision"
+          ]
+        }
+      ]
+    }
+  ]
+}

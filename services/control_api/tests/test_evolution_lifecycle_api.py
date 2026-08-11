@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from services.control_api.app.main import create_app
 from services.evolution.domain import CandidateArtifact, GateResult, ValidationReport
@@ -18,6 +19,38 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEMORIA_EVOLUTION_VALIDATOR_TOKEN", "evolution-validator-token")
     monkeypatch.setenv("MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256", "a" * 64)
     monkeypatch.setenv("OFFLINE_MOCK", "true")
+
+
+async def _register_verified_adult(
+    client: AsyncClient,
+    app: FastAPI,
+    *,
+    username: str,
+    password: str = "safe-password",
+) -> dict[str, str]:
+    """Register, ratchet to a verified adult, and mint a fresh session."""
+
+    registered_response = await client.post(
+        "/v1/auth/register",
+        json={"username": username, "password": password},
+    )
+    assert registered_response.status_code == 201
+    registered = registered_response.json()
+    app.state.memory_store.update_subject_profile(
+        user_id=registered["user_id"],
+        subject_category="adult",
+        birth_year_band="adult",
+        age_evidence_status="verified",
+        now=datetime.now(UTC).isoformat(),
+    )
+    login_response = await client.post(
+        "/v1/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert login_response.status_code == 200
+    logged_in = login_response.json()
+    assert logged_in["user_id"] == registered["user_id"]
+    return logged_in
 
 
 def _candidate(candidate_id: str, account_id: str, *, version: int) -> CandidateArtifact:
@@ -80,18 +113,16 @@ async def test_lifecycle_api_exposes_reason_and_controls_last_known_good_rollbac
     app = create_app()
     control = {"X-Memoria-Internal-Token": "evolution-control-token"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        owner = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "evolution-lifecycle-owner", "password": "safe-password"},
-            )
-        ).json()
-        other = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "evolution-lifecycle-other", "password": "safe-password"},
-            )
-        ).json()
+        owner = await _register_verified_adult(
+            client,
+            app,
+            username="evolution-lifecycle-owner",
+        )
+        other = await _register_verified_adult(
+            client,
+            app,
+            username="evolution-lifecycle-other",
+        )
         owner_bearer = {"Authorization": f"Bearer {owner['access_token']}"}
         other_bearer = {"Authorization": f"Bearer {other['access_token']}"}
         first = _candidate("rollback-v1", owner["user_id"], version=1)

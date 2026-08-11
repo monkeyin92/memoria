@@ -29,6 +29,15 @@ export {
 } from "./api/memory.js";
 
 export {
+  createDeviceBinding,
+  createDeviceSession,
+  getDeviceBinding,
+  getRuntimeProfile,
+  resolveSessionSubject,
+  setActiveSubject,
+} from "./api/device.js";
+
+export {
   exportAccountArchive,
   getLifeTimeline,
   getMemoryReviewQueue,

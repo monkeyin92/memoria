@@ -1,5 +1,7 @@
 const api = require("../../utils/api");
 const { requireLogin } = require("../../utils/auth-gate");
+const contracts = require("../../utils/multi-subject-contracts");
+const { capabilityGateMessage, configActionGate } = require("../../utils/device-binding");
 
 Page({
   data: {
@@ -47,6 +49,15 @@ Page({
       this._clearPrivateState();
       return;
     }
+    const gate = await api.requireRuntimeCapability(contracts.Capability.RawAudioRetention);
+    if (!gate.allowed) {
+      this.setData({
+        loading: false,
+        consent: null,
+        error: capabilityGateMessage(gate, contracts.Capability.RawAudioRetention),
+      });
+      return;
+    }
     const authEpoch = api.currentAuthEpoch();
     this.setData({ loading: true, error: "" });
     try {
@@ -62,6 +73,12 @@ Page({
   },
 
   async grant() {
+    // 配置动作：consent 决策接口接入前由 config seam fail-closed（P1 边界）。
+    const seam = configActionGate("raw_audio_consent");
+    if (!seam.allowed) {
+      this.setData({ error: seam.message });
+      return;
+    }
     const confirmed = await new Promise((resolve) => {
       wx.showModal({
         title: "确认原始语音归档授权",
@@ -86,6 +103,12 @@ Page({
   },
 
   async revoke() {
+    // 配置动作：同上，fail-closed 且不按本地年龄放开。
+    const seam = configActionGate("raw_audio_consent");
+    if (!seam.allowed) {
+      this.setData({ error: seam.message });
+      return;
+    }
     const confirmed = await new Promise((resolve) => {
       wx.showModal({
         title: "撤回原始语音授权",

@@ -1,5 +1,108 @@
 const { CONTROL_API_BASE_URL } = require("../config");
 const { normalizeGuardianLinks, normalizeGuardianSummary } = require("./guardian");
+const {
+  buildBindingRequest,
+  normalizeRuntimeProfile,
+  normalizeSubjectResolution,
+  readBindingManifest,
+  saveBindingManifest,
+  saveCachedRuntimeProfile,
+  clearCachedRuntimeProfile,
+  canonicalWireJson,
+} = require("./device-binding");
+
+/*
+ * Runtime Profile 请求代次与 epoch 守卫（§9.5 / §10.2，复审 P0-2/3/4）：
+ * - 完整 context = device_id + binding_id + binding_version + session_id，
+ *   与经过严格校验的 BindingManifest 对齐；代次按 context 隔离，不同
+ *   binding/session 的并行请求互不取消，同一 context 内晚到响应丢弃；
+ * - 响应必须先通过 expected context 校验（device/binding/version/session
+ *   与请求及当前 BindingManifest 一致），任何 mismatch 拒绝并清理缓存，
+ *   防止另一个 device/binding 的有效 profile 被复用放行；
+ * - 幂等比较是 canonical 全 24 字段 + signature 的确定性完整比较：普通
+ *   refresh 只接受“同 session + 同 epoch + 完全相同的 wire 内容”；
+ *   同 epoch 任何字段（capabilities/obligations/speaker_state/service_mode/
+ *   persona/expiry/signature 等）变化都拒绝；
+ * - setActiveSubject 成功结果必须严格 epoch 提升；
+ * - 内存态（请求代次 + epoch floor）在登出 / 重新绑定 / 401 时清理。
+ */
+const runtimeProfileSeqs = new Map();
+const acceptedProfileFloors = new Map(); // contextKey -> { epoch, fingerprint }
+
+function runtimeProfileContextKey(context) {
+  return [
+    context.deviceId || "",
+    context.bindingId || "",
+    context.bindingVersion ?? "",
+    context.sessionId || "",
+  ].join("|");
+}
+
+function beginRuntimeProfileRequest(context) {
+  const key = runtimeProfileContextKey(context);
+  const seq = (runtimeProfileSeqs.get(key) || 0) + 1;
+  runtimeProfileSeqs.set(key, seq);
+  return { key, seq };
+}
+
+function isRuntimeProfileRequestCurrent(token) {
+  return runtimeProfileSeqs.get(token.key) === token.seq;
+}
+
+function profileIdentityFingerprint(profile) {
+  // canonical 全 24 字段 + signature 的递归确定性完整比较（P0-2）。
+  return canonicalWireJson(profile);
+}
+
+/*
+ * 清理全部内存守卫状态（请求代次 + epoch floor）。登出、绑定上下文变化
+ * （重新绑定/版本变化）与鉴权 401 时调用，避免旧 epoch floor 或请求
+ * 代次残留导致新上下文被错误拒绝/放行。
+ */
+function clearRuntimeProfileMemory() {
+  runtimeProfileSeqs.clear();
+  acceptedProfileFloors.clear();
+}
+
+function profileMatchesExpectedContext(profile, context) {
+  if (!context) return false;
+  if (profile.device_id !== context.deviceId) return false;
+  if (profile.binding_id !== context.bindingId) return false;
+  if (profile.binding_version !== context.bindingVersion) return false;
+  if (context.sessionId && profile.session_id !== context.sessionId) return false;
+  return true;
+}
+
+function acceptRuntimeProfile(profile, mode, context) {
+  if (!profile || profile.valid !== true) return profile;
+  if (!profileMatchesExpectedContext(profile, context)) {
+    // 跨 device/binding/session 响应：拒绝并清理缓存（P0-3）。
+    clearCachedRuntimeProfile();
+    return null;
+  }
+  // epoch floor 按响应中的真实 session 归属，保证无 session 的 refresh
+  // 与同 session 的 switch 共用同一把 epoch 锁。
+  const floorKey = runtimeProfileContextKey({
+    deviceId: profile.device_id,
+    bindingId: profile.binding_id,
+    bindingVersion: profile.binding_version,
+    sessionId: profile.session_id,
+  });
+  const previous = acceptedProfileFloors.get(floorKey);
+  const fingerprint = profileIdentityFingerprint(profile);
+  if (previous) {
+    if (profile.session_epoch < previous.epoch) return null;
+    if (profile.session_epoch === previous.epoch) {
+      if (mode === "switch") return null; // 切换必须严格提升
+      if (fingerprint !== previous.fingerprint) return null; // 同 epoch 内容必须完全一致
+    }
+  }
+  acceptedProfileFloors.set(floorKey, {
+    epoch: profile.session_epoch,
+    fingerprint,
+  });
+  return profile;
+}
 
 class ApiError extends Error {
   constructor(message, { status = 0, code = null } = {}) {
@@ -126,6 +229,9 @@ function rawRequest(path, options = {}) {
         }
         const error = errorFromResponse(response);
         if (authenticated && response.statusCode === 401) {
+          // 登录态失效：本地的 Runtime Profile 缓存一并失效。
+          clearCachedRuntimeProfile();
+          clearRuntimeProfileMemory();
           currentApp()?.clearAuthenticatedIdentity?.();
         }
         reject(error);
@@ -213,6 +319,8 @@ async function uploadWechatAvatar(filePath) {
 }
 
 function logoutLocal() {
+  clearCachedRuntimeProfile();
+  clearRuntimeProfileMemory();
   const app = currentApp();
   if (app) app.clearAuthenticatedIdentity();
 }
@@ -242,6 +350,17 @@ function createMiniProgramSession({
   interactionMode = "companion",
   sessionFocus = "chat",
 }) {
+  /*
+   * 从经过校验的 BindingManifest 取 device_id 写入 client.device_id，
+   * 让后续 /session-policy 能把语音会话关联到 Binding/Runtime Profile。
+   * 无绑定时保持兼容创建，但必须显式声明 unknown_safe 会话范围：
+   * 服务端不得把未绑定会话按账号成人能力放开（D-07 / §4.3）。
+   * （当前 ClientInfo 忽略未知 client 字段，兼容现有后端；session
+   * producer 接线后消费该字段。）
+   */
+  const binding = readBindingManifest();
+  const deviceId =
+    binding && typeof binding.device_id === "string" && binding.device_id ? binding.device_id : null;
   return rawRequest("/v1/sessions", {
     method: "POST",
     data: {
@@ -254,6 +373,8 @@ function createMiniProgramSession({
       client: {
         platform: "miniprogram",
         timezone: "Asia/Shanghai",
+        device_id: deviceId,
+        ...(deviceId ? {} : { session_scope: "unknown_safe" }),
       },
     },
   }).then((session) => {
@@ -421,6 +542,155 @@ function revokeRawVoiceConsent() {
   return rawRequest("/v1/archive/raw-voice-consent", { method: "DELETE" });
 }
 
+/*
+ * 首次设备绑定（整改文档 §9.1）。请求体先经过 buildBindingRequest
+ * fail-closed 校验：客户端不能提交 policy_version 或任何假授权字段。
+ */
+function createDeviceBinding(request, { idempotencyKey = "" } = {}) {
+  const payload = buildBindingRequest(request);
+  const previous = readBindingManifest();
+  return rawRequest("/v1/device-bindings", {
+    method: "POST",
+    data: payload,
+    idempotencyKey,
+  }).then((manifest) => {
+    saveBindingManifest(manifest);
+    if (
+      !previous ||
+      previous.device_id !== manifest.device_id ||
+      previous.binding_id !== manifest.binding_id ||
+      previous.binding_version !== manifest.binding_version
+    ) {
+      // 重新绑定/版本变化：清空内存守卫，避免旧 epoch floor/代次残留。
+      clearRuntimeProfileMemory();
+    }
+    return manifest;
+  });
+}
+
+/*
+ * 查询设备当前绑定（PR-04 后端提供；展示 declared_mode 与角色）。
+ */
+function getDeviceBinding(deviceId) {
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/binding`);
+}
+
+/*
+ * 解析当前会话主体（§9.2）。客户端不发送声纹原始数据，只传服务端
+ * 已知的设备与会话标识。
+ */
+function resolveSessionSubject({
+  deviceId,
+  sessionId = null,
+  clientClaimedPersonId = null,
+  environment = {},
+} = {}) {
+  return rawRequest("/v1/sessions/resolve-subject", {
+    method: "POST",
+    data: {
+      device_id: deviceId,
+      session_id: sessionId,
+      client_claimed_person_id: clientClaimedPersonId,
+      environment,
+    },
+  }).then((payload) => normalizeSubjectResolution(payload));
+}
+
+/*
+ * 获取 Runtime Profile（§9.3）。只读、带过期时间的服务端配置；
+ * 客户端用它驱动敏感入口展示，而不是本地推断年龄。
+ * 响应经过 canonical 严格校验（utils/device-binding.js）；晚到响应
+ * （代次被更新的请求取代）、epoch 倒退、或 device/session/binding 与
+ * 当前经过校验的 BindingManifest 不一致时返回 null，由调用方丢弃。
+ */
+function getRuntimeProfile(deviceId, { sessionId = null } = {}) {
+  const manifest = readBindingManifest();
+  if (!manifest || manifest.device_id !== deviceId) {
+    return Promise.reject(new ApiError("还没有绑定设备，无法获取 Runtime Profile。", { status: 403 }));
+  }
+  const context = {
+    deviceId: manifest.device_id,
+    bindingId: manifest.binding_id,
+    bindingVersion: manifest.binding_version,
+    sessionId: sessionId || null,
+  };
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+  const token = beginRuntimeProfileRequest(context);
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/runtime-profile${query}`).then(
+    (payload) => {
+      if (!isRuntimeProfileRequestCurrent(token)) return null;
+      const profile = normalizeRuntimeProfile(payload);
+      if (!isRuntimeProfileRequestCurrent(token)) return null;
+      const accepted = acceptRuntimeProfile(profile, "refresh", context);
+      if (accepted === null) return null;
+      saveCachedRuntimeProfile(accepted);
+      return accepted;
+    },
+  );
+}
+
+/*
+ * 切换当前使用者（§9.5）。confirmation_method 只允许服务端声明的
+ * 确认方式（如 app_confirm），客户端不能自行断言已通过声纹确认。
+ * 同样受请求代次与 session_epoch 单调守卫：切换后只保存 epoch 提升的
+ * 新 profile，晚到响应返回 null。
+ */
+function setActiveSubject(sessionId, { personId, confirmationMethod = "app_confirm" } = {}) {
+  const manifest = readBindingManifest();
+  if (!manifest) {
+    return Promise.reject(new ApiError("还没有绑定设备，无法切换当前使用者。", { status: 403 }));
+  }
+  const context = {
+    deviceId: manifest.device_id,
+    bindingId: manifest.binding_id,
+    bindingVersion: manifest.binding_version,
+    sessionId: sessionId || null,
+  };
+  const token = beginRuntimeProfileRequest(context);
+  return rawRequest(`/v1/sessions/${encodeURIComponent(sessionId)}/active-subject`, {
+    method: "POST",
+    data: {
+      person_id: personId,
+      confirmation_method: confirmationMethod,
+    },
+  }).then((payload) => {
+    if (!isRuntimeProfileRequestCurrent(token)) return null;
+    const profile = normalizeRuntimeProfile(payload);
+    if (!isRuntimeProfileRequestCurrent(token)) return null;
+    const accepted = acceptRuntimeProfile(profile, "switch", context);
+    if (accepted === null) return null;
+    saveCachedRuntimeProfile(accepted);
+    return accepted;
+  });
+}
+
+/*
+ * 敏感入口的统一能力门禁（D-07）：只有当前设备取得有效 Runtime Profile
+ * 且 capabilities 包含目标能力时才放行；Profile 不可用时返回可解释拒绝。
+ * 所有敏感页面（数字分身/声纹/成长小结/原始语音/私人回顾）必须经此门禁。
+ */
+async function requireRuntimeCapability(capability, { sessionId = null } = {}) {
+  const binding = readBindingManifest();
+  if (!binding || typeof binding.device_id !== "string") {
+    return { allowed: false, reason: "no_binding", profile: null };
+  }
+  try {
+    const profile = await getRuntimeProfile(binding.device_id, { sessionId });
+    if (profile === null) {
+      return { allowed: false, reason: "superseded", profile: null };
+    }
+    if (profile.valid !== true) {
+      return { allowed: false, reason: "invalid_profile", profile };
+    }
+    if (!profile.capabilities.includes(capability)) {
+      return { allowed: false, reason: "capability_missing", profile };
+    }
+    return { allowed: true, reason: "allowed", profile };
+  } catch (error) {
+    return { allowed: false, reason: "unavailable", profile: null, error };
+  }
+}
+
 module.exports = {
   ApiError,
   currentIdentity,
@@ -460,4 +730,11 @@ module.exports = {
   getRawVoiceConsent,
   grantRawVoiceConsent,
   revokeRawVoiceConsent,
+  createDeviceBinding,
+  getDeviceBinding,
+  resolveSessionSubject,
+  getRuntimeProfile,
+  setActiveSubject,
+  requireRuntimeCapability,
+  clearRuntimeProfileMemory,
 };

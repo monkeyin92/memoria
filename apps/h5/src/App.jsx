@@ -22,11 +22,14 @@ import {
 import {
   bootstrapIdentity,
   cachePendingMessage,
+  createDeviceBinding,
+  createDeviceSession,
   flushPendingMessages,
   getFidelityEvaluations,
   getGrowthTasks,
   getMemoryDays,
   getProfile,
+  getRuntimeProfile,
   getSelfPreviewCapability,
   getSelfPreviewSources,
   issueSelfPreviewGrant,
@@ -34,8 +37,10 @@ import {
   logoutAllDevices,
   logoutCurrentDevice,
   registerAccount,
+  resolveSessionSubject,
   revokeSelfPreviewGrant,
   saveMessage,
+  setActiveSubject,
   startFidelityEvaluation,
   chooseFidelityTrial,
   completeFidelityEvaluation,
@@ -44,6 +49,16 @@ import {
   transitionGrowthTask,
   updateProfile,
 } from "./api.js";
+import {
+  capabilityGateMessage,
+  sensitiveEntryBlockReason,
+  SENSITIVE_ENTRIES,
+} from "./lib/multiSubject/gates.js";
+import {
+  readBindingManifest,
+  readLatestCachedRuntimeProfile,
+} from "./lib/multiSubject/bindingManifest.js";
+import { MODE_TITLES } from "./lib/multiSubject/modeMeta.js";
 import { AuthScreen } from "./components/AuthScreen.jsx";
 import { CompanionOnboarding } from "./components/CompanionOnboarding.jsx";
 import { CompanionSwitcher } from "./components/CompanionSwitcher.jsx";
@@ -95,6 +110,16 @@ const DigitalSelfPanel = lazy(() =>
 const PrivacyDataPanel = lazy(() =>
   import("./components/PrivacyDataPanel.jsx").then((module) => ({
     default: module.PrivacyDataPanel,
+  })),
+);
+const DeviceBindingFlow = lazy(() =>
+  import("./components/DeviceBindingFlow.jsx").then((module) => ({
+    default: module.DeviceBindingFlow,
+  })),
+);
+const DeviceSubjectPanel = lazy(() =>
+  import("./components/DeviceSubjectPanel.jsx").then((module) => ({
+    default: module.DeviceSubjectPanel,
   })),
 );
 // Cascade only for now. Omni / Audio Flash E2E backends are temporarily off.
@@ -246,6 +271,19 @@ export function App() {
   const [companionSwitchOrigin, setCompanionSwitchOrigin] = useState("profile");
   const [privacyDataOpen, setPrivacyDataOpen] = useState(false);
   const [accountDeletionOpen, setAccountDeletionOpen] = useState(false);
+  const [bindFlowOpen, setBindFlowOpen] = useState(false);
+  const [devicePanelOpen, setDevicePanelOpen] = useState(false);
+  const [deviceBinding, setDeviceBinding] = useState(null);
+  const [deviceProfile, setDeviceProfile] = useState(null);
+  const [authoritySessionId, setAuthoritySessionId] = useState(null);
+  const [deviceResolution, setDeviceResolution] = useState(null);
+  const [deviceLoading, setDeviceLoading] = useState(false);
+  const [deviceError, setDeviceError] = useState("");
+  const [deviceOffline, setDeviceOffline] = useState(
+    typeof navigator !== "undefined" && navigator.onLine === false,
+  );
+  const [deviceMultipleSpeakers, setDeviceMultipleSpeakers] = useState(false);
+  const deviceRefreshEpochRef = useRef(0);
   const [memoryDays, setMemoryDays] = useState([]);
   const [selectedDay, setSelectedDay] = useState(today());
   const [memoryLoading, setMemoryLoading] = useState(false);
@@ -351,6 +389,205 @@ export function App() {
   });
   const textInputReady =
     voice.uiState === "ready" || voice.uiState === "listening";
+  const voiceSessionId = voice.session?.session_id || null;
+
+  /*
+   * 设备/主体状态（多用户整改）。
+   *
+   * 敏感入口只由“当前有效 profile.capabilities”驱动（D-07），展示层红线
+   * 再叠加 degraded / unknown_safe / 未确认说话人 / 离线 / 多人场景的
+   * 隐藏与拒绝；绝不从年龄/关系/本地缓存推断权限。
+   *
+   * authority session 与 media/voice session 分离：
+   * - authoritySessionId = 当前 voice session id；或从严格未过期的缓存
+   *   profile 取出候选 session id 后，经 GET /runtime-profile?session_id=
+   *   服务端重新验证为 current 的 session id（本地缓存只提供候选，绝不
+   *   只信缓存）；刷新失败即清 profile、敏感门禁关闭。
+   * - voiceActive 只用于声纹录取互斥和主体切换前是否 reset media。
+   */
+  const refreshDeviceState = useCallback(async () => {
+    const epoch = deviceRefreshEpochRef.current + 1;
+    deviceRefreshEpochRef.current = epoch;
+    setDeviceLoading(true);
+    setDeviceError("");
+    try {
+      const manifest = readBindingManifest();
+      if (!manifest) {
+        setDeviceBinding(null);
+        setDeviceProfile(null);
+        setAuthoritySessionId(null);
+        setDeviceResolution(null);
+        setDeviceMultipleSpeakers(false);
+        return;
+      }
+      setDeviceBinding(manifest);
+      // 1) 候选 authority session：当前 voice session 优先；否则从严格
+      //    未过期缓存取 session_id（仅作候选，必须经服务端重新验证）。
+      let candidateSessionId = voiceSessionId;
+      if (!candidateSessionId) {
+        const cached = readLatestCachedRuntimeProfile({
+          deviceId: manifest.device_id,
+          bindingId: manifest.binding_id,
+          bindingVersion: manifest.binding_version,
+        });
+        if (cached && cached.valid === true && cached.session_id) {
+          candidateSessionId = cached.session_id;
+        }
+      }
+      const environment = {
+        offline: deviceOffline,
+        multiple_speakers: deviceMultipleSpeakers,
+      };
+      const [resolutionResult, profileResult] = await Promise.allSettled([
+        resolveSessionSubject({
+          deviceId: manifest.device_id,
+          sessionId: candidateSessionId,
+          environment,
+        }),
+        candidateSessionId
+          ? getRuntimeProfile(manifest.device_id, {
+              sessionId: candidateSessionId,
+            })
+          : Promise.resolve(null),
+      ]);
+      if (epoch !== deviceRefreshEpochRef.current) return;
+      if (resolutionResult.status === "fulfilled") {
+        setDeviceResolution(resolutionResult.value);
+      } else {
+        setDeviceResolution(null);
+      }
+      const profile =
+        profileResult.status === "fulfilled" ? profileResult.value : null;
+      const resolution =
+        resolutionResult.status === "fulfilled" ? resolutionResult.value : null;
+      setDeviceMultipleSpeakers(
+        Boolean(
+          resolution &&
+            (resolution.valid !== true ||
+              resolution.temporary_service_mode === "unknown_safe"),
+        ),
+      );
+      if (
+        profile &&
+        profile.valid === true &&
+        typeof candidateSessionId === "string" &&
+        candidateSessionId
+      ) {
+        setDeviceProfile(profile);
+        setAuthoritySessionId(candidateSessionId);
+      } else if (profile && profile.valid !== true) {
+        // 服务端返回 fail-closed 降级对象（过期/校验失败）：保留用于
+        // 展示原因，权威 session 仍记为该候选，敏感门禁关闭。
+        setDeviceProfile(profile);
+        if (typeof candidateSessionId === "string" && candidateSessionId) {
+          setAuthoritySessionId(candidateSessionId);
+        } else {
+          setAuthoritySessionId(null);
+        }
+      } else {
+        // 刷新失败（503 / 网络 / 晚到被弃）：清 profile 与权威会话，
+        // 敏感门禁 fail closed，绝不回退到本地缓存。
+        setDeviceProfile(null);
+        setAuthoritySessionId(null);
+      }
+      if (
+        (resolutionResult.status === "rejected" ||
+          (profileResult.status === "rejected" && candidateSessionId)) &&
+        epoch === deviceRefreshEpochRef.current
+      ) {
+        setDeviceError("服务端暂时无法提供有效的 Runtime Profile，敏感功能保持关闭。");
+      }
+    } finally {
+      if (epoch === deviceRefreshEpochRef.current) setDeviceLoading(false);
+    }
+  }, [deviceOffline, voiceSessionId]);
+
+  useEffect(() => {
+    const syncOnline = () => {
+      setDeviceOffline(
+        typeof navigator !== "undefined" && navigator.onLine === false,
+      );
+    };
+    window.addEventListener("online", syncOnline);
+    window.addEventListener("offline", syncOnline);
+    void refreshDeviceState();
+    return () => {
+      window.removeEventListener("online", syncOnline);
+      window.removeEventListener("offline", syncOnline);
+    };
+  }, [refreshDeviceState]);
+
+  const deviceDisplayContext = {
+    offline: deviceOffline,
+    multipleSpeakers: deviceMultipleSpeakers,
+  };
+  const gateResultFor = (entryKey) => {
+    const entry = SENSITIVE_ENTRIES.find((item) => item.key === entryKey);
+    if (!entry) return { allowed: false, reason: "unavailable" };
+    if (!deviceBinding) return { allowed: false, reason: "no_binding" };
+    if (!authoritySessionId || !deviceProfile) {
+      return { allowed: false, reason: "unavailable" };
+    }
+    if (deviceProfile.valid !== true) {
+      return { allowed: false, reason: "invalid_profile" };
+    }
+    const blockReason = sensitiveEntryBlockReason(
+      entry,
+      deviceProfile,
+      deviceDisplayContext,
+    );
+    if (blockReason) {
+      return { allowed: false, reason: blockReason };
+    }
+    return { allowed: true, reason: "allowed" };
+  };
+  const sensitiveGates = Object.fromEntries(
+    SENSITIVE_ENTRIES.map((entry) => [
+      entry.key,
+      gateResultFor(entry.key).allowed,
+    ]),
+  );
+  const gateMessage = (entryKey) => {
+    const entry = SENSITIVE_ENTRIES.find((item) => item.key === entryKey);
+    return entry
+      ? capabilityGateMessage(gateResultFor(entryKey), entry.capability)
+      : "";
+  };
+  const deviceSummary = deviceBinding
+    ? {
+        modeTitle: MODE_TITLES[deviceBinding.declared_mode] || deviceBinding.declared_mode,
+        bindingVersion: deviceBinding.binding_version,
+        activeSubjectLabel:
+          deviceProfile?.active_subject_id &&
+          deviceProfile.valid === true &&
+          !deviceProfile.degraded &&
+          !deviceMultipleSpeakers
+            ? deviceResolution?.candidate_subjects?.find(
+                (candidate) =>
+                  candidate.person_id === deviceProfile.active_subject_id,
+              )?.display_name || deviceProfile.active_subject_id
+            : null,
+        degraded: Boolean(
+          deviceProfile && (deviceProfile.degraded || deviceMultipleSpeakers),
+        ),
+      }
+    : null;
+
+  const stopVoiceForSubjectSwitch = useCallback(async () => {
+    await voice.reset();
+  }, [voice.reset]);
+
+  const handleSubjectSwitched = useCallback(
+    (nextProfile) => {
+      setDeviceProfile(nextProfile);
+      setDeviceBinding(readBindingManifest());
+    },
+    [],
+  );
+
+  const restartVoiceAfterSwitch = useCallback(async () => {
+    await voice.start();
+  }, [voice.start]);
 
   const waitForPendingMessageSaves = useCallback(async () => {
     await voice.flushPersistence?.();
@@ -991,6 +1228,7 @@ export function App() {
 
   const handleAccountDeleted = async () => {
     activeUserIdRef.current = "";
+    deviceRefreshEpochRef.current += 1;
     const voiceReset = voice.reset ? voice.reset() : voice.end();
     setCurrentIdentity(null);
     setIdentityError("");
@@ -1011,6 +1249,15 @@ export function App() {
     setPreviewBusy("");
     setFidelityEvaluations([]);
     setFidelityFocusVersionId("");
+    setBindFlowOpen(false);
+    setDevicePanelOpen(false);
+    setDeviceBinding(null);
+    setDeviceProfile(null);
+    setAuthoritySessionId(null);
+    setDeviceResolution(null);
+    setDeviceLoading(false);
+    setDeviceError("");
+    setDeviceMultipleSpeakers(false);
     growthCompletionIdsRef.current = {};
     setDigitalSelfOpen(false);
     setSpeakerEnrollmentOpen(false);
@@ -1104,7 +1351,11 @@ export function App() {
     <main
       className="mobile-prototype"
       data-page={
-        privacyDataOpen
+        bindFlowOpen
+          ? "device-bind"
+          : devicePanelOpen
+            ? "device-subject"
+          : privacyDataOpen
           ? "privacy-data"
           : speakerEnrollmentOpen
             ? "speaker-enrollment"
@@ -1347,7 +1598,32 @@ export function App() {
           </section>
         )}
 
-        {activeTab === "memory" && (
+        {activeTab === "memory" && !sensitiveGates.memory_recall && (
+          <section className="screen memory-screen" aria-label="私人回顾已关闭">
+            <header className="topbar page-topbar">
+              <div>
+                <p className="eyebrow">私人回顾</p>
+                <h1>回顾</h1>
+              </div>
+            </header>
+            <div className="empty-memory">
+              <h2>私人记忆暂时不可用</h2>
+              <p>{gateMessage("memory_recall")}</p>
+              <button
+                type="button"
+                className="button-primary"
+                onClick={() => {
+                  setActiveTab("profile");
+                  setDevicePanelOpen(true);
+                }}
+              >
+                前往设备与成员
+              </button>
+            </div>
+          </section>
+        )}
+
+        {activeTab === "memory" && sensitiveGates.memory_recall && (
           <MemoryScreen
             activeMemory={activeMemory}
             days={memoryDays}
@@ -1469,6 +1745,101 @@ export function App() {
           </Suspense>
         )}
 
+        {bindFlowOpen && (
+          <Suspense
+            fallback={
+              <section className="screen device-bind-screen" aria-label="正在打开首次绑定">
+                <div className="digital-loading" role="status">
+                  <span className="loading-orbit" />
+                  正在打开首次绑定…
+                </div>
+              </section>
+            }
+          >
+            <DeviceBindingFlow
+              identity={identity}
+              onCreateBinding={createDeviceBinding}
+              onComplete={async (manifest) => {
+                setDeviceBinding(manifest);
+                setBindFlowOpen(false);
+                setDevicePanelOpen(true);
+                await refreshDeviceState();
+              }}
+              onBack={() => setBindFlowOpen(false)}
+            />
+          </Suspense>
+        )}
+
+        {devicePanelOpen && (
+          <Suspense
+            fallback={
+              <section className="screen device-subject-screen" aria-label="正在打开设备与成员">
+                <div className="digital-loading" role="status">
+                  <span className="loading-orbit" />
+                  正在同步设备与成员…
+                </div>
+              </section>
+            }
+          >
+            <DeviceSubjectPanel
+              binding={deviceBinding}
+              profile={deviceProfile}
+              resolution={deviceResolution}
+              displayContext={deviceDisplayContext}
+              sessionId={authoritySessionId}
+              voiceActive={Boolean(voice.session)}
+              loading={deviceLoading}
+              error={deviceError}
+              onRefresh={() => refreshDeviceState()}
+              onResolveSubject={() =>
+                resolveSessionSubject({
+                  deviceId: deviceBinding.device_id,
+                  sessionId: authoritySessionId,
+                  environment: {
+                    offline: deviceOffline,
+                    multiple_speakers: deviceMultipleSpeakers,
+                  },
+                }).then((resolution) => {
+                  setDeviceResolution(resolution);
+                  setDeviceMultipleSpeakers(
+                    Boolean(
+                      resolution &&
+                        (resolution.valid !== true ||
+                          resolution.temporary_service_mode === "unknown_safe"),
+                    ),
+                  );
+                  return resolution;
+                })
+              }
+              onSwitchSubject={(personId) =>
+                setActiveSubject(authoritySessionId, {
+                  personId,
+                  confirmationMethod: "app_confirm",
+                })
+              }
+              onBeforeSubjectSwitch={stopVoiceForSubjectSwitch}
+              onSubjectSwitched={handleSubjectSwitched}
+              onRestartVoice={restartVoiceAfterSwitch}
+              onCreateSession={async () => {
+                const created = await createDeviceSession(userId);
+                setDeviceProfile(created.profile);
+                setDeviceBinding(readBindingManifest());
+                setAuthoritySessionId(created.profile.session_id);
+                await refreshDeviceState();
+                return created;
+              }}
+              onOpenBindFlow={() => {
+                setDevicePanelOpen(false);
+                setBindFlowOpen(true);
+              }}
+              onBack={() => {
+                setDevicePanelOpen(false);
+                setActiveTab("profile");
+              }}
+            />
+          </Suspense>
+        )}
+
         {activeTab === "profile" && !digitalSelfOpen && !speakerEnrollmentOpen && !companionSwitchOpen && !privacyDataOpen && (
           <ProfileScreen
             profile={profile}
@@ -1481,13 +1852,28 @@ export function App() {
               setCompanionSwitchOpen(true);
             }}
             onOpenSpeakerEnrollment={() => {
+              if (!sensitiveGates.speaker_enrollment) return;
               setSpeakerEnrollmentNotice("");
               setSpeakerEnrollmentOpen(true);
             }}
             voiceSessionActive={Boolean(voice.session)}
             speakerEnrollmentNotice={speakerEnrollmentNotice}
-            onOpenDigitalSelf={() => setDigitalSelfOpen(true)}
-            onOpenPrivacyData={() => setPrivacyDataOpen(true)}
+            onOpenDigitalSelf={() => {
+              if (!sensitiveGates.digital_self) return;
+              setDigitalSelfOpen(true);
+            }}
+            onOpenPrivacyData={() => {
+              if (!sensitiveGates.raw_voice_consent) return;
+              setPrivacyDataOpen(true);
+            }}
+            deviceSummary={deviceSummary}
+            sensitiveGates={sensitiveGates}
+            gateMessage={gateMessage}
+            onOpenDevicePanel={() => {
+              setDevicePanelOpen(true);
+              void refreshDeviceState();
+            }}
+            onOpenBindFlow={() => setBindFlowOpen(true)}
             onLogoutCurrent={() => handleLogout(false)}
             onLogoutAll={() => handleLogout(true)}
             onAccountDeleted={handleAccountDeleted}
@@ -1498,7 +1884,7 @@ export function App() {
 
         <div ref={voice.audioContainerRef} hidden aria-hidden="true" />
 
-        {!digitalSelfOpen && !speakerEnrollmentOpen && !companionSwitchOpen && !privacyDataOpen && !accountDeletionOpen && <nav className="bottom-nav" aria-label="主导航">
+        {!digitalSelfOpen && !speakerEnrollmentOpen && !companionSwitchOpen && !privacyDataOpen && !accountDeletionOpen && !bindFlowOpen && !devicePanelOpen && <nav className="bottom-nav" aria-label="主导航">
           {tabs.map(({ id, label, Icon }) => (
             <button
               type="button"

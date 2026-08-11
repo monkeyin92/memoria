@@ -3,10 +3,51 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 from cryptography.fernet import Fernet
+from scripts.bootstrap_production_data_env import main as bootstrap_data_env_main
 from scripts.prepare_production_upgrade_env import main, prepare
+from scripts.production_postgres_roles import PRODUCTION_POSTGRES_ROLES
+
+EXPECTED_CONTROL_DATABASE_ROLES = {
+    "MEMORIA_ARCHIVE_DATABASE_URL": "memoria_app",
+    "MEMORIA_ARCHIVE_COMPILER_DATABASE_URL": "memoria_compiler",
+    "MEMORIA_EVOLUTION_DATABASE_URL": "memoria_evolution",
+    "MEMORIA_GUARDIAN_DATABASE_URL": "memoria_guardian",
+    "MEMORIA_GUARDIAN_MAINTENANCE_DATABASE_URL": "memoria_guardian_maintenance",
+    "MEMORIA_GUARDIAN_WORKER_DATABASE_URL": "memoria_guardian_worker",
+    "MEMORIA_IDENTITY_DATABASE_URL": "memoria_identity",
+    "MEMORIA_IDENTITY_REGISTRATION_DATABASE_URL": "memoria_identity_registration",
+    "MEMORIA_CONSENT_DATABASE_URL": "memoria_consent",
+    "MEMORIA_SESSION_RUNTIME_DATABASE_URL": "memoria_session_api",
+    "MEMORIA_ACTION_EXECUTOR_DATABASE_URL": "memoria_action_executor",
+    "MEMORIA_SESSION_RUNTIME_PROJECTOR_DATABASE_URL": "memoria_session_projector",
+    "MEMORIA_SESSION_RUNTIME_WORKER_DATABASE_URL": "memoria_session_worker",
+    "MEMORIA_SESSION_RUNTIME_MAINTENANCE_DATABASE_URL": "memoria_session_maintenance",
+    "MEMORIA_MEMORY_API_DATABASE_URL": "memoria_memory_api",
+    "MEMORIA_MEMORY_WORKER_DATABASE_URL": "memoria_memory_worker",
+}
+
+EXPECTED_PASSWORD_ROLES = {
+    "MEMORIA_DB_APP_PASSWORD": "memoria_app",
+    "MEMORIA_DB_COMPILER_PASSWORD": "memoria_compiler",
+    "MEMORIA_DB_EVOLUTION_PASSWORD": "memoria_evolution",
+    "MEMORIA_DB_GUARDIAN_PASSWORD": "memoria_guardian",
+    "MEMORIA_DB_GUARDIAN_MAINTENANCE_PASSWORD": "memoria_guardian_maintenance",
+    "MEMORIA_DB_GUARDIAN_WORKER_PASSWORD": "memoria_guardian_worker",
+    "MEMORIA_DB_IDENTITY_PASSWORD": "memoria_identity",
+    "MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD": "memoria_identity_registration",
+    "MEMORIA_DB_CONSENT_PASSWORD": "memoria_consent",
+    "MEMORIA_DB_SESSION_API_PASSWORD": "memoria_session_api",
+    "MEMORIA_DB_ACTION_EXECUTOR_PASSWORD": "memoria_action_executor",
+    "MEMORIA_DB_SESSION_PROJECTOR_PASSWORD": "memoria_session_projector",
+    "MEMORIA_DB_SESSION_WORKER_PASSWORD": "memoria_session_worker",
+    "MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD": "memoria_session_maintenance",
+    "MEMORIA_DB_MEMORY_API_PASSWORD": "memoria_memory_api",
+    "MEMORIA_DB_MEMORY_WORKER_PASSWORD": "memoria_memory_worker",
+}
 
 
 def _env_values(path: Path) -> dict[str, str]:
@@ -58,10 +99,7 @@ def _upgrade_inputs(
         }
     )
     postgres = {
-        "MEMORIA_DB_APP_PASSWORD": "app-pass",
-        "MEMORIA_DB_COMPILER_PASSWORD": "compiler-pass",
-        "MEMORIA_DB_EVOLUTION_PASSWORD": "evolution-pass",
-        "MEMORIA_DB_GUARDIAN_PASSWORD": "guardian-pass",
+        password_env: f"{role}-pass" for password_env, role in EXPECTED_PASSWORD_ROLES.items()
     }
     minio = {
         "MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY": "archive-access",
@@ -157,9 +195,19 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert len(control["MEMORIA_EVOLUTION_CONTROL_TOKEN"]) >= 32
     assert len(control["MEMORIA_EVOLUTION_VALIDATOR_TOKEN"]) >= 32
     assert control["MEMORIA_EVOLUTION_RUNTIME_PROMPT_FAMILIES"] == "weather"
-    assert control["MEMORIA_GUARDIAN_DATABASE_URL"].startswith(
-        "postgresql://memoria_guardian:"
-    )
+    assert control["MEMORIA_GUARDIAN_DATABASE_URL"].startswith("postgresql://memoria_guardian:")
+    generated_database_urls = {
+        field_name: control[field_name] for field_name in EXPECTED_CONTROL_DATABASE_ROLES
+    }
+    assert {
+        field_name: urlsplit(database_url).username
+        for field_name, database_url in generated_database_urls.items()
+    } == EXPECTED_CONTROL_DATABASE_ROLES
+    assert len(set(generated_database_urls.values())) == len(generated_database_urls)
+    assert control["MEMORIA_SESSION_RUNTIME_SCHEMA_MANAGED_EXTERNALLY"] == "true"
+    assert control["MEMORIA_MEMORY_SCHEMA_MANAGED_EXTERNALLY"] == "true"
+    assert "MEMORIA_SESSION_RUNTIME_BOOTSTRAP_DATABASE_URL" not in control
+    assert "MEMORIA_MEMORY_BOOTSTRAP_DATABASE_URL" not in control
     assert "MEMORIA_EVOLUTION_CONTROL_TOKEN" not in agent
     assert "MEMORIA_EVOLUTION_VALIDATOR_TOKEN" not in agent
     assert len(control["MEMORIA_VOICE_CLEANUP_TOKEN"]) >= 32
@@ -169,8 +217,9 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     }
     assert gateway["LIVEKIT_API_KEY"] == "livekit-key"
     assert gateway["LIVEKIT_API_SECRET"] == "livekit-secret-material-that-is-long-enough"
-    assert gateway["MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET"] == (
-        control["MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET"]
+    assert (
+        gateway["MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET"]
+        == (control["MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET"])
     )
     assert gateway["MINIPROGRAM_GATEWAY_TICKET_MAX_TTL_S"] == "300"
     assert control["MINIPROGRAM_MEDIA_GATEWAY_URL"] == (
@@ -205,6 +254,11 @@ def test_upgrade_env_preserves_existing_encryption_keys_versions_and_read_keyrin
         ),
         "MEMORIA_SPEAKER_TEMPLATE_KEY": Fernet.generate_key().decode("ascii"),
         "MEMORIA_ARCHIVE_SPOOL_KEY": Fernet.generate_key().decode("ascii"),
+        "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET": (
+            "preserved-runtime-profile-signing-secret-material"
+        ),
+        "MEMORIA_DEVICE_BINDING_TOKEN_SECRET": ("preserved-device-binding-token-secret-material"),
+        "MEMORIA_TRANSFER_EVIDENCE_SECRET": ("preserved-transfer-evidence-secret-material"),
     }
     legacy.update(preserved)
 
@@ -247,8 +301,51 @@ def test_upgrade_env_generates_only_missing_encryption_keys() -> None:
     assert control["MEMORIA_WECHAT_IDENTITY_SECRET"] != control["MEMORIA_AUTH_SECRET"]
     assert "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET" not in agent
     assert "MEMORIA_WECHAT_IDENTITY_SECRET" not in agent
+    generated_signing_secrets = (
+        control["MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET"],
+        control["MEMORIA_DEVICE_BINDING_TOKEN_SECRET"],
+        control["MEMORIA_TRANSFER_EVIDENCE_SECRET"],
+    )
+    assert all(len(secret) >= 32 for secret in generated_signing_secrets)
+    assert len(set(generated_signing_secrets)) == len(generated_signing_secrets)
     assert control["MEMORIA_ARCHIVE_OBJECT_KEY_VERSION"] == "archive-object-v1"
     assert control["MEMORIA_VOICE_SAMPLE_KEY_VERSION"] == "voice-sample-v1"
+
+
+def test_production_postgres_role_registry_is_complete_and_generates_root_only_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    assert {
+        role.password_env: role.role for role in PRODUCTION_POSTGRES_ROLES
+    } == EXPECTED_PASSWORD_ROLES
+    assert {
+        role.control_dsn_env: role.role
+        for role in PRODUCTION_POSTGRES_ROLES
+        if role.control_dsn_env is not None
+    } == EXPECTED_CONTROL_DATABASE_ROLES
+
+    postgres_path = tmp_path / "postgres.env"
+    minio_path = tmp_path / "minio.env"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "bootstrap_production_data_env.py",
+            "--postgres",
+            str(postgres_path),
+            "--minio",
+            str(minio_path),
+        ],
+    )
+
+    assert bootstrap_data_env_main() == 0
+    postgres = _env_values(postgres_path)
+    assert set(postgres) == {"POSTGRES_PASSWORD", *EXPECTED_PASSWORD_ROLES}
+    assert all(len(postgres[key]) >= 32 for key in postgres)
+    assert len(set(postgres.values())) == len(postgres)
+    assert postgres_path.stat().st_mode & 0o777 == 0o600
+    assert minio_path.stat().st_mode & 0o777 == 0o600
 
 
 def test_upgrade_env_cli_does_not_print_preserved_keys(
@@ -300,9 +397,9 @@ def test_upgrade_env_cli_does_not_print_preserved_keys(
     captured = capsys.readouterr()
     assert secret not in captured.out
     assert secret not in captured.err
-    assert _env_values(tmp_path / "control.env")[
-        "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256"
-    ] == "b" * 64
+    assert (
+        _env_values(tmp_path / "control.env")["MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256"] == "b" * 64
+    )
 
 
 def test_upgrade_env_rejects_missing_doubao_authentication() -> None:

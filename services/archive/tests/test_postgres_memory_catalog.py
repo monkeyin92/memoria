@@ -103,6 +103,12 @@ async def test_compiler_role_claims_outbox_without_bypassing_account_rls() -> No
     archive: PostgresLifeArchive | None = None
     ordinary: PostgresMemoryCatalog | None = None
     compiler: PostgresMemoryCatalog | None = None
+    projected_event_ids: list[str] = []
+
+    async def project_capture(event: EvidenceEvent) -> bool:
+        projected_event_ids.append(event.event_id)
+        return event.account_id == "compiler-account-a"
+
     try:
         await admin.execute(
             """
@@ -144,6 +150,7 @@ async def test_compiler_role_claims_outbox_without_bypassing_account_rls() -> No
             compiler_dsn=compiler_dsn,
             compiler_role=compiler_role,
             extractor=RuleBasedMemoryExtractor(),
+            capture_evidence_projector=project_capture,
         )
         await archive.initialize()
         await ordinary.initialize()
@@ -162,6 +169,7 @@ async def test_compiler_role_claims_outbox_without_bypassing_account_rls() -> No
                         "interaction_mode": "companion",
                         "prompt_kind": "spontaneous",
                         "owner_projection_eligible": True,
+                        "memory_capture_candidate_v1": {"version": 1},
                     },
                 )
             )
@@ -170,6 +178,10 @@ async def test_compiler_role_claims_outbox_without_bypassing_account_rls() -> No
         report = await compiler.compile_pending(limit=10)
 
         assert report.compiled_events == 2
+        assert set(projected_event_ids) == {
+            "event-compiler-account-a",
+            "event-compiler-account-b",
+        }
         ordinary_connection = await asyncpg.connect(app_dsn)
         compiler_connection = await asyncpg.connect(compiler_dsn)
         try:

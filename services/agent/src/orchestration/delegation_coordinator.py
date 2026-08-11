@@ -160,6 +160,9 @@ class DelegationCoordinator:
                 turn_id=int(candidate.turn_id),
                 generation_id=int(candidate.generation_id),
                 tool_epoch=int(candidate.tool_epoch),
+                # The wire intent carries no epoch; the current identity epoch
+                # is authoritative for the shadow admission check (P0-3).
+                session_epoch=current_fence.session_epoch,
             )
             if (
                 int(candidate.expires_at_ms) <= now_ms
@@ -510,6 +513,7 @@ class DelegationCoordinator:
             turn_id=int(intent.turn_id),
             generation_id=int(intent.generation_id),
             tool_epoch=int(intent.tool_epoch),
+            session_epoch=current_fence.session_epoch,
         )
         reason = ""
         if not fence.matches(current_fence):

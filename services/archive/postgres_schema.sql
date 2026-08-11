@@ -44,17 +44,88 @@ CREATE TABLE IF NOT EXISTS archive_processing_outbox (
         REFERENCES archive_evidence_events(event_id) ON DELETE CASCADE,
     task_type TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (
-        status IN ('pending', 'processing', 'completed', 'failed')
+        status IN ('pending', 'processing', 'completed', 'failed', 'dead')
     ),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    max_attempts INTEGER NOT NULL DEFAULT 8 CHECK (max_attempts > 0),
     available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    locked_until TIMESTAMPTZ,
+    fencing_token BIGINT NOT NULL DEFAULT 0 CHECK (fencing_token >= 0),
+    worker_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ,
+    dead_lettered_at TIMESTAMPTZ,
+    replay_count INTEGER NOT NULL DEFAULT 0 CHECK (replay_count >= 0),
     last_error_code TEXT
 );
 
+ALTER TABLE archive_processing_outbox
+ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 8;
+ALTER TABLE archive_processing_outbox
+ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ;
+ALTER TABLE archive_processing_outbox
+ADD COLUMN IF NOT EXISTS fencing_token BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE archive_processing_outbox
+ADD COLUMN IF NOT EXISTS worker_id TEXT;
+ALTER TABLE archive_processing_outbox
+ADD COLUMN IF NOT EXISTS dead_lettered_at TIMESTAMPTZ;
+ALTER TABLE archive_processing_outbox
+ADD COLUMN IF NOT EXISTS replay_count INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE archive_processing_outbox
+DROP CONSTRAINT IF EXISTS archive_processing_outbox_status_check;
+ALTER TABLE archive_processing_outbox
+ADD CONSTRAINT archive_processing_outbox_status_check CHECK (
+    status IN ('pending', 'processing', 'completed', 'failed', 'dead')
+);
+ALTER TABLE archive_processing_outbox
+DROP CONSTRAINT IF EXISTS archive_processing_outbox_max_attempts_check;
+ALTER TABLE archive_processing_outbox
+ADD CONSTRAINT archive_processing_outbox_max_attempts_check CHECK (max_attempts > 0);
+ALTER TABLE archive_processing_outbox
+DROP CONSTRAINT IF EXISTS archive_processing_outbox_fencing_token_check;
+ALTER TABLE archive_processing_outbox
+ADD CONSTRAINT archive_processing_outbox_fencing_token_check CHECK (fencing_token >= 0);
+ALTER TABLE archive_processing_outbox
+DROP CONSTRAINT IF EXISTS archive_processing_outbox_replay_count_check;
+ALTER TABLE archive_processing_outbox
+ADD CONSTRAINT archive_processing_outbox_replay_count_check CHECK (replay_count >= 0);
+
+UPDATE archive_processing_outbox
+SET status = 'dead',
+    locked_until = NULL,
+    worker_id = NULL,
+    dead_lettered_at = COALESCE(dead_lettered_at, now())
+WHERE status = 'failed' AND attempts >= max_attempts;
+
 CREATE INDEX IF NOT EXISTS idx_archive_outbox_pending
-ON archive_processing_outbox(status, available_at, outbox_id);
+ON archive_processing_outbox(status, available_at, locked_until, outbox_id);
+
+CREATE INDEX IF NOT EXISTS idx_archive_outbox_claimable
+ON archive_processing_outbox(
+    task_type,
+    status,
+    available_at,
+    locked_until,
+    attempts,
+    max_attempts,
+    outbox_id
+);
+
+CREATE TABLE IF NOT EXISTS archive_outbox_replay_audit (
+    replay_id UUID PRIMARY KEY,
+    outbox_id UUID NOT NULL
+        REFERENCES archive_processing_outbox(outbox_id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    previous_attempts INTEGER NOT NULL CHECK (previous_attempts >= 0),
+    previous_error_code TEXT,
+    replayed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_archive_outbox_replay_account
+ON archive_outbox_replay_audit(account_id, replayed_at DESC, replay_id);
 
 CREATE TABLE IF NOT EXISTS archive_evidence_blobs (
     blob_id UUID PRIMARY KEY,
@@ -116,12 +187,14 @@ WHERE is_current;
 ALTER TABLE archive_consent_grants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE archive_evidence_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE archive_processing_outbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE archive_outbox_replay_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE archive_evidence_blobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE archive_transcript_versions ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE archive_consent_grants FORCE ROW LEVEL SECURITY;
 ALTER TABLE archive_evidence_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE archive_processing_outbox FORCE ROW LEVEL SECURITY;
+ALTER TABLE archive_outbox_replay_audit FORCE ROW LEVEL SECURITY;
 ALTER TABLE archive_evidence_blobs FORCE ROW LEVEL SECURITY;
 ALTER TABLE archive_transcript_versions FORCE ROW LEVEL SECURITY;
 
@@ -140,6 +213,11 @@ CREATE POLICY archive_outbox_account_policy ON archive_processing_outbox
 USING (account_id = current_setting('app.account_id', true))
 WITH CHECK (account_id = current_setting('app.account_id', true));
 
+DROP POLICY IF EXISTS archive_outbox_replay_account_policy ON archive_outbox_replay_audit;
+CREATE POLICY archive_outbox_replay_account_policy ON archive_outbox_replay_audit
+USING (account_id = current_setting('app.account_id', true))
+WITH CHECK (account_id = current_setting('app.account_id', true));
+
 -- The background compiler is a NOLOGIN group role with access only to compile
 -- tasks in the outbox. It does not bypass RLS on evidence or projections.
 DROP POLICY IF EXISTS archive_outbox_compiler_policy ON archive_processing_outbox;
@@ -151,7 +229,17 @@ BEGIN
             current_schema()
         );
         GRANT SELECT ON archive_processing_outbox TO memoria_archive_compiler;
-        GRANT UPDATE (status, attempts, completed_at, last_error_code)
+        GRANT UPDATE (
+            status,
+            attempts,
+            available_at,
+            locked_until,
+            fencing_token,
+            worker_id,
+            completed_at,
+            dead_lettered_at,
+            last_error_code
+        )
             ON archive_processing_outbox TO memoria_archive_compiler;
         CREATE POLICY archive_outbox_compiler_policy ON archive_processing_outbox
             TO memoria_archive_compiler

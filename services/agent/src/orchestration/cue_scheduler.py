@@ -7,6 +7,7 @@ import time
 import uuid
 from dataclasses import dataclass
 
+from services.agent.src.contracts.ids import GenerationFence
 from services.common.companion_response_safety import companion_safety_decision
 
 _SENSITIVE_HINTS = (
@@ -31,6 +32,7 @@ class ListenerCue:
     cue_epoch: int
     user_turn_id: int
     text: str
+    fence: GenerationFence
 
 
 @dataclass
@@ -62,6 +64,7 @@ class CueScheduler:
         self,
         text: str,
         *,
+        fence: GenerationFence,
         now_ns: int | None = None,
         aec_healthy: bool = True,
         main_response_active: bool = False,
@@ -91,6 +94,7 @@ class CueScheduler:
             cue_epoch=self._cue_epoch,
             user_turn_id=self._active_turn_id,
             text=self.cues[self._next_cue % len(self.cues)],
+            fence=fence,
         )
         self._next_cue += 1
         self._count += 1

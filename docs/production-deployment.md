@@ -886,17 +886,36 @@ trap '\''exit 130'\'' INT
 trap '\''exit 143'\'' TERM
 trap cleanup_postgres_candidate EXIT
 install -o root -g root -m 0600 /etc/memoria-postgres.env "$postgres_candidate"
-if ! grep -Eq "^MEMORIA_DB_EVOLUTION_PASSWORD=.{32,}$" "$postgres_candidate"; then
-  temporary="$(mktemp "$candidate_dir/.postgres.XXXXXX")"
-  awk '\''!/^MEMORIA_DB_EVOLUTION_PASSWORD=/'\'' "$postgres_candidate" >"$temporary"
-  evolution_password="$(openssl rand -hex 48)"
-  printf "MEMORIA_DB_EVOLUTION_PASSWORD=%s\n" "$evolution_password" >>"$temporary"
-  unset evolution_password
-  chown root:root "$temporary"
-  chmod 0600 "$temporary"
-  mv -T "$temporary" "$postgres_candidate"
-  temporary=
-fi
+for key in \
+  MEMORIA_DB_APP_PASSWORD \
+  MEMORIA_DB_COMPILER_PASSWORD \
+  MEMORIA_DB_EVOLUTION_PASSWORD \
+  MEMORIA_DB_GUARDIAN_PASSWORD \
+  MEMORIA_DB_GUARDIAN_MAINTENANCE_PASSWORD \
+  MEMORIA_DB_GUARDIAN_WORKER_PASSWORD \
+  MEMORIA_DB_IDENTITY_PASSWORD \
+  MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD \
+  MEMORIA_DB_CONSENT_PASSWORD \
+  MEMORIA_DB_SESSION_API_PASSWORD \
+  MEMORIA_DB_ACTION_EXECUTOR_PASSWORD \
+  MEMORIA_DB_SESSION_PROJECTOR_PASSWORD \
+  MEMORIA_DB_SESSION_WORKER_PASSWORD \
+  MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD \
+  MEMORIA_DB_MEMORY_API_PASSWORD \
+  MEMORIA_DB_MEMORY_WORKER_PASSWORD; do
+  if ! grep -Eq "^${key}=.{32,}$" "$postgres_candidate"; then
+    temporary="$(mktemp "$candidate_dir/.postgres.XXXXXX")"
+    awk -v target="$key" '\''index($0, target "=") != 1'\'' \
+      "$postgres_candidate" >"$temporary"
+    generated_password="$(openssl rand -hex 48)"
+    printf "%s=%s\n" "$key" "$generated_password" >>"$temporary"
+    unset generated_password
+    chown root:root "$temporary"
+    chmod 0600 "$temporary"
+    mv -T "$temporary" "$postgres_candidate"
+    temporary=
+  fi
+done
 secure_file "$postgres_candidate"
 postgres_candidate_committed=1
 trap - EXIT HUP INT TERM
@@ -951,7 +970,25 @@ done
 
 postgres_candidate=$candidate_dir/postgres.env
 secure_file "$postgres_candidate"
-grep -Eq "^MEMORIA_DB_EVOLUTION_PASSWORD=.{32,}$" "$postgres_candidate"
+for key in \
+  MEMORIA_DB_APP_PASSWORD \
+  MEMORIA_DB_COMPILER_PASSWORD \
+  MEMORIA_DB_EVOLUTION_PASSWORD \
+  MEMORIA_DB_GUARDIAN_PASSWORD \
+  MEMORIA_DB_GUARDIAN_MAINTENANCE_PASSWORD \
+  MEMORIA_DB_GUARDIAN_WORKER_PASSWORD \
+  MEMORIA_DB_IDENTITY_PASSWORD \
+  MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD \
+  MEMORIA_DB_CONSENT_PASSWORD \
+  MEMORIA_DB_SESSION_API_PASSWORD \
+  MEMORIA_DB_ACTION_EXECUTOR_PASSWORD \
+  MEMORIA_DB_SESSION_PROJECTOR_PASSWORD \
+  MEMORIA_DB_SESSION_WORKER_PASSWORD \
+  MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD \
+  MEMORIA_DB_MEMORY_API_PASSWORD \
+  MEMORIA_DB_MEMORY_WORKER_PASSWORD; do
+  grep -Eq "^${key}=.{32,}$" "$postgres_candidate"
+done
 
 currents=(
   /etc/memoria-control-api.env /etc/memoria-agent.env
@@ -987,8 +1024,24 @@ grep -qx "INTERRUPT_SEMANTIC_MODEL=deepseek-v4-flash" "$candidate_dir/agent.env"
 grep -qx "INTERRUPT_SEMANTIC_TIMEOUT_S=1.2" "$candidate_dir/agent.env"
 grep -Fxq "MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256=$trusted_root" \
   "$candidate_dir/control-api.env"
-for key in POSTGRES_PASSWORD MEMORIA_DB_APP_PASSWORD \
-  MEMORIA_DB_COMPILER_PASSWORD MEMORIA_DB_EVOLUTION_PASSWORD; do
+for key in \
+  POSTGRES_PASSWORD \
+  MEMORIA_DB_APP_PASSWORD \
+  MEMORIA_DB_COMPILER_PASSWORD \
+  MEMORIA_DB_EVOLUTION_PASSWORD \
+  MEMORIA_DB_GUARDIAN_PASSWORD \
+  MEMORIA_DB_GUARDIAN_MAINTENANCE_PASSWORD \
+  MEMORIA_DB_GUARDIAN_WORKER_PASSWORD \
+  MEMORIA_DB_IDENTITY_PASSWORD \
+  MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD \
+  MEMORIA_DB_CONSENT_PASSWORD \
+  MEMORIA_DB_SESSION_API_PASSWORD \
+  MEMORIA_DB_ACTION_EXECUTOR_PASSWORD \
+  MEMORIA_DB_SESSION_PROJECTOR_PASSWORD \
+  MEMORIA_DB_SESSION_WORKER_PASSWORD \
+  MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD \
+  MEMORIA_DB_MEMORY_API_PASSWORD \
+  MEMORIA_DB_MEMORY_WORKER_PASSWORD; do
   grep -Eq "^${key}=.+$" "$postgres_candidate"
 done
 for index in "${!currents[@]}"; do
@@ -1034,7 +1087,11 @@ done
 Compose 把新脚本只读挂载到现有 PostgreSQL 容器，再运行候选 release 中的幂等升级脚本。旧 runtime
 writer 在整个 DDL 窗口保持停止；无论升级成功、失败、SSH 断开或收到终止信号，本事务都会恢复冻结的
 旧 env/data/runtime 后再退出。成功只保留 additive DDL，下一节在独立受保护事务中重新安装同一组
-candidate env 并切换 runtime；失败不切 H5，也不回滚已经提交的 forward-only DDL：
+candidate env 并切换 runtime；失败不切 H5，也不回滚已经提交的 forward-only DDL。16 个运行角色
+密码只从 `root:root 0600` 的 `/etc/memoria-postgres.env` 导入本次维护 shell；管理员通过容器内本地
+socket 执行 DDL，`POSTGRES_PASSWORD`、`memoria_admin` DSN 和
+`MEMORIA_SESSION_RUNTIME_BOOTSTRAP_DATABASE_URL`、`MEMORIA_MEMORY_BOOTSTRAP_DATABASE_URL`
+都不得进入长期 Control API env：
 
 ```bash
 sudo bash -cEeu '
@@ -1193,17 +1250,42 @@ set -a
 . /etc/memoria-postgres.env
 set +a
 export POSTGRES_CONTAINER=memoria-data-postgres-1
-"$candidate_release/scripts/upgrade_evolution_postgres.sh"
-unset MEMORIA_DB_APP_PASSWORD MEMORIA_DB_COMPILER_PASSWORD \
-  MEMORIA_DB_EVOLUTION_PASSWORD POSTGRES_PASSWORD POSTGRES_CONTAINER
+"$candidate_release/scripts/upgrade_authoritative_postgres.sh"
+"$candidate_release/scripts/verify_authoritative_postgres.sh"
+for key in \
+  MEMORIA_DB_APP_PASSWORD \
+  MEMORIA_DB_COMPILER_PASSWORD \
+  MEMORIA_DB_EVOLUTION_PASSWORD \
+  MEMORIA_DB_GUARDIAN_PASSWORD \
+  MEMORIA_DB_GUARDIAN_MAINTENANCE_PASSWORD \
+  MEMORIA_DB_GUARDIAN_WORKER_PASSWORD \
+  MEMORIA_DB_IDENTITY_PASSWORD \
+  MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD \
+  MEMORIA_DB_CONSENT_PASSWORD \
+  MEMORIA_DB_SESSION_API_PASSWORD \
+  MEMORIA_DB_ACTION_EXECUTOR_PASSWORD \
+  MEMORIA_DB_SESSION_PROJECTOR_PASSWORD \
+  MEMORIA_DB_SESSION_WORKER_PASSWORD \
+  MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD \
+  MEMORIA_DB_MEMORY_API_PASSWORD \
+  MEMORIA_DB_MEMORY_WORKER_PASSWORD; do
+  unset "$key"
+done
+unset POSTGRES_PASSWORD POSTGRES_CONTAINER
 docker exec memoria-data-postgres-1 pg_isready -U memoria_admin -d postgres
 ' bash "$RELEASE_TAG" "$ROLLBACK_RECEIPT"
 ```
 
-事务执行期间临时安装的 PostgreSQL candidate 必须为 `root:root 0600`，并包含当前 app/compiler
-密码及本次唯一 evolution 角色密码；脚本和命令不得打印这些值。事务退出时 `/etc` 已恢复旧值，唯一
-candidate 仍保留在 `/run/memoria-env/$RELEASE_TAG/postgres.env`，由下一节与其余五份 candidate 一起
-原子安装。升级成功不等于新 runtime 可切流；仍须启动 commit/tag 绑定镜像，并在 readiness 中取得
+事务执行期间临时安装的 PostgreSQL candidate 必须为 `root:root 0600`，并包含 16 个独立运行角色的
+当前密码；脚本和命令不得打印这些值。统一 verifier 会检查所有运行角色均为
+`LOGIN/NOSUPERUSER/NOCREATEDB/NOCREATEROLE/NOBYPASSRLS` 且拥有数据库 `CONNECT`，核对 Identity、
+Consent、Policy Receipt、Device Fleet、Session Runtime、Evolution、Guardian/Tutor、MemoryScope
+的全部权威表，
+并验证 RLS、要求 FORCE RLS 的表、关键 SECURITY/authority 函数及 NOLOGIN owner 角色。旧
+`upgrade_evolution_postgres.sh` 与 `upgrade_guardian_postgres.sh` 只保留为兼容包装器，新 Runbook
+不得再调用。事务退出时 `/etc` 已恢复旧值，唯一 candidate 仍保留在
+`/run/memoria-env/$RELEASE_TAG/postgres.env`，由下一节与其余五份 candidate 一起原子安装。升级成功
+不等于新 runtime 可切流；仍须启动 commit/tag 绑定镜像，并在 readiness 中取得
 `evolution_store=ready` 和 10/10 core。
 
 ### 4. 原子激活 runtime

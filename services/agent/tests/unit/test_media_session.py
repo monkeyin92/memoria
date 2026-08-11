@@ -11,7 +11,6 @@ import pytest
 from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
-from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.context_snapshot_manager import (
     MemoryCapsule,
     PersonaCapsule,
@@ -48,6 +47,7 @@ from services.agent.src.voice_core.speech_timeline import (
     SpeechSegment,
     asr_result_to_segment,
 )
+from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -2111,15 +2111,13 @@ async def test_media_vad_classifies_the_speaker_before_committing_the_turn() -> 
 
     identity = SessionIdentity("classified-media-turn")
     runtime = DuplexRuntime.create(session_id=identity.session_id)
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="speaker-media-test",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=False,
-            shadow_low_sensitivity_persona=False,
-        )
+    bind_owner_policy(
+        runtime,
+        private_context=True,
+        owner_evidence=True,
+        tools=True,
+        voice_profile=False,
+        shadow_low_sensitivity_persona=False,
     )
     classified_pcm: list[bytes] = []
 

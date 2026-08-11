@@ -99,6 +99,16 @@ class RecordResult:
 
 
 @dataclass(frozen=True, slots=True)
+class OutboxReplayResult:
+    outbox_id: str
+    account_id: str
+    replay_id: str
+    replay_count: int
+    previous_attempts: int
+    replayed_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class ContextQuery:
     account_id: str
     speaker_class: SpeakerClass

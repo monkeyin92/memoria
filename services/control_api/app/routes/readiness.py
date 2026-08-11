@@ -252,6 +252,25 @@ async def _core_checks(
         store = cast(ObjectStore, _component(request, "voice_object_store"))
         return await _probe_object_store(store)
 
+    async def session_runtime() -> object:
+        runtime_store = getattr(request.app.state, "session_runtime_store", None)
+        if runtime_store is None:
+            if settings.environment == "production":
+                raise RuntimeError("session runtime store is missing")
+            return "skipped"
+        readiness = getattr(runtime_store, "readiness", None)
+        if not callable(readiness):
+            raise RuntimeError("session runtime readiness probe is missing")
+        return await readiness()
+
+    async def memory_scope() -> object:
+        if settings.environment != "production":
+            return "skipped"
+        wiring = getattr(request.app.state, "memory_wiring", None)
+        if wiring is None or not getattr(wiring, "ready", False):
+            raise RuntimeError("memory scope is unavailable")
+        return None
+
     probes: tuple[tuple[str, Callable[[], Awaitable[object]]], ...] = (
         ("control_database", control_database),
         ("evolution_store", evolution_store),
@@ -262,15 +281,17 @@ async def _core_checks(
         ("voice_profile", voice_profile),
         ("archive_object_store", archive_object_store),
         ("voice_object_store", voice_object_store),
+        ("session_runtime", session_runtime),
+        ("memory_scope", memory_scope),
     )
     checks: dict[str, str] = {}
     for name, probe in probes:
         try:
-            await probe()
+            result = await probe()
         except Exception:
             checks[name] = "unavailable"
         else:
-            checks[name] = "ready"
+            checks[name] = "skipped" if result == "skipped" else "ready"
     try:
         checks["speaker_model"] = await _probe_speaker_model(settings)
     except Exception:

@@ -153,16 +153,97 @@ def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> No
     assert "archive_mode=on" in compose
     assert "memoria_app" in postgres_init
     assert "memoria_archive_compiler" in postgres_init
-    assert "ALTER ROLE memoria_evolution PASSWORD" in postgres_init
-    assert "ALTER ROLE memoria_guardian PASSWORD" in postgres_init
-    assert "NOBYPASSRLS" in postgres_init
+    runtime_roles = {
+        "MEMORIA_DB_APP_PASSWORD": "memoria_app",
+        "MEMORIA_DB_COMPILER_PASSWORD": "memoria_compiler",
+        "MEMORIA_DB_EVOLUTION_PASSWORD": "memoria_evolution",
+        "MEMORIA_DB_GUARDIAN_PASSWORD": "memoria_guardian",
+        "MEMORIA_DB_GUARDIAN_MAINTENANCE_PASSWORD": "memoria_guardian_maintenance",
+        "MEMORIA_DB_GUARDIAN_WORKER_PASSWORD": "memoria_guardian_worker",
+        "MEMORIA_DB_IDENTITY_PASSWORD": "memoria_identity",
+        "MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD": "memoria_identity_registration",
+        "MEMORIA_DB_CONSENT_PASSWORD": "memoria_consent",
+        "MEMORIA_DB_SESSION_API_PASSWORD": "memoria_session_api",
+        "MEMORIA_DB_ACTION_EXECUTOR_PASSWORD": "memoria_action_executor",
+        "MEMORIA_DB_SESSION_PROJECTOR_PASSWORD": "memoria_session_projector",
+        "MEMORIA_DB_SESSION_WORKER_PASSWORD": "memoria_session_worker",
+        "MEMORIA_DB_SESSION_MAINTENANCE_PASSWORD": "memoria_session_maintenance",
+        "MEMORIA_DB_MEMORY_API_PASSWORD": "memoria_memory_api",
+        "MEMORIA_DB_MEMORY_WORKER_PASSWORD": "memoria_memory_worker",
+    }
+    for password_env, role in runtime_roles.items():
+        assert password_env in postgres_init
+        assert f"ALTER ROLE {role}" in postgres_init
+    assert postgres_init.count("LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS") >= len(
+        runtime_roles
+    )
+    assert "REVOKE CREATE ON SCHEMA public FROM PUBLIC" in postgres_init
     assert "mc version enable local/memoria-archive" in minio_init
     assert "mc version enable local/memoria-voice" in minio_init
     assert "s3:DeleteObjectVersion" in minio_init
     assert "MC_CONFIG_DIR: /tmp/.mc" in compose
-    assert compose.count("create_host_path: false") == 6
-    assert "002-evolution-schema.sql" in compose
-    assert "003-guardian-schema.sql" in compose
+    assert compose.count("create_host_path: false") == 12
+    schema_mounts = (
+        "002-identity-schema.sql",
+        "003-consent-schema.sql",
+        "004-policy-receipt-schema.sql",
+        "005-device-fleet-schema.sql",
+        "006-session-runtime-schema.sql",
+        "007-evolution-schema.sql",
+        "008-guardian-schema.sql",
+        "009-memory-scope-schema.sql",
+    )
+    assert all(schema_mount in compose for schema_mount in schema_mounts)
+    assert all(
+        f"\\i /docker-entrypoint-initdb.d/{schema_mount}" in postgres_init
+        for schema_mount in schema_mounts
+    )
+    assert all(
+        (
+            f"\\i /docker-entrypoint-initdb.d/{schema_mount}\n"
+            "RESET ROLE;"
+        )
+        in postgres_init
+        for schema_mount in schema_mounts
+    )
+    assert [compose.index(schema_mount) for schema_mount in schema_mounts] == sorted(
+        compose.index(schema_mount) for schema_mount in schema_mounts
+    )
+    assert [postgres_init.index(schema_mount) for schema_mount in schema_mounts] == sorted(
+        postgres_init.index(schema_mount) for schema_mount in schema_mounts
+    )
+
+
+def test_authoritative_postgres_upgrade_has_one_entrypoint_and_compatibility_wrappers() -> None:
+    authoritative = ROOT / "scripts" / "upgrade_authoritative_postgres.sh"
+    verifier = ROOT / "scripts" / "verify_authoritative_postgres.sh"
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    integration_gate = (
+        ROOT / "scripts" / "tests" / "run_authoritative_postgres_gate.sh"
+    )
+    assert authoritative.is_file()
+    assert verifier.is_file()
+    assert integration_gate.is_file()
+    source = authoritative.read_text(encoding="utf-8")
+    verification = verifier.read_text(encoding="utf-8")
+    gate = integration_gate.read_text(encoding="utf-8")
+    assert "001-init-memoria.sh" in source
+    assert "authoritative PostgreSQL roles, schemas and RLS are installed" in source
+    assert "authoritative PostgreSQL contract verified" in verification
+    assert "relrowsecurity" in verification
+    assert "relforcerowsecurity" in verification
+    assert "rolbypassrls" in verification
+    assert "upgrade_authoritative_postgres.sh" in gate
+    assert gate.count("verify_authoritative_postgres.sh") == 2
+    assert "scripts/tests/run_authoritative_postgres_gate.sh" in ci
+
+    for legacy_name in (
+        "upgrade_evolution_postgres.sh",
+        "upgrade_guardian_postgres.sh",
+    ):
+        wrapper = (ROOT / "scripts" / legacy_name).read_text(encoding="utf-8")
+        assert "upgrade_authoritative_postgres.sh" in wrapper
+        assert "001-init-memoria.sh" not in wrapper
 
 
 def test_offsite_backup_profile_covers_base_backup_wal_and_critical_objects() -> None:
@@ -170,9 +251,7 @@ def test_offsite_backup_profile_covers_base_backup_wal_and_critical_objects() ->
     base_backup = (ROOT / "infra" / "backup" / "postgres-base-backup.sh").read_text(
         encoding="utf-8"
     )
-    mirror = (ROOT / "infra" / "backup" / "offsite-mirror.sh").read_text(
-        encoding="utf-8"
-    )
+    mirror = (ROOT / "infra" / "backup" / "offsite-mirror.sh").read_text(encoding="utf-8")
 
     assert compose.count('profiles: ["offsite-backup"]') == 2
     assert "pg_basebackup" in base_backup
@@ -189,9 +268,7 @@ def test_offsite_backup_profile_covers_base_backup_wal_and_critical_objects() ->
     for forbidden in ("localhost", "127.0.0.1", "memoria-minio", "host.docker.internal"):
         assert f"*{forbidden}*" in mirror
 
-    drill = (ROOT / "scripts" / "run_offsite_restore_drill.sh").read_text(
-        encoding="utf-8"
-    )
+    drill = (ROOT / "scripts" / "run_offsite_restore_drill.sh").read_text(encoding="utf-8")
     assert "pg_verifybackup" in drill
     assert "--network none" in drill
     assert "archive_evidence_blobs" in drill

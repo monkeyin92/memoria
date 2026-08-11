@@ -1,6 +1,8 @@
 const api = require("../../utils/api");
 const { guardianSummaryErrorState } = require("../../utils/guardian");
 const { requireLogin } = require("../../utils/auth-gate");
+const contracts = require("../../utils/multi-subject-contracts");
+const { capabilityGateMessage, configActionGate } = require("../../utils/device-binding");
 
 const CONSENT_DEFINITIONS = Object.freeze([
   {
@@ -58,7 +60,7 @@ Page({
     createdMinorName: "",
     birthBands: [
       { value: "under_14", label: "14 岁以下" },
-      { value: "14_to_17", label: "14 至 17 岁" },
+      { value: "14_17", label: "14 至 17 岁" },
     ],
     birthBandIndex: 0,
     selectedLinkId: "",
@@ -104,9 +106,26 @@ Page({
     });
   },
 
+  /* 每次敏感读/写动作都重新走 Runtime Profile 能力门禁（D-07）。 */
+  async _gateGuardian() {
+    const gate = await api.requireRuntimeCapability(contracts.Capability.GuardianSummaryView);
+    if (!gate.allowed) {
+      this.setData({ error: capabilityGateMessage(gate, contracts.Capability.GuardianSummaryView) });
+    }
+    return gate.allowed;
+  },
+
+  /* 创建关系/修改授权属于配置动作：走独立 config seam（P1 边界）。 */
+  _gateGuardianConfig() {
+    const gate = configActionGate("guardian_manage");
+    this.setData({ error: gate.message });
+    return gate.allowed;
+  },
+
   async refresh() {
     const identity = api.currentIdentity();
     if (!identity || this.data.loading) return;
+    if (!(await this._gateGuardian())) return;
     const authEpoch = api.currentAuthEpoch();
     this.setData({ loading: true, error: "" });
     try {
@@ -161,6 +180,7 @@ Page({
 
   async createLink() {
     if (!this.data.minorUserId || this.data.working) return;
+    if (!this._gateGuardianConfig()) return;
     this.setData({ working: true, error: "", createdBindingCode: "" });
     try {
       const link = await api.createGuardianLink({
@@ -185,6 +205,7 @@ Page({
     const linkId = event.currentTarget.dataset.linkId;
     const band = this.data.birthBands[this.data.birthBandIndex]?.value || "under_14";
     if (!linkId || this.data.bindingCode.length !== 8 || this.data.working) return;
+    if (!this._gateGuardianConfig()) return;
     this.setData({ working: true, error: "" });
     try {
       await api.confirmGuardianLink({
@@ -208,6 +229,7 @@ Page({
 
   async toggleConsent(event) {
     if (this.data.working) return;
+    if (!this._gateGuardianConfig()) return;
     const { linkId, kind, policyVersion, consentId, active } = event.currentTarget.dataset;
     this.setData({ working: true, error: "" });
     try {
@@ -239,6 +261,7 @@ Page({
 
   async selectMinorById(minorUserId) {
     if (!minorUserId) return;
+    if (!(await this._gateGuardian())) return;
     this.setData({ selectedMinorId: minorUserId, summaryState: "loading", summary: null });
     try {
       const summary = await api.getGuardianSummary(minorUserId);

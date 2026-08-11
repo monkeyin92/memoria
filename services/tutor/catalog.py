@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Final
 
 from services.tutor.domain import LessonDifficulty, LessonTask, TutorFocus
@@ -86,10 +87,57 @@ HOMEWORK_COMPANION_TASK: Final = LessonTask(
 )
 ALL_LESSONS: Final = (*ENGLISH_LESSONS, HOMEWORK_COMPANION_TASK)
 _BY_ID: Final[dict[str, LessonTask]] = {task.task_id: task for task in ALL_LESSONS}
+_HOMEWORK_TASK_ID: Final[str] = HOMEWORK_COMPANION_TASK.task_id
+
+
+@dataclass(frozen=True, slots=True)
+class TutorCriterion:
+    """One server-owned, scorable success criterion for a lesson task.
+
+    ``masterable`` is false for open-ended criteria (for example homework
+    companionship) so the rubric can never mint a ``mastered`` outcome for
+    them; closed scenario criteria carry an explicit objective and can be
+    assessed against the correctness threshold.
+    """
+
+    criterion_id: str
+    skill_key: str
+    masterable: bool
+    objective: str
+
+    def __post_init__(self) -> None:
+        for name in ("criterion_id", "skill_key", "objective"):
+            value = str(getattr(self, name)).strip()
+            if not value or len(value) > 128:
+                raise ValueError(f"{name} must be a bounded non-blank string")
+            object.__setattr__(self, name, value)
 
 
 def lesson_task(task_id: str) -> LessonTask | None:
     return _BY_ID.get(task_id)
+
+
+def criteria_for(task: LessonTask) -> tuple[TutorCriterion, ...]:
+    """The server-owned criterion set for one lesson task."""
+
+    if task.task_id == _HOMEWORK_TASK_ID:
+        return (
+            TutorCriterion(
+                criterion_id="homework-self-guided.criterion.v1",
+                skill_key="homework-planning",
+                masterable=False,
+                objective="学生自主念题、梳理条件并完成一个可执行的下一步",
+            ),
+        )
+    return tuple(
+        TutorCriterion(
+            criterion_id=f"{task.task_id}.criterion.v1",
+            skill_key=skill_key,
+            masterable=True,
+            objective=task.objective,
+        )
+        for skill_key in task.skill_keys
+    )
 
 
 def lessons_for(

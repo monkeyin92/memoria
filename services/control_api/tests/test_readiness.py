@@ -118,6 +118,8 @@ async def test_local_readiness_checks_core_services_without_active_profiles(
         "voice_profile": "ready",
         "archive_object_store": "ready",
         "voice_object_store": "ready",
+        "session_runtime": "skipped",
+        "memory_scope": "skipped",
         "speaker_model": "skipped",
     }
 
@@ -229,6 +231,31 @@ async def test_readiness_fails_closed_when_evolution_store_is_unavailable(
     assert status == 503
     assert body["status"] == "not_ready"
     assert body["checks"]["core"]["evolution_store"] == "unavailable"
+
+
+class _FailingSessionRuntimeStore:
+    async def readiness(self) -> object:
+        raise RuntimeError("schema/RLS unavailable")
+
+
+@pytest.mark.asyncio
+async def test_health_ready_exposes_session_runtime_readiness_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_local(monkeypatch, tmp_path)
+    app = create_app()
+    app.state.session_runtime_store = _FailingSessionRuntimeStore()
+
+    monkeypatch.setattr(readiness_routes, "_valid_configuration", lambda _: True)
+    monkeypatch.setattr(readiness_routes, "_missing_config", lambda _: [])
+    monkeypatch.setattr(readiness_routes, "_smoke_state", lambda *_: "passed")
+
+    status, body = await _ready(app)
+
+    assert status == 503
+    assert body["status"] == "not_ready"
+    assert body["checks"]["core"]["session_runtime"] == "unavailable"
 
 
 @pytest.mark.asyncio

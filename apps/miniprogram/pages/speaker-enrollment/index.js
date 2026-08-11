@@ -1,5 +1,7 @@
 const api = require("../../utils/api");
 const { requireLogin } = require("../../utils/auth-gate");
+const contracts = require("../../utils/multi-subject-contracts");
+const { capabilityGateMessage, configActionGate } = require("../../utils/device-binding");
 
 const RECORDING_OPTIONS = {
   duration: 8_000,
@@ -57,6 +59,7 @@ Page({
     recordings: freshRecordings(),
     completed: 0,
     consent: false,
+    capabilityAllowed: false,
     recordingIndex: -1,
     elapsed: "0.0",
     busy: false,
@@ -89,7 +92,16 @@ Page({
   },
 
   async onShow() {
-    await requireLogin({ reason: "edit_profile" });
+    if (!(await requireLogin({ reason: "edit_profile" }))) return;
+    const gate = await api.requireRuntimeCapability(contracts.Capability.VoiceProfileCreate);
+    if (!gate.allowed) {
+      this.setData({
+        capabilityAllowed: false,
+        error: capabilityGateMessage(gate, contracts.Capability.VoiceProfileCreate),
+      });
+      return;
+    }
+    this.setData({ capabilityAllowed: true, error: "" });
   },
 
   onUnload() {
@@ -120,6 +132,10 @@ Page({
   startRecording(event) {
     const index = Number(event.currentTarget.dataset.index);
     const recording = this.data.recordings[index];
+    if (!this.data.capabilityAllowed) {
+      this.setData({ error: "当前 Runtime Profile 未授权主人声纹能力。" });
+      return;
+    }
     if (!this.data.consent) {
       this.setData({ error: "请先阅读并同意主人声纹用途说明。" });
       return;
@@ -235,6 +251,10 @@ Page({
   async submit() {
     const { recordings, consent, busy, recordingIndex } = this.data;
     if (busy || recordingIndex >= 0) return;
+    if (!this.data.capabilityAllowed) {
+      this.setData({ error: "当前 Runtime Profile 未授权主人声纹能力。" });
+      return;
+    }
     if (!consent) {
       this.setData({ error: "请先同意主人声纹用途说明。" });
       return;
@@ -246,6 +266,14 @@ Page({
 
     this.setData({ busy: true, error: "" });
     try {
+      // 声纹档案提交属于配置动作：consent 决策接口接入前由 config seam
+      // fail-closed（P1 边界），避免“未授权就无法发起授权”的死锁，也不
+      // 在客户端用年龄绕过。
+      const seam = configActionGate("voice_enrollment");
+      if (!seam.allowed) {
+        this.setData({ busy: false, error: seam.message });
+        return;
+      }
       await api.enrollSpeakerProfiles(recordings.map((item) => item.sample));
       if (this._unloaded) return;
       wx.showToast({ title: "主人声纹已提交", icon: "success" });

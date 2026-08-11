@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -13,6 +14,34 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEMORIA_AUTH_SECRET", "test-auth-material-that-is-long-enough")
     monkeypatch.setenv("MEMORIA_ARCHIVE_INTERNAL_TOKEN", "test-internal-archive-token")
     monkeypatch.setenv("OFFLINE_MOCK", "true")
+
+
+async def _register_verified_adult(
+    client: AsyncClient,
+    app: Any,
+    *,
+    username: str,
+    password: str = "safe-password",
+) -> dict[str, object]:
+    registered = (
+        await client.post(
+            "/v1/auth/register",
+            json={"username": username, "password": password},
+        )
+    ).json()
+    app.state.memory_store.update_subject_profile(
+        user_id=registered["user_id"],
+        subject_category="adult",
+        birth_year_band="adult",
+        age_evidence_status="verified",
+        now=datetime.now(UTC).isoformat(),
+    )
+    logged_in = await client.post(
+        "/v1/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert logged_in.status_code == 200
+    return logged_in.json()
 
 
 def _shadow_persona_payload(
@@ -86,12 +115,11 @@ async def test_consent_drives_non_blocking_owner_learning_and_session_scoped_cap
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "persona-owner", "password": "safe-password"},
-            )
-        ).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="persona-owner",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         status_before = await client.get("/v1/persona/status", headers=headers)
         consent = await client.post(
@@ -186,12 +214,11 @@ async def test_revoked_owner_can_manage_confirmed_traits_and_version_history(
     app = create_app()
     internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "revoked-persona-owner", "password": "safe-password"},
-            )
-        ).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="revoked-persona-owner",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         await client.post(
             "/v1/persona/consent",
@@ -264,12 +291,11 @@ async def test_single_uncertain_candidate_is_hidden_but_owner_review_api_remains
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "uncertain-persona", "password": "safe-password"},
-            )
-        ).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="uncertain-persona",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         await client.post(
             "/v1/persona/consent",
@@ -387,12 +413,11 @@ async def test_consented_uncertain_cross_session_evidence_auto_publishes_persona
     app = create_app()
     internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "automatic-persona", "password": "safe-password"},
-            )
-        ).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="automatic-persona",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         await client.post(
             "/v1/persona/consent",
@@ -621,12 +646,11 @@ async def test_value_or_decision_trait_requires_authenticated_review(
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "decision-owner", "password": "safe-password"},
-            )
-        ).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="decision-owner",
+        )
         headers = {"Authorization": f"Bearer {identity['access_token']}"}
         await client.post(
             "/v1/persona/consent",

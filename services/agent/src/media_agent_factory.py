@@ -33,7 +33,8 @@ from services.agent.src.response_planner_client import (
     ResponsePlannerClient,
     ResponsePlannerClientConfig,
 )
-from services.agent.src.tutor_session import voice_system_prompt
+from services.agent.src.runtime_profile import VerifiedRuntimeProfile
+from services.agent.src.tutor_session import production_system_prompt
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.media_session import MediaSessionResources
 from services.agent.src.voice_core.provider_adapter import (
@@ -117,9 +118,17 @@ class ProductionMediaSessionFactory:
             realtime_search_resolver = build_realtime_search_resolver(settings=self.settings)
             if realtime_search_resolver is not None:
                 owned.append(realtime_search_resolver)
-            runtime = self._new_runtime(identity.session_id, tts)
+            runtime = self._new_runtime(
+                identity.session_id, tts, device_id=identity.device_id or None
+            )
             mode_policy_client = await self._bind_mode_policy(runtime)
             owned.append(mode_policy_client)
+
+            async def _refresh_profile() -> VerifiedRuntimeProfile | None:
+                policy = await mode_policy_client.fetch(session_id=runtime.session_id)
+                return policy.runtime_profile
+
+            runtime.set_runtime_profile_refresher(_refresh_profile)
             response_planner_client = self._response_planner_client()
             owned.append(response_planner_client)
             voice_profile_client = await self._bind_voice_profile(runtime, tts)
@@ -131,7 +140,7 @@ class ProductionMediaSessionFactory:
             await runtime.orchestrator.ready()
             warmer = getattr(language_model, "prewarm", None)
             agent = DuplexVoiceAgent(
-                instructions=voice_system_prompt(runtime.mode_policy.session_focus),
+                instructions=production_system_prompt(runtime),
                 runtime=runtime,
                 voice_profile_client=voice_profile_client,
                 response_planner_client=response_planner_client,
@@ -193,10 +202,13 @@ class ProductionMediaSessionFactory:
                             await result
             raise
 
-    def _new_runtime(self, session_id: str, tts: Any) -> DuplexRuntime:
+    def _new_runtime(
+        self, session_id: str, tts: Any, *, device_id: str | None = None
+    ) -> DuplexRuntime:
         settings = self.settings
         return DuplexRuntime.create(
             session_id=session_id,
+            device_id=device_id,
             tts=tts,
             input_guard_enabled=True,
             barge_in_enabled=True,
@@ -287,7 +299,7 @@ class ProductionMediaSessionFactory:
         if not (
             settings.voice_profile_enabled
             and token
-            and (runtime.mode_policy.allows_voice_profile() or runtime.mode_policy.mode == "legacy")
+            and runtime.profile_permits(runtime.fence, capability="voice_clone_use")
         ):
             return None
         client = VoiceProfileClient(

@@ -29,6 +29,21 @@ _GAUGES = {
     "tts_frame_age_ms",
 }
 
+_SUBJECT_RESOLUTION_STATUSES = frozenset({"confirmed", "unknown"})
+_RUNTIME_PROFILE_EXPIRED_REASONS = frozenset({"expired_at_parse", "expired_at_use"})
+_RUNTIME_PROFILE_REFRESH_FAILURE_REASONS = frozenset(
+    {"timeout", "error", "invalid", "drain_error", "drain_timeout", "no_playback_seam"}
+)
+_IDENTITY_CONFUSION_REASONS = frozenset(
+    {
+        "user_identity_confusion",
+        "relative_impersonation",
+        "exclusive_dependency",
+        "fraud_risk",
+        "prolonged_use",
+    }
+)
+
 
 @dataclass
 class MetricsRegistry:
@@ -142,6 +157,45 @@ class MetricsRegistry:
 
     def inc_media_session_failed(self) -> None:
         self._inc("media_sessions_failed_total")
+
+    # ------------------------------------------------------------------
+    # Trust metrics (remediation doc 14.2).  All series are bounded and
+    # low-cardinality: session_id / person_id never appear as labels.
+    # ------------------------------------------------------------------
+
+    def inc_subject_resolution(self, status: str) -> None:
+        """Record one subject-resolution outcome.
+
+        ``subject_resolution_unknown_rate`` is derived from the two bounded
+        series (unknown/total); the authoritative rate is computed by the
+        monitoring side, not here.
+        """
+
+        if status not in _SUBJECT_RESOLUTION_STATUSES:
+            raise ValueError(f"subject resolution status must be one of {sorted(_SUBJECT_RESOLUTION_STATUSES)}")
+        self._inc("subject_resolution_total", {"status": status})
+
+    def inc_runtime_profile_expired_use_attempt(self, reason: str) -> None:
+        """Count any attempt to keep using an expired runtime profile."""
+
+        if reason not in _RUNTIME_PROFILE_EXPIRED_REASONS:
+            raise ValueError(f"expired-use reason must be one of {sorted(_RUNTIME_PROFILE_EXPIRED_REASONS)}")
+        self._inc("runtime_profile_expired_use_attempts_total", {"reason": reason})
+
+    def inc_runtime_profile_refresh_failure(self, reason: str) -> None:
+        """Count an authority-refresh failure (timeout vs unexpected error)."""
+
+        if reason not in _RUNTIME_PROFILE_REFRESH_FAILURE_REASONS:
+            raise ValueError(f"refresh-failure reason must be one of {sorted(_RUNTIME_PROFILE_REFRESH_FAILURE_REASONS)}")
+        self._inc("runtime_profile_refresh_failures_total", {"reason": reason})
+
+    def inc_persona_identity_confusion_event(self, reason: str) -> None:
+        """Count an identity-confusion/impersonation/dependency/fraud event
+        rendered by the persona renderer (never per-turn mechanical prompts)."""
+
+        if reason not in _IDENTITY_CONFUSION_REASONS:
+            raise ValueError(f"identity confusion reason must be one of {sorted(_IDENTITY_CONFUSION_REASONS)}")
+        self._inc("persona_identity_confusion_events_total", {"reason": reason})
 
     def set_media_active_sessions(self, count: int) -> None:
         if count < 0:

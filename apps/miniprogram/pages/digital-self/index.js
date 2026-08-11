@@ -1,5 +1,7 @@
 const api = require("../../utils/api");
 const { requireLogin } = require("../../utils/auth-gate");
+const contracts = require("../../utils/multi-subject-contracts");
+const { capabilityGateMessage } = require("../../utils/device-binding");
 
 function dimensionsOf(result) {
   return Array.isArray(result?.dimensions) ? result.dimensions : [];
@@ -32,6 +34,14 @@ Page({
         redirect: "/pages/digital-self/index",
       }))
     ) return;
+    const gate = await api.requireRuntimeCapability(contracts.Capability.DigitalSelfPreview);
+    if (!gate.allowed) {
+      this.setData({
+        loading: false,
+        error: capabilityGateMessage(gate, contracts.Capability.DigitalSelfPreview),
+      });
+      return;
+    }
     this.loadOverview();
   },
 
@@ -63,6 +73,14 @@ Page({
   async loadOverview() {
     if (!api.hasAuthenticatedSession()) {
       this._clearPrivateState();
+      return;
+    }
+    const gate = await api.requireRuntimeCapability(contracts.Capability.DigitalSelfPreview);
+    if (!gate.allowed) {
+      this.setData({
+        loading: false,
+        error: capabilityGateMessage(gate, contracts.Capability.DigitalSelfPreview),
+      });
       return;
     }
     const authEpoch = api.currentAuthEpoch();

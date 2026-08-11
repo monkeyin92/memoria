@@ -411,6 +411,14 @@ class AgentSettings(BaseSettings):
         default="http://control-api:8000/v1/interaction/session-policy",
         alias="MEMORIA_INTERACTION_POLICY_URL",
     )
+    transactional_effect_commit_url: str = Field(
+        default="http://control-api:8000/v1/interaction/tool-effect/commit",
+        alias="MEMORIA_TRANSACTIONAL_EFFECT_COMMIT_URL",
+    )
+    transactional_effect_reconcile_url: str = Field(
+        default="http://control-api:8000/v1/interaction/tool-effect/reconcile",
+        alias="MEMORIA_TRANSACTIONAL_EFFECT_RECONCILE_URL",
+    )
     interaction_policy_timeout_s: float = Field(
         default=0.4,
         ge=0.05,

@@ -83,7 +83,10 @@ class GuardianConsentService:
                 },
             )
         )
-        return await self._store.grant_consent(record)
+        return await self._store.grant_consent(
+            record,
+            actor_user_id=guardian_user_id,
+        )
 
     async def revoke(
         self,

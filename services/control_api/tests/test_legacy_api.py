@@ -43,13 +43,32 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return path
 
 
-async def _register(client: AsyncClient, username: str) -> dict[str, str]:
+async def _register_verified_adult(
+    client: AsyncClient,
+    app: FastAPI,
+    username: str,
+) -> dict[str, str]:
     response = await client.post(
         "/v1/auth/register",
         json={"username": username, "password": PASSWORD},
     )
     assert response.status_code == 201
-    return cast(dict[str, str], response.json())
+    registered = cast(dict[str, str], response.json())
+    app.state.memory_store.update_subject_profile(
+        user_id=registered["user_id"],
+        subject_category="adult",
+        birth_year_band="adult",
+        age_evidence_status="verified",
+        now=datetime.now(UTC).isoformat(),
+    )
+    login = await client.post(
+        "/v1/auth/login",
+        json={"username": username, "password": PASSWORD},
+    )
+    assert login.status_code == 200
+    logged_in = cast(dict[str, str], login.json())
+    assert logged_in["user_id"] == registered["user_id"]
+    return logged_in
 
 
 def _headers(account: dict[str, str]) -> dict[str, str]:
@@ -206,8 +225,8 @@ class _LegacyContext:
 
 
 async def _prepare(app: FastAPI, client: AsyncClient) -> _LegacyContext:
-    owner = await _register(client, "legacy-owner")
-    grantee = await _register(client, "legacy-grantee")
+    owner = await _register_verified_adult(client, app, "legacy-owner")
+    grantee = await _register_verified_adult(client, app, "legacy-grantee")
     relationship = _relationship(owner["user_id"])
     version = _version(owner["user_id"], relationship)
     versions = _Versions(version)

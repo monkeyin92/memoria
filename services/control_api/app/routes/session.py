@@ -8,12 +8,16 @@ import inspect
 import json
 import logging
 import re
+import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import Response
+from packages.contracts.generated.python.multi_subject_contracts import (
+    RuntimeProfileSignedV2,
+)
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.common.companions import DEFAULT_COMPANION_ID, companion_definition
@@ -79,6 +83,13 @@ from services.self_model.domain import (
     RelationshipProfile,
     SelfModelNotFoundError,
     SelfModelRegistryPort,
+)
+from services.session_runtime.postgres_store import SessionRuntimeConflict
+from services.session_runtime.service import (
+    PersistentSessionDenied,
+    PersistentSessionUnavailable,
+    PostgresSessionRuntimeService,
+    StartPersistentSessionCommand,
 )
 from services.speaker.domain import SpeakerAuthorityPort
 from services.tutor.domain import SessionFocus
@@ -227,6 +238,7 @@ class ClientInfo(BaseModel):
     platform: str = "web"
     timezone: str = "Asia/Shanghai"
     device_id: str | None = Field(default=None, min_length=1, max_length=128)
+    binding_version: int | None = Field(default=None, ge=1)
 
 
 class CreateSessionRequest(BaseModel):
@@ -287,6 +299,7 @@ class CreateSessionResponse(BaseModel):
     ownership_epoch: int | None = Field(default=None, ge=1)
     streamcore: dict[str, Any] | None = None
     ice_servers: list[dict[str, Any]] = Field(default_factory=list)
+    runtime_profile: RuntimeProfileSignedV2 | None = None
 
 
 class CreateOmniSessionResponse(BaseModel):
@@ -296,6 +309,11 @@ class CreateOmniSessionResponse(BaseModel):
     config: dict[str, Any]
     interaction: dict[str, Any]
     learning_task_id: str | None = None
+    runtime_profile: RuntimeProfileSignedV2 | None = None
+
+
+class CreateMiniProgramSessionRuntimeResponse(CreateMiniProgramSessionResponse):
+    runtime_profile: RuntimeProfileSignedV2 | None = None
 
 
 class StopResponseBody(BaseModel):
@@ -406,14 +424,24 @@ class OmniTelemetryBody(BaseModel):
 @router.post(
     "",
     response_model=(
-        CreateSessionResponse | CreateOmniSessionResponse | CreateMiniProgramSessionResponse
+        CreateSessionResponse
+        | CreateOmniSessionResponse
+        | CreateMiniProgramSessionRuntimeResponse
     ),
 )
 async def create_session(
     body: CreateSessionRequest,
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
-) -> CreateSessionResponse | CreateOmniSessionResponse | CreateMiniProgramSessionResponse:
+    idempotency_key: Annotated[
+        str | None,
+        Header(alias="Idempotency-Key", min_length=1, max_length=128),
+    ] = None,
+) -> (
+    CreateSessionResponse
+    | CreateOmniSessionResponse
+    | CreateMiniProgramSessionRuntimeResponse
+):
     settings = request.app.state.settings
     user_id = require_matching_user(body.user_id, user) if body.user_id else user.user_id
     store = cast(MemoryStore, request.app.state.memory_store)
@@ -711,7 +739,78 @@ async def create_session(
             fallback_voice_model="seed-tts-2.0",
             fallback_voice_resource_id="seed-tts-2.0",
         )
-    session_id = create_session_id()
+    persistent_service = cast(
+        PostgresSessionRuntimeService | None,
+        getattr(request.app.state, "session_runtime_service", None),
+    )
+    persistent_required = (
+        settings.environment == "production"
+        or persistent_service is not None
+        or body.client.binding_version is not None
+    )
+    if persistent_required and (
+        body.client.device_id is None or body.client.binding_version is None
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_binding_authority_required"},
+        )
+    if persistent_required and persistent_service is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_authority_unavailable"},
+        )
+    if idempotency_key is not None:
+        session_id = str(
+            uuid.UUID(
+                hashlib.sha256(
+                    f"{user_id}\0{idempotency_key}".encode()
+                ).hexdigest()[:32]
+            )
+        )
+    else:
+        session_id = create_session_id()
+    runtime_profile: RuntimeProfileSignedV2 | None = None
+    if persistent_required:
+        assert persistent_service is not None
+        assert body.client.device_id is not None
+        assert body.client.binding_version is not None
+        try:
+            runtime_profile = await persistent_service.start(
+                StartPersistentSessionCommand(
+                    session_id=session_id,
+                    actor_id=user_id,
+                    device_id=body.client.device_id,
+                    expected_binding_version=body.client.binding_version,
+                    idempotency_key=idempotency_key or f"session-start-{session_id}",
+                    now=datetime.now(UTC),
+                    requested_capabilities=("chat",),
+                )
+            )
+        except PersistentSessionDenied as exc:
+            logger.warning(
+                "persistent Session authority denied session_id=%s reason=%s",
+                session_id,
+                exc,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "session_runtime_authority_denied"},
+            ) from exc
+        except SessionRuntimeConflict as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "session_runtime_conflict"},
+            ) from exc
+        except PersistentSessionUnavailable as exc:
+            logger.exception(
+                "persistent Session authority failed session_id=%s",
+                session_id,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "session_runtime_authority_unavailable"},
+            ) from exc
     # The room name is also the Agent's trusted source for the public session id.
     room_name = f"voice-{session_id}"
     identity = f"user-{user_id}-{session_id[:8]}"
@@ -878,11 +977,12 @@ async def create_session(
             },
             interaction=_frozen_values(frozen),
             learning_task_id=learning_task_id,
+            runtime_profile=runtime_profile,
         )
 
     if mini_program:
         learning_task_id = await persist_voice_session()
-        return CreateMiniProgramSessionResponse(
+        return CreateMiniProgramSessionRuntimeResponse(
             session_id=session_id,
             config={
                 "locale": body.locale,
@@ -897,6 +997,7 @@ async def create_session(
                 room_name=room_name,
                 identity=identity,
             ),
+            runtime_profile=runtime_profile,
         )
 
     try:
@@ -989,6 +1090,7 @@ async def create_session(
             session_id=session_id,
             device_id=body.client.device_id,
         ),
+        runtime_profile=runtime_profile,
     )
 
 

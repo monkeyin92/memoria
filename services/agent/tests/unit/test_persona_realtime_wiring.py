@@ -11,7 +11,6 @@ from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.context_assembler import ContextAssembler
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.memory_context_client import MemoryContextSnapshot
-from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.persona_client import PersonaCapsuleSnapshot
 from services.agent.src.response_planner_client import (
     ResponsePlan,
@@ -19,6 +18,7 @@ from services.agent.src.response_planner_client import (
     ResponseVoiceTarget,
 )
 from services.agent.src.voice_profile_client import VoiceRuntimeProfile
+from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -95,15 +95,13 @@ async def _prepare_speaker(
     reason_code: str | None = None,
 ) -> None:
     if runtime.fence.turn_id == 0 and runtime.fence.generation_id == 0:
-        runtime.set_mode_policy(
-            ModePolicy.companion_for_test(
-                policy_version="test-policy",
-                private_context=True,
-                owner_evidence=True,
-                tools=True,
-                voice_profile=True,
-                shadow_low_sensitivity_persona=True,
-            )
+        bind_owner_policy(
+            runtime,
+            private_context=True,
+            owner_evidence=True,
+            tools=True,
+            voice_profile=True,
+            shadow_low_sensitivity_persona=True,
         )
 
     async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
@@ -290,6 +288,7 @@ async def test_guest_context_cannot_see_owner_turns_or_use_tools(
 
     runtime = DuplexRuntime.create(session_id="session-owner-then-guest")
     await runtime.orchestrator.ready()
+    await _prepare_speaker(runtime, "guest")
     runtime.orchestrator.context.add_user(
         "主人刚才说了一个私人家庭故事。",
         speaker_scope="owner",
@@ -298,7 +297,6 @@ async def test_guest_context_cannot_see_owner_turns_or_use_tools(
         "我已经记住这个私人故事。",
         speaker_scope="owner",
     )
-    await _prepare_speaker(runtime, "guest")
     agent = DuplexVoiceAgent(
         instructions="test",
         runtime=runtime,
@@ -356,12 +354,12 @@ async def test_uncertain_same_session_keeps_safe_followup_context(
 
     runtime = DuplexRuntime.create(session_id="session-uncertain-followup")
     await runtime.orchestrator.ready()
+    await _prepare_speaker(runtime, "uncertain")
     runtime.orchestrator.context.add_user(previous_user, speaker_scope="public")
     runtime.orchestrator.context.commit_assistant_heard(
         previous_assistant,
         speaker_scope="public",
     )
-    await _prepare_speaker(runtime, "uncertain")
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
     chat_ctx = llm.ChatContext.empty()
     chat_ctx.add_message(role="user", content=previous_user)
@@ -699,7 +697,7 @@ async def test_completed_voice_resolution_is_applied_without_network_wait() -> N
     applied: list[tuple[str, str]] = []
 
     class TTSStub:
-        pool = object()
+        pool = None  # no real provider connection pool in this stub
         current_voice_profile_id = "warm_companion"
         current_model = "seed-tts-2.0"
         current_voice = "zh_male_yangguangqingnian_uranus_bigtts"
@@ -744,15 +742,14 @@ async def test_completed_voice_resolution_is_applied_without_network_wait() -> N
         session_id="session-voice-active",
         tts=TTSStub(),  # type: ignore[arg-type]
     )
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=True,
-            shadow_low_sensitivity_persona=True,
-        )
+    bind_owner_policy(
+        runtime,
+        private_context=True,
+        owner_evidence=True,
+        tools=True,
+        voice_profile=True,
+        shadow_low_sensitivity_persona=True,
+        include_voice_clone=True,
     )
     await runtime.orchestrator.ready()
     agent = DuplexVoiceAgent(
@@ -774,7 +771,7 @@ async def test_voice_profile_refresh_runs_in_background_on_vad_start() -> None:
     baseline_calls = 0
 
     class TTSStub:
-        pool = object()
+        pool = None  # no real provider connection pool in this stub
 
         def use_baseline_voice(self) -> None:
             nonlocal baseline_calls
@@ -788,15 +785,14 @@ async def test_voice_profile_refresh_runs_in_background_on_vad_start() -> None:
         session_id="session-voice-refresh",
         tts=TTSStub(),  # type: ignore[arg-type]
     )
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=True,
-            shadow_low_sensitivity_persona=True,
-        )
+    bind_owner_policy(
+        runtime,
+        private_context=True,
+        owner_evidence=True,
+        tools=True,
+        voice_profile=True,
+        shadow_low_sensitivity_persona=True,
+        include_voice_clone=True,
     )
     runtime.set_voice_profile_refresher(refresh)
 
@@ -822,7 +818,7 @@ async def test_first_turn_waits_for_voice_profile_refresh_before_applying_voice(
     applied: list[str] = []
 
     class TTSStub:
-        pool = object()
+        pool = None  # no real provider connection pool in this stub
         current_voice_profile_id = "warm_companion"
         current_model = "seed-tts-2.0"
         current_voice = "zh_male_yangguangqingnian_uranus_bigtts"
@@ -878,15 +874,14 @@ async def test_first_turn_waits_for_voice_profile_refresh_before_applying_voice(
         session_id="session-voice-first-turn",
         tts=TTSStub(),  # type: ignore[arg-type]
     )
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=True,
-            shadow_low_sensitivity_persona=True,
-        )
+    bind_owner_policy(
+        runtime,
+        private_context=True,
+        owner_evidence=True,
+        tools=True,
+        voice_profile=True,
+        shadow_low_sensitivity_persona=True,
+        include_voice_clone=True,
     )
     runtime.set_voice_profile_refresher(refresh)
     await runtime.orchestrator.ready()

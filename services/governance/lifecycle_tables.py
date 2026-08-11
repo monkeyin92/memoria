@@ -12,6 +12,7 @@ POSTGRES_AUTHORITATIVE_ACCOUNT_TABLES = (
     "archive_consent_grants",
     "archive_evidence_events",
     "archive_processing_outbox",
+    "archive_outbox_replay_audit",
     "archive_evidence_blobs",
     "archive_transcript_versions",
     "skill_run_steps",

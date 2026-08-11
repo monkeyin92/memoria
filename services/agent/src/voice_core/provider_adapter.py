@@ -109,7 +109,7 @@ class ExistingVoiceProviderAdapter:
     )
     _cancelled_generations: set[GenerationFence] = field(default_factory=set, init=False)
     _generation_history: deque[GenerationFence] = field(default_factory=deque, init=False)
-    _generation_eviction_floor: tuple[int, int, int] | None = field(
+    _generation_eviction_floor: tuple[int, int, int, int] | None = field(
         default=None,
         init=False,
     )
@@ -996,8 +996,11 @@ class ExistingVoiceProviderAdapter:
             self._output_work_started.discard(self._output_work_history.popleft())
 
     @staticmethod
-    def _generation_order(fence: GenerationFence) -> tuple[int, int, int]:
-        return (fence.turn_id, fence.generation_id, fence.tool_epoch)
+    def _generation_order(fence: GenerationFence) -> tuple[int, int, int, int]:
+        # session_epoch is the identity dimension (P0-3): the same
+        # turn/generation/tool numbers under a new subject must never be
+        # misjudged as already evicted by the old subject's floor.
+        return (fence.session_epoch, fence.turn_id, fence.generation_id, fence.tool_epoch)
 
     def _generation_was_evicted(self, fence: GenerationFence) -> bool:
         floor = self._generation_eviction_floor

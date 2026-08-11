@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -80,6 +80,10 @@ _SENSITIVITY_ORDER: dict[MemorySensitivity, int] = {
     "sensitive": 2,
     "highly_sensitive": 3,
 }
+
+
+class OutboxLeaseLostError(RuntimeError):
+    """A compiler attempted to commit after its monotonic outbox fence changed."""
 
 
 @asynccontextmanager
@@ -174,6 +178,12 @@ class PostgresMemoryCatalog:
         require_vector: bool = False,
         episode_consolidator: EpisodeConsolidator | None = None,
         subject_category_resolver: Callable[[str], str | None] | None = None,
+        capture_evidence_projector: (
+            Callable[[EvidenceEvent], Awaitable[bool]] | None
+        ) = None,
+        outbox_lease_s: float = 300.0,
+        outbox_retry_base_s: float = 2.0,
+        outbox_retry_max_s: float = 300.0,
     ) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("memory catalog DSN must use PostgreSQL")
@@ -183,6 +193,14 @@ class PostgresMemoryCatalog:
             raise ValueError("memory compiler DSN must use PostgreSQL")
         if compiler_role is not None and not compiler_role.strip():
             raise ValueError("memory compiler role must not be blank")
+        if not 5 <= outbox_lease_s <= 3600:
+            raise ValueError("memory compiler lease must be between 5 and 3600 seconds")
+        if not 0.1 <= outbox_retry_base_s <= 300:
+            raise ValueError("memory compiler retry base must be between 0.1 and 300 seconds")
+        if not outbox_retry_base_s <= outbox_retry_max_s <= 3600:
+            raise ValueError(
+                "memory compiler retry max must be between retry base and 3600 seconds"
+            )
         self._dsn = dsn
         self._compiler_dsn = compiler_dsn
         self._compiler_role = compiler_role
@@ -193,6 +211,11 @@ class PostgresMemoryCatalog:
         self._episode_consolidator = episode_consolidator or EpisodeConsolidator()
         self._memory_write_policy = MemoryWritePolicy()
         self._subject_category_resolver = subject_category_resolver or (lambda _: None)
+        self._capture_evidence_projector = capture_evidence_projector
+        self._outbox_lease_s = outbox_lease_s
+        self._outbox_retry_base_s = outbox_retry_base_s
+        self._outbox_retry_max_s = outbox_retry_max_s
+        self._worker_id = f"memory-compiler:{uuid.uuid4()}"
         self._vector_enabled = False
         self._pool: asyncpg.Pool | None = None
         self._compiler_pool: asyncpg.Pool | None = None
@@ -301,20 +324,37 @@ class PostgresMemoryCatalog:
                     SELECT outbox_id
                     FROM archive_processing_outbox
                     WHERE task_type = 'compile_evidence'
-                      AND status IN ('pending', 'processing', 'failed')
-                      AND available_at <= now()
+                      AND attempts < max_attempts
+                      AND (
+                          (
+                              status IN ('pending', 'failed')
+                              AND available_at <= now()
+                          )
+                          OR (
+                              status = 'processing'
+                              AND (locked_until IS NULL OR locked_until <= now())
+                          )
+                      )
                     ORDER BY created_at, outbox_id
                     FOR UPDATE SKIP LOCKED
                     LIMIT $1
                 )
                 UPDATE archive_processing_outbox outbox
                 SET status = 'processing', attempts = outbox.attempts + 1,
-                    completed_at = NULL, last_error_code = NULL
+                    locked_until = now() + ($2 * interval '1 second'),
+                    fencing_token = outbox.fencing_token + 1,
+                    worker_id = $3,
+                    completed_at = NULL,
+                    dead_lettered_at = NULL,
+                    last_error_code = NULL
                 FROM next_items
                 WHERE outbox.outbox_id = next_items.outbox_id
-                RETURNING outbox.outbox_id, outbox.event_id, outbox.account_id
+                RETURNING outbox.outbox_id, outbox.event_id, outbox.account_id,
+                          outbox.attempts, outbox.max_attempts, outbox.fencing_token
                 """,
                 limit,
+                self._outbox_lease_s,
+                self._worker_id,
             )
 
         outcomes = [await self._compile_claimed(row, pool) for row in claimed]
@@ -331,11 +371,19 @@ class PostgresMemoryCatalog:
     ) -> str:
         account_id = str(claimed_row["account_id"])
         outbox_id = cast(uuid.UUID, claimed_row["outbox_id"])
+        fencing_token = int(claimed_row["fencing_token"])
         try:
             async with self._account_guard(account_id):
                 return await self._compile_claimed_guarded(claimed_row, pool)
         except AccountWriteRejectedError as exc:
-            await self._fail_outbox(account_id, outbox_id, type(exc).__name__)
+            await self._fail_outbox(
+                account_id,
+                outbox_id,
+                fencing_token=fencing_token,
+                attempts=int(claimed_row["attempts"]),
+                max_attempts=int(claimed_row["max_attempts"]),
+                error_code=type(exc).__name__,
+            )
             return "failed"
 
     async def _compile_claimed_guarded(
@@ -346,23 +394,51 @@ class PostgresMemoryCatalog:
         account_id = str(claimed_row["account_id"])
         event_id = str(claimed_row["event_id"])
         outbox_id = cast(uuid.UUID, claimed_row["outbox_id"])
+        fencing_token = int(claimed_row["fencing_token"])
+        attempts = int(claimed_row["attempts"])
+        max_attempts = int(claimed_row["max_attempts"])
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
             receipt = await connection.fetchval(
                 "SELECT outcome FROM memory_compile_receipts WHERE event_id = $1",
                 event_id,
             )
-            if receipt is not None:
-                await self._complete_outbox(connection, outbox_id)
-                return "skipped"
             row = await connection.fetchrow(
                 "SELECT * FROM archive_evidence_events WHERE event_id = $1",
                 event_id,
             )
         if row is None:
-            await self._fail_outbox(account_id, outbox_id, "EvidenceNotFound")
+            await self._fail_outbox(
+                account_id,
+                outbox_id,
+                fencing_token=fencing_token,
+                attempts=attempts,
+                max_attempts=max_attempts,
+                error_code="EvidenceNotFound",
+            )
             return "failed"
         event = self._event_from_row(row)
+        try:
+            await self._project_capture_evidence(event)
+        except Exception as exc:
+            await self._fail_outbox(
+                account_id,
+                outbox_id,
+                fencing_token=fencing_token,
+                attempts=attempts,
+                max_attempts=max_attempts,
+                error_code=type(exc).__name__,
+            )
+            return "failed"
+        if receipt is not None:
+            async with pool.acquire() as connection, connection.transaction():
+                await self._scope(connection, account_id)
+                await self._complete_outbox(
+                    connection,
+                    outbox_id,
+                    fencing_token=fencing_token,
+                )
+            return "skipped"
         if event.event_type == "memory.claim_reviewed" and (
             event.source == "user.memory_review" or is_policy_confirmation_event(event)
         ):
@@ -371,17 +447,32 @@ class PostgresMemoryCatalog:
                     await self._scope(connection, account_id)
                     await self._replay_review_event(connection, event)
                     await self._record_receipt(connection, event, outcome="compiled")
-                    await self._complete_outbox(connection, outbox_id)
+                    await self._complete_outbox(
+                        connection,
+                        outbox_id,
+                        fencing_token=fencing_token,
+                    )
                 return "compiled"
             except Exception as exc:
-                await self._fail_outbox(account_id, outbox_id, type(exc).__name__)
+                await self._fail_outbox(
+                    account_id,
+                    outbox_id,
+                    fencing_token=fencing_token,
+                    attempts=attempts,
+                    max_attempts=max_attempts,
+                    error_code=type(exc).__name__,
+                )
                 return "failed"
         contribution = contribution_for(event)
         if not contribution.accepted:
             async with pool.acquire() as connection, connection.transaction():
                 await self._scope(connection, account_id)
                 await self._record_receipt(connection, event, outcome="ignored")
-                await self._complete_outbox(connection, outbox_id)
+                await self._complete_outbox(
+                    connection,
+                    outbox_id,
+                    fencing_token=fencing_token,
+                )
             return "ignored"
         try:
             extraction = await self._extractor.extract(event)
@@ -418,29 +509,87 @@ class PostgresMemoryCatalog:
                     outcome="compiled",
                     extractor_version=extraction.extractor_version,
                 )
-                await self._complete_outbox(connection, outbox_id)
+                await self._complete_outbox(
+                    connection,
+                    outbox_id,
+                    fencing_token=fencing_token,
+                )
             return "compiled"
         except Exception as exc:
-            await self._fail_outbox(account_id, outbox_id, type(exc).__name__)
+            await self._fail_outbox(
+                account_id,
+                outbox_id,
+                fencing_token=fencing_token,
+                attempts=attempts,
+                max_attempts=max_attempts,
+                error_code=type(exc).__name__,
+            )
             return "failed"
+
+    async def _project_capture_evidence(self, event: EvidenceEvent) -> None:
+        candidate = event.payload.get("memory_capture_candidate_v1")
+        if candidate is None:
+            return
+        if not isinstance(candidate, dict):
+            raise ValueError("memory capture candidate must be an object")
+        projector = self._capture_evidence_projector
+        if projector is None:
+            raise RuntimeError("memory capture evidence projector is unavailable")
+        # False is an explicit stale/forged candidate decision.  The Archive
+        # event is still valid evidence and its normal projections continue;
+        # only the durable Memory capture authority is withheld.
+        await projector(event)
+
+    def _retry_delay_s(self, outbox_id: uuid.UUID, attempts: int) -> float:
+        exponent = min(max(attempts - 1, 0), 20)
+        base = min(
+            self._outbox_retry_max_s,
+            self._outbox_retry_base_s * (2**exponent),
+        )
+        digest = sha256(f"{outbox_id}:{attempts}".encode()).digest()
+        jitter = 0.75 + (int.from_bytes(digest[:2], "big") / 65535) * 0.5
+        # Keep the adapter boundary concrete: asyncpg/third-party stubs can
+        # otherwise widen ``min`` to Any even though all configured values
+        # are validated floats at construction time.
+        return float(min(self._outbox_retry_max_s, base * jitter))
 
     async def _fail_outbox(
         self,
         account_id: str,
         outbox_id: uuid.UUID,
+        *,
+        fencing_token: int,
+        attempts: int,
+        max_attempts: int,
         error_code: str,
     ) -> None:
         pool = await self._ready_pool()
+        dead_letter = attempts >= max_attempts
+        retry_delay_s = self._retry_delay_s(outbox_id, attempts)
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, account_id)
             await connection.execute(
                 """
                 UPDATE archive_processing_outbox
-                SET status = 'failed', completed_at = NULL, last_error_code = $1
+                SET status = CASE WHEN $4 THEN 'dead' ELSE 'failed' END,
+                    available_at = CASE
+                        WHEN $4 THEN available_at
+                        ELSE now() + ($5 * interval '1 second')
+                    END,
+                    locked_until = NULL,
+                    worker_id = NULL,
+                    completed_at = NULL,
+                    dead_lettered_at = CASE WHEN $4 THEN now() ELSE NULL END,
+                    last_error_code = $1
                 WHERE outbox_id = $2
+                  AND status = 'processing'
+                  AND fencing_token = $3
                 """,
                 error_code,
                 outbox_id,
+                fencing_token,
+                dead_letter,
+                retry_delay_s,
             )
 
     async def _write_extraction(
@@ -1176,15 +1325,28 @@ class PostgresMemoryCatalog:
     async def _complete_outbox(
         connection: asyncpg.Connection,
         outbox_id: uuid.UUID,
+        *,
+        fencing_token: int,
     ) -> None:
-        await connection.execute(
+        updated = await connection.fetchval(
             """
             UPDATE archive_processing_outbox
-            SET status = 'completed', completed_at = now(), last_error_code = NULL
+            SET status = 'completed',
+                locked_until = NULL,
+                worker_id = NULL,
+                completed_at = now(),
+                dead_lettered_at = NULL,
+                last_error_code = NULL
             WHERE outbox_id = $1
+              AND status = 'processing'
+              AND fencing_token = $2
+            RETURNING 1
             """,
             outbox_id,
+            fencing_token,
         )
+        if updated != 1:
+            raise OutboxLeaseLostError("memory compiler outbox lease was lost")
 
     async def search(self, query: MemorySearchQuery) -> MemorySearchResult:
         return await self._search(query, confirmed_only=False)

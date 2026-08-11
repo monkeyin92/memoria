@@ -108,6 +108,19 @@ class ContextManager:
         )
         self.rolling_summary = combined[-self.max_rolling_summary_chars :]
 
+    def clear_turns(self) -> None:
+        """Drop the whole working context (subject-switch fence, PR-08)."""
+
+        self.turns = []
+
+    def reset_identity(self) -> None:
+        """Atomic identity reset: turns and both summaries belong to the old
+        subject and must never leak into the new one (P0-3)."""
+
+        self.turns = []
+        self.rolling_summary = ""
+        self.business_summary = ""
+
     def context_summary(self) -> str:
         parts = []
         if self.business_summary:

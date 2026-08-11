@@ -118,21 +118,31 @@
     <text class="student-notice-copy">只分享一周的情绪趋势、学习时长和话题分布，你和伙伴聊过的具体内容不会出现在小结里。</text>
   </view>
 
-  <view wx:if="{{canUseAdultCapabilities || isMinor}}" class="card nav-card guardian-entry" bindtap="openGuardianSummary">
-    <view><text class="settings-title">{{isMinor ? '学生模式与监护授权' : '家长成长小结'}}</text><text class="setting-desc">{{isMinor ? '确认家长绑定并了解已授权的内容' : '查看已绑定孩子一周的情绪趋势、学习时长和话题分布'}}</text></view>
+  <view wx:if="{{guardianEntryAllowed}}" class="card nav-card guardian-entry" bindtap="openGuardianSummary">
+    <view><text class="settings-title">成长小结与监护授权</text><text class="setting-desc">查看已授权孩子的每周聚合小结与监护关系</text></view>
     <view class="nav-arrow"><text class="nav-arrow-icon">›</text></view>
   </view>
-  <view wx:if="{{canUseAdultCapabilities}}" class="card nav-card" bindtap="openSpeakerEnrollment">
+  <view wx:if="{{speakerEntryAllowed}}" class="card nav-card" bindtap="openSpeakerEnrollment">
     <view><text class="settings-title">主人声纹</text><text class="setting-desc">用自然、轻声、带笑和稳重语气各录一次，提高边缘场景识别稳定性</text></view>
     <view class="nav-arrow"><text class="nav-arrow-icon">›</text></view>
   </view>
-  <view wx:if="{{canUseAdultCapabilities}}" class="card nav-card" bindtap="openDigitalSelf">
+  <view wx:if="{{digitalSelfEntryAllowed}}" class="card nav-card" bindtap="openDigitalSelf">
     <view><text class="settings-title">数字分身成长</text><text class="setting-desc">查看服务端的成长维度、Persona 与版本状态</text></view>
     <view class="nav-arrow"><text class="nav-arrow-icon">›</text></view>
   </view>
-  <view class="card nav-card" bindtap="openPrivacy">
+  <view class="card nav-card" bindtap="openDevice">
+    <view><text class="settings-title">设备与家庭成员</text><text class="setting-desc">查看设备绑定、确认当前使用者，敏感能力由服务端按当前主体授权</text></view>
+    <view class="nav-arrow"><text class="nav-arrow-icon">›</text></view>
+  </view>
+  <view wx:if="{{rawVoiceEntryAllowed}}" class="card nav-card" bindtap="openPrivacy">
     <view><text class="settings-title">隐私与原始语音授权</text><text class="setting-desc">查看或撤回可选的原始音频归档授权</text></view>
     <view class="nav-arrow"><text class="nav-arrow-icon">›</text></view>
+  </view>
+
+  <view wx:if="{{profileUnavailableReason}}" class="card capability-unavailable-card">
+    <text class="capability-unavailable-title">敏感能力入口已关闭</text>
+    <text class="setting-desc">{{profileUnavailableReason}}</text>
+    <text class="setting-desc">能力只由服务端按当前主体授权，不会按本地年龄开放。</text>
   </view>
 
   <view class="card">

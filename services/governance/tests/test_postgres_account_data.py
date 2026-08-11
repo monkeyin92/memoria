@@ -62,6 +62,28 @@ async def test_postgres_account_repository_exports_and_deletes_every_projection(
                 '{"text":"postgres governance"}',
                 "a" * 64,
             )
+            outbox_id = uuid.uuid4()
+            await connection.execute(
+                """
+                INSERT INTO archive_processing_outbox (
+                    outbox_id, account_id, event_id, task_type, status
+                ) VALUES ($1, $2, $3, 'compile_memory', 'dead')
+                """,
+                outbox_id,
+                current_account,
+                current_event,
+            )
+            await connection.execute(
+                """
+                INSERT INTO archive_outbox_replay_audit (
+                    replay_id, outbox_id, account_id, actor_id, reason,
+                    previous_attempts
+                ) VALUES ($1, $2, $3, 'governance-test', 'account lifecycle', 8)
+                """,
+                uuid.uuid4(),
+                outbox_id,
+                current_account,
+            )
             await connection.execute(
                 """
                 INSERT INTO person_entities (
@@ -319,6 +341,8 @@ async def test_postgres_account_repository_exports_and_deletes_every_projection(
         assert "是否完整删除派生模型" in serialized
         assert "温和坦诚" in serialized
         assert "self_model_command_receipts" in serialized
+        assert "archive_outbox_replay_audit" in serialized
+        assert "account lifecycle" in serialized
         assert "provider_voice_id" not in serialized
         assert "template_ciphertext" not in serialized
         references = await archive.object_references(account_id)
@@ -346,6 +370,20 @@ async def test_postgres_account_repository_exports_and_deletes_every_projection(
         assert (
             await connection.fetchval(
                 "SELECT count(*) FROM archive_evidence_events WHERE account_id = $1",
+                other_id,
+            )
+            == 1
+        )
+        assert (
+            await connection.fetchval(
+                "SELECT count(*) FROM archive_outbox_replay_audit WHERE account_id = $1",
+                account_id,
+            )
+            == 0
+        )
+        assert (
+            await connection.fetchval(
+                "SELECT count(*) FROM archive_outbox_replay_audit WHERE account_id = $1",
                 other_id,
             )
             == 1

@@ -49,6 +49,7 @@ from services.agent.src.response_planner_client import (
     ResponseProvenance,
     ResponseVoiceTarget,
 )
+from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 from services.common.miniprogram_gateway_ticket import (
     MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
@@ -70,16 +71,7 @@ async def _collect_strings(source: AsyncIterator[str]) -> list[str]:
 @pytest.mark.asyncio
 async def test_agent_prepares_and_streams_a_media_turn_through_the_response_plan() -> None:
     runtime = DuplexRuntime.create(session_id="media-agent-session")
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=False,
-            shadow_low_sensitivity_persona=False,
-        )
-    )
+    bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=True, voice_profile=False, shadow_low_sensitivity_persona=False)
     runtime.authenticate_text_owner()
 
     class Planner:
@@ -129,27 +121,20 @@ async def test_agent_prepares_and_streams_a_media_turn_through_the_response_plan
 @pytest.mark.asyncio
 async def test_response_plan_receives_bounded_owner_recall_context_only() -> None:
     runtime = DuplexRuntime.create(session_id="response-plan-recall-context")
-    policy = ModePolicy.companion_for_test(
-        policy_version="test-policy",
-        private_context=True,
-        owner_evidence=True,
-        tools=True,
-        voice_profile=False,
-        shadow_low_sensitivity_persona=False,
-    )
-    runtime.set_mode_policy(policy)
+    bind_owner_policy(runtime, voice_profile=False)
     runtime.authenticate_text_owner()
-    runtime.orchestrator.context_snapshots.seed_initial(
+    fresh_snapshot = runtime.orchestrator.context_snapshots.rebind_identity(
         runtime.session_id,
         ContextSnapshotDraft(
             recent_committed_turns=tuple(
                 ContextTurn("user", f"第{index}轮提到的安排", "owner") for index in range(1, 7)
             ),
-            relationship_policy=policy,
+            relationship_policy=runtime.mode_policy,
             tool_permission=True,
             speaker_class="owner",
         ),
     )
+    runtime.orchestrator.bind_context_version(runtime.fence, fresh_snapshot.version)
     observed: dict[str, object] = {}
 
     class Planner:
@@ -204,16 +189,7 @@ async def test_response_plan_receives_bounded_owner_recall_context_only() -> Non
 @pytest.mark.asyncio
 async def test_media_agent_streams_the_configured_llm_without_a_livekit_session() -> None:
     runtime = DuplexRuntime.create(session_id="standalone-media-agent")
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=False,
-            shadow_low_sensitivity_persona=False,
-        )
-    )
+    bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=True, voice_profile=False, shadow_low_sensitivity_persona=False)
     runtime.authenticate_text_owner()
 
     class Planner:
@@ -281,16 +257,7 @@ async def test_media_agent_streams_the_configured_llm_without_a_livekit_session(
 async def test_authenticated_text_input_uses_owner_policy_and_disables_audio_output() -> None:
     runtime = DuplexRuntime.create(session_id="text-session")
     runtime.tts = SimpleNamespace()
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=True,
-            shadow_low_sensitivity_persona=False,
-        )
-    )
+    bind_owner_policy(runtime)
     published: list[dict[str, Any]] = []
 
     async def publish(event: dict[str, Any]) -> None:
@@ -636,16 +603,7 @@ async def test_livekit_tool_executes_only_through_registered_coordinator_handler
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = DuplexRuntime.create(session_id="coordinated-livekit-tool")
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=False,
-            shadow_low_sensitivity_persona=False,
-        )
-    )
+    bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=True, voice_profile=False, shadow_low_sensitivity_persona=False)
     runtime._speaker_class = "owner"
     await runtime.on_turn_committed("查询南京档案")
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
@@ -721,18 +679,19 @@ def test_livekit_high_risk_tool_is_not_exposed_without_explicit_confirmation() -
     ) -> str:
         return "should not run"
 
-    runtime.orchestrator.task_manager.register(
-        agent_mod.ToolSpec(
-            name="send_message",
-            description="发送消息",
-            input_schema={"type": "object"},
-            cancellable=True,
-            idempotent=False,
-            timeout_s=1,
-            side_effect_policy="high_risk",
-        ),
-        handler,
-    )
+    with pytest.raises(PermissionError):
+        runtime.orchestrator.task_manager.register(
+            agent_mod.ToolSpec(
+                name="send_message",
+                description="发送消息",
+                input_schema={"type": "object"},
+                cancellable=True,
+                idempotent=False,
+                timeout_s=1,
+                side_effect_policy="high_risk",
+            ),
+            handler,
+        )
 
     async def direct_tool(_raw_arguments: dict[str, object]) -> str:
         return "should not run"
@@ -752,16 +711,7 @@ def test_livekit_high_risk_tool_is_not_exposed_without_explicit_confirmation() -
 @pytest.mark.asyncio
 async def test_response_plan_capsules_are_frozen_for_the_current_generation() -> None:
     runtime = DuplexRuntime.create(session_id="response-plan-context-snapshot")
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=False,
-            shadow_low_sensitivity_persona=False,
-        )
-    )
+    bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=True, voice_profile=False, shadow_low_sensitivity_persona=False)
     runtime._speaker_class = "owner"
 
     class Planner:
@@ -821,16 +771,7 @@ async def test_response_plan_capsules_are_frozen_for_the_current_generation() ->
 @pytest.mark.asyncio
 async def test_partial_transcript_prefetches_real_context_before_commit() -> None:
     runtime = DuplexRuntime.create(session_id="context-prefetch-before-commit")
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=False,
-            voice_profile=False,
-            shadow_low_sensitivity_persona=False,
-        )
-    )
+    bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=False, voice_profile=False, shadow_low_sensitivity_persona=False)
     runtime.authenticate_text_owner()
     calls: list[str] = []
 
@@ -878,16 +819,7 @@ async def test_partial_transcript_prefetches_real_context_before_commit() -> Non
 @pytest.mark.asyncio
 async def test_snapshot_build_failure_keeps_call_on_safe_fallback() -> None:
     runtime = DuplexRuntime.create(session_id="snapshot-build-fallback")
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=False,
-            shadow_low_sensitivity_persona=False,
-        )
-    )
+    bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=True, voice_profile=False, shadow_low_sensitivity_persona=False)
     await runtime.on_turn_committed("seed", input_modality="text")
     await asyncio.sleep(0)
     await asyncio.sleep(0)
@@ -1272,16 +1204,7 @@ async def test_media_delegation_uses_public_resolver_without_advancing_outer_tas
 @pytest.mark.asyncio
 async def test_public_weather_lookup_is_available_without_owner_tool_permission() -> None:
     runtime = DuplexRuntime.create(session_id="public-weather-lookup")
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=False,
-            shadow_low_sensitivity_persona=False,
-        )
-    )
+    bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=True, voice_profile=False, shadow_low_sensitivity_persona=False)
     queries: list[str] = []
 
     class Resolver:
@@ -1590,6 +1513,7 @@ async def test_agent_fetches_response_plan_once_per_committed_turn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = DuplexRuntime.create()
+    bind_owner_policy(runtime)
 
     class Message:
         def __init__(self, text: str) -> None:
@@ -1652,16 +1576,7 @@ async def test_companion_voice_turn_reaches_llm_when_guest_filter_is_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = DuplexRuntime.create(session_id="companion-voice-turn")
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=False,
-            owner_evidence=False,
-            tools=False,
-            voice_profile=False,
-            shadow_low_sensitivity_persona=False,
-        )
-    )
+    bind_owner_policy(runtime, policy_version="test-policy", private_context=False, owner_evidence=False, tools=False, voice_profile=False, shadow_low_sensitivity_persona=False)
     runtime.set_reject_non_owner_voice(False)
     runtime.set_target_speaker_focus(True)
     runtime.tts = SimpleNamespace(
@@ -1729,6 +1644,7 @@ async def test_companion_voice_turn_reaches_llm_when_guest_filter_is_disabled(
 @pytest.mark.asyncio
 async def test_agent_drops_response_plan_when_fence_changes_during_fetch() -> None:
     runtime = DuplexRuntime.create()
+    bind_owner_policy(runtime)
 
     class Message:
         def text_content(self) -> str:
@@ -1785,16 +1701,7 @@ async def test_planner_failure_fallback_is_current_turn_only_and_disables_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = DuplexRuntime.create(session_id="fallback-current-only")
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=False,
-            shadow_low_sensitivity_persona=False,
-        )
-    )
+    bind_owner_policy(runtime, policy_version="test-policy", private_context=True, owner_evidence=True, tools=True, voice_profile=False, shadow_low_sensitivity_persona=False)
 
     class Message:
         def text_content(self) -> str:
@@ -2104,16 +2011,7 @@ async def test_non_preemptive_turn_commits_fence_before_first_llm_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = DuplexRuntime.create()
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=False,
-            owner_evidence=False,
-            tools=False,
-            voice_profile=False,
-            shadow_low_sensitivity_persona=False,
-        )
-    )
+    bind_owner_policy(runtime, policy_version="test-policy", private_context=False, owner_evidence=False, tools=False, voice_profile=False, shadow_low_sensitivity_persona=False)
     await runtime.orchestrator.ready()
     agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
 
@@ -3144,7 +3042,7 @@ class _FakeSession(_Emitter):
 async def test_entrypoint_routes_control_playback_and_ui_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from services.agent.src import mode_policy_client
+    from services.agent.src import mode_policy_client, policy_runtime_wiring
     from services.agent.src.mode_policy_client import ModePolicy
     from services.agent.src.providers import deepseek, doubao_tts, funasr_stt, vosk_kws
 
@@ -3222,6 +3120,7 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     monkeypatch.setattr(deepseek, "DeepSeekConfig", FakeDeepConfig)
     monkeypatch.setattr(deepseek, "DeepSeekClient", FakeDeepClient)
     monkeypatch.setattr(mode_policy_client, "ModePolicyClient", FakeModePolicyClient)
+    monkeypatch.setattr(policy_runtime_wiring, "ModePolicyClient", FakeModePolicyClient)
     monkeypatch.setattr(agent_mod.openai, "LLM", lambda **kwargs: SimpleNamespace(**kwargs))
     monkeypatch.setattr(agent_mod, "AgentSession", _FakeSession)
     session_builds: list[dict[str, Any]] = []

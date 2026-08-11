@@ -1,6 +1,28 @@
 # 项目交接
 
-## 当前状态（2026-08-09）
+## 当前状态（2026-08-11）
+
+### 多主体整改本地工作区（未提交、未推送、未部署）
+
+- 《Memoria 多用户场景产品策略与架构开发调整方案》PR-01~PR-17 的主体、
+  绑定、关系、Runtime Profile、Session epoch、Policy V2、Memory Scope、Tutor、
+  Notification、Device Fleet 与 PostgreSQL RLS 软件主体已落入当前 dirty worktree。
+- 本轮完成 Identity FORCE RLS、Guardian 核心表 actor/subject RLS、Policy
+  nullable-subject receipt scope、Session action subject fence、Notification 写入 actor
+  防伪与主体本人读取语义、Device Fleet actor fence，以及 Agent action-policy
+  装配；Agent 策略装配已从 `agent.py` 抽离，模块预算保持 `3426`。
+- PR-10/12/14 的仓库软件闭环已补齐：Agent 通过生产 HTTP
+  `TransactionalToolEffectCommitPort` 提交/对账 Session Runtime 持久化 intent/outbox；
+  Memory capture 由 Control 生产 authority 装配和 Archive canonical evidence projector
+  驱动同事务写入；家庭共享由生产 executor 完成不同主体 propose/confirm/promotion、
+  object/withdraw 与回滚。缺配置或 authority 时仍 fail-closed，不回退 legacy 写入。
+- 本地证据：全部服务测试目录与所有真实 PostgreSQL 合约文件通过（pgvector 专用
+  文件使用 pgvector 0.8.1/PostgreSQL 17，其余使用 PostgreSQL 16）；strict mypy
+  `380` 个源码文件通过；H5 `372` 项测试和 production build、小程序 `180` 项测试和
+  JS 语法检查通过；scripts 测试、canonical 合同、模块预算、Ruff、compileall 与
+  `git diff --check` 通过。以上均不是生产迁移、外部副作用送达、真实通知或真机证据。
+- 详细状态以 `docs/architecture/multi-subject-pr-plan.md` 的
+  “2026-08-11 本地实现状态”为准；不再新建平行会话文档。
 
 ### 学生线本地工作区（未提交、未部署、未发布）
 
@@ -53,6 +75,12 @@
 
 ## 仍需完成
 
+- 多主体能力上线前必须先做生产备份和 forward-only schema dry-run，配置并验证
+  Policy/Session/Memory 内部 token、Redis/outbox、角色权限与 readiness，再执行回滚演练；
+  当前 dirty worktree 未提交、未推送、未部署，线上仍是旧基线。
+- `TransactionalToolEffectCommitPort` 已保证本地持久化、幂等和 worker 领取合同，但仓库
+  当前没有具体第三方业务工具/投递 worker；只有在明确业务动作和供应商后才能实现并验收
+  外部 delivery，不能把 outbox completed 或单测通过表述为第三方副作用已发生。
 - 先完成学生线全部外部门禁并把证据写入 `docs/acceptance/` / `docs/releases/`；当前危机通知只有本地
   outbox 与家长页提醒，不能宣称微信订阅消息已送达，也不能用自动化代替真实 iOS/Android 声学验收。
 - 在任何学生数据进入生产前，先执行 guardian forward-only 升级，配置真实远端备份 endpoint，验证

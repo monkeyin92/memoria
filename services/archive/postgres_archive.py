@@ -18,6 +18,7 @@ from services.archive.domain import (
     EvidenceNotFoundError,
     IdempotencyConflictError,
     MemoryReview,
+    OutboxReplayResult,
     RawVoiceConsent,
     RawVoiceConsentRequiredError,
     RawVoiceRetentionPolicy,
@@ -29,10 +30,13 @@ from services.archive.object_store import ObjectRef
 
 
 class PostgresLifeArchive:
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, outbox_max_attempts: int = 8) -> None:
         if not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("archive DSN must use PostgreSQL")
+        if not 1 <= outbox_max_attempts <= 100:
+            raise ValueError("archive outbox max attempts must be between 1 and 100")
         self._dsn = dsn
+        self._outbox_max_attempts = outbox_max_attempts
         self._pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
@@ -502,12 +506,13 @@ class PostgresLifeArchive:
             await connection.execute(
                 """
                 INSERT INTO archive_processing_outbox (
-                    outbox_id, account_id, event_id, task_type
-                ) VALUES ($1, $2, $3, 'compile_evidence')
+                    outbox_id, account_id, event_id, task_type, max_attempts
+                ) VALUES ($1, $2, $3, 'compile_evidence', $4)
                 """,
                 outbox_id,
                 event.account_id,
                 event.event_id,
+                self._outbox_max_attempts,
             )
             return RecordResult(
                 event_id=event.event_id,
@@ -537,6 +542,92 @@ class PostgresLifeArchive:
             outbox_id=str(existing["outbox_id"]),
             recorded_at=cast(datetime, existing["recorded_at"]),
             duplicate=True,
+        )
+
+    async def replay_dead_letter(
+        self,
+        *,
+        account_id: str,
+        outbox_id: str,
+        actor_id: str,
+        reason: str,
+    ) -> OutboxReplayResult:
+        """Requeue one dead-lettered compile task with an account-scoped audit record."""
+
+        if not account_id.strip() or not actor_id.strip() or not reason.strip():
+            raise ValueError("outbox replay requires account_id, actor_id and reason")
+        try:
+            parsed_outbox_id = uuid.UUID(outbox_id)
+        except ValueError as exc:
+            raise ValueError("outbox_id must be a UUID") from exc
+        if len(actor_id) > 128 or len(reason) > 512:
+            raise ValueError("outbox replay actor or reason is too long")
+
+        replay_id = uuid.uuid4()
+        pool = await self._ready_pool()
+        async with pool.acquire() as connection, connection.transaction():
+            await self._scope(connection, account_id)
+            row = await connection.fetchrow(
+                """
+                SELECT account_id, status, attempts, replay_count, last_error_code
+                FROM archive_processing_outbox
+                WHERE outbox_id = $1
+                FOR UPDATE
+                """,
+                parsed_outbox_id,
+            )
+            if row is None:
+                raise EvidenceNotFoundError("archive outbox item was not found")
+            if str(row["status"]) != "dead":
+                raise IdempotencyConflictError(
+                    "archive outbox item is not in the dead-letter state"
+                )
+            previous_attempts = int(row["attempts"])
+            replayed_at = cast(
+                datetime,
+                await connection.fetchval(
+                    """
+                    INSERT INTO archive_outbox_replay_audit (
+                        replay_id, outbox_id, account_id, actor_id, reason,
+                        previous_attempts, previous_error_code
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    RETURNING replayed_at
+                    """,
+                    replay_id,
+                    parsed_outbox_id,
+                    account_id,
+                    actor_id,
+                    reason,
+                    previous_attempts,
+                    row["last_error_code"],
+                ),
+            )
+            updated = await connection.fetchrow(
+                """
+                UPDATE archive_processing_outbox
+                SET status = 'pending',
+                    attempts = 0,
+                    available_at = now(),
+                    locked_until = NULL,
+                    worker_id = NULL,
+                    completed_at = NULL,
+                    dead_lettered_at = NULL,
+                    replay_count = replay_count + 1,
+                    last_error_code = NULL
+                WHERE outbox_id = $1 AND status = 'dead'
+                RETURNING replay_count
+                """,
+                parsed_outbox_id,
+            )
+            if updated is None:  # pragma: no cover - row is locked in this transaction
+                raise IdempotencyConflictError("archive outbox replay lost its state fence")
+        return OutboxReplayResult(
+            outbox_id=str(parsed_outbox_id),
+            account_id=account_id,
+            replay_id=str(replay_id),
+            replay_count=int(updated["replay_count"]),
+            previous_attempts=previous_attempts,
+            replayed_at=replayed_at,
         )
 
     async def context(self, query: ContextQuery) -> ContextBundle:

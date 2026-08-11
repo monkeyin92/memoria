@@ -1,0 +1,187 @@
+<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
+
+<view class="page-shell">
+  <text class="eyebrow">首次绑定</text>
+  <text class="page-title">让这台机器人陪你</text>
+  <text class="page-subtitle">先告诉它主要想陪谁；之后每次对话仍会确认是谁在使用，敏感能力由服务端按当前主体授权。</text>
+
+  <!-- 步骤 1：设备码 -->
+  <block wx:if="{{step === 'claim'}}">
+    <view class="card">
+      <text class="settings-title">设备码</text>
+      <text class="setting-desc">扫描机器人上的二维码，或手动输入设备码。</text>
+      <input class="field-input bind-token-input" value="{{deviceClaimToken}}" placeholder="例如 dev-XXXX-XXXX" placeholder-class="field-placeholder" bindinput="onDeviceTokenInput" />
+      <view class="button-row bind-button-row">
+        <button class="secondary-button bind-scan-button" loading="{{scanning}}" bindtap="scanDeviceCode">扫码</button>
+        <button class="primary-button bind-next-button" bindtap="goToModeStep">下一步</button>
+      </view>
+      <text wx:if="{{error}}" class="error-text">{{error}}</text>
+    </view>
+  </block>
+
+  <!-- 步骤 2：四分流 -->
+  <block wx:if="{{step === 'mode'}}">
+    <view wx:for="{{modeCards}}" wx:key="id" class="card mode-card" data-mode="{{item.id}}" bindtap="chooseMode">
+      <view class="mode-card-head">
+        <text class="mode-card-title">{{item.title}}</text>
+        <text class="mode-card-tagline">{{item.tagline}}</text>
+      </view>
+      <text class="mode-card-desc">{{item.description}}</text>
+    </view>
+    <text class="mode-footnote">四种场景会建立不同的主体档案、关系与记忆空间；后续都可以在“设备与成员”中修改。</text>
+  </block>
+
+  <!-- 步骤 3：按场景采集最小必要信息 -->
+  <block wx:if="{{step === 'form'}}">
+    <view class="card">
+      <text class="settings-title">{{modeMeta.title}} · 基本信息</text>
+
+      <!-- A. 给孩子使用 -->
+      <block wx:if="{{declaredMode === 'parent_for_child'}}">
+        <picker range="{{subjectSourceOptions}}" range-key="label" value="{{form.subjectSource === 'existing' ? 1 : 0}}" bindchange="onSubjectSourceChange">
+          <view class="picker-row"><text class="picker-label">孩子档案</text><text class="picker-value">{{form.subjectSource === 'existing' ? '使用已有档案' : '新建档案'}}</text></view>
+        </picker>
+        <picker wx:if="{{form.subjectSource === 'existing' && existingSubjectOptions.length > 0}}" range="{{existingSubjectOptions}}" range-key="label" value="{{form.existingSubjectIndex}}" bindchange="onExistingSubjectChange">
+          <view class="picker-row"><text class="picker-label">选择孩子</text><text class="picker-value">{{existingSubjectOptions[form.existingSubjectIndex].label}}</text></view>
+        </picker>
+        <input wx:if="{{form.subjectSource === 'new'}}" class="field-input" value="{{form.childNickname}}" placeholder="孩子的昵称" placeholder-class="field-placeholder" data-key="childNickname" bindinput="onFieldInput" />
+        <picker range="{{ageBands}}" range-key="label" value="{{ageBandIndex}}" bindchange="onAgeBandChange">
+          <view class="picker-row"><text class="picker-label">年龄段</text><text class="picker-value">{{ageBands[ageBandIndex].label}}</text></view>
+        </picker>
+        <view class="setting-row">
+          <view><text class="setting-name">学习指导</text><text class="setting-desc">先引导步骤，不直接代做作业</text></view>
+          <switch checked="{{form.tutorEnabled}}" data-key="tutorEnabled" bindchange="onSwitch" color="#22e5ff" />
+        </view>
+        <view class="setting-row">
+          <view><text class="setting-name">英语口语陪练</text><text class="setting-desc">开口练习与即时反馈</text></view>
+          <switch checked="{{form.englishPracticeEnabled}}" data-key="englishPracticeEnabled" bindchange="onSwitch" color="#22e5ff" />
+        </view>
+        <picker range="{{sessionMinuteOptions}}" value="{{sessionMinuteIndex}}" bindchange="onSessionMinutesChange">
+          <view class="picker-row"><text class="picker-label">单次使用时长</text><text class="picker-value">{{sessionMinuteOptions[sessionMinuteIndex]}} 分钟</text></view>
+        </picker>
+        <view class="quiet-hours-row">
+          <picker mode="time" value="{{form.quietHoursStart}}" bindchange="onQuietStartChange">
+            <view class="picker-row"><text class="picker-label">夜间休息开始</text><text class="picker-value">{{form.quietHoursStart}}</text></view>
+          </picker>
+          <picker mode="time" value="{{form.quietHoursEnd}}" bindchange="onQuietEndChange">
+            <view class="picker-row"><text class="picker-label">结束</text><text class="picker-value">{{form.quietHoursEnd}}</text></view>
+          </picker>
+        </view>
+        <text class="form-note">孩子的年龄证据与监护关系由服务端验证；学习时长、夜间时段与成长记录规则绑定儿童策略，人格无法覆盖。</text>
+      </block>
+
+      <!-- B. 给自己使用 -->
+      <block wx:if="{{declaredMode === 'self_use'}}">
+        <input class="field-input" value="{{form.selfNickname}}" placeholder="怎么称呼你（可选）" placeholder-class="field-placeholder" data-key="selfNickname" bindinput="onFieldInput" />
+        <picker range="{{memoryLevelOptions}}" range-key="label" value="{{form.memoryLevelIndex}}" data-key="memoryLevelIndex" bindchange="onPickerChange">
+          <view class="picker-row"><text class="picker-label">记忆深度</text><text class="picker-value">{{memoryLevelOptions[form.memoryLevelIndex].label}}</text></view>
+        </picker>
+        <picker range="{{interviewFrequencyOptions}}" range-key="label" value="{{form.interviewFrequencyIndex}}" data-key="interviewFrequencyIndex" bindchange="onPickerChange">
+          <view class="picker-row"><text class="picker-label">主动采访</text><text class="picker-value">{{interviewFrequencyOptions[form.interviewFrequencyIndex].label}}</text></view>
+        </picker>
+        <text class="form-note">年龄以服务端验证为准；声音复刻、数字自我与传承等能力默认关闭，需要单独开启。</text>
+      </block>
+
+      <!-- C. 给父母使用 -->
+      <block wx:if="{{declaredMode === 'child_for_parent'}}">
+        <view class="setting-row">
+          <view><text class="setting-name">我是购买者 / 设备管理员</text><text class="setting-desc">管理网络、固件与绑定，不代表可以读取父母私人内容</text></view>
+          <switch checked="{{form.adminIsBuyer}}" data-key="adminIsBuyer" bindchange="onSwitch" color="#22e5ff" />
+        </view>
+        <input class="field-input" value="{{form.parentNickname}}" placeholder="父母怎么称呼（例如：妈妈、爸爸、爷爷）" placeholder-class="field-placeholder" data-key="parentNickname" bindinput="onFieldInput" />
+        <picker range="{{speechSpeedOptions}}" range-key="label" value="{{form.speechSpeedIndex}}" data-key="speechSpeedIndex" bindchange="onPickerChange">
+          <view class="picker-row"><text class="picker-label">语速偏好</text><text class="picker-value">{{speechSpeedOptions[form.speechSpeedIndex].label}}</text></view>
+        </picker>
+        <picker range="{{adminVisibilityOptions}}" range-key="label" value="{{form.adminVisibilityIndex}}" data-key="adminVisibilityIndex" bindchange="onPickerChange">
+          <view class="picker-row"><text class="picker-label">子女可见范围</text><text class="picker-value">{{adminVisibilityOptions[form.adminVisibilityIndex].label}}</text></view>
+        </picker>
+        <view class="notice-card parent-acceptance-notice">
+          <text class="notice-title">服务与数据规则需要父母本人确认</text>
+          <text class="notice-copy">绑定完成后，请让父母本人在设备上确认接受；在此之前你不会代替父母开启人生记录等能力。子女协助管理设备，不等于可以读取父母的聊天和人生故事。</text>
+        </view>
+      </block>
+
+      <!-- D. 家庭共同使用 -->
+      <block wx:if="{{declaredMode === 'family_shared'}}">
+        <input class="field-input" value="{{form.familyName}}" placeholder="家庭空间的名字（例如：我们的小家）" placeholder-class="field-placeholder" data-key="familyName" bindinput="onFieldInput" />
+        <text class="field-label">家庭管理员（你）</text>
+        <input class="field-input" value="{{form.adminNickname}}" disabled placeholder="你的称呼" placeholder-class="field-placeholder" />
+        <view class="setting-row">
+          <view><text class="setting-name">共享同一人格</text><text class="setting-desc">成员档案仍然各自独立</text></view>
+          <switch checked="{{form.sharedPersonaEnabled}}" data-key="sharedPersonaEnabled" bindchange="onSwitch" color="#22e5ff" />
+        </view>
+        <text class="field-label">家庭成员（可稍后邀请更多）</text>
+        <view wx:for="{{form.familyDrafts}}" wx:key="key" class="member-draft">
+          <view class="member-draft-head">
+            <text class="member-draft-index">成员 {{index + 1}}</text>
+            <text wx:if="{{form.familyDrafts.length > 1}}" class="member-remove" data-index="{{index}}" bindtap="removeFamilyMember">移除</text>
+          </view>
+          <input class="field-input" value="{{item.nickname}}" placeholder="称呼（例如：小乐、妈妈）" placeholder-class="field-placeholder" data-index="{{index}}" bindinput="onFamilyMemberInput" />
+          <view class="member-draft-row">
+            <picker range="{{ageBands}}" range-key="label" value="{{item.ageBandIndex}}" data-index="{{index}}" bindchange="onFamilyMemberAgeBand">
+              <view class="picker-row member-age-picker"><text class="picker-label">年龄</text><text class="picker-value">{{item.ageBand === 'adult' ? '成年' : '未成年'}}</text></view>
+            </picker>
+            <view class="setting-row member-minor-switch">
+              <view><text class="setting-name">未成年成员</text><text class="setting-desc">需要对应监护关系</text></view>
+              <switch checked="{{item.isMinor}}" data-index="{{index}}" bindchange="onFamilyMemberMinor" color="#22e5ff" />
+            </view>
+          </view>
+        </view>
+        <button class="secondary-button add-member-button" bindtap="addFamilyMember">+ 添加成员</button>
+        <text class="form-note">每位成员拥有独立主体档案；私人记忆、家庭共享记忆与待确认共同记忆分区管理，家庭管理员不能读取成员私人记忆。成员邀请与确认由服务端完成。</text>
+      </block>
+
+      <text class="field-label">陪伴人格</text>
+      <picker range="{{personaOptions}}" range-key="name" value="{{personaIndex}}" bindchange="onPersonaChange">
+        <view class="picker-row"><text class="picker-label">选择人格</text><text class="picker-value">{{personaOptions[personaIndex].name}}</text></view>
+      </picker>
+
+      <view class="button-row">
+        <button class="secondary-button form-back-button" bindtap="backToMode">返回</button>
+        <button class="primary-button form-next-button" bindtap="goToReview">下一步</button>
+      </view>
+      <text wx:if="{{error}}" class="error-text">{{error}}</text>
+    </view>
+  </block>
+
+  <!-- 步骤 4：确认授权与提交 -->
+  <block wx:if="{{step === 'review'}}">
+    <view class="card">
+      <text class="settings-title">确认一下</text>
+      <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{modeMeta.title}}</text></view>
+      <view class="summary-row"><text class="summary-key">陪伴人格</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
+
+      <text class="field-label">需要你确认的授权</text>
+      <view wx:for="{{offers}}" wx:key="id" class="offer-row {{item.requiresParentSelfAcceptance ? 'offer-disabled' : ''}}" data-id="{{item.id}}" bindtap="{{item.requiresParentSelfAcceptance ? '' : 'toggleOffer'}}">
+        <view class="offer-check {{item.checked ? 'offer-check-on' : ''}}">
+          <text wx:if="{{item.checked}}">✓</text>
+        </view>
+        <view class="offer-copy">
+          <text class="offer-label">{{item.label}}</text>
+          <text class="offer-desc">{{item.description}}</text>
+          <text wx:if="{{item.requiresParentSelfAcceptance}}" class="offer-note">需父母本人确认，绑定后在设备上完成</text>
+        </view>
+      </view>
+      <text class="form-note">敏感能力（声音复刻、数字自我、传承、原始音频等）只有明确勾选才会申请；数字自我、声音复刻与传承默认不勾选。</text>
+
+      <button class="primary-button submit-button" loading="{{submitting}}" bindtap="submitBinding">提交绑定</button>
+      <button class="secondary-button form-back-button" bindtap="backToForm">返回修改</button>
+      <text wx:if="{{error}}" class="error-text">{{error}}</text>
+    </view>
+  </block>
+
+  <!-- 步骤 5：绑定完成 -->
+  <block wx:if="{{step === 'done'}}">
+    <view class="card done-card">
+      <text class="done-badge">绑定完成</text>
+      <text class="done-title">机器人已绑定为「{{manifest.declared_mode === 'parent_for_child' ? '给孩子使用' : manifest.declared_mode === 'self_use' ? '给自己使用' : manifest.declared_mode === 'child_for_parent' ? '给父母使用' : '家庭共同使用'}}」</text>
+      <view class="summary-row"><text class="summary-key">绑定编号</text><text class="summary-value">{{manifest.binding_id}}</text></view>
+      <view class="summary-row"><text class="summary-key">设备</text><text class="summary-value">{{manifest.device_id}}</text></view>
+      <text class="done-note">绑定只是一份版本化合同；以后更换主要使用者会生成新版本，旧的绑定记录会被保留用于审计。</text>
+      <view class="button-row">
+        <button class="secondary-button form-back-button" bindtap="openDevicePage">去设备与成员</button>
+        <button class="primary-button form-next-button" bindtap="goHome">返回首页</button>
+      </view>
+    </view>
+  </block>
+</view>

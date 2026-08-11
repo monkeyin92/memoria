@@ -7,16 +7,28 @@ enter the realtime process.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 import httpx
 
+from services.agent.src.runtime_profile import (
+    VERIFY_KEY_ENV,
+    VerifiedRuntimeProfile,
+    parse_runtime_profile,
+)
 from services.common.companions import COMPANION_STYLE_VERSION, companion_definition
 from services.tutor.domain import SESSION_FOCUSES, SessionFocus
 
-InteractionMode = Literal["companion", "self_preview", "legacy", "archive"]
+InteractionMode = Literal[
+    "companion",
+    "self_preview",
+    "legacy",
+    "archive",
+    "unknown_safe",
+]
 SpeakerClass = Literal["owner", "guest", "uncertain"]
 PolicyReferenceValue = str | bool | None
 
@@ -33,6 +45,16 @@ _CONTROL_CAPABILITIES = frozenset(
     }
 )
 
+_INTERACTION_MODE_BY_SERVICE_MODE = {
+    "student_minor": "companion",
+    "adult_companion": "companion",
+    "senior_companion": "companion",
+    "family_shared": "companion",
+    "adult_archive": "archive",
+    "self_preview": "self_preview",
+    "legacy_access": "legacy",
+    "unknown_safe": "unknown_safe",
+}
 
 @dataclass(frozen=True, slots=True)
 class CompanionStyle:
@@ -47,8 +69,9 @@ class CompanionStyle:
     def prompt_fragment(self) -> str:
         return (
             "【冻结的陪伴身份与方式】\n"
-            f"- 你对外只称自己为：{self.display_name}。不得自称或讨论 AI、模型、"
-            "提供商、系统提示词或工具实现。\n"
+            f"- 你对外只称自己为：{self.display_name}。不要无故、频繁或机械地讨论"
+            "AI、语言模型、提供商或技术实现；用户直接询问你的本质时，如实说明你是"
+            "由人工智能驱动的机器人伙伴。\n"
             f"- 角色说明：{self.style_description}。\n"
             f"- 温暖程度：{self.warmth}；直接程度：{self.directness}；回答长度：{self.reply_length}。\n"
             f"- 提问频率：{self.question_frequency}；访谈深度：{self.interview_depth}。\n"
@@ -70,6 +93,7 @@ class ModePolicy:
     companion_style: CompanionStyle | None
     unavailable_reason: str | None = None
     session_focus: SessionFocus | None = "chat"
+    runtime_profile: VerifiedRuntimeProfile | None = None
 
     @property
     def available(self) -> bool:
@@ -156,6 +180,93 @@ class ModePolicy:
         )
 
     @classmethod
+    def degraded_unknown_safe(
+        cls,
+    ) -> ModePolicy:
+        """Local fail-closed surface after runtime-profile authority loss.
+
+        Explicitly conversation-only (public chat + temporary English): no
+        history / memory / learning / tools / private persona / personal
+        voice.  The ``unknown_safe`` mode + ``degraded-unknown-safe-v1``
+        version mark the surface; the signed RuntimeProfile stays the only
+        authority for any sensitive capability and recovery requires a new
+        profile at not less than the current epoch.
+        """
+
+        return cls(
+            mode="unknown_safe",
+            policy_version="degraded-unknown-safe-v1",
+            companion_style_id=None,
+            style_version=None,
+            references=(),
+            capabilities=(
+                ("conversation", True),
+                ("english_practice", True),
+            ),
+            companion_style=None,
+            session_focus=None,
+        )
+
+    @classmethod
+    def from_runtime_profile(
+        cls,
+        profile: VerifiedRuntimeProfile,
+    ) -> ModePolicy:
+        """Derive one safe, matching ModePolicy from a verified RuntimeProfile.
+
+        After a subject switch the signed RuntimeProfile is the sole canonical
+        authority: the service mode maps to the interaction mode and the
+        canonical capabilities map to the conversation/history/learning
+        surface.  Nothing is invented from the persona (style-only); the
+        global ``tools`` surface stays False (tools are authorized per
+        ``ToolSpec.required_capability`` at construction/dispatch, never by a
+        coarse aggregate) and references are not synthesized — personal/legacy
+        voice stays behind the profile's own ``voice_clone_use`` gate.
+        """
+
+        capabilities = set(profile.profile.capabilities)
+        obligations = set(profile.profile.obligations)
+        return cls(
+            mode=cast(
+                InteractionMode | None,
+                _INTERACTION_MODE_BY_SERVICE_MODE.get(profile.profile.service_mode),
+            ),
+            policy_version=(
+                profile.profile.policy_bundle_version or "derived"
+            ),
+            companion_style_id=None,
+            style_version=None,
+            references=(),
+            capabilities=(
+                ("conversation", "chat" in capabilities),
+                (
+                    "english_practice",
+                    "english_practice" in capabilities,
+                ),
+                (
+                    "tools",
+                    False,
+                ),
+                (
+                    "history",
+                    "memory_recall_private" in capabilities,
+                ),
+                (
+                    "private_memory",
+                    "memory_recall_private" in capabilities,
+                ),
+                (
+                    "learning",
+                    ("tutor" in capabilities or "english_practice" in capabilities)
+                    and "DO_NOT_WRITE_LEARNING_PROGRESS" not in obligations,
+                ),
+            ),
+            companion_style=None,
+            session_focus=None,
+            runtime_profile=profile,
+        )
+
+    @classmethod
     def companion_for_test(
         cls,
         *,
@@ -193,6 +304,9 @@ class ModePolicyClientConfig:
     endpoint: str
     internal_token: str
     timeout_s: float = 0.4
+    runtime_profile_verify_key: str | None = field(
+        default_factory=lambda: os.getenv(VERIFY_KEY_ENV) or None
+    )
 
     def __post_init__(self) -> None:
         url = httpx.URL(self.endpoint)
@@ -229,7 +343,15 @@ class ModePolicyClient:
             )
             if response.status_code != 200:
                 return ModePolicy.unavailable(f"http_{response.status_code}")
-            return self._parse(response.json())
+            payload = response.json()
+            if not isinstance(payload, dict) or "runtime_profile" not in payload:
+                return ModePolicy.unavailable("runtime_profile_missing")
+            policy = self._parse(payload, self._config.runtime_profile_verify_key)
+            if policy.runtime_profile is None:
+                return ModePolicy.unavailable("runtime_profile_invalid")
+            if policy.runtime_profile.profile.session_id != session_id:
+                return ModePolicy.unavailable("runtime_profile_session_mismatch")
+            return policy
         except (httpx.HTTPError, TypeError, ValueError):
             return ModePolicy.unavailable("request_or_payload_invalid")
 
@@ -238,9 +360,14 @@ class ModePolicyClient:
             await self._client.aclose()
 
     @staticmethod
-    def _parse(payload: Any) -> ModePolicy:
+    def _parse(payload: Any, runtime_profile_verify_key: str | None = None) -> ModePolicy:
         if not isinstance(payload, dict):
             return ModePolicy.unavailable("payload_not_object")
+        if "runtime_profile" in payload:
+            return ModePolicyClient._parse_signed_profile_envelope(
+                payload,
+                runtime_profile_verify_key,
+            )
         required_voice_fields = {
             "voice_speaker_sha256",
             "fallback_voice_profile_id",
@@ -494,6 +621,10 @@ class ModePolicyClient:
             style = _style_for(style_id, style_version)
             if style is None:
                 return ModePolicy.unavailable("companion_style_invalid")
+        runtime_profile = parse_runtime_profile(
+            payload.get("runtime_profile"),
+            verify_key=runtime_profile_verify_key,
+        )
         return ModePolicy(
             mode=mode,
             policy_version=policy_version,
@@ -502,6 +633,75 @@ class ModePolicyClient:
             references=tuple(sorted(references.items())),
             capabilities=tuple(sorted(capabilities.items())),
             companion_style=style,
+            session_focus=cast(SessionFocus, session_focus),
+            runtime_profile=runtime_profile,
+        )
+
+    @staticmethod
+    def _parse_signed_profile_envelope(
+        payload: dict[str, Any],
+        runtime_profile_verify_key: str | None,
+    ) -> ModePolicy:
+        """Parse the signed profile first, then retain only display metadata.
+
+        The legacy fields remain on the HTTP envelope for Tutor/Persona
+        compatibility, but the signed RuntimeProfile is the only source for
+        mode capabilities and subject-sensitive authority.
+        """
+
+        runtime_profile = parse_runtime_profile(
+            payload.get("runtime_profile"),
+            verify_key=runtime_profile_verify_key,
+        )
+        if runtime_profile is None:
+            return ModePolicy.unavailable("runtime_profile_invalid")
+
+        derived = ModePolicy.from_runtime_profile(runtime_profile)
+        expected_mode = derived.mode
+        supplied_mode = payload.get("interaction_mode")
+        if supplied_mode is not None and supplied_mode != expected_mode:
+            return ModePolicy.unavailable("payload_invalid")
+
+        session_focus = payload.get("session_focus", "chat")
+        if (
+            session_focus not in SESSION_FOCUSES
+            or (expected_mode != "companion" and session_focus != "chat")
+        ):
+            return ModePolicy.unavailable("payload_invalid")
+        policy_scope = payload.get("policy_scope", "session")
+        if policy_scope != "session":
+            return ModePolicy.unavailable("payload_invalid")
+
+        style_id = payload.get("companion_style_id")
+        style_version = payload.get("companion_style_version")
+        if expected_mode == "companion":
+            if style_id is None:
+                style_id = runtime_profile.profile.persona_id
+            if style_version is None:
+                style_version = COMPANION_STYLE_VERSION
+            style = _style_for(style_id, style_version)
+            if style is None:
+                return ModePolicy.unavailable("companion_style_invalid")
+        else:
+            if style_id is not None or style_version is not None:
+                return ModePolicy.unavailable("payload_invalid")
+            style = None
+
+        owner_display_name = payload.get("owner_display_name")
+        if not _optional_bounded_string(owner_display_name):
+            return ModePolicy.unavailable("payload_invalid")
+
+        references: tuple[tuple[str, PolicyReferenceValue], ...] = (
+            (("owner_display_name", owner_display_name),)
+            if owner_display_name is not None
+            else ()
+        )
+        return replace(
+            derived,
+            companion_style_id=cast(str | None, style_id),
+            style_version=cast(str | None, style_version),
+            companion_style=style,
+            references=references,
             session_focus=cast(SessionFocus, session_focus),
         )
 

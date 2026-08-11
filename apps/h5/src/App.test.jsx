@@ -9,6 +9,11 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { localDateKey } from "./lib/date.js";
+import {
+  saveBindingManifest,
+  saveCachedRuntimeProfile,
+} from "./lib/multiSubject/bindingManifest.js";
+import { normalizeRuntimeProfileV2 } from "./lib/multiSubject/runtimeProfile.js";
 
 const mocks = vi.hoisted(() => ({
   approveDigitalSelfVersion: vi.fn(),
@@ -45,6 +50,12 @@ const mocks = vi.hoisted(() => ({
   getGrowthOverview: vi.fn().mockResolvedValue({ dimensions: [] }),
   getGrowthTasks: vi.fn().mockResolvedValue({ items: [] }),
   getRawVoiceConsent: vi.fn().mockResolvedValue({ consent: null }),
+  createDeviceBinding: vi.fn(),
+  createDeviceSession: vi.fn(),
+  getDeviceBinding: vi.fn(),
+  getRuntimeProfile: vi.fn().mockResolvedValue(null),
+  resolveSessionSubject: vi.fn().mockResolvedValue(null),
+  setActiveSubject: vi.fn(),
   getProfile: vi.fn(),
   getSelfPreviewCapability: vi.fn().mockResolvedValue({
     status: "blocked",
@@ -125,6 +136,12 @@ vi.mock("./api.js", () => ({
   getGrowthOverview: mocks.getGrowthOverview,
   getGrowthTasks: mocks.getGrowthTasks,
   getRawVoiceConsent: mocks.getRawVoiceConsent,
+  createDeviceBinding: mocks.createDeviceBinding,
+  createDeviceSession: mocks.createDeviceSession,
+  getDeviceBinding: mocks.getDeviceBinding,
+  getRuntimeProfile: mocks.getRuntimeProfile,
+  resolveSessionSubject: mocks.resolveSessionSubject,
+  setActiveSubject: mocks.setActiveSubject,
   getProfile: mocks.getProfile,
   getSelfPreviewCapability: mocks.getSelfPreviewCapability,
   getSelfPreviewSources: mocks.getSelfPreviewSources,
@@ -209,6 +226,150 @@ function voiceState() {
     end: mocks.endVoice,
     reset: mocks.resetVoice,
   };
+}
+
+const HEX64 = "a".repeat(64);
+
+function deviceManifest(overrides = {}) {
+  return {
+    binding_id: "bd-1",
+    device_id: "dev-1",
+    declared_mode: "self_use",
+    binding_version: 1,
+    status: "active",
+    reason: "create",
+    supersedes_binding_id: null,
+    family_space_id: null,
+    account_owner_id: "person-self",
+    device_admin_ids: ["person-self"],
+    primary_subject_ids: ["person-self"],
+    guardian_ids: [],
+    delegate_ids: [],
+    emergency_contact_ids: [],
+    member_ids: [],
+    roles: [
+      { person_id: "person-self", role: "account_owner", permissions: [] },
+      { person_id: "person-self", role: "device_admin", permissions: [] },
+      { person_id: "person-self", role: "primary_subject", permissions: [] },
+    ],
+    service_profile_version: "adult-companion-v1",
+    policy_bundle_version: "policy-adult-v1",
+    consent_snapshot_id: "cs-1",
+    persona_assignment_id: "pa-1",
+    valid_from: "2026-01-01T00:00:00Z",
+    valid_until: null,
+    created_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function signedProfileV2(overrides = {}) {
+  return {
+    signature_schema: "runtime-profile-v2",
+    runtime_profile_id: "rp-1",
+    device_id: "dev-1",
+    session_id: "ses-device",
+    actor_id: "person-self",
+    binding_id: "bd-1",
+    binding_version: 1,
+    active_subject_id: "person-self",
+    subject_revision: 1,
+    subject_category: "adult",
+    age_band: "adult",
+    speaker_state: "confirmed",
+    speaker_confidence: 0.96,
+    service_mode: "adult_companion",
+    persona_assignment_id: "pa-1",
+    persona: {
+      persona_id: "starlight",
+      version: 4,
+      relationship_stage: "familiar",
+    },
+    policy_bundle_version: "adult-companion-v1",
+    capabilities: [
+      "chat",
+      "memory_recall_private",
+      "digital_self_preview",
+      "voice_profile_create",
+      "raw_audio_retention",
+    ],
+    obligations: [],
+    policy_receipt_ids: [],
+    session_epoch: 5,
+    issued_at: "2026-01-01T00:00:00Z",
+    expires_at: "2099-01-01T00:00:00Z",
+    signature: HEX64,
+    ...overrides,
+  };
+}
+
+function defaultResolution(overrides = {}) {
+  return {
+    valid: true,
+    resolution: "confirmed",
+    candidate_subjects: [
+      { person_id: "person-self", display_name: "小忆", confidence: 0.96 },
+    ],
+    temporary_service_mode: "adult_companion",
+    allowed_confirmation_methods: ["app_confirm"],
+    runtime_profile_id: "rp-1",
+    ...overrides,
+  };
+}
+
+/**
+ * 让敏感入口通过展示门禁：保存 canonical 绑定清单 + 提供带会话的 voice
+ * mock + 返回带目标 capabilities 的有效签名 profile。
+ */
+function configureDeviceBinding({
+  capabilities = signedProfileV2().capabilities,
+  profileOverrides = {},
+  resolutionOverrides = {},
+  sessionId = "ses-device",
+  withSession = true,
+  profileStatus = "ok",
+} = {}) {
+  saveBindingManifest(deviceManifest());
+  mocks.resolveSessionSubject.mockResolvedValue({
+    ...defaultResolution(resolutionOverrides),
+    candidate_subjects: [
+      { person_id: "person-self", display_name: "小忆", confidence: 0.96 },
+      { person_id: "person-other", display_name: "另一位家人", confidence: 0.3 },
+    ],
+  });
+  const profile = normalizeRuntimeProfileV2(
+    signedProfileV2({ session_id: sessionId, capabilities, ...profileOverrides }),
+  );
+  if (profileStatus === "unavailable") {
+    const error = new Error("upstream down");
+    error.status = 503;
+    mocks.getRuntimeProfile.mockRejectedValue(error);
+  } else if (profileStatus === "degraded") {
+    mocks.getRuntimeProfile.mockResolvedValue(
+      normalizeRuntimeProfileV2(
+        signedProfileV2({
+          session_id: sessionId,
+          capabilities,
+          expires_at: "2020-01-01T00:00:00Z",
+          ...profileOverrides,
+        }),
+      ),
+    );
+  } else {
+    mocks.getRuntimeProfile.mockResolvedValue(profile);
+  }
+  if (withSession) {
+    mocks.useVoiceSession.mockImplementation(() => ({
+      ...voiceState(),
+      session: {
+        session_id: sessionId,
+        interaction: { interaction_mode: "companion" },
+      },
+    }));
+  } else {
+    // 无活跃会话：把严格校验过的 profile 写入缓存，供展示门禁回退读取。
+    saveCachedRuntimeProfile(profile);
+  }
 }
 
 function activeLegacyGrant(overrides = {}) {
@@ -775,7 +936,11 @@ describe("App identity and profile preferences", () => {
     );
     expect(await screen.findByRole("heading", { name: "我的" }))
       .toBeInTheDocument();
-    expect(screen.getByText("专属凭证保护你的对话")).toBeInTheDocument();
+    // 未绑定设备时敏感入口按 fail-closed 展示可解释提示。
+    expect(
+      screen.getAllByText(/还没有绑定设备，无法取得 Runtime Profile/).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("专属凭证保护你的对话")).not.toBeInTheDocument();
     expect(screen.queryByText("你的对话只属于你")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("switch", { name: /语音回应/ }));
@@ -924,6 +1089,7 @@ describe("App identity and profile preferences", () => {
       account_type: "registered",
       access_token: "token",
     });
+    configureDeviceBinding();
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 
@@ -942,12 +1108,41 @@ describe("App identity and profile preferences", () => {
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
   });
 
+  it("closes sensitive entries and shows unknown_safe when resolution reports an unsafe crowd", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "anonymous-user",
+      account_type: "registered",
+      access_token: "token",
+    });
+    configureDeviceBinding({
+      withSession: false,
+      resolutionOverrides: { temporary_service_mode: "unknown_safe" },
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+
+    expect(
+      await screen.findAllByText(/unknown_safe|多人同时说话/),
+    ).toHaveLength(3);
+    expect(
+      screen.queryByRole("button", { name: /数字心智与声音/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /主人声纹/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/安全模式中/)).toBeInTheDocument();
+  });
+
   it("opens owner voiceprint enrollment directly from My and returns predictably", async () => {
     mocks.bootstrapIdentity.mockResolvedValue({
       user_id: "anonymous-user",
       account_type: "registered",
       access_token: "token",
     });
+    // 声纹录取需要无活跃会话（麦克风独占），门禁走严格写入的缓存 profile。
+    configureDeviceBinding({ withSession: false });
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 
@@ -966,6 +1161,29 @@ describe("App identity and profile preferences", () => {
     fireEvent.click(screen.getByRole("button", { name: "返回我的" }));
     expect(await screen.findByRole("heading", { name: "我的" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
+  });
+
+  it("keeps sensitive entries closed when the cached profile cannot be revalidated (503)", async () => {
+    mocks.bootstrapIdentity.mockResolvedValue({
+      user_id: "registered-user",
+      account_type: "registered",
+      access_token: "token",
+    });
+    // 有严格写入的本地缓存 profile，但服务端刷新 503：绝不能只信缓存。
+    configureDeviceBinding({ withSession: false, profileStatus: "unavailable" });
+    render(<App />);
+    await screen.findByRole("heading", { name: /小忆/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "我的" }));
+    expect(
+      await screen.findAllByText(/服务端暂时无法提供有效的 Runtime Profile/),
+    ).toHaveLength(3);
+    expect(
+      screen.queryByRole("button", { name: /数字心智与声音/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /主人声纹/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("runs an active grantee Legacy session with an opaque grant and no history side effects", async () => {
@@ -1012,6 +1230,7 @@ describe("App identity and profile preferences", () => {
         preview_eligible: true,
       }],
     });
+    configureDeviceBinding({ withSession: false });
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
     await enterLegacyFromMy();
@@ -1092,6 +1311,7 @@ describe("App identity and profile preferences", () => {
         revision: revision + 1,
       }),
     );
+    configureDeviceBinding({ withSession: false });
     mocks.useVoiceSession.mockImplementation((options) => ({
       ...voiceState(),
       session: options.learningTaskId ? {
@@ -1155,6 +1375,7 @@ describe("App identity and profile preferences", () => {
       .mockResolvedValue({
         items: [{ ...naturalTask, status: "active", revision: 1 }],
       });
+    configureDeviceBinding({ withSession: false });
     mocks.useVoiceSession.mockImplementation((options) => ({
       ...voiceState(),
       session: options.learningTaskId ? {
@@ -1210,6 +1431,7 @@ describe("App identity and profile preferences", () => {
         learning_task_id: "another-task",
       } : null,
     }));
+    configureDeviceBinding({ withSession: false });
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 
@@ -1230,6 +1452,7 @@ describe("App identity and profile preferences", () => {
       account_type: "registered",
       access_token: "token",
     });
+    configureDeviceBinding({ withSession: false });
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 
@@ -1257,6 +1480,7 @@ describe("App identity and profile preferences", () => {
       account_type: "registered",
       access_token: "token",
     });
+    configureDeviceBinding({ withSession: false });
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 
@@ -1275,6 +1499,7 @@ describe("App identity and profile preferences", () => {
 
   it("logs out the current device and returns to the account gate", async () => {
     configureActiveLegacyVoice("legacy-session-logout");
+    configureDeviceBinding({ withSession: false });
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
     await enterLegacyFromMy();
@@ -1324,6 +1549,7 @@ describe("App identity and profile preferences", () => {
 
   it("ends realtime voice and returns to the account gate after permanent deletion", async () => {
     configureActiveLegacyVoice("legacy-session-delete");
+    configureDeviceBinding({ withSession: false });
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 
@@ -1596,6 +1822,7 @@ describe("App identity and profile preferences", () => {
         },
       ],
     });
+    configureDeviceBinding({ withSession: false });
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 
@@ -1631,6 +1858,7 @@ describe("App identity and profile preferences", () => {
         },
       ],
     });
+    configureDeviceBinding({ withSession: false });
     render(<App />);
     await screen.findByRole("heading", { name: /小忆/ });
 

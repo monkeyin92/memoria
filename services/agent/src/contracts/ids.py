@@ -8,12 +8,18 @@ from uuid import uuid4
 
 @dataclass(frozen=True, slots=True)
 class GenerationFence:
-    """Complete fence: every async LLM/TTS/tool result must match all fields."""
+    """Complete fence: every async LLM/TTS/tool result must match all fields.
+
+    ``session_epoch`` is the identity/context epoch (remediation doc PR-08):
+    it advances whenever the active subject or runtime profile changes, so a
+    late result produced under a previous subject can never cross the switch.
+    """
 
     session_id: str
     turn_id: int
     generation_id: int
     tool_epoch: int
+    session_epoch: int = 0
 
     def matches(self, other: GenerationFence) -> bool:
         return (
@@ -21,6 +27,7 @@ class GenerationFence:
             and self.turn_id == other.turn_id
             and self.generation_id == other.generation_id
             and self.tool_epoch == other.tool_epoch
+            and self.session_epoch == other.session_epoch
         )
 
     def bump_generation(self) -> GenerationFence:
@@ -29,6 +36,7 @@ class GenerationFence:
             turn_id=self.turn_id,
             generation_id=self.generation_id + 1,
             tool_epoch=self.tool_epoch,
+            session_epoch=self.session_epoch,
         )
 
     def bump_turn(self) -> GenerationFence:
@@ -37,6 +45,7 @@ class GenerationFence:
             turn_id=self.turn_id + 1,
             generation_id=self.generation_id + 1,
             tool_epoch=self.tool_epoch,
+            session_epoch=self.session_epoch,
         )
 
     def bump_tool_epoch(self) -> GenerationFence:
@@ -45,6 +54,20 @@ class GenerationFence:
             turn_id=self.turn_id,
             generation_id=self.generation_id + 1,
             tool_epoch=self.tool_epoch + 1,
+            session_epoch=self.session_epoch,
+        )
+
+    def with_session_epoch(self, epoch: int) -> GenerationFence:
+        """Return the same turn/generation under a new identity epoch."""
+
+        if not isinstance(epoch, int) or isinstance(epoch, bool) or epoch < 0:
+            raise ValueError("session epoch must be a non-negative integer")
+        return GenerationFence(
+            session_id=self.session_id,
+            turn_id=self.turn_id,
+            generation_id=self.generation_id,
+            tool_epoch=self.tool_epoch,
+            session_epoch=epoch,
         )
 
 
@@ -73,6 +96,10 @@ class CancellationContext:
     @property
     def tool_epoch(self) -> int:
         return self.fence.tool_epoch
+
+    @property
+    def session_epoch(self) -> int:
+        return self.fence.session_epoch
 
     def is_current(self, current: GenerationFence | CancellationContext) -> bool:
         other = current.fence if isinstance(current, CancellationContext) else current

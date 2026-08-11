@@ -19,7 +19,6 @@ from services.agent.src.agent import (
     create_runtime_for_tests,
 )
 from services.agent.src.duplex_runtime import DuplexRuntime, KeywordSpotterBinding
-from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.interruption_guard import PlaybackInputDecision
 from services.agent.src.orchestration.speaker_verify import (
     SpeakerGateState,
@@ -35,6 +34,10 @@ from services.agent.src.providers.cosyvoice_tts import CosyVoiceConfig, CosyVoic
 from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
 from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSTT
+from services.agent.tests.unit.runtime_profile_test_helpers import (
+    bind_owner_policy,
+    canonical_wire_payload,
+)
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -240,15 +243,13 @@ async def test_uncertain_user_evidence_carries_shadow_owner_provenance() -> None
         evidence.append(event)
 
     runtime = DuplexRuntime.create(session_id="shadow-persona-session")
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=True,
-            shadow_low_sensitivity_persona=True,
-        )
+    bind_owner_policy(
+        runtime,
+        private_context=True,
+        owner_evidence=True,
+        tools=True,
+        voice_profile=True,
+        shadow_low_sensitivity_persona=True,
     )
     runtime.set_evidence_publisher(_publish)
     await _classify_speaker(runtime, _shadow_speaker_decision(profile_id="shadow-profile-1"))
@@ -2189,9 +2190,189 @@ async def test_runtime_publishes_one_fence_bound_assistant_expression() -> None:
         "turn_id": fence.turn_id,
         "generation_id": fence.generation_id,
         "tool_epoch": fence.tool_epoch,
+        "session_epoch": fence.session_epoch,
+        "device_id": None,
+        "subject_revision": None,
+        "active_subject_id": None,
+        "runtime_profile_id": None,
+        "actor_id": None,
+        "binding_id": None,
+        "binding_version": None,
+        "event_sequence": expressions[0]["event_sequence"],
         "at": "",
     }
     assert isinstance(expressions[0]["at"], str)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_publish_forces_authoritative_envelope_over_forged_fields() -> None:
+    """§11.5: pre-filled session/turn/generation/tool/identity fields in an
+    upstream event are unconditionally overwritten from the event's own fence
+    (or the epoch-0 lifecycle envelope), so a forged identity can never
+    survive publication."""
+
+    runtime = DuplexRuntime.create(session_id="envelope-session")
+    published: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime.set_event_publisher(publish)
+    fence = runtime.fence.bump_generation()
+    runtime._publish(
+        {
+            "type": "assistant_state",
+            "session_id": "evil-session",
+            "session_epoch": 999,
+            "turn_id": 999,
+            "generation_id": 999,
+            "tool_epoch": 999,
+            "active_subject_id": "person_evil",
+            "runtime_profile_id": "rp_evil",
+            "actor_id": "actor_evil",
+            "binding_id": "bind_evil",
+            "binding_version": 999,
+            "device_id": "dev_evil",
+            "subject_revision": 999,
+        },
+        fence=fence,
+    )
+    runtime._publish(
+        {
+            "type": "listener_cue",
+            "session_id": "evil-session",
+            "session_epoch": 7,
+            "turn_id": 7,
+            "generation_id": 7,
+            "tool_epoch": 7,
+            "active_subject_id": "person_evil",
+            "runtime_profile_id": "rp_evil",
+            "device_id": "dev_evil",
+            "subject_revision": 999,
+        }
+    )
+    await asyncio.sleep(0)
+
+    assert len(published) == 2
+    fenced, lifecycle = published
+    assert fenced["session_id"] == "envelope-session"
+    assert fenced["session_epoch"] == fence.session_epoch
+    assert fenced["turn_id"] == fence.turn_id
+    assert fenced["generation_id"] == fence.generation_id
+    assert fenced["tool_epoch"] == fence.tool_epoch
+    assert fenced["active_subject_id"] is None
+    assert fenced["runtime_profile_id"] is None
+    assert fenced["actor_id"] is None
+    assert fenced["binding_id"] is None
+    assert fenced["binding_version"] is None
+    assert fenced["device_id"] is None
+    assert fenced["subject_revision"] is None
+    assert isinstance(fenced["event_sequence"], int)
+    assert lifecycle["session_epoch"] == 0
+    assert lifecycle["turn_id"] == 0
+    assert lifecycle["generation_id"] == 0
+    assert lifecycle["tool_epoch"] == 0
+    assert lifecycle["active_subject_id"] is None
+    assert lifecycle["runtime_profile_id"] is None
+    assert lifecycle["device_id"] is None
+    assert lifecycle["subject_revision"] is None
+    assert lifecycle["session_id"] == "envelope-session"
+    assert isinstance(lifecycle["event_sequence"], int)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_publish_envelope_carries_profile_device_and_subject_revision() -> None:
+    """§11.5: a fenced event carries device_id/subject_revision from the exact
+    signed profile; an epoch-0 lifecycle event carries null identity even when
+    a profile is currently applied (forged pre-filled values are overwritten)."""
+
+    runtime = DuplexRuntime.create(session_id="envelope-profile-session")
+    bind_owner_policy(runtime)
+    published: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime.set_event_publisher(publish)
+    runtime._publish(
+        {
+            "type": "assistant_state",
+            "device_id": "dev_evil",
+            "subject_revision": 999,
+        },
+        fence=runtime.fence,
+    )
+    runtime._publish(
+        {
+            "type": "listener_cue",
+            "device_id": "dev_evil",
+            "subject_revision": 999,
+        }
+    )
+    await asyncio.sleep(0)
+
+    fenced, lifecycle = published
+    assert fenced["session_epoch"] == runtime.fence.session_epoch
+    assert fenced["device_id"] == "dev_01J_test"
+    assert fenced["subject_revision"] == 1
+    assert fenced["active_subject_id"] == "person_owner"
+    assert lifecycle["session_epoch"] == 0
+    assert lifecycle["device_id"] is None
+    assert lifecycle["subject_revision"] is None
+    assert lifecycle["active_subject_id"] is None
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_late_old_epoch_event_keeps_its_own_epoch_identity() -> None:
+    """§11.5: a late event frozen under a pre-switch fence carries its own old
+    epoch and never borrows the newest subject/profile identity."""
+
+    from services.agent.tests.unit.runtime_profile_test_helpers import (
+        TEST_VERIFY_KEY,
+    )
+
+    runtime = DuplexRuntime.create(session_id="late-epoch-session")
+    bind_owner_policy(runtime)
+    published: list[dict[str, object]] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime.set_event_publisher(publish)
+    old_fence = runtime.fence
+    runtime.orchestrator.runtime_profiles.verify_key = TEST_VERIFY_KEY
+    switched = canonical_wire_payload(
+        session_id="late-epoch-session",
+        runtime_profile_id="rp_switched",
+        active_subject_id="person_parent",
+        subject_category="adult",
+        age_band="adult",
+        speaker_state="confirmed",
+        service_mode="adult_companion",
+        session_epoch=2,
+        capabilities=["chat", "tutor", "english_practice"],
+    )
+    applied = runtime.apply_runtime_profile(switched)
+    assert applied is not None
+    assert runtime.fence.session_epoch == 2
+    runtime._publish(
+        {"type": "assistant_state"},
+        fence=old_fence,
+    )
+    await asyncio.sleep(0)
+
+    late = published[0]
+    # The old epoch's profile is void after the switch: no identity is
+    # borrowed from the current subject.
+    assert late["session_epoch"] == 1
+    assert late["turn_id"] == old_fence.turn_id
+    assert late["generation_id"] == old_fence.generation_id
+    assert late["active_subject_id"] is None
+    assert late["runtime_profile_id"] is None
+    assert late["actor_id"] is None
     await runtime.close()
 
 
@@ -2484,6 +2665,65 @@ async def test_listener_cue_uses_an_isolated_cancel_domain_and_never_enters_hist
         event.get("type") == "assistant_state" and event.get("state") == "thinking_silent"
         for event in published
     )
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_delayed_listener_cue_after_identity_switch_is_dropped() -> None:
+    """§11.5: a cue scheduled under one identity epoch must never be tagged
+    with the current subject after a switch — it is dropped, not re-tagged."""
+
+    from services.agent.tests.unit.runtime_profile_test_helpers import (
+        TEST_VERIFY_KEY,
+        bind_owner_policy,
+        canonical_wire_payload,
+    )
+
+    runtime = DuplexRuntime.create(
+        session_id="cue-switch-session", listener_cues_enabled=True
+    )
+    runtime.orchestrator.runtime_profiles.verify_key = TEST_VERIFY_KEY
+    bind_owner_policy(runtime)
+    runtime.cue_scheduler.min_speech_ms = 0
+    runtime.cue_scheduler.pause_ms = 0.05
+    runtime.cue_scheduler.cooldown_ms = 0
+    runtime.set_listener_cue_aec_healthy(True)
+    published: list[dict[str, object]] = []
+    played: list[str] = []
+
+    async def publish(event: dict[str, object]) -> None:
+        published.append(event)
+
+    runtime.set_event_publisher(publish)
+    runtime.set_listener_cue_player(played.append)
+    await runtime.orchestrator.ready()
+    runtime.on_user_voice_started(now_ns=1_000_000_000)
+    runtime.observe_user_transcript(
+        "我还在继续讲这件事",
+        final=False,
+        now_ns=2_100_000_000,
+    )
+    assert runtime.fence.session_epoch == 1
+
+    # Identity switch while the cue's micro-pause is still pending.
+    switched = canonical_wire_payload(
+        session_id="cue-switch-session",
+        runtime_profile_id="rp_cue_switched",
+        active_subject_id="person_parent",
+        subject_category="adult",
+        age_band="adult",
+        speaker_state="confirmed",
+        service_mode="adult_companion",
+        session_epoch=2,
+        capabilities=["chat", "tutor", "english_practice"],
+    )
+    applied = runtime.apply_runtime_profile(switched)
+    assert applied is not None
+    assert runtime.fence.session_epoch == 2
+    await asyncio.sleep(0.12)
+
+    assert played == []
+    assert not any(event.get("type") == "listener_cue" for event in published)
     await runtime.close()
 
 

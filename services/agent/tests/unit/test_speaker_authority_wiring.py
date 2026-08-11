@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 from services.agent.src.duplex_runtime import DuplexRuntime
-from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -27,15 +27,13 @@ def _decision(
 
 
 def _enable_companion_policy(runtime: DuplexRuntime) -> None:
-    runtime.set_mode_policy(
-        ModePolicy.companion_for_test(
-            policy_version="test-policy",
-            private_context=True,
-            owner_evidence=True,
-            tools=True,
-            voice_profile=True,
-            shadow_low_sensitivity_persona=True,
-        )
+    bind_owner_policy(
+        runtime,
+        private_context=True,
+        owner_evidence=True,
+        tools=True,
+        voice_profile=True,
+        shadow_low_sensitivity_persona=True,
     )
 
 

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from services.guardian.domain import (
+    AgeEvidenceStatus,
     BirthYearBand,
     SubjectCategory,
     validate_subject_transition,
@@ -40,10 +41,12 @@ CREATE TABLE IF NOT EXISTS profiles (
     gentle_reminders INTEGER NOT NULL DEFAULT 0 CHECK (gentle_reminders IN (0, 1)),
     reject_non_owner_voice INTEGER NOT NULL DEFAULT 1
         CHECK (reject_non_owner_voice IN (0, 1)),
-    subject_category TEXT NOT NULL DEFAULT 'adult'
-        CHECK (subject_category IN ('adult', 'minor')),
+    subject_category TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (subject_category IN ('unknown', 'minor', 'adult')),
     birth_year_band TEXT NOT NULL DEFAULT 'unknown'
-        CHECK (birth_year_band IN ('unknown', 'under_14', '14_to_17', '18_or_over')),
+        CHECK (birth_year_band IN ('unknown', 'under_14', '14_17', 'adult')),
+    age_evidence_status TEXT NOT NULL DEFAULT 'unverified'
+        CHECK (age_evidence_status IN ('unverified', 'verified', 'disputed')),
     subject_revision INTEGER NOT NULL DEFAULT 0 CHECK (subject_revision >= 0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -267,11 +270,16 @@ _PROFILE_BOOLEAN_COLUMNS = {
 
 _PROFILE_SUBJECT_COLUMNS = {
     "subject_category": (
-        "TEXT NOT NULL DEFAULT 'adult' CHECK (subject_category IN ('adult', 'minor'))"
+        "TEXT NOT NULL DEFAULT 'unknown' "
+        "CHECK (subject_category IN ('unknown', 'minor', 'adult'))"
     ),
     "birth_year_band": (
         "TEXT NOT NULL DEFAULT 'unknown' "
-        "CHECK (birth_year_band IN ('unknown', 'under_14', '14_to_17', '18_or_over'))"
+        "CHECK (birth_year_band IN ('unknown', 'under_14', '14_17', 'adult'))"
+    ),
+    "age_evidence_status": (
+        "TEXT NOT NULL DEFAULT 'unverified' "
+        "CHECK (age_evidence_status IN ('unverified', 'verified', 'disputed'))"
     ),
     "subject_revision": "INTEGER NOT NULL DEFAULT 0 CHECK (subject_revision >= 0)",
 }
@@ -404,6 +412,7 @@ class MemoryStore:
                         WHERE user_id IN (SELECT user_id FROM accounts)
                         """
                     )
+                self._migrate_profile_subject_contract(connection)
                 self._migrate_profile_companion_constraint(connection)
                 message_columns = {
                     str(row[1]) for row in connection.execute("PRAGMA table_info(messages)")
@@ -614,6 +623,114 @@ class MemoryStore:
                         """
                     )
             self._initialized = True
+
+    @staticmethod
+    def _migrate_profile_subject_contract(connection: sqlite3.Connection) -> None:
+        """Quarantine historical default-adult rows and canonicalize age values.
+
+        The former schema could not distinguish an explicitly verified adult
+        from a row created through ``DEFAULT 'adult'``.  The multi-subject
+        contract therefore treats every historical adult row as unverified
+        ``unknown`` until a new age-evidence flow confirms it.  Minor rows keep
+        their fail-closed category while the old age-band spelling is mapped.
+        """
+
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'profiles'"
+        ).fetchone()
+        definition = str(row[0]) if row and row[0] else ""
+        if (
+            "DEFAULT 'unknown'" in definition
+            and "'14_17'" in definition
+            and "'14_to_17'" not in definition
+            and "subject_category IN ('unknown', 'minor', 'adult')" in definition
+        ):
+            return
+        category_pattern = (
+            r"subject_category\s+TEXT\s+NOT\s+NULL\s+DEFAULT\s+'adult'\s+"
+            r"CHECK\s*\(\s*subject_category\s+IN\s*\(\s*'adult'\s*,\s*'minor'\s*\)\s*\)"
+        )
+        category_replacement = (
+            "subject_category TEXT NOT NULL DEFAULT 'unknown' "
+            "CHECK (subject_category IN ('unknown', 'minor', 'adult'))"
+        )
+        migrated_definition, category_replacements = re.subn(
+            category_pattern,
+            category_replacement,
+            definition,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        age_pattern = (
+            r"birth_year_band\s+TEXT\s+NOT\s+NULL\s+DEFAULT\s+'unknown'\s+"
+            r"CHECK\s*\(\s*birth_year_band\s+IN\s*\(\s*'unknown'\s*,\s*"
+            r"'under_14'\s*,\s*'14_to_17'\s*,\s*'18_or_over'\s*\)\s*\)"
+        )
+        age_replacement = (
+            "birth_year_band TEXT NOT NULL DEFAULT 'unknown' "
+            "CHECK (birth_year_band IN ('unknown', 'under_14', '14_17', 'adult'))"
+        )
+        migrated_definition, age_replacements = re.subn(
+            age_pattern,
+            age_replacement,
+            migrated_definition,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        if category_replacements != 1 or age_replacements != 1:
+            raise RuntimeError("profiles subject contract migration could not rewrite schema")
+        columns = [
+            str(column[1]) for column in connection.execute("PRAGMA table_info(profiles)")
+        ]
+        if not columns:
+            raise RuntimeError("profiles schema is unavailable")
+
+        def quoted(column: str) -> str:
+            return f'"{column.replace(chr(34), chr(34) * 2)}"'
+
+        insert_columns = ", ".join(quoted(column) for column in columns)
+        select_values: list[str] = []
+        for column in columns:
+            if column == "subject_category":
+                select_values.append(
+                    "CASE WHEN subject_category = 'minor' THEN 'minor' "
+                    "ELSE 'unknown' END"
+                )
+            elif column == "birth_year_band":
+                select_values.append(
+                    "CASE WHEN birth_year_band = 'under_14' THEN 'under_14' "
+                    "WHEN birth_year_band = '14_to_17' THEN '14_17' "
+                    "ELSE 'unknown' END"
+                )
+            elif column == "age_evidence_status":
+                select_values.append("'unverified'")
+            elif column == "subject_revision":
+                select_values.append("subject_revision + 1")
+            else:
+                select_values.append(quoted(column))
+
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute("PRAGMA legacy_alter_table=ON")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("ALTER TABLE profiles RENAME TO profiles_legacy_subject")
+            connection.execute(migrated_definition)
+            connection.execute(
+                f"INSERT INTO profiles ({insert_columns}) "
+                f"SELECT {', '.join(select_values)} FROM profiles_legacy_subject"
+            )
+            connection.execute("DROP TABLE profiles_legacy_subject")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA legacy_alter_table=OFF")
+            connection.execute("PRAGMA foreign_keys=ON")
+        violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError("profiles subject contract migration failed foreign_key_check")
 
     @staticmethod
     def _migrate_profile_companion_constraint(connection: sqlite3.Connection) -> None:
@@ -1500,7 +1617,7 @@ class MemoryStore:
                 SELECT user_id, display_name, bio, avatar_url, phone_number_masked,
                        companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
-                       subject_category, birth_year_band, subject_revision,
+                       subject_category, birth_year_band, age_evidence_status, subject_revision,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
                 """,
@@ -1914,6 +2031,7 @@ class MemoryStore:
         user_id: str,
         subject_category: SubjectCategory,
         birth_year_band: BirthYearBand,
+        age_evidence_status: AgeEvidenceStatus = "unverified",
         now: str,
         age_eligible: bool = False,
         guardian_confirmed: bool = False,
@@ -1931,7 +2049,7 @@ class MemoryStore:
             self._ensure_profile(connection, user_id, now)
             current = connection.execute(
                 """
-                SELECT subject_category, birth_year_band, subject_revision
+                SELECT subject_category, birth_year_band, age_evidence_status, subject_revision
                 FROM profiles WHERE user_id = ?
                 """,
                 (user_id,),
@@ -1940,26 +2058,40 @@ class MemoryStore:
                 raise RuntimeError("profile initialization failed")
             current_category = cast(SubjectCategory, str(current["subject_category"]))
             current_band = cast(BirthYearBand, str(current["birth_year_band"]))
+            current_evidence = cast(
+                AgeEvidenceStatus,
+                str(current["age_evidence_status"]),
+            )
             validate_subject_transition(
                 current_category=current_category,
                 current_birth_year_band=current_band,
+                current_age_evidence_status=current_evidence,
                 target_category=subject_category,
                 target_birth_year_band=birth_year_band,
+                target_age_evidence_status=age_evidence_status,
                 age_eligible=age_eligible,
                 guardian_confirmed=guardian_confirmed,
             )
             changed = (
-                current_category != subject_category or current_band != birth_year_band
+                current_category != subject_category
+                or current_band != birth_year_band
+                or current_evidence != age_evidence_status
             )
             if changed:
                 connection.execute(
                     """
                     UPDATE profiles
-                    SET subject_category = ?, birth_year_band = ?,
+                    SET subject_category = ?, birth_year_band = ?, age_evidence_status = ?,
                         subject_revision = subject_revision + 1, updated_at = ?
                     WHERE user_id = ?
                     """,
-                    (subject_category, birth_year_band, now, user_id),
+                    (
+                        subject_category,
+                        birth_year_band,
+                        age_evidence_status,
+                        now,
+                        user_id,
+                    ),
                 )
                 connection.execute(
                     """
@@ -1974,7 +2106,7 @@ class MemoryStore:
                 SELECT user_id, display_name, bio, avatar_url, phone_number_masked,
                        companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
-                       subject_category, birth_year_band, subject_revision,
+                       subject_category, birth_year_band, age_evidence_status, subject_revision,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
                 """,
@@ -2270,7 +2402,7 @@ class MemoryStore:
                 SELECT user_id, display_name, bio, avatar_url, phone_number_masked,
                        companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
-                       subject_category, birth_year_band, subject_revision,
+                       subject_category, birth_year_band, age_evidence_status, subject_revision,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
                 """,
@@ -2281,13 +2413,13 @@ class MemoryStore:
         return dict(row)
 
     def get_subject_profile(self, *, user_id: str) -> dict[str, Any] | None:
-        """Read the capability root without creating a default-adult profile."""
+        """Read the fail-closed capability root without creating a profile."""
 
         with self._connection() as connection:
             row = connection.execute(
                 """
                 SELECT user_id, display_name, companion_id, subject_category,
-                       birth_year_band, subject_revision
+                       birth_year_band, age_evidence_status, subject_revision
                 FROM profiles WHERE user_id = ?
                 """,
                 (user_id,),
@@ -2341,7 +2473,7 @@ class MemoryStore:
                 SELECT user_id, display_name, bio, avatar_url, phone_number_masked,
                        companion_id, timezone,
                        auto_summary, voice_reply, gentle_reminders, reject_non_owner_voice,
-                       subject_category, birth_year_band, subject_revision,
+                       subject_category, birth_year_band, age_evidence_status, subject_revision,
                        created_at, updated_at
                 FROM profiles WHERE user_id = ?
                 """,

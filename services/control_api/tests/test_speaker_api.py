@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from cryptography.fernet import Fernet
@@ -44,6 +46,34 @@ def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("OFFLINE_MOCK", "true")
 
 
+async def _register_verified_adult(
+    client: AsyncClient,
+    app: Any,
+    *,
+    username: str,
+    password: str = "safe-password",
+) -> dict[str, object]:
+    registered = (
+        await client.post(
+            "/v1/auth/register",
+            json={"username": username, "password": password},
+        )
+    ).json()
+    app.state.memory_store.update_subject_profile(
+        user_id=registered["user_id"],
+        subject_category="adult",
+        birth_year_band="adult",
+        age_evidence_status="verified",
+        now=datetime.now(UTC).isoformat(),
+    )
+    logged_in = await client.post(
+        "/v1/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert logged_in.status_code == 200
+    return logged_in.json()
+
+
 def _audio(value: bytes) -> str:
     return base64.b64encode(value).decode("ascii")
 
@@ -78,12 +108,11 @@ async def test_registered_owner_manages_shadow_active_and_revoked_speaker_profil
     )
     internal = {"X-Memoria-Speaker-Token": "test-speaker-token"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        identity = (
-            await client.post(
-                "/v1/auth/register",
-                json={"username": "speaker-owner", "password": "safe-password"},
-            )
-        ).json()
+        identity = await _register_verified_adult(
+            client,
+            app,
+            username="speaker-owner",
+        )
         owner_headers = {"Authorization": f"Bearer {identity['access_token']}"}
         enrolled = await client.post(
             "/v1/speakers/enrollments",

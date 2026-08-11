@@ -60,20 +60,138 @@ def _payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
+def _profile_for(capabilities: tuple[str, ...]) -> object:
+    from services.agent.tests.unit.runtime_profile_test_helpers import (
+        TEST_VERIFY_KEY,
+        canonical_wire_payload,
+        parse_runtime_profile,
+    )
+
+    verified = parse_runtime_profile(
+        canonical_wire_payload(
+            session_id="ses_mode_matrix",
+            session_epoch=2,
+            active_subject_id="person_parent",
+            subject_category="adult",
+            age_band="adult",
+            service_mode="adult_companion",
+            capabilities=list(capabilities),
+        ),
+        verify_key=TEST_VERIFY_KEY,
+    )
+    assert verified is not None
+    return verified
+
+
+@pytest.mark.parametrize(
+    "capabilities",
+    [
+        ("chat",),
+        ("memory_recall_private",),
+        ("guardian_summary_view",),
+        ("voice_profile_create",),
+        ("voice_clone_use",),
+        ("payment",),
+        ("device_ownership_transfer",),
+        ("crisis_notification",),
+        ("digital_self_preview",),
+        ("legacy_grant_create",),
+        ("raw_audio_retention",),
+        ("model_training_contribution",),
+    ],
+)
+def test_derived_policy_never_cross_grants_unrelated_surfaces(
+    capabilities: tuple[str, ...],
+) -> None:
+    """No canonical capability may grant an unrelated ModePolicy surface:
+    memory/voice/payment/transfer/crisis receipts never open tools, history,
+    learning or conversation beyond their exact mapping."""
+
+    from services.agent.src.mode_policy_client import ModePolicy
+
+    profile = _profile_for(capabilities)
+    policy = ModePolicy.from_runtime_profile(profile)
+    assert policy.allows_tools("owner") is False
+    assert policy.allows_voice_profile() is False
+    assert policy.allows_private_persona("owner") is False
+    assert policy.allows_low_sensitivity_persona(is_shadow=True) is False
+    assert policy.allows_conversation() is ("chat" in capabilities)
+    assert policy.history_eligible("owner") is ("memory_recall_private" in capabilities)
+    assert policy.owner_projection_eligible("owner") is (
+        "memory_recall_private" in capabilities
+    )
+    assert policy.allows_learning("owner") is False
+
+
+def test_derived_policy_learning_requires_tutor_surface_and_no_persistence() -> None:
+    """Learning derives from tutor/english_practice plus the signed
+    no-learning-progress obligation, never from memory_capture."""
+
+    from services.agent.src.mode_policy_client import ModePolicy
+    from services.agent.tests.unit.runtime_profile_test_helpers import (
+        TEST_VERIFY_KEY,
+        canonical_wire_payload,
+        parse_runtime_profile,
+    )
+
+    for capabilities, obligations, expected in (
+        (("chat", "tutor"), (), True),
+        (("chat", "tutor"), ("DO_NOT_WRITE_LEARNING_PROGRESS",), False),
+        (("chat", "english_practice"), (), True),
+        (("chat", "memory_capture"), (), False),
+    ):
+        verified = parse_runtime_profile(
+            canonical_wire_payload(
+                session_id="ses_mode_matrix",
+                session_epoch=2,
+                active_subject_id="person_parent",
+                subject_category="adult",
+                age_band="adult",
+                service_mode="adult_companion",
+                capabilities=list(capabilities),
+                obligations=list(obligations),
+            ),
+            verify_key=TEST_VERIFY_KEY,
+        )
+        assert verified is not None
+        policy = ModePolicy.from_runtime_profile(verified)
+        assert policy.allows_learning("owner") is expected
+
+
 @pytest.mark.asyncio
 async def test_fetch_freezes_companion_policy_from_the_authoritative_session_response() -> None:
     seen: dict[str, object] = {}
+    from services.agent.tests.unit.runtime_profile_test_helpers import (
+        TEST_VERIFY_KEY,
+        canonical_wire_payload,
+    )
 
     async def handler(request: httpx.Request) -> httpx.Response:
         seen["path"] = request.url.path
         seen["body"] = json.loads(request.content)
         seen["token"] = request.headers.get("X-Memoria-Internal-Token")
-        return httpx.Response(200, json=_payload())
+        return httpx.Response(
+            200,
+            json={
+                **_payload(),
+                "runtime_profile": canonical_wire_payload(
+                    session_id="session-001",
+                    service_mode="adult_companion",
+                    subject_category="adult",
+                    age_band="adult",
+                    active_subject_id="person-owner",
+                    speaker_state="confirmed",
+                    session_epoch=1,
+                    capabilities=["chat", "tutor", "memory_recall_private"],
+                ),
+            },
+        )
 
     client = ModePolicyClient(
         ModePolicyClientConfig(
             endpoint="https://control.test/v1/interaction/session-policy",
             internal_token="interaction-token",
+            runtime_profile_verify_key=TEST_VERIFY_KEY,
         ),
         client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
@@ -88,7 +206,7 @@ async def test_fetch_freezes_companion_policy_from_the_authoritative_session_res
     assert policy.available is True
     assert policy.mode == "companion"
     assert policy.session_focus == "chat"
-    assert policy.policy_version == "mode-policy-3"
+    assert policy.policy_version == "cn-minor-v5"
     assert policy.companion_style_prompt is not None
     assert "价值观" in policy.companion_style_prompt
 

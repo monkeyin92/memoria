@@ -44,6 +44,10 @@ jobs:
         run: |
           uv run --extra dev python scripts/generate_media_proto.py
           git diff --exit-code -- services/agent/src/voice_core/generated
+      - name: Multi-subject contracts are reproducible
+        run: uv run python scripts/generate_multi_subject_contracts.py --check
+      - name: Authoritative PostgreSQL init and repeat-upgrade contract
+        run: scripts/tests/run_authoritative_postgres_gate.sh
       - name: Media proto lint
         working-directory: packages/proto
         run: buf lint

@@ -10,7 +10,7 @@ student_track_as_of: 2026-08-09_local_worktree
 
 module_budgets:
   services/agent/src/duplex_runtime.py: 4748
-  services/agent/src/agent.py: 3450
+  services/agent/src/agent.py: 3426
 
 stages:
   python_voice_core: implemented_local

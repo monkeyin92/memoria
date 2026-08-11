@@ -4,23 +4,43 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
 import inspect
 import json
 import logging
-import math
 import time
-import uuid
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol, cast
 
-from services.agent.src.contracts.events import UI_EVENT_TYPES, TimedWord
+from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import (
     CancellationContext,
     GenerationFence,
     new_session_id,
+)
+from services.agent.src.cue_playback import (
+    cancel_listener_cue,
+    cancel_listener_cue_candidate,
+    publish_listener_cue,
+    schedule_listener_cue,
+    stop_cue_handle,
+)
+from services.agent.src.event_identity import (
+    archive_evidence,
+    evidence_fingerprint,
+    input_policy_for_state,
+    phase_for_published_state,
+    preview_provenance,
+    publish_ui_event,
+    speaker_classification_evidence,
+    transcript_delta_event,
+)
+from services.agent.src.identity_state import (
+    capture_identity_tasks,
+    clear_identity_private_state,
+    drain_epoch_rotation,
+    invalidate_identity_epochs,
 )
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.observability.audio_trace import parse_client_audio_trace
@@ -82,6 +102,12 @@ from services.agent.src.orchestration.utterance_router import (
     route_target_speaker,
     route_utterance,
 )
+from services.agent.src.output_provenance import (
+    mode_policy_provenance,
+    owner_acoustic_evidence,
+    speaker_persona_provenance,
+)
+from services.agent.src.runtime_profile import VerifiedRuntimeProfile
 from services.common.companion_response_safety import SAFE_UNKNOWN_REPLY
 from services.common.companions import companion_definition
 from services.common.evidence_policy import classify_prompt_kind
@@ -100,7 +126,6 @@ from services.speaker.domain import (
 logger = logging.getLogger(__name__)
 
 ResumeSpeakerBinding = tuple[str, str, int | None, str]
-
 POST_PLAYBACK_BACKCHANNEL_GUARD_MS = 800
 POST_PLAYBACK_ECHO_GUARD_MS = 10_000
 PLAYBACK_INPUT_BLOCK_MIN_WORDS = 1000
@@ -219,6 +244,7 @@ class DuplexRuntime:
     _set_interruption_min_words: Callable[[int], None] | None = None
     _base_interruption_min_words: int = 0
     _event_publisher: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None
+    _event_sequence: int = 0
     _evidence_publisher: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None
     _owner_turn_publisher: (
         Callable[[dict[str, Any], bytes, int], Coroutine[Any, Any, None]] | None
@@ -237,21 +263,19 @@ class DuplexRuntime:
     _speaker_classification_task: asyncio.Task[Any] | None = None
     _playback_epoch: int = 0
     _playback_control_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    _history_eligible_by_fence: dict[tuple[int, int], bool] = field(default_factory=dict)
-    _owner_projection_eligible_by_fence: dict[tuple[int, int], bool] = field(default_factory=dict)
-    _input_modality_by_fence: dict[tuple[int, int], str] = field(default_factory=dict)
+    _history_eligible_by_fence: dict[GenerationFence, bool] = field(default_factory=dict)
+    _owner_projection_eligible_by_fence: dict[GenerationFence, bool] = field(default_factory=dict)
+    _input_modality_by_fence: dict[GenerationFence, str] = field(default_factory=dict)
     _text_only_delivery: bool = False
     _mode_policy: ModePolicy = field(default_factory=lambda: ModePolicy.unavailable("not_fetched"))
-    _mode_policy_by_fence: dict[tuple[int, int], ModePolicy] = field(default_factory=dict)
-    _response_provenance_by_fence: dict[
-        tuple[int, int, int],
-        dict[str, Any],
-    ] = field(default_factory=dict)
-    _voice_snapshot_by_fence: dict[
-        tuple[int, int, int],
-        GenerationVoiceSnapshot,
-    ] = field(default_factory=dict)
-    _assistant_expression_fence: tuple[int, int, int] | None = None
+    _mode_policy_by_fence: dict[GenerationFence, ModePolicy] = field(default_factory=dict)
+    _response_provenance_by_fence: dict[GenerationFence, dict[str, Any]] = field(
+        default_factory=dict
+    )
+    _voice_snapshot_by_fence: dict[GenerationFence, GenerationVoiceSnapshot] = field(
+        default_factory=dict
+    )
+    _assistant_expression_fence: GenerationFence | None = None
     _target_speaker_focus_enabled: bool = False
     _reject_non_owner_voice: bool = True
     _target_focus_epoch: int | None = None
@@ -302,12 +326,14 @@ class DuplexRuntime:
     # Friendly yield when we stop mid-reply so silence does not feel like a crash.
     INTERRUPT_YIELD_COOLDOWN_MS: int = 4_000
     FALSE_INTERRUPT_RECOVER_COOLDOWN_MS: int = 3_000
+    RUNTIME_PROFILE_REFRESH_TIMEOUT_S: float = 0.8
     _pending_tool_results: int = 0
     _listener_cue_player: Callable[[str], Any] | None = None
     _active_listener_cue: ListenerCue | None = None
     _active_listener_cue_handle: Any | None = None
     _listener_cue_candidate_task: asyncio.Task[Any] | None = None
     _listener_cue_aec_healthy: bool = False
+    _enroll_fence: GenerationFence | None = None
     _emotion_turn_observer: Callable[[int], None] | None = None
     _keyword_spotter_finalizer: Callable[[KeywordSpotterBinding | None], None] | None = None
     _fast_model_warmer: Callable[[], Awaitable[Any] | Any] | None = None
@@ -319,11 +345,16 @@ class DuplexRuntime:
     _interaction_delegated_fences: set[GenerationFence] = field(default_factory=set)
     _pending_context_snapshot: PendingSnapshot | None = None
     _pending_context_snapshot_epoch: int | None = None
+    _pending_epoch_drain: GenerationFence | None = None
+    _rotation_captured_tasks: list[Any] | None = None
     _context_snapshot_prepare_epoch: int = 0
     _context_snapshot_prepare_task: asyncio.Task[Any] | None = None
     context_snapshot_prepare_timeout_s: float = 1.0
     _emotion_segments_by_turn: dict[int, list[tuple[str, str]]] = field(default_factory=dict)
     _voice_profile_refresher: Callable[[], Coroutine[Any, Any, Any]] | None = None
+    _runtime_profile_refresher: (
+        Callable[[], Coroutine[Any, Any, VerifiedRuntimeProfile | None]] | None
+    ) = None
     _voice_profile_refresh_task: asyncio.Task[Any] | None = None
 
     @classmethod
@@ -331,6 +362,7 @@ class DuplexRuntime:
         cls,
         *,
         session_id: str | None = None,
+        device_id: str | None = None,
         tts: Any | None = None,
         input_guard_enabled: bool = False,
         trusted_aec_playback_control: bool = False,
@@ -340,7 +372,7 @@ class DuplexRuntime:
         speaker_verifier: SpeakerVerifier | None = None,
     ) -> DuplexRuntime:
         sid = session_id or new_session_id()
-        orch = Orchestrator(session_id=sid)
+        orch = Orchestrator(session_id=sid, device_id=device_id)
         if tts is not None:
             orch.tts_pool = LiveKitTTSPoolAdapter(pool=tts.pool)
         return cls(
@@ -476,27 +508,19 @@ class DuplexRuntime:
             self._owner_projection_eligible(expected_fence),
         )
         self._speech_plans_by_fence[next_fence] = self.speech_plan_for_fence(expected_fence)
-        previous_key = (
-            expected_fence.turn_id,
-            expected_fence.generation_id,
-            expected_fence.tool_epoch,
-        )
-        next_key = (
-            next_fence.turn_id,
-            next_fence.generation_id,
-            next_fence.tool_epoch,
-        )
-        if previous_key in self._response_provenance_by_fence:
-            self._response_provenance_by_fence[next_key] = self._response_provenance_by_fence[
-                previous_key
+        if expected_fence in self._response_provenance_by_fence:
+            self._response_provenance_by_fence[next_fence] = self._response_provenance_by_fence[
+                expected_fence
             ]
         # An explicit preemption leaves the interaction phase at INTERRUPTED
         # even though this source is an admitted assistant output. Move the
         # runtime through THINKING before the OutputWork admission re-check so
         # the floor gate does not discard the rebound source.
         self.set_interaction_phase(InteractionPhase.THINKING_SILENT, cause="media_auxiliary_output")
-        if previous_key in self._voice_snapshot_by_fence:
-            self._voice_snapshot_by_fence[next_key] = self._voice_snapshot_by_fence[previous_key]
+        if expected_fence in self._voice_snapshot_by_fence:
+            self._voice_snapshot_by_fence[next_fence] = self._voice_snapshot_by_fence[
+                expected_fence
+            ]
         self.apply_speech_plan_to_tts(next_fence)
         self._pending_assistant_text = ""
         self._played_assistant_text = ""
@@ -631,13 +655,18 @@ class DuplexRuntime:
             if turn.role in {"user", "assistant"}
         )
         policy = self._mode_policy
+        # Public read-only tools stay available; revoked epochs stop them too.
+        # Tool authorization is per ToolSpec, never a coarse policy aggregate.
+        outputs_allowed = self.orchestrator.runtime_profiles.output_allowed(
+            self.fence, current_fence=self.fence
+        )
         return scope_context_snapshot_draft(
             ContextSnapshotDraft(
                 recent_committed_turns=turns,
                 memory_capsule=current.memory_capsule,
                 persona_capsule=current.persona_capsule,
                 relationship_policy=policy,
-                tool_permission=policy.allows_tools(self.current_speaker_class),
+                tool_permission=outputs_allowed,
                 speaker_class=self.current_speaker_class,
                 summary=self.orchestrator.context.context_summary(),
             )
@@ -714,10 +743,7 @@ class DuplexRuntime:
         )
         if not isinstance(activated, ContextSnapshot):
             return None
-        self.orchestrator.delegation.activate_context_version(
-            self.session_id,
-            activated.version,
-        )
+        self.orchestrator.delegation.activate_context_version(self.session_id, activated.version)
         if not self.orchestrator.bind_context_version(fence, activated.version):
             return None
         return activated
@@ -827,6 +853,8 @@ class DuplexRuntime:
         cancellation: GenerationFence | CancellationContext,
         token: str,
     ) -> str | None:
+        if self._pending_epoch_drain is not None:
+            return None
         return self.orchestrator.gate_llm_token(cancellation, token)
 
     def gate_tts_audio(
@@ -834,6 +862,8 @@ class DuplexRuntime:
         cancellation: GenerationFence | CancellationContext,
         pcm: bytes,
     ) -> bytes | None:
+        if self._pending_epoch_drain is not None:
+            return None
         return self.orchestrator.gate_tts_audio(cancellation, pcm)
 
     def gate_tool_result(
@@ -841,6 +871,8 @@ class DuplexRuntime:
         cancellation: GenerationFence | CancellationContext,
         payload: Any,
     ) -> Any | None:
+        if self._pending_epoch_drain is not None:
+            return None
         return self.orchestrator.gate_tool_result(cancellation, payload)
 
     def set_event_publisher(
@@ -899,7 +931,88 @@ class DuplexRuntime:
         if self.fence.turn_id or self.fence.generation_id:
             raise RuntimeError("interaction policy must be frozen before the first turn")
         self._mode_policy = policy
+        self.apply_runtime_profile(policy.runtime_profile)
         self._bind_mode_policy(self.fence, policy)
+
+    def apply_runtime_profile(
+        self, payload: object, *, now: datetime | None = None
+    ) -> VerifiedRuntimeProfile | None:
+        """Consumer seam: between-turn refresh/subject switch (P1-8)."""
+
+        previous_epoch = self.fence.session_epoch
+        old_fence = self.fence
+        applied = self.orchestrator.runtime_profiles.apply(payload, self.fence, now=now)
+        if applied is not None and applied.profile.session_epoch > previous_epoch:
+            self._rotate_identity_epoch(
+                applied, old_fence=old_fence, install_policy=previous_epoch > 0
+            )
+        return applied
+
+    def _rotate_identity_epoch(
+        self,
+        profile: VerifiedRuntimeProfile | None,
+        *,
+        old_fence: GenerationFence,
+        install_policy: bool,
+    ) -> None:
+        """One atomic identity-epoch rotation; ONE authority after it."""
+        self._pending_epoch_drain = old_fence
+        # Capture identity-owned tasks BEFORE clearing references, bump the
+        # identity-private epochs so late results are logically void, then
+        # clear state; the drain barrier bounded-cancels the captured tasks.
+        self._rotation_captured_tasks = capture_identity_tasks(self)
+        invalidate_identity_epochs(self)
+        self._reset_identity_private_caches()
+        clear_identity_private_state(self)
+        if install_policy:
+            self._mode_policy = (
+                ModePolicy.from_runtime_profile(profile)
+                if profile is not None
+                else ModePolicy.degraded_unknown_safe()
+            )
+            self._mode_policy_by_fence = {
+                fence: old
+                for fence, old in self._mode_policy_by_fence.items()
+                if fence.session_epoch == self.fence.session_epoch
+            }
+            self._bind_mode_policy(self.fence, self._mode_policy)
+
+    async def _drain_epoch_rotation(self) -> None:
+        """Barrier stays visible until every physical owner drained."""
+        old_fence = self._pending_epoch_drain
+        if old_fence is None:
+            return
+        try:
+            await drain_epoch_rotation(self, old_fence)
+        except Exception:
+            # Barrier stays visible (fail-closed) and the turn is aborted.
+            self._pending_epoch_drain = old_fence
+            self.orchestrator.metrics.inc_runtime_profile_refresh_failure("drain_error")
+            logger.exception("epoch rotation drain failed")
+            raise
+        self._pending_epoch_drain = None
+
+    def degrade_runtime_profile(self) -> GenerationFence:
+        """Authority-loss transition to a true unknown-safe degraded epoch."""
+
+        previous_epoch = self.fence.session_epoch
+        old_fence = self.fence
+        new_fence = self.orchestrator.runtime_profiles.degrade(self.fence)
+        if new_fence.session_epoch == previous_epoch:
+            return new_fence  # already degraded (idempotent)
+        self._rotate_identity_epoch(None, old_fence=old_fence, install_policy=True)
+        return new_fence
+
+    def _reset_identity_private_caches(self) -> None:
+        """Drop every pending/prefetched private field of the old subject."""
+
+        # Called once per epoch bump, atomically inside the apply seam.
+        self._pending_context_snapshot = None
+        self._pending_context_snapshot_epoch = None
+        self._context_prefetch_text = ""
+        self._pending_realtime_request = None
+        self._persona_evidence_eligible = False
+        self._next_user_prompt_kind = "spontaneous"
 
     @property
     def mode_policy(self) -> ModePolicy:
@@ -913,9 +1026,19 @@ class DuplexRuntime:
 
     def mode_policy_for_fence(self, fence: GenerationFence) -> ModePolicy:
         return self._mode_policy_by_fence.get(
-            (fence.turn_id, fence.generation_id),
-            ModePolicy.unavailable("policy_not_bound_to_fence"),
+            fence, ModePolicy.unavailable("policy_not_bound_to_fence")
         )
+
+    def profile_permits(self, fence: GenerationFence, *, capability: str | None = None) -> bool:
+        """Production permission check: valid signed profile for this fence."""
+
+        return self.orchestrator.runtime_profiles.permits(
+            fence, current_fence=self.fence, capability=capability
+        )
+
+    # Side-effect tools commit through the TaskManager's transactional
+    # effect commit port (deep seam); the runtime never writes directly, and
+    # the port re-verifies the complete fence + receipt inside one atomic op.
 
     @property
     def current_speaker_class(self) -> Literal["owner", "guest", "uncertain"]:
@@ -962,10 +1085,7 @@ class DuplexRuntime:
         self._text_only_delivery = True
 
     def input_modality_for_fence(self, fence: GenerationFence) -> str:
-        return self._input_modality_by_fence.get(
-            (fence.turn_id, fence.generation_id),
-            "audio",
-        )
+        return self._input_modality_by_fence.get(fence, "audio")
 
     def authenticate_text_owner(self) -> SpeakerDecision:
         """Bind an lk.chat turn from the linked account participant as owner."""
@@ -986,9 +1106,7 @@ class DuplexRuntime:
         return decision
 
     def _bind_mode_policy(self, fence: GenerationFence, policy: ModePolicy | None = None) -> None:
-        self._mode_policy_by_fence[(fence.turn_id, fence.generation_id)] = (
-            policy or self._mode_policy
-        )
+        self._mode_policy_by_fence[fence] = policy or self._mode_policy
         while len(self._mode_policy_by_fence) > HISTORY_ELIGIBILITY_MAX_FENCES:
             self._mode_policy_by_fence.pop(next(iter(self._mode_policy_by_fence)))
 
@@ -1000,16 +1118,25 @@ class DuplexRuntime:
         return permissions_for_speaker(classification)  # type: ignore[arg-type]
 
     def _current_history_eligible(self) -> bool:
+        """Owner history requires the signed profile + memory_recall_private."""
+
         decision = self._speaker_decision
-        return decision is not None and self._mode_policy.history_eligible(
-            decision.classification,
-            reason_code=decision.reason_code,
+        return (
+            decision is not None
+            and self._mode_policy.history_eligible(
+                decision.classification, reason_code=decision.reason_code
+            )
+            and self.profile_permits(self.fence, capability="memory_recall_private")
         )
 
     def _current_owner_projection_eligible(self) -> bool:
+        """Owner projection requires the signed profile + memory_recall_private."""
+
         decision = self._speaker_decision
-        return decision is not None and self._mode_policy.owner_projection_eligible(
-            decision.classification
+        return (
+            decision is not None
+            and self._mode_policy.owner_projection_eligible(decision.classification)
+            and self.profile_permits(self.fence, capability="memory_recall_private")
         )
 
     def is_shadow_speaker(self) -> bool:
@@ -1020,30 +1147,26 @@ class DuplexRuntime:
         )
 
     def _bind_history_eligibility(self, fence: GenerationFence, eligible: bool) -> None:
-        self._history_eligible_by_fence[(fence.turn_id, fence.generation_id)] = eligible
+        self._history_eligible_by_fence[fence] = eligible
         while len(self._history_eligible_by_fence) > HISTORY_ELIGIBILITY_MAX_FENCES:
             self._history_eligible_by_fence.pop(next(iter(self._history_eligible_by_fence)))
 
     def _history_eligible(self, fence: GenerationFence) -> bool:
-        return self._history_eligible_by_fence.get((fence.turn_id, fence.generation_id), False)
+        return self._history_eligible_by_fence.get(fence, False)
 
     def _bind_owner_projection_eligibility(
         self,
         fence: GenerationFence,
         eligible: bool,
     ) -> None:
-        key = (fence.turn_id, fence.generation_id)
-        self._owner_projection_eligible_by_fence[key] = eligible
+        self._owner_projection_eligible_by_fence[fence] = eligible
         while len(self._owner_projection_eligible_by_fence) > HISTORY_ELIGIBILITY_MAX_FENCES:
             self._owner_projection_eligible_by_fence.pop(
                 next(iter(self._owner_projection_eligible_by_fence))
             )
 
     def _owner_projection_eligible(self, fence: GenerationFence) -> bool:
-        return self._owner_projection_eligible_by_fence.get(
-            (fence.turn_id, fence.generation_id),
-            False,
-        )
+        return self._owner_projection_eligible_by_fence.get(fence, False)
 
     def bind_response_provenance(
         self,
@@ -1070,8 +1193,7 @@ class DuplexRuntime:
             or self._contains_forbidden_provenance_key(provenance)
         ):
             return False
-        key = (fence.turn_id, fence.generation_id, fence.tool_epoch)
-        self._response_provenance_by_fence[key] = json.loads(encoded)
+        self._response_provenance_by_fence[fence] = json.loads(encoded)
         while len(self._response_provenance_by_fence) > RESPONSE_PROVENANCE_MAX_FENCES:
             self._response_provenance_by_fence.pop(next(iter(self._response_provenance_by_fence)))
         return True
@@ -1091,7 +1213,8 @@ class DuplexRuntime:
         references = dict(policy.references)
         companion = companion_definition(policy.companion_style_id)
         personal_contract = (
-            policy.mode in {"self_preview", "legacy"}
+            self.profile_permits(fence, capability="voice_clone_use")
+            and policy.mode in {"self_preview", "legacy"}
             and (policy.mode != "legacy" or references.get("legacy_voice_allowed") is True)
             and profile_id is not None
             and profile_id == references.get("voice_profile_id")
@@ -1132,8 +1255,7 @@ class DuplexRuntime:
             )
         ):
             return False
-        key = (fence.turn_id, fence.generation_id, fence.tool_epoch)
-        self._voice_snapshot_by_fence[key] = GenerationVoiceSnapshot(
+        self._voice_snapshot_by_fence[fence] = GenerationVoiceSnapshot(
             profile_id=profile_id,
             resource_id=resource_id,
             speaker_sha256=speaker_sha256,
@@ -1147,9 +1269,7 @@ class DuplexRuntime:
         self,
         fence: GenerationFence,
     ) -> GenerationVoiceSnapshot | None:
-        return self._voice_snapshot_by_fence.get(
-            (fence.turn_id, fence.generation_id, fence.tool_epoch)
-        )
+        return self._voice_snapshot_by_fence.get(fence)
 
     @classmethod
     def _contains_forbidden_provenance_key(cls, value: object) -> bool:
@@ -1167,9 +1287,7 @@ class DuplexRuntime:
         self,
         fence: GenerationFence,
     ) -> dict[str, Any] | None:
-        stored = self._response_provenance_by_fence.get(
-            (fence.turn_id, fence.generation_id, fence.tool_epoch)
-        )
+        stored = self._response_provenance_by_fence.get(fence)
         if stored is None:
             return None
         provenance = cast(dict[str, Any], json.loads(json.dumps(stored)))
@@ -1220,6 +1338,47 @@ class DuplexRuntime:
         refresher: Callable[[], Coroutine[Any, Any, Any]],
     ) -> None:
         self._voice_profile_refresher = refresher
+
+    def set_runtime_profile_refresher(
+        self,
+        refresher: Callable[[], Coroutine[Any, Any, VerifiedRuntimeProfile | None]] | None,
+    ) -> None:
+        """Install the authoritative refresh source (P1-8/audit 2)."""
+
+        self._runtime_profile_refresher = refresher
+
+    def set_playback_stop_seam(
+        self,
+        seam: Callable[[], Awaitable[Any]] | None,
+    ) -> None:
+        self.orchestrator.playback_stop_seam = seam
+
+    async def refresh_runtime_profile(self) -> VerifiedRuntimeProfile | None:
+        if self._runtime_profile_refresher is None:
+            self.degrade_runtime_profile()
+            return None
+        try:
+            verified = await asyncio.wait_for(
+                self._runtime_profile_refresher(), timeout=self.RUNTIME_PROFILE_REFRESH_TIMEOUT_S
+            )
+        except TimeoutError:
+            self.orchestrator.metrics.inc_runtime_profile_refresh_failure("timeout")
+            logger.warning(
+                "runtime profile refresh timed out after %ss",
+                self.RUNTIME_PROFILE_REFRESH_TIMEOUT_S,
+            )
+            self.degrade_runtime_profile()
+            return None
+        except Exception:
+            self.orchestrator.metrics.inc_runtime_profile_refresh_failure("error")
+            logger.exception("runtime profile refresh failed")
+            self.degrade_runtime_profile()
+            return None
+        applied = self.apply_runtime_profile(verified)
+        if applied is None:
+            self.orchestrator.metrics.inc_runtime_profile_refresh_failure("invalid")
+            self.degrade_runtime_profile()
+        return applied
 
     def refresh_voice_profile(self) -> asyncio.Task[Any] | None:
         if self._voice_profile_refresher is None:
@@ -1641,35 +1800,17 @@ class DuplexRuntime:
     def _publish_speaker_decision(self, epoch: int, decision: SpeakerDecision) -> None:
         if self._evidence_publisher is None:
             return
-        event: dict[str, Any] = {
-            "event_id": str(
-                uuid.uuid5(
-                    uuid.NAMESPACE_URL,
-                    f"memoria:speaker-classification:{self.session_id}:{epoch}",
-                )
-            ),
-            "session_id": self.session_id,
-            "event_type": "speaker.classified",
-            "occurred_at": datetime.now(UTC).isoformat(),
-            "speaker_class": decision.classification,
-            "source": "speaker_authority.formal_embedding",
-            "turn_id": self.fence.turn_id + 1,
-            "generation_id": self.fence.generation_id,
-            "payload": {
-                "score": decision.score,
-                "quality_score": decision.quality_score,
-                "reason_code": decision.reason_code,
-                "model_version": decision.model_version,
-                "template_version": decision.template_version,
-                "profile_id": decision.profile_id,
-            },
-        }
-        event["payload"].update(
-            self._mode_policy_provenance(
+        event = speaker_classification_evidence(
+            session_id=self.session_id,
+            epoch=epoch,
+            decision=decision,
+            turn_id=self.fence.turn_id + 1,
+            generation_id=self.fence.generation_id,
+            provenance=self._mode_policy_provenance(
                 self.fence,
                 decision.classification,
                 reason_code=decision.reason_code,
-            )
+            ),
         )
         self._spawn(
             self._evidence_publisher(event),
@@ -1697,6 +1838,7 @@ class DuplexRuntime:
         # non-interrupt path used to not clear it). Clear so enroll PCM is fed.
         self._was_speaking = False
         self._enroll_collecting = True
+        self._enroll_fence = self.fence
         self._enroll_started_mono = time.monotonic()
         self.speaker_verifier.begin_enrollment()
         self.publish_assistant_state("speaker_enroll")
@@ -1727,7 +1869,8 @@ class DuplexRuntime:
                         "target_ms": progress["target_ms"],
                         "elapsed_ms": progress["elapsed_ms"],
                         "at": datetime.now(UTC).isoformat(),
-                    }
+                    },
+                    fence=self._enroll_fence or self.fence,
                 )
             return None
         payload = {
@@ -1740,8 +1883,9 @@ class DuplexRuntime:
             "state": self.speaker_verifier.state.value,
             "at": datetime.now(UTC).isoformat(),
         }
-        self._publish(payload)
+        self._publish(payload, fence=self._enroll_fence or self.fence)
         self._enroll_collecting = False
+        self._enroll_fence = None
         self.mark_audio_event(
             "speaker_enrolled" if result.reason == "enrolled" else "speaker_enroll_open",
             detail={"reason": result.reason, "speech_ms": result.speech_ms},
@@ -1876,7 +2020,8 @@ class DuplexRuntime:
                         "roll": round(roll.score, 4),
                         "speech_ms": score.speech_ms,
                         "at": datetime.now(UTC).isoformat(),
-                    }
+                    },
+                    fence=self.fence,
                 )
                 return False
 
@@ -1997,7 +2142,8 @@ class DuplexRuntime:
                 "roll": round(roll.score, 4),
                 "speech_ms": score.speech_ms,
                 "at": datetime.now(UTC).isoformat(),
-            }
+            },
+            fence=self.fence,
         )
         return False
 
@@ -2026,15 +2172,14 @@ class DuplexRuntime:
         task.add_done_callback(_done)
         return task
 
-    def _publish(self, event: dict[str, Any]) -> asyncio.Task[Any] | None:
-        if event.get("type") not in UI_EVENT_TYPES:
-            raise ValueError("unsupported voice-agent.ui event type")
-        if self._event_publisher is not None:
-            return self._spawn(
-                self._event_publisher(event),
-                name=f"duplex-ui-{event['type']}",
-            )
-        return None
+    def _publish(
+        self,
+        event: dict[str, Any],
+        *,
+        fence: GenerationFence | None = None,
+    ) -> asyncio.Task[Any] | None:
+        # §11.5: identity is overwritten from the event's own fence.
+        return publish_ui_event(self, event, fence)
 
     def set_interaction_phase(
         self,
@@ -2106,7 +2251,8 @@ class DuplexRuntime:
                 "generation_id": fence.generation_id,
                 "tool_epoch": fence.tool_epoch,
                 "at": datetime.now(UTC).isoformat(),
-            }
+            },
+            fence=fence,
         )
         if self.barge_in_enabled:
             return state_task
@@ -2139,47 +2285,17 @@ class DuplexRuntime:
                 "turn_id": fence.turn_id,
                 "generation_id": fence.generation_id,
                 "at": datetime.now(UTC).isoformat(),
-            }
+            },
+            fence=fence,
         )
 
     @staticmethod
     def _input_policy_for_state(state: str) -> tuple[bool, str] | None:
-        if state in {"ready", "speaker_enroll", "listening", "user_speaking", "eot_pending"}:
-            return True, f"assistant_{state}"
-        if state == "backchannel":
-            return True, "user_holds_floor"
-        if state in {"thinking", "thinking_silent"}:
-            return False, "assistant_thinking"
-        if state == "tool_waiting":
-            return False, "assistant_tool_waiting"
-        if state == "speaking":
-            return False, "assistant_speaking"
-        if state in {"interrupted", "interruption_pending"}:
-            return False, "assistant_stopping"
-        if state == "recovering":
-            return False, "transport_recovering"
-        if state in {"connecting", "closed"}:
-            return False, f"session_{state}"
-        return None
+        return input_policy_for_state(state)
 
     @staticmethod
     def _phase_for_published_state(state: str) -> InteractionPhase | None:
-        mapping = {
-            "connecting": InteractionPhase.CONNECTING,
-            "ready": InteractionPhase.LISTENING,
-            "speaker_enroll": InteractionPhase.LISTENING,
-            "listening": InteractionPhase.LISTENING,
-            "user_speaking": InteractionPhase.USER_SPEAKING,
-            "backchannel": InteractionPhase.BACKCHANNEL,
-            "thinking": InteractionPhase.THINKING_SILENT,
-            "thinking_silent": InteractionPhase.THINKING_SILENT,
-            "speaking": InteractionPhase.SPEAKING,
-            "interrupted": InteractionPhase.INTERRUPTED,
-            "tool_waiting": InteractionPhase.TOOL_WAITING,
-            "recovering": InteractionPhase.RECOVERING,
-            "closed": InteractionPhase.CLOSED,
-        }
-        return mapping.get(state)
+        return phase_for_published_state(state)  # type: ignore[return-value]
 
     def publish_assistant_audio(
         self,
@@ -2200,7 +2316,8 @@ class DuplexRuntime:
                 "generation_id": fence.generation_id,
                 "tool_epoch": fence.tool_epoch,
                 "at": datetime.now(UTC).isoformat(),
-            }
+            },
+            fence=fence,
         )
 
     def mark_audio_event(
@@ -2215,27 +2332,32 @@ class DuplexRuntime:
         """Record and publish one server-side first-audio stage without blocking media."""
         if status == "ok":
             self.latency_trace.mark(name, mono_ns=mono_ns)
-        fence = fence or self.fence
         event: dict[str, Any] = {
             "type": "audio_trace",
             "source": "agent",
             "session_id": self.session_id,
             "name": name,
             "status": status,
-            "turn_id": fence.turn_id,
-            "generation_id": fence.generation_id,
             "at": datetime.now(UTC).isoformat(),
         }
+        if fence is not None:
+            event.update(
+                {
+                    "turn_id": fence.turn_id,
+                    "generation_id": fence.generation_id,
+                    "tool_epoch": fence.tool_epoch,
+                }
+            )
         if detail:
             event["detail"] = detail
         logger.info(
             "agent_audio_trace name=%s status=%s turn_id=%s generation_id=%s",
             name,
             status,
-            fence.turn_id,
-            fence.generation_id,
+            None if fence is None else fence.turn_id,
+            None if fence is None else fence.generation_id,
         )
-        self._publish(event)
+        self._publish(event, fence=fence)
 
     def observe_client_audio_trace(
         self,
@@ -2271,6 +2393,7 @@ class DuplexRuntime:
         archive_fence: GenerationFence | None = None,
         turn_revision: int | None = None,
     ) -> bool:
+        original_fence = fence
         fence = fence or self.fence
         archive_fence = archive_fence or fence
         revision = self._transcript_revisions.issue(
@@ -2281,83 +2404,36 @@ class DuplexRuntime:
         )
         if revision is None:
             return False
-        event: dict[str, Any] = {
-            "type": "transcript_delta",
-            "session_id": self.session_id,
-            "speaker": speaker,
-            "text": text,
-            "final": final,
-            "turn_id": fence.turn_id,
-            "generation_id": fence.generation_id,
-            "turn_revision": revision,
-            "tool_epoch": fence.tool_epoch,
-            "history_eligible": bool(final and self._history_eligible(fence)),
-        }
-        if heard is not None:
-            event["heard"] = heard
-        if text_delivered:
-            event["text_delivered"] = True
+        disclosure: dict[str, object] | None = None
         if (
             speaker == "assistant"
             and final
             and heard is True
             and self.mode_policy_for_fence(archive_fence).mode == "self_preview"
         ):
-            provenance = self.response_provenance_for(archive_fence)
-            if (
-                isinstance(provenance, dict)
-                and isinstance(provenance.get("digital_self_version_id"), str)
-                and isinstance(provenance.get("manifest_sha256"), str)
-            ):
-                refs: list[dict[str, Any]] = []
-                raw_refs = provenance.get("source_refs")
-                if isinstance(raw_refs, list):
-                    for raw in raw_refs[:12]:
-                        if not isinstance(raw, dict):
-                            continue
-                        kind = raw.get("kind")
-                        item_id = raw.get("item_id")
-                        source_ids = raw.get("source_event_ids")
-                        if (
-                            isinstance(kind, str)
-                            and isinstance(item_id, str)
-                            and isinstance(source_ids, list)
-                        ):
-                            refs.append(
-                                {
-                                    "kind": kind[:64],
-                                    "item_id": item_id[:128],
-                                    "source_event_ids": [
-                                        str(value)[:128] for value in source_ids[:8]
-                                    ],
-                                }
-                            )
-                disclosures = provenance.get("disclosures")
-                event["preview_provenance"] = {
-                    "digital_self_version_id": provenance["digital_self_version_id"][:128],
-                    "manifest_sha256": provenance["manifest_sha256"][:64],
-                    "turn_id": archive_fence.turn_id,
-                    "generation_id": archive_fence.generation_id,
-                    "tool_epoch": archive_fence.tool_epoch,
-                    "epistemic_status": str(provenance.get("epistemic_status") or "unknown")[:32],
-                    "disclosures": (
-                        [str(value)[:64] for value in disclosures[:4]]
-                        if isinstance(disclosures, list)
-                        else []
-                    ),
-                    "source_refs": refs,
-                }
-        self._publish(event)
+            disclosure = preview_provenance(
+                self.response_provenance_for(archive_fence), archive_fence
+            )
+        event = transcript_delta_event(
+            session_id=self.session_id,
+            speaker=speaker,
+            text=text,
+            final=final,
+            fence=fence,
+            revision=revision,
+            history_eligible=bool(final and self._history_eligible(fence)),
+            heard=heard,
+            text_delivered=text_delivered,
+            preview=disclosure,
+        )
+        self._publish(event, fence=original_fence)
         if not final or not text.strip():
             return True
         archive_text = redact_pii(text.strip())
         if speaker == "user":
             event_type = "speech.utterance_finalized"
             speaker_class = self._speaker_class
-            input_modality = self._input_modality_by_fence.get(
-                (archive_fence.turn_id, archive_fence.generation_id),
-                "audio",
-            )
+            input_modality = self._input_modality_by_fence.get(archive_fence, "audio")
             payload: dict[str, Any] = {
                 "text": archive_text,
                 "persona_eligible": self._persona_evidence_eligible,
@@ -2386,20 +2462,29 @@ class DuplexRuntime:
                 owner_projection_eligible=self._owner_projection_eligible(archive_fence),
             )
         )
-        fingerprint = hashlib.sha256(
-            (
-                f"{self.session_id}\0{event_type}\0{speaker}\0"
-                f"{archive_fence.turn_id}\0{archive_fence.generation_id}\0"
-                f"{archive_fence.tool_epoch}\0{archive_text}"
-            ).encode()
-        ).hexdigest()
-        evidence = {
-            "event_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"memoria:evidence:{fingerprint}")),
-            "session_id": self.session_id,
-            "event_type": event_type,
-            "occurred_at": datetime.now(UTC).isoformat(),
-            "speaker_class": speaker_class,
-            "source": (
+        decision = self.orchestrator.runtime_profiles.persistence_decision(
+            archive_fence, current_fence=self.fence
+        )
+        fingerprint = evidence_fingerprint(
+            session_id=self.session_id,
+            event_type=event_type,
+            speaker=speaker,
+            fence=archive_fence,
+            text=archive_text,
+        )
+        # MemoryWriteFence: evidence carries device + subject revision and the
+        # exact verified capability receipt so the archive can re-verify the
+        # write against the signed RuntimeProfile.
+        if not decision.allowed or original_fence is None:
+            # P0-6: without a verified receipt (or caller fence) no archive.
+            return True
+        self._event_sequence += 1
+        evidence = archive_evidence(
+            event_type=event_type,
+            session_id=self.session_id,
+            speaker_class=speaker_class,
+            payload=payload,
+            source=(
                 "generation_fence.actual_heard"
                 if speaker == "assistant"
                 else (
@@ -2408,14 +2493,16 @@ class DuplexRuntime:
                     else "funasr.authoritative_final"
                 )
             ),
-            "turn_id": archive_fence.turn_id,
-            "generation_id": archive_fence.generation_id,
-            "tool_epoch": archive_fence.tool_epoch,
-            "payload": payload,
-        }
+            fence=archive_fence,
+            decision=decision,
+            fingerprint=fingerprint,
+            event_sequence=self._event_sequence,
+        )
         if (
             speaker_class == "owner"
             and payload["owner_projection_eligible"] is True
+            and not decision.aggregate_only
+            and decision.raw_audio_allowed
             and self._owner_turn_publisher is not None
         ):
             self._spawn(
@@ -2436,18 +2523,7 @@ class DuplexRuntime:
         return True
 
     def _speaker_persona_provenance(self) -> dict[str, Any]:
-        """Bind Persona eligibility to the decision for this exact speech epoch."""
-
-        decision = self._speaker_decision
-        if decision is None:
-            return {}
-        return {
-            "speaker_reason_code": decision.reason_code,
-            "speaker_profile_id": decision.profile_id,
-            "speaker_quality_score": decision.quality_score,
-            "speaker_model_version": decision.model_version,
-            "speaker_template_version": decision.template_version,
-        }
+        return speaker_persona_provenance(self._speaker_decision)
 
     def _mode_policy_provenance(
         self,
@@ -2459,63 +2535,25 @@ class DuplexRuntime:
         reason_code: str | None = None,
     ) -> dict[str, Any]:
         policy = self.mode_policy_for_fence(fence)
-        supported_speaker = cast(
-            Literal["owner", "guest", "uncertain"],
-            speaker_class if speaker_class in {"owner", "guest", "uncertain"} else "uncertain",
+        return mode_policy_provenance(
+            policy,
+            speaker_class,
+            history_eligible=history_eligible,
+            owner_projection_eligible=owner_projection_eligible,
+            reason_code=reason_code,
         )
-        return {
-            "interaction_mode": policy.mode or "unavailable",
-            "mode_policy_version": policy.policy_version or "unavailable",
-            "simulated_output": policy.mode in {"self_preview", "legacy"},
-            "history_eligible": (
-                history_eligible
-                if history_eligible is not None
-                else policy.history_eligible(
-                    supported_speaker,
-                    reason_code=reason_code,
-                )
-            ),
-            "owner_projection_eligible": (
-                owner_projection_eligible
-                if owner_projection_eligible is not None
-                else policy.owner_projection_eligible(supported_speaker)
-            ),
-        }
 
     def _owner_acoustic_evidence(self) -> dict[str, int | float]:
-        decision = self._speaker_decision
-        if (
-            self._speaker_class != "owner"
-            or decision is None
-            or not self._mode_policy.owner_projection_eligible("owner")
-            or decision.classification != "owner"
-            or not decision.profile_id
-            or decision.template_version is None
-            or decision.template_version < 1
-            or not self._speaker_pcm
-        ):
-            return {}
-        stats = voiced_stats_from_pcm(
-            bytes(self._speaker_pcm),
+        return owner_acoustic_evidence(
+            speaker_class=self._speaker_class,
+            decision=self._speaker_decision,
+            owner_projection_eligible=self._mode_policy.owner_projection_eligible("owner"),
+            profile_permits_memory_capture=self.profile_permits(
+                self.fence, capability="memory_capture"
+            ),
+            pcm=self._speaker_pcm,
             sample_rate=self._speaker_sample_rate,
         )
-        speech_ms = int(stats["speech_ms"])
-        duty = float(stats["duty"])
-        quality_score = float(decision.quality_score)
-        if (
-            speech_ms <= 0
-            or speech_ms > 600_000
-            or not math.isfinite(duty)
-            or not 0 <= duty <= 1
-            or not math.isfinite(quality_score)
-            or not 0 <= quality_score <= 1
-        ):
-            return {}
-        return {
-            "speech_ms": speech_ms,
-            "pause_ratio": min(1.0, max(0.0, 1.0 - duty)),
-            "quality_score": quality_score,
-        }
 
     def observe_acoustic_emotion(
         self,
@@ -2541,6 +2579,7 @@ class DuplexRuntime:
         observation: EmotionObservation,
         *,
         turn_id: int,
+        fence: GenerationFence,
     ) -> None:
         logger.info(
             "emotion_observation label=%s provider_label=%s evidence=%s turn_id=%s",
@@ -2549,7 +2588,6 @@ class DuplexRuntime:
             ",".join(observation.evidence),
             turn_id,
         )
-        fence = self.fence
         target_generation_id = fence.generation_id + int(turn_id > fence.turn_id)
         self._publish(
             {
@@ -2564,7 +2602,8 @@ class DuplexRuntime:
                 "generation_id": target_generation_id,
                 "expires_after_ms": self.emotion_smoother.ttl_ms,
                 "at": datetime.now(UTC).isoformat(),
-            }
+            },
+            fence=fence,
         )
 
     def _apply_speech_plan(
@@ -2587,7 +2626,7 @@ class DuplexRuntime:
                 turn_id=turn_id,
             )
         observation = self.emotion_smoother.observe_text(user_text, acoustic=acoustic)
-        self._publish_emotion_observation(observation, turn_id=turn_id)
+        self._publish_emotion_observation(observation, turn_id=turn_id, fence=fence)
         self.speech_plan = speech_plan_for_turn(
             label=observation.label,
             provider_label=observation.provider_label,
@@ -2628,29 +2667,21 @@ class DuplexRuntime:
         return self.speech_plan
 
     def _publish_listener_cue(self, cue: ListenerCue, state: str) -> None:
-        self._publish(
-            {
-                "type": "listener_cue",
-                "session_id": self.session_id,
-                "cue_id": cue.cue_id,
-                "cue_epoch": cue.cue_epoch,
-                "user_turn_id": cue.user_turn_id,
-                "state": state,
-                "phase": self.interaction_phase.value,
-                "at": datetime.now(UTC).isoformat(),
-            }
-        )
+        publish_listener_cue(self, cue, state)
 
     async def _play_listener_cue(self, cue: ListenerCue) -> None:
-        if self._listener_cue_player is None or not self.cue_scheduler.is_current(cue):
+        if (
+            self._listener_cue_player is None
+            or not self.cue_scheduler.is_current(cue)
+            or cue.fence.session_epoch != self.fence.session_epoch
+        ):
             return
         handle = self._listener_cue_player(cue.text)
         if inspect.isawaitable(handle):
             handle = await handle
-        if not self.cue_scheduler.is_current(cue):
-            stop = getattr(handle, "stop", None)
-            if callable(stop):
-                stop()
+        if not self.cue_scheduler.is_current(cue) or not cue.fence.matches(self.fence):
+            # Superseded or identity switched: stop the physical handle.
+            await stop_cue_handle(handle)
             return
         self._active_listener_cue = cue
         self._active_listener_cue_handle = handle
@@ -2665,73 +2696,36 @@ class DuplexRuntime:
                 await wait_for_playout()
             elif inspect.isawaitable(handle):
                 await handle
-            if self.cue_scheduler.is_current(cue):
+            if self.cue_scheduler.is_current(cue) and cue.fence.matches(self.fence):
                 self._publish_listener_cue(cue, "finished")
         finally:
             if self._active_listener_cue is cue:
                 self._active_listener_cue = None
                 self._active_listener_cue_handle = None
-            if self.interaction_phase is InteractionPhase.BACKCHANNEL:
+            # The physical cue must not keep playing after the task was
+            # cancelled (identity switch/interrupt) or the cue was superseded.
+            if not self.cue_scheduler.is_current(cue) or not cue.fence.matches(self.fence):
+                # Stop the physical handle so no old audio keeps playing.
+                await stop_cue_handle(handle)
+            # Never mutate a newer epoch's phase from an old cue's finally.
+            if (
+                cue.fence.matches(self.fence)
+                and self.cue_scheduler.is_current(cue)
+                and self.interaction_phase is InteractionPhase.BACKCHANNEL
+            ):
                 self.set_interaction_phase(
                     InteractionPhase.USER_SPEAKING,
                     cause="listener_cue_finished",
                 )
 
     def cancel_listener_cue(self) -> None:
-        self._cancel_listener_cue_candidate()
-        cue = self._active_listener_cue
-        self.cue_scheduler.cancel_turn()
-        handle = self._active_listener_cue_handle
-        stop = getattr(handle, "stop", None)
-        if callable(stop):
-            stop()
-        self._active_listener_cue = None
-        self._active_listener_cue_handle = None
-        if cue is not None:
-            self._publish_listener_cue(cue, "cancelled")
-        if self.interaction_phase is InteractionPhase.BACKCHANNEL:
-            self.set_interaction_phase(
-                InteractionPhase.USER_SPEAKING,
-                cause="listener_cue_cancelled",
-                publish=False,
-            )
+        cancel_listener_cue(self)
 
     def _cancel_listener_cue_candidate(self) -> None:
-        task = self._listener_cue_candidate_task
-        if task is not None and not task.done():
-            task.cancel()
-        self._listener_cue_candidate_task = None
+        cancel_listener_cue_candidate(self)
 
     def _schedule_listener_cue(self, text: str, *, now_ns: int | None) -> None:
-        self._cancel_listener_cue_candidate()
-        observed_at_ns = now_ns if now_ns is not None else time.monotonic_ns()
-
-        async def _after_micro_pause() -> None:
-            try:
-                await asyncio.sleep(self.cue_scheduler.pause_ms / 1000)
-                cue = self.cue_scheduler.observe_partial(
-                    text,
-                    now_ns=observed_at_ns + self.cue_scheduler.pause_ms * 1_000_000,
-                    aec_healthy=self._listener_cue_aec_healthy,
-                    main_response_active=self.orchestrator.state
-                    in {
-                        ConversationState.THINKING,
-                        ConversationState.SPEAKING,
-                        ConversationState.TOOL_WAITING,
-                    },
-                )
-                if cue is not None:
-                    if self._listener_cue_candidate_task is asyncio.current_task():
-                        self._listener_cue_candidate_task = None
-                    await self._play_listener_cue(cue)
-            finally:
-                if self._listener_cue_candidate_task is asyncio.current_task():
-                    self._listener_cue_candidate_task = None
-
-        self._listener_cue_candidate_task = self._spawn(
-            _after_micro_pause(),
-            name="listener-cue-micro-pause",
-        )
+        schedule_listener_cue(self, text, now_ns=now_ns)
 
     def update_pending_assistant_text(self, text: str) -> None:
         self._pending_assistant_text = text
@@ -3399,6 +3393,7 @@ class DuplexRuntime:
                         is_shadow=self.is_shadow_speaker()
                     )
                 )
+                and self.profile_permits(self.fence, capability="memory_capture")
             )
             self._resume_pending = route.intent is UtteranceIntent.RESUME
             if route.enter_chat:
@@ -3419,14 +3414,18 @@ class DuplexRuntime:
         *,
         input_modality: Literal["audio", "text"] = "audio",
     ) -> GenerationFence:
-        if (
-            self.fence.turn_id == 0
-            and self.orchestrator.context_snapshots.current(self.session_id).version == 0
-        ):
-            self.orchestrator.context_snapshots.seed_initial(
-                self.session_id,
-                self._context_snapshot_draft(),
-            )
+        # Turn-boundary authority refresh: re-apply the signed profile before
+        # any generation starts (never in the background mid-generation).
+        await self.refresh_runtime_profile()
+        if self._pending_epoch_drain is not None:
+            # Epoch rotation barrier: old work drains before new output.
+            await self._drain_epoch_rotation()
+        self.orchestrator.context_snapshots.seed_or_rebind_if_empty(
+            self.session_id,
+            first_turn=self.fence.turn_id == 0,
+            draft_factory=self._context_snapshot_draft,
+            delegation=self.orchestrator.delegation,
+        )
         history_eligible = self._current_history_eligible()
         owner_projection_eligible = self._current_owner_projection_eligible()
         next_speaker_scope: Literal["owner", "public"] = (
@@ -3459,8 +3458,7 @@ class DuplexRuntime:
             fence,
             owner_projection_eligible,
         )
-        input_key = (fence.turn_id, fence.generation_id)
-        self._input_modality_by_fence[input_key] = input_modality
+        self._input_modality_by_fence[fence] = input_modality
         while len(self._input_modality_by_fence) > HISTORY_ELIGIBILITY_MAX_FENCES:
             self._input_modality_by_fence.pop(next(iter(self._input_modality_by_fence)))
         self._reply_speaker_binding = self._current_resume_speaker_binding()
@@ -3565,10 +3563,9 @@ class DuplexRuntime:
 
     def _publish_assistant_expression(self, full_text: str) -> None:
         fence = self.fence
-        key = (fence.turn_id, fence.generation_id, fence.tool_epoch)
-        if self._assistant_expression_fence == key:
+        if self._assistant_expression_fence == fence:
             return
-        self._assistant_expression_fence = key
+        self._assistant_expression_fence = fence
         self._publish(
             {
                 "type": "assistant_expression",
@@ -3581,7 +3578,8 @@ class DuplexRuntime:
                 "generation_id": fence.generation_id,
                 "tool_epoch": fence.tool_epoch,
                 "at": datetime.now(UTC).isoformat(),
-            }
+            },
+            fence=fence,
         )
 
     async def on_playback_done(self, *, tools_active: bool = False) -> None:
@@ -4373,6 +4371,7 @@ class DuplexRuntime:
                     text=self._played_assistant_text,
                     final=False,
                     heard=True,
+                    fence=self.fence,
                 )
 
     async def on_assistant_reply_completed(self, text: str) -> None:
@@ -4628,6 +4627,7 @@ class DuplexRuntime:
                         speaker="user",
                         text=text,
                         final=False,
+                        fence=self.fence,
                     )
 
         def _on_conversation_item(ev: Any) -> None:

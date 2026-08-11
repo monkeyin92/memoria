@@ -8,7 +8,7 @@ import base64
 import secrets
 from collections.abc import Callable
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 from services.agent.src.config import (
     SELF_HOSTED_ENDPOINTING_MAX_DELAY_S,
@@ -20,6 +20,7 @@ from services.agent.src.config import (
 from services.control_api.app.config import ControlSettings
 from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 
+from scripts.production_postgres_roles import production_control_database_urls
 from scripts.split_production_env import (
     _AGENT_EXTRA_KEYS,
     _CONTROL_EXTRA_KEYS,
@@ -52,10 +53,6 @@ def _required(values: dict[str, str], key: str) -> str:
     if not value:
         raise ValueError(f"missing required bootstrap value: {key}")
     return value
-
-
-def _postgres_dsn(*, user: str, password: str) -> str:
-    return f"postgresql://{user}:{quote(password, safe='')}@memoria-postgres:5432/memoria"
 
 
 def _miniprogram_gateway_url(public_base_url: str) -> str:
@@ -101,10 +98,7 @@ def prepare(
     dashscope_key = _required(values, "DASHSCOPE_API_KEY")
     _required(values, "WECHAT_MINIPROGRAM_APPID")
     _required(values, "WECHAT_MINIPROGRAM_APPSECRET")
-    app_password = _required(postgres, "MEMORIA_DB_APP_PASSWORD")
-    compiler_password = _required(postgres, "MEMORIA_DB_COMPILER_PASSWORD")
-    evolution_password = _required(postgres, "MEMORIA_DB_EVOLUTION_PASSWORD")
-    guardian_password = _required(postgres, "MEMORIA_DB_GUARDIAN_PASSWORD")
+    database_urls = production_control_database_urls(postgres)
     archive_access = _required(minio, "MEMORIA_ARCHIVE_OBJECT_ACCESS_KEY")
     archive_secret = _required(minio, "MEMORIA_ARCHIVE_OBJECT_SECRET_KEY")
     voice_access = _required(minio, "MEMORIA_VOICE_OBJECT_ACCESS_KEY")
@@ -126,16 +120,15 @@ def prepare(
         character not in "0123456789abcdef" for character in evolution_trusted_root.lower()
     ):
         raise ValueError("MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256 must be a sha256 digest")
-    gateway_url = (
-        values.get("MINIPROGRAM_MEDIA_GATEWAY_URL", "").strip()
-        or _miniprogram_gateway_url(public_base_url)
-    )
+    gateway_url = values.get(
+        "MINIPROGRAM_MEDIA_GATEWAY_URL", ""
+    ).strip() or _miniprogram_gateway_url(public_base_url)
     asymmetric_streamcore = bool(
         values.get("STREAMCORE_TOKEN_PRIVATE_KEY_FILE", "").strip()
         or values.get("STREAMCORE_TOKEN_PRIVATE_KEY_PEM", "").strip()
     )
-    streamcore_token_secret = "" if asymmetric_streamcore else _keep_or_create(
-        values, "STREAMCORE_TOKEN_SECRET", _token
+    streamcore_token_secret = (
+        "" if asymmetric_streamcore else _keep_or_create(values, "STREAMCORE_TOKEN_SECRET", _token)
     )
     values.update(
         {
@@ -164,16 +157,12 @@ def prepare(
             "STREAMCORE_TOKEN_PRIVATE_KEY_FILE": values.get(
                 "STREAMCORE_TOKEN_PRIVATE_KEY_FILE", ""
             ),
-            "STREAMCORE_TOKEN_PRIVATE_KEY_PEM": values.get(
-                "STREAMCORE_TOKEN_PRIVATE_KEY_PEM", ""
-            ),
+            "STREAMCORE_TOKEN_PRIVATE_KEY_PEM": values.get("STREAMCORE_TOKEN_PRIVATE_KEY_PEM", ""),
             "STREAMCORE_TOKEN_KEY_ID": values.get("STREAMCORE_TOKEN_KEY_ID", "streamcore-1"),
             "MEDIA_EDGE_CONTROL_URL": values.get(
                 "MEDIA_EDGE_CONTROL_URL", "http://media-edge:8080"
             ),
-            "MEDIA_EDGE_CONTROL_TIMEOUT_S": values.get(
-                "MEDIA_EDGE_CONTROL_TIMEOUT_S", "2"
-            ),
+            "MEDIA_EDGE_CONTROL_TIMEOUT_S": values.get("MEDIA_EDGE_CONTROL_TIMEOUT_S", "2"),
             "MEDIA_EDGE_JWT_SECRET": streamcore_token_secret,
             "MEDIA_EDGE_JWT_PUBLIC_KEY_FILE": values.get("MEDIA_EDGE_JWT_PUBLIC_KEY_FILE", ""),
             "MEDIA_EDGE_JWT_PUBLIC_KEY_PEM": values.get("MEDIA_EDGE_JWT_PUBLIC_KEY_PEM", ""),
@@ -193,25 +182,31 @@ def prepare(
             "MEDIA_EDGE_VOICE_CORE_SERVER_NAME": "voice-core-media-bridge",
             "MEDIA_EDGE_VOICE_CORE_ALLOW_INSECURE_DEVELOPMENT": "false",
             "MEDIA_EDGE_VOICE_CORE_CONNECT_TIMEOUT_MS": "5000",
-            "MEMORIA_ARCHIVE_DATABASE_URL": _postgres_dsn(
-                user="memoria_app", password=app_password
-            ),
-            "MEMORIA_ARCHIVE_COMPILER_DATABASE_URL": _postgres_dsn(
-                user="memoria_compiler", password=compiler_password
-            ),
-            "MEMORIA_EVOLUTION_DATABASE_URL": _postgres_dsn(
-                user="memoria_evolution", password=evolution_password
-            ),
-            "MEMORIA_GUARDIAN_DATABASE_URL": _postgres_dsn(
-                user="memoria_guardian", password=guardian_password
-            ),
+            **database_urls,
             "MEMORIA_ARCHIVE_COMPILER_ROLE": "memoria_compiler",
+            "MEMORIA_SESSION_RUNTIME_SCHEMA_MANAGED_EXTERNALLY": "true",
+            "MEMORIA_MEMORY_SCHEMA_MANAGED_EXTERNALLY": "true",
             "MEMORIA_ARCHIVE_WRITE_TOKEN": _token(),
             "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET": _keep_or_create(
                 values, "MEMORIA_MESSAGE_IDEMPOTENCY_SECRET", _token
             ),
             "MEMORIA_WECHAT_IDENTITY_SECRET": _keep_or_create(
                 values, "MEMORIA_WECHAT_IDENTITY_SECRET", _token
+            ),
+            "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET": _keep_or_create(
+                values,
+                "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET",
+                _token,
+            ),
+            "MEMORIA_DEVICE_BINDING_TOKEN_SECRET": _keep_or_create(
+                values,
+                "MEMORIA_DEVICE_BINDING_TOKEN_SECRET",
+                _token,
+            ),
+            "MEMORIA_TRANSFER_EVIDENCE_SECRET": _keep_or_create(
+                values,
+                "MEMORIA_TRANSFER_EVIDENCE_SECRET",
+                _token,
             ),
             "MEMORIA_AGENT_HEARTBEAT_TOKEN": _token(),
             "MEMORIA_MEMORY_READ_TOKEN": _token(),
@@ -302,20 +297,21 @@ def prepare(
                 "turn:turn.example.com:3478,turns:turn.example.com:5349",
             ),
             "COTURN_REALM": values.get("COTURN_REALM", "memoria"),
-            "COTURN_SHARED_SECRET": _keep_or_create(
-                values, "COTURN_SHARED_SECRET", _token
-            ),
+            "COTURN_SHARED_SECRET": _keep_or_create(values, "COTURN_SHARED_SECRET", _token),
             "COTURN_CREDENTIAL_TTL_S": values.get("COTURN_CREDENTIAL_TTL_S", "300"),
             "PREEMPTIVE_GENERATION": "false",
             "PREEMPTIVE_TTS": "false",
             "ENDPOINTING_MIN_DELAY_S": f"{SELF_HOSTED_ENDPOINTING_MIN_DELAY_S:.2f}",
             "ENDPOINTING_MAX_DELAY_S": f"{SELF_HOSTED_ENDPOINTING_MAX_DELAY_S:.2f}",
-            "FALSE_INTERRUPTION_TIMEOUT_S": (
-                f"{SELF_HOSTED_FALSE_INTERRUPTION_TIMEOUT_S:.2f}"
-            ),
+            "FALSE_INTERRUPTION_TIMEOUT_S": (f"{SELF_HOSTED_FALSE_INTERRUPTION_TIMEOUT_S:.2f}"),
         }
     )
     values.pop("MEMORIA_ARCHIVE_INTERNAL_TOKEN", None)
+    # Production schema installation is performed by the root-only data
+    # upgrade workflow.  Never copy its administrator DSN into a long-lived
+    # Control API environment.
+    values.pop("MEMORIA_SESSION_RUNTIME_BOOTSTRAP_DATABASE_URL", None)
+    values.pop("MEMORIA_MEMORY_BOOTSTRAP_DATABASE_URL", None)
     control, agent, speaker_model, gateway, media_edge = split_env(values)
     ControlSettings.model_validate(control).validate_production()
     AgentSettings.model_validate(agent)

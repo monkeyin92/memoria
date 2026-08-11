@@ -7,9 +7,10 @@ import hashlib
 from asyncio import Lock, to_thread
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import cast
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 from fastapi import FastAPI
@@ -20,7 +21,7 @@ from services.agent.src.providers.crisis_semantic_classifier import (
     CrisisSemanticClassifierConfig,
 )
 from services.archive.compiler_worker import MemoryCompilerWorker
-from services.archive.domain import LifeArchivePort
+from services.archive.domain import EvidenceEvent, LifeArchivePort
 from services.archive.life_archive import LifeArchive
 from services.archive.memory_catalog import MemoryCatalog
 from services.archive.memory_domain import (
@@ -38,6 +39,13 @@ from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 from services.archive.postgres_skill_catalog import PostgresSkillCatalog
 from services.archive.skill_catalog import SkillCatalog
 from services.archive.skill_domain import SkillCatalogPort
+from services.consent.binding_snapshot import (
+    BindingConsentAuthority,
+    BindingConsentStorePort,
+    PostgresBindingConsentStore,
+    RejectingBindingConsentAuthority,
+    SqliteBindingConsentStore,
+)
 from services.control_api.app.account_gate import AccountDeletingError, AccountOperationGate
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
@@ -45,16 +53,23 @@ from services.control_api.app.device_registry import DeviceRegistry
 from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.media_slo import MediaSLOGate
 from services.control_api.app.memory_components import build_memory_embedder, build_memory_extractor
+from services.control_api.app.memory_scope_authority import PostgresMemoryAuthority
+from services.control_api.app.multi_subject_runtime import (
+    MultiSubjectRuntimeControl,
+    PostgresMultiSubjectRuntimeControl,
+)
 from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import auth as auth_routes
 from services.control_api.app.routes import digital_self as digital_self_routes
 from services.control_api.app.routes import evolution as evolution_routes
 from services.control_api.app.routes import growth as growth_routes
 from services.control_api.app.routes import guardian as guardian_routes
+from services.control_api.app.routes import identity_lifecycle as identity_lifecycle_routes
 from services.control_api.app.routes import interaction as interaction_routes
 from services.control_api.app.routes import legacy as legacy_routes
 from services.control_api.app.routes import media as media_routes
 from services.control_api.app.routes import memory as memory_routes
+from services.control_api.app.routes import multi_subject as multi_subject_routes
 from services.control_api.app.routes import persona as persona_routes
 from services.control_api.app.routes import readiness as readiness_routes
 from services.control_api.app.routes import self_model as self_model_routes
@@ -114,17 +129,45 @@ from services.guardian.crisis import CrisisNotificationService, CrisisNotificati
 from services.guardian.domain import ConsentKind, GuardianStorePort
 from services.guardian.postgres_store import PostgresGuardianStore
 from services.guardian.sqlite_store import SqliteGuardianStore
+from services.identity.authority import (
+    ConsentSnapshotResolver,
+    RejectingTransferEvidenceVerifier,
+)
+from services.identity.postgres_store import PostgresIdentityStore
+from services.identity.repository import IdentityStore
+from services.identity.service import IdentityService
+from services.identity.sqlite_store import SqliteIdentityStore
 from services.legacy.domain import LegacyRegistryPort
 from services.legacy.postgres_registry import PostgresLegacyRegistry
 from services.legacy.registry import LegacyRegistry
+from services.memory_scope.capture_policy import (
+    build_memory_capture_policy_assembly,
+)
+from services.memory_scope.production import (
+    MemoryProductionSettings,
+)
+from services.memory_scope.redis_outbox import RedisMemoryOutboxDispatcher
+from services.memory_scope.relationship_grants import (
+    IdentityRelationshipGrantResolver,
+)
+from services.memory_scope.shared_actions import PostgresFamilySharedActionExecutor
+from services.memory_scope.wiring import (
+    MemoryProductionWiring,
+    build_memory_router,
+    install_memory_production,
+)
 from services.persona.domain import PersonaEnginePort
 from services.persona.engine import PersonaEngine
 from services.persona.postgres_engine import PostgresPersonaEngine
 from services.persona.qwen_extractor import FallbackPersonaExtractor, QwenPersonaExtractor
 from services.persona.rules import PersonaExtractor, RuleBasedPersonaExtractor
+from services.policy.engine import PolicyEngine
+from services.policy.receipt_store import InMemoryPolicyReceiptWriter
 from services.self_model.domain import SelfModelRegistryPort
 from services.self_model.postgres_registry import PostgresSelfModelRegistry
 from services.self_model.registry import SelfModelRegistry
+from services.session_runtime.postgres_store import PostgresSessionRuntimeStore
+from services.session_runtime.service import build_postgres_session_runtime_service
 from services.speaker.authority import SpeakerAuthority
 from services.speaker.campplus_http import (
     CampPlusHTTPEmbeddingAdapter,
@@ -132,6 +175,11 @@ from services.speaker.campplus_http import (
 )
 from services.speaker.domain import SpeakerAuthorityPort, SpeakerEmbeddingAdapter
 from services.speaker.postgres_authority import PostgresSpeakerAuthority
+from services.tutor.authority import (
+    TutorEvidenceGate,
+    TutorFenceSnapshot,
+    TutorScoringRubric,
+)
 from services.voice_profile.cosyvoice_enrollment import (
     CosyVoiceEnrollmentClient,
     CosyVoiceEnrollmentConfig,
@@ -155,6 +203,65 @@ from services.voice_profile.postgres_manager import PostgresVoiceProfileManager
 from services.voice_profile.sample_url import VoiceSampleURLSigner
 
 
+class _PostgresRuntimeProfileFencePort:
+    """Adapt the persistent Session Runtime profile to Tutor's fence port."""
+
+    def __init__(self, runtime: PostgresMultiSubjectRuntimeControl) -> None:
+        self._runtime = runtime
+
+    async def resolve_fence(
+        self,
+        *,
+        actor_id: str,
+        voice_session_id: str,
+        now: datetime,
+    ) -> TutorFenceSnapshot | None:
+        profile = await self._runtime.tutor_profile(
+            actor_id=actor_id,
+            session_id=voice_session_id,
+            now=now,
+        )
+        if profile is None or profile.active_subject_id is None:
+            return None
+        return TutorFenceSnapshot(
+            voice_session_id=voice_session_id,
+            actor_id=profile.actor_id,
+            active_subject_id=profile.active_subject_id,
+            device_id=profile.device_id,
+            binding_id=profile.binding_id,
+            binding_version=profile.binding_version,
+            subject_revision=profile.subject_revision,
+            session_epoch=profile.session_epoch,
+            runtime_profile_id=profile.runtime_profile_id,
+            policy_receipt_ids=tuple(profile.policy_receipt_ids),
+            expires_at=profile.expires_at,
+            resolved_at=now,
+        )
+
+
+def _install_tutor_authority(app: FastAPI) -> None:
+    """PR-13: wire server-owned tutor subject fence and evidence gate.
+
+    The assessment authority (voice-agent seam) is intentionally not wired:
+    practice scoring fails closed with 503 until the agent-side evidence
+    producer lands.  The action-receipt verifier (Policy transaction-bound
+    seam) is also not wired yet: practice writes fail closed with 503 until
+    the Policy port lands.  The fence and signing gate are real.
+    """
+
+    runtime = app.state.multi_subject_runtime
+    if isinstance(runtime, PostgresMultiSubjectRuntimeControl):
+        app.state.tutor_session_fence = _PostgresRuntimeProfileFencePort(runtime)
+    else:
+        from services.control_api.app.routes.tutor import RuntimeProfileFencePort
+
+        app.state.tutor_session_fence = RuntimeProfileFencePort(runtime)
+    app.state.tutor_receipt_verifier = None
+    app.state.tutor_evidence_gate = TutorEvidenceGate(
+        signing_key=app.state.settings.runtime_profile_signing_key()
+    )
+    app.state.tutor_scoring_rubric = TutorScoringRubric()
+    app.state.tutor_assessment_authority = None
 def _memory_account_guard(
     gate: AccountOperationGate,
     store: MemoryStore,
@@ -510,8 +617,115 @@ def _evolution_plane(
     )
 
 
+async def _install_session_runtime(
+    app: FastAPI,
+    settings: ControlSettings,
+) -> PostgresSessionRuntimeStore | None:
+    """Install the authoritative Session Runtime for the current profile."""
+
+    app.state.session_runtime_store = None
+    app.state.session_runtime_service = None
+    if settings.environment == "production":
+        session_runtime_store = PostgresSessionRuntimeStore(
+            dsn=settings.session_runtime_database_url.get_secret_value().strip(),
+            action_dsn=settings.action_executor_database_url.get_secret_value().strip(),
+            bootstrap_dsn=(
+                settings.session_runtime_bootstrap_database_url.get_secret_value().strip()
+                or None
+            ),
+        )
+        app.state.session_runtime_store = session_runtime_store
+        await session_runtime_store.initialize()
+        session_runtime_service = build_postgres_session_runtime_service(
+            store=session_runtime_store,
+            signing_key=settings.runtime_profile_signing_key(),
+            policy=PolicyEngine(),
+        )
+        app.state.session_runtime_service = session_runtime_service
+        app.state.policy_receipt_writer = None
+        app.state.multi_subject_runtime = PostgresMultiSubjectRuntimeControl(
+            identity=app.state.identity_service,
+            sessions=session_runtime_service,
+        )
+        return session_runtime_store
+
+    app.state.policy_receipt_writer = InMemoryPolicyReceiptWriter()
+    app.state.multi_subject_runtime = MultiSubjectRuntimeControl(
+        identity=app.state.identity_service,
+        policy=PolicyEngine(receipt_writer=app.state.policy_receipt_writer),
+        signing_key=settings.runtime_profile_signing_key(),
+    )
+    return None
+
+
+async def _install_memory_scope(
+    app: FastAPI,
+    settings: ControlSettings,
+) -> None:
+    """Install MemoryScope only from dedicated production PostgreSQL roles."""
+
+    app.state.memory_wiring = None
+    if settings.environment != "production":
+        return
+    api_dsn = settings.memory_api_database_url.get_secret_value().strip()
+    worker_dsn = settings.memory_worker_database_url.get_secret_value().strip()
+    if not api_dsn or not worker_dsn:
+        return
+    runtime = app.state.multi_subject_runtime
+    if not isinstance(runtime, PostgresMultiSubjectRuntimeControl):
+        raise RuntimeError("MemoryScope requires the production Session runtime")
+    bootstrap_dsn = (
+        settings.memory_bootstrap_database_url.get_secret_value().strip() or None
+    )
+    api_password = urlsplit(api_dsn).password
+    worker_password = urlsplit(worker_dsn).password
+    if bootstrap_dsn and api_password != worker_password:
+        raise RuntimeError(
+            "MemoryScope bootstrap requires matching API and worker role passwords"
+        )
+    production_settings = MemoryProductionSettings(
+        api_dsn=api_dsn,
+        worker_dsn=worker_dsn,
+        action_executor_dsn=(
+            settings.action_executor_database_url.get_secret_value().strip()
+        ),
+        bootstrap_dsn=bootstrap_dsn,
+        app_role_password=(
+            unquote(api_password) if bootstrap_dsn and api_password else None
+        ),
+        schema_managed_externally=settings.memory_schema_managed_externally,
+    )
+    capture_policy = build_memory_capture_policy_assembly()
+    relationship_grants = IdentityRelationshipGrantResolver(
+        app.state.identity_service
+    )
+    dispatcher = (
+        RedisMemoryOutboxDispatcher.from_url(settings.redis_url)
+        if settings.redis_url.strip()
+        else None
+    )
+    shared_actions = PostgresFamilySharedActionExecutor(
+        production_settings.action_executor_dsn
+    )
+    wiring = install_memory_production(
+        app,
+        production_settings,
+        receipt_verifier=None,
+        family_membership_verifier=None,
+        consent_verifier=None,
+        grant_resolver=relationship_grants,
+        authority=PostgresMemoryAuthority(runtime),
+        sensitive_write=capture_policy.sensitive_write,
+        context_builder=capture_policy.context_builder,
+        outbox_dispatcher=dispatcher,
+        shared_action_executor=shared_actions,
+        include_router=False,
+    )
+    await wiring.start()
+
+
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
     settings = ControlSettings()
     try:
         settings.validate_production()
@@ -539,6 +753,47 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     store = MemoryStore(settings.memoria_db_path)
     await to_thread(store.initialize)
     app.state.memory_store = store
+    consent_url = settings.consent_database_url.get_secret_value().strip()
+    if consent_url:
+        binding_consent_store: BindingConsentStorePort = (
+            PostgresBindingConsentStore(consent_url)
+        )
+    else:
+        binding_consent_store = SqliteBindingConsentStore(
+            settings.consent_sqlite_path()
+        )
+    await binding_consent_store.initialize()
+    binding_consent_authority = BindingConsentAuthority(binding_consent_store)
+    app.state.binding_consent_store = binding_consent_store
+    app.state.binding_consent_authority = binding_consent_authority
+
+    identity_url = settings.identity_database_url.get_secret_value().strip()
+    if identity_url:
+        identity_store: IdentityStore = PostgresIdentityStore(
+            identity_url,
+            registration_dsn=(
+                settings.identity_registration_database_url.get_secret_value().strip()
+                or None
+            ),
+        )
+        await identity_store.initialize()
+    else:
+        sqlite_identity_store = SqliteIdentityStore(settings.identity_sqlite_path())
+        await to_thread(sqlite_identity_store.initialize)
+        identity_store = cast(IdentityStore, sqlite_identity_store)
+    app.state.identity_store = identity_store
+    app.state.identity_service = IdentityService(
+        identity_store,
+        # Transfer evidence authorities are NOT wired yet: the composite
+        # verifier fails closed until the policy receipt / step-up
+        # integration lands.
+        transfer_verifier=RejectingTransferEvidenceVerifier(),
+        consent_resolver=binding_consent_authority,
+    )
+    app.state.multi_subject_binding_manifests = {}
+    await _install_session_runtime(app, settings)
+    await _install_memory_scope(app, settings)
+    _install_tutor_authority(app)
     app.state.device_registry = DeviceRegistry(
         store,
         challenge_ttl_ms=settings.device_challenge_ttl_ms,
@@ -550,10 +805,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.session_terminator = session_terminator
     guardian_url = settings.guardian_database_url.get_secret_value().strip()
+    guardian_maintenance_url = (
+        settings.guardian_maintenance_database_url.get_secret_value().strip() or None
+    )
+    guardian_worker_url = (
+        settings.guardian_worker_database_url.get_secret_value().strip() or None
+    )
     postgres_guardian: PostgresGuardianStore | None = None
     if guardian_url:
         postgres_guardian = PostgresGuardianStore(
             guardian_url,
+            maintenance_dsn=guardian_maintenance_url,
+            worker_dsn=guardian_worker_url,
             initialize_schema=settings.environment != "production",
         )
         await postgres_guardian.initialize()
@@ -584,9 +847,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     embedder = build_memory_embedder(settings)
     account_guard = _memory_account_guard(app.state.account_operations, store)
     if archive_url:
-        postgres_archive = PostgresLifeArchive(archive_url)
+        postgres_archive = PostgresLifeArchive(
+            archive_url,
+            outbox_max_attempts=settings.archive_compile_max_attempts,
+        )
         await postgres_archive.initialize()
         archive = postgres_archive
+        memory_wiring = cast(
+            MemoryProductionWiring | None,
+            getattr(app.state, "memory_wiring", None),
+        )
+
+        async def project_capture_evidence(event: EvidenceEvent) -> bool:
+            candidate = event.payload.get("memory_capture_candidate_v1")
+            if not isinstance(candidate, dict) or memory_wiring is None:
+                return False
+            return await memory_wiring.project_capture_evidence(
+                event_id=event.event_id,
+                content_sha256=event.content_sha256,
+                occurred_at=event.occurred_at,
+                candidate=cast(dict[str, object], candidate),
+            )
+
         postgres_catalog = PostgresMemoryCatalog(
             archive_url,
             extractor=extractor,
@@ -594,8 +876,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             compiler_role=settings.archive_compiler_role or None,
             account_guard=account_guard,
             subject_category_resolver=_subject_category_resolver(store),
+            capture_evidence_projector=(
+                project_capture_evidence
+                if settings.environment == "production"
+                else None
+            ),
             embedder=embedder,
             require_vector=settings.environment == "production",
+            outbox_lease_s=settings.archive_compile_lease_s,
+            outbox_retry_base_s=settings.archive_compile_retry_base_s,
+            outbox_retry_max_s=settings.archive_compile_retry_max_s,
         )
         await postgres_catalog.initialize()
         memory_catalog = postgres_catalog
@@ -832,6 +1122,38 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await postgres_guardian.close()
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    try:
+        async with _lifespan_impl(app):
+            yield
+    finally:
+        memory_wiring = getattr(app.state, "memory_wiring", None)
+        if memory_wiring is not None:
+            await memory_wiring.close()
+        session_runtime_store = getattr(
+            app.state,
+            "session_runtime_store",
+            None,
+        )
+        if session_runtime_store is not None:
+            await session_runtime_store.close()
+        identity_store = getattr(
+            app.state,
+            "identity_store",
+            None,
+        )
+        if identity_store is not None:
+            await identity_store.close()
+        binding_consent_store = getattr(
+            app.state,
+            "binding_consent_store",
+            None,
+        )
+        if binding_consent_store is not None:
+            await binding_consent_store.close()
+
+
 def create_app() -> FastAPI:
     settings = ControlSettings()
     production = settings.environment == "production"
@@ -862,6 +1184,49 @@ def create_app() -> FastAPI:
     app.state.realtime_connections = RealtimeConnectionRegistry()
     # The store initializes lazily for ASGI test clients that do not run lifespan.
     app.state.memory_store = MemoryStore(settings.memoria_db_path)
+    identity_store = SqliteIdentityStore(settings.identity_sqlite_path())
+    identity_store.initialize()
+    app.state.identity_store = identity_store
+    if production:
+        binding_consent_store = None
+        binding_consent_authority: ConsentSnapshotResolver = (
+            RejectingBindingConsentAuthority()
+        )
+    else:
+        sqlite_binding_consent_store = SqliteBindingConsentStore(
+            settings.consent_sqlite_path()
+        )
+        sqlite_binding_consent_store.initialize_sync()
+        binding_consent_store = sqlite_binding_consent_store
+        binding_consent_authority = BindingConsentAuthority(
+            sqlite_binding_consent_store
+        )
+    app.state.binding_consent_store = binding_consent_store
+    app.state.binding_consent_authority = binding_consent_authority
+    app.state.identity_service = IdentityService(
+        cast(IdentityStore, identity_store),
+        transfer_verifier=RejectingTransferEvidenceVerifier(),
+        consent_resolver=binding_consent_authority,
+    )
+    app.state.multi_subject_binding_manifests = {}
+    app.state.session_runtime_store = None
+    app.state.session_runtime_service = None
+    app.state.memory_wiring = None
+    if production:
+        # Production Session Runtime is installed by the async lifespan after
+        # schema/RLS/action-role initialization; never provide an in-memory
+        # policy receipt fallback in the eager app state.
+        app.state.policy_receipt_writer = None
+        app.state.multi_subject_runtime = None
+        app.state.tutor_session_fence = None
+    else:
+        app.state.policy_receipt_writer = InMemoryPolicyReceiptWriter()
+        app.state.multi_subject_runtime = MultiSubjectRuntimeControl(
+            identity=app.state.identity_service,
+            policy=PolicyEngine(receipt_writer=app.state.policy_receipt_writer),
+            signing_key=settings.runtime_profile_signing_key(),
+        )
+        _install_tutor_authority(app)
     app.state.device_registry = DeviceRegistry(
         app.state.memory_store,
         challenge_ttl_ms=settings.device_challenge_ttl_ms,
@@ -975,6 +1340,9 @@ def create_app() -> FastAPI:
     app.include_router(skill_routes.router)
     app.include_router(speaker_routes.router)
     app.include_router(memory_routes.router)
+    app.include_router(build_memory_router())
+    app.include_router(multi_subject_routes.router)
+    app.include_router(identity_lifecycle_routes.router)
     app.include_router(persona_routes.router)
     app.include_router(digital_self_routes.router)
     app.include_router(evolution_routes.router)

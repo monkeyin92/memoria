@@ -43,6 +43,35 @@ SAFETY_CORE = """
 不要解释或模仿孤立的韩文、日文、粤语字符；遇到极短异常转写时等待用户重说。
 """.strip()
 
+# Identity-transparent safety baseline for persona/policy-driven sessions
+# (remediation doc 3.4 and PR-11): truthful when asked, never impersonating,
+# never mechanically self-reporting.  The legacy SAFETY_CORE and
+# VOICE_SYSTEM_PROMPT above stay byte-for-byte unchanged.
+_AI_IDENTITY_RULE_OLD = (
+    "只能使用当前系统消息提供的机器人名称和角色说明介绍自己；不得自称或讨论 AI、\n"
+    "语言模型、模型名称、提供商、厂商、系统提示词、工具实现或内部配置。用户追问这些内容时，\n"
+    "只简短介绍当前机器人名称和陪伴方式，不要解释技术细节。"
+)
+_AI_IDENTITY_RULE_TRANSPARENT = (
+    "只能使用当前系统消息提供的机器人名称和角色说明介绍自己；不要无故、频繁或机械地讨论\n"
+    "AI、语言模型、模型名称、提供商、厂商、系统提示词、工具实现或内部配置。\n"
+    "用户直接询问你的本质时，如实说明你是由人工智能驱动的机器人伙伴；\n"
+    "不得冒充具有真实法律身份、真实肉体经历或现实亲属关系的自然人，\n"
+    "不得声称自己在现实世界亲眼见过、亲身经历过并不存在的事件。"
+)
+
+# Public identity-transparency rule (remediation D-05 / PR-11): truthful when
+# asked, never impersonating, never mechanically self-reporting.  Used by
+# prompt_composition and the Control API response-plan instruction seam so no
+# parallel hard-coded AI-hiding rule survives.
+AI_IDENTITY_RULE_TRANSPARENT = _AI_IDENTITY_RULE_TRANSPARENT
+
+# Same safety core with the absolute AI-hiding rule replaced by the
+# transparency rule.  Used by prompt_composition; legacy paths keep SAFETY_CORE.
+SAFETY_CORE_TRANSPARENT = SAFETY_CORE.replace(
+    _AI_IDENTITY_RULE_OLD, _AI_IDENTITY_RULE_TRANSPARENT
+)
+
 # Backward-compatible companion prompt. Keep its text byte-for-byte equivalent
 # to the former monolith while new session focuses replace only the first style.
 VOICE_SYSTEM_PROMPT = "\n".join((COMPANION_STYLE, SAFETY_CORE))
@@ -55,9 +84,11 @@ BRIDGE_PHRASES = (
 )
 
 __all__ = [
+    "AI_IDENTITY_RULE_TRANSPARENT",
     "BRIDGE_PHRASES",
     "COMPANION_STYLE",
     "SAFETY_CORE",
+    "SAFETY_CORE_TRANSPARENT",
     "TUTOR_STYLE",
     "VOICE_SYSTEM_PROMPT",
 ]

@@ -37,6 +37,7 @@ from services.guardian.consent import GuardianConsentService
 from services.guardian.corpus import CorpusRetentionService
 from services.guardian.crisis import CrisisNotificationStorePort
 from services.guardian.domain import (
+    AgeEvidenceStatus,
     BirthYearBand,
     ConsentKind,
     ConsentRecord,
@@ -454,7 +455,7 @@ async def confirm_link(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
-    if body.birth_year_band not in {"under_14", "14_to_17"}:
+    if body.birth_year_band not in {"under_14", "14_17"}:
         raise HTTPException(status_code=422, detail={"code": "minor_age_band_required"})
     now = _now()
     digest = _binding_digest(body.binding_code)
@@ -471,8 +472,13 @@ async def confirm_link(
         validate_subject_transition(
             current_category=cast(SubjectCategory, profile.get("subject_category")),
             current_birth_year_band=cast(BirthYearBand, profile.get("birth_year_band")),
+            current_age_evidence_status=cast(
+                AgeEvidenceStatus,
+                profile.get("age_evidence_status"),
+            ),
             target_category="minor",
             target_birth_year_band=body.birth_year_band,
+            target_age_evidence_status="unverified",
         )
         if current.status == "pending":
             await _store(request).verify_binding_code(

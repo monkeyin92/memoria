@@ -33,10 +33,10 @@ SubjectCapability = Literal[
 
 SUBJECT_CAPABILITY_RULES = MappingProxyType(
     {
-        "companion_chat": frozenset({"adult", "minor"}),
+        "companion_chat": frozenset({"unknown", "adult", "minor"}),
         "memory_ledger": frozenset({"adult", "minor"}),
-        "emotion_expression": frozenset({"adult", "minor"}),
-        "tutor": frozenset({"adult", "minor"}),
+        "emotion_expression": frozenset({"unknown", "adult", "minor"}),
+        "tutor": frozenset({"unknown", "adult", "minor"}),
         "voice_clone": frozenset({"adult"}),
         "digital_self": frozenset({"adult"}),
         "self_preview": frozenset({"adult"}),

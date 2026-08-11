@@ -1,5 +1,7 @@
 const api = require("../../utils/api");
 const { requireLogin } = require("../../utils/auth-gate");
+const contracts = require("../../utils/multi-subject-contracts");
+const { capabilityGateMessage } = require("../../utils/device-binding");
 
 function today() {
   const date = new Date();
@@ -78,6 +80,17 @@ Page({
     const authEpoch = api.currentAuthEpoch();
     this.setData({ loading: true, error: "" });
     try {
+      const gate = await api.requireRuntimeCapability(contracts.Capability.MemoryRecallPrivate);
+      if (!gate.allowed) {
+        if (api.isAuthEpochCurrent(authEpoch)) {
+          this.setData({
+            loading: false,
+            days: [],
+            error: capabilityGateMessage(gate, contracts.Capability.MemoryRecallPrivate),
+          });
+        }
+        return;
+      }
       const result = await api.getMemoryDays(identity.user_id, 30);
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       const days = (result.items || []).map(normalizeDay);
@@ -103,6 +116,13 @@ Page({
   async summarizeSelectedDay() {
     if (!(await requireLogin({ reason: "generate_review" }))) return;
     this.setData({ authenticated: true });
+    const gate = await api.requireRuntimeCapability(contracts.Capability.MemoryRecallPrivate);
+    if (!gate.allowed) {
+      this.setData({
+        error: capabilityGateMessage(gate, contracts.Capability.MemoryRecallPrivate),
+      });
+      return;
+    }
     const identity = api.currentIdentity();
     if (!identity || this.data.summarizing) return;
     const authEpoch = api.currentAuthEpoch();

@@ -60,6 +60,67 @@ def test_weekly_projection_uses_only_fenced_authoritative_aggregates() -> None:
     assert report.source_event_count == 5
 
 
+def test_weekly_report_consumes_only_fenced_aggregates_not_raw_learning_events() -> None:
+    events = [
+        # A fenced, subject-bound practice_completed aggregate (envelope plus
+        # duration only) is what the projector may count.
+        _event(
+            "study-fenced-1",
+            event_type="tutor.practice_completed",
+            day=4,
+            payload={
+                "history_eligible": True,
+                "owner_projection_eligible": True,
+                "duration_seconds": 900,
+                "subject_id": "minor-1",
+                "actor_id": "minor-1",
+                "session_epoch": 4,
+                "runtime_profile_id": "rp_1",
+                "policy_receipt_id": "receipt-tutor",
+                "text": "原文绝不允许进入周报",
+            },
+        ),
+        # Practice turn evidence carries outcome/skill/diagnosis-level detail:
+        # it must never be counted as study minutes or leak into the report.
+        _event(
+            "turn-1",
+            event_type="tutor.practice_turn_recorded",
+            day=4,
+            payload={
+                "history_eligible": True,
+                "owner_projection_eligible": True,
+                "duration_seconds": 600,
+                "subject_id": "minor-1",
+                "actor_id": "minor-1",
+                "session_epoch": 4,
+                "runtime_profile_id": "rp_1",
+                "policy_receipt_id": "receipt-tutor",
+                "outcome": "struggled",
+                "skill_key": "past-story",
+                "correctness_score": 0.3,
+                "text": "逐字回答原文绝不能进入周报",
+            },
+        ),
+        # An unfenced aggregate (no envelope) must be ignored as well.
+        _event(
+            "study-unfenced-1",
+            event_type="tutor.practice_completed",
+            day=5,
+            payload={"duration_seconds": 3600},
+        ),
+    ]
+
+    report = WeeklyReportProjector.build(
+        minor_user_id="minor-1",
+        week_start=date(2026, 8, 3),
+        events=events,
+    )
+
+    assert report.study_minutes == 15
+    assert report.source_event_count == 1
+    assert report.topic_distribution == {}
+
+
 def test_public_weekly_payload_never_contains_transcript_or_diagnosis() -> None:
     report = WeeklyReportProjector.build(
         minor_user_id="minor-1",

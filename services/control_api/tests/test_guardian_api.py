@@ -19,6 +19,9 @@ from services.control_api.app.account_gate import (
     require_capability_for_account_id,
 )
 from services.control_api.app.main import create_app
+from services.control_api.tests.test_interaction_api import (
+    _attach_signed_runtime_profile,
+)
 
 
 def _configure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -64,6 +67,16 @@ async def _login(client: AsyncClient, username: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
+def _mark_verified_adult(app: Any, user_id: str) -> None:
+    app.state.memory_store.update_subject_profile(
+        user_id=user_id,
+        subject_category="adult",
+        birth_year_band="adult",
+        age_evidence_status="verified",
+        now=datetime.now(UTC).isoformat(),
+    )
+
+
 def _wav_base64() -> str:
     output = io.BytesIO()
     with wave.open(output, "wb") as writer:
@@ -84,6 +97,8 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         parent, parent_headers = await _register(client, "guardian-parent")
         child, child_headers = await _register(client, "guardian-child")
+        _mark_verified_adult(app, parent["user_id"])
+        parent_headers = await _login(client, "guardian-parent")
         app.state.memory_store.bind_external_identities(
             preferred_user_id=parent["user_id"],
             identities={"wechat_openid": "parent-openid-sha256"},
@@ -152,6 +167,15 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
         )
         assert session.status_code == 200
         assert session.json()["interaction"]["session_focus"] == "tutor_english"
+        _attach_signed_runtime_profile(
+            app,
+            user_id=child["user_id"],
+            session_id=session.json()["session_id"],
+            subject_category="minor",
+            age_band="under_14",
+            service_mode="student_minor",
+            capabilities=("chat", "tutor", "english_practice"),
+        )
 
         policy_without_retention = await client.post(
             "/v1/interaction/session-policy",
@@ -160,6 +184,7 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
             },
             json={"session_id": session.json()["session_id"]},
         )
+        assert policy_without_retention.status_code == 200, policy_without_retention.text
         unretained = await client.post(
             "/v1/archive/session-events",
             headers={
@@ -201,6 +226,20 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
             },
         )
         assert memory_consent.status_code == 201
+        _attach_signed_runtime_profile(
+            app,
+            user_id=child["user_id"],
+            session_id=session.json()["session_id"],
+            subject_category="minor",
+            age_band="under_14",
+            service_mode="student_minor",
+            capabilities=(
+                "chat",
+                "tutor",
+                "english_practice",
+                "memory_recall_private",
+            ),
+        )
         policy_with_retention = await client.post(
             "/v1/interaction/session-policy",
             headers={
@@ -388,6 +427,8 @@ async def test_guardian_summary_requires_exact_active_link_and_weekly_consent(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         parent, parent_headers = await _register(client, "guardian-no-link")
         child, _ = await _register(client, "guardian-private-child")
+        _mark_verified_adult(app, parent["user_id"])
+        parent_headers = await _login(client, "guardian-no-link")
         app.state.memory_store.bind_external_identities(
             preferred_user_id=parent["user_id"],
             identities={"wechat_openid": "parent-no-link-openid"},
@@ -396,7 +437,7 @@ async def test_guardian_summary_requires_exact_active_link_and_weekly_consent(
         app.state.memory_store.update_subject_profile(
             user_id=child["user_id"],
             subject_category="minor",
-            birth_year_band="14_to_17",
+            birth_year_band="14_17",
             now=datetime.now(UTC).isoformat(),
         )
 
@@ -422,6 +463,8 @@ async def test_authorized_child_corpus_is_time_bounded_and_revocation_deletes_au
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         parent, parent_headers = await _register(client, "corpus-parent")
         child, child_headers = await _register(client, "corpus-child")
+        _mark_verified_adult(app, parent["user_id"])
+        parent_headers = await _login(client, "corpus-parent")
         app.state.memory_store.bind_external_identities(
             preferred_user_id=parent["user_id"],
             identities={"wechat_openid": "corpus-parent-openid"},

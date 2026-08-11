@@ -31,6 +31,9 @@ def test_turn_revision_closes_after_the_first_final() -> None:
 @pytest.mark.asyncio
 async def test_final_revision_cannot_diverge_from_durable_history() -> None:
     runtime = DuplexRuntime.create(session_id="revision-history")
+    from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
+
+    bind_owner_policy(runtime)
     ui_events: list[dict[str, Any]] = []
     evidence_events: list[dict[str, Any]] = []
 
@@ -48,12 +51,14 @@ async def test_final_revision_cannot_diverge_from_durable_history() -> None:
         text="第一份最终稿",
         final=True,
         turn_revision=1,
+        fence=runtime.fence,
     )
     assert not runtime.publish_transcript(
         speaker="user",
         text="迟到的第二份最终稿",
         final=True,
         turn_revision=2,
+        fence=runtime.fence,
     )
     await asyncio.sleep(0)
 

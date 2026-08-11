@@ -176,7 +176,12 @@ async def test_high_risk_delegation_requires_committed_turn() -> None:
 @pytest.mark.asyncio
 async def test_high_risk_delegation_requires_explicit_user_confirmation() -> None:
     coordinator = await _coordinator_with_result("ok")
-    coordinator.task_manager.specs["search"].side_effect_policy = SideEffectPolicy.HIGH_RISK.value
+    # ToolSpec is frozen: replace the registered spec with an immutable
+    # HIGH_RISK spec (never mutate the original's permission boundary).
+    coordinator.task_manager.specs["search"] = replace(
+        coordinator.task_manager.specs["search"],
+        side_effect_policy=SideEffectPolicy.HIGH_RISK.value,
+    )
     request = replace(
         _request(committed=True),
         side_effect_policy=SideEffectPolicy.HIGH_RISK,
@@ -217,13 +222,16 @@ def test_conversation_reply_intent_is_admitted_and_consumed() -> None:
     )
 
     assert intent.kind == media_pb2.OUTPUT_INTENT_KIND_CONVERSATION_REPLY
-    assert coordinator.admit_output_intent(
-        intent,
-        current_fence=fence,
-        current_context_version=5,
-        floor_allows_output=True,
-        now_ms=1_001,
-    ) == ""
+    assert (
+        coordinator.admit_output_intent(
+            intent,
+            current_fence=fence,
+            current_context_version=5,
+            floor_allows_output=True,
+            now_ms=1_001,
+        )
+        == ""
+    )
     assert observations[-1].accepted is True
     assert observations[-1].consumed is False
     assert observations[-1].selected is True
@@ -498,17 +506,20 @@ def test_output_intent_observer_receives_multi_source_authoritative_winner() -> 
         )
 
     current_fence = _fence()
-    assert coordinator.admit_output_intent(
-        intent("deep", media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT, 50, 900),
-        current_fence=current_fence,
-        current_context_version=5,
-        floor_allows_output=True,
-        now_ms=1_000,
-    ) == "deep"
+    assert (
+        coordinator.admit_output_intent(
+            intent("deep", media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT, 50, 900),
+            current_fence=current_fence,
+            current_context_version=5,
+            floor_allows_output=True,
+            now_ms=1_000,
+        )
+        == "deep"
+    )
     assert observations[-1].authoritative_candidate.intent_id == "deep"
-    assert [
-        candidate.intent_id for candidate in observations[-1].authoritative_candidates
-    ] == ["deep"]
+    assert [candidate.intent_id for candidate in observations[-1].authoritative_candidates] == [
+        "deep"
+    ]
 
     assert (
         coordinator.admit_output_intent(
@@ -524,9 +535,10 @@ def test_output_intent_observer_receives_multi_source_authoritative_winner() -> 
     assert observations[-1].accepted is True
     assert observations[-1].selected is False
     assert observations[-1].reason == "queued"
-    assert [
-        candidate.intent_id for candidate in observations[-1].authoritative_candidates
-    ] == ["deep", "lower-tool"]
+    assert [candidate.intent_id for candidate in observations[-1].authoritative_candidates] == [
+        "deep",
+        "lower-tool",
+    ]
 
     assert (
         coordinator.admit_output_intent(
@@ -540,18 +552,24 @@ def test_output_intent_observer_receives_multi_source_authoritative_winner() -> 
     )
     assert observations[-1].authoritative_candidate.intent_id == "deep"
 
-    assert coordinator.admit_output_intent(
-        intent("ack", media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT, 1, 903),
-        current_fence=current_fence,
-        current_context_version=5,
-        floor_allows_output=True,
-        now_ms=1_000,
-    ) == "ack"
+    assert (
+        coordinator.admit_output_intent(
+            intent("ack", media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT, 1, 903),
+            current_fence=current_fence,
+            current_context_version=5,
+            floor_allows_output=True,
+            now_ms=1_000,
+        )
+        == "ack"
+    )
     assert observations[-1].authoritative_candidate.intent_id == "ack"
     assert observations[-1].selected is True
-    assert [
-        candidate.intent_id for candidate in observations[-1].authoritative_candidates
-    ] == ["ack", "deep", "lower-tool", "notification"]
+    assert [candidate.intent_id for candidate in observations[-1].authoritative_candidates] == [
+        "ack",
+        "deep",
+        "lower-tool",
+        "notification",
+    ]
 
 
 def test_output_intent_authoritative_state_restores_same_domain_fallback() -> None:
@@ -578,13 +596,16 @@ def test_output_intent_authoritative_state_restores_same_domain_fallback() -> No
 
     winner = intent("winner", 100, 1_100)
     fallback = intent("fallback", 1, 2_000)
-    assert coordinator.admit_output_intent(
-        winner,
-        current_fence=fence,
-        current_context_version=5,
-        floor_allows_output=True,
-        now_ms=1_000,
-    ) == "winner"
+    assert (
+        coordinator.admit_output_intent(
+            winner,
+            current_fence=fence,
+            current_context_version=5,
+            floor_allows_output=True,
+            now_ms=1_000,
+        )
+        == "winner"
+    )
     assert (
         coordinator.admit_output_intent(
             fallback,
@@ -609,9 +630,9 @@ def test_output_intent_authoritative_state_restores_same_domain_fallback() -> No
     )
     assert observations[-1].reason == "duplicate_intent"
     assert observations[-1].authoritative_candidate.intent_id == "fallback"
-    assert [
-        candidate.intent_id for candidate in observations[-1].authoritative_candidates
-    ] == ["fallback"]
+    assert [candidate.intent_id for candidate in observations[-1].authoritative_candidates] == [
+        "fallback"
+    ]
 
 
 def test_output_intent_authoritative_state_is_bounded_and_context_scoped() -> None:
@@ -644,9 +665,12 @@ def test_output_intent_authoritative_state_is_bounded_and_context_scoped() -> No
             now_ms=1_000,
         ) == str(priority)
 
-    assert [
-        candidate.intent_id for candidate in observations[-1].authoritative_candidates
-    ] == ["candidate-4", "candidate-3", "candidate-2", "candidate-1"]
+    assert [candidate.intent_id for candidate in observations[-1].authoritative_candidates] == [
+        "candidate-4",
+        "candidate-3",
+        "candidate-2",
+        "candidate-1",
+    ]
 
     coordinator.activate_context_version(fence.session_id, 6)
     stale = media_pb2.OutputIntent()
@@ -706,13 +730,16 @@ def test_output_intent_floor_loss_clears_active_candidates() -> None:
         expires_at_ms=2_000,
         now_ms=1_000,
     )
-    assert coordinator.admit_output_intent(
-        intent,
-        current_fence=fence,
-        current_context_version=5,
-        floor_allows_output=True,
-        now_ms=1_001,
-    ) == BRIDGE_PHRASES[0]
+    assert (
+        coordinator.admit_output_intent(
+            intent,
+            current_fence=fence,
+            current_context_version=5,
+            floor_allows_output=True,
+            now_ms=1_001,
+        )
+        == BRIDGE_PHRASES[0]
+    )
 
     blocked = media_pb2.OutputIntent()
     blocked.CopyFrom(intent)
@@ -751,26 +778,32 @@ def test_output_intent_shadow_state_resets_on_transport_epoch_change() -> None:
         context_version=5,
         tts_source="old",
     )
-    assert coordinator.admit_output_intent(
-        intent,
-        current_fence=fence,
-        current_context_version=5,
-        floor_allows_output=True,
-        now_ms=1_000,
-    ) == "old"
+    assert (
+        coordinator.admit_output_intent(
+            intent,
+            current_fence=fence,
+            current_context_version=5,
+            floor_allows_output=True,
+            now_ms=1_000,
+        )
+        == "old"
+    )
 
     coordinator.reset_output_intent_state("session")
     replacement = media_pb2.OutputIntent()
     replacement.CopyFrom(intent)
     replacement.intent_id = "new-epoch"
     replacement.tts_source = "new"
-    assert coordinator.admit_output_intent(
-        replacement,
-        current_fence=fence,
-        current_context_version=5,
-        floor_allows_output=True,
-        now_ms=1_000,
-    ) == "new"
+    assert (
+        coordinator.admit_output_intent(
+            replacement,
+            current_fence=fence,
+            current_context_version=5,
+            floor_allows_output=True,
+            now_ms=1_000,
+        )
+        == "new"
+    )
     assert observations[-1].authoritative_candidate.intent_id == "new-epoch"
 
 
