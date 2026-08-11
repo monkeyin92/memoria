@@ -62,6 +62,16 @@ PRODUCTION_POSTGRES_ROLES = (
         control_dsn_env="MEMORIA_CONSENT_DATABASE_URL",
     ),
     ProductionPostgresRole(
+        password_env="MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD",
+        role="memoria_device_onboarding_api",
+        control_dsn_env="MEMORIA_DEVICE_ONBOARDING_DATABASE_URL",
+    ),
+    ProductionPostgresRole(
+        password_env="MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD",
+        role="memoria_device_onboarding_maintenance",
+        control_dsn_env=None,
+    ),
+    ProductionPostgresRole(
         password_env="MEMORIA_DB_SESSION_API_PASSWORD",
         role="memoria_session_api",
         control_dsn_env="MEMORIA_SESSION_RUNTIME_DATABASE_URL",

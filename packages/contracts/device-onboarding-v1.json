@@ -1,0 +1,502 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoria.local/contracts/device-onboarding-v1.json",
+  "title": "Memoria Device Onboarding v1",
+  "description": "Strict Bootstrap, Claim and Activation wire contracts. No network credential field is part of this contract.",
+  "oneOf": [
+    { "$ref": "#/$defs/qr_payload" },
+    { "$ref": "#/$defs/introspect_request" },
+    { "$ref": "#/$defs/claim_request" },
+    { "$ref": "#/$defs/binding_initialization" },
+    { "$ref": "#/$defs/online_proof" },
+    { "$ref": "#/$defs/activation_ack" },
+    { "$ref": "#/$defs/activation_manifest" },
+    { "$ref": "#/$defs/bootstrap_session_response" },
+    { "$ref": "#/$defs/claim_response" },
+    { "$ref": "#/$defs/activation_status_response" },
+    { "$ref": "#/$defs/device_media_challenge_response" },
+    { "$ref": "#/$defs/device_media_session_proof" },
+    { "$ref": "#/$defs/device_media_session_response" },
+    { "$ref": "#/$defs/offline_mock_device_registration" }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "base64url": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "rfc3339": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "qr_envelope": {
+      "type": "string",
+      "pattern": "^memoria-bootstrap:v1:[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+    },
+    "qr_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "typ",
+        "ver",
+        "device_id",
+        "bootstrap_nonce",
+        "ble_name",
+        "ble_service_uuid",
+        "certificate_id",
+        "provisioning_protocol",
+        "firmware_version",
+        "pop"
+      ],
+      "properties": {
+        "typ": { "const": "memoria-device-bootstrap" },
+        "ver": { "const": 1 },
+        "device_id": { "$ref": "#/$defs/identifier" },
+        "bootstrap_nonce": { "$ref": "#/$defs/base64url", "minLength": 22 },
+        "ble_name": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,32}$" },
+        "ble_service_uuid": { "type": "string", "format": "uuid" },
+        "certificate_id": { "$ref": "#/$defs/identifier" },
+        "provisioning_protocol": { "const": "memoria-provisioning/1" },
+        "firmware_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "pop": { "$ref": "#/$defs/base64url", "minLength": 22 }
+      }
+    },
+    "introspect_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["qr_payload", "client_onboarding_id", "client"],
+      "properties": {
+        "qr_payload": { "$ref": "#/$defs/qr_envelope" },
+        "client_onboarding_id": { "$ref": "#/$defs/identifier" },
+        "client": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["platform", "app_version", "base_library_version"],
+          "properties": {
+            "platform": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "app_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "base_library_version": { "type": "string", "minLength": 1, "maxLength": 128 }
+          }
+        }
+      }
+    },
+    "claim_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "onboarding_session_id",
+        "device_id",
+        "idempotency_key",
+        "expected_state_version"
+      ],
+      "properties": {
+        "onboarding_session_id": { "$ref": "#/$defs/identifier" },
+        "device_id": { "$ref": "#/$defs/identifier" },
+        "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "expected_state_version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "binding_initialization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "declared_mode",
+        "account_owner_person_id",
+        "primary_subject",
+        "persona_selection",
+        "service_preferences",
+        "consent_offer_ids"
+      ],
+      "properties": {
+        "declared_mode": {
+          "enum": ["parent_for_child", "self_use", "child_for_parent", "family_shared"]
+        },
+        "account_owner_person_id": { "$ref": "#/$defs/identifier" },
+        "primary_subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["person_id", "relationship"],
+          "properties": {
+            "person_id": { "$ref": "#/$defs/identifier" },
+            "relationship": { "type": "string", "minLength": 1, "maxLength": 32 }
+          }
+        },
+        "persona_selection": { "$ref": "#/$defs/identifier" },
+        "service_preferences": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tutor_enabled": { "type": "boolean" },
+            "english_practice_enabled": { "type": "boolean" },
+            "max_session_minutes": { "type": "integer", "minimum": 1, "maximum": 1440 },
+            "quiet_hours": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["start", "end"],
+              "properties": {
+                "start": { "type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]$" },
+                "end": { "type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]$" }
+              }
+            },
+            "interview_frequency": { "enum": ["off", "low", "medium"] },
+            "speech_speed": { "enum": ["normal", "slow"] },
+            "admin_visibility": {
+              "enum": ["device_status", "device_status_and_reminders"]
+            },
+            "shared_persona_enabled": { "type": "boolean" },
+            "robot_name": { "type": "string", "maxLength": 256 },
+            "locale": { "type": "string", "maxLength": 64 },
+            "timezone": { "type": "string", "maxLength": 128 },
+            "memory_level": { "type": "string", "maxLength": 64 },
+            "quiet_hours_start": { "type": "string", "maxLength": 32 },
+            "quiet_hours_end": { "type": "string", "maxLength": 32 },
+            "voice_style": { "type": "string", "maxLength": 64 },
+            "speaker_enrollment_requested": { "type": "boolean" }
+          }
+        },
+        "consent_offer_ids": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "online_proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_id",
+        "certificate_id",
+        "bootstrap_nonce_hash",
+        "mobile_nonce_hash",
+        "challenge_id",
+        "challenge_nonce",
+        "firmware_version",
+        "firmware_security_version",
+        "capability_manifest_hash",
+        "network_result",
+        "monotonic_counter",
+        "signature"
+      ],
+      "properties": {
+        "device_id": { "$ref": "#/$defs/identifier" },
+        "certificate_id": { "$ref": "#/$defs/identifier" },
+        "bootstrap_nonce_hash": { "$ref": "#/$defs/sha256" },
+        "mobile_nonce_hash": { "$ref": "#/$defs/sha256" },
+        "challenge_id": { "$ref": "#/$defs/identifier" },
+        "challenge_nonce": { "$ref": "#/$defs/base64url", "minLength": 43 },
+        "firmware_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "firmware_security_version": { "type": "integer", "minimum": 0 },
+        "capability_manifest_hash": { "$ref": "#/$defs/sha256" },
+        "network_result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["got_ip", "dns_ready", "tls_ready"],
+          "properties": {
+            "got_ip": { "type": "boolean" },
+            "dns_ready": { "type": "boolean" },
+            "tls_ready": { "type": "boolean" }
+          }
+        },
+        "monotonic_counter": { "type": "integer", "minimum": 1 },
+        "signature": { "$ref": "#/$defs/base64url", "minLength": 86, "maxLength": 86 }
+      }
+    },
+    "activation_ack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_id",
+        "certificate_id",
+        "binding_id",
+        "binding_version",
+        "activation_version",
+        "config_hash",
+        "firmware_version",
+        "monotonic_counter",
+        "applied_at",
+        "signature"
+      ],
+      "properties": {
+        "device_id": { "$ref": "#/$defs/identifier" },
+        "certificate_id": { "$ref": "#/$defs/identifier" },
+        "binding_id": { "$ref": "#/$defs/identifier" },
+        "binding_version": { "type": "integer", "minimum": 1 },
+        "activation_version": { "type": "integer", "minimum": 1 },
+        "config_hash": { "$ref": "#/$defs/sha256" },
+        "firmware_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "monotonic_counter": { "type": "integer", "minimum": 1 },
+        "applied_at": { "$ref": "#/$defs/rfc3339" },
+        "signature": { "$ref": "#/$defs/base64url", "minLength": 86, "maxLength": 86 }
+      }
+    },
+    "device_media_challenge_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "challenge_id",
+        "device_id",
+        "certificate_id",
+        "client_id",
+        "nonce",
+        "issued_at",
+        "expires_at",
+        "algorithm"
+      ],
+      "properties": {
+        "challenge_id": { "$ref": "#/$defs/identifier" },
+        "device_id": { "$ref": "#/$defs/identifier" },
+        "certificate_id": { "$ref": "#/$defs/identifier" },
+        "client_id": { "$ref": "#/$defs/identifier" },
+        "nonce": { "$ref": "#/$defs/base64url", "minLength": 43, "maxLength": 43 },
+        "issued_at": { "$ref": "#/$defs/rfc3339" },
+        "expires_at": { "$ref": "#/$defs/rfc3339" },
+        "algorithm": { "const": "Ed25519" }
+      }
+    },
+    "device_media_session_proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["certificate_id", "challenge_id", "nonce", "signature", "client_id"],
+      "properties": {
+        "certificate_id": { "$ref": "#/$defs/identifier" },
+        "challenge_id": { "$ref": "#/$defs/identifier" },
+        "nonce": { "$ref": "#/$defs/base64url", "minLength": 43, "maxLength": 43 },
+        "signature": { "$ref": "#/$defs/base64url", "minLength": 86, "maxLength": 86 },
+        "client_id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "device_media_session_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "stream_epoch",
+        "websocket_url",
+        "media_token",
+        "expires_in",
+        "protocol_version",
+        "binding_id",
+        "binding_version",
+        "uplink",
+        "downlink"
+      ],
+      "properties": {
+        "session_id": { "$ref": "#/$defs/identifier" },
+        "stream_epoch": { "type": "integer", "minimum": 1 },
+        "websocket_url": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "media_token": { "type": "string", "minLength": 1 },
+        "expires_in": { "type": "integer", "minimum": 30, "maximum": 300 },
+        "protocol_version": { "const": 1 },
+        "binding_id": { "$ref": "#/$defs/identifier" },
+        "binding_version": { "type": "integer", "minimum": 1 },
+        "uplink": { "$ref": "#/$defs/device_opus_format_uplink" },
+        "downlink": { "$ref": "#/$defs/device_opus_format_downlink" }
+      }
+    },
+    "device_opus_format_uplink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codec", "sample_rate", "channels", "frame_ms"],
+      "properties": {
+        "codec": { "const": "opus" },
+        "sample_rate": { "const": 16000 },
+        "channels": { "const": 1 },
+        "frame_ms": { "const": 20 }
+      }
+    },
+    "device_opus_format_downlink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codec", "sample_rate", "channels", "frame_ms"],
+      "properties": {
+        "codec": { "const": "opus" },
+        "sample_rate": { "const": 24000 },
+        "channels": { "const": 1 },
+        "frame_ms": { "const": 20 }
+      }
+    },
+    "activation_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "activation_id",
+        "activation_version",
+        "device_id",
+        "binding_id",
+        "binding_version",
+        "persona_assignment_id",
+        "service_profile_version",
+        "policy_bundle_version",
+        "runtime_profile_version",
+        "locale",
+        "timezone",
+        "display",
+        "endpoints",
+        "config_hash",
+        "issued_at",
+        "expires_at",
+        "signature"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "activation_id": { "$ref": "#/$defs/identifier" },
+        "activation_version": { "type": "integer", "minimum": 1 },
+        "device_id": { "$ref": "#/$defs/identifier" },
+        "binding_id": { "$ref": "#/$defs/identifier" },
+        "binding_version": { "type": "integer", "minimum": 1 },
+        "persona_assignment_id": { "$ref": "#/$defs/identifier" },
+        "service_profile_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "policy_bundle_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "runtime_profile_version": { "type": "integer", "minimum": 1 },
+        "locale": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "timezone": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "display": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["robot_name", "primary_subject_display_name"],
+          "properties": {
+            "robot_name": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "primary_subject_display_name": { "type": "string", "minLength": 1, "maxLength": 128 }
+          }
+        },
+        "endpoints": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["control_api", "device_media"],
+          "properties": {
+            "control_api": { "type": "string", "minLength": 1, "maxLength": 512 },
+            "device_media": { "type": "string", "minLength": 1, "maxLength": 512 }
+          }
+        },
+        "config_hash": { "$ref": "#/$defs/sha256" },
+        "issued_at": { "$ref": "#/$defs/rfc3339" },
+        "expires_at": { "$ref": "#/$defs/rfc3339" },
+        "signature": { "$ref": "#/$defs/base64url", "minLength": 86, "maxLength": 86 }
+      }
+    },
+    "bootstrap_session_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "onboarding_session_id",
+        "state",
+        "state_version",
+        "expires_at",
+        "device",
+        "provisioning"
+      ],
+      "properties": {
+        "onboarding_session_id": { "$ref": "#/$defs/identifier" },
+        "state": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "state_version": { "type": "integer", "minimum": 1 },
+        "expires_at": { "$ref": "#/$defs/rfc3339" },
+        "mobile_nonce": { "$ref": "#/$defs/base64url", "minLength": 43, "maxLength": 43 },
+        "device": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["device_id", "display_tail", "model", "firmware_version", "claim_status"],
+          "properties": {
+            "device_id": { "$ref": "#/$defs/identifier" },
+            "display_tail": { "type": "string", "minLength": 1, "maxLength": 8 },
+            "model": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "firmware_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "claim_status": {
+              "enum": ["unclaimed", "reserved", "bound", "suspended", "revoked"]
+            }
+          }
+        },
+        "provisioning": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["transport", "ble_name", "service_uuid", "protocol_version"],
+          "properties": {
+            "transport": { "const": "ble" },
+            "ble_name": { "type": "string", "minLength": 1, "maxLength": 32 },
+            "service_uuid": { "type": "string", "format": "uuid" },
+            "protocol_version": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "claim_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_id", "onboarding_session_id", "device_id", "status", "expires_at"],
+      "properties": {
+        "claim_id": { "$ref": "#/$defs/identifier" },
+        "onboarding_session_id": { "$ref": "#/$defs/identifier" },
+        "device_id": { "$ref": "#/$defs/identifier" },
+        "status": {
+          "enum": [
+            "reserved",
+            "binding_committing",
+            "binding_created",
+            "committed",
+            "released",
+            "expired",
+            "conflict"
+          ]
+        },
+        "expires_at": { "$ref": "#/$defs/rfc3339" }
+      }
+    },
+    "activation_status_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "activation_id",
+        "device_id",
+        "binding_id",
+        "binding_version",
+        "activation_version",
+        "status",
+        "config_hash"
+      ],
+      "properties": {
+        "activation_id": { "$ref": "#/$defs/identifier" },
+        "device_id": { "$ref": "#/$defs/identifier" },
+        "binding_id": { "$ref": "#/$defs/identifier" },
+        "binding_version": { "type": "integer", "minimum": 1 },
+        "activation_version": { "type": "integer", "minimum": 1 },
+        "status": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "config_hash": { "$ref": "#/$defs/sha256" },
+        "acknowledged_at": { "$ref": "#/$defs/rfc3339" }
+      }
+    },
+    "offline_mock_device_registration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_id",
+        "certificate_id",
+        "public_key",
+        "product_model",
+        "hardware_revision",
+        "firmware_version",
+        "firmware_security_version",
+        "capability_manifest_hash"
+      ],
+      "properties": {
+        "device_id": { "$ref": "#/$defs/identifier" },
+        "certificate_id": { "$ref": "#/$defs/identifier" },
+        "public_key": { "$ref": "#/$defs/base64url", "minLength": 43, "maxLength": 43 },
+        "product_model": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "hardware_revision": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "firmware_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "firmware_security_version": { "type": "integer", "minimum": 0 },
+        "capability_manifest_hash": { "$ref": "#/$defs/sha256" },
+        "minimum_firmware_security_version": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

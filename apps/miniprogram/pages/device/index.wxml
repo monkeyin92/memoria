@@ -13,13 +13,29 @@
   <block wx:elif="{{!hasBinding}}">
     <view class="card empty-card">
       <text class="empty-badge">还没有绑定设备</text>
-      <text class="empty-copy">扫描机器人上的二维码开始首次绑定。绑定会建立主体档案与关系，之后的敏感能力都由服务端按当前主体授权。</text>
-      <button class="primary-button empty-button" bindtap="openBindPage">绑定设备</button>
+      <text class="empty-copy">把这里当作机器人管理入口：添加时扫码、近场配网、认领和首次初始化会在独立流程完成；绑定后小程序主要用于查看设备状态、管理设置和回顾信息。</text>
+      <button class="primary-button empty-button" bindtap="openOnboarding">添加机器人</button>
+      <button wx:if="{{hasPendingOnboarding}}" class="secondary-button empty-button" bindtap="resumeOnboarding">恢复未完成启用</button>
     </view>
   </block>
 
   <!-- 已绑定 -->
   <block wx:else>
+    <view class="card">
+      <text class="settings-title">机器人状态</text>
+      <view class="device-status-grid">
+        <view class="device-status-item"><text class="device-status-label">在线状态</text><text class="device-status-value">{{onlineLabel}}</text></view>
+        <view class="device-status-item"><text class="device-status-label">固件版本</text><text class="device-status-value">{{firmwareVersion}}</text></view>
+        <view class="device-status-item"><text class="device-status-label">网络状态</text><text class="device-status-value">{{networkLabel}}</text></view>
+        <view class="device-status-item"><text class="device-status-label">激活状态</text><text class="device-status-value">{{activationLabel}}</text></view>
+      </view>
+      <view class="button-row device-action-row">
+        <button class="secondary-button" bindtap="openReprovision">重新配网</button>
+        <button class="primary-button" bindtap="openOnboarding">添加另一个</button>
+      </view>
+      <text class="form-note">重新配网只更新 Wi‑Fi，不解除设备归属；设备状态与激活状态以服务端和机器人回执为准。</text>
+    </view>
+
     <view class="card">
       <text class="settings-title">绑定信息</text>
       <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{bindingModeLabel}}</text></view>

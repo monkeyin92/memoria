@@ -74,6 +74,7 @@ from services.common.companion_response_safety import (
 from services.common.companion_turn_policy import COMPANION_TURN_POLICY_INSTRUCTIONS
 from services.common.companions import DESIGNED_VOICE_MODEL, companion_definition
 from services.common.miniprogram_gateway_ticket import (
+    DEVICE_AGENT_DISPATCH_METADATA,
     MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
     MINIPROGRAM_AEC_FAILED,
     MINIPROGRAM_AEC_FAILED_ACK,
@@ -164,6 +165,10 @@ def is_miniprogram_session(dispatch_metadata: object) -> bool:
         MINIPROGRAM_AGENT_DISPATCH_METADATA,
         MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
     }
+
+
+def is_device_session(dispatch_metadata: object) -> bool:
+    return dispatch_metadata == DEVICE_AGENT_DISPATCH_METADATA
 
 
 def build_keyword_spotter_pcm_observer(
@@ -2614,6 +2619,8 @@ async def entrypoint(ctx: Any) -> None:
     profile = os.getenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     offline = os.getenv("OFFLINE_MOCK", "false").lower() == "true"
     miniprogram_session = is_miniprogram_session(dispatch_metadata)
+    device_session = is_device_session(dispatch_metadata)
+    controlled_half_duplex_session = miniprogram_session or device_session
     miniprogram_aec_session = is_miniprogram_aec_session(dispatch_metadata)
 
     room_name = str(ctx.room.name)
@@ -2638,7 +2645,7 @@ async def entrypoint(ctx: Any) -> None:
         tts=tts_plugin,
         input_guard_enabled=profile == "cn_self_hosted" or miniprogram_aec_session,
         trusted_aec_playback_control=miniprogram_aec_session,
-        barge_in_enabled=not miniprogram_session,
+        barge_in_enabled=not controlled_half_duplex_session,
         listener_cues_enabled=cues_on,
         use_paralinguistic_tags=False,
         speaker_verifier=speaker_verifier,
@@ -2888,7 +2895,7 @@ async def entrypoint(ctx: Any) -> None:
         tts=tts_plugin,
         profile=profile,
         offline=offline,
-        interruptions_enabled=not miniprogram_session,
+        interruptions_enabled=not controlled_half_duplex_session,
     )
     session_kwargs.pop("turn_handling_config", None)
     if apply_miniprogram_session_audio_policy(session_kwargs, dispatch_metadata):
@@ -3158,6 +3165,12 @@ async def entrypoint(ctx: Any) -> None:
         agent_instructions += (
             "\n\n当前客户端是受控半双工小程序。普通回答只说一到三句、最多一百二十个"
             "中英文数字字符，优先先给完整结论；只有用户明确要求故事、朗读、详细方案或继续时才展开。"
+        )
+    elif device_session:
+        agent_instructions += (
+            "\n\n当前客户端是无端侧 AEC 的受控半双工硬件机器人。普通回答只说一到三句、最多"
+            "一百二十个中英文数字字符，优先先给完整结论；只有用户明确要求故事、朗读、详细方案"
+            "或继续时才展开。"
         )
     fast_model_warmer = getattr(llm_plugin, "prewarm", None)
     agent = DuplexVoiceAgent(

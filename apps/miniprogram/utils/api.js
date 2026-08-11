@@ -10,6 +10,12 @@ const {
   clearCachedRuntimeProfile,
   canonicalWireJson,
 } = require("./device-binding");
+const {
+  normalizeIntrospectResponse,
+  normalizeOnboardingSession,
+  normalizeClaimResponse,
+  normalizeActivationResponse,
+} = require("./device-onboarding/contracts");
 
 /*
  * Runtime Profile 请求代次与 epoch 守卫（§9.5 / §10.2，复审 P0-2/3/4）：
@@ -542,6 +548,110 @@ function revokeRawVoiceConsent() {
   return rawRequest("/v1/archive/raw-voice-consent", { method: "DELETE" });
 }
 
+function requiredOnboardingId(value, field) {
+  if (typeof value !== "string" || !value || value.trim() !== value || value.length > 256) {
+    throw new TypeError(`${field} 无效`);
+  }
+  return value;
+}
+
+function onboardingClientMetadata() {
+  let appVersion = "unknown";
+  let baseLibraryVersion = "unknown";
+  try {
+    const accountInfo = globalThis.wx?.getAccountInfoSync?.();
+    appVersion = accountInfo?.miniProgram?.version || appVersion;
+  } catch {
+    // The server still receives a bounded, non-sensitive client marker.
+  }
+  try {
+    const systemInfo = globalThis.wx?.getSystemInfoSync?.();
+    baseLibraryVersion = systemInfo?.SDKVersion || baseLibraryVersion;
+  } catch {
+    // Optional on older runtimes.
+  }
+  return {
+    platform: "wechat-miniprogram",
+    app_version: appVersion,
+    base_library_version: baseLibraryVersion,
+  };
+}
+
+/*
+ * Device Bootstrap API.  The QR string is passed as-is and is never written
+ * to storage or included in a user-facing error.  Signature, certificate,
+ * revocation, and session TTL decisions remain server authoritative.
+ */
+function introspectDeviceQr({ qrPayload, clientOnboardingId } = {}) {
+  if (typeof qrPayload !== "string" || !qrPayload || qrPayload.length > 4096) {
+    throw new TypeError("qr_payload 无效");
+  }
+  const clientId = requiredOnboardingId(clientOnboardingId, "client_onboarding_id");
+  return rawRequest("/v1/device-bootstrap/introspect", {
+    method: "POST",
+    data: {
+      qr_payload: qrPayload,
+      client_onboarding_id: clientId,
+      client: onboardingClientMetadata(),
+    },
+  }).then((payload) => normalizeIntrospectResponse(payload));
+}
+
+function getOnboardingSession(onboardingSessionId) {
+  const sessionId = requiredOnboardingId(onboardingSessionId, "onboarding_session_id");
+  return rawRequest(`/v1/device-bootstrap/${encodeURIComponent(sessionId)}`).then((payload) =>
+    normalizeOnboardingSession(payload),
+  );
+}
+
+function cancelOnboardingSession(onboardingSessionId) {
+  const sessionId = requiredOnboardingId(onboardingSessionId, "onboarding_session_id");
+  return rawRequest(`/v1/device-bootstrap/${encodeURIComponent(sessionId)}/cancel`, {
+    method: "POST",
+  }).then((payload) => normalizeOnboardingSession(payload));
+}
+
+function reserveDeviceClaim({
+  onboardingSessionId,
+  deviceId,
+  idempotencyKey,
+  expectedStateVersion,
+} = {}) {
+  const sessionId = requiredOnboardingId(onboardingSessionId, "onboarding_session_id");
+  const targetDeviceId = requiredOnboardingId(deviceId, "device_id");
+  const key = requiredOnboardingId(idempotencyKey, "idempotency_key");
+  if (
+    expectedStateVersion !== undefined &&
+    (!Number.isInteger(expectedStateVersion) || expectedStateVersion < 1)
+  ) {
+    throw new TypeError("expected_state_version 无效");
+  }
+  return rawRequest("/v1/device-claims", {
+    method: "POST",
+    data: {
+      onboarding_session_id: sessionId,
+      device_id: targetDeviceId,
+      idempotency_key: key,
+      ...(expectedStateVersion === undefined ? {} : { expected_state_version: expectedStateVersion }),
+    },
+    idempotencyKey: key,
+  }).then((payload) => normalizeClaimResponse(payload));
+}
+
+function getDeviceClaim(claimId) {
+  const id = requiredOnboardingId(claimId, "claim_id");
+  return rawRequest(`/v1/device-claims/${encodeURIComponent(id)}`).then((payload) =>
+    normalizeClaimResponse(payload),
+  );
+}
+
+function getActivationStatus(deviceId) {
+  const id = requiredOnboardingId(deviceId, "device_id");
+  return rawRequest(`/v1/device-activations/${encodeURIComponent(id)}`).then((payload) =>
+    normalizeActivationResponse(payload),
+  );
+}
+
 /*
  * 首次设备绑定（整改文档 §9.1）。请求体先经过 buildBindingRequest
  * fail-closed 校验：客户端不能提交 policy_version 或任何假授权字段。
@@ -730,6 +840,12 @@ module.exports = {
   getRawVoiceConsent,
   grantRawVoiceConsent,
   revokeRawVoiceConsent,
+  introspectDeviceQr,
+  getOnboardingSession,
+  cancelOnboardingSession,
+  reserveDeviceClaim,
+  getDeviceClaim,
+  getActivationStatus,
   createDeviceBinding,
   getDeviceBinding,
   resolveSessionSubject,

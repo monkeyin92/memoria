@@ -1,0 +1,150 @@
+diff --git a/main/application.h b/main/application.h
+--- a/main/application.h
++++ b/main/application.h
+@@ -171,7 +171,7 @@ private:
+     // Helper methods
+     void CheckAssetsVersion();
+     void CheckNewVersion();
+-    void InitializeProtocol();
++    bool InitializeProtocol();
+     void ShowActivationCode(const std::string& code, const std::string& message);
+     void SetListeningMode(ListeningMode mode);
+     ListeningMode GetDefaultListeningMode() const;
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -6,9 +6,11 @@
+ #include "display.h"
+ #include "mcp_server.h"
+ #include "mqtt_protocol.h"
++#include "memoria_protocol.h"
+ #include "settings.h"
+ #include "system_info.h"
+ #include "text_glyph_payload.h"
+ #include "websocket_protocol.h"
+
++#include <esp_app_desc.h>
+ #include <driver/gpio.h>
+@@ -74,6 +76,12 @@ void Application::Initialize() {
+         xEventGroupSetBits(event_group_, MAIN_EVENT_VAD_CHANGE);
+     };
+     callbacks.on_playback_drained = [this]() {
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++        auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++        if (memoria_protocol != nullptr) {
++            memoria_protocol->NotifyPlaybackDrained();
++        }
++#endif
+         xEventGroupSetBits(event_group_, MAIN_EVENT_PLAYBACK_DRAINED);
+     };
+     audio_service_.SetCallbacks(callbacks);
+@@ -322,6 +330,15 @@ void Application::HandleActivationDoneEvent() {
+     SystemInfo::PrintHeapStats();
+     SetDeviceState(kDeviceStateIdle);
+
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++    has_server_time_ = true;
++    auto display = Board::GetInstance().GetDisplay();
++    std::string message = std::string(Lang::Strings::VERSION) + esp_app_get_description()->version;
++    display->ShowNotification(message.c_str());
++    display->SetChatMessage("system", "");
++    auto& board = Board::GetInstance();
++    board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
++#else
+     has_server_time_ = ota_->HasServerTime();
+
+     auto display = Board::GetInstance().GetDisplay();
+@@ -333,6 +350,7 @@ void Application::HandleActivationDoneEvent() {
+     ota_.reset();
+     auto& board = Board::GetInstance();
+     board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
++#endif
+
+     Schedule([this]() {
+         // Play the success sound to indicate the device is ready
+@@ -341,6 +359,12 @@ void Application::HandleActivationDoneEvent() {
+ }
+
+ void Application::ActivationTask() {
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++    if (!InitializeProtocol()) {
++        return;
++    }
++    xEventGroupSetBits(event_group_, MAIN_EVENT_ACTIVATION_DONE);
++#else
+     // Create OTA object for activation process
+     ota_ = std::make_unique<Ota>();
+
+@@ -356,6 +380,7 @@ void Application::ActivationTask() {
+
+     // Signal completion to main loop
+     xEventGroupSetBits(event_group_, MAIN_EVENT_ACTIVATION_DONE);
++#endif
+ }
+
+ void Application::CheckAssetsVersion() {
+@@ -495,7 +520,7 @@ void Application::CheckNewVersion() {
+     }
+ }
+
+-void Application::InitializeProtocol() {
++bool Application::InitializeProtocol() {
+     auto& board = Board::GetInstance();
+     auto display = board.GetDisplay();
+     auto codec = board.GetAudioCodec();
+@@ -503,7 +528,10 @@ void Application::InitializeProtocol() {
+
+     display->SetStatus(Lang::Strings::LOADING_PROTOCOL);
+
+-    if (ota_->HasMqttConfig()) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++    protocol_ = std::make_unique<memoria::MemoriaProtocol>();
++#else
++    if (ota_ != nullptr && ota_->HasMqttConfig()) {
+         protocol_ = std::make_unique<MqttProtocol>();
+     } else if (ota_->HasWebsocketConfig()) {
+         protocol_ = std::make_unique<WebsocketProtocol>();
+@@ -511,6 +539,7 @@ void Application::InitializeProtocol() {
+         ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");
+         protocol_ = std::make_unique<MqttProtocol>();
+     }
++#endif
+
+     protocol_->OnConnected([this]() { DismissAlert(); });
+
+@@ -521,5 +550,14 @@ void Application::InitializeProtocol() {
+     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++        auto pending_packet = std::make_shared<std::unique_ptr<AudioStreamPacket>>(std::move(packet));
++        Schedule([this, pending_packet]() mutable {
++            if (GetDeviceState() == kDeviceStateSpeaking) {
++                audio_service_.PushPacketToDecodeQueue(std::move(*pending_packet));
++            }
++        });
++#else
+         if (GetDeviceState() == kDeviceStateSpeaking) {
+             audio_service_.PushPacketToDecodeQueue(std::move(packet));
+         }
++#endif
+     });
+@@ -652,7 +690,7 @@ void Application::InitializeProtocol() {
+         }
+     });
+
+-    protocol_->Start();
++    return protocol_->Start();
+ }
+
+ void Application::ShowActivationCode(const std::string& code, const std::string& message) {
+diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -39,4 +39,8 @@
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++#define OPUS_FRAME_DURATION_MS 20
++#else
+ #define OPUS_FRAME_DURATION_MS 60
++#endif
+ #define MAX_ENCODE_TASKS_IN_QUEUE 2
+ #define MAX_PLAYBACK_TASKS_IN_QUEUE 2
+ #define MAX_DECODE_PACKETS_IN_QUEUE (2400 / OPUS_FRAME_DURATION_MS)

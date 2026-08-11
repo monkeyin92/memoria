@@ -1,0 +1,123 @@
+<view class="page-bg"><image class="page-bg-img" src="/assets/bg/night-stars.png" mode="widthFix" /></view>
+
+<view class="page-shell onboarding-page">
+  <text class="eyebrow">{{mode === 'reprovision' ? '重新配网' : '首次启用'}}</text>
+  <text class="page-title">{{stateLabel}}</text>
+  <text class="page-subtitle">{{mode === 'reprovision' ? '只更新网络，不改变设备归属、设备密钥或绑定关系。' : '扫码、近场配网、设备认领和激活分阶段完成；关闭小程序后机器人仍应独立工作。'}}</text>
+
+  <view wx:if="{{state === 'prepare'}}" class="card">
+    <text class="settings-title">先准备好机器人</text>
+    <text class="setting-desc">请接通电源，等待机器人屏幕出现动态二维码；手机需要打开蓝牙和 Wi‑Fi，家庭网络需支持 2.4 GHz。</text>
+    <view class="notice-card">
+      <text class="notice-title">安全提醒</text>
+      <text class="notice-copy">二维码只启动短期启用会话，不代表设备所有权。Wi‑Fi 密码只在本页内存和机器人安全配网会话中短暂存在。</text>
+    </view>
+    <button class="primary-button onboarding-button" bindtap="startFlow">开始扫码</button>
+    <button class="secondary-button onboarding-button" bindtap="openDevicePage">返回设备管理</button>
+  </view>
+
+  <view wx:if="{{state === 'scan'}}" class="card">
+    <text class="settings-title">扫描机器人二维码</text>
+    <text class="setting-desc">请扫描屏幕上的 Memoria 设备二维码。扫码结果不会保存；只会原样提交到服务端进行识别和签名校验。</text>
+    <button class="primary-button onboarding-button" loading="{{scanning || busy}}" disabled="{{scanning || busy}}" bindtap="scanQr">扫描二维码</button>
+    <text class="form-note">二维码失效、设备已绑定或协议版本不兼容时，会在这里给出可操作提示。</text>
+  </view>
+
+  <view wx:if="{{state === 'device_verified'}}" class="card">
+    <text class="settings-title">已确认这台设备</text>
+    <view wx:if="{{device}}" class="summary-list">
+      <view class="summary-row"><text class="summary-key">设备型号</text><text class="summary-value">{{device.model}}</text></view>
+      <view class="summary-row"><text class="summary-key">设备尾号</text><text class="summary-value">{{device.display_tail}}</text></view>
+      <view class="summary-row"><text class="summary-key">固件版本</text><text class="summary-value">{{device.firmware_version}}</text></view>
+      <view class="summary-row"><text class="summary-key">设备状态</text><text class="summary-value">{{device.claim_status === 'unclaimed' ? '待启用' : device.claim_status}}</text></view>
+    </view>
+    <text class="form-note">下一步会在附近搜索名称和尾号均匹配的机器人；扫码本身不会直接绑定账号。</text>
+    <button class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="connectBle">连接附近机器人</button>
+    <button class="secondary-button onboarding-button" bindtap="startFlow">重新扫码</button>
+  </view>
+
+  <view wx:if="{{state === 'ble'}}" class="card">
+    <text class="settings-title">连接附近机器人</text>
+    <view class="flow-status-list">
+      <text class="flow-status">正在打开蓝牙</text>
+      <text class="flow-status">正在寻找屏幕上的机器人</text>
+      <text class="flow-status">已找到后会校验设备尾号和服务</text>
+      <text class="flow-status">安全会话未通过前不会发送 Wi‑Fi 信息</text>
+    </view>
+    <button class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="retryBle">重新连接</button>
+  </view>
+
+  <view wx:if="{{state === 'wifi'}}" class="card">
+    <text class="settings-title">选择家庭 Wi‑Fi</text>
+    <text class="setting-desc">优先使用机器人通过 BLE 扫描到的 2.4 GHz 网络；手机当前连接的 Wi‑Fi 只作默认选中提示。</text>
+    <view wx:if="{{connectedWifi}}" class="wifi-hint">手机当前连接：{{connectedWifi}}</view>
+    <view wx:if="{{wifiNetworks.length > 0}}" class="wifi-list">
+      <view wx:for="{{wifiNetworks}}" wx:key="ssid" class="wifi-row {{selectedSsid === item.ssid ? 'wifi-selected' : ''}}" data-ssid="{{item.ssid}}" bindtap="onWifiNetworkTap">
+        <view class="wifi-copy"><text class="wifi-name">{{item.ssid}}</text><text class="wifi-meta">{{item.security}} · 信号 {{item.rssi}}</text></view>
+        <text wx:if="{{selectedSsid === item.ssid}}" class="wifi-check">✓</text>
+      </view>
+    </view>
+    <input class="field-input" value="{{selectedSsid}}" placeholder="也可以手动输入 SSID" placeholder-class="field-placeholder" bindinput="onSsidInput" />
+    <view class="password-row">
+      <input class="field-input password-input" password="{{!showPassword}}" value="{{wifiPassword}}" placeholder="Wi‑Fi 密码" placeholder-class="field-placeholder" bindinput="onWifiPasswordInput" />
+      <button class="password-toggle" bindtap="togglePassword">{{showPassword ? '隐藏' : '显示'}}</button>
+    </view>
+    <text class="form-note">密码不会写入 Storage、日志、API 请求、埋点或错误上报；切后台、离开页面和提交后都会清空。</text>
+    <button class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="submitWifi">安全发送给机器人</button>
+  </view>
+
+  <view wx:if="{{state === 'progress'}}" class="card">
+    <text class="settings-title">机器人正在联网</text>
+    <view class="progress-list">
+      <view wx:for="{{progressRows}}" wx:key="key" class="progress-row {{item.done ? 'progress-done' : ''}} {{item.active ? 'progress-active' : ''}}">
+        <view class="progress-dot"><text wx:if="{{item.done}}">✓</text></view>
+        <text class="progress-label">{{item.label}}</text>
+      </view>
+    </view>
+    <text class="network-state">{{networkLabel}}</text>
+    <button class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="retryProgress">刷新机器人状态</button>
+    <button wx:if="{{progressIndex >= 6}}" class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="reserveClaim">认领这台机器人</button>
+  </view>
+
+  <view wx:if="{{state === 'claim'}}" class="card">
+    <text class="settings-title">认领设备</text>
+    <text class="setting-desc">设备已完成在线证明。认领后当前账号获得一次性初始化窗口，设备归属不会因为清除 Wi‑Fi 自动转移。</text>
+    <view wx:if="{{device}}" class="summary-row"><text class="summary-key">设备尾号</text><text class="summary-value">{{device.display_tail}}</text></view>
+    <view wx:if="{{claim}}" class="summary-row"><text class="summary-key">认领状态</text><text class="summary-value">{{claim.status}}</text></view>
+    <view wx:if="{{claim}}" class="summary-row"><text class="summary-key">有效期</text><text class="summary-value">{{claim.expires_at}}</text></view>
+    <button wx:if="{{!claim}}" class="primary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="reserveClaim">保留认领</button>
+    <button wx:if="{{claim}}" class="primary-button onboarding-button" bindtap="continueInitialize">开始首次初始化</button>
+  </view>
+
+  <view wx:if="{{state === 'initialize'}}" class="card">
+    <text class="settings-title">首次初始化</text>
+    <text class="setting-desc">接下来选择给孩子、自己、父母或家庭使用。绑定页已经通过服务端确认 claim_id，不会再次扫码或输入设备码。</text>
+    <button class="primary-button onboarding-button" bindtap="continueInitialize">进入使用方式设置</button>
+  </view>
+
+  <view wx:if="{{state === 'activation'}}" class="card">
+    <text class="settings-title">等待机器人激活</text>
+    <text class="setting-desc">绑定清单和 Activation Manifest 已交给设备链路；只有机器人回传 device_acknowledged 或 ready_for_conversation，才会显示完成。</text>
+    <view class="activation-badge">{{activationLabel}}</view>
+    <view wx:if="{{activation}}" class="summary-list">
+      <view wx:if="{{activation.firmware_version}}" class="summary-row"><text class="summary-key">固件版本</text><text class="summary-value">{{activation.firmware_version}}</text></view>
+      <view wx:if="{{activation.network}}" class="summary-row"><text class="summary-key">网络状态</text><text class="summary-value">{{activation.network.status}}</text></view>
+      <view wx:if="{{activation.updated_at}}" class="summary-row"><text class="summary-key">最近更新</text><text class="summary-value">{{activation.updated_at}}</text></view>
+    </view>
+    <view class="button-row">
+      <button class="secondary-button" bindtap="openSpeakerEnrollment">登记说话人</button>
+      <button class="primary-button" bindtap="skipSpeakerEnrollment">跳过</button>
+    </view>
+    <button class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="refreshActivation">刷新激活状态</button>
+  </view>
+
+  <view wx:if="{{state === 'complete'}}" class="card done-card">
+    <text class="done-badge">READY</text>
+    <text class="done-title">机器人可以开始对话了</text>
+    <text class="done-note">设备已确认配置并进入 ready_for_conversation。现在可以关闭小程序，直接和真实硬件机器人说话；小程序继续作为管理和回顾入口。</text>
+    <button class="primary-button onboarding-button" bindtap="openDevicePage">进入设备管理</button>
+  </view>
+
+  <text wx:if="{{error}}" class="error-text onboarding-error">{{error}}</text>
+  <button wx:if="{{state !== 'complete'}}" class="cancel-link" bindtap="cancelFlow">取消本次启用</button>
+</view>

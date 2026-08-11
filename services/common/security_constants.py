@@ -7,3 +7,6 @@ DEV_MESSAGE_IDEMPOTENCY_SECRET = (
 DEV_MINIPROGRAM_GATEWAY_TICKET_SECRET = (
     "memoria-development-miniprogram-gateway-ticket-secret-do-not-use-in-production"
 )
+DEV_DEVICE_GATEWAY_TICKET_SECRET = (
+    "memoria-development-device-gateway-ticket-secret-do-not-use-in-production"
+)

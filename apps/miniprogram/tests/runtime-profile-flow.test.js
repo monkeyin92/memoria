@@ -499,7 +499,8 @@ test("rebinding to a new manifest version clears in-memory guards", async () => 
   await first;
 
   const rebind = api.createDeviceBinding({
-    device_claim_token: "claim-2",
+    claim_id: "claim-2",
+    onboarding_session_id: "onb-2",
     declared_mode: "self_use",
     account_owner_person_id: "person_owner",
     primary_subject: { person_id: "person_owner", relationship: "self" },

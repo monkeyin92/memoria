@@ -18,6 +18,7 @@ from services.agent.src.config import (
     validate_doubao_auth,
 )
 from services.control_api.app.config import ControlSettings
+from services.device_media_gateway.config import DeviceMediaGatewaySettings
 from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 
 from scripts.production_postgres_roles import production_control_database_urls
@@ -65,6 +66,20 @@ def _miniprogram_gateway_url(public_base_url: str) -> str:
     return f"wss://{parsed.netloc}{prefix}/memoria-mini-media/v1/mini-program/media"
 
 
+def _device_gateway_url(public_base_url: str) -> str:
+    parsed = urlsplit(public_base_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError("PUBLIC_BASE_URL must be HTTPS to derive device gateway URL")
+    prefix = parsed.path.rstrip("/")
+    if prefix.endswith("/memoria-api"):
+        prefix = prefix.removesuffix("/memoria-api")
+    return f"wss://{parsed.netloc}{prefix}/memoria-device-media/v1/device/media"
+
+
+def _ed25519_seed_b64() -> str:
+    return base64.b64encode(secrets.token_bytes(32)).decode("ascii")
+
+
 def prepare(
     *,
     legacy: dict[str, str],
@@ -78,6 +93,7 @@ def prepare(
     dict[str, str],
     dict[str, str],
     dict[str, str],
+    dict[str, str],
 ]:
     known = (
         _aliases(ControlSettings)
@@ -85,6 +101,7 @@ def prepare(
         | set(_CONTROL_EXTRA_KEYS)
         | set(_AGENT_EXTRA_KEYS)
         | _aliases(MiniProgramGatewaySettings)
+        | _aliases(DeviceMediaGatewaySettings)
         | set(_GATEWAY_EXTRA_KEYS)
         | set(_MEDIA_EDGE_EXTRA_KEYS)
     )
@@ -123,6 +140,9 @@ def prepare(
     gateway_url = values.get(
         "MINIPROGRAM_MEDIA_GATEWAY_URL", ""
     ).strip() or _miniprogram_gateway_url(public_base_url)
+    device_gateway_url = values.get(
+        "DEVICE_MEDIA_GATEWAY_URL", ""
+    ).strip() or _device_gateway_url(public_base_url)
     asymmetric_streamcore = bool(
         values.get("STREAMCORE_TOKEN_PRIVATE_KEY_FILE", "").strip()
         or values.get("STREAMCORE_TOKEN_PRIVATE_KEY_PEM", "").strip()
@@ -228,6 +248,21 @@ def prepare(
             ),
             "MINIPROGRAM_GATEWAY_TICKET_MAX_TTL_S": "300",
             "MINIPROGRAM_GATEWAY_LIVEKIT_TOKEN_TTL_S": "300",
+            "DEVICE_MEDIA_GATEWAY_URL": device_gateway_url,
+            "DEVICE_GATEWAY_TICKET_TTL_S": "300",
+            "MEMORIA_DEVICE_GATEWAY_TICKET_SECRET": _keep_or_create(
+                values,
+                "MEMORIA_DEVICE_GATEWAY_TICKET_SECRET",
+                _token,
+            ),
+            "MEMORIA_DEVICE_ACTIVATION_SIGNING_SEED_B64": _keep_or_create(
+                values,
+                "MEMORIA_DEVICE_ACTIVATION_SIGNING_SEED_B64",
+                _ed25519_seed_b64,
+            ),
+            "DEVICE_MEDIA_GATEWAY_TICKET_MAX_TTL_S": "300",
+            "DEVICE_MEDIA_GATEWAY_HANDSHAKE_TIMEOUT_S": "10",
+            "DEVICE_MEDIA_GATEWAY_MAX_OPUS_PAYLOAD_BYTES": "4096",
             "MEMORIA_SPEAKER_INTERNAL_TOKEN": _token(),
             "MEMORIA_SPEAKER_EMBEDDING_TOKEN": _token(),
             "MEMORIA_SPEAKER_TEMPLATE_KEY": _keep_or_create(
@@ -312,13 +347,14 @@ def prepare(
     # Control API environment.
     values.pop("MEMORIA_SESSION_RUNTIME_BOOTSTRAP_DATABASE_URL", None)
     values.pop("MEMORIA_MEMORY_BOOTSTRAP_DATABASE_URL", None)
-    control, agent, speaker_model, gateway, media_edge = split_env(values)
+    control, agent, speaker_model, gateway, device_gateway, media_edge = split_env(values)
     ControlSettings.model_validate(control).validate_production()
     AgentSettings.model_validate(agent)
     MiniProgramGatewaySettings.model_validate(gateway).validate_production()
+    DeviceMediaGatewaySettings.model_validate(device_gateway).validate_production()
     if not speaker_model:
         raise ValueError("speaker-model env must contain its scoped token")
-    return control, agent, speaker_model, gateway, media_edge
+    return control, agent, speaker_model, gateway, device_gateway, media_edge
 
 
 def main() -> int:
@@ -336,12 +372,20 @@ def main() -> int:
     parser.add_argument("--agent", required=True, type=Path)
     parser.add_argument("--speaker-model", required=True, type=Path)
     parser.add_argument("--gateway", required=True, type=Path)
+    parser.add_argument("--device-gateway", required=True, type=Path)
     parser.add_argument("--media-edge", required=True, type=Path)
     args = parser.parse_args()
-    for path in (args.control, args.agent, args.speaker_model, args.gateway, args.media_edge):
+    for path in (
+        args.control,
+        args.agent,
+        args.speaker_model,
+        args.gateway,
+        args.device_gateway,
+        args.media_edge,
+    ):
         if path.exists():
             raise FileExistsError(f"refusing to replace existing candidate: {path}")
-    control, agent, speaker_model, gateway, media_edge = prepare(
+    control, agent, speaker_model, gateway, device_gateway, media_edge = prepare(
         legacy=_read_env(args.legacy),
         postgres=_read_env(args.postgres),
         minio=_read_env(args.minio),
@@ -352,11 +396,12 @@ def main() -> int:
     _write_env(args.agent, agent)
     _write_env(args.speaker_model, speaker_model)
     _write_env(args.gateway, gateway)
+    _write_env(args.device_gateway, device_gateway)
     _write_env(args.media_edge, media_edge)
     print(
         f"created validated env candidates: control={len(control)}, "
         f"agent={len(agent)}, speaker-model={len(speaker_model)}, gateway={len(gateway)}, "
-        f"media-edge={len(media_edge)}"
+        f"device-gateway={len(device_gateway)}, media-edge={len(media_edge)}"
     )
     return 0
 

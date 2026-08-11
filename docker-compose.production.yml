@@ -148,6 +148,56 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
 
+  device-media-gateway:
+    image: "memoria-device-media-gateway:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.miniprogram-gateway
+      args:
+        MEMORIA_RELEASE_COMMIT: "${MEMORIA_RELEASE_COMMIT:?MEMORIA_RELEASE_COMMIT is required}"
+        MEMORIA_RELEASE_TAG: "${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
+        MEMORIA_IMAGE_ROLE: "device-media-gateway"
+        UV_DEFAULT_INDEX: "${UV_DEFAULT_INDEX:-https://mirrors.aliyun.com/pypi/simple}"
+    env_file:
+      - /etc/memoria-device-media-gateway.env
+    environment:
+      ENVIRONMENT: production
+    command:
+      - /app/.venv/bin/uvicorn
+      - services.device_media_gateway.app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8011"
+      - --workers
+      - "1"
+      - --no-access-log
+    ports:
+      - "127.0.0.1:8793:8011"
+    depends_on:
+      control-api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8011/health/live', timeout=3).close()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+
   agent:
     image: "memoria-agent:${MEMORIA_RELEASE_TAG:?MEMORIA_RELEASE_TAG is required}"
     build:

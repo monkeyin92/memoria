@@ -33,6 +33,44 @@
   margin-top: 32rpx;
 }
 
+.empty-button + .empty-button {
+  margin-top: 18rpx;
+}
+
+.device-status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16rpx;
+  margin-top: 22rpx;
+}
+
+.device-status-item {
+  box-sizing: border-box;
+  min-height: 112rpx;
+  padding: 20rpx;
+  border: 1rpx solid rgba(94, 234, 255, 0.12);
+  border-radius: 22rpx;
+  background: rgba(8, 14, 36, 0.48);
+}
+
+.device-status-label {
+  display: block;
+  color: #6b779f;
+  font-size: 22rpx;
+}
+
+.device-status-value {
+  display: block;
+  margin-top: 10rpx;
+  color: #dfe7ff;
+  font-size: 24rpx;
+  line-height: 1.4;
+}
+
+.device-action-row {
+  margin-top: 24rpx;
+}
+
 .summary-row {
   display: flex;
   align-items: baseline;

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from services.agent.src.config import AgentSettings, validate_doubao_auth
 from services.control_api.app.config import ControlSettings
+from services.device_media_gateway.config import DeviceMediaGatewaySettings
 from services.miniprogram_gateway.config import MiniProgramGatewaySettings
 
 _AGENT_EXTRA_KEYS = frozenset(
@@ -103,7 +104,10 @@ _MEDIA_EDGE_EXTRA_KEYS = frozenset(
 
 
 def _aliases(
-    settings_type: type[AgentSettings] | type[ControlSettings] | type[MiniProgramGatewaySettings],
+    settings_type: type[AgentSettings]
+    | type[ControlSettings]
+    | type[DeviceMediaGatewaySettings]
+    | type[MiniProgramGatewaySettings],
 ) -> set[str]:
     return {
         str(field.alias)
@@ -115,6 +119,7 @@ def _aliases(
 def split_env(
     values: dict[str, str],
 ) -> tuple[
+    dict[str, str],
     dict[str, str],
     dict[str, str],
     dict[str, str],
@@ -173,14 +178,19 @@ def split_env(
     control_keys = _aliases(ControlSettings) | set(_CONTROL_EXTRA_KEYS)
     agent_keys = _aliases(AgentSettings) | set(_AGENT_EXTRA_KEYS)
     gateway_keys = _aliases(MiniProgramGatewaySettings) | set(_GATEWAY_EXTRA_KEYS)
+    device_gateway_keys = _aliases(DeviceMediaGatewaySettings) | set(_GATEWAY_EXTRA_KEYS)
     media_edge_keys = set(_MEDIA_EDGE_EXTRA_KEYS)
-    known = control_keys | agent_keys | gateway_keys | media_edge_keys
+    known = control_keys | agent_keys | gateway_keys | device_gateway_keys | media_edge_keys
     unknown = sorted(set(values) - known)
     if unknown:
         raise ValueError(f"unrouted production env keys: {', '.join(unknown)}")
     control = {key: value for key, value in values.items() if key in control_keys}
     agent = {key: value for key, value in values.items() if key in agent_keys}
     gateway = {key: value for key, value in values.items() if key in gateway_keys}
+    device_gateway = {
+        key: value for key, value in values.items() if key in device_gateway_keys
+    }
+    device_gateway.pop("MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET", None)
     media_edge = {key: value for key, value in values.items() if key in media_edge_keys}
     capability_flags = (
         ("MEMORIA_ARCHIVE_WRITE_TOKEN", "MEMORIA_ARCHIVE_SINK_ENABLED", True),
@@ -194,7 +204,7 @@ def split_env(
             agent.pop(token, None)
     embedding_token = values.get("MEMORIA_SPEAKER_EMBEDDING_TOKEN", "").strip()
     speaker_model = {"MEMORIA_SPEAKER_MODEL_TOKEN": embedding_token} if embedding_token else {}
-    return control, agent, speaker_model, gateway, media_edge
+    return control, agent, speaker_model, gateway, device_gateway, media_edge
 
 
 def _read_env(path: Path) -> dict[str, str]:
@@ -248,21 +258,29 @@ def main() -> int:
         default=Path("/etc/memoria-miniprogram-gateway.env"),
     )
     parser.add_argument(
+        "--device-gateway",
+        type=Path,
+        default=Path("/etc/memoria-device-media-gateway.env"),
+    )
+    parser.add_argument(
         "--media-edge",
         type=Path,
         default=Path("/etc/memoria-media-edge.env"),
     )
     args = parser.parse_args()
-    control, agent, speaker_model, gateway, media_edge = split_env(_read_env(args.source))
+    control, agent, speaker_model, gateway, device_gateway, media_edge = split_env(
+        _read_env(args.source)
+    )
     _write_env(args.control, control)
     _write_env(args.agent, agent)
     _write_env(args.speaker_model, speaker_model)
     _write_env(args.gateway, gateway)
+    _write_env(args.device_gateway, device_gateway)
     _write_env(args.media_edge, media_edge)
     print(
         f"wrote {len(control)} Control API keys, {len(agent)} Agent keys "
-        f"{len(speaker_model)} Speaker Model keys, {len(gateway)} Gateway keys "
-        f"and {len(media_edge)} Media Edge keys"
+        f"{len(speaker_model)} Speaker Model keys, {len(gateway)} Gateway keys, "
+        f"{len(device_gateway)} Device Gateway keys and {len(media_edge)} Media Edge keys"
     )
     return 0
 

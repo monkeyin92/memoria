@@ -8,6 +8,7 @@ const {
   MODE_AGE_BANDS,
   consentOffersFor,
 } = require("../../utils/device-binding");
+const { isExpired } = require("../../utils/device-onboarding/state");
 
 const SESSION_MINUTE_OPTIONS = [15, 30, 45, 60, 90, 120];
 const FAMILY_MEMBER_AGE_BANDS = ["under_14", "14_17", "adult"];
@@ -91,15 +92,13 @@ function defaultForm(mode, identity) {
   };
 }
 
-function operationKey(prefix) {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 Page({
   data: {
-    step: "claim",
-    deviceClaimToken: "",
-    scanning: false,
+    step: "loading",
+    claimId: "",
+    onboardingSessionId: "",
+    claimLoading: true,
+    claim: null,
     modeCards,
     declaredMode: "",
     modeMeta: null,
@@ -125,44 +124,63 @@ Page({
     manifest: null,
   },
 
-  onLoad() {
-    this._idempotencyKey = operationKey("bind");
+  onLoad(options = {}) {
+    this._claimId = typeof options.claim_id === "string" ? options.claim_id : "";
+    this._onboardingSessionId =
+      typeof options.onboarding_session_id === "string" ? options.onboarding_session_id : "";
+    // claim_id is server-issued and uniquely scopes the binding Saga.  A
+    // deterministic operation key lets reload/retry resume the same intent.
+    this._idempotencyKey = this._claimId ? `bind-${this._claimId}` : "";
+    this.setData({
+      claimId: this._claimId,
+      onboardingSessionId: this._onboardingSessionId,
+    });
   },
 
   async onShow() {
     if (!(await requireLogin({ reason: "bind_device" }))) return;
+    if (this._claimLoaded) return;
+    await this.loadClaim();
   },
 
-  onDeviceTokenInput(event) {
-    this.setData({ deviceClaimToken: event.detail.value, error: "" });
-  },
-
-  scanDeviceCode() {
-    this.setData({ scanning: true, error: "" });
-    wx.scanCode({
-      onlyFromCamera: false,
-      success: (result) => {
-        const token = (result?.result || "").trim();
-        if (!token) {
-          this.setData({ error: "没有识别到设备码，请重新扫描或手动输入。" });
-          return;
-        }
-        this.setData({ deviceClaimToken: token });
-      },
-      fail: () => {
-        this.setData({ error: "扫码未完成，也可以手动输入设备码。" });
-      },
-      complete: () => this.setData({ scanning: false }),
-    });
-  },
-
-  goToModeStep() {
-    const token = this.data.deviceClaimToken.trim();
-    if (!token) {
-      this.setData({ error: "请先输入或扫描设备码。" });
-      return;
+  async loadClaim() {
+    if (!this._claimId || !this._onboardingSessionId) {
+      this._claimLoaded = true;
+      this.setData({
+        claimLoading: false,
+        step: "error",
+        error: "绑定入口缺少服务端确认的 claim_id 或启用会话，请返回设备页重新开始。",
+      });
+      return null;
     }
-    this.setData({ step: "mode", error: "" });
+    this.setData({ claimLoading: true, step: "loading", error: "" });
+    try {
+      const claim = await api.getDeviceClaim(this._claimId);
+      if (claim.onboarding_session_id !== this._onboardingSessionId) {
+        throw new Error("认领不属于当前启用会话，已拒绝继续绑定。");
+      }
+      if (claim.status === "expired" || isExpired(claim.expires_at)) {
+        const error = new Error("认领保留已过期，请返回启用流程重新保留。");
+        error.code = "CLAIM_EXPIRED";
+        throw error;
+      }
+      if (!["reserved", "binding_committing", "binding_created"].includes(claim.status)) {
+        const error = new Error("当前认领状态不允许创建绑定。");
+        error.code = "CLAIM_CONFLICT";
+        throw error;
+      }
+      this._claimLoaded = true;
+      this.setData({ claim, claimLoading: false, step: "mode", error: "" });
+      return claim;
+    } catch (error) {
+      this._claimLoaded = true;
+      this.setData({
+        claimLoading: false,
+        step: "error",
+        error: error?.message || "认领状态读取失败，请返回启用流程重试。",
+      });
+      return null;
+    }
   },
 
   chooseMode(event) {
@@ -410,7 +428,8 @@ Page({
     };
     if (subjectDraft) primarySubject.subject_draft = subjectDraft;
     return {
-      device_claim_token: this.data.deviceClaimToken.trim(),
+      claim_id: this._claimId,
+      onboarding_session_id: this._onboardingSessionId,
       declared_mode: mode,
       account_owner_person_id: identity.user_id,
       primary_subject: primarySubject,
@@ -437,7 +456,25 @@ Page({
   },
 
   openDevicePage() {
-    wx.navigateTo({ url: "/pages/device/index" });
+    wx.switchTab({ url: "/pages/device/index" });
+  },
+
+  continueActivation() {
+    const pages = typeof getCurrentPages === "function" ? getCurrentPages() : [];
+    const previous = pages[pages.length - 2];
+    if (typeof previous?.onBindingCreated === "function") {
+      previous.onBindingCreated(this.data.manifest);
+      wx.navigateBack({ delta: 1 });
+      return;
+    }
+    wx.redirectTo({
+      url:
+        `/pages/device-onboarding/index?session_id=${encodeURIComponent(this._onboardingSessionId)}`,
+    });
+  },
+
+  openSpeakerEnrollment() {
+    wx.navigateTo({ url: "/pages/speaker-enrollment/index?from=device-onboarding" });
   },
 
   goHome() {

@@ -1,0 +1,11 @@
+# Memoria ESP32 firmware source lock. Keep this file secret-free and review
+# changes together with the overlay patch set.
+UPSTREAM_REPOSITORY=https://github.com/78/xiaozhi-esp32.git
+UPSTREAM_REF=e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5
+UPSTREAM_VERSION=v2.4.2
+ESP_IDF_REPOSITORY=https://github.com/espressif/esp-idf.git
+ESP_IDF_VERSION=v6.0.2
+ESP_IDF_TARGET=esp32s3
+PYTHON_PREFERRED_VERSION=3.12
+BOARD_PATH=memoria/atk-dnesp32s3-v1
+BOARD_NAME=memoria-atk-dnesp32s3-v1

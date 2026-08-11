@@ -53,6 +53,15 @@ api.currentAccessToken = () => "test-token";
 api.currentAuthEpoch = () => 0;
 api.isAuthEpochCurrent = () => true;
 api.getGuardianLinks = async () => [];
+api.getDeviceClaim = async () => ({
+  claim_id: "claim_test_1",
+  device_id: "dev_test_1",
+  onboarding_session_id: "onb_test_1",
+  status: "reserved",
+  expires_at: new Date(Date.now() + 600_000).toISOString(),
+  binding_id: null,
+  device: null,
+});
 
 function setPath(data, key, value) {
   const parts = key.replace(/\[(\d+)\]/g, ".$1").split(".").filter(Boolean);
@@ -101,31 +110,32 @@ function defaultManifestResponse(declaredMode) {
 
 async function bootToMode(mode) {
   const page = instantiate(pageDefinition);
+  page.onLoad({ claim_id: "claim_test_1", onboarding_session_id: "onb_test_1" });
   await page.onShow();
-  page.setData({ deviceClaimToken: "dev-token-1" });
-  page.goToModeStep();
   assert.equal(page.data.step, "mode");
   page.chooseMode({ currentTarget: { dataset: { mode } } });
   assert.equal(page.data.step, "form");
   return page;
 }
 
-test("app registers the bind and device pages", () => {
+test("app registers binding, device, and onboarding pages", () => {
   const appConfig = JSON.parse(fs.readFileSync(path.join(root, "app.json"), "utf8"));
   assert.ok(appConfig.pages.includes("pages/bind/index"));
   assert.ok(appConfig.pages.includes("pages/device/index"));
+  assert.ok(appConfig.pages.includes("pages/device-onboarding/index"));
+  assert.deepEqual(
+    appConfig.tabBar.list.map((item) => item.text),
+    ["陪伴", "设备", "回顾", "我的"],
+  );
 });
 
-test("claim step accepts manual token and QR scan", () => {
+test("binding page cannot enter from a device code or scanner", async () => {
   const page = instantiate(pageDefinition);
-  page.setData({ deviceClaimToken: "dev-manual-1" });
-  page.goToModeStep();
-  assert.equal(page.data.step, "mode");
-
-  const page2 = instantiate(pageDefinition);
-  page2.scanDeviceCode();
-  assert.equal(page2.data.deviceClaimToken, "scanned-device-token");
-  assert.equal(page2.data.scanning, false);
+  page.onLoad({});
+  await page.onShow();
+  assert.equal(page.data.step, "error");
+  assert.match(page.data.error, /claim_id/);
+  assert.equal(typeof page.scanDeviceCode, "undefined");
 });
 
 test("self_use flow keeps sensitive offers off by default and submits clean payload", async () => {
@@ -145,6 +155,10 @@ test("self_use flow keeps sensitive offers off by default and submits clean payl
   assert.equal(page.data.step, "done");
   const payload = lastWxRequest.data;
   assert.equal(payload.declared_mode, "self_use");
+  assert.equal(payload.claim_id, "claim_test_1");
+  assert.equal(payload.onboarding_session_id, "onb_test_1");
+  assert.equal(payload.device_claim_token, undefined);
+  assert.equal(lastWxRequest.header["Idempotency-Key"], "bind-claim_test_1");
   assert.equal(payload.account_owner_person_id, "person_owner");
   assert.equal(payload.primary_subject.person_id, "person_owner");
   assert.equal(payload.primary_subject.relationship, "self");

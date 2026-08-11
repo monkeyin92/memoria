@@ -297,7 +297,7 @@ Page({
   },
 
   openDevice() {
-    wx.navigateTo({ url: "/pages/device/index" });
+    wx.switchTab({ url: "/pages/device/index" });
   },
 
   async openGuardianSummary() {

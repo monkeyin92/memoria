@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
@@ -15,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from services.common.security_constants import (
     DEV_AUTH_SECRET,
+    DEV_DEVICE_GATEWAY_TICKET_SECRET,
     DEV_MESSAGE_IDEMPOTENCY_SECRET,
     DEV_MINIPROGRAM_GATEWAY_TICKET_SECRET,
 )
@@ -115,6 +117,20 @@ class ControlSettings(BaseSettings):
         default=SecretStr(DEV_MINIPROGRAM_GATEWAY_TICKET_SECRET),
         alias="MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET",
     )
+    device_media_gateway_url: str = Field(
+        default="",
+        alias="DEVICE_MEDIA_GATEWAY_URL",
+    )
+    device_gateway_ticket_ttl_s: int = Field(
+        default=300,
+        ge=30,
+        le=300,
+        alias="DEVICE_GATEWAY_TICKET_TTL_S",
+    )
+    memoria_device_gateway_ticket_secret: SecretStr = Field(
+        default=SecretStr(DEV_DEVICE_GATEWAY_TICKET_SECRET),
+        alias="MEMORIA_DEVICE_GATEWAY_TICKET_SECRET",
+    )
 
     memoria_db_path: str = Field(default="data/memoria.sqlite3", alias="MEMORIA_DB_PATH")
     archive_database_url: SecretStr = Field(
@@ -152,6 +168,14 @@ class ControlSettings(BaseSettings):
     consent_database_url: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_CONSENT_DATABASE_URL",
+    )
+    device_onboarding_database_url: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_DEVICE_ONBOARDING_DATABASE_URL",
+    )
+    device_activation_signing_seed_b64: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEMORIA_DEVICE_ACTIVATION_SIGNING_SEED_B64",
     )
     identity_registration_database_url: SecretStr = Field(
         default=SecretStr(""),
@@ -979,6 +1003,54 @@ class ControlSettings(BaseSettings):
                 raise ValueError(
                     "production requires an independent Mini Program gateway ticket secret"
                 )
+        device_gateway_url = self.device_media_gateway_url.strip()
+        device_gateway_ticket_secret = (
+            self.memoria_device_gateway_ticket_secret.get_secret_value()
+        )
+        if device_gateway_url:
+            if not device_gateway_url.startswith("wss://"):
+                raise ValueError("production device media gateway must use secure WSS")
+            if (
+                device_gateway_ticket_secret == DEV_DEVICE_GATEWAY_TICKET_SECRET
+                or len(device_gateway_ticket_secret) < 32
+                or device_gateway_ticket_secret
+                in {
+                    auth_secret,
+                    self.livekit_api_secret,
+                    gateway_ticket_secret,
+                }
+            ):
+                raise ValueError(
+                    "production requires an independent device gateway ticket secret"
+                )
+            onboarding_url = self.device_onboarding_database_url.get_secret_value().strip()
+            if not onboarding_url.startswith(("postgresql://", "postgres://")):
+                raise ValueError(
+                    "production device media gateway requires "
+                    "MEMORIA_DEVICE_ONBOARDING_DATABASE_URL for PostgreSQL"
+                )
+            if (urlsplit(onboarding_url).username or "") != "memoria_device_onboarding_api":
+                raise ValueError(
+                    "production MEMORIA_DEVICE_ONBOARDING_DATABASE_URL must use the "
+                    "independent memoria_device_onboarding_api role"
+                )
+            signing_seed_b64 = (
+                self.device_activation_signing_seed_b64.get_secret_value().strip()
+            )
+            try:
+                signing_seed = base64.b64decode(signing_seed_b64, validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise ValueError(
+                    "production requires a valid independent "
+                    "MEMORIA_DEVICE_ACTIVATION_SIGNING_SEED_B64"
+                ) from exc
+            if len(signing_seed) != 32 or signing_seed == hashlib.sha256(
+                b"memoria-device-activation-v1\0" + auth_secret.encode("utf-8")
+            ).digest():
+                raise ValueError(
+                    "production requires an independent 32-byte "
+                    "MEMORIA_DEVICE_ACTIVATION_SIGNING_SEED_B64"
+                )
         capability_tokens = {
             "MEMORIA_ARCHIVE_WRITE_TOKEN": self.internal_token("archive_write"),
             "MEMORIA_AGENT_HEARTBEAT_TOKEN": self.internal_token("agent_heartbeat"),
@@ -1000,6 +1072,13 @@ class ControlSettings(BaseSettings):
         if gateway_url and gateway_ticket_secret in capability_tokens.values():
             raise ValueError(
                 "Mini Program gateway ticket secret must differ from internal capability tokens"
+            )
+        if (
+            device_gateway_url
+            and device_gateway_ticket_secret in capability_tokens.values()
+        ):
+            raise ValueError(
+                "device gateway ticket secret must differ from internal capability tokens"
             )
         if wechat_identity_secret and (
             wechat_identity_secret in capability_tokens.values()

@@ -10,6 +10,10 @@ Executable contracts shared by the Agent, H5, and Mini Program media gateway.
 - `realtime-facade.json` defines the deliberately small OpenAI Realtime-style
   mapping surface. It delegates to the existing `DuplexRuntime` and does not
   expose a second audio transport or pipeline.
+- `device-onboarding-v1.json` defines the strict signed QR, online proof,
+  Claim, Binding initialization, Activation/ACK and post-activation device
+  media challenge/session payloads. It deliberately contains no Wi-Fi
+  credential, user access token, LiveKit credential or device private key field.
 - `media-events.schema.json` defines the versioned media-v1 DataChannel envelope;
   every envelope carries the complete session/stream/sequence/generation/tool
   fence and a required object payload. Clients reject stale fences and require

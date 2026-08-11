@@ -15,6 +15,7 @@ nginx_pid="$workdir/nginx.pid"
 nginx_error_log="$workdir/nginx-error.log"
 smoke_https="$workdir/memoria-https.conf"
 smoke_miniprogram_media="$workdir/memoria-miniprogram-media.conf"
+smoke_device_media="$workdir/memoria-device-media.conf"
 www_root="$workdir/www"
 host_header="Host: aigcnice.com"
 response_plan_token="preflight-response-plan-token-that-is-long-enough"
@@ -31,6 +32,7 @@ trap cleanup EXIT
 test -f "$release/infra/nginx-memoria-loopback-smoke.conf"
 test -f "$release/infra/nginx-memoria-https.conf"
 test -f "$release/infra/nginx-memoria-miniprogram-media.conf"
+test -f "$release/infra/nginx-memoria-device-media.conf"
 test -f "$h5_release/index.html"
 sudo docker image inspect "$image" >/dev/null
 if sudo ss -ltn | grep -qE ":($api_port|$nginx_port)[[:space:]]"; then
@@ -42,10 +44,12 @@ sudo chown 65532:65532 "$data_dir"
 install -d -m 0755 "$www_root"
 ln -s "$h5_release" "$www_root/memoria-h5"
 cp "$release/infra/nginx-memoria-miniprogram-media.conf" "$smoke_miniprogram_media"
+cp "$release/infra/nginx-memoria-device-media.conf" "$smoke_device_media"
 sed \
   -e "s#127\\.0\\.0\\.1:8791#127.0.0.1:$api_port#g" \
   -e "s#root /var/www;#root $www_root;#g" \
   -e "s#/etc/nginx/snippets/memoria-miniprogram-media.conf;#$smoke_miniprogram_media;#g" \
+  -e "s#/etc/nginx/snippets/memoria-device-media.conf;#$smoke_device_media;#g" \
   "$release/infra/nginx-memoria-https.conf" >"$smoke_https"
 sed \
   -e "s#/tmp/memoria-nginx-smoke.pid#$nginx_pid#g" \

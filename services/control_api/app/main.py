@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 from asyncio import Lock, to_thread
 from collections.abc import AsyncIterator, Callable
@@ -13,6 +14,7 @@ from typing import cast
 from urllib.parse import quote, unquote, urlsplit
 
 import httpx
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -60,6 +62,7 @@ from services.control_api.app.multi_subject_runtime import (
 )
 from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import auth as auth_routes
+from services.control_api.app.routes import device_onboarding as device_onboarding_routes
 from services.control_api.app.routes import digital_self as digital_self_routes
 from services.control_api.app.routes import evolution as evolution_routes
 from services.control_api.app.routes import growth as growth_routes
@@ -89,6 +92,11 @@ from services.control_api.app.session_termination import (
     AccountSessionTerminator,
     LiveKitRoomCloser,
     RealtimeConnectionRegistry,
+)
+from services.device_fleet.bootstrap_postgres_store import PostgresBootstrapStore
+from services.device_fleet.bootstrap_service import (
+    DeviceOnboardingService,
+    create_device_onboarding_service,
 )
 from services.digital_self.domain import RegistryPort
 from services.digital_self.postgres_registry import PostgresDigitalSelfRegistry
@@ -286,6 +294,61 @@ def _subject_category_resolver(store: MemoryStore) -> Callable[[str], str | None
         return str(value) if value in {"adult", "minor"} else None
 
     return resolve
+
+
+def _device_onboarding_database_path(settings: ControlSettings) -> str:
+    memory_path = Path(settings.memoria_db_path)
+    return str(memory_path.with_name(f"{memory_path.stem}-device-onboarding.sqlite3"))
+
+
+def _device_onboarding_service(
+    settings: ControlSettings,
+) -> DeviceOnboardingService | None:
+    """Build the explicit local or PostgreSQL/RLS onboarding authority."""
+
+    if settings.environment == "production":
+        if not settings.device_media_gateway_url.strip():
+            return None
+        database_url = settings.device_onboarding_database_url.get_secret_value().strip()
+        encoded_seed = (
+            settings.device_activation_signing_seed_b64.get_secret_value().strip()
+        )
+        try:
+            seed = base64.b64decode(encoded_seed, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise RuntimeError("invalid production Device Activation signing seed") from exc
+        if len(seed) != 32:
+            raise RuntimeError("production Device Activation signing seed must be 32 bytes")
+        store = PostgresBootstrapStore(database_url)
+        try:
+            store.initialize()
+        except BaseException:
+            store.close()
+            raise
+        return DeviceOnboardingService(
+            store,
+            server_signing_key=Ed25519PrivateKey.from_private_bytes(seed),
+            offline_mock=False,
+        )
+    seed = hashlib.sha256(
+        b"memoria-device-activation-v1\0"
+        + settings.memoria_auth_secret.get_secret_value().encode("utf-8")
+    ).digest()
+    return create_device_onboarding_service(
+        database_path=_device_onboarding_database_path(settings),
+        server_signing_key=Ed25519PrivateKey.from_private_bytes(seed),
+        offline_mock=settings.offline_mock,
+    )
+
+
+def _replace_device_onboarding_service(
+    app: FastAPI,
+    settings: ControlSettings,
+) -> None:
+    current = getattr(app.state, "device_onboarding_service", None)
+    if isinstance(current, DeviceOnboardingService):
+        current.close()
+    app.state.device_onboarding_service = _device_onboarding_service(settings)
 
 
 def _speaker_authority(settings: ControlSettings) -> SpeakerAuthorityPort:
@@ -753,6 +816,7 @@ async def _lifespan_impl(app: FastAPI) -> AsyncIterator[None]:
     store = MemoryStore(settings.memoria_db_path)
     await to_thread(store.initialize)
     app.state.memory_store = store
+    _replace_device_onboarding_service(app, settings)
     consent_url = settings.consent_database_url.get_secret_value().strip()
     if consent_url:
         binding_consent_store: BindingConsentStorePort = (
@@ -1138,6 +1202,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         if session_runtime_store is not None:
             await session_runtime_store.close()
+        device_onboarding_service = getattr(
+            app.state,
+            "device_onboarding_service",
+            None,
+        )
+        if isinstance(device_onboarding_service, DeviceOnboardingService):
+            device_onboarding_service.close()
         identity_store = getattr(
             app.state,
             "identity_store",
@@ -1184,6 +1255,10 @@ def create_app() -> FastAPI:
     app.state.realtime_connections = RealtimeConnectionRegistry()
     # The store initializes lazily for ASGI test clients that do not run lifespan.
     app.state.memory_store = MemoryStore(settings.memoria_db_path)
+    if production:
+        app.state.device_onboarding_service = None
+    else:
+        _replace_device_onboarding_service(app, settings)
     identity_store = SqliteIdentityStore(settings.identity_sqlite_path())
     identity_store.initialize()
     app.state.identity_store = identity_store
@@ -1342,6 +1417,7 @@ def create_app() -> FastAPI:
     app.include_router(memory_routes.router)
     app.include_router(build_memory_router())
     app.include_router(multi_subject_routes.router)
+    app.include_router(device_onboarding_routes.router)
     app.include_router(identity_lifecycle_routes.router)
     app.include_router(persona_routes.router)
     app.include_router(digital_self_routes.router)

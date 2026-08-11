@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from packages.contracts.generated.python.multi_subject_contracts import (
     AgeBandValue,
     CapabilityValue,
@@ -27,6 +27,17 @@ from services.control_api.app.multi_subject_runtime import (
     SubjectSwitchForbiddenError,
 )
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
+from services.device_fleet.bootstrap_domain import (
+    BindingInitialization,
+    ClaimConflict,
+    ClaimExpired,
+    IntegrationUnavailable,
+    OnboardingError,
+)
+from services.device_fleet.bootstrap_service import (
+    BindingAuthorityResult,
+    DeviceOnboardingService,
+)
 from services.identity.authority import ConsentAuthorityUnavailableError
 from services.identity.domain import (
     BindingManifest,
@@ -81,7 +92,9 @@ class PrimarySubjectRequest(BaseModel):
 class CreateDeviceBindingRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    device_claim_token: str = Field(min_length=16, max_length=4096)
+    device_claim_token: str | None = Field(default=None, min_length=16, max_length=4096)
+    claim_id: str | None = Field(default=None, min_length=1, max_length=128)
+    onboarding_session_id: str | None = Field(default=None, min_length=1, max_length=128)
     declared_mode: DeviceDeclaredModeValue
     account_owner_person_id: str = Field(min_length=1, max_length=128)
     primary_subject: PrimarySubjectRequest
@@ -91,6 +104,15 @@ class CreateDeviceBindingRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode_contract(self) -> CreateDeviceBindingRequest:
+        has_legacy_token = self.device_claim_token is not None
+        has_claim_id = self.claim_id is not None
+        has_session_id = self.onboarding_session_id is not None
+        if has_claim_id != has_session_id:
+            raise ValueError("claim_id and onboarding_session_id must be provided together")
+        if has_legacy_token == has_claim_id:
+            raise ValueError(
+                "provide either the onboarding claim pair or the offline legacy token"
+            )
         if self.primary_subject.relationship != _RELATIONSHIP_FOR_MODE[self.declared_mode]:
             raise ValueError("primary subject relationship does not match declared_mode")
         # This is only an HTTP-shape adapter.  Identity passes the same command
@@ -149,6 +171,76 @@ def _runtime(
     return cast(
         MultiSubjectRuntimeControl | PostgresMultiSubjectRuntimeControl,
         request.app.state.multi_subject_runtime,
+    )
+
+
+def _onboarding(request: Request) -> DeviceOnboardingService:
+    service = getattr(request.app.state, "device_onboarding_service", None)
+    if not isinstance(service, DeviceOnboardingService):
+        raise IntegrationUnavailable("device onboarding authority is unavailable")
+    return service
+
+
+def _onboarding_http_error(error: OnboardingError) -> HTTPException:
+    return HTTPException(status_code=error.status_code, detail={"code": error.code})
+
+
+def _binding_initialization(
+    *,
+    body: CreateDeviceBindingRequest,
+    owner: PersonSubject,
+    subject: PersonSubject,
+) -> BindingInitialization:
+    return BindingInitialization.from_mapping(
+        {
+            "declared_mode": body.declared_mode,
+            "account_owner_person_id": owner.person_id,
+            "primary_subject": {
+                "person_id": subject.person_id,
+                "relationship": body.primary_subject.relationship,
+            },
+            "persona_selection": body.persona_selection,
+            "service_preferences": body.service_preferences,
+            "consent_offer_ids": body.consent_offer_ids,
+        }
+    )
+
+
+def _same_binding_intent(
+    *,
+    body: CreateDeviceBindingRequest,
+    intent: BindingInitialization,
+) -> bool:
+    requested_person_id = body.primary_subject.person_id
+    stored_person_id = str(intent.primary_subject["person_id"])
+    return (
+        intent.declared_mode == body.declared_mode
+        and intent.account_owner_person_id == body.account_owner_person_id
+        and intent.primary_subject["relationship"] == body.primary_subject.relationship
+        and (requested_person_id == "new" or requested_person_id == stored_person_id)
+        and intent.persona_selection == body.persona_selection
+        and dict(intent.service_preferences) == body.service_preferences
+        and tuple(intent.consent_offer_ids) == body.consent_offer_ids
+    )
+
+
+def _same_identity_manifest(
+    *,
+    manifest: BindingManifest,
+    device_id: str,
+    body: CreateDeviceBindingRequest,
+    owner: PersonSubject,
+    subject: PersonSubject,
+) -> bool:
+    return (
+        manifest.status == "active"
+        and manifest.device_id == device_id
+        and manifest.declared_mode == body.declared_mode
+        and manifest.account_owner_id == owner.person_id
+        and manifest.primary_subject_ids == (subject.person_id,)
+        and manifest.service_profile_version == f"{body.declared_mode}-v1"
+        and manifest.policy_bundle_version == "multi-subject-v1"
+        and manifest.persona_assignment_id == f"{body.persona_selection}:v1"
     )
 
 
@@ -244,6 +336,7 @@ async def create_device_binding(
     body: CreateDeviceBindingRequest,
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, object]:
     if body.account_owner_person_id != user.user_id:
         raise HTTPException(
@@ -252,31 +345,122 @@ async def create_device_binding(
         )
     now = datetime.now(UTC)
     try:
-        device_id = verify_device_binding_token(
-            body.device_claim_token,
-            secret=request.app.state.settings.device_binding_token_key(),
-            now=now,
-        )
+        onboarding: DeviceOnboardingService | None = None
+        claim_status: str | None = None
+        if body.device_claim_token is not None:
+            if not request.app.state.settings.offline_mock:
+                raise HTTPException(
+                    status_code=410,
+                    detail={"code": "legacy_device_claim_disabled"},
+                )
+            device_id = verify_device_binding_token(
+                body.device_claim_token,
+                secret=request.app.state.settings.device_binding_token_key(),
+                now=now,
+            )
+        else:
+            assert body.claim_id is not None
+            assert body.onboarding_session_id is not None
+            if idempotency_key is None or not 8 <= len(idempotency_key) <= 128:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "binding_idempotency_key_required"},
+                )
+            onboarding = _onboarding(request)
+            claim = onboarding.get_claim(actor_id=user.user_id, claim_id=body.claim_id)
+            if claim["onboarding_session_id"] != body.onboarding_session_id:
+                raise ClaimConflict("claim does not belong to onboarding session")
+            claim_status = str(claim["status"])
+            if claim_status == "expired":
+                raise ClaimExpired()
+            if claim_status not in {"reserved", "binding_committing", "committed"}:
+                raise ClaimConflict("claim is not available for binding")
+            device_id = str(claim["device_id"])
         owner = await _account_person(request, user_id=user.user_id, now=now)
-        subject = await _primary_subject(request, body=body, owner=owner, now=now)
+        intent = (
+            onboarding.get_binding_intent(actor_id=user.user_id, claim_id=body.claim_id)
+            if onboarding is not None and body.claim_id is not None
+            else None
+        )
+        if intent is not None:
+            if not _same_binding_intent(body=body, intent=intent.initialization):
+                raise ClaimConflict("binding retry does not match the persisted intent")
+            subject_id = str(intent.initialization.primary_subject["person_id"])
+            subject = await _identity(request).get_person(
+                subject_id,
+                actor_person_id=owner.person_id,
+            )
+        else:
+            subject = await _primary_subject(request, body=body, owner=owner, now=now)
+        initialization = _binding_initialization(body=body, owner=owner, subject=subject)
+        if onboarding is not None:
+            assert body.claim_id is not None
+            assert body.onboarding_session_id is not None
+            assert idempotency_key is not None
+            onboarding.binding_begin(
+                actor_id=user.user_id,
+                claim_id=body.claim_id,
+                onboarding_session_id=body.onboarding_session_id,
+                initialization=initialization,
+                idempotency_key=idempotency_key,
+            )
         family_space_id = (
             f"family-{uuid.uuid4()}" if body.declared_mode == "family_shared" else None
         )
-        manifest = await _identity(request).create_binding(
-            device_id=device_id,
-            declared_mode=body.declared_mode,
-            account_owner_person_id=owner.person_id,
-            primary_subject_ids=(subject.person_id,),
-            roles=_binding_roles(body=body, owner_id=owner.person_id),
-            family_space_id=family_space_id,
-            service_profile_version=f"{body.declared_mode}-v1",
-            policy_bundle_version="multi-subject-v1",
-            consent_offer_ids=body.consent_offer_ids,
-            service_preferences=body.service_preferences,
-            persona_assignment_id=f"{body.persona_selection}:v1",
-            actor_person_id=owner.person_id,
-            now=now,
+        manifest = (
+            await _identity(request).get_active_manifest(
+                device_id,
+                now=now,
+                actor_person_id=owner.person_id,
+            )
+            if onboarding is not None
+            else None
         )
+        if manifest is not None:
+            if not _same_identity_manifest(
+                manifest=manifest,
+                device_id=device_id,
+                body=body,
+                owner=owner,
+                subject=subject,
+            ):
+                raise IdentityConflictError("device already has a different binding")
+        else:
+            manifest = await _identity(request).create_binding(
+                device_id=device_id,
+                declared_mode=body.declared_mode,
+                account_owner_person_id=owner.person_id,
+                primary_subject_ids=(subject.person_id,),
+                roles=_binding_roles(body=body, owner_id=owner.person_id),
+                family_space_id=family_space_id,
+                service_profile_version=f"{body.declared_mode}-v1",
+                policy_bundle_version="multi-subject-v1",
+                consent_offer_ids=body.consent_offer_ids,
+                service_preferences=body.service_preferences,
+                persona_assignment_id=f"{body.persona_selection}:v1",
+                actor_person_id=owner.person_id,
+                now=now,
+            )
+        if onboarding is not None:
+            assert body.claim_id is not None
+            gateway_url = request.app.state.settings.device_media_gateway_url.strip()
+            onboarding.binding_commit_with_authority(
+                actor_id=user.user_id,
+                claim_id=body.claim_id,
+                authority=BindingAuthorityResult(
+                    binding_id=manifest.binding_id,
+                    binding_version=manifest.binding_version,
+                    persona_assignment_id=manifest.persona_assignment_id
+                    or f"{body.persona_selection}:v1",
+                    service_profile_version=manifest.service_profile_version,
+                    policy_bundle_version=manifest.policy_bundle_version,
+                    runtime_profile_version=manifest.binding_version,
+                    robot_name=str(body.service_preferences.get("robot_name") or "Memoria"),
+                    primary_subject_display_name=subject.display_name,
+                    control_api_endpoint=request.app.state.settings.public_base_url.rstrip("/"),
+                    device_media_endpoint=gateway_url or "wss://media.invalid",
+                ),
+            )
         request.app.state.multi_subject_binding_manifests[device_id] = manifest
         return manifest.to_dict()
     except DeviceBindingTokenError as exc:
@@ -284,6 +468,8 @@ async def create_device_binding(
             status_code=401,
             detail={"code": "device_claim_invalid"},
         ) from exc
+    except OnboardingError as exc:
+        raise _onboarding_http_error(exc) from exc
     except IdentityAccessDeniedError as exc:
         raise HTTPException(status_code=403, detail={"code": "binding_forbidden"}) from exc
     except ConsentAuthorityUnavailableError as exc:

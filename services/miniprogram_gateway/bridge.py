@@ -105,6 +105,8 @@ class MiniProgramLiveKitBridge:
         *,
         settings: MiniProgramGatewaySettings,
         claims: GatewayTicketClaims,
+        dispatch_metadata: str | None = None,
+        microphone_track_name: str = "miniprogram-microphone",
     ) -> None:
         if claims.voice_backend != "cascade":
             raise GatewayMediaError("only cascade sessions may use the media gateway")
@@ -112,6 +114,8 @@ class MiniProgramLiveKitBridge:
             raise GatewayMediaError("gateway ticket agent does not match configured agent")
         self._settings = settings
         self._claims = claims
+        self._dispatch_metadata = dispatch_metadata
+        self._microphone_track_name = microphone_track_name
         self._room: Any | None = None
         self._audio_source: Any | None = None
         self._publication: Any | None = None
@@ -211,7 +215,7 @@ class MiniProgramLiveKitBridge:
                 1,
                 queue_size_ms=self._settings.miniprogram_gateway_frame_ms * 10,
             )
-            track = rtc.LocalAudioTrack.create_audio_track("miniprogram-microphone", source)
+            track = rtc.LocalAudioTrack.create_audio_track(self._microphone_track_name, source)
             self._publication = await room.local_participant.publish_track(
                 track,
                 rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE),
@@ -492,9 +496,12 @@ class MiniProgramLiveKitBridge:
                     RoomAgentDispatch(
                         agent_name=self._claims.agent_name,
                         metadata=(
-                            MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA
-                            if self._audio_processor.aec_ready
-                            else MINIPROGRAM_AGENT_DISPATCH_METADATA
+                            self._dispatch_metadata
+                            or (
+                                MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA
+                                if self._audio_processor.aec_ready
+                                else MINIPROGRAM_AGENT_DISPATCH_METADATA
+                            )
                         ),
                     )
                 ]

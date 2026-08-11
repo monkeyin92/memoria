@@ -57,7 +57,7 @@ sudo sha256sum /etc/letsencrypt/renewal-hooks/deploy/50-memoria-reload-nginx
 
 生产 secret 按最小权限拆分到服务器 `/etc/memoria-control-api.env`、
 `/etc/memoria-agent.env`、`/etc/memoria-speaker-model.env`、
-`/etc/memoria-miniprogram-gateway.env` 和可选的
+`/etc/memoria-miniprogram-gateway.env`、`/etc/memoria-device-media-gateway.env` 和可选的
 `/etc/memoria-media-edge.env`，权限都必须是 `root:root 0600`。使用
 `scripts/split_production_env.py` 从 root-only 运维源生成候选文件；该脚本只分流已有值，
 不会应用默认值。首次 P0-P6 升级应使用 `scripts/prepare_production_upgrade_env.py`，
@@ -355,18 +355,21 @@ CONTROL_ENV=/etc/memoria-control-api.env
 AGENT_ENV=/etc/memoria-agent.env
 SPEAKER_MODEL_ENV=/etc/memoria-speaker-model.env
 GATEWAY_ENV=/etc/memoria-miniprogram-gateway.env
+DEVICE_GATEWAY_ENV=/etc/memoria-device-media-gateway.env
 MEDIA_EDGE_ENV=/etc/memoria-media-edge.env
 POSTGRES_ENV=/etc/memoria-postgres.env
 CONTROL_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/control-api.env
 AGENT_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/agent.env
 SPEAKER_MODEL_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/speaker-model.env
 GATEWAY_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/gateway.env
+DEVICE_GATEWAY_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/device-gateway.env
 MEDIA_EDGE_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/media-edge.env
 POSTGRES_ENV_CANDIDATE=/run/memoria-env/$RELEASE_TAG/postgres.env
 CONTROL_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-control-api.env-pre-$RELEASE_TAG
 AGENT_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-agent.env-pre-$RELEASE_TAG
 SPEAKER_MODEL_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-speaker-model.env-pre-$RELEASE_TAG
 GATEWAY_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-miniprogram-gateway.env-pre-$RELEASE_TAG
+DEVICE_GATEWAY_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-device-media-gateway.env-pre-$RELEASE_TAG
 MEDIA_EDGE_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-media-edge.env-pre-$RELEASE_TAG
 POSTGRES_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-postgres.env-pre-$RELEASE_TAG
 ROLLBACK_RECEIPT=$PROTECTED_BACKUP_DIR/rollback-$RELEASE_TAG.env
@@ -413,7 +416,15 @@ DOCKER_CONTEXT=default DOCKER_BUILDKIT=0 \
   MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
   bash scripts/delta_build_images.sh
 
-for image in agent control-api speaker-model miniprogram-gateway; do
+# Device Media Gateway 使用含 PyAV/libopus 的完整锁定依赖构建，并固定独立镜像 role。
+docker buildx build --platform linux/amd64 --load \
+  -f infra/Dockerfile.miniprogram-gateway \
+  --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
+  --build-arg MEMORIA_RELEASE_TAG="$RELEASE_TAG" \
+  --build-arg MEMORIA_IMAGE_ROLE=device-media-gateway \
+  -t "memoria-device-media-gateway:$RELEASE_TAG" .
+
+for image in agent control-api speaker-model miniprogram-gateway device-media-gateway; do
   test "$(docker image inspect "memoria-$image:$RELEASE_TAG" \
     --format '{{.Architecture}}')" = amd64
 done
@@ -428,6 +439,7 @@ docker save --platform linux/amd64 \
   "memoria-agent:$RELEASE_TAG" \
   "memoria-control-api:$RELEASE_TAG" \
   "memoria-miniprogram-gateway:$RELEASE_TAG" \
+  "memoria-device-media-gateway:$RELEASE_TAG" \
   "memoria-speaker-model:$RELEASE_TAG" \
   -o "$ARTIFACT_DIR/images.tar"
 for artifact in source.tar images.tar h5-dist.tar.gz; do
@@ -469,8 +481,9 @@ printf 'bind MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256 to manifest digest: %s\n' \
   "$MEMORIA_EVOLUTION_TRUSTED_ROOT_SHA256"
 ```
 
-增量构建要求上一健康 release 的四个镜像齐全且共享同一 commit/tag/role。脚本会自动
-对比依赖锁、四个完整 Dockerfile、Speaker Model requirements/patch/exporter；任一变化都
+增量构建要求上一健康 release 的四个既有镜像齐全且共享同一 commit/tag/role；设备媒体镜像仍按
+上面的锁定依赖完整构建。脚本会自动对比依赖锁、四个完整 Dockerfile、Speaker Model
+requirements/patch/exporter；任一变化都
 fail closed，必须走下面的完整镜像构建，不允许继承旧依赖后只换新标签。
 
 依赖变化时不要运行增量脚本，在本机执行完整构建：
@@ -496,6 +509,12 @@ docker buildx build --platform linux/amd64 --load \
   --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
   --build-arg MEMORIA_RELEASE_TAG="$RELEASE_TAG" \
   -t "memoria-miniprogram-gateway:$RELEASE_TAG" .
+docker buildx build --platform linux/amd64 --load \
+  -f infra/Dockerfile.miniprogram-gateway \
+  --build-arg MEMORIA_RELEASE_COMMIT="$MEMORIA_RELEASE_COMMIT" \
+  --build-arg MEMORIA_RELEASE_TAG="$RELEASE_TAG" \
+  --build-arg MEMORIA_IMAGE_ROLE=device-media-gateway \
+  -t "memoria-device-media-gateway:$RELEASE_TAG" .
 ```
 
 Dockerfile 必须从 `uv.lock` 或固定 requirements 导出并安装固定版本与哈希，任何不匹配都令构建失败；不得使用 `latest`。完整构建后同样执行上面的架构校验、H5 build、`docker save` 和 SHA-256 清单生成。
@@ -558,7 +577,7 @@ python3 "$UPLOAD_DIR/release-verifier.pyz" \
   --expected-tag "$RELEASE_TAG" \
   --expected-commit "$MEMORIA_RELEASE_COMMIT" \
   --verify-imported-images
-for image in agent control-api speaker-model miniprogram-gateway; do
+for image in agent control-api speaker-model miniprogram-gateway device-media-gateway; do
   sudo docker image inspect "memoria-$image:$RELEASE_TAG" \
     --format '{{.Id}} {{.Architecture}}'
 done
@@ -797,6 +816,8 @@ rollback_manifest_sha="$(sha256sum \
   printf "AGENT_ENV_PRESENT=%s\n" "$(present /etc/memoria-agent.env)"
   printf "SPEAKER_MODEL_ENV_PRESENT=%s\n" "$(present /etc/memoria-speaker-model.env)"
   printf "GATEWAY_ENV_PRESENT=%s\n" "$(present /etc/memoria-miniprogram-gateway.env)"
+  printf "DEVICE_GATEWAY_ENV_PRESENT=%s\n" \
+    "$(present /etc/memoria-device-media-gateway.env)"
   printf "MEDIA_EDGE_ENV_PRESENT=%s\n" "$(present /etc/memoria-media-edge.env)"
   printf "POSTGRES_ENV_PRESENT=%s\n" "$(present /etc/memoria-postgres.env)"
   printf "MEDIA_RUNTIME_WAS_RUNNING=%s\n" "$media_runtime_was_running"
@@ -896,6 +917,8 @@ for key in \
   MEMORIA_DB_IDENTITY_PASSWORD \
   MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD \
   MEMORIA_DB_CONSENT_PASSWORD \
+  MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD \
+  MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD \
   MEMORIA_DB_SESSION_API_PASSWORD \
   MEMORIA_DB_ACTION_EXECUTOR_PASSWORD \
   MEMORIA_DB_SESSION_PROJECTOR_PASSWORD \
@@ -943,6 +966,7 @@ sudo docker run --rm --network none --read-only --tmpfs /tmp:rw,noexec,nosuid,no
   --agent /run/output/agent.env \
   --speaker-model /run/output/speaker-model.env \
   --gateway /run/output/gateway.env \
+  --device-gateway /run/output/device-gateway.env \
   --media-edge /run/output/media-edge.env
 
 sudo bash -cEeu '
@@ -963,6 +987,7 @@ secure_file "$receipt"
 test "$RELEASE_TAG" = "$requested_release"
 for value in "$CONTROL_ENV_PRESENT" "$AGENT_ENV_PRESENT" \
   "$SPEAKER_MODEL_ENV_PRESENT" "$GATEWAY_ENV_PRESENT" \
+  "$DEVICE_GATEWAY_ENV_PRESENT" \
   "$MEDIA_EDGE_ENV_PRESENT" "$POSTGRES_ENV_PRESENT" \
   "$MEDIA_RUNTIME_WAS_RUNNING"; do
   case "$value" in 0|1) ;; *) echo "invalid rollback receipt" >&2; exit 1 ;; esac
@@ -980,6 +1005,8 @@ for key in \
   MEMORIA_DB_IDENTITY_PASSWORD \
   MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD \
   MEMORIA_DB_CONSENT_PASSWORD \
+  MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD \
+  MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD \
   MEMORIA_DB_SESSION_API_PASSWORD \
   MEMORIA_DB_ACTION_EXECUTOR_PASSWORD \
   MEMORIA_DB_SESSION_PROJECTOR_PASSWORD \
@@ -993,11 +1020,13 @@ done
 currents=(
   /etc/memoria-control-api.env /etc/memoria-agent.env
   /etc/memoria-speaker-model.env /etc/memoria-miniprogram-gateway.env
+  /etc/memoria-device-media-gateway.env
   /etc/memoria-postgres.env /etc/memoria-media-edge.env
 )
 candidates=(
   "$candidate_dir/control-api.env" "$candidate_dir/agent.env"
   "$candidate_dir/speaker-model.env" "$candidate_dir/gateway.env"
+  "$candidate_dir/device-gateway.env"
   "$postgres_candidate" "$candidate_dir/media-edge.env"
 )
 backups=(
@@ -1005,12 +1034,14 @@ backups=(
   "$backup_dir/memoria-agent.env-pre-$requested_release"
   "$backup_dir/memoria-speaker-model.env-pre-$requested_release"
   "$backup_dir/memoria-miniprogram-gateway.env-pre-$requested_release"
+  "$backup_dir/memoria-device-media-gateway.env-pre-$requested_release"
   "$backup_dir/memoria-postgres.env-pre-$requested_release"
   "$backup_dir/memoria-media-edge.env-pre-$requested_release"
 )
 present=(
   "$CONTROL_ENV_PRESENT" "$AGENT_ENV_PRESENT" "$SPEAKER_MODEL_ENV_PRESENT"
-  "$GATEWAY_ENV_PRESENT" "$POSTGRES_ENV_PRESENT" "$MEDIA_EDGE_ENV_PRESENT"
+  "$GATEWAY_ENV_PRESENT" "$DEVICE_GATEWAY_ENV_PRESENT" \
+  "$POSTGRES_ENV_PRESENT" "$MEDIA_EDGE_ENV_PRESENT"
 )
 
 # Phase 1: validate every candidate and every frozen current state before writing
@@ -1035,6 +1066,8 @@ for key in \
   MEMORIA_DB_IDENTITY_PASSWORD \
   MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD \
   MEMORIA_DB_CONSENT_PASSWORD \
+  MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD \
+  MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD \
   MEMORIA_DB_SESSION_API_PASSWORD \
   MEMORIA_DB_ACTION_EXECUTOR_PASSWORD \
   MEMORIA_DB_SESSION_PROJECTOR_PASSWORD \
@@ -1115,7 +1148,7 @@ restore_one() {
   fi
 }
 stop_current_runtime() {
-  for service in agent control-api speaker-model miniprogram-gateway \
+  for service in agent control-api speaker-model miniprogram-gateway device-media-gateway \
     media-slo-reporter voice-core-media-bridge media-edge; do
     if ! ids="$(docker ps -q \
       --filter label=com.docker.compose.project=memoria \
@@ -1124,7 +1157,7 @@ stop_current_runtime() {
     fi
     if [ -n "$ids" ]; then docker stop $ids >/dev/null; fi
   done
-  for service in agent control-api speaker-model miniprogram-gateway \
+  for service in agent control-api speaker-model miniprogram-gateway device-media-gateway \
     media-slo-reporter voice-core-media-bridge media-edge; do
     if docker ps -q \
       --filter label=com.docker.compose.project=memoria \
@@ -1165,6 +1198,7 @@ for item in \
   "control-api:$CONTROL_ENV_PRESENT" "agent:$AGENT_ENV_PRESENT" \
   "speaker-model:$SPEAKER_MODEL_ENV_PRESENT" \
   "miniprogram-gateway:$GATEWAY_ENV_PRESENT" \
+  "device-media-gateway:$DEVICE_GATEWAY_ENV_PRESENT" \
   "postgres:$POSTGRES_ENV_PRESENT" "media-edge:$MEDIA_EDGE_ENV_PRESENT"; do
   name=${item%%:*}
   was_present=${item##*:}
@@ -1202,6 +1236,9 @@ restore_previous_runtime() {
   restore_one /etc/memoria-miniprogram-gateway.env \
     "$backup_dir/memoria-miniprogram-gateway.env-pre-$requested_release" \
     "$GATEWAY_ENV_PRESENT"
+  restore_one /etc/memoria-device-media-gateway.env \
+    "$backup_dir/memoria-device-media-gateway.env-pre-$requested_release" \
+    "$DEVICE_GATEWAY_ENV_PRESENT"
   restore_one /etc/memoria-media-edge.env \
     "$backup_dir/memoria-media-edge.env-pre-$requested_release" "$MEDIA_EDGE_ENV_PRESENT"
 
@@ -1316,7 +1353,7 @@ restore_one() {
   fi
 }
 stop_current_runtime() {
-  for service in agent control-api speaker-model miniprogram-gateway \
+  for service in agent control-api speaker-model miniprogram-gateway device-media-gateway \
     media-slo-reporter voice-core-media-bridge media-edge; do
     if ! ids="$(docker ps -q \
       --filter label=com.docker.compose.project=memoria \
@@ -1325,7 +1362,7 @@ stop_current_runtime() {
     fi
     if [ -n "$ids" ]; then docker stop $ids >/dev/null; fi
   done
-  for service in agent control-api speaker-model miniprogram-gateway \
+  for service in agent control-api speaker-model miniprogram-gateway device-media-gateway \
     media-slo-reporter voice-core-media-bridge media-edge; do
     if docker ps -q \
       --filter label=com.docker.compose.project=memoria \
@@ -1350,6 +1387,9 @@ restore_old_runtime() {
   restore_one /etc/memoria-miniprogram-gateway.env \
     "$backup_dir/memoria-miniprogram-gateway.env-pre-$requested_release" \
     "$GATEWAY_ENV_PRESENT"
+  restore_one /etc/memoria-device-media-gateway.env \
+    "$backup_dir/memoria-device-media-gateway.env-pre-$requested_release" \
+    "$DEVICE_GATEWAY_ENV_PRESENT"
   restore_one /etc/memoria-media-edge.env \
     "$backup_dir/memoria-media-edge.env-pre-$requested_release" "$MEDIA_EDGE_ENV_PRESENT"
 
@@ -1391,6 +1431,7 @@ secure_file "$receipt"
 test "$RELEASE_TAG" = "$requested_release"
 for value in "$CONTROL_ENV_PRESENT" "$AGENT_ENV_PRESENT" \
   "$SPEAKER_MODEL_ENV_PRESENT" "$GATEWAY_ENV_PRESENT" \
+  "$DEVICE_GATEWAY_ENV_PRESENT" \
   "$MEDIA_EDGE_ENV_PRESENT" "$POSTGRES_ENV_PRESENT" \
   "$MEDIA_RUNTIME_WAS_RUNNING"; do
   case "$value" in 0|1) ;; *) echo "invalid rollback receipt" >&2; exit 1 ;; esac
@@ -1416,15 +1457,17 @@ cd "$old_runtime"
 env MEMORIA_RELEASE_TAG="$PREV_RUNTIME_TAG" \
   docker compose -f docker-compose.production.yml config --quiet
 
-targets=(control-api agent speaker-model miniprogram-gateway postgres media-edge)
+targets=(control-api agent speaker-model miniprogram-gateway device-media-gateway postgres media-edge)
 candidates=(
   "$candidate_env/control-api.env" "$candidate_env/agent.env"
   "$candidate_env/speaker-model.env" "$candidate_env/gateway.env"
+  "$candidate_env/device-gateway.env"
   "$candidate_env/postgres.env" "$candidate_env/media-edge.env"
 )
 present=(
   "$CONTROL_ENV_PRESENT" "$AGENT_ENV_PRESENT" "$SPEAKER_MODEL_ENV_PRESENT"
-  "$GATEWAY_ENV_PRESENT" "$POSTGRES_ENV_PRESENT" "$MEDIA_EDGE_ENV_PRESENT"
+  "$GATEWAY_ENV_PRESENT" "$DEVICE_GATEWAY_ENV_PRESENT" \
+  "$POSTGRES_ENV_PRESENT" "$MEDIA_EDGE_ENV_PRESENT"
 )
 for index in "${!targets[@]}"; do
   current=/etc/memoria-${targets[$index]}.env
@@ -1578,12 +1621,12 @@ trap on_rebuild_exit EXIT
 cd "$candidate"
 env MEMORIA_RELEASE_TAG="$requested_release" \
   docker compose --profile media-runtime -f docker-compose.production.yml stop \
-  agent control-api miniprogram-gateway media-slo-reporter \
+  agent control-api miniprogram-gateway device-media-gateway media-slo-reporter \
   voice-core-media-bridge media-edge
 running="$(env MEMORIA_RELEASE_TAG="$requested_release" \
   docker compose --profile media-runtime -f docker-compose.production.yml \
   ps --status running --services)"
-for service in agent control-api miniprogram-gateway media-slo-reporter \
+for service in agent control-api miniprogram-gateway device-media-gateway media-slo-reporter \
   voice-core-media-bridge media-edge; do
   case $'\''\n'\''"$running"$'\''\n'\'' in
     *$'\''\n'\''$service$'\''\n'\''*) echo "writer still running: $service" >&2; false ;;
@@ -1672,6 +1715,7 @@ sudo docker logs --since 5m memoria-livekit-livekit-1 2>&1 | wc -l
 - `/etc/nginx/snippets/memoria-http.conf`
 - `/etc/nginx/snippets/memoria-https.conf`
 - `/etc/nginx/snippets/memoria-miniprogram-media.conf`
+- `/etc/nginx/snippets/memoria-device-media.conf`
 - `/etc/nginx/snippets/memoria-livekit.conf`
 - `/etc/nginx/snippets/memoria-site-common.conf`
 - `/etc/nginx/sites-enabled/memoria`
@@ -1703,6 +1747,19 @@ WMS 443。443 路由只作为备案/网络放行后的候选；当前生产
 ```text
 wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media
 ```
+
+硬件设备 WSS 使用独立进程、端口和票据 secret。安装
+`infra/nginx-memoria-device-media.conf` 为
+`/etc/nginx/snippets/memoria-device-media.conf`，并在同一 TLS `server` 中 include；Control
+API 与 gateway 分别配置相同的 `MEMORIA_DEVICE_GATEWAY_TICKET_SECRET`，但不得与 Auth、
+LiveKit、小程序 gateway 或内部 capability token 复用。公网地址固定为：
+
+```text
+wss://aigcnice.com:8443/memoria-device-media/v1/device/media
+```
+
+生产启用仍以 Device Fleet PostgreSQL/RLS、托管 Activation 签名密钥和真实 ESP32 验收为前置门禁；
+缺少任一项时 Control API 必须保持 503，不能回退旧 `DeviceRegistry`。
 
 先备份 `/etc/nginx/sites-enabled/wms`、共享 snippet 与
 `/etc/memoria-control-api.env` 到 root-only 回滚目录。安装新文件后执行：
@@ -2082,7 +2139,7 @@ restore_one() {
   fi
 }
 stop_current_runtime() {
-  for service in agent control-api speaker-model miniprogram-gateway \
+  for service in agent control-api speaker-model miniprogram-gateway device-media-gateway \
     media-slo-reporter voice-core-media-bridge media-edge; do
     if ! ids="$(docker ps -q \
       --filter label=com.docker.compose.project=memoria \
@@ -2091,7 +2148,7 @@ stop_current_runtime() {
     fi
     if [ -n "$ids" ]; then docker stop $ids >/dev/null; fi
   done
-  for service in agent control-api speaker-model miniprogram-gateway \
+  for service in agent control-api speaker-model miniprogram-gateway device-media-gateway \
     media-slo-reporter voice-core-media-bridge media-edge; do
     if docker ps -q \
       --filter label=com.docker.compose.project=memoria \
@@ -2108,6 +2165,7 @@ secure_file "$receipt"
 test "$RELEASE_TAG" = "$requested_release"
 for value in "$CONTROL_ENV_PRESENT" "$AGENT_ENV_PRESENT" \
   "$SPEAKER_MODEL_ENV_PRESENT" "$GATEWAY_ENV_PRESENT" \
+  "$DEVICE_GATEWAY_ENV_PRESENT" \
   "$MEDIA_EDGE_ENV_PRESENT" "$POSTGRES_ENV_PRESENT" \
   "$MEDIA_RUNTIME_WAS_RUNNING"; do
   case "$value" in 0|1) ;; *) echo "invalid rollback receipt" >&2; exit 1 ;; esac
@@ -2154,9 +2212,10 @@ cd "$old_runtime"
 env MEMORIA_RELEASE_TAG="$PREV_RUNTIME_TAG" \
   docker compose -f docker-compose.production.yml config --quiet
 
-targets=(control-api agent speaker-model miniprogram-gateway postgres media-edge)
+targets=(control-api agent speaker-model miniprogram-gateway device-media-gateway postgres media-edge)
 present=("$CONTROL_ENV_PRESENT" "$AGENT_ENV_PRESENT" \
-  "$SPEAKER_MODEL_ENV_PRESENT" "$GATEWAY_ENV_PRESENT" "$POSTGRES_ENV_PRESENT" \
+  "$SPEAKER_MODEL_ENV_PRESENT" "$GATEWAY_ENV_PRESENT" \
+  "$DEVICE_GATEWAY_ENV_PRESENT" "$POSTGRES_ENV_PRESENT" \
   "$MEDIA_EDGE_ENV_PRESENT")
 for index in "${!targets[@]}"; do
   if [ "${present[$index]}" = 1 ]; then
@@ -2184,6 +2243,9 @@ complete_full_rollback() {
   restore_one /etc/memoria-miniprogram-gateway.env \
     "$backup_dir/memoria-miniprogram-gateway.env-pre-$requested_release" \
     "$GATEWAY_ENV_PRESENT"
+  restore_one /etc/memoria-device-media-gateway.env \
+    "$backup_dir/memoria-device-media-gateway.env-pre-$requested_release" \
+    "$DEVICE_GATEWAY_ENV_PRESENT"
   restore_one /etc/memoria-media-edge.env \
     "$backup_dir/memoria-media-edge.env-pre-$requested_release" "$MEDIA_EDGE_ENV_PRESENT"
 

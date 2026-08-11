@@ -1,0 +1,47 @@
+diff --git a/main/CMakeLists.txt b/main/CMakeLists.txt
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -31,13 +31,17 @@
+             "protocols/protocol.cc"
+             "protocols/text_glyph_payload.cc"
+             "protocols/mqtt_protocol.cc"
+             "protocols/websocket_protocol.cc"
++            "memoria/device_identity.cc"
++            "memoria/memoria_audio_frame.cc"
++            "memoria/memoria_activation_client.cc"
++            "memoria/memoria_protocol.cc"
+             "mcp_server.cc"
+             "system_info.cc"
+             "application.cc"
+             "ota.cc"
+             "settings.cc"
+             "device_state_machine.cc"
+             "assets.cc"
+             "main.cc"
+             )
+@@ -45,3 +49,3 @@
+
+-set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols")
++set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "memoria")
+
+@@ -1074,7 +1078,9 @@ idf_component_register(SRCS ${SOURCES}
+                         esp_app_format
+                         app_update
+                         spi_flash
+                         mbedtls
++                        nvs_flash
++                        libsodium
+                         console
+                         efuse
+                         bt
+diff --git a/main/idf_component.yml b/main/idf_component.yml
+--- a/main/idf_component.yml
++++ b/main/idf_component.yml
+@@ -36,6 +36,7 @@ dependencies:
+   espressif/esp-sr: ~2.4.7
+   espressif/button: ~4.2.0
+   espressif/knob: ^1.0.0
++  espressif/libsodium: ^1.0.22
+   esphome/esp-hub75:
+     version: ^0.3.5
+     rules:

@@ -9,7 +9,8 @@
     "pages/digital-self/index",
     "pages/privacy/index",
     "pages/bind/index",
-    "pages/device/index"
+    "pages/device/index",
+    "pages/device-onboarding/index"
   ],
   "window": {
     "backgroundColor": "#070b1a",
@@ -27,6 +28,10 @@
       {
         "pagePath": "pages/home/index",
         "text": "陪伴"
+      },
+      {
+        "pagePath": "pages/device/index",
+        "text": "设备"
       },
       {
         "pagePath": "pages/memory/index",

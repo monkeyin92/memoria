@@ -81,6 +81,12 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source: ../services/device_fleet/bootstrap_postgres_schema.sql
+        target: /docker-entrypoint-initdb.d/010-device-onboarding-schema.sql
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       memoria:
         aliases:

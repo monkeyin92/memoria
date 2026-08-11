@@ -96,6 +96,32 @@ def test_miniprogram_gateway_is_isolated_and_only_exposes_loopback_wss_upstream(
     )
 
 
+def test_device_media_gateway_is_isolated_and_headers_never_enter_the_url() -> None:
+    compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
+    device_media = (ROOT / "infra" / "nginx-memoria-device-media.conf").read_text(
+        encoding="utf-8"
+    )
+    gateway = compose.split("  device-media-gateway:\n", 1)[1].split("  agent:\n", 1)[0]
+
+    assert "memoria-device-media-gateway:${MEMORIA_RELEASE_TAG" in gateway
+    assert "services.device_media_gateway.app:app" in gateway
+    assert "/etc/memoria-device-media-gateway.env" in gateway
+    assert "127.0.0.1:8793:8011" in gateway
+    assert "read_only: true" in gateway
+    assert "no-new-privileges:true" in gateway
+    assert "cap_drop:" in gateway
+    assert "--no-access-log" in gateway
+    assert "include /etc/nginx/snippets/memoria-device-media.conf;" in nginx
+    assert "location = /memoria-device-media/v1/device/media {" in device_media
+    assert "proxy_pass http://127.0.0.1:8793/v1/device/media;" in device_media
+    assert "proxy_set_header Authorization $http_authorization;" in device_media
+    assert "proxy_set_header Device-Id $http_device_id;" in device_media
+    assert "proxy_set_header Client-Id $http_client_id;" in device_media
+    assert "$arg_" not in device_media
+    assert "access_log off;" in device_media
+
+
 def test_miniprogram_media_keeps_443_route_with_8443_as_the_active_url() -> None:
     media_path = ROOT / "infra" / "nginx-memoria-miniprogram-media.conf"
     assert media_path.is_file()
@@ -182,7 +208,7 @@ def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> No
     assert "mc version enable local/memoria-voice" in minio_init
     assert "s3:DeleteObjectVersion" in minio_init
     assert "MC_CONFIG_DIR: /tmp/.mc" in compose
-    assert compose.count("create_host_path: false") == 12
+    assert compose.count("create_host_path: false") == 13
     schema_mounts = (
         "002-identity-schema.sql",
         "003-consent-schema.sql",
@@ -479,7 +505,7 @@ def test_production_example_declares_control_only_object_read_keyrings() -> None
 
 
 def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent() -> None:
-    control, agent, speaker_model, gateway, media_edge = split_env(
+    control, agent, speaker_model, gateway, device_gateway, media_edge = split_env(
         {
             "MEMORIA_AUTH_SECRET": "auth",
             "WECHAT_MINIPROGRAM_APPID": "wx-test",
@@ -583,10 +609,11 @@ def test_production_env_split_never_exposes_archive_or_biometric_keys_to_agent()
     assert control["MEMORIA_ARCHIVE_OBJECT_READ_KEYS"] == '{"archive-v1":"archive-old-key"}'
     assert control["MEMORIA_VOICE_SAMPLE_READ_KEYS"] == '{"voice-v1":"voice-old-key"}'
     assert gateway == {}
+    assert device_gateway == {}
 
 
 def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None:
-    control, agent, speaker_model, gateway, media_edge = split_env(
+    control, agent, speaker_model, gateway, device_gateway, media_edge = split_env(
         {
             "ENVIRONMENT": "production",
             "MEDIA_RUNTIME_DEFAULT": "livekit",
@@ -623,6 +650,7 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
     assert "MEDIA_EDGE_VOICE_CORE_ADDR" not in agent
     assert speaker_model == {}
     assert gateway == {"ENVIRONMENT": "production"}
+    assert device_gateway == {"ENVIRONMENT": "production"}
 
 
 def test_production_example_routes_media_edge_webrtc_connectivity_config() -> None:

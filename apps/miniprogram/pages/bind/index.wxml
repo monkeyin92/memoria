@@ -5,17 +5,19 @@
   <text class="page-title">让这台机器人陪你</text>
   <text class="page-subtitle">先告诉它主要想陪谁；之后每次对话仍会确认是谁在使用，敏感能力由服务端按当前主体授权。</text>
 
-  <!-- 步骤 1：设备码 -->
-  <block wx:if="{{step === 'claim'}}">
+  <block wx:if="{{step === 'loading'}}">
     <view class="card">
-      <text class="settings-title">设备码</text>
-      <text class="setting-desc">扫描机器人上的二维码，或手动输入设备码。</text>
-      <input class="field-input bind-token-input" value="{{deviceClaimToken}}" placeholder="例如 dev-XXXX-XXXX" placeholder-class="field-placeholder" bindinput="onDeviceTokenInput" />
-      <view class="button-row bind-button-row">
-        <button class="secondary-button bind-scan-button" loading="{{scanning}}" bindtap="scanDeviceCode">扫码</button>
-        <button class="primary-button bind-next-button" bindtap="goToModeStep">下一步</button>
-      </view>
-      <text wx:if="{{error}}" class="error-text">{{error}}</text>
+      <text class="settings-title">正在确认认领</text>
+      <text class="setting-desc">绑定页只接受启用流程确认过的 claim，不在这里重新识别设备。</text>
+      <text class="loading-text">正在读取服务端认领状态…</text>
+    </view>
+  </block>
+
+  <block wx:if="{{step === 'error'}}">
+    <view class="card">
+      <text class="settings-title">无法继续绑定</text>
+      <text class="setting-desc">{{error}}</text>
+      <button class="secondary-button" bindtap="openDevicePage">返回设备管理</button>
     </view>
   </block>
 
@@ -173,15 +175,16 @@
   <!-- 步骤 5：绑定完成 -->
   <block wx:if="{{step === 'done'}}">
     <view class="card done-card">
-      <text class="done-badge">绑定完成</text>
-      <text class="done-title">机器人已绑定为「{{manifest.declared_mode === 'parent_for_child' ? '给孩子使用' : manifest.declared_mode === 'self_use' ? '给自己使用' : manifest.declared_mode === 'child_for_parent' ? '给父母使用' : '家庭共同使用'}}」</text>
+      <text class="done-badge">已提交初始化</text>
+      <text class="done-title">机器人已建立「{{manifest.declared_mode === 'parent_for_child' ? '给孩子使用' : manifest.declared_mode === 'self_use' ? '给自己使用' : manifest.declared_mode === 'child_for_parent' ? '给父母使用' : '家庭共同使用'}}」绑定</text>
       <view class="summary-row"><text class="summary-key">绑定编号</text><text class="summary-value">{{manifest.binding_id}}</text></view>
       <view class="summary-row"><text class="summary-key">设备</text><text class="summary-value">{{manifest.device_id}}</text></view>
-      <text class="done-note">绑定只是一份版本化合同；以后更换主要使用者会生成新版本，旧的绑定记录会被保留用于审计。</text>
+      <text class="done-note">绑定成功不等于设备已经激活。你可以跳过说话人登记，下一步等待机器人确认 Activation ACK。</text>
       <view class="button-row">
-        <button class="secondary-button form-back-button" bindtap="openDevicePage">去设备与成员</button>
-        <button class="primary-button form-next-button" bindtap="goHome">返回首页</button>
+        <button class="secondary-button form-back-button" bindtap="openSpeakerEnrollment">登记说话人</button>
+        <button class="primary-button form-next-button" bindtap="continueActivation">跳过并等待激活</button>
       </view>
+      <text class="form-note">说话人登记只用于区分当前是谁在说话，不是声音复刻；以后也可以在设备设置中完成。</text>
     </view>
   </block>
 </view>

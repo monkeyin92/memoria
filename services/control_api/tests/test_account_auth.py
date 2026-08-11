@@ -141,6 +141,37 @@ def test_production_miniprogram_requires_wechat_credentials_and_independent_iden
         ).validate_production()
 
 
+def test_production_device_gateway_requires_wss_and_an_independent_ticket_key() -> None:
+    common = {
+        "ENVIRONMENT": "production",
+        "PUBLIC_BASE_URL": "https://voice.example.com",
+        "ALLOWED_ORIGINS": "https://voice.example.com",
+        "LIVEKIT_URL": "wss://livekit.example.com",
+        "LIVEKIT_API_KEY": "key",
+        "LIVEKIT_API_SECRET": "test-livekit-material-long-enough",
+        "MEMORIA_AUTH_SECRET": "test-auth-material-that-is-long-enough",
+    }
+    with pytest.raises(ValueError, match="secure WSS"):
+        ControlSettings(
+            _env_file=None,
+            **common,
+            DEVICE_MEDIA_GATEWAY_URL="ws://voice.example.com/v1/device/media",
+        ).validate_production()
+    with pytest.raises(ValueError, match="device gateway ticket secret"):
+        ControlSettings(
+            _env_file=None,
+            **common,
+            DEVICE_MEDIA_GATEWAY_URL="wss://voice.example.com/v1/device/media",
+        ).validate_production()
+    with pytest.raises(ValueError, match="device gateway ticket secret"):
+        ControlSettings(
+            _env_file=None,
+            **common,
+            DEVICE_MEDIA_GATEWAY_URL="wss://voice.example.com/v1/device/media",
+            MEMORIA_DEVICE_GATEWAY_TICKET_SECRET=common["MEMORIA_AUTH_SECRET"],
+        ).validate_production()
+
+
 @pytest.mark.asyncio
 async def test_wechat_phone_exchange_reuses_the_app_access_token(
     monkeypatch: pytest.MonkeyPatch,

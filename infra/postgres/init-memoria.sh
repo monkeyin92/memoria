@@ -10,6 +10,8 @@ set -eu
 : "${MEMORIA_DB_IDENTITY_PASSWORD:?MEMORIA_DB_IDENTITY_PASSWORD is required}"
 : "${MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD:?MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD is required}"
 : "${MEMORIA_DB_CONSENT_PASSWORD:?MEMORIA_DB_CONSENT_PASSWORD is required}"
+: "${MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD:?MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD is required}"
+: "${MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD:?MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD is required}"
 : "${MEMORIA_DB_SESSION_API_PASSWORD:?MEMORIA_DB_SESSION_API_PASSWORD is required}"
 : "${MEMORIA_DB_ACTION_EXECUTOR_PASSWORD:?MEMORIA_DB_ACTION_EXECUTOR_PASSWORD is required}"
 : "${MEMORIA_DB_SESSION_PROJECTOR_PASSWORD:?MEMORIA_DB_SESSION_PROJECTOR_PASSWORD is required}"
@@ -29,6 +31,8 @@ psql \
   --set=identity_password="$MEMORIA_DB_IDENTITY_PASSWORD" \
   --set=identity_registration_password="$MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD" \
   --set=consent_password="$MEMORIA_DB_CONSENT_PASSWORD" \
+  --set=device_onboarding_api_password="$MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD" \
+  --set=device_onboarding_maintenance_password="$MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD" \
   --set=session_api_password="$MEMORIA_DB_SESSION_API_PASSWORD" \
   --set=action_executor_password="$MEMORIA_DB_ACTION_EXECUTOR_PASSWORD" \
   --set=session_projector_password="$MEMORIA_DB_SESSION_PROJECTOR_PASSWORD" \
@@ -160,6 +164,34 @@ SELECT format(
 \gexec
 
 SELECT format(
+    'CREATE ROLE memoria_device_onboarding_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD %L',
+    :'device_onboarding_api_password'
+)
+WHERE NOT EXISTS (
+    SELECT 1 FROM pg_roles WHERE rolname = 'memoria_device_onboarding_api'
+)
+\gexec
+SELECT format(
+    'ALTER ROLE memoria_device_onboarding_api WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD %L',
+    :'device_onboarding_api_password'
+)
+\gexec
+
+SELECT format(
+    'CREATE ROLE memoria_device_onboarding_maintenance LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD %L',
+    :'device_onboarding_maintenance_password'
+)
+WHERE NOT EXISTS (
+    SELECT 1 FROM pg_roles WHERE rolname = 'memoria_device_onboarding_maintenance'
+)
+\gexec
+SELECT format(
+    'ALTER ROLE memoria_device_onboarding_maintenance WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD %L',
+    :'device_onboarding_maintenance_password'
+)
+\gexec
+
+SELECT format(
     'CREATE ROLE memoria_session_api LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD %L',
     :'session_api_password'
 )
@@ -270,6 +302,8 @@ GRANT CONNECT ON DATABASE memoria TO
     memoria_identity,
     memoria_identity_registration,
     memoria_consent,
+    memoria_device_onboarding_api,
+    memoria_device_onboarding_maintenance,
     memoria_session_api,
     memoria_action_executor,
     memoria_session_projector,
@@ -298,6 +332,8 @@ RESET ROLE;
 RESET ROLE;
 \i /docker-entrypoint-initdb.d/009-memory-scope-schema.sql
 RESET ROLE;
+\i /docker-entrypoint-initdb.d/010-device-onboarding-schema.sql
+RESET ROLE;
 
 -- Runtime credentials are never DDL principals.  Schema owner roles created
 -- by the SQL files are NOLOGIN and remain the only domain object owners.
@@ -310,6 +346,8 @@ GRANT USAGE ON SCHEMA public TO
     memoria_identity,
     memoria_identity_registration,
     memoria_consent,
+    memoria_device_onboarding_api,
+    memoria_device_onboarding_maintenance,
     memoria_session_api,
     memoria_action_executor,
     memoria_session_projector,
@@ -326,6 +364,8 @@ REVOKE CREATE ON SCHEMA public FROM
     memoria_identity,
     memoria_identity_registration,
     memoria_consent,
+    memoria_device_onboarding_api,
+    memoria_device_onboarding_maintenance,
     memoria_session_api,
     memoria_action_executor,
     memoria_session_projector,

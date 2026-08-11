@@ -1644,6 +1644,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "asyncpg" },
+    { name = "av" },
     { name = "boto3" },
     { name = "cryptography" },
     { name = "fastapi" },
@@ -1689,6 +1690,7 @@ kws = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11,<4" },
     { name = "asyncpg", specifier = ">=0.30,<1" },
+    { name = "av", specifier = ">=18,<19" },
     { name = "boto3", specifier = ">=1.40,<2" },
     { name = "cryptography", specifier = ">=45,<47" },
     { name = "fastapi", specifier = ">=0.115,<1" },

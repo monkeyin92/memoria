@@ -14,6 +14,8 @@ set -eu
 : "${MEMORIA_DB_IDENTITY_PASSWORD:?set the identity API role password}"
 : "${MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD:?set the identity registration role password}"
 : "${MEMORIA_DB_CONSENT_PASSWORD:?set the consent API role password}"
+: "${MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD:?set the device onboarding API role password}"
+: "${MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD:?set the device onboarding maintenance role password}"
 : "${MEMORIA_DB_SESSION_API_PASSWORD:?set the Session Runtime API role password}"
 : "${MEMORIA_DB_ACTION_EXECUTOR_PASSWORD:?set the action executor role password}"
 : "${MEMORIA_DB_SESSION_PROJECTOR_PASSWORD:?set the Session Runtime projector role password}"
@@ -32,6 +34,8 @@ docker exec \
   -e MEMORIA_DB_IDENTITY_PASSWORD \
   -e MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD \
   -e MEMORIA_DB_CONSENT_PASSWORD \
+  -e MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD \
+  -e MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD \
   -e MEMORIA_DB_SESSION_API_PASSWORD \
   -e MEMORIA_DB_ACTION_EXECUTOR_PASSWORD \
   -e MEMORIA_DB_SESSION_PROJECTOR_PASSWORD \

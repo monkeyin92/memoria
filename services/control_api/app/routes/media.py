@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import hmac
 from datetime import UTC, datetime
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.agent.src.voice_core.device_security import SignedChallenge
+from services.common.miniprogram_gateway_ticket import issue_device_gateway_ticket
 from services.control_api.app.account_gate import require_writable_account
 from services.control_api.app.device_registry import (
     DeviceChallengeRateLimited,
@@ -28,6 +29,11 @@ from services.control_api.app.security import (
     optional_authenticated_user,
 )
 from services.control_api.app.session_directory import SessionDirectoryUnavailable
+from services.device_fleet.bootstrap_domain import (
+    OnboardingError,
+    b64url_decode,
+)
+from services.device_fleet.bootstrap_service import DeviceOnboardingService
 
 router = APIRouter(prefix="/v1/media", tags=["media"])
 device_router = APIRouter(prefix="/v1/devices", tags=["media"])
@@ -91,12 +97,47 @@ class MediaSessionResponse(BaseModel):
     device_id: str | None = None
 
 
+class DeviceMediaSessionProof(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    certificate_id: str = Field(min_length=1, max_length=128)
+    challenge_id: str = Field(min_length=1, max_length=128)
+    nonce: str = Field(min_length=43, max_length=43)
+    signature: str = Field(min_length=86, max_length=86)
+    client_id: str = Field(min_length=1, max_length=128)
+
+
+class DeviceOpusFormat(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    codec: Literal["opus"] = "opus"
+    sample_rate: Literal[16000, 24000]
+    channels: Literal[1] = 1
+    frame_ms: Literal[20] = 20
+
+
+class DeviceGatewaySessionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    stream_epoch: int = Field(ge=1)
+    websocket_url: str
+    media_token: str
+    expires_in: int = Field(ge=30, le=300)
+    protocol_version: Literal[1] = 1
+    binding_id: str
+    binding_version: int = Field(ge=1)
+    uplink: DeviceOpusFormat
+    downlink: DeviceOpusFormat
+
+
 async def _create(
     body: CreateMediaSessionRequest,
     request: Request,
     user: AuthenticatedUser,
     *,
     device_id: str | None = None,
+    binding_version: int | None = None,
 ) -> MediaSessionResponse:
     effective_device_id = device_id or body.device_id
     if device_id is not None and body.device_id not in {None, device_id}:
@@ -112,7 +153,11 @@ async def _create(
     platform = "h5" if body.client_type == "h5" else "device"
     created = await session_routes.create_session(
         session_routes.CreateSessionRequest(
-            client=session_routes.ClientInfo(platform=platform, device_id=effective_device_id),
+            client=session_routes.ClientInfo(
+                platform=platform,
+                device_id=effective_device_id,
+                binding_version=binding_version,
+            ),
         ),
         request,
         user,
@@ -156,6 +201,20 @@ async def _create(
         },
         device_id=effective_device_id,
     )
+
+
+def _device_onboarding_service(request: Request) -> DeviceOnboardingService:
+    service = getattr(request.app.state, "device_onboarding_service", None)
+    if not isinstance(service, DeviceOnboardingService):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "device_onboarding_unavailable"},
+        )
+    return service
+
+
+def _device_onboarding_error(error: OnboardingError) -> HTTPException:
+    return HTTPException(status_code=error.status_code, detail={"code": error.code})
 
 
 @router.post("/sessions", response_model=MediaSessionResponse)
@@ -232,6 +291,121 @@ async def create_device_media_session(
     device_user = user or AuthenticatedUser(user_id=account_id, session_id=None, jti=None)
     async with request.app.state.account_operations.write(account_id):
         return await _create(body, request, device_user, device_id=device_id)
+
+
+@device_router.post("/{device_id}/media-challenge")
+async def issue_fleet_device_media_challenge(
+    device_id: str,
+    request: Request,
+    certificate_id: Annotated[
+        str | None,
+        Header(alias="X-Device-Certificate-ID"),
+    ] = None,
+    client_id: Annotated[str | None, Header(alias="X-Client-ID")] = None,
+) -> dict[str, object]:
+    if not certificate_id:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "device_certificate_required"},
+        )
+    if not client_id:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "device_client_id_required"},
+        )
+    try:
+        return _device_onboarding_service(request).issue_media_challenge(
+            device_id=device_id,
+            certificate_id=certificate_id,
+            client_id=client_id,
+        )
+    except OnboardingError as error:
+        raise _device_onboarding_error(error) from error
+
+
+@device_router.post(
+    "/{device_id}/media-sessions",
+    response_model=DeviceGatewaySessionResponse,
+)
+async def create_fleet_device_media_session(
+    device_id: str,
+    body: DeviceMediaSessionProof,
+    request: Request,
+) -> DeviceGatewaySessionResponse:
+    websocket_url = request.app.state.settings.device_media_gateway_url.strip()
+    if not websocket_url:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "device_media_gateway_unavailable"},
+        )
+    try:
+        authenticated = _device_onboarding_service(
+            request
+        ).authenticate_media_challenge(
+            device_id=device_id,
+            certificate_id=body.certificate_id,
+            client_id=body.client_id,
+            challenge_id=body.challenge_id,
+            nonce=body.nonce,
+            signature=b64url_decode(
+                body.signature,
+                field="device_media_signature",
+                exact_length=64,
+            ),
+        )
+    except OnboardingError as error:
+        raise _device_onboarding_error(error) from error
+    account_id = str(authenticated["actor_id"])
+    binding_id = str(authenticated["binding_id"])
+    binding_version = int(cast(int, authenticated["binding_version"]))
+    if request.app.state.memory_store.is_account_unavailable(user_id=account_id):
+        raise HTTPException(status_code=409, detail={"code": "device_owner_unavailable"})
+    device_user = AuthenticatedUser(user_id=account_id, session_id=None, jti=None)
+    async with request.app.state.account_operations.write(account_id):
+        created = await _create(
+            CreateMediaSessionRequest(client_type="device", device_id=device_id),
+            request,
+            device_user,
+            device_id=device_id,
+            binding_version=(
+                binding_version
+                if getattr(request.app.state, "session_runtime_service", None) is not None
+                else None
+            ),
+        )
+    livekit = created.livekit
+    if livekit is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "device_media_livekit_unavailable"},
+        )
+    room_name = livekit.get("room_name", "")
+    identity = f"user-{account_id}-{created.session_id[:8]}"
+    ticket, ttl = issue_device_gateway_ticket(
+        secret=request.app.state.settings.memoria_device_gateway_ticket_secret.get_secret_value(),
+        session_id=created.session_id,
+        user_id=account_id,
+        device_id=device_id,
+        client_id=body.client_id,
+        binding_id=binding_id,
+        binding_version=binding_version,
+        room_name=room_name,
+        identity=identity,
+        agent_name=request.app.state.settings.livekit_agent_name,
+        stream_epoch=created.stream_epoch,
+        ttl_s=request.app.state.settings.device_gateway_ticket_ttl_s,
+    )
+    return DeviceGatewaySessionResponse(
+        session_id=created.session_id,
+        stream_epoch=created.stream_epoch,
+        websocket_url=websocket_url,
+        media_token=ticket,
+        expires_in=ttl,
+        binding_id=binding_id,
+        binding_version=binding_version,
+        uplink=DeviceOpusFormat(sample_rate=16000),
+        downlink=DeviceOpusFormat(sample_rate=24000),
+    )
 
 
 @device_router.post("/{device_id}/identity")

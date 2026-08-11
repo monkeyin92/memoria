@@ -21,6 +21,7 @@ EXPECTED_CONTROL_DATABASE_ROLES = {
     "MEMORIA_IDENTITY_DATABASE_URL": "memoria_identity",
     "MEMORIA_IDENTITY_REGISTRATION_DATABASE_URL": "memoria_identity_registration",
     "MEMORIA_CONSENT_DATABASE_URL": "memoria_consent",
+    "MEMORIA_DEVICE_ONBOARDING_DATABASE_URL": "memoria_device_onboarding_api",
     "MEMORIA_SESSION_RUNTIME_DATABASE_URL": "memoria_session_api",
     "MEMORIA_ACTION_EXECUTOR_DATABASE_URL": "memoria_action_executor",
     "MEMORIA_SESSION_RUNTIME_PROJECTOR_DATABASE_URL": "memoria_session_projector",
@@ -40,6 +41,10 @@ EXPECTED_PASSWORD_ROLES = {
     "MEMORIA_DB_IDENTITY_PASSWORD": "memoria_identity",
     "MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD": "memoria_identity_registration",
     "MEMORIA_DB_CONSENT_PASSWORD": "memoria_consent",
+    "MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD": "memoria_device_onboarding_api",
+    "MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD": (
+        "memoria_device_onboarding_maintenance"
+    ),
     "MEMORIA_DB_SESSION_API_PASSWORD": "memoria_session_api",
     "MEMORIA_DB_ACTION_EXECUTOR_PASSWORD": "memoria_action_executor",
     "MEMORIA_DB_SESSION_PROJECTOR_PASSWORD": "memoria_session_projector",
@@ -134,7 +139,7 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     legacy["MEMORIA_ARCHIVE_OBJECT_READ_KEYS"] = json.dumps(archive_read_keys)
     legacy["MEMORIA_VOICE_SAMPLE_READ_KEYS"] = json.dumps(voice_read_keys)
 
-    control, agent, speaker_model, gateway, media_edge = prepare(
+    control, agent, speaker_model, gateway, device_gateway, media_edge = prepare(
         legacy=legacy,
         postgres=postgres,
         minio=minio,
@@ -170,6 +175,11 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert media_edge["MEDIA_EDGE_JWT_SECRET"] == control["STREAMCORE_TOKEN_SECRET"]
     assert media_edge["MEDIA_EDGE_JWT_ISSUER"] == "voice-agent"
     assert media_edge["MEDIA_EDGE_JWT_AUDIENCE"] == "memoria-media"
+    assert device_gateway["MEMORIA_DEVICE_GATEWAY_TICKET_SECRET"] == control[
+        "MEMORIA_DEVICE_GATEWAY_TICKET_SECRET"
+    ]
+    assert "MEMORIA_MINIPROGRAM_GATEWAY_TICKET_SECRET" not in device_gateway
+    assert device_gateway["LIVEKIT_API_SECRET"] == gateway["LIVEKIT_API_SECRET"]
     assert "MEDIA_EDGE_JWT_SECRET" not in control
     assert "MEDIA_EDGE_JWT_SECRET" not in agent
     assert "DOUBAO_TTS_APP_ID" not in control
@@ -262,7 +272,7 @@ def test_upgrade_env_preserves_existing_encryption_keys_versions_and_read_keyrin
     }
     legacy.update(preserved)
 
-    control, agent, _, _, _ = prepare(
+    control, agent, _, _, _, _ = prepare(
         legacy=legacy,
         postgres=postgres,
         minio=minio,
@@ -277,7 +287,7 @@ def test_upgrade_env_preserves_existing_encryption_keys_versions_and_read_keyrin
 def test_upgrade_env_generates_only_missing_encryption_keys() -> None:
     legacy, postgres, minio = _upgrade_inputs()
 
-    control, agent, _, _, _ = prepare(
+    control, agent, _, _, _, _ = prepare(
         legacy=legacy,
         postgres=postgres,
         minio=minio,
@@ -388,6 +398,8 @@ def test_upgrade_env_cli_does_not_print_preserved_keys(
             str(tmp_path / "speaker.env"),
             "--gateway",
             str(tmp_path / "gateway.env"),
+            "--device-gateway",
+            str(tmp_path / "device-gateway.env"),
             "--media-edge",
             str(tmp_path / "media-edge.env"),
         ],
@@ -443,7 +455,7 @@ def test_upgrade_env_rejects_ambiguous_or_half_configured_doubao_authentication(
 def test_upgrade_env_accepts_doubao_api_key_authentication() -> None:
     legacy, postgres, minio = _upgrade_inputs({"DOUBAO_TTS_API_KEY": "doubao-api-key"})
 
-    control, agent, _, _, _ = prepare(
+    control, agent, _, _, _, _ = prepare(
         legacy=legacy,
         postgres=postgres,
         minio=minio,
@@ -468,7 +480,7 @@ def test_upgrade_env_routes_independent_doubao_clone_key_to_control_only() -> No
         }
     )
 
-    control, agent, speaker_model, _, _ = prepare(
+    control, agent, speaker_model, _, _, _ = prepare(
         legacy=legacy,
         postgres=postgres,
         minio=minio,

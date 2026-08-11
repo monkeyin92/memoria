@@ -7,6 +7,41 @@ const {
   degradationFor,
   isNewerRuntimeProfile,
 } = require("../../utils/device-binding");
+const { readOnboardingSessionId } = require("../../utils/device-onboarding/session-store");
+
+const ACTIVATION_LABELS = Object.freeze({
+  pending_manifest: "等待配置",
+  manifest_ready: "等待机器人拉取",
+  device_downloading: "机器人同步中",
+  device_applied: "设备已应用",
+  device_acknowledged: "设备已确认",
+  ready_for_conversation: "可开始对话",
+  failed: "激活失败",
+  expired: "激活已过期",
+  unknown: "状态待同步",
+});
+
+function activationLabel(status) {
+  return ACTIVATION_LABELS[status] || "状态待同步";
+}
+
+function deviceStatusSummary(activation, profile) {
+  const ready = activation?.status === "ready_for_conversation";
+  return {
+    onlineLabel: ready
+      ? "在线，可直接对话"
+      : activation?.network?.internet === true
+        ? "已联网，等待激活"
+        : activation
+          ? "暂未确认在线"
+          : profile
+            ? "绑定已确认，设备状态待同步"
+            : "状态暂不可用",
+    firmwareVersion: activation?.firmware_version || "未读取",
+    networkLabel: activation?.network?.status || "未读取",
+    activationLabel: activationLabel(activation?.status),
+  };
+}
 
 const ROLE_LABELS = Object.freeze({
   account_owner: "账号持有人",
@@ -61,6 +96,12 @@ Page({
     degradation: null,
     sensitiveEntries: [],
     currentUserLabel: "",
+    activation: null,
+    onlineLabel: "状态待同步",
+    firmwareVersion: "未读取",
+    networkLabel: "未读取",
+    activationLabel: "状态待同步",
+    hasPendingOnboarding: false,
   },
 
   onLoad() {
@@ -102,6 +143,12 @@ Page({
       degradation: null,
       sensitiveEntries: [],
       currentUserLabel: "",
+      activation: null,
+      onlineLabel: "状态待同步",
+      firmwareVersion: "未读取",
+      networkLabel: "未读取",
+      activationLabel: "状态待同步",
+      hasPendingOnboarding: false,
     });
   },
 
@@ -110,19 +157,37 @@ Page({
     this.setData({ loading: true, error: "" });
     const binding = readBindingManifest();
     if (!binding || typeof binding.device_id !== "string") {
-      this.setData({ loading: false, hasBinding: false });
+      let hasPendingOnboarding = false;
+      try {
+        hasPendingOnboarding = Boolean(readOnboardingSessionId());
+      } catch {
+        hasPendingOnboarding = false;
+      }
+      this.setData({ loading: false, hasBinding: false, hasPendingOnboarding });
       return;
     }
     try {
-      const profile = await api.getRuntimeProfile(binding.device_id);
-      if (profile === null || flowSeq !== this._flowSeq) return; // 晚到响应丢弃
+      const [profileResult, activationResult] = await Promise.allSettled([
+        api.getRuntimeProfile(binding.device_id),
+        api.getActivationStatus(binding.device_id),
+      ]);
+      if (flowSeq !== this._flowSeq) return; // 晚到响应丢弃
+      const profile =
+        profileResult.status === "fulfilled" && profileResult.value !== null
+          ? profileResult.value
+          : null;
+      const activation = activationResult.status === "fulfilled" ? activationResult.value : null;
       const needResolution =
-        profile.degraded || profile.service_mode === "family_shared";
+        profile?.degraded || profile?.service_mode === "family_shared";
       const resolution = needResolution
         ? await api.resolveSessionSubject({ deviceId: binding.device_id })
         : null;
       if (flowSeq !== this._flowSeq) return;
       const candidates = resolution?.candidate_subjects || [];
+      const summary = deviceStatusSummary(activation, profile);
+      const failures = [profileResult, activationResult].filter(
+        (result) => result.status === "rejected",
+      );
       this.setData({
         hasBinding: true,
         binding,
@@ -132,18 +197,29 @@ Page({
         resolution,
         candidates,
         selectedCandidateId:
-          candidates.find((candidate) => candidate.person_id === profile.active_subject_id)
+          candidates.find((candidate) => candidate.person_id === profile?.active_subject_id)
             ?.person_id || "",
         canConfirmWithApp: (resolution?.allowed_confirmation_methods || []).includes(
           "app_confirm",
         ),
-        degradation: degradationFor(profile),
-        sensitiveEntries: sensitiveEntriesFor(profile),
+        degradation: profile ? degradationFor(profile) : null,
+        sensitiveEntries: profile ? sensitiveEntriesFor(profile) : [],
         currentUserLabel: currentUserLabel(profile, candidates),
-        error: "",
+        activation,
+        onlineLabel: summary.onlineLabel,
+        firmwareVersion: summary.firmwareVersion,
+        networkLabel: summary.networkLabel,
+        activationLabel: summary.activationLabel,
+        error:
+          failures.length === 2
+            ? "设备状态暂时无法读取，绑定关系仍保留；请稍后下拉刷新。"
+            : "",
       });
     } catch (error) {
-      this.setData({ hasBinding: true, error: error?.message || "设备信息加载失败。" });
+      this.setData({
+        hasBinding: true,
+        error: error?.message || "设备信息加载失败。",
+      });
     } finally {
       this.setData({ loading: false });
     }
@@ -157,8 +233,30 @@ Page({
     this.loadDevice().finally(() => wx.stopPullDownRefresh());
   },
 
-  openBindPage() {
-    wx.navigateTo({ url: "/pages/bind/index" });
+  openOnboarding() {
+    wx.navigateTo({ url: "/pages/device-onboarding/index" });
+  },
+
+  resumeOnboarding() {
+    let sessionId = "";
+    try {
+      sessionId = readOnboardingSessionId();
+    } catch {
+      sessionId = "";
+    }
+    if (!sessionId) {
+      wx.showToast({ title: "没有可恢复的启用会话", icon: "none" });
+      return;
+    }
+    wx.navigateTo({
+      url: `/pages/device-onboarding/index?session_id=${encodeURIComponent(sessionId)}`,
+    });
+  },
+
+  openReprovision() {
+    const deviceId = this.data.binding?.device_id;
+    const query = deviceId ? `&device_id=${encodeURIComponent(deviceId)}` : "";
+    wx.navigateTo({ url: `/pages/device-onboarding/index?mode=reprovision${query}` });
   },
 
   selectCandidate(event) {

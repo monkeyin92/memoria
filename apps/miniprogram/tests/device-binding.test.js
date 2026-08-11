@@ -7,7 +7,8 @@ const { canonicalManifest } = require("./manifest-fixtures");
 
 function validRequest(overrides = {}) {
   return {
-    device_claim_token: "claim-token-123",
+    claim_id: "claim_01",
+    onboarding_session_id: "onb_01",
     declared_mode: "parent_for_child",
     account_owner_person_id: "person_owner",
     primary_subject: {
@@ -35,7 +36,8 @@ function validRequest(overrides = {}) {
 test("builds the documented payload for parent_for_child", () => {
   const payload = binding.buildBindingRequest(validRequest());
   assert.deepEqual(payload, {
-    device_claim_token: "claim-token-123",
+    claim_id: "claim_01",
+    onboarding_session_id: "onb_01",
     declared_mode: "parent_for_child",
     account_owner_person_id: "person_owner",
     primary_subject: {
@@ -134,7 +136,7 @@ test("rejects unknown request keys and invalid declared modes", () => {
     () => binding.buildBindingRequest(validRequest({ declared_mode: "child_primary" })),
     /declared_mode 取值无效/,
   );
-  assert.throws(() => binding.buildBindingRequest({}), /device_claim_token 不能为空/);
+  assert.throws(() => binding.buildBindingRequest({}), /claim_id 不能为空/);
 });
 
 test("rejects unknown, mismatched, and parent-self-acceptance consent offers", () => {

@@ -1,0 +1,16 @@
+{
+    "manufacturer": "memoria",
+    "type": "memoria-atk-dnesp32s3-v1",
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "memoria-atk-dnesp32s3-v1",
+            "sdkconfig_append": [
+                "CONFIG_USE_DEVICE_AEC=n",
+                "CONFIG_USE_HOTSPOT_WIFI_PROVISIONING=y",
+                "CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING=n",
+                "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/v2/16m.csv\""
+            ]
+        }
+    ]
+}

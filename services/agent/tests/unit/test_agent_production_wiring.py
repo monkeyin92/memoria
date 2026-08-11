@@ -19,6 +19,7 @@ from services.agent.src.agent import (
     DuplexVoiceAgent,
     apply_miniprogram_session_audio_policy,
     build_keyword_spotter_pcm_observer,
+    is_device_session,
     is_miniprogram_session,
     should_enable_legacy_speaker_verifier,
 )
@@ -52,6 +53,7 @@ from services.agent.src.response_planner_client import (
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.common.companion_response_safety import CRISIS_SUPPORT_REPLY
 from services.common.miniprogram_gateway_ticket import (
+    DEVICE_AGENT_DISPATCH_METADATA,
     MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA,
     MINIPROGRAM_AGENT_DISPATCH_METADATA,
 )
@@ -411,6 +413,8 @@ def test_miniprogram_audio_policy_identifies_plain_and_aec_sessions() -> None:
     assert is_miniprogram_session(MINIPROGRAM_AEC_AGENT_DISPATCH_METADATA)
     assert not is_miniprogram_session("")
     assert not is_miniprogram_session("memoria.miniprogram.aec.v2")
+    assert is_device_session(DEVICE_AGENT_DISPATCH_METADATA)
+    assert not is_device_session(MINIPROGRAM_AGENT_DISPATCH_METADATA)
     assert not apply_miniprogram_session_audio_policy(web_kwargs, "")
     assert "aec_warmup_duration" not in web_kwargs
     assert not apply_miniprogram_session_audio_policy(web_kwargs, "memoria.miniprogram.aec.v2")

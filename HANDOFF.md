@@ -2,6 +2,54 @@
 
 ## 当前状态（2026-08-11）
 
+### 小程序硬件管理与 ESP32-S3 Path 2（未提交、未推送、未部署；真机已到 Memoria 媒体边界）
+
+- 小程序保留首页与 AI 对话，主导航调整为“陪伴 / 设备 / 回顾 / 我的”；新增独立扫码启用页，
+  串起二维码校验、真实 `wx` BLE 生命周期、Wi-Fi 表单、Claim、首次多主体初始化、Binding、
+  Activation 查询和失败恢复。设备页成为硬件管理入口，绑定页只接受服务端确认的
+  `claim_id + onboarding_session_id`，生产默认拒绝旧 `device_claim_token`。
+- Wi-Fi 密码只存在页面内存和可清零缓冲区，隐藏、卸载或提交后清除，不进入 Storage、日志、
+  二维码或后端。因小程序侧尚无经审计的 Protocomm Security 1/Protobuf codec，默认配网
+  transport 在写凭据前 fail-closed；当前不能宣称微信真机 BLE 配网已完成。
+- Device Fleet 新增独立 Bootstrap/Claim/Activation 子域和版本化合同：二维码及设备在线证明使用
+  Ed25519，一次性 Claim 与 Identity 权威 Binding 通过可恢复 Saga 衔接，Activation Manifest
+  按版本和设备单调计数 ACK。新增一次性 device media challenge/session，设备专用票据使用独立
+  `aud/typ/secret` 并冻结 device、client、binding、cascade session 与 stream epoch；生产在
+  PostgreSQL/RLS、托管签名密钥接入前显式 503，不回退 SQLite 或旧 DeviceRegistry 权威。
+- `firmware/esp32` 固定 `xiaozhi-esp32 v2.4.2` commit
+  `e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5` 与 ESP-IDF `v6.0.2`，新增独立
+  `memoria-atk-dnesp32s3-v1` 板型，保留 ES8388/ST7789/XL9555/按键并关闭 OV2640。新增独立
+  `memoria_identity` NVS 分区、Ed25519 研发身份注入、Activation Manifest 验签/ACK、设备
+  challenge/ticket/WSS 客户端和严格 `MemoriaAudioFrameV1`；上行 Opus 16 kHz/20 ms，下行
+  24 kHz/20 ms。身份脚本只写 `0x10000..0x1ffff`，不会写 Secure Boot、Flash Encryption 或 eFuse。
+- 新增独立 `services/device_media_gateway`，只负责设备票据、帧协议、Opus 与 LiveKit 桥接，复用
+  现有 Mini Program LiveKit Bridge 和 Agent/ASR/LLM/TTS/Policy 控制链，不创建第二套媒体或身份
+  权威。设备只有在真实播放队列排空后才发送 `playback.ended`；服务器生成/发送 TTS 不算已听到。
+- `2026-08-11 18:29 CST` 已在真实正点原子板卡完成首次烧录：esptool 识别为 ESP32-S3
+  rev `v0.2`、8 MB PSRAM、USB-Serial/JTAG，Bootloader、分区表、OTA 数据、资源和主应用全部
+  写入并逐段通过 Hash 校验。自动复位后真实启动到 `wifi_configuring`，串口确认板型 SKU、8 MB
+  PSRAM、LVGL/ST7789、ES8388、24 kHz I2S 和 SoftAP 均初始化成功；连续观察到 50 秒无 panic、
+  看门狗或重启循环，也无摄像头初始化错误。串口监视已正常退出，未执行不可逆安全配置。
+- 用户随后通过上游热点完成 Wi-Fi 配置，并用测试账号走通 `xiaozhi.me` 激活和真实硬件对话；
+  这是 Path 1 的上游验收，不作为 Memoria 闭环证据。
+- `2026-08-11 22:32 CST` 已把 Path 2 最终固件写入同一实板并逐段通过 Hash 校验。真机重启后从
+  独立 NVS 读取研发身份，Activation Manifest 验签成功并进入 `idle`；短按后真实完成 Control API
+  media challenge、media session 和 WSS 握手。网关随后因本机没有 LiveKit（`127.0.0.1:7880`
+  refused）以服务器错误关闭，所以只验收到真实设备进入 Memoria 媒体边界，尚未完成 Memoria 对话。
+- WSS 关闭回调曾暴露高/低优先级任务销毁竞态并造成 `StoreProhibited`；已按连接生命周期修复，
+  最终固件连续短按两次均约 1 秒提示“设备媒体服务不可用”并回到待机，持续观察无 panic、重启或
+  堆继续下降。已刷合并包 `9,873,069` bytes，SHA-256
+  `29ab9cf4825099aa586a007aa03c97a786c2d16daad54911dfc96b665cca096f`。
+- 回滚保留在被忽略目录：Path 1 整包
+  `firmware/esp32/artifacts/backups/pre-path2-upstream-working-merged.bin`，SHA-256
+  `ea3b37904e42c42a8334b9808871e8bebff2f72f9ed02dbc4000ec35fdf1e250`；切换前启动/NVS/OTA 区备份
+  SHA-256 `956c727accb33f1718be569a01275fc4f67627a77d8d258bfcb8816d2b13f77e`。
+- 最终本地证据：相关 Python 纵切 `234` 项、小程序 `193/193`、Ruff、mypy、干净 upstream
+  overlay 重放、ESP-IDF clean build/merge-bin 通过。仍缺微信 iOS/Android Protocomm、生产
+  PostgreSQL/RLS/托管签名密钥、真实 LiveKit/Agent/provider 部署后的 Memoria 对话，以及完整
+  LCD/麦克风/扬声器声学、AEC/全双工和量产安全验收；本轮临时 Control API/设备网关已在验收后
+  正常关闭，本地 SQLite 数据不是生产发布。
+
 ### 多主体整改本地工作区（未提交、未推送、未部署）
 
 - 《Memoria 多用户场景产品策略与架构开发调整方案》PR-01~PR-17 的主体、

@@ -365,7 +365,8 @@ function capabilityGateMessage(result, capability) {
 }
 
 const REQUEST_ALLOWED_KEYS = Object.freeze([
-  "device_claim_token",
+  "claim_id",
+  "onboarding_session_id",
   "declared_mode",
   "account_owner_person_id",
   "primary_subject",
@@ -523,7 +524,8 @@ function buildBindingRequest(request) {
       throw new TypeError(`绑定请求不允许字段 ${key}`);
     }
   }
-  assertNonEmptyString(request.device_claim_token, "device_claim_token");
+  assertNonEmptyString(request.claim_id, "claim_id");
+  assertNonEmptyString(request.onboarding_session_id, "onboarding_session_id");
   if (!contracts.isDeviceDeclaredMode(request.declared_mode)) {
     throw new TypeError(`declared_mode 取值无效：${request.declared_mode}`);
   }
@@ -533,7 +535,8 @@ function buildBindingRequest(request) {
     throw new TypeError("persona_selection 过长");
   }
   return {
-    device_claim_token: request.device_claim_token.trim(),
+    claim_id: request.claim_id.trim(),
+    onboarding_session_id: request.onboarding_session_id.trim(),
     declared_mode: request.declared_mode,
     account_owner_person_id: request.account_owner_person_id.trim(),
     primary_subject: validatePrimarySubject(request.declared_mode, request.primary_subject),
