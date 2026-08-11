@@ -114,6 +114,42 @@ async def _establish_relationship(
     )
 
 
+@pytest.mark.asyncio
+async def test_self_binding_never_reads_identity_without_owner_actor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    app = _env(monkeypatch, tmp_path, "binding-identity-actor")
+    identity = app.state.identity_service
+    original_get_person = identity.get_person
+    calls: list[tuple[str, str | None]] = []
+
+    async def require_actor(person_id: str, actor_person_id: str | None = None):
+        calls.append((person_id, actor_person_id))
+        if actor_person_id is None:
+            raise AssertionError("production FORCE RLS requires an identity actor")
+        return await original_get_person(
+            person_id,
+            actor_person_id=actor_person_id,
+        )
+
+    monkeypatch.setattr(identity, "get_person", require_actor)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        owner = await _register(client, "binding-actor-owner")
+        await _bind_self(
+            client,
+            app,
+            owner=owner,
+            device_id="device-binding-actor",
+            nonce="claim-binding-actor",
+        )
+
+    assert calls
+    assert all(actor_id == owner["user_id"] for _person_id, actor_id in calls)
+
+
 async def _bind_family(
     client: AsyncClient,
     app,

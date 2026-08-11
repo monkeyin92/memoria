@@ -260,7 +260,7 @@ async def _account_person(
 ) -> PersonSubject:
     identity = _identity(request)
     try:
-        return await identity.get_person(user_id)
+        return await identity.get_person(user_id, actor_person_id=user_id)
     except IdentityNotFoundError:
         profile = request.app.state.memory_store.get_subject_profile(user_id=user_id) or {}
         return await identity.register_person(
@@ -288,7 +288,10 @@ async def _primary_subject(
     if body.primary_subject.person_id != "new":
         if body.declared_mode == "self_use" and body.primary_subject.person_id != owner.person_id:
             raise IdentityAccessDeniedError("self_use subject must be the account person")
-        return await _identity(request).get_person(body.primary_subject.person_id)
+        return await _identity(request).get_person(
+            body.primary_subject.person_id,
+            actor_person_id=owner.person_id,
+        )
     draft = body.primary_subject.subject_draft
     assert draft is not None
     category: Literal["unknown", "minor"] = (
