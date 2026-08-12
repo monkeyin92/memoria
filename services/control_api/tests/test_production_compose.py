@@ -616,6 +616,8 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
     control, agent, speaker_model, gateway, device_gateway, media_edge = split_env(
         {
             "ENVIRONMENT": "production",
+            "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET": "runtime-profile-key-material",
+            "MEMORIA_RUNTIME_PROFILE_VERIFY_KEY": "runtime-profile-key-material",
             "MEDIA_RUNTIME_DEFAULT": "livekit",
             "STREAMCORE_EXPERIMENT_PERCENT": "0",
             "STREAMCORE_KILL_SWITCH": "false",
@@ -648,6 +650,11 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
     assert media_edge["MEDIA_EDGE_WEBRTC_UDP_PORT_MAX"] == "40100"
     assert "MEDIA_EDGE_JWT_SECRET" not in control
     assert "MEDIA_EDGE_VOICE_CORE_ADDR" not in agent
+    assert control["MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET"] == (
+        "runtime-profile-key-material"
+    )
+    assert agent["MEMORIA_RUNTIME_PROFILE_VERIFY_KEY"] == "runtime-profile-key-material"
+    assert "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET" not in agent
     assert speaker_model == {}
     assert gateway == {"ENVIRONMENT": "production"}
     assert device_gateway == {"ENVIRONMENT": "production"}
@@ -719,6 +726,33 @@ def test_production_env_split_rejects_missing_or_mismatched_media_token_secrets(
     assert "control-secret" not in message
     assert "edge-secret" not in message
     assert "different-edge-secret" not in message
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        {},
+        {"MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET": "control-signing-key"},
+        {"MEMORIA_RUNTIME_PROFILE_VERIFY_KEY": "agent-verify-key"},
+        {
+            "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET": "control-signing-key",
+            "MEMORIA_RUNTIME_PROFILE_VERIFY_KEY": "different-agent-verify-key",
+        },
+    ],
+)
+def test_production_env_split_rejects_missing_or_mismatched_runtime_profile_keys(
+    keys: dict[str, str],
+) -> None:
+    with pytest.raises(ValueError) as caught:
+        split_env({"ENVIRONMENT": "production", **keys})
+
+    message = str(caught.value)
+    assert message in {
+        "production Runtime Profile signing and verify keys must both be set",
+        "production Runtime Profile signing and verify keys must match",
+    }
+    assert "control-signing-key" not in message
+    assert "agent-verify-key" not in message
 
 
 def test_production_env_split_rejects_unused_doubao_secret_key() -> None:

@@ -200,6 +200,10 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert agent["MEMORIA_AGENT_HEARTBEAT_TOKEN"] != agent["MEMORIA_ARCHIVE_WRITE_TOKEN"]
     assert agent["MEMORIA_INTERACTION_POLICY_TOKEN"] == control["MEMORIA_INTERACTION_POLICY_TOKEN"]
     assert agent["MEMORIA_INTERACTION_POLICY_TOKEN"] != agent["MEMORIA_AGENT_HEARTBEAT_TOKEN"]
+    assert agent["MEMORIA_RUNTIME_PROFILE_VERIFY_KEY"] == control[
+        "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET"
+    ]
+    assert "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET" not in agent
     assert len(control["MEMORIA_RESPONSE_PLAN_TOKEN"]) >= 32
     assert control["MEMORIA_RESPONSE_PLAN_TOKEN"] != control["MEMORIA_INTERACTION_POLICY_TOKEN"]
     assert len(control["MEMORIA_EVOLUTION_CONTROL_TOKEN"]) >= 32
@@ -318,6 +322,7 @@ def test_upgrade_env_generates_only_missing_encryption_keys() -> None:
     )
     assert all(len(secret) >= 32 for secret in generated_signing_secrets)
     assert len(set(generated_signing_secrets)) == len(generated_signing_secrets)
+    assert agent["MEMORIA_RUNTIME_PROFILE_VERIFY_KEY"] == generated_signing_secrets[0]
     assert control["MEMORIA_ARCHIVE_OBJECT_KEY_VERSION"] == "archive-object-v1"
     assert control["MEMORIA_VOICE_SAMPLE_KEY_VERSION"] == "voice-sample-v1"
 

@@ -120,7 +120,7 @@ async def test_downlink_requires_generation_reset_and_bounds_playback_receipts()
     session = _session(bridge)
     await bridge.outbound.put(
         GatewayOutboundMessage(
-            event={"type": "audio_reset", "generation_id": 1, "barrier_sequence": 0}
+            event={"type": "audio_reset", "generation_id": 0, "barrier_sequence": 0}
         )
     )
     reset = await session.next_outbound()
@@ -138,10 +138,10 @@ async def test_downlink_requires_generation_reset_and_bounds_playback_receipts()
                 sequence=0,
                 timestamp_ms=0,
                 payload=pcm,
-                generation_id=1,
+                generation_id=0,
             ),
             audio_reference=pcm,
-            generation_id=1,
+            generation_id=0,
         )
     )
     outbound = await session.next_outbound()
@@ -156,8 +156,50 @@ async def test_downlink_requires_generation_reset_and_bounds_playback_receipts()
         '{"type":"playback.ended","stream_epoch":3,"generation_id":1,'
         '"played_sample_end":480,"reason":"completed"}'
     )
+    assert bridge.events[-1]["generation_id"] == 0
     with pytest.raises(ProtocolError, match="ahead"):
         session.accept_text(
             '{"type":"playback.progress","stream_epoch":3,"generation_id":1,'
             '"played_sample_end":481}'
         )
+
+
+@pytest.mark.asyncio
+async def test_each_bridge_generation_maps_to_one_positive_device_generation() -> None:
+    bridge = FakeBridge()
+    session = _session(bridge)
+
+    for bridge_generation_id, device_generation_id in ((0, 1), (1, 2)):
+        await bridge.outbound.put(
+            GatewayOutboundMessage(
+                event={
+                    "type": "audio_reset",
+                    "generation_id": bridge_generation_id,
+                    "barrier_sequence": 0,
+                }
+            )
+        )
+        reset = await session.next_outbound()
+        assert reset.event is not None
+        assert reset.event["generation_id"] == device_generation_id
+
+        await bridge.outbound.put(
+            GatewayOutboundMessage(
+                event={
+                    "type": "ui_event",
+                    "event": {
+                        "type": "assistant_state",
+                        "generation_id": bridge_generation_id,
+                        "state": "speaking",
+                    },
+                }
+            )
+        )
+        state = await session.next_outbound()
+        assert state.event is not None
+        assert state.event["generation_id"] == device_generation_id
+
+
+def test_bridge_generation_mapping_rejects_uint32_overflow() -> None:
+    with pytest.raises(ProtocolError, match="outside the device range"):
+        DeviceMediaSession._device_generation_id(0xFFFFFFFF)

@@ -2,7 +2,7 @@
 
 ## 当前状态（2026-08-11）
 
-### 小程序硬件管理与 ESP32-S3 Path 2（未提交、未推送、未部署；真机已到 Memoria 媒体边界）
+### 小程序硬件管理与 ESP32-S3 Path 2（代码已提交并进入生产真机验收）
 
 - 小程序保留首页与 AI 对话，主导航调整为“陪伴 / 设备 / 回顾 / 我的”；新增独立扫码启用页，
   串起二维码校验、真实 `wx` BLE 生命周期、Wi-Fi 表单、Claim、首次多主体初始化、Binding、
@@ -40,6 +40,15 @@
   最终固件连续短按两次均约 1 秒提示“设备媒体服务不可用”并回到待机，持续观察无 panic、重启或
   堆继续下降。已刷合并包 `9,873,069` bytes，SHA-256
   `29ab9cf4825099aa586a007aa03c97a786c2d16daad54911dfc96b665cca096f`。
+- `2026-08-12` 已将五个 Path 2 运行时服务部署到生产。实板 Ed25519 身份、media challenge、
+  media session、TURN 身份、设备 WSS `session.ready` 和 Agent `unknown_safe` 策略验签均已通过；
+  未确认说话人只允许普通对话，主人称呼、私人记忆、历史、学习、工具和个性化声线保持关闭。
+- 真实欢迎语暴露出内部 Agent/小程序 `generation_id=0` 与设备协议“0 表示尚无播放代次”的边界
+  冲突。修复统一放在设备媒体网关：所有内部代次映射为设备代次 `N+1`，设备播放回执再映射回
+  `N`；没有改 Agent 的全局 generation fence，也没有为欢迎语增加旁路特判。
+- 当前这块研发板的生产 authority 身份与绑定是人工受控投影；后续新设备的“小程序扫码 → Claim
+  → Binding → Activation”自动 Saga 尚未完成微信真机和生产批量验收，不能据此宣称新设备已能
+  零人工自动接入。
 - 回滚保留在被忽略目录：Path 1 整包
   `firmware/esp32/artifacts/backups/pre-path2-upstream-working-merged.bin`，SHA-256
   `ea3b37904e42c42a8334b9808871e8bebff2f72f9ed02dbc4000ec35fdf1e250`；切换前启动/NVS/OTA 区备份
@@ -87,13 +96,16 @@
 - 仍阻塞发布：PIA/法务/算法备案确认、危机话术专业评审、真实微信订阅消息、生产 guardian 升级、
   真实异地备份与独立恢复报告、iOS/Android 完整语音链、ESP32/AEC、200 条真实授权儿童语料。
 
-### 当前生产基线（未切换）
+### 当前生产基线
 
-- 生产 runtime/H5 均为 `20260808-171749`，源码 commit
-  `9812fac155ef4f46a74d0d8dbfaf197fe9c5fa5a`；直接回滚目标为 `20260807-163916`。完整证据见
-  `docs/releases/20260808-171749.md`。
-- 四个应用容器及 PostgreSQL/MinIO 均 healthy；真实 LiveKit、QwenRealtimeSearch、DeepSeek、
-  Doubao、FunASR、InterruptSemantic smoke 通过，readiness 绑定新 tag，core 10/10 ready。
+- 生产 runtime 为 `20260812-111951`，源码 commit
+  `8eeb2992281b829a47fd8542bdf2249a2d91227a`；H5 有意保持 `20260808-171749`，本轮硬件修复不
+  切 H5。直接 runtime 回滚目标为 `20260812-103158`。完整证据见
+  `docs/releases/20260812-111951.md`。
+- Agent、Control API、Speaker Model、小程序 Gateway、Device Media Gateway 五个应用容器以及
+  PostgreSQL/Redis/MinIO 均 healthy；readiness 已绑定 runtime tag，LiveKit/Agent 权威语音链保持
+  复用。Runtime Profile 验签键已在生产 Agent 以 root-only 最小权限临时接通，正式生成器修复随
+  下一 release 固化。
 - PostgreSQL 已 forward-only 安装独立 `memoria_evolution` 角色、8 张表、8/8 FORCE RLS 与 8/8
   controller policy。不要为代码回滚删除这些对象；旧 runtime 可与 additive schema 共存。
 - H5 已最后切流；240 个 immutable URL 全部 HTTPS 200，历史 4776 条资源引用均可用。公网正向路由

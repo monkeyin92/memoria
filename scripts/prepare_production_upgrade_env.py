@@ -128,6 +128,11 @@ def prepare(
         "seed-icl-2.0" if voice_clone_provider == "volcengine_doubao" else "cosyvoice-v3.5-flash"
     )
     public_base_url = _required(values, "PUBLIC_BASE_URL")
+    runtime_profile_signing_secret = _keep_or_create(
+        values,
+        "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET",
+        _token,
+    )
     evolution_trusted_root = (
         evolution_trusted_root.strip()
         if evolution_trusted_root is not None
@@ -213,11 +218,8 @@ def prepare(
             "MEMORIA_WECHAT_IDENTITY_SECRET": _keep_or_create(
                 values, "MEMORIA_WECHAT_IDENTITY_SECRET", _token
             ),
-            "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET": _keep_or_create(
-                values,
-                "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET",
-                _token,
-            ),
+            "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET": runtime_profile_signing_secret,
+            "MEMORIA_RUNTIME_PROFILE_VERIFY_KEY": runtime_profile_signing_secret,
             "MEMORIA_DEVICE_BINDING_TOKEN_SECRET": _keep_or_create(
                 values,
                 "MEMORIA_DEVICE_BINDING_TOKEN_SECRET",

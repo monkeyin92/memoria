@@ -30,6 +30,8 @@ from services.miniprogram_gateway.bridge import GatewayOutboundMessage, MiniProg
 from services.miniprogram_gateway.protocol import FrameType as PcmFrameType
 from services.miniprogram_gateway.protocol import PcmFrame
 
+_MAX_UINT32 = (1 << 32) - 1
+
 
 class DeviceBridge(Protocol):
     async def connect(self) -> None: ...
@@ -179,7 +181,7 @@ class DeviceMediaSession:
         raw = parse_json_message(text)
         event = validate_device_event(raw, stream_epoch=self.claims.stream_epoch)
         self._validate_event_fence(event)
-        self.bridge.accept_transport_event(event)
+        self.bridge.accept_transport_event(self._project_event_to_bridge(event))
 
     async def next_outbound(self) -> DeviceOutboundMessage:
         source = await self.bridge.next_outbound()
@@ -189,9 +191,17 @@ class DeviceMediaSession:
         if source.binary is None:
             raise ProtocolError("bridge emitted an empty outbound message")
         pcm_frame = self._decode_bridge_pcm(source.binary)
-        generation_id = source.generation_id or pcm_frame.generation_id
-        if not isinstance(generation_id, int) or generation_id <= 0:
+        bridge_generation_id = source.generation_id
+        if bridge_generation_id is None:
+            bridge_generation_id = pcm_frame.generation_id
+        elif (
+            pcm_frame.generation_id is not None
+            and bridge_generation_id != pcm_frame.generation_id
+        ):
+            raise ProtocolError("bridge downlink generation fences disagree")
+        if not isinstance(bridge_generation_id, int):
             raise ProtocolError("downlink audio is missing a generation fence")
+        generation_id = self._device_generation_id(bridge_generation_id)
         if generation_id != self._active_generation:
             raise ProtocolError("downlink audio generation is not active")
         packet = self._downlink_encoder.encode(pcm_frame.payload)
@@ -282,8 +292,11 @@ class DeviceMediaSession:
     def _translate_event(self, event: dict[str, object]) -> dict[str, object]:
         event_type = event.get("type")
         if event_type == "audio_reset":
-            generation_id = event.get("generation_id")
-            if not isinstance(generation_id, int) or generation_id <= self._active_generation:
+            bridge_generation_id = event.get("generation_id")
+            if not isinstance(bridge_generation_id, int):
+                raise ProtocolError("invalid generation reset")
+            generation_id = self._device_generation_id(bridge_generation_id)
+            if generation_id <= self._active_generation:
                 raise ProtocolError("invalid or stale generation reset")
             self._active_generation = generation_id
             self._downlink_encoder = OpusEncoder(
@@ -345,8 +358,39 @@ class DeviceMediaSession:
             if key in event:
                 result[key] = event[key]
         generation_id = result.get("generation_id")
-        if generation_id is not None and (
-            not isinstance(generation_id, int) or generation_id < self._active_generation
+        if generation_id is not None:
+            if not isinstance(generation_id, int):
+                raise ProtocolError("bridge UI event generation is invalid")
+            generation_id = self._device_generation_id(generation_id)
+            if generation_id < self._active_generation:
+                raise ProtocolError("bridge UI event generation is stale")
+            result["generation_id"] = generation_id
+        return result
+
+    @staticmethod
+    def _device_generation_id(bridge_generation_id: int) -> int:
+        """Map Agent generation zero onto the device protocol's positive range."""
+        if (
+            isinstance(bridge_generation_id, bool)
+            or bridge_generation_id < 0
+            or bridge_generation_id >= _MAX_UINT32
         ):
-            raise ProtocolError("bridge UI event generation is stale")
+            raise ProtocolError("bridge generation is outside the device range")
+        return bridge_generation_id + 1
+
+    @staticmethod
+    def _bridge_generation_id(device_generation_id: int) -> int:
+        if (
+            isinstance(device_generation_id, bool)
+            or device_generation_id <= 0
+            or device_generation_id > _MAX_UINT32
+        ):
+            raise ProtocolError("device generation is outside the bridge range")
+        return device_generation_id - 1
+
+    def _project_event_to_bridge(self, event: dict[str, object]) -> dict[str, object]:
+        result = dict(event)
+        generation_id = result.get("generation_id")
+        if isinstance(generation_id, int) and generation_id > 0:
+            result["generation_id"] = self._bridge_generation_id(generation_id)
         return result

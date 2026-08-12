@@ -66,6 +66,11 @@ sudo sha256sum /etc/letsencrypt/renewal-hooks/deploy/50-memoria-reload-nginx
 LiveKit 接入凭据、gateway ticket 签名材料和媒体适配配置；它不包含 `MEMORIA_AUTH_SECRET`、
 档案对象存储密钥、DASHSCOPE 或 Agent capability token。
 
+Runtime Profile 当前使用 HMAC-SHA256；root-only 合并源中的
+`MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET` 与 `MEMORIA_RUNTIME_PROFILE_VERIFY_KEY` 必须使用同一份
+至少 32 字符的随机材料。拆分后 signing 键名只进入 Control，verify 键名只进入 Agent；生产
+缺少任一键或两者不一致时 `split_production_env.py` 必须 fail closed。
+
 Agent 与 Control API 的内部能力必须分别配置，值至少 32 字符且两两不同：
 
 ```text

@@ -50,6 +50,7 @@ _AGENT_EXTRA_KEYS = frozenset(
         "QWEN_EMOTION_RECONNECT_DELAY_S",
         "QWEN_EMOTION_SAMPLE_RATE",
         "QWEN_EMOTION_WS_URL",
+        "MEMORIA_RUNTIME_PROFILE_VERIFY_KEY",
         "VAD_MIN_SPEECH_DURATION_S",
         "VAD_PREFIX_PADDING_DURATION_S",
     }
@@ -175,6 +176,20 @@ def split_env(
         configured_keys = [key for key in encryption_keys if key]
         if len(configured_keys) != len(set(configured_keys)):
             raise ValueError("production encryption keys must be independent")
+        runtime_profile_signing = values.get(
+            "MEMORIA_RUNTIME_PROFILE_SIGNING_SECRET", ""
+        ).strip()
+        runtime_profile_verify = values.get(
+            "MEMORIA_RUNTIME_PROFILE_VERIFY_KEY", ""
+        ).strip()
+        if not runtime_profile_signing or not runtime_profile_verify:
+            raise ValueError(
+                "production Runtime Profile signing and verify keys must both be set"
+            )
+        if runtime_profile_signing != runtime_profile_verify:
+            raise ValueError(
+                "production Runtime Profile signing and verify keys must match"
+            )
     control_keys = _aliases(ControlSettings) | set(_CONTROL_EXTRA_KEYS)
     agent_keys = _aliases(AgentSettings) | set(_AGENT_EXTRA_KEYS)
     gateway_keys = _aliases(MiniProgramGatewaySettings) | set(_GATEWAY_EXTRA_KEYS)

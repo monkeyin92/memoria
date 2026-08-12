@@ -9,7 +9,16 @@ from fastapi.testclient import TestClient
 from services.common.miniprogram_gateway_ticket import issue_device_gateway_ticket
 from services.device_media_gateway.app import MEDIA_PATH, create_app
 from services.device_media_gateway.config import DeviceMediaGatewaySettings
+from services.device_media_gateway.protocol import (
+    DOWNLINK_FRAME_SAMPLES,
+    FrameType,
+    decode_audio_frame,
+)
 from services.miniprogram_gateway.bridge import GatewayOutboundMessage
+from services.miniprogram_gateway.protocol import (
+    FrameType as PcmFrameType,
+)
+from services.miniprogram_gateway.protocol import encode_pcm_frame
 
 SECRET = "device-gateway-secret-that-is-long-enough-for-tests"
 
@@ -104,6 +113,34 @@ class FailingBridge(FakeBridge):
         raise ValueError("internal LiveKit connection failed")
 
 
+class WelcomeBridge(FakeBridge):
+    def __init__(self) -> None:
+        super().__init__()
+        pcm = bytes(DOWNLINK_FRAME_SAMPLES * 2)
+        self._outbound: asyncio.Queue[GatewayOutboundMessage] = asyncio.Queue()
+        self._outbound.put_nowait(
+            GatewayOutboundMessage(
+                event={"type": "audio_reset", "generation_id": 0, "barrier_sequence": 0}
+            )
+        )
+        self._outbound.put_nowait(
+            GatewayOutboundMessage(
+                binary=encode_pcm_frame(
+                    PcmFrameType.DOWNLINK_AUDIO,
+                    sequence=0,
+                    timestamp_ms=0,
+                    payload=pcm,
+                    generation_id=0,
+                ),
+                audio_reference=pcm,
+                generation_id=0,
+            )
+        )
+
+    async def next_outbound(self) -> GatewayOutboundMessage:
+        return await self._outbound.get()
+
+
 def _headers(
     token: str, *, device_id: str = "dev-1", client_id: str = "client-1"
 ) -> dict[str, str]:
@@ -141,6 +178,38 @@ def test_device_wss_requires_client_id_bound_to_ticket_and_accepts_strict_hello(
     assert len(bridges) == 1
     assert bridges[0].events == [{"type": "listen.start", "stream_epoch": 1, "sample_start": 0}]
     assert bridges[0].closed
+
+
+def test_device_wss_projects_welcome_generation_zero_onto_positive_device_fence() -> None:
+    bridge = WelcomeBridge()
+    app = create_app(settings=_settings(), bridge_factory=lambda _settings, _claims: bridge)
+    with TestClient(app) as client:
+        with client.websocket_connect(MEDIA_PATH, headers=_headers(_ticket())) as websocket:
+            websocket.send_json(_hello())
+            assert websocket.receive_json()["type"] == "session.ready"
+            assert websocket.receive_json() == {
+                "type": "playback.flush",
+                "stream_epoch": 1,
+                "generation_id": 1,
+                "barrier_sequence": 0,
+            }
+            frame = decode_audio_frame(
+                websocket.receive_bytes(), expected_type=FrameType.DOWNLINK_AUDIO
+            )
+            assert frame.generation_id == 1
+            assert frame.frame_samples == DOWNLINK_FRAME_SAMPLES
+            websocket.send_json(
+                {
+                    "type": "playback.ended",
+                    "stream_epoch": 1,
+                    "generation_id": 1,
+                    "played_sample_end": DOWNLINK_FRAME_SAMPLES,
+                    "reason": "drained",
+                }
+            )
+            websocket.close()
+
+    assert bridge.events[-1]["generation_id"] == 0
 
 
 @pytest.mark.parametrize(

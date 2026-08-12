@@ -69,6 +69,7 @@ def create_app(
     async def media_socket(websocket: WebSocket) -> None:
         session: DeviceMediaSession | None = None
         ticket_id: str | None = None
+        protocol_component = "handshake"
         started = time.monotonic()
         try:
             await websocket.accept()
@@ -99,6 +100,7 @@ def create_app(
             await asyncio.gather(*pending, return_exceptions=True)
             for task in done:
                 if not task.cancelled():
+                    protocol_component = task.get_name().removeprefix("device-media-")
                     task.result()
             if room_disconnect in done:
                 await _close_safely(websocket, 1011)
@@ -108,8 +110,21 @@ def create_app(
         except GatewayTicketError:
             logger.info("device_media_handshake rejected elapsed_ms=%d", _elapsed_ms(started))
             await _close_safely(websocket, 4401)
-        except (ProtocolError, TimeoutError, json.JSONDecodeError):
-            logger.info("device_media_protocol rejected elapsed_ms=%d", _elapsed_ms(started))
+        except ProtocolError as exc:
+            logger.info(
+                "device_media_protocol rejected component=%s reason=%s elapsed_ms=%d",
+                protocol_component,
+                str(exc),
+                _elapsed_ms(started),
+            )
+            await _close_safely(websocket, 4400)
+        except (TimeoutError, json.JSONDecodeError) as exc:
+            logger.info(
+                "device_media_protocol rejected component=%s reason=%s elapsed_ms=%d",
+                protocol_component,
+                "timeout" if isinstance(exc, TimeoutError) else "invalid_json",
+                _elapsed_ms(started),
+            )
             await _close_safely(websocket, 4400)
         except Exception:
             logger.exception("device media socket failed without logging client payload")
