@@ -427,6 +427,31 @@ class PostgresBootstrapStore(BootstrapStorePort):
                 value,
             )
 
+    async def _authorize_locked_device_mutation(
+        self,
+        connection: asyncpg.Connection,
+        *,
+        device_id: str,
+        lookup_kind: str,
+        lookup_id: str,
+    ) -> None:
+        """Upgrade an exact read scope using identity from its locked row.
+
+        Lookup GUCs intentionally authorize reads only. System-owned expiry
+        transitions may mutate a row only after it has been selected and
+        locked, and must derive the device write authority from that row rather
+        than from caller input.
+        """
+
+        await self._set_scope(
+            connection,
+            self._scope(
+                device_id=device_id,
+                lookup_kind=lookup_kind,
+                lookup_id=lookup_id,
+            ),
+        )
+
     async def _transaction(
         self,
         scope: _Scope,
@@ -869,6 +894,13 @@ class PostgresBootstrapStore(BootstrapStorePort):
             if current.state_version != expected_state_version:
                 raise StateVersionConflict("onboarding state version changed")
             require_transition(current.state, target)
+            if actor_type == "system":
+                await self._authorize_locked_device_mutation(
+                    connection,
+                    device_id=current.device_id,
+                    lookup_kind="session",
+                    lookup_id=onboarding_session_id,
+                )
             assignments = ["state = $1", "state_version = state_version + 1"]
             values: list[object] = [target.value]
             parameter = 2
@@ -1366,6 +1398,12 @@ class PostgresBootstrapStore(BootstrapStorePort):
                 return claim
             if claim.expires_at > current_time:
                 return claim
+            await self._authorize_locked_device_mutation(
+                connection,
+                device_id=claim.device_id,
+                lookup_kind="claim",
+                lookup_id=claim_id,
+            )
             await connection.execute(
                 """
                 UPDATE device_onboarding_claims

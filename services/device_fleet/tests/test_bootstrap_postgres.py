@@ -267,6 +267,47 @@ async def test_postgres_challenge_is_single_use(
 
 
 @pytest.mark.asyncio
+async def test_postgres_system_expiry_derives_write_scope_from_locked_rows(
+    postgres_onboarding: tuple[PostgresBootstrapStore, PostgresBootstrapStore, str],
+) -> None:
+    api, maintenance, _admin_dsn = postgres_onboarding
+
+    session_device = _device("dev_session_expiry")
+    maintenance.register_manufactured_device(session_device)
+    session = _session(
+        session_id="onb_system_expiry",
+        device_id=session_device.device_id,
+        actor_id="actor_expiry",
+    )
+    api.create_session(session)
+    expired_session = api.expire_session(
+        session.onboarding_session_id,
+        now=NOW + timedelta(minutes=20),
+    )
+    assert expired_session.state is BootstrapState.EXPIRED
+
+    claim_device = _device("dev_claim_expiry")
+    maintenance.register_manufactured_device(claim_device)
+    claim_session = _session(
+        session_id="onb_claim_expiry",
+        device_id=claim_device.device_id,
+        actor_id="actor_expiry",
+    )
+    api.create_session(claim_session)
+    claim = _claim(claim_id="claim_system_expiry", session=claim_session)
+    api.reserve_claim(
+        claim,
+        expected_state_version=claim_session.state_version,
+        now=NOW,
+    )
+    expired_claim = api.expire_claim_if_needed(
+        claim.claim_id,
+        now=NOW + timedelta(minutes=11),
+    )
+    assert expired_claim.status is ClaimStatus.EXPIRED
+
+
+@pytest.mark.asyncio
 async def test_postgres_schema_bootstrap_is_repeatable(
     postgres_onboarding: tuple[PostgresBootstrapStore, PostgresBootstrapStore, str],
 ) -> None:
