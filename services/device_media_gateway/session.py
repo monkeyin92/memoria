@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from services.agent.src.contracts.events import UI_EVENT_TYPES
 from services.common.miniprogram_gateway_ticket import (
     DEVICE_AGENT_DISPATCH_METADATA,
     DeviceGatewayTicketClaims,
@@ -184,10 +185,16 @@ class DeviceMediaSession:
         self.bridge.accept_transport_event(self._project_event_to_bridge(event))
 
     async def next_outbound(self) -> DeviceOutboundMessage:
-        source = await self.bridge.next_outbound()
-        if source.event is not None:
+        while True:
+            source = await self.bridge.next_outbound()
+            if source.event is None:
+                break
             event = self._translate_event(source.event)
-            return DeviceOutboundMessage(source=source, event=event)
+            if event is not None:
+                return DeviceOutboundMessage(source=source, event=event)
+            # Agent UI events with no hardware surface are still known and
+            # consumed. Unknown event types continue to fail closed below.
+            self.bridge.outbound_sent(source)
         if source.binary is None:
             raise ProtocolError("bridge emitted an empty outbound message")
         pcm_frame = self._decode_bridge_pcm(source.binary)
@@ -289,7 +296,7 @@ class DeviceMediaSession:
             payload=frame.payload,
         )
 
-    def _translate_event(self, event: dict[str, object]) -> dict[str, object]:
+    def _translate_event(self, event: dict[str, object]) -> dict[str, object] | None:
         event_type = event.get("type")
         if event_type == "audio_reset":
             bridge_generation_id = event.get("generation_id")
@@ -336,7 +343,7 @@ class DeviceMediaSession:
             }
         raise ProtocolError("bridge emitted an unsupported event")
 
-    def _translate_ui_event(self, event: dict[str, object]) -> dict[str, object]:
+    def _translate_ui_event(self, event: dict[str, object]) -> dict[str, object] | None:
         event_type = event.get("type")
         if not isinstance(event_type, str):
             raise ProtocolError("bridge UI event type is invalid")
@@ -349,6 +356,8 @@ class DeviceMediaSession:
         }
         output_type = mapping.get(event_type)
         if output_type is None:
+            if event_type in UI_EVENT_TYPES:
+                return None
             raise ProtocolError("bridge UI event is not allowlisted")
         result: dict[str, object] = {
             "type": output_type,

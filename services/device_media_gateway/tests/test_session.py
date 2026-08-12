@@ -200,6 +200,48 @@ async def test_each_bridge_generation_maps_to_one_positive_device_generation() -
         assert state.event["generation_id"] == device_generation_id
 
 
+@pytest.mark.asyncio
+async def test_known_agent_ui_telemetry_is_consumed_before_hardware_event() -> None:
+    bridge = FakeBridge()
+    session = _session(bridge)
+    await bridge.outbound.put(
+        GatewayOutboundMessage(
+            event={
+                "type": "ui_event",
+                "event": {"type": "audio_trace", "name": "welcome_generation_started"},
+            }
+        )
+    )
+    await bridge.outbound.put(
+        GatewayOutboundMessage(
+            event={"type": "audio_reset", "generation_id": 0, "barrier_sequence": 0}
+        )
+    )
+
+    outbound = await session.next_outbound()
+
+    assert outbound.event == {
+        "type": "playback.flush",
+        "stream_epoch": 3,
+        "generation_id": 1,
+        "barrier_sequence": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_unknown_bridge_ui_event_still_fails_closed() -> None:
+    bridge = FakeBridge()
+    session = _session(bridge)
+    await bridge.outbound.put(
+        GatewayOutboundMessage(
+            event={"type": "ui_event", "event": {"type": "future_unreviewed_event"}}
+        )
+    )
+
+    with pytest.raises(ProtocolError, match="not allowlisted"):
+        await session.next_outbound()
+
+
 def test_bridge_generation_mapping_rejects_uint32_overflow() -> None:
     with pytest.raises(ProtocolError, match="outside the device range"):
         DeviceMediaSession._device_generation_id(0xFFFFFFFF)

@@ -98,14 +98,14 @@
 
 ### 当前生产基线
 
-- 生产 runtime 为 `20260812-111951`，源码 commit
-  `8eeb2992281b829a47fd8542bdf2249a2d91227a`；H5 有意保持 `20260808-171749`，本轮硬件修复不
-  切 H5。直接 runtime 回滚目标为 `20260812-103158`。完整证据见
-  `docs/releases/20260812-111951.md`。
+- 生产 runtime 为 `20260812-114447`，源码 commit
+  `d198d235691b064e73083f07cdd8e041a8adaa9b`；H5 有意保持 `20260808-171749`，本轮硬件修复不
+  切 H5。直接 runtime 回滚目标为 `20260812-111951`。完整证据见
+  `docs/releases/20260812-114447.md`。
 - Agent、Control API、Speaker Model、小程序 Gateway、Device Media Gateway 五个应用容器以及
   PostgreSQL/Redis/MinIO 均 healthy；readiness 已绑定 runtime tag，LiveKit/Agent 权威语音链保持
   复用。Runtime Profile 验签键已在生产 Agent 以 root-only 最小权限临时接通，正式生成器修复随
-  下一 release 固化。
+  `20260812-114447` 已由正式环境生成器逻辑和最小权限拆分测试固化。
 - PostgreSQL 已 forward-only 安装独立 `memoria_evolution` 角色、8 张表、8/8 FORCE RLS 与 8/8
   controller policy。不要为代码回滚删除这些对象；旧 runtime 可与 additive schema 共存。
 - H5 已最后切流；240 个 immutable URL 全部 HTTPS 200，历史 4776 条资源引用均可用。公网正向路由

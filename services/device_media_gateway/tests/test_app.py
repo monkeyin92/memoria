@@ -120,6 +120,14 @@ class WelcomeBridge(FakeBridge):
         self._outbound: asyncio.Queue[GatewayOutboundMessage] = asyncio.Queue()
         self._outbound.put_nowait(
             GatewayOutboundMessage(
+                event={
+                    "type": "ui_event",
+                    "event": {"type": "audio_trace", "name": "welcome_generation_started"},
+                }
+            )
+        )
+        self._outbound.put_nowait(
+            GatewayOutboundMessage(
                 event={"type": "audio_reset", "generation_id": 0, "barrier_sequence": 0}
             )
         )
