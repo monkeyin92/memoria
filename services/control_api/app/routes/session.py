@@ -1110,8 +1110,11 @@ def turn_ice_servers(
     secret = settings.coturn_shared_secret.get_secret_value().strip()
     if not urls or not secret:
         return []
+    scope = hashlib.sha256(
+        f"{session_id}\0{device_id or 'h5'}".encode()
+    ).hexdigest()[:32]
     credentials = mint_turn_credentials(
-        f"media:{session_id}:{device_id or 'h5'}",
+        f"media-{scope}",
         secret,
         ttl_s=settings.coturn_credential_ttl_s,
     )
