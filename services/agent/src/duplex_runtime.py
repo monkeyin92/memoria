@@ -30,6 +30,7 @@ from services.agent.src.event_identity import (
     archive_evidence,
     evidence_fingerprint,
     input_policy_for_state,
+    join_ui_publishes,
     phase_for_published_state,
     preview_provenance,
     publish_ui_event,
@@ -2260,10 +2261,8 @@ class DuplexRuntime:
         if policy is None:
             return state_task
         capture_allowed, reason = policy
-        return self.publish_input_policy(
-            capture_allowed=capture_allowed,
-            reason=reason,
-        )
+        policy_task = self.publish_input_policy(capture_allowed=capture_allowed, reason=reason)
+        return join_ui_publishes(self, state_task, policy_task)
 
     def publish_input_policy(
         self,
@@ -3500,13 +3499,13 @@ class DuplexRuntime:
         *,
         expected_fence: GenerationFence | None = None,
         precondition: Callable[[], bool] | None = None,
+        publish_state: bool = True,
     ) -> bool:
         def may_publish() -> bool:
             return bool(
                 (expected_fence is None or self.fence.matches(expected_fence))
                 and (precondition is None or precondition())
             )
-
         if not may_publish():
             return False
         w = list(words) if words else []
@@ -3537,10 +3536,10 @@ class DuplexRuntime:
         self.set_interaction_phase(
             InteractionPhase.SPEAKING,
             cause="assistant_speaking",
+            publish=publish_state,
         )
         self._publish_assistant_expression(full_text)
         return True
-
     async def on_assistant_reply_aborted(
         self,
         fence: GenerationFence,

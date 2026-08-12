@@ -1247,6 +1247,92 @@ async def test_new_speaking_barrier_releases_quarantine_without_clipping_first_f
 
 
 @pytest.mark.asyncio
+async def test_fixed_speech_state_gates_audio_until_speaking_and_after_listening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    downlink = b"\x01\x00" * 480
+
+    class FakeAudioStream:
+        @classmethod
+        def from_track(cls, **_kwargs: object) -> FakeAudioStream:
+            return cls()
+
+        def __aiter__(self) -> FakeAudioStream:
+            self.sent = False
+            return self
+
+        async def __anext__(self) -> SimpleNamespace:
+            if self.sent:
+                raise StopAsyncIteration
+            self.sent = True
+            return SimpleNamespace(
+                frame=rtc.AudioFrame(
+                    data=downlink,
+                    sample_rate=24_000,
+                    num_channels=1,
+                    samples_per_channel=480,
+                )
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(bridge_module.rtc, "AudioStream", FakeAudioStream)
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge.set_downlink_generation_protocol(True)
+    agent = SimpleNamespace(kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT)
+
+    await bridge._pump_downlink_track(object())
+    assert bridge._audio_messages.empty()
+
+    def publish_state(state: str) -> None:
+        bridge._on_data_received(
+            SimpleNamespace(
+                participant=agent,
+                topic="voice-agent.ui",
+                data=json.dumps(
+                    {
+                        "type": "assistant_state",
+                        "turn_id": 0,
+                        "generation_id": 0,
+                        "state": state,
+                    }
+                ).encode(),
+            )
+        )
+
+    publish_state("speaking")
+    assert (await bridge.next_outbound()).event == {
+        "type": "audio_reset",
+        "generation_id": 0,
+        "barrier_sequence": 1,
+    }
+    assert (await bridge.next_outbound()).event is not None
+    await bridge._pump_downlink_track(object())
+    audio = await bridge.next_outbound()
+    assert audio.binary is not None
+    assert decode_pcm_frame(audio.binary).generation_id == 0
+
+    publish_state("listening")
+    assert (await bridge.next_outbound()).event is not None
+    await bridge._pump_downlink_track(object())
+    assert bridge._audio_messages.empty()
+
+
+@pytest.mark.asyncio
 async def test_control_ack_track_uses_current_generation_during_interrupted_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

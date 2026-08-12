@@ -61,6 +61,27 @@ def publish_ui_event(
     return None
 
 
+def join_ui_publishes(
+    runtime: DuplexRuntime,
+    *tasks: asyncio.Task[Any] | None,
+) -> asyncio.Task[Any] | None:
+    """Return one completion handle for already-scheduled UI publications."""
+
+    active = tuple(task for task in tasks if task is not None)
+    if not active:
+        return None
+    if len(active) == 1:
+        return active[0]
+
+    async def _wait_for_all() -> None:
+        results = await asyncio.gather(*active, return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+
+    return runtime._spawn(_wait_for_all(), name="duplex-ui-publications")
+
+
 EPOCH_ZERO_ENVELOPE: dict[str, object] = {
     "session_epoch": 0,
     "turn_id": 0,
@@ -334,6 +355,7 @@ __all__ = [
     "event_envelope",
     "evidence_fingerprint",
     "input_policy_for_state",
+    "join_ui_publishes",
     "phase_for_published_state",
     "preview_provenance",
     "speaker_classification_evidence",

@@ -133,6 +133,18 @@ class WelcomeBridge(FakeBridge):
         )
         self._outbound.put_nowait(
             GatewayOutboundMessage(
+                event={
+                    "type": "ui_event",
+                    "event": {
+                        "type": "assistant_state",
+                        "generation_id": 0,
+                        "state": "speaking",
+                    },
+                }
+            )
+        )
+        self._outbound.put_nowait(
+            GatewayOutboundMessage(
                 binary=encode_pcm_frame(
                     PcmFrameType.DOWNLINK_AUDIO,
                     sequence=0,
@@ -142,6 +154,18 @@ class WelcomeBridge(FakeBridge):
                 ),
                 audio_reference=pcm,
                 generation_id=0,
+            )
+        )
+        self._outbound.put_nowait(
+            GatewayOutboundMessage(
+                event={
+                    "type": "ui_event",
+                    "event": {
+                        "type": "assistant_state",
+                        "generation_id": 0,
+                        "state": "listening",
+                    },
+                }
             )
         )
 
@@ -201,11 +225,23 @@ def test_device_wss_projects_welcome_generation_zero_onto_positive_device_fence(
                 "generation_id": 1,
                 "barrier_sequence": 0,
             }
+            assert websocket.receive_json() == {
+                "type": "assistant.state",
+                "stream_epoch": 1,
+                "generation_id": 1,
+                "state": "speaking",
+            }
             frame = decode_audio_frame(
                 websocket.receive_bytes(), expected_type=FrameType.DOWNLINK_AUDIO
             )
             assert frame.generation_id == 1
             assert frame.frame_samples == DOWNLINK_FRAME_SAMPLES
+            assert websocket.receive_json() == {
+                "type": "assistant.state",
+                "stream_epoch": 1,
+                "generation_id": 1,
+                "state": "listening",
+            }
             websocket.send_json(
                 {
                     "type": "playback.ended",

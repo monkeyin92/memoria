@@ -26,6 +26,7 @@ from services.agent.src.duplex_runtime import (
     GenerationVoiceSnapshot,
     KeywordSpotterBinding,
 )
+from services.agent.src.fixed_speech import FixedSpeechPlayer
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.context_manager import ChatMessage
 from services.agent.src.orchestration.context_snapshot_manager import (
@@ -3272,37 +3273,7 @@ async def entrypoint(ctx: Any) -> None:
         raise RuntimeError("Agent UI publisher was not configured")
     await ready_publish
 
-    async def _say_fixed(
-        text: str,
-        *,
-        interruptible: bool = False,
-        emotion: str = "neutral",
-        rate: float = 1.0,
-        instruction: str = "",
-    ) -> None:
-        """One TTS stream of fixed text to avoid multi-phrase voice glitches."""
-        if hasattr(tts_plugin, "apply_speech_plan"):
-            tts_plugin.apply_speech_plan(
-                emotion=emotion,
-                rate=rate,
-                instruction=instruction,
-            )
-        handle = session.say(
-            text,
-            allow_interruptions=interruptible,
-            add_to_chat_ctx=False,
-        )
-        wait = getattr(handle, "wait_for_playout", None)
-        if callable(wait):
-            await wait()
-        else:
-            for _ in range(150):
-                if not runtime._was_speaking:
-                    break
-                await asyncio.sleep(0.1)
-        # Fixed say may not clear speaking via conversation_item path.
-        runtime._was_speaking = False
-        await asyncio.sleep(0.2)
+    fixed_speech = FixedSpeechPlayer(session=session, runtime=runtime, tts=tts_plugin)
 
     companion = companion_definition(runtime.mode_policy.companion_style_id)
     welcome_text = companion.welcome_text if companion is not None else "嗨，想聊什么就直接说吧。"
@@ -3313,11 +3284,15 @@ async def entrypoint(ctx: Any) -> None:
     if runtime.speaker_verifier.enabled:
         # Fixed single-stream prompt (not generate_reply) so TTS does not
         # split into multiple phrases that sound like a second voice / speed-up.
-        runtime.publish_assistant_state("speaker_enroll")
+        enroll_publish = runtime.publish_assistant_state("speaker_enroll")
+        if enroll_publish is None:
+            raise RuntimeError("Agent UI publisher was not configured")
+        await enroll_publish
         runtime.mark_audio_event("speaker_enroll_prompt_started")
-        await _say_fixed(
+        await fixed_speech.say(
             "请用正常音量连续说大约四秒，可以说：我是主人，请记住我的声音。",
             interruptible=False,
+            restore_state="speaker_enroll",
         )
         # Only start PCM enrollment after the prompt has fully finished playing.
         runtime.begin_speaker_enrollment()
@@ -3339,10 +3314,9 @@ async def entrypoint(ctx: Any) -> None:
         # Hard safety: never leave PENDING or all chat turns stay blocked.
         if runtime.speaker_verifier.state.value == "pending":
             runtime.poll_speaker_enrollment(force=True)
-        runtime.publish_assistant_state("listening")
         runtime.mark_audio_event("welcome_generation_started")
         if runtime.speaker_verifier.state.value == "enrolled":
-            await _say_fixed(
+            await fixed_speech.say(
                 f"好的，已经记住你的声音了。{welcome_text}",
                 interruptible=False,
                 emotion=welcome_emotion,
@@ -3352,7 +3326,7 @@ async def entrypoint(ctx: Any) -> None:
         else:
             # Fail-open: do not announce "跳过声纹" — it felt like a random extra
             # sentence after the model had already answered enroll speech.
-            await _say_fixed(
+            await fixed_speech.say(
                 f"好的。{welcome_text}",
                 interruptible=False,
                 emotion=welcome_emotion,
@@ -3361,7 +3335,7 @@ async def entrypoint(ctx: Any) -> None:
             )
     else:
         runtime.mark_audio_event("welcome_generation_started")
-        await _say_fixed(
+        await fixed_speech.say(
             welcome_text,
             interruptible=True,
             emotion=welcome_emotion,

@@ -3090,6 +3090,34 @@ async def test_controlled_turn_runtime_publishes_monotonic_input_policy() -> Non
 
 
 @pytest.mark.asyncio
+async def test_controlled_state_completion_waits_for_state_and_input_policy() -> None:
+    runtime = DuplexRuntime.create(session_id="mini-state-barrier", barge_in_enabled=False)
+    state_release = asyncio.Event()
+    state_started = asyncio.Event()
+    policy_release = asyncio.Event()
+    policy_started = asyncio.Event()
+
+    async def publish(event: dict[str, Any]) -> None:
+        if event["type"] == "assistant_state":
+            state_started.set()
+            await state_release.wait()
+        if event["type"] == "input_policy":
+            policy_started.set()
+            await policy_release.wait()
+
+    runtime.set_event_publisher(publish)
+    completion = runtime.publish_assistant_state("speaking")
+    assert completion is not None
+    await asyncio.gather(state_started.wait(), policy_started.wait())
+
+    state_release.set()
+    await asyncio.sleep(0)
+    assert not completion.done()
+    policy_release.set()
+    await completion
+
+
+@pytest.mark.asyncio
 async def test_interrupt_discards_cosy_pool_binding() -> None:
     tts = CosyVoiceTTS(CosyVoiceConfig(api_key="t", ws_url="ws://127.0.0.1:9", pool_size=0))
     runtime = create_runtime_for_tests(tts=tts)

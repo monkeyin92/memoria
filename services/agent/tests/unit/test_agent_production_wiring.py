@@ -2953,9 +2953,13 @@ class _FakeTTS:
         self.bound: list[Any] = []
         self.alignment_callback: Any | None = None
         self.closed = False
+        self.plans: list[dict[str, Any]] = []
 
     def bind_fence(self, fence: Any) -> None:
         self.bound.append(fence)
+
+    def apply_speech_plan(self, **kwargs: Any) -> None:
+        self.plans.append(kwargs)
 
     def set_alignment_callback(self, callback: Any) -> None:
         self.alignment_callback = callback
@@ -3031,9 +3035,13 @@ class _FakeSession(_Emitter):
         future.set_result(None)
         return future
 
-    def say(self, text: str, **_kwargs: Any) -> str:
+    def say(self, text: str, **_kwargs: Any) -> Any:
         self.said.append(text)
-        return text
+
+        async def _wait_for_playout() -> None:
+            return None
+
+        return SimpleNamespace(wait_for_playout=_wait_for_playout)
 
     def clear_user_turn(self) -> None:
         self.clear_user_turn_count += 1
@@ -3152,6 +3160,15 @@ async def test_entrypoint_routes_control_playback_and_ui_events(
     assert session.generated == []
     assert session.said == ["嗨，我是星澜。今天想聊点什么，我陪你慢慢说。"]
     assert any(event[0].get("state") == "ready" for event in room.local_participant.published)
+    fixed_states = [
+        event
+        for event, _reliable, topic in room.local_participant.published
+        if topic == "voice-agent.ui"
+        and event.get("type") == "assistant_state"
+        and event.get("state") in {"speaking", "listening"}
+    ]
+    assert [event["state"] for event in fixed_states[:2]] == ["speaking", "listening"]
+    assert fixed_states[0]["generation_id"] == fixed_states[1]["generation_id"] == 0
     assert any(
         event[0].get("type") == "audio_trace" and event[0].get("name") == "audio_output_attached"
         for event in room.local_participant.published
