@@ -195,7 +195,7 @@ bool MemoriaProtocol::CreateMediaSession(MediaSession* session) {
     if (!HttpJson(JoinUrl(base, device_path + "/media-challenge"),
                   {{"X-Device-Certificate-ID", identity_.certificate_id()},
                    {"X-Client-ID", identity_.client_id()}},
-                  {}, &challenge_response)) {
+                  "{}", &challenge_response)) {
         return false;
     }
     ScopedJson challenge{cJSON_ParseWithLength(challenge_response.data(), challenge_response.size())};
