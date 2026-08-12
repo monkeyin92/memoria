@@ -625,7 +625,6 @@ async def test_session_policy_fails_closed_without_persistent_runtime_authority(
     ("profile_kwargs", "context_kwargs", "expected_code"),
     [
         ({"expired": True}, {}, "session_runtime_profile_expired"),
-        ({"unknown_subject": True}, {}, "session_runtime_subject_unavailable"),
         ({}, {"binding_id": "binding-replayed"}, "session_runtime_profile_binding_mismatch"),
         ({}, {"session_epoch": 2}, "session_runtime_profile_binding_mismatch"),
     ],
@@ -660,6 +659,62 @@ async def test_session_policy_rejects_stale_or_unusable_runtime_profile(
 
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == expected_code
+
+
+@pytest.mark.asyncio
+async def test_session_policy_accepts_signed_unknown_safe_as_conversation_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=headers, json={})).json()[
+            "session_id"
+        ]
+        profile = _attach_signed_runtime_profile(
+            app,
+            user_id=user_id,
+            session_id=session_id,
+            unknown_subject=True,
+        )
+        response = await client.post(
+            "/v1/interaction/session-policy",
+            headers={"X-Memoria-Internal-Token": "interaction-policy-token-that-is-long-enough"},
+            json={"session_id": session_id},
+        )
+
+    assert response.status_code == 200, response.text
+    policy = response.json()
+    assert policy["interaction_mode"] == "unknown_safe"
+    assert policy["companion_style_id"] is None
+    assert policy["companion_style_version"] is None
+    assert "owner_display_name" not in policy
+    assert policy["history_eligible"] is False
+    assert policy["owner_projection_eligible"] is False
+    assert policy["capabilities"] == {
+        "conversation": True,
+        "private_memory": False,
+        "persona": False,
+        "persona_low_sensitivity": False,
+        "tools": False,
+        "history": False,
+        "learning": False,
+        "voice_profile": False,
+    }
+    parsed = ModePolicyClient._parse(
+        policy,
+        runtime_profile_verify_key=_RUNTIME_PROFILE_SIGNING_KEY.decode(),
+    )
+    assert parsed.available is True
+    assert parsed.mode == "unknown_safe"
+    assert parsed.runtime_profile is not None
+    assert parsed.runtime_profile.profile.runtime_profile_id == profile.runtime_profile_id
+    assert parsed.allows_conversation() is True
+    assert parsed.allows_private_context("owner") is False
+    assert parsed.allows_tools("owner") is False
+    assert parsed.history_eligible("owner") is False
+    assert parsed.allows_learning("owner") is False
 
 
 def _action_policy_body(

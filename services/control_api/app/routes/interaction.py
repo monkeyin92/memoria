@@ -516,11 +516,23 @@ async def _current_persistent_runtime_profile(
             status_code=503,
             detail={"code": "session_runtime_profile_expired"},
         )
-    if (
-        getattr(profile, "active_subject_id", None) is None
-        or getattr(profile, "speaker_state", None) != "confirmed"
-        or getattr(profile, "subject_category", None) == "unknown"
-    ):
+    active_subject_id = getattr(profile, "active_subject_id", None)
+    speaker_state = getattr(profile, "speaker_state", None)
+    subject_category = getattr(profile, "subject_category", None)
+    service_mode = getattr(profile, "service_mode", None)
+    confirmed_subject = (
+        isinstance(active_subject_id, str)
+        and bool(active_subject_id.strip())
+        and speaker_state == "confirmed"
+        and subject_category != "unknown"
+    )
+    unknown_safe_subject = (
+        active_subject_id is None
+        and speaker_state == "unconfirmed"
+        and subject_category == "unknown"
+        and service_mode == "unknown_safe"
+    )
+    if not confirmed_subject and not unknown_safe_subject:
         raise HTTPException(
             status_code=503,
             detail={"code": "session_runtime_subject_unavailable"},
@@ -610,6 +622,10 @@ async def session_policy(
             status_code=503,
             detail={"code": "session_runtime_profile_unavailable"},
         )
+    history_eligible = (
+        interaction_mode != "unknown_safe"
+        and "memory_recall_private" in profile_capabilities
+    )
     policy.update(
         {
             "interaction_mode": interaction_mode,
@@ -617,17 +633,18 @@ async def session_policy(
                 "policy_bundle_version", policy["mode_policy_version"]
             ),
             "simulated_output": interaction_mode != "companion",
-            "history_eligible": "memory_recall_private" in profile_capabilities,
-            "owner_projection_eligible": "memory_recall_private" in profile_capabilities,
+            "history_eligible": history_eligible,
+            "owner_projection_eligible": history_eligible,
             "capabilities": {
                 "conversation": "chat" in profile_capabilities,
-                "private_memory": "memory_recall_private" in profile_capabilities,
+                "private_memory": history_eligible,
                 "persona": False,
                 "persona_low_sensitivity": False,
                 "tools": False,
-                "history": "memory_recall_private" in profile_capabilities,
+                "history": history_eligible,
                 "learning": (
-                    (
+                    interaction_mode != "unknown_safe"
+                    and (
                         "tutor" in profile_capabilities
                         or "english_practice" in profile_capabilities
                     )
@@ -638,6 +655,14 @@ async def session_policy(
             "runtime_profile": runtime_profile,
         }
     )
+    if interaction_mode == "unknown_safe":
+        # A signed unknown-safe profile is a valid conversation-only surface,
+        # not an authority outage.  Keep it free of every owner/style hint so
+        # the Agent cannot infer identity, private context, or persona from the
+        # legacy companion session envelope.
+        policy.pop("owner_display_name", None)
+        policy["companion_style_id"] = None
+        policy["companion_style_version"] = None
     return policy
 
 
