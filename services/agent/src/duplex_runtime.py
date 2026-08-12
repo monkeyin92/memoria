@@ -37,6 +37,7 @@ from services.agent.src.event_identity import (
     speaker_classification_evidence,
     transcript_delta_event,
 )
+from services.agent.src.generation_output_policy import generation_voice_allowed
 from services.agent.src.identity_state import (
     capture_identity_tasks,
     clear_identity_private_state,
@@ -110,7 +111,6 @@ from services.agent.src.output_provenance import (
 )
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile
 from services.common.companion_response_safety import SAFE_UNKNOWN_REPLY
-from services.common.companions import companion_definition
 from services.common.evidence_policy import classify_prompt_kind
 from services.common.realtime_information import (
     is_incomplete_realtime_reply,
@@ -1211,48 +1211,18 @@ class DuplexRuntime:
         """Bind or update the voice actually used by this exact generation."""
 
         policy = self.mode_policy_for_fence(fence)
-        references = dict(policy.references)
-        companion = companion_definition(policy.companion_style_id)
-        personal_contract = (
-            self.profile_permits(fence, capability="voice_clone_use")
-            and policy.mode in {"self_preview", "legacy"}
-            and (policy.mode != "legacy" or references.get("legacy_voice_allowed") is True)
-            and profile_id is not None
-            and profile_id == references.get("voice_profile_id")
-            and references.get("voice_profile_version") is not None
-            and references.get("voice_provider") == "volcengine_doubao"
-            and references.get("voice_model") == "seed-icl-2.0"
-            and references.get("voice_resource_id") == "seed-icl-2.0"
-            and references.get("voice_provider_expires_at") is not None
-            and speaker_sha256 == references.get("voice_speaker_sha256")
-        )
-        designed_contract = (
-            policy.mode == "companion"
-            and companion is not None
-            and profile_id == companion.designed_voice_profile
-        ) or (
-            policy.mode in {"self_preview", "legacy"}
-            and profile_id == references.get("fallback_voice_profile_id")
-            and references.get("fallback_voice_provider") == "volcengine_doubao"
-            and references.get("fallback_voice_model") == "seed-tts-2.0"
-            and references.get("fallback_voice_resource_id") == "seed-tts-2.0"
-        )
         if (
             fence.session_id != self.session_id
             or not self.fence.matches(fence)
-            or (
-                profile_id is not None
-                and (not profile_id or len(profile_id) > 128 or profile_id != profile_id.strip())
-            )
-            or resource_id not in {"seed-tts-2.0", "seed-icl-2.0"}
-            or len(speaker_sha256) != 64
-            or any(char not in "0123456789abcdef" for char in speaker_sha256)
-            or voice_kind not in {"designed", "personal"}
-            or (voice_kind == "personal") != (resource_id == "seed-icl-2.0")
-            or (voice_kind == "personal" and not personal_contract)
-            or (
-                voice_kind == "designed"
-                and (resource_id != "seed-tts-2.0" or not designed_contract)
+            or not generation_voice_allowed(
+                policy,
+                personal_voice_permitted=self.profile_permits(
+                    fence, capability="voice_clone_use"
+                ),
+                profile_id=profile_id,
+                resource_id=resource_id,
+                speaker_sha256=speaker_sha256,
+                voice_kind=voice_kind,
             )
         ):
             return False

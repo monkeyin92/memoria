@@ -132,6 +132,27 @@ class ModePolicy:
             and speaker_class != "owner"
         )
 
+    def allows_anonymous_public_conversation(
+        self,
+        speaker_class: SpeakerClass | None = None,
+    ) -> bool:
+        """Allow only the identity-free, non-persistent unknown-safe surface."""
+
+        sensitive = (
+            "private_memory",
+            "persona",
+            "persona_low_sensitivity",
+            "tools",
+            "history",
+            "learning",
+            "voice_profile",
+        )
+        return (
+            self.mode == "unknown_safe"
+            and self.allows_conversation(speaker_class)
+            and not any(self.capability(name) for name in sensitive)
+        )
+
     def allows_private_persona(self, speaker_class: SpeakerClass) -> bool:
         return speaker_class == "owner" and self.capability("persona")
 

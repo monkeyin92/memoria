@@ -13,6 +13,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callab
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from services.agent.src import generation_output_policy as output_policy
 from services.agent.src.action_policy_client import is_action_policy_capability
 from services.agent.src.config import load_turn_timing
 from services.agent.src.context_assembler import (
@@ -586,7 +587,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             return False
         policy = self._runtime.mode_policy_for_fence(fence)
         if (
-            policy.mode in {"self_preview", "legacy"}
+            output_policy.generation_voice_must_match_plan(policy)
             and voice is not None
             and not self._generation_voice_matches_target(voice, plan.voice_target)
         ):
@@ -631,8 +632,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         voice_kind = getattr(tts_plugin, "current_voice_kind", None)
         if not isinstance(profile_id, str) or not profile_id or not isinstance(resource_id, str) or not resource_id or not isinstance(speaker, str) or not speaker or not isinstance(voice_kind, str) or not voice_kind:
             return False
-        archive_profile_id = self._archive_voice_profile_id(
-            fence,
+        archive_profile_id = output_policy.generation_voice_profile_id(
+            self._runtime.mode_policy_for_fence(fence),
             profile_id=profile_id,
             voice_kind=voice_kind,
         )
@@ -644,18 +645,6 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             voice_kind=cast(Literal["designed", "personal"], voice_kind),
         )
 
-    def _archive_voice_profile_id(
-        self,
-        fence: GenerationFence,
-        *,
-        profile_id: str,
-        voice_kind: str,
-    ) -> str | None:
-        if voice_kind == "personal":
-            return profile_id
-        mode = self._runtime.mode_policy_for_fence(fence).mode
-        return profile_id if mode in {"companion", "self_preview", "legacy"} else None
-
     def _observe_tts_voice_fallback(
         self,
         fence: GenerationFence,
@@ -665,8 +654,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         voice_kind: str,
     ) -> None:
         speaker_sha256 = hashlib.sha256(speaker.encode()).hexdigest()
-        archive_profile_id = self._archive_voice_profile_id(
-            fence,
+        archive_profile_id = output_policy.generation_voice_profile_id(
+            self._runtime.mode_policy_for_fence(fence),
             profile_id=profile_id,
             voice_kind=voice_kind,
         )
@@ -715,6 +704,8 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
         ):
             return False
         if self._is_local_safe_plan(plan):
+            if output_policy.anonymous_public_plan_allowed(plan, policy, tts_model=self._tts_model):
+                return True
             companion = companion_definition(policy.companion_style_id)
             allowed_companion_direct_text = {
                 None,
@@ -911,10 +902,11 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             if raw_speaker_class in {"owner", "guest", "uncertain"}
             else "uncertain",
         )
+        anonymous_public = policy.allows_anonymous_public_conversation(speaker_class)
         speaker_reason = getattr(speaker, "reason_code", "speaker_unavailable")
         speaker_model = getattr(speaker, "model_version", "unknown")
-        speaker_profile = getattr(speaker, "profile_id", None)
-        speaker_template = getattr(speaker, "template_version", None)
+        speaker_profile = None if anonymous_public else getattr(speaker, "profile_id", None)
+        speaker_template = None if anonymous_public else getattr(speaker, "template_version", None)
         companion = mode == "companion"
         companion_definition_for_policy = companion_definition(policy.companion_style_id)
         fixed_reply = fixed_companion_reply(
@@ -946,7 +938,11 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             if mode == "legacy"
             else ("privacy_refusal", "unknown")
         )
-        instructions = _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
+        instructions = (
+            output_policy.ANONYMOUS_PUBLIC_CHAT_INSTRUCTIONS
+            if anonymous_public
+            else _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
+        )
         if companion and speaker_class == "owner":
             instructions = (
                 "仅依据当前用户这一轮内容回答。不得读取、引用或推断历史对话、"
@@ -970,7 +966,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             instructions=instructions,
             direct_text=(
                 fixed_reply
-                if companion or fixed_reply == CRISIS_SUPPORT_REPLY
+                if companion or anonymous_public or fixed_reply == CRISIS_SUPPORT_REPLY
                 else _LOCAL_SAFE_REFUSAL_TEXT
             ),
             epistemic_status="not_applicable",
@@ -981,12 +977,12 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 kind="fallback",
                 profile_id=(
                     None
-                    if companion
+                    if companion or anonymous_public
                     else cast(str | None, references.get("fallback_voice_profile_id"))
                 ),
                 model=(
                     self._tts_model
-                    if companion
+                    if companion or anonymous_public
                     else cast(str, references.get("fallback_voice_model"))
                 ),
             ),
@@ -1383,7 +1379,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             )
         if (
             input_modality == "audio"
-            and policy.mode in {"self_preview", "legacy"}
+            and output_policy.generation_voice_must_match_plan(policy)
             and not self._ensure_generation_voice_matches_plan(fence, plan, policy)
         ):
             logger.error(
@@ -1439,7 +1435,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             )
             if (
                 input_modality == "audio"
-                and policy.mode in {"self_preview", "legacy"}
+                and output_policy.generation_voice_must_match_plan(policy)
                 and not self._ensure_generation_voice_matches_plan(fence, plan, policy)
             ):
                 raise StopResponse()
@@ -1975,10 +1971,11 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 fence.generation_id,
             )
             return
-        if policy.mode in {
-            "self_preview",
-            "legacy",
-        } and not self._ensure_generation_voice_matches_plan(fence, response_plan, policy):
+        if (
+            self._runtime.input_modality_for_fence(fence) == "audio"
+            and output_policy.generation_voice_must_match_plan(policy)
+            and not self._ensure_generation_voice_matches_plan(fence, response_plan, policy)
+        ):
             logger.error(
                 "llm request blocked by response plan voice mismatch mode=%s fallback=%s "
                 "session_id=%s turn_id=%s generation_id=%s",
@@ -2167,7 +2164,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 resume_interrupted_reply=resume_interrupted_reply,
                 force_current_user_only=(
                     self._is_local_safe_plan(response_plan)
-                    and (speaker_class == "owner" or resume_interrupted_reply)
+                    and (speaker_class == "owner" or resume_interrupted_reply or policy.mode == "unknown_safe")
                 ),
                 session_turns=frozen_session_turns,
                 delivery_instruction=delivery_instruction,

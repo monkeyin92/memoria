@@ -1947,6 +1947,110 @@ def test_self_preview_selected_fallback_binds_exact_generation_voice_snapshot() 
     assert snapshot.resource_id == "seed-tts-2.0"
 
 
+def test_unknown_safe_audio_turn_binds_anonymous_approved_baseline_voice() -> None:
+    runtime = DuplexRuntime.create(session_id="unknown-safe-baseline")
+    runtime.set_mode_policy(ModePolicy.degraded_unknown_safe())
+    runtime.tts = SimpleNamespace(
+        current_voice_profile_id="warm_companion",
+        current_model="seed-tts-2.0",
+        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice_kind="designed",
+    )
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+
+    assert agent._bind_current_tts_voice(runtime.fence)
+    snapshot = runtime.generation_voice_for(runtime.fence)
+    assert snapshot is not None
+    assert snapshot.profile_id is None
+    assert snapshot.resource_id == "seed-tts-2.0"
+    assert snapshot.voice_kind == "designed"
+
+
+@pytest.mark.asyncio
+async def test_unknown_safe_audio_turn_reaches_llm_with_current_public_turn_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="unknown-safe-public-turn")
+    runtime.set_mode_policy(ModePolicy.degraded_unknown_safe())
+    runtime.tts = SimpleNamespace(
+        current_voice_profile_id="warm_companion",
+        current_model="seed-tts-2.0",
+        current_voice="zh_male_yangguangqingnian_uranus_bigtts",
+        current_voice_kind="designed",
+        bind_fence=lambda _fence: None,
+    )
+
+    class Message:
+        def text_content(self) -> str:
+            return "请简单介绍一下你自己"
+
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return SpeakerDecision(
+            classification="uncertain",
+            score=0.0,
+            quality_score=0.0,
+            reason_code="authority_unavailable",
+            model_version="unavailable",
+            template_version=None,
+            profile_id=None,
+            permissions=permissions_for_speaker("uncertain"),
+        )
+
+    captured: dict[str, Any] = {}
+
+    async def fake_llm_node(
+        _agent: Any,
+        safe_ctx: Any,
+        tools: list[Any],
+        _settings: Any,
+    ) -> AsyncIterator[str]:
+        captured.update(ctx=safe_ctx, tools=tools)
+        yield "你好，我是一个人工智能机器人伙伴。"
+
+    runtime.set_speaker_classifier(classify, sample_rate=16_000)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x01\x00" * 800)
+    runtime.on_user_voice_stopped()
+    agent = DuplexVoiceAgent(
+        instructions="test",
+        runtime=runtime,
+        llm_provider="qwen",
+        llm_model="qwen-plus",
+        tts_provider="doubao",
+        tts_model="seed-tts-2.0",
+    )
+    monkeypatch.setattr(agent_mod.Agent.default, "llm_node", staticmethod(fake_llm_node))
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="旧私人问题：我的保险号码是什么？")
+    chat_ctx.add_message(role="assistant", content="旧私人回答：号码是 123456。")
+    chat_ctx.add_message(role="user", content="请简单介绍一下你自己")
+
+    await agent.on_user_turn_completed(chat_ctx, Message())
+    output = [item async for item in agent.llm_node(chat_ctx, ["private-tool"], None)]
+
+    assert output == ["你好，我是一个人工智能机器人伙伴。"]
+    conversation = [
+        (message.role, message.text_content)
+        for message in captured["ctx"].messages()
+        if message.role != "system"
+    ]
+    system_text = "\n".join(
+        message.text_content for message in captured["ctx"].messages() if message.role == "system"
+    )
+    assert conversation == [("user", "请简单介绍一下你自己")]
+    assert "仅依据当前用户这一轮内容" in system_text
+    assert "123456" not in system_text
+    assert captured["tools"] == []
+    voice = runtime.generation_voice_for(runtime.fence)
+    assert voice is not None
+    assert voice.profile_id is None
+    provenance = runtime.response_provenance_for(runtime.fence)
+    assert provenance is not None
+    assert provenance["interaction_mode"] == "unknown_safe"
+    assert provenance["actual_voice_profile_id"] is None
+    assert provenance["source_refs"] == []
+
+
 @pytest.mark.asyncio
 async def test_agent_adds_only_the_canonical_response_plan_system_block(
     monkeypatch: pytest.MonkeyPatch,

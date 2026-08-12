@@ -38,6 +38,7 @@ from services.agent.tests.unit.runtime_profile_test_helpers import (
     canonical_wire_payload,
     install_receipt_verifier,
 )
+from services.common.companions import designed_voice_speaker_sha256
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -283,7 +284,7 @@ async def test_epoch_keyed_permission_caches_never_hit_old_subject(
         old_fence,
         profile_id="warm_companion",
         resource_id="seed-tts-2.0",
-        speaker_sha256="0" * 64,
+        speaker_sha256=designed_voice_speaker_sha256("warm_companion") or "",
         voice_kind="designed",
     )
 

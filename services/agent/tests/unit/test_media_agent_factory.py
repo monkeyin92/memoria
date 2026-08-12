@@ -82,7 +82,7 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
     class TTS:
         current_voice_profile_id = "warm_companion"
         current_model = "seed-tts-2.0"
-        current_voice = "zh_female_wanwanxiaohe_moon_bigtts"
+        current_voice = "zh_male_yangguangqingnian_uranus_bigtts"
         current_voice_kind = "designed"
 
         def __init__(self) -> None:

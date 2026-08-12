@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 from pathlib import Path
 
@@ -12,6 +11,7 @@ from services.agent.src.archive_sink import ArchiveSink, ArchiveSinkConfig
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
+from services.common.companions import designed_voice_speaker_sha256
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -274,7 +274,8 @@ def test_generation_voice_snapshot_is_hashed_and_rejects_stale_fences() -> None:
     runtime = DuplexRuntime.create(session_id="session-voice-snapshot")
     _enable_owner_projection(runtime)
     fence = runtime.fence
-    speaker_sha256 = hashlib.sha256(b"baseline-speaker").hexdigest()
+    speaker_sha256 = designed_voice_speaker_sha256("warm_companion")
+    assert speaker_sha256 is not None
 
     assert runtime.bind_generation_voice(
         fence,
@@ -352,7 +353,7 @@ def test_self_preview_generation_voice_requires_frozen_personal_digest_and_fallb
         fence,
         profile_id="bright_peer",
         resource_id="seed-tts-2.0",
-        speaker_sha256="c" * 64,
+        speaker_sha256=designed_voice_speaker_sha256("bright_peer") or "",
         voice_kind="designed",
     )
 
@@ -384,7 +385,7 @@ def test_legacy_generation_voice_accepts_only_authorized_personal_or_frozen_fall
         fence,
         profile_id="bright_peer",
         resource_id="seed-tts-2.0",
-        speaker_sha256="b" * 64,
+        speaker_sha256=designed_voice_speaker_sha256("bright_peer") or "",
         voice_kind="designed",
     )
     assert not runtime.bind_generation_voice(
@@ -402,6 +403,76 @@ def test_legacy_generation_voice_accepts_only_authorized_personal_or_frozen_fall
         resource_id="seed-icl-2.0",
         speaker_sha256="a" * 64,
         voice_kind="personal",
+    )
+
+
+def test_unknown_safe_generation_voice_accepts_only_anonymous_public_baseline() -> None:
+    runtime = DuplexRuntime.create(session_id="session-unknown-safe-voice")
+    runtime.set_mode_policy(ModePolicy.degraded_unknown_safe())
+    fence = runtime.fence
+    approved_hash = designed_voice_speaker_sha256("warm_companion")
+    assert approved_hash is not None
+
+    assert runtime.bind_generation_voice(
+        fence,
+        profile_id=None,
+        resource_id="seed-tts-2.0",
+        speaker_sha256=approved_hash,
+        voice_kind="designed",
+    )
+    snapshot = runtime.generation_voice_for(fence)
+    assert snapshot is not None
+    assert snapshot.profile_id is None
+    assert snapshot.voice_kind == "designed"
+
+    assert not runtime.bind_generation_voice(
+        fence,
+        profile_id="warm_companion",
+        resource_id="seed-tts-2.0",
+        speaker_sha256=approved_hash,
+        voice_kind="designed",
+    )
+    assert not runtime.bind_generation_voice(
+        fence,
+        profile_id=None,
+        resource_id="seed-tts-2.0",
+        speaker_sha256="f" * 64,
+        voice_kind="designed",
+    )
+    assert not runtime.bind_generation_voice(
+        fence,
+        profile_id="personal-voice-1",
+        resource_id="seed-icl-2.0",
+        speaker_sha256=approved_hash,
+        voice_kind="personal",
+    )
+
+    overprivileged = ModePolicy(
+        mode="unknown_safe",
+        policy_version="unsafe-test-policy",
+        companion_style_id=None,
+        style_version=None,
+        references=(),
+        capabilities=(("conversation", True), ("history", True)),
+        companion_style=None,
+    )
+    privileged_runtime = DuplexRuntime.create(session_id="unknown-safe-overprivileged")
+    privileged_runtime.set_mode_policy(overprivileged)
+    assert not privileged_runtime.bind_generation_voice(
+        privileged_runtime.fence,
+        profile_id=None,
+        resource_id="seed-tts-2.0",
+        speaker_sha256=approved_hash,
+        voice_kind="designed",
+    )
+
+    runtime.set_mode_policy(ModePolicy.unavailable("authority_missing"))
+    assert not runtime.bind_generation_voice(
+        fence,
+        profile_id=None,
+        resource_id="seed-tts-2.0",
+        speaker_sha256=approved_hash,
+        voice_kind="designed",
     )
 
 

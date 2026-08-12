@@ -62,9 +62,16 @@
   实板麦克风的“你好，请简单介绍一下你自己”已得到 FunASR 终稿且不再触发
   `missing_speech_epoch`，但真实话轮提交又暴露 LiveKit interrupt 返回 Future、epoch-drain 仅接受
   coroutine 的既有合同缺口，故本版本只完成 VAD/ASR 实板验收，尚未完成回复声学闭环。
-- `20260812-163054` 候选把修复收敛到统一 epoch-drain barrier：所有 Awaitable 均经自有 coroutine
-  包装后进入同一超时/取消/fail-closed 路径，不在 LiveKit 调用方加特判。Agent 全目录和 Future、
-  Task、coroutine、超时回归已通过；待生产切流并用同一实板完成 LLM/TTS/扬声器闭环。
+- `20260812-163054` 已上线统一 epoch-drain barrier：所有 Awaitable 均经自有 coroutine 包装后进入
+  同一超时/取消/fail-closed 路径，不在 LiveKit 调用方加特判。完整 provider/readiness 与连续
+  `8/8` 公网稳定性通过；同一实板再次完成 VAD、FunASR final 和话轮提交，旧 Future `TypeError`
+  已消失。该真机话轮随后在生成前暴露 `unknown_safe` 公共基线音色被旧 designed-voice 合同拒绝；
+  因此本版本证明 epoch-drain 修复真实生效，但仍未完成 LLM/TTS/扬声器闭环。
+- `20260812-173008` 候选把生成音色、响应计划和上下文边界收敛为统一 generation output policy：
+  `unknown_safe` 只有在 conversation=true 且 history/memory/persona/tools/learning/personal voice 全关闭时，
+  才可匿名使用批准的公共基线音色并仅依据当前话轮回答；任何身份引用、未知 speaker hash 或敏感能力
+  均 fail closed。Agent `1463` 项、定向 `182` 项、Ruff、strict mypy、模块预算和 diff 校验通过；
+  待生产切流并用同一实板完成 LLM、Doubao、下行 Opus 与实际扬声器听感验收。
 - 当前这块研发板的生产 authority 身份与绑定是人工受控投影；后续新设备的“小程序扫码 → Claim
   → Binding → Activation”自动 Saga 尚未完成微信真机和生产批量验收，不能据此宣称新设备已能
   零人工自动接入。
@@ -86,7 +93,8 @@
 - 本轮完成 Identity FORCE RLS、Guardian 核心表 actor/subject RLS、Policy
   nullable-subject receipt scope、Session action subject fence、Notification 写入 actor
   防伪与主体本人读取语义、Device Fleet actor fence，以及 Agent action-policy
-  装配；Agent 策略装配与固定播报控制已从 `agent.py` 抽离，模块预算收紧到 `3413`。
+  装配；Agent 策略装配、固定播报与 generation output policy 已从 `agent.py` 抽离，模块预算收紧到
+  `3410`。
 - PR-10/12/14 的仓库软件闭环已补齐：Agent 通过生产 HTTP
   `TransactionalToolEffectCommitPort` 提交/对账 Session Runtime 持久化 intent/outbox；
   Memory capture 由 Control 生产 authority 装配和 Archive canonical evidence projector
@@ -117,10 +125,10 @@
 
 ### 当前生产基线
 
-- 生产 runtime 为 `20260812-154923`，源码 commit
-  `88c4735bc29776d8d2f8fb2734ed7dcfd934ab0e`；H5 有意保持 `20260808-171749`，本轮硬件修复不
-  切 H5。直接 runtime 回滚目标为 `20260812-134635`。完整证据见
-  `docs/releases/20260812-154923.md`；`20260812-163054` 仍是待切流候选。
+- 生产 runtime 为 `20260812-163054`，源码 commit
+  `fef36f30556970e9244103f901a1c2ac03fb954a`；H5 有意保持 `20260808-171749`，本轮硬件修复不
+  切 H5。直接 runtime 回滚目标为 `20260812-154923`。完整证据见
+  `docs/releases/20260812-163054.md`；`20260812-173008` 为待切流候选。
 - Agent、Control API、Speaker Model、小程序 Gateway、Device Media Gateway 五个应用容器以及
   PostgreSQL/Redis/MinIO 均 healthy；readiness 已绑定 runtime tag，LiveKit/Agent 权威语音链保持
   复用。Runtime Profile 验签键已在生产 Agent 以 root-only 最小权限临时接通，正式生成器修复随
