@@ -26,6 +26,10 @@ constexpr int kSessionReadyTimeoutMs = 10000;
 constexpr uint32_t kUplinkSampleRate = 16000;
 constexpr uint32_t kDownlinkSampleRate = 24000;
 constexpr uint32_t kFrameMs = 20;
+// AFE is the normal endpoint authority. This absolute sample-clock fence only
+// prevents one bad/noisy capture from holding a signed media session open
+// indefinitely; ordinary turns must still end through the AFE VAD callback.
+constexpr uint64_t kMaxVadSpeechSamples = static_cast<uint64_t>(kUplinkSampleRate) * 20;
 
 struct ScopedJson final {
     cJSON* value = nullptr;
@@ -357,9 +361,12 @@ bool MemoriaProtocol::OpenAudioChannel() {
 }
 
 void MemoriaProtocol::CloseAudioChannel(bool send_goodbye) {
-    if (send_goodbye && websocket_ != nullptr && websocket_->IsConnected() && stream_epoch_ != 0) {
-        SendText("{\"type\":\"session.close\",\"stream_epoch\":" +
-                 std::to_string(stream_epoch_) + ",\"reason\":\"device_close\"}");
+    if (websocket_ != nullptr && websocket_->IsConnected() && stream_epoch_ != 0) {
+        SendVadState(false);
+        if (send_goodbye) {
+            SendText("{\"type\":\"session.close\",\"stream_epoch\":" +
+                     std::to_string(stream_epoch_) + ",\"reason\":\"device_close\"}");
+        }
     }
     if (websocket_ != nullptr) {
         websocket_->Close();
@@ -400,6 +407,11 @@ bool MemoriaProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     }
     uplink_sequence_ = (uplink_sequence_ + 1) & 0xffffffffU;
     uplink_sample_start_ += MemoriaAudioFrame::kUplinkFrameSamples;
+    if (vad_active_ && uplink_sample_start_ - vad_started_sample_ >= kMaxVadSpeechSamples) {
+        ESP_LOGW(kTag, "Closing overlong device VAD epoch at sample=%llu",
+                 static_cast<unsigned long long>(uplink_sample_start_));
+        SendVadState(false);
+    }
     return true;
 }
 
@@ -561,6 +573,7 @@ void MemoriaProtocol::SendStopListening() {
     if (stream_epoch_ == 0) {
         return;
     }
+    SendVadState(false);
     SendText("{\"type\":\"listen.stop\",\"stream_epoch\":" +
              std::to_string(stream_epoch_) + ",\"sample_start\":" +
              std::to_string(uplink_sample_start_) + "}");
@@ -576,6 +589,9 @@ void MemoriaProtocol::SendVadState(bool speaking) {
         ",\"sample_position\":" + std::to_string(uplink_sample_start_) + "}";
     if (SendText(event)) {
         vad_active_ = speaking;
+        vad_started_sample_ = speaking ? uplink_sample_start_ : 0;
+        ESP_LOGI(kTag, "Device VAD %s at sample=%llu", speaking ? "start" : "end",
+                 static_cast<unsigned long long>(uplink_sample_start_));
     }
 }
 
@@ -650,6 +666,7 @@ void MemoriaProtocol::ResetSessionState() {
     uplink_sequence_ = 0;
     uplink_sample_start_ = 0;
     vad_active_ = false;
+    vad_started_sample_ = 0;
     downlink_started_ = false;
     downlink_sequence_ = 0;
     downlink_sample_start_ = 0;

@@ -58,6 +58,7 @@ private:
     uint32_t uplink_sequence_ = 0;
     uint64_t uplink_sample_start_ = 0;
     bool vad_active_ = false;
+    uint64_t vad_started_sample_ = 0;
     bool downlink_started_ = false;
     uint32_t downlink_sequence_ = 0;
     uint64_t downlink_sample_start_ = 0;
