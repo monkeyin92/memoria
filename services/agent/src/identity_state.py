@@ -8,6 +8,7 @@ must run between turns, synchronously, together with the epoch advance.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -204,16 +205,29 @@ async def drain_epoch_rotation(runtime: Any, old_fence: Any) -> None:
     )
 
 
-async def _bounded(coro: Any, timeout_s: float, label: str, orch: Any) -> None:
+async def _bounded(
+    awaitable: Awaitable[Any],
+    timeout_s: float,
+    label: str,
+    orch: Any,
+) -> None:
     """Await one drain step under the shared deadline; never hang the loop.
 
-    The step runs as its own task so a timeout/cancel also cancels the
-    underlying coroutine and bounded-awaits it; a step that swallows
+    Production seams may return a coroutine, Task, Future or another Awaitable
+    (LiveKit ``AgentSession.interrupt`` currently returns a Future).  Wrap the
+    awaitable in our own coroutine before creating the named drain task so all
+    valid Awaitable implementations share the same cancellation contract.
+
+    A timeout/cancel also cancels the underlying awaitable and bounded-awaits
+    it; a step that swallows
     cancellation is detached (its late result is never adopted) instead of
     leaking a pending task into the loop teardown.
     """
 
-    task = asyncio.create_task(coro, name=f"drain-{label}")
+    async def _run() -> None:
+        await awaitable
+
+    task = asyncio.create_task(_run(), name=f"drain-{label}")
     try:
         await asyncio.wait_for(asyncio.shield(task), timeout=timeout_s)
     except (TimeoutError, asyncio.CancelledError):

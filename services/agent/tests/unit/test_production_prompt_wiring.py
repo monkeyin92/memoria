@@ -2138,6 +2138,46 @@ async def test_slow_playback_seam_keeps_barrier_visible_until_drained(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("awaitable_kind", ["future", "task"])
+async def test_playback_seam_accepts_non_coroutine_awaitables(
+    awaitable_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production LiveKit interrupt seam may return Future/Task, not a coroutine."""
+
+    runtime = _runtime(monkeypatch)
+    runtime.set_mode_policy(_policy(_profile(epoch=1)))
+    await runtime.on_turn_committed("A 第一轮。", input_modality="text")
+
+    def _future_seam() -> asyncio.Future[None]:
+        future = asyncio.get_running_loop().create_future()
+        future.set_result(None)
+        return future
+
+    async def _finished() -> None:
+        return None
+
+    def _task_seam() -> asyncio.Task[None]:
+        return asyncio.create_task(_finished())
+
+    runtime.set_playback_stop_seam(
+        _future_seam if awaitable_kind == "future" else _task_seam
+    )
+    applied = runtime.apply_runtime_profile(
+        _profile(epoch=2, subject="person_parent", mode="adult_companion")
+    )
+    assert applied is not None
+
+    await runtime.on_turn_committed("B 第一轮。", input_modality="text")
+
+    assert runtime._pending_epoch_drain is None
+    assert [turn.content for turn in runtime.orchestrator.context.turns] == [
+        "B 第一轮。"
+    ]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_hanging_playback_seam_times_out_and_aborts_turn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

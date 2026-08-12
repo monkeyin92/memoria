@@ -56,6 +56,15 @@
   仍按 fence 正确拒绝 orphan final。后续版本不放宽 `missing_speech_epoch`：改由固件 AFE 发布
   sample-clock-bound `vad.start/end`，设备网关校验 stream/单调时钟/状态交替后，通过可靠 LiveKit
   data 投影到 AgentSession 的统一 user-state seam；发布失败即断开会话，避免无边界音频继续运行。
+- `20260812-154923` 已上线上述设备 VAD 投影，完整 provider/readiness 与连续 `8/8` 公网稳定性
+  通过；签名设备仿真和真实开发板均在生产 Agent 留下 `cause=vad_start` 的实际消费证据。新固件
+  五段写入及回读 Hash 通过，身份分区刷前刷后逐字节一致，原 Wi-Fi 与 Activation v2 均保留。
+  实板麦克风的“你好，请简单介绍一下你自己”已得到 FunASR 终稿且不再触发
+  `missing_speech_epoch`，但真实话轮提交又暴露 LiveKit interrupt 返回 Future、epoch-drain 仅接受
+  coroutine 的既有合同缺口，故本版本只完成 VAD/ASR 实板验收，尚未完成回复声学闭环。
+- `20260812-163054` 候选把修复收敛到统一 epoch-drain barrier：所有 Awaitable 均经自有 coroutine
+  包装后进入同一超时/取消/fail-closed 路径，不在 LiveKit 调用方加特判。Agent 全目录和 Future、
+  Task、coroutine、超时回归已通过；待生产切流并用同一实板完成 LLM/TTS/扬声器闭环。
 - 当前这块研发板的生产 authority 身份与绑定是人工受控投影；后续新设备的“小程序扫码 → Claim
   → Binding → Activation”自动 Saga 尚未完成微信真机和生产批量验收，不能据此宣称新设备已能
   零人工自动接入。
@@ -108,10 +117,10 @@
 
 ### 当前生产基线
 
-- 生产 runtime 为 `20260812-134635`，源码 commit
-  `a747065e3ec93611bb246cd84484b07f9beb246a`；H5 有意保持 `20260808-171749`，本轮硬件修复不
-  切 H5。直接 runtime 回滚目标为 `20260812-123053`。完整证据见
-  `docs/releases/20260812-134635.md`。
+- 生产 runtime 为 `20260812-154923`，源码 commit
+  `88c4735bc29776d8d2f8fb2734ed7dcfd934ab0e`；H5 有意保持 `20260808-171749`，本轮硬件修复不
+  切 H5。直接 runtime 回滚目标为 `20260812-134635`。完整证据见
+  `docs/releases/20260812-154923.md`；`20260812-163054` 仍是待切流候选。
 - Agent、Control API、Speaker Model、小程序 Gateway、Device Media Gateway 五个应用容器以及
   PostgreSQL/Redis/MinIO 均 healthy；readiness 已绑定 runtime tag，LiveKit/Agent 权威语音链保持
   复用。Runtime Profile 验签键已在生产 Agent 以 root-only 最小权限临时接通，正式生成器修复随
