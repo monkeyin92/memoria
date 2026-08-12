@@ -779,6 +779,86 @@ async def test_client_audio_trace_is_forwarded_to_the_agent_without_text() -> No
 
 
 @pytest.mark.asyncio
+async def test_device_vad_is_published_reliably_without_transcript_text() -> None:
+    published: list[tuple[dict[str, object], bool, str]] = []
+
+    class Participant:
+        async def publish_data(self, payload: str, *, reliable: bool, topic: str) -> None:
+            published.append((json.loads(payload), reliable, topic))
+
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._room = SimpleNamespace(local_participant=Participant())
+
+    bridge.accept_transport_event({"type": "vad.start", "sample_position": 640})
+    await asyncio.sleep(0)
+
+    assert published == [
+        (
+            {"type": "vad.start", "session_id": "session-1", "sample_position": 640},
+            True,
+            "voice-agent.device-vad",
+        )
+    ]
+    with pytest.raises(GatewayMediaError, match="sample position"):
+        bridge.accept_transport_event({"type": "vad.end", "sample_position": True})
+    await bridge.close()
+
+
+@pytest.mark.asyncio
+async def test_device_vad_publish_failure_disconnects_the_room() -> None:
+    disconnected = False
+
+    class Participant:
+        async def publish_data(self, _payload: str, *, reliable: bool, topic: str) -> None:
+            assert reliable is True
+            assert topic == "voice-agent.device-vad"
+            raise RuntimeError("data channel unavailable")
+
+    class Room:
+        local_participant = Participant()
+
+        async def disconnect(self) -> None:
+            nonlocal disconnected
+            disconnected = True
+
+    bridge = MiniProgramLiveKitBridge(
+        settings=MiniProgramGatewaySettings(),
+        claims=GatewayTicketClaims(
+            session_id="session-1",
+            user_id="account-1",
+            room_name="voice-session-1",
+            identity="user-account-1-session",
+            agent_name="duplex-zh-agent",
+            voice_backend="cascade",
+            issued_at_s=1,
+            expires_at_s=91,
+            ticket_id="ticket-1",
+        ),
+    )
+    bridge._room = Room()
+
+    bridge.accept_transport_event({"type": "vad.start", "sample_position": 640})
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert disconnected is True
+    await bridge.close()
+
+
+@pytest.mark.asyncio
 async def test_text_turn_uses_the_linked_participant_chat_stream() -> None:
     sent: list[tuple[str, str]] = []
 

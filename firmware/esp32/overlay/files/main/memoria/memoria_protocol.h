@@ -28,6 +28,7 @@ public:
     void SendWakeWordDetected(const std::string& wake_word) override;
     void SendStartListening(ListeningMode mode) override;
     void SendStopListening() override;
+    void SendVadState(bool speaking);
     void SendAbortSpeaking(AbortReason reason) override;
     void SendMcpMessage(const std::string& message) override;
 
@@ -56,6 +57,7 @@ private:
     uint32_t stream_epoch_ = 0;
     uint32_t uplink_sequence_ = 0;
     uint64_t uplink_sample_start_ = 0;
+    bool vad_active_ = false;
     bool downlink_started_ = false;
     uint32_t downlink_sequence_ = 0;
     uint64_t downlink_sample_start_ = 0;

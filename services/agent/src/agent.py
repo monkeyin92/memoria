@@ -11,7 +11,7 @@ import os
 import time
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 from services.agent.src.action_policy_client import is_action_policy_capability
 from services.agent.src.config import load_turn_timing
@@ -21,6 +21,7 @@ from services.agent.src.context_assembler import (
 )
 from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.device_vad import DeviceVadProjector
 from services.agent.src.duplex_runtime import (
     DuplexRuntime,
     GenerationVoiceSnapshot,
@@ -95,13 +96,9 @@ from services.common.realtime_information import (
 )
 from services.common.response_depth import ResponseDepth, response_depth_for
 
-if TYPE_CHECKING:
-    pass
-
 media_pb2: Any = _media_pb2
 logger = logging.getLogger(__name__)
 
-# Voice replies stay shorter than chat, but 96/3 cut creative answers mid-stream.
 MAX_VOICE_REPLY_SENTENCES = 8
 MAX_VOICE_REPLY_CHARS = 320
 MAX_REALTIME_REPLY_SENTENCES = 5
@@ -3075,8 +3072,11 @@ async def entrypoint(ctx: Any) -> None:
         await _say_control_ack("我继续。")
 
     runtime.set_false_interrupt_recover(_false_interrupt_recover)
+    device_vad = DeviceVadProjector(session, runtime_session_id) if device_session else None
 
     def _on_control_packet(packet: Any) -> None:
+        if device_vad is not None and device_vad.accept(packet):
+            return
         topic = getattr(packet, "topic", None)
         if topic == MINIPROGRAM_AEC_HEALTH_TOPIC:
             if not miniprogram_aec_session or getattr(packet, "participant", None) is None:

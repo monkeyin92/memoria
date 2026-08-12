@@ -270,6 +270,8 @@ def validate_device_hello(
 _EVENT_REQUIRED_KEYS: Final[dict[str, frozenset[str]]] = {
     "listen.start": frozenset({"type", "stream_epoch", "sample_start"}),
     "listen.stop": frozenset({"type", "stream_epoch", "sample_start"}),
+    "vad.start": frozenset({"type", "stream_epoch", "sample_position"}),
+    "vad.end": frozenset({"type", "stream_epoch", "sample_position"}),
     "button.event": frozenset({"type", "stream_epoch", "button", "action", "generation_id"}),
     "device.telemetry": frozenset({"type", "stream_epoch", "metrics"}),
     "playback.started": frozenset({"type", "stream_epoch", "generation_id", "played_sample_end"}),
@@ -307,6 +309,8 @@ def validate_device_event(
     result = dict(raw)
     if event_type in {"listen.start", "listen.stop"}:
         _require_event_uint(result, "sample_start", 64)
+    elif event_type in {"vad.start", "vad.end"}:
+        _require_event_uint(result, "sample_position", 64)
     elif event_type == "button.event":
         _require_bounded_string(result, "button", 64)
         _require_bounded_string(result, "action", 64)

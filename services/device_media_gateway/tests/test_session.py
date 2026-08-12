@@ -115,6 +115,36 @@ async def test_uplink_opus_keeps_transport_and_decoded_sample_clocks_separate() 
 
 
 @pytest.mark.asyncio
+async def test_device_vad_is_monotonic_audio_bounded_and_projected_without_epoch() -> None:
+    bridge = FakeBridge()
+    session = _session(bridge)
+    encoder = OpusEncoder(sample_rate=16_000, frame_samples=UPLINK_FRAME_SAMPLES)
+    await session.accept_binary(
+        encode_audio_frame(
+            FrameType.UPLINK_AUDIO,
+            stream_epoch=3,
+            sequence=0,
+            sample_start=0,
+            frame_samples=UPLINK_FRAME_SAMPLES,
+            generation_id=0,
+            payload=encoder.encode(bytes(UPLINK_FRAME_SAMPLES * 2)),
+        )
+    )
+
+    session.accept_text('{"type":"vad.start","stream_epoch":3,"sample_position":320}')
+    session.accept_text('{"type":"vad.end","stream_epoch":3,"sample_position":320}')
+
+    assert bridge.events[-2:] == [
+        {"type": "vad.start", "sample_position": 320},
+        {"type": "vad.end", "sample_position": 320},
+    ]
+    with pytest.raises(ProtocolError, match="not active"):
+        session.accept_text('{"type":"vad.end","stream_epoch":3,"sample_position":320}')
+    with pytest.raises(ProtocolError, match="ahead"):
+        session.accept_text('{"type":"vad.start","stream_epoch":3,"sample_position":321}')
+
+
+@pytest.mark.asyncio
 async def test_downlink_requires_generation_reset_and_bounds_playback_receipts() -> None:
     bridge = FakeBridge()
     session = _session(bridge)
@@ -157,6 +187,7 @@ async def test_downlink_requires_generation_reset_and_bounds_playback_receipts()
         '"played_sample_end":480,"reason":"completed"}'
     )
     assert bridge.events[-1]["generation_id"] == 0
+    assert bridge.events[-1]["stream_epoch"] == 3
     with pytest.raises(ProtocolError, match="ahead"):
         session.accept_text(
             '{"type":"playback.progress","stream_epoch":3,"generation_id":1,'

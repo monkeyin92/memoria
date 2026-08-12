@@ -37,6 +37,7 @@ from services.miniprogram_gateway.protocol import (
 logger = logging.getLogger(__name__)
 UI_TOPIC = "voice-agent.ui"
 TELEMETRY_TOPIC = "voice-agent.telemetry"
+DEVICE_VAD_TOPIC = "voice-agent.device-vad"
 CONTROL_ACK_TRACK_NAME = "memoria-ack"
 CLIENT_AUDIO_TRACE_MIN_INTERVAL_S = 0.5
 
@@ -155,6 +156,7 @@ class MiniProgramLiveKitBridge:
         self._aec_failure_sent = False
         self._aec_failure_ack = asyncio.Event()
         self._aec_failure_lock = asyncio.Lock()
+        self._device_vad_lock = asyncio.Lock()
         self._audio_messages: asyncio.Queue[GatewayOutboundMessage] = asyncio.Queue(
             maxsize=settings.miniprogram_gateway_audio_queue_frames
         )
@@ -355,6 +357,22 @@ class MiniProgramLiveKitBridge:
 
     def accept_transport_event(self, event: dict[str, object]) -> None:
         """Record bounded client playout facts without accepting business commands."""
+        if event.get("type") in {"vad.start", "vad.end"}:
+            room = self._room
+            if room is None:
+                raise GatewayMediaError("device VAD transport is unavailable")
+            sample_position = event.get("sample_position")
+            if (
+                isinstance(sample_position, bool)
+                or not isinstance(sample_position, int)
+                or not 0 <= sample_position <= 0xFFFFFFFFFFFFFFFF
+            ):
+                raise GatewayMediaError("device VAD sample position is invalid")
+            self._spawn(
+                self._publish_device_vad(room, str(event["type"]), sample_position),
+                name=f"device-{str(event['type']).replace('.', '-')}",
+            )
+            return
         if event.get("type") == "client_audio_trace":
             name = str(event["name"])
             now = asyncio.get_running_loop().time()
@@ -424,6 +442,31 @@ class MiniProgramLiveKitBridge:
         ):
             self._audio_processor.reset()
             self._aec_suppressed_generation_id = generation_id
+
+    async def _publish_device_vad(
+        self,
+        room: Any,
+        event_type: str,
+        sample_position: int,
+    ) -> None:
+        async with self._device_vad_lock:
+            try:
+                await room.local_participant.publish_data(
+                    json.dumps(
+                        {
+                            "type": event_type,
+                            "session_id": self._claims.session_id,
+                            "sample_position": sample_position,
+                        },
+                        separators=(",", ":"),
+                    ),
+                    reliable=True,
+                    topic=DEVICE_VAD_TOPIC,
+                )
+            except Exception:
+                with contextlib.suppress(Exception):
+                    await room.disconnect()
+                raise
 
     async def accept_text_turn(self, text: str) -> None:
         """Forward one validated text turn as the linked participant's lk.chat stream."""

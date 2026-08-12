@@ -137,6 +137,8 @@ class DeviceMediaSession:
         self._active_generation = 0
         self._sent_generation_end: dict[int, int] = {}
         self._received_playback_end: dict[int, int] = {}
+        self._vad_active = False
+        self._last_vad_sample = 0
         self._closed = False
 
     @property
@@ -255,7 +257,23 @@ class DeviceMediaSession:
         self._uplink_sample_start += UPLINK_FRAME_SAMPLES
 
     def _validate_event_fence(self, event: dict[str, object]) -> None:
-        if event["type"] in {
+        if event["type"] in {"vad.start", "vad.end"}:
+            sample_position = event["sample_position"]
+            assert isinstance(sample_position, int)
+            if sample_position > self._uplink_sample_start:
+                raise ProtocolError("device VAD sample position is ahead of uplink audio")
+            if sample_position < self._last_vad_sample:
+                raise ProtocolError("device VAD sample clock moved backwards")
+            if event["type"] == "vad.start":
+                if self._vad_active:
+                    raise ProtocolError("device VAD speech is already active")
+                self._vad_active = True
+            else:
+                if not self._vad_active:
+                    raise ProtocolError("device VAD speech is not active")
+                self._vad_active = False
+            self._last_vad_sample = sample_position
+        elif event["type"] in {
             "playback.started",
             "playback.progress",
             "playback.ended",
@@ -399,6 +417,8 @@ class DeviceMediaSession:
 
     def _project_event_to_bridge(self, event: dict[str, object]) -> dict[str, object]:
         result = dict(event)
+        if result.get("type") in {"vad.start", "vad.end"}:
+            result.pop("stream_epoch", None)
         generation_id = result.get("generation_id")
         if isinstance(generation_id, int) and generation_id > 0:
             result["generation_id"] = self._bridge_generation_id(generation_id)

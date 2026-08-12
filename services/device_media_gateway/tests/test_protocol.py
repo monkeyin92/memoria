@@ -108,3 +108,10 @@ def test_device_hello_is_exact_and_event_allowlist_is_strict() -> None:
         "reason": "completed",
     }
     assert validate_device_event(receipt, stream_epoch=3) == receipt
+
+    vad = {"type": "vad.start", "stream_epoch": 3, "sample_position": 320}
+    assert validate_device_event(vad, stream_epoch=3) == vad
+    with pytest.raises(ProtocolError, match="schema"):
+        validate_device_event({**vad, "text": "private"}, stream_epoch=3)
+    with pytest.raises(ProtocolError, match="sample_position"):
+        validate_device_event({**vad, "sample_position": True}, stream_epoch=3)

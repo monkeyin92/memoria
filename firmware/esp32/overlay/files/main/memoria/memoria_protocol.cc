@@ -566,6 +566,19 @@ void MemoriaProtocol::SendStopListening() {
              std::to_string(uplink_sample_start_) + "}");
 }
 
+void MemoriaProtocol::SendVadState(bool speaking) {
+    if (stream_epoch_ == 0 || speaking == vad_active_) {
+        return;
+    }
+    const std::string event =
+        "{\"type\":\"vad." + std::string(speaking ? "start" : "end") +
+        "\",\"stream_epoch\":" + std::to_string(stream_epoch_) +
+        ",\"sample_position\":" + std::to_string(uplink_sample_start_) + "}";
+    if (SendText(event)) {
+        vad_active_ = speaking;
+    }
+}
+
 void MemoriaProtocol::SendAbortSpeaking(AbortReason reason) {
     (void)reason;
     if (stream_epoch_ == 0) {
@@ -636,6 +649,7 @@ void MemoriaProtocol::ResetSessionState() {
     session_id_.clear();
     uplink_sequence_ = 0;
     uplink_sample_start_ = 0;
+    vad_active_ = false;
     downlink_started_ = false;
     downlink_sequence_ = 0;
     downlink_sample_start_ = 0;

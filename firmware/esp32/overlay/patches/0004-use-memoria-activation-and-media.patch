@@ -25,7 +25,17 @@ diff --git a/main/application.cc b/main/application.cc
 
 +#include <esp_app_desc.h>
  #include <driver/gpio.h>
-@@ -74,6 +76,12 @@ void Application::Initialize() {
+@@ -80,7 +82,22 @@ void Application::Initialize() {
+     callbacks.on_vad_change = [this](bool speaking) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++        const bool listening = GetDeviceState() == kDeviceStateListening;
++        Schedule([this, speaking, listening]() {
++            auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++            if (memoria_protocol != nullptr && listening) {
++                memoria_protocol->SendVadState(speaking);
++            }
++        });
++#endif
          xEventGroupSetBits(event_group_, MAIN_EVENT_VAD_CHANGE);
      };
      callbacks.on_playback_drained = [this]() {

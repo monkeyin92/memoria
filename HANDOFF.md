@@ -50,6 +50,12 @@
   readiness 已验收。后续仿真确认连接不再被 UI 事件断开，但欢迎语 PCM 因固定 `session.say`
   未先发布 generation-bound `speaking` 而被共享桥接安全丢弃。该状态合同修复随下一 superseding
   release 发布；在设备签名公网仿真和实板麦克风/扬声器闭环通过前，不把 Path 2 记为语音验收完成。
+- `20260812-134635` 已上线统一 fixed-speech 状态合同，公网签名设备仿真通过 challenge、session、
+  WSS、speaking、下行 Opus、listening 与播放回执；实板也收到欢迎语并把真实麦克风音频送到
+  FunASR。真机“你好”终稿随后暴露出设备输入未被 LiveKit Silero VAD 建立 speech epoch，Agent
+  仍按 fence 正确拒绝 orphan final。后续版本不放宽 `missing_speech_epoch`：改由固件 AFE 发布
+  sample-clock-bound `vad.start/end`，设备网关校验 stream/单调时钟/状态交替后，通过可靠 LiveKit
+  data 投影到 AgentSession 的统一 user-state seam；发布失败即断开会话，避免无边界音频继续运行。
 - 当前这块研发板的生产 authority 身份与绑定是人工受控投影；后续新设备的“小程序扫码 → Claim
   → Binding → Activation”自动 Saga 尚未完成微信真机和生产批量验收，不能据此宣称新设备已能
   零人工自动接入。
@@ -102,10 +108,10 @@
 
 ### 当前生产基线
 
-- 生产 runtime 为 `20260812-123053`，源码 commit
-  `310f2bfe2dc29cde056c2cca3e18f9cd568f4ca9`；H5 有意保持 `20260808-171749`，本轮硬件修复不
-  切 H5。直接 runtime 回滚目标为 `20260812-114447`。完整证据见
-  `docs/releases/20260812-123053.md`。
+- 生产 runtime 为 `20260812-134635`，源码 commit
+  `a747065e3ec93611bb246cd84484b07f9beb246a`；H5 有意保持 `20260808-171749`，本轮硬件修复不
+  切 H5。直接 runtime 回滚目标为 `20260812-123053`。完整证据见
+  `docs/releases/20260812-134635.md`。
 - Agent、Control API、Speaker Model、小程序 Gateway、Device Media Gateway 五个应用容器以及
   PostgreSQL/Redis/MinIO 均 healthy；readiness 已绑定 runtime tag，LiveKit/Agent 权威语音链保持
   复用。Runtime Profile 验签键已在生产 Agent 以 root-only 最小权限临时接通，正式生成器修复随
