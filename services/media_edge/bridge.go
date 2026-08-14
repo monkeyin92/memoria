@@ -305,14 +305,33 @@ func (b *VoiceCoreBridge) Ready() bool {
 }
 
 // Connect starts one bidirectional media-v1 stream and consumes the accepted
-// event before returning.  There is no implicit retry: a reconnect must use a
-// strictly larger stream epoch supplied by the control plane.
+// event before returning. The supplied context owns both the handshake and
+// the accepted stream for callers that want the original single-context
+// contract. There is no implicit retry: a reconnect must use a strictly
+// larger stream epoch supplied by the control plane.
 func (b *VoiceCoreBridge) Connect(
 	ctx context.Context,
 	identity BridgeIdentity,
 	uplink BridgeAudioFormat,
 	downlink BridgeAudioFormat,
 ) (*VoiceCoreSession, error) {
+	return b.ConnectWithHandshakeContext(ctx, ctx, identity, uplink, downlink)
+}
+
+// ConnectWithHandshakeContext separates the lifetime of the accepted gRPC
+// stream from the bounded handshake. Cancelling handshakeCtx after acceptance
+// must not cancel the long-lived media stream; streamCtx remains authoritative
+// until the session is closed or its owning runtime is retired.
+func (b *VoiceCoreBridge) ConnectWithHandshakeContext(
+	streamCtx context.Context,
+	handshakeCtx context.Context,
+	identity BridgeIdentity,
+	uplink BridgeAudioFormat,
+	downlink BridgeAudioFormat,
+) (*VoiceCoreSession, error) {
+	if streamCtx == nil || handshakeCtx == nil {
+		return nil, fmt.Errorf("voice-core bridge contexts are required")
+	}
 	if err := identity.validate(); err != nil {
 		return nil, err
 	}
@@ -325,8 +344,8 @@ func (b *VoiceCoreBridge) Connect(
 	if uplink.SampleRate != 16_000 || downlink.SampleRate != 24_000 {
 		return nil, fmt.Errorf("voice-core bridge requires 16 kHz uplink and 24 kHz downlink")
 	}
-	streamCtx, cancel := context.WithCancel(ctx)
-	stream, err := b.client.Connect(streamCtx)
+	sessionCtx, cancel := context.WithCancel(streamCtx)
+	stream, err := b.client.Connect(sessionCtx)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("open Voice Core stream: %w", err)
@@ -350,7 +369,7 @@ func (b *VoiceCoreBridge) Connect(
 		_ = session.Close()
 		return nil, err
 	}
-	accepted, err := stream.Recv()
+	accepted, err := recvVoiceCoreHandshake(handshakeCtx, stream)
 	if err != nil {
 		_ = session.Close()
 		return nil, fmt.Errorf("receive Voice Core acceptance: %w", err)
@@ -384,7 +403,7 @@ func (b *VoiceCoreBridge) Connect(
 		// resume event immediately after acceptance; consume it before exposing
 		// the session so callers cannot send a stop/playback fact against the
 		// generation-only placeholder fence.
-		resume, resumeErr := stream.Recv()
+		resume, resumeErr := recvVoiceCoreHandshake(handshakeCtx, stream)
 		if resumeErr != nil {
 			_ = session.Close()
 			return nil, fmt.Errorf("receive Voice Core reconnect fence: %w", resumeErr)
@@ -404,6 +423,31 @@ func (b *VoiceCoreBridge) Connect(
 			generation.GetAction() != mediav1.GenerationAction_GENERATION_ACTION_RESUME
 	}
 	return session, nil
+}
+
+type voiceCoreHandshakeResult struct {
+	event *mediav1.CoreToMedia
+	err   error
+}
+
+func recvVoiceCoreHandshake(
+	ctx context.Context,
+	stream grpc.BidiStreamingClient[mediav1.MediaToCore, mediav1.CoreToMedia],
+) (*mediav1.CoreToMedia, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	received := make(chan voiceCoreHandshakeResult, 1)
+	go func() {
+		event, err := stream.Recv()
+		received <- voiceCoreHandshakeResult{event: event, err: err}
+	}()
+	select {
+	case result := <-received:
+		return result.event, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (f Fence) equal(other Fence) bool {

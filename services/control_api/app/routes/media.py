@@ -926,7 +926,7 @@ async def _create_direct_device_media_session(
         subject_id=authoritative_subject_id,
         runtime_profile_version=runtime_profile_version,
         uplink=DeviceOpusFormat(sample_rate=16000),
-        downlink=DeviceOpusFormat(sample_rate=16000),
+        downlink=DeviceOpusFormat(sample_rate=24000),
     )
 
 
@@ -1196,7 +1196,7 @@ async def _resume_direct_device_media_session(
         subject_id=subject_id,
         runtime_profile_version=ledger.profile_version,
         uplink=DeviceOpusFormat(sample_rate=16000),
-        downlink=DeviceOpusFormat(sample_rate=16000),
+        downlink=DeviceOpusFormat(sample_rate=24000),
     )
 
 

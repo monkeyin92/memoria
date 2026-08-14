@@ -781,7 +781,7 @@ async def test_direct_device_media_session_never_touches_livekit(
     assert response["interaction_authority"] == "python_authoritative"
     assert response["downlink"] == {
         "codec": "opus",
-        "sample_rate": 16000,
+        "sample_rate": 24000,
         "channels": 1,
         "frame_ms": 20,
     }
@@ -989,6 +989,12 @@ async def test_direct_reconnect_reuses_session_and_advances_only_transport_epoch
     resumed_body = resumed.json()
     assert resumed_body["session_id"] == first_body["session_id"]
     assert resumed_body["stream_epoch"] == first_body["stream_epoch"] + 1
+    assert resumed_body["downlink"] == {
+        "codec": "opus",
+        "sample_rate": 24000,
+        "channels": 1,
+        "frame_ms": 20,
+    }
     assert len(authority.started) == 1
     resumed_claims = jwt.decode(
         str(resumed_body["media_token"]),

@@ -579,14 +579,15 @@ func buildDeviceWSS(
 			session *mediaedge.Session,
 			sender mediaedge.DownlinkSender,
 		) (*mediaedge.VoiceCoreMediaRuntime, error) {
-			connectCtx, cancel := context.WithTimeout(
+			handshakeCtx, cancel := context.WithTimeout(
 				context.Background(),
 				envDuration("MEDIA_EDGE_VOICE_CORE_CONNECT_TIMEOUT_MS", 5*time.Second),
 			)
 			defer cancel()
 			_, accountID, deviceID, streamEpoch := session.IdentitySnapshot()
-			core, err := voiceCore.Connect(
-				connectCtx,
+			core, err := voiceCore.ConnectWithHandshakeContext(
+				context.Background(),
+				handshakeCtx,
 				mediaedge.BridgeIdentity{
 					SessionID: request.SessionID, AccountID: accountID, DeviceID: deviceID,
 					ClientType: "device", StreamEpoch: streamEpoch,
@@ -712,15 +713,16 @@ func main() {
 		server.ReadyProbe = voiceCore.Ready
 		if terminator != nil {
 			server.BridgeFactory = func(request mediaedge.OpenSessionRequest, session *mediaedge.Session, sender mediaedge.DownlinkSender) (*mediaedge.VoiceCoreMediaRuntime, error) {
-				connectCtx, cancel := context.WithTimeout(context.Background(), envDuration("MEDIA_EDGE_VOICE_CORE_CONNECT_TIMEOUT_MS", 5*time.Second))
+				handshakeCtx, cancel := context.WithTimeout(context.Background(), envDuration("MEDIA_EDGE_VOICE_CORE_CONNECT_TIMEOUT_MS", 5*time.Second))
 				defer cancel()
 				clientType := request.ClientType
 				if clientType == "" {
 					clientType = session.ClientTypeValue()
 				}
 				_, accountID, deviceID, streamEpoch := session.IdentitySnapshot()
-				core, err := voiceCore.Connect(
-					connectCtx,
+				core, err := voiceCore.ConnectWithHandshakeContext(
+					context.Background(),
+					handshakeCtx,
 					mediaedge.BridgeIdentity{
 						SessionID: request.SessionID, AccountID: accountID, DeviceID: deviceID,
 						ClientType: clientType, StreamEpoch: streamEpoch,

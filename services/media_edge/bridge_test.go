@@ -24,6 +24,23 @@ type fakeVoiceCore struct {
 	effectiveAuthority mediav1.InteractionAuthority
 }
 
+type withholdingVoiceCore struct {
+	mediav1.UnimplementedVoiceMediaBridgeServer
+	helloReceived chan struct{}
+	streamDone    chan error
+}
+
+func (f *withholdingVoiceCore) Connect(stream grpc.BidiStreamingServer[mediav1.MediaToCore, mediav1.CoreToMedia]) error {
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	close(f.helloReceived)
+	<-stream.Context().Done()
+	err := stream.Context().Err()
+	f.streamDone <- err
+	return err
+}
+
 func (f *fakeVoiceCore) Connect(stream grpc.BidiStreamingServer[mediav1.MediaToCore, mediav1.CoreToMedia]) error {
 	first, err := stream.Recv()
 	if err != nil {
@@ -111,6 +128,70 @@ func TestVoiceCoreBridgeNegotiatesAndRecordsEffectiveInteractionAuthority(t *tes
 	}
 	if session.InteractionAuthority() != mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW {
 		t.Fatalf("effective authority was not retained: %v", session.InteractionAuthority())
+	}
+}
+
+func TestVoiceCoreBridgeHandshakeContextDoesNotOwnAcceptedStream(t *testing.T) {
+	service := &fakeVoiceCore{received: make(chan *mediav1.MediaToCore, 1)}
+	bridge, cleanup := newBufconnBridge(t, service)
+	defer cleanup()
+	streamCtx, cancelStream := context.WithCancel(context.Background())
+	defer cancelStream()
+	handshakeCtx, cancelHandshake := context.WithCancel(context.Background())
+	session, err := bridge.ConnectWithHandshakeContext(
+		streamCtx, handshakeCtx, bridgeIdentity(), bridgeFormat(16_000), bridgeFormat(24_000),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	cancelHandshake()
+	frame := AudioFrame{
+		SessionID: "s", StreamEpoch: 1, Sequence: 0, CaptureStartSample: 0,
+		FrameSamples: 160, PayloadB64: base64.StdEncoding.EncodeToString(make([]byte, 320)),
+	}
+	if err := session.SendAudio(frame); err != nil {
+		t.Fatalf("accepted stream was cancelled with its handshake context: %v", err)
+	}
+	select {
+	case received := <-service.received:
+		if received.GetAudio() == nil {
+			t.Fatalf("expected audio after handshake cancellation, got %v", received)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("accepted stream stopped delivering after handshake cancellation")
+	}
+}
+
+func TestVoiceCoreBridgeHandshakeTimeoutCancelsUnacceptedStream(t *testing.T) {
+	service := &withholdingVoiceCore{
+		helloReceived: make(chan struct{}),
+		streamDone:    make(chan error, 1),
+	}
+	bridge, cleanup := newBufconnBridge(t, service)
+	defer cleanup()
+	streamCtx, cancelStream := context.WithCancel(context.Background())
+	defer cancelStream()
+	handshakeCtx, cancelHandshake := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancelHandshake()
+	_, err := bridge.ConnectWithHandshakeContext(
+		streamCtx, handshakeCtx, bridgeIdentity(), bridgeFormat(16_000), bridgeFormat(24_000),
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("handshake timeout error=%v, want deadline exceeded", err)
+	}
+	select {
+	case <-service.helloReceived:
+	default:
+		t.Fatal("Voice Core did not receive the hello before handshake timeout")
+	}
+	select {
+	case streamErr := <-service.streamDone:
+		if !errors.Is(streamErr, context.Canceled) {
+			t.Fatalf("timed-out stream ended with %v, want context canceled", streamErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed-out handshake did not cancel its gRPC stream")
 	}
 }
 
@@ -226,7 +307,7 @@ type statusError string
 
 func (e statusError) Error() string { return string(e) }
 
-func newBufconnBridge(t *testing.T, service *fakeVoiceCore) (*VoiceCoreBridge, func()) {
+func newBufconnBridge(t *testing.T, service mediav1.VoiceMediaBridgeServer) (*VoiceCoreBridge, func()) {
 	t.Helper()
 	listener := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
