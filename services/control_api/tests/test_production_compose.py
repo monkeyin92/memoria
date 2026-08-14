@@ -40,6 +40,21 @@ def test_media_bridge_uses_the_shared_production_agent_session_factory() -> None
     ).read_text(encoding="utf-8")
 
 
+def test_python_media_sidecars_run_as_modules_from_app_root() -> None:
+    compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    reporter = compose.split("  media-slo-reporter:\n", 1)[1].split(
+        "  voice-core-media-bridge:\n", 1
+    )[0]
+    bridge = compose.split("  voice-core-media-bridge:\n", 1)[1].split(
+        "  device-state-redis:\n", 1
+    )[0]
+
+    assert "- -m\n      - scripts.run_media_slo_reporter" in reporter
+    assert "- -m\n      - scripts.run_media_bridge" in bridge
+    assert "/app/scripts/run_media_slo_reporter.py" not in reporter
+    assert "/app/scripts/run_media_bridge.py" not in bridge
+
+
 def test_production_agent_healthcheck_uses_accepted_heartbeat_checker() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
     readiness = (ROOT / "services/control_api/app/routes/readiness.py").read_text(encoding="utf-8")
