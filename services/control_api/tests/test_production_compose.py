@@ -633,6 +633,7 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
             "MEDIA_EDGE_JWT_AUDIENCE": "memoria-media",
             "MEDIA_EDGE_INTERACTION_AUTHORITY": "python_authoritative",
             "MEDIA_EDGE_VOICE_CORE_ADDR": "voice-core-media-bridge:7001",
+            "MEDIA_EDGE_WEBRTC_ENABLED": "false",
             "MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON": "[]",
             "MEDIA_EDGE_WEBRTC_PUBLIC_IPS": "198.51.100.10",
             "MEDIA_EDGE_WEBRTC_UDP_PORT_MIN": "40000",
@@ -648,6 +649,7 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
     assert media_edge["MEDIA_EDGE_JWT_SECRET"] == control["STREAMCORE_TOKEN_SECRET"]
     assert media_edge["MEDIA_EDGE_INTERACTION_AUTHORITY"] == "python_authoritative"
     assert media_edge["MEDIA_EDGE_VOICE_CORE_ADDR"] == "voice-core-media-bridge:7001"
+    assert media_edge["MEDIA_EDGE_WEBRTC_ENABLED"] == "false"
     assert media_edge["MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON"] == "[]"
     assert media_edge["MEDIA_EDGE_WEBRTC_PUBLIC_IPS"] == "198.51.100.10"
     assert media_edge["MEDIA_EDGE_WEBRTC_UDP_PORT_MIN"] == "40000"

@@ -54,6 +54,31 @@ func TestBuildWebRTCConfigAcceptsTURNOrBoundedPublicUDP(t *testing.T) {
 	})
 }
 
+func TestRequestedWebRTCEnabledDefaultsOnAndAllowsExplicitDeviceOnly(t *testing.T) {
+	t.Setenv("MEDIA_EDGE_WEBRTC_ENABLED", "")
+	enabled, err := requestedWebRTCEnabled(true, false)
+	if err != nil || !enabled {
+		t.Fatalf("unset WebRTC mode must preserve the enabled default: enabled=%v err=%v", enabled, err)
+	}
+
+	t.Setenv("MEDIA_EDGE_WEBRTC_ENABLED", "false")
+	enabled, err = requestedWebRTCEnabled(true, true)
+	if err != nil || enabled {
+		t.Fatalf("production Direct Device WSS could not select device-only mode: enabled=%v err=%v", enabled, err)
+	}
+}
+
+func TestRequestedWebRTCEnabledFailsClosedWithoutDirectDeviceWSS(t *testing.T) {
+	t.Setenv("MEDIA_EDGE_WEBRTC_ENABLED", "false")
+	if _, err := requestedWebRTCEnabled(true, false); err == nil {
+		t.Fatal("production disabled WebRTC without Direct Device WSS")
+	}
+	t.Setenv("MEDIA_EDGE_WEBRTC_ENABLED", "not-a-bool")
+	if _, err := requestedWebRTCEnabled(true, true); err == nil {
+		t.Fatal("malformed WebRTC mode did not fail closed")
+	}
+}
+
 func TestRequestedInteractionAuthorityNeverEnablesUnprovenGoAuthority(t *testing.T) {
 	t.Setenv("MEDIA_EDGE_INTERACTION_AUTHORITY", "go_shadow")
 	shadow, err := requestedInteractionAuthority()

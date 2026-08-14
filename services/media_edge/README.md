@@ -112,6 +112,9 @@ readiness 每 5 秒实际执行一次 ICE candidate gathering；TURN-only 部署
 candidate 才可用。第二种方式适合 1:1 NAT；一般生产部署优先 TURN。Voice Core TLS 继续使用
 `MEDIA_EDGE_VOICE_CORE_CA_FILE`、`MEDIA_EDGE_VOICE_CORE_CLIENT_CERT_FILE`、
 `MEDIA_EDGE_VOICE_CORE_CLIENT_KEY_FILE` 和 `MEDIA_EDGE_VOICE_CORE_SERVER_NAME`。
+只承载 ESP32 Direct WSS 的独立进程可显式设置 `MEDIA_EDGE_WEBRTC_ENABLED=false`；生产
+环境只有同时启用 `MEDIA_EDGE_DEVICE_WSS_ENABLED=true` 时才接受该模式，默认仍启用
+WebRTC，且配置拼写错误会启动失败。
 构建机需要 `pkg-config` 与 `libopus-dev`，运行镜像已携带 `libopus.so.0`。
 
 ## 验证
