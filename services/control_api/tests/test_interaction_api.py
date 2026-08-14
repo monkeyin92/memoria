@@ -297,12 +297,15 @@ def _attach_signed_runtime_profile(
     session_id: str,
     expired: bool = False,
     unknown_subject: bool = False,
+    confirmed_unknown_subject: bool = False,
     subject_category: str = "adult",
     age_band: str = "adult",
     service_mode: str = "adult_companion",
     capabilities: tuple[str, ...] | None = None,
 ) -> RuntimeProfileSignedV2:
     now = datetime.now(UTC)
+    if unknown_subject and confirmed_unknown_subject:
+        raise ValueError("unknown subject fixtures must choose one speaker state")
     subject_payload = (
         {
             "active_subject_id": None,
@@ -353,6 +356,34 @@ def _attach_signed_runtime_profile(
             "obligations": [],
         }
     )
+    if confirmed_unknown_subject:
+        subject_payload = {
+            "active_subject_id": user_id,
+            "subject_revision": 1,
+            "subject_category": "unknown",
+            "age_band": "unknown",
+            "speaker_state": "confirmed",
+            "speaker_confidence": 0.99,
+            "service_mode": "unknown_safe",
+            "capabilities": ["chat"],
+            "obligations": [
+                {
+                    "code": code,
+                    "params": {
+                        "max_session_seconds": None,
+                        "retention_ttl_seconds": None,
+                        "quiet_hours": None,
+                        "extras": [],
+                    },
+                }
+                for code in (
+                    "DO_NOT_PERSIST",
+                    "DO_NOT_WRITE_LEARNING_PROGRESS",
+                    "NO_MODEL_TRAINING",
+                    "REQUIRE_SPEAKER_CONFIRMATION",
+                )
+            ],
+        }
     issued_at = now - timedelta(minutes=10) if expired else now
     expires_at = now - timedelta(minutes=5) if expired else now + timedelta(minutes=5)
     payload: dict[str, object] = {
@@ -662,8 +693,9 @@ async def test_session_policy_rejects_stale_or_unusable_runtime_profile(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("confirmed", [False, True])
 async def test_session_policy_accepts_signed_unknown_safe_as_conversation_only(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, confirmed: bool
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
@@ -676,7 +708,8 @@ async def test_session_policy_accepts_signed_unknown_safe_as_conversation_only(
             app,
             user_id=user_id,
             session_id=session_id,
-            unknown_subject=True,
+            unknown_subject=not confirmed,
+            confirmed_unknown_subject=confirmed,
         )
         response = await client.post(
             "/v1/interaction/session-policy",

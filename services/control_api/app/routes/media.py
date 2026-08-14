@@ -874,6 +874,7 @@ async def _create_direct_device_media_session(
             stream_epoch=stream_epoch,
             firmware_version=firmware_version,
             board_profile=board_profile,
+            runtime_profile_id=runtime_profile.runtime_profile_id,
             runtime_profile_version=runtime_profile_version,
             settings_version=device_settings.settings_version,
             audio_mode_requested=device_settings.audio_mode,
@@ -1006,6 +1007,16 @@ async def _resume_direct_device_media_session(
             detail={"code": "session_runtime_authority_unavailable"},
         ) from exc
 
+    frozen_runtime_profile_id = str(previous.get("runtime_profile_id") or "").strip()
+    frozen_runtime_profile_version = int(previous["runtime_profile_version"])
+    if not frozen_runtime_profile_id or frozen_runtime_profile_version < 1:
+        # Rows issued before the per-Session profile fence cannot be resumed
+        # safely. The device must establish a new authoritative Session.
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "runtime_profile_not_frozen"},
+        )
+
     authority_facts = (
         (runtime_profile.session_id, session_id),
         (runtime_profile.actor_id, account_id),
@@ -1016,6 +1027,7 @@ async def _resume_direct_device_media_session(
         (str(previous["binding_id"]), binding_id),
         (int(previous["binding_version"]), binding_version),
         (str(previous["subject_id"]), subject_id),
+        (runtime_profile.runtime_profile_id, frozen_runtime_profile_id),
     )
     if any(actual != expected for actual, expected in authority_facts):
         raise HTTPException(
@@ -1023,12 +1035,6 @@ async def _resume_direct_device_media_session(
             detail={"code": "media_session_resume_authority_mismatch"},
         )
 
-    ledger = RuntimeProfileLedger(store).current(device_id)
-    if ledger is None or ledger.runtime_profile_id != runtime_profile.runtime_profile_id:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "runtime_profile_not_current"},
-        )
     device_settings = DeviceSettingsAuthority(store).current(device_id, now=datetime.now(UTC))
     if device_settings.audio_mode not in allowed_audio_modes(
         AcousticCapabilityAuthority(store).current(device_id)
@@ -1109,7 +1115,7 @@ async def _resume_direct_device_media_session(
             binding_id=binding_id,
             binding_version=binding_version,
             subject_id=subject_id,
-            runtime_profile_version=ledger.profile_version,
+            runtime_profile_version=frozen_runtime_profile_version,
             device_settings={
                 "settings_version": device_settings.settings_version,
                 "volume_limit": device_settings.volume_limit,
@@ -1131,7 +1137,8 @@ async def _resume_direct_device_media_session(
             client_id=client_id,
             firmware_version=firmware_version,
             board_profile=board_profile,
-            runtime_profile_version=ledger.profile_version,
+            expected_runtime_profile_id=frozen_runtime_profile_id,
+            expected_runtime_profile_version=frozen_runtime_profile_version,
             settings_version=device_settings.settings_version,
             audio_mode_requested=device_settings.audio_mode,
             ticket_jti=ticket.jti,
@@ -1194,7 +1201,7 @@ async def _resume_direct_device_media_session(
         binding_id=binding_id,
         binding_version=binding_version,
         subject_id=subject_id,
-        runtime_profile_version=ledger.profile_version,
+        runtime_profile_version=frozen_runtime_profile_version,
         uplink=DeviceOpusFormat(sample_rate=16000),
         downlink=DeviceOpusFormat(sample_rate=24000),
     )

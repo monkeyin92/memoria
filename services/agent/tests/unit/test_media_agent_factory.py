@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,6 +15,79 @@ from services.agent.src.orchestration.handlers import SpeechSynthesisRequest
 from services.agent.src.response_planner_client import ResponsePlanFetch
 from services.agent.src.runtime_profile_gate import RuntimeProfileGate
 from services.agent.src.voice_core.media_protocol import SessionIdentity
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("policy", "expected_error"),
+    [
+        (
+            ModePolicy.unavailable("http_503"),
+            "interaction policy authority unavailable: http_503",
+        ),
+        (
+            replace(
+                ModePolicy.companion_for_test(
+                    policy_version="media-policy",
+                    private_context=False,
+                    owner_evidence=False,
+                    tools=False,
+                    voice_profile=False,
+                    shadow_low_sensitivity_persona=False,
+                ),
+                runtime_profile_version=3,
+            ),
+            "device ticket RuntimeProfile version does not match authority",
+        ),
+    ],
+)
+async def test_bind_mode_policy_reports_authority_outage_before_version_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    policy: ModePolicy,
+    expected_error: str,
+) -> None:
+    from services.agent.src import media_agent_factory as factory_module
+
+    closed = False
+
+    class PolicyClient:
+        def __init__(self, _config: object) -> None:
+            pass
+
+        async def fetch(self, *, session_id: str) -> ModePolicy:
+            assert session_id == "direct-session"
+            return policy
+
+        async def aclose(self) -> None:
+            nonlocal closed
+            closed = True
+
+    runtime = SimpleNamespace(
+        session_id="direct-session",
+        orchestrator=SimpleNamespace(
+            runtime_profiles=SimpleNamespace(expected_device_profile_version=2)
+        ),
+        set_mode_policy=lambda _policy: pytest.fail(
+            "rejected policy must not be installed"
+        ),
+    )
+    settings = SimpleNamespace(
+        interaction_policy_url="http://control-api/v1/interaction/session-policy",
+        interaction_policy_timeout_s=0.4,
+        internal_token=lambda capability: "p" * 32
+        if capability == "interaction_policy"
+        else "",
+    )
+    monkeypatch.setattr(factory_module, "ModePolicyClient", PolicyClient)
+    factory = factory_module.ProductionMediaSessionFactory(
+        settings=settings,
+        llm_factory=object(),
+    )
+
+    with pytest.raises(RuntimeError, match=expected_error):
+        await factory._bind_mode_policy(runtime)  # type: ignore[arg-type]
+
+    assert closed is True
 
 
 @pytest.mark.asyncio

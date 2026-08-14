@@ -275,10 +275,17 @@ func TestDeviceHelloV2Validation(t *testing.T) {
 	if err := hello.validate("dev_1", 19); err == nil {
 		t.Fatal("epoch mismatch was accepted")
 	}
-	no16k := hello
-	no16k.Audio.DownlinkSampleRates = []uint64{24_000}
-	if err := no16k.validate("dev_1", 18); err == nil {
-		t.Fatal("v2 hello without 16 kHz downlink was accepted")
+	no24k := hello
+	no24k.Audio.DownlinkSampleRates = []uint64{16_000}
+	if err := no24k.validate("dev_1", 18); err == nil {
+		t.Fatal("v2 hello without 24 kHz downlink was accepted")
+	}
+	// Direct Voice Core only supports 24 kHz, so a 24 kHz-only v2 hello is
+	// valid even without 16 kHz.
+	only24k := hello
+	only24k.Audio.DownlinkSampleRates = []uint64{24_000}
+	if err := only24k.validate("dev_1", 18); err != nil {
+		t.Fatalf("24 kHz-only v2 hello was rejected: %v", err)
 	}
 	badAEC := hello
 	badAEC.Capabilities.AECMode = "magic"

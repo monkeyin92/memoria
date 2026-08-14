@@ -525,7 +525,10 @@ async def _current_persistent_runtime_profile(
         isinstance(active_subject_id, str)
         and bool(active_subject_id.strip())
         and speaker_state == "confirmed"
-        and subject_category != "unknown"
+        and (
+            subject_category != "unknown"
+            or (subject_category == "unknown" and service_mode == "unknown_safe")
+        )
     )
     unknown_safe_subject = (
         active_subject_id is None
@@ -577,8 +580,28 @@ async def session_policy(
             status_code=503,
             detail={"code": "session_runtime_profile_unavailable"},
         )
-    ledger = RuntimeProfileLedger(_store(request)).current(device_id)
-    runtime_profile_version = ledger.profile_version if ledger is not None else 0
+    store = _store(request)
+    direct_session = store.get_device_media_session(session_id=body.session_id)
+    if direct_session is not None and direct_session.get("runtime") == "direct_voice_core":
+        frozen_profile_id = str(direct_session.get("runtime_profile_id") or "").strip()
+        frozen_profile_version = int(direct_session.get("runtime_profile_version") or 0)
+        if (
+            int(direct_session.get("protocol_version") or 0) != 2
+            or not frozen_profile_id
+            or frozen_profile_version < 1
+            or runtime_profile.get("runtime_profile_id") != frozen_profile_id
+            or direct_session.get("device_id") != device_id
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "session_runtime_profile_projection_mismatch"},
+            )
+        runtime_profile_version = frozen_profile_version
+    else:
+        # Legacy/non-Direct sessions retain the existing device-ledger read
+        # model. Direct sessions never consult this mutable global projection.
+        ledger = RuntimeProfileLedger(store).current(device_id)
+        runtime_profile_version = ledger.profile_version if ledger is not None else 0
     frozen = FrozenMode.from_session(session)
     policy = ModePolicy.session_context(frozen)
     if frozen.interaction_mode == "companion":

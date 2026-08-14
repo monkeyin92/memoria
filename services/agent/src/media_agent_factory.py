@@ -129,6 +129,12 @@ class ProductionMediaSessionFactory:
 
             async def _refresh_profile() -> VerifiedRuntimeProfile | None:
                 policy = await mode_policy_client.fetch(session_id=runtime.session_id)
+                if not policy.available:
+                    await mode_policy_client.aclose()
+                    raise RuntimeError(
+                        "interaction policy authority unavailable: "
+                        f"{policy.unavailable_reason or 'unknown'}"
+                    )
                 expected_profile_version = (
                     runtime.orchestrator.runtime_profiles.expected_device_profile_version
                 )
@@ -261,6 +267,12 @@ class ProductionMediaSessionFactory:
             )
         )
         policy = await client.fetch(session_id=runtime.session_id)
+        if not policy.available:
+            await client.aclose()
+            raise RuntimeError(
+                "interaction policy authority unavailable: "
+                f"{policy.unavailable_reason or 'unknown'}"
+            )
         expected_profile_version = (
             runtime.orchestrator.runtime_profiles.expected_device_profile_version
         )

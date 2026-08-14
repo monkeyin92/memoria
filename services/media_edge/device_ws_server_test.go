@@ -331,8 +331,8 @@ func TestDeviceWSSV2SessionAcceptedAndUplinkForwarded(t *testing.T) {
 	if accepted.AudioMode != DeviceAudioModeHalfDuplexSafe {
 		t.Fatalf("audio mode = %s, want requested half_duplex_safe", accepted.AudioMode)
 	}
-	if accepted.DownlinkSampleRate != 16_000 {
-		t.Fatalf("downlink rate = %d, want 16000", accepted.DownlinkSampleRate)
+	if accepted.DownlinkSampleRate != 24_000 {
+		t.Fatalf("downlink rate = %d, want 24000", accepted.DownlinkSampleRate)
 	}
 	if accepted.InteractionAuthority != "python_authoritative" {
 		t.Fatalf("interaction authority = %s", accepted.InteractionAuthority)
@@ -557,14 +557,14 @@ func TestDeviceWSSDownlinkAudioAndGenerationControls(t *testing.T) {
 		}
 		frames = append(frames, frame)
 	}
-	if frames[0].FrameSamples != 320 || frames[0].GenerationID != 1 ||
+	if frames[0].FrameSamples != 480 || frames[0].GenerationID != 1 ||
 		frames[0].Direction != DeviceDirectionDownlink || frames[0].StreamEpoch != 18 {
 		t.Fatalf("downlink frame mismatch: %+v", frames[0])
 	}
 	if frames[0].Sequence != 0 || frames[0].SampleStart != 0 {
 		t.Fatalf("first downlink frame must start at sequence/sample zero: %+v", frames[0])
 	}
-	if frames[1].Sequence != 1 || frames[1].SampleStart != 320 {
+	if frames[1].Sequence != 1 || frames[1].SampleStart != 480 {
 		t.Fatalf("second downlink frame mismatch: %+v", frames[1])
 	}
 
@@ -841,9 +841,9 @@ func TestDeviceWSSVADKeywordButtonPlaybackMapped(t *testing.T) {
 	if core.keywords[0] != "stop" {
 		t.Fatalf("keyword = %s", core.keywords[0])
 	}
-	// Device receipts are in negotiated 16 kHz samples; the media-v1 bridge
-	// receives Voice Core's 24 kHz source-domain watermark.
-	if len(core.playback) != 1 || core.playback[0].RenderedSampleEnd != 480 {
+	// Device receipts are in negotiated 24 kHz samples, which match Voice
+	// Core's 24 kHz source-domain watermark 1:1.
+	if len(core.playback) != 1 || core.playback[0].RenderedSampleEnd != 320 {
 		t.Fatalf("playback progress mismatch: %+v", core.playback)
 	}
 	if len(core.stops) != 1 {

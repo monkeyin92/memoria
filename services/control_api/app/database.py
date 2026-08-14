@@ -344,6 +344,7 @@ CREATE TABLE IF NOT EXISTS device_media_sessions (
     stream_epoch INTEGER NOT NULL CHECK (stream_epoch >= 1),
     firmware_version TEXT NOT NULL DEFAULT '',
     board_profile TEXT NOT NULL DEFAULT '',
+    runtime_profile_id TEXT NOT NULL CHECK (length(runtime_profile_id) > 0),
     runtime_profile_version INTEGER NOT NULL DEFAULT 1
         CHECK (runtime_profile_version >= 1),
     settings_version INTEGER NOT NULL DEFAULT 0
@@ -474,6 +475,11 @@ class MemoryStore:
                 for column, definition in {
                     "firmware_version": "TEXT NOT NULL DEFAULT ''",
                     "board_profile": "TEXT NOT NULL DEFAULT ''",
+                    # Historical rows predate the per-Session profile fence.
+                    # They migrate as blank and are rejected by Direct resume
+                    # and /session-policy instead of being guessed from the
+                    # device-global ledger. New writes require a non-blank id.
+                    "runtime_profile_id": "TEXT NOT NULL DEFAULT ''",
                     "runtime_profile_version": "INTEGER NOT NULL DEFAULT 1 CHECK (runtime_profile_version >= 1)",
                     "settings_version": "INTEGER NOT NULL DEFAULT 0 CHECK (settings_version >= 0)",
                     "audio_mode_requested": "TEXT NOT NULL DEFAULT 'half_duplex_safe'",
@@ -1583,6 +1589,7 @@ class MemoryStore:
         stream_epoch: int,
         firmware_version: str,
         board_profile: str,
+        runtime_profile_id: str,
         runtime_profile_version: int,
         settings_version: int,
         audio_mode_requested: str,
@@ -1594,6 +1601,10 @@ class MemoryStore:
     ) -> dict[str, Any]:
         """Persist one server-issued device media session (plan section 10.3)."""
 
+        if not runtime_profile_id.strip():
+            raise ValueError("device media runtime_profile_id must not be blank")
+        if runtime_profile_version < 1:
+            raise ValueError("device media runtime_profile_version must be positive")
         if stream_epoch < 1 or stream_epoch > _DEVICE_STREAM_EPOCH_MAX:
             raise ValueError("device media stream_epoch must be a positive uint32")
 
@@ -1604,10 +1615,10 @@ class MemoryStore:
                     session_id, device_id, binding_id, binding_version,
                     subject_id, client_id, runtime, protocol_version,
                     stream_epoch, firmware_version, board_profile,
-                    runtime_profile_version, settings_version,
+                    runtime_profile_id, runtime_profile_version, settings_version,
                     audio_mode_requested, audio_mode_effective,
                     aec_profile_version, ticket_jti, created_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -1621,6 +1632,7 @@ class MemoryStore:
                     stream_epoch,
                     firmware_version,
                     board_profile,
+                    runtime_profile_id,
                     runtime_profile_version,
                     settings_version,
                     audio_mode_requested,
@@ -1648,7 +1660,8 @@ class MemoryStore:
         client_id: str,
         firmware_version: str,
         board_profile: str,
-        runtime_profile_version: int,
+        expected_runtime_profile_id: str,
+        expected_runtime_profile_version: int,
         settings_version: int,
         audio_mode_requested: str,
         ticket_jti: str,
@@ -1663,6 +1676,8 @@ class MemoryStore:
         PostgreSQL Session authority and conversation id remain unchanged.
         """
 
+        if not expected_runtime_profile_id.strip() or expected_runtime_profile_version < 1:
+            raise ValueError("device media RuntimeProfile fence is invalid")
         if (
             expected_stream_epoch < 1
             or expected_stream_epoch > _DEVICE_STREAM_EPOCH_MAX
@@ -1684,12 +1699,12 @@ class MemoryStore:
                 """
                 UPDATE device_media_sessions
                 SET stream_epoch = ?, client_id = ?, firmware_version = ?,
-                    board_profile = ?, runtime_profile_version = ?,
-                    settings_version = ?, audio_mode_requested = ?,
+                    board_profile = ?, settings_version = ?, audio_mode_requested = ?,
                     audio_mode_effective = '', aec_profile_version = NULL,
                     ticket_jti = ?, expires_at = ?, connected_at = NULL
                 WHERE session_id = ? AND stream_epoch = ?
                   AND runtime = 'direct_voice_core' AND protocol_version = 2
+                  AND runtime_profile_id = ? AND runtime_profile_version = ?
                   AND closed_at IS NULL
                 """,
                 (
@@ -1697,13 +1712,14 @@ class MemoryStore:
                     client_id,
                     firmware_version,
                     board_profile,
-                    runtime_profile_version,
                     settings_version,
                     audio_mode_requested,
                     ticket_jti,
                     expires_at,
                     session_id,
                     expected_stream_epoch,
+                    expected_runtime_profile_id,
+                    expected_runtime_profile_version,
                 ),
             )
             if cursor.rowcount != 1:

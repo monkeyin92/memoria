@@ -77,7 +77,7 @@ func TestDeviceWSSDownlinkClockResetsForGenerationTwoWithoutReconnect(t *testing
 	samples := downlinkTestSamples()
 
 	// Generation 1: three 24 kHz source frames (480 samples each) become
-	// 320-sample 16 kHz device frames with sequence/sample starting at 0.
+	// 480-sample 24 kHz device frames with sequence/sample starting at 0.
 	core.inject(deviceGenerationEvent("session_1", 18, 1, 1, 1, mediav1.GenerationAction_GENERATION_ACTION_START))
 	for sequence := 0; sequence < 3; sequence++ {
 		core.inject(deviceAudioEvent("session_1", 18, uint64(sequence), uint64(sequence)*480, samples, 1, 1))
@@ -87,7 +87,7 @@ func TestDeviceWSSDownlinkClockResetsForGenerationTwoWithoutReconnect(t *testing
 	for index, frame := range generationOne {
 		if frame.GenerationID != 1 || frame.Flags != 0 ||
 			frame.Sequence != uint32(index) ||
-			frame.SampleStart != uint64(index)*320 {
+			frame.SampleStart != uint64(index)*480 {
 			t.Fatalf("generation 1 frame %d mismatch: %+v", index, frame)
 		}
 	}
@@ -103,7 +103,7 @@ func TestDeviceWSSDownlinkClockResetsForGenerationTwoWithoutReconnect(t *testing
 	for index, frame := range generationTwo {
 		if frame.GenerationID != 2 || frame.Flags != 0 ||
 			frame.Sequence != uint32(index) ||
-			frame.SampleStart != uint64(index)*320 {
+			frame.SampleStart != uint64(index)*480 {
 			t.Fatalf("generation 2 frame %d mismatch: %+v", index, frame)
 		}
 	}

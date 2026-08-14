@@ -321,6 +321,7 @@ def test_device_media_stream_epoch_reservation_is_monotonic_and_migration_safe(
         stream_epoch=7,
         firmware_version="0.2.0",
         board_profile="memoria-atk-dnesp32s3-v1",
+        runtime_profile_id="rp-session-historical",
         runtime_profile_version=1,
         settings_version=0,
         audio_mode_requested="half_duplex_safe",
@@ -844,6 +845,7 @@ async def test_direct_device_media_session_never_touches_livekit(
     assert record["stream_epoch"] == 1
     assert record["firmware_version"] == "0.1.0"
     assert record["board_profile"] == "memoria-devkit"
+    assert record["runtime_profile_id"] == authority.profile.runtime_profile_id
     assert record["runtime_profile_version"] == claims["runtime_profile_version"]
     assert record["settings_version"] == 0
     assert record["audio_mode_requested"] == "half_duplex_safe"
@@ -979,6 +981,46 @@ async def test_direct_reconnect_reuses_session_and_advances_only_transport_epoch
         first = await _post_direct_media_session(client, service, device_key)
         assert first.status_code == 200, first.text
         first_body = first.json()
+        first_record = memory.get_device_media_session(
+            session_id=str(first_body["session_id"])
+        )
+        assert first_record is not None
+        assert authority.profile is not None
+        frozen_profile_id = str(first_record["runtime_profile_id"])
+        frozen_profile_version = int(first_record["runtime_profile_version"])
+        assert frozen_profile_id == authority.profile.runtime_profile_id
+        assert frozen_profile_version == int(first_body["runtime_profile_version"])
+
+        # Settings updates and another/late Session profile may advance the
+        # device-global ledger. Neither may rewrite this Session's frozen
+        # RuntimeProfile identity/version fence.
+        now = datetime.now(UTC)
+        ledger = RuntimeProfileLedger(memory)
+        ledger.observe_config_change(
+            device_id="dev_test_01",
+            content_fingerprint="settings-after-session",
+            now=now,
+        )
+        ledger.observe(
+            device_id="dev_test_01",
+            runtime_profile_id="rp-other-or-late-session",
+            content_fingerprint="other-or-late-profile",
+            issued_at=now,
+            expires_at=now + timedelta(minutes=5),
+            now=now,
+        )
+        current_ledger = ledger.current("dev_test_01")
+        assert current_ledger is not None
+        assert current_ledger.profile_version > frozen_profile_version
+        assert current_ledger.runtime_profile_id != frozen_profile_id
+
+        policy_response = await client.post(
+            "/v1/interaction/session-policy",
+            headers={"X-Memoria-Internal-Token": _POLICY_TOKEN},
+            json={"session_id": first_body["session_id"]},
+        )
+        assert policy_response.status_code == 200, policy_response.text
+        assert policy_response.json()["runtime_profile_version"] == frozen_profile_version
         resumed = await _post_direct_media_session(
             client,
             service,
@@ -1005,10 +1047,14 @@ async def test_direct_reconnect_reuses_session_and_advances_only_transport_epoch
     )
     assert resumed_claims["session_id"] == first_body["session_id"]
     assert resumed_claims["stream_epoch"] == resumed_body["stream_epoch"]
+    assert resumed_claims["runtime_profile_version"] == frozen_profile_version
+    assert resumed_body["runtime_profile_version"] == frozen_profile_version
     record = memory.get_device_media_session(session_id=str(first_body["session_id"]))
     assert record is not None
     assert record["stream_epoch"] == resumed_body["stream_epoch"]
     assert record["ticket_jti"] == resumed_claims["jti"]
+    assert record["runtime_profile_id"] == frozen_profile_id
+    assert record["runtime_profile_version"] == frozen_profile_version
 
 
 @pytest.mark.asyncio
@@ -1079,6 +1125,42 @@ async def test_direct_device_media_session_creates_authority_before_ticket_and_p
         assert runtime_profile["binding_version"] == claims["binding_version"]
         assert runtime_profile["active_subject_id"] == claims["subject_id"]
         assert runtime_profile["session_epoch"] == authority.profile.session_epoch
+
+
+@pytest.mark.asyncio
+async def test_direct_session_policy_rejects_profile_projection_id_mismatch(
+    tmp_path: Path,
+) -> None:
+    service, store, device_key, payload = _fixture()
+    manifest = _activate_device(service, store, device_key, payload)
+    settings_value, _ = _direct_media_settings()
+    memory = _direct_memory(tmp_path)
+    authority = _DirectSessionAuthority(
+        binding_id=str(manifest["binding_id"]),
+        binding_version=int(manifest["binding_version"]),
+        subject_id="person_a",
+    )
+    app = _direct_app(service, memory, authority, settings_value)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await _post_direct_media_session(client, service, device_key)
+        assert created.status_code == 200, created.text
+        session_id = str(created.json()["session_id"])
+        with memory._connection() as connection:
+            connection.execute(
+                "UPDATE device_media_sessions SET runtime_profile_id = ? WHERE session_id = ?",
+                ("rp-forged-other-session", session_id),
+            )
+        policy = await client.post(
+            "/v1/interaction/session-policy",
+            headers={"X-Memoria-Internal-Token": _POLICY_TOKEN},
+            json={"session_id": session_id},
+        )
+
+    assert policy.status_code == 503, policy.text
+    assert (
+        policy.json()["detail"]["code"]
+        == "session_runtime_profile_projection_mismatch"
+    )
 
 
 @pytest.mark.asyncio

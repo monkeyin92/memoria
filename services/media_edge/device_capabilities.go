@@ -121,13 +121,15 @@ func applyBargeInPolicy(mode string, allowed []string) string {
 	return mode
 }
 
-// ResolveDownlinkRate picks 16 kHz whenever the v2 audio contract offers it
-// (the contract requires it), otherwise 24 kHz for legacy fixture callers.
+// ResolveDownlinkRate picks 24 kHz whenever the v2 audio contract declares it.
+// Direct Voice Core only supports 24 kHz, so v2 hello validation requires
+// 24000 and 16 kHz is neither required nor preferred. Legacy fixture callers
+// keep 24 kHz as before.
 func ResolveDownlinkRate(helloVersion uint64, audio deviceAudioV2) uint64 {
 	if helloVersion >= 2 {
 		for _, rate := range audio.DownlinkSampleRates {
-			if rate == 16_000 {
-				return 16_000
+			if rate == 24_000 {
+				return 24_000
 			}
 		}
 	}
@@ -194,17 +196,17 @@ func (h deviceHelloV2) validate(expectedDeviceID string, expectedEpoch uint64) e
 	if len(audio.DownlinkSampleRates) == 0 || len(audio.DownlinkSampleRates) > 2 {
 		return fmt.Errorf("v2 hello downlink_sample_rates must list 1-2 rates")
 	}
-	has16k := false
+	has24k := false
 	for _, rate := range audio.DownlinkSampleRates {
 		if rate != 16_000 && rate != 24_000 {
 			return fmt.Errorf("v2 hello downlink_sample_rates must be 16000 or 24000")
 		}
-		if rate == 16_000 {
-			has16k = true
+		if rate == 24_000 {
+			has24k = true
 		}
 	}
-	if !has16k {
-		return fmt.Errorf("v2 hello downlink_sample_rates must contain 16000")
+	if !has24k {
+		return fmt.Errorf("v2 hello downlink_sample_rates must contain 24000")
 	}
 	capabilities := h.Capabilities
 	switch capabilities.AECMode {

@@ -35,8 +35,8 @@ func TestAcousticRegistryGatesFullDuplex(t *testing.T) {
 	if err != nil || mode != DeviceAudioModeFullDuplex {
 		t.Fatalf("verified board + verified device AEC did not open full duplex: mode=%s err=%v", mode, err)
 	}
-	if mode := ResolveDownlinkRate(2, v2HelloForMode(true).Audio); mode != 16_000 {
-		t.Fatalf("v2 downlink rate = %d, want 16000", mode)
+	if mode := ResolveDownlinkRate(2, v2HelloForMode(true).Audio); mode != 24_000 {
+		t.Fatalf("v2 downlink rate = %d, want 24000", mode)
 	}
 }
 
@@ -93,10 +93,14 @@ func TestAcousticRegistryRequiresDeviceAECFacts(t *testing.T) {
 	}
 }
 
-func TestResolveDownlinkRatePrefers16kForV2(t *testing.T) {
+func TestResolveDownlinkRateChooses24kForV2(t *testing.T) {
 	audio := deviceAudioV2{DownlinkSampleRates: []uint64{24_000, 16_000}}
-	if rate := ResolveDownlinkRate(2, audio); rate != 16_000 {
-		t.Fatalf("rate = %d, want 16000", rate)
+	if rate := ResolveDownlinkRate(2, audio); rate != 24_000 {
+		t.Fatalf("rate = %d, want 24000", rate)
+	}
+	audio24Only := deviceAudioV2{DownlinkSampleRates: []uint64{24_000}}
+	if rate := ResolveDownlinkRate(2, audio24Only); rate != 24_000 {
+		t.Fatalf("24 kHz-only rate = %d, want 24000", rate)
 	}
 	if rate := ResolveDownlinkRate(1, audio); rate != 24_000 {
 		t.Fatalf("legacy rate = %d, want 24000", rate)
