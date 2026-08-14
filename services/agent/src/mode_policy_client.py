@@ -94,6 +94,7 @@ class ModePolicy:
     unavailable_reason: str | None = None
     session_focus: SessionFocus | None = "chat"
     runtime_profile: VerifiedRuntimeProfile | None = None
+    runtime_profile_version: int = 0
 
     @property
     def available(self) -> bool:
@@ -676,6 +677,13 @@ class ModePolicyClient:
         )
         if runtime_profile is None:
             return ModePolicy.unavailable("runtime_profile_invalid")
+        runtime_profile_version = payload.get("runtime_profile_version", 0)
+        if (
+            isinstance(runtime_profile_version, bool)
+            or not isinstance(runtime_profile_version, int)
+            or runtime_profile_version < 0
+        ):
+            return ModePolicy.unavailable("runtime_profile_version_invalid")
 
         derived = ModePolicy.from_runtime_profile(runtime_profile)
         expected_mode = derived.mode
@@ -724,6 +732,7 @@ class ModePolicyClient:
             companion_style=style,
             references=references,
             session_focus=cast(SessionFocus, session_focus),
+            runtime_profile_version=runtime_profile_version,
         )
 
 

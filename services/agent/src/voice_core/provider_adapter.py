@@ -143,9 +143,11 @@ class ExistingVoiceProviderAdapter:
 
     @property
     def supports_delegation(self) -> bool:
-        return bool(getattr(self.language_model, "supports_delegation", True)) and callable(
-            getattr(self.language_model, "start_delegation", None)
-        ) and callable(getattr(self.language_model, "accept_output_intent", None))
+        return (
+            bool(getattr(self.language_model, "supports_delegation", True))
+            and callable(getattr(self.language_model, "start_delegation", None))
+            and callable(getattr(self.language_model, "accept_output_intent", None))
+        )
 
     @property
     def current_asr_task_epoch(self) -> int:
@@ -258,6 +260,45 @@ class ExistingVoiceProviderAdapter:
                 results.append(result)
         return tuple(results)
 
+    async def finalize_speech_segment(
+        self,
+        identity: SessionIdentity,
+    ) -> tuple[ASRResult, ...]:
+        """Close one VAD-authoritative ASR task and start the next on the same WS."""
+
+        if self._asr is None:
+            return ()
+        asr = await self._ensure_asr(identity.stream_epoch)
+        previous_task_id = str(getattr(asr, "task_id", "") or "")
+        if not previous_task_id:
+            raise RuntimeError("FunASR segment boundary has no active task id")
+        self._remember_asr_task(asr, identity.stream_epoch)
+        await asr.rotate_task(require_consumed=False)
+        self._remember_asr_task(asr, identity.stream_epoch)
+
+        results: list[ASRResult] = []
+        boundary_seen = False
+        # Audio ingestion continuously drains provider events. The larger
+        # history bound is a fail-closed ceiling for the small tail that can
+        # remain between the final PCM frame and task-finished.
+        for _ in range(self.config.max_asr_result_history):
+            try:
+                event = asr.events.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if event.event == "task-failed":
+                raise RuntimeError(event.error_message or "FunASR task failed")
+            if event.event == "result-generated" and event.sentence is not None:
+                result = self._map_asr_event(asr, event, identity.stream_epoch)
+                if result is not None:
+                    results.append(result)
+            if event.event == "task-finished" and event.task_id == previous_task_id:
+                boundary_seen = True
+                break
+        if not boundary_seen:
+            raise RuntimeError("FunASR task boundary event was not available to the media adapter")
+        return tuple(results)
+
     async def reset_after_discontinuity(
         self,
         identity: SessionIdentity,
@@ -285,6 +326,8 @@ class ExistingVoiceProviderAdapter:
     ) -> ASRResult | None:
         sentence = event.sentence
         if sentence is None:
+            return None
+        if sentence.heartbeat and not sentence.text:
             return None
         if not event.task_id:
             return None
@@ -1022,7 +1065,9 @@ class ExistingVoiceProviderAdapter:
         """Request cooperative cancellation of one generation output stream."""
 
         output_cancelled = False
-        for (output_fence, _work_id), output_event in tuple(self._output_work_cancel_events.items()):
+        for (output_fence, _work_id), output_event in tuple(
+            self._output_work_cancel_events.items()
+        ):
             if output_fence.matches(fence):
                 output_event.set()
                 output_cancelled = True

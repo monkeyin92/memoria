@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def test_production_services_use_separate_env_files_and_persistent_agent_spool() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    control = compose.split("  control-api:\n", 1)[1].split("  agent:\n", 1)[0]
 
     assert "/etc/memoria.env" not in compose
     assert "/etc/memoria-control-api.env" in compose
@@ -19,6 +20,9 @@ def test_production_services_use_separate_env_files_and_persistent_agent_spool()
     assert "/etc/memoria-miniprogram-gateway.env" in compose
     assert "source: /var/lib/memoria-agent" in compose
     assert "target: /data" in compose
+    assert "source: /etc/memoria-media-runtime" in control
+    assert "target: /etc/memoria-media-runtime" in control
+    assert "read_only: true" in control
 
 
 def test_media_bridge_uses_the_shared_production_agent_session_factory() -> None:
@@ -813,3 +817,72 @@ def test_production_env_split_rejects_a_reused_spool_encryption_key() -> None:
                 "MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY": shared,
             }
         )
+
+
+def test_media_edge_direct_device_ingress_uses_new_loopback_port_and_exact_path() -> None:
+    compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    edge = compose.split("  media-edge:\n", 1)[1]
+    device_edge = (ROOT / "infra" / "nginx-memoria-device-edge.conf").read_text(encoding="utf-8")
+    https_conf = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
+    legacy = (ROOT / "infra" / "nginx-memoria-device-media.conf").read_text(encoding="utf-8")
+    example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
+
+    # Direct device WSS is published loopback-only to a NEW media-edge port and
+    # never reuses the legacy gateway port 8793.
+    assert "127.0.0.1:8794:8082" in edge
+    assert 'MEDIA_EDGE_DEVICE_WSS_ADDR: ":8082"' in edge
+    assert "profiles:\n      - media-runtime" in edge
+    assert "include /etc/nginx/snippets/memoria-device-edge.conf;" in https_conf
+    assert "include /etc/nginx/snippets/memoria-device-media.conf;" in https_conf
+    exact = "location = /memoria-device-edge/v1/device/media {"
+    assert exact in device_edge
+    block = device_edge.split(exact, 1)[1].split("}", 1)[0]
+    assert "proxy_pass http://127.0.0.1:8794/v1/device/media;" in block
+    assert "proxy_set_header Authorization $http_authorization;" in block
+    assert "proxy_set_header X-Client-ID $http_x_client_id;" in block
+    assert "proxy_buffering off;" in block
+    assert "access_log off;" in block
+    assert "8793" not in block
+    # Legacy exact gateway route remains untouched.
+    assert "location = /memoria-device-media/v1/device/media {" in legacy
+    assert "proxy_pass http://127.0.0.1:8793/v1/device/media;" in legacy
+    # Direct device media stays default-off.
+    assert "DEVICE_MEDIA_RUNTIME=livekit_compat" in example
+    assert "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE=allowlist" in example
+    assert "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS=" in example
+    assert "MEDIA_EDGE_DEVICE_WSS_ENABLED=false" in example
+    assert "device-state-redis:" in compose
+    assert "--tls-auth-clients" in compose
+    assert "device-state-redis-healthcheck-client.crt" in compose
+    assert "condition: service_healthy" in edge
+
+
+def test_nginx_publicly_blocks_v1_internal_routes_without_touching_container_urls() -> None:
+    nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
+
+    # The public TLS server block must never proxy Control-internal v1
+    # routes (device session close reports, media-runtime SLO).
+    exact = "location ^~ /memoria-api/v1/internal/ {"
+    assert nginx.count(exact) == 1
+    block = nginx.split(exact, 1)[1].split("}", 1)[0]
+    assert block.strip() == "return 404;"
+    assert "proxy_pass" not in block
+
+    # The v1 internal block sits next to the legacy internal block and
+    # always ahead of the generic /memoria-api/ fallback so a later move
+    # cannot silently re-expose it.
+    legacy_internal = "location ^~ /memoria-api/internal/ {"
+    fallback = "location ^~ /memoria-api/ {"
+    assert nginx.index(legacy_internal) < nginx.index(exact) < nginx.index(fallback)
+
+    # Internal container URLs use Docker DNS (control-api:8000) and must
+    # never be routed through the public nginx server block.
+    assert "http://control-api:8000/v1/internal/device-close" not in nginx
+    assert "http://control-api:8000/v1/internal/media-runtime/slo" not in nginx
+    for snippet in (
+        "nginx-memoria-device-edge.conf",
+        "nginx-memoria-device-media.conf",
+        "nginx-memoria-miniprogram-media.conf",
+        "nginx-memoria-loopback-smoke.conf",
+    ):
+        assert exact not in (ROOT / "infra" / snippet).read_text(encoding="utf-8")

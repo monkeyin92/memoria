@@ -13,6 +13,7 @@ from services.common.companions import (
     companion_definition,
     designed_voice_speaker_sha256,
 )
+from services.common.realtime_information import is_safe_realtime_reply
 
 VoiceKind = Literal["designed", "personal"]
 PERSONAL_VOICE_MODEL = "seed-icl-2.0"
@@ -139,7 +140,7 @@ def anonymous_public_plan_allowed(
         and provenance.mode_policy_version == policy.policy_version
         and provenance.planner_policy_version == "local-safe-fallback-v1"
         and plan.instructions == ANONYMOUS_PUBLIC_CHAT_INSTRUCTIONS
-        and plan.direct_text in {None, SAFE_UNKNOWN_REPLY, CRISIS_SUPPORT_REPLY}
+        and (plan.direct_text in {None, SAFE_UNKNOWN_REPLY, CRISIS_SUPPORT_REPLY} or is_safe_realtime_reply(plan.direct_text))
         and plan.epistemic_status == provenance.epistemic_status == "not_applicable"
         and plan.epistemic_reason_codes == provenance.epistemic_reason_codes
         and bool(plan.epistemic_reason_codes)

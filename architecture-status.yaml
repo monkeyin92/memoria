@@ -1,12 +1,63 @@
-# 唯一架构状态基线；真实外部 Gate 未通过前不得启用 go_authoritative。
-schema_version: 1
-as_of_commit: 20260806-213522
+# 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
+# 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
+schema_version: 2
+as_of_commit: working_tree_2026-08-14_esp32_realtime_remediation_real_board
 production_runtime: python_authoritative
 production_media: livekit
 go_shadow_enabled: false
 go_authoritative_allowed: false
+hardware_target: esp32_first_class_realtime_terminal
+miniprogram_role: control_plane_only
+hardware_media_target_runtime: go_media_edge_direct_voice_core
+hardware_media_rollback_runtime: python_device_gateway_livekit_compat
+hardware_media_interaction_authority: python_authoritative
 student_track: p3_local_software_complete_external_release_gates_pending
 student_track_as_of: 2026-08-09_local_worktree
+
+hardware_realtime_voice:
+  code: implemented_local_candidate
+  wired: legacy_canary_real_board_two_turn_verified_direct_not_deployed
+  enabled: false
+  verified: false
+  product_level: hardware_compatibility_demo
+  target_product_level: hardware_realtime_voice_candidate
+  advertised_duplex_level: none
+  target_duplex_level: l2_natural_interrupt_near_full_duplex
+  device_protocol: v2_direct_with_v1_legacy_gateway
+  device_wss_owner: go_media_edge
+  interaction_owner: python_voice_core
+  generation_origin: one
+  aec_profile: pending_16khz_reference_bringup
+  rollback_path: device_media_gateway_livekit_compat
+  firmware_overlay_sha256: 3d967764a623d13e0983f87de494465c051c6278efa1b2b862280c0c2bd33217
+  firmware_merged_sha256: cc155a344ea948deb373aa440f5c85ebd71cad0c602960188c7ff07d136eca81
+  firmware_real_board_flushed: true
+  firmware_identity_preserved_verified: true
+  firmware_boot_activation_verified: true
+  legacy_v1_negotiation_verified: true
+  legacy_v1_agent_canary_enabled: true
+  legacy_v1_agent_canary_image: memoria-agent:20260814-172823-agent-canary
+  legacy_v1_agent_canary_commit: c6c54d4ade09025eb24d88c896ef9e65c6568a82
+  legacy_v1_two_turn_actual_heard: true
+  prior_candidate_legacy_v1_first_reply_audible: true
+  prior_candidate_first_turn_asr_endpoint_latency_ms: 20500
+  prior_candidate_second_turn_asr_final_received: false
+  firmware_legacy_v1_heartbeat_compat: implemented_on_board_two_turn_verified_long_session_pending
+  agent_vad_task_boundary: implemented_legacy_canary_and_direct_local_tests_passed
+  agent_vad_task_boundary_enabled: true
+  agent_vad_task_boundary_real_board_verified: true
+  direct_v2_enabled: false
+  direct_v2_verified: false
+
+miniprogram_control_plane:
+  code: implemented_local
+  wired: implemented_local_not_uploaded
+  enabled: false
+  verified: false
+  realtime_microphone_allowed: false
+  realtime_tts_playback_allowed: false
+  realtime_media_wss_allowed: false
+  livekit_room_allowed: false
 
 module_budgets:
   services/agent/src/duplex_runtime.py: 4717
@@ -28,16 +79,40 @@ stages:
   student_tutor: implemented_local
   student_weekly_report_and_crisis_outbox: implemented_local
   student_offsite_backup_tooling: implemented_local_not_operated
-  multi_instance_ownership: pending
+  miniprogram_control_plane_only: implemented_local_static_gate_passed
+  esp32_device_protocol_v2: implemented_local_clean_build_real_board_flash_direct_v2_not_deployed
+  esp32_legacy_v1_rolling_fallback: implemented_real_board_two_turn_verified
+  funasr_per_vad_task_rotation: implemented_agent_canary_real_board_two_turn_verified_1493_tests_passed
+  device_same_session_recovery: implemented_local_bounded_attempt_fenced_pending_real_weak_network
+  go_hardware_device_wss: implemented_local_auth_replay_epoch_backpressure
+  direct_device_to_voice_core: implemented_local_not_deployed
+  hardware_playback_actual_heard: two_turn_user_confirmed_audible_watermark_still_approximate
+  hardware_hard_stop: implemented_local_pending_real_audible_latency
+  runtime_profile_device_ack: implemented_local_edge_observed
+  runtime_profile_settings_atomicity: implemented_local
+  device_effective_audio_mode_diagnostics: implemented_local_edge_authoritative
+  control_to_edge_internal_auth: implemented_local_token_plus_mtls_required_for_production_direct
+  edge_to_control_session_close: implemented_local_strict_contract_independent_token
+  session_terminal_authority: implemented_local_postgres_epoch_fenced_idempotent
+  direct_production_ingress: implemented_local_loopback_nginx_exact_route_not_deployed
+  direct_rollback_env_cleanup: implemented_local_tested
+  device_ticket_replay_authority: redis_atomic_shared_local_tests_passed_not_deployed
+  device_connection_lease_authority: redis_owner_epoch_atomic_local_tests_passed_not_deployed
+  hardware_offline_stop_keyword: pending_firmware_and_acoustic_verification
+  hardware_natural_barge_in: pending_aec_verification
+  legacy_device_livekit_bridge: rollback_only_after_direct_path_gate
+  multi_instance_ownership: implemented_local_redis_pubsub_plus_refresh_not_deployed
   authority_migration: blocked_by_external_gates
 
 gates:
   ci: pending_remote_run
   local_strict_mypy: passed
   local_proto_generation: passed
-  local_python_tests: passed_2108_2_skipped_coverage_87_10
+  local_python_tests: passed_service_suites_and_postgres_contracts_2026_08_13
   local_h5_tests: passed
-  local_miniprogram_tests: passed_90_upload_dry_run_only
+  local_h5_test_count: passed_372_node_24_16_0
+  local_h5_production_build: passed_node_24_16_0
+  local_miniprogram_tests: passed_142_node_24_16_0_upload_dry_run
   local_go_tests: passed
   local_go_race: passed
   local_go_vet: passed
@@ -61,11 +136,35 @@ gates:
   turn_cross_host_e2e: pending
   browser_playout_ack: pending
   hardware_aec: pending
+  miniprogram_no_realtime_media_static_gate: passed_local_142_tests_upload_dry_run
+  device_protocol_v2_compatibility: passed_local_contract_and_firmware_source_tests
+  go_hardware_wss_auth_replay: passed_local_go_and_race
+  go_hardware_wss_backpressure: passed_local_go_and_race
+  direct_voice_core_single_turn: passed_local_contract_pending_provider_and_real_hardware
+  funasr_vad_task_boundary: passed_agent_canary_legacy_real_board_two_turn_and_direct_local_absolute_deadline
+  session_close_authority: passed_local_postgres_41
+  edge_close_report_contract: passed_local_strict_identity_epoch_cas
+  direct_production_env_and_rollback: passed_local_generation_and_static_compose
+  direct_production_mtls_jwks_deploy: pending_real_secrets_and_host_deployment
+  direct_multi_instance_replay_and_lease: passed_local_two_edge_real_redis_process_pending_production_ha_chaos
+  device_wss_server_ca_validation: pending_real_firmware_tls_evidence
+  compatibility_hs256_retirement: pending_direct_default_switch_same_release_gate
+  device_button_stop_latency: pending_real_hardware
+  device_offline_keyword_latency: pending_real_hardware
+  hardware_playback_watermark: pending_real_dac_evidence
+  hardware_double_talk_matrix: pending_real_hardware
+  miniprogram_independence_t14: pending_real_wechat_and_hardware
+  esp32_identity_preservation: passed_real_board_pre_post_byte_equal_2026_08_14
+  esp32_firmware_flash_readback: passed_real_board_four_immutable_regions_and_ota_valid_2026_08_14
+  esp32_boot_wifi_activation: passed_real_board_2026_08_14
+  hardware_acceptance_t1_t14: blocked_0_pass_14_blocked_0_failed_real_board_booted_receipts_and_acoustic_runs_pending
+  esp32_500_turn_stability: pending_real_hardware
+  ota_power_loss_recovery: pending_real_hardware
   authorized_child_corpus_200: pending
   capacity_matrix: pending
-  redis_session_ownership: pending
+  redis_session_ownership: passed_local_device_wss_atomic_takeover_pending_production_ha
   chaos_recovery: pending
-  canary_and_rollback: pending
+  canary_and_rollback: agent_canary_deployed_healthy_rollback_images_retained_not_exercised
 
 external_evidence_policy:
   fail_closed: true

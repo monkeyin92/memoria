@@ -221,6 +221,11 @@ type LiveSessionActor struct {
 	outputCandidatesComplete bool
 	outputEvaluated          map[string]struct{}
 	outputEvaluatedOrder     []string
+	// nextEvent may wake on audio/bulk while an earlier critical event is
+	// already ready in another channel. Keep that selected event here so the
+	// critical generation/floor transition is reduced first without dropping
+	// or re-enqueuing the selected payload.
+	deferredEvent *LiveSessionEvent
 }
 
 type shadowOutputWatermark struct {

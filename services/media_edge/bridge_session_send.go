@@ -23,6 +23,15 @@ func (s *VoiceCoreSession) CurrentFence() Fence {
 	return s.current
 }
 
+// CurrentGeneration returns the complete authoritative reconnect snapshot.
+// A cancelled fence remains current for stale-event rejection but is not an
+// active playback generation.
+func (s *VoiceCoreSession) CurrentGeneration() (Fence, bool) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	return s.current, s.currentActive
+}
+
 func (s *VoiceCoreSession) send(message *mediav1.MediaToCore) error {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()

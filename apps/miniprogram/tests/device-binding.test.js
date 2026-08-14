@@ -679,7 +679,7 @@ test("tampered binding manifest is cleared on read and yields no_binding", () =>
 });
 
 test("config action seam fails closed with explainable messages", () => {
-  for (const action of ["guardian_manage", "raw_audio_consent", "voice_enrollment"]) {
+  for (const action of ["guardian_manage", "raw_audio_consent"]) {
     const gate = binding.configActionGate(action);
     assert.equal(gate.allowed, false);
     assert.equal(gate.reason, "config_seam_pending");
@@ -723,7 +723,6 @@ test("sensitive entries are driven by capabilities, not local inference", () => 
 
 test("each valid capability opens exactly its own sensitive entry", () => {
   const cases = [
-    ["voice_profile_create", "speaker_enrollment"],
     ["digital_self_preview", "digital_self"],
     ["guardian_summary_view", "guardian_summary"],
     ["raw_audio_retention", "raw_voice_consent"],
@@ -740,6 +739,17 @@ test("each valid capability opens exactly its own sensitive entry", () => {
   }
 });
 
+test("voice_profile_create no longer opens a navigation entry", () => {
+  // PR-02：手机声纹录取移除后，voice_profile_create 只作为「我的」页的服务端
+  // 授权状态展示，不再映射到任何页面入口（说话人登记在机器人端完成）。
+  const profile = binding.normalizeRuntimeProfile(
+    validRuntimeProfile({ capabilities: ["voice_profile_create"] }),
+  );
+  assert.equal(profile.valid, true);
+  assert.deepEqual(binding.sensitiveEntriesFor(profile), []);
+  assert.deepEqual(binding.sensitiveCapabilitiesFor(profile), ["voice_profile_create"]);
+  assert.equal(binding.entryForCapability("voice_profile_create"), null);
+});
 test("profile unavailable denies all five sensitive entries", () => {
   assert.deepEqual(binding.sensitiveEntriesFor(null), []);
   const invalid = binding.normalizeRuntimeProfile({ service_mode: "adult_companion" });

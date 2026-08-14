@@ -12,6 +12,9 @@ func (s *Server) metrics(w http.ResponseWriter, _ *http.Request) {
 	s.metricsMu.Lock()
 	defer s.metricsMu.Unlock()
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	if s.DeviceWSS != nil {
+		s.DeviceWSS.writeDeviceMetrics(w)
+	}
 	_, _ = fmt.Fprintf(w, "media_edge_requests_total %d\n", s.Requests.Load())
 	_, _ = fmt.Fprintf(w, "media_edge_rejected_frames_total %d\n", s.RejectedFrames.Load())
 	_, _ = fmt.Fprintf(w, "media_edge_opus_fec_frames_total %d\n", s.OpusFECFrames.Load())

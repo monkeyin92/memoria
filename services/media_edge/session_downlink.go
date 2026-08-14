@@ -28,7 +28,8 @@ func (s *Session) acceptDownlinkLocked(frame AudioFrame) error {
 		s.staleFrames++
 		return fmt.Errorf("downlink sequence has a gap")
 	}
-	if !s.hasDownlinkSeq && (frame.Sequence != 0 || frame.CaptureStartSample != 0) {
+	if !s.hasDownlinkSeq && !s.allowResumedDownlinkOrigin &&
+		(frame.Sequence != 0 || frame.CaptureStartSample != 0) {
 		s.staleFrames++
 		return fmt.Errorf("first downlink frame must start at sequence and sample zero")
 	}
@@ -51,6 +52,7 @@ func (s *Session) acceptDownlinkLocked(frame AudioFrame) error {
 	}
 	s.lastDownlinkSeq = frame.Sequence
 	s.hasDownlinkSeq = true
+	s.allowResumedDownlinkOrigin = false
 	frameEnd := frame.CaptureStartSample + frame.FrameSamples
 	s.lastDownlinkSourceEnd = frameEnd
 	if frameEnd > s.renderedSampleEnd {

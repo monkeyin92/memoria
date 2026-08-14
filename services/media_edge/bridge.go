@@ -37,12 +37,16 @@ var (
 
 // BridgeIdentity is the identity carried on every media-v1 message.
 type BridgeIdentity struct {
-	SessionID     string
-	AccountID     string
-	ParticipantID string
-	DeviceID      string
-	ClientType    string
-	StreamEpoch   uint64
+	SessionID             string
+	AccountID             string
+	ParticipantID         string
+	DeviceID              string
+	ClientType            string
+	StreamEpoch           uint64
+	SubjectID             string
+	BindingID             string
+	BindingVersion        uint64
+	RuntimeProfileVersion uint64
 }
 
 func (i BridgeIdentity) validate() error {
@@ -55,17 +59,29 @@ func (i BridgeIdentity) validate() error {
 	if i.StreamEpoch == 0 {
 		return fmt.Errorf("stream epoch must be positive")
 	}
+	if i.ClientType == "device" && (i.SubjectID == "" || i.BindingID == "" ||
+		i.BindingVersion == 0 || i.RuntimeProfileVersion == 0) {
+		return fmt.Errorf("device identity requires a complete runtime profile authority fence")
+	}
+	if i.ClientType != "device" && (i.SubjectID != "" || i.BindingID != "" ||
+		i.BindingVersion != 0 || i.RuntimeProfileVersion != 0) {
+		return fmt.Errorf("runtime profile authority fence is device-only")
+	}
 	return nil
 }
 
 func (i BridgeIdentity) proto() *mediav1.SessionIdentity {
 	return &mediav1.SessionIdentity{
-		SessionId:     i.SessionID,
-		AccountId:     i.AccountID,
-		ParticipantId: i.ParticipantID,
-		DeviceId:      i.DeviceID,
-		ClientType:    i.ClientType,
-		StreamEpoch:   i.StreamEpoch,
+		SessionId:             i.SessionID,
+		AccountId:             i.AccountID,
+		ParticipantId:         i.ParticipantID,
+		DeviceId:              i.DeviceID,
+		ClientType:            i.ClientType,
+		StreamEpoch:           i.StreamEpoch,
+		SubjectId:             i.SubjectID,
+		BindingId:             i.BindingID,
+		BindingVersion:        i.BindingVersion,
+		RuntimeProfileVersion: i.RuntimeProfileVersion,
 	}
 }
 
@@ -74,12 +90,16 @@ func identityFromProto(value *mediav1.SessionIdentity) BridgeIdentity {
 		return BridgeIdentity{}
 	}
 	return BridgeIdentity{
-		SessionID:     value.GetSessionId(),
-		AccountID:     value.GetAccountId(),
-		ParticipantID: value.GetParticipantId(),
-		DeviceID:      value.GetDeviceId(),
-		ClientType:    value.GetClientType(),
-		StreamEpoch:   value.GetStreamEpoch(),
+		SessionID:             value.GetSessionId(),
+		AccountID:             value.GetAccountId(),
+		ParticipantID:         value.GetParticipantId(),
+		DeviceID:              value.GetDeviceId(),
+		ClientType:            value.GetClientType(),
+		StreamEpoch:           value.GetStreamEpoch(),
+		SubjectID:             value.GetSubjectId(),
+		BindingID:             value.GetBindingId(),
+		BindingVersion:        value.GetBindingVersion(),
+		RuntimeProfileVersion: value.GetRuntimeProfileVersion(),
 	}
 }
 
@@ -347,8 +367,18 @@ func (b *VoiceCoreBridge) Connect(
 		return nil, err
 	}
 	session.interactionAuthority = effectiveAuthority
-	if accepted.GetAccepted().GetCurrentGenerationId() > 0 {
-		session.current.GenerationID = accepted.GetAccepted().GetCurrentGenerationId()
+	acceptedFence := Fence{
+		SessionID:    identity.SessionID,
+		TurnID:       accepted.GetAccepted().GetCurrentTurnId(),
+		GenerationID: accepted.GetAccepted().GetCurrentGenerationId(),
+		ToolEpoch:    accepted.GetAccepted().GetCurrentToolEpoch(),
+	}
+	if (acceptedFence.GenerationID == 0) != (acceptedFence.TurnID == 0 && acceptedFence.ToolEpoch == 0) {
+		_ = session.Close()
+		return nil, fmt.Errorf("voice-core bridge returned a partial reconnect fence")
+	}
+	if acceptedFence.GenerationID > 0 {
+		session.current = acceptedFence
 		// SessionAccepted predates the full fence fields.  A reconnect with a
 		// non-zero generation therefore carries one ordered GenerationControl
 		// resume event immediately after acceptance; consume it before exposing
@@ -359,13 +389,19 @@ func (b *VoiceCoreBridge) Connect(
 			_ = session.Close()
 			return nil, fmt.Errorf("receive Voice Core reconnect fence: %w", resumeErr)
 		}
-		if resumeErr := session.validateCoreEvent(resume); resumeErr != nil || resume.GetGeneration() == nil {
+		generation := resume.GetGeneration()
+		if resumeErr := session.validateCoreEvent(resume); resumeErr != nil || generation == nil ||
+			(generation.GetAction() != mediav1.GenerationAction_GENERATION_ACTION_RESUME &&
+				generation.GetAction() != mediav1.GenerationAction_GENERATION_ACTION_CANCEL) ||
+			!session.CurrentFence().Equal(acceptedFence) {
 			_ = session.Close()
 			if resumeErr != nil {
 				return nil, fmt.Errorf("invalid Voice Core reconnect fence: %w", resumeErr)
 			}
 			return nil, fmt.Errorf("voice-core reconnect acceptance omitted full generation fence")
 		}
+		session.requireAudioOrigin =
+			generation.GetAction() != mediav1.GenerationAction_GENERATION_ACTION_RESUME
 	}
 	return session, nil
 }
@@ -389,6 +425,7 @@ type VoiceCoreSession struct {
 	sendMu               sync.Mutex
 	stateMu              sync.Mutex
 	current              Fence
+	currentActive        bool
 	lastEventSequence    uint64
 	lastShadowSequence   uint64
 	lastFloorEpoch       uint64

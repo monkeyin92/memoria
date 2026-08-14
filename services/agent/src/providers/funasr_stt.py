@@ -121,14 +121,22 @@ class FunASRSession:
         self._recv_task: asyncio.Task[None] | None = None
         self._ready = asyncio.Event()
         self._reconnect_lock = asyncio.Lock()
+        self._task_rotation_lock = asyncio.Lock()
         self._breaker = CircuitBreaker()
         self._finishing = False
+        self._terminal_finishing = False
+        self._rotation_pending = False
+        self._task_started_event = asyncio.Event()
+        self._task_finished_received = asyncio.Event()
+        self._task_finished_consumed = asyncio.Event()
+        self._finished_task_id: str | None = None
         self._pcm_ring: collections.deque[bytes] = collections.deque()
         self._pcm_ring_ranges: collections.deque[tuple[int, int]] = collections.deque()
         self._pcm_ring_bytes = 0
         self._max_ring_bytes = int(config.sample_rate * 2 * config.reconnect_audio_ms / 1000)
         self._context: tuple[dict[str, object], ...] = ()
         self._task_epoch = 0
+        self._segment_epoch = 1
         self._task_sample_origin = 0
         self._last_sent_sample = 0
         self._last_provider_acked_sample = 0
@@ -153,6 +161,18 @@ class FunASRSession:
     @property
     def task_epoch(self) -> int:
         return self._task_epoch
+
+    @property
+    def segment_epoch(self) -> int:
+        return self._segment_epoch
+
+    @property
+    def finishing(self) -> bool:
+        return self._finishing
+
+    @property
+    def rotation_pending(self) -> bool:
+        return self._rotation_pending
 
     @property
     def task_sample_origin(self) -> int:
@@ -184,9 +204,23 @@ class FunASRSession:
 
         window = max(1, self.config.sample_rate * self.config.reconnect_audio_ms // 1000)
         return max(
+            self._task_sample_origin,
             self._last_provider_acked_sample,
             self._last_committed_sample,
             self._last_sent_sample - window,
+        )
+
+    def _build_run_task(self) -> dict[str, Any]:
+        return build_run_task(
+            model=self.config.model,
+            sample_rate=self.config.sample_rate,
+            language_hints=[self.config.language],
+            semantic_punctuation_enabled=self.config.semantic_punctuation,
+            max_sentence_silence_ms=self.config.max_sentence_silence_ms,
+            heartbeat=self.config.heartbeat,
+            context=list(self._context),
+            vocabulary_id=self.config.vocabulary_id,
+            speech_noise_threshold=self.config.speech_noise_threshold,
         )
 
     async def connect(self) -> None:
@@ -204,6 +238,13 @@ class FunASRSession:
         self._task_epoch += 1
         self._task_sample_origin = 0
         self._failed = False
+        self._finishing = False
+        self._terminal_finishing = False
+        self._rotation_pending = False
+        self._task_started_event.set()
+        self._task_finished_received.clear()
+        self._task_finished_consumed.clear()
+        self._finished_task_id = None
         self._started.set()
         self._ready.set()
         self._mark_ws_connected()
@@ -223,17 +264,7 @@ class FunASRSession:
                 additional_headers=headers,
                 open_timeout=self.config.connect_timeout_s,
             )
-            run = build_run_task(
-                model=self.config.model,
-                sample_rate=self.config.sample_rate,
-                language_hints=[self.config.language],
-                semantic_punctuation_enabled=self.config.semantic_punctuation,
-                max_sentence_silence_ms=self.config.max_sentence_silence_ms,
-                heartbeat=self.config.heartbeat,
-                context=list(self._context),
-                vocabulary_id=self.config.vocabulary_id,
-                speech_noise_threshold=self.config.speech_noise_threshold,
-            )
+            run = self._build_run_task()
             task_id = str(run["header"]["task_id"])
             await ws.send(json.dumps(run, ensure_ascii=False))
             while True:
@@ -278,10 +309,29 @@ class FunASRSession:
                     if isinstance(message, bytes):
                         continue
                     ev = parse_server_message(message)
+                    if ev.task_id and ev.task_id == self._finished_task_id:
+                        logger.info(
+                            "late FunASR event ignored after task boundary event=%s task_id=%s",
+                            ev.event,
+                            ev.task_id,
+                        )
+                        continue
+                    if ev.task_id and self.task_id and ev.task_id != self.task_id:
+                        logger.info(
+                            "stale FunASR task event ignored event=%s task_id=%s current_task_id=%s",
+                            ev.event,
+                            ev.task_id,
+                            self.task_id,
+                        )
+                        continue
                     if ev.event == "task-failed":
                         self._failed = True
                         self._breaker.record_failure()
                     await self.events.put(ev)
+                    if ev.event == "task-started" and ev.task_id == self.task_id:
+                        self._failed = False
+                        self._ready.set()
+                        self._task_started_event.set()
                     if ev.event == "result-generated" and ev.sentence is not None:
                         end_ms = ev.sentence.end_ms or ev.sentence.begin_ms
                         ack = max(
@@ -298,13 +348,20 @@ class FunASRSession:
                                 self._last_emitted_final_sample,
                                 min(ack, self._last_sent_sample),
                             )
-                    if ev.event in ("task-finished", "task-failed"):
+                    if ev.event == "task-finished" and ev.task_id == self.task_id:
+                        self._finished_task_id = ev.task_id
+                        self._ready.clear()
+                        self._task_finished_received.set()
+                        if self._rotation_pending:
+                            continue
+                        return
+                    if ev.event == "task-failed":
+                        self._task_started_event.set()
                         self._mark_ws_disconnected()
                         self._ready.clear()
                         with contextlib.suppress(Exception):
                             await ws.close()
-                        if ev.event == "task-failed":
-                            self._failed = True
+                        self._failed = True
                         return
                 if self._closed:
                     return
@@ -349,6 +406,10 @@ class FunASRSession:
                 self._task_epoch += 1
                 self._task_sample_origin = replay_start
                 self._failed = False
+                self._task_started_event.set()
+                self._task_finished_received.clear()
+                self._task_finished_consumed.clear()
+                self._finished_task_id = None
                 self._mark_ws_connected()
                 for ev in startup_events:
                     await self.events.put(ev)
@@ -420,7 +481,7 @@ class FunASRSession:
             self._last_sent_sample = start
             self._push_ring(pcm)
             self._last_sent_sample += len(pcm) // 2
-        await self._ready.wait()
+        await self._wait_until_ready("send PCM")
         ws = self._ws
         if ws is None:
             raise RuntimeError("FunASR session not connected")
@@ -440,15 +501,19 @@ class FunASRSession:
         self._context = context
         if self._ws is None or self.task_id is None:
             return
-        await self._ready.wait()
+        await self._wait_until_ready("update context")
         msg = build_continue_task_context(self.task_id, list(context))
         await self._ws.send(json.dumps(msg, ensure_ascii=False))
 
-    async def finish(self) -> None:
+    async def finish(self, *, terminal: bool = True) -> None:
         if self._finishing or self._ws is None or self.task_id is None:
             return
         self._finishing = True
-        await self._ready.wait()
+        self._terminal_finishing = terminal
+        self._task_finished_received.clear()
+        self._task_finished_consumed.clear()
+        self._finished_task_id = None
+        await self._wait_until_ready("finish task")
         ws = self._ws
         assert ws is not None
         try:
@@ -456,6 +521,95 @@ class FunASRSession:
         except Exception:
             if not await self._recover(ws):
                 raise APIConnectionError("FunASR reconnect failed while finishing") from None
+
+    async def wait_for_task_finished(self, *, require_consumed: bool = False) -> None:
+        """Wait for one provider task boundary; heartbeat packets cannot extend it."""
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.config.result_timeout_s
+        try:
+            await asyncio.wait_for(
+                self._task_finished_received.wait(),
+                timeout=max(0.001, deadline - loop.time()),
+            )
+            if require_consumed:
+                await asyncio.wait_for(
+                    self._task_finished_consumed.wait(),
+                    timeout=max(0.001, deadline - loop.time()),
+                )
+        except TimeoutError as exc:
+            raise APIConnectionError(
+                f"FunASR task boundary timed out after {self.config.result_timeout_s:.3f}s"
+            ) from exc
+
+    def acknowledge_task_finished(self, task_id: str) -> None:
+        if task_id and task_id == self.task_id:
+            self._task_finished_consumed.set()
+
+    async def rotate_task(self, *, require_consumed: bool = True) -> None:
+        """Finish one VAD segment and reuse the same WebSocket for the next task."""
+
+        async with self._task_rotation_lock:
+            if self._closed or self._ws is None or self.task_id is None:
+                raise APIConnectionError("FunASR task rotation requires an active session")
+            if self._finishing:
+                raise APIConnectionError("FunASR task rotation already in progress")
+            self._rotation_pending = True
+            try:
+                await self.finish(terminal=False)
+                await self.wait_for_task_finished(require_consumed=require_consumed)
+                await self._start_reused_task()
+            except BaseException:
+                self._rotation_pending = False
+                raise
+
+    async def _start_reused_task(self) -> None:
+        ws = self._ws
+        if ws is None:
+            raise APIConnectionError("FunASR WebSocket is unavailable for task reuse")
+
+        run = self._build_run_task()
+        task_id = str(run["header"]["task_id"])
+        next_origin = self._last_sent_sample
+        self._task_started_event.clear()
+        self._task_finished_received.clear()
+        self._task_finished_consumed.clear()
+        self.task_id = task_id
+        self._task_epoch += 1
+        self._segment_epoch += 1
+        self._task_sample_origin = next_origin
+        self._finishing = False
+        self._terminal_finishing = False
+        self._ready.clear()
+        self._pcm_ring.clear()
+        self._pcm_ring_ranges.clear()
+        self._pcm_ring_bytes = 0
+        try:
+            await ws.send(json.dumps(run, ensure_ascii=False))
+            await asyncio.wait_for(
+                self._task_started_event.wait(),
+                timeout=self.config.connect_timeout_s,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            raise APIConnectionError(f"FunASR reused task failed to start: {exc}") from exc
+        if self._failed or not self._ready.is_set():
+            raise APIConnectionError("FunASR reused task was rejected")
+        self._rotation_pending = False
+
+    async def _wait_until_ready(self, operation: str) -> None:
+        try:
+            await asyncio.wait_for(
+                self._ready.wait(),
+                timeout=self.config.connect_timeout_s,
+            )
+        except TimeoutError as exc:
+            raise APIConnectionError(
+                f"FunASR was not ready to {operation} after {self.config.connect_timeout_s:.3f}s"
+            ) from exc
+        if self._failed or self._ws is None:
+            raise APIConnectionError(f"FunASR cannot {operation}: session unavailable")
 
     async def aclose(self) -> None:
         self._closed = True
@@ -540,8 +694,8 @@ class FunASRRecognizeStream(stt.RecognizeStream):
         self._speaking = False
         # Sentence IDs are stable across a FunASR reconnect.  Keying by
         # provider task would let a replayed final cross the task boundary.
-        self._final_sentence_ids: set[str] = set()
-        self._sentence_revisions: dict[str, int] = {}
+        self._final_sentence_ids: set[tuple[int, str]] = set()
+        self._sentence_revisions: dict[tuple[int, str], int] = {}
         self._provider_task_id = ""
         self._provider_task_epoch = 0
         self._asr_results: deque[ASRResult] = deque(maxlen=64)
@@ -588,12 +742,10 @@ class FunASRRecognizeStream(stt.RecognizeStream):
         try:
             # Must not cancel recv when send completes first — finals/task-finished
             # arrive after finish-task is sent. Run both to completion.
-            results = await asyncio.gather(send_task, recv_task, return_exceptions=True)
-            for result in results:
-                if isinstance(result, BaseException) and not isinstance(
-                    result, asyncio.CancelledError
-                ):
-                    raise APIConnectionError(str(result)) from result
+            # A provider-boundary timeout must cancel the peer task promptly;
+            # return_exceptions=True would wait forever on a heartbeat-only
+            # receive loop after the send side has already failed.
+            await asyncio.gather(send_task, recv_task)
         finally:
             for t in (send_task, recv_task, ctx_task):
                 if not t.done():
@@ -640,11 +792,18 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                     await session.send_pcm(remaining, capture_start_sample=capture_sample)
                     capture_sample += len(remaining) // 2
                     byte_stream.clear()
+                # end_input() flushes and closes the channel; that is the
+                # terminal task boundary handled below. A live flush comes
+                # from the authoritative VAD endpoint and rotates to a fresh
+                # provider task on the same WebSocket.
+                if not self._input_ch.closed:
+                    await session.rotate_task()
         if byte_stream:
             remaining = bytes(byte_stream)
             self._stt_instance.observe_pcm(remaining)
             await session.send_pcm(remaining, capture_start_sample=capture_sample)
         await session.finish()
+        await session.wait_for_task_finished()
 
     async def _recv_events(self, session: FunASRSession) -> None:
         idle_timeouts = 0
@@ -657,6 +816,10 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                 )
                 idle_timeouts = 0
             except TimeoutError:
+                if not session.finishing:
+                    # A long-lived listening session is expected to be quiet.
+                    # Only an explicit task boundary has a result deadline.
+                    continue
                 idle_timeouts += 1
                 if idle_timeouts >= max_idle:
                     # Provider went silent after finish; end stream cleanly.
@@ -670,11 +833,16 @@ class FunASRRecognizeStream(stt.RecognizeStream):
             if ev.event == "task-failed":
                 raise APIConnectionError(ev.error_message or "funasr task-failed")
             if ev.event == "task-finished":
+                session.acknowledge_task_finished(ev.task_id)
                 if self._speaking:
                     self._event_ch.send_nowait(
                         stt.SpeechEvent(type=stt.SpeechEventType.END_OF_SPEECH)
                     )
                     self._speaking = False
+                if session.rotation_pending:
+                    continue
+                if not session.finishing:
+                    raise APIConnectionError("FunASR task finished without a client boundary")
                 return
             if ev.event != "result-generated" or ev.sentence is None:
                 continue
@@ -685,7 +853,8 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                 self._provider_task_id = ev.task_id
                 self._provider_task_epoch += 1
             task_epoch = max(1, session.task_epoch, self._provider_task_epoch)
-            sentence_key = str(sent.sentence_id)
+            sentence_id = str(sent.sentence_id)
+            sentence_key = (session.segment_epoch, sentence_id)
             revision = self._sentence_revisions.get(sentence_key, 0) + 1
             self._sentence_revisions[sentence_key] = revision
             asr_result = sentence_to_asr_result(
@@ -718,7 +887,8 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                 and sentence_key in self._final_sentence_ids
             ):
                 logger.info(
-                    "duplicate FunASR final ignored sentence_id=%s",
+                    "duplicate FunASR final ignored segment_epoch=%s sentence_id=%s",
+                    session.segment_epoch,
                     sent.sentence_id,
                 )
                 continue
@@ -863,6 +1033,26 @@ class FunASRSTT(stt.STT[Any]):
         callback: Callable[[str, str, dict[str, int]], None] | None,
     ) -> None:
         self._trace_callback = callback
+
+    def flush_speech_segment(self, _binding: object = None) -> None:
+        """Queue one VAD-authoritative task boundary on every active stream."""
+
+        flushed = 0
+        for stream in tuple(self._streams):
+            try:
+                stream.flush()
+                flushed += 1
+            except RuntimeError:
+                # A stream can disappear between the WeakSet snapshot and the
+                # synchronous flush. The next stream starts with a clean task.
+                continue
+        callback = self._trace_callback
+        if callback is not None:
+            callback(
+                "funasr_segment_flush",
+                "ok" if flushed else "ignored",
+                {"active_streams": flushed},
+            )
 
     def trace_result(self, sentence: FunASRSentence, *, task_epoch: int) -> None:
         callback = self._trace_callback

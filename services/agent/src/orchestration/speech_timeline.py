@@ -71,6 +71,12 @@ class SpeechSegment:
     hard_stop: bool = False
     voiced_end_sample: int | None = None
     loss_concealed: bool = False
+    # Transport-level acoustic facts for the hardware-agnostic interruption
+    # policy.  Absent values are None: a policy must treat them as
+    # unproven rather than trusted.
+    near_end_rms: float | None = None
+    far_end_rms: float | None = None
+    residual_echo_score: float | None = None
 
     def __post_init__(self) -> None:
         if not self.session_id:
@@ -93,6 +99,16 @@ class SpeechSegment:
             raise ValueError("voiced end sample must precede the event sample end")
         if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
+        for name, value in (
+            ("near_end_rms", self.near_end_rms),
+            ("far_end_rms", self.far_end_rms),
+        ):
+            if value is not None and value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        if self.residual_echo_score is not None and not (
+            0.0 <= self.residual_echo_score <= 1.0
+        ):
+            raise ValueError("residual_echo_score must be between 0 and 1")
 
     @property
     def logical_version(self) -> ASRLogicalVersion:

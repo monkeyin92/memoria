@@ -122,9 +122,10 @@
     <view><text class="settings-title">成长小结与监护授权</text><text class="setting-desc">查看已授权孩子的每周聚合小结与监护关系</text></view>
     <view class="nav-arrow"><text class="nav-arrow-icon">›</text></view>
   </view>
-  <view wx:if="{{speakerEntryAllowed}}" class="card nav-card" bindtap="openSpeakerEnrollment">
-    <view><text class="settings-title">主人声纹</text><text class="setting-desc">用自然、轻声、带笑和稳重语气各录一次，提高边缘场景识别稳定性</text></view>
-    <view class="nav-arrow"><text class="nav-arrow-icon">›</text></view>
+  <view wx:if="{{speakerEntryAllowed}}" class="card">
+    <text class="settings-title">主人声纹</text>
+    <text class="setting-desc">说话人登记在机器人端完成：对着设备说几句话即可，手机不再采集声纹。登记状态与授权由服务端 Runtime Profile 决定。</text>
+    <text class="form-note">当前服务端已授权声纹能力（voice_profile_create），用于识别主人说话，不用于声音复刻。</text>
   </view>
   <view wx:if="{{digitalSelfEntryAllowed}}" class="card nav-card" bindtap="openDigitalSelf">
     <view><text class="settings-title">数字分身成长</text><text class="setting-desc">查看服务端的成长维度、Persona 与版本状态</text></view>

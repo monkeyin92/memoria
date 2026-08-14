@@ -98,6 +98,10 @@ class TTSPoolHandle:
 class Orchestrator:
     session_id: str = field(default_factory=new_session_id)
     device_id: str | None = None
+    expected_actor_id: str | None = None
+    expected_binding_id: str | None = None
+    expected_binding_version: int | None = None
+    expected_active_subject_id: str | None = None
     metrics: MetricsRegistry = field(default_factory=MetricsRegistry)
     state_machine: DuplexStateMachine | None = None
     fence_gate: FenceGate | None = None
@@ -157,6 +161,10 @@ class Orchestrator:
             bump_epoch=self.bump_session_epoch,
             expected_session_id=self.session_id,
             expected_device_id=self.device_id,
+            expected_actor_id=self.expected_actor_id,
+            expected_binding_id=self.expected_binding_id,
+            expected_binding_version=self.expected_binding_version,
+            expected_active_subject_id=self.expected_active_subject_id,
         )
 
     @property

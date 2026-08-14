@@ -15,7 +15,7 @@ import logging
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -99,6 +99,7 @@ ClientEventHandler = Callable[[MediaBridgeSession, MediaEnvelope, int], Awaitabl
 AudioFrameHandler = Callable[[MediaBridgeSession, AudioFrame], Awaitable[None]]
 SpeechSegmentHandler = Callable[[MediaBridgeSession, SpeechSegment, int], Awaitable[None]]
 SessionClosedHandler = Callable[[MediaBridgeSession], Awaitable[None]]
+SessionConnectedHandler = Callable[[MediaBridgeSession], Awaitable[None]]
 PlaybackProgressHandler = Callable[[MediaBridgeSession, PlaybackProgress], Awaitable[None]]
 DownlinkOverflowHandler = Callable[[MediaBridgeSession], Awaitable[None]]
 
@@ -243,6 +244,10 @@ def _identity_from_proto(value: Any) -> SessionIdentity:
         device_id=str(value.device_id),
         client_type=str(value.client_type or "h5"),
         stream_epoch=int(value.stream_epoch),
+        subject_id=str(value.subject_id),
+        binding_id=str(value.binding_id),
+        binding_version=int(value.binding_version),
+        runtime_profile_version=int(value.runtime_profile_version),
     )
 
 
@@ -254,6 +259,10 @@ def _identity_to_proto(identity: SessionIdentity) -> Any:
         device_id=identity.device_id,
         client_type=identity.client_type,
         stream_epoch=identity.stream_epoch,
+        subject_id=identity.subject_id,
+        binding_id=identity.binding_id,
+        binding_version=identity.binding_version,
+        runtime_profile_version=identity.runtime_profile_version,
     )
 
 
@@ -292,6 +301,7 @@ class MediaBridgeGrpcServer:
         on_audio_frame: AudioFrameHandler | None = None,
         on_speech_segment: SpeechSegmentHandler | None = None,
         on_session_closed: SessionClosedHandler | None = None,
+        on_session_connected: SessionConnectedHandler | None = None,
         on_playback_progress: PlaybackProgressHandler | None = None,
         on_downlink_overflow: DownlinkOverflowHandler | None = None,
     ) -> None:
@@ -304,9 +314,11 @@ class MediaBridgeGrpcServer:
         self.on_audio_frame = on_audio_frame
         self.on_speech_segment = on_speech_segment
         self.on_session_closed = on_session_closed
+        self.on_session_connected = on_session_connected
         self.on_playback_progress = on_playback_progress
         self.on_downlink_overflow = on_downlink_overflow
         self._connections: dict[str, _Connection] = {}
+        self._transport_sessions_seen: set[str] = set()
         self._closed_session_notifications: set[str] = set()
         self._server: grpc.aio.Server | None = None
 
@@ -456,6 +468,8 @@ class MediaBridgeGrpcServer:
                         interaction_authority=interaction_authority,
                     )
                     connection.outgoing = outgoing
+                    if self.on_session_connected is not None:
+                        await self.on_session_connected(connection.session)
                     holder["connection"] = connection
                     ready.set()
                     continue
@@ -555,6 +569,7 @@ class MediaBridgeGrpcServer:
             outgoing=_PriorityOutgoing(self.max_pending_messages),
         )
         self._connections[identity.session_id] = connection
+        self._transport_sessions_seen.add(identity.session_id)
         return connection
 
     def _close_connection(self, connection: _Connection) -> None:
@@ -962,6 +977,52 @@ class MediaBridgeGrpcServer:
             connection.session.pop_downlink(frame.sequence)
             connection.session.ack_downlink(frame.sequence)
         return enqueued
+
+    async def emit_pcm_when_connected(
+        self,
+        session_id: str,
+        frame: PCMFrame,
+        *,
+        timeout_s: float,
+    ) -> bool:
+        """Backpressure one provider frame across a bounded reconnect gap.
+
+        No audio is queued while no gRPC transport owns the Session. The
+        caller keeps exactly its current frame and retries only after a newer
+        stream epoch is connected, so old WSS queues are never replayed.
+        """
+
+        if timeout_s <= 0:
+            return await self.emit_pcm(session_id, frame)
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        while True:
+            connection = self._connections.get(session_id)
+            candidate = (
+                replace(frame, identity=connection.session.identity)
+                if connection is not None and not connection.closed
+                else frame
+            )
+            if await self.emit_pcm(session_id, candidate):
+                return True
+            if connection is not None and not connection.closed:
+                # A stable current transport rejected this frame for a real
+                # gate/sequence/queue reason. Waiting cannot make it valid;
+                # only retry when this attempt raced a replacement epoch.
+                if self._connections.get(session_id) is connection and not connection.closed:
+                    return False
+            session = self.bridge.get(session_id)
+            if session is None or session.state == "closed" or not session.generation_active:
+                return False
+            # A session inserted directly into the state gate (unit/local
+            # adapter paths) was never attached to a gRPC transport. Preserve
+            # the historical immediate rejection; reconnect waiting begins
+            # only after a real connection existed and then detached.
+            if connection is None and session_id not in self._transport_sessions_seen:
+                return False
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(0.02, remaining))
 
     async def emit_generation(
         self,

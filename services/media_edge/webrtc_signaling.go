@@ -147,7 +147,7 @@ func (t *WebRTCTerminator) createSession(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "invalid SDP offer", http.StatusBadRequest)
 		return
 	}
-	request := OpenSessionRequest(identity)
+	request := identity.openSessionRequest()
 	peer, answer, err := t.negotiate(request, string(offer))
 	if err != nil {
 		t.report(err)

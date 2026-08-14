@@ -228,6 +228,12 @@ message SessionIdentity {
   string device_id = 4;
   string client_type = 5;
   uint64 stream_epoch = 6;
+  // Device direct-media authority fence. Browser/legacy clients leave these
+  // empty/zero; a device ticket propagates all of them unchanged.
+  string subject_id = 7;
+  string binding_id = 8;
+  uint64 binding_version = 9;
+  uint64 runtime_profile_version = 10;
 }
 
 message AudioFormat {

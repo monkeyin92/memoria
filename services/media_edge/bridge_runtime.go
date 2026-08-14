@@ -26,6 +26,10 @@ type generationStopStream interface {
 	SendStop(eventID, reason string, fence Fence, detectedAtMs uint64) error
 }
 
+type generationSnapshotStream interface {
+	CurrentGeneration() (Fence, bool)
+}
+
 type keywordStream interface {
 	SendKeywordAtFence(keyword string, confidence float32, start, end uint64, hardStop bool, fence Fence, detectedAtMs uint64) error
 }

@@ -3,7 +3,7 @@
 <view class="page-shell">
   <text class="eyebrow">隐私与授权</text>
   <text class="page-title">每一份授权都可撤回</text>
-  <text class="page-subtitle">默认不会因为小程序语音会话而自动保存原始音频。</text>
+  <text class="page-subtitle">默认不会因为机器人上的语音陪伴而自动保存原始音频。</text>
 
   <view class="card consent-card {{consent ? 'consent-on' : ''}}">
     <view class="consent-shield">
@@ -11,7 +11,7 @@
     </view>
     <text class="privacy-status">{{consent ? '原始语音归档已授权' : '原始语音归档未授权'}}</text>
     <text wx:if="{{consent}}" class="privacy-detail">授权时间：{{consent.granted_at}}<br />策略：{{consent.retention_policy}}</text>
-    <text wx:else class="privacy-detail">实时语音仍会经过现有语音服务完成识别与回应；是否归档原始音频需要单独明确同意。</text>
+    <text wx:else class="privacy-detail">机器人的对话音频是否归档需要单独明确同意；小程序只做授权管理，不采集或中转实时音频。</text>
     <button wx:if="{{!consent}}" class="primary-button privacy-button" loading="{{acting}}" bindtap="grant">明确授权原始语音归档</button>
     <button wx:else class="danger-button privacy-button" loading="{{acting}}" bindtap="revoke">撤回并删除受授权音频</button>
     <text wx:if="{{error}}" class="error-text">{{error}}</text>
@@ -19,6 +19,6 @@
 
   <view class="card privacy-note">
     <text class="privacy-note-title">身份与媒体边界</text>
-    <text class="privacy-detail">小程序只获得短期媒体网关票据，不接触 LiveKit participant token 或服务端密钥；说话人、历史资格、数字分身与权限均由服务端判定。</text>
+    <text class="privacy-detail">小程序只通过 HTTPS 访问 Control API，不采集麦克风、不播放实时语音、不加入 LiveKit 房间、不接触设备媒体票据或服务端密钥；说话人、历史资格、数字分身与权限均由服务端判定。</text>
   </view>
 </view>

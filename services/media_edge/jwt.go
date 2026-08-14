@@ -80,6 +80,13 @@ type MediaTokenIdentity struct {
 	StreamEpoch uint64
 }
 
+func (i MediaTokenIdentity) openSessionRequest() OpenSessionRequest {
+	return OpenSessionRequest{
+		SessionID: i.SessionID, AccountID: i.AccountID, DeviceID: i.DeviceID,
+		ClientType: i.ClientType, StreamEpoch: i.StreamEpoch,
+	}
+}
+
 func (v JWTVerifier) Verify(token, sessionID string, expectedEpoch ...uint64) error {
 	identity := MediaTokenIdentity{SessionID: sessionID}
 	if len(expectedEpoch) > 0 {
@@ -118,7 +125,7 @@ func (v JWTVerifier) ParseIdentity(token string) (MediaTokenIdentity, error) {
 	if err := v.VerifyIdentity(token, identity); err != nil {
 		return MediaTokenIdentity{}, err
 	}
-	if err := OpenSessionRequest(identity).Validate(); err != nil {
+	if err := identity.openSessionRequest().Validate(); err != nil {
 		return MediaTokenIdentity{}, fmt.Errorf("invalid media token identity: %w", err)
 	}
 	return identity, nil

@@ -105,8 +105,7 @@
       <view wx:if="{{activation.updated_at}}" class="summary-row"><text class="summary-key">最近更新</text><text class="summary-value">{{activation.updated_at}}</text></view>
     </view>
     <view class="button-row">
-      <button class="secondary-button" bindtap="openSpeakerEnrollment">登记说话人</button>
-      <button class="primary-button" bindtap="skipSpeakerEnrollment">跳过</button>
+      <text class="form-note">说话人登记在机器人端完成：对着设备说几句话即可，手机不采集声纹。</text>
     </view>
     <button class="secondary-button onboarding-button" loading="{{busy}}" disabled="{{busy}}" bindtap="refreshActivation">刷新激活状态</button>
   </view>

@@ -93,6 +93,7 @@ from services.session_runtime.subject_resolver import (
 )
 
 _DEFAULT_PROFILE_TTL = timedelta(minutes=5)
+_MAX_PROFILE_TTL = timedelta(seconds=86_400)
 _NO_EXPIRY_SENTINEL = datetime(9999, 12, 31, tzinfo=UTC)
 
 
@@ -116,6 +117,10 @@ class StartPersistentSessionCommand:
     candidates: tuple[SubjectCandidate, ...] = ()
     multiple_speakers: bool = False
     offline: bool = False
+    # Per-session profile lifetime override. Only the direct hardware media
+    # path sets this (device_runtime_profile_ttl_s); every other caller keeps
+    # the service default so H5 and mini-program profiles are never widened.
+    profile_ttl: timedelta | None = None
 
     def __post_init__(self) -> None:
         for value, field in (
@@ -134,6 +139,13 @@ class StartPersistentSessionCommand:
             raise ValueError("requested_capabilities must not be empty")
         if len(set(self.requested_capabilities)) != len(self.requested_capabilities):
             raise ValueError("requested_capabilities must be unique")
+        if self.profile_ttl is not None:
+            if not isinstance(self.profile_ttl, timedelta):
+                raise ValueError("profile_ttl must be a timedelta")
+            if self.profile_ttl <= timedelta(0):
+                raise ValueError("profile_ttl must be positive")
+            if self.profile_ttl > _MAX_PROFILE_TTL:
+                raise ValueError("profile_ttl exceeds the one-day bound")
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +231,14 @@ class SwitchPersistentSubjectCommand:
 
 class PersistentSessionNotFound(LookupError):
     """No RLS-visible active Session/profile exists."""
+
+
+@dataclass(frozen=True, slots=True)
+class SessionCloseResult:
+    """Outcome of a terminal session_closed authority transition."""
+
+    applied: bool
+    already_closed: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -890,6 +910,7 @@ class PostgresSessionRuntimeService:
                     binding=binding,
                     requested=requested,
                     device_trust=trust.trust,
+                    profile_ttl=command.profile_ttl,
                 )
                 if before_commit is not None:
                     await before_commit(profile)
@@ -913,6 +934,7 @@ class PostgresSessionRuntimeService:
         binding: _LockedBinding,
         requested: tuple[CapabilityValue, ...],
         device_trust: str,
+        profile_ttl: timedelta | None = None,
     ) -> RuntimeProfileSignedV2:
         resolution = self._subject_resolver.resolve(
             ResolveSubjectCommand(
@@ -945,6 +967,7 @@ class PostgresSessionRuntimeService:
             tool_epoch=0,
             event_type="subject_resolved",
             event_payload={},
+            profile_ttl=profile_ttl,
         )
         context = SessionRuntimeContext.from_profile(
             issue.profile,
@@ -1062,6 +1085,7 @@ class PostgresSessionRuntimeService:
         tool_epoch: int,
         event_type: str,
         event_payload: dict[str, object],
+        profile_ttl: timedelta | None = None,
     ) -> _IssuedProfile:
         subject = next(
             (item for item in binding.subjects if item.person_id == resolution.active_subject_id),
@@ -1183,7 +1207,7 @@ class PostgresSessionRuntimeService:
                 "policy_receipt_ids": [item.receipt_id for item in allowed_receipts],
                 "session_epoch": session_epoch,
                 "issued_at": now.isoformat(),
-                "expires_at": (now + self._profile_ttl).isoformat(),
+                "expires_at": (now + (profile_ttl or self._profile_ttl)).isoformat(),
             }
         )
         payload = unsigned.model_dump(mode="json")
@@ -1265,26 +1289,41 @@ class PostgresSessionRuntimeService:
                 "locked Policy receipt batch differs from signed profile"
             )
 
+    def _require_profile_signature(
+        self,
+        profile: RuntimeProfileSignedV2,
+    ) -> None:
+        """Verify the durable profile payload without imposing its use window."""
+
+        payload = profile.model_dump(mode="json", exclude={"signature"})
+        expected = sign_runtime_profile_payload(payload, signing_key=self._signing_key)
+        if not hmac.compare_digest(profile.signature, expected):
+            raise PersistentSessionDenied("runtime profile signature is invalid")
+
     def _require_current_profile(
         self,
         profile: RuntimeProfileSignedV2,
         *,
         now: datetime,
     ) -> None:
-        payload = profile.model_dump(mode="json", exclude={"signature"})
-        expected = sign_runtime_profile_payload(payload, signing_key=self._signing_key)
-        if not hmac.compare_digest(profile.signature, expected):
-            raise PersistentSessionDenied("runtime profile signature is invalid")
+        self._require_profile_signature(profile)
         if now < profile.issued_at or now >= profile.expires_at:
             raise PersistentSessionDenied("runtime profile is expired")
 
-    async def current(
+    async def _active_profile_context(
         self,
         *,
         actor_id: str,
         session_id: str,
-        now: datetime,
     ) -> tuple[RuntimeProfileSignedV2, SessionRuntimeContext]:
+        """Load one active profile/context pair without applying use-time validity.
+
+        Terminal closure must remain possible after a profile expires: expiry
+        denies further conversation work, but it must not strand an active
+        authority row forever. Callers still have to verify the stored profile
+        signature before using this close-only path.
+        """
+
         try:
             async with self._store.read_transaction(actor_id=actor_id) as connection:
                 profile = await self._store.current_profile(
@@ -1301,6 +1340,21 @@ class PostgresSessionRuntimeService:
             raise PersistentSessionNotFound(session_id)
         if profile.runtime_profile_id != context.current_runtime_profile_id:
             raise PersistentSessionUnavailable("current profile projection is inconsistent")
+        if profile.session_epoch != context.session_epoch:
+            raise PersistentSessionUnavailable("current profile epoch is inconsistent")
+        return profile, context
+
+    async def current(
+        self,
+        *,
+        actor_id: str,
+        session_id: str,
+        now: datetime,
+    ) -> tuple[RuntimeProfileSignedV2, SessionRuntimeContext]:
+        profile, context = await self._active_profile_context(
+            actor_id=actor_id,
+            session_id=session_id,
+        )
         self._require_current_profile(profile, now=now)
         return profile, context
 
@@ -1376,6 +1430,11 @@ class PostgresSessionRuntimeService:
                     connection,
                     resolution.active_subject_id,
                 )
+                # Preserve this session original profile duration across a
+                # subject/profile rotation: a direct hardware session started
+                # with device_runtime_profile_ttl_s must not silently shrink
+                # back to the 5-minute default when the subject switches.
+                rotation_ttl = current.expires_at - current.issued_at
                 issue = await self._build_issue(
                     connection,
                     binding=binding,
@@ -1398,6 +1457,7 @@ class PostgresSessionRuntimeService:
                     event_type=(
                         "subject_switched" if command.subject_id is not None else "epoch_bumped"
                     ),
+                    profile_ttl=rotation_ttl,
                     event_payload={
                         "claimed_subject_id": command.claimed_subject_id,
                         "invalidated_fences": [
@@ -1507,6 +1567,102 @@ class PostgresSessionRuntimeService:
             raise
         except (SessionRuntimeAuthorityUnavailable, asyncpg.PostgresError) as exc:
             raise PersistentSessionUnavailable(str(exc)) from exc
+
+    async def close_session(
+        self,
+        *,
+        actor_id: str,
+        session_id: str,
+        reason_code: str,
+        now: datetime,
+    ) -> SessionCloseResult:
+        """Apply the distinct idempotent session_closed authority transition.
+
+        A normal close is never labeled session_failed. The transition
+        advances the session and conversation fences and writes one session_closed event
+        plus its outbox row atomically; a retried close of the same expected
+        profile/epoch is an idempotent replay that applies nothing and never
+        marks a failed session closed.
+        """
+
+        reason_code = reason_code.strip()
+        if not reason_code or len(reason_code) > 64:
+            raise ValueError("reason_code must be a bounded non-blank string")
+        try:
+            profile, context = await self._active_profile_context(
+                actor_id=actor_id,
+                session_id=session_id,
+            )
+        except PersistentSessionNotFound:
+            # The session is not active. Distinguish an idempotent
+            # already-closed replay from an unknown or failed authority.
+            async with self._store.read_transaction(actor_id=actor_id) as connection:
+                stored = await self._store.context_any_state(
+                    connection,
+                    session_id=session_id,
+                )
+            if stored is None or stored[0].actor_id != actor_id:
+                raise PersistentSessionNotFound(session_id) from None
+            if stored[1] == "closed":
+                return SessionCloseResult(applied=False, already_closed=True)
+            raise SessionRuntimeConflict(
+                "session is not active and cannot be closed",
+            ) from None
+        if profile.actor_id != actor_id:
+            raise PersistentSessionDenied("only the profile actor may close a Session")
+        self._require_profile_signature(profile)
+
+        event = SessionEvent.model_validate(
+            {
+                "event_id": f"event-{uuid.uuid4()}",
+                "event_type": "session_closed",
+                "session_id": session_id,
+                "session_epoch": context.session_epoch + 1,
+                "device_id": profile.device_id,
+                "binding_id": profile.binding_id,
+                "binding_version": profile.binding_version,
+                "generation_id": context.generation_id + 1,
+                "turn_id": context.turn_id + 1,
+                "tool_epoch": context.tool_epoch + 1,
+                "event_sequence": context.profile_revision + 1,
+                "active_subject_id": None,
+                "runtime_profile_id": profile.runtime_profile_id,
+                "actor_id": actor_id,
+                "subject_revision": 0,
+                "occurred_at": now.isoformat(),
+                "payload": {
+                    "reason_code": reason_code,
+                    "invalidated_fences": [
+                        "session",
+                        "generation",
+                        "tool",
+                        "effect",
+                        "tts",
+                        "memory",
+                        "ui",
+                    ],
+                },
+            },
+        )
+        try:
+            async with self._store.action_transaction(
+                actor_id=actor_id,
+                device_id=profile.device_id,
+                subject_id=context.active_subject_id,
+            ) as connection:
+                status = await self._store.close_session(
+                    connection,
+                    expected=context,
+                    event=event,
+                )
+        except (SessionRuntimeConflict, PersistentSessionDenied):
+            raise
+        except (SessionRuntimeAuthorityUnavailable, asyncpg.PostgresError) as exc:
+            raise PersistentSessionUnavailable(str(exc)) from exc
+        return SessionCloseResult(
+            applied=status == "closed",
+            already_closed=status == "already_closed",
+        )
 
     @staticmethod
     def _action_fence_kind(
@@ -2507,6 +2663,7 @@ def build_postgres_session_runtime_service(
 __all__ = [
     "PersistentSessionDenied",
     "PersistentSessionUnavailable",
+    "SessionCloseResult",
     "PostgresSessionRuntimeService",
     "StartPersistentSessionCommand",
     "build_postgres_session_runtime_service",

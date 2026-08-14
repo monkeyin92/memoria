@@ -182,13 +182,9 @@ function errorFromResponse(response) {
             ? "当前微信身份与已绑定手机号不一致，请联系客服处理。"
             : code === "account_deletion_in_progress"
               ? "账号正在注销处理中，暂时无法重新登录。"
-            : code && code.startsWith("wechat_")
-              ? "微信登录校验未完成，请重新授权后再试。"
-              : code === "miniprogram_media_gateway_unavailable"
-                ? "小程序语音入口暂未部署，请稍后再试。"
-                : code === "miniprogram_requires_cascade"
-                  ? "小程序当前只支持级联语音服务。"
-                  : code === "guardian_summary_projection_unavailable"
+              : code && code.startsWith("wechat_")
+                ? "微信登录校验未完成，请重新授权后再试。"
+                : code === "guardian_summary_projection_unavailable"
                     ? "成长小结服务正在准备中。"
                   : code === "guardian_link_required"
                       ? "你还没有查看这份成长小结的权限。"
@@ -346,84 +342,6 @@ async function requestAccountDeletion({ confirmation }) {
     data: {
       wechat_login_code: loginCode,
       confirmation,
-    },
-  });
-}
-
-function createMiniProgramSession({
-  userId,
-  learningTaskId = null,
-  interactionMode = "companion",
-  sessionFocus = "chat",
-}) {
-  /*
-   * 从经过校验的 BindingManifest 取 device_id 写入 client.device_id，
-   * 让后续 /session-policy 能把语音会话关联到 Binding/Runtime Profile。
-   * 无绑定时保持兼容创建，但必须显式声明 unknown_safe 会话范围：
-   * 服务端不得把未绑定会话按账号成人能力放开（D-07 / §4.3）。
-   * （当前 ClientInfo 忽略未知 client 字段，兼容现有后端；session
-   * producer 接线后消费该字段。）
-   */
-  const binding = readBindingManifest();
-  const deviceId =
-    binding && typeof binding.device_id === "string" && binding.device_id ? binding.device_id : null;
-  return rawRequest("/v1/sessions", {
-    method: "POST",
-    data: {
-      user_id: userId,
-      voice_backend: "cascade",
-      interaction_mode: interactionMode,
-      session_focus: interactionMode === "companion" ? sessionFocus : "chat",
-      learning_task_id: interactionMode === "companion" ? learningTaskId : null,
-      locale: "zh-CN",
-      client: {
-        platform: "miniprogram",
-        timezone: "Asia/Shanghai",
-        device_id: deviceId,
-        ...(deviceId ? {} : { session_scope: "unknown_safe" }),
-      },
-    },
-  }).then((session) => {
-    if (
-      !session ||
-      session.voice_backend !== "cascade" ||
-      !session.media_gateway ||
-      typeof session.media_gateway.websocket_url !== "string" ||
-      typeof session.media_gateway.ticket !== "string"
-    ) {
-      throw new ApiError("服务端没有返回可用的小程序语音会话。");
-    }
-    return session;
-  });
-}
-
-function refreshMiniProgramGatewayTicket(sessionId) {
-  return rawRequest(
-    `/v1/sessions/${encodeURIComponent(sessionId)}/mini-program/gateway-ticket`,
-    { method: "POST" },
-  );
-}
-
-function stopResponse(sessionId) {
-  return rawRequest(`/v1/sessions/${encodeURIComponent(sessionId)}/stop-response`, {
-    method: "POST",
-    data: { reason: "user_button" },
-  });
-}
-
-function notifyRtcRecovered(sessionId) {
-  return rawRequest(`/v1/sessions/${encodeURIComponent(sessionId)}/rtc-recovered`, {
-    method: "POST",
-  });
-}
-
-function enrollSpeakerProfiles(samples) {
-  return rawRequest("/v1/speakers/enrollments", {
-    method: "POST",
-    data: {
-      consent_policy_version: "speaker-biometric-v1",
-      consent_accepted: true,
-      samples,
     },
   });
 }
@@ -685,6 +603,49 @@ function getDeviceBinding(deviceId) {
   return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/binding`);
 }
 
+function getDeviceSettings(deviceId) {
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/settings`);
+}
+
+/*
+ * 设备诊断（PR-18）。只展示服务端权威字段：绑定/设置快照、声学能力登记、
+ * 允许的音频模式与 Runtime Profile 版本。端点不可用时由调用方 fail-closed，
+ * 客户端不拼接或伪造连接质量字段。
+ */
+function getDeviceDiagnostics(deviceId) {
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/diagnostics/latest`);
+}
+
+function updateDeviceSettings(deviceId, changes, { expectedVersion } = {}) {
+  if (!changes || typeof changes !== "object" || Array.isArray(changes)) {
+    return Promise.reject(new TypeError("设备设置无效"));
+  }
+  const allowed = new Set([
+    "volume_limit",
+    "screen_brightness",
+    "night_mode",
+    "do_not_disturb",
+    "learning_mode",
+    "audio_mode",
+    "wake_mode",
+    "allowed_barge_in",
+  ]);
+  const keys = Object.keys(changes);
+  if (!keys.length || keys.some((key) => !allowed.has(key))) {
+    return Promise.reject(new TypeError("设备设置包含不支持的字段"));
+  }
+  if (!Number.isInteger(expectedVersion) || expectedVersion < 0) {
+    return Promise.reject(new TypeError("设备设置版本无效"));
+  }
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/settings`, {
+    method: "PATCH",
+    data: {
+      expected_settings_version: expectedVersion,
+      changes,
+    },
+  });
+}
+
 /*
  * 解析当前会话主体（§9.2）。客户端不发送声纹原始数据，只传服务端
  * 已知的设备与会话标识。
@@ -777,7 +738,7 @@ function setActiveSubject(sessionId, { personId, confirmationMethod = "app_confi
 /*
  * 敏感入口的统一能力门禁（D-07）：只有当前设备取得有效 Runtime Profile
  * 且 capabilities 包含目标能力时才放行；Profile 不可用时返回可解释拒绝。
- * 所有敏感页面（数字分身/声纹/成长小结/原始语音/私人回顾）必须经此门禁。
+ * 所有敏感页面（数字分身/成长小结/原始语音/私人回顾）必须经此门禁。
  */
 async function requireRuntimeCapability(capability, { sessionId = null } = {}) {
   const binding = readBindingManifest();
@@ -816,11 +777,6 @@ module.exports = {
   logoutCurrentDevice,
   logoutAllDevices,
   requestAccountDeletion,
-  createMiniProgramSession,
-  refreshMiniProgramGatewayTicket,
-  stopResponse,
-  notifyRtcRecovered,
-  enrollSpeakerProfiles,
   getProfile,
   getGuardianLinks,
   getGuardianSummary,
@@ -848,6 +804,9 @@ module.exports = {
   getActivationStatus,
   createDeviceBinding,
   getDeviceBinding,
+  getDeviceSettings,
+  getDeviceDiagnostics,
+  updateDeviceSettings,
   resolveSessionSubject,
   getRuntimeProfile,
   setActiveSubject,

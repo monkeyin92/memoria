@@ -87,6 +87,15 @@ async def test_runtime_transcript_event_carries_the_session_contract() -> None:
             "turn_revision": 1,
             "tool_epoch": 0,
             "history_eligible": False,
+            "session_epoch": 0,
+            "active_subject_id": None,
+            "runtime_profile_id": None,
+            "actor_id": None,
+            "binding_id": None,
+            "binding_version": None,
+            "device_id": None,
+            "subject_revision": None,
+            "event_sequence": 1,
         }
     ]
     await runtime.close()

@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Iterator
 
 import pytest
+from livekit.agents import APIConnectionError
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
 from services.agent.tests.integration.mock_servers import MockFunASRServer
 
@@ -141,6 +142,59 @@ async def test_funasr_task_start_timeout_closes_socket_and_has_no_recv_task() ->
 
         assert session._recv_task is None
         assert srv.connections_closed >= 1
+        await session.aclose()
+    finally:
+        srv.stop()
+
+
+@pytest.mark.asyncio
+async def test_funasr_task_boundary_timeout_is_not_extended_by_heartbeats() -> None:
+    srv = MockFunASRServer(scenario="heartbeat_stall")
+    srv.start()
+    try:
+        session = FunASRSession(
+            FunASRConfig(
+                api_key="test",
+                ws_url=srv.ws_url,
+                result_timeout_s=0.2,
+            )
+        )
+        await session.connect()
+        await session.send_pcm(b"\x00\x00" * 2000)
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(APIConnectionError, match="task boundary timed out"):
+            await session.rotate_task()
+        elapsed = asyncio.get_running_loop().time() - started
+        assert elapsed < 1.0
+        assert len(srv.tasks_started) == 1
+        await session.aclose()
+    finally:
+        srv.stop()
+
+
+@pytest.mark.asyncio
+async def test_funasr_task_rotation_can_handoff_queued_tail_to_media_adapter() -> None:
+    srv = MockFunASRServer(scenario="task_reuse")
+    srv.start()
+    try:
+        session = FunASRSession(FunASRConfig(api_key="test", ws_url=srv.ws_url))
+        await session.connect()
+        first_task_id = session.task_id
+        await session.send_pcm(b"\x01\x00" * 2000)
+
+        await session.rotate_task(require_consumed=False)
+
+        assert session.task_id != first_task_id
+        assert session.task_epoch == 2
+        queued = []
+        while not session.events.empty():
+            queued.append(session.events.get_nowait())
+        assert any(
+            event.event == "result-generated" and event.task_id == first_task_id for event in queued
+        )
+        assert any(
+            event.event == "task-finished" and event.task_id == first_task_id for event in queued
+        )
         await session.aclose()
     finally:
         srv.stop()

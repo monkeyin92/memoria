@@ -4,6 +4,11 @@
 - 日期：2026-08-11
 - 适用范围：微信小程序首次启用、Device Fleet 未认领设备、正点原子 ATK-DNESP32S3 V1 固件
 
+> 2026-08-13 更新：本文的 Bootstrap、Claim、Binding、Activation 与设备身份决策继续有效；
+> “设备媒体路径（第 2 条）”中经 `MiniProgramLiveKitBridge` 的链路已由 ADR-0035 降为显式
+> `livekit_compat` 回滚路径。新硬件默认目标是 Device WSS → Go Media Edge → `media-v1` →
+> Python Voice Core，代码存在、生产接线、功能启用和真机验证必须分别记录。
+
 ## 决策
 
 设备首次启用拆成五个互相独立、由服务端状态推进的阶段：
@@ -50,7 +55,10 @@
 
 机器人完成激活后，应使用设备身份直接连接 Memoria Control/Media Edge。它不得保存用户 Access Token，现有 Agent、ASR、LLM、TTS、记忆、Policy 与多主体 Runtime Profile 继续保持权威。
 
-## 设备媒体路径（第 2 条）
+## 设备媒体路径（第 2 条，历史兼容路径）
+
+本节保留 2026-08-11 已上线链路的历史合同与回滚依据，不再是新硬件目标架构。除安全、
+生产故障和回滚可用性修复外，不得继续向该路径增加业务能力；目标路径见 ADR-0035。
 
 ESP32 不复用小程序 bearer，也不继续使用旧 `DeviceRegistry` 作为第二套身份权威。
 完成 Activation ACK 后，设备按以下固定控制链建立媒体会话：

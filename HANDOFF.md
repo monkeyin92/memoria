@@ -1,5 +1,147 @@
 # 项目交接
 
+## 当前状态（2026-08-14，Agent-only canary 与实板连续两轮已跑通；整改主线未提交/未推送）
+
+### ESP32 一等语音终端与小程序纯控制面
+
+- 已按 ADR-0035 将目标链路收敛为“ESP32-S3 → Go Hardware Media Edge WSS →
+  mTLS gRPC media-v1 → Python Voice Core”，交互权威仍是 Python。Control API 以服务端
+  开关在 `direct_voice_core` 与 `livekit_compat` 回滚路径之间选择，设备不能自行切换；生产
+  仍保持 `python_authoritative + livekit`。本轮只发布 legacy Agent ASR task 轮换与确定性当前日期
+  响应，没有切换 Direct、Control 或 Edge。
+- 新增严格 Device Media v2：Ed25519/JWKS 短票据、一次性 JTI、device/client/binding/
+  subject/profile/epoch 全量绑定、direct v2 与 legacy v1 路由隔离、Opus 16 kHz、单连接租约、单调预留
+  `stream_epoch`、sequence/sample/generation 校验、80–200 ms 背压、P0 控制队列和 Edge →
+  Voice Core 双向桥。短票据只用于建连，不再把 120 秒凭证 TTL 错当会话 TTL。
+- Generation 直接从 1 开始，新路径不做 N+1 映射；按钮同步清空本地 decoder，Edge/Core
+  关闭 generation gate 并丢弃迟到帧。`generation.completed` 是同代音频之后的有序屏障。
+  当前板没有 DAC 样本计数，因此 playback receipt 明确为 output-commit 上界、
+  `approximate=true`，Actual Heard 继续 fail-closed，不能宣称 exact。
+- Runtime Profile/设备设置闭环已补齐：设置与 profile 版本在同一 SQLite 事务提交；
+  Control 通过独立 HTTPS/mTLS + 32 字符以上控制令牌通知 Edge；设备在真实应用
+  `session.accepted` 后上报 `runtime_profile.applied(profile_version, settings_version)`；Edge
+  只读状态接口给 Control/小程序展示协商后的实际音频模式，页面明确区分期望值与实际值。
+- 会话生命周期闭环已补齐：owner DELETE 与 `runtime_profile_invalidated` 才进入
+  `session_closed` PostgreSQL 权威事件并原子推进 `session_epoch + generation/turn/tool`
+  fence；Edge 网络断开/替代/关机只结束当前 transport epoch，记录断线诊断并保留同一
+  Session 的恢复资格。Edge 回报使用与
+  Control→Edge 控制令牌分离的 token，并逐项核对 device/account/stream epoch；过期 Profile
+  或已撤销 binding 仍允许执行终态清理，不会把 Session 永久卡在 active。
+- 设备端同 Session 传输恢复已补齐：Wi-Fi 或仅 WSS 断开进入显式 `RECOVERING`，最多 5 次
+  按 1/2/4/8 秒退避申请同 Session、更高 `stream_epoch`；每个 WSS attempt 是独立权限
+  fence，被动断开先退休旧 attempt，再通知上层。旧连接排队中的音频、TTS/STT、字幕、表情和
+  close 回调不能修改新 epoch；用户主动结束、服务端终态、恢复耗尽均清除 resume 身份。
+- 生产 direct bundle 已补齐独立 device WSS listener、精确 Nginx WSS 路由、Ed25519/JWKS、
+  Control→Edge mTLS、专用 healthcheck client identity 与 Edge→Control 关闭回报；生成器从
+  direct 回退 `livekit_compat` 时清除全部 direct-only key，避免半配置启动。以上只完成本地
+  代码/配置验证，真实生产证书、托管私钥、部署与回滚演练仍属外部门禁。
+- Direct Device WSS 的一次性 JTI 与设备连接租约已从单进程 map 抽象为生产强制 Redis
+  原子共享状态：JTI 使用带票据 `exp` 的 `SET NX`；租约绑定
+  `device_id + stream_epoch + owner_id + conn_id`，更高 epoch 通过 Lua 原子接管，Pub/Sub
+  立即关闭旧主机 socket，compare-and-refresh 作为消息丢失后备，compare-and-delete 阻止旧连接
+  删除新租约。跨两个独立 Edge 实例的真实 Redis 进程测试已覆盖票据重放、conn_id 跨主机碰撞、
+  旧 epoch、旧 release、Redis 丢失时 readiness/活动连接 fail closed；Go 全量 test/race/vet 通过。
+  该实现尚未部署，生产 direct bundle 现在必须显式提供独立
+  `MEDIA_EDGE_DEVICE_STATE_REDIS_URL`，仍缺 Redis HA、故障转移和容量混沌证据。
+  设备协议的 `stream_epoch`、Runtime Profile/Settings/声学证明版本已在 Control 签票、Edge
+  验票和关闭回报边界统一限制为固件真实可表示的 `uint32`，达到上限显式拒绝，不能静默截断；
+  `session.accepted` 只在握手状态 CAS 成功后入队，跨主机接管期间的旧握手不能短暂复活。
+- 当前生产 Control API 仍是 `20260812-173008` 代际，只接受 legacy v1 媒体会话请求，并以严格
+  422 拒绝新增协商字段。固件已增加仅匹配 FastAPI `extra_forbidden` 且字段集合精确一致时的
+  单次滚动发布回退：新会话删除 `supported_protocol_versions` 后复用尚未消费的签名 challenge；
+  v2 恢复遇到服务端回滚时，在会话 fence 下清除 resume 身份并重新建立 fresh v1。401、5xx、
+  其他 422 或迟到结果仍 fail closed。该兼容代码已通过评审、源码测试、干净构建和本轮最终固件
+  的 legacy v1 实板连续两轮验证；direct v2 仍未部署、未启用、未验证。
+- 旧候选的真实会话已证明 legacy v1 链路能完成首轮“你好你好”：设备 VAD、FunASR final、LLM、
+  TTS 和扬声器均实际消费，但生产日志显示从最后一帧用户音频到 ASR final 约 `20.5 s`，LLM 首 token
+  仅约 `1.25 s`，因此首轮长等待的主因是 ASR 断句。紧接着“今天星期几”有正常 VAD 和用户音频，
+  却始终没有 ASR final，LLM/TTS 未启动。根因是 legacy LiveKit 会话把多个 VAD 话段长期复用为一个
+  FunASR task，且 heartbeat 包持续重置接收空闲计时，噪声下既不强制断句也不超时退出。
+- Agent 本地候选已在每个权威 `vad.end` 同步 flush 当前 STT stream，执行
+  `finish-task -> task-finished -> 新 task_id 的 run-task`，同一 WebSocket 复用但 task/segment fence
+  隔离；task boundary 使用单一绝对 deadline，heartbeat 不能续期，已结束 task 的迟到事件也不能污染
+  下一话段。除 legacy LiveKit STT stream 外，Direct Device v2 的 provider-neutral Voice Core 路径也在
+  VAD 尾帧排空后轮换 FunASR task，并先验收旧 task 的终稿再公布新 task epoch；空 heartbeat 不进入
+  ASR 语义时间线。完整 Agent unit/integration `1493/1493`、strict mypy、Ruff 均通过。
+  `2026-08-14 17:06 CST` 已从生产基线 `memoria-agent:20260812-173008` 离线增量构建并启用首个
+  Agent-only canary `memoria-agent:20260814-165401-agent-canary`，候选 commit
+  `4726f99032b3c8ff1f18dc483189db470560d2f5`；运行容器源码哈希、amd64 架构与 OCI 标签均核对。
+  首次实板复验已证明第二个 FunASR task 可正常产出 final、turn/generation 连续推进，不再出现第二问
+  永久无响应；同时暴露两个独立问题：设备 VAD 使用 `VAD_MODE_2` 时每轮由 `20 s` 硬上限关段，且
+  `unknown_safe` 模式把“今天星期几”交给 LLM 后错误回答 2025 年。
+  `2026-08-14 17:28 CST` 已增量启用当前 Agent-only canary
+  `memoria-agent:20260814-172823-agent-canary`，候选 commit
+  `c6c54d4ade09025eb24d88c896ef9e65c6568a82`；当前日期/星期由 Agent 时钟生成规范固定回复，跨模式
+  优先于 LLM。运行时 release tag 仍报告 `20260812-173008` 以保持 Control 心跳代际一致，当前 boot ID
+  为 `c76aa5d9-9cd5-463b-9077-d9d33e252687`，health/readiness 全绿且其余四个应用容器 ID 未变化。
+  首个 canary 与原生产 Agent 镜像均保留回滚标签；尚未执行真实回滚演练。
+- 当前 Agent 与最终固件的重新实板复验完成连续两轮：第一轮“你好你好”提交
+  `turn 1 / generation 1`，最后用户音频到 FunASR final 约 `163 ms`；第二轮“今天星期几”提交
+  `turn 2 / generation 2`，对应延迟约 `181 ms`，Agent 命中 `direct_text=true`，设备显示
+  “今天是2026年8月14日，星期五。”并回到 listening。串口未再出现 `20 s` overlong VAD；设备报告
+  两轮 playback start，用户已当场确认两句均实际听清、体感可用，仅有“说完后等待 AI 回答”的
+  轻微延迟。因此本次连续两轮场景可记 Actual Heard 通过，但不外推为 DAC 精确采样、双讲或完整
+  T1–T14 声学验收。服务端从最后用户音频到 playback start：普通问候约 `2.53 s`（其中 LLM
+  request 到首 token 约 `1.36 s`），确定性日期回复约 `0.55 s`；口腔停声到设备 VAD end 的尾窗还会
+  叠加在用户体感上，后续应以端到端 P95 优化，不宜仅凭一次样本继续压低 VAD 阈值。
+- 本次成功复验窗口内 Agent 无 ERROR、无 overlong VAD。仍有两个相互独立的既有告警：生产
+  Speaker Authority 调用返回 HTTP 403，Voice Profile 因 authority/token 不可用而禁用，会话因此按
+  `unknown_safe` 降级；LiveKit 另记录一次 transcript-after-commit，但本轮 canonical 文本、turn 与
+  generation 均正确。只读核对确认本次测试账号权威 `subject_category=unknown`，而统一能力规则只
+  允许 adult 使用 `speaker_enrollment`，因此 403 是预期 fail-closed，不是 token 配错；扩大 canary
+  前应补齐账号类别证据，或让 Agent 对明确无资格会话降低预期告警噪声，不能放宽生物特征门禁。
+  transcript 时序仍需独立消警。二者均不改变本次 ASR 轮换结论，不能与“第二问不响应”混为同一根因。
+- 旧固件还在 legacy v1 上错误套用了 v2 主动 Ping/Pong 判死，并曾在设备 uptime 约 `392.5 s`
+  误退健康 transport。最新固件仅对 v1 关闭这条客户端主动判死，由 TCP/WSS 断开、发送失败和网关
+  close 负责故障权威；v2 的 `30 s Ping / 10 s Pong` 仍严格保留。该修复已上板完成真实 legacy v1
+  媒体会话与连续两轮对话；超过旧故障点 `392.5 s` 的长连接稳定性仍待单独持续验证。
+- 当前板固件会应用音量与亮度；ATK-DNESP32S3 的背光是二值门控（0 关闭，1–100 开启），
+  不是 PWM 精确亮度。设备能力诚实声明无 AEC Reference、无 simultaneous capture/playback、
+  无本地停止词/duck；服务端无声学验收记录时只开放 `half_duplex_safe`，绝不自报
+  `full_duplex_verified`。
+- Espressif VAD 模式语义已纠正：数值越大越容易触发语音，当前无 AEC Reference 的目标板使用
+  `VAD_MODE_0` 并保留 `vad_min_noise_ms=900`。`2026-08-14` 最新 overlay 哈希为
+  `3d967764a623d13e0983f87de494465c051c6278efa1b2b862280c0c2bd33217`；ESP-IDF 6.0.2
+  clean build 生成 `xiaozhi.bin` `2,964,720` bytes、SHA-256
+  `1a91babd4a36b4e30ae6bb5e0463bae0fd099ec8778c71d4c7e5dcfc1411deb4`，应用分区余
+  `1,164,048` bytes（28%）。合并镜像 `9,873,069` bytes，SHA-256
+  `cc155a344ea948deb373aa440f5c85ebd71cad0c602960188c7ff07d136eca81`。
+  最新候选仅在 `0x20000` 写应用并完成独立 flash verify，未重写 bootloader、分区表、OTA 数据、
+  资源或 `0x10000..0x1ffff` 身份区；身份区刷前/刷后 `65,536` bytes 逐字节一致，SHA-256
+  `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`，旧应用回滚镜像 SHA-256
+  `04b3c915663700687efc5b9cb4d4193b6ade469aed9d67ac3663b50f9d9955d8`。真实重启已验证 8 MB
+  PSRAM、目标板 SKU、Wi-Fi 重连、Activation Manifest v2 验签、`starting -> activating -> idle`
+  和 16 kHz 单麦 VAD；启动噪声话段在约 `930 ms` 自动结束，证明 `900 ms` 尾窗生效。串口连续观察
+  至设备 uptime 约 `802 s`，无 panic/watchdog/restart，free SRAM 稳定在约 `145.6 KB`；这不是活动媒体
+  会话，也不替代 100/500 轮稳定性。以上是刷写、启动与两轮功能证据，不替代 DAC 精确采样、打断、
+  重连或 T1–T14 全套声学回执。
+- 小程序已删除首页实时语音/文字会话、RecorderManager、PCM player、媒体 WSS、LiveKit
+  房间和手机声纹录取，首页改为设备/摘要 Dashboard；设备页保留版本化设置、服务端声学能力、
+  实际 Edge 模式和脱敏诊断。`design-preview` 与 tests 明确排除出微信包，静态门禁阻止实时媒体
+  重新进入生产源码。
+- 本地最新门禁：Control `581/581` 与 Agent `1493/1493` 全量测试、Session Runtime PostgreSQL `41/41`、common/
+  Device Fleet/Device Gateway、strict mypy（`399` 个源码文件）、Ruff 与
+  `git diff --check`；Go `test`/`race`/`vet`；H5 `372/372`（Node 24.16.0）及 production
+  build；小程序 `142/142`（含真实编译 upload dry-run）；Device v2、固件源码与验收合同门禁
+  均通过。T1–T14 编排结果仍为 `0 pass / 14 blocked / 0 failed`；虽已有真实开发板，当前仍缺
+  结构化声学/微信/生产安全回执，因此继续按外部 Gate 退出。ESP32 overlay
+  已从锁定 upstream `e8d8a401...` 重新克隆并通过重放校验、ESP-IDF clean build 与
+  merge-bin；最新 overlay 哈希为
+  `3d967764a623d13e0983f87de494465c051c6278efa1b2b862280c0c2bd33217`。
+  `xiaozhi.bin` 为 `2,964,720` bytes（`0x2d3cf0`），`ota_0/ota_1` 各 `0x3f0000`，
+  余 `1,164,048` bytes（`0x11c310`，28%）。合并镜像为 `9,873,069` bytes，SHA-256
+  `cc155a344ea948deb373aa440f5c85ebd71cad0c602960188c7ff07d136eca81`，位于
+  `firmware/esp32/artifacts/memoria-atk-dnesp32s3-v1-merged.bin`；最新应用候选已完成安全刷写、
+  启动与连续两轮功能验收。
+- 外部 Gate 仍未完成：T1–T13 真实 ESP32/DAC/麦克风/Provider/AEC/停止词/双讲/100+500
+  轮稳定性，T14 微信 iOS+Android 独立性，OTA/断电、生产 mTLS/JWKS/托管签名密钥、容量/
+  混沌/Direct Canary/真实回滚演练。未通过这些 Gate 前不得宣传“全双工”，不得启用
+  `full_duplex_verified`，不得把本地构建当作生产或真机证据。
+- Direct Canary 的本地候选已具备 Redis 原子多实例 ownership，但生产 Redis/HA 尚未配置或
+  演练，因此部署前仍保持单实例 Canary；扩容必须先完成真实双实例、Redis 故障转移、Edge 重启与
+  容量混沌。实板还必须验证 WSS 服务器 CA 信任锚/证书校验，不得仅因 URL 为 `wss://` 就视为
+  TLS 身份已验收。Direct 默认切换必须和兼容路径共享 HS256 设备票据退役绑定为同一发布 Gate。
+
 ## 当前状态（2026-08-12）
 
 ### 小程序硬件管理与 ESP32-S3 Path 2（代码已提交并进入生产真机验收）

@@ -45,6 +45,7 @@ from services.control_api.app.account_gate import (
 )
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.device_control import RuntimeProfileLedger
 from services.control_api.app.mode_policy import FrozenMode, InteractionMode, ModePolicy
 from services.control_api.app.security import (
     AuthenticatedUser,
@@ -570,6 +571,14 @@ async def session_policy(
         session,
         session_id=body.session_id,
     )
+    device_id = runtime_profile.get("device_id")
+    if not isinstance(device_id, str) or not device_id:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_profile_unavailable"},
+        )
+    ledger = RuntimeProfileLedger(_store(request)).current(device_id)
+    runtime_profile_version = ledger.profile_version if ledger is not None else 0
     frozen = FrozenMode.from_session(session)
     policy = ModePolicy.session_context(frozen)
     if frozen.interaction_mode == "companion":
@@ -653,6 +662,7 @@ async def session_policy(
                 "voice_profile": False,
             },
             "runtime_profile": runtime_profile,
+            "runtime_profile_version": runtime_profile_version,
         }
     )
     if interaction_mode == "unknown_safe":

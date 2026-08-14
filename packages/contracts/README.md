@@ -14,6 +14,19 @@ Executable contracts shared by the Agent, H5, and Mini Program media gateway.
   Claim, Binding initialization, Activation/ACK and post-activation device
   media challenge/session payloads. It deliberately contains no Wi-Fi
   credential, user access token, LiveKit credential or device private key field.
+- `device-media-v2.json` is the ESP32 ↔ Go Hardware Media Edge authority for
+  capability negotiation, interruption/playback control events, full
+  generation fences, priority lanes and byte-exact `MemoriaAudioFrameV1`
+  fixtures. The v2 downlink sequence/sample clock resets to 0 per
+  authoritative `generation.started` or `playback.flush` replacement, and a
+  same-generation forward gap caused by queue drops MUST be marked with the
+  downlink-only discontinuity flag (header flags bit 0, 0x0001) at
+  socket-write time; the device accepts a flagged gap only when the sequence
+  and sample deltas are consistent multiples of `frame_samples` and rejects
+  backward, forged or unflagged gaps. A v1 hello/session is served only by the legacy
+  livekit_compat gateway; the direct edge is v2-only and never accepts a
+  v1 hello, never uses the legacy `N + 1` generation mapping, and
+  `full_duplex_verified` requires server-side acoustic attestation.
 - `media-events.schema.json` defines the versioned media-v1 DataChannel envelope;
   every envelope carries the complete session/stream/sequence/generation/tool
   fence and a required object payload. Clients reject stale fences and require

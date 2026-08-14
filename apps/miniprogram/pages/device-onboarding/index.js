@@ -232,14 +232,7 @@ Page({
     });
   },
 
-  skipSpeakerEnrollment() {
-    this._controller.skipSpeakerEnrollment();
-    this._controller.startActivationPolling();
-  },
 
-  openSpeakerEnrollment() {
-    wx.navigateTo({ url: "/pages/speaker-enrollment/index?from=device-onboarding" });
-  },
 
   refreshActivation() {
     this._controller.refreshActivation();

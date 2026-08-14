@@ -74,15 +74,22 @@ npm --prefix apps/h5 run build
 
 ### 微信小程序
 
-微信小程序位于 `apps/miniprogram`，媒体面通过
-`RecorderManager → PCM/WSS → MiniProgramMediaGateway → LiveKit Agent` 接入同一业务与智能链路。
-共享媒体契约位于 `packages/contracts/miniprogram-media.json`：
+微信小程序位于 `apps/miniprogram`，定位为**机器人控制台、家庭账户入口和长期信息
+查看器**（整改方案 §2.1）：负责扫码/BLE 配网、Claim/Binding/Activation、Soul/
+Persona、家庭与权限、设备设置、会话记录与总结、告警与诊断。小程序不采集麦克风、
+不播放实时 TTS、不建立媒体 WSS、不加入 LiveKit 房间，也不接触设备媒体票据；
+**ESP32-S3 机器人是唯一面向用户的实时语音终端**，初始化完成后关闭小程序不影响
+机器人对话。未通过 AEC/双讲真机验收前不得宣称全双工。
 
 ```bash
 npm --prefix apps/miniprogram test
 find apps/miniprogram -type f -name '*.js' ! -path '*/node_modules/*' -print0 \
   | xargs -0 -n1 node --check
 ```
+
+CI 静态门禁禁止 `wx.getRecorderManager` / `RecorderManager` / `scope.record`、媒体
+WSS 与媒体会话类重新进入生产包；`packages/contracts/miniprogram-media.json` 仅供
+小程序媒体 Gateway 退役前的兼容路径使用，不再是小程序当前链路。
 
 ### 离线质量门（无需供应商密钥）
 

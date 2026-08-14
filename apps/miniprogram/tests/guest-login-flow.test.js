@@ -50,10 +50,10 @@ test("guest actions share one login gate with a return path", async () => {
   const { requireLogin } = require("../utils/auth-gate");
 
   try {
-    assert.equal(await requireLogin({ reason: "start_voice" }), false);
+    assert.equal(await requireLogin({ reason: "view_dashboard" }), false);
     assert.match(navigated, /^\/pages\/auth\/index\?/);
     assert.match(decodeURIComponent(navigated), /redirect=\/pages\/home\/index/);
-    assert.match(navigated, /reason=start_voice/);
+    assert.match(navigated, /reason=view_dashboard/);
     assert.match(navigated, /skip_restore=1/);
   } finally {
     delete require.cache[gatePath];
@@ -110,7 +110,7 @@ test("auth cleanup broadcasts to every page that can hold private state", () => 
   assert.match(homeScript, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
   assert.match(
     homeScript,
-    /_enterGuestState\(\)[\s\S]*_endMediaLocally\(\)[\s\S]*transcript:\s*\[\][\s\S]*active:\s*false/,
+    /_enterGuestState\(\)[\s\S]*hasBinding:\s*false[\s\S]*device:\s*null[\s\S]*todayCount:\s*null/,
   );
   assert.match(memoryScript, /subscribeAuthCleared\(\(\) => this\._enterGuestState\(\)\)/);
   assert.match(memoryScript, /_enterGuestState\(\)[\s\S]*days:\s*\[\]/);

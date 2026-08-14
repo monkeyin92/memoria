@@ -8,6 +8,7 @@ import inspect
 import logging
 import time
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Protocol
 
@@ -151,6 +152,104 @@ class MediaAudioIngress:
                 await result
         context.ingress.discontinuity_pending = False
 
+    async def finalize_speech_segment(self, context: _MediaVoiceSession) -> None:
+        """Drain pre-VAD PCM, rotate provider task, then accept its tail results."""
+
+        callback_stream_epoch = context.stream_epoch
+        await self._wait_until_idle(context)
+        if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
+            return
+        finalize = getattr(context.provider, "finalize_speech_segment", None)
+        if not callable(finalize):
+            return
+        results = finalize(context.identity)
+        if inspect.isawaitable(results):
+            results = await results
+        if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
+            return
+        # The returned finals belong to the task that just ended. Accept them
+        # before announcing the freshly started task epoch; doing it in the
+        # opposite order would correctly classify the tail as stale.
+        await self._accept_provider_results(
+            context,
+            results,
+            callback_stream_epoch=callback_stream_epoch,
+            observe_task_before_results=False,
+        )
+
+    async def _wait_until_idle(self, context: _MediaVoiceSession) -> None:
+        state = context.ingress
+        while True:
+            task = state.pump_task
+            if task is None:
+                if state.queue.empty():
+                    return
+                await asyncio.sleep(0)
+                continue
+            if task is asyncio.current_task():
+                raise RuntimeError("media audio ingress cannot wait on its own pump")
+            await asyncio.shield(task)
+
+    async def _observe_provider_task(self, context: _MediaVoiceSession) -> None:
+        provider_task_epoch = getattr(context.provider, "current_asr_task_epoch", 0)
+        if not provider_task_epoch:
+            return
+        if isinstance(provider_task_epoch, bool) or not isinstance(provider_task_epoch, int):
+            raise RuntimeError("media provider returned an invalid ASR task epoch")
+        previous_task_epoch = context.asr.latest_authoritative_task_epoch
+        if not context.asr.observe_task(provider_task_epoch):
+            raise RuntimeError("media provider ASR task epoch moved backwards")
+        if provider_task_epoch > previous_task_epoch:
+            await self._host.bridge.emit_speech_task_started(
+                context.identity.session_id,
+                provider_task_epoch,
+                context.runtime.speech_timeline,
+            )
+
+    async def _accept_provider_results(
+        self,
+        context: _MediaVoiceSession,
+        results: Iterable[ASRResult],
+        *,
+        callback_stream_epoch: int,
+        observe_task_before_results: bool = True,
+    ) -> None:
+        if observe_task_before_results:
+            await self._observe_provider_task(context)
+        for result in results:
+            if not isinstance(result, ASRResult):
+                raise RuntimeError("media provider returned an invalid ASR result")
+            if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
+                return
+            if (
+                any(
+                    result.capture_start_sample < end and start < result.capture_end_sample
+                    for start, end in context.ingress.loss_concealed_ranges
+                )
+                and not result.loss_concealed
+            ):
+                confidence = result.confidence
+                if confidence is not None:
+                    confidence = max(0.0, confidence * 0.75)
+                result = replace(result, confidence=confidence, loss_concealed=True)
+            decision = await self._host._accept_asr_result_decision(
+                context.identity.session_id,
+                result,
+            )
+            if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
+                return
+            shadow_result = decision.accepted or result
+            await self._host.bridge.emit_speech_segment_decision(
+                context.identity.session_id,
+                asr_result_to_segment(shadow_result, session_id=context.identity.session_id),
+                authoritative_accepted=decision.accepted is not None,
+                authoritative_reason=decision.reason.value,
+                timeline=context.runtime.speech_timeline,
+                latest_task_epoch=context.asr.latest_authoritative_task_epoch,
+            )
+        if not observe_task_before_results:
+            await self._observe_provider_task(context)
+
     async def _process(
         self,
         context: _MediaVoiceSession,
@@ -166,7 +265,9 @@ class MediaAudioIngress:
         results = await context.provider.ingest_audio(context.identity, frame)
         if frame.loss_concealed:
             ranges = context.ingress.loss_concealed_ranges
-            ranges.append((frame.capture_start_sample, frame.capture_start_sample + frame.frame_samples))
+            ranges.append(
+                (frame.capture_start_sample, frame.capture_start_sample + frame.frame_samples)
+            )
             while len(ranges) > 64:
                 ranges.popleft()
             self._host.metrics.inc_media_metric("media_loss_concealed_frames_total")
@@ -177,42 +278,11 @@ class MediaAudioIngress:
         if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
             return
         context.runtime.feed_speaker_pcm(frame.payload)
-        provider_task_epoch = getattr(context.provider, "current_asr_task_epoch", 0)
-        if provider_task_epoch:
-            if isinstance(provider_task_epoch, bool) or not isinstance(provider_task_epoch, int):
-                raise RuntimeError("media provider returned an invalid ASR task epoch")
-            previous_task_epoch = context.asr.latest_authoritative_task_epoch
-            if not context.asr.observe_task(provider_task_epoch):
-                raise RuntimeError("media provider ASR task epoch moved backwards")
-            if provider_task_epoch > previous_task_epoch:
-                await self._host.bridge.emit_speech_task_started(
-                    context.identity.session_id,
-                    provider_task_epoch,
-                    context.runtime.speech_timeline,
-                )
-        for result in results:
-            if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
-                return
-            if any(
-                result.capture_start_sample < end and start < result.capture_end_sample
-                for start, end in context.ingress.loss_concealed_ranges
-            ) and not result.loss_concealed:
-                confidence = result.confidence
-                if confidence is not None:
-                    confidence = max(0.0, confidence * 0.75)
-                result = replace(result, confidence=confidence, loss_concealed=True)
-            decision = await self._host._accept_asr_result_decision(context.identity.session_id, result)
-            if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
-                return
-            shadow_result = decision.accepted or result
-            await self._host.bridge.emit_speech_segment_decision(
-                context.identity.session_id,
-                asr_result_to_segment(shadow_result, session_id=context.identity.session_id),
-                authoritative_accepted=decision.accepted is not None,
-                authoritative_reason=decision.reason.value,
-                timeline=context.runtime.speech_timeline,
-                latest_task_epoch=context.asr.latest_authoritative_task_epoch,
-            )
+        await self._accept_provider_results(
+            context,
+            results,
+            callback_stream_epoch=callback_stream_epoch,
+        )
 
     async def _pump(self, context: _MediaVoiceSession) -> None:
         state = context.ingress

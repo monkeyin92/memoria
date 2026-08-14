@@ -32,7 +32,7 @@ test("device is the registered hardware-management tab", () => {
   assert.deepEqual(
     appConfig.tabBar?.list?.map((item) => [item.pagePath, item.text]),
     [
-      ["pages/home/index", "陪伴"],
+      ["pages/home/index", "首页"],
       ["pages/device/index", "设备"],
       ["pages/memory/index", "回顾"],
       ["pages/profile/index", "我的"],

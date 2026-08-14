@@ -1247,8 +1247,21 @@ func TestVoiceCoreMediaRuntimeExplicitSenderRetiresMoreThanQueueCapacity(t *test
 			t.Fatalf("delivered %d frames, want 101", count)
 		}
 	}
-	if _, ok := session.PopDownlink(); ok {
-		t.Fatal("sender-acknowledged frame remained queued")
+	// Delivery is observable before the receive loop reacquires the Session
+	// mutex to retire the acknowledged frame. Wait for that post-send commit
+	// instead of racing it under the race detector's slower scheduler.
+	deadlineAt := time.Now().Add(2 * time.Second)
+	for {
+		session.mu.Lock()
+		pending := session.downlink.Len()
+		session.mu.Unlock()
+		if pending == 0 {
+			break
+		}
+		if time.Now().After(deadlineAt) {
+			t.Fatal("sender-acknowledged frame remained queued")
+		}
+		time.Sleep(time.Millisecond)
 	}
 	if stats := session.Stats(); stats.OverflowFrames != 0 || stats.DownlinkFrames != 101 {
 		t.Fatalf("unexpected stats: %+v", stats)

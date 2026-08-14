@@ -78,6 +78,74 @@
     </view>
 
     <!-- 可解释降级 -->
+
+    <!-- 设备设置：版本化写入服务端 Runtime Profile，设备在下一安全点生效 -->
+    <view class="card">
+      <text class="settings-title">设备设置</text>
+      <text class="setting-desc">设置以版本化方式写入服务端 Runtime Profile，设备在下一安全点生效；未保存成功不保留本地假状态。</text>
+      <block wx:if="{{settings}}">
+        <view class="setting-control">
+          <text class="setting-control-label">音量</text>
+          <slider min="0" max="100" step="1" value="{{settings.volume_limit}}" bindchange="changeVolume" disabled="{{settingsSaving}}" activeColor="#22e5ff" block-color="#7ceaff" />
+        </view>
+        <view class="setting-control">
+          <text class="setting-control-label">屏幕亮度</text>
+          <slider min="0" max="100" step="1" value="{{settings.screen_brightness}}" bindchange="changeBrightness" disabled="{{settingsSaving}}" activeColor="#22e5ff" block-color="#7ceaff" />
+        </view>
+        <view class="setting-control">
+          <text class="setting-control-label">期望音频模式（{{currentAudioModeLabel}}）</text>
+          <picker wx:if="{{audioModeOptions.length > 0}}" range="{{audioModeOptions}}" range-key="label" value="{{audioModeIndex}}" bindchange="selectAudioMode" disabled="{{settingsSaving}}">
+            <view class="picker-value {{settingsSaving ? 'picker-disabled' : ''}}">{{audioModeOptions[audioModeIndex].label}}</view>
+          </picker>
+          <text wx:else class="setting-control-note">声学能力未知，音频模式暂不可修改（fail-closed）。</text>
+        </view>
+        <view class="setting-control">
+          <text class="setting-control-label">唤醒方式</text>
+          <picker range="{{wakeModeOptions}}" range-key="label" value="{{wakeModeIndex}}" bindchange="selectWakeMode" disabled="{{settingsSaving}}">
+            <view class="picker-value {{settingsSaving ? 'picker-disabled' : ''}}">{{wakeModeLabel}}</view>
+          </picker>
+        </view>
+        <view class="setting-control">
+          <text class="setting-control-label">允许的打断方式</text>
+          <checkbox-group bindchange="toggleBargeIn">
+            <label wx:for="{{bargeInOptions}}" wx:key="value" class="barge-in-option">
+              <checkbox value="{{item.value}}" checked="{{bargeInChecked[item.value]}}" color="#22e5ff" disabled="{{settingsSaving}}" />
+              <text class="barge-in-label">{{item.label}}</text>
+            </label>
+          </checkbox-group>
+        </view>
+        <text wx:if="{{settingsSaving}}" class="setting-control-note">正在保存…</text>
+        <text wx:if="{{settingsError}}" class="error-text">{{settingsError}}</text>
+      </block>
+      <text wx:else class="setting-control-note">设备设置暂时无法读取，请下拉刷新；未取得权威设置前不开放修改。</text>
+    </view>
+
+    <!-- 诊断信息：只展示服务端权威字段（PR-18），客户端不拼接连接质量数据 -->
+    <view class="card">
+      <text class="settings-title">诊断信息</text>
+      <block wx:if="{{diagnostics}}">
+        <view wx:if="{{diagnostics.generated_at}}" class="summary-row"><text class="summary-key">最近诊断时间</text><text class="summary-value">{{diagnostics.generated_at}}</text></view>
+        <view wx:if="{{diagnostics.binding}}" class="summary-row"><text class="summary-key">绑定版本 / 激活状态</text><text class="summary-value">v{{diagnostics.binding.binding_version}} · {{diagnostics.binding.activation_status}}</text></view>
+        <view class="summary-row"><text class="summary-key">Runtime Profile 版本</text><text class="summary-value">v{{diagnostics.runtime_profile_version}}</text></view>
+        <view class="summary-row"><text class="summary-key">实际音频模式</text><text class="summary-value">{{effectiveAudioModeLabel}}</text></view>
+        <view class="summary-row"><text class="summary-key">实时链路</text><text class="summary-value">{{liveRuntimeStatusLabel}}</text></view>
+        <view class="summary-row"><text class="summary-key">允许的音频模式</text><text class="summary-value">{{allowedAudioModesLabel}}</text></view>
+        <block wx:if="{{acousticCapability}}">
+          <text class="setting-desc acoustic-heading">声学能力登记（服务端权威）</text>
+          <view class="summary-row"><text class="summary-key">板型</text><text class="summary-value">{{acousticCapability.board_profile}}</text></view>
+          <view class="summary-row"><text class="summary-key">固件范围</text><text class="summary-value">{{acousticCapability.firmware_version_range}}</text></view>
+          <view class="summary-row"><text class="summary-key">声学档案版本</text><text class="summary-value">v{{acousticCapability.acoustic_profile_version}}</text></view>
+          <view class="summary-row"><text class="summary-key">AEC 验收</text><text class="summary-value">{{acousticCapability.aec_verified ? '已通过' : '未通过'}}</text></view>
+          <view class="summary-row"><text class="summary-key">AEC 参考类型</text><text class="summary-value">{{acousticCapability.aec_reference_type}}</text></view>
+          <view class="summary-row"><text class="summary-key">最大打断等级</text><text class="summary-value">{{acousticCapability.max_barge_in_level}}</text></view>
+          <view class="summary-row"><text class="summary-key">测试音量范围</text><text class="summary-value">{{acousticCapability.tested_volume_range}}</text></view>
+          <view wx:if="{{acousticCapability.tested_distance_m !== null}}" class="summary-row"><text class="summary-key">测试距离</text><text class="summary-value">{{acousticCapability.tested_distance_m}} m</text></view>
+        </block>
+        <text wx:else class="setting-control-note">尚未登记声学能力：只允许半双工安全模式，不开放全双工或语音打断。</text>
+        <text class="form-note">诊断只展示服务端权威字段；连接质量（丢包/欠载/重连）等字段由服务端补齐后才会展示。</text>
+      </block>
+      <text wx:else class="setting-control-note">诊断信息暂时不可用（服务端未返回），不展示推断数据。</text>
+    </view>
     <view wx:if="{{degradation}}" class="card degradation-card">
       <text class="degradation-badge">安全模式</text>
       <text wx:for="{{degradation.reasons}}" wx:key="*this" class="degradation-reason">{{item}}</text>

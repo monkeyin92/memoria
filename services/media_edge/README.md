@@ -12,6 +12,30 @@ SRTP、RTP 和 DataChannel 复用 Pion；Opus 上下行使用一层最小 `libop
 `python_authoritative + LiveKit` 默认路径；真实 provider、TURN、浏览器播放、硬件、容量、
 多实例和混沌证据完成前，Go 只允许 shadow，不能晋升为权威。
 
+## ESP32 Device WSS 共享安全状态
+
+`/v1/device/media` 的一次性 JTI 与单设备连接租约在开发环境可使用进程内存；生产
+direct-device 模式必须配置 `MEDIA_EDGE_DEVICE_STATE_REDIS_URL`，否则进程拒绝启动并且
+readiness fail closed。Redis 票据键只保存 JTI 的 SHA-256 且 TTL 不超过票据 `exp`，使用
+原子 `SET NX`；Redis 不可用时返回 503，不回退本地 map。
+
+设备租约以 `device_id + stream_epoch + owner_id + conn_id` 原子比较。更高 epoch 接管时，Lua
+脚本在写入新租约后向旧 `owner_id` 发布 supersede；旧 Edge 立即关闭本地 socket，周期性
+compare-and-refresh 是 Pub/Sub 丢失时的后备。`conn_id` 只在进程内唯一，跨主机关闭必须同时
+匹配 `owner_id`；旧连接的 compare-and-delete 不能删除新主机租约。Redis 故障时现有连接也会
+关闭，避免旧 Edge 在失去共享权威后继续转发。
+
+相关配置：
+
+```text
+MEDIA_EDGE_DEVICE_STATE_REDIS_URL=rediss://...
+MEDIA_EDGE_DEVICE_STATE_KEY_PREFIX=memoria:device-media:v2
+MEDIA_EDGE_DEVICE_STATE_TIMEOUT_MS=500
+MEDIA_EDGE_DEVICE_LEASE_TTL_MS=30000
+MEDIA_EDGE_DEVICE_LEASE_CHECK_INTERVAL_MS=5000
+MEDIA_EDGE_INSTANCE_ID=<optional unique owner; hostname-pid by default>
+```
+
 `POST /whip` 验证 Control API 签发的短期 JWT，从 token 绑定 session/account/device/
 client/stream epoch，完成非 trickle offer/answer，并返回 `Location` 和 `ETag`。
 `PATCH /whip/{resource}` 是 Memoria 的完整 SDP 非 trickle restart 扩展（要求
@@ -103,7 +127,9 @@ MEDIA_EDGE_JWT_SECRET='...' ENVIRONMENT=development \
 API 只持有 `STREAMCORE_TOKEN_PRIVATE_KEY_FILE` 或 PEM；Edge 支持轮换期间的多 `kid`。
 HS256 的 `MEDIA_EDGE_JWT_SECRET`/`STREAMCORE_TOKEN_SECRET` 仅作为迁移 fallback，不能与
 EdDSA 同时启用。设置 `MEDIA_EDGE_INTERNAL_HTTP_ADDR` 后，`/readyz` 和 `/metrics` 只在
-私网监听；公网 listener 只保留 liveness、WHIP 和带 token 的媒体控制。参考 HTTP 端点不会
+私网监听；`runtime_profile.invalidated` 投递还必须携带与 Control API 独立共享的
+`MEDIA_EDGE_INTERNAL_CONTROL_TOKEN`，生产 direct-device 模式要求外层 HTTPS/mTLS。
+公网 listener 只保留 liveness、WHIP 和带 token 的媒体控制。参考 HTTP 端点不会
 接收长期模型/用户密钥。
 无 secret 的本地测试必须显式设置
 `AllowInsecureDevelopment=true`，默认 fail closed。

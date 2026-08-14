@@ -156,8 +156,16 @@ class MediaSessionLifecycleMixin:
         self.bridge.on_speech_segment = self.on_speech_segment
         self.bridge.on_client_event = self.on_client_event
         self.bridge.on_session_closed = self.on_session_closed
+        self.bridge.on_session_connected = self.on_session_connected
         self.bridge.on_playback_progress = self.on_playback_progress
         self.bridge.on_downlink_overflow = self.on_downlink_overflow
+
+    async def on_session_connected(self, session: MediaBridgeSession) -> None:
+        """Install a replacement epoch before resumed downlink can flow."""
+
+        current = self._sessions.get(session.identity.session_id)
+        if current is not None:
+            await self._reuse_session(current, session.identity)
 
     def _stream_epoch_is_current(
         self,
@@ -218,9 +226,10 @@ class MediaSessionLifecycleMixin:
                 current.stream_epoch = identity.stream_epoch
                 current.floor_epoch = 0
                 current.runtime.start_media_stream_epoch(identity.stream_epoch)
-                current.runtime.orchestrator.delegation.reset_output_intent_state(
-                    identity.session_id
-                )
+                # A transport reconnect preserves the current Generation and
+                # its selected output lease. Candidate output is fenced by
+                # Generation/context, not stream_epoch; clearing it here
+                # would cancel the very reply the new epoch is resuming.
                 if not current.asr.reconnect(stream_epoch=identity.stream_epoch):
                     raise ValueError("ASR stream epoch did not advance")
                 endpoint_task = current.turn_endpoint_task

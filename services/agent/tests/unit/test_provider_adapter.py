@@ -513,6 +513,56 @@ async def test_existing_provider_adapter_maps_asr_and_streams_existing_handlers(
 
 
 @pytest.mark.asyncio
+async def test_existing_provider_adapter_rotates_funasr_at_vad_boundary() -> None:
+    class SegmentASR(FakeASR):
+        async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+            self.sent.append((pcm, capture_start_sample))
+
+        async def rotate_task(self, *, require_consumed: bool = True) -> None:
+            assert require_consumed is False
+            previous_task_id = self.task_id
+            await self.events.put(
+                FunASRServerEvent(
+                    event="result-generated",
+                    task_id=previous_task_id,
+                    sentence=FunASRSentence(
+                        sentence_id=9,
+                        text="第二问",
+                        begin_ms=0,
+                        end_ms=20,
+                        sentence_end=True,
+                        heartbeat=False,
+                        words=(),
+                    ),
+                )
+            )
+            await self.events.put(
+                FunASRServerEvent(event="task-finished", task_id=previous_task_id)
+            )
+            self.task_epoch += 1
+            self.task_id = f"task-{self.task_epoch}"
+            self.task_sample_origin = 320
+
+    asr = SegmentASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("adapter-vad-boundary", stream_epoch=1)
+    assert not await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+
+    results = await adapter.finalize_speech_segment(identity)
+
+    assert [(result.text, result.task_epoch) for result in results] == [("第二问", 1)]
+    assert adapter.current_asr_task_epoch == 2
+    assert asr.task_id == "task-2"
+
+
+@pytest.mark.asyncio
 async def test_existing_provider_adapter_records_partial_sample_age() -> None:
     class PartialASR(FakeASR):
         last_sent_sample = 640
@@ -1219,7 +1269,9 @@ async def test_generation_eviction_floor_is_epoch_scoped() -> None:
 
     # Old subject (epoch 1) fills the history and advances the eviction floor.
     for generation in range(1, 5):
-        assert [chunk async for chunk in adapter.generate_reply(identity, "hi", fence(1, generation))]
+        assert [
+            chunk async for chunk in adapter.generate_reply(identity, "hi", fence(1, generation))
+        ]
     assert len(adapter._generation_started) <= 2
     assert adapter._generation_eviction_floor is not None
     # New subject reuses the same turn/generation numbers at epoch 2: it must

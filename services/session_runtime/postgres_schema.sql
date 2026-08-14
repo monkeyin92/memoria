@@ -1141,6 +1141,114 @@ BEGIN
 END
 $session_runtime_fail_session$;
 
+
+-- Terminal close authority.  ``session_closed`` is a distinct lifecycle
+-- event: a normal/Edge-reported close never reuses ``session_failed``.
+-- The transition advances every conversation fence (session/generation/turn/tool)
+-- and atomically writes one event plus its outbox row with the state change.
+-- An idempotent replay may present either the pre-close epoch or the observed
+-- terminal epoch. Failed sessions remain failed and conflict on close so a
+-- failed authority can never be relabeled closed.
+CREATE OR REPLACE FUNCTION session_runtime_close_session(
+    p_session_id text,
+    p_expected_runtime_profile_id text,
+    p_expected_session_epoch integer,
+    p_event jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = on
+AS $session_runtime_close_session$
+DECLARE
+    authenticated_actor text := NULLIF(
+        current_setting('app.authenticated_actor', true), ''
+    );
+    authenticated_device text := NULLIF(
+        current_setting('app.authenticated_device', true), ''
+    );
+    context_row session_runtime_contexts%ROWTYPE;
+BEGIN
+    SELECT * INTO context_row
+    FROM session_runtime_contexts
+    WHERE session_id = p_session_id
+      AND current_runtime_profile_id = p_expected_runtime_profile_id
+      AND actor_id = authenticated_actor
+      AND device_id = authenticated_device
+    FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'closed-session CAS conflict' USING ERRCODE = 'SR412';
+    END IF;
+    IF context_row.state = 'closed' THEN
+        IF context_row.session_epoch = p_expected_session_epoch
+           OR context_row.session_epoch = p_expected_session_epoch + 1 THEN
+            RETURN jsonb_build_object('status', 'already_closed');
+        END IF;
+        RAISE EXCEPTION 'closed-session CAS conflict' USING ERRCODE = 'SR412';
+    END IF;
+    IF context_row.state <> 'active'
+       OR context_row.session_epoch <> p_expected_session_epoch THEN
+        RAISE EXCEPTION 'closed-session CAS conflict' USING ERRCODE = 'SR412';
+    END IF;
+    -- Closing an already-issued Session is terminal cleanup, not a new
+    -- authorization. The frozen actor/device/binding tuple above is the CAS
+    -- authority; requiring the binding to remain active here would strand
+    -- sessions precisely when unbind/revocation needs them closed.
+    IF p_event ->> 'event_type' <> 'session_closed'
+       OR p_event ->> 'session_id' <> p_session_id
+       OR p_event ->> 'runtime_profile_id'
+            <> context_row.current_runtime_profile_id
+       OR p_event ->> 'actor_id' <> authenticated_actor
+       OR p_event ->> 'device_id' <> authenticated_device
+       OR p_event ->> 'binding_id' <> context_row.binding_id
+       OR (p_event ->> 'binding_version')::integer
+            <> context_row.binding_version
+       OR p_event -> 'active_subject_id' IS DISTINCT FROM 'null'::jsonb
+       OR (p_event ->> 'subject_revision')::integer <> 0
+       OR (p_event ->> 'event_sequence')::integer
+            <> context_row.profile_revision + 1
+       OR (p_event ->> 'session_epoch')::integer
+            <> context_row.session_epoch + 1
+       OR (p_event ->> 'generation_id')::integer
+            <> context_row.generation_id + 1
+       OR (p_event ->> 'turn_id')::integer <> context_row.turn_id + 1
+       OR (p_event ->> 'tool_epoch')::integer <> context_row.tool_epoch + 1 THEN
+        RAISE EXCEPTION 'closed-session fence did not advance'
+            USING ERRCODE = 'SR400';
+    END IF;
+    UPDATE session_runtime_contexts
+    SET state = 'closed', active_subject_id = NULL,
+        session_epoch = context_row.session_epoch + 1,
+        generation_id = context_row.generation_id + 1,
+        turn_id = context_row.turn_id + 1,
+        tool_epoch = context_row.tool_epoch + 1,
+        updated_at = (p_event ->> 'occurred_at')::timestamptz
+    WHERE session_id = p_session_id;
+    INSERT INTO session_runtime_events (
+        event_id, event_type, session_id, event_sequence, session_epoch,
+        actor_id, binding_id, payload_json, occurred_at
+    ) VALUES (
+        p_event ->> 'event_id', p_event ->> 'event_type', p_session_id,
+        (p_event ->> 'event_sequence')::integer,
+        (p_event ->> 'session_epoch')::integer, authenticated_actor,
+        context_row.binding_id, p_event,
+        (p_event ->> 'occurred_at')::timestamptz
+    );
+    INSERT INTO session_runtime_outbox (
+        outbox_id, event_id, session_id, actor_id, binding_id, topic,
+        payload_json, status, attempts, locked_until, last_error_code,
+        created_at, updated_at, delivered_at
+    ) VALUES (
+        'outbox-' || (p_event ->> 'event_id'), p_event ->> 'event_id',
+        p_session_id, authenticated_actor, context_row.binding_id,
+        'agent.session.closed', p_event, 'pending', 0, NULL, NULL,
+        (p_event ->> 'occurred_at')::timestamptz,
+        (p_event ->> 'occurred_at')::timestamptz, NULL
+    );
+    RETURN jsonb_build_object('status', 'closed');
+END
+$session_runtime_close_session$;
+
 -- Session action fence authority.  The action login can only advance one
 -- legal monotonic fence step (new turn / interrupt / tool) on the
 -- authoritative context row and lock an exact-fence policy receipt; it never
@@ -1900,6 +2008,10 @@ REVOKE ALL ON FUNCTION session_runtime_commit_rotation(
 REVOKE ALL ON FUNCTION session_runtime_fail_session(
     text, text, integer, jsonb
 ) FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION session_runtime_close_session(
+    text, text, integer, jsonb
+) FROM PUBLIC;
 REVOKE ALL ON FUNCTION session_runtime_fence_json_valid(jsonb, text[])
     FROM PUBLIC;
 REVOKE ALL ON FUNCTION session_runtime_fence_text_valid(
@@ -1944,6 +2056,10 @@ GRANT EXECUTE ON FUNCTION session_runtime_commit_rotation(
     jsonb, integer, jsonb
 ) TO memoria_action_executor;
 GRANT EXECUTE ON FUNCTION session_runtime_fail_session(
+    text, text, integer, jsonb
+) TO memoria_action_executor;
+
+GRANT EXECUTE ON FUNCTION session_runtime_close_session(
     text, text, integer, jsonb
 ) TO memoria_action_executor;
 GRANT EXECUTE ON FUNCTION session_runtime_advance_action_fence(jsonb)

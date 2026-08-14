@@ -480,6 +480,10 @@ class LinuxMediaDeviceClient:
             device_id=self.identity.device_id,
             client_type=self.identity.client_type,
             stream_epoch=self.identity.stream_epoch,
+            subject_id=self.identity.subject_id,
+            binding_id=self.identity.binding_id,
+            binding_version=self.identity.binding_version,
+            runtime_profile_version=self.identity.runtime_profile_version,
         )
 
     @staticmethod

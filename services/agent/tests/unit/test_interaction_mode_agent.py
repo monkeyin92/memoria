@@ -881,7 +881,7 @@ def test_legacy_personal_voice_requires_grant_permission_and_exact_target() -> N
     )
 
 
-def test_legacy_local_safe_is_only_fixed_refusal_with_frozen_designed_fallback() -> None:
+def test_legacy_local_safe_allows_only_deterministic_safe_text_with_frozen_fallback() -> None:
     runtime = DuplexRuntime.create(session_id="strict-legacy-local-safe")
     policy = _legacy_policy(voice_allowed=True)
     runtime.set_mode_policy(policy)
@@ -946,6 +946,15 @@ def test_legacy_local_safe_is_only_fixed_refusal_with_frozen_designed_fallback()
     )
     assert crisis_plan.direct_text == CRISIS_SUPPORT_REPLY
     assert agent._plan_matches_mode_policy(crisis_plan, policy)
+    clock_plan = agent._local_safe_plan(
+        fence=runtime.fence,
+        speaker=speaker,
+        reason="planner_unavailable",
+        query="今天星期几",
+    )
+    assert clock_plan.direct_text is not None
+    assert clock_plan.direct_text.startswith("今天是")
+    assert agent._plan_matches_mode_policy(clock_plan, policy)
     assert not agent._plan_matches_mode_policy(
         replace(
             plan,
@@ -957,6 +966,38 @@ def test_legacy_local_safe_is_only_fixed_refusal_with_frozen_designed_fallback()
         ),
         policy,
     )
+
+
+def test_unknown_safe_clock_fact_uses_authoritative_local_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        agent_mod,
+        "current_local_time",
+        lambda _timezone: datetime.fromisoformat("2026-08-14T17:13:00+08:00"),
+    )
+    runtime = DuplexRuntime.create(session_id="unknown-safe-clock")
+    policy = ModePolicy.degraded_unknown_safe()
+    runtime.set_mode_policy(policy)
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    plan = agent._local_safe_plan(
+        fence=runtime.fence,
+        speaker=SpeakerDecision(
+            classification="uncertain",
+            score=0.0,
+            quality_score=0.0,
+            reason_code="authority_unavailable",
+            model_version="unavailable",
+            template_version=None,
+            profile_id=None,
+            permissions=permissions_for_speaker("uncertain"),
+        ),
+        reason="no_verified_runtime_profile",
+        query="今天星期几？",
+    )
+
+    assert plan.direct_text == "今天是2026年8月14日，星期五。"
+    assert agent._plan_matches_mode_policy(plan, policy)
 
 
 @pytest.mark.asyncio

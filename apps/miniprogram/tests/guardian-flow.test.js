@@ -40,6 +40,7 @@ test("student notice and tutor focus remain explicit client choices", () => {
   assert.match(profile, /敏感能力入口已关闭/);
   assert.match(homeScript, /英语口语/);
   assert.match(homeScript, /作业陪伴/);
-  assert.match(homeScript, /sessionFocus: this\.data\.sessionFocus/);
-  assert.match(api, /session_focus: interactionMode === "companion" \? sessionFocus : "chat"/);
+  assert.match(homeScript, /learning_mode/);
+  assert.match(api, /updateDeviceSettings/);
+  assert.doesNotMatch(api, /session_focus/);
 });

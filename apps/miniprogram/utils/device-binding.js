@@ -267,8 +267,10 @@ const AGE_BAND_LABELS = Object.freeze({
 });
 
 /* 敏感入口：是否展示由服务端 Runtime Profile 的 capabilities 决定（D-07）。
- * 五类敏感能力全部 fail-closed：Profile 缺失/非法/过期时一律不开放，
- * 客户端不得用本地年龄或账号资料做成人降级。 */
+ * 可导航入口全部 fail-closed：Profile 缺失/非法/过期时一律不开放，
+ * 客户端不得用本地年龄或账号资料做成人降级。手机声纹录取已移除（整改方案
+ * PR-02），voice_profile_create 只在「我的」页作为服务端授权状态展示，
+ * 不再映射到任何页面入口；实际说话人登记在机器人端完成。 */
 const SENSITIVE_ENTRIES = Object.freeze([
   {
     key: "digital_self",
@@ -276,13 +278,6 @@ const SENSITIVE_ENTRIES = Object.freeze([
     title: "数字分身成长",
     description: "查看服务端的成长维度、Persona 与版本状态",
     page: "/pages/digital-self/index",
-  },
-  {
-    key: "speaker_enrollment",
-    capability: contracts.Capability.VoiceProfileCreate,
-    title: "主人声纹",
-    description: "用自然、轻声、带笑和稳重语气各录一次",
-    page: "/pages/speaker-enrollment/index",
   },
   {
     key: "guardian_summary",
@@ -323,7 +318,7 @@ function entryForCapability(capability) {
 
 /*
  * 配置/consent 类动作的独立 gate seam（P1 边界）：监护关系创建与授权、
- * 原始语音授权授予/撤回、声纹档案提交等“配置能力”的动作不能复用使用类
+  * 原始语音授权授予/撤回等“配置能力”的动作不能复用使用类
  * 能力的门禁（否则首次设置死锁：未授权就永远无法发起授权），也不能在
  * 客户端用年龄绕过。后端 consent/policy 决策接口接入前，一律 fail-closed
  * 并给出可解释文案；接入后由该 seam 消费服务端决策结果。
@@ -333,8 +328,6 @@ const CONFIG_SEAM_MESSAGES = Object.freeze({
     "监护关系与授权配置需要服务端 consent/policy 决策接口；该接口尚未接入，操作保持关闭，不会按本地年龄放开。",
   raw_audio_consent:
     "原始语音授权配置需要服务端 consent 决策接口；该接口尚未接入，授权保持关闭，不会按本地年龄放开。",
-  voice_enrollment:
-    "声纹档案提交需要服务端 consent 决策接口；该接口尚未接入，提交保持关闭，不会按本地年龄放开。",
 });
 
 function configActionGate(action) {

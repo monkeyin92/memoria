@@ -183,22 +183,29 @@ func (a *LiveSessionActor) run() {
 // only when the higher-priority lanes are empty. `drain` is used during
 // shutdown to account for every queued event without waiting on the context.
 func (a *LiveSessionActor) nextEvent(drain bool) (LiveSessionEvent, bool) {
-	if drain {
-		for _, lane := range []<-chan LiveSessionEvent{a.critical, a.audio, a.bulk} {
-			select {
-			case event := <-lane:
-				return event, true
-			default:
-			}
-		}
-		return LiveSessionEvent{}, false
+	// Critical state transitions always overtake a previously selected audio
+	// or bulk event. This closes the small race in Go's blocking select where
+	// generation.start and its first audio frame are both ready and selection
+	// among the channels is otherwise random.
+	select {
+	case event := <-a.critical:
+		return event, true
+	default:
 	}
-	for _, lane := range []<-chan LiveSessionEvent{a.critical, a.audio, a.bulk} {
+	if a.deferredEvent != nil {
+		event := *a.deferredEvent
+		a.deferredEvent = nil
+		return event, true
+	}
+	for _, lane := range []<-chan LiveSessionEvent{a.audio, a.bulk} {
 		select {
 		case event := <-lane:
 			return event, true
 		default:
 		}
+	}
+	if drain {
+		return LiveSessionEvent{}, false
 	}
 	select {
 	case <-a.ctx.Done():
@@ -206,8 +213,20 @@ func (a *LiveSessionActor) nextEvent(drain bool) (LiveSessionEvent, bool) {
 	case event := <-a.critical:
 		return event, true
 	case event := <-a.audio:
-		return event, true
+		return a.deferBehindReadyCritical(event)
 	case event := <-a.bulk:
+		return a.deferBehindReadyCritical(event)
+	}
+}
+
+func (a *LiveSessionActor) deferBehindReadyCritical(
+	event LiveSessionEvent,
+) (LiveSessionEvent, bool) {
+	select {
+	case critical := <-a.critical:
+		a.deferredEvent = &event
+		return critical, true
+	default:
 		return event, true
 	}
 }

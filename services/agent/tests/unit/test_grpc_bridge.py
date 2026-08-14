@@ -834,3 +834,57 @@ async def test_old_transport_close_cannot_notify_after_reconnect_claims_session(
     assert closed_epochs == []
     await bridge._finish_connection(second)
     assert closed_epochs == [2]
+
+
+@pytest.mark.asyncio
+async def test_pcm_waits_for_new_epoch_and_preserves_generation_source_clock() -> None:
+    bridge = MediaBridgeGrpcServer()
+    first_identity = SessionIdentity("resume-pcm", stream_epoch=1)
+    first = bridge._open_connection(first_identity)
+    fence = GenerationFence("resume-pcm", 1, 1, 0)
+    assert await bridge.emit_generation(
+        first_identity.session_id,
+        fence,
+        action=media_pb2.GENERATION_ACTION_START,
+    )
+    await first.outgoing.get()  # generation.started
+    assert await bridge.emit_pcm(
+        first_identity.session_id,
+        PCMFrame(
+            identity=first_identity,
+            turn_id=1,
+            generation_id=1,
+            tool_epoch=0,
+            sequence=0,
+            source_start_sample=0,
+            frame_samples=1,
+            pcm_s16le=b"\x00\x00",
+        ),
+    )
+    await first.outgoing.get()
+    bridge._close_connection(first)
+
+    pending = asyncio.create_task(
+        bridge.emit_pcm_when_connected(
+            first_identity.session_id,
+            PCMFrame(
+                identity=first_identity,
+                turn_id=1,
+                generation_id=1,
+                tool_epoch=0,
+                sequence=1,
+                source_start_sample=1,
+                frame_samples=1,
+                pcm_s16le=b"\x01\x00",
+            ),
+            timeout_s=0.2,
+        )
+    )
+    await asyncio.sleep(0.02)
+    assert not pending.done()
+    second = bridge._open_connection(SessionIdentity("resume-pcm", stream_epoch=2))
+    assert await pending
+    resumed = await second.outgoing.get()
+    assert resumed.audio.identity.stream_epoch == 2
+    assert resumed.audio.sequence == 1
+    assert resumed.audio.source_start_sample == 1

@@ -86,11 +86,15 @@ func (f AudioFrame) Validate(expectedSession string, expectedEpoch uint64) error
 }
 
 type OpenSessionRequest struct {
-	SessionID   string `json:"session_id"`
-	AccountID   string `json:"account_id"`
-	DeviceID    string `json:"device_id"`
-	ClientType  string `json:"client_type,omitempty"`
-	StreamEpoch uint64 `json:"stream_epoch"`
+	SessionID             string `json:"session_id"`
+	AccountID             string `json:"account_id"`
+	DeviceID              string `json:"device_id"`
+	ClientType            string `json:"client_type,omitempty"`
+	StreamEpoch           uint64 `json:"stream_epoch"`
+	SubjectID             string `json:"subject_id,omitempty"`
+	BindingID             string `json:"binding_id,omitempty"`
+	BindingVersion        uint64 `json:"binding_version,omitempty"`
+	RuntimeProfileVersion uint64 `json:"runtime_profile_version,omitempty"`
 }
 
 func (r OpenSessionRequest) Validate() error {
@@ -105,6 +109,15 @@ func (r OpenSessionRequest) Validate() error {
 	}
 	if r.StreamEpoch == 0 {
 		return fmt.Errorf("stream_epoch must be positive")
+	}
+	if r.ClientType == "device" && (strings.TrimSpace(r.SubjectID) == "" ||
+		strings.TrimSpace(r.BindingID) == "" || r.BindingVersion == 0 ||
+		r.RuntimeProfileVersion == 0) {
+		return fmt.Errorf("device session requires a complete runtime profile authority fence")
+	}
+	if r.ClientType != "device" && (r.SubjectID != "" || r.BindingID != "" ||
+		r.BindingVersion != 0 || r.RuntimeProfileVersion != 0) {
+		return fmt.Errorf("runtime profile authority fence is device-only")
 	}
 	return nil
 }

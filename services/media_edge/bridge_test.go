@@ -265,6 +265,7 @@ func newBufconnBridge(t *testing.T, service *fakeVoiceCore) (*VoiceCoreBridge, f
 func bridgeIdentity() BridgeIdentity {
 	return BridgeIdentity{
 		SessionID: "s", AccountID: "a", ParticipantID: "p", DeviceID: "d", ClientType: "device", StreamEpoch: 1,
+		SubjectID: "subject", BindingID: "binding", BindingVersion: 1, RuntimeProfileVersion: 1,
 	}
 }
 

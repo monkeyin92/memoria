@@ -4,7 +4,6 @@
     "pages/memory/index",
     "pages/profile/index",
     "pages/guardian/index",
-    "pages/speaker-enrollment/index",
     "pages/auth/index",
     "pages/digital-self/index",
     "pages/privacy/index",
@@ -27,7 +26,7 @@
     "list": [
       {
         "pagePath": "pages/home/index",
-        "text": "陪伴"
+        "text": "首页"
       },
       {
         "pagePath": "pages/device/index",

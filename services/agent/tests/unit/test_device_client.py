@@ -13,6 +13,20 @@ from services.agent.src.voice_core.media_bridge_server import PCMFrame
 from services.agent.src.voice_core.media_protocol import MediaEnvelope, SessionIdentity
 
 
+def _device_identity(session_id: str) -> SessionIdentity:
+    return SessionIdentity(
+        session_id,
+        account_id="account",
+        participant_id="device-participant",
+        device_id="doll-1",
+        client_type="device",
+        subject_id="subject-1",
+        binding_id="binding-1",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+
+
 async def _wait_for_acks(acks: list[MediaEnvelope], count: int) -> None:
     for _ in range(50):
         if len(acks) >= count:
@@ -77,13 +91,7 @@ async def test_linux_device_client_capture_playback_ack_and_local_mute() -> None
         on_playback_progress=on_progress,
     )
     port = await bridge.start("127.0.0.1:0")
-    identity = SessionIdentity(
-        "device-client-session",
-        account_id="account",
-        participant_id="device-participant",
-        device_id="doll-1",
-        client_type="device",
-    )
+    identity = _device_identity("device-client-session")
     client = LinuxMediaDeviceClient(
         MediaDeviceConfig(
             address=f"127.0.0.1:{port}",
@@ -165,13 +173,7 @@ async def test_linux_device_does_not_ack_when_renderer_reports_no_progress() -> 
 
     bridge = MediaBridgeGrpcServer(on_playback_progress=on_progress)
     port = await bridge.start("127.0.0.1:0")
-    identity = SessionIdentity(
-        "device-no-playout-progress",
-        account_id="account",
-        participant_id="device-participant",
-        device_id="doll-1",
-        client_type="device",
-    )
+    identity = _device_identity("device-no-playout-progress")
     client = LinuxMediaDeviceClient(
         MediaDeviceConfig(address=f"127.0.0.1:{port}", identity=identity),
         on_playback=lambda *_: None,
@@ -209,13 +211,7 @@ async def test_linux_device_client_reports_button_and_network_telemetry() -> Non
 
     bridge = MediaBridgeGrpcServer(on_client_event=on_event)
     port = await bridge.start("127.0.0.1:0")
-    identity = SessionIdentity(
-        "device-telemetry-session",
-        account_id="account",
-        participant_id="device-participant",
-        device_id="doll-1",
-        client_type="device",
-    )
+    identity = _device_identity("device-telemetry-session")
     client = LinuxMediaDeviceClient(
         MediaDeviceConfig(address=f"127.0.0.1:{port}", identity=identity),
         on_generation=lambda *_: generation_seen.set(),
@@ -266,13 +262,7 @@ async def test_linux_device_client_reports_button_and_network_telemetry() -> Non
 @pytest.mark.asyncio
 async def test_linux_device_client_rejects_plaintext_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "production")
-    identity = SessionIdentity(
-        "device-production-session",
-        account_id="account",
-        participant_id="device-participant",
-        device_id="doll-1",
-        client_type="device",
-    )
+    identity = _device_identity("device-production-session")
     client = LinuxMediaDeviceClient(
         MediaDeviceConfig(address="127.0.0.1:1", identity=identity),
     )
@@ -295,13 +285,7 @@ async def test_remote_mute_false_is_rejected_and_cannot_unmute() -> None:
 
     bridge = MediaBridgeGrpcServer(on_client_event=on_event)
     port = await bridge.start("127.0.0.1:0")
-    identity = SessionIdentity(
-        "device-remote-mute-false",
-        account_id="account",
-        participant_id="device-participant",
-        device_id="doll-1",
-        client_type="device",
-    )
+    identity = _device_identity("device-remote-mute-false")
     client = LinuxMediaDeviceClient(
         MediaDeviceConfig(address=f"127.0.0.1:{port}", identity=identity),
         on_command=on_command,
@@ -355,13 +339,7 @@ async def test_remote_mute_malformed_payloads_fail_closed(payload: dict[str, obj
 
     bridge = MediaBridgeGrpcServer(on_client_event=on_event)
     port = await bridge.start("127.0.0.1:0")
-    identity = SessionIdentity(
-        "device-remote-mute-malformed",
-        account_id="account",
-        participant_id="device-participant",
-        device_id="doll-1",
-        client_type="device",
-    )
+    identity = _device_identity("device-remote-mute-malformed")
     client = LinuxMediaDeviceClient(
         MediaDeviceConfig(address=f"127.0.0.1:{port}", identity=identity),
     )
@@ -409,13 +387,7 @@ async def test_local_hardware_mute_seam_unmutes_and_is_isolated_from_remote() ->
 
     bridge = MediaBridgeGrpcServer(on_client_event=on_event)
     port = await bridge.start("127.0.0.1:0")
-    identity = SessionIdentity(
-        "device-local-hardware-seam",
-        account_id="account",
-        participant_id="device-participant",
-        device_id="doll-1",
-        client_type="device",
-    )
+    identity = _device_identity("device-local-hardware-seam")
     client = LinuxMediaDeviceClient(
         MediaDeviceConfig(address=f"127.0.0.1:{port}", identity=identity),
     )
@@ -470,13 +442,7 @@ async def test_remote_mute_duplicate_and_expired_commands_keep_safety_semantics(
 
     bridge = MediaBridgeGrpcServer(on_client_event=on_event)
     port = await bridge.start("127.0.0.1:0")
-    identity = SessionIdentity(
-        "device-remote-mute-duplicate",
-        account_id="account",
-        participant_id="device-participant",
-        device_id="doll-1",
-        client_type="device",
-    )
+    identity = _device_identity("device-remote-mute-duplicate")
     client = LinuxMediaDeviceClient(
         MediaDeviceConfig(address=f"127.0.0.1:{port}", identity=identity),
     )

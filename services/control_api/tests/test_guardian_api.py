@@ -179,18 +179,14 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
 
         policy_without_retention = await client.post(
             "/v1/interaction/session-policy",
-            headers={
-                "X-Memoria-Internal-Token": "guardian-test-policy-token-that-is-long-enough"
-            },
+            headers={"X-Memoria-Internal-Token": "guardian-test-policy-token-that-is-long-enough"},
             json={"session_id": session.json()["session_id"]},
         )
         assert policy_without_retention.status_code == 200, policy_without_retention.text
         unretained = await client.post(
             "/v1/archive/session-events",
             headers={
-                "X-Memoria-Internal-Token": (
-                    "guardian-test-archive-token-that-is-long-enough"
-                )
+                "X-Memoria-Internal-Token": ("guardian-test-archive-token-that-is-long-enough")
             },
             json={
                 "event_id": "minor-unretained-turn",
@@ -242,17 +238,13 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
         )
         policy_with_retention = await client.post(
             "/v1/interaction/session-policy",
-            headers={
-                "X-Memoria-Internal-Token": "guardian-test-policy-token-that-is-long-enough"
-            },
+            headers={"X-Memoria-Internal-Token": "guardian-test-policy-token-that-is-long-enough"},
             json={"session_id": session.json()["session_id"]},
         )
         retained = await client.post(
             "/v1/archive/session-events",
             headers={
-                "X-Memoria-Internal-Token": (
-                    "guardian-test-archive-token-that-is-long-enough"
-                )
+                "X-Memoria-Internal-Token": ("guardian-test-archive-token-that-is-long-enough")
             },
             json={
                 "event_id": "minor-retained-turn",
@@ -397,17 +389,15 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
         assert "【导师话轮约束】" not in semantic_crisis.json()["instructions"]
 
         revoked = await client.delete(
-            (
-                f"/v1/guardian/links/{link['link_id']}/consents/"
-                f"{voice_consent.json()['consent_id']}"
-            ),
+            (f"/v1/guardian/links/{link['link_id']}/consents/{voice_consent.json()['consent_id']}"),
             headers={**parent_headers, "Idempotency-Key": "voice-revoke-request-001"},
         )
         assert revoked.status_code == 200
         assert revoked.json()["active"] is False
-        assert app.state.memory_store.get_voice_session_by_id(
-            session_id=session.json()["session_id"]
-        ) is None
+        assert (
+            app.state.memory_store.get_voice_session_by_id(session_id=session.json()["session_id"])
+            is None
+        )
 
         blocked_after_revoke = await client.post(
             "/v1/sessions",
@@ -554,9 +544,7 @@ async def test_authorized_child_corpus_is_time_bounded_and_revocation_deletes_au
         )
         assert transcript.status_code == 201
         assert audio.status_code == 201
-        samples = await app.state.guardian_store.corpus_samples(
-            minor_user_id=child["user_id"]
-        )
+        samples = await app.state.guardian_store.corpus_samples(minor_user_id=child["user_id"])
         assert len(samples) == 1
         assert await app.state.archive_object_store.get(samples[0].reference)
 
@@ -581,11 +569,7 @@ class _SubjectStore:
 
     def get_subject_profile(self, *, user_id: str) -> dict[str, Any] | None:
         del user_id
-        return (
-            {"subject_category": self.category}
-            if self.category is not None
-            else None
-        )
+        return {"subject_category": self.category} if self.category is not None else None
 
 
 @pytest.mark.parametrize("capability", tuple(SUBJECT_CAPABILITY_RULES))
@@ -593,7 +577,7 @@ def test_subject_capability_matrix_covers_adult_minor_and_missing(
     capability: SubjectCapability,
 ) -> None:
     allowed = SUBJECT_CAPABILITY_RULES[capability]
-    for category in ("adult", "minor"):
+    for category in ("adult", "minor", "unknown"):
         if category in allowed:
             profile = require_capability_for_account_id(
                 "account-1",

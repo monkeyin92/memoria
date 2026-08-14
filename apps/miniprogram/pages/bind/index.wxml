@@ -179,12 +179,11 @@
       <text class="done-title">机器人已建立「{{manifest.declared_mode === 'parent_for_child' ? '给孩子使用' : manifest.declared_mode === 'self_use' ? '给自己使用' : manifest.declared_mode === 'child_for_parent' ? '给父母使用' : '家庭共同使用'}}」绑定</text>
       <view class="summary-row"><text class="summary-key">绑定编号</text><text class="summary-value">{{manifest.binding_id}}</text></view>
       <view class="summary-row"><text class="summary-key">设备</text><text class="summary-value">{{manifest.device_id}}</text></view>
-      <text class="done-note">绑定成功不等于设备已经激活。你可以跳过说话人登记，下一步等待机器人确认 Activation ACK。</text>
+      <text class="done-note">绑定成功不等于设备已经激活。说话人登记在机器人端完成，无需在手机上采集；下一步等待机器人确认 Activation ACK。</text>
       <view class="button-row">
-        <button class="secondary-button form-back-button" bindtap="openSpeakerEnrollment">登记说话人</button>
-        <button class="primary-button form-next-button" bindtap="continueActivation">跳过并等待激活</button>
+        <button class="primary-button form-next-button" bindtap="continueActivation">继续等待激活</button>
       </view>
-      <text class="form-note">说话人登记只用于区分当前是谁在说话，不是声音复刻；以后也可以在设备设置中完成。</text>
+      <text class="form-note">说话人登记只用于区分当前是谁在说话，不是声音复刻；设备端完成后状态由服务端记录。</text>
     </view>
   </block>
 </view>

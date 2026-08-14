@@ -42,6 +42,7 @@ class PlaybackLedger:
     max_fences: int = 64
     _spans: dict[GenerationFence, list[PlaybackSpan]] = field(default_factory=dict)
     _rendered_sample_end: dict[GenerationFence, int] = field(default_factory=dict)
+    _completion_sample_end: dict[GenerationFence, int] = field(default_factory=dict)
     _received_sequence: dict[GenerationFence, int] = field(default_factory=dict)
     _received_sample_end: dict[GenerationFence, int] = field(default_factory=dict)
     _received_ranges: dict[GenerationFence, list[tuple[int, int, int]]] = field(
@@ -72,6 +73,7 @@ class PlaybackLedger:
             self._fence_order.append(fence)
         self._spans.setdefault(fence, [])
         self._rendered_sample_end.setdefault(fence, 0)
+        self._completion_sample_end.setdefault(fence, 0)
         self._received_sequence.setdefault(fence, -1)
         self._received_sample_end.setdefault(fence, 0)
         self._received_ranges.setdefault(fence, [])
@@ -83,6 +85,7 @@ class PlaybackLedger:
                 break
             self._spans.pop(evicted, None)
             self._rendered_sample_end.pop(evicted, None)
+            self._completion_sample_end.pop(evicted, None)
             self._received_sequence.pop(evicted, None)
             self._received_sample_end.pop(evicted, None)
             self._received_ranges.pop(evicted, None)
@@ -174,10 +177,16 @@ class PlaybackLedger:
         *,
         received_sequence: int | None = None,
         approximate: bool = False,
+        heard_eligible: bool = True,
     ) -> tuple[PlaybackSpan, ...]:
-        """Mark all fully rendered spans up to the monotonic sample watermark."""
+        """Advance playback, promoting text only from an eligible watermark.
 
-        _ = approximate  # retained in the API for H5-vs-hardware telemetry.
+        ``approximate`` remains transport telemetry because H5 compatibility
+        paths historically use it for software-owned progress. Hardware paths
+        explicitly pass ``heard_eligible=False`` when the device only knows an
+        upper bound (queued/I2S-delivered rather than DAC-rendered samples).
+        """
+
         if rendered_sample_end < 0:
             raise ValueError("rendered_sample_end must be non-negative")
         if self._current_fence is None or not fence.matches(self._current_fence):
@@ -207,8 +216,14 @@ class PlaybackLedger:
         if rendered_sample_end > renderable_sample_end:
             self._stale_ack_count += 1
             return ()
+        completion_watermark = max(
+            self._completion_sample_end.get(fence, 0),
+            rendered_sample_end,
+        )
+        self._completion_sample_end[fence] = completion_watermark
+        _ = approximate
         previous = self._rendered_sample_end.get(fence, 0)
-        watermark = max(previous, rendered_sample_end)
+        watermark = max(previous, rendered_sample_end) if heard_eligible else previous
         self._rendered_sample_end[fence] = watermark
         spans = self._spans.setdefault(fence, [])
         acknowledged: list[PlaybackSpan] = []
@@ -269,10 +284,21 @@ class PlaybackLedger:
         """
 
         received_end = self._received_sample_end.get(fence, 0)
-        if received_end <= 0 or self._rendered_sample_end.get(fence, 0) < received_end:
+        if received_end <= 0 or self._completion_sample_end.get(fence, 0) < received_end:
             return False
         spans = self._spans.get(fence, ())
         return all(span.acknowledged for span in spans)
+
+    def is_playback_complete(self, fence: GenerationFence) -> bool:
+        """Return true when transport playback reached all registered audio.
+
+        This is intentionally independent of Actual Heard text eligibility:
+        an approximate hardware terminal receipt may release the speaking
+        state without asserting that buffered tail audio was heard.
+        """
+
+        received_end = self._received_sample_end.get(fence, 0)
+        return received_end > 0 and self._completion_sample_end.get(fence, 0) >= received_end
 
     def actual_heard_text(self, fence: GenerationFence) -> str:
         """Return only text whose complete mapped span was actually rendered."""
@@ -287,6 +313,7 @@ class PlaybackLedger:
 
         self._spans.pop(fence, None)
         self._rendered_sample_end.pop(fence, None)
+        self._completion_sample_end.pop(fence, None)
         self._received_sequence.pop(fence, None)
         self._received_sample_end.pop(fence, None)
         self._received_ranges.pop(fence, None)
