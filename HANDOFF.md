@@ -1,5 +1,5 @@
 # 项目交接
-## 当前状态（2026-08-16，Edge Bridge Health + supervisor 已 code + local verified，未部署）
+## 当前状态（2026-08-16，Edge Bridge Health + supervisor 已 production enabled + runtime/chaos verified）
 
 - 当前未刷板固件候选已于 `2026-08-16T16:14:08Z` 从锁定 upstream
   `e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5` 完成 ESP-IDF 6.0.2 clean build 与 overlay
@@ -23,8 +23,20 @@
 - 生产 Direct 单 Edge 已配置并启用 Device State Redis URL 与 Redis mTLS 四件套，Media Edge
   healthy；生产 Direct 模式缺少 Redis 会 fail-closed 启动。该证据只证明单 Edge 共享权威已启用，
   不证明真实票据重放、跨实例接管、Redis HA、故障转移或混沌。
-- Edge Bridge supervisor 现状严格为：`code=true`、`wired=true`（main 已接线）、`enabled=false`、
-  `production_runtime_verified=false`；未部署前不得写成生产已验证或 Edge 自动恢复。
+- Edge Bridge supervisor 生产候选为 tag 20260816-bridge-liveness-83af813、revision
+  83af81318083b1977521a1fbdca8d9bbe51927bd；只重建 Voice Core Bridge 和 Go Media Edge。Bridge
+  Docker health 为 healthy，具名 gRPC Health memoria.media.v1.VoiceMediaBridge 为 SERVING；Edge
+  Docker health 为 healthy，私有 mTLS readyz 返回 200 ready。随后私有 metrics 的 liveness probe
+  successes 由 6 增至 9、failures=0，active_device_connections=0、active_media_sessions=0。
+- 受保护的生产混沌演练只停止 Voice Core Bridge：停止期间 Edge mTLS readyz=503、liveness=0；恢复
+  Bridge 后 readyz=200、liveness=1、redial attempts/successes 均由 0 增至 1、channel generation
+  由 1 增至 2，且没有会话重放。回滚链按候选 Edge+Bridge → 旧 Edge+候选 Bridge → 旧 Edge+旧
+  Bridge 完成，再反向恢复候选；所有检查均为零活跃设备/媒体会话范围。
+- 本轮没有重建 Agent、Control API、Mini Program Gateway、Device Media Gateway、PostgreSQL、Redis、
+  Nginx、LiveKit 或 H5；被保护容器启动时间保持不变。以上是服务器运行与混沌证据，不是 Direct
+  真机、AEC、双讲、DAC、Actual Heard 或 full-duplex 验收。生产制品已按当前候选加即时可用回滚保留，
+  并删除无引用的旧 20260816-170800 Media Edge 候选、其 tar 和已复制的临时上传目录，磁盘可用空间
+  从约 26 GiB 增至约 27 GiB。
 
 ### Media Turn retry canary（2026-08-16）
 
@@ -73,9 +85,10 @@
   `production_runtime_verified=true`、`direct_real_device_verified=false`、
   `full_duplex_verified=false`。T1–T14 仍是 `0 pass / 14 blocked / 0 failed`；Exact DAC、AEC
   Reference、双讲、精确 Actual Heard、100/500 轮与 T14 微信独立性没有新增证据。
-- Edge Bridge supervisor（受监督的 channel 重建、有界退避、指标）已于 `2026-08-16` 实现并通过
-  本地 Go 门禁（全量测试、`-race`、`vet`），但未部署；生产仍需在 Bridge IP 变化、Bridge 重启、
-  Edge 重启和回滚混沌矩阵中验证指标/告警与恢复，在此之前不得宣称 Bridge 热替换已由 Edge 自动恢复。
+- Edge Bridge supervisor（受监督的 channel 重建、有界退避、指标）已于 2026-08-16 完成生产部署、
+  应用层 Health fail-closed、Bridge 停止/恢复自动 redial 与双向回滚演练；本地 Go 全量、-race、vet 与
+  Python Bridge Health 门禁仍为其代码证据。尚未验证带活跃会话恢复、Bridge IP 变化、Edge 重启、告警
+  送达或完整混沌矩阵，因此该项不外推为 Direct 真机或全双工通过。
 
 ### Direct event-sequence canary（2026-08-15）
 
@@ -418,15 +431,15 @@
 
 ## 仍需完成
 
-- 为 Media Edge 实现受监督的 Voice Core Bridge DNS 重解析和 gRPC channel 自动重拨，并补
-  Bridge IP 变化、Bridge/Edge 重启、回滚与 Redis/网络故障的混沌门禁；当前同 ID 重启 Edge
-  只是已验证的发布补救步骤。
+- Edge Bridge supervisor 已在生产启用，并完成应用层 Health fail-closed、Bridge 停止/恢复后的
+  自动 redial 与零会话双向回滚演练。仍需补 Bridge IP 变化、Edge 重启、Redis/网络故障、告警送达
+  和带活跃会话恢复的完整混沌矩阵；在这些证据形成前，不得把该项外推为 Direct 真机或全双工通过。
 - 重新接入真实 ESP32 后，用同一 generation 的串口、Edge/Core/Provider 日志和用户 Actual Heard
   回执完成 Direct T4–T7；没有活跃设备指标和 Exact DAC 水位时继续保持
   `direct_real_device_verified=false`、`full_duplex_verified=false`。
 - 多主体能力上线前必须先做生产备份和 forward-only schema dry-run，配置并验证
   Policy/Session/Memory 内部 token、Redis/outbox、角色权限与 readiness，再执行回滚演练；
-  当前 dirty worktree 未提交、未推送、未部署，线上仍是旧基线。
+  本次仅部署 Voice Core Bridge 与 Go Media Edge，不改变该独立上线门禁。
 - `TransactionalToolEffectCommitPort` 已保证本地持久化、幂等和 worker 领取合同，但仓库
   当前没有具体第三方业务工具/投递 worker；只有在明确业务动作和供应商后才能实现并验收
   外部 delivery，不能把 outbox completed 或单测通过表述为第三方副作用已发生。

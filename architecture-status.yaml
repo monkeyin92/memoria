@@ -1,7 +1,7 @@
 # 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
 # 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
 schema_version: 2
-as_of_commit: working_tree_2026-08-16_voice_core_health_and_edge_liveness
+as_of_commit: 83af81318083b1977521a1fbdca8d9bbe51927bd
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 production_release_tag: 20260814-231749-direct-canary
@@ -121,15 +121,46 @@ hardware_realtime_voice:
     rollback_completed_approx: "2026-08-16T14:10:55Z"
     edge_recovery_same_container_restart: "2026-08-16T14:14:59Z"
     rollback_path_exercised: true
-    edge_bridge_auto_redial_verified: false
-    architecture_gap: supervised_dns_reresolution_and_grpc_channel_redial_implemented_local_production_pending
+    edge_bridge_auto_redial_verified: false_for_pre_supervisor_edge
+    architecture_gap: resolved_by_deployed_supervisor_2026_08_16
   media_bridge_hot_replacement_supervisor:
     code: implemented
-    wired: local_main_grpc_health_readiness_factories_metrics
-    enabled: false
+    wired: production_main_grpc_health_readiness_factories_metrics_mtls
+    enabled: true
     verified: local_go_test_race_vet_python_health_21
-    production_runtime_verified: false
-    production_chaos_verified: false
+    production_runtime_verified: true
+    production_chaos_verified: true
+    production_evidence_date: 2026-08-16
+    candidate:
+      release_tag: 20260816-bridge-liveness-83af813
+      revision: 83af81318083b1977521a1fbdca8d9bbe51927bd
+      bridge_image: memoria-agent:20260816-bridge-liveness-83af813
+      edge_image: memoria-media-edge:20260816-bridge-liveness-83af813
+      bridge_grpc_health: memoria_media_v1_VoiceMediaBridge_SERVING
+      edge_readyz: mTLS_200_ready
+      liveness_probe_successes: 6_to_9
+      liveness_probe_failures: 0
+      active_device_connections: 0
+      active_media_sessions: 0
+      protected_non_target_containers_recreated: false
+    chaos:
+      stopped_service: voice_core_media_bridge_only
+      edge_readyz_while_stopped: 503
+      edge_liveness_while_stopped: 0
+      recovery_readyz: 200
+      recovery_liveness: 1
+      redial_attempts: 0_to_1
+      redial_successes: 0_to_1
+      channel_generation: 1_to_2
+      sessions_replayed: false
+    rollback:
+      order: candidate_edge_candidate_bridge_to_old_edge_candidate_bridge_to_old_edge_old_bridge_then_reverse
+      verified: true
+      active_device_connections: 0
+      active_media_sessions: 0
+    scope_limit: zero_active_device_and_media_sessions_only
+    direct_real_device_verified: false
+    full_duplex_verified: false
   device_state_redis:
     authority: redis_atomic_shared
     production_topology: single_edge
@@ -179,7 +210,7 @@ stages:
   go_hardware_device_wss: implemented_local_auth_replay_epoch_backpressure
   direct_device_to_voice_core: production_enabled_runtime_verified_real_device_pending
   media_turn_lifecycle_hardening: production_canary_enabled_runtime_verified_real_device_pending
-  media_bridge_hot_replacement_redial: implemented_local_go_race_vet_python_health_passed_production_deployment_and_chaos_pending
+  media_bridge_hot_replacement_redial: production_enabled_runtime_and_zero_session_chaos_verified_direct_real_device_pending
   hardware_playback_actual_heard: prior_legacy_candidate_two_turn_user_confirmed_current_direct_candidate_unverified_watermark_still_approximate
   hardware_hard_stop: implemented_local_pending_real_audible_latency
   runtime_profile_device_ack: implemented_local_edge_observed
@@ -241,7 +272,7 @@ gates:
   direct_production_env_and_rollback: passed_local_generation_and_static_compose
   direct_production_mtls_jwks_deploy: passed_current_single_device_production_canary
   media_turn_retry_canary: passed_production_runtime_delayed_check_real_device_pending
-  media_bridge_hot_replacement_auto_redial: passed_local_go_test_race_vet_python_health_production_deployment_alerting_and_chaos_pending
+  media_bridge_hot_replacement_auto_redial: passed_production_mtls_health_zero_session_rollback_and_chaos_2026_08_16_alert_delivery_and_full_matrix_pending
   direct_real_device_t4_t7: pending_fresh_same_generation_serial_server_and_actual_heard_evidence
   direct_multi_instance_replay_and_lease: production_single_edge_redis_mtls_runtime_verified_local_two_edge_real_redis_passed_production_multi_edge_ha_chaos_pending
   device_wss_server_ca_validation: pending_real_firmware_tls_evidence
@@ -262,7 +293,7 @@ gates:
   capacity_matrix: pending
   redis_session_ownership: production_single_edge_redis_mtls_runtime_verified_local_atomic_takeover_passed_production_multi_edge_ha_chaos_pending
   chaos_recovery: pending
-  canary_and_rollback: media_turn_retry_candidate_healthy_automatic_rollback_exercised_edge_restart_required
+  canary_and_rollback: bridge_liveness_candidate_healthy_bidirectional_rollback_and_zero_session_chaos_exercised
 
 external_evidence_policy:
   fail_closed: true
