@@ -1604,8 +1604,14 @@ type SessionIdentity struct {
 	DeviceId      string                 `protobuf:"bytes,4,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
 	ClientType    string                 `protobuf:"bytes,5,opt,name=client_type,json=clientType,proto3" json:"client_type,omitempty"`
 	StreamEpoch   uint64                 `protobuf:"varint,6,opt,name=stream_epoch,json=streamEpoch,proto3" json:"stream_epoch,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Device direct-media authority fence. Browser/legacy clients leave these
+	// empty/zero; a device ticket propagates all of them unchanged.
+	SubjectId             string `protobuf:"bytes,7,opt,name=subject_id,json=subjectId,proto3" json:"subject_id,omitempty"`
+	BindingId             string `protobuf:"bytes,8,opt,name=binding_id,json=bindingId,proto3" json:"binding_id,omitempty"`
+	BindingVersion        uint64 `protobuf:"varint,9,opt,name=binding_version,json=bindingVersion,proto3" json:"binding_version,omitempty"`
+	RuntimeProfileVersion uint64 `protobuf:"varint,10,opt,name=runtime_profile_version,json=runtimeProfileVersion,proto3" json:"runtime_profile_version,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *SessionIdentity) Reset() {
@@ -1676,6 +1682,34 @@ func (x *SessionIdentity) GetClientType() string {
 func (x *SessionIdentity) GetStreamEpoch() uint64 {
 	if x != nil {
 		return x.StreamEpoch
+	}
+	return 0
+}
+
+func (x *SessionIdentity) GetSubjectId() string {
+	if x != nil {
+		return x.SubjectId
+	}
+	return ""
+}
+
+func (x *SessionIdentity) GetBindingId() string {
+	if x != nil {
+		return x.BindingId
+	}
+	return ""
+}
+
+func (x *SessionIdentity) GetBindingVersion() uint64 {
+	if x != nil {
+		return x.BindingVersion
+	}
+	return 0
+}
+
+func (x *SessionIdentity) GetRuntimeProfileVersion() uint64 {
+	if x != nil {
+		return x.RuntimeProfileVersion
 	}
 	return 0
 }
@@ -4498,7 +4532,7 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"tool_epoch\x18\x0e \x01(\x04R\ttoolEpoch\x12'\n" +
 	"\x0fcontext_version\x18\x0f \x01(\x04R\x0econtextVersion\x12)\n" +
 	"\x10history_eligible\x18\x10 \x01(\bR\x0fhistoryEligible\x12\x16\n" +
-	"\x06reason\x18\x11 \x01(\tR\x06reason\"\xd7\x01\n" +
+	"\x06reason\x18\x11 \x01(\tR\x06reason\"\xf6\x02\n" +
 	"\x0fSessionIdentity\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
@@ -4508,7 +4542,14 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\tdevice_id\x18\x04 \x01(\tR\bdeviceId\x12\x1f\n" +
 	"\vclient_type\x18\x05 \x01(\tR\n" +
 	"clientType\x12!\n" +
-	"\fstream_epoch\x18\x06 \x01(\x04R\vstreamEpoch\"\xa2\x01\n" +
+	"\fstream_epoch\x18\x06 \x01(\x04R\vstreamEpoch\x12\x1d\n" +
+	"\n" +
+	"subject_id\x18\a \x01(\tR\tsubjectId\x12\x1d\n" +
+	"\n" +
+	"binding_id\x18\b \x01(\tR\tbindingId\x12'\n" +
+	"\x0fbinding_version\x18\t \x01(\x04R\x0ebindingVersion\x126\n" +
+	"\x17runtime_profile_version\x18\n" +
+	" \x01(\x04R\x15runtimeProfileVersion\"\xa2\x01\n" +
 	"\vAudioFormat\x12;\n" +
 	"\bencoding\x18\x01 \x01(\x0e2\x1f.memoria.media.v1.AudioEncodingR\bencoding\x12\x1f\n" +
 	"\vsample_rate\x18\x02 \x01(\rR\n" +

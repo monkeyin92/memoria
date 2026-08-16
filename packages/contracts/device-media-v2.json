@@ -1,0 +1,1428 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoria.local/contracts/device-media-v2.json",
+  "title": "Memoria hardware device media protocol v2",
+  "description": "Device WSS control frames and MemoriaAudioFrameV1 golden bytes. Version 1 remains a shared compatibility fixture for the legacy livekit_compat gateway; the direct hardware edge accepts only version 2.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/device_hello_v1"
+    },
+    {
+      "$ref": "#/$defs/device_hello_v2"
+    },
+    {
+      "$ref": "#/$defs/session_accepted_v2"
+    },
+    {
+      "$ref": "#/$defs/vad_start_v2"
+    },
+    {
+      "$ref": "#/$defs/vad_end_v2"
+    },
+    {
+      "$ref": "#/$defs/keyword_detected_v2"
+    },
+    {
+      "$ref": "#/$defs/button_stop_v2"
+    },
+    {
+      "$ref": "#/$defs/playback_receipt_v2"
+    },
+    {
+      "$ref": "#/$defs/device_state_event_v2"
+    },
+    {
+      "$ref": "#/$defs/session_close_v2"
+    },
+    {
+      "$ref": "#/$defs/generation_control_v2"
+    },
+    {
+      "$ref": "#/$defs/playback_control_v2"
+    },
+    {
+      "$ref": "#/$defs/runtime_profile_invalidated_v2"
+    },
+    {
+      "$ref": "#/$defs/runtime_profile_applied_v2"
+    },
+    {
+      "$ref": "#/$defs/session_error_v2"
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "uint32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "positive_uint32": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "uint64": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "unit_interval": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "audio_mode": {
+      "enum": [
+        "half_duplex_safe",
+        "interrupt_assist",
+        "full_duplex_verified"
+      ]
+    },
+    "device_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "settings_version",
+        "volume_limit",
+        "screen_brightness",
+        "night_mode",
+        "do_not_disturb",
+        "learning_mode",
+        "audio_mode",
+        "wake_mode",
+        "allowed_barge_in"
+      ],
+      "properties": {
+        "settings_version": {
+          "$ref": "#/$defs/uint32"
+        },
+        "volume_limit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "screen_brightness": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "night_mode": {
+          "type": "boolean"
+        },
+        "do_not_disturb": {
+          "type": "boolean"
+        },
+        "learning_mode": {
+          "enum": [
+            "off",
+            "tutor_english",
+            "tutor_homework"
+          ]
+        },
+        "audio_mode": {
+          "$ref": "#/$defs/audio_mode"
+        },
+        "wake_mode": {
+          "enum": [
+            "button",
+            "keyword",
+            "button_or_keyword"
+          ]
+        },
+        "allowed_barge_in": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "none",
+              "button",
+              "keyword",
+              "voice"
+            ]
+          }
+        }
+      }
+    },
+    "generation_fence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turn_id",
+        "generation_id",
+        "tool_epoch"
+      ],
+      "properties": {
+        "turn_id": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "generation_id": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "tool_epoch": {
+          "$ref": "#/$defs/uint32"
+        }
+      }
+    },
+    "legacy_capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "display",
+        "microphone",
+        "speaker",
+        "device_aec",
+        "physical_button"
+      ],
+      "properties": {
+        "display": {
+          "type": "boolean"
+        },
+        "microphone": {
+          "type": "boolean"
+        },
+        "speaker": {
+          "type": "boolean"
+        },
+        "device_aec": {
+          "type": "boolean"
+        },
+        "physical_button": {
+          "type": "boolean"
+        }
+      }
+    },
+    "legacy_audio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uplink_codec",
+        "uplink_sample_rate",
+        "downlink_sample_rate",
+        "channels",
+        "frame_ms"
+      ],
+      "properties": {
+        "uplink_codec": {
+          "const": "opus"
+        },
+        "uplink_sample_rate": {
+          "const": 16000
+        },
+        "downlink_sample_rate": {
+          "const": 24000
+        },
+        "channels": {
+          "const": 1
+        },
+        "frame_ms": {
+          "const": 20
+        }
+      }
+    },
+    "device_hello_v1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "version",
+        "device_id",
+        "firmware_version",
+        "board_profile",
+        "stream_epoch",
+        "audio",
+        "capabilities"
+      ],
+      "properties": {
+        "type": {
+          "const": "device.hello"
+        },
+        "version": {
+          "const": 1
+        },
+        "device_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "firmware_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "board_profile": {
+          "$ref": "#/$defs/identifier"
+        },
+        "stream_epoch": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "audio": {
+          "$ref": "#/$defs/legacy_audio"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/legacy_capabilities"
+        }
+      }
+    },
+    "device_audio_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uplink_codec",
+        "uplink_sample_rate",
+        "downlink_sample_rates",
+        "channels",
+        "frame_ms"
+      ],
+      "properties": {
+        "uplink_codec": {
+          "const": "opus"
+        },
+        "uplink_sample_rate": {
+          "const": 16000
+        },
+        "downlink_sample_rates": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "contains": {
+            "const": 16000
+          },
+          "items": {
+            "enum": [
+              16000,
+              24000
+            ]
+          }
+        },
+        "channels": {
+          "const": 1
+        },
+        "frame_ms": {
+          "const": 20
+        }
+      }
+    },
+    "device_capabilities_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "display",
+        "microphone",
+        "speaker",
+        "simultaneous_capture_playback",
+        "aec_mode",
+        "aec_reference",
+        "aec_reference_verified",
+        "local_vad",
+        "local_stop_keyword",
+        "physical_stop_button",
+        "playback_watermark",
+        "local_duck",
+        "barge_in_level"
+      ],
+      "properties": {
+        "display": {
+          "type": "boolean"
+        },
+        "microphone": {
+          "type": "boolean"
+        },
+        "speaker": {
+          "type": "boolean"
+        },
+        "simultaneous_capture_playback": {
+          "type": "boolean"
+        },
+        "aec_mode": {
+          "enum": [
+            "none",
+            "fd_low_cost",
+            "fd_high_quality"
+          ]
+        },
+        "aec_reference": {
+          "enum": [
+            "none",
+            "software_post_gain_pre_i2s",
+            "hardware_loopback"
+          ]
+        },
+        "aec_reference_verified": {
+          "type": "boolean"
+        },
+        "local_vad": {
+          "type": "boolean"
+        },
+        "local_stop_keyword": {
+          "type": "boolean"
+        },
+        "physical_stop_button": {
+          "type": "boolean"
+        },
+        "playback_watermark": {
+          "enum": [
+            "none",
+            "approximate",
+            "exact"
+          ]
+        },
+        "local_duck": {
+          "type": "boolean"
+        },
+        "barge_in_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        }
+      }
+    },
+    "device_hello_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "version",
+        "device_id",
+        "firmware_version",
+        "board_profile",
+        "stream_epoch",
+        "audio",
+        "capabilities"
+      ],
+      "properties": {
+        "type": {
+          "const": "device.hello"
+        },
+        "version": {
+          "const": 2
+        },
+        "device_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "firmware_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "board_profile": {
+          "$ref": "#/$defs/identifier"
+        },
+        "stream_epoch": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "audio": {
+          "$ref": "#/$defs/device_audio_v2"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/device_capabilities_v2"
+        }
+      }
+    },
+    "acoustic_attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verified",
+        "board_profile",
+        "profile_version"
+      ],
+      "properties": {
+        "verified": {
+          "const": true
+        },
+        "board_profile": {
+          "$ref": "#/$defs/identifier"
+        },
+        "profile_version": {
+          "$ref": "#/$defs/positive_uint32"
+        }
+      }
+    },
+    "session_accepted_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "version",
+        "session_id",
+        "stream_epoch",
+        "interaction_authority",
+        "audio_mode",
+        "downlink_sample_rate",
+        "runtime_profile_version",
+        "device_settings",
+        "current_fence",
+        "current_generation_active",
+        "acoustic_attestation"
+      ],
+      "properties": {
+        "type": {
+          "const": "session.accepted"
+        },
+        "version": {
+          "const": 2
+        },
+        "session_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "stream_epoch": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "interaction_authority": {
+          "const": "python_authoritative"
+        },
+        "audio_mode": {
+          "$ref": "#/$defs/audio_mode"
+        },
+        "downlink_sample_rate": {
+          "enum": [
+            16000,
+            24000
+          ]
+        },
+        "runtime_profile_version": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "device_settings": {
+          "$ref": "#/$defs/device_settings"
+        },
+        "current_fence": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/generation_fence"
+            }
+          ]
+        },
+        "current_generation_active": {
+          "type": "boolean"
+        },
+        "acoustic_attestation": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/acoustic_attestation"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "current_generation_active": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "current_fence": {
+                "$ref": "#/$defs/generation_fence"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "audio_mode": {
+                "const": "full_duplex_verified"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "acoustic_attestation": {
+                "$ref": "#/$defs/acoustic_attestation"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "device_event_base": {
+      "type": "object",
+      "required": [
+        "version",
+        "stream_epoch",
+        "control_sequence",
+        "device_monotonic_ms"
+      ],
+      "properties": {
+        "version": {
+          "const": 2
+        },
+        "stream_epoch": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "control_sequence": {
+          "$ref": "#/$defs/uint32"
+        },
+        "device_monotonic_ms": {
+          "$ref": "#/$defs/uint64"
+        }
+      }
+    },
+    "vad_start_v2": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/device_event_base"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "version",
+            "stream_epoch",
+            "control_sequence",
+            "device_monotonic_ms",
+            "sample_position",
+            "probability",
+            "near_end_rms"
+          ],
+          "properties": {
+            "type": {
+              "const": "vad.start"
+            },
+            "version": {
+              "const": 2
+            },
+            "stream_epoch": {
+              "$ref": "#/$defs/positive_uint32"
+            },
+            "control_sequence": {
+              "$ref": "#/$defs/uint32"
+            },
+            "device_monotonic_ms": {
+              "$ref": "#/$defs/uint64"
+            },
+            "sample_position": {
+              "$ref": "#/$defs/uint64"
+            },
+            "probability": {
+              "$ref": "#/$defs/unit_interval"
+            },
+            "near_end_rms": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "vad_end_v2": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/device_event_base"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "version",
+            "stream_epoch",
+            "control_sequence",
+            "device_monotonic_ms",
+            "sample_position",
+            "voiced_end_sample",
+            "probability",
+            "near_end_rms"
+          ],
+          "properties": {
+            "type": {
+              "const": "vad.end"
+            },
+            "version": {
+              "const": 2
+            },
+            "stream_epoch": {
+              "$ref": "#/$defs/positive_uint32"
+            },
+            "control_sequence": {
+              "$ref": "#/$defs/uint32"
+            },
+            "device_monotonic_ms": {
+              "$ref": "#/$defs/uint64"
+            },
+            "sample_position": {
+              "$ref": "#/$defs/uint64"
+            },
+            "voiced_end_sample": {
+              "$ref": "#/$defs/uint64"
+            },
+            "probability": {
+              "$ref": "#/$defs/unit_interval"
+            },
+            "near_end_rms": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "interruption_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "detected_sample",
+        "source",
+        "aec_mode",
+        "aec_verified",
+        "vad_probability",
+        "near_end_rms",
+        "far_end_rms",
+        "speaker_class",
+        "duration_ms"
+      ],
+      "properties": {
+        "detected_sample": {
+          "$ref": "#/$defs/uint64"
+        },
+        "source": {
+          "enum": [
+            "button",
+            "local_kws",
+            "local_vad",
+            "cloud_asr"
+          ]
+        },
+        "aec_mode": {
+          "enum": [
+            "none",
+            "fd_low_cost",
+            "fd_high_quality"
+          ]
+        },
+        "aec_verified": {
+          "type": "boolean"
+        },
+        "vad_probability": {
+          "$ref": "#/$defs/unit_interval"
+        },
+        "near_end_rms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "far_end_rms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "residual_echo_score": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/unit_interval"
+            }
+          ]
+        },
+        "speaker_class": {
+          "enum": [
+            "owner",
+            "guest",
+            "ambiguous",
+            "unknown"
+          ]
+        },
+        "asr_prefix": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "maxLength": 64
+            }
+          ]
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60000
+        }
+      }
+    },
+    "keyword_detected_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "version",
+        "stream_epoch",
+        "control_sequence",
+        "device_monotonic_ms",
+        "keyword_id",
+        "confidence",
+        "hard_stop",
+        "evidence",
+        "expected_fence"
+      ],
+      "properties": {
+        "type": {
+          "const": "keyword.detected"
+        },
+        "version": {
+          "const": 2
+        },
+        "stream_epoch": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "control_sequence": {
+          "$ref": "#/$defs/uint32"
+        },
+        "device_monotonic_ms": {
+          "$ref": "#/$defs/uint64"
+        },
+        "keyword_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "confidence": {
+          "$ref": "#/$defs/unit_interval"
+        },
+        "hard_stop": {
+          "type": "boolean"
+        },
+        "evidence": {
+          "$ref": "#/$defs/interruption_evidence"
+        },
+        "expected_fence": {
+          "$ref": "#/$defs/generation_fence"
+        }
+      }
+    },
+    "button_stop_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "version",
+        "stream_epoch",
+        "control_sequence",
+        "device_monotonic_ms",
+        "expected_fence",
+        "local_flush_sample_end"
+      ],
+      "properties": {
+        "type": {
+          "const": "button.stop"
+        },
+        "version": {
+          "const": 2
+        },
+        "stream_epoch": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "control_sequence": {
+          "$ref": "#/$defs/uint32"
+        },
+        "device_monotonic_ms": {
+          "$ref": "#/$defs/uint64"
+        },
+        "expected_fence": {
+          "$ref": "#/$defs/generation_fence"
+        },
+        "local_flush_sample_end": {
+          "$ref": "#/$defs/uint64"
+        }
+      }
+    },
+    "playback_receipt_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "version",
+        "stream_epoch",
+        "control_sequence",
+        "device_monotonic_ms",
+        "fence",
+        "received_sequence",
+        "rendered_sample_end",
+        "approximate"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "playback.started",
+            "playback.progress",
+            "playback.ended",
+            "playback.error"
+          ]
+        },
+        "version": {
+          "const": 2
+        },
+        "stream_epoch": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "control_sequence": {
+          "$ref": "#/$defs/uint32"
+        },
+        "device_monotonic_ms": {
+          "$ref": "#/$defs/uint64"
+        },
+        "fence": {
+          "$ref": "#/$defs/generation_fence"
+        },
+        "received_sequence": {
+          "$ref": "#/$defs/uint32"
+        },
+        "rendered_sample_end": {
+          "$ref": "#/$defs/uint64"
+        },
+        "approximate": {
+          "type": "boolean"
+        }
+      }
+    },
+    "device_state_event_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "version",
+        "stream_epoch",
+        "control_sequence",
+        "device_monotonic_ms",
+        "value"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "device.mute_changed",
+            "device.network_changed",
+            "device.telemetry"
+          ]
+        },
+        "version": {
+          "const": 2
+        },
+        "stream_epoch": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "control_sequence": {
+          "$ref": "#/$defs/uint32"
+        },
+        "device_monotonic_ms": {
+          "$ref": "#/$defs/uint64"
+        },
+        "value": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "null"
+            ],
+            "maxLength": 1024
+          }
+        }
+      }
+    },
+    "session_close_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "version",
+        "stream_epoch",
+        "control_sequence",
+        "device_monotonic_ms",
+        "value"
+      ],
+      "properties": {
+        "type": {
+          "const": "session.close"
+        },
+        "version": {
+          "const": 2
+        },
+        "stream_epoch": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "control_sequence": {
+          "$ref": "#/$defs/uint32"
+        },
+        "device_monotonic_ms": {
+          "$ref": "#/$defs/uint64"
+        },
+        "value": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reason"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        }
+      }
+    },
+    "server_event_base": {
+      "type": "object",
+      "required": [
+        "version",
+        "session_id",
+        "stream_epoch",
+        "control_sequence",
+        "server_monotonic_ms"
+      ],
+      "properties": {
+        "version": {
+          "const": 2
+        },
+        "session_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "stream_epoch": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "control_sequence": {
+          "$ref": "#/$defs/uint32"
+        },
+        "server_monotonic_ms": {
+          "$ref": "#/$defs/uint64"
+        }
+      }
+    },
+    "generation_control_v2": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/server_event_base"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "version",
+            "session_id",
+            "stream_epoch",
+            "control_sequence",
+            "server_monotonic_ms",
+            "fence",
+            "reason"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "generation.started",
+                "generation.pause",
+                "generation.resume",
+                "generation.cancelled",
+                "generation.completed"
+              ]
+            },
+            "version": {
+              "const": 2
+            },
+            "session_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "stream_epoch": {
+              "$ref": "#/$defs/positive_uint32"
+            },
+            "control_sequence": {
+              "$ref": "#/$defs/uint32"
+            },
+            "server_monotonic_ms": {
+              "$ref": "#/$defs/uint64"
+            },
+            "fence": {
+              "$ref": "#/$defs/generation_fence"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        }
+      ]
+    },
+    "playback_control_v2": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/server_event_base"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "version",
+            "session_id",
+            "stream_epoch",
+            "control_sequence",
+            "server_monotonic_ms",
+            "fence",
+            "replacement_generation_id",
+            "duck_db"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "playback.duck",
+                "playback.flush"
+              ]
+            },
+            "version": {
+              "const": 2
+            },
+            "session_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "stream_epoch": {
+              "$ref": "#/$defs/positive_uint32"
+            },
+            "control_sequence": {
+              "$ref": "#/$defs/uint32"
+            },
+            "server_monotonic_ms": {
+              "$ref": "#/$defs/uint64"
+            },
+            "fence": {
+              "$ref": "#/$defs/generation_fence"
+            },
+            "replacement_generation_id": {
+              "$ref": "#/$defs/positive_uint32"
+            },
+            "duck_db": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 60
+            }
+          }
+        }
+      ]
+    },
+    "runtime_profile_invalidated_v2": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/server_event_base"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "version",
+            "session_id",
+            "stream_epoch",
+            "control_sequence",
+            "server_monotonic_ms",
+            "profile_version",
+            "apply_at"
+          ],
+          "properties": {
+            "type": {
+              "const": "runtime_profile.invalidated"
+            },
+            "version": {
+              "const": 2
+            },
+            "session_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "stream_epoch": {
+              "$ref": "#/$defs/positive_uint32"
+            },
+            "control_sequence": {
+              "$ref": "#/$defs/uint32"
+            },
+            "server_monotonic_ms": {
+              "$ref": "#/$defs/uint64"
+            },
+            "profile_version": {
+              "$ref": "#/$defs/positive_uint32"
+            },
+            "apply_at": {
+              "enum": [
+                "next_safe_point",
+                "next_session",
+                "immediate_fail_closed"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "runtime_profile_applied_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "version",
+        "stream_epoch",
+        "control_sequence",
+        "device_monotonic_ms",
+        "profile_version",
+        "settings_version"
+      ],
+      "properties": {
+        "type": {
+          "const": "runtime_profile.applied"
+        },
+        "version": {
+          "const": 2
+        },
+        "stream_epoch": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "control_sequence": {
+          "$ref": "#/$defs/uint32"
+        },
+        "device_monotonic_ms": {
+          "$ref": "#/$defs/uint64"
+        },
+        "profile_version": {
+          "$ref": "#/$defs/positive_uint32"
+        },
+        "settings_version": {
+          "$ref": "#/$defs/uint32"
+        }
+      }
+    },
+    "session_error_v2": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/server_event_base"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "version",
+            "session_id",
+            "stream_epoch",
+            "control_sequence",
+            "server_monotonic_ms",
+            "code",
+            "retryable"
+          ],
+          "properties": {
+            "type": {
+              "const": "session.error"
+            },
+            "version": {
+              "const": 2
+            },
+            "session_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "stream_epoch": {
+              "$ref": "#/$defs/positive_uint32"
+            },
+            "control_sequence": {
+              "$ref": "#/$defs/uint32"
+            },
+            "server_monotonic_ms": {
+              "$ref": "#/$defs/uint64"
+            },
+            "code": {
+              "$ref": "#/$defs/identifier"
+            },
+            "retryable": {
+              "type": "boolean"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "binary_audio": {
+    "name": "MemoriaAudioFrameV1",
+    "version": 1,
+    "byte_order": "network",
+    "header_size": 30,
+    "websocket_fragmentation_allowed": false,
+    "fields": [
+      {
+        "name": "version",
+        "type": "uint8"
+      },
+      {
+        "name": "direction",
+        "type": "uint8",
+        "values": {
+          "uplink": 1,
+          "downlink": 2
+        }
+      },
+      {
+        "name": "flags",
+        "type": "uint16",
+        "description": "bit 0 (0x0001) = discontinuity: downlink-only, set by the edge at socket-write time on the first frame after a same-generation forward gap caused by queue drops; uplink frames must carry flags 0; any other bit is forged"
+      },
+      {
+        "name": "stream_epoch",
+        "type": "uint32"
+      },
+      {
+        "name": "sequence",
+        "type": "uint32"
+      },
+      {
+        "name": "sample_start",
+        "type": "uint64"
+      },
+      {
+        "name": "frame_samples",
+        "type": "uint32"
+      },
+      {
+        "name": "generation_id",
+        "type": "uint32"
+      },
+      {
+        "name": "payload_size",
+        "type": "uint16"
+      }
+    ],
+    "generation_semantics": {
+      "none": 0,
+      "first": 1,
+      "mapping_allowed_on_direct_path": false,
+      "downlink_clock": {
+        "reset_on": [
+          "generation.started",
+          "playback.flush"
+        ],
+        "reset_to": 0,
+        "gap_policy": "same-generation forward gaps caused by queue drops MUST be marked with the discontinuity flag (0x0001) at socket-write time; the device accepts a flagged gap only when the sequence delta and the sample delta are consistent multiples of frame_samples, and rejects backward, forged or unflagged gaps"
+      }
+    },
+    "audio": {
+      "codec": "opus",
+      "channels": 1,
+      "frame_ms": 20,
+      "uplink_sample_rate": 16000,
+      "uplink_frame_samples": 320,
+      "downlink_sample_rates": [
+        16000,
+        24000
+      ],
+      "downlink_frame_samples": {
+        "16000": 320,
+        "24000": 480
+      }
+    },
+    "golden_frames": [
+      {
+        "name": "uplink-v1",
+        "stream_epoch": 18,
+        "sequence": 7,
+        "sample_start": 2240,
+        "frame_samples": 320,
+        "generation_id": 0,
+        "payload_hex": "010203",
+        "frame_hex": "01010000000000120000000700000000000008c000000140000000000003010203"
+      },
+      {
+        "name": "downlink-24k-v1",
+        "stream_epoch": 18,
+        "sequence": 3,
+        "sample_start": 1440,
+        "frame_samples": 480,
+        "generation_id": 1,
+        "payload_hex": "0405",
+        "frame_hex": "01020000000000120000000300000000000005a0000001e00000000100020405"
+      },
+      {
+        "name": "downlink-16k-negotiated",
+        "stream_epoch": 18,
+        "sequence": 3,
+        "sample_start": 960,
+        "frame_samples": 320,
+        "generation_id": 1,
+        "payload_hex": "0405",
+        "frame_hex": "01020000000000120000000300000000000003c0000001400000000100020405"
+      }
+    ],
+    "flags": {
+      "discontinuity": 1,
+      "description": "Downlink-only bit 0 (0x0001). The edge sets it at socket-write time on the first frame after a same-generation forward gap caused by queue drops. Uplink frames must carry flags 0; any other downlink bit is forged and must be rejected.",
+      "uplink_allowed": false
+    }
+  },
+  "priority_lanes": {
+    "description": "Server-to-device write lanes. P0 always preempts P1, P1 preempts P2 audio, P2 preempts P3. Device-to-server control events travel in the opposite direction on the same socket, ordered by their own device-lifetime monotonic control_sequence; their intended urgency is expressed in uplink_priority_lanes.",
+    "p0": [
+      "playback.flush",
+      "generation.cancelled",
+      "session.close"
+    ],
+    "p1": [
+      "generation.started",
+      "generation.pause",
+      "generation.resume",
+      "vad.start",
+      "vad.end",
+      "keyword.detected",
+      "button.stop",
+      "playback.started",
+      "playback.progress",
+      "playback.ended",
+      "playback.error",
+      "runtime_profile.applied"
+    ],
+    "p2": [
+      "assistant.audio.frame",
+      "generation.completed"
+    ],
+    "p3": [
+      "screen.subtitle",
+      "screen.expression",
+      "device.telemetry"
+    ]
+  },
+  "uplink_priority_lanes": {
+    "description": "Device-to-server ordering intent. The device serializes every control event on one device-lifetime monotonic control_sequence and the edge enforces strict advancement per connection; urgency within that sequence is advisory.",
+    "p0": [
+      "device.mute_changed",
+      "session.close"
+    ],
+    "p1": [
+      "vad.start",
+      "vad.end",
+      "keyword.detected",
+      "button.stop",
+      "playback.started",
+      "playback.progress",
+      "playback.ended",
+      "playback.error",
+      "runtime_profile.applied"
+    ],
+    "p2": [
+      "audio.frame"
+    ],
+    "p3": [
+      "device.network_changed",
+      "device.telemetry"
+    ]
+  },
+  "ordered_barriers": {
+    "generation.completed": "MUST be queued after all assistant.audio.frame messages for the same generation and MUST be dropped if that generation becomes stale before write"
+  }
+}

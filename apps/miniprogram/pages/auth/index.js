@@ -8,7 +8,7 @@ const TAB_ROUTES = new Set([
 
 function reasonText(reason) {
   return {
-    start_voice: "登录后即可开始语音陪伴。",
+    view_dashboard: "登录后即可查看设备状态与今日概览。",
     generate_review: "登录后才能生成并查看你的专属回顾。",
     edit_profile: "登录后才能保存你的资料与陪伴偏好。",
     view_memory: "登录后即可查看你的专属回顾。",

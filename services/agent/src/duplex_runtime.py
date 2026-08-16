@@ -336,7 +336,7 @@ class DuplexRuntime:
     _listener_cue_aec_healthy: bool = False
     _enroll_fence: GenerationFence | None = None
     _emotion_turn_observer: Callable[[int], None] | None = None
-    _keyword_spotter_finalizer: Callable[[KeywordSpotterBinding | None], None] | None = None
+    _speech_segment_finalizers: list[Callable[..., None]] = field(default_factory=list)
     _fast_model_warmer: Callable[[], Awaitable[Any] | Any] | None = None
     _delegation_starter: Callable[[str, GenerationFence], Awaitable[Any] | Any] | None = None
     _interaction_prefetch_epoch: int | None = None
@@ -1290,7 +1290,7 @@ class DuplexRuntime:
         self,
         finalizer: Callable[[KeywordSpotterBinding | None], None],
     ) -> None:
-        self._keyword_spotter_finalizer = finalizer
+        self._speech_segment_finalizers.append(finalizer)
 
     def set_fast_model_warmer(
         self,
@@ -1561,12 +1561,12 @@ class DuplexRuntime:
         self._speaker_collecting = False
         self.speaker_verifier.mark_utterance_end()
         self._start_speaker_classification()
-        if self._keyword_spotter_finalizer is not None:
+        for finalizer in self._speech_segment_finalizers:
             try:
-                self._keyword_spotter_finalizer(keyword_binding)
+                finalizer(keyword_binding)
             except Exception:
                 logger.warning(
-                    "keyword spotter finalization failed; ordinary ASR remains active",
+                    "speech segment finalization failed; ordinary ASR remains active",
                     exc_info=True,
                 )
 

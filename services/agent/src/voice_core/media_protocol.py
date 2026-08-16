@@ -43,12 +43,31 @@ class SessionIdentity:
     device_id: str = ""
     client_type: str = "h5"
     stream_epoch: int = 1
+    subject_id: str = ""
+    binding_id: str = ""
+    binding_version: int = 0
+    runtime_profile_version: int = 0
 
     def __post_init__(self) -> None:
         _required_string(self.session_id, "session_id")
         _non_negative_int(self.stream_epoch, "stream_epoch")
         if self.stream_epoch < 1:
             raise ValueError("stream_epoch must be positive")
+        for value, name in (
+            (self.binding_version, "binding_version"),
+            (self.runtime_profile_version, "runtime_profile_version"),
+        ):
+            _non_negative_int(value, name)
+        authority_fence = (
+            bool(self.subject_id.strip()),
+            bool(self.binding_id.strip()),
+            self.binding_version > 0,
+            self.runtime_profile_version > 0,
+        )
+        if self.client_type == "device" and not all(authority_fence):
+            raise ValueError("device identity requires a complete runtime profile authority fence")
+        if self.client_type != "device" and any(authority_fence):
+            raise ValueError("runtime profile authority fence is device-only")
 
 
 @dataclass(frozen=True, slots=True)

@@ -165,6 +165,12 @@ class AgentSettings(BaseSettings):
     media_bridge_go_shadow_enabled: bool = Field(
         default=False, alias="MEDIA_BRIDGE_GO_SHADOW_ENABLED"
     )
+    media_output_generation_timeout_s: float = Field(
+        default=45.0,
+        ge=0.1,
+        le=300.0,
+        alias="MEDIA_OUTPUT_GENERATION_TIMEOUT_S",
+    )
     media_slo_report_enabled: bool = Field(
         default=False, alias="MEDIA_SLO_REPORT_ENABLED"
     )

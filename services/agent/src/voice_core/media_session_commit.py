@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import logging
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from services.agent.src.contracts.ids import GenerationFence
@@ -25,11 +26,16 @@ from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRDecisionReason,
 )
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
+from services.agent.src.voice_core.interruption import (
+    InterruptionPolicy,
+    evidence_from_speech_segment,
+)
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
 from services.agent.src.voice_core.speech_timeline import (
     ASRResult,
+    SegmentKind,
     SpeechSegment,
     asr_result_to_segment,
 )
@@ -48,6 +54,7 @@ class MediaSessionCommitMixin:
     if TYPE_CHECKING:
         bridge: MediaBridgeGrpcServer
         metrics: MetricsRegistry
+        interruption_policy: InterruptionPolicy
         _sessions: dict[str, _MediaVoiceSession]
 
         def _stream_epoch_is_current(
@@ -236,24 +243,95 @@ class MediaSessionCommitMixin:
         retire_end = end_sample if retire_sample is None else retire_sample
         if retire_end < end_sample:
             raise ValueError("media retire sample cannot precede the logical endpoint")
+        was_assistant_speaking = context.runtime.assistant_speaking
         context.runtime.on_user_voice_stopped()
         await context.runtime.await_speaker_classification()
+        speaker_evidence = self._projection_speaker_evidence(context)
+        history_eligible = context.runtime.current_history_eligible
+        commit_evidence = CommitEvidence(
+            session_id=session_id,
+            stream_epoch=stream_epoch,
+            capture_start_sample=start_sample,
+            capture_end_sample=end_sample,
+            text=text,
+            fence=context.runtime.fence.bump_turn(),
+            speaker_evidence=speaker_evidence,
+            history_eligible=history_eligible,
+            provider_final_missing=provider_final_missing,
+        )
+        projection_rejection = context.projection.validate_commit(commit_evidence)
+        if projection_rejection is not None:
+            await self._discard_projection(context, projection_rejection.value)
+            return None, projection_rejection.value
+        speaker_patch = context.projection.apply_speaker_evidence(speaker_evidence)
+        if speaker_patch is not None:
+            await self._emit_projection_patch(context, speaker_patch)
+        elapsed_ms = (end_sample - start_sample) * 1_000 // 16_000
+        route = context.runtime.route_user_turn(text)
+        guarded_reason = context.runtime.playback_guarded_reason(
+            text,
+            duration_ms=elapsed_ms,
+        )
         interaction = context.runtime.decide_interaction(
             InteractionSnapshot(
                 event=InteractionEvent.TRANSCRIPT,
                 assistant_speaking=context.runtime.assistant_speaking,
                 text=text,
-                elapsed_ms=(end_sample - start_sample) * 1_000 // 16_000,
+                elapsed_ms=elapsed_ms,
                 final=True,
                 has_speech_energy=True,
-                guarded_reason=context.runtime.playback_guarded_reason(
-                    text,
-                    duration_ms=(end_sample - start_sample) * 1_000 // 16_000,
-                ),
+                guarded_reason=guarded_reason,
                 semantic_evidence=True,
-                utterance_route=context.runtime.route_user_turn(text),
+                utterance_route=route,
             )
         )
+        if was_assistant_speaking and guarded_reason is None:
+            asr_segments = [
+                segment
+                for segment in context.runtime.speech_timeline.segments_in_range(
+                    stream_epoch=stream_epoch,
+                    start_sample=start_sample,
+                    end_sample=end_sample,
+                )
+                if segment.kind in {SegmentKind.ASR_PARTIAL, SegmentKind.ASR_FINAL}
+            ]
+            if asr_segments:
+                evidence_segment = max(
+                    asr_segments,
+                    key=lambda segment: (
+                        segment.provider_task_epoch,
+                        segment.revision,
+                        segment.final,
+                    ),
+                )
+                interruption = self.interruption_policy.evaluate(
+                    evidence_from_speech_segment(
+                        evidence_segment,
+                        active_generation_id=max(
+                            1,
+                            (
+                                context.playback.current_fence or context.runtime.fence
+                            ).generation_id,
+                        ),
+                        duration_ms=elapsed_ms,
+                    ),
+                    asr_text=text,
+                    speaker_profile=(
+                        "child"
+                        if context.runtime.mode_policy.runtime_profile is not None
+                        and context.runtime.mode_policy.runtime_profile.profile.subject_category
+                        == "minor"
+                        else "adult"
+                    ),
+                )
+                interaction = replace(
+                    interaction,
+                    reason=interruption.reason,
+                    duck_output=interruption.duck_output,
+                    cancel_generation=interruption.cancel_generation,
+                    continue_output=interruption.continue_output,
+                    backchannel=interruption.backchannel,
+                )
         if interaction.backchannel:
             await self._commit_media_input_range(
                 context,
@@ -300,11 +378,6 @@ class MediaSessionCommitMixin:
             return None, reason or "user_turn_rejected"
         if context.runtime.assistant_speaking:
             context.runtime.publish_assistant_audio("restore", gain=1.0)
-        speaker_evidence = self._projection_speaker_evidence(context)
-        speaker_patch = context.projection.apply_speaker_evidence(speaker_evidence)
-        if speaker_patch is not None:
-            await self._emit_projection_patch(context, speaker_patch)
-        history_eligible = context.runtime.current_history_eligible
         before_prepare_fence = context.runtime.fence
         prepare_turn = getattr(context.provider, "prepare_committed_turn", None)
         try:
@@ -338,17 +411,10 @@ class MediaSessionCommitMixin:
                         prepared_fence
                     )
                     recovered = context.projection.commit_turn(
-                        CommitEvidence(
-                            session_id=session_id,
-                            stream_epoch=stream_epoch,
-                            capture_start_sample=start_sample,
-                            capture_end_sample=end_sample,
-                            text=text,
+                        replace(
+                            commit_evidence,
                             fence=prepared_fence,
-                            speaker_evidence=speaker_evidence,
-                            history_eligible=history_eligible,
                             context_version=context_version,
-                            provider_final_missing=provider_final_missing,
                         )
                     )
                     if isinstance(recovered, CommittedTurn):
@@ -403,17 +469,10 @@ class MediaSessionCommitMixin:
         )
         context_version = context.runtime.orchestrator.context_version_for_fence(fence)
         projection_result = context.projection.commit_turn(
-            CommitEvidence(
-                session_id=session_id,
-                stream_epoch=stream_epoch,
-                capture_start_sample=start_sample,
-                capture_end_sample=end_sample,
-                text=text,
+            replace(
+                commit_evidence,
                 fence=fence,
-                speaker_evidence=speaker_evidence,
-                history_eligible=history_eligible,
                 context_version=context_version,
-                provider_final_missing=provider_final_missing,
             )
         )
         if isinstance(projection_result, ProjectionRejectReason):

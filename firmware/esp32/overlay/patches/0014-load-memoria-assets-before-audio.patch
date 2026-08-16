@@ -1,0 +1,19 @@
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -358,5 +358,15 @@ void Application::ActivationTask() {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++    // The Memoria activation path intentionally skips OTA asset version
++    // checks, but the local assets partition still owns the ESP-SR models.
++    // Apply it before the first audio-engine initialization; otherwise the
++    // engine falls back to esp_srmodel_init("model") and WakeNet remains
++    // disabled even though generated_assets.bin was flashed successfully.
++    auto& assets = Assets::GetInstance();
++    if (!assets.partition_valid() || !assets.Apply()) {
++        ESP_LOGE(TAG, "Memoria assets partition/model load failed");
++        return;
++    }
+     if (!InitializeProtocol()) {
+         return;
+     }
+     xEventGroupSetBits(event_group_, MAIN_EVENT_ACTIVATION_DONE);

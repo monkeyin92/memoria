@@ -1161,7 +1161,7 @@ async def claim_session_route(
     account_id: str,
     device_id: str,
     stream_epoch: int,
-    media_runtime: Literal["livekit", "streamcore"] = "livekit",
+    media_runtime: Literal["livekit", "streamcore", "direct_voice_core"] = "livekit",
 ) -> SessionRoute | None:
     directory = cast(
         SessionDirectory | None,

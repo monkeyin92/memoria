@@ -85,6 +85,10 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 		if !s.current.monotonic(actual) {
 			return fmt.Errorf("generation moved backwards")
 		}
+		if generation.GetAction() == mediav1.GenerationAction_GENERATION_ACTION_RESUME &&
+			!s.current.equal(actual) {
+			return fmt.Errorf("generation resume fence does not match acceptance")
+		}
 		if err := s.acceptEventSequence(generation.GetSequence()); err != nil {
 			return err
 		}
@@ -99,6 +103,7 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 			s.requireAudioOrigin = generation.GetAction() != mediav1.GenerationAction_GENERATION_ACTION_RESUME
 		}
 		s.current = actual
+		s.currentActive = generation.GetAction() != mediav1.GenerationAction_GENERATION_ACTION_CANCEL
 		return nil
 	}
 	if effect := event.GetRealtimeEffect(); effect != nil {
@@ -132,6 +137,7 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 		}
 		if effect.GetEffectKind() == mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_CANCEL_GENERATION {
 			s.current = fence
+			s.currentActive = false
 		}
 		return nil
 	}

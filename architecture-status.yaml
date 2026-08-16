@@ -1,12 +1,155 @@
-# 唯一架构状态基线；真实外部 Gate 未通过前不得启用 go_authoritative。
-schema_version: 1
-as_of_commit: 20260806-213522
+# 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
+# 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
+schema_version: 2
+as_of_commit: working_tree_2026-08-16_esp32_first_cleanup_plus_edge_bridge_supervisor
 production_runtime: python_authoritative
-production_media: livekit
+production_media: go_media_edge_direct_voice_core_with_livekit_compat
+production_release_tag: 20260814-231749-direct-canary
+production_release_symlink: /opt/memoria/releases/20260812-173008
+production_runtime_verified: true
+direct_real_device_verified: false
+full_duplex_verified: false
 go_shadow_enabled: false
 go_authoritative_allowed: false
+hardware_target: esp32_first_class_realtime_terminal
+miniprogram_role: control_plane_only
+hardware_media_target_runtime: go_media_edge_direct_voice_core
+hardware_media_rollback_runtime: python_device_gateway_livekit_compat
+hardware_media_interaction_authority: python_authoritative
 student_track: p3_local_software_complete_external_release_gates_pending
 student_track_as_of: 2026-08-09_local_worktree
+
+hardware_realtime_voice:
+  code: implemented_local_candidate
+  wired: direct_production_canary_agent_bridge_edge_mtls
+  enabled: true
+  verified: false
+  production_runtime_verified: true
+  direct_real_device_verified: false
+  full_duplex_verified: false
+  product_level: hardware_realtime_voice_candidate_production_runtime_only
+  target_product_level: hardware_realtime_voice_candidate
+  advertised_duplex_level: none
+  target_duplex_level: l2_natural_interrupt_near_full_duplex
+  device_protocol: v2_direct_with_v1_legacy_gateway
+  device_wss_owner: go_media_edge
+  interaction_owner: python_voice_core
+  generation_origin: one
+  aec_profile: pending_16khz_reference_bringup
+  rollback_path: device_media_gateway_livekit_compat
+  firmware_upstream_commit: e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5
+  firmware_clean_build_at: "2026-08-16T16:14:08Z"
+  firmware_overlay_sha256: 513e14ef346d49fc39e82b9bf96e2c56df0bf25bb1d2f081ee56e5707dd6a969
+  firmware_app_sha256: 6fe8e936d481433f80fd0dcd5c076f2a5f47029132e2b9e21ccb1680fe3d798d
+  firmware_app_size_bytes: 2950832
+  firmware_app_partition_bytes: 4128768
+  firmware_app_partition_headroom_bytes: 1177936
+  firmware_app_partition_headroom_percent: 29
+  firmware_merged_sha256: 7d7b921a81500817fda6a8230cd5c5b5a97814855dd0a440188f3d75e2cee188
+  firmware_merged_size_bytes: 13577086
+  firmware_flash_offsets: 0x0_bootloader_0x8000_partition_0xd000_ota_0x20000_app_0x800000_assets
+  firmware_identity_partition_in_flash_plan: false
+  firmware_clean_build_verified: true
+  firmware_overlay_gate_verified: true
+  firmware_real_board_flushed: false
+  firmware_identity_preserved_verified: false
+  firmware_boot_activation_verified: false
+  prior_real_board_candidate:
+    evidence_date: 2026-08-14
+    overlay_sha256: 3d967764a623d13e0983f87de494465c051c6278efa1b2b862280c0c2bd33217
+    app_sha256: 1a91babd4a36b4e30ae6bb5e0463bae0fd099ec8778c71d4c7e5dcfc1411deb4
+    app_size_bytes: 2964720
+    merged_sha256: cc155a344ea948deb373aa440f5c85ebd71cad0c602960188c7ff07d136eca81
+    merged_size_bytes: 9873069
+    real_board_flushed: true
+    flashed_regions: app_only_at_0x20000
+    identity_preserved_verified: true
+    identity_sha256: b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846
+    boot_activation_verified: true
+    legacy_v1_negotiation_verified: true
+    legacy_v1_agent_canary_enabled: true
+    legacy_v1_agent_canary_image: memoria-agent:20260814-172823-agent-canary
+    legacy_v1_agent_canary_commit: c6c54d4ade09025eb24d88c896ef9e65c6568a82
+    legacy_v1_two_turn_actual_heard: true
+    legacy_v1_first_reply_audible: true
+    first_turn_asr_endpoint_latency_ms: 20500
+    second_turn_asr_final_received: false
+  firmware_legacy_v1_heartbeat_compat: implemented_current_source_prior_candidate_two_turn_verified_long_session_pending
+  agent_vad_task_boundary: implemented_legacy_canary_prior_real_board_and_direct_local_tests_passed
+  agent_vad_task_boundary_enabled: true
+  agent_vad_task_boundary_real_board_verified: true
+  direct_v2_enabled: true
+  direct_v2_verified: false
+  media_turn_retry_canary:
+    image: memoria-agent:20260816-214225-media-turn-retry-canary
+    image_id: sha256:467b431bc80c5d6de00ffa2c578e20f0843e523ad971808654ea77bdf7d26acd
+    revision: 9be3d18ed7f8ec1702cc52d674c813a549f48f71
+    cutover_started: "2026-08-16T14:19:13Z"
+    cutover_completed: "2026-08-16T14:20:01Z"
+    agent_container_id: 02b557181037b1e2fabdfc0de9af05a1d13d25b1886d475886e05b27f1f88605
+    bridge_container_id: 50ca13e22248f26da41932fb2320bf43af4a4b770a5a744537ca6aa0dcad6bcc
+    edge_container_id: 8a157c3d5da42c26cc77ac63f9d4f519b37ae5323879cba06537a898ac9e31d5
+    agent_health: healthy
+    bridge_health: healthy
+    edge_health: healthy
+    edge_started_after_same_container_restart: "2026-08-16T14:19:40.076649486Z"
+    runtime_file_hashes: 17_of_17_both_target_containers
+    inherited_media_agent_factory_sha256: c4c6004cbbd68665354743d51699faf801568266e7684c169538c47922307410
+    dockerfile_sha256: 463a921111d17dc8db78e7a6fff6ff1477bd0873f2f7db66cbb12eba69648b6e
+    runtime_manifest_sha256: 0d44a70b9b64f10cdc0134c95285c5958e8dacca9442f2f49d4ee4c5b74f46a2
+    preserved_container_ids: 10_of_10
+    delayed_verification_at: "2026-08-16T14:28:01Z"
+    edge_ready: true
+    fresh_log_counts:
+      traceback: 0
+      stale_core_event_sequence: 0
+      asr_tail_timeout: 0
+      prepare_retry_exhausted: 0
+      output_timeout: 0
+      error: 0
+      closed_client: 0
+      speaker_403: 0
+    active_device_connections: 0
+    active_media_sessions: 0
+    direct_real_device_verified: false
+    full_duplex_verified: false
+  media_turn_retry_rollback:
+    image: memoria-agent:rollback-20260816-214225-pre-media-turn-retry
+    image_id: sha256:0453fa47c495e913ccede09ac3ab0d73caf46c4363c018e23019a51cddcada44
+    first_attempt_started: "2026-08-16T14:09:45Z"
+    first_attempt_result: rolled_back_edge_channel_not_ready
+    rollback_completed_approx: "2026-08-16T14:10:55Z"
+    edge_recovery_same_container_restart: "2026-08-16T14:14:59Z"
+    rollback_path_exercised: true
+    edge_bridge_auto_redial_verified: false
+    architecture_gap: supervised_dns_reresolution_and_grpc_channel_redial_implemented_local_production_pending
+  media_bridge_hot_replacement_supervisor:
+    code: implemented
+    wired: local_main_readiness_factories_metrics
+    enabled: false
+    verified: local_go_test_race_vet
+    production_runtime_verified: false
+    production_chaos_verified: false
+  device_state_redis:
+    authority: redis_atomic_shared
+    production_topology: single_edge
+    enabled: true
+    production_runtime_verified: true
+    mtls: enabled
+    real_ticket_replay_verified: false
+    real_cross_instance_takeover_verified: false
+    redis_ha_verified: false
+    failover_chaos_verified: false
+
+miniprogram_control_plane:
+  code: implemented_local
+  wired: implemented_local_not_uploaded
+  enabled: false
+  verified: false
+  realtime_microphone_allowed: false
+  realtime_tts_playback_allowed: false
+  realtime_media_wss_allowed: false
+  livekit_room_allowed: false
 
 module_budgets:
   services/agent/src/duplex_runtime.py: 4717
@@ -14,7 +157,7 @@ module_budgets:
 
 stages:
   python_voice_core: implemented_local
-  go_media_edge: implemented_local_shadow_only
+  go_media_edge: production_direct_enabled_runtime_verified_no_active_device
   h5_streamcore_transport: implemented_local
   h5_audio_worklet_playback_ack: implemented_local_software_graph
   voice_core_and_edge_module_split: implemented_local
@@ -28,16 +171,42 @@ stages:
   student_tutor: implemented_local
   student_weekly_report_and_crisis_outbox: implemented_local
   student_offsite_backup_tooling: implemented_local_not_operated
-  multi_instance_ownership: pending
+  miniprogram_control_plane_only: implemented_local_static_gate_passed
+  esp32_device_protocol_v2: production_direct_canary_enabled_runtime_verified_real_device_pending
+  esp32_legacy_v1_rolling_fallback: implemented_prior_real_board_two_turn_verified
+  funasr_per_vad_task_rotation: implemented_agent_canary_prior_real_board_two_turn_verified_1493_tests_passed
+  device_same_session_recovery: implemented_local_bounded_attempt_fenced_pending_real_weak_network
+  go_hardware_device_wss: implemented_local_auth_replay_epoch_backpressure
+  direct_device_to_voice_core: production_enabled_runtime_verified_real_device_pending
+  media_turn_lifecycle_hardening: production_canary_enabled_runtime_verified_real_device_pending
+  media_bridge_hot_replacement_redial: implemented_local_test_race_vet_passed_production_deployment_and_chaos_pending
+  hardware_playback_actual_heard: prior_legacy_candidate_two_turn_user_confirmed_current_direct_candidate_unverified_watermark_still_approximate
+  hardware_hard_stop: implemented_local_pending_real_audible_latency
+  runtime_profile_device_ack: implemented_local_edge_observed
+  runtime_profile_settings_atomicity: implemented_local
+  device_effective_audio_mode_diagnostics: implemented_local_edge_authoritative
+  control_to_edge_internal_auth: implemented_local_token_plus_mtls_required_for_production_direct
+  edge_to_control_session_close: implemented_local_strict_contract_independent_token
+  session_terminal_authority: implemented_local_postgres_epoch_fenced_idempotent
+  direct_production_ingress: production_canary_enabled_exact_route_runtime_verified
+  direct_rollback_env_cleanup: implemented_local_tested
+  device_ticket_replay_authority: redis_atomic_shared_production_single_edge_enabled_mtls_runtime_verified_real_replay_ha_chaos_pending
+  device_connection_lease_authority: redis_owner_epoch_atomic_production_single_edge_enabled_mtls_runtime_verified_cross_instance_takeover_ha_chaos_pending
+  hardware_offline_stop_keyword: pending_firmware_and_acoustic_verification
+  hardware_natural_barge_in: pending_aec_verification
+  legacy_device_livekit_bridge: rollback_only_after_direct_path_gate
+  multi_instance_ownership: redis_shared_authority_production_single_edge_enabled_mtls_runtime_verified_multi_edge_takeover_ha_chaos_pending
   authority_migration: blocked_by_external_gates
 
 gates:
   ci: pending_remote_run
-  local_strict_mypy: passed
+  local_strict_mypy: passed_399_source_files_2026_08_16
   local_proto_generation: passed
-  local_python_tests: passed_2108_2_skipped_coverage_87_10
+  local_python_tests: passed_agent_full_suite_media_session_78_speech_timeline_5_2026_08_16
   local_h5_tests: passed
-  local_miniprogram_tests: passed_90_upload_dry_run_only
+  local_h5_test_count: passed_372_node_24_16_0
+  local_h5_production_build: passed_node_24_16_0
+  local_miniprogram_tests: passed_142_node_24_16_0_upload_dry_run
   local_go_tests: passed
   local_go_race: passed
   local_go_vet: passed
@@ -61,11 +230,39 @@ gates:
   turn_cross_host_e2e: pending
   browser_playout_ack: pending
   hardware_aec: pending
+  miniprogram_no_realtime_media_static_gate: passed_local_142_tests_upload_dry_run
+  device_protocol_v2_compatibility: passed_local_contract_and_firmware_source_tests
+  go_hardware_wss_auth_replay: passed_local_go_and_race
+  go_hardware_wss_backpressure: passed_local_go_and_race
+  direct_voice_core_single_turn: passed_local_contract_pending_provider_and_real_hardware
+  funasr_vad_task_boundary: passed_agent_canary_legacy_real_board_two_turn_and_direct_local_absolute_deadline
+  session_close_authority: passed_local_postgres_41
+  edge_close_report_contract: passed_local_strict_identity_epoch_cas
+  direct_production_env_and_rollback: passed_local_generation_and_static_compose
+  direct_production_mtls_jwks_deploy: passed_current_single_device_production_canary
+  media_turn_retry_canary: passed_production_runtime_delayed_check_real_device_pending
+  media_bridge_hot_replacement_auto_redial: passed_local_go_test_race_vet_production_deployment_alerting_and_chaos_pending
+  direct_real_device_t4_t7: pending_fresh_same_generation_serial_server_and_actual_heard_evidence
+  direct_multi_instance_replay_and_lease: production_single_edge_redis_mtls_runtime_verified_local_two_edge_real_redis_passed_production_multi_edge_ha_chaos_pending
+  device_wss_server_ca_validation: pending_real_firmware_tls_evidence
+  compatibility_hs256_retirement: pending_direct_default_switch_same_release_gate
+  device_button_stop_latency: pending_real_hardware
+  device_offline_keyword_latency: pending_real_hardware
+  hardware_playback_watermark: pending_real_dac_evidence
+  hardware_double_talk_matrix: pending_real_hardware
+  miniprogram_independence_t14: pending_real_wechat_and_hardware
+  esp32_current_candidate_clean_build: passed_overlay_and_esp_idf_6_0_2_build_2026_08_16_unflashed
+  esp32_identity_preservation: prior_real_board_passed_2026_08_14_current_candidate_unflashed_unverified
+  esp32_firmware_flash_readback: prior_real_board_passed_2026_08_14_current_candidate_unflashed
+  esp32_boot_wifi_activation: prior_real_board_passed_2026_08_14_current_candidate_unflashed_unverified
+  hardware_acceptance_t1_t14: blocked_0_pass_14_blocked_0_failed_2026_08_16_exact_dac_aec_double_talk_actual_heard_t14_pending
+  esp32_500_turn_stability: pending_real_hardware
+  ota_power_loss_recovery: pending_real_hardware
   authorized_child_corpus_200: pending
   capacity_matrix: pending
-  redis_session_ownership: pending
+  redis_session_ownership: production_single_edge_redis_mtls_runtime_verified_local_atomic_takeover_passed_production_multi_edge_ha_chaos_pending
   chaos_recovery: pending
-  canary_and_rollback: pending
+  canary_and_rollback: media_turn_retry_candidate_healthy_automatic_rollback_exercised_edge_restart_required
 
 external_evidence_policy:
   fail_closed: true

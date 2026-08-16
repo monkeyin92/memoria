@@ -35,6 +35,42 @@ from scripts.split_production_env import (
 
 _MODEL_VERSION = "campplus-cn-common@v1.0.0+ckpt.3388cf5f+onnx.7a39d2e5e566+fbank.v1"
 
+# Keys owned exclusively by the direct_voice_core trust boundary. The
+# legacy/livekit_compat shape must never carry them: the Go edge fails closed
+# at startup on a half-surviving bundle (a close-report URL without the device
+# WSS listener, or internal TLS files with the plaintext healthcheck), and
+# Control keeps dead direct wiring (e.g. a device WSS URL that no longer
+# exists) when they leak into the rollback envs.
+_DIRECT_DEVICE_EDGE_KEYS = frozenset(
+    {
+        "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS",
+        "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE",
+        "DEVICE_DIRECT_MEDIA_WSS_URL",
+        "MEDIA_EDGE_DEVICE_WSS_ADDR",
+        "MEDIA_EDGE_DEVICE_JWT_ISSUER",
+        "MEDIA_EDGE_DEVICE_JWT_AUDIENCE",
+        "MEDIA_EDGE_DEVICE_CLOSE_REPORT_URL",
+        "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN",
+        "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TIMEOUT_MS",
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_URL",
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_CA_FILE",
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_CLIENT_CERT_FILE",
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_CLIENT_KEY_FILE",
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_SERVER_NAME",
+        "MEDIA_EDGE_DEVICE_STATE_KEY_PREFIX",
+        "MEDIA_EDGE_DEVICE_STATE_TIMEOUT_MS",
+        "MEDIA_EDGE_DEVICE_LEASE_TTL_MS",
+        "MEDIA_EDGE_DEVICE_LEASE_CHECK_INTERVAL_MS",
+        "MEDIA_EDGE_INSTANCE_ID",
+        "MEDIA_EDGE_INTERNAL_TLS_CERT_FILE",
+        "MEDIA_EDGE_INTERNAL_TLS_KEY_FILE",
+        "MEDIA_EDGE_INTERNAL_TLS_CLIENT_CA_FILE",
+        "MEDIA_EDGE_HEALTHCHECK_CA_FILE",
+        "MEDIA_EDGE_HEALTHCHECK_CLIENT_CERT_FILE",
+        "MEDIA_EDGE_HEALTHCHECK_CLIENT_KEY_FILE",
+    }
+)
+
 
 def _token() -> str:
     return secrets.token_urlsafe(48)
@@ -74,6 +110,16 @@ def _device_gateway_url(public_base_url: str) -> str:
     if prefix.endswith("/memoria-api"):
         prefix = prefix.removesuffix("/memoria-api")
     return f"wss://{parsed.netloc}{prefix}/memoria-device-media/v1/device/media"
+
+
+def _device_edge_url(public_base_url: str) -> str:
+    parsed = urlsplit(public_base_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError("PUBLIC_BASE_URL must be HTTPS to derive direct device Edge URL")
+    prefix = parsed.path.rstrip("/")
+    if prefix.endswith("/memoria-api"):
+        prefix = prefix.removesuffix("/memoria-api")
+    return f"wss://{parsed.netloc}{prefix}/memoria-device-edge/v1/device/media"
 
 
 def _ed25519_seed_b64() -> str:
@@ -148,6 +194,7 @@ def prepare(
     device_gateway_url = values.get(
         "DEVICE_MEDIA_GATEWAY_URL", ""
     ).strip() or _device_gateway_url(public_base_url)
+    device_edge_url = values.get("DEVICE_DIRECT_MEDIA_WSS_URL", "").strip()
     asymmetric_streamcore = bool(
         values.get("STREAMCORE_TOKEN_PRIVATE_KEY_FILE", "").strip()
         or values.get("STREAMCORE_TOKEN_PRIVATE_KEY_PEM", "").strip()
@@ -188,6 +235,24 @@ def prepare(
                 "MEDIA_EDGE_CONTROL_URL", "http://media-edge:8080"
             ),
             "MEDIA_EDGE_CONTROL_TIMEOUT_S": values.get("MEDIA_EDGE_CONTROL_TIMEOUT_S", "2"),
+            "MEDIA_EDGE_INTERNAL_CONTROL_URL": values.get(
+                "MEDIA_EDGE_INTERNAL_CONTROL_URL", ""
+            ),
+            "MEDIA_EDGE_INTERNAL_CONTROL_TOKEN": _keep_or_create(
+                values, "MEDIA_EDGE_INTERNAL_CONTROL_TOKEN", _token
+            ),
+            "MEDIA_EDGE_INTERNAL_CONTROL_CA_FILE": values.get(
+                "MEDIA_EDGE_INTERNAL_CONTROL_CA_FILE", ""
+            ),
+            "MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_CERT_FILE": values.get(
+                "MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_CERT_FILE", ""
+            ),
+            "MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_KEY_FILE": values.get(
+                "MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_KEY_FILE", ""
+            ),
+            "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN": values.get(
+                "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN", ""
+            ),
             "MEDIA_EDGE_JWT_SECRET": streamcore_token_secret,
             "MEDIA_EDGE_JWT_PUBLIC_KEY_FILE": values.get("MEDIA_EDGE_JWT_PUBLIC_KEY_FILE", ""),
             "MEDIA_EDGE_JWT_PUBLIC_KEY_PEM": values.get("MEDIA_EDGE_JWT_PUBLIC_KEY_PEM", ""),
@@ -198,7 +263,7 @@ def prepare(
             "MEDIA_EDGE_JWT_AUDIENCE": "memoria-media",
             "MEDIA_EDGE_HTTP_ADDR": ":8080",
             "MEDIA_EDGE_INTERNAL_HTTP_ADDR": values.get("MEDIA_EDGE_INTERNAL_HTTP_ADDR", ""),
-            "MEDIA_EDGE_HEALTHCHECK_URL": "http://127.0.0.1:8080/readyz",
+            "MEDIA_EDGE_HEALTHCHECK_URL": "http://127.0.0.1:8081/readyz",
             "MEDIA_EDGE_VOICE_CORE_REQUIRED": "true",
             "MEDIA_EDGE_VOICE_CORE_ADDR": "voice-core-media-bridge:7001",
             "MEDIA_EDGE_VOICE_CORE_CA_FILE": "/etc/memoria-media-runtime/media-edge-ca.crt",
@@ -349,6 +414,97 @@ def prepare(
     # Control API environment.
     values.pop("MEMORIA_SESSION_RUNTIME_BOOTSTRAP_DATABASE_URL", None)
     values.pop("MEMORIA_MEMORY_BOOTSTRAP_DATABASE_URL", None)
+    # The general production upgrade keeps the existing hardware compatibility
+    # runtime unless an operator deliberately supplies the complete direct
+    # device-media bundle. It must not accidentally half-enable a new trust
+    # boundary while rotating unrelated service credentials.
+    direct_requested = values.get("DEVICE_MEDIA_RUNTIME", "livekit_compat").strip() == (
+        "direct_voice_core"
+    )
+    if direct_requested:
+        for key in (
+            "MEDIA_EDGE_INTERNAL_CONTROL_URL",
+            "MEDIA_EDGE_INTERNAL_CONTROL_CA_FILE",
+            "MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_CERT_FILE",
+            "MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_KEY_FILE",
+            "MEDIA_EDGE_DEVICE_STATE_REDIS_URL",
+            "MEDIA_EDGE_DEVICE_STATE_REDIS_CA_FILE",
+            "MEDIA_EDGE_DEVICE_STATE_REDIS_CLIENT_CERT_FILE",
+            "MEDIA_EDGE_DEVICE_STATE_REDIS_CLIENT_KEY_FILE",
+            "MEDIA_EDGE_DEVICE_STATE_REDIS_SERVER_NAME",
+        ):
+            _required(values, key)
+        if not _required(values, "MEDIA_EDGE_DEVICE_STATE_REDIS_URL").lower().startswith(
+            "rediss://"
+        ):
+            raise ValueError(
+                "MEDIA_EDGE_DEVICE_STATE_REDIS_URL must use rediss:// in direct production mode"
+            )
+        values["MEDIA_EDGE_DEVICE_WSS_ENABLED"] = "true"
+        values["MEDIA_EDGE_DEVICE_REQUIRED"] = "true"
+        values["MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN"] = _keep_or_create(
+            values, "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN", _token
+        )
+        values["DEVICE_DIRECT_MEDIA_WSS_URL"] = device_edge_url or _device_edge_url(
+            public_base_url
+        )
+        values["MEDIA_EDGE_DEVICE_JWT_ISSUER"] = values.get(
+            "JWT_ISSUER", "voice-agent"
+        )
+        values["MEDIA_EDGE_DEVICE_JWT_AUDIENCE"] = "memoria-media-edge"
+        values["MEDIA_EDGE_DEVICE_WSS_ADDR"] = ":8082"
+        values["MEDIA_EDGE_DEVICE_CLOSE_REPORT_URL"] = (
+            "http://control-api:8000/v1/internal/device-close"
+        )
+        values["MEDIA_EDGE_DEVICE_CLOSE_REPORT_TIMEOUT_MS"] = values.get(
+            "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TIMEOUT_MS", "2000"
+        )
+        values["MEDIA_EDGE_DEVICE_STATE_KEY_PREFIX"] = values.get(
+            "MEDIA_EDGE_DEVICE_STATE_KEY_PREFIX", "memoria:device-media:v2"
+        )
+        values["MEDIA_EDGE_DEVICE_STATE_TIMEOUT_MS"] = values.get(
+            "MEDIA_EDGE_DEVICE_STATE_TIMEOUT_MS", "500"
+        )
+        values["MEDIA_EDGE_DEVICE_LEASE_TTL_MS"] = values.get(
+            "MEDIA_EDGE_DEVICE_LEASE_TTL_MS", "30000"
+        )
+        values["MEDIA_EDGE_DEVICE_LEASE_CHECK_INTERVAL_MS"] = values.get(
+            "MEDIA_EDGE_DEVICE_LEASE_CHECK_INTERVAL_MS", "5000"
+        )
+        for key in (
+            "MEDIA_EDGE_INTERNAL_TLS_CERT_FILE",
+            "MEDIA_EDGE_INTERNAL_TLS_KEY_FILE",
+            "MEDIA_EDGE_INTERNAL_TLS_CLIENT_CA_FILE",
+            "MEDIA_EDGE_HEALTHCHECK_CA_FILE",
+            "MEDIA_EDGE_HEALTHCHECK_CLIENT_CERT_FILE",
+            "MEDIA_EDGE_HEALTHCHECK_CLIENT_KEY_FILE",
+        ):
+            _required(values, key)
+        values["MEDIA_EDGE_HEALTHCHECK_URL"] = "https://127.0.0.1:8081/readyz"
+        rollout_mode = values.get(
+            "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE", "allowlist"
+        ).strip()
+        if rollout_mode == "allowlist":
+            _required(values, "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS")
+        elif rollout_mode == "all":
+            values.pop("DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS", None)
+        else:
+            raise ValueError(
+                "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE must be allowlist or all"
+            )
+        values["DEVICE_MEDIA_DIRECT_ROLLOUT_MODE"] = rollout_mode
+    else:
+        # Rollback to the hardware compatibility runtime must be provably
+        # clean: drop the complete direct bundle instead of leaving a
+        # half-configured Edge (main.go log.Fatal on a close-report URL with
+        # DEVICE_WSS_ENABLED=false, or internal TLS files with the plaintext
+        # healthcheck) and dead direct wiring in Control.
+        for key in _DIRECT_DEVICE_EDGE_KEYS:
+            values.pop(key, None)
+        values["DEVICE_MEDIA_RUNTIME"] = "livekit_compat"
+        values["MEDIA_EDGE_DEVICE_WSS_ENABLED"] = "false"
+        values["MEDIA_EDGE_DEVICE_REQUIRED"] = "false"
+        values["MEDIA_EDGE_HEALTHCHECK_URL"] = "http://127.0.0.1:8081/readyz"
     control, agent, speaker_model, gateway, device_gateway, media_edge = split_env(values)
     ControlSettings.model_validate(control).validate_production()
     AgentSettings.model_validate(agent)

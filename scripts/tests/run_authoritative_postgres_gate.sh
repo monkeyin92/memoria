@@ -29,6 +29,8 @@ export MEMORIA_DB_GUARDIAN_WORKER_PASSWORD="$(secret)"
 export MEMORIA_DB_IDENTITY_PASSWORD="$(secret)"
 export MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD="$(secret)"
 export MEMORIA_DB_CONSENT_PASSWORD="$(secret)"
+export MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD="$(secret)"
+export MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD="$(secret)"
 export MEMORIA_DB_SESSION_API_PASSWORD="$(secret)"
 export MEMORIA_DB_ACTION_EXECUTOR_PASSWORD="$(secret)"
 export MEMORIA_DB_SESSION_PROJECTOR_PASSWORD="$(secret)"
@@ -51,6 +53,8 @@ docker run -d \
   -e MEMORIA_DB_IDENTITY_PASSWORD \
   -e MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD \
   -e MEMORIA_DB_CONSENT_PASSWORD \
+  -e MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD \
+  -e MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD \
   -e MEMORIA_DB_SESSION_API_PASSWORD \
   -e MEMORIA_DB_ACTION_EXECUTOR_PASSWORD \
   -e MEMORIA_DB_SESSION_PROJECTOR_PASSWORD \
@@ -67,6 +71,7 @@ docker run -d \
   -v "$ROOT/services/evolution/postgres_schema.sql:/docker-entrypoint-initdb.d/007-evolution-schema.sql:ro" \
   -v "$ROOT/services/guardian/postgres_schema.sql:/docker-entrypoint-initdb.d/008-guardian-schema.sql:ro" \
   -v "$ROOT/services/memory_scope/postgres_schema.sql:/docker-entrypoint-initdb.d/009-memory-scope-schema.sql:ro" \
+  -v "$ROOT/services/device_fleet/bootstrap_postgres_schema.sql:/docker-entrypoint-initdb.d/010-device-onboarding-schema.sql:ro" \
   "$POSTGRES_IMAGE" >/dev/null
 
 ready=false
@@ -102,6 +107,8 @@ MEMORIA_DB_GUARDIAN_WORKER_PASSWORD
 MEMORIA_DB_IDENTITY_PASSWORD
 MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD
 MEMORIA_DB_CONSENT_PASSWORD
+MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD
+MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD
 MEMORIA_DB_SESSION_API_PASSWORD
 MEMORIA_DB_ACTION_EXECUTOR_PASSWORD
 MEMORIA_DB_SESSION_PROJECTOR_PASSWORD

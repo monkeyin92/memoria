@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import math
 from typing import TYPE_CHECKING, Any
 
 from services.agent.src.contracts.ids import GenerationFence
@@ -23,6 +24,7 @@ from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRAcceptDecision,
     ASRStreamSupervisor,
 )
+from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_audio_ingress import (
     MediaAudioIngress,
@@ -47,6 +49,8 @@ from services.agent.src.voice_core.media_session_types import (
 from services.agent.src.voice_core.speech_timeline import ASRResult, SpeechSegment
 from services.common.realtime_information import requires_realtime_lookup
 
+media_pb2: Any = _media_pb2
+
 
 class MediaSessionLifecycleMixin:
     """Build, reuse and retire one Registry-owned session record."""
@@ -65,6 +69,7 @@ class MediaSessionLifecycleMixin:
         turn_endpoint_min_grace_s: float
         turn_endpoint_max_grace_s: float
         turn_endpoint_absolute_timeout_s: float
+        output_generation_timeout_s: float
         _sessions: dict[str, _MediaVoiceSession]
         _cleanup_tasks: dict[str, asyncio.Task[None]]
         _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]]
@@ -79,6 +84,8 @@ class MediaSessionLifecycleMixin:
         async def _discard_projection(
             self, context: _MediaVoiceSession, reason: str
         ) -> None: ...
+
+        def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
         async def on_audio_frame(
             self, session: MediaBridgeSession, frame: AudioFrame
@@ -123,6 +130,21 @@ class MediaSessionLifecycleMixin:
 
         async def _run_media_delegation(self, *args: Any, **kwargs: Any) -> None: ...
 
+        async def _cancel_reply_task(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+            *,
+            reason: str = "cancelled",
+            cancel_timeout_s: float = 5.0,
+        ) -> None: ...
+
+        def _event_versions(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+        ) -> tuple[int, int]: ...
+
         async def _publish_runtime_event(
             self, context: _MediaVoiceSession, event: dict[str, Any]
         ) -> None: ...
@@ -146,6 +168,8 @@ class MediaSessionLifecycleMixin:
             or self.turn_endpoint_absolute_timeout_s <= self.turn_endpoint_max_grace_s
         ):
             raise ValueError("media endpoint grace and tail timeouts are invalid")
+        if not math.isfinite(self.output_generation_timeout_s) or self.output_generation_timeout_s <= 0:
+            raise ValueError("output_generation_timeout_s must be finite and positive")
         self._creation_semaphore = asyncio.Semaphore(self.session_creation_limit)
         self._audio_ingress = MediaAudioIngress(self)
 
@@ -156,8 +180,16 @@ class MediaSessionLifecycleMixin:
         self.bridge.on_speech_segment = self.on_speech_segment
         self.bridge.on_client_event = self.on_client_event
         self.bridge.on_session_closed = self.on_session_closed
+        self.bridge.on_session_connected = self.on_session_connected
         self.bridge.on_playback_progress = self.on_playback_progress
         self.bridge.on_downlink_overflow = self.on_downlink_overflow
+
+    async def on_session_connected(self, session: MediaBridgeSession) -> None:
+        """Install a replacement epoch before resumed downlink can flow."""
+
+        current = self._sessions.get(session.identity.session_id)
+        if current is not None:
+            await self._reuse_session(current, session.identity)
 
     def _stream_epoch_is_current(
         self,
@@ -203,42 +235,39 @@ class MediaSessionLifecycleMixin:
         reconnected = False
         if identity.stream_epoch > current.stream_epoch:
             await self._cancel_audio_pump(current)
-            async with current.turn_commit_lock:
-                # A pending commit may have completed while this lookup waited
-                # for the lock. Re-check the epoch before mutating the session.
-                if identity.stream_epoch < current.stream_epoch:
-                    raise ValueError("media session stream epoch moved backwards")
-                if identity.stream_epoch == current.stream_epoch:
-                    return current
-                discarded = current.projection.discard_provisional(
-                    None,
-                    "stream_epoch_changed",
-                )
-                current.identity = identity
-                current.stream_epoch = identity.stream_epoch
-                current.floor_epoch = 0
-                current.runtime.start_media_stream_epoch(identity.stream_epoch)
-                current.runtime.orchestrator.delegation.reset_output_intent_state(
-                    identity.session_id
-                )
-                if not current.asr.reconnect(stream_epoch=identity.stream_epoch):
-                    raise ValueError("ASR stream epoch did not advance")
-                endpoint_task = current.turn_endpoint_task
-                if endpoint_task is not None and not endpoint_task.done():
-                    endpoint_task.cancel()
-                current.turn_start_sample = None
-                current.turn_end_sample = None
-                current.turn_endpoint_sample = None
-                current.turn_retire_sample = None
-                current.turn_endpoint_grace_deadline = None
-                current.turn_endpoint_tail_deadline = None
-                if current.turn_endpoint_timeout_handle is not None:
-                    current.turn_endpoint_timeout_handle.cancel()
-                    current.turn_endpoint_timeout_handle = None
-                current.committed_asr_keys.clear()
-                current.pending_partial = None
-                self._audio_ingress.reset_for_reconnect(current)
-                reconnected = True
+            async with current.ingress.finalize_lock:
+                async with current.turn_commit_lock:
+                    # A pending commit or VAD final may have completed while this
+                    # lookup waited. Re-check before mutating the session.
+                    if identity.stream_epoch < current.stream_epoch:
+                        raise ValueError("media session stream epoch moved backwards")
+                    if identity.stream_epoch == current.stream_epoch:
+                        return current
+                    reset_provider = getattr(current.provider, "reset_for_stream_epoch", None)
+                    if callable(reset_provider):
+                        result = reset_provider(identity)
+                        if inspect.isawaitable(result):
+                            await result
+                    discarded = current.projection.discard_provisional(
+                        None,
+                        "stream_epoch_changed",
+                    )
+                    current.identity = identity
+                    current.stream_epoch = identity.stream_epoch
+                    current.floor_epoch = 0
+                    current.runtime.start_media_stream_epoch(identity.stream_epoch)
+                    # A transport reconnect preserves the current Generation and
+                    # its selected output lease. Candidate output is fenced by
+                    # Generation/context, not stream_epoch; clearing it here
+                    # would cancel the very reply the new epoch is resuming.
+                    if not current.asr.reconnect(stream_epoch=identity.stream_epoch):
+                        raise ValueError("ASR stream epoch did not advance")
+                    endpoint_task = current.turn_endpoint_task
+                    if endpoint_task is not None and not endpoint_task.done():
+                        endpoint_task.cancel()
+                    self._clear_pending_turn_state(current)
+                    self._audio_ingress.reset_for_reconnect(current)
+                    reconnected = True
         if discarded is not None:
             await self._emit_projection_patch(current, discarded)
         if reconnected:
@@ -353,6 +382,60 @@ class MediaSessionLifecycleMixin:
                 await self._publish_runtime_event(current, event)
 
             runtime.set_event_publisher(publish_runtime_event)
+
+            async def stop_direct_playback() -> None:
+                """Drain the Registry-owned physical output during epoch rotation."""
+
+                if current.closed:
+                    return
+                owner = current.output_owner
+                old_fence = (
+                    owner.fence
+                    if owner is not None
+                    else current.playback.current_fence
+                )
+                if old_fence is None:
+                    return
+
+                await self._cancel_reply_task(
+                    current,
+                    old_fence,
+                    reason="identity_epoch_rotated",
+                )
+
+                runtime_fence = current.runtime.fence
+                cancelled = await current.runtime.preempt_media_output(
+                    cause="identity_epoch_rotated",
+                    # The runtime identity already rotated before this drain.
+                    # Old-fence playback evidence must never be rebound to the
+                    # new subject; only ACKs published before rotation survive.
+                    synchronized_transcript="",
+                )
+                if cancelled.matches(runtime_fence):
+                    raise RuntimeError(
+                        "Direct playback stop did not advance the runtime generation"
+                    )
+                await current.runtime.on_media_playback_interrupted(
+                    interrupted_from=runtime_fence,
+                    synchronized_transcript="",
+                )
+                current.playback.discard(old_fence)
+                current.output_work.clear()
+                task_epoch, context_version = self._event_versions(current, cancelled)
+                if not await self.bridge.emit_realtime_effect(
+                    cancelled.session_id,
+                    media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
+                    cancelled,
+                    source_event_id="identity_epoch_rotated",
+                    payload={"reason": "identity_epoch_rotated"},
+                    task_epoch=task_epoch,
+                    context_version=context_version,
+                ):
+                    raise RuntimeError(
+                        "Direct playback stop did not reach the Media Edge"
+                    )
+
+            runtime.set_playback_stop_seam(stop_direct_playback)
             return current
         except BaseException:
             await self._close_unpublished_resources(runtime, provider, identity)

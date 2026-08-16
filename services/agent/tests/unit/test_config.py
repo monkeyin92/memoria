@@ -49,6 +49,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.media_bridge_mtls is False
     assert s.media_bridge_max_pending_audio_frames == 20
     assert s.media_bridge_go_shadow_enabled is False
+    assert s.media_output_generation_timeout_s == 45.0
     assert s.media_slo_report_enabled is False
     assert s.media_slo_metrics_url == "http://agent:9090/"
     assert s.media_slo_report_interval_s == 30.0

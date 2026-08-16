@@ -307,6 +307,54 @@ def test_outgoing_queue_drains_critical_before_reliable_and_coalescing() -> None
 
 
 @pytest.mark.asyncio
+async def test_outgoing_wire_sequence_follows_priority_drain_order() -> None:
+    bridge = MediaBridgeGrpcServer(max_pending_messages=4, allow_go_shadow=True)
+    identity = SessionIdentity(
+        "priority-sequence",
+        account_id="account",
+        device_id="device",
+        client_type="h5",
+        stream_epoch=7,
+    )
+    connection = bridge._open_connection(  # noqa: SLF001 - transport seam under test
+        identity,
+        interaction_authority=InteractionAuthority.GO_SHADOW,
+    )
+
+    # A reliable assistant-state event also queues one coalescing shadow
+    # observation.  A later generation control is critical and therefore
+    # overtakes both.  Wire sequence must describe that actual send order,
+    # otherwise Media Edge correctly rejects the delayed smaller sequence.
+    assert await bridge.emit_event(
+        identity.session_id,
+        "assistant_state",
+        {"phase": "user_speaking"},
+    )
+    assert await bridge.emit_generation(
+        identity.session_id,
+        GenerationFence(identity.session_id, 1, 1, 0),
+        action=media_pb2.GENERATION_ACTION_START,
+    )
+
+    generation = connection.outgoing.get_nowait()
+    client = connection.outgoing.get_nowait()
+    shadow = connection.outgoing.get_nowait()
+
+    assert generation.WhichOneof("event") == "generation"
+    assert client.WhichOneof("event") == "client"
+    assert shadow.WhichOneof("event") == "shadow_observation"
+    assert [
+        generation.generation.sequence,
+        client.client.sequence,
+        shadow.shadow_observation.sequence,
+    ] == [0, 1, 2]
+    client_payload = json.loads(client.client.json_payload)
+    assert client_payload["sequence"] == 1
+    assert client_payload["event_id"].endswith(":1")
+    assert shadow.shadow_observation.shadow_sequence == 0
+
+
+@pytest.mark.asyncio
 async def test_python_executor_emits_fenced_realtime_effect_during_go_shadow() -> None:
     bridge = MediaBridgeGrpcServer(allow_go_shadow=True)
     identity = SessionIdentity(
@@ -834,3 +882,57 @@ async def test_old_transport_close_cannot_notify_after_reconnect_claims_session(
     assert closed_epochs == []
     await bridge._finish_connection(second)
     assert closed_epochs == [2]
+
+
+@pytest.mark.asyncio
+async def test_pcm_waits_for_new_epoch_and_preserves_generation_source_clock() -> None:
+    bridge = MediaBridgeGrpcServer()
+    first_identity = SessionIdentity("resume-pcm", stream_epoch=1)
+    first = bridge._open_connection(first_identity)
+    fence = GenerationFence("resume-pcm", 1, 1, 0)
+    assert await bridge.emit_generation(
+        first_identity.session_id,
+        fence,
+        action=media_pb2.GENERATION_ACTION_START,
+    )
+    await first.outgoing.get()  # generation.started
+    assert await bridge.emit_pcm(
+        first_identity.session_id,
+        PCMFrame(
+            identity=first_identity,
+            turn_id=1,
+            generation_id=1,
+            tool_epoch=0,
+            sequence=0,
+            source_start_sample=0,
+            frame_samples=1,
+            pcm_s16le=b"\x00\x00",
+        ),
+    )
+    await first.outgoing.get()
+    bridge._close_connection(first)
+
+    pending = asyncio.create_task(
+        bridge.emit_pcm_when_connected(
+            first_identity.session_id,
+            PCMFrame(
+                identity=first_identity,
+                turn_id=1,
+                generation_id=1,
+                tool_epoch=0,
+                sequence=1,
+                source_start_sample=1,
+                frame_samples=1,
+                pcm_s16le=b"\x01\x00",
+            ),
+            timeout_s=0.2,
+        )
+    )
+    await asyncio.sleep(0.02)
+    assert not pending.done()
+    second = bridge._open_connection(SessionIdentity("resume-pcm", stream_epoch=2))
+    assert await pending
+    resumed = await second.outgoing.get()
+    assert resumed.audio.identity.stream_epoch == 2
+    assert resumed.audio.sequence == 1
+    assert resumed.audio.source_start_sample == 1

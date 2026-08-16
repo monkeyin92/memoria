@@ -58,8 +58,16 @@ public:
     static constexpr uint8_t kVersion = 1;
     static constexpr size_t kHeaderSize = sizeof(MemoriaAudioFrameHeaderV1);
     static constexpr size_t kMaxPayloadBytes = 4096;
+    // Header flags bit 0 (0x0001): downlink-only discontinuity marker the
+    // edge sets at socket-write time on the first frame after a
+    // same-generation forward gap caused by queue drops. Uplink frames must
+    // carry flags 0; any other bit is forged.
+    static constexpr uint16_t kDiscontinuityFlag = 0x0001;
     static constexpr uint32_t kUplinkFrameSamples = 320;
-    static constexpr uint32_t kDownlinkFrameSamples = 480;
+    // 20 ms frames at the negotiated downlink rate. The session layer picks
+    // one of these after session.accepted v2; v1 sessions always use 24 kHz.
+    static constexpr uint32_t kDownlinkFrameSamples16k = 320;
+    static constexpr uint32_t kDownlinkFrameSamples24k = 480;
 
     static MemoriaAudioFrameError Encode(const MemoriaAudioFrameMetadata& metadata,
                                          const uint8_t* payload,

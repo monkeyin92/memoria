@@ -67,6 +67,62 @@ OFFLINE_MOCK=false MEMORIA_PROVIDER_SMOKE_REQUIRED=true \
 7. 使用监护人授权且最终不少于 200 条的儿童语料（建议 200--300 条），单独记录 CER、Stop/KWS 召回率、附和误
    打断率、电视/远场负例和隐私删除证明。仓库的 synthetic manifest 不满足此项。
 
+### 2.1 从 golden trace 生成 T4–T7 候选回执（collect）
+
+一次真实板端会话（固件串口/屏幕回执 + Edge + Voice Core 日志按 `session_id +
+stream_epoch` 归并）可整理为 golden trace JSON，再由验收编排器生成 T4–T7 候选回执：
+
+```bash
+uv run python scripts/hardware_realtime_acceptance.py collect \
+  --trace golden-trace-20260815-101500.json \
+  --tag direct-t4t7-20260815 --output ./acceptance-collected
+```
+
+Golden trace 契约（`schema_version=1.0`、`trace_type=memoria_golden_trace`）：
+
+- 顶层固定字段：`origin`（仅 `real_device` 可产生 pass）、`session_id`、
+  `stream_epoch`、`collected_at`（必须带时区）、`device`（与回执 device 块同构）、
+  `events`。
+- 事件白名单：`session.accepted / vad.start / vad.end / uplink.audio / asr.final /
+  turn.committed / user.text.injected / llm.reply / tts.started / playback.started /
+  playback.ended / error`。未知事件或未知字段直接拒绝；事件时间必须单调不倒退；
+  `session.accepted` 必须是首个事件且 `session_id/stream_epoch` 与顶层一致。
+- `asr.final` 需要 `engine=funasr`、`displayed` 布尔值；`playback.ended` 需要
+  `ack`、`dac_verified` 布尔值与 `watermark_precision`。
+- `user.text.injected` 与 `llm.reply` 必须携带正整数 `generation_id`；T5–T7
+  要求 TTS、Playback Start/End、Turn/LLM 事件绑定同一 Generation，并按真实因果
+  顺序出现。仅有另一代次的播放 ACK 不得为当前话轮放行。
+
+Fail-closed 规则（collect 永不把软件证据升级为真机证据）：
+
+- `origin=repository|mock` 的 trace 被直接拒绝；仓内软件回放走 `run` 的 probe。
+- 缺 `reference_text/recognized_text`（无法计算 CER）→ T4 输出 `blocked`。
+- T5/T6/T7 的 `pass` 必须同时满足 `playback.ended` 的 `ack=true`、
+  `dac_verified=true`、`watermark_precision=exact`；缺 DAC/actual-heard 证据一律
+  输出 `blocked` 并写明缺失项。当前板声明 `playback_watermark=approximate`（无 DAC
+  样本计数），因此在真机提供精确水位证据前，T5–T7 只能得到 blocked 候选。
+- trace 中出现任何 `error` 事件时，T4–T7 全部输出 `blocked`。
+- 输入 trace 由验收操作者提供，`collect` 只生成候选回执，不认证采集来源，也不能
+  单独替代并发串口、服务器日志和用户 Actual Heard 确认。
+
+输出到 `--output` 目录：`T4-<tag>.json ... T7-<tag>.json` 与
+`evidence/golden-trace-<tag>.json`（回执引用的证据文件，带 sha256）。复制到证据目录
+的 trace 会把 ASR reference/recognized、注入文本、LLM 回复和错误消息替换为
+`[REDACTED]`，不复制真实对话原文；原始 trace 由验收操作者按最小权限和保留期
+单独管理。每个回执在
+写出时已通过 `verify` 的 schema/TTL/证据哈希自检；pass 回执的 `collected_at` 取自
+trace，TTL 按 `real_hardware` 类别 72 小时计。命令退出码：0=全部 pass；2=已写出但
+存在 blocked 候选；1=trace 非法或拒绝。候选回执仍需正式验收：
+
+```bash
+uv run python scripts/hardware_realtime_acceptance.py verify \
+  --dir ./acceptance-collected \
+  --evidence-root ./acceptance-collected/evidence
+```
+
+collect 只整理与降级，不创造真机事实：任何回执仍必须通过 `verify` 的 schema、
+TTL、路径/hash 与 per-item scenario 门禁，并保留原始 trace 作为证据 artifact。
+
 ## 3. 灰度与回滚
 
 - 灰度只由 Control API server-owned runtime、`STREAMCORE_EXPERIMENT_PERCENT` 和

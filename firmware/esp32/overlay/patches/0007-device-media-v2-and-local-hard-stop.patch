@@ -1,0 +1,200 @@
+diff --git a/main/protocols/protocol.h b/main/protocols/protocol.h
+--- a/main/protocols/protocol.h
++++ b/main/protocols/protocol.h
+@@ -12,6 +12,10 @@
+     int frame_duration = 0;
+     uint32_t timestamp = 0;
+     std::vector<uint8_t> payload;
++    // Generation of the server audio this packet belongs to (0 = none). The
++    // device protocol fills it so the playback pipeline can reject frames of
++    // a flushed/stopped generation that were handed over before the flush.
++    uint32_t generation_id = 0;
+ };
+ 
+ struct BinaryProtocol2 {
+diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -86,6 +86,9 @@
+     std::function<void(void)> on_audio_testing_queue_full;
+     // Fired when the decode/playback queues and their in-flight work are drained.
+     std::function<void(void)> on_playback_drained;
++    // Fired when a packet that belonged to the current playback generation
++    // failed to decode (terminal playback error).
++    std::function<void(void)> on_playback_decode_error;
+ };
+ 
+ 
+@@ -133,6 +136,10 @@
+     void EnableDeviceAec(bool enable);
+ 
+     void SetCallbacks(AudioServiceCallbacks& callbacks);
++    // RMS (relative full scale, 0..1) of the most recent uplink frame encoded
++    // for the server; the strongest near-end level signal available on this
++    // board.
++    float LastUplinkRms() const;
+ 
+     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
+     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
+@@ -194,6 +201,7 @@
+ #endif
+     std::atomic<bool> service_stopped_{true};
+     std::atomic<bool> audio_input_need_warmup_{false};
++    std::atomic<float> last_uplink_rms_{0.0f};
+ 
+     esp_timer_handle_t audio_power_timer_ = nullptr;
+     std::chrono::steady_clock::time_point last_input_time_;
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -1,6 +1,7 @@
+ #include "audio_service.h"
+ #include <esp_log.h>
+ #include <cstring>
++#include <cmath>
+ 
+ #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
+     (esp_ae_rate_cvt_cfg_t)                                  \
+@@ -425,6 +426,8 @@
+             }
+ 
+             lock.lock();
++            const bool notify_decode_error = !decoded && generation == playback_generation_ &&
++                                             !service_stopped_.load();
+             if (decoded && generation == playback_generation_ && !service_stopped_.load()) {
+                 audio_playback_queue_.push_back(std::move(task));
+             }
+@@ -433,6 +436,9 @@
+             const bool notify_drained = MarkPlaybackDrainedLocked();
+             audio_queue_cv_.notify_all();
+             lock.unlock();
++            if (notify_decode_error && callbacks_.on_playback_decode_error) {
++                callbacks_.on_playback_decode_error();
++            }
+             if (notify_drained && callbacks_.on_playback_drained) {
+                 callbacks_.on_playback_drained();
+             }
+@@ -445,6 +451,15 @@
+             audio_queue_cv_.notify_all();
+             lock.unlock();
+ 
++            if (task->type == kAudioTaskTypeEncodeToSendQueue && !task->pcm.empty()) {
++                double sum = 0.0;
++                for (int16_t sample : task->pcm) {
++                    sum += static_cast<double>(sample) * static_cast<double>(sample);
++                }
++                last_uplink_rms_.store(static_cast<float>(
++                    std::sqrt(sum / static_cast<double>(task->pcm.size())) / 32768.0));
++            }
++
+             auto packet = std::make_unique<AudioStreamPacket>();
+             packet->frame_duration = OPUS_FRAME_DURATION_MS;
+             packet->sample_rate = 16000;
+@@ -707,6 +722,10 @@
+     callbacks_ = callbacks;
+ }
+ 
++float AudioService::LastUplinkRms() const {
++    return last_uplink_rms_.load();
++}
++
+ void AudioService::PlaySound(const std::string_view& ogg) {
+     if (!codec_->output_enabled()) {
+         esp_timer_stop(audio_power_timer_);
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -88,7 +88,7 @@
+             auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+             if (memoria_protocol != nullptr &&
+                 (!speaking || GetDeviceState() == kDeviceStateListening)) {
+-                memoria_protocol->SendVadState(speaking);
++                memoria_protocol->SendVadState(speaking, audio_service_.LastUplinkRms());
+             }
+         });
+ #endif
+@@ -103,6 +103,14 @@
+ #endif
+         xEventGroupSetBits(event_group_, MAIN_EVENT_PLAYBACK_DRAINED);
+     };
++    callbacks.on_playback_decode_error = [this]() {
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++        auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++        if (memoria_protocol != nullptr) {
++            memoria_protocol->NotifyPlaybackDecodeError();
++        }
++#endif
++    };
+     audio_service_.SetCallbacks(callbacks);
+ 
+     // Add state change listeners
+@@ -548,6 +556,8 @@
+ 
+ #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+     protocol_ = std::make_unique<memoria::MemoriaProtocol>();
++    static_cast<memoria::MemoriaProtocol*>(protocol_.get())
++        ->SetLocalFlushCallback([this]() { audio_service_.ResetDecoder(); });
+ #else
+     if (ota_ != nullptr && ota_->HasMqttConfig()) {
+         protocol_ = std::make_unique<MqttProtocol>();
+@@ -570,7 +580,10 @@
+ #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+         auto pending_packet = std::make_shared<std::unique_ptr<AudioStreamPacket>>(std::move(packet));
+         Schedule([this, pending_packet]() mutable {
+-            if (GetDeviceState() == kDeviceStateSpeaking) {
++            auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++            if (GetDeviceState() == kDeviceStateSpeaking &&
++                (memoria_protocol == nullptr ||
++                 memoria_protocol->AcceptsGeneration((*pending_packet)->generation_id))) {
+                 audio_service_.PushPacketToDecodeQueue(std::move(*pending_packet));
+             }
+         });
+@@ -886,11 +899,25 @@
+             ;
+ 
+         if (state == kDeviceStateListening) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++            // Symmetric with the speaking branch: close the current mic epoch
++            // and defer to StartListeningAudio's cue-first seam, so the local
++            // cue cannot create a device VAD epoch on this simplex board. The
++            // playback-drained event resumes this same seam.
++            auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++            if (memoria_protocol != nullptr) {
++                memoria_protocol->SendVadState(false, audio_service_.LastUplinkRms());
++            }
++            audio_service_.EnableVoiceProcessing(false);
++            play_popup_on_listening_ = true;
++            StartListeningAudio();
++#else
+             protocol_->SendStartListening(GetDefaultListeningMode());
+             audio_service_.ResetDecoder();
+             audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
+             // Re-enable wake word detection as it was stopped by the detection itself
+             audio_service_.EnableWakeWordDetection(true);
++#endif
+         } else {
+             // Play popup sound and start listening again
+             play_popup_on_listening_ = true;
+@@ -1085,9 +1112,22 @@
+ void Application::AbortSpeaking(AbortReason reason) {
+     ESP_LOGI(TAG, "Abort speaking");
+     aborted_ = true;
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++    // L0 physical hard stop: flush the local playback pipeline synchronously
++    // so nothing more is heard, then report the stop with the pre-flush fence
++    // and local flush sample end. The server closes the generation gate;
++    // late frames of the old generation are dropped and counted by the
++    // protocol and must never resume playback.
++    audio_service_.ResetDecoder();
++    auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++    if (memoria_protocol != nullptr) {
++        memoria_protocol->NotifyLocalFlush();
++    }
++#else
+     if (protocol_) {
+         protocol_->SendAbortSpeaking(reason);
+     }
++#endif
+ }
+ 
+ void Application::SetListeningMode(ListeningMode mode) {

@@ -16,6 +16,10 @@ let resolutionPayload = null;
 let nextRequestResult = null;
 let deferProfileResponses = false;
 const deferredResponses = [];
+let settingsPayload = null;
+let diagnosticsPayload = null;
+let settingsPatchResult = null;
+const settingsPatchCalls = [];
 
 global.wx = {
   getStorageSync: (key) => storage[key],
@@ -44,6 +48,29 @@ global.wx = {
     }
     if (pathname === "/v1/sessions/resolve-subject") {
       options.success({ statusCode: 200, data: resolutionPayload });
+      return;
+    }
+    if (pathname === "/v1/devices/dev_1/settings") {
+      if (options.method === "PATCH") {
+        settingsPatchCalls.push(options.data);
+        options.success(
+          settingsPatchResult === null
+            ? { statusCode: 409, data: { detail: { code: "settings_version_conflict" } } }
+            : { statusCode: 200, data: settingsPatchResult },
+        );
+      } else if (settingsPayload !== null) {
+        options.success({ statusCode: 200, data: settingsPayload });
+      } else {
+        options.success(nextRequestResult);
+      }
+      return;
+    }
+    if (pathname === "/v1/devices/dev_1/diagnostics/latest") {
+      options.success(
+        diagnosticsPayload === null
+          ? nextRequestResult
+          : { statusCode: 200, data: diagnosticsPayload },
+      );
       return;
     }
     const activeMatch = pathname.match(/^\/v1\/sessions\/([^/]+)\/active-subject$/);
@@ -395,7 +422,7 @@ test("confirming without a usable session is rejected with an explainable messag
   await page.onShow();
   page.selectCandidate({ currentTarget: { dataset: { personId: "person_child" } } });
   await page.confirmSubject();
-  assert.ok(page.data.error.includes("先开始一次语音对话"));
+  assert.ok(page.data.error.includes("先在机器人上开始对话"));
   assert.equal(activeSubjectCalls.length, 0);
 });
 
@@ -455,4 +482,240 @@ test("device load failures surface an error without breaking the page", async ()
   await page.onShow();
   assert.equal(page.data.hasBinding, true);
   assert.ok(page.data.error);
+});
+
+function wireSettings(overrides = {}) {
+  return {
+    device_id: "dev_1",
+    settings_version: 3,
+    volume_limit: 60,
+    screen_brightness: 70,
+    night_mode: false,
+    do_not_disturb: false,
+    learning_mode: "off",
+    audio_mode: "half_duplex_safe",
+    wake_mode: "button",
+    allowed_barge_in: ["button", "keyword"],
+    updated_by: "person_owner",
+    updated_at: new Date().toISOString(),
+    update_reason: "defaults",
+    ...overrides,
+  };
+}
+
+function wireDiagnostics(overrides = {}) {
+  return {
+    device_id: "dev_1",
+    generated_at: "2026-08-13T00:00:00Z",
+    binding: {
+      binding_id: "bd_1",
+      binding_version: 2,
+      activation_status: "ready_for_conversation",
+      config_hash: "abc",
+    },
+    settings: wireSettings(),
+    acoustic_capability: {
+      device_id: "dev_1",
+      board_profile: "memoria-atk-dnesp32s3-v1",
+      firmware_version_range: "0.2.0-0.3.0",
+      acoustic_profile_version: 1,
+      simultaneous_capture_playback: false,
+      aec_reference_type: "none",
+      aec_verified: false,
+      max_barge_in_level: "level_1",
+      tested_volume_range: "40-70",
+      tested_distance_m: null,
+      test_report_uri: "",
+      approved_at: "2026-08-01T00:00:00Z",
+      approved_by: "qa",
+      revoked_at: null,
+    },
+    allowed_audio_modes: ["half_duplex_safe"],
+    runtime_profile_version: 2,
+    live_runtime: {
+      device_id: "dev_1",
+      connected: false,
+    },
+    ...overrides,
+  };
+}
+
+test("device page loads authoritative settings and diagnostics (half-duplex fail-closed)", async () => {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireProfile({ runtime_profile_id: "rp_diag", session_id: "ses_diag", session_epoch: 1 });
+  settingsPayload = wireSettings();
+  diagnosticsPayload = wireDiagnostics();
+  nextRequestResult = null;
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.equal(page.data.settings.settings_version, 3);
+  assert.equal(page.data.settings.volume_limit, 60);
+  assert.equal(page.data.diagnosticsUnavailable, false);
+  assert.equal(page.data.diagnostics.runtime_profile_version, 2);
+  assert.equal(page.data.diagnostics.binding.activation_status, "ready_for_conversation");
+  assert.equal(page.data.acousticCapability.aec_verified, false);
+  assert.equal(page.data.acousticVerified, false);
+  assert.deepEqual(page.data.audioModeOptions, [
+    { value: "half_duplex_safe", label: "半双工安全模式" },
+  ]);
+  assert.equal(page.data.allowedAudioModesLabel, "半双工安全模式");
+  assert.equal(page.data.currentAudioModeLabel, "半双工安全模式");
+  assert.equal(page.data.effectiveAudioModeLabel, "未连接，暂无实际模式");
+  assert.equal(page.data.liveRuntimeStatusLabel, "当前未连接");
+  assert.equal(page.data.wakeModeLabel, "按键唤醒");
+  assert.deepEqual(
+    page.data.bargeInOptions.map((option) => option.value),
+    ["none", "button", "keyword"],
+    "AEC 未验收时不得提供语音打断选项",
+  );
+  assert.deepEqual(page.data.bargeInChecked, { button: true, keyword: true });
+});
+
+test("aec-verified diagnostics expose server-approved modes and voice barge-in", async () => {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireProfile({ runtime_profile_id: "rp_aec", session_id: "ses_aec", session_epoch: 1 });
+  settingsPayload = wireSettings();
+  diagnosticsPayload = wireDiagnostics({
+    acoustic_capability: {
+      ...wireDiagnostics().acoustic_capability,
+      simultaneous_capture_playback: true,
+      aec_reference_type: "software_post_gain_pre_i2s",
+      aec_verified: true,
+    },
+    allowed_audio_modes: ["full_duplex_verified", "interrupt_assist", "half_duplex_safe"],
+  });
+  nextRequestResult = null;
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.equal(page.data.acousticVerified, true);
+  assert.deepEqual(
+    page.data.audioModeOptions.map((option) => option.value),
+    ["full_duplex_verified", "interrupt_assist", "half_duplex_safe"],
+  );
+  assert.ok(
+    page.data.audioModeOptions.some(
+      (option) => option.value === "full_duplex_verified" && option.label.includes("声学验收"),
+    ),
+  );
+  assert.deepEqual(
+    page.data.bargeInOptions.map((option) => option.value),
+    ["none", "button", "keyword", "voice"],
+    "AEC 验收通过后才开放语音打断选项",
+  );
+});
+
+test("device page shows the Edge-negotiated effective audio mode, not the requested echo", async () => {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireProfile({ runtime_profile_id: "rp_live", session_id: "ses_live", session_epoch: 1 });
+  settingsPayload = wireSettings({ audio_mode: "interrupt_assist" });
+  diagnosticsPayload = wireDiagnostics({
+    settings: settingsPayload,
+    allowed_audio_modes: ["half_duplex_safe", "interrupt_assist"],
+    live_runtime: {
+      device_id: "dev_1",
+      connected: true,
+      session_id: "ses_live",
+      stream_epoch: 18,
+      audio_mode_requested: "interrupt_assist",
+      audio_mode_effective: "half_duplex_safe",
+    },
+  });
+  nextRequestResult = null;
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.equal(page.data.currentAudioModeLabel, "打断辅助");
+  assert.equal(page.data.effectiveAudioModeLabel, "半双工安全模式");
+  assert.equal(page.data.liveRuntimeStatusLabel, "已连接 · epoch 18");
+});
+
+test("diagnostics unavailable fails closed for acoustics controls", async () => {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireProfile({ runtime_profile_id: "rp_nodiag", session_id: "ses_nodiag", session_epoch: 1 });
+  settingsPayload = wireSettings();
+  diagnosticsPayload = null;
+  nextRequestResult = { statusCode: 500, data: { detail: "diagnostics unavailable" } };
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  assert.equal(page.data.diagnostics, null);
+  assert.equal(page.data.diagnosticsUnavailable, true);
+  assert.deepEqual(page.data.audioModeOptions, [], "诊断不可用时音频模式不可选");
+  assert.deepEqual(
+    page.data.bargeInOptions.map((option) => option.value),
+    ["none", "button", "keyword"],
+    "诊断不可用时不得提供语音打断选项",
+  );
+  assert.equal(page.data.acousticCapability, null);
+});
+
+test("settings saves go through versioned updateDeviceSettings and revert on conflict", async () => {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireProfile({ runtime_profile_id: "rp_set", session_id: "ses_set", session_epoch: 1 });
+  settingsPayload = wireSettings();
+  diagnosticsPayload = wireDiagnostics();
+  nextRequestResult = null;
+  settingsPatchCalls.length = 0;
+
+  settingsPatchResult = wireSettings({ settings_version: 4, volume_limit: 80 });
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+  await page.changeVolume({ detail: { value: 80 } });
+  assert.equal(settingsPatchCalls.length, 1);
+  assert.equal(settingsPatchCalls[0].expected_settings_version, 3);
+  assert.deepEqual(settingsPatchCalls[0].changes, { volume_limit: 80 });
+  assert.equal(page.data.settings.settings_version, 4);
+  assert.equal(page.data.settings.volume_limit, 80);
+
+  settingsPatchCalls.length = 0;
+  settingsPatchResult = null; // 409 settings_version_conflict
+  await page.changeBrightness({ detail: { value: 55 } });
+  assert.equal(settingsPatchCalls.length, 1);
+  assert.equal(settingsPatchCalls[0].expected_settings_version, 4);
+  assert.equal(page.data.settings.settings_version, 4, "冲突后不得保留本地假状态");
+  assert.equal(page.data.settings.screen_brightness, 70);
+  assert.ok(page.data.settingsError.length > 0);
+});
+
+test("audio mode and wake mode pickers only submit server-approved values", async () => {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireProfile({ runtime_profile_id: "rp_pick", session_id: "ses_pick", session_epoch: 1 });
+  settingsPayload = wireSettings();
+  diagnosticsPayload = wireDiagnostics();
+  nextRequestResult = null;
+  settingsPatchCalls.length = 0;
+  settingsPatchResult = wireSettings({ settings_version: 4, wake_mode: "keyword" });
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+
+  // 越界/非法选择被忽略（未验证 full duplex 不可选：选项来自 allowed_audio_modes）。
+  await page.selectAudioMode({ detail: { value: "9" } });
+  assert.equal(settingsPatchCalls.length, 0, "越界音频模式不得提交");
+  await page.selectWakeMode({ detail: { value: "1" } }); // keyword
+  assert.equal(settingsPatchCalls.length, 1);
+  assert.deepEqual(settingsPatchCalls[0].changes, { wake_mode: "keyword" });
+  assert.equal(page.data.wakeModeLabel, "唤醒词唤醒");
+  assert.equal(page.data.settings.wake_mode, "keyword");
+});
+
+test("empty barge-in selection is blocked and voice kind follows AEC evidence", async () => {
+  binding.saveBindingManifest(familyManifest());
+  profilePayload = wireProfile({ runtime_profile_id: "rp_bg", session_id: "ses_bg", session_epoch: 1 });
+  settingsPayload = wireSettings();
+  diagnosticsPayload = wireDiagnostics();
+  nextRequestResult = null;
+  settingsPatchCalls.length = 0;
+  const page = instantiate(pageDefinition);
+  await page.onShow();
+
+  await page.toggleBargeIn({ detail: { value: [] } });
+  assert.equal(settingsPatchCalls.length, 0, "空打断列表不得提交（后端要求非空）");
+  assert.equal(page.data.settings.allowed_barge_in.length, 2);
+
+  settingsPatchResult = wireSettings({
+    settings_version: 4,
+    allowed_barge_in: ["button"],
+  });
+  await page.toggleBargeIn({ detail: { value: ["button"] } });
+  assert.equal(settingsPatchCalls.length, 1);
+  assert.deepEqual(settingsPatchCalls[0].changes, { allowed_barge_in: ["button"] });
+  assert.deepEqual(page.data.bargeInChecked, { button: true });
 });

@@ -375,46 +375,6 @@ test("request generation is isolated per device/session context", async () => {
   assert.equal(await refreshSame, null);
 });
 
-test("createMiniProgramSession carries bound device_id from the validated manifest", async () => {
-  bindDevice();
-  const request = api.createMiniProgramSession({
-    userId: "person_owner",
-    interactionMode: "companion",
-    sessionFocus: "chat",
-  });
-  const options = resolveRequest(0, {
-    session_id: "ses_new_1",
-    voice_backend: "cascade",
-    media_gateway: { websocket_url: "wss://gateway.example/m", ticket: "ticket-1" },
-  });
-  const session = await request;
-  assert.equal(session.session_id, "ses_new_1");
-  assert.equal(options.data.client.device_id, "dev_flow");
-  assert.equal(options.data.client.platform, "miniprogram");
-  assert.equal(options.data.client.session_scope, undefined, "有绑定时不需要 unknown_safe 声明");
-  assert.equal(options.data.user_id, "person_owner");
-  assert.ok(!JSON.stringify(options.data).includes("policy_version"));
-  assert.ok(!JSON.stringify(options.data).includes("_accepted"));
-});
-
-test("createMiniProgramSession without binding is explicitly unknown_safe", async () => {
-  binding.clearBindingManifest();
-  binding.clearCachedRuntimeProfile();
-  const request = api.createMiniProgramSession({
-    userId: "person_owner",
-    interactionMode: "companion",
-    sessionFocus: "chat",
-  });
-  const options = resolveRequest(0, {
-    session_id: "ses_new_2",
-    voice_backend: "cascade",
-    media_gateway: { websocket_url: "wss://gateway.example/m", ticket: "ticket-2" },
-  });
-  await request;
-  assert.equal(options.data.client.device_id, null);
-  assert.equal(options.data.client.session_scope, "unknown_safe");
-});
-
 test("logout clears the cached runtime profile", async () => {
   bindDevice();
   const request = api.getRuntimeProfile("dev_flow", { sessionId: "ses_logout" });

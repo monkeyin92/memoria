@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from services.agent.src.contracts.ids import GenerationFence
@@ -11,6 +12,10 @@ from services.agent.src.orchestration.interaction_plane import (
     InteractionSnapshot,
 )
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
+from services.agent.src.voice_core.interruption import (
+    InterruptionPolicy,
+    evidence_from_speech_segment,
+)
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
 from services.agent.src.voice_core.media_session_state import (
@@ -32,11 +37,10 @@ class MediaSessionInputMixin:
     if TYPE_CHECKING:
         bridge: MediaBridgeGrpcServer
         metrics: MetricsRegistry
+        interruption_policy: InterruptionPolicy
         _audio_ingress: MediaAudioIngress
 
-        async def _get_or_create(
-            self, identity: SessionIdentity
-        ) -> _MediaVoiceSession: ...
+        async def _get_or_create(self, identity: SessionIdentity) -> _MediaVoiceSession: ...
 
         async def _apply_projection_segment(
             self, context: _MediaVoiceSession, segment: SpeechSegment
@@ -44,18 +48,26 @@ class MediaSessionInputMixin:
 
         def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None: ...
 
+        async def _retire_prepare_retry_before_new_vad(
+            self, context: _MediaVoiceSession
+        ) -> None: ...
+
         async def _record_interrupted_timed_spans(
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> None: ...
 
         async def _cancel_reply_task(
-            self, context: _MediaVoiceSession, fence: GenerationFence, *, reason: str = "cancelled"
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+            *,
+            reason: str = "cancelled",
+            cancel_timeout_s: float = 5.0,
         ) -> None: ...
 
         def _event_versions(
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> tuple[int, int]: ...
-
 
     async def on_audio_frame(
         self,
@@ -64,7 +76,6 @@ class MediaSessionInputMixin:
     ) -> None:
         context = await self._get_or_create(session.identity)
         await self._audio_ingress.accept(context, frame)
-
 
     async def on_speech_segment(
         self,
@@ -75,9 +86,49 @@ class MediaSessionInputMixin:
         context = await self._get_or_create(session.identity)
         if not context.runtime.ingest_media_speech_segment(segment):
             return
+        if segment.kind is SegmentKind.VAD and not segment.final:
+            # Only an accepted range-stamped VAD may supersede a retrying turn.
+            # A replayed/stale start is observational noise and must not discard
+            # the still-authoritative provisional projection.
+            await self._retire_prepare_retry_before_new_vad(context)
         if segment.kind is SegmentKind.VAD:
+            if context.runtime.assistant_speaking:
+                # VAD is an acoustic observation, never an interrupt by
+                # itself.  Project the available evidence into the shared
+                # policy and only execute its reversible duck/continue flags;
+                # ASR/Router still owns semantic cancellation.
+                aec_verified = all(
+                    value is not None
+                    for value in (
+                        segment.near_end_rms,
+                        segment.far_end_rms,
+                        segment.residual_echo_score,
+                    )
+                )
+                interruption = self.interruption_policy.evaluate(
+                    evidence_from_speech_segment(
+                        segment,
+                        active_generation_id=max(
+                            1,
+                            (context.playback.current_fence or context.runtime.fence).generation_id,
+                        ),
+                        aec_mode=("verified" if aec_verified else "unverified"),
+                        aec_verified=aec_verified,
+                    ),
+                    speaker_profile=(
+                        "child"
+                        if context.runtime.mode_policy.runtime_profile is not None
+                        and context.runtime.mode_policy.runtime_profile.profile.subject_category
+                        == "minor"
+                        else "adult"
+                    ),
+                )
+            else:
+                interruption = None
             await self._apply_projection_segment(context, segment)
             if segment.final:
+                if not await self._audio_ingress.finalize_speech_segment(context):
+                    return
                 voiced_end_sample = (
                     segment.voiced_end_sample
                     if segment.voiced_end_sample is not None
@@ -111,13 +162,14 @@ class MediaSessionInputMixin:
                 self._schedule_turn_commit(context)
             else:
                 pending_endpoint = context.turn_endpoint_sample
-                if pending_endpoint is not None and segment.capture_start_sample >= pending_endpoint:
+                if (
+                    pending_endpoint is not None
+                    and segment.capture_start_sample >= pending_endpoint
+                ):
                     pause_s = (segment.capture_start_sample - pending_endpoint) / 16_000
                     previous_pause = context.observed_within_turn_pause_s
                     context.observed_within_turn_pause_s = (
-                        pause_s
-                        if previous_pause is None
-                        else previous_pause * 0.7 + pause_s * 0.3
+                        pause_s if previous_pause is None else previous_pause * 0.7 + pause_s * 0.3
                     )
                 if context.turn_start_sample is None:
                     # One accepted range-stamped start opens the Runtime's
@@ -131,6 +183,15 @@ class MediaSessionInputMixin:
                         has_speech_energy=True,
                     )
                 )
+                if interruption is not None:
+                    interaction = replace(
+                        interaction,
+                        reason=interruption.reason,
+                        duck_output=interruption.duck_output,
+                        cancel_generation=False,
+                        continue_output=interruption.continue_output,
+                        backchannel=interruption.backchannel,
+                    )
                 if interaction.duck_output:
                     context.runtime.publish_assistant_audio("duck", gain=0.0)
                 context.runtime.apply_interaction_decision(interaction)
@@ -152,18 +213,18 @@ class MediaSessionInputMixin:
                 )
         # Sample ranges remain authoritative for media turn boundaries.
         if segment.kind is SegmentKind.KWS and segment.final:
-            route = context.runtime.route_user_turn(segment.text)
-            interaction = context.runtime.decide_interaction(
-                InteractionSnapshot(
-                    event=InteractionEvent.KEYWORD,
-                    assistant_speaking=context.runtime.assistant_speaking,
-                    text=segment.text,
-                    utterance_route=route,
-                    keyword_hard_stop=segment.hard_stop,
-                    keyword_confidence=segment.confidence or 0.0,
-                )
+            interruption = self.interruption_policy.evaluate(
+                evidence_from_speech_segment(
+                    segment,
+                    active_generation_id=(
+                        context.playback.current_fence or context.runtime.fence
+                    ).generation_id,
+                    device_monotonic_ms=detected_monotonic_ms or None,
+                ),
+                asr_text=segment.text,
+                local_hard_stop=segment.hard_stop,
             )
-            if interaction.cancel_generation:
+            if interruption.cancel_generation:
                 # Never subtract an Edge wall-clock timestamp from Core's
                 # monotonic clock. The only trustworthy local measurement is
                 # this handler's own work; end-to-end timing is fail-closed

@@ -1,0 +1,62 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -9,5 +9,5 @@
+ # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
+ idf_build_set_property(MINIMAL_BUILD ON)
+ 
+ set(PROJECT_VER "2.4.2")
+-project(xiaozhi)
++project(memoria)
+diff --git a/main/boards/common/wifi_board.cc b/main/boards/common/wifi_board.cc
+--- a/main/boards/common/wifi_board.cc
++++ b/main/boards/common/wifi_board.cc
+@@ -54,7 +54,12 @@ void WifiBoard::StartNetwork() {
+ 
+     // Initialize WiFi manager
+     WifiManagerConfig config;
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++    config.ssid_prefix = "Memoria";
++    config.show_ota_config = false;
++#else
+     config.ssid_prefix = "Xiaozhi";
++    config.show_ota_config = true;
++#endif
+     config.language = Lang::CODE;
+-    config.show_ota_config = true;
+     config.show_sleep_config = true;
+ 
+     // Set a DHCP hostname so the router shows a friendly name instead of "espressif".
+diff --git a/main/mcp_server.cc b/main/mcp_server.cc
+--- a/main/mcp_server.cc
++++ b/main/mcp_server.cc
+@@ -149,5 +149,6 @@ void McpServer::AddCommonTools() {
+         });
+ 
++#if !CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+     // Firmware upgrade
+     AddUserOnlyTool("self.upgrade_firmware", "Upgrade firmware from a specific URL. This will download and install the firmware, then reboot the device.",
+         PropertyList({
+@@ -168,6 +168,7 @@ void McpServer::AddCommonTools() {
+             return true;
+         });
+ 
++#endif
+     // Display control
+ #ifdef HAVE_LVGL
+     auto display = dynamic_cast<LvglDisplay*>(Board::GetInstance().GetDisplay());
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -1501,4 +1501,10 @@ void Application::Reboot() {
+ }
+ 
+ bool Application::UpgradeFirmware(const std::string& url, const std::string& version) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++    (void)url;
++    (void)version;
++    ESP_LOGW(TAG, "Memoria OTA is disabled; install a signed product firmware through the controlled release path");
++    return false;
++#endif
+     auto& board = Board::GetInstance();
+     auto display = board.GetDisplay();

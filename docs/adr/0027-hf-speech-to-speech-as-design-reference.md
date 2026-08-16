@@ -5,6 +5,11 @@ date: 2026-07-28
 
 # Hugging Face speech-to-speech 只作为边界设计参考
 
+> **架构更新（2026-08-16）**：本 ADR 中小程序受控媒体适配器的描述只保留为历史语境。
+> 当前实时终端边界由 [ADR-0035](0035-esp32-first-class-realtime-terminal.md) 定义：H5 继续使用
+> LiveKit，ESP32 使用 Direct Device WSS；小程序只承担控制面。本 ADR 关于不引入第二套
+> pipeline、统一取消与 Handler 边界的决策仍有效。
+
 ## Context
 
 Hugging Face `speech-to-speech` 提供模块化实时语音流水线，将 VAD、STT、LLM、TTS、
@@ -68,4 +73,4 @@ LiveKit 也会重新承担信令、TURN、重连和浏览器设备兼容，而�
 
 - https://github.com/huggingface/speech-to-speech
 - [`0025-controlled-miniprogram-turns-and-h5-semantic-barge-in.md`](0025-controlled-miniprogram-turns-and-h5-semantic-barge-in.md)
-- [`../implementation-plan-20260728-voice-architecture-finalization.md`](../implementation-plan-20260728-voice-architecture-finalization.md)
+- [`0035-esp32-first-class-realtime-terminal.md`](0035-esp32-first-class-realtime-terminal.md)

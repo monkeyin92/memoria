@@ -27,6 +27,7 @@ func (s *Session) AdvanceGeneration(fence Fence) error {
 	s.generationActive = true
 	s.rotateDownlinkDeliveryLocked()
 	s.hasDownlinkSeq = false
+	s.allowResumedDownlinkOrigin = false
 	s.lastDownlinkSeq = 0
 	s.lastDownlinkSourceEnd = 0
 	s.renderedSampleEnd = 0
@@ -77,6 +78,7 @@ func (s *Session) CancelGeneration(eventID string, expected *Fence) (current, ca
 	s.Generation = cancelled
 	s.generationActive = false
 	s.hasDownlinkSeq = false
+	s.allowResumedDownlinkOrigin = false
 	s.lastDownlinkSeq = 0
 	s.lastDownlinkSourceEnd = 0
 	s.renderedSampleEnd = 0
@@ -131,6 +133,7 @@ func (s *Session) ApplyCancelledGeneration(cancelled Fence) error {
 	s.generationActive = false
 	s.cancelDownlinkDeliveryLocked()
 	s.hasDownlinkSeq = false
+	s.allowResumedDownlinkOrigin = false
 	s.lastDownlinkSeq = 0
 	s.lastDownlinkSourceEnd = 0
 	s.renderedSampleEnd = 0
@@ -153,6 +156,37 @@ func (s *Session) GenerationSnapshot() (Fence, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.Generation, s.generationActive
+}
+
+// RestoreGeneration installs the Voice Core reconnect snapshot into a newly
+// created transport Session. It is only legal before this Session has seen
+// media. An active snapshot permits the first continued Core frame to retain
+// its source sequence/sample origin; DeviceConnection rebases that source
+// clock to 0/0 on the new WSS transport.
+func (s *Session) RestoreGeneration(fence Fence, active bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.State != SessionActive || s.Generation.GenerationID != 0 ||
+		s.hasDownlinkSeq || s.downlinkFrames != 0 || fence.SessionID != s.ID ||
+		fence.TurnID == 0 || fence.GenerationID == 0 {
+		return fmt.Errorf("generation reconnect snapshot is invalid")
+	}
+	s.Generation = fence
+	s.generationActive = active
+	s.hasDownlinkSeq = false
+	s.allowResumedDownlinkOrigin = active
+	s.lastDownlinkSeq = 0
+	s.lastDownlinkSourceEnd = 0
+	s.renderedSampleEnd = 0
+	s.generationFinalSampleEnd = 0
+	s.hasGenerationFinal = false
+	s.playoutUnderrunActive = false
+	if active {
+		s.rotateDownlinkDeliveryLocked()
+	} else {
+		s.cancelDownlinkDeliveryLocked()
+	}
+	return nil
 }
 
 func (s *Session) withActiveGeneration(fence Fence, action func() error) error {
@@ -235,6 +269,7 @@ func (s *Session) Reconnect() (uint64, error) {
 	s.rotateDownlinkDeliveryLocked()
 	s.hasUplinkSequence = false
 	s.hasDownlinkSeq = false
+	s.allowResumedDownlinkOrigin = false
 	s.lastDownlinkSeq = 0
 	s.lastCaptureEnd = 0
 	s.lastDownlinkSourceEnd = 0

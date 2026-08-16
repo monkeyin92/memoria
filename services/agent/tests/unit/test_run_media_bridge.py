@@ -51,6 +51,7 @@ def _settings() -> SimpleNamespace:
         media_bridge_max_pending_audio_frames=8,
         media_bridge_max_pending_messages=8,
         media_bridge_go_shadow_enabled=False,
+        media_output_generation_timeout_s=45.0,
         media_bridge_grpc_addr="127.0.0.1:50051",
         prometheus_port=0,
     )

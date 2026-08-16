@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Memoria 小程序 · 赛博霓虹潮玩设计预览</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #04060f;
+    padding: 48px 24px;
+    color: #dfe7ff;
+  }
+  .preview-header { max-width: 1320px; margin: 0 auto 36px; }
+  .preview-header h1 { font-size: 28px; font-weight: 800; letter-spacing: 1px; }
+  .preview-header h1 span {
+    background: linear-gradient(120deg, #22e5ff, #7b5cff, #ff4ddb);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .preview-header p { margin-top: 10px; color: #8d99c4; font-size: 14px; line-height: 1.8; max-width: 880px; }
+  .preview-header b { color: #7ceaff; font-weight: 600; }
+  .screens { display: flex; flex-wrap: wrap; gap: 32px; justify-content: center; max-width: 1320px; margin: 0 auto; }
+  .screen-wrap { width: 375px; flex: none; }
+  .screen-wrap.wide { width: 100%; max-width: 1320px; }
+  .screen-label {
+    margin-bottom: 12px; color: #9db4e8; font-size: 13px; font-weight: 700; letter-spacing: 2px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .screen-label::before { content: ""; width: 10px; height: 10px; border-radius: 50%;
+    background: linear-gradient(135deg, #22e5ff, #7b5cff); box-shadow: 0 0 8px rgba(34,229,255,.7); }
+  .screen {
+    width: 375px; height: 740px; overflow-y: auto; border-radius: 40px;
+    background: #070b1a url("../assets/bg/night-stars.webp") no-repeat top center / 375px auto;
+    box-shadow: 0 24px 64px rgba(0,0,0,.5), 0 0 40px rgba(34,229,255,.06);
+    scrollbar-width: none; position: relative;
+  }
+  .screen::-webkit-scrollbar { display: none; }
+
+  .pg { min-height: 740px; padding: 20px 16px 28px; }
+  .eyebrow {
+    display: inline-flex; align-items: center; padding: 4px 12px;
+    border: 1px solid rgba(94,234,255,.32); border-radius: 999px;
+    background: rgba(34,229,255,.08); color: #7ceaff; font-size: 11px; letter-spacing: 2.5px;
+    text-shadow: 0 0 8px rgba(34,229,255,.45);
+  }
+  .ptitle { display: block; margin-top: 8px; color: #f2f5ff; font-size: 26px; font-weight: 800; line-height: 1.22; }
+  .psub { display: block; margin-top: 8px; color: #8d99c4; font-size: 13.5px; line-height: 1.65; }
+  .card {
+    margin-top: 14px; padding: 16px; border: 1px solid rgba(94,234,255,.14); border-radius: 18px;
+    background: rgba(16,23,52,.72); box-shadow: 0 9px 24px rgba(0,0,0,.38), inset 0 0 20px rgba(34,229,255,.03);
+    backdrop-filter: blur(12px);
+  }
+  .btn {
+    display: flex; align-items: center; justify-content: center; min-height: 46px;
+    border-radius: 999px; font-size: 15px; font-weight: 700; letter-spacing: 1px;
+  }
+  .btn-primary { color: #fff; background: linear-gradient(120deg, #19b8d8, #7b5cff 55%, #c44de0);
+    box-shadow: 0 6px 18px rgba(123,92,255,.42), 0 0 14px rgba(34,229,255,.22); }
+  .btn-secondary { border: 1px solid rgba(94,234,255,.38); color: #7ceaff; background: rgba(34,229,255,.08); }
+  .btn-danger { border: 1px solid rgba(255,110,140,.42); color: #ff8ba3; background: rgba(255,77,109,.1); }
+
+  /* ===== 首页 ===== */
+  .hero-greeting { display: block; color: #8d99c4; font-size: 13px; }
+  .hero-title { display: block; margin-top: 6px; color: #f2f5ff; font-size: 27px; font-weight: 800; }
+  .hero-title span { background: linear-gradient(120deg, #22e5ff, #7b5cff 55%, #ff4ddb);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .chip {
+    display: inline-flex; align-items: center; margin-top: 11px; padding: 4px 13px 4px 6px;
+    border: 1px solid rgba(94,234,255,.28); border-radius: 999px; background: rgba(16,23,52,.66);
+    box-shadow: 0 0 12px rgba(34,229,255,.12);
+  }
+  .chip img { width: 26px; height: 26px; }
+  .chip i { margin-left: 7px; color: #9db4e8; font-size: 12px; font-weight: 600; font-style: normal; }
+
+  .stage { position: relative; height: 310px; margin-top: 8px; }
+  .halo { position: absolute; left: 50%; top: 46%; width: 280px; height: 280px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(34,229,255,.16), rgba(123,92,255,.12) 44%, rgba(123,92,255,0) 70%);
+    transform: translate(-50%,-50%); animation: breathe 4.2s ease-in-out infinite; }
+  .ring { position: absolute; left: 50%; top: 46%; width: 250px; height: 250px; border-radius: 50%;
+    border: 1px dashed rgba(94,234,255,.3); transform: translate(-50%,-50%); animation: spin 26s linear infinite; }
+  .ground { position: absolute; left: 50%; bottom: 32px; width: 170px; height: 36px; border-radius: 50%;
+    background: radial-gradient(ellipse, rgba(34,229,255,.32), rgba(123,92,255,.16) 52%, rgba(123,92,255,0) 76%);
+    transform: translateX(-50%); }
+  .spark { position: absolute; color: rgba(140,240,255,.85); text-shadow: 0 0 7px rgba(34,229,255,.8);
+    animation: float 3.6s ease-in-out infinite; }
+  .spark.a { left: 48px; top: 48px; font-size: 17px; }
+  .spark.b { right: 55px; top: 75px; color: rgba(255,150,235,.8); font-size: 14px;
+    text-shadow: 0 0 7px rgba(255,77,219,.75); animation-delay: .9s; }
+  .spark.c { right: 75px; bottom: 85px; font-size: 12px; animation-delay: 1.8s; }
+  @keyframes breathe { 0%,100%{opacity:.85;transform:translate(-50%,-50%) scale(1);} 50%{opacity:1;transform:translate(-50%,-50%) scale(1.06);} }
+  @keyframes spin { from{transform:translate(-50%,-50%) rotate(0);} to{transform:translate(-50%,-50%) rotate(360deg);} }
+  @keyframes float { 0%,100%{opacity:.55;transform:translateY(0);} 50%{opacity:1;transform:translateY(-7px);} }
+
+  .doll { position: absolute; left: 50%; top: 46%; width: 235px; height: 235px; transform: translate(-50%,-50%);
+    animation: listen 3.2s cubic-bezier(.45,0,.2,1) infinite; transform-origin: 50% 78%; }
+  .doll.speaking { animation: speak 1.65s cubic-bezier(.45,0,.2,1) infinite; }
+  .doll img.body { width: 100%; height: 100%; object-fit: contain; display: block; }
+  @keyframes listen { 0%,100%{transform:translate(-50%,-50%) translateY(0) scale(1);} 50%{transform:translate(-50%,-50%) translateY(-4px) scale(1.008);} }
+  @keyframes speak { 0%,100%{transform:translate(-50%,-50%) translateY(0) scale(1);} 45%{transform:translate(-50%,-50%) translateY(-2px) scale(1.005);} }
+
+  /* ——— 表情骨架（与 WXSS 同一套百分比，240×140 → %） ——— */
+  .face { position: absolute; pointer-events: none; }
+  .face.dark { filter: drop-shadow(0 0 3px rgba(140,230,255,.45)); }
+  .fexp { position: absolute; inset: 0; opacity: 0; transform: translateY(1px) scale(.985);
+    transition: opacity .18s ease-in, transform .18s ease-in; }
+  .fexp.on { opacity: 1; transform: none; transition: opacity .24s ease-out, transform .24s ease-out; }
+  .eye { position: absolute; top: 24.3%; width: 18.33%; height: 41.43%; overflow: hidden;
+    border-radius: 50%; background: var(--ink); animation: blink 5.6s ease-in-out infinite; transform-origin: center; }
+  .eye.l { left: 20.84%; } .eye.r { left: 60.83%; }
+  .iris { position: absolute; left: 6.8%; top: 3.5%; width: 86.4%; height: 89.7%; border-radius: 50%;
+    background: linear-gradient(180deg, var(--et) 0%, var(--et) 52%, var(--eb) 100%); }
+  .eglow { position: absolute; left: 22.7%; top: 69%; width: 54.5%; height: 17.2%; border-radius: 50%; background: var(--gl); }
+  .shine { position: absolute; border-radius: 50%; background: #fffaf0; }
+  .shine.m { left: 22.7%; top: 22.4%; width: 22.7%; height: 17.2%; }
+  .shine.s { left: 60.5%; top: 47.6%; width: 10.9%; height: 8.3%; background: rgba(255,255,255,.72); }
+  @keyframes blink { 0%,43%,47%,100%{transform:scaleY(1);} 45%{transform:scaleY(.08);} }
+  .heye { position: absolute; top: 33.6%; width: 17.5%; height: 15.7%; box-sizing: border-box;
+    border: 2.5px solid transparent; border-bottom-color: var(--ink); border-radius: 50%; }
+  .heye.l { left: 21.25%; } .heye.r { left: 61.25%; }
+  .brow { position: absolute; top: 15.7%; width: 15.5%; height: 2.5px; border-radius: 99px; background: var(--ink); opacity: .85; }
+  .brow.l { left: 22.3%; transform: rotate(-6deg); } .brow.r { left: 62.2%; transform: rotate(6deg); }
+  .brow.l.cu { top: 12.9%; transform: rotate(-13deg); } .brow.r.cu { top: 18.2%; transform: rotate(3deg); }
+  .brow.l.ca { top: 18%; transform: rotate(17deg); } .brow.r.ca { top: 18%; transform: rotate(-17deg); }
+  .mouth { position: absolute; }
+  .mouth.smile { left: 45%; top: 72.5%; width: 10%; height: 7%; box-sizing: border-box;
+    border-bottom: 2.5px solid var(--ink); border-radius: 0 0 99px 99px; }
+  .mouth.open { left: 42.5%; top: 66.4%; width: 15%; height: 20.7%; overflow: hidden; border-radius: 48%; background: var(--ink); }
+  .mouth.open .tongue { position: absolute; left: 17%; bottom: 4%; width: 66%; height: 36%;
+    border-radius: 50% 50% 46% 46%; background: #f18d86; }
+  .mouth.o { left: 47.9%; top: 72.9%; width: 4.2%; height: 10%; border-radius: 50%; background: var(--ink); }
+  .mouth.care { left: 45%; top: 68.5%; width: 10%; height: 7%; box-sizing: border-box;
+    border-top: 2.5px solid var(--ink); border-radius: 99px 99px 0 0; }
+  .speaking-mouth { animation: talk 340ms ease-in-out infinite alternate; transform-origin: center 30%; }
+  @keyframes talk { from{transform:scaleY(.7);} to{transform:scaleY(1.12);} }
+  .chest { position: absolute; left: 50%; width: 24px; height: 24px; border-radius: 50%; transform: translate(-50%,-50%); }
+  .chest.listen { box-shadow: 0 0 10px 3px rgba(80,181,143,.2); animation: cl 2.4s ease-in-out infinite; }
+  .chest.speak { box-shadow: 0 0 11px 4px rgba(76,143,235,.26); animation: cs 720ms ease-in-out infinite alternate; }
+  @keyframes cl { 0%,100%{opacity:.42;} 50%{opacity:.74;} }
+  @keyframes cs { from{opacity:.46;transform:translate(-50%,-50%) scale(.92);} to{opacity:.86;transform:translate(-50%,-50%) scale(1.08);} }
+
+  .pill { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 15px; border-radius: 999px;
+    border: 1px solid rgba(94,234,255,.24); color: #9db4e8; background: rgba(16,23,52,.72);
+    font-size: 12px; font-weight: 600; letter-spacing: 1px; box-shadow: 0 0 12px rgba(34,229,255,.1); }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #5d688f; }
+  .pill.cyan { color: #7ceaff; border-color: rgba(94,234,255,.45); box-shadow: 0 0 14px rgba(34,229,255,.22); }
+  .pill.cyan::before { background: #22e5ff; box-shadow: 0 0 6px rgba(34,229,255,.9); }
+  .pill.pink { color: #f0a6ff; border-color: rgba(255,77,219,.4); box-shadow: 0 0 14px rgba(255,77,219,.2); }
+  .pill.pink::before { background: #ff4ddb; box-shadow: 0 0 6px rgba(255,77,219,.9); }
+
+  .caption { display: block; text-align: center; color: #8d99c4; font-size: 13px; line-height: 1.6; margin-top: 6px; }
+  .ctrl { text-align: center; }
+  .ctrl .btn { margin-top: 13px; }
+  .ctrl-row { display: flex; gap: 8px; } .ctrl-row .btn { flex: 1; }
+
+  .section-head { display: flex; align-items: baseline; justify-content: space-between;
+    color: #e6ecff; font-size: 15.5px; font-weight: 700; }
+  .section-head small { max-width: 175px; color: #5d688f; font-size: 10px; font-weight: 400; text-align: right; }
+  .brow-row { display: flex; margin-top: 12px; }
+  .brow-row.user { justify-content: flex-end; }
+  .bubble { max-width: 80%; padding: 10px 12px; border: 1px solid rgba(94,234,255,.16);
+    border-radius: 14px; border-top-left-radius: 4px; background: rgba(22,31,66,.85); }
+  .brow-row.user .bubble { border: none; border-radius: 14px; border-top-right-radius: 4px; color: #fff;
+    background: linear-gradient(135deg, #19b8d8, #7b5cff 55%, #c44de0); box-shadow: 0 5px 14px rgba(104,92,255,.36); }
+  .bubble b { display: block; margin-bottom: 3px; color: #6b7699; font-size: 10.5px; font-weight: 500; }
+  .brow-row.user .bubble b { color: rgba(255,255,255,.78); }
+  .bubble p { color: #dfe7ff; font-size: 14px; line-height: 1.55; }
+  .brow-row.user .bubble p { color: #fff; }
+
+  /* ===== 表情四宫格 ===== */
+  .expr-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  .expr-cell { text-align: center; }
+  .expr-stage { position: relative; width: 220px; height: 220px; margin: 0 auto;
+    border: 1px solid rgba(94,234,255,.14); border-radius: 24px; background: rgba(16,23,52,.55);
+    background-image: url("../assets/bg/night-stars.webp"); background-size: cover; background-position: center 30%; }
+  .expr-doll { position: absolute; left: 50%; top: 52%; width: 190px; height: 190px; transform: translate(-50%,-50%); }
+  .expr-doll img { width: 100%; height: 100%; object-fit: contain; }
+  .expr-name { margin-top: 10px; color: #7ceaff; font-size: 13px; font-weight: 700; letter-spacing: 2px; }
+  .expr-desc { margin-top: 4px; color: #6b7699; font-size: 11.5px; }
+
+  /* ===== AUTH ===== */
+  .auth-stage { position: relative; width: 170px; height: 170px; margin: 12px auto 0; }
+  .auth-stage .halo { width: 190px; height: 190px; }
+  .auth-stage .ring { width: 165px; height: 165px; }
+  .auth-mascot { position: relative; width: 100%; height: 100%; object-fit: contain; display: block; }
+  .auth-copy { margin-top: 13px; text-align: center; }
+  .auth-copy .ptitle { font-size: 23px; text-shadow: 0 0 16px rgba(34,229,255,.3); }
+  .auth-copy .psub { max-width: 280px; margin: 8px auto 0; font-size: 12.5px; }
+  .flabel { display: block; margin: 10px 0 6px; color: #9db4e8; font-size: 13px; font-weight: 600; letter-spacing: 1px; }
+  .finput { height: 44px; padding: 0 13px; border: 1px solid rgba(94,234,255,.26); border-radius: 999px;
+    color: #5d688f; background: rgba(255,255,255,.05); font-size: 14px; display: flex; align-items: center; }
+  .auth-switch { margin-top: 7px; text-align: center; color: #7ceaff; font-size: 13.5px; padding: 6px; }
+  .anon { margin-top: 13px; padding: 13px 15px; border: 1px solid rgba(123,92,255,.3);
+    border-radius: 15px; background: rgba(123,92,255,.08); }
+  .anon b { display: block; color: #cdb4ff; font-size: 14.5px; }
+  .anon p { margin: 5px 0 10px; color: #8d99c4; font-size: 12.5px; line-height: 1.55; }
+  .anon-btn { border: 1px solid rgba(123,92,255,.5); color: #cdb4ff; background: rgba(123,92,255,.14); }
+
+  /* ===== MEMORY ===== */
+  .date-chip { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 11px; padding: 6px 13px;
+    border: 1px solid rgba(94,234,255,.3); border-radius: 999px; background: rgba(34,229,255,.08);
+    color: #9db4e8; font-size: 13px; font-weight: 600; }
+  .date-chip s { text-decoration: none; color: #7ceaff; text-shadow: 0 0 6px rgba(34,229,255,.7); }
+  .tl { margin-top: 4px; }
+  .tl-item { display: flex; align-items: stretch; }
+  .tl-rail { display: flex; width: 22px; flex-direction: column; align-items: center; padding-top: 26px; }
+  .tl-dot { width: 8px; height: 8px; border: 2px solid rgba(94,234,255,.3); border-radius: 50%; background: #0b1026; flex: none; }
+  .tl-dot.on { border-color: rgba(94,234,255,.8); background: linear-gradient(135deg, #22e5ff, #7b5cff);
+    box-shadow: 0 0 9px rgba(34,229,255,.7); }
+  .tl-line { width: 1px; flex: 1; margin-top: 4px;
+    background: linear-gradient(180deg, rgba(94,234,255,.32), rgba(94,234,255,.04)); }
+  .day-card { flex: 1; }
+  .day-card.on { border-color: rgba(94,234,255,.55); background: rgba(20,30,66,.85);
+    box-shadow: 0 9px 26px rgba(0,0,0,.42), 0 0 16px rgba(34,229,255,.14); }
+  .day-head { display: flex; align-items: center; justify-content: space-between; }
+  .day-head b { color: #7ceaff; font-size: 13px; letter-spacing: 1px; }
+  .day-head em { padding: 3px 9px; border: 1px solid rgba(123,92,255,.35); border-radius: 999px; color: #cdb4ff;
+    background: rgba(123,92,255,.12); font-size: 10.5px; font-style: normal; }
+  .day-title { display: block; margin-top: 8px; color: #f2f5ff; font-size: 16px; font-weight: 800; }
+  .day-overview { display: block; margin-top: 6px; color: #9aa6cf; font-size: 13.5px; line-height: 1.65; }
+  .hl { display: block; margin-top: 8px; color: #8fb8e8; font-size: 12.5px; line-height: 1.6; }
+  .sugg { display: block; margin-top: 9px; padding: 8px 11px; border: 1px solid rgba(255,77,219,.22); border-radius: 10px;
+    color: #f0a6e0; background: linear-gradient(120deg, rgba(255,77,219,.1), rgba(123,92,255,.1)); font-size: 12.5px; line-height: 1.6; }
+
+  /* ===== PROFILE ===== */
+  .hero { position: relative; display: flex; align-items: center; margin-top: 12px; padding: 16px; overflow: hidden;
+    border: 1px solid rgba(94,234,255,.22); border-radius: 20px;
+    background: linear-gradient(135deg, rgba(20,30,66,.9), rgba(36,24,70,.88));
+    box-shadow: 0 10px 26px rgba(0,0,0,.42), 0 0 20px rgba(34,229,255,.1); }
+  .hero::after { content: ""; position: absolute; top: -70px; right: -50px; width: 170px; height: 170px;
+    border-radius: 50%; background: radial-gradient(circle, rgba(255,77,219,.18), rgba(255,77,219,0) 68%); }
+  .hero-ring { flex: none; width: 78px; height: 78px; border: 1px solid rgba(94,234,255,.5); border-radius: 50%;
+    background: radial-gradient(circle at 34% 30%, rgba(34,229,255,.16), rgba(16,23,52,.9));
+    box-shadow: 0 0 16px rgba(34,229,255,.3), inset 0 0 12px rgba(34,229,255,.14);
+    display: flex; align-items: center; justify-content: center; }
+  .hero-ring img { width: 64px; height: 64px; object-fit: contain; }
+  .hero-copy { flex: 1; margin-left: 13px; }
+  .hero-copy b { display: block; color: #f2f5ff; font-size: 20px; font-weight: 800; }
+  .hero-copy p { margin-top: 4px; color: #9aa6cf; font-size: 12.5px; line-height: 1.5; }
+  .hero-copy small { display: block; margin-top: 6px; color: #6b7699; font-size: 10.5px; }
+  .stats { display: flex; gap: 9px; margin-top: 12px; }
+  .stat { flex: 1; padding: 12px 6px; border: 1px solid rgba(94,234,255,.14); border-radius: 14px;
+    background: rgba(16,23,52,.72); text-align: center; }
+  .stat b { display: block; background: linear-gradient(120deg, #22e5ff, #a06bff);
+    -webkit-background-clip: text; background-clip: text; color: transparent; font-size: 22px; font-weight: 800; }
+  .stat span { display: block; margin-top: 3px; color: #8d99c4; font-size: 11px; letter-spacing: 1px; }
+  .comp-row { display: flex; align-items: center; min-height: 64px; margin-top: 8px; padding: 6px 9px;
+    border: 1px solid transparent; border-radius: 13px; }
+  .comp-row.on { border-color: rgba(94,234,255,.55);
+    background: linear-gradient(120deg, rgba(34,229,255,.1), rgba(123,92,255,.12));
+    box-shadow: 0 0 14px rgba(34,229,255,.14); }
+  .comp-row img { flex: none; width: 48px; height: 48px; object-fit: contain; }
+  .comp-copy { flex: 1; margin-left: 10px; }
+  .comp-copy b { display: block; color: #e6ecff; font-size: 14.5px; }
+  .comp-copy small { display: block; margin-top: 2px; color: #6b7699; font-size: 11.5px; }
+  .check { flex: none; width: 20px; height: 20px; margin-right: 3px; border: 1px solid rgba(94,234,255,.3);
+    border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; }
+  .check.on { border: none; background: linear-gradient(135deg, #19b8d8, #7b5cff); box-shadow: 0 0 8px rgba(34,229,255,.55); }
+  .set-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0;
+    border-bottom: 1px solid rgba(94,234,255,.08); }
+  .set-row:last-child { border-bottom: none; }
+  .set-row b { display: block; color: #c4cfef; font-size: 14px; font-weight: 600; }
+  .set-row small { display: block; margin-top: 2px; color: #6b7699; font-size: 11.5px; }
+  .switch { flex: none; width: 42px; height: 24px; border-radius: 999px; background: #1d2648; position: relative; }
+  .switch.on { background: #1899b8; box-shadow: 0 0 8px rgba(34,229,255,.4); }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+    border-radius: 50%; background: #fff; transition: left .2s; }
+  .switch.on::after { left: 20px; }
+  .switch.dim { opacity: .5; }
+  .nav-arrow { flex: none; width: 28px; height: 28px; margin-left: 10px; border: 1px solid rgba(94,234,255,.3);
+    border-radius: 50%; background: rgba(34,229,255,.08); display: flex; align-items: center; justify-content: center;
+    color: #7ceaff; font-size: 18px; }
+  .nav-card { display: flex; align-items: center; justify-content: space-between; }
+  .acct { display: flex; align-items: center; justify-content: space-between; padding: 12px 0;
+    border-bottom: 1px solid rgba(94,234,255,.08); }
+  .acct:last-child { border-bottom: none; }
+  .acct-act { flex: none; margin-left: 10px; padding: 5px 14px; border: 1px solid rgba(94,234,255,.35);
+    border-radius: 999px; color: #7ceaff; background: rgba(34,229,255,.08); font-size: 12px; }
+  .acct-act.danger { border-color: rgba(255,110,140,.42); color: #ff8ba3; background: rgba(255,77,109,.1); }
+  .delete-link { margin-top: 18px; text-align: center; color: #ff8ba3; font-size: 13px; }
+  .delete-link small { display: block; margin-top: 3px; color: #5d688f; font-size: 10.5px; }
+  .settings-title { display: block; color: #e6ecff; font-size: 15.5px; font-weight: 700; }
+
+  /* ===== DIGITAL-SELF / PRIVACY ===== */
+  .persona { position: relative; overflow: hidden; }
+  .persona::after { content: ""; position: absolute; top: -60px; right: -60px; width: 160px; height: 160px;
+    border-radius: 50%; background: radial-gradient(circle, rgba(34,229,255,.16), rgba(34,229,255,0) 68%); }
+  .status-row { display: flex; align-items: center; margin-top: 10px; }
+  .beacon { width: 10px; height: 10px; margin-right: 8px; border-radius: 50%;
+    background: linear-gradient(135deg, #22e5ff, #7b5cff); box-shadow: 0 0 10px rgba(34,229,255,.75); }
+  .status-val { color: #7ceaff; font-size: 15.5px; font-weight: 700; }
+  .detail { display: block; margin-top: 6px; color: #8d99c4; font-size: 12.5px; line-height: 1.65; }
+  .dim-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0;
+    border-bottom: 1px solid rgba(94,234,255,.08); }
+  .dim-row:last-child { border-bottom: none; }
+  .dim-row b { display: block; color: #c4cfef; font-size: 14px; font-weight: 650; }
+  .dim-row small { display: block; margin-top: 2.5px; color: #6b7699; font-size: 11.5px; }
+  .dim-tag { flex: none; margin-left: 10px; padding: 4px 10px; border: 1px solid rgba(123,92,255,.35);
+    border-radius: 999px; color: #cdb4ff; background: rgba(123,92,255,.12); font-size: 11px; }
+  .ver-row { display: flex; align-items: center; padding: 11px 0; border-bottom: 1px solid rgba(94,234,255,.08); }
+  .ver-row:last-child { border-bottom: none; }
+  .ver-badge { flex: none; width: 36px; height: 36px; border-radius: 12px; color: #fff;
+    background: linear-gradient(135deg, #19b8d8, #7b5cff); box-shadow: 0 4px 12px rgba(123,92,255,.4);
+    display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+  .ver-copy { flex: 1; margin-left: 10px; }
+  .ver-copy b { display: block; color: #c4cfef; font-size: 14px; font-weight: 650; }
+  .ver-copy small { display: block; margin-top: 2.5px; color: #6b7699; font-size: 11.5px; }
+  .disclosure { border-color: rgba(123,92,255,.28);
+    background: linear-gradient(135deg, rgba(123,92,255,.1), rgba(34,229,255,.06)); }
+  .consent { text-align: center; }
+  .shield { width: 64px; height: 64px; margin: 4px auto 11px; border: 1px solid rgba(94,234,255,.3);
+    border-radius: 50%; background: rgba(34,229,255,.07); box-shadow: 0 0 16px rgba(34,229,255,.12);
+    display: flex; align-items: center; justify-content: center; color: #7ceaff; font-size: 26px; }
+  .consent.on .shield { border-color: rgba(94,234,255,.7); color: #fff;
+    background: linear-gradient(135deg, #19b8d8, #7b5cff); box-shadow: 0 0 22px rgba(34,229,255,.45); }
+  .consent-status { display: block; color: #f2f5ff; font-size: 16.5px; font-weight: 800; }
+  .note { border-color: rgba(94,234,255,.22); text-align: left;
+    background: linear-gradient(135deg, rgba(34,229,255,.07), rgba(123,92,255,.08)); }
+  .note b { display: block; color: #7ceaff; font-size: 14.5px; }
+</style>
+</head>
+<body>
+<div class="preview-header">
+  <h1>Memoria 小程序 · <span>赛博霓虹 × 潮玩</span> 重设计 V2</h1>
+  <p>针对反馈的四项修正：<b>①</b> 全站转为深空霓虹（电青 #22E5FF / 幻紫 #7B5CFF / 品红 #FF4DDB）+ 潮玩光环舞台；<b>②</b> 吉祥物位图已抠出透明通道，与夜空背景直接相融，并用 CSS 复刻 H5 表情骨架（眉眼嘴四表情 + 眨眼/呼吸/说话/胸灯动效），对话时按 emotion_observation 联动表情；<b>③</b> 首页舞台已绑定所选伙伴（示例即桃喜）；<b>④</b>「我的」页补齐资料 Hero、陪伴统计、四项偏好、账户与设备、注销账号。</p>
+</div>
+
+<div class="screens">
+
+  <!-- HOME · 桃喜 · listening -->
+  <div class="screen-wrap">
+    <div class="screen-label">陪伴首页 · 桃喜（账号伙伴）</div>
+    <div class="screen"><div class="pg">
+      <span class="hero-greeting">晚上好，阿林</span>
+      <span class="hero-title">慢慢说，<span>我会认真听。</span></span>
+      <div class="chip"><img src="../assets/companions/alpha/taoxi.webp" /><i>桃喜 · 轻快回应 · 少量追问</i></div>
+      <div class="stage">
+        <div class="halo"></div><div class="ring"></div><div class="ground"></div>
+        <span class="spark a">✦</span><span class="spark b">✧</span><span class="spark c">✦</span>
+        <div class="doll">
+          <img class="body" src="../assets/companions/alpha/taoxi.webp" />
+          <div class="face" style="left:30.2%;top:39.1%;width:39.6%;height:28.2%;--ink:#6a3551;--et:#6a3551;--eb:#d46d9e;--gl:rgba(255,220,239,.82);">
+            <div class="fexp on">
+              <div class="brow l"></div><div class="brow r"></div>
+              <div class="eye l"><div class="iris"></div><div class="eglow"></div><div class="shine m"></div><div class="shine s"></div></div>
+              <div class="eye r"><div class="iris"></div><div class="eglow"></div><div class="shine m"></div><div class="shine s"></div></div>
+              <div class="mouth smile"></div>
+            </div>
+          </div>
+        </div>
+        <span class="pill cyan">我在听</span>
+      </div>
+      <div class="ctrl">
+        <div class="ctrl-row"><div class="btn btn-secondary">设备管理</div><div class="btn btn-primary">查看回顾</div></div>
+      </div>
+      <div class="card">
+        <div class="section-head">最近会话摘要<small>服务器权威只读投影，不承载实时媒体</small></div>
+        <div class="brow-row user"><div class="bubble"><b>你</b><p>今天开会被否定了方案，有点沮丧。</p></div></div>
+        <div class="brow-row"><div class="bubble"><b>桃喜</b><p>哎呀别灰心，跟我说说当时怎么回事？</p></div></div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- HOME · 星澜 · speaking + happy -->
+  <div class="screen-wrap">
+    <div class="screen-label">陪伴首页 · 星澜 · 回应中（happy 表情）</div>
+    <div class="screen"><div class="pg">
+      <span class="hero-greeting">晚上好，阿林</span>
+      <span class="hero-title">慢慢说，<span>我会认真听。</span></span>
+      <div class="chip"><img src="../assets/companions/alpha/starlight.webp" /><i>星澜 · 温暖回应 · 适度追问</i></div>
+      <div class="stage">
+        <div class="halo"></div><div class="ring"></div><div class="ground"></div>
+        <span class="spark a">✦</span><span class="spark b">✧</span><span class="spark c">✦</span>
+        <div class="doll speaking">
+          <img class="body" src="../assets/companions/alpha/starlight.webp" />
+          <div class="face" style="left:30.3%;top:34.2%;width:39.4%;height:25.4%;--ink:#162b4b;--et:#111f3d;--eb:#5bb6ef;--gl:rgba(101,196,246,.7);">
+            <div class="fexp on">
+              <div class="brow l"></div><div class="brow r"></div>
+              <div class="heye l"></div><div class="heye r"></div>
+              <div class="mouth open speaking-mouth"><div class="tongue"></div></div>
+            </div>
+          </div>
+          <div class="chest speak" style="top:73.7%"></div>
+        </div>
+        <span class="pill pink">正在回应</span>
+      </div>
+      <div class="ctrl">
+        <div class="ctrl-row"><div class="btn btn-secondary">设备管理</div><div class="btn btn-primary">查看回顾</div></div>
+      </div>
+      <div class="card">
+        <div class="section-head">最近会话摘要<small>服务器权威只读投影，不承载实时媒体</small></div>
+        <div class="brow-row user"><div class="bubble"><b>你</b><p>今天方案过了，好开心！</p></div></div>
+        <div class="brow-row"><div class="bubble"><b>星澜</b><p>太好啦！这几天打磨的功夫没白费，真心替你高兴！</p></div></div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- 表情四宫格 -->
+  <div class="screen-wrap wide">
+    <div class="screen-label">表情骨架 · 四表情联动（emotion_observation 驱动，负面统一映射为关切）</div>
+    <div class="expr-grid">
+      <div class="expr-cell">
+        <div class="expr-stage"><div class="expr-doll">
+          <img src="../assets/companions/alpha/starlight.webp" />
+          <div class="face" style="left:30.3%;top:34.2%;width:39.4%;height:25.4%;--ink:#162b4b;--et:#111f3d;--eb:#5bb6ef;--gl:rgba(101,196,246,.7);">
+            <div class="fexp on">
+              <div class="brow l"></div><div class="brow r"></div>
+              <div class="eye l"><div class="iris"></div><div class="eglow"></div><div class="shine m"></div><div class="shine s"></div></div>
+              <div class="eye r"><div class="iris"></div><div class="eglow"></div><div class="shine m"></div><div class="shine s"></div></div>
+              <div class="mouth smile"></div>
+            </div>
+          </div>
+        </div></div>
+        <div class="expr-name">neutral 平静</div>
+        <div class="expr-desc">默认状态 · 周期性眨眼</div>
+      </div>
+      <div class="expr-cell">
+        <div class="expr-stage"><div class="expr-doll">
+          <img src="../assets/companions/alpha/starlight.webp" />
+          <div class="face" style="left:30.3%;top:34.2%;width:39.4%;height:25.4%;--ink:#162b4b;--et:#111f3d;--eb:#5bb6ef;--gl:rgba(101,196,246,.7);">
+            <div class="fexp on">
+              <div class="brow l"></div><div class="brow r"></div>
+              <div class="heye l"></div><div class="heye r"></div>
+              <div class="mouth open"><div class="tongue"></div></div>
+            </div>
+          </div>
+        </div></div>
+        <div class="expr-name">happy 开心</div>
+        <div class="expr-desc">happy 标签 · 闭眼笑 + 张嘴</div>
+      </div>
+      <div class="expr-cell">
+        <div class="expr-stage"><div class="expr-doll">
+          <img src="../assets/companions/alpha/starlight.webp" />
+          <div class="face" style="left:30.3%;top:34.2%;width:39.4%;height:25.4%;--ink:#162b4b;--et:#111f3d;--eb:#5bb6ef;--gl:rgba(101,196,246,.7);">
+            <div class="fexp on">
+              <div class="brow l cu"></div><div class="brow r cu"></div>
+              <div class="eye l"><div class="iris"></div><div class="eglow"></div><div class="shine m"></div><div class="shine s"></div></div>
+              <div class="eye r"><div class="iris"></div><div class="eglow"></div><div class="shine m"></div><div class="shine s"></div></div>
+              <div class="mouth o"></div>
+            </div>
+          </div>
+        </div></div>
+        <div class="expr-name">curious 好奇</div>
+        <div class="expr-desc">surprised 标签 · 挑眉 + o 嘴</div>
+      </div>
+      <div class="expr-cell">
+        <div class="expr-stage"><div class="expr-doll">
+          <img src="../assets/companions/alpha/starlight.webp" />
+          <div class="face" style="left:30.3%;top:34.2%;width:39.4%;height:25.4%;--ink:#162b4b;--et:#111f3d;--eb:#5bb6ef;--gl:rgba(101,196,246,.7);">
+            <div class="fexp on">
+              <div class="brow l ca"></div><div class="brow r ca"></div>
+              <div class="eye l"><div class="iris"></div><div class="eglow"></div><div class="shine m"></div><div class="shine s"></div></div>
+              <div class="eye r"><div class="iris"></div><div class="eglow"></div><div class="shine m"></div><div class="shine s"></div></div>
+              <div class="mouth care"></div>
+            </div>
+          </div>
+        </div></div>
+        <div class="expr-name">caring 关切</div>
+        <div class="expr-desc">sad/angry/fearful/disgusted → 关切</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AUTH -->
+  <div class="screen-wrap">
+    <div class="screen-label">登录 · 机身与夜空相融</div>
+    <div class="screen"><div class="pg">
+      <div class="auth-stage">
+        <div class="halo"></div><div class="ring"></div>
+        <span class="spark a" style="left:9px;top:30px">✦</span>
+        <span class="spark b" style="right:12px;bottom:45px">✧</span>
+        <img class="auth-mascot" src="../assets/mascot-alpha.webp" />
+      </div>
+      <div class="auth-copy">
+        <span class="eyebrow">让每次回来都还是你</span>
+        <span class="ptitle">欢迎回到 Memoria</span>
+        <span class="psub">账号会绑定聊天、回顾与个人资料。访问 token 仅保存在当前小程序运行期。</span>
+      </div>
+      <div class="card">
+        <span class="flabel">用户名</span>
+        <div class="finput">2–32 个文字、数字、点、下划线或短横线</div>
+        <span class="flabel">密码</span>
+        <div class="finput">至少 8 个字符</div>
+        <div class="btn btn-primary" style="margin-top:17px">登录</div>
+        <div class="auth-switch">还没有账号，去创建</div>
+      </div>
+      <div class="anon">
+        <b>先体验一下</b>
+        <p>匿名体验不会上传微信身份；关闭小程序后需重新进入或注册账号。</p>
+        <div class="btn anon-btn" style="min-height:42px">开始匿名体验</div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- MEMORY -->
+  <div class="screen-wrap">
+    <div class="screen-label">回顾 · 霓虹时间线</div>
+    <div class="screen"><div class="pg">
+      <span class="eyebrow">回顾</span>
+      <span class="ptitle">把今天慢慢收好</span>
+      <span class="psub">只读取服务端确认可进入个人回顾的内容。</span>
+      <div class="card">
+        <div class="date-chip"><s>✦</s>选中的日期：2026-07-24</div>
+        <div class="btn btn-primary">生成 / 更新回顾</div>
+      </div>
+      <div class="tl">
+        <div class="tl-item">
+          <div class="tl-rail"><div class="tl-dot on"></div><div class="tl-line"></div></div>
+          <div class="card day-card on">
+            <div class="day-head"><b>2026-07-24</b><em>12 条对话</em></div>
+            <span class="day-title">方案被否定后的自我整理</span>
+            <span class="day-overview">今天聊到会上方案被否的沮丧，慢慢把情绪和事实分开看了一遍。</span>
+            <span class="hl">✦ 承认失落，但没有否定自己</span>
+            <span class="hl">✦ 决定明天先找同事对齐预期</span>
+            <span class="sugg">睡前可以花两分钟写下明天最想确认的一件事。</span>
+          </div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-rail"><div class="tl-dot"></div><div class="tl-line"></div></div>
+          <div class="card day-card">
+            <div class="day-head"><b>2026-07-23</b><em>8 条对话</em></div>
+            <span class="day-title">一次安静的晚间散步</span>
+            <span class="day-overview">聊到最近的作息和一点点恢复运动的想法。</span>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- PROFILE -->
+  <div class="screen-wrap">
+    <div class="screen-label">我的 · Hero + 统计 + 账户（已扩充）</div>
+    <div class="screen"><div class="pg">
+      <span class="eyebrow">你的陪伴空间</span>
+      <div class="hero">
+        <div class="hero-ring"><img src="../assets/companions/alpha/taoxi.webp" /></div>
+        <div class="hero-copy">
+          <b>阿林</b>
+          <p>慢慢说，我会认真听。</p>
+          <small>账号由服务端安全保护</small>
+        </div>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>12</b><span>聊过的天</span></div>
+        <div class="stat"><b>86</b><span>记住的片刻</span></div>
+        <div class="stat"><b>5</b><span>连续陪伴</span></div>
+      </div>
+      <div class="card">
+        <span class="settings-title">陪伴方式</span>
+        <div class="comp-row on">
+          <img src="../assets/companions/alpha/taoxi.webp" />
+          <div class="comp-copy"><b>桃喜</b><small>轻快回应 · 少量追问</small></div>
+          <div class="check on">✓</div>
+        </div>
+        <div class="comp-row">
+          <img src="../assets/companions/alpha/starlight.webp" />
+          <div class="comp-copy"><b>星澜</b><small>温暖回应 · 适度追问</small></div>
+          <div class="check"></div>
+        </div>
+        <div class="comp-row">
+          <img src="../assets/companions/alpha/xuanmo.webp" />
+          <div class="comp-copy"><b>玄墨</b><small>克制回应 · 保留留白</small></div>
+          <div class="check"></div>
+        </div>
+      </div>
+      <div class="card">
+        <span class="settings-title">陪伴偏好</span>
+        <div class="set-row"><div><b>过滤明显旁人（实验）</b><small>不让明确非主人的声音进入主人私有路径</small></div><div class="switch on"></div></div>
+        <div class="set-row"><div><b>自动生成每日回顾</b><small>每次聊天结束后静默整理</small></div><div class="switch on"></div></div>
+        <div class="set-row"><div><b>语音回应</b><small>让伙伴用声音陪你</small></div><div class="switch on"></div></div>
+        <div class="set-row"><div><b>温柔提醒</b><small>即将开放 · 在合适的时候问候你</small></div><div class="switch dim"></div></div>
+      </div>
+      <div class="card nav-card">
+        <div><span class="settings-title">数字分身成长</span><small style="display:block;margin-top:2px;color:#6b7699;font-size:11.5px">成长维度、Persona 与版本状态</small></div>
+        <div class="nav-arrow">›</div>
+      </div>
+      <div class="card">
+        <span class="settings-title">账户与设备</span>
+        <div class="acct"><div><b style="display:block;color:#c4cfef;font-size:14px;font-weight:600">退出当前设备</b><small style="display:block;margin-top:2px;color:#6b7699;font-size:11.5px">其他已登录设备保持在线</small></div><span class="acct-act">退出</span></div>
+        <div class="acct"><div><b style="display:block;color:#c4cfef;font-size:14px;font-weight:600">退出所有设备</b><small style="display:block;margin-top:2px;color:#6b7699;font-size:11.5px">所有设备都需要重新登录</small></div><span class="acct-act danger">全部退出</span></div>
+      </div>
+      <div class="delete-link">注销账号<small>永久删除账号及全部数据</small></div>
+    </div></div>
+  </div>
+
+  <!-- DIGITAL SELF -->
+  <div class="screen-wrap">
+    <div class="screen-label">数字分身成长</div>
+    <div class="screen"><div class="pg">
+      <span class="eyebrow">数字分身成长</span>
+      <span class="ptitle">由你确认，慢慢成长</span>
+      <span class="psub">这里展示服务端的成长状态；不会把小程序端的临时状态当成你的事实或人格材料。</span>
+      <div class="card persona">
+        <span class="settings-title">Persona 学习状态</span>
+        <div class="status-row"><div class="beacon"></div><span class="status-val">已启用</span></div>
+        <span class="detail">Persona、记忆和数字分身版本继续由现有服务端权限与证据规则决定。</span>
+      </div>
+      <div class="card">
+        <span class="settings-title">成长维度</span>
+        <div class="dim-row"><div><b>情绪回应风格</b><small>状态：active · 已采纳 6 条来源</small></div><span class="dim-tag">可构建</span></div>
+        <div class="dim-row"><div><b>日常叙事偏好</b><small>状态：active · 已采纳 3 条来源</small></div><span class="dim-tag">观察中</span></div>
+        <div class="dim-row"><div><b>重要关系</b><small>状态：gathering · 已采纳 2 条来源</small></div><span class="dim-tag">观察中</span></div>
+      </div>
+      <div class="card">
+        <span class="settings-title">版本</span>
+        <div class="ver-row"><div class="ver-badge">v2</div><div class="ver-copy"><b>版本 2</b><small>active · 已绑定资料摘要</small></div></div>
+        <div class="ver-row"><div class="ver-badge">v1</div><div class="ver-copy"><b>版本 1</b><small>archived · 已绑定资料摘要</small></div></div>
+      </div>
+      <div class="card disclosure">
+        <span class="settings-title">边界说明</span>
+        <span class="detail">复杂的版本构建、评测、冻结、传承授权和密码确认仍由服务端高风险流程收口；小程序不会绕过这些保护。</span>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- PRIVACY -->
+  <div class="screen-wrap">
+    <div class="screen-label">隐私与授权</div>
+    <div class="screen"><div class="pg">
+      <span class="eyebrow">隐私与授权</span>
+      <span class="ptitle">每一份授权都可撤回</span>
+      <span class="psub">默认不会因为设备语音会话而自动保存原始音频。</span>
+      <div class="card consent">
+        <div class="shield">✧</div>
+        <span class="consent-status">原始语音归档未授权</span>
+        <span class="detail" style="display:block;margin-top:7px">实时语音由已激活的 ESP32 设备接入服务端完成识别与回应；是否归档原始音频需要单独明确同意。</span>
+        <div class="btn btn-primary" style="margin-top:15px">明确授权原始语音归档</div>
+      </div>
+      <div class="card consent on">
+        <div class="shield">✓</div>
+        <span class="consent-status">原始语音归档已授权</span>
+        <span class="detail" style="display:block;margin-top:7px">授权时间：2026-07-01<br />策略：账户存续期</span>
+        <div class="btn btn-danger" style="margin-top:15px">撤回并删除受授权音频</div>
+      </div>
+      <div class="card note">
+        <b>身份与媒体边界</b>
+        <span class="detail" style="display:block;margin-top:7px">小程序不接触媒体票据、LiveKit participant token 或服务端密钥；设备激活后才由服务端签发短期媒体票据，说话人、历史资格、数字分身与权限均由服务端判定。</span>
+      </div>
+    </div></div>
+  </div>
+
+</div>
+</body>
+</html>

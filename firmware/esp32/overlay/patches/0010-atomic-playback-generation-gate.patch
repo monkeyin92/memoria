@@ -1,0 +1,191 @@
+diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -151,10 +151,16 @@ public:
+     float LastUplinkRms() const;
+ 
+     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
++    // Memoria server audio enters through an atomic generation gate inside
++    // the decode queue lock. A P0 flush updates this value and clears all
++    // playback work under the same lock, so a frame that passed a protocol
++    // check before the flush cannot be enqueued after it.
++    bool PushServerPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet);
+     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
+     void PlaySound(const std::string_view& sound);
+     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
+     void ResetDecoder();
++    void ResetDecoderForServerGeneration(uint32_t generation_id);
+     void SetModelsList(srmodel_list_t* models_list);
+ 
+ private:
+@@ -197,7 +205,8 @@ private:
+     bool decode_in_flight_ = false;
+     bool output_in_flight_ = false;
+     bool playback_drained_notified_ = true;
+     uint32_t playback_generation_ = 0;
++    uint32_t accepted_server_generation_ = 0;
+     // For server AEC
+     std::deque<uint32_t> timestamp_queue_;
+ 
+@@ -222,7 +231,8 @@ private:
+     void PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm);
+     bool InitializeAudioEngine();
+     void SetDecodeSampleRate(int sample_rate, int frame_duration);
+     void CheckAndUpdateAudioPowerState();
++    bool ResetDecoderLocked(uint32_t accepted_server_generation);
+     bool IsPlaybackDrainedLocked() const;
+     bool MarkPlaybackDrainedLocked();
+ };
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -175,6 +175,7 @@ void AudioService::Stop() {
+     {
+         std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+         ++playback_generation_;
++        accepted_server_generation_ = 0;
+         audio_encode_queue_.clear();
+         audio_decode_queue_.clear();
+         audio_playback_queue_.clear();
+@@ -621,6 +621,23 @@ bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> p
+     return true;
+ }
+ 
++bool AudioService::PushServerPacketToDecodeQueue(
++    std::unique_ptr<AudioStreamPacket> packet) {
++    if (packet == nullptr || packet->generation_id == 0) {
++        return false;
++    }
++    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
++    if (service_stopped_.load() ||
++        packet->generation_id != accepted_server_generation_ ||
++        audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
++        return false;
++    }
++    playback_drained_notified_ = false;
++    audio_decode_queue_.push_back(std::move(packet));
++    audio_queue_cv_.notify_all();
++    return true;
++}
++
+ std::unique_ptr<AudioStreamPacket> AudioService::PopPacketFromSendQueue() {
+     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+     if (audio_send_queue_.empty()) {
+@@ -769,24 +786,41 @@ bool AudioService::IsPlaybackIdle() {
+     return IsPlaybackDrainedLocked();
+ }
+ 
+-void AudioService::ResetDecoder() {
+-    bool notify_drained = false;
+-    {
+-        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+-        ++playback_generation_;
+-        std::unique_lock<std::mutex> decoder_lock(decoder_mutex_);
+-        if (opus_decoder_ != nullptr) {
+-            esp_opus_dec_reset(opus_decoder_);
+-        }
+-        decoder_lock.unlock();
+-        timestamp_queue_.clear();
+-        audio_decode_queue_.clear();
+-        audio_playback_queue_.clear();
+-        audio_testing_queue_.clear();
+-        notify_drained = MarkPlaybackDrainedLocked();
+-        audio_queue_cv_.notify_all();
++bool AudioService::ResetDecoderLocked(uint32_t accepted_server_generation) {
++    ++playback_generation_;
++    accepted_server_generation_ = accepted_server_generation;
++    std::unique_lock<std::mutex> decoder_lock(decoder_mutex_);
++    if (opus_decoder_ != nullptr) {
++        esp_opus_dec_reset(opus_decoder_);
+     }
++    decoder_lock.unlock();
++    timestamp_queue_.clear();
++    audio_decode_queue_.clear();
++    audio_playback_queue_.clear();
++    audio_testing_queue_.clear();
++    const bool notify_drained = MarkPlaybackDrainedLocked();
++    audio_queue_cv_.notify_all();
++    return notify_drained;
++}
++
++void AudioService::ResetDecoder() {
++    bool notify_drained = false;
++    {
++        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
++        notify_drained = ResetDecoderLocked(accepted_server_generation_);
++    }
++    if (notify_drained && callbacks_.on_playback_drained) {
++        callbacks_.on_playback_drained();
++    }
++}
++
++void AudioService::ResetDecoderForServerGeneration(uint32_t generation_id) {
++    bool notify_drained = false;
++    {
++        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
++        notify_drained = ResetDecoderLocked(generation_id);
++    }
+     if (notify_drained && callbacks_.on_playback_drained) {
+         callbacks_.on_playback_drained();
+     }
+ }
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -575,7 +575,9 @@ bool Application::InitializeProtocol() {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+     protocol_ = std::make_unique<memoria::MemoriaProtocol>();
+     static_cast<memoria::MemoriaProtocol*>(protocol_.get())
+-        ->SetLocalFlushCallback([this]() { audio_service_.ResetDecoder(); });
++        ->SetLocalFlushCallback([this](uint32_t generation_id) {
++            audio_service_.ResetDecoderForServerGeneration(generation_id);
++        });
+     static_cast<memoria::MemoriaProtocol*>(protocol_.get())
+         ->SetIsPlaybackIdleCallback([this]() { return audio_service_.IsPlaybackIdle(); });
+     static_cast<memoria::MemoriaProtocol*>(protocol_.get())
+@@ -611,9 +613,6 @@ bool Application::InitializeProtocol() {
+         Schedule([this, pending_packet]() mutable {
+-            auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+-            if (GetDeviceState() == kDeviceStateSpeaking &&
+-                (memoria_protocol == nullptr ||
+-                 memoria_protocol->AcceptsGeneration((*pending_packet)->generation_id))) {
+-                audio_service_.PushPacketToDecodeQueue(std::move(*pending_packet));
++            if (GetDeviceState() == kDeviceStateSpeaking) {
++                audio_service_.PushServerPacketToDecodeQueue(std::move(*pending_packet));
+             }
+         });
+ #else
+@@ -631,6 +633,9 @@ bool Application::InitializeProtocol() {
+     });
+ 
+     protocol_->OnAudioChannelClosed([this, &board]() {
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++        audio_service_.ResetDecoderForServerGeneration(0);
++#endif
+         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+         Schedule([this]() {
+             auto display = Board::GetInstance().GetDisplay();
+@@ -1141,16 +1146,16 @@ void Application::AbortSpeaking(AbortReason reason) {
+     ESP_LOGI(TAG, "Abort speaking");
+     aborted_ = true;
+ #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+-    // L0 physical hard stop: flush the local playback pipeline synchronously
+-    // so nothing more is heard, then report the stop with the pre-flush fence
+-    // and local flush sample end. The server closes the generation gate;
+-    // late frames of the old generation are dropped and counted by the
+-    // protocol and must never resume playback.
+-    audio_service_.ResetDecoder();
++    // L0 physical hard stop: NotifyLocalFlush atomically revokes the protocol
++    // receipt identity, closes the AudioService generation gate and clears
++    // playback before its best-effort report reaches the server. A frame that
++    // passed the protocol check earlier cannot enter the queue afterwards.
+     auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+     if (memoria_protocol != nullptr) {
+         memoria_protocol->NotifyLocalFlush();
+-    }
++    } else {
++        audio_service_.ResetDecoderForServerGeneration(0);
++    }
+ #else
+     if (protocol_) {
+         protocol_->SendAbortSpeaking(reason);

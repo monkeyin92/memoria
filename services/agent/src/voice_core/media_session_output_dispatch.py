@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import logging
 import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
@@ -28,6 +30,7 @@ if TYPE_CHECKING:
     )
 
 media_pb2: Any = _media_pb2
+logger = logging.getLogger(__name__)
 
 _CONVERSATION_REPLY_TTL_MS = 120_000
 _STREAMCORE_EXECUTABLE_OUTPUT_KINDS = frozenset(
@@ -45,6 +48,7 @@ class MediaOutputDispatchMixin:
     if TYPE_CHECKING:
         bridge: MediaBridgeGrpcServer
         _sessions: dict[str, _MediaVoiceSession]
+        output_generation_timeout_s: float
 
         def _event_versions(
             self,
@@ -77,6 +81,15 @@ class MediaOutputDispatchMixin:
             work: _OutputWork,
         ) -> bool: ...
 
+        async def _cancel_reply_task(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+            *,
+            reason: str = "cancelled",
+            cancel_timeout_s: float = 5.0,
+        ) -> None: ...
+
         @staticmethod
         def _rebind_output_work(
             work: _OutputWork,
@@ -84,14 +97,6 @@ class MediaOutputDispatchMixin:
             *,
             context_version: int,
         ) -> _OutputWork | None: ...
-
-        async def _cancel_reply_task(
-            self,
-            context: _MediaVoiceSession,
-            fence: GenerationFence,
-            *,
-            reason: str = "cancelled",
-        ) -> None: ...
 
         async def _stream_output(
             self,
@@ -384,15 +389,89 @@ class MediaOutputDispatchMixin:
             task = asyncio.current_task()
             if task is not None:
                 context.reply_task = task
+            chunks = self._output_chunks(context, work, context.playback.renderable_sample_end(fence))
             try:
-                source_start_sample = context.playback.renderable_sample_end(fence)
-                return await self._stream_output(
-                    context,
-                    fence.session_id,
-                    fence,
-                    lease,
-                    self._output_chunks(context, work, source_start_sample),
-                )
+                deadline = asyncio.timeout(self.output_generation_timeout_s)
+                try:
+                    async with deadline:
+                        return await self._stream_output(
+                            context,
+                            fence.session_id,
+                            fence,
+                            lease,
+                            chunks,
+                        )
+                except TimeoutError:
+                    if not deadline.expired():
+                        # The provider itself raised TimeoutError. Preserve the
+                        # provider failure semantics; it is not our generation
+                        # deadline and must not be reported as output_timeout.
+                        raise
+                    await self._abort_output_timeout(context, fence, chunks)
+                    return False
             finally:
                 if context.reply_task is task:
                     context.reply_task = None
+                if context.output_dispatch_task is task:
+                    context.output_dispatch_task = None
+
+    async def _abort_output_timeout(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+        chunks: AsyncIterator[MediaReplyChunk],
+    ) -> None:
+        """Fail closed when a provider stream stops making progress."""
+
+        close = getattr(chunks, "aclose", None)
+        if callable(close):
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    async with asyncio.timeout(
+                        min(5.0, max(0.1, self.output_generation_timeout_s))
+                    ):
+                        await result
+            except TimeoutError:
+                logger.warning(
+                    "media output iterator close timed out session=%s generation=%s",
+                    fence.session_id,
+                    fence.generation_id,
+                )
+            except Exception:
+                logger.exception("media output iterator close failed")
+
+        await self._cancel_reply_task(
+            context,
+            fence,
+            reason="output_timeout",
+            cancel_timeout_s=min(5.0, max(0.1, self.output_generation_timeout_s)),
+        )
+        context.playback.discard(fence)
+        context.assistant_text = ""
+        context.output_text_offset = 0
+        context.provider_complete = False
+        context.output_complete_emitted = False
+        for intent_id, pending in tuple(context.output_work.items()):
+            if pending.fence.matches(fence):
+                context.output_work.pop(intent_id, None)
+        context.runtime.orchestrator.delegation.reset_output_intent_state(
+            fence.session_id
+        )
+
+        if not context.runtime.fence.matches(fence):
+            return
+        task_epoch, context_version = self._event_versions(context, fence)
+        await self.bridge.emit_realtime_effect(
+            fence.session_id,
+            media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
+            fence,
+            source_event_id="output_timeout",
+            payload={"reason": "output_timeout"},
+            task_epoch=task_epoch,
+            context_version=context_version,
+        )
+        await context.runtime.on_assistant_reply_aborted(
+            fence,
+            cause="output_timeout",
+        )

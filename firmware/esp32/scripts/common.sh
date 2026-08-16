@@ -74,6 +74,15 @@ select_python() {
     if command -v "python${MEMORIA_PYTHON_PREFERRED_VERSION}" >/dev/null 2>&1; then
         candidates+=("$(command -v "python${MEMORIA_PYTHON_PREFERRED_VERSION}")")
     fi
+    # Reuse the exact ESP-IDF virtualenv installed for the locked IDF/Python
+    # pair before falling back to an unrelated newer PATH interpreter. This
+    # keeps export.sh from searching for a non-existent idf6.0_pyX.Y_env.
+    local idf_minor="${MEMORIA_ESP_IDF_VERSION#v}"
+    idf_minor="${idf_minor%.*}"
+    local idf_python_env="$HOME/.espressif/python_env/idf${idf_minor}_py${MEMORIA_PYTHON_PREFERRED_VERSION}_env/bin/python"
+    if [[ -x "$idf_python_env" ]]; then
+        candidates+=("$idf_python_env")
+    fi
     if command -v python3.13 >/dev/null 2>&1; then
         candidates+=("$(command -v python3.13)")
     fi
@@ -113,12 +122,25 @@ configure_python_tls() {
     export REQUESTS_CA_BUNDLE="$ca_file"
 }
 
+configure_idf_python_env() {
+    local python_bin="$1"
+    local environment_path
+    environment_path="$(cd "$(dirname "$python_bin")/.." && pwd)"
+    if [[ -f "$environment_path/idf_version.txt" ]]; then
+        export IDF_PYTHON_ENV_PATH="$environment_path"
+    fi
+    export PATH="$(dirname "$python_bin"):$PATH"
+}
+
 overlay_hash() {
-    {
-        find "$MEMORIA_FIRMWARE_ROOT/overlay" -type f -print | LC_ALL=C sort | while IFS= read -r file; do
-            shasum -a 256 "$file"
+    (
+        cd "$MEMORIA_FIRMWARE_ROOT/overlay"
+        find . -type f -print | LC_ALL=C sort | while IFS= read -r relative_path; do
+            relative_path="${relative_path#./}"
+            file_hash="$(shasum -a 256 "$relative_path" | awk '{print $1}')"
+            printf '%s  %s\n' "$file_hash" "$relative_path"
         done
-    } | shasum -a 256 | awk '{print $1}'
+    ) | shasum -a 256 | awk '{print $1}'
 }
 
 idf_version_from_path() {

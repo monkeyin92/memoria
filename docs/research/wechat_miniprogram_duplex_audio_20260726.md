@@ -1,5 +1,7 @@
 # 微信原生小程序实时双向语音：能力边界、故障推断与推荐架构
 
+> 历史状态（2026-08-16）：本文记录的小程序实时媒体客户端已移除，不再是当前产品方案。现行架构以 ESP32 为一等实时语音终端，小程序只承担控制面；参见 [ADR-0035](../adr/0035-esp32-first-class-realtime-terminal.md)。下文模块名仅用于保留历史研究语境。
+>
 > 调研日期：2026-07-26
 >
 > 适用范围：原生微信小程序；`RecorderManager` PCM 上行、`WebAudioContext` PCM 下行、WSS 媒体网关、现有 LiveKit/FunASR/Qwen/TTS/记忆主链
@@ -54,8 +56,8 @@
 **已确认：**
 
 - `RecorderManager` 支持 `format: "PCM"`、`frameSize`，`onFrameRecorded` 返回帧数据；16 kHz、16 bit、单声道与当前 FunASR 上行契约一致。[微信 `RecorderManager.start`](https://developers.weixin.qq.com/miniprogram/dev/api/media/recorder/RecorderManager.start.html)；[`RecorderManager.onFrameRecorded`](https://developers.weixin.qq.com/miniprogram/dev/api/media/recorder/RecorderManager.onFrameRecorded.html)
-- 当前客户端设置 `frameSize: 1KB`。对 16 kHz、16 bit、单声道 PCM，约为 32ms 音频；网关再重分帧成 20ms LiveKit `AudioFrame`。[当前 `media-gateway.js`](../../apps/miniprogram/utils/media-gateway.js)；[当前 `bridge.py`](../../services/miniprogram_gateway/bridge.py)
-- 当前下行是 24 kHz、16 bit、单声道、20ms，一秒约创建并调度 50 个 `BufferSourceNode`。[当前 `bridge.py`](../../services/miniprogram_gateway/bridge.py)；[当前 `pcm-player.js`](../../apps/miniprogram/utils/pcm-player.js)
+- 历史客户端设置 `frameSize: 1KB`。对 16 kHz、16 bit、单声道 PCM，约为 32ms 音频；网关再重分帧成 20ms LiveKit `AudioFrame`。历史客户端媒体网关模块已于 2026-08-16 删除；[当前仍保留的历史兼容网关 `bridge.py`](../../services/miniprogram_gateway/bridge.py)
+- 历史下行是 24 kHz、16 bit、单声道、20ms，一秒约创建并调度 50 个 `BufferSourceNode`。[当前仍保留的历史兼容网关 `bridge.py`](../../services/miniprogram_gateway/bridge.py)；历史客户端 PCM 播放器已于 2026-08-16 删除。
 
 **推断：**
 
@@ -154,9 +156,9 @@
 
 **已确认的修复前实现：**
 
-- 网关每 20ms 下发一个 PCM frame；客户端每帧创建一个 `AudioBuffer` 和一次性 `BufferSourceNode`。[当前 `bridge.py`](../../services/miniprogram_gateway/bridge.py)；[当前 `pcm-player.js`](../../apps/miniprogram/utils/pcm-player.js)
+- 网关每 20ms 下发一个 PCM frame；客户端每帧创建一个 `AudioBuffer` 和一次性 `BufferSourceNode`。[当前仍保留的历史兼容网关 `bridge.py`](../../services/miniprogram_gateway/bridge.py)；历史客户端 PCM 播放器已于 2026-08-16 删除。
 - 当 `nextStartAt < now` 时，播放器把下一块重置为 `now + 80ms`，会产生可听空隙；当排程领先超过 450ms 时，它也重置时间轴，但**没有同时停止已在未来排程的旧 source**，新旧 source 可能重叠播放。
-- 协议携带 sequence/timestamp，但客户端解码后只把 payload 交给播放器；下行丢帧、迟到、乱序、队列跳帧都没有进入播放决策或遥测。[当前 `media-protocol.js`](../../apps/miniprogram/utils/media-protocol.js)；[当前 `media-gateway.js`](../../apps/miniprogram/utils/media-gateway.js)
+- 协议携带 sequence/timestamp，但客户端解码后只把 payload 交给播放器；下行丢帧、迟到、乱序、队列跳帧都没有进入播放决策或遥测。历史客户端协议与媒体网关模块已于 2026-08-16 删除。
 - 网关音频队列默认 100 个 20ms frame，即最多约 2 秒；满时静默丢最旧帧。对直播可以接受的缓存，对可打断对话过大。[修复前 `config.py`](../../services/miniprogram_gateway/config.py)；[`bridge.py`](../../services/miniprogram_gateway/bridge.py)
 
 **推断：**

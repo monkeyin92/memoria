@@ -1,0 +1,19 @@
+diff --git a/main/application.cc b/main/application.cc
+index 494d850..d31d51e 100644
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -354,7 +354,14 @@ void Application::HandleNetworkDisconnectedEvent() {
+     if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
+         state == kDeviceStateSpeaking) {
+         ESP_LOGI(TAG, "Closing audio channel due to network disconnection");
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++        // A Wi-Fi loss ends only the current WSS transport. Preserve the
++        // Session id so the next authenticated ticket can resume the same
++        // conversation at a strictly newer stream_epoch.
++        protocol_->CloseAudioChannel(false);
++#else
+         protocol_->CloseAudioChannel();
++#endif
+     }
+ 
+     // Update the status bar immediately to show the network state

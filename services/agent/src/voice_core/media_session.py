@@ -20,6 +20,7 @@ from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 a
 from services.agent.src.voice_core.grpc_bridge import (
     MediaBridgeGrpcServer,
 )
+from services.agent.src.voice_core.interruption import InterruptionPolicy
 from services.agent.src.voice_core.media_audio_ingress import (
     MediaAudioIngress,
 )
@@ -79,6 +80,7 @@ class MediaVoiceCoreRegistry(
     runtime_factory: RuntimeFactory = field(default=_default_runtime_factory)
     session_factory: SessionFactory | None = None
     metrics: MetricsRegistry = field(default_factory=lambda: GLOBAL_METRICS)
+    interruption_policy: InterruptionPolicy = field(default_factory=InterruptionPolicy)
     max_sessions: int = 256
     session_creation_limit: int = 32
     audio_ingress_max_frames: int = 20
@@ -90,6 +92,7 @@ class MediaVoiceCoreRegistry(
     turn_endpoint_min_grace_s: float = 0.7
     turn_endpoint_max_grace_s: float = 1.1
     turn_endpoint_absolute_timeout_s: float = 2.5
+    output_generation_timeout_s: float = 45.0
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
     _cleanup_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
     _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]] = field(

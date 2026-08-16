@@ -43,6 +43,47 @@ def test_revisions_replace_partials_without_fifo_assumptions() -> None:
     assert timeline.committed_sample == 320
 
 
+def test_same_logical_version_is_idempotent_except_for_final_upgrade() -> None:
+    timeline = SpeechTimeline()
+    partial = segment(
+        "sentence",
+        start=0,
+        end=320,
+        kind=SegmentKind.ASR_PARTIAL,
+        final=False,
+        text="我今",
+    )
+    final = segment(
+        "sentence",
+        start=0,
+        end=320,
+        kind=SegmentKind.ASR_FINAL,
+        final=True,
+        text="我今天",
+    )
+
+    assert timeline.add(partial)
+    assert not timeline.add(partial)
+    assert timeline.add(final)
+    assert not timeline.add(final)
+    assert timeline.pending == (final,)
+
+
+def test_duplicate_vad_start_is_rejected() -> None:
+    timeline = SpeechTimeline()
+    vad = segment(
+        "vad-start",
+        start=320,
+        end=321,
+        kind=SegmentKind.VAD,
+        final=False,
+    )
+
+    assert timeline.add(vad)
+    assert not timeline.add(vad)
+    assert timeline.pending == (vad,)
+
+
 def test_late_results_before_watermark_and_old_epoch_are_dropped() -> None:
     timeline = SpeechTimeline()
     timeline.add(segment("old", start=0, end=320, text="旧"))

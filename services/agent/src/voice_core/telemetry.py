@@ -19,12 +19,25 @@ from typing import Any
 
 MEDIA_METRIC_NAMES = frozenset(
     {
+        "aec_double_talk_asr_error_rate",
+        "aec_far_end_false_vad_total",
+        "device_downlink_queue_ms",
+        "device_media_connect_success_total",
+        "device_media_reconnect_total",
+        "device_playback_ack_lag_ms",
+        "device_uplink_gap_samples_total",
+        "interrupt_audible_stop_ms",
+        "interrupt_candidate_total",
+        "interrupt_confirmed_total",
+        "interrupt_false_positive_total",
         "media_active_sessions",
         "media_peer_connection_state_total",
         "media_ice_connection_time_ms",
         "media_rtp_packets_received_total",
         "media_rtp_packets_lost_total",
         "media_rtp_jitter_ms",
+        "runtime_profile_version_lag",
+        "stale_generation_drop_total",
         "media_pcm_queue_depth",
         "media_pcm_overflow_total",
         "media_discontinuity_total",
@@ -36,6 +49,7 @@ MEDIA_METRIC_NAMES = frozenset(
         "voice_asr_partial_latency_ms",
         "voice_asr_final_latency_ms",
         "voice_turn_commit_latency_ms",
+        "voice_turn_prepare_retry_total",
         "voice_llm_ttft_ms",
         "voice_tts_ttfb_ms",
         "voice_first_audio_ms",
@@ -57,6 +71,21 @@ MEDIA_METRIC_NAMES = frozenset(
 
 MEDIA_SPAN_NAMES = frozenset(
     {
+        "device.dac_started",
+        "device.first_audio_received",
+        "device.mic_first_sample",
+        "device.playback_ended",
+        "edge.audio_first",
+        "edge.first_downlink_opus",
+        "generation.cancelled",
+        "interrupt.detected",
+        "interrupt.flush",
+        "interrupt.local_duck",
+        "asr.partial_first",
+        "turn.committed",
+        "tts.first_pcm",
+        "vad.end",
+        "vad.start",
         "webrtc.connect",
         "ice.gather",
         "rtp.receive",
@@ -77,8 +106,63 @@ MEDIA_SPAN_NAMES = frozenset(
     }
 )
 
+GOLDEN_TRACE_BASE_EVENTS = (
+    "device.mic_first_sample",
+    "vad.start",
+    "vad.end",
+    "edge.audio_first",
+    "asr.partial_first",
+    "asr.final",
+    "turn.committed",
+    "llm.first_token",
+    "tts.first_pcm",
+    "edge.first_downlink_opus",
+    "device.first_audio_received",
+    "device.dac_started",
+    "device.playback_ended",
+)
+
+GOLDEN_TRACE_INTERRUPT_EVENTS = (
+    "interrupt.detected",
+    "interrupt.local_duck",
+    "interrupt.flush",
+    "generation.cancelled",
+)
+
 _SAFE_LABEL = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _ALLOWED_LABELS = frozenset({"runtime", "state", "source", "reason", "kind", "status"})
+_ALLOWED_TRACE_EVENT_FIELDS = frozenset(
+    {
+        "approximate",
+        "audio_mode",
+        "capture_end_sample",
+        "capture_start_sample",
+        "device_sequence",
+        "frame_samples",
+        "playback_sample_end",
+        "playback_sample_start",
+        "queue_ms",
+        "reason",
+        "received_sequence",
+        "sample_position",
+        "source",
+        "status",
+        "voiced_end_sample",
+    }
+)
+_SENSITIVE_TRACE_FIELD_FRAGMENTS = (
+    "audio",
+    "credential",
+    "key",
+    "password",
+    "payload",
+    "private",
+    "secret",
+    "text",
+    "token",
+    "transcript",
+    "wifi",
+)
 
 
 def _labels(labels: Mapping[str, str] | None) -> tuple[tuple[str, str], ...]:
@@ -106,6 +190,7 @@ class TraceContext:
     tool_epoch: int = 0
     device_id: str | None = None
     provider_task_epoch: int = 0
+    runtime_profile_version: int = 0
 
     def __post_init__(self) -> None:
         for field_name, text_value in (
@@ -120,6 +205,7 @@ class TraceContext:
             ("generation_id", self.generation_id),
             ("tool_epoch", self.tool_epoch),
             ("provider_task_epoch", self.provider_task_epoch),
+            ("runtime_profile_version", self.runtime_profile_version),
         ):
             if (
                 isinstance(number_value, bool)
@@ -144,6 +230,7 @@ class TraceContext:
             tool_epoch=self.tool_epoch,
             device_id=self.device_id,
             provider_task_epoch=self.provider_task_epoch,
+            runtime_profile_version=self.runtime_profile_version,
         )
 
     def fields(self) -> dict[str, str | int]:
@@ -155,6 +242,7 @@ class TraceContext:
             "generation_id": self.generation_id,
             "tool_epoch": self.tool_epoch,
             "provider_task_epoch": self.provider_task_epoch,
+            "runtime_profile_version": self.runtime_profile_version,
         }
         if self.device_id is not None:
             result["device_id"] = self.device_id
@@ -172,6 +260,16 @@ class TraceEvent:
             raise ValueError("trace span name is not allowlisted")
         if self.at_monotonic_ns < 0:
             raise ValueError("trace timestamp must be non-negative")
+        for key, value in self.fields.items():
+            normalized = key.lower()
+            if any(fragment in normalized for fragment in _SENSITIVE_TRACE_FIELD_FRAGMENTS):
+                raise ValueError("sensitive trace event field is forbidden")
+            if key not in _ALLOWED_TRACE_EVENT_FIELDS:
+                raise ValueError("trace event field is not allowlisted")
+            if not isinstance(value, (str, int, float, bool)):
+                raise ValueError("trace event field value must be scalar")
+            if isinstance(value, str) and (not value or len(value) > 64):
+                raise ValueError("trace event string must be short and non-empty")
 
 
 class TurnTimeline:
@@ -203,6 +301,16 @@ class TurnTimeline:
     def events(self) -> tuple[TraceEvent, ...]:
         with self._lock:
             return tuple(self._events)
+
+    def completion_gaps(self, *, require_interrupt: bool = False) -> tuple[str, ...]:
+        """Return missing Golden Trace anchors without fabricating runtime proof."""
+
+        with self._lock:
+            observed = {event.name for event in self._events}
+        required: tuple[str, ...] = GOLDEN_TRACE_BASE_EVENTS
+        if require_interrupt:
+            required += GOLDEN_TRACE_INTERRUPT_EVENTS
+        return tuple(name for name in required if name not in observed)
 
     def to_dict(self) -> dict[str, Any]:
         with self._lock:
@@ -332,6 +440,8 @@ def _format_labels(labels: tuple[tuple[str, str], ...]) -> str:
 
 
 __all__ = [
+    "GOLDEN_TRACE_BASE_EVENTS",
+    "GOLDEN_TRACE_INTERRUPT_EVENTS",
     "MEDIA_METRIC_NAMES",
     "MEDIA_SPAN_NAMES",
     "MediaTelemetry",

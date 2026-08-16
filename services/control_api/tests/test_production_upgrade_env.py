@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import datetime
 import json
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+from cryptography import x509
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+from cryptography.x509.oid import NameOID
 from scripts.bootstrap_production_data_env import main as bootstrap_data_env_main
 from scripts.prepare_production_upgrade_env import main, prepare
 from scripts.production_postgres_roles import PRODUCTION_POSTGRES_ROLES
@@ -115,6 +120,133 @@ def _upgrade_inputs(
     return legacy, postgres, minio
 
 
+def _ed25519_pem_pair() -> tuple[str, str]:
+    private = ed25519.Ed25519PrivateKey.generate()
+    private_pem = private.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode("ascii")
+    public_pem = private.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
+    return private_pem, public_pem
+
+
+def _control_edge_mtls_bundle(tmp_path: Path) -> dict[str, str]:
+    """CA plus Control client identity that ControlSettings verifies on disk."""
+    ca_key = ec.generate_private_key(ec.SECP256R1())
+    ca_name = x509.Name(
+        [x509.NameAttribute(NameOID.COMMON_NAME, "memoria-test-control-edge-ca")]
+    )
+    now = datetime.datetime.now(datetime.UTC)
+    ca_cert = (
+        x509.CertificateBuilder()
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=30))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+    client_key = ec.generate_private_key(ec.SECP256R1())
+    client_name = x509.Name(
+        [x509.NameAttribute(NameOID.COMMON_NAME, "memoria-test-control-edge-client")]
+    )
+    client_cert = (
+        x509.CertificateBuilder()
+        .subject_name(client_name)
+        .issuer_name(ca_name)
+        .public_key(client_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=30))
+        .sign(ca_key, hashes.SHA256())
+    )
+    ca_file = tmp_path / "control-edge-ca.crt"
+    cert_file = tmp_path / "control-edge-client.crt"
+    key_file = tmp_path / "control-edge-client.key"
+    ca_file.write_bytes(ca_cert.public_bytes(serialization.Encoding.PEM))
+    cert_file.write_bytes(client_cert.public_bytes(serialization.Encoding.PEM))
+    key_file.write_bytes(
+        client_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return {
+        "MEDIA_EDGE_INTERNAL_CONTROL_CA_FILE": str(ca_file),
+        "MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_CERT_FILE": str(cert_file),
+        "MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_KEY_FILE": str(key_file),
+    }
+
+
+def _direct_upgrade_inputs(
+    tmp_path: Path,
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """Complete direct_voice_core bundle as an operator would leave it in the
+    source env after a direct generation run."""
+    legacy, postgres, minio = _upgrade_inputs()
+    private_pem, public_pem = _ed25519_pem_pair()
+    legacy.update(
+        {
+            "DEVICE_MEDIA_RUNTIME": "direct_voice_core",
+            "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE": "allowlist",
+            "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS": "dev_test_01",
+            "STREAMCORE_TOKEN_PRIVATE_KEY_PEM": private_pem,
+            "MEDIA_EDGE_JWT_PUBLIC_KEY_PEM": public_pem,
+            "MEDIA_EDGE_INTERNAL_CONTROL_URL": "https://media-edge:8081",
+            "MEDIA_EDGE_INTERNAL_CONTROL_TOKEN": "direct-control-token-material-32+chars",
+            "MEDIA_EDGE_INTERNAL_TLS_CERT_FILE": (
+                "/etc/memoria-media-runtime/edge-internal-server.crt"
+            ),
+            "MEDIA_EDGE_INTERNAL_TLS_KEY_FILE": (
+                "/etc/memoria-media-runtime/edge-internal-server.key"
+            ),
+            "MEDIA_EDGE_INTERNAL_TLS_CLIENT_CA_FILE": (
+                "/etc/memoria-media-runtime/control-edge-ca.crt"
+            ),
+            "MEDIA_EDGE_HEALTHCHECK_CA_FILE": "/etc/memoria-media-runtime/control-edge-ca.crt",
+            "MEDIA_EDGE_HEALTHCHECK_CLIENT_CERT_FILE": (
+                "/etc/memoria-media-runtime/edge-healthcheck-client.crt"
+            ),
+            "MEDIA_EDGE_HEALTHCHECK_CLIENT_KEY_FILE": (
+                "/etc/memoria-media-runtime/edge-healthcheck-client.key"
+            ),
+            "MEDIA_EDGE_DEVICE_CLOSE_REPORT_URL": (
+                "http://control-api:8000/v1/internal/device-close"
+            ),
+            "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN": (
+                "direct-close-report-token-material-32+"
+            ),
+            "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TIMEOUT_MS": "2500",
+            "MEDIA_EDGE_DEVICE_JWT_ISSUER": "voice-agent",
+            "MEDIA_EDGE_DEVICE_JWT_AUDIENCE": "memoria-media-edge",
+            "MEDIA_EDGE_DEVICE_WSS_ADDR": ":8082",
+            "MEDIA_EDGE_DEVICE_STATE_REDIS_URL": "rediss://device-state.example:6379/4",
+            "MEDIA_EDGE_DEVICE_STATE_REDIS_CA_FILE": (
+                "/etc/memoria-media-runtime/device-state-redis-ca.crt"
+            ),
+            "MEDIA_EDGE_DEVICE_STATE_REDIS_CLIENT_CERT_FILE": (
+                "/etc/memoria-media-runtime/device-state-redis-client.crt"
+            ),
+            "MEDIA_EDGE_DEVICE_STATE_REDIS_CLIENT_KEY_FILE": (
+                "/etc/memoria-media-runtime/device-state-redis-client.key"
+            ),
+            "MEDIA_EDGE_DEVICE_STATE_REDIS_SERVER_NAME": "device-state-redis",
+            "DEVICE_DIRECT_MEDIA_WSS_URL": (
+                "wss://voice.example.com/memoria-device-edge/v1/device/media"
+            ),
+            **_control_edge_mtls_bundle(tmp_path),
+        }
+    )
+    return legacy, postgres, minio
+
+
 def test_endpointing_defaults_match_operator_templates() -> None:
     root = Path(__file__).resolve().parents[3]
     expected = {
@@ -175,6 +307,12 @@ def test_upgrade_env_is_valid_split_and_does_not_expose_storage_secrets_to_agent
     assert media_edge["MEDIA_EDGE_JWT_SECRET"] == control["STREAMCORE_TOKEN_SECRET"]
     assert media_edge["MEDIA_EDGE_JWT_ISSUER"] == "voice-agent"
     assert media_edge["MEDIA_EDGE_JWT_AUDIENCE"] == "memoria-media"
+    assert control["DEVICE_MEDIA_RUNTIME"] == "livekit_compat"
+    assert media_edge["MEDIA_EDGE_DEVICE_WSS_ENABLED"] == "false"
+    assert media_edge["MEDIA_EDGE_DEVICE_REQUIRED"] == "false"
+    assert media_edge["MEDIA_EDGE_INTERNAL_CONTROL_TOKEN"] == control[
+        "MEDIA_EDGE_INTERNAL_CONTROL_TOKEN"
+    ]
     assert device_gateway["MEMORIA_DEVICE_GATEWAY_TICKET_SECRET"] == control[
         "MEMORIA_DEVICE_GATEWAY_TICKET_SECRET"
     ]
@@ -537,3 +675,210 @@ def test_upgrade_env_rejects_unverified_doubao_clone_synth_id_mapping() -> None:
             minio=minio,
             release_tag="20260723-doubao-unverified",
         )
+
+
+def test_upgrade_env_direct_voice_core_generates_complete_direct_bundle(
+    tmp_path: Path,
+) -> None:
+    legacy, postgres, minio = _direct_upgrade_inputs(tmp_path)
+
+    control, agent, _, _, _, media_edge = prepare(
+        legacy=legacy,
+        postgres=postgres,
+        minio=minio,
+        release_tag="20260813-direct",
+    )
+
+    assert control["DEVICE_MEDIA_RUNTIME"] == "direct_voice_core"
+    assert control["DEVICE_MEDIA_DIRECT_ROLLOUT_MODE"] == "allowlist"
+    assert control["DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS"] == "dev_test_01"
+    assert control["DEVICE_DIRECT_MEDIA_WSS_URL"] == (
+        "wss://voice.example.com/memoria-device-edge/v1/device/media"
+    )
+    assert control["MEDIA_EDGE_INTERNAL_CONTROL_URL"] == "https://media-edge:8081"
+    assert control["MEDIA_EDGE_INTERNAL_CONTROL_TOKEN"] == (
+        "direct-control-token-material-32+chars"
+    )
+    assert control["MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN"] == (
+        "direct-close-report-token-material-32+"
+    )
+    assert control["STREAMCORE_TOKEN_SECRET"] == ""
+    assert control["STREAMCORE_TOKEN_PRIVATE_KEY_PEM"] == (
+        legacy["STREAMCORE_TOKEN_PRIVATE_KEY_PEM"]
+    )
+    assert media_edge["MEDIA_EDGE_DEVICE_WSS_ENABLED"] == "true"
+    assert media_edge["MEDIA_EDGE_DEVICE_REQUIRED"] == "true"
+    assert media_edge["MEDIA_EDGE_DEVICE_WSS_ADDR"] == ":8082"
+    assert media_edge["MEDIA_EDGE_DEVICE_JWT_ISSUER"] == "voice-agent"
+    assert media_edge["MEDIA_EDGE_DEVICE_JWT_AUDIENCE"] == "memoria-media-edge"
+    assert media_edge["MEDIA_EDGE_DEVICE_CLOSE_REPORT_URL"] == (
+        "http://control-api:8000/v1/internal/device-close"
+    )
+    assert media_edge["MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN"] == (
+        "direct-close-report-token-material-32+"
+    )
+    assert media_edge["MEDIA_EDGE_DEVICE_CLOSE_REPORT_TIMEOUT_MS"] == "2500"
+    assert media_edge["MEDIA_EDGE_DEVICE_STATE_REDIS_URL"] == (
+        "rediss://device-state.example:6379/4"
+    )
+    assert media_edge["MEDIA_EDGE_DEVICE_STATE_REDIS_SERVER_NAME"] == "device-state-redis"
+    for key in (
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_CA_FILE",
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_CLIENT_CERT_FILE",
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_CLIENT_KEY_FILE",
+    ):
+        assert media_edge[key] == legacy[key]
+    assert media_edge["MEDIA_EDGE_DEVICE_STATE_KEY_PREFIX"] == (
+        "memoria:device-media:v2"
+    )
+    assert media_edge["MEDIA_EDGE_DEVICE_STATE_TIMEOUT_MS"] == "500"
+    assert media_edge["MEDIA_EDGE_DEVICE_LEASE_TTL_MS"] == "30000"
+    assert media_edge["MEDIA_EDGE_DEVICE_LEASE_CHECK_INTERVAL_MS"] == "5000"
+    for key in (
+        "MEDIA_EDGE_INTERNAL_TLS_CERT_FILE",
+        "MEDIA_EDGE_INTERNAL_TLS_KEY_FILE",
+        "MEDIA_EDGE_INTERNAL_TLS_CLIENT_CA_FILE",
+        "MEDIA_EDGE_HEALTHCHECK_CA_FILE",
+        "MEDIA_EDGE_HEALTHCHECK_CLIENT_CERT_FILE",
+        "MEDIA_EDGE_HEALTHCHECK_CLIENT_KEY_FILE",
+    ):
+        assert media_edge[key] == legacy[key]
+    assert media_edge["MEDIA_EDGE_HEALTHCHECK_URL"] == "https://127.0.0.1:8081/readyz"
+    assert media_edge["MEDIA_EDGE_JWT_PUBLIC_KEY_PEM"] == (
+        legacy["MEDIA_EDGE_JWT_PUBLIC_KEY_PEM"]
+    )
+    assert media_edge["MEDIA_EDGE_JWT_SECRET"] == ""
+    assert "DEVICE_DIRECT_MEDIA_WSS_URL" not in media_edge
+    assert "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN" not in agent
+
+
+def test_upgrade_env_direct_voice_core_requires_shared_device_state_redis(
+    tmp_path: Path,
+) -> None:
+    legacy, postgres, minio = _direct_upgrade_inputs(tmp_path)
+    legacy.pop("MEDIA_EDGE_DEVICE_STATE_REDIS_URL")
+
+    with pytest.raises(
+        ValueError,
+        match="MEDIA_EDGE_DEVICE_STATE_REDIS_URL",
+    ):
+        prepare(
+            legacy=legacy,
+            postgres=postgres,
+            minio=minio,
+            release_tag="20260814-direct-no-shared-state",
+        )
+
+
+def test_upgrade_env_direct_voice_core_rejects_plaintext_device_state_redis(
+    tmp_path: Path,
+) -> None:
+    legacy, postgres, minio = _direct_upgrade_inputs(tmp_path)
+    legacy["MEDIA_EDGE_DEVICE_STATE_REDIS_URL"] = "redis://device-state.example:6379/4"
+
+    with pytest.raises(ValueError, match="must use rediss://"):
+        prepare(
+            legacy=legacy,
+            postgres=postgres,
+            minio=minio,
+            release_tag="20260814-direct-plaintext-state",
+        )
+
+
+def test_upgrade_env_direct_canary_requires_a_nonempty_device_allowlist(
+    tmp_path: Path,
+) -> None:
+    legacy, postgres, minio = _direct_upgrade_inputs(tmp_path)
+    legacy.pop("DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS")
+
+    with pytest.raises(ValueError, match="DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS"):
+        prepare(
+            legacy=legacy,
+            postgres=postgres,
+            minio=minio,
+            release_tag="20260814-direct-empty-canary",
+        )
+
+
+@pytest.mark.parametrize(
+    "runtime_value",
+    [None, "livekit_compat"],
+    ids=["runtime-removed", "runtime-livekit-compat"],
+)
+def test_upgrade_env_rollback_removes_direct_only_edge_config(
+    tmp_path: Path,
+    runtime_value: str | None,
+) -> None:
+    legacy, postgres, minio = _direct_upgrade_inputs(tmp_path)
+    if runtime_value is None:
+        legacy.pop("DEVICE_MEDIA_RUNTIME")
+    else:
+        legacy["DEVICE_MEDIA_RUNTIME"] = runtime_value
+    direct_only_keys = {
+        "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS",
+        "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE",
+        "DEVICE_DIRECT_MEDIA_WSS_URL",
+        "MEDIA_EDGE_DEVICE_WSS_ADDR",
+        "MEDIA_EDGE_DEVICE_JWT_ISSUER",
+        "MEDIA_EDGE_DEVICE_JWT_AUDIENCE",
+        "MEDIA_EDGE_DEVICE_CLOSE_REPORT_URL",
+        "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN",
+        "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TIMEOUT_MS",
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_URL",
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_CA_FILE",
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_CLIENT_CERT_FILE",
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_CLIENT_KEY_FILE",
+        "MEDIA_EDGE_DEVICE_STATE_REDIS_SERVER_NAME",
+        "MEDIA_EDGE_DEVICE_STATE_KEY_PREFIX",
+        "MEDIA_EDGE_DEVICE_STATE_TIMEOUT_MS",
+        "MEDIA_EDGE_DEVICE_LEASE_TTL_MS",
+        "MEDIA_EDGE_DEVICE_LEASE_CHECK_INTERVAL_MS",
+        "MEDIA_EDGE_INSTANCE_ID",
+        "MEDIA_EDGE_INTERNAL_TLS_CERT_FILE",
+        "MEDIA_EDGE_INTERNAL_TLS_KEY_FILE",
+        "MEDIA_EDGE_INTERNAL_TLS_CLIENT_CA_FILE",
+        "MEDIA_EDGE_HEALTHCHECK_CA_FILE",
+        "MEDIA_EDGE_HEALTHCHECK_CLIENT_CERT_FILE",
+        "MEDIA_EDGE_HEALTHCHECK_CLIENT_KEY_FILE",
+    }
+
+    control, agent, _, gateway, device_gateway, media_edge = prepare(
+        legacy=legacy,
+        postgres=postgres,
+        minio=minio,
+        release_tag="20260813-rollback",
+    )
+
+    assert control["DEVICE_MEDIA_RUNTIME"] == "livekit_compat"
+    for service_env in (control, agent, gateway, device_gateway, media_edge):
+        for key in direct_only_keys:
+            assert key not in service_env
+    assert media_edge["MEDIA_EDGE_DEVICE_WSS_ENABLED"] == "false"
+    assert media_edge["MEDIA_EDGE_DEVICE_REQUIRED"] == "false"
+    assert media_edge["MEDIA_EDGE_HEALTHCHECK_URL"] == "http://127.0.0.1:8081/readyz"
+    # The Go edge must boot the plaintext compatibility shape: JWT identity
+    # for H5/StreamCore stays, internal control token stays, and the device
+    # listener is off.
+    assert media_edge["MEDIA_EDGE_HTTP_ADDR"] == ":8080"
+    assert media_edge["MEDIA_EDGE_JWT_ISSUER"] == "voice-agent"
+    assert media_edge["MEDIA_EDGE_JWT_AUDIENCE"] == "memoria-media"
+    assert media_edge["MEDIA_EDGE_JWT_SECRET"] == control["STREAMCORE_TOKEN_SECRET"]
+    assert media_edge["MEDIA_EDGE_JWT_PUBLIC_KEY_PEM"] == (
+        legacy["MEDIA_EDGE_JWT_PUBLIC_KEY_PEM"]
+    )
+    assert media_edge["MEDIA_EDGE_INTERNAL_CONTROL_TOKEN"] == (
+        control["MEDIA_EDGE_INTERNAL_CONTROL_TOKEN"]
+    )
+    # General keys survive rollback untouched: the internal control endpoint
+    # is documented for both runtimes (direct mode only additionally requires
+    # HTTPS/mTLS), so it must never be stripped for legacy H5.
+    assert control["MEDIA_EDGE_INTERNAL_CONTROL_URL"] == "https://media-edge:8081"
+    assert control["MEDIA_EDGE_INTERNAL_CONTROL_CA_FILE"] == (
+        legacy["MEDIA_EDGE_INTERNAL_CONTROL_CA_FILE"]
+    )
+    assert control["MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_CERT_FILE"] == (
+        legacy["MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_CERT_FILE"]
+    )
+    assert control["MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_KEY_FILE"] == (
+        legacy["MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_KEY_FILE"]
+    )

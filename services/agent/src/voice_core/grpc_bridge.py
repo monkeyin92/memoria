@@ -15,7 +15,7 @@ import logging
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -99,6 +99,7 @@ ClientEventHandler = Callable[[MediaBridgeSession, MediaEnvelope, int], Awaitabl
 AudioFrameHandler = Callable[[MediaBridgeSession, AudioFrame], Awaitable[None]]
 SpeechSegmentHandler = Callable[[MediaBridgeSession, SpeechSegment, int], Awaitable[None]]
 SessionClosedHandler = Callable[[MediaBridgeSession], Awaitable[None]]
+SessionConnectedHandler = Callable[[MediaBridgeSession], Awaitable[None]]
 PlaybackProgressHandler = Callable[[MediaBridgeSession, PlaybackProgress], Awaitable[None]]
 DownlinkOverflowHandler = Callable[[MediaBridgeSession], Awaitable[None]]
 
@@ -117,6 +118,67 @@ class _PriorityOutgoing:
         self._space = asyncio.Event()
         self._space.set()
         self._reliable_since_bulk = 0
+        self._next_event_sequence = 0
+        self._next_shadow_sequence = 0
+
+    def prepare_for_send(
+        self,
+        message: media_pb2.CoreToMedia | None,
+    ) -> media_pb2.CoreToMedia | None:
+        """Stamp ordered event identifiers at the actual transport boundary.
+
+        Producers enqueue across priority lanes.  Assigning the shared event
+        sequence before that arbitration lets a later critical event overtake
+        an earlier reliable event while retaining a larger sequence, causing
+        Media Edge to reject the delayed event as stale.
+        """
+
+        if message is None:
+            return None
+        kind = message.WhichOneof("event")
+        if kind not in {
+            "generation",
+            "transcript",
+            "state",
+            "client",
+            "shadow_observation",
+            "realtime_effect",
+            "floor_effect",
+        }:
+            return message
+        event = getattr(message, kind)
+        sequence = self._next_event_sequence
+        self._next_event_sequence += 1
+        event.sequence = sequence
+        if kind == "realtime_effect":
+            event.effect_id = (
+                f"{event.identity.session_id}:{event.identity.stream_epoch}:effect:{sequence}"
+            )
+        elif kind == "floor_effect":
+            event.effect_id = (
+                f"{event.identity.session_id}:{event.identity.stream_epoch}:"
+                f"floor:{event.floor_epoch}:{sequence}"
+            )
+        elif kind == "client":
+            try:
+                payload = json.loads(bytes(event.json_payload))
+            except (TypeError, ValueError):
+                payload = None
+            if isinstance(payload, dict):
+                payload["sequence"] = sequence
+                payload["event_id"] = (
+                    f"{event.identity.session_id}:"
+                    f"{event.identity.stream_epoch}:{sequence}"
+                )
+                event.json_payload = json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+        elif kind == "shadow_observation":
+            event.shadow_sequence = self._next_shadow_sequence
+            self._next_shadow_sequence += 1
+        return message
 
     @staticmethod
     def _lane(message: media_pb2.CoreToMedia | None) -> str:
@@ -193,6 +255,7 @@ class _PriorityOutgoing:
             self._reliable_since_bulk = 0
         else:
             raise asyncio.QueueEmpty
+        message = self.prepare_for_send(message)
         self._space.set()
         if self.empty():
             self._ready.clear()
@@ -217,6 +280,14 @@ class _PriorityOutgoing:
             self._ready.clear()
         return message
 
+    def clear(self) -> None:
+        self._critical.clear()
+        self._reliable.clear()
+        self._coalescing.clear()
+        self._reliable_since_bulk = 0
+        self._ready.clear()
+        self._space.set()
+
     def qsize(self) -> int:
         return len(self._critical) + len(self._reliable) + len(self._coalescing)
 
@@ -228,8 +299,6 @@ class _PriorityOutgoing:
 class _Connection:
     session: MediaBridgeSession
     outgoing: _PriorityOutgoing
-    next_event_sequence: int = 0
-    next_shadow_sequence: int = 0
     dropped_shadow_observations: int = 0
     closed: bool = False
     close_notified: bool = False
@@ -243,6 +312,10 @@ def _identity_from_proto(value: Any) -> SessionIdentity:
         device_id=str(value.device_id),
         client_type=str(value.client_type or "h5"),
         stream_epoch=int(value.stream_epoch),
+        subject_id=str(value.subject_id),
+        binding_id=str(value.binding_id),
+        binding_version=int(value.binding_version),
+        runtime_profile_version=int(value.runtime_profile_version),
     )
 
 
@@ -254,6 +327,10 @@ def _identity_to_proto(identity: SessionIdentity) -> Any:
         device_id=identity.device_id,
         client_type=identity.client_type,
         stream_epoch=identity.stream_epoch,
+        subject_id=identity.subject_id,
+        binding_id=identity.binding_id,
+        binding_version=identity.binding_version,
+        runtime_profile_version=identity.runtime_profile_version,
     )
 
 
@@ -292,6 +369,7 @@ class MediaBridgeGrpcServer:
         on_audio_frame: AudioFrameHandler | None = None,
         on_speech_segment: SpeechSegmentHandler | None = None,
         on_session_closed: SessionClosedHandler | None = None,
+        on_session_connected: SessionConnectedHandler | None = None,
         on_playback_progress: PlaybackProgressHandler | None = None,
         on_downlink_overflow: DownlinkOverflowHandler | None = None,
     ) -> None:
@@ -304,9 +382,11 @@ class MediaBridgeGrpcServer:
         self.on_audio_frame = on_audio_frame
         self.on_speech_segment = on_speech_segment
         self.on_session_closed = on_session_closed
+        self.on_session_connected = on_session_connected
         self.on_playback_progress = on_playback_progress
         self.on_downlink_overflow = on_downlink_overflow
         self._connections: dict[str, _Connection] = {}
+        self._transport_sessions_seen: set[str] = set()
         self._closed_session_notifications: set[str] = set()
         self._server: grpc.aio.Server | None = None
 
@@ -401,7 +481,7 @@ class MediaBridgeGrpcServer:
                     if connection.session.generation_active
                     else media_pb2.GENERATION_ACTION_CANCEL
                 )
-                yield media_pb2.CoreToMedia(
+                resumed = media_pb2.CoreToMedia(
                     generation=media_pb2.GenerationControl(
                         identity=_identity_to_proto(connection.session.identity),
                         turn_id=connection.session.fence.turn_id,
@@ -409,9 +489,9 @@ class MediaBridgeGrpcServer:
                         tool_epoch=connection.session.fence.tool_epoch,
                         action=action,
                         reason="stream_reconnected",
-                        sequence=self._next_event_sequence(connection),
                     )
                 )
+                yield outgoing.prepare_for_send(resumed)
             while True:
                 message = await outgoing.get()
                 if message is None:
@@ -456,6 +536,8 @@ class MediaBridgeGrpcServer:
                         interaction_authority=interaction_authority,
                     )
                     connection.outgoing = outgoing
+                    if self.on_session_connected is not None:
+                        await self.on_session_connected(connection.session)
                     holder["connection"] = connection
                     ready.set()
                     continue
@@ -555,6 +637,7 @@ class MediaBridgeGrpcServer:
             outgoing=_PriorityOutgoing(self.max_pending_messages),
         )
         self._connections[identity.session_id] = connection
+        self._transport_sessions_seen.add(identity.session_id)
         return connection
 
     def _close_connection(self, connection: _Connection) -> None:
@@ -587,12 +670,6 @@ class MediaBridgeGrpcServer:
         self._closed_session_notifications.add(session_id)
         if self.on_session_closed is not None:
             await self.on_session_closed(session)
-
-    @staticmethod
-    def _next_event_sequence(connection: _Connection) -> int:
-        sequence = connection.next_event_sequence
-        connection.next_event_sequence += 1
-        return sequence
 
     async def _handle_request(
         self,
@@ -880,11 +957,7 @@ class MediaBridgeGrpcServer:
         """Wake the writer immediately when bounded delivery is exhausted."""
 
         connection.closed = True
-        while True:
-            try:
-                connection.outgoing.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        connection.outgoing.clear()
         if terminal is not None:
             connection.outgoing.put_nowait(terminal)
         else:
@@ -922,7 +995,6 @@ class MediaBridgeGrpcServer:
                 tool_epoch=next_fence.tool_epoch,
                 action=media_pb2.GENERATION_ACTION_CANCEL,
                 reason="downlink_queue_full",
-                sequence=self._next_event_sequence(connection),
                 task_epoch=connection.session.task_epoch,
                 context_version=connection.session.context_version,
             )
@@ -963,6 +1035,52 @@ class MediaBridgeGrpcServer:
             connection.session.ack_downlink(frame.sequence)
         return enqueued
 
+    async def emit_pcm_when_connected(
+        self,
+        session_id: str,
+        frame: PCMFrame,
+        *,
+        timeout_s: float,
+    ) -> bool:
+        """Backpressure one provider frame across a bounded reconnect gap.
+
+        No audio is queued while no gRPC transport owns the Session. The
+        caller keeps exactly its current frame and retries only after a newer
+        stream epoch is connected, so old WSS queues are never replayed.
+        """
+
+        if timeout_s <= 0:
+            return await self.emit_pcm(session_id, frame)
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        while True:
+            connection = self._connections.get(session_id)
+            candidate = (
+                replace(frame, identity=connection.session.identity)
+                if connection is not None and not connection.closed
+                else frame
+            )
+            if await self.emit_pcm(session_id, candidate):
+                return True
+            if connection is not None and not connection.closed:
+                # A stable current transport rejected this frame for a real
+                # gate/sequence/queue reason. Waiting cannot make it valid;
+                # only retry when this attempt raced a replacement epoch.
+                if self._connections.get(session_id) is connection and not connection.closed:
+                    return False
+            session = self.bridge.get(session_id)
+            if session is None or session.state == "closed" or not session.generation_active:
+                return False
+            # A session inserted directly into the state gate (unit/local
+            # adapter paths) was never attached to a gRPC transport. Preserve
+            # the historical immediate rejection; reconnect waiting begins
+            # only after a real connection existed and then detached.
+            if connection is None and session_id not in self._transport_sessions_seen:
+                return False
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(0.02, remaining))
+
     async def emit_generation(
         self,
         session_id: str,
@@ -997,7 +1115,6 @@ class MediaBridgeGrpcServer:
                     tool_epoch=fence.tool_epoch,
                     action=action,
                     reason=reason[:256],
-                    sequence=self._next_event_sequence(connection),
                     task_epoch=task_epoch,
                     context_version=context_version,
                 )
@@ -1066,19 +1183,12 @@ class MediaBridgeGrpcServer:
             task_epoch,
             context_version,
         )
-        sequence = self._next_event_sequence(connection)
-        effect_id = (
-            f"{connection.session.identity.session_id}:"
-            f"{connection.session.identity.stream_epoch}:effect:{sequence}"
-        )
         return await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
                 realtime_effect=media_pb2.RealtimeEffect(
-                    effect_id=effect_id,
                     session_id=connection.session.identity.session_id,
                     stream_epoch=connection.session.identity.stream_epoch,
-                    sequence=sequence,
                     effect_kind=effect_kind,
                     source_event_id=source_event_id[:128],
                     turn_id=fence.turn_id,
@@ -1134,18 +1244,11 @@ class MediaBridgeGrpcServer:
             task_epoch,
             context_version,
         )
-        sequence = self._next_event_sequence(connection)
-        effect_id = (
-            f"{connection.session.identity.session_id}:"
-            f"{connection.session.identity.stream_epoch}:floor:{floor_epoch}:{sequence}"
-        )
         return await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
                 floor_effect=media_pb2.FloorEffect(
-                    effect_id=effect_id,
                     identity=_identity_to_proto(connection.session.identity),
-                    sequence=sequence,
                     floor_state=floor_state,
                     floor_epoch=floor_epoch,
                     source_event_id=source_event_id[:128],
@@ -1179,11 +1282,6 @@ class MediaBridgeGrpcServer:
             task_epoch,
             context_version,
         )
-        sequence = self._next_event_sequence(connection)
-        event_id = (
-            f"{connection.session.identity.session_id}:"
-            f"{connection.session.identity.stream_epoch}:{sequence}"
-        )
         enqueued = await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
@@ -1195,10 +1293,8 @@ class MediaBridgeGrpcServer:
                             "v": 1,
                             "protocol": "media-v1",
                             "type": event_type,
-                            "event_id": event_id,
                             "session_id": connection.session.identity.session_id,
                             "stream_epoch": connection.session.identity.stream_epoch,
-                            "sequence": sequence,
                             "payload": payload,
                             "turn_id": turn_id,
                             "generation_id": generation_id,
@@ -1215,7 +1311,6 @@ class MediaBridgeGrpcServer:
                     tool_epoch=tool_epoch,
                     task_epoch=task_epoch,
                     context_version=context_version,
-                    sequence=sequence,
                 )
             ),
         )
@@ -1341,7 +1436,6 @@ class MediaBridgeGrpcServer:
             task_epoch,
             context_version,
         )
-        sequence = self._next_event_sequence(connection)
         return await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
@@ -1357,7 +1451,6 @@ class MediaBridgeGrpcServer:
                     speaker_class=speaker_class or segment.speaker_class or "",
                     generation_id=fence.generation_id,
                     tool_epoch=fence.tool_epoch,
-                    sequence=sequence,
                     task_epoch=task_epoch,
                     context_version=context_version,
                     loss_concealed=segment.loss_concealed,
@@ -1509,13 +1602,8 @@ class MediaBridgeGrpcServer:
         observed_at_ms: int = 0,
         authoritative_context_version: int = 0,
     ) -> Any:
-        sequence = self._next_event_sequence(connection)
-        shadow_sequence = connection.next_shadow_sequence
-        connection.next_shadow_sequence += 1
         return media_pb2.ShadowObservation(
             identity=_identity_to_proto(connection.session.identity),
-            sequence=sequence,
-            shadow_sequence=shadow_sequence,
             contract_version="media-v1-a6a",
             candidate_only=True,
             kind=kind,

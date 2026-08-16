@@ -41,6 +41,7 @@ class MediaOutputStreamMixin:
     if TYPE_CHECKING:
         bridge: MediaBridgeGrpcServer
         metrics: MetricsRegistry
+        reconnect_grace_s: float
         _sessions: dict[str, _MediaVoiceSession]
 
         def _event_versions(
@@ -69,6 +70,7 @@ class MediaOutputStreamMixin:
             fence: GenerationFence,
             *,
             reason: str = "cancelled",
+            cancel_timeout_s: float = 5.0,
         ) -> None: ...
 
         async def _start_selected_output(self, context: _MediaVoiceSession) -> bool: ...
@@ -92,6 +94,7 @@ class MediaOutputStreamMixin:
             progress.rendered_sample_end,
             received_sequence=progress.received_sequence,
             approximate=progress.approximate,
+            heard_eligible=not (session.identity.client_type == "device" and progress.approximate),
         )
         # Publish the cumulative acknowledged prefix under one turn/revision;
         # publishing only the newly acknowledged span would make clients
@@ -99,7 +102,7 @@ class MediaOutputStreamMixin:
         heard = context.playback.actual_heard_text(fence)
         if (
             context.provider_complete
-            and context.playback.is_fully_acknowledged(fence)
+            and context.playback.is_playback_complete(fence)
             and context.runtime.fence.matches(fence)
         ):
             await self._finish_completed_output(context, fence)
@@ -138,9 +141,7 @@ class MediaOutputStreamMixin:
                     await self._cancel_reply_task(context, fence, reason="superseded")
                     return False
                 announcement = (
-                    chunk.text
-                    if chunk.assistant_text_delta is None
-                    else chunk.assistant_text_delta
+                    chunk.text if chunk.assistant_text_delta is None else chunk.assistant_text_delta
                 )
                 if announcement:
                     context.assistant_text += announcement
@@ -189,7 +190,11 @@ class MediaOutputStreamMixin:
                     task_epoch=task_epoch,
                     context_version=context_version,
                 )
-                if not await self.bridge.emit_pcm(session_id, frame):
+                if not await self.bridge.emit_pcm_when_connected(
+                    session_id,
+                    frame,
+                    timeout_s=self.reconnect_grace_s,
+                ):
                     self.metrics.inc_media_stale_generation()
                     await self._cancel_reply_task(context, fence, reason="transport_rejected")
                     return False
@@ -267,7 +272,7 @@ class MediaOutputStreamMixin:
                 )
             # A very fast client may acknowledge the last frame before the
             # provider iterator yields completion.
-            if context.playback.is_fully_acknowledged(fence):
+            if context.playback.is_playback_complete(fence):
                 await self._finish_completed_output(context, fence)
         else:
             self._release_output_owner(context, fence, reason="provider_completed_without_audio")
@@ -360,7 +365,7 @@ class MediaOutputStreamMixin:
     ) -> None:
         if (
             not context.provider_complete
-            or not context.playback.is_fully_acknowledged(fence)
+            or not context.playback.is_playback_complete(fence)
             or not context.runtime.fence.matches(fence)
         ):
             return

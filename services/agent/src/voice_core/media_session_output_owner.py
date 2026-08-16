@@ -44,6 +44,8 @@ class MediaOutputOwnerMixin:
     async def _cancel_provider_generation(
         context: _MediaVoiceSession,
         fence: GenerationFence,
+        *,
+        timeout_s: float = 5.0,
     ) -> None:
         """Best-effort remote cancellation after the local lease is revoked."""
 
@@ -54,7 +56,15 @@ class MediaOutputOwnerMixin:
             return
         result = cancel(fence)
         if inspect.isawaitable(result):
-            await result
+            try:
+                async with asyncio.timeout(timeout_s):
+                    await result
+            except TimeoutError:
+                logger.warning(
+                    "media provider cancellation timed out session=%s generation=%s",
+                    fence.session_id,
+                    fence.generation_id,
+                )
 
     @staticmethod
     def _release_output_owner(
@@ -184,6 +194,7 @@ class MediaOutputOwnerMixin:
         fence: GenerationFence,
         *,
         reason: str = "cancelled",
+        cancel_timeout_s: float = 5.0,
     ) -> None:
         """Cancel provider work and drain the old reply task before reuse."""
 
@@ -196,7 +207,11 @@ class MediaOutputOwnerMixin:
         # A provider can own a remote stream after its local task has already
         # completed. Transport cancellation must still reach that provider.
         try:
-            await cls._cancel_provider_generation(context, fence)
+            await cls._cancel_provider_generation(
+                context,
+                fence,
+                timeout_s=cancel_timeout_s,
+            )
         except Exception:
             logger.exception("media provider cancellation failed")
         if task is None:

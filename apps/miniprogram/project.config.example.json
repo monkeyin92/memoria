@@ -5,6 +5,10 @@
       {
         "value": "tests",
         "type": "folder"
+      },
+      {
+        "value": "design-preview",
+        "type": "folder"
       }
     ],
     "include": [

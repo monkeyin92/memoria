@@ -38,17 +38,22 @@ class FakeASR:
         self.task_sample_origin = 0
         self.events: asyncio.Queue[FunASRServerEvent] = asyncio.Queue()
         self.sent: list[tuple[bytes, int]] = []
+        self.reconnect_calls = 0
+        self.committed_samples: list[int] = []
         self.closed = False
 
     async def connect(self) -> None:
         return None
 
     async def reconnect_with_replay(self) -> None:
+        self.reconnect_calls += 1
         self.task_epoch += 1
         self.task_id = f"task-{self.task_epoch}"
         self.task_sample_origin = 320
 
     async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+        if not self.sent:
+            self.task_sample_origin = capture_start_sample
         self.sent.append((pcm, capture_start_sample))
         if len(self.sent) == 1:
             await self.events.put(
@@ -66,6 +71,9 @@ class FakeASR:
                     ),
                 )
             )
+
+    def mark_committed_sample(self, sample: int) -> None:
+        self.committed_samples.append(sample)
 
     async def aclose(self) -> None:
         self.closed = True
@@ -510,6 +518,150 @@ async def test_existing_provider_adapter_maps_asr_and_streams_existing_handlers(
     assert chunks[0].assistant_text_delta == "你好。"
     await adapter.close(identity)
     assert asr.closed
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_rebuilds_funasr_for_new_stream_epoch() -> None:
+    sessions: list[FakeASR] = []
+
+    def build_asr() -> FakeASR:
+        session = FakeASR()
+        sessions.append(session)
+        return session
+
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, build_asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    first_identity = SessionIdentity("adapter-stream-reset", stream_epoch=1)
+    first = await adapter.ingest_audio(
+        first_identity,
+        AudioFrame(first_identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+    first_task_epoch = first[0].task_epoch
+
+    second_identity = SessionIdentity(first_identity.session_id, stream_epoch=2)
+    await adapter.reset_for_stream_epoch(second_identity)
+    await sessions[0].events.put(
+        FunASRServerEvent(
+            event="result-generated",
+            task_id=sessions[0].task_id,
+            sentence=FunASRSentence(
+                sentence_id=99,
+                text="迟到旧结果",
+                begin_ms=0,
+                end_ms=20,
+                sentence_end=True,
+                heartbeat=False,
+                words=(),
+            ),
+        )
+    )
+    second = await adapter.ingest_audio(
+        second_identity,
+        AudioFrame(second_identity, 0, 0, 320, b"\x01\x00" * 320),
+    )
+
+    assert len(sessions) == 2
+    assert sessions[0].closed is True
+    assert sessions[0].reconnect_calls == 0
+    assert sessions[1].sent == [(b"\x01\x00" * 320, 0)]
+    assert [(result.text, result.stream_epoch) for result in second] == [("你好", 2)]
+    assert second[0].task_epoch > first_task_epoch
+    assert sessions[0].events.qsize() == 1
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_recovers_failed_session_at_absolute_sample() -> None:
+    sessions: list[FakeASR] = []
+
+    def build_asr() -> FakeASR:
+        session = FakeASR()
+        sessions.append(session)
+        return session
+
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, build_asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("adapter-provider-recovery", stream_epoch=1)
+    first = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+
+    await adapter.recover_after_failure(identity)
+    await adapter.reset_after_discontinuity(identity, capture_start_sample=320)
+    second = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 1, 320, 320, b"\x01\x00" * 320),
+    )
+
+    assert len(sessions) == 2
+    assert sessions[0].closed is True
+    assert sessions[1].reconnect_calls == 0
+    assert sessions[1].committed_samples == [320]
+    assert (second[0].capture_start_sample, second[0].capture_end_sample) == (320, 640)
+    assert second[0].task_epoch > first[0].task_epoch
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_rotates_funasr_at_vad_boundary() -> None:
+    class SegmentASR(FakeASR):
+        def __init__(self) -> None:
+            super().__init__()
+            self.rotation_calls = 0
+
+        async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+            self.sent.append((pcm, capture_start_sample))
+
+        async def rotate_task(self, *, require_consumed: bool = True) -> None:
+            self.rotation_calls += 1
+            assert require_consumed is False
+            previous_task_id = self.task_id
+            await self.events.put(
+                FunASRServerEvent(
+                    event="result-generated",
+                    task_id=previous_task_id,
+                    sentence=FunASRSentence(
+                        sentence_id=9,
+                        text="第二问",
+                        begin_ms=0,
+                        end_ms=20,
+                        sentence_end=True,
+                        heartbeat=False,
+                        words=(),
+                    ),
+                )
+            )
+            await self.events.put(
+                FunASRServerEvent(event="task-finished", task_id=previous_task_id)
+            )
+            self.task_epoch += 1
+            self.task_id = f"task-{self.task_epoch}"
+            self.task_sample_origin = 320
+
+    asr = SegmentASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("adapter-vad-boundary", stream_epoch=1)
+    assert not await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+
+    results = await adapter.finalize_speech_segment(identity)
+
+    assert [(result.text, result.task_epoch) for result in results] == [("第二问", 1)]
+    assert adapter.current_asr_task_epoch == 2
+    assert asr.task_id == "task-2"
+    assert await adapter.finalize_speech_segment(identity) == ()
+    assert asr.rotation_calls == 1
 
 
 @pytest.mark.asyncio
@@ -1219,7 +1371,9 @@ async def test_generation_eviction_floor_is_epoch_scoped() -> None:
 
     # Old subject (epoch 1) fills the history and advances the eviction floor.
     for generation in range(1, 5):
-        assert [chunk async for chunk in adapter.generate_reply(identity, "hi", fence(1, generation))]
+        assert [
+            chunk async for chunk in adapter.generate_reply(identity, "hi", fence(1, generation))
+        ]
     assert len(adapter._generation_started) <= 2
     assert adapter._generation_eviction_floor is not None
     # New subject reuses the same turn/generation numbers at epoch 2: it must

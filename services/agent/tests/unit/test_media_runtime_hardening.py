@@ -30,6 +30,8 @@ from services.agent.src.voice_core.replay_harness import (
     estimate_load,
 )
 from services.agent.src.voice_core.telemetry import (
+    GOLDEN_TRACE_BASE_EVENTS,
+    GOLDEN_TRACE_INTERRUPT_EVENTS,
     MediaTelemetry,
     TraceContext,
     TurnTimeline,
@@ -128,3 +130,61 @@ def test_telemetry_redacts_labels_and_bounds_timeline() -> None:
     timeline.add("turn.commit", at_monotonic_ns=30)
     assert [event.name for event in timeline.events()] == ["asr.final", "turn.commit"]
     assert not configure_otel("")
+
+
+def test_hardware_golden_trace_requires_full_fence_profile_and_safe_sample_fields() -> None:
+    context = TraceContext(
+        trace_id="0123456789abcdef0123456789abcdef",
+        session_id="session-1",
+        stream_epoch=3,
+        turn_id=4,
+        generation_id=5,
+        tool_epoch=2,
+        device_id="device-1",
+        provider_task_epoch=7,
+        runtime_profile_version=9,
+    )
+    timeline = TurnTimeline(context, max_events=32)
+    for index, name in enumerate(GOLDEN_TRACE_BASE_EVENTS):
+        timeline.add(
+            name,
+            at_monotonic_ns=index + 1,
+            fields={"device_sequence": index, "capture_start_sample": index * 320},
+        )
+    assert timeline.completion_gaps() == ()
+    assert timeline.completion_gaps(require_interrupt=True) == GOLDEN_TRACE_INTERRUPT_EVENTS
+    for index, name in enumerate(GOLDEN_TRACE_INTERRUPT_EVENTS, start=100):
+        timeline.add(name, at_monotonic_ns=index, fields={"reason": "hard_stop"})
+    assert timeline.completion_gaps(require_interrupt=True) == ()
+    assert context.fields()["runtime_profile_version"] == 9
+
+
+def test_hardware_trace_rejects_transcript_audio_and_secret_fields() -> None:
+    timeline = TurnTimeline(TraceContext(trace_id="trace", session_id="session", stream_epoch=1))
+    for field in ("text", "transcript", "audio_payload", "wifi_password", "provider_token"):
+        with pytest.raises(ValueError, match="sensitive"):
+            timeline.add("asr.final", fields={field: "forbidden"})
+    with pytest.raises(ValueError, match="not allowlisted"):
+        timeline.add("asr.final", fields={"family_name": "forbidden"})
+
+
+def test_hardware_metric_names_are_allowlisted_without_identifier_labels() -> None:
+    metrics = MediaTelemetry()
+    for name in (
+        "device_media_connect_success_total",
+        "device_media_reconnect_total",
+        "device_uplink_gap_samples_total",
+        "device_downlink_queue_ms",
+        "device_playback_ack_lag_ms",
+        "stale_generation_drop_total",
+        "interrupt_candidate_total",
+        "interrupt_confirmed_total",
+        "interrupt_false_positive_total",
+        "interrupt_audible_stop_ms",
+        "aec_far_end_false_vad_total",
+        "aec_double_talk_asr_error_rate",
+        "runtime_profile_version_lag",
+    ):
+        metrics.inc(name)
+    with pytest.raises(ValueError, match="not allowlisted"):
+        metrics.inc("stale_generation_drop_total", labels={"device_id": "device-1"})

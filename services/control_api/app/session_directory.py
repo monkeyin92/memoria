@@ -51,7 +51,7 @@ class SessionRoute:
     expires_at: datetime
     owner_instance_id: str
     ownership_epoch: int
-    media_runtime: Literal["livekit", "streamcore"] = "livekit"
+    media_runtime: Literal["livekit", "streamcore", "direct_voice_core"] = "livekit"
     state: Literal["active", "draining"] = "active"
 
     @property
@@ -87,6 +87,12 @@ class SessionRoute:
         value["lease_expires_at"] = value["expires_at"]
         value["generation_id"] = self.generation
         return value
+
+
+def _coerce_media_runtime(value: object) -> Literal["livekit", "streamcore", "direct_voice_core"]:
+    if value == "direct_voice_core":
+        return "direct_voice_core"
+    return "streamcore" if value == "streamcore" else "livekit"
 
 
 Clock = Callable[[], datetime]
@@ -182,7 +188,7 @@ return 1
         ttl_s: int | None,
         owner_instance_id: str,
         ownership_epoch: int,
-        media_runtime: Literal["livekit", "streamcore"] = "livekit",
+        media_runtime: Literal["livekit", "streamcore", "direct_voice_core"] = "livekit",
         state: Literal["active", "draining"] = "active",
     ) -> SessionRoute:
         self._validate_ids(
@@ -244,9 +250,7 @@ return 1
                 expires_at=expires_at.astimezone(UTC),
                 owner_instance_id=str(value.get("owner_instance_id") or value["media_edge_id"]),
                 ownership_epoch=max(1, int(value.get("ownership_epoch", 1))),
-                media_runtime=(
-                    "streamcore" if value.get("media_runtime") == "streamcore" else "livekit"
-                ),
+                media_runtime=_coerce_media_runtime(value.get("media_runtime")),
                 state="draining" if value.get("state") == "draining" else "active",
             )
         except (KeyError, TypeError, ValueError) as exc:
@@ -283,7 +287,7 @@ return 1
         stream_epoch: int = 1,
         generation: int = 0,
         ttl_s: int | None = None,
-        media_runtime: Literal["livekit", "streamcore"] = "livekit",
+        media_runtime: Literal["livekit", "streamcore", "direct_voice_core"] = "livekit",
         owner_instance_id: str | None = None,
     ) -> SessionRoute:
         owner = (owner_instance_id or media_edge_id).strip()

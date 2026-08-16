@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"regexp"
 	"testing"
 	"time"
 
@@ -22,6 +23,24 @@ type fakeVoiceCore struct {
 	received           chan *mediav1.MediaToCore
 	requestedAuthority chan mediav1.InteractionAuthority
 	effectiveAuthority mediav1.InteractionAuthority
+	helloReceived      chan *mediav1.SessionHello
+}
+
+type withholdingVoiceCore struct {
+	mediav1.UnimplementedVoiceMediaBridgeServer
+	helloReceived chan struct{}
+	streamDone    chan error
+}
+
+func (f *withholdingVoiceCore) Connect(stream grpc.BidiStreamingServer[mediav1.MediaToCore, mediav1.CoreToMedia]) error {
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	close(f.helloReceived)
+	<-stream.Context().Done()
+	err := stream.Context().Err()
+	f.streamDone <- err
+	return err
 }
 
 func (f *fakeVoiceCore) Connect(stream grpc.BidiStreamingServer[mediav1.MediaToCore, mediav1.CoreToMedia]) error {
@@ -33,6 +52,9 @@ func (f *fakeVoiceCore) Connect(stream grpc.BidiStreamingServer[mediav1.MediaToC
 		return statusError("hello is required")
 	}
 	identity := first.GetHello().GetIdentity()
+	if f.helloReceived != nil {
+		f.helloReceived <- first.GetHello()
+	}
 	if f.requestedAuthority != nil {
 		f.requestedAuthority <- first.GetHello().GetInteractionAuthority()
 	}
@@ -96,6 +118,7 @@ func TestVoiceCoreBridgeNegotiatesAndRecordsEffectiveInteractionAuthority(t *tes
 	service := &fakeVoiceCore{
 		received: make(chan *mediav1.MediaToCore, 1), requestedAuthority: make(chan mediav1.InteractionAuthority, 1),
 		effectiveAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW,
+		helloReceived:      make(chan *mediav1.SessionHello, 1),
 	}
 	bridge, cleanup := newBufconnBridge(t, service)
 	defer cleanup()
@@ -111,6 +134,77 @@ func TestVoiceCoreBridgeNegotiatesAndRecordsEffectiveInteractionAuthority(t *tes
 	}
 	if session.InteractionAuthority() != mediav1.InteractionAuthority_INTERACTION_AUTHORITY_GO_SHADOW {
 		t.Fatalf("effective authority was not retained: %v", session.InteractionAuthority())
+	}
+	hello := <-service.helloReceived
+	if !regexp.MustCompile(`^00-[0-9a-f]{32}-[0-9a-f]{16}-01$`).MatchString(hello.GetTraceparent()) {
+		t.Fatalf("invalid W3C traceparent: %q", hello.GetTraceparent())
+	}
+	if session.traceparent != hello.GetTraceparent() {
+		t.Fatalf("session traceparent %q does not match hello %q", session.traceparent, hello.GetTraceparent())
+	}
+}
+
+func TestVoiceCoreBridgeHandshakeContextDoesNotOwnAcceptedStream(t *testing.T) {
+	service := &fakeVoiceCore{received: make(chan *mediav1.MediaToCore, 1)}
+	bridge, cleanup := newBufconnBridge(t, service)
+	defer cleanup()
+	streamCtx, cancelStream := context.WithCancel(context.Background())
+	defer cancelStream()
+	handshakeCtx, cancelHandshake := context.WithCancel(context.Background())
+	session, err := bridge.ConnectWithHandshakeContext(
+		streamCtx, handshakeCtx, bridgeIdentity(), bridgeFormat(16_000), bridgeFormat(24_000),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	cancelHandshake()
+	frame := AudioFrame{
+		SessionID: "s", StreamEpoch: 1, Sequence: 0, CaptureStartSample: 0,
+		FrameSamples: 160, PayloadB64: base64.StdEncoding.EncodeToString(make([]byte, 320)),
+	}
+	if err := session.SendAudio(frame); err != nil {
+		t.Fatalf("accepted stream was cancelled with its handshake context: %v", err)
+	}
+	select {
+	case received := <-service.received:
+		if received.GetAudio() == nil {
+			t.Fatalf("expected audio after handshake cancellation, got %v", received)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("accepted stream stopped delivering after handshake cancellation")
+	}
+}
+
+func TestVoiceCoreBridgeHandshakeTimeoutCancelsUnacceptedStream(t *testing.T) {
+	service := &withholdingVoiceCore{
+		helloReceived: make(chan struct{}),
+		streamDone:    make(chan error, 1),
+	}
+	bridge, cleanup := newBufconnBridge(t, service)
+	defer cleanup()
+	streamCtx, cancelStream := context.WithCancel(context.Background())
+	defer cancelStream()
+	handshakeCtx, cancelHandshake := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancelHandshake()
+	_, err := bridge.ConnectWithHandshakeContext(
+		streamCtx, handshakeCtx, bridgeIdentity(), bridgeFormat(16_000), bridgeFormat(24_000),
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("handshake timeout error=%v, want deadline exceeded", err)
+	}
+	select {
+	case <-service.helloReceived:
+	default:
+		t.Fatal("Voice Core did not receive the hello before handshake timeout")
+	}
+	select {
+	case streamErr := <-service.streamDone:
+		if !errors.Is(streamErr, context.Canceled) {
+			t.Fatalf("timed-out stream ended with %v, want context canceled", streamErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed-out handshake did not cancel its gRPC stream")
 	}
 }
 
@@ -220,13 +314,55 @@ func TestVoiceCoreBridgeFailsClosedForUnprovenGoAuthority(t *testing.T) {
 	}
 }
 
+func TestDialVoiceCoreKeepsLongLivedBridgeOutOfIdle(t *testing.T) {
+	if voiceCoreBridgeIdleTimeout != 0 {
+		t.Fatalf("production Voice Core bridge idle timeout=%s, want disabled", voiceCoreBridgeIdleTimeout)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	grpcServer := grpc.NewServer()
+	go func() { _ = grpcServer.Serve(listener) }()
+	defer grpcServer.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	bridge, err := dialVoiceCoreWithIdleTimeout(ctx, VoiceCoreBridgeConfig{
+		Address:                  listener.Addr().String(),
+		AllowInsecureDevelopment: true,
+	}, 20*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bridge.Close()
+
+	// Use a short test-only timeout to prove that this option controls the
+	// grpc-go channel. The production wrapper passes zero, which disables the
+	// idle transition for this process-level dependency.
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), time.Second)
+	defer waitCancel()
+	state := bridge.conn.GetState()
+	if state != connectivity.Ready {
+		t.Fatalf("bridge state=%s, want Ready before idle probe", state)
+	}
+	if !bridge.conn.WaitForStateChange(waitCtx, state) {
+		t.Fatalf("bridge state did not change during idle probe: %v", waitCtx.Err())
+	}
+	if state = bridge.conn.GetState(); state != connectivity.Idle {
+		t.Fatalf("bridge state=%s after idle timeout, want Idle", state)
+	}
+}
+
 // Keep the fake independent from generated status helpers; the test only
 // needs a non-nil error to terminate the server stream.
 type statusError string
 
 func (e statusError) Error() string { return string(e) }
 
-func newBufconnBridge(t *testing.T, service *fakeVoiceCore) (*VoiceCoreBridge, func()) {
+func newBufconnBridge(t *testing.T, service mediav1.VoiceMediaBridgeServer) (*VoiceCoreBridge, func()) {
 	t.Helper()
 	listener := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
@@ -265,6 +401,7 @@ func newBufconnBridge(t *testing.T, service *fakeVoiceCore) (*VoiceCoreBridge, f
 func bridgeIdentity() BridgeIdentity {
 	return BridgeIdentity{
 		SessionID: "s", AccountID: "a", ParticipantID: "p", DeviceID: "d", ClientType: "device", StreamEpoch: 1,
+		SubjectID: "subject", BindingID: "binding", BindingVersion: 1, RuntimeProfileVersion: 1,
 	}
 }
 

@@ -104,9 +104,10 @@ def _client_info(value: Mapping[str, object]) -> None:
 
 
 def _safe_protocol_id(value: str, *, field: str) -> str:
-    if not isinstance(value, str) or re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value
-    ) is None:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value) is None
+    ):
         raise InvalidOnboardingRequest(f"{field} is invalid")
     return value
 
@@ -295,9 +296,7 @@ class DeviceOnboardingService:
         client: Mapping[str, object],
     ) -> dict[str, object]:
         actor_id = _safe_protocol_id(actor_id, field="actor_id")
-        client_onboarding_id = _safe_protocol_id(
-            client_onboarding_id, field="client_onboarding_id"
-        )
+        client_onboarding_id = _safe_protocol_id(client_onboarding_id, field="client_onboarding_id")
         _client_info(client)
         parsed = parse_bootstrap_qr(qr_payload)
         payload = parsed.payload
@@ -432,7 +431,11 @@ class DeviceOnboardingService:
         session = self._expire_session_if_needed(session)
         if session.state in {BootstrapState.CANCELLED, BootstrapState.EXPIRED}:
             return self._session_view(session)
-        if session.state in {BootstrapState.BOUND, BootstrapState.ACTIVATING, BootstrapState.ACTIVATED}:
+        if session.state in {
+            BootstrapState.BOUND,
+            BootstrapState.ACTIVATING,
+            BootstrapState.ACTIVATED,
+        }:
             raise BindingConflict("activated onboarding cannot be cancelled")
         updated = self.store.transition_session(  # type: ignore[attr-defined]
             onboarding_session_id,
@@ -502,7 +505,9 @@ class DeviceOnboardingService:
         onboarding_session_id: str,
         proof: DeviceOnlineProof | Mapping[str, object],
     ) -> dict[str, object]:
-        normalized = proof if isinstance(proof, DeviceOnlineProof) else DeviceOnlineProof.from_mapping(proof)
+        normalized = (
+            proof if isinstance(proof, DeviceOnlineProof) else DeviceOnlineProof.from_mapping(proof)
+        )
         session = self._expire_session_if_needed(self._session(onboarding_session_id))
         device = self._device(normalized.device_id)
         if session.device_id != normalized.device_id:
@@ -589,7 +594,10 @@ class DeviceOnboardingService:
         }:
             if existing.actor_id != actor_id:
                 raise ClaimConflict()
-            if existing.idempotency_key == idempotency_key or existing.status is ClaimStatus.COMMITTED:
+            if (
+                existing.idempotency_key == idempotency_key
+                or existing.status is ClaimStatus.COMMITTED
+            ):
                 return self._claim_view(existing)
         now = self._now()
         claim = ClaimReservation(
@@ -726,9 +734,7 @@ class DeviceOnboardingService:
             device_media_endpoint="wss://media.invalid",
         )
 
-    def _binding_authority_result(
-        self, *, binding: BindingRecord
-    ) -> BindingAuthorityResult:
+    def _binding_authority_result(self, *, binding: BindingRecord) -> BindingAuthorityResult:
         if self.binding_authority is not None:
             result = self.binding_authority.commit_binding(
                 actor_id=binding.actor_id,
@@ -739,7 +745,10 @@ class DeviceOnboardingService:
             )
             if not isinstance(result, BindingAuthorityResult):
                 raise IntegrationUnavailable("binding authority returned an invalid result")
-            if result.binding_id != binding.binding_id or result.binding_version != binding.binding_version:
+            if (
+                result.binding_id != binding.binding_id
+                or result.binding_version != binding.binding_version
+            ):
                 raise BindingConflict("binding authority result does not match claim")
             return result
         return self._local_binding_authority(
@@ -860,9 +869,7 @@ class DeviceOnboardingService:
             authority=authority,
         )
 
-    def get_binding_intent(
-        self, *, actor_id: str, claim_id: str
-    ) -> BindingRecord | None:
+    def get_binding_intent(self, *, actor_id: str, claim_id: str) -> BindingRecord | None:
         """Return the persisted Saga intent for an in-process Control adapter."""
 
         claim = self._claim(claim_id)
@@ -1140,8 +1147,7 @@ class DeviceOnboardingService:
             challenge.device_id != device_id
             or challenge.certificate_id != certificate_id
             or challenge.client_id != client_id
-            or challenge.nonce_hash
-            != hash_b64url(nonce, field="media_challenge_nonce")
+            or challenge.nonce_hash != hash_b64url(nonce, field="media_challenge_nonce")
         ):
             raise InvalidDeviceProof("device media challenge does not match")
         if challenge.used_at is not None or challenge.expires_at <= self._now():
@@ -1166,6 +1172,18 @@ class DeviceOnboardingService:
         )
         current = self._device(device_id)
         activation = self._assert_device_media_ready(current)
+        binding = cast(
+            BindingRecord | None,
+            self.store.get_binding(current.binding_id),  # type: ignore[attr-defined]
+        )
+        if binding is None:
+            raise BindingConflict("active device binding is unavailable")
+        subject_id = str(binding.initialization.primary_subject.get("person_id", ""))
+        if not subject_id:
+            raise BindingConflict("active device binding has no primary subject")
+        runtime_profile_version = int(cast(int, activation.manifest["runtime_profile_version"]))
+        if runtime_profile_version < 1:
+            raise BindingConflict("activation runtime profile version is invalid")
         assert current.actor_id is not None
         assert current.binding_id is not None
         assert current.binding_version is not None
@@ -1174,8 +1192,12 @@ class DeviceOnboardingService:
             "device_id": current.device_id,
             "binding_id": current.binding_id,
             "binding_version": current.binding_version,
+            "subject_id": subject_id,
+            "runtime_profile_version": runtime_profile_version,
             "activation_id": activation.activation_id,
             "activation_version": activation.activation_version,
+            "firmware_version": current.firmware_version,
+            "board_profile": current.product_model,
         }
 
     # ------------------------------------------------------------------

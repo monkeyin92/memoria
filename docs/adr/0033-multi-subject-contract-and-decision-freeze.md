@@ -7,7 +7,7 @@ date: 2026-08-09
 
 ## 背景
 
-`Memoria_多用户场景产品策略与架构开发调整方案_2026-08-09.md` 第 0/1/5/7/8/9 章定义了多年龄段的统一平台模型：首次绑定是产品一级分流入口，但运行时必须按当前说话人、年龄证据、关系、设备状态和风险状态动态决策。此前仓库中同名枚举（`service_mode`、`subject_category`、`speaker_state` 等）散落在 Agent、Control API、Guardian、Archive 与客户端，存在同名不同值的漂移风险，且缺少统一的 fail-closed 语义。
+本 ADR 冻结了原多主体方案中的长期决策：Memoria 是多年龄段统一平台，首次绑定是产品一级分流入口，但运行时必须按当前说话人、年龄证据、关系、设备状态和风险状态动态决策。执行路径与依赖分别由 `docs/architecture/multi-subject-path-map.md` 和 `docs/architecture/multi-subject-pr-plan.md` 维护，不再依赖一次性方案文档。此前仓库中同名枚举（`service_mode`、`subject_category`、`speaker_state` 等）散落在 Agent、Control API、Guardian、Archive 与客户端，存在同名不同值的漂移风险，且缺少统一的 fail-closed 语义。
 
 ## 决策
 

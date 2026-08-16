@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def test_production_services_use_separate_env_files_and_persistent_agent_spool() -> None:
     compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    control = compose.split("  control-api:\n", 1)[1].split("  agent:\n", 1)[0]
 
     assert "/etc/memoria.env" not in compose
     assert "/etc/memoria-control-api.env" in compose
@@ -19,6 +20,9 @@ def test_production_services_use_separate_env_files_and_persistent_agent_spool()
     assert "/etc/memoria-miniprogram-gateway.env" in compose
     assert "source: /var/lib/memoria-agent" in compose
     assert "target: /data" in compose
+    assert "source: /etc/memoria-media-runtime" in control
+    assert "target: /etc/memoria-media-runtime" in control
+    assert "read_only: true" in control
 
 
 def test_media_bridge_uses_the_shared_production_agent_session_factory() -> None:
@@ -34,6 +38,21 @@ def test_media_bridge_uses_the_shared_production_agent_session_factory() -> None
     assert f"MEDIA_BRIDGE_SESSION_FACTORY={factory}" in (
         ROOT / "infra/memoria.env.production.example"
     ).read_text(encoding="utf-8")
+
+
+def test_python_media_sidecars_run_as_modules_from_app_root() -> None:
+    compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    reporter = compose.split("  media-slo-reporter:\n", 1)[1].split(
+        "  voice-core-media-bridge:\n", 1
+    )[0]
+    bridge = compose.split("  voice-core-media-bridge:\n", 1)[1].split(
+        "  device-state-redis:\n", 1
+    )[0]
+
+    assert "- -m\n      - scripts.run_media_slo_reporter" in reporter
+    assert "- -m\n      - scripts.run_media_bridge" in bridge
+    assert "/app/scripts/run_media_slo_reporter.py" not in reporter
+    assert "/app/scripts/run_media_bridge.py" not in bridge
 
 
 def test_production_agent_healthcheck_uses_accepted_heartbeat_checker() -> None:
@@ -122,7 +141,7 @@ def test_device_media_gateway_is_isolated_and_headers_never_enter_the_url() -> N
     assert "access_log off;" in device_media
 
 
-def test_miniprogram_media_keeps_443_route_with_8443_as_the_active_url() -> None:
+def test_miniprogram_media_route_is_explicitly_legacy_rollback_only() -> None:
     media_path = ROOT / "infra" / "nginx-memoria-miniprogram-media.conf"
     assert media_path.is_file()
     media = media_path.read_text(encoding="utf-8")
@@ -145,6 +164,8 @@ def test_miniprogram_media_keeps_443_route_with_8443_as_the_active_url() -> None
         "wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media"
     ) in example
     assert "wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media" in runbook
+    assert "已退役的原生小程序媒体兼容回滚入口" in runbook
+    assert "只能用于明确的 legacy 回滚" in runbook
 
 
 def test_server_smoke_covers_response_plan_safety_contract() -> None:
@@ -189,6 +210,10 @@ def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> No
         "MEMORIA_DB_IDENTITY_PASSWORD": "memoria_identity",
         "MEMORIA_DB_IDENTITY_REGISTRATION_PASSWORD": "memoria_identity_registration",
         "MEMORIA_DB_CONSENT_PASSWORD": "memoria_consent",
+        "MEMORIA_DB_DEVICE_ONBOARDING_API_PASSWORD": "memoria_device_onboarding_api",
+        "MEMORIA_DB_DEVICE_ONBOARDING_MAINTENANCE_PASSWORD": (
+            "memoria_device_onboarding_maintenance"
+        ),
         "MEMORIA_DB_SESSION_API_PASSWORD": "memoria_session_api",
         "MEMORIA_DB_ACTION_EXECUTOR_PASSWORD": "memoria_action_executor",
         "MEMORIA_DB_SESSION_PROJECTOR_PASSWORD": "memoria_session_projector",
@@ -218,6 +243,7 @@ def test_low_cost_data_stack_is_isolated_pinned_and_not_publicly_exposed() -> No
         "007-evolution-schema.sql",
         "008-guardian-schema.sql",
         "009-memory-scope-schema.sql",
+        "010-device-onboarding-schema.sql",
     )
     assert all(schema_mount in compose for schema_mount in schema_mounts)
     assert all(
@@ -262,6 +288,22 @@ def test_authoritative_postgres_upgrade_has_one_entrypoint_and_compatibility_wra
     assert "upgrade_authoritative_postgres.sh" in gate
     assert gate.count("verify_authoritative_postgres.sh") == 2
     assert "scripts/tests/run_authoritative_postgres_gate.sh" in ci
+    assert "010-device-onboarding-schema.sql" in gate
+
+    postgres_init = (ROOT / "infra" / "postgres" / "init-memoria.sh").read_text(
+        encoding="utf-8"
+    )
+    required_role_passwords: set[str] = set()
+    for line in postgres_init.splitlines():
+        if not line.startswith(': "$') or "MEMORIA_DB_" not in line:
+            continue
+        suffix = line.split("MEMORIA_DB_", 1)[1].split(":", 1)[0]
+        required_role_passwords.add(f"MEMORIA_DB_{suffix}")
+    assert required_role_passwords
+    for password_env in required_role_passwords:
+        assert f"export {password_env}=" in gate
+        assert f"-e {password_env}" in gate
+        assert f"\n{password_env}\n" in gate
 
     for legacy_name in (
         "upgrade_evolution_postgres.sh",
@@ -629,6 +671,7 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
             "MEDIA_EDGE_JWT_AUDIENCE": "memoria-media",
             "MEDIA_EDGE_INTERACTION_AUTHORITY": "python_authoritative",
             "MEDIA_EDGE_VOICE_CORE_ADDR": "voice-core-media-bridge:7001",
+            "MEDIA_EDGE_WEBRTC_ENABLED": "false",
             "MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON": "[]",
             "MEDIA_EDGE_WEBRTC_PUBLIC_IPS": "198.51.100.10",
             "MEDIA_EDGE_WEBRTC_UDP_PORT_MIN": "40000",
@@ -644,6 +687,7 @@ def test_production_env_split_keeps_media_edge_trust_boundary_separate() -> None
     assert media_edge["MEDIA_EDGE_JWT_SECRET"] == control["STREAMCORE_TOKEN_SECRET"]
     assert media_edge["MEDIA_EDGE_INTERACTION_AUTHORITY"] == "python_authoritative"
     assert media_edge["MEDIA_EDGE_VOICE_CORE_ADDR"] == "voice-core-media-bridge:7001"
+    assert media_edge["MEDIA_EDGE_WEBRTC_ENABLED"] == "false"
     assert media_edge["MEDIA_EDGE_WEBRTC_ICE_SERVERS_JSON"] == "[]"
     assert media_edge["MEDIA_EDGE_WEBRTC_PUBLIC_IPS"] == "198.51.100.10"
     assert media_edge["MEDIA_EDGE_WEBRTC_UDP_PORT_MIN"] == "40000"
@@ -813,3 +857,75 @@ def test_production_env_split_rejects_a_reused_spool_encryption_key() -> None:
                 "MEMORIA_ARCHIVE_OBJECT_ENCRYPTION_KEY": shared,
             }
         )
+
+
+def test_media_edge_direct_device_ingress_uses_new_loopback_port_and_exact_path() -> None:
+    compose = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
+    edge = compose.split("  media-edge:\n", 1)[1]
+    device_edge = (ROOT / "infra" / "nginx-memoria-device-edge.conf").read_text(encoding="utf-8")
+    https_conf = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
+    legacy = (ROOT / "infra" / "nginx-memoria-device-media.conf").read_text(encoding="utf-8")
+    example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
+    runbook = (ROOT / "docs" / "production-deployment.md").read_text(encoding="utf-8")
+
+    # Direct device WSS is published loopback-only to a NEW media-edge port and
+    # never reuses the legacy gateway port 8793.
+    assert "127.0.0.1:8794:8082" in edge
+    assert 'MEDIA_EDGE_DEVICE_WSS_ADDR: ":8082"' in edge
+    assert "profiles:\n      - media-runtime" in edge
+    assert "include /etc/nginx/snippets/memoria-device-edge.conf;" in https_conf
+    assert "include /etc/nginx/snippets/memoria-device-media.conf;" in https_conf
+    exact = "location = /memoria-device-edge/v1/device/media {"
+    assert exact in device_edge
+    block = device_edge.split(exact, 1)[1].split("}", 1)[0]
+    assert "proxy_pass http://127.0.0.1:8794/v1/device/media;" in block
+    assert "proxy_set_header Authorization $http_authorization;" in block
+    assert "proxy_set_header X-Client-ID $http_x_client_id;" in block
+    assert "proxy_buffering off;" in block
+    assert "access_log off;" in block
+    assert "8793" not in block
+    # Legacy exact gateway route remains untouched.
+    assert "location = /memoria-device-media/v1/device/media {" in legacy
+    assert "proxy_pass http://127.0.0.1:8793/v1/device/media;" in legacy
+    # Direct device media stays default-off.
+    assert "DEVICE_MEDIA_RUNTIME=livekit_compat" in example
+    assert "DEVICE_MEDIA_DIRECT_ROLLOUT_MODE=allowlist" in example
+    assert "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS=" in example
+    assert "MEDIA_EDGE_DEVICE_WSS_ENABLED=false" in example
+    assert "device-state-redis:" in compose
+    assert "--tls-auth-clients" in compose
+    assert "device-state-redis-healthcheck-client.crt" in compose
+    assert "condition: service_healthy" in edge
+    assert "wss://aigcnice.com:8443/memoria-device-edge/v1/device/media" in runbook
+    assert "公共 8080 不承载设备 WSS" in runbook
+
+
+def test_nginx_publicly_blocks_v1_internal_routes_without_touching_container_urls() -> None:
+    nginx = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
+
+    # The public TLS server block must never proxy Control-internal v1
+    # routes (device session close reports, media-runtime SLO).
+    exact = "location ^~ /memoria-api/v1/internal/ {"
+    assert nginx.count(exact) == 1
+    block = nginx.split(exact, 1)[1].split("}", 1)[0]
+    assert block.strip() == "return 404;"
+    assert "proxy_pass" not in block
+
+    # The v1 internal block sits next to the legacy internal block and
+    # always ahead of the generic /memoria-api/ fallback so a later move
+    # cannot silently re-expose it.
+    legacy_internal = "location ^~ /memoria-api/internal/ {"
+    fallback = "location ^~ /memoria-api/ {"
+    assert nginx.index(legacy_internal) < nginx.index(exact) < nginx.index(fallback)
+
+    # Internal container URLs use Docker DNS (control-api:8000) and must
+    # never be routed through the public nginx server block.
+    assert "http://control-api:8000/v1/internal/device-close" not in nginx
+    assert "http://control-api:8000/v1/internal/media-runtime/slo" not in nginx
+    for snippet in (
+        "nginx-memoria-device-edge.conf",
+        "nginx-memoria-device-media.conf",
+        "nginx-memoria-miniprogram-media.conf",
+        "nginx-memoria-loopback-smoke.conf",
+    ):
+        assert exact not in (ROOT / "infra" / snippet).read_text(encoding="utf-8")

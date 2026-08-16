@@ -27,6 +27,7 @@ func testFrame(sessionID string, epoch, seq uint64, generation uint64) AudioFram
 
 func TestPublicAndInternalHandlersSeparateOperationalRoutes(t *testing.T) {
 	server := NewServer(JWTVerifier{}, 4)
+	server.InternalControlToken = "test-internal-control-token-material-0001"
 	public := httptest.NewRecorder()
 	server.PublicHandler().ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if public.Code != http.StatusNotFound {
@@ -41,6 +42,70 @@ func TestPublicAndInternalHandlersSeparateOperationalRoutes(t *testing.T) {
 	server.PublicHandler().ServeHTTP(publicReady, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if publicReady.Code != http.StatusNotFound {
 		t.Fatalf("public readiness route status=%d, want 404", publicReady.Code)
+	}
+	server.DeviceWSS = NewDeviceWSServer(DeviceJWTVerifier{})
+	publicDeviceWSS := httptest.NewRecorder()
+	server.PublicHandler().ServeHTTP(
+		publicDeviceWSS,
+		httptest.NewRequest(http.MethodGet, DeviceMediaEndpoint, nil),
+	)
+	if publicDeviceWSS.Code != http.StatusNotFound {
+		t.Fatalf("public device WSS status=%d, want 404", publicDeviceWSS.Code)
+	}
+	publicInvalidation := httptest.NewRecorder()
+	server.PublicHandler().ServeHTTP(
+		publicInvalidation,
+		httptest.NewRequest(
+			http.MethodPost,
+			"/v1/internal/device-runtime/invalidate",
+			strings.NewReader(`{"device_id":"dev_1","profile_version":2,"apply_at":"next_session"}`),
+		),
+	)
+	if publicInvalidation.Code != http.StatusNotFound {
+		t.Fatalf("public runtime invalidation status=%d, want 404", publicInvalidation.Code)
+	}
+	internalInvalidation := httptest.NewRecorder()
+	unauthorizedRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/internal/device-runtime/invalidate",
+		strings.NewReader(`{"device_id":"dev_1","profile_version":2,"apply_at":"next_session"}`),
+	)
+	server.InternalHandler().ServeHTTP(internalInvalidation, unauthorizedRequest)
+	if internalInvalidation.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated runtime invalidation status=%d, want 401", internalInvalidation.Code)
+	}
+	internalInvalidation = httptest.NewRecorder()
+	internalRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/internal/device-runtime/invalidate",
+		strings.NewReader(`{"device_id":"dev_1","profile_version":2,"apply_at":"next_session"}`),
+	)
+	internalRequest.Header.Set(internalControlTokenHeader, server.InternalControlToken)
+	server.InternalHandler().ServeHTTP(
+		internalInvalidation,
+		internalRequest,
+	)
+	if internalInvalidation.Code != http.StatusOK ||
+		!strings.Contains(internalInvalidation.Body.String(), `"delivered":false`) {
+		t.Fatalf("internal runtime invalidation failed: status=%d body=%s", internalInvalidation.Code, internalInvalidation.Body.String())
+	}
+	unauthorizedStatus := httptest.NewRecorder()
+	server.InternalHandler().ServeHTTP(
+		unauthorizedStatus,
+		httptest.NewRequest(http.MethodGet, "/v1/internal/device-runtime/status?device_id=dev_1", nil),
+	)
+	if unauthorizedStatus.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated runtime status=%d, want 401", unauthorizedStatus.Code)
+	}
+	statusRequest := httptest.NewRequest(
+		http.MethodGet, "/v1/internal/device-runtime/status?device_id=dev_1", nil,
+	)
+	statusRequest.Header.Set(internalControlTokenHeader, server.InternalControlToken)
+	statusResponse := httptest.NewRecorder()
+	server.InternalHandler().ServeHTTP(statusResponse, statusRequest)
+	if statusResponse.Code != http.StatusOK ||
+		!strings.Contains(statusResponse.Body.String(), `"connected":false`) {
+		t.Fatalf("internal runtime status failed: status=%d body=%s", statusResponse.Code, statusResponse.Body.String())
 	}
 }
 

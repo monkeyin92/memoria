@@ -253,7 +253,25 @@ def test_task_failed_reads_header_error_message() -> None:
         }
     )
 
+    assert parsed.error_code == "InvalidParameter"
     assert parsed.error_message == "Missing required parameter payload.input"
+
+
+def test_task_failed_diagnostics_are_bounded_and_redacted() -> None:
+    parsed = parse_server_message(
+        {
+            "header": {"event": "task-failed", "task_id": "t"},
+            "payload": {
+                "code": "InvalidParameter",
+                "message": "api_key=sk_live_123456789012 for 13812345678\n",
+            },
+        }
+    )
+
+    assert parsed.error_code == "InvalidParameter"
+    assert parsed.error_message == "api_key=[REDACTED] for [手机号]"
+    assert "sk_live_123456789012" not in parsed.error_message
+    assert "\n" not in parsed.error_message
 
 
 def test_result_trace_metrics_expose_timing_without_transcript_text() -> None:

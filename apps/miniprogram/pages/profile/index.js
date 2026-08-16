@@ -290,11 +290,6 @@ Page({
     wx.navigateTo({ url: "/pages/digital-self/index" });
   },
 
-  async openSpeakerEnrollment() {
-    if (!(await requireLogin({ reason: "edit_profile" }))) return;
-    if (!this._allowSensitiveEntry("主人声纹", contracts.Capability.VoiceProfileCreate)) return;
-    wx.navigateTo({ url: "/pages/speaker-enrollment/index" });
-  },
 
   openDevice() {
     wx.switchTab({ url: "/pages/device/index" });

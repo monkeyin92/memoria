@@ -2,6 +2,7 @@ package mediaedge
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -28,8 +29,18 @@ type Server struct {
 	// transport can accept a new session.
 	DownlinkReadyProbe func() bool
 	ReadyProbe         func() bool
-	WHIPHandler        http.Handler
-	SessionCloseHook   func(string)
+	// BridgeMetricsWriter contributes process-level Voice Core channel
+	// supervision metrics to the private /metrics endpoint.
+	BridgeMetricsWriter func(io.Writer)
+	WHIPHandler         http.Handler
+	// DeviceWSS serves the hardware device endpoint /v1/device/media when
+	// configured. It owns its own ticket replay store and device leases.
+	DeviceWSS        *DeviceWSServer
+	SessionCloseHook func(string)
+	// InternalControlToken authenticates Control API requests on the private
+	// runtime-profile invalidation endpoint. Network placement is an
+	// additional boundary, not a substitute for request authentication.
+	InternalControlToken string
 	// RequireExternalDownlinkSender makes the HTTP reference queue
 	// development-only. A production embedding must expose a real media
 	// terminator and report its readiness explicitly.
@@ -83,6 +94,9 @@ func (s *Server) beginOpen() (func(), bool) {
 // provider-neutral reference server as well.
 func (s *Server) Close() error {
 	s.Draining.Store(true)
+	if s.DeviceWSS != nil {
+		s.DeviceWSS.Close()
+	}
 	// Ensure every pre-drain creator has registered before waiting for its
 	// expensive bridge/provider work to finish.
 	s.openMu.Lock()

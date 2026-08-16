@@ -86,6 +86,9 @@ class ExistingVoiceProviderAdapter:
     owns_language_model: bool = False
     _asr: FunASRSession | None = field(default=None, init=False)
     _stream_epoch: int = field(default=0, init=False)
+    _asr_task_epoch_offset: int = field(default=0, init=False)
+    _asr_task_epoch_floor: int = field(default=0, init=False)
+    _audio_since_finalize: bool = field(default=False, init=False)
     _asr_task_contexts: dict[str, tuple[int, int, int]] = field(
         default_factory=dict,
         init=False,
@@ -143,15 +146,17 @@ class ExistingVoiceProviderAdapter:
 
     @property
     def supports_delegation(self) -> bool:
-        return bool(getattr(self.language_model, "supports_delegation", True)) and callable(
-            getattr(self.language_model, "start_delegation", None)
-        ) and callable(getattr(self.language_model, "accept_output_intent", None))
+        return (
+            bool(getattr(self.language_model, "supports_delegation", True))
+            and callable(getattr(self.language_model, "start_delegation", None))
+            and callable(getattr(self.language_model, "accept_output_intent", None))
+        )
 
     @property
     def current_asr_task_epoch(self) -> int:
         """Return the provider task that has successfully connected."""
 
-        return self._asr.task_epoch if self._asr is not None else 0
+        return self._global_asr_task_epoch(self._asr) if self._asr is not None else 0
 
     @property
     def supports_turn_preparation(self) -> bool:
@@ -187,12 +192,68 @@ class ExistingVoiceProviderAdapter:
             raise RuntimeError("orchestrated language-model handler returned an invalid fence")
         return fence
 
+    def _global_asr_task_epoch(self, asr: FunASRSession) -> int:
+        return self._asr_task_epoch_offset + max(1, int(asr.task_epoch))
+
+    def _clear_asr_event_context(self) -> None:
+        self._asr_task_contexts.clear()
+        self._asr_task_order.clear()
+        self._sentence_revisions.clear()
+        self._sentence_revision_order.clear()
+
+    async def _reset_asr_session(self, stream_epoch: int) -> None:
+        """Discard provider state so ``stream_epoch`` owns a new sample origin."""
+
+        if stream_epoch < 1:
+            raise ValueError("stream_epoch must be positive")
+        previous = self._asr
+        if previous is not None:
+            self._asr_task_epoch_floor = max(
+                self._asr_task_epoch_floor,
+                self._global_asr_task_epoch(previous),
+            )
+            close = getattr(previous, "aclose", None)
+            if callable(close):
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+        self._asr = None
+        self._stream_epoch = stream_epoch
+        self._asr_task_epoch_offset = self._asr_task_epoch_floor
+        self._audio_since_finalize = False
+        self._clear_asr_event_context()
+
+    async def reset_for_stream_epoch(self, identity: SessionIdentity) -> None:
+        """Fence a transport epoch before its first PCM frame is accepted."""
+
+        stream_epoch = identity.stream_epoch
+        if stream_epoch < 1:
+            raise ValueError("stream_epoch must be positive")
+        if stream_epoch < self._stream_epoch:
+            raise ValueError("ASR stream epoch moved backwards")
+        if stream_epoch == self._stream_epoch:
+            return
+        await self._reset_asr_session(stream_epoch)
+
+    async def recover_after_failure(self, identity: SessionIdentity) -> None:
+        """Replace a failed provider task before the next frame is processed."""
+
+        if identity.stream_epoch < 1:
+            raise ValueError("stream_epoch must be positive")
+        if self._stream_epoch and identity.stream_epoch < self._stream_epoch:
+            raise ValueError("ASR stream epoch moved backwards")
+        await self._reset_asr_session(identity.stream_epoch)
+
     async def _ensure_asr(self, stream_epoch: int) -> FunASRSession:
         if self._closed:
             raise RuntimeError("media provider is closed")
         if stream_epoch < 1:
             raise ValueError("stream_epoch must be positive")
         if self._asr is None:
+            if stream_epoch < self._stream_epoch:
+                raise ValueError("ASR stream epoch moved backwards")
+            if stream_epoch > self._stream_epoch:
+                await self._reset_asr_session(stream_epoch)
             self._asr = self.asr_session_factory()
             await self._asr.connect()
             self._stream_epoch = stream_epoch
@@ -200,13 +261,8 @@ class ExistingVoiceProviderAdapter:
         elif stream_epoch < self._stream_epoch:
             raise ValueError("ASR stream epoch moved backwards")
         elif stream_epoch > self._stream_epoch:
-            await self._asr.reconnect_with_replay()
-            self._stream_epoch = stream_epoch
-            self._asr_task_contexts.clear()
-            self._asr_task_order.clear()
-            self._sentence_revisions.clear()
-            self._sentence_revision_order.clear()
-            self._remember_asr_task(self._asr, stream_epoch)
+            await self._reset_asr_session(stream_epoch)
+            return await self._ensure_asr(stream_epoch)
         return self._asr
 
     def _remember_asr_task(self, asr: FunASRSession, stream_epoch: int) -> None:
@@ -216,7 +272,7 @@ class ExistingVoiceProviderAdapter:
                 self._asr_task_order.append(task_id)
             self._asr_task_contexts[task_id] = (
                 stream_epoch,
-                max(1, asr.task_epoch),
+                self._global_asr_task_epoch(asr),
                 asr.task_sample_origin,
             )
             while len(self._asr_task_order) > self.config.max_asr_task_history:
@@ -239,6 +295,7 @@ class ExistingVoiceProviderAdapter:
             frame.payload,
             capture_start_sample=frame.capture_start_sample,
         )
+        self._audio_since_finalize = True
         # ``send_pcm`` may transparently reconnect and advance the provider
         # task. Remember both sides so queued late events retain their own
         # task epoch and absolute sample origin.
@@ -258,6 +315,46 @@ class ExistingVoiceProviderAdapter:
                 results.append(result)
         return tuple(results)
 
+    async def finalize_speech_segment(
+        self,
+        identity: SessionIdentity,
+    ) -> tuple[ASRResult, ...]:
+        """Close one VAD-authoritative ASR task and start the next on the same WS."""
+
+        if self._asr is None or not self._audio_since_finalize:
+            return ()
+        asr = await self._ensure_asr(identity.stream_epoch)
+        previous_task_id = str(getattr(asr, "task_id", "") or "")
+        if not previous_task_id:
+            raise RuntimeError("FunASR segment boundary has no active task id")
+        self._remember_asr_task(asr, identity.stream_epoch)
+        await asr.rotate_task(require_consumed=False)
+        self._remember_asr_task(asr, identity.stream_epoch)
+
+        results: list[ASRResult] = []
+        boundary_seen = False
+        # Audio ingestion continuously drains provider events. The larger
+        # history bound is a fail-closed ceiling for the small tail that can
+        # remain between the final PCM frame and task-finished.
+        for _ in range(self.config.max_asr_result_history):
+            try:
+                event = asr.events.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if event.event == "task-failed":
+                raise RuntimeError(event.error_message or "FunASR task failed")
+            if event.event == "result-generated" and event.sentence is not None:
+                result = self._map_asr_event(asr, event, identity.stream_epoch)
+                if result is not None:
+                    results.append(result)
+            if event.event == "task-finished" and event.task_id == previous_task_id:
+                boundary_seen = True
+                break
+        if not boundary_seen:
+            raise RuntimeError("FunASR task boundary event was not available to the media adapter")
+        self._audio_since_finalize = False
+        return tuple(results)
+
     async def reset_after_discontinuity(
         self,
         identity: SessionIdentity,
@@ -268,13 +365,16 @@ class ExistingVoiceProviderAdapter:
 
         if capture_start_sample < 0:
             raise ValueError("discontinuity sample must be non-negative")
+        had_active_asr = self._asr is not None
         asr = await self._ensure_asr(identity.stream_epoch)
         asr.mark_committed_sample(capture_start_sample)
-        await asr.reconnect_with_replay()
-        self._asr_task_contexts.clear()
-        self._asr_task_order.clear()
-        self._sentence_revisions.clear()
-        self._sentence_revision_order.clear()
+        # Failure recovery has already discarded the poisoned provider task. A
+        # fresh session adopts the next frame's absolute sample origin on first
+        # send and must not immediately reconnect a second time.
+        if had_active_asr:
+            await asr.reconnect_with_replay()
+        self._audio_since_finalize = False
+        self._clear_asr_event_context()
         self._remember_asr_task(asr, identity.stream_epoch)
 
     def _map_asr_event(
@@ -285,6 +385,8 @@ class ExistingVoiceProviderAdapter:
     ) -> ASRResult | None:
         sentence = event.sentence
         if sentence is None:
+            return None
+        if sentence.heartbeat and not sentence.text:
             return None
         if not event.task_id:
             return None
@@ -299,7 +401,7 @@ class ExistingVoiceProviderAdapter:
             self._remember_asr_task(asr, stream_epoch)
             task_context = (
                 stream_epoch,
-                max(1, asr.task_epoch),
+                self._global_asr_task_epoch(asr),
                 asr.task_sample_origin,
             )
         event_stream_epoch, task_epoch, sample_offset = task_context
@@ -1022,7 +1124,9 @@ class ExistingVoiceProviderAdapter:
         """Request cooperative cancellation of one generation output stream."""
 
         output_cancelled = False
-        for (output_fence, _work_id), output_event in tuple(self._output_work_cancel_events.items()):
+        for (output_fence, _work_id), output_event in tuple(
+            self._output_work_cancel_events.items()
+        ):
             if output_fence.matches(fence):
                 output_event.set()
                 output_cancelled = True

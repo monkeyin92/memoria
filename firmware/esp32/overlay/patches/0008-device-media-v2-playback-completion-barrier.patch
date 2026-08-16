@@ -1,0 +1,109 @@
+diff --git a/main/protocols/protocol.h b/main/protocols/protocol.h
+--- a/main/protocols/protocol.h
++++ b/main/protocols/protocol.h
+@@ -16,6 +16,14 @@
+     // device protocol fills it so the playback pipeline can reject frames of
+     // a flushed/stopped generation that were handed over before the flush.
+     uint32_t generation_id = 0;
++    // Downlink sample-clock position of this frame (0 = unset). The device
++    // protocol fills it so playback receipts can report an output-commit
++    // watermark in the negotiated downlink domain instead of a received
++    // position.
++    uint64_t sample_start = 0;
++    uint64_t sample_end = 0;
++    // Server-side downlink sequence of this frame; echoed by receipts.
++    uint32_t received_sequence = 0;
+ };
+ 
+ struct BinaryProtocol2 {
+diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -89,6 +89,12 @@
+     // Fired when a packet that belonged to the current playback generation
+     // failed to decode (terminal playback error).
+     std::function<void(void)> on_playback_decode_error;
++    // Fired after each decoded frame is committed to the codec output
++    // (OutputData). Carries the frame's generation, its downlink sample-clock
++    // end and the server-side received sequence so playback receipts can
++    // report an output-commit watermark instead of a network-received bound.
++    std::function<void(uint32_t generation_id, uint64_t rendered_sample_end,
++                       uint32_t received_sequence)> on_playback_output;
+ };
+ 
+ 
+@@ -102,6 +108,9 @@
+     AudioTaskType type;
+     std::vector<int16_t> pcm;
+     uint32_t timestamp = 0;
++    uint32_t generation_id = 0;
++    uint64_t sample_end = 0;
++    uint32_t received_sequence = 0;
+ };
+ 
+ struct DebugStatistics {
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -353,6 +353,13 @@
+         audio_queue_cv_.notify_all();
+         lock.unlock();
+ 
++        // The output-commit watermark must be reported before the drained
++        // edge so a pending completion finalizes with the last frame the
++        // codec output actually consumed.
++        if (callbacks_.on_playback_output) {
++            callbacks_.on_playback_output(task->generation_id, task->sample_end,
++                                          task->received_sequence);
++        }
+         if (notify_drained && callbacks_.on_playback_drained) {
+             callbacks_.on_playback_drained();
+         }
+@@ -385,6 +392,9 @@
+             auto task = std::make_unique<AudioTask>();
+             task->type = kAudioTaskTypeDecodeToPlaybackQueue;
+             task->timestamp = packet->timestamp;
++            task->generation_id = packet->generation_id;
++            task->sample_end = packet->sample_end;
++            task->received_sequence = packet->received_sequence;
+ 
+             SetDecodeSampleRate(packet->sample_rate, packet->frame_duration);
+             bool decoded = false;
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -111,6 +111,17 @@
+         }
+ #endif
+     };
++    callbacks.on_playback_output = [this](uint32_t generation_id,
++                                          uint64_t rendered_sample_end,
++                                          uint32_t received_sequence) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++        auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++        if (memoria_protocol != nullptr) {
++            memoria_protocol->NotifyPlaybackOutput(generation_id, rendered_sample_end,
++                                                   received_sequence);
++        }
++#endif
++    };
+     audio_service_.SetCallbacks(callbacks);
+ 
+     // Add state change listeners
+@@ -558,6 +569,16 @@
+     protocol_ = std::make_unique<memoria::MemoriaProtocol>();
+     static_cast<memoria::MemoriaProtocol*>(protocol_.get())
+         ->SetLocalFlushCallback([this]() { audio_service_.ResetDecoder(); });
++    static_cast<memoria::MemoriaProtocol*>(protocol_.get())
++        ->SetIsPlaybackIdleCallback([this]() { return audio_service_.IsPlaybackIdle(); });
++    static_cast<memoria::MemoriaProtocol*>(protocol_.get())
++        ->SetDeviceSettingsCallback([](uint32_t volume_limit, uint32_t screen_brightness) {
++            auto& board = Board::GetInstance();
++            board.GetAudioCodec()->SetOutputVolume(static_cast<int>(volume_limit));
++            if (auto* backlight = board.GetBacklight(); backlight != nullptr) {
++                backlight->SetBrightness(static_cast<uint8_t>(screen_brightness), true);
++            }
++        });
+ #else
+     if (ota_ != nullptr && ota_->HasMqttConfig()) {
+         protocol_ = std::make_unique<MqttProtocol>();

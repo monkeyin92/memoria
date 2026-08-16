@@ -273,28 +273,12 @@ class ConversationProjection:
         self,
         evidence: CommitEvidence,
     ) -> CommittedTurn | ProjectionRejectReason:
+        rejected = self.validate_commit(evidence)
+        if rejected is not None:
+            return rejected
         current = self._provisional
-        if current is None:
-            return ProjectionRejectReason.NO_PROVISIONAL
-        if evidence.session_id != self.session_id or evidence.fence.session_id != self.session_id:
-            return ProjectionRejectReason.SESSION_MISMATCH
-        if evidence.stream_epoch != current.stream_epoch:
-            return ProjectionRejectReason.STREAM_EPOCH_MISMATCH
-        if evidence.fence.turn_id != current.turn_id_hint:
-            return ProjectionRejectReason.TURN_FENCE_MISMATCH
-        if (
-            evidence.capture_start_sample > current.capture_start_sample
-            or evidence.capture_end_sample <= evidence.capture_start_sample
-            or evidence.capture_end_sample > current.capture_end_sample
-        ):
-            return ProjectionRejectReason.RANGE_MISMATCH
+        assert current is not None
         text = evidence.text.strip()
-        if not text:
-            return ProjectionRejectReason.EMPTY_TEXT
-        if text != current.text.strip():
-            return ProjectionRejectReason.TEXT_MISMATCH
-        if not evidence.persist_as_turn:
-            return ProjectionRejectReason.NOT_PERSISTABLE
         eligible = bool(
             evidence.history_eligible
             and evidence.speaker_evidence.speaker_class == "owner"
@@ -316,6 +300,33 @@ class ConversationProjection:
         )
         self._provisional = None
         return committed
+
+    def validate_commit(self, evidence: CommitEvidence) -> ProjectionRejectReason | None:
+        """Validate a commit without consuming its provisional turn."""
+
+        current = self._provisional
+        if current is None:
+            return ProjectionRejectReason.NO_PROVISIONAL
+        if evidence.session_id != self.session_id or evidence.fence.session_id != self.session_id:
+            return ProjectionRejectReason.SESSION_MISMATCH
+        if evidence.stream_epoch != current.stream_epoch:
+            return ProjectionRejectReason.STREAM_EPOCH_MISMATCH
+        if evidence.fence.turn_id != current.turn_id_hint:
+            return ProjectionRejectReason.TURN_FENCE_MISMATCH
+        if (
+            evidence.capture_start_sample < current.capture_start_sample
+            or evidence.capture_end_sample <= evidence.capture_start_sample
+            or evidence.capture_end_sample > current.capture_end_sample
+        ):
+            return ProjectionRejectReason.RANGE_MISMATCH
+        text = evidence.text.strip()
+        if not text:
+            return ProjectionRejectReason.EMPTY_TEXT
+        if text != current.text.strip():
+            return ProjectionRejectReason.TEXT_MISMATCH
+        if not evidence.persist_as_turn:
+            return ProjectionRejectReason.NOT_PERSISTABLE
+        return None
 
     def apply_speaker_evidence(
         self,

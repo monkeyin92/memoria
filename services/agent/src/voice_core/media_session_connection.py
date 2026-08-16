@@ -42,7 +42,10 @@ class MediaSessionConnectionMixin:
             fence: GenerationFence,
             *,
             reason: str = "cancelled",
+            cancel_timeout_s: float = 5.0,
         ) -> None: ...
+
+        def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
     async def on_client_event(
         self,
@@ -186,6 +189,7 @@ class MediaSessionConnectionMixin:
             context_stream_epoch = context.stream_epoch
             context.closed = True
             context.projection.discard_provisional(None, "session_closed")
+            self._clear_pending_turn_state(context)
         finally:
             context.turn_commit_lock.release()
         self.metrics.set_media_active_sessions(len(self._sessions))

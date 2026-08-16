@@ -62,6 +62,7 @@ from services.control_api.app.multi_subject_runtime import (
 )
 from services.control_api.app.routes import archive as archive_routes
 from services.control_api.app.routes import auth as auth_routes
+from services.control_api.app.routes import device_control as device_control_routes
 from services.control_api.app.routes import device_onboarding as device_onboarding_routes
 from services.control_api.app.routes import digital_self as digital_self_routes
 from services.control_api.app.routes import evolution as evolution_routes
@@ -1238,6 +1239,11 @@ def create_app() -> FastAPI:
     )
     # Eager defaults so tests without lifespan still work.
     app.state.settings = settings
+    # Independent Edge-to-Control close-report secret (MEDIA_EDGE_DEVICE_
+    # CLOSE_REPORT_TOKEN on the Edge side). Deliberately distinct from the
+    # Control-to-Edge runtime-control token; the internal device-close
+    # endpoint validates it before touching any private state.
+    app.state.device_close_report_token = settings.media_edge_device_close_report_token
     app.state.crisis_semantic_classifier = _crisis_semantic_classifier(settings)
     app.state.session_directory = (
         RedisSessionDirectory(settings.redis_url)
@@ -1418,6 +1424,8 @@ def create_app() -> FastAPI:
     app.include_router(build_memory_router())
     app.include_router(multi_subject_routes.router)
     app.include_router(device_onboarding_routes.router)
+    app.include_router(device_control_routes.router)
+    app.include_router(device_control_routes.internal_router)
     app.include_router(identity_lifecycle_routes.router)
     app.include_router(persona_routes.router)
     app.include_router(digital_self_routes.router)

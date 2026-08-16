@@ -43,6 +43,8 @@ def _ticket(
         client_id=client_id,
         binding_id="binding-1",
         binding_version=1,
+        subject_id="account-1",
+        runtime_profile_version=1,
         room_name="room-1",
         identity="device-dev-1",
         agent_name="duplex-zh-agent",
@@ -265,6 +267,16 @@ def test_device_wss_projects_welcome_generation_zero_onto_positive_device_fence(
     ],
 )
 def test_device_wss_rejects_missing_or_cross_bound_headers(headers: dict[str, str]) -> None:
+    with TestClient(create_app(settings=_settings())) as client:
+        with client.websocket_connect(MEDIA_PATH, headers=headers) as websocket:
+            close = websocket.receive()
+    assert close["type"] == "websocket.close"
+    assert close["code"] in {4400, 4401, 403}
+
+
+def test_legacy_device_wss_rejects_direct_edge_client_id_alias() -> None:
+    headers = _headers(_ticket())
+    headers["X-Client-ID"] = headers.pop("Client-Id")
     with TestClient(create_app(settings=_settings())) as client:
         with client.websocket_connect(MEDIA_PATH, headers=headers) as websocket:
             close = websocket.receive()

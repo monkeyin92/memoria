@@ -50,6 +50,8 @@ class DeviceGatewayTicketClaims:
     client_id: str
     binding_id: str
     binding_version: int
+    subject_id: str
+    runtime_profile_version: int
     room_name: str
     identity: str
     agent_name: str
@@ -197,6 +199,8 @@ def issue_device_gateway_ticket(
     client_id: str,
     binding_id: str,
     binding_version: int,
+    subject_id: str,
+    runtime_profile_version: int,
     room_name: str,
     identity: str,
     agent_name: str,
@@ -216,6 +220,7 @@ def issue_device_gateway_ticket(
         "device_id": device_id,
         "client_id": client_id,
         "binding_id": binding_id,
+        "subject_id": subject_id,
         "room_name": room_name,
         "identity": identity,
         "agent_name": agent_name,
@@ -226,6 +231,8 @@ def issue_device_gateway_ticket(
         raise ValueError("device gateway binding version must be positive")
     if isinstance(stream_epoch, bool) or stream_epoch < 1:
         raise ValueError("device gateway stream epoch must be positive")
+    if isinstance(runtime_profile_version, bool) or runtime_profile_version < 1:
+        raise ValueError("device gateway runtime profile version must be positive")
     issued_at = int(time.time()) if now_s is None else now_s
     if issued_at < 0:
         raise ValueError("device gateway ticket issue time must not be negative")
@@ -239,6 +246,8 @@ def issue_device_gateway_ticket(
         "client_id": client_id,
         "binding_id": binding_id,
         "binding_version": binding_version,
+        "subject_id": subject_id,
+        "runtime_profile_version": runtime_profile_version,
         "room": room_name,
         "identity": identity,
         "agent_name": agent_name,
@@ -287,6 +296,8 @@ def verify_device_gateway_ticket(
                     "client_id",
                     "binding_id",
                     "binding_version",
+                    "subject_id",
+                    "runtime_profile_version",
                     "stream_epoch",
                 ],
                 "verify_exp": False,
@@ -322,6 +333,8 @@ def verify_device_gateway_ticket(
         client_id=_require_string(payload, "client_id"),
         binding_id=_require_string(payload, "binding_id"),
         binding_version=_require_positive_int(payload, "binding_version"),
+        subject_id=_require_string(payload, "subject_id"),
+        runtime_profile_version=_require_positive_int(payload, "runtime_profile_version"),
         room_name=_require_string(payload, "room"),
         identity=_require_string(payload, "identity"),
         agent_name=_require_string(payload, "agent_name"),

@@ -2,6 +2,104 @@ package mediaedge
 
 import "testing"
 
+func TestSessionRestoresActiveGenerationWithContinuedCoreClock(t *testing.T) {
+	session, err := NewSession(OpenSessionRequest{
+		SessionID: "resume", AccountID: "a", DeviceID: "d", StreamEpoch: 2,
+	}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Stop()
+	fence := Fence{SessionID: "resume", TurnID: 3, GenerationID: 5, ToolEpoch: 1}
+	if err := session.RestoreGeneration(fence, true); err != nil {
+		t.Fatal(err)
+	}
+	continued := testFrame("resume", 2, 7, fence.GenerationID)
+	continued.TurnID = fence.TurnID
+	continued.ToolEpoch = fence.ToolEpoch
+	continued.CaptureStartSample = 7 * continued.FrameSamples
+	if err := session.AcceptDownlink(continued); err != nil {
+		t.Fatalf("continued Core clock was rejected after reconnect: %v", err)
+	}
+	if err := session.RestoreGeneration(fence, true); err == nil {
+		t.Fatal("reconnect snapshot was accepted after media had started")
+	}
+}
+
+func TestSessionRestoresCancelledGenerationAsInactive(t *testing.T) {
+	session, err := NewSession(OpenSessionRequest{
+		SessionID: "cancelled", AccountID: "a", DeviceID: "d", StreamEpoch: 2,
+	}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Stop()
+	fence := Fence{SessionID: "cancelled", TurnID: 3, GenerationID: 6, ToolEpoch: 1}
+	if err := session.RestoreGeneration(fence, false); err != nil {
+		t.Fatal(err)
+	}
+	frame := testFrame("cancelled", 2, 0, fence.GenerationID)
+	frame.TurnID = fence.TurnID
+	frame.ToolEpoch = fence.ToolEpoch
+	if err := session.AcceptDownlink(frame); err != ErrStaleDownlinkGeneration {
+		t.Fatalf("cancelled reconnect accepted audio: %v", err)
+	}
+}
+
+// TestSessionDownlinkStrictContinuityBeforeLane proves the upstream gate the
+// device lane relies on: within one generation the Session only admits
+// strictly consecutive frames starting at sequence/sample zero, a forward
+// gap is rejected, and AdvanceGeneration restarts the clock so generation 2
+// begins again at zero on the same session (no reconnect).
+func TestSessionDownlinkStrictContinuityBeforeLane(t *testing.T) {
+	session, err := NewSession(OpenSessionRequest{
+		SessionID: "continuity", AccountID: "a", DeviceID: "d", StreamEpoch: 1,
+	}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Stop()
+
+	firstFence := Fence{SessionID: "continuity", TurnID: 1, GenerationID: 1}
+	if err := session.AdvanceGeneration(firstFence); err != nil {
+		t.Fatal(err)
+	}
+	first := testFrame("continuity", 1, 0, firstFence.GenerationID)
+	first.TurnID = firstFence.TurnID
+	if err := session.AcceptDownlink(first); err != nil {
+		t.Fatalf("first generation frame at 0/0 was rejected: %v", err)
+	}
+	// A forward gap from sequence 0 to 2 must be rejected before the lane.
+	gapped := testFrame("continuity", 1, 2, firstFence.GenerationID)
+	gapped.TurnID = firstFence.TurnID
+	if err := session.AcceptDownlink(gapped); err == nil {
+		t.Fatal("downlink sequence gap was accepted by the session gate")
+	}
+	second := testFrame("continuity", 1, 1, firstFence.GenerationID)
+	second.TurnID = firstFence.TurnID
+	if err := session.AcceptDownlink(second); err != nil {
+		t.Fatalf("consecutive frame was rejected: %v", err)
+	}
+	// Non-zero first frame of a generation is rejected (the sample clock
+	// restarts at zero per generation).
+	lateStart := testFrame("continuity", 1, 5, firstFence.GenerationID)
+	lateStart.TurnID = firstFence.TurnID
+	if err := session.AcceptDownlink(lateStart); err == nil {
+		t.Fatal("generation restart at non-zero sequence was accepted")
+	}
+
+	// Generation 2 on the same session: the clock restarts at 0/0.
+	secondFence := Fence{SessionID: "continuity", TurnID: 2, GenerationID: 2}
+	if err := session.AdvanceGeneration(secondFence); err != nil {
+		t.Fatal(err)
+	}
+	fresh := testFrame("continuity", 1, 0, secondFence.GenerationID)
+	fresh.TurnID = secondFence.TurnID
+	if err := session.AcceptDownlink(fresh); err != nil {
+		t.Fatalf("generation 2 restart at 0/0 was rejected: %v", err)
+	}
+}
+
 func TestSessionPlayoutBufferRestartsAtZeroAfterGenerationChange(t *testing.T) {
 	for _, test := range []struct {
 		name       string

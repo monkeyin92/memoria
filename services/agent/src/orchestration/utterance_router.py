@@ -15,6 +15,7 @@ from typing import Literal
 
 from services.agent.src.orchestration.interruption_guard import (
     interrupt_ack_phrase,
+    is_backchannel,
     is_completion_ack_only,
     is_explicit_interrupt,
     is_interrupt_command_only,
@@ -55,6 +56,38 @@ class InterruptSemanticVerdict(StrEnum):
     CONTROL_ONLY = "CONTROL_ONLY"
     HAS_USER_CONTENT = "HAS_USER_CONTENT"
     UNSURE = "UNSURE"
+
+
+@dataclass(frozen=True)
+class PlaybackUtteranceRoute:
+    """Router-owned text semantics for an interruption candidate.
+
+    Acoustic policy may decide whether a candidate is trustworthy, but it
+    must not grow a second phrase table.  This projection keeps stop,
+    interrupt-with-content, empty and backchannel classification behind the
+    same Router boundary used by committed user turns.
+    """
+
+    utterance: UtteranceRoute
+    backchannel: bool
+
+
+def route_playback_utterance(
+    text: str,
+    *,
+    duration_ms: int,
+    speaker_state: SpeakerGateState | str | None = None,
+) -> PlaybackUtteranceRoute:
+    """Project playback-time text without assigning acoustic authority."""
+
+    utterance = route_utterance(text, speaker_state=speaker_state)
+    return PlaybackUtteranceRoute(
+        utterance=utterance,
+        backchannel=(
+            utterance.intent is UtteranceIntent.CHAT
+            and is_backchannel(text, duration_ms=duration_ms)
+        ),
+    )
 
 
 @dataclass(frozen=True)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -99,8 +100,63 @@ class FunASRServerEvent:
     event: FunASREventType
     task_id: str
     sentence: FunASRSentence | None = None
+    error_code: str | None = None
     error_message: str | None = None
     raw: dict[str, Any] | None = None
+
+
+_DIAGNOSTIC_SECRET_RE = re.compile(
+    r"(?i)\b(authorization|api[-_ ]?key|access[-_ ]?token|token|secret|password)"
+    r"\s*[:=]\s*[^\s,;]+"
+)
+
+
+def sanitize_error_code(value: Any) -> str | None:
+    """Return a bounded provider error code safe for logs and exceptions."""
+
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return sanitize_diagnostic_text(text, fallback="unknown", limit=96)
+
+
+def sanitize_error_message(value: Any, *, fallback: str = "task-failed") -> str:
+    """Bound and redact provider error text before it reaches diagnostics."""
+
+    if value is None:
+        text = ""
+    elif isinstance(value, (dict, list, tuple)):
+        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    else:
+        text = str(value)
+    return sanitize_diagnostic_text(text, fallback=fallback, limit=400)
+
+
+def sanitize_diagnostic_text(value: str, *, fallback: str, limit: int) -> str:
+    text = value.replace("\r", " ").replace("\n", " ").replace("\t", " ").strip()
+    text = "".join(char if char.isprintable() else " " for char in text)
+    text = _DIAGNOSTIC_SECRET_RE.sub(r"\1=[REDACTED]", text)
+    text = redact_pii(text)
+    text = text[:limit].strip()
+    return text or fallback
+
+
+def _first_error_field(*mappings: dict[str, Any]) -> Any:
+    for mapping in mappings:
+        for key in ("error_code", "code"):
+            if key in mapping and mapping[key] is not None:
+                return mapping[key]
+    return None
+
+
+def _first_error_message(*mappings: dict[str, Any]) -> Any:
+    for mapping in mappings:
+        for key in ("error_message", "message", "error", "detail"):
+            if key in mapping and mapping[key] is not None:
+                return mapping[key]
+    return None
 
 
 def build_run_task(
@@ -190,15 +246,20 @@ def parse_server_message(data: str | bytes | dict[str, Any]) -> FunASRServerEven
         return FunASRServerEvent(event="task-finished", task_id=task_id, raw=obj)
     if event_name == "task-failed":
         payload = obj.get("payload") or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        output = payload.get("output") or {}
+        if not isinstance(output, dict):
+            output = {}
         return FunASRServerEvent(
             event="task-failed",
             task_id=task_id,
-            error_message=str(
-                header.get("error_message")
-                or header.get("message")
-                or payload.get("message")
-                or payload.get("error")
-                or "task-failed"
+            error_code=sanitize_error_code(
+                _first_error_field(header, payload, output)
+            ),
+            error_message=sanitize_error_message(
+                _first_error_message(header, payload, output),
+                fallback="task-failed",
             ),
             raw=obj,
         )

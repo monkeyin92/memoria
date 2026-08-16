@@ -42,6 +42,22 @@ public:
     }
 };
 
+class MemoriaBacklight final : public Backlight {
+public:
+    explicit MemoriaBacklight(XL9555* expander) : expander_(expander) {}
+
+protected:
+    void SetBrightnessImpl(uint8_t brightness) override {
+        // The board exposes only a binary XL9555 gate, not PWM. Preserve the
+        // server's 0/non-zero safety boundary and do not claim fractional
+        // luminance control on this hardware revision.
+        expander_->SetOutputState(8, brightness > 0 ? 1 : 0);
+    }
+
+private:
+    XL9555* expander_;
+};
+
 class MemoriaAtkDnesp32s3V1 : public WifiBoard {
 private:
     i2c_master_bus_handle_t i2c_bus_;
@@ -86,6 +102,10 @@ private:
                 EnterWifiConfigMode();
             } else if (state == kDeviceStateSpeaking) {
                 app.AbortSpeaking(kAbortReasonNone);
+            } else if (state == kDeviceStateRecovering) {
+                // The physical stop remains authoritative while the transport
+                // is down; ToggleChatState terminally cancels recovery.
+                app.ToggleChatState();
             } else if (state == kDeviceStateListening) {
                 app.StopListening();
             } else if (state == kDeviceStateWifiConfiguring) {
@@ -99,6 +119,16 @@ private:
             const auto state = Application::GetInstance().GetDeviceState();
             if (state == kDeviceStateWifiConfiguring) {
                 GetDisplay()->ShowNotification("WiFi 配网中", 1500);
+                return;
+            }
+            if (state == kDeviceStateRecovering) {
+                // Cancel the resumable Session before WifiBoard resets the
+                // protocol object for provisioning. Both callbacks execute in
+                // the main loop: ToggleChat is handled before scheduled work,
+                // so EnterWifiConfigMode observes the resulting idle state.
+                auto& app = Application::GetInstance();
+                app.ToggleChatState();
+                app.Schedule([this]() { EnterWifiConfigMode(); });
                 return;
             }
             GetDisplay()->ShowNotification("正在进入配网", 1500);
@@ -167,6 +197,11 @@ public:
 
     virtual Display* GetDisplay() override {
         return display_;
+    }
+
+    virtual Backlight* GetBacklight() override {
+        static MemoriaBacklight backlight(xl9555_);
+        return &backlight;
     }
 };
 

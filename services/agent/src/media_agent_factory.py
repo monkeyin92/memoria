@@ -119,13 +119,25 @@ class ProductionMediaSessionFactory:
             if realtime_search_resolver is not None:
                 owned.append(realtime_search_resolver)
             runtime = self._new_runtime(
-                identity.session_id, tts, device_id=identity.device_id or None
+                identity.session_id,
+                tts,
+                device_id=identity.device_id or None,
+                identity=identity,
             )
             mode_policy_client = await self._bind_mode_policy(runtime)
             owned.append(mode_policy_client)
 
             async def _refresh_profile() -> VerifiedRuntimeProfile | None:
                 policy = await mode_policy_client.fetch(session_id=runtime.session_id)
+                expected_profile_version = (
+                    runtime.orchestrator.runtime_profiles.expected_device_profile_version
+                )
+                if expected_profile_version is not None and (
+                    policy.runtime_profile_version != expected_profile_version
+                ):
+                    raise RuntimeError(
+                        "device RuntimeProfile version changed; reconnect at a safe session boundary"
+                    )
                 return policy.runtime_profile
 
             runtime.set_runtime_profile_refresher(_refresh_profile)
@@ -203,10 +215,15 @@ class ProductionMediaSessionFactory:
             raise
 
     def _new_runtime(
-        self, session_id: str, tts: Any, *, device_id: str | None = None
+        self,
+        session_id: str,
+        tts: Any,
+        *,
+        device_id: str | None = None,
+        identity: SessionIdentity | None = None,
     ) -> DuplexRuntime:
         settings = self.settings
-        return DuplexRuntime.create(
+        runtime = DuplexRuntime.create(
             session_id=session_id,
             device_id=device_id,
             tts=tts,
@@ -222,6 +239,14 @@ class ProductionMediaSessionFactory:
                 min_verify_speech_ms=settings.speaker_min_verify_speech_ms,
             ),
         )
+        if identity is not None and identity.client_type == "device":
+            gate = runtime.orchestrator.runtime_profiles
+            gate.expected_actor_id = identity.account_id
+            gate.expected_binding_id = identity.binding_id
+            gate.expected_binding_version = identity.binding_version
+            gate.expected_active_subject_id = identity.subject_id
+            gate.expected_device_profile_version = identity.runtime_profile_version
+        return runtime
 
     async def _bind_mode_policy(self, runtime: DuplexRuntime) -> ModePolicyClient:
         settings = self.settings
@@ -236,6 +261,14 @@ class ProductionMediaSessionFactory:
             )
         )
         policy = await client.fetch(session_id=runtime.session_id)
+        expected_profile_version = (
+            runtime.orchestrator.runtime_profiles.expected_device_profile_version
+        )
+        if expected_profile_version is not None and (
+            policy.runtime_profile_version != expected_profile_version
+        ):
+            await client.aclose()
+            raise RuntimeError("device ticket RuntimeProfile version does not match authority")
         runtime.set_mode_policy(policy)
         if not policy.allows_conversation():
             await client.aclose()

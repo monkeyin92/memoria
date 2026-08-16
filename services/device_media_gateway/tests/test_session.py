@@ -31,6 +31,8 @@ def _claims() -> DeviceGatewayTicketClaims:
         client_id="installation-1",
         binding_id="binding-1",
         binding_version=1,
+        subject_id="person-1",
+        runtime_profile_version=1,
         room_name="voice-session-1",
         identity="user-person-1-session",
         agent_name="duplex-zh-agent",

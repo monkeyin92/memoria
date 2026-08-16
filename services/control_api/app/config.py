@@ -5,12 +5,17 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
+from cryptography import x509
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -83,6 +88,30 @@ class ControlSettings(BaseSettings):
         le=30.0,
         alias="MEDIA_EDGE_CONTROL_TIMEOUT_S",
     )
+    media_edge_internal_control_url: str = Field(
+        default="",
+        alias="MEDIA_EDGE_INTERNAL_CONTROL_URL",
+    )
+    media_edge_internal_control_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEDIA_EDGE_INTERNAL_CONTROL_TOKEN",
+    )
+    media_edge_internal_control_ca_file: str = Field(
+        default="",
+        alias="MEDIA_EDGE_INTERNAL_CONTROL_CA_FILE",
+    )
+    media_edge_internal_control_client_cert_file: str = Field(
+        default="",
+        alias="MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_CERT_FILE",
+    )
+    media_edge_internal_control_client_key_file: str = Field(
+        default="",
+        alias="MEDIA_EDGE_INTERNAL_CONTROL_CLIENT_KEY_FILE",
+    )
+    media_edge_device_close_report_token: SecretStr = Field(
+        default=SecretStr(""),
+        alias="MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN",
+    )
     streamcore_token_secret: SecretStr = Field(
         default=SecretStr(""), alias="STREAMCORE_TOKEN_SECRET"
     )
@@ -130,6 +159,39 @@ class ControlSettings(BaseSettings):
     memoria_device_gateway_ticket_secret: SecretStr = Field(
         default=SecretStr(DEV_DEVICE_GATEWAY_TICKET_SECRET),
         alias="MEMORIA_DEVICE_GATEWAY_TICKET_SECRET",
+    )
+    # Server-owned hardware media runtime selection (ADR-0035 / plan 4.3):
+    # livekit_compat keeps the legacy Python device gateway + HS256 device
+    # ticket; direct_voice_core selects the Go Media Edge WSS path with an
+    # EdDSA/JWKS device ticket. Clients can never force either side.
+    device_media_runtime: Literal["livekit_compat", "direct_voice_core"] = Field(
+        default="livekit_compat",
+        alias="DEVICE_MEDIA_RUNTIME",
+    )
+    # Direct rollout is independently fenced from the runtime capability.
+    # Production defaults to an exact device allowlist so setting
+    # DEVICE_MEDIA_RUNTIME=direct_voice_core can never become an accidental
+    # fleet-wide switch.  "all" is an explicit later release action.
+    device_media_direct_rollout_mode: Literal["allowlist", "all"] = Field(
+        default="allowlist",
+        alias="DEVICE_MEDIA_DIRECT_ROLLOUT_MODE",
+    )
+    device_media_direct_canary_device_ids: str = Field(
+        default="",
+        alias="DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS",
+    )
+    # Independent WSS endpoint for the direct hardware media path. It is
+    # distinct from DEVICE_MEDIA_GATEWAY_URL (compat gateway) and from the
+    # H5 StreamCore WHIP URL; the direct path never shares a LiveKit room.
+    device_direct_media_wss_url: str = Field(
+        default="",
+        alias="DEVICE_DIRECT_MEDIA_WSS_URL",
+    )
+    device_runtime_profile_ttl_s: int = Field(
+        default=3600,
+        ge=300,
+        le=86400,
+        alias="DEVICE_RUNTIME_PROFILE_TTL_S",
     )
 
     memoria_db_path: str = Field(default="data/memoria.sqlite3", alias="MEMORIA_DB_PATH")
@@ -924,6 +986,164 @@ class ControlSettings(BaseSettings):
             return configured
         return self.memoria_archive_internal_token.get_secret_value()
 
+    def validate_device_direct_media(self) -> None:
+        """Fail closed for the direct hardware media runtime in production.
+
+        Direct mode requires an Ed25519 private key (the Go edge JWKS verifier
+        only carries Ed25519 keys), the independent device WSS URL, a signing
+        key id for JWKS rotation, and an authenticated HTTPS edge control
+        channel. The private key must actually parse as Ed25519 and the
+        Control-to-Edge mTLS files must be readable, matching, and signed by
+        the configured CA. An HS256 token can never satisfy the JWKS contract,
+        so a missing or unparseable private key is a startup error instead of a
+        silent downgrade.
+        """
+
+        direct_url = self.device_direct_media_wss_url.strip()
+        if not direct_url.startswith("wss://"):
+            raise ValueError(
+                "production direct device media requires secure "
+                "DEVICE_DIRECT_MEDIA_WSS_URL"
+            )
+        self._validate_direct_ed25519_private_key()
+        if not self.streamcore_token_key_id.strip():
+            raise ValueError(
+                "production direct device media requires STREAMCORE_TOKEN_KEY_ID"
+            )
+        if not self.media_edge_internal_control_url.strip().startswith("https://"):
+            raise ValueError(
+                "production direct device media requires HTTPS "
+                "MEDIA_EDGE_INTERNAL_CONTROL_URL (mTLS control channel to the Go "
+                "media edge); direct mode fails closed without it"
+            )
+        if len(self.media_edge_internal_control_token.get_secret_value().strip()) < 32:
+            raise ValueError(
+                "production direct device media requires "
+                "MEDIA_EDGE_INTERNAL_CONTROL_TOKEN with at least 32 characters"
+            )
+        close_token = self.media_edge_device_close_report_token.get_secret_value().strip()
+        if len(close_token) < 32:
+            raise ValueError(
+                "production direct device media requires independent "
+                "MEDIA_EDGE_DEVICE_CLOSE_REPORT_TOKEN with at least 32 characters"
+            )
+        if hmac.compare_digest(
+            close_token,
+            self.media_edge_internal_control_token.get_secret_value().strip(),
+        ):
+            raise ValueError(
+                "production direct device media close-report token must be "
+                "independent from MEDIA_EDGE_INTERNAL_CONTROL_TOKEN"
+            )
+        mtls_paths = (
+            self.media_edge_internal_control_ca_file.strip(),
+            self.media_edge_internal_control_client_cert_file.strip(),
+            self.media_edge_internal_control_client_key_file.strip(),
+        )
+        if not all(mtls_paths):
+            raise ValueError(
+                "production direct device media requires Control-to-Edge mTLS "
+                "CA, client certificate and client key files"
+            )
+        self._validate_control_mtls_files(
+            self.media_edge_internal_control_ca_file.strip(),
+            self.media_edge_internal_control_client_cert_file.strip(),
+            self.media_edge_internal_control_client_key_file.strip(),
+        )
+        if self.device_media_direct_rollout_mode == "allowlist":
+            from services.control_api.app.media_runtime import direct_canary_device_ids
+
+            if not direct_canary_device_ids(self):
+                raise ValueError(
+                    "production direct device media allowlist mode requires "
+                    "DEVICE_MEDIA_DIRECT_CANARY_DEVICE_IDS"
+                )
+
+    def _validate_direct_ed25519_private_key(self) -> None:
+        """Parse the configured StreamCore/device private key at startup.
+
+        Direct device tickets are EdDSA-only; an unreadable, unparseable or
+        non-Ed25519 key is a startup error, never a silent HS256 downgrade.
+        """
+        path = self.streamcore_token_private_key_file.strip()
+        inline = self.streamcore_token_private_key_pem.get_secret_value().strip()
+        if path and inline:
+            raise ValueError(
+                "production direct device media requires exactly one "
+                "StreamCore private key source"
+            )
+        material = ""
+        if inline:
+            material = inline
+        elif path:
+            try:
+                material = Path(path).read_text(encoding="utf-8")
+            except OSError as exc:
+                raise ValueError(
+                    "production direct device media requires a readable "
+                    "STREAMCORE_TOKEN_PRIVATE_KEY_FILE"
+                ) from exc
+        else:
+            raise ValueError(
+                "production direct device media requires an Ed25519 private key "
+                "(STREAMCORE_TOKEN_PRIVATE_KEY_FILE or "
+                "STREAMCORE_TOKEN_PRIVATE_KEY_PEM); HS256 is not accepted "
+                "for direct device media"
+            )
+        if len(material) > 16_384:
+            raise ValueError("production direct device media private key is too large")
+        try:
+            key = serialization.load_pem_private_key(material.encode("utf-8"), password=None)
+        except (ValueError, TypeError, binascii.Error) as exc:
+            raise ValueError(
+                "production direct device media requires a parseable unencrypted "
+                "Ed25519 private key"
+            ) from exc
+        if not isinstance(key, Ed25519PrivateKey):
+            raise ValueError(
+                "production direct device media requires an Ed25519 private key"
+            )
+
+    @staticmethod
+    def _validate_control_mtls_files(ca_file: str, cert_file: str, key_file: str) -> None:
+        """Read and cross-check the Control-to-Edge mTLS bundle at startup.
+
+        The client certificate must parse, match its private key, and be
+        directly issued by the configured CA; any mismatch fails closed before
+        a single device ticket is minted.
+        """
+        try:
+            ca_cert = x509.load_pem_x509_certificates(Path(ca_file).read_bytes())[0]
+            client_cert = x509.load_pem_x509_certificates(Path(cert_file).read_bytes())[0]
+            client_key = serialization.load_pem_private_key(
+                Path(key_file).read_bytes(), password=None
+            )
+        except (OSError, ValueError, TypeError, binascii.Error) as exc:
+            raise ValueError(
+                "production direct device media requires readable, parseable "
+                "Control-to-Edge mTLS files"
+            ) from exc
+        cert_public = client_cert.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        key_public = client_key.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        if cert_public != key_public:
+            raise ValueError(
+                "production direct device media Control-to-Edge client "
+                "certificate and key do not match"
+            )
+        try:
+            client_cert.verify_directly_issued_by(ca_cert)
+        except (ValueError, InvalidSignature) as exc:
+            raise ValueError(
+                "production direct device media Control-to-Edge client "
+                "certificate is not signed by the configured CA"
+            ) from exc
+
     def validate_production(self) -> None:
         if self.environment != "production":
             return
@@ -1051,6 +1271,8 @@ class ControlSettings(BaseSettings):
                     "production requires an independent 32-byte "
                     "MEMORIA_DEVICE_ACTIVATION_SIGNING_SEED_B64"
                 )
+        if self.device_media_runtime == "direct_voice_core":
+            self.validate_device_direct_media()
         capability_tokens = {
             "MEMORIA_ARCHIVE_WRITE_TOKEN": self.internal_token("archive_write"),
             "MEMORIA_AGENT_HEARTBEAT_TOKEN": self.internal_token("agent_heartbeat"),

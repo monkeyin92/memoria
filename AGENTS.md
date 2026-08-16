@@ -37,9 +37,11 @@ Durable instructions for anyone (human or AI) working on Memoria. Update this fi
 
 ## 其他
 
+- 生产服务器上的同类上传包、构建归档、候选镜像和回滚镜像最多只保留最近两个可用版本：当前运行版本与紧邻的可运行回滚版本。新版本完成部署和回滚点核验后，必须删除更早版本并检查磁盘占用；不得因长期堆积制品挤满服务器磁盘。数据库、安全与合规备份按各自保留策略处理，不得把不可替代的数据备份当作普通构建制品误删。
+- 执行 `Memoria_ESP32一等语音终端与小程序控制面全双工整改方案_2026-08-13.md` 时，任何完成事项都必须在该文件中同步勾选或标注，并写清 `code / wired / enabled / verified` 层级及证据日期；未回写方案的事项不得口头记为完成。
 - 学生线账号能力以 `services/control_api/app/account_gate.py` 的规则表为单一决策点。新增或修改账号能力路由时，评审必须逐个列出端点，在任何读取私有资源或写副作用前调用 `require_capability_for_subject`（代操作场景用 `require_capability_for_account_id`），并为 adult、minor、类别缺失三种情况补矩阵测试；规则表没有声明的能力按拒绝处理。只有端点清单与矩阵测试一一对应，评审才算完成。
 - 称呼只在首次注册 UI 中设置：H5 使用“怎么称呼你？”（示例：朋友、主人、小明），小程序在首次微信手机号授权时要求填写；“我的/个人信息”不再提供称呼或“想让伙伴怎样陪你”的编辑入口。兼容 API/数据库字段可以保留，但不能重新把它们作为常规资料编辑项暴露。
 - 吉祥物的用户情绪仍只消费权威 `emotion_observation`。助手实际说话期间，Agent 以当前 `session_id + turn_id + generation_id + tool_epoch` 发布单个 `assistant_expression`（`neutral / happy / curious / caring`）；H5 和小程序只能在匹配的 speaking fence 内展示，回答结束、断线或中断时清除。客户端不得从助手字幕自行猜词切换表情。
 - H5 原型视觉约定见 `apps/h5/AGENTS.md`。
 - 发布、回滚、线上状态见 `HANDOFF.md` 与 `docs/releases/`。
-- 架构规范见 `full_duplex_voice_agent_architecture_zh.md`。
+- ESP32 一等语音终端目标架构与执行状态见 `Memoria_ESP32一等语音终端与小程序控制面全双工整改方案_2026-08-13.md`、`architecture-status.yaml`、ADR-0029 与 ADR-0035。

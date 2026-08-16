@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
 need_command bash
+need_command cmp
 need_command git
 need_command rg
 assert_tls_verification
@@ -18,11 +19,21 @@ for script in "$SCRIPT_DIR"/*.sh; do
     rg -q '^set -euo pipefail$' "$script" || die "missing strict shell mode: $script"
 done
 
+rg -Fq 'WAKE_WORD_MODEL="${MEMORIA_FIRMWARE_WAKE_WORD_MODEL:-}"' \
+    "$SCRIPT_DIR/build.sh" || die "product build must use the board's Memoria wake word by default"
+
 "$python_bin" -m json.tool \
     "$MEMORIA_FIRMWARE_ROOT/overlay/files/main/boards/memoria/atk-dnesp32s3-v1/config.json" \
     >/dev/null
 
 "$SCRIPT_DIR/bootstrap.sh" --no-idf-install
+
+[[ -s "$MEMORIA_FIRMWARE_ROOT/overlay/files/dependencies.lock" ]] || \
+    die "pinned ESP component dependency lock is missing"
+cmp -s \
+    "$MEMORIA_FIRMWARE_ROOT/overlay/files/dependencies.lock" \
+    "$MEMORIA_UPSTREAM_DIR/dependencies.lock" || \
+    die "upstream ESP component dependency lock differs from the overlay pin"
 
 board_dir="$MEMORIA_UPSTREAM_DIR/main/boards/memoria/atk-dnesp32s3-v1"
 [[ -f "$board_dir/memoria_atk_dnesp32s3_v1.cc" ]] || die "board source missing"
@@ -51,6 +62,54 @@ if rg -n 'esp_video|EspVideo|GetCamera|InitializeCamera|CAM_PIN|OV_' \
 fi
 
 rg -q 'memoria-atk-dnesp32s3-v1' "$board_dir/config.json" || die "wrong board identity"
+rg -q '^project\(memoria\)$' "$MEMORIA_UPSTREAM_DIR/CMakeLists.txt" || \
+    die "Memoria build must use project(memoria)"
+if rg -q '^project\(xiaozhi\)$' "$MEMORIA_UPSTREAM_DIR/CMakeLists.txt"; then
+    die "upstream product project name leaked into Memoria build"
+fi
+rg -q 'config.ssid_prefix = "Memoria";' "$MEMORIA_UPSTREAM_DIR/main/boards/common/wifi_board.cc" || \
+    die "Memoria Wi-Fi identity prefix is missing"
+rg -q 'config.show_ota_config = false;' "$MEMORIA_UPSTREAM_DIR/main/boards/common/wifi_board.cc" || \
+    die "Memoria Wi-Fi OTA configuration must be hidden"
+rg -q '#if !CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1' "$MEMORIA_UPSTREAM_DIR/main/mcp_server.cc" || \
+    die "upstream firmware upgrade MCP tool is not removed for Memoria"
+rg -q 'Memoria OTA is disabled' "$MEMORIA_UPSTREAM_DIR/main/application.cc" || \
+    die "Application OTA must fail closed for Memoria"
+"$python_bin" - "$board_dir/config.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    manifest = json.load(handle)
+sdkconfig = set(manifest["builds"][0]["sdkconfig_append"])
+required = {
+    "CONFIG_USE_CUSTOM_WAKE_WORD=y",
+    "CONFIG_OTA_URL=\"\"",
+    'CONFIG_CUSTOM_WAKE_WORD="mei mo li ya"',
+    'CONFIG_CUSTOM_WAKE_WORD_DISPLAY="Memoria"',
+    "CONFIG_SEND_WAKE_WORD_DATA=n",
+    "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=n",
+    "CONFIG_SR_WN_WN9L_NIHAOXIAOZHI_TTS3=n",
+    "CONFIG_SR_MN_CN_MULTINET6_QUANT=y",
+}
+missing = sorted(required - sdkconfig)
+if missing:
+    raise SystemExit("missing Memoria wake-word settings: " + ", ".join(missing))
+if "CONFIG_SR_MN_CN_NONE=y" in sdkconfig:
+    raise SystemExit("Memoria custom wake word cannot use CONFIG_SR_MN_CN_NONE=y")
+if any(
+    item.startswith("CONFIG_SR_WN_") and item.endswith("=y")
+    for item in sdkconfig
+):
+    raise SystemExit("Memoria board must not enable an upstream Xiaozhi WakeNet model")
+if any(
+    item.startswith("CONFIG_SR_MN_CN_MULTINET")
+    and item.endswith("=y")
+    and item != "CONFIG_SR_MN_CN_MULTINET6_QUANT=y"
+    for item in sdkconfig
+):
+    raise SystemExit("Memoria board must select only CONFIG_SR_MN_CN_MULTINET6_QUANT=y")
+PY
 (cd "$MEMORIA_UPSTREAM_DIR" && git diff --check)
 
 board_json="$(cd "$MEMORIA_UPSTREAM_DIR" && "$python_bin" scripts/build.py --list-boards --json)"
@@ -66,4 +125,208 @@ if match[0].get("target") != "esp32s3":
     raise SystemExit("Memoria board target is not esp32s3")
 '
 
+protocol_source="$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_protocol.cc"
+protocol_header="$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_protocol.h"
+frame_header="$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_audio_frame.h"
+[[ -f "$protocol_source" ]] || die "protocol v2 source missing"
+[[ -f "$protocol_header" ]] || die "protocol v2 header missing"
+
+# Device protocol v2 must declare only honest simplex capabilities: no AEC
+# reference, no simultaneous capture/playback, no local stop keyword/duck,
+# approximate playback watermark only.
+rg -q 'cJSON_AddBoolToObject\(capabilities, "simultaneous_capture_playback", false\)' \
+    "$protocol_source" || die "hello v2 must declare no simultaneous capture/playback"
+rg -q 'cJSON_AddStringToObject\(capabilities, "aec_mode", "none"\)' \
+    "$protocol_source" || die "hello v2 must declare aec_mode none"
+rg -q 'cJSON_AddStringToObject\(capabilities, "aec_reference", "none"\)' \
+    "$protocol_source" || die "hello v2 must declare no AEC reference"
+rg -q 'cJSON_AddBoolToObject\(capabilities, "aec_reference_verified", false\)' \
+    "$protocol_source" || die "hello v2 must declare AEC reference unverified"
+rg -q 'cJSON_AddBoolToObject\(capabilities, "local_stop_keyword", false\)' \
+    "$protocol_source" || die "hello v2 must declare no local stop keyword"
+rg -q 'cJSON_AddBoolToObject\(capabilities, "local_duck", false\)' \
+    "$protocol_source" || die "hello v2 must declare no local duck"
+rg -q 'cJSON_AddStringToObject\(capabilities, "playback_watermark", "approximate"\)' \
+    "$protocol_source" || die "hello v2 must declare an approximate playback watermark"
+rg -q 'cJSON_AddNumberToObject\(capabilities, "barge_in_level", 0\)' \
+    "$protocol_source" || die "hello v2 must declare barge_in_level 0"
+if rg -n 'playback_watermark' "$protocol_source" | rg -q '"exact"'; then
+    die "hello v2 must never claim an exact playback watermark"
+fi
+rg -q '"downlink_sample_rates"' "$protocol_source" || die "hello v2 must negotiate downlink rates"
+rg -q 'kDownlinkSampleRate16k' "$protocol_source" || die "hello v2 must declare the playable 16 kHz rate"
+rg -q 'kDownlinkSampleRate24k' "$protocol_source" || die "hello v2 must declare the playable 24 kHz rate"
+
+# The v2 control plane and the complete generation fence must be implemented.
+rg -q '"session.accepted"' "$protocol_source" || die "session.accepted v2 parsing is missing"
+rg -q 'audio_mode != "half_duplex_safe" && audio_mode != "interrupt_assist"' \
+    "$protocol_source" || \
+    die "session.accepted must reject modes outside the declared capability ladder"
+rg -Fq 'SetHeader("X-Client-ID"' "$protocol_source" || \
+    die "device WSS must use the strict X-Client-ID header"
+rg -q '"current_fence"' "$protocol_source" || die "generation fence parsing is missing"
+rg -q '"device_settings"' "$protocol_source" || die "signed device settings parsing is missing"
+rg -q 'on_device_settings_received_' "$protocol_source" || \
+    die "signed device settings are not wired to Application"
+rg -q '"turn_id"' "$protocol_source" || die "generation fence turn_id is missing"
+rg -q '"tool_epoch"' "$protocol_source" || die "generation fence tool_epoch is missing"
+rg -q '"runtime_profile.invalidated"' "$protocol_source" || \
+    die "runtime_profile.invalidated handling is missing"
+rg -q '"immediate_fail_closed"' "$protocol_source" || \
+    die "runtime_profile.invalidated fail-closed handling is missing"
+rg -q '"next_safe_point"' "$protocol_source" || \
+    die "runtime_profile.invalidated next_safe_point handling is missing"
+rg -q 'dropped_frames_.stale' "$protocol_source" || \
+    die "stale generation frames must be dropped and counted"
+rg -q 'metadata.generation_id == 0' "$protocol_source" || \
+    die "generation 0 must be handled as no valid playback"
+rg -q '"button.stop"' "$protocol_source" || die "button.stop v2 is missing"
+rg -q '"expected_fence"' "$protocol_source" || die "button.stop v2 fence is missing"
+rg -q '"local_flush_sample_end"' "$protocol_source" || \
+    die "button.stop v2 local flush watermark is missing"
+rg -q '"rendered_sample_end"' "$protocol_source" || \
+    die "playback receipts v2 watermark is missing"
+rg -q 'cJSON_AddBoolToObject\(root.value, "approximate", true\)' "$protocol_source" || \
+    die "playback receipts v2 must be explicitly approximate"
+rg -q 'kDownlinkFrameSamples16k = 320' "$frame_header" || \
+    die "audio frame layer must accept the negotiated 16 kHz downlink"
+rg -q 'kDownlinkFrameSamples24k = 480' "$frame_header" || \
+    die "audio frame layer must accept the negotiated 24 kHz downlink"
+
+overlay_patch_0006="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0006-fence-simplex-listening-playback.patch"
+[[ -f "$overlay_patch_0006" ]] || die "overlay patch 0006 is missing"
+rg -Fq 'pending_listening_start_' "$overlay_patch_0006" || \
+    die "patch 0006 must fence deferred listening start"
+rg -Fq 'SendVadState(false)' "$overlay_patch_0006" || \
+    die "patch 0006 must stop VAD before simplex playback"
+
+overlay_patch_0007="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0007-device-media-v2-and-local-hard-stop.patch"
+[[ -f "$overlay_patch_0007" ]] || die "overlay patch 0007 is missing"
+rg -q 'void Application::AbortSpeaking' "$overlay_patch_0007" || \
+    die "patch 0007 must implement the L0 local hard stop"
+rg -q 'ResetDecoder' "$overlay_patch_0007" || \
+    die "patch 0007 must flush playback synchronously on the button stop"
+
+overlay_patch_0010="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0010-atomic-playback-generation-gate.patch"
+[[ -f "$overlay_patch_0010" ]] || die "overlay patch 0010 is missing"
+rg -q 'PushServerPacketToDecodeQueue' "$overlay_patch_0010" || \
+    die "server audio must enter through the atomic generation gate"
+rg -q 'packet->generation_id != accepted_server_generation_' "$overlay_patch_0010" || \
+    die "the audio queue must recheck the server generation under its lock"
+rg -q 'ResetDecoderForServerGeneration' "$overlay_patch_0010" || \
+    die "P0 flush must atomically replace the audio generation gate"
+
+# generation.completed is an ordered barrier in the audio FIFO. The device
+# must treat it as completion-pending only: playback.ended, the legacy tts
+# stop and the generation clear wait for the real AudioService drain (or a
+# synchronous cancel flush), and the queue-idle probe finalizes immediately
+# when the completion arrives on an already-empty queue.
+overlay_patch_0008="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0008-device-media-v2-playback-completion-barrier.patch"
+[[ -f "$overlay_patch_0008" ]] || die "overlay patch 0008 is missing"
+rg -q 'generation.completed' "$protocol_source" || die "generation.completed v2 handling is missing"
+rg -q 'playback_completion_pending_' "$protocol_source" || die "generation.completed must only mark completion pending"
+rg -q 'is_playback_idle_' "$protocol_source" || die "completed generation must finalize through the Application idle probe"
+rg -q 'void MemoriaProtocol::FinalizePlaybackEnded' "$protocol_source" || die "the drained-queue completion finalize is missing"
+rg -q 'NotifyPlaybackOutput' "$protocol_source" || die "output-commit playback receipts are missing"
+rg -q 'on_playback_output' "$overlay_patch_0008" || die "patch 0008 must wire output-commit watermark callbacks"
+rg -q 'SetIsPlaybackIdleCallback' "$overlay_patch_0008" || die "patch 0008 must inject the AudioService idle probe"
+rg -q 'not a network-received position' "$protocol_source" || die "v2 started/progress must not be emitted from the receive path"
+
+overlay_patch_0009="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0009-preserve-session-on-network-reconnect.patch"
+[[ -f "$overlay_patch_0009" ]] || die "overlay patch 0009 is missing"
+rg -q 'CloseAudioChannel\(false\)' "$overlay_patch_0009" || \
+    die "network loss must preserve the same resumable Session id"
+rg -q '"resume_session_id"' "$protocol_source" || \
+    die "device media ticket request must carry the resumable Session id"
+rg -q 'session->stream_epoch <= requested_after_epoch' "$protocol_source" || \
+    die "the device must reject a resume response without a strictly newer epoch"
+overlay_patch_0011="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0011-recover-media-session.patch"
+[[ -f "$overlay_patch_0011" ]] || die "overlay patch 0011 is missing"
+rg -q 'kDeviceStateRecovering' "$overlay_patch_0011" || \
+    die "network recovery must be an explicit device state"
+rg -q 'kMediaReconnectMaxAttempts = 5' "$overlay_patch_0011" || \
+    die "same-Session WSS recovery must be bounded"
+rg -q 'kMediaReconnectCallbackGraceUs = 100000' "$overlay_patch_0011" || \
+    die "passive WSS failure must not reopen on its callback return edge"
+rg -q 'std::atomic<bool> media_network_connected_' "$overlay_patch_0011" || \
+    die "coalesced network event bits must defer to a latest-observation authority"
+rg -q 'protocol_->OpenAudioChannel\(\)' "$overlay_patch_0011" || \
+    die "network recovery must actively request a newer stream epoch"
+rg -q 'websocket_attempt_id_' "$protocol_source" || \
+    die "late callbacks from an old WSS must be fenced from a newer epoch"
+rg -q 'bool MemoriaProtocol::CanResumeSession' "$protocol_source" || \
+    die "terminal close and resumable transport loss must be distinguishable"
+rg -q 'saved_v2_resume' "$protocol_source" || \
+    die "a saved v2 resume identity must survive the safe protocol-version reset"
+rg -q 'audio_transport_attempt' "$overlay_patch_0011" || \
+    die "queued old-epoch audio must be fenced from a recovered WSS"
+rg -q 'json_transport_attempt' "$overlay_patch_0011" || \
+    die "queued old-epoch JSON controls and UI must be fenced from RECOVERING"
+rg -q 'bool MemoriaProtocol::RetireTransportAttempt' "$protocol_source" || \
+    die "passive WSS failure must retire its transport authority immediately"
+overlay_patch_0012="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0012-main-task-transport-actions.patch"
+[[ -f "$overlay_patch_0012" ]] || die "overlay patch 0012 is missing"
+rg -Fq 'MAIN_EVENT_MEMORIA_TRANSPORT' "$overlay_patch_0012" || \
+    die "patch 0012 must schedule transport actions on the main task"
+rg -Fq 'DrainTransportActions' "$overlay_patch_0012" || \
+    die "patch 0012 must drain transport actions on the main task"
+overlay_patch_0013="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0013-prioritize-media-close-recovery.patch"
+[[ -f "$overlay_patch_0013" ]] || die "overlay patch 0013 is missing"
+rg -q 'MAIN_EVENT_MEMORIA_MEDIA_CLOSED' "$overlay_patch_0013" || \
+    die "transport close must have a dedicated main-task recovery event"
+rg -q 'HandleMediaTransportClosedEvent' "$overlay_patch_0013" || \
+    die "transport-close recovery state must be frozen before generic errors"
+rg -q 'media_closed_transport_attempt_' "$overlay_patch_0013" || \
+    die "transport-close recovery must retain an old-attempt fence"
+overlay_patch_0014="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0014-load-memoria-assets-before-audio.patch"
+[[ -f "$overlay_patch_0014" ]] || die "overlay patch 0014 is missing"
+rg -q 'auto& assets = Assets::GetInstance()' "$overlay_patch_0014" || \
+    die "Memoria activation must resolve the assets singleton before audio starts"
+rg -q 'assets.partition_valid() || !assets.Apply()' "$overlay_patch_0014" || \
+    die "Memoria activation must fail closed when local assets/models cannot load"
+rg -q 'esp_srmodel_init\("model"\)' "$overlay_patch_0014" || \
+    die "the assets patch must document the legacy model-partition fallback it prevents"
+overlay_patch_0015="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0015-memoria-product-identity-and-ota-fail-closed.patch"
+[[ -f "$overlay_patch_0015" ]] || die "overlay patch 0015 is missing"
+rg -Fq 'project(memoria)' "$overlay_patch_0015" || \
+    die "patch 0015 must set the Memoria product identity"
+rg -Fq 'UpgradeFirmware' "$overlay_patch_0015" || \
+    die "patch 0015 must override the upstream firmware upgrade path"
+rg -Fq 'Memoria OTA is disabled' "$overlay_patch_0015" || \
+    die "patch 0015 must fail closed instead of using upstream OTA"
+sdkconfig="$MEMORIA_UPSTREAM_DIR/sdkconfig"
+metadata="$MEMORIA_UPSTREAM_DIR/build/project_description.json"
+flasher_args="$MEMORIA_UPSTREAM_DIR/build/flasher_args.json"
+[[ -s "$sdkconfig" ]] || die "final sdkconfig is missing"
+rg -q '^CONFIG_OTA_URL=""$' "$sdkconfig" || die "final sdkconfig still exposes an OTA endpoint"
+if rg -n 'api\.tenclass\.net/xiaozhi/ota|CONFIG_OTA_URL="https?://' "$sdkconfig"; then
+    die "upstream OTA endpoint leaked into final sdkconfig"
+fi
+[[ -s "$metadata" ]] || die "build metadata is missing; run build.sh before this check"
+[[ -s "$flasher_args" ]] || die "flasher arguments are missing; run build.sh before this check"
+"$python_bin" - "$metadata" "$flasher_args" <<'PY'
+import json
+import pathlib
+import sys
+
+metadata_path = pathlib.Path(sys.argv[1])
+flasher_path = pathlib.Path(sys.argv[2])
+with metadata_path.open(encoding="utf-8") as handle:
+    metadata = json.load(handle)
+with flasher_path.open(encoding="utf-8") as handle:
+    flasher = json.load(handle)
+if metadata.get("project_name") != "memoria":
+    raise SystemExit("build metadata project_name is not memoria")
+app_bin = metadata.get("app_bin")
+if not isinstance(app_bin, str) or app_bin == "xiaozhi.bin" or pathlib.Path(app_bin).name != app_bin:
+    raise SystemExit(f"invalid product app_bin: {app_bin!r}")
+flash_files = flasher.get("flash_files", {})
+if "0x10000" in flash_files:
+    raise SystemExit("flash plan would overwrite the protected identity partition")
+if any("xiaozhi" in str(value).casefold() for value in flash_files.values()):
+    raise SystemExit("flash plan exposes an upstream Xiaozhi image")
+PY
+if find "$MEMORIA_ARTIFACT_DIR" -maxdepth 1 -type f -name '*-xiaozhi.bin' -print -quit | rg -q .; then
+    die "upstream-named product artifact remains in artifacts/"
+fi
 printf 'overlay check passed: %s\n' "$MEMORIA_BOARD_NAME"

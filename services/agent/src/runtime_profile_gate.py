@@ -60,6 +60,9 @@ class RuntimeProfileGate:
     expected_binding_version: int | None = None
     expected_active_subject_id: str | None = None
     expected_subject_revision: int | None = None
+    # Device-visible monotonic config/profile projection. It is compared with
+    # the Control policy envelope, never with signed identity session_epoch.
+    expected_device_profile_version: int | None = None
     verify_key: str | None = field(
         default_factory=lambda: os.getenv(VERIFY_KEY_ENV) or None
     )

@@ -1,13 +1,22 @@
 ---
-status: accepted
+status: superseded
+superseded_by: 0035-esp32-first-class-realtime-terminal
+retained_for: legacy rollback record
 date: 2026-07-24
 ---
 
-# 微信原生小程序通过受限媒体网关接入既有 LiveKit 房间
+# 微信原生小程序受限媒体网关（已退役，兼容回滚记录）
+
+> **状态说明（2026-08-16）**：本 ADR 已被
+> [ADR-0035：ESP32 一等实时语音终端与小程序控制面](0035-esp32-first-class-realtime-terminal.md)
+> 取代。生产小程序不再持有媒体票据、连接媒体 WebSocket 或参与 LiveKit；ESP32-S3 是唯一
+> 面向用户的实时语音终端。本文件保留此前 Gateway 的设计与风险记录，仅供受限兼容回滚参考，
+> 不是当前产品主链、发布默认项或新设备路径。待 Direct 路径完成 Canary、回滚演练和真实硬件
+> 验收并关闭 PR-23 后，再删除该兼容实现与本记录。
 
 ## Context
 
-Memoria 的当前正式语音主链是 Cascade：`FunASR Realtime → 百炼 DeepSeek-v4-flash → Doubao Seed-TTS 2.0 → LiveKit/H5`。H5 使用 Browser LiveKit SDK 直接发布麦克风并订阅 Agent 音频；微信原生小程序没有可用的 `RTCPeerConnection`/MediaStream 兼容层，也没有公开、维护中的 LiveKit 小程序客户端可直接替代该 SDK。
+2026-07-24 制定本 ADR 时，Memoria 的正式语音主链是 Cascade：`FunASR Realtime → 百炼 DeepSeek-v4-flash → Doubao Seed-TTS 2.0 → LiveKit/H5`。H5 使用 Browser LiveKit SDK 直接发布麦克风并订阅 Agent 音频；微信原生小程序没有可用的 `RTCPeerConnection`/MediaStream 兼容层，也没有公开、维护中的 LiveKit 小程序客户端可直接替代该 SDK。
 
 把 `livekit-client` 通过 DOM polyfill 打进小程序不能补足 ICE、DTLS、SRTP、RTP/RTCP、Opus 和 AEC。把原生 H5 放入 web-view 虽然可避免媒体改造，但不满足原生小程序复刻和微信传播入口的目标。
 

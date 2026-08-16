@@ -44,6 +44,8 @@ node_modules/
 *.log
 .cache/
 .npm-cache/
+.playwright-mcp/
+.workbuddy/
 tmp/
 scratch/
 outputs/

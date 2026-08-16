@@ -18,7 +18,7 @@
 <view class="page-shell home-page">
   <view class="home-header">
     <text class="hero-greeting">{{greeting}}，{{profile.display_name || '新朋友'}}</text>
-    <text class="hero-title">慢慢说，<text class="hero-title-accent">我会认真听。</text></text>
+    <text class="hero-title">伙伴守在机器人上，<text class="hero-title-accent">这里帮你打理一切。</text></text>
     <view class="companion-chip">
       <image wx:if="{{companion.id === 'starlight'}}" class="companion-chip-img" src="/assets/companions/miniprogram/starlight.png" mode="aspectFit" />
       <image wx:if="{{companion.id === 'taoxi'}}" class="companion-chip-img" src="/assets/companions/miniprogram/taoxi.png" mode="aspectFit" />
@@ -29,7 +29,7 @@
     </view>
   </view>
 
-  <view class="stage-wrap mascot-{{status}}">
+  <view class="stage-wrap mascot-idle">
     <view class="stage-halo"></view>
     <view class="stage-ring"></view>
     <view class="stage-ground"></view>
@@ -44,106 +44,108 @@
       <image wx:if="{{companion.id === 'axu'}}" class="mascot-body" src="/assets/companions/miniprogram/axu.png" mode="aspectFit" />
       <image wx:if="{{companion.id === 'xuanmo'}}" class="mascot-body" src="/assets/companions/miniprogram/xuanmo.png" mode="aspectFit" />
       <view class="mascot-face tone-{{faceTone}}" style="{{faceStyle}}">
-        <view class="face-expression {{expression === 'neutral' ? 'is-visible' : ''}}">
+        <view class="face-expression is-visible">
           <view class="brow brow-l"></view>
           <view class="brow brow-r"></view>
           <template is="openEyes" />
           <view class="mouth mouth-smile"></view>
         </view>
-        <view class="face-expression {{expression === 'happy' ? 'is-visible' : ''}}">
-          <view class="brow brow-l"></view>
-          <view class="brow brow-r"></view>
-          <view class="happy-eye happy-eye-l"></view>
-          <view class="happy-eye happy-eye-r"></view>
-          <view class="mouth mouth-open"><view class="tongue"></view></view>
-        </view>
-        <view class="face-expression {{expression === 'curious' ? 'is-visible' : ''}}">
-          <view class="brow brow-l curious-brow-l"></view>
-          <view class="brow brow-r curious-brow-r"></view>
-          <template is="openEyes" />
-          <view class="mouth mouth-o"></view>
-        </view>
-        <view class="face-expression {{expression === 'caring' ? 'is-visible' : ''}}">
-          <view class="brow brow-l caring-brow-l"></view>
-          <view class="brow brow-r caring-brow-r"></view>
-          <template is="openEyes" />
-          <view class="mouth mouth-caring"></view>
-        </view>
       </view>
       <view wx:if="{{hasChest}}" class="chest-pulse" style="{{chestStyle}}"></view>
     </view>
 
-    <view class="status-pill status-{{status}}">
+    <view class="status-pill {{device ? (device.online ? 'status-online' : 'status-offline') : 'status-idle'}}">
       <view class="status-dot"></view>
-      <text>{{statusLabel}}</text>
+      <text>{{!authenticated ? '游客浏览模式' : (device ? device.onlineLabel : (hasBinding ? '状态读取中' : '还没有绑定设备'))}}</text>
     </view>
   </view>
 
-  <view class="control-deck">
-    <text class="mascot-caption">{{active ? (inputMode === 'text' ? '不打开麦克风，也不播放声音，只用文字和你聊。' : '正在听你说话；想结束时，再点一次下方按钮。') : companion.description}}</text>
-    <block wx:if="{{!active}}">
-      <view class="focus-picker">
-        <view
-          wx:for="{{sessionFocusOptions}}"
-          wx:key="value"
-          class="focus-option {{sessionFocus === item.value ? 'is-selected' : ''}}"
-          data-focus="{{item.value}}"
-          bindtap="selectSessionFocus"
-        >
-          <text class="focus-label">{{item.label}}</text>
-          <text class="focus-desc">{{item.description}}</text>
+  <block wx:if="{{!authenticated}}">
+    <view class="card empty-card">
+      <text class="empty-badge">机器人控制台</text>
+      <text class="empty-copy">小程序只负责启用设备、管理 Soul 与人物权限、查看回顾和总结；倾听、说话和陪伴都发生在机器人上，关闭小程序不影响机器人对话。</text>
+      <button class="primary-button empty-button" bindtap="loginForDashboard">微信登录后查看</button>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view class="card">
+      <view class="section-heading"><text>机器人状态</text></view>
+      <block wx:if="{{!hasBinding}}">
+        <text class="empty-badge">还没有绑定设备</text>
+        <text class="setting-desc">扫码或近场配网完成启用后，这里会显示机器人状态、Soul/Persona 和今天的陪伴概览。</text>
+        <button class="primary-button empty-button" bindtap="openOnboarding">添加机器人</button>
+      </block>
+      <block wx:else>
+        <view class="device-status-grid">
+          <view class="device-status-item"><text class="device-status-label">在线状态</text><text class="device-status-value">{{device.onlineLabel}}</text></view>
+          <view class="device-status-item"><text class="device-status-label">固件版本</text><text class="device-status-value">{{device.firmwareVersion}}</text></view>
+          <view class="device-status-item"><text class="device-status-label">网络状态</text><text class="device-status-value">{{device.networkLabel}}</text></view>
+          <view class="device-status-item"><text class="device-status-label">激活状态</text><text class="device-status-value">{{device.activationLabel}}</text></view>
+        </view>
+        <view wx:if="{{device && !device.online}}" class="offline-hint">
+          <text class="setting-desc">机器人不在线不影响它本地的对话，也不依赖小程序中转；可到设备页查看详情或重新配网。</text>
+          <button class="secondary-button empty-button" bindtap="openDevice">查看设备状态</button>
+        </view>
+      </block>
+    </view>
+
+    <view class="card">
+      <text class="settings-title">伙伴与使用者</text>
+      <view class="summary-row"><text class="summary-key">伙伴</text><text class="summary-value">{{companion.name}}</text></view>
+      <view wx:if="{{persona}}" class="summary-row">
+        <text class="summary-key">人格阶段</text>
+        <text class="summary-value">{{persona.relationship_stage}} · v{{persona.version}}</text>
+      </view>
+      <view wx:if="{{hasBinding}}" class="summary-row"><text class="summary-key">当前使用者</text><text class="summary-value">{{activeSubjectLabel}}</text></view>
+      <text class="form-note">Soul 决定“怎么说”，Policy 决定“能不能做”；设置变更通过版本化 Runtime Profile 在设备下一个安全点生效。</text>
+      <button class="secondary-button empty-button" bindtap="openProfile">管理 Soul 与 Persona</button>
+    </view>
+
+    <view class="card">
+      <text class="settings-title">今日概览</text>
+      <block wx:if="{{memoryAllowed}}">
+        <view class="summary-row"><text class="summary-key">今日对话</text><text class="summary-value">{{todayCount === null ? '—' : todayCount + ' 条'}}</text></view>
+        <view wx:if="{{recentSummary}}" class="summary-row summary-overview-row">
+          <text class="summary-key">最近摘要</text>
+          <text class="summary-value summary-overview">{{recentSummary}}</text>
+        </view>
+      </block>
+      <text wx:else class="setting-desc">回顾内容按服务端 Runtime Profile 授权显示；获得授权后这里会展示今日对话次数与最近摘要。</text>
+      <button class="secondary-button empty-button" bindtap="openMemory">打开回顾</button>
+    </view>
+
+    <view wx:if="{{settings}}" class="card">
+      <text class="settings-title">快捷设置</text>
+      <view class="quick-setting-row">
+        <view><text class="summary-key">勿扰</text><text class="setting-desc">暂停主动提醒</text></view>
+        <switch checked="{{settings.do_not_disturb}}" disabled="{{settingsSaving}}" data-key="do_not_disturb" bindchange="toggleDeviceSetting" color="#22e5ff" />
+      </view>
+      <view class="quick-setting-row">
+        <view><text class="summary-key">夜间模式</text><text class="setting-desc">降低主动性与屏幕刺激</text></view>
+        <switch checked="{{settings.night_mode}}" disabled="{{settingsSaving}}" data-key="night_mode" bindchange="toggleDeviceSetting" color="#22e5ff" />
+      </view>
+      <view class="quick-setting-block">
+        <view class="quick-setting-heading"><text class="summary-key">音量上限</text><text class="summary-value">{{settings.volume_limit}}%</text></view>
+        <slider value="{{settings.volume_limit}}" min="0" max="100" step="1" disabled="{{settingsSaving}}" bindchange="changeVolume" activeColor="#22e5ff" block-size="18" />
+      </view>
+      <view class="quick-setting-block">
+        <text class="summary-key">学习模式</text>
+        <view class="learning-mode-row">
+          <button wx:for="{{learningModeOptions}}" wx:key="value" size="mini" class="mode-chip {{settings.learning_mode === item.value ? 'is-active' : ''}}" disabled="{{settingsSaving}}" data-mode="{{item.value}}" bindtap="selectLearningMode">{{item.label}}</button>
         </view>
       </view>
-      <text wx:if="{{profile.subject_category === 'minor'}}" class="student-session-notice">每周会给爸爸妈妈一份不含对话原文的成长小结。</text>
-      <button
-        class="primary-button start-button"
-        loading="{{connecting && inputMode === 'voice'}}"
-        bindtap="startVoice"
-      >开始语音对话</button>
-      <button
-        class="secondary-button text-mode-button"
-        loading="{{connecting && inputMode === 'text'}}"
-        bindtap="startText"
-      >使用文字对话</button>
-      <text wx:if="{{!authenticated}}" class="guest-action-hint">可以先浏览，开始对话时再使用微信登录。</text>
-    </block>
-    <block wx:else>
-      <view wx:if="{{inputMode === 'text'}}" class="text-composer">
-        <textarea
-          class="text-input"
-          value="{{textDraft}}"
-          maxlength="500"
-          auto-height
-          placeholder="输入你想说的话"
-          placeholder-class="text-input-placeholder"
-          bindinput="onTextDraftInput"
-        />
-        <button
-          class="primary-button text-send-button"
-          disabled="{{!textDraft || textTurnPending || status !== 'listening'}}"
-          bindtap="sendText"
-        >发送</button>
-      </view>
-      <button class="end-session-button" bindtap="stopVoice">{{inputMode === 'text' ? '退出文字对话' : '结束语音对话'}}</button>
-    </block>
-    <button wx:if="{{status === 'closed' && sessionId}}" class="secondary-button retry-button" bindtap="retryVoice">恢复对话</button>
-    <text wx:if="{{error}}" class="error-text">{{error}}</text>
-  </view>
+      <text class="form-note">设置写入服务端权威配置，并通过新 Runtime Profile 版本在机器人下一个安全点生效。</text>
+    </view>
 
-  <view class="conversation-card card">
-    <view class="section-heading">
-      <text>{{inputMode === 'text' ? '文字对话' : '实时对话'}}</text>
-      <text class="section-hint">仅显示当前发言</text>
-    </view>
-    <view wx:if="{{!transcript.length}}" class="empty-state">
-      <text class="empty-spark">✧</text>
-      <text class="empty-copy">开始后，这里会显示已确认的对话内容。</text>
-    </view>
-    <view wx:for="{{transcript}}" wx:key="id" class="bubble-row bubble-{{item.speaker}}">
-      <view class="bubble">
-        <text class="bubble-speaker">{{item.speaker === 'user' ? '你' : companion.name}}</text>
-        <text class="bubble-text">{{item.text}}</text>
+    <view wx:if="{{guardianNoticeCount > 0}}" class="card notice-card" bindtap="openGuardian">
+      <view class="notice-heading">
+        <text class="settings-title">家长提醒</text>
+        <text class="notice-count">{{guardianNoticeCount}} 条未处理</text>
       </view>
+      <text class="setting-desc">查看需要家长处理的提醒与成长小结。</text>
     </view>
-  </view>
+
+    <text wx:if="{{error}}" class="error-text">{{error}}</text>
+  </block>
 </view>

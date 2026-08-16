@@ -101,6 +101,73 @@ def test_multi_vad_multi_revision_is_one_provisional_then_one_committed_turn() -
     assert projection.provisional is None
 
 
+def test_commit_allows_asr_subrange_inside_leading_vad_provisional() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    projection = ConversationProjection("session", timeline)
+    vad = _segment("vad", start=0, end=1, kind=SegmentKind.VAD)
+    final = _segment(
+        "asr",
+        start=160,
+        end=640,
+        text="梅莫里亚你好",
+        kind=SegmentKind.ASR_FINAL,
+        final=True,
+    )
+    for segment in (vad, final):
+        assert timeline.add(segment)
+        assert projection.apply_continuous_event(segment, turn_id_hint=1) is not None
+
+    evidence = CommitEvidence(
+        session_id="session",
+        stream_epoch=1,
+        capture_start_sample=160,
+        capture_end_sample=640,
+        text="梅莫里亚你好",
+        fence=GenerationFence("session", 1, 1, 0),
+        speaker_evidence=SpeakerEvidence("owner", "voice_match", True),
+        history_eligible=True,
+    )
+
+    assert projection.validate_commit(evidence) is None
+    committed = projection.commit_turn(evidence)
+
+    assert isinstance(committed, CommittedTurn)
+    assert committed.capture_start_sample == 160
+    assert committed.capture_end_sample == 640
+
+
+def test_commit_rejects_ranges_outside_the_provisional_interval() -> None:
+    for start_sample, end_sample in ((80, 640), (160, 800)):
+        timeline = SpeechTimeline()
+        timeline.start_stream_epoch(1)
+        projection = ConversationProjection("session", timeline)
+        final = _segment(
+            "asr",
+            start=160,
+            end=640,
+            text="边界测试",
+            kind=SegmentKind.ASR_FINAL,
+            final=True,
+        )
+        assert timeline.add(final)
+        assert projection.apply_continuous_event(final, turn_id_hint=1) is not None
+        evidence = CommitEvidence(
+            session_id="session",
+            stream_epoch=1,
+            capture_start_sample=start_sample,
+            capture_end_sample=end_sample,
+            text="边界测试",
+            fence=GenerationFence("session", 1, 1, 0),
+            speaker_evidence=SpeakerEvidence(),
+            history_eligible=False,
+        )
+
+        assert projection.validate_commit(evidence) is ProjectionRejectReason.RANGE_MISMATCH
+        assert projection.commit_turn(evidence) is ProjectionRejectReason.RANGE_MISMATCH
+        assert projection.provisional is not None
+
+
 def test_guest_or_ambiguous_evidence_cannot_gain_history_eligibility() -> None:
     for speaker in (
         SpeakerEvidence("guest", "owner_mismatch", authority_verified=True),

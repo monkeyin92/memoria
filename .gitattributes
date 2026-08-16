@@ -1,0 +1,3 @@
+# Overlay patch files embed unified-diff context markers. Their trailing spaces
+# are patch syntax, so Git must not apply source-file whitespace rules to them.
+firmware/esp32/overlay/patches/*.patch -whitespace

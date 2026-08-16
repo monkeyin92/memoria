@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from dataclasses import replace
@@ -10,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
+from services.agent.src.orchestration.conversation_projection import ProjectionPatch
 from services.agent.src.voice_core.asr_stream_supervisor import ASRAcceptDecision
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.speech_timeline import ASRResult
@@ -20,6 +22,10 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+_PREPARE_RETRY_DELAYS_S = (0.05, 0.15)
+_PREPARE_RETRY_EXHAUSTED_REASON = "provider_prepare_retries_exhausted"
+_PREPARE_RETRY_SUPERSEDED_REASON = "provider_prepare_retry_superseded_by_new_vad"
 
 
 class MediaTurnEndpointMixin:
@@ -46,12 +52,19 @@ class MediaTurnEndpointMixin:
             reason: str,
         ) -> None: ...
 
+        async def _emit_projection_patch(
+            self,
+            context: _MediaVoiceSession,
+            patch: ProjectionPatch,
+        ) -> None: ...
+
         async def _cancel_reply_task(
             self,
             context: _MediaVoiceSession,
             fence: GenerationFence,
             *,
             reason: str = "cancelled",
+            cancel_timeout_s: float = 5.0,
         ) -> None: ...
 
         async def commit_user_turn(
@@ -64,6 +77,17 @@ class MediaTurnEndpointMixin:
             retire_sample: int | None = None,
             provider_final_missing: bool = False,
         ) -> tuple[GenerationFence | None, str | None]: ...
+
+        async def _commit_media_input_range(
+            self,
+            context: _MediaVoiceSession,
+            *,
+            session_id: str,
+            stream_epoch: int,
+            start_sample: int,
+            end_sample: int,
+            retire_end: int,
+        ) -> None: ...
 
         async def generate_reply(
             self,
@@ -175,6 +199,74 @@ class MediaTurnEndpointMixin:
             name=f"media-turn-tail-{session_id}-{endpoint_sample}",
         )
 
+    @staticmethod
+    def _turn_commit_retry_matches(
+        context: _MediaVoiceSession,
+        stream_epoch: int,
+        endpoint_sample: int,
+    ) -> bool:
+        task = context.turn_commit_retry_task
+        return bool(
+            task is not None
+            and not task.done()
+            and context.turn_commit_retry_stream_epoch == stream_epoch
+            and context.turn_commit_retry_endpoint_sample == endpoint_sample
+        )
+
+    @staticmethod
+    def _clear_turn_commit_retry_state(context: _MediaVoiceSession) -> None:
+        task = context.turn_commit_retry_task
+        current_task = asyncio.current_task()
+        if task is not None and task is not current_task and not task.done():
+            task.cancel()
+        context.turn_commit_retry_task = None
+        context.turn_commit_retry_attempt = 0
+        context.turn_commit_retry_stream_epoch = None
+        context.turn_commit_retry_endpoint_sample = None
+
+    @staticmethod
+    def _clear_pending_turn_state(context: _MediaVoiceSession) -> None:
+        if context.turn_endpoint_timeout_handle is not None:
+            context.turn_endpoint_timeout_handle.cancel()
+            context.turn_endpoint_timeout_handle = None
+        MediaTurnEndpointMixin._clear_turn_commit_retry_state(context)
+        context.turn_start_sample = None
+        context.turn_end_sample = None
+        context.turn_endpoint_sample = None
+        context.turn_retire_sample = None
+        context.turn_endpoint_grace_deadline = None
+        context.turn_endpoint_tail_deadline = None
+        context.committed_asr_keys.clear()
+        context.pending_partial = None
+
+    async def _retire_pending_turn_input_range(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        stream_epoch: int,
+        endpoint_sample: int,
+    ) -> bool:
+        """Consume one discarded turn through its transport hangover boundary."""
+
+        start_sample = context.turn_start_sample
+        retire_sample = context.turn_retire_sample
+        if (
+            start_sample is None
+            or retire_sample is None
+            or endpoint_sample <= start_sample
+            or retire_sample < endpoint_sample
+        ):
+            return False
+        await self._commit_media_input_range(
+            context,
+            session_id=context.identity.session_id,
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=endpoint_sample,
+            retire_end=retire_sample,
+        )
+        return True
+
     async def _expire_endpoint_tail(
         self,
         session_id: str,
@@ -189,6 +281,24 @@ class MediaTurnEndpointMixin:
             or context.turn_endpoint_sample != endpoint_sample
         ):
             return
+        retry_task = context.turn_commit_retry_task
+        if (
+            retry_task is not None
+            and self._turn_commit_retry_matches(context, stream_epoch, endpoint_sample)
+        ):
+            try:
+                await asyncio.shield(retry_task)
+            except asyncio.CancelledError:
+                if not retry_task.cancelled():
+                    raise
+            context = self._sessions.get(session_id)
+            if (
+                context is None
+                or context.closed
+                or context.stream_epoch != stream_epoch
+                or context.turn_endpoint_sample != endpoint_sample
+            ):
+                return
         partial = context.pending_partial
         if (
             partial is not None
@@ -223,18 +333,31 @@ class MediaTurnEndpointMixin:
                 if context.turn_endpoint_sample != endpoint_sample:
                     return
 
-        context.asr.mark_committed(endpoint_sample)
-        await self._discard_projection(context, "provider_final_missing")
-        context.turn_start_sample = None
-        context.turn_end_sample = None
-        context.turn_endpoint_sample = None
-        context.turn_retire_sample = None
-        context.turn_endpoint_grace_deadline = None
-        context.turn_endpoint_tail_deadline = None
-        context.committed_asr_keys.clear()
-        context.pending_partial = None
-        if context.runtime.assistant_speaking:
-            context.runtime.publish_assistant_audio("restore", gain=1.0)
+        discarded: ProjectionPatch | None = None
+        async with context.turn_commit_lock:
+            current = self._sessions.get(session_id)
+            if (
+                current is not context
+                or context.closed
+                or context.stream_epoch != stream_epoch
+                or context.turn_endpoint_sample != endpoint_sample
+            ):
+                return
+            if not await self._retire_pending_turn_input_range(
+                context,
+                stream_epoch=stream_epoch,
+                endpoint_sample=endpoint_sample,
+            ):
+                context.asr.mark_committed(endpoint_sample)
+            discarded = context.projection.discard_provisional(
+                None,
+                "provider_final_missing",
+            )
+            self._clear_pending_turn_state(context)
+            if context.runtime.assistant_speaking:
+                context.runtime.publish_assistant_audio("restore", gain=1.0)
+        if discarded is not None:
+            await self._emit_projection_patch(context, discarded)
         logger.warning(
             "media turn discarded after ASR tail timeout session=%s stream_epoch=%s endpoint=%s",
             session_id,
@@ -248,6 +371,12 @@ class MediaTurnEndpointMixin:
             task.cancel()
         endpoint_sample = context.turn_endpoint_sample
         if endpoint_sample is None:
+            return
+        if self._turn_commit_retry_matches(
+            context,
+            context.stream_epoch,
+            endpoint_sample,
+        ):
             return
         self._arm_endpoint_tail_timeout(context, endpoint_sample)
         grace_deadline = context.turn_endpoint_grace_deadline or time.monotonic()
@@ -309,7 +438,8 @@ class MediaTurnEndpointMixin:
         context: _MediaVoiceSession,
         *,
         provider_final_missing: bool = False,
-    ) -> None:
+        schedule_prepare_retry: bool = True,
+    ) -> str | None:
         """Commit one VAD/ASR-coordinated logical turn through UtteranceRouter."""
 
         start_sample = context.turn_start_sample
@@ -325,7 +455,7 @@ class MediaTurnEndpointMixin:
             or end_sample <= start_sample
             or retire_sample < endpoint_sample
         ):
-            return
+            return "invalid_pending_media_turn"
         previous_fence = context.playback.current_fence or context.runtime.fence
         fence, reason = await self.commit_user_turn(
             context.identity.session_id,
@@ -337,18 +467,19 @@ class MediaTurnEndpointMixin:
         )
         # The range was consumed even when Router turns it into a low-risk
         # control action rather than a chat generation.
-        if reason != "empty_media_turn":
-            if context.turn_endpoint_timeout_handle is not None:
-                context.turn_endpoint_timeout_handle.cancel()
-                context.turn_endpoint_timeout_handle = None
-            context.turn_start_sample = None
-            context.turn_end_sample = None
-            context.turn_endpoint_sample = None
-            context.turn_retire_sample = None
-            context.turn_endpoint_grace_deadline = None
-            context.turn_endpoint_tail_deadline = None
-            context.committed_asr_keys.clear()
-            context.pending_partial = None
+        prepare_retryable = (
+            reason == "provider_prepare_failed"
+            and context.projection.provisional is not None
+        )
+        if prepare_retryable and schedule_prepare_retry:
+            self._schedule_turn_prepare_retry(
+                context,
+                stream_epoch=context.stream_epoch,
+                endpoint_sample=endpoint_sample,
+                provider_final_missing=provider_final_missing,
+            )
+        if reason != "empty_media_turn" and not prepare_retryable:
+            self._clear_pending_turn_state(context)
         if fence is None:
             # Pure control/enrol/guarded utterances are intentionally not sent
             # to the LLM; ``accept_user_turn`` already routed those centrally.
@@ -358,7 +489,7 @@ class MediaTurnEndpointMixin:
                     context.identity.session_id,
                     reason,
                 )
-            return
+            return reason
         # A final ASR result can arrive while the previous answer is still
         # synthesizing.  Wait for that task to release the per-session reply
         # lock before scheduling the new turn; otherwise ``generate_reply``
@@ -393,3 +524,197 @@ class MediaTurnEndpointMixin:
                 )
 
         task.add_done_callback(_observe)
+        return reason
+
+    def _schedule_turn_prepare_retry(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        stream_epoch: int,
+        endpoint_sample: int,
+        provider_final_missing: bool,
+    ) -> None:
+        if self._turn_commit_retry_matches(context, stream_epoch, endpoint_sample):
+            return
+        self._clear_turn_commit_retry_state(context)
+        context.turn_commit_retry_attempt = 0
+        context.turn_commit_retry_stream_epoch = stream_epoch
+        context.turn_commit_retry_endpoint_sample = endpoint_sample
+        context.turn_commit_retry_task = asyncio.create_task(
+            self._run_turn_prepare_retries(
+                context.identity.session_id,
+                stream_epoch,
+                endpoint_sample,
+                provider_final_missing=provider_final_missing,
+            ),
+            name=(
+                f"media-turn-prepare-retry-{context.identity.session_id}-"
+                f"{stream_epoch}-{endpoint_sample}"
+            ),
+        )
+        self.metrics.inc_media_metric(
+            "voice_turn_prepare_retry_total",
+            labels={"status": "scheduled"},
+        )
+
+    async def _run_turn_prepare_retries(
+        self,
+        session_id: str,
+        stream_epoch: int,
+        endpoint_sample: int,
+        *,
+        provider_final_missing: bool,
+    ) -> None:
+        current_task = asyncio.current_task()
+        try:
+            for attempt, delay_s in enumerate(_PREPARE_RETRY_DELAYS_S, start=1):
+                await asyncio.sleep(delay_s)
+                context = self._sessions.get(session_id)
+                if (
+                    context is None
+                    or context.closed
+                    or context.turn_commit_retry_task is not current_task
+                    or not self._turn_commit_retry_matches(
+                        context,
+                        stream_epoch,
+                        endpoint_sample,
+                    )
+                    or context.projection.provisional is None
+                ):
+                    return
+                context.turn_commit_retry_attempt = attempt
+                self.metrics.inc_media_metric(
+                    "voice_turn_prepare_retry_total",
+                    labels={"status": "attempt"},
+                )
+                reason = await self._commit_pending_turn(
+                    context,
+                    provider_final_missing=provider_final_missing,
+                    schedule_prepare_retry=False,
+                )
+                if reason != "provider_prepare_failed":
+                    if reason is None:
+                        self.metrics.inc_media_metric(
+                            "voice_turn_prepare_retry_total",
+                            labels={"status": "succeeded"},
+                        )
+                    return
+                if context.projection.provisional is None:
+                    return
+            await self._discard_exhausted_turn_prepare_retry(
+                session_id,
+                stream_epoch,
+                endpoint_sample,
+            )
+        except asyncio.CancelledError:
+            return
+        finally:
+            context = self._sessions.get(session_id)
+            if context is not None and context.turn_commit_retry_task is current_task:
+                self._clear_turn_commit_retry_state(context)
+
+    async def _discard_exhausted_turn_prepare_retry(
+        self,
+        session_id: str,
+        stream_epoch: int,
+        endpoint_sample: int,
+    ) -> None:
+        context = self._sessions.get(session_id)
+        if context is None:
+            return
+        discarded: ProjectionPatch | None = None
+        async with context.turn_commit_lock:
+            current = self._sessions.get(session_id)
+            if (
+                current is not context
+                or context.closed
+                or context.stream_epoch != stream_epoch
+                or context.turn_endpoint_sample != endpoint_sample
+                or not self._turn_commit_retry_matches(
+                    context,
+                    stream_epoch,
+                    endpoint_sample,
+                )
+            ):
+                return
+            if not await self._retire_pending_turn_input_range(
+                context,
+                stream_epoch=stream_epoch,
+                endpoint_sample=endpoint_sample,
+            ):
+                context.asr.mark_committed(endpoint_sample)
+            discarded = context.projection.discard_provisional(
+                None,
+                _PREPARE_RETRY_EXHAUSTED_REASON,
+            )
+            self._clear_pending_turn_state(context)
+            if context.runtime.assistant_speaking:
+                context.runtime.publish_assistant_audio("restore", gain=1.0)
+        if discarded is not None:
+            await self._emit_projection_patch(context, discarded)
+        self.metrics.inc_media_metric(
+            "voice_turn_prepare_retry_total",
+            labels={"status": "exhausted"},
+        )
+        logger.error(
+            "media turn preparation retries exhausted session=%s stream_epoch=%s endpoint=%s",
+            session_id,
+            stream_epoch,
+            endpoint_sample,
+        )
+
+    async def _retire_prepare_retry_before_new_vad(
+        self,
+        context: _MediaVoiceSession,
+    ) -> None:
+        retry_task = context.turn_commit_retry_task
+        stream_epoch = context.stream_epoch
+        endpoint_sample = context.turn_commit_retry_endpoint_sample
+        if (
+            retry_task is None
+            or endpoint_sample is None
+            or not self._turn_commit_retry_matches(
+                context,
+                stream_epoch,
+                endpoint_sample,
+            )
+        ):
+            return
+        discarded: ProjectionPatch | None = None
+        async with context.turn_commit_lock:
+            if not self._turn_commit_retry_matches(
+                context,
+                stream_epoch,
+                endpoint_sample,
+            ):
+                return
+            retry_task = context.turn_commit_retry_task
+            if not await self._retire_pending_turn_input_range(
+                context,
+                stream_epoch=stream_epoch,
+                endpoint_sample=endpoint_sample,
+            ):
+                context.asr.mark_committed(endpoint_sample)
+            discarded = context.projection.discard_provisional(
+                None,
+                _PREPARE_RETRY_SUPERSEDED_REASON,
+            )
+            self._clear_pending_turn_state(context)
+            if context.runtime.assistant_speaking:
+                context.runtime.publish_assistant_audio("restore", gain=1.0)
+        if retry_task is not None and retry_task is not asyncio.current_task():
+            with contextlib.suppress(asyncio.CancelledError):
+                await retry_task
+        if discarded is not None:
+            await self._emit_projection_patch(context, discarded)
+        self.metrics.inc_media_metric(
+            "voice_turn_prepare_retry_total",
+            labels={"status": "superseded"},
+        )
+        logger.warning(
+            "media turn preparation retry superseded by new VAD session=%s "
+            "stream_epoch=%s endpoint=%s",
+            context.identity.session_id,
+            stream_epoch,
+            endpoint_sample,
+        )

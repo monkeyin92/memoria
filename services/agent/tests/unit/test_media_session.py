@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Sequence
+from types import SimpleNamespace
 from typing import Any
 
 import grpc
@@ -11,10 +12,12 @@ import pytest
 from services.agent.src.agent import DuplexVoiceAgent
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.context_snapshot_manager import (
     MemoryCapsule,
     PersonaCapsule,
 )
+from services.agent.src.orchestration.conversation_projection import ConversationProjection
 from services.agent.src.orchestration.delegation_coordinator import OutputIntentAdmission
 from services.agent.src.orchestration.state_machine import ConversationState
 from services.agent.src.prompts import BRIDGE_PHRASES
@@ -45,6 +48,7 @@ from services.agent.src.voice_core.speech_timeline import (
     ASRWordTiming,
     SegmentKind,
     SpeechSegment,
+    SpeechTimeline,
     asr_result_to_segment,
 )
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
@@ -102,6 +106,49 @@ class FakeMediaProvider(MediaVoiceProvider):
 
     async def close(self, _identity: SessionIdentity) -> None:
         self.closed = True
+
+
+class _CapturingMediaBridge(MediaBridgeGrpcServer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    async def emit_event(
+        self,
+        _session_id: str,
+        event_type: str,
+        payload: dict[str, object],
+        **_kwargs: object,
+    ) -> bool:
+        self.events.append((event_type, payload))
+        return True
+
+
+async def _seed_pending_media_turn(
+    registry: MediaVoiceCoreRegistry,
+    identity: SessionIdentity,
+    *,
+    text: str,
+    endpoint_sample: int = 600,
+    retire_sample: int = 640,
+) -> Any:
+    context = await registry._get_or_create(identity)
+    assert await registry.accept_asr_result(
+        identity.session_id,
+        ASRResult(
+            task_epoch=1,
+            sentence_id=f"seed-{identity.session_id}",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=endpoint_sample,
+            text=text,
+            is_final=True,
+            stream_epoch=identity.stream_epoch,
+        ),
+    )
+    context.turn_endpoint_sample = endpoint_sample
+    context.turn_retire_sample = retire_sample
+    return context
 
 
 class MultiFinalProvider(FakeMediaProvider):
@@ -245,7 +292,145 @@ async def test_media_registry_closes_unpublished_factory_resources_on_wiring_fai
 
     assert runtime_closed.is_set()
     assert provider.closed is True
+    assert runtime.orchestrator.playback_stop_seam is None
     assert registry.context(identity.session_id) is None
+
+
+@pytest.mark.asyncio
+async def test_media_registry_installs_direct_playback_stop_seam_as_safe_noop() -> None:
+    identity = SessionIdentity("direct-playback-seam-noop")
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+    provider = FakeMediaProvider()
+
+    async def build_session(_identity: SessionIdentity) -> MediaSessionResources:
+        return MediaSessionResources(runtime=runtime, provider=provider)
+
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        session_factory=build_session,
+    )
+    await registry._get_or_create(identity)
+
+    seam = runtime.orchestrator.playback_stop_seam
+    assert seam is not None
+    before = runtime.fence
+    await seam()
+
+    assert runtime.fence.matches(before)
+    assert provider.cancelled == []
+    runtime.set_playback_stop_seam(None)
+    await runtime.close()
+    await provider.close(identity)
+
+
+@pytest.mark.asyncio
+async def test_direct_playback_stop_seam_revokes_output_and_cancels_next_generation() -> None:
+    reply_started = asyncio.Event()
+    reply_drained = asyncio.Event()
+
+    class BlockingFailCancelProvider(FakeMediaProvider):
+        def generate_reply(
+            self,
+            _identity: SessionIdentity,
+            _user_text: str,
+            _fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                try:
+                    reply_started.set()
+                    await asyncio.Event().wait()
+                    yield MediaReplyChunk(b"\x00\x00", 0)
+                finally:
+                    reply_drained.set()
+
+            return chunks()
+
+        async def cancel_generation(self, fence: GenerationFence) -> None:
+            self.cancelled.append(fence)
+            raise RuntimeError("provider cancel failed")
+
+    identity = SessionIdentity("direct-playback-seam-active")
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+    provider = BlockingFailCancelProvider()
+    bridge = MediaBridgeGrpcServer()
+    effects: list[tuple[int, GenerationFence, str]] = []
+
+    async def emit_realtime_effect(
+        _session_id: str,
+        effect_kind: int,
+        fence: GenerationFence,
+        *,
+        source_event_id: str,
+        **_kwargs: Any,
+    ) -> bool:
+        effects.append((effect_kind, fence, source_event_id))
+        return True
+
+    bridge.emit_realtime_effect = emit_realtime_effect  # type: ignore[method-assign]
+
+    async def build_session(_identity: SessionIdentity) -> MediaSessionResources:
+        return MediaSessionResources(runtime=runtime, provider=provider)
+
+    registry = MediaVoiceCoreRegistry(bridge=bridge, session_factory=build_session)
+    context = await registry._get_or_create(identity)
+    fence = await runtime.on_turn_committed("你好")
+    reply = asyncio.create_task(registry.generate_reply(identity.session_id, "你好", fence))
+    await asyncio.wait_for(reply_started.wait(), timeout=1)
+    assert context.output_owner is not None
+    assert context.playback.register_audio(fence, 0, 0, 2)
+    assert context.playback.add_span(
+        PlaybackSpan(fence, 0, 1, 0, 2, text="你", sequence=0)
+    )
+    assert context.playback.acknowledge(fence, 2, received_sequence=0)
+    stale_before = context.playback.stale_ack_count
+    runtime_before = runtime.fence
+    turns_before = [
+        (turn.role, turn.content) for turn in context.runtime.orchestrator.context.turns
+    ]
+    interrupted: list[tuple[GenerationFence, str | None]] = []
+    original_interrupted = context.runtime.on_media_playback_interrupted
+
+    async def observe_interrupted(
+        *,
+        interrupted_from: GenerationFence,
+        synchronized_transcript: str | None,
+    ) -> str | None:
+        interrupted.append((interrupted_from, synchronized_transcript))
+        return await original_interrupted(
+            interrupted_from=interrupted_from,
+            synchronized_transcript=synchronized_transcript,
+        )
+
+    context.runtime.on_media_playback_interrupted = observe_interrupted  # type: ignore[method-assign]
+
+    seam = runtime.orchestrator.playback_stop_seam
+    assert seam is not None
+    await seam()
+
+    assert context.output_owner is None
+    assert context.reply_task is None
+    assert reply.done()
+    assert reply_drained.is_set()
+    assert provider.cancelled == [fence]
+    assert runtime.fence.generation_id == runtime_before.generation_id + 1
+    assert effects == [
+        (
+            media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
+            runtime.fence,
+            "identity_epoch_rotated",
+        )
+    ]
+    assert context.playback.actual_heard_text(fence) == ""
+    assert context.playback.acknowledge(fence, 2, received_sequence=0) == ()
+    assert context.playback.stale_ack_count == stale_before + 1
+    assert interrupted == [(runtime_before, "")]
+    assert [
+        (turn.role, turn.content) for turn in context.runtime.orchestrator.context.turns
+    ] == turns_before
+
+    runtime.set_playback_stop_seam(None)
+    await runtime.close()
+    await provider.close(identity)
 
 
 @pytest.mark.asyncio
@@ -350,6 +535,344 @@ async def test_old_epoch_provider_callback_cannot_update_speaker_or_shadow() -> 
 
 
 @pytest.mark.asyncio
+async def test_commit_accepts_asr_subrange_of_leading_vad_projection() -> None:
+    identity = SessionIdentity("leading-vad-subrange")
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+    provider = FakeMediaProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        session_factory=lambda _identity: MediaSessionResources(runtime, provider),
+    )
+    context = await registry._get_or_create(identity)
+    segments = (
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            provider_task_epoch=0,
+            segment_id="leading-vad",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+        ),
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            provider_task_epoch=1,
+            segment_id="trimmed-asr",
+            revision=1,
+            kind=SegmentKind.ASR_FINAL,
+            capture_start_sample=160,
+            capture_end_sample=640,
+            text="梅莫里亚你好",
+            final=True,
+        ),
+    )
+    for segment in segments:
+        assert context.runtime.ingest_media_speech_segment(segment)
+        await registry._apply_projection_segment(context, segment)
+
+    fence, reason = await registry.commit_user_turn(
+        identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        start_sample=160,
+        end_sample=640,
+    )
+
+    assert fence is not None
+    assert reason is None
+    assert context.projection.provisional is None
+    assert [
+        turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["梅莫里亚你好"]
+    await runtime.close()
+    await provider.close(identity)
+
+
+@pytest.mark.asyncio
+async def test_no_provisional_rejects_before_prepare_or_runtime_commit() -> None:
+    identity = SessionIdentity("preflight-no-provisional")
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+
+    class TrackingPreparingProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.prepare_calls = 0
+
+        async def prepare_committed_turn(
+            self,
+            _identity: SessionIdentity,
+            text: str,
+        ) -> GenerationFence:
+            self.prepare_calls += 1
+            return await runtime.on_turn_committed(text, input_modality="audio")
+
+    provider = TrackingPreparingProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        session_factory=lambda _identity: MediaSessionResources(runtime, provider),
+    )
+    context = await registry._get_or_create(identity)
+    segment = SpeechSegment(
+        session_id=identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        provider_task_epoch=1,
+        segment_id="missing-provisional",
+        revision=1,
+        kind=SegmentKind.ASR_FINAL,
+        capture_start_sample=0,
+        capture_end_sample=320,
+        text="这句不能成为幽灵话轮",
+        final=True,
+    )
+    assert context.runtime.ingest_media_speech_segment(segment)
+    context.projection = ConversationProjection(identity.session_id, SpeechTimeline())
+    before_fence = runtime.fence
+    before_turns = list(runtime.orchestrator.context.turns)
+
+    fence, reason = await registry.commit_user_turn(
+        identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        start_sample=0,
+        end_sample=320,
+    )
+
+    assert fence is None
+    assert reason == "no_provisional_turn"
+    assert provider.prepare_calls == 0
+    assert runtime.fence == before_fence
+    assert runtime.orchestrator.context.turns == before_turns
+    assert runtime.speech_timeline.committed_sample == 0
+    assert context.asr.last_committed_sample == 0
+    await runtime.close()
+    await provider.close(identity)
+
+
+@pytest.mark.asyncio
+async def test_endpoint_timeout_waits_for_inflight_turn_prepare() -> None:
+    identity = SessionIdentity("tail-timeout-during-prepare")
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+    prepare_started = asyncio.Event()
+    release_prepare = asyncio.Event()
+
+    class BlockingPreparingProvider(FakeMediaProvider):
+        async def prepare_committed_turn(
+            self,
+            _identity: SessionIdentity,
+            text: str,
+        ) -> GenerationFence:
+            prepare_started.set()
+            await release_prepare.wait()
+            return await runtime.on_turn_committed(text, input_modality="audio")
+
+    class CapturingBridge(MediaBridgeGrpcServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.events: list[tuple[str, dict[str, object]]] = []
+
+        async def emit_event(
+            self,
+            _session_id: str,
+            event_type: str,
+            payload: dict[str, object],
+            **_kwargs: object,
+        ) -> bool:
+            self.events.append((event_type, payload))
+            return True
+
+    provider = BlockingPreparingProvider()
+    bridge = CapturingBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        session_factory=lambda _identity: MediaSessionResources(runtime, provider),
+    )
+    context = await registry._get_or_create(identity)
+    segment = SpeechSegment(
+        session_id=identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        provider_task_epoch=1,
+        segment_id="blocking-prepare",
+        revision=1,
+        kind=SegmentKind.ASR_FINAL,
+        capture_start_sample=0,
+        capture_end_sample=320,
+        text="提交期间不能被超时删除",
+        final=True,
+    )
+    assert context.runtime.ingest_media_speech_segment(segment)
+    await registry._apply_projection_segment(context, segment)
+    context.turn_start_sample = 0
+    context.turn_end_sample = 320
+    context.turn_endpoint_sample = 320
+    context.turn_retire_sample = 320
+
+    committing = asyncio.create_task(registry._commit_pending_turn(context))
+    await asyncio.wait_for(prepare_started.wait(), timeout=1)
+    expiring = asyncio.create_task(
+        registry._expire_endpoint_tail(identity.session_id, identity.stream_epoch, 320)
+    )
+    await asyncio.sleep(0)
+
+    assert not expiring.done()
+    assert context.projection.provisional is not None
+
+    release_prepare.set()
+    await asyncio.wait_for(committing, timeout=1)
+    await asyncio.wait_for(expiring, timeout=1)
+
+    assert [
+        turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["提交期间不能被超时删除"]
+    assert [
+        payload["text"]
+        for event_type, payload in bridge.events
+        if event_type == "turn.committed"
+    ] == ["提交期间不能被超时删除"]
+    assert not [
+        payload
+        for event_type, payload in bridge.events
+        if event_type == "turn.provisional.discarded"
+        and payload.get("reason") == "provider_final_missing"
+    ]
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_audio_discontinuity_waits_for_inflight_turn_prepare() -> None:
+    identity = SessionIdentity("discontinuity-during-prepare")
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+    prepare_started = asyncio.Event()
+    release_prepare = asyncio.Event()
+
+    class BlockingPreparingProvider(FakeMediaProvider):
+        async def prepare_committed_turn(
+            self,
+            _identity: SessionIdentity,
+            text: str,
+        ) -> GenerationFence:
+            prepare_started.set()
+            await release_prepare.wait()
+            return await runtime.on_turn_committed(text, input_modality="audio")
+
+    provider = BlockingPreparingProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        session_factory=lambda _identity: MediaSessionResources(runtime, provider),
+    )
+    context = await registry._get_or_create(identity)
+    segment = SpeechSegment(
+        session_id=identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        provider_task_epoch=1,
+        segment_id="discontinuity-blocking-prepare",
+        revision=1,
+        kind=SegmentKind.ASR_FINAL,
+        capture_start_sample=0,
+        capture_end_sample=320,
+        text="断流不能抢先删除话轮",
+        final=True,
+    )
+    assert context.runtime.ingest_media_speech_segment(segment)
+    await registry._apply_projection_segment(context, segment)
+    context.turn_start_sample = 0
+    context.turn_end_sample = 320
+    context.turn_endpoint_sample = 320
+    context.turn_retire_sample = 320
+
+    committing = asyncio.create_task(registry._commit_pending_turn(context))
+    await asyncio.wait_for(prepare_started.wait(), timeout=1)
+    resetting = asyncio.create_task(
+        registry._audio_ingress._reset_discontinuity(
+            context,
+            AudioFrame(identity, 1, 320, 320, b"\x00\x00" * 320, discontinuity=True),
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert not resetting.done()
+    assert context.projection.provisional is not None
+
+    release_prepare.set()
+    await asyncio.wait_for(committing, timeout=1)
+    await asyncio.wait_for(resetting, timeout=1)
+
+    assert [
+        turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["断流不能抢先删除话轮"]
+    assert context.projection.provisional is None
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_finalize_failure_waits_for_inflight_turn_prepare() -> None:
+    identity = SessionIdentity("finalize-failure-during-prepare")
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+    prepare_started = asyncio.Event()
+    release_prepare = asyncio.Event()
+
+    class BlockingPreparingProvider(FakeMediaProvider):
+        async def prepare_committed_turn(
+            self,
+            _identity: SessionIdentity,
+            text: str,
+        ) -> GenerationFence:
+            prepare_started.set()
+            await release_prepare.wait()
+            return await runtime.on_turn_committed(text, input_modality="audio")
+
+        async def finalize_speech_segment(
+            self,
+            _identity: SessionIdentity,
+        ) -> Sequence[ASRResult]:
+            raise RuntimeError("task rotation failed")
+
+    provider = BlockingPreparingProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        session_factory=lambda _identity: MediaSessionResources(runtime, provider),
+    )
+    context = await registry._get_or_create(identity)
+    assert context.asr.record_audio(start_sample=0, frame_samples=320)
+    segment = SpeechSegment(
+        session_id=identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        provider_task_epoch=1,
+        segment_id="finalize-failure-blocking-prepare",
+        revision=1,
+        kind=SegmentKind.ASR_FINAL,
+        capture_start_sample=0,
+        capture_end_sample=320,
+        text="终结失败不能抢先删除话轮",
+        final=True,
+    )
+    assert context.runtime.ingest_media_speech_segment(segment)
+    await registry._apply_projection_segment(context, segment)
+    context.turn_start_sample = 0
+    context.turn_end_sample = 320
+    context.turn_endpoint_sample = 320
+    context.turn_retire_sample = 320
+
+    committing = asyncio.create_task(registry._commit_pending_turn(context))
+    await asyncio.wait_for(prepare_started.wait(), timeout=1)
+    finalizing = asyncio.create_task(registry._audio_ingress.finalize_speech_segment(context))
+    await asyncio.sleep(0)
+
+    assert not finalizing.done()
+    assert context.projection.provisional is not None
+
+    release_prepare.set()
+    await asyncio.wait_for(committing, timeout=1)
+    assert await asyncio.wait_for(finalizing, timeout=1) is False
+
+    assert [
+        turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["终结失败不能抢先删除话轮"]
+    assert context.projection.provisional is None
+    assert context.ingress.provider_failed is True
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_prepare_failure_leaves_media_turn_retryable() -> None:
     identity = SessionIdentity("prepare-failure-leaves-turn-retryable")
     runtime = DuplexRuntime.create(session_id=identity.session_id)
@@ -419,6 +942,441 @@ async def test_prepare_failure_leaves_media_turn_retryable() -> None:
     assert context.asr.last_committed_sample == 320
     await runtime.close()
     await provider.close(identity)
+
+
+@pytest.mark.asyncio
+async def test_prepare_failure_automatically_retries_and_commits_once() -> None:
+    identity = SessionIdentity("prepare-failure-auto-retry")
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+
+    class FailOncePreparingProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.prepare_calls = 0
+            self.reply_calls = 0
+            self.reply_started = asyncio.Event()
+
+        async def prepare_committed_turn(
+            self,
+            _identity: SessionIdentity,
+            text: str,
+        ) -> GenerationFence:
+            self.prepare_calls += 1
+            if self.prepare_calls == 1:
+                raise RuntimeError("transient preparation failure")
+            return await runtime.on_turn_committed(text, input_modality="audio")
+
+        def generate_reply(
+            self,
+            identity: SessionIdentity,
+            user_text: str,
+            fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            self.reply_calls += 1
+            self.reply_started.set()
+            return super().generate_reply(identity, user_text, fence)
+
+    provider = FailOncePreparingProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=_CapturingMediaBridge(),
+        session_factory=lambda _identity: MediaSessionResources(runtime, provider),
+        metrics=MetricsRegistry(),
+    )
+    context = await _seed_pending_media_turn(
+        registry,
+        identity,
+        text="自动重试后只提交一次",
+    )
+
+    assert await registry._commit_pending_turn(context) == "provider_prepare_failed"
+    retry_task = context.turn_commit_retry_task
+    assert retry_task is not None
+
+    await asyncio.wait_for(provider.reply_started.wait(), timeout=1)
+    await asyncio.wait_for(retry_task, timeout=1)
+
+    assert provider.prepare_calls == 2
+    assert provider.reply_calls == 1
+    assert [
+        turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["自动重试后只提交一次"]
+    assert context.projection.provisional is None
+    assert context.runtime.speech_timeline.committed_sample == 640
+    assert context.asr.last_committed_sample == 640
+    assert context.turn_commit_retry_task is None
+    assert context.turn_commit_retry_attempt == 0
+    assert context.turn_commit_retry_stream_epoch is None
+    assert context.turn_commit_retry_endpoint_sample is None
+    assert registry.metrics.get(
+        "voice_turn_prepare_retry_total", {"status": "scheduled"}
+    ) == 1
+    assert registry.metrics.get(
+        "voice_turn_prepare_retry_total", {"status": "attempt"}
+    ) == 1
+    assert registry.metrics.get(
+        "voice_turn_prepare_retry_total", {"status": "succeeded"}
+    ) == 1
+    assert registry.metrics.get(
+        "voice_turn_prepare_retry_total", {"status": "exhausted"}
+    ) == 0
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_endpoint_tail_waits_for_matching_prepare_retry() -> None:
+    identity = SessionIdentity("endpoint-tail-waits-for-prepare-retry")
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+
+    class BlockingRetryProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.prepare_calls = 0
+            self.retry_started = asyncio.Event()
+            self.release_retry = asyncio.Event()
+
+        async def prepare_committed_turn(
+            self,
+            _identity: SessionIdentity,
+            text: str,
+        ) -> GenerationFence:
+            self.prepare_calls += 1
+            if self.prepare_calls == 1:
+                raise RuntimeError("transient preparation failure")
+            self.retry_started.set()
+            await self.release_retry.wait()
+            return await runtime.on_turn_committed(text, input_modality="audio")
+
+    provider = BlockingRetryProvider()
+    bridge = _CapturingMediaBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        session_factory=lambda _identity: MediaSessionResources(runtime, provider),
+        metrics=MetricsRegistry(),
+    )
+    context = await _seed_pending_media_turn(
+        registry,
+        identity,
+        text="尾超时必须等同一轮重试",
+    )
+
+    assert await registry._commit_pending_turn(context) == "provider_prepare_failed"
+    retry_task = context.turn_commit_retry_task
+    assert retry_task is not None
+    await asyncio.wait_for(provider.retry_started.wait(), timeout=1)
+
+    expiring = asyncio.create_task(
+        registry._expire_endpoint_tail(identity.session_id, identity.stream_epoch, 600)
+    )
+    await asyncio.sleep(0)
+    assert not expiring.done()
+    assert context.projection.provisional is not None
+
+    provider.release_retry.set()
+    await asyncio.wait_for(retry_task, timeout=1)
+    await asyncio.wait_for(expiring, timeout=1)
+
+    assert provider.prepare_calls == 2
+    assert context.projection.provisional is None
+    assert context.asr.last_committed_sample == 640
+    assert not [
+        payload
+        for event_type, payload in bridge.events
+        if event_type == "turn.provisional.discarded"
+        and payload.get("reason") == "provider_final_missing"
+    ]
+    assert registry.metrics.get(
+        "voice_turn_prepare_retry_total", {"status": "succeeded"}
+    ) == 1
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_new_vad_supersedes_retry_without_merging_turns() -> None:
+    identity = SessionIdentity("new-vad-supersedes-prepare-retry")
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+
+    class AlwaysFailingPreparingProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.prepare_calls = 0
+
+        async def prepare_committed_turn(
+            self,
+            _identity: SessionIdentity,
+            _text: str,
+        ) -> GenerationFence:
+            self.prepare_calls += 1
+            raise RuntimeError("preparation unavailable")
+
+    provider = AlwaysFailingPreparingProvider()
+    bridge = _CapturingMediaBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        session_factory=lambda _identity: MediaSessionResources(runtime, provider),
+        metrics=MetricsRegistry(),
+    )
+    session = bridge.bridge.open(identity)
+    context = await _seed_pending_media_turn(
+        registry,
+        identity,
+        text="旧话轮不能并入新话轮",
+    )
+
+    assert await registry._commit_pending_turn(context) == "provider_prepare_failed"
+    first_started = [
+        payload
+        for event_type, payload in bridge.events
+        if event_type == "turn.provisional.started"
+    ]
+    assert len(first_started) == 1
+
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            provider_task_epoch=0,
+            segment_id="next-valid-vad",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=640,
+            capture_end_sample=641,
+        ),
+    )
+
+    started = [
+        payload
+        for event_type, payload in bridge.events
+        if event_type == "turn.provisional.started"
+    ]
+    discarded = [
+        payload
+        for event_type, payload in bridge.events
+        if event_type == "turn.provisional.discarded"
+    ]
+    assert len(started) == 2
+    assert len(discarded) == 1
+    assert discarded[0]["reason"] == "provider_prepare_retry_superseded_by_new_vad"
+    assert discarded[0]["provisional_id"] == first_started[0]["provisional_id"]
+    assert started[1]["provisional_id"] != first_started[0]["provisional_id"]
+    assert context.projection.provisional is not None
+    assert context.projection.provisional.provisional_id == started[1]["provisional_id"]
+    assert context.asr.last_committed_sample == 640
+    assert context.runtime.speech_timeline.committed_sample == 640
+    assert [item.segment_id for item in context.runtime.speech_timeline.pending] == [
+        "next-valid-vad"
+    ]
+    assert context.turn_commit_retry_task is None
+    assert context.turn_commit_retry_attempt == 0
+    assert context.turn_commit_retry_stream_epoch is None
+    assert context.turn_commit_retry_endpoint_sample is None
+    assert provider.prepare_calls == 1
+    assert registry.metrics.get(
+        "voice_turn_prepare_retry_total", {"status": "superseded"}
+    ) == 1
+    assert registry.metrics.get(
+        "voice_turn_prepare_retry_total", {"status": "attempt"}
+    ) == 0
+    assert not await registry.accept_asr_result(
+        identity.session_id,
+        ASRResult(
+            task_epoch=1,
+            sentence_id="late-hangover-after-supersede",
+            revision=1,
+            capture_start_sample=600,
+            capture_end_sample=640,
+            text="尾静音迟到文本",
+            is_final=True,
+            stream_epoch=identity.stream_epoch,
+        ),
+    )
+    session.close()
+    await registry.on_session_closed(session)
+
+
+@pytest.mark.asyncio
+async def test_prepare_retry_exhaustion_discards_once_at_transport_retire_sample() -> None:
+    identity = SessionIdentity("prepare-retry-exhaustion")
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+
+    class AlwaysFailingPreparingProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.prepare_calls = 0
+            self.reply_calls = 0
+
+        async def prepare_committed_turn(
+            self,
+            _identity: SessionIdentity,
+            _text: str,
+        ) -> GenerationFence:
+            self.prepare_calls += 1
+            raise RuntimeError("preparation unavailable")
+
+        def generate_reply(
+            self,
+            identity: SessionIdentity,
+            user_text: str,
+            fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            self.reply_calls += 1
+            return super().generate_reply(identity, user_text, fence)
+
+    provider = AlwaysFailingPreparingProvider()
+    bridge = _CapturingMediaBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        session_factory=lambda _identity: MediaSessionResources(runtime, provider),
+        metrics=MetricsRegistry(),
+    )
+    context = await _seed_pending_media_turn(
+        registry,
+        identity,
+        text="重试耗尽后确定性丢弃",
+    )
+
+    assert await registry._commit_pending_turn(context) == "provider_prepare_failed"
+    retry_task = context.turn_commit_retry_task
+    assert retry_task is not None
+    await asyncio.wait_for(retry_task, timeout=1)
+
+    discarded = [
+        payload
+        for event_type, payload in bridge.events
+        if event_type == "turn.provisional.discarded"
+    ]
+    assert len(discarded) == 1
+    assert discarded[0]["reason"] == "provider_prepare_retries_exhausted"
+    assert not [
+        payload
+        for event_type, payload in bridge.events
+        if event_type == "turn.provisional.discarded"
+        and payload.get("reason") == "provider_final_missing"
+    ]
+    assert provider.prepare_calls == 3
+    assert provider.reply_calls == 0
+    assert context.projection.provisional is None
+    assert context.runtime.speech_timeline.committed_sample == 640
+    assert context.asr.last_committed_sample == 640
+    assert context.turn_commit_retry_task is None
+    assert context.turn_commit_retry_attempt == 0
+    assert context.turn_commit_retry_stream_epoch is None
+    assert context.turn_commit_retry_endpoint_sample is None
+    assert [
+        turn for turn in runtime.orchestrator.context.turns if turn.role == "user"
+    ] == []
+    assert registry.metrics.get(
+        "voice_turn_prepare_retry_total", {"status": "scheduled"}
+    ) == 1
+    assert registry.metrics.get(
+        "voice_turn_prepare_retry_total", {"status": "attempt"}
+    ) == 2
+    assert registry.metrics.get(
+        "voice_turn_prepare_retry_total", {"status": "exhausted"}
+    ) == 1
+    assert registry.metrics.get(
+        "voice_turn_prepare_retry_total", {"status": "succeeded"}
+    ) == 0
+    assert not await registry.accept_asr_result(
+        identity.session_id,
+        ASRResult(
+            task_epoch=1,
+            sentence_id="late-hangover-after-exhaustion",
+            revision=1,
+            capture_start_sample=600,
+            capture_end_sample=640,
+            text="尾静音迟到文本",
+            is_final=True,
+            stream_epoch=identity.stream_epoch,
+        ),
+    )
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_stale_or_duplicate_vad_does_not_supersede_matching_prepare_retry() -> None:
+    identity = SessionIdentity("stale-vad-keeps-prepare-retry")
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+
+    class FailOncePreparingProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.prepare_calls = 0
+
+        async def prepare_committed_turn(
+            self,
+            _identity: SessionIdentity,
+            text: str,
+        ) -> GenerationFence:
+            self.prepare_calls += 1
+            if self.prepare_calls == 1:
+                raise RuntimeError("transient preparation failure")
+            return await runtime.on_turn_committed(text, input_modality="audio")
+
+    provider = FailOncePreparingProvider()
+    bridge = _CapturingMediaBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        session_factory=lambda _identity: MediaSessionResources(runtime, provider),
+        metrics=MetricsRegistry(),
+    )
+    session = bridge.bridge.open(identity)
+    context = await _seed_pending_media_turn(
+        registry,
+        identity,
+        text="过期 VAD 不能丢掉合法重试",
+    )
+    replayed_vad = SpeechSegment(
+        session_id=identity.session_id,
+        stream_epoch=identity.stream_epoch,
+        provider_task_epoch=0,
+        segment_id="replayed-next-vad",
+        revision=1,
+        kind=SegmentKind.VAD,
+        capture_start_sample=640,
+        capture_end_sample=641,
+    )
+    assert context.runtime.ingest_media_speech_segment(replayed_vad)
+
+    assert await registry._commit_pending_turn(context) == "provider_prepare_failed"
+    retry_task = context.turn_commit_retry_task
+    assert retry_task is not None
+    provisional = context.projection.provisional
+    assert provisional is not None
+
+    await registry.on_speech_segment(session, replayed_vad)
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=identity.stream_epoch + 1,
+            provider_task_epoch=0,
+            segment_id="stale-next-vad",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=640,
+            capture_end_sample=641,
+        ),
+    )
+
+    assert context.turn_commit_retry_task is retry_task
+    assert context.projection.provisional is provisional
+    assert not [
+        payload
+        for event_type, payload in bridge.events
+        if event_type == "turn.provisional.discarded"
+    ]
+    assert registry.metrics.get(
+        "voice_turn_prepare_retry_total", {"status": "superseded"}
+    ) == 0
+
+    await asyncio.wait_for(retry_task, timeout=1)
+    assert provider.prepare_calls == 2
+    assert context.projection.provisional is None
+    assert context.asr.last_committed_sample == 640
+    assert context.turn_commit_retry_task is None
+    session.close()
+    await registry.on_session_closed(session)
 
 
 @pytest.mark.asyncio
@@ -648,9 +1606,7 @@ async def test_different_new_sessions_build_in_parallel_with_per_session_singlef
     registry = MediaVoiceCoreRegistry(bridge=bridge, session_factory=build_session)
     first = asyncio.create_task(registry._get_or_create(SessionIdentity("first-new-session")))
     await asyncio.wait_for(first_started.wait(), timeout=1)
-    duplicate = asyncio.create_task(
-        registry._get_or_create(SessionIdentity("first-new-session"))
-    )
+    duplicate = asyncio.create_task(registry._get_or_create(SessionIdentity("first-new-session")))
     second = asyncio.create_task(registry._get_or_create(SessionIdentity("second-new-session")))
 
     await asyncio.wait_for(second_started.wait(), timeout=0.1)
@@ -731,6 +1687,239 @@ async def test_audio_ingress_pump_drops_stale_backlog_and_marks_discontinuity() 
     assert registry.metrics.get("media_discontinuity_total") >= 1
     session.close()
     await registry.on_session_closed(session)
+
+
+@pytest.mark.asyncio
+async def test_audio_ingress_provider_failure_drains_backlog_and_recovers_next_frame() -> None:
+    class RecoveringProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.first_started = asyncio.Event()
+            self.release_first = asyncio.Event()
+            self.recoveries = 0
+            self.reset_samples: list[int] = []
+
+        async def ingest_audio(
+            self,
+            _identity: SessionIdentity,
+            frame: AudioFrame,
+        ) -> Sequence[ASRResult]:
+            self.audio_calls.append(frame.sequence)
+            if frame.sequence == 0:
+                self.first_started.set()
+                await self.release_first.wait()
+                raise RuntimeError("provider send failed")
+            return ()
+
+        async def recover_after_failure(self, _identity: SessionIdentity) -> None:
+            self.recoveries += 1
+
+        async def reset_after_discontinuity(
+            self,
+            _identity: SessionIdentity,
+            *,
+            capture_start_sample: int,
+        ) -> None:
+            self.reset_samples.append(capture_start_sample)
+
+    provider = RecoveringProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        audio_ingress_max_frames=4,
+    )
+    identity = SessionIdentity("provider-send-recovery", stream_epoch=1)
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+
+    await registry.on_audio_frame(session, AudioFrame(identity, 0, 0, 2, b"\x00\x00" * 2))
+    await asyncio.wait_for(provider.first_started.wait(), timeout=1)
+    await registry.on_audio_frame(session, AudioFrame(identity, 1, 2, 2, b"\x01\x00" * 2))
+    await registry.on_audio_frame(session, AudioFrame(identity, 2, 4, 2, b"\x02\x00" * 2))
+    provider.release_first.set()
+    for _ in range(50):
+        if context.ingress.provider_failed:
+            break
+        await asyncio.sleep(0)
+
+    assert provider.audio_calls == [0]
+    assert context.ingress.queue.empty()
+    assert context.ingress.provider_failed is True
+
+    await registry.on_audio_frame(session, AudioFrame(identity, 3, 6, 2, b"\x03\x00" * 2))
+    for _ in range(50):
+        if provider.audio_calls == [0, 3]:
+            break
+        await asyncio.sleep(0)
+
+    assert provider.recoveries == 1
+    assert provider.reset_samples == [6]
+    assert provider.audio_calls == [0, 3]
+    assert context.ingress.provider_failed is False
+    await context.runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_audio_ingress_serializes_duplicate_finalize_watermark() -> None:
+    class FinalizeProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.finalize_calls = 0
+            self.finalize_started = asyncio.Event()
+            self.release_finalize = asyncio.Event()
+
+        async def ingest_audio(
+            self,
+            _identity: SessionIdentity,
+            frame: AudioFrame,
+        ) -> Sequence[ASRResult]:
+            self.audio_calls.append(frame.sequence)
+            return ()
+
+        async def finalize_speech_segment(
+            self,
+            _identity: SessionIdentity,
+        ) -> Sequence[ASRResult]:
+            self.finalize_calls += 1
+            self.finalize_started.set()
+            await self.release_finalize.wait()
+            return ()
+
+    provider = FinalizeProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    identity = SessionIdentity("duplicate-vad-final", stream_epoch=1)
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    await registry.on_audio_frame(session, AudioFrame(identity, 0, 0, 2, b"\x00\x00" * 2))
+
+    first = asyncio.create_task(registry._audio_ingress.finalize_speech_segment(context))
+    await asyncio.wait_for(provider.finalize_started.wait(), timeout=1)
+    second = asyncio.create_task(registry._audio_ingress.finalize_speech_segment(context))
+    provider.release_finalize.set()
+
+    assert await asyncio.gather(first, second) == [True, True]
+    assert provider.finalize_calls == 1
+    assert context.ingress.last_finalized_audio_watermark == 2
+    await context.runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_audio_ingress_queues_new_audio_after_finalize_boundary() -> None:
+    class BlockingFinalizeProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.finalize_started = asyncio.Event()
+            self.release_finalize = asyncio.Event()
+
+        async def ingest_audio(
+            self,
+            _identity: SessionIdentity,
+            frame: AudioFrame,
+        ) -> Sequence[ASRResult]:
+            self.audio_calls.append(frame.sequence)
+            return ()
+
+        async def finalize_speech_segment(
+            self,
+            _identity: SessionIdentity,
+        ) -> Sequence[ASRResult]:
+            self.finalize_started.set()
+            await self.release_finalize.wait()
+            return ()
+
+    provider = BlockingFinalizeProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    identity = SessionIdentity("audio-after-finalize", stream_epoch=1)
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    await registry.on_audio_frame(session, AudioFrame(identity, 0, 0, 2, b"\x00\x00" * 2))
+
+    finalize = asyncio.create_task(registry._audio_ingress.finalize_speech_segment(context))
+    await asyncio.wait_for(provider.finalize_started.wait(), timeout=1)
+    next_audio = asyncio.create_task(
+        registry.on_audio_frame(
+            session,
+            AudioFrame(identity, 1, 2, 2, b"\x01\x00" * 2),
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert next_audio.done() is False
+    assert context.asr.last_sent_sample == 2
+    assert provider.audio_calls == [0]
+
+    provider.release_finalize.set()
+    assert await asyncio.wait_for(finalize, timeout=1) is True
+    await asyncio.wait_for(next_audio, timeout=1)
+    for _ in range(20):
+        if provider.audio_calls == [0, 1]:
+            break
+        await asyncio.sleep(0)
+
+    assert context.ingress.last_finalized_audio_watermark == 2
+    assert context.asr.last_sent_sample == 4
+    assert provider.audio_calls == [0, 1]
+    await context.runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_vad_finalize_failure_does_not_escape_media_callback() -> None:
+    class FailingFinalizeProvider(FakeMediaProvider):
+        async def ingest_audio(
+            self,
+            _identity: SessionIdentity,
+            frame: AudioFrame,
+        ) -> Sequence[ASRResult]:
+            self.audio_calls.append(frame.sequence)
+            return ()
+
+        async def finalize_speech_segment(
+            self,
+            _identity: SessionIdentity,
+        ) -> Sequence[ASRResult]:
+            raise RuntimeError("task rotation failed")
+
+    provider = FailingFinalizeProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    identity = SessionIdentity("vad-finalize-failure", stream_epoch=1)
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    await registry.on_audio_frame(session, AudioFrame(identity, 0, 0, 2, b"\x00\x00" * 2))
+
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="failed-vad-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=2,
+            capture_end_sample=3,
+            final=True,
+            voiced_end_sample=2,
+        ),
+    )
+
+    assert context.ingress.provider_failed is True
+    assert context.ingress.discontinuity_pending is True
+    assert context.turn_endpoint_sample is None
+    assert registry.metrics.get("media_sessions_failed_total") >= 1
+    await context.runtime.close()
 
 
 @pytest.mark.asyncio
@@ -830,6 +2019,94 @@ async def test_second_lookup_releases_creation_lock_before_session_reuse(
     await reuse_task
     await current.runtime.close()
     await current.provider.close(identity)
+
+
+@pytest.mark.asyncio
+async def test_reconnect_preserves_current_output_intent_owner() -> None:
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: FakeMediaProvider(),
+    )
+    identity = SessionIdentity("resume-output-owner", stream_epoch=1)
+    context = await registry._get_or_create(identity)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+    await context.runtime.accept_media_generation(fence, cause="test")
+    intent = context.runtime.orchestrator.delegation.conversation_reply(
+        fence=fence,
+        context_version=context.runtime.orchestrator.context_version_for_fence(fence),
+        expires_at_ms=int(time.time() * 1_000) + 60_000,
+        now_ms=int(time.time() * 1_000),
+    )
+    coordinator = context.runtime.orchestrator.delegation
+    assert (
+        coordinator.admit_output_intent(
+            intent,
+            current_fence=fence,
+            current_context_version=coordinator.current_context_version(identity.session_id),
+            floor_allows_output=True,
+        )
+        == ""
+    )
+    lease = SimpleNamespace(intent=intent, fence=fence, task=asyncio.current_task())
+    context.output_owner = lease  # type: ignore[assignment]
+
+    await registry._reuse_session(
+        context,
+        SessionIdentity(identity.session_id, stream_epoch=2),
+    )
+
+    assert context.output_owner is lease
+    assert coordinator.output_intent_is_selected(
+        intent,
+        current_fence=fence,
+        current_context_version=coordinator.current_context_version(identity.session_id),
+        floor_allows_output=True,
+    )
+    await context.runtime.close()
+    await context.provider.close(context.identity)
+
+
+@pytest.mark.asyncio
+async def test_reconnect_provider_reset_failure_keeps_old_epoch_authoritative() -> None:
+    class FailingResetProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reset_identities: list[SessionIdentity] = []
+
+        async def reset_for_stream_epoch(self, identity: SessionIdentity) -> None:
+            self.reset_identities.append(identity)
+            raise RuntimeError("provider epoch reset failed")
+
+    provider = FailingResetProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: provider,
+    )
+    identity = SessionIdentity("failed-provider-epoch-reset", stream_epoch=1)
+    context = await registry._get_or_create(identity)
+    before_asr = (
+        context.asr.stream_epoch,
+        context.asr.task_epoch,
+        context.asr.latest_authoritative_task_epoch,
+    )
+    before_runtime_epoch = context.runtime.speech_timeline.stream_epoch
+    replacement = SessionIdentity(identity.session_id, stream_epoch=2)
+
+    with pytest.raises(RuntimeError, match="provider epoch reset failed"):
+        await registry._reuse_session(context, replacement)
+
+    assert provider.reset_identities == [replacement]
+    assert context.identity == identity
+    assert context.stream_epoch == identity.stream_epoch
+    assert (
+        context.asr.stream_epoch,
+        context.asr.task_epoch,
+        context.asr.latest_authoritative_task_epoch,
+    ) == before_asr
+    assert context.runtime.speech_timeline.stream_epoch == before_runtime_epoch
+    await context.runtime.close()
+    await context.provider.close(context.identity)
 
 
 @pytest.mark.asyncio
@@ -1100,13 +2377,16 @@ async def test_reserved_output_kind_is_rejected_at_streamcore_execution_boundary
         context_version=coordinator.current_context_version(identity.session_id),
         tts_source="这条预留通知不能播放。",
     )
-    assert coordinator.admit_output_intent(
-        reserved,
-        current_fence=fence,
-        current_context_version=coordinator.current_context_version(identity.session_id),
-        floor_allows_output=True,
-        now_ms=now_ms + 1,
-    ) == "这条预留通知不能播放。"
+    assert (
+        coordinator.admit_output_intent(
+            reserved,
+            current_fence=fence,
+            current_context_version=coordinator.current_context_version(identity.session_id),
+            floor_allows_output=True,
+            now_ms=now_ms + 1,
+        )
+        == "这条预留通知不能播放。"
+    )
 
     assert not await registry._enqueue_output_work(context, _OutputWork(reserved))
     assert str(reserved.intent_id) not in context.output_work
@@ -1604,6 +2884,159 @@ async def test_provider_cancel_failure_is_contained_and_reply_task_is_drained() 
 
 
 @pytest.mark.asyncio
+async def test_stalled_output_generation_times_out_and_discards_partial_playback() -> None:
+    second_read_started = asyncio.Event()
+    cancellation_started = asyncio.Event()
+    cancellation_finished = asyncio.Event()
+
+    class StalledProvider(FakeMediaProvider):
+        def generate_reply(
+            self,
+            _identity: SessionIdentity,
+            _user_text: str,
+            _fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=0,
+                    text="部分",
+                    first=True,
+                    final=False,
+                )
+                second_read_started.set()
+                await asyncio.Event().wait()
+
+            return chunks()
+
+        async def cancel_generation(self, fence: GenerationFence) -> None:
+            self.cancelled.append(fence)
+            cancellation_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancellation_finished.set()
+
+    class CapturingBridge(MediaBridgeGrpcServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.effects: list[tuple[int, GenerationFence, dict[str, object]]] = []
+
+        async def emit_realtime_effect(
+            self,
+            _session_id: str,
+            effect_kind: int,
+            fence: GenerationFence,
+            *,
+            payload: dict[str, object],
+            **_kwargs: object,
+        ) -> bool:
+            self.effects.append((effect_kind, fence, payload))
+            return True
+
+        async def emit_pcm(self, _session_id: str, _frame: object) -> bool:
+            return True
+
+    provider = StalledProvider()
+    bridge = CapturingBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        output_generation_timeout_s=0.02,
+    )
+    registry.install()
+    identity = SessionIdentity("stalled-output-generation")
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    fence = await context.runtime.on_turn_committed("你好")
+    context.playback.start(fence)
+
+    reply = asyncio.create_task(
+        registry.generate_reply(identity.session_id, "你好", fence),
+        name="test-stalled-output-generation",
+    )
+    await asyncio.wait_for(second_read_started.wait(), timeout=1)
+    assert context.output_owner is not None
+    result = await asyncio.wait_for(reply, timeout=1)
+
+    assert result is False
+    assert cancellation_started.is_set()
+    await asyncio.wait_for(cancellation_finished.wait(), timeout=1)
+    assert provider.cancelled == [fence]
+    assert context.output_owner is None
+    assert context.reply_task is None
+    assert context.output_dispatch_task is None
+    assert context.output_work == {}
+    assert context.playback.current_fence is None
+    assert context.playback.actual_heard_text(fence) == ""
+    assert context.runtime.orchestrator.state is ConversationState.LISTENING
+    assert bridge.effects == [
+        (
+            media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
+            fence,
+            {"reason": "output_timeout"},
+        )
+    ]
+
+    await registry.on_playback_progress(
+        session,
+        PlaybackProgress(
+            identity=identity,
+            generation_id=fence.generation_id,
+            received_sequence=0,
+            rendered_sample_end=2,
+            client_monotonic_ms=1,
+            turn_id=fence.turn_id,
+            tool_epoch=fence.tool_epoch,
+        ),
+    )
+    assert context.playback.actual_heard_text(fence) == ""
+    assert not [
+        task
+        for task in asyncio.all_tasks()
+        if not task.done() and task.get_name() == "test-stalled-output-generation"
+    ]
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_provider_timeout_error_is_not_reclassified_as_generation_deadline() -> None:
+    class ProviderTimeout(FakeMediaProvider):
+        def generate_reply(
+            self,
+            _identity: SessionIdentity,
+            _user_text: str,
+            _fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                raise TimeoutError("provider timeout")
+                yield MediaReplyChunk(b"\x00\x00", 0)  # pragma: no cover
+
+            return chunks()
+
+    bridge = MediaBridgeGrpcServer()
+    provider = ProviderTimeout()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        output_generation_timeout_s=1.0,
+    )
+    registry.install()
+    identity = SessionIdentity("provider-timeout-error")
+    context = await registry._get_or_create(identity)
+    fence = await context.runtime.on_turn_committed("你好")
+    context.playback.start(fence)
+
+    with pytest.raises(TimeoutError, match="provider timeout"):
+        await registry.generate_reply(identity.session_id, "你好", fence)
+
+    assert context.output_owner is None
+    assert context.playback.current_fence is fence
+    assert context.runtime.orchestrator.state is ConversationState.THINKING
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_media_registry_lets_the_shared_agent_prepare_a_committed_turn() -> None:
     identity = SessionIdentity("prepared-media-turn")
     runtime = DuplexRuntime.create(session_id=identity.session_id)
@@ -1875,6 +3308,7 @@ async def test_media_realtime_delegation_owns_output_and_skips_conversation_repl
             source_start_sample: int,
         ) -> AsyncIterator[MediaReplyChunk]:
             _ = work_id
+
             async def chunks() -> AsyncIterator[MediaReplyChunk]:
                 yield MediaReplyChunk(
                     pcm_s16le=b"\x02\x00\x03\x00",
@@ -2020,9 +3454,7 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
                 identity=identity,
                 generation_id=ack_fence.generation_id,
                 received_sequence=ack_frame.sequence,
-                rendered_sample_end=(
-                    ack_frame.source_start_sample + ack_frame.frame_samples
-                ),
+                rendered_sample_end=(ack_frame.source_start_sample + ack_frame.frame_samples),
                 client_monotonic_ms=1,
                 turn_id=ack_fence.turn_id,
                 tool_epoch=ack_fence.tool_epoch,
@@ -2044,9 +3476,7 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
                 identity=identity,
                 generation_id=deep_owner.fence.generation_id,
                 received_sequence=deep_frame.sequence,
-                rendered_sample_end=(
-                    deep_frame.source_start_sample + deep_frame.frame_samples
-                ),
+                rendered_sample_end=(deep_frame.source_start_sample + deep_frame.frame_samples),
                 client_monotonic_ms=2,
                 turn_id=deep_owner.fence.turn_id,
                 tool_epoch=deep_owner.fence.tool_epoch,
@@ -2189,6 +3619,114 @@ async def test_media_vad_classifies_the_speaker_before_committing_the_turn() -> 
     }
     assert bridge.committed[0]["history_eligible"] is True
     await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_vad_boundary_drains_audio_before_rotating_provider_task() -> None:
+    class BoundaryProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.ingest_started = asyncio.Event()
+            self.release_ingest = asyncio.Event()
+            self.audio_drained = False
+            self.finalize_called = False
+            self.task_epoch = 1
+
+        @property
+        def current_asr_task_epoch(self) -> int:
+            return self.task_epoch
+
+        async def ingest_audio(
+            self,
+            _identity: SessionIdentity,
+            frame: AudioFrame,
+        ) -> Sequence[ASRResult]:
+            self.audio_calls.append(frame.sequence)
+            self.ingest_started.set()
+            await self.release_ingest.wait()
+            self.audio_drained = True
+            return ()
+
+        async def finalize_speech_segment(
+            self,
+            identity: SessionIdentity,
+        ) -> Sequence[ASRResult]:
+            assert self.audio_drained
+            self.finalize_called = True
+            self.task_epoch = 2
+            return (
+                ASRResult(
+                    task_epoch=1,
+                    sentence_id="vad-tail",
+                    revision=1,
+                    capture_start_sample=0,
+                    capture_end_sample=320,
+                    text="今天星期几",
+                    is_final=True,
+                    stream_epoch=identity.stream_epoch,
+                ),
+            )
+
+    provider = BoundaryProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=60,
+    )
+    registry.install()
+    identity = SessionIdentity("vad-provider-boundary", stream_epoch=1)
+    session = bridge.bridge.open(identity)
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="vad-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+        ),
+    )
+    await registry.on_audio_frame(
+        session,
+        AudioFrame(identity, 0, 0, 320, b"\x01\x00" * 320),
+    )
+    await asyncio.wait_for(provider.ingest_started.wait(), timeout=1)
+
+    boundary_task = asyncio.create_task(
+        registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=1,
+                provider_task_epoch=0,
+                segment_id="vad-end",
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=320,
+                capture_end_sample=321,
+                final=True,
+                voiced_end_sample=320,
+            ),
+        )
+    )
+    await asyncio.sleep(0)
+    assert provider.finalize_called is False
+    provider.release_ingest.set()
+    await asyncio.wait_for(boundary_task, timeout=1)
+
+    context = registry._sessions[identity.session_id]
+    assert provider.finalize_called is True
+    assert context.turn_end_sample == 320
+    assert context.asr.latest_authoritative_task_epoch == 2
+    assert any(segment.text == "今天星期几" for segment in context.runtime.speech_timeline.pending)
+    if context.turn_endpoint_task is not None:
+        context.turn_endpoint_task.cancel()
+        await asyncio.gather(context.turn_endpoint_task, return_exceptions=True)
+    await context.runtime.close()
 
 
 @pytest.mark.asyncio
@@ -2437,8 +3975,142 @@ async def test_absolute_endpoint_tail_discards_turn_when_provider_final_never_ar
     assert context.turn_endpoint_sample is None
     assert context.turn_start_sample is None
     assert context.projection.provisional is None
-    assert context.asr.last_committed_sample == 600
-    assert [turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"] == []
+    assert context.asr.last_committed_sample == 640
+    assert context.runtime.speech_timeline.committed_sample == 640
+    assert [
+        turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == []
+
+
+@pytest.mark.asyncio
+async def test_tail_timeout_fences_late_final_and_rotates_projection_identity() -> None:
+    class CapturingBridge(MediaBridgeGrpcServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.events: list[tuple[str, dict[str, object]]] = []
+
+        async def emit_event(
+            self,
+            _session_id: str,
+            event_type: str,
+            payload: dict[str, object],
+            **_kwargs: object,
+        ) -> bool:
+            self.events.append((event_type, payload))
+            return True
+
+    provider = FakeMediaProvider()
+    bridge = CapturingBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=60,
+        turn_endpoint_absolute_timeout_s=60,
+    )
+    identity = SessionIdentity("late-final-after-tail-timeout")
+    session = bridge.bridge.open(identity)
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            provider_task_epoch=0,
+            segment_id="timed-out-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+        ),
+    )
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            provider_task_epoch=0,
+            segment_id="timed-out-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=640,
+            capture_end_sample=641,
+            final=True,
+            voiced_end_sample=600,
+        ),
+    )
+    context = registry._sessions[identity.session_id]
+    endpoint_task = context.turn_endpoint_task
+    assert endpoint_task is not None
+    endpoint_task.cancel()
+    await asyncio.gather(endpoint_task, return_exceptions=True)
+    timeout_handle = context.turn_endpoint_timeout_handle
+    assert timeout_handle is not None
+    timeout_handle.cancel()
+    context.turn_endpoint_timeout_handle = None
+    first_started = [
+        payload
+        for event_type, payload in bridge.events
+        if event_type == "turn.provisional.started"
+    ]
+    assert len(first_started) == 1
+
+    await registry._expire_endpoint_tail(
+        identity.session_id,
+        identity.stream_epoch,
+        600,
+    )
+
+    discarded = [
+        payload
+        for event_type, payload in bridge.events
+        if event_type == "turn.provisional.discarded"
+    ]
+    assert len(discarded) == 1
+    assert discarded[0]["provisional_id"] == first_started[0]["provisional_id"]
+    assert discarded[0]["reason"] == "provider_final_missing"
+    before_late_fence = context.runtime.fence
+    assert not await registry.accept_asr_result(
+        identity.session_id,
+        ASRResult(
+            task_epoch=1,
+            sentence_id="late-final",
+            revision=1,
+            capture_start_sample=600,
+            capture_end_sample=640,
+            text="尾静音迟到终稿不能提交",
+            is_final=True,
+            stream_epoch=identity.stream_epoch,
+        ),
+    )
+    assert context.runtime.fence == before_late_fence
+    assert [
+        turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == []
+
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=identity.stream_epoch,
+            provider_task_epoch=0,
+            segment_id="next-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=641,
+            capture_end_sample=642,
+        ),
+    )
+    started = [
+        payload
+        for event_type, payload in bridge.events
+        if event_type == "turn.provisional.started"
+    ]
+    assert len(started) == 2
+    assert started[1]["provisional_id"] != started[0]["provisional_id"]
+    assert int(started[1]["projection_revision"]) > int(
+        discarded[0]["projection_revision"]
+    )
+    await context.runtime.close()
+    await provider.close(identity)
 
 
 @pytest.mark.asyncio
@@ -2519,9 +4191,7 @@ async def test_absolute_endpoint_tail_commits_stable_partial_with_missing_final_
         turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
     ] == ["南京天气"]
     committed = [
-        payload
-        for event_type, payload in bridge.client_events
-        if event_type == "turn.committed"
+        payload for event_type, payload in bridge.client_events if event_type == "turn.committed"
     ]
     assert committed and committed[-1]["provider_final_missing"] is True
     assert context.pending_partial is None
@@ -3401,6 +5071,66 @@ async def test_playback_ack_without_text_spans_still_completes_speaking() -> Non
     # SPEAKING forever.
     assert completed == [(fence, "")]
     assert context.runtime.orchestrator.state is ConversationState.LISTENING
+
+
+@pytest.mark.asyncio
+async def test_approximate_device_progress_completes_without_actual_heard() -> None:
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = SessionIdentity(
+        "device-approximate-playback",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="subject",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+    assert await context.runtime.accept_media_generation(fence, cause="test")
+    await context.runtime.on_assistant_speaking("你好")
+    context.runtime.orchestrator.state_machine.state = ConversationState.SPEAKING
+    context.playback.start(fence)
+    assert context.playback.register_audio(fence, 0, 0, 320)
+    assert context.playback.add_span(
+        PlaybackSpan(
+            fence=fence,
+            text_start=0,
+            text_end=2,
+            audio_start_sample=0,
+            audio_end_sample=320,
+            text="你好",
+            sequence=0,
+        )
+    )
+    context.provider_complete = True
+
+    await registry.on_playback_progress(
+        session,
+        PlaybackProgress(
+            identity=identity,
+            generation_id=fence.generation_id,
+            received_sequence=0,
+            rendered_sample_end=320,
+            client_monotonic_ms=1,
+            approximate=True,
+            turn_id=fence.turn_id,
+            tool_epoch=fence.tool_epoch,
+        ),
+    )
+
+    assert context.playback.actual_heard_text(fence) == ""
+    assert context.runtime.orchestrator.state is ConversationState.LISTENING
+    assert all(turn.content != "你好" for turn in context.runtime.orchestrator.context.turns)
 
 
 @pytest.mark.asyncio

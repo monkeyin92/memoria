@@ -48,10 +48,9 @@ bool IsDirectionValid(MemoriaAudioDirection direction) {
            direction == MemoriaAudioDirection::kDownlink;
 }
 
-uint32_t ExpectedSamples(MemoriaAudioDirection direction) {
-    return direction == MemoriaAudioDirection::kUplink
-               ? MemoriaAudioFrame::kUplinkFrameSamples
-               : MemoriaAudioFrame::kDownlinkFrameSamples;
+bool IsValidDownlinkFrameSamples(uint32_t frame_samples) {
+    return frame_samples == MemoriaAudioFrame::kDownlinkFrameSamples16k ||
+           frame_samples == MemoriaAudioFrame::kDownlinkFrameSamples24k;
 }
 
 }  // namespace
@@ -62,7 +61,15 @@ MemoriaAudioFrameError MemoriaAudioFrame::Validate(
     if (!IsDirectionValid(metadata.direction)) {
         return MemoriaAudioFrameError::kInvalidDirection;
     }
-    if (metadata.flags != 0) {
+    if (metadata.direction == MemoriaAudioDirection::kUplink) {
+        // The discontinuity flag is a downlink-only edge marking; an uplink
+        // frame carrying any flag is forged.
+        if (metadata.flags != 0) {
+            return MemoriaAudioFrameError::kInvalidFlags;
+        }
+    } else if ((metadata.flags & ~MemoriaAudioFrame::kDiscontinuityFlag) != 0) {
+        // Only the discontinuity bit is defined for downlink; any other bit
+        // would be a forged marker and is rejected at the wire boundary.
         return MemoriaAudioFrameError::kInvalidFlags;
     }
     if (metadata.stream_epoch == 0) {
@@ -75,7 +82,12 @@ MemoriaAudioFrameError MemoriaAudioFrame::Validate(
         std::numeric_limits<uint64_t>::max() - metadata.frame_samples) {
         return MemoriaAudioFrameError::kInvalidSampleStart;
     }
-    if (metadata.frame_samples != ExpectedSamples(metadata.direction)) {
+    if (metadata.direction == MemoriaAudioDirection::kUplink &&
+        metadata.frame_samples != MemoriaAudioFrame::kUplinkFrameSamples) {
+        return MemoriaAudioFrameError::kInvalidFrameSamples;
+    }
+    if (metadata.direction == MemoriaAudioDirection::kDownlink &&
+        !IsValidDownlinkFrameSamples(metadata.frame_samples)) {
         return MemoriaAudioFrameError::kInvalidFrameSamples;
     }
     if (payload_size == 0 || payload_size > kMaxPayloadBytes || payload_size > UINT16_MAX) {

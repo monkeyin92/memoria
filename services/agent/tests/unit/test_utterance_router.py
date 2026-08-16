@@ -10,10 +10,33 @@ from services.agent.src.orchestration.speaker_verify import SpeakerGateState
 from services.agent.src.orchestration.utterance_router import (
     InterruptSemanticVerdict,
     UtteranceIntent,
+    route_playback_utterance,
     route_speaker_gate,
     route_target_speaker,
     route_utterance,
 )
+
+
+@pytest.mark.parametrize(
+    ("text", "duration_ms", "intent", "backchannel"),
+    [
+        ("停一下", 200, UtteranceIntent.INTERRUPT_COMMAND, False),
+        ("等一下我想问天气", 200, UtteranceIntent.INTERRUPT_THEN_CHAT, False),
+        ("嗯", 300, UtteranceIntent.CHAT, True),
+        ("嗯", 1_200, UtteranceIntent.CHAT, False),
+        ("天气", 300, UtteranceIntent.CHAT, False),
+    ],
+)
+def test_playback_route_reuses_router_semantics(
+    text: str,
+    duration_ms: int,
+    intent: UtteranceIntent,
+    backchannel: bool,
+) -> None:
+    route = route_playback_utterance(text, duration_ms=duration_ms)
+
+    assert route.utterance.intent is intent
+    assert route.backchannel is backchannel
 
 _INTERRUPTION_CORPUS = json.loads(
     (

@@ -109,6 +109,22 @@ class _SessionEmitter:
             handler(event)
 
 
+def test_vad_end_flushes_one_authoritative_asr_segment() -> None:
+    runtime = DuplexRuntime.create()
+    flushed: list[tuple[str, int]] = []
+    runtime.set_keyword_spotter_finalizer(
+        lambda _binding: flushed.append(("asr", runtime._speaker_epoch))
+    )
+    runtime.set_keyword_spotter_finalizer(
+        lambda _binding: flushed.append(("keyword", runtime._speaker_epoch))
+    )
+
+    runtime.on_user_voice_started()
+    runtime.on_user_voice_stopped()
+
+    assert flushed == [("asr", 1), ("keyword", 1)]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("trusted_aec", [True, False])
 async def test_barge_in_mutes_playback_before_semantic_confirmation(

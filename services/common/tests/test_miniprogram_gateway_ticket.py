@@ -72,6 +72,8 @@ def test_device_gateway_ticket_is_bound_to_device_binding_and_epoch() -> None:
         client_id="installation-1",
         binding_id="binding-1",
         binding_version=3,
+        subject_id="person-1",
+        runtime_profile_version=7,
         room_name="room-device-1",
         identity="device-dev-1",
         agent_name="duplex-zh-agent",
@@ -89,6 +91,8 @@ def test_device_gateway_ticket_is_bound_to_device_binding_and_epoch() -> None:
     assert claims.client_id == "installation-1"
     assert claims.binding_id == "binding-1"
     assert claims.binding_version == 3
+    assert claims.subject_id == "person-1"
+    assert claims.runtime_profile_version == 7
     assert claims.stream_epoch == 2
     assert claims.session_id == "session-device-1"
 
@@ -102,6 +106,8 @@ def test_miniprogram_and_device_gateway_tickets_are_not_interchangeable() -> Non
         client_id="installation-1",
         binding_id="binding-1",
         binding_version=1,
+        subject_id="person-1",
+        runtime_profile_version=1,
         room_name="room-device-1",
         identity="device-dev-1",
         agent_name="duplex-zh-agent",

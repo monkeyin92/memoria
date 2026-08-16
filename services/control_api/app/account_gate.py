@@ -29,6 +29,10 @@ SubjectCapability = Literal[
     "raw_voice_archive",
     "guardian_manage",
     "guardian_weekly_report",
+    "device_settings_read",
+    "device_settings_manage",
+    "device_runtime_profile_sync",
+    "conversation_review",
 ]
 
 SUBJECT_CAPABILITY_RULES = MappingProxyType(
@@ -47,12 +51,49 @@ SUBJECT_CAPABILITY_RULES = MappingProxyType(
         "raw_voice_archive": frozenset({"adult"}),
         "guardian_manage": frozenset({"adult"}),
         "guardian_weekly_report": frozenset({"minor"}),
+        "device_settings_read": frozenset({"adult", "minor"}),
+        "device_settings_manage": frozenset({"adult"}),
+        # Unknown subjects still need the signed unknown-safe runtime profile
+        # so the hardware can fail closed. This does not grant private memory
+        # or adult-only settings capabilities.
+        "device_runtime_profile_sync": frozenset({"unknown", "adult", "minor"}),
+        "conversation_review": frozenset({"adult", "minor"}),
     }
 )
 
 
 class SubjectProfileStore(Protocol):
     def get_subject_profile(self, *, user_id: str) -> dict[str, Any] | None: ...
+
+
+def require_capability_for_subject_category(
+    subject_category: object,
+    capability: SubjectCapability,
+) -> None:
+    """Enforce one capability matrix for any authoritative category source.
+
+    Most legacy routes resolve the category from ``MemoryStore``. Newer
+    multi-subject routes resolve it from Identity/PostgreSQL. Both paths must
+    share this exact decision point instead of growing parallel rule tables.
+    """
+
+    allowed_categories = SUBJECT_CAPABILITY_RULES.get(capability)
+    if allowed_categories is None:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "subject_capability_unconfigured", "capability": capability},
+        )
+    if subject_category is None:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "subject_category_unavailable", "capability": capability},
+        )
+    if subject_category not in allowed_categories:
+        code = "minor_forbidden" if subject_category == "minor" else "subject_capability_forbidden"
+        raise HTTPException(
+            status_code=403,
+            detail={"code": code, "capability": capability},
+        )
 
 
 def require_capability_for_account_id(
@@ -63,12 +104,6 @@ def require_capability_for_account_id(
 ) -> dict[str, Any]:
     """Resolve the authoritative profile and enforce the single capability matrix."""
 
-    allowed_categories = SUBJECT_CAPABILITY_RULES.get(capability)
-    if allowed_categories is None:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "subject_capability_unconfigured", "capability": capability},
-        )
     try:
         profile = store.get_subject_profile(user_id=account_id)
     except Exception as exc:
@@ -81,13 +116,10 @@ def require_capability_for_account_id(
             status_code=403,
             detail={"code": "subject_category_unavailable", "capability": capability},
         )
-    category = profile.get("subject_category")
-    if category not in allowed_categories:
-        code = "minor_forbidden" if category == "minor" else "subject_capability_forbidden"
-        raise HTTPException(
-            status_code=403,
-            detail={"code": code, "capability": capability},
-        )
+    require_capability_for_subject_category(
+        profile.get("subject_category"),
+        capability,
+    )
     return profile
 
 

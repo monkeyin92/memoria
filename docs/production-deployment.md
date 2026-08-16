@@ -19,14 +19,15 @@
 - 对象存储：独立同机 MinIO，档案/声音两个 bucket 分权并启用版本控制，无公网端口
 - Runtime：版本目录位于 `/opt/memoria/releases/`，`/opt/memoria/current` 原子软链指向当前 release
 - H5：版本目录位于 `/var/www/memoria-releases/`，`/var/www/memoria-h5` 原子软链指向当前 release
-- 原生小程序当前媒体入口：
+- 已退役的原生小程序媒体兼容回滚入口（不是当前生产小程序或新设备默认路径）：
   `wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media`。标准 `443` 保留同路径
-  精确路由，但当前中国大陆无 VPN 网络在 TLS ClientHello 后重置连接，未解决前不由 Control API
-  下发；两者的 loopback 上游均为 `127.0.0.1:8792`。
+  精确路由；两者的 loopback 上游均为 `127.0.0.1:8792`。该路径仅保留给明确授权的 legacy
+  回滚，不能重新作为小程序实时媒体入口或新设备媒体入口；现行边界见 ADR-0035。
 
 Memoria 使用独立静态资源/API 路径、回环端口、Compose project 和限流 zone。新服务器的
 443 仍由既有 WMS 虚拟主机拥有，只额外 include
-`/etc/nginx/snippets/memoria-miniprogram-media.conf` 暴露精确的小程序媒体 WSS；WMS 根路径、
+`/etc/nginx/snippets/memoria-miniprogram-media.conf` 保留精确的 legacy 小程序媒体回滚 WSS；
+它不属于当前小程序产品链。WMS 根路径、
 `/wms/` 和其他 404 边界保持不变。8443 继续由 Nginx stream 预读协议，TLS 流量转到
 `127.0.0.1:9443` 的 Memoria HTTPS server，原生 ICE/TCP 转到 `127.0.0.1:8444` 后进入
 LiveKit 容器的 8443；H5、Control API 与 LiveKit 正式入口仍为 8443。公网
@@ -1736,7 +1737,7 @@ stream mux 依赖 `libnginx-mod-stream`；`memoria` 中必须保留 `127.0.0.1:9
 `127.0.0.1:8444`。`/rtc`、`/agent` 与 `/twirp/` 必须关闭 access log，避免短期 participant
 JWT 进入 query-string 日志。
 
-小程序媒体的标准 443 入口必须复用仓库
+已退役小程序媒体的标准 443 兼容回滚入口复用仓库
 `infra/nginx-memoria-miniprogram-media.conf`：先将其安装为
 `/etc/nginx/snippets/memoria-miniprogram-media.conf`，再仅在 WMS 的 443 `server` 内、
 最终 `location / { return 404; }` 之前增加：
@@ -1746,14 +1747,22 @@ include /etc/nginx/snippets/memoria-miniprogram-media.conf;
 ```
 
 不得 include 完整的 `memoria-https.conf`，否则会把 H5、Control API 等额外路由一并迁入
-WMS 443。443 路由只作为备案/网络放行后的候选；当前生产
-`MINIPROGRAM_MEDIA_GATEWAY_URL` 保持：
+WMS 443。该路由只能用于明确的 legacy 回滚，不能被描述为当前小程序入口或新设备默认路径。
+`MINIPROGRAM_MEDIA_GATEWAY_URL` 仅为恢复旧版本而保留：
 
 ```text
 wss://aigcnice.com:8443/memoria-mini-media/v1/mini-program/media
 ```
 
-硬件设备 WSS 使用独立进程、端口和票据 secret。安装
+Direct Device WSS canary 使用独立的 Go Media Edge 入口：安装
+infra/nginx-memoria-device-edge.conf 为
+/etc/nginx/snippets/memoria-device-edge.conf，并在同一 TLS server 中 include；它只代理
+127.0.0.1:8794 → media-edge:8082，公网地址为
+wss://aigcnice.com:8443/memoria-device-edge/v1/device/media。该入口只在
+DEVICE_MEDIA_RUNTIME=direct_voice_core 的明确 Canary/allowlist 中使用；公共 8080 不承载设备 WSS。
+它与下面的 legacy Gateway 路由、进程和票据边界完全隔离。
+
+legacy 硬件设备 WSS 继续使用独立进程、端口和票据 secret，仅用于 livekit_compat 回滚。安装
 `infra/nginx-memoria-device-media.conf` 为
 `/etc/nginx/snippets/memoria-device-media.conf`，并在同一 TLS `server` 中 include；Control
 API 与 gateway 分别配置相同的 `MEMORIA_DEVICE_GATEWAY_TICKET_SECRET`，但不得与 Auth、

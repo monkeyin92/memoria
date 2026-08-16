@@ -75,6 +75,10 @@ services:
       - type: bind
         source: /var/lib/memoria
         target: /data
+      - type: bind
+        source: /etc/memoria-media-runtime
+        target: /etc/memoria-media-runtime
+        read_only: true
     depends_on:
       speaker-model:
         condition: service_healthy
@@ -259,7 +263,8 @@ services:
       XDG_CACHE_HOME: /tmp/.cache
       MEDIA_SLO_METRICS_URL: "http://voice-core-media-bridge:9090/"
     command:
-      - /app/scripts/run_media_slo_reporter.py
+      - -m
+      - scripts.run_media_slo_reporter
     depends_on:
       control-api:
         condition: service_healthy
@@ -298,8 +303,10 @@ services:
       MEDIA_BRIDGE_GRPC_ADDR: "0.0.0.0:7001"
       MEDIA_BRIDGE_MTLS: "true"
       MEDIA_BRIDGE_SESSION_FACTORY: "services.agent.src.media_agent_factory:build_production_media_session_factory"
+      MEDIA_OUTPUT_GENERATION_TIMEOUT_S: "45"
     command:
-      - /app/scripts/run_media_bridge.py
+      - -m
+      - scripts.run_media_bridge
     expose:
       - "7001"
       - "9090"
@@ -333,6 +340,70 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
 
+  device-state-redis:
+    profiles:
+      - media-runtime
+    image: redis:7
+    user: "65532:65532"
+    command:
+      - redis-server
+      - --port
+      - "0"
+      - --tls-port
+      - "6379"
+      - --tls-cert-file
+      - /etc/memoria-media-runtime/device-state-redis-server.crt
+      - --tls-key-file
+      - /etc/memoria-media-runtime/device-state-redis-server.key
+      - --tls-ca-cert-file
+      - /etc/memoria-media-runtime/device-state-redis-ca.crt
+      - --tls-auth-clients
+      - "yes"
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+    expose:
+      - "6379"
+    volumes:
+      - type: bind
+        source: /etc/memoria-media-runtime
+        target: /etc/memoria-media-runtime
+        read_only: true
+      - type: bind
+        source: /var/lib/memoria-device-state-redis
+        target: /data
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - --tls
+        - --cacert
+        - /etc/memoria-media-runtime/device-state-redis-ca.crt
+        - --cert
+        - /etc/memoria-media-runtime/device-state-redis-healthcheck-client.crt
+        - --key
+        - /etc/memoria-media-runtime/device-state-redis-healthcheck-client.key
+        - -h
+        - "127.0.0.1"
+        - -p
+        - "6379"
+        - ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    mem_limit: 256m
+    cpus: 0.5
+
   media-edge:
     profiles:
       - media-runtime
@@ -349,12 +420,15 @@ services:
       ENVIRONMENT: production
       MEDIA_EDGE_HTTP_ADDR: ":8080"
       MEDIA_EDGE_INTERNAL_HTTP_ADDR: ":8081"
-      MEDIA_EDGE_HEALTHCHECK_URL: "http://127.0.0.1:8081/readyz"
       MEDIA_EDGE_VOICE_CORE_ADDR: "voice-core-media-bridge:7001"
       MEDIA_EDGE_VOICE_CORE_REQUIRED: "true"
+      MEDIA_EDGE_DEVICE_WSS_ADDR: ":8082"
     expose:
       - "8080"
       - "8081"
+      - "8082"
+    ports:
+      - "127.0.0.1:8794:8082"
     volumes:
       - type: bind
         source: /etc/memoria-media-runtime
@@ -362,6 +436,8 @@ services:
         read_only: true
     depends_on:
       voice-core-media-bridge:
+        condition: service_healthy
+      device-state-redis:
         condition: service_healthy
     healthcheck:
       test:

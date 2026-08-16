@@ -18,6 +18,7 @@ import pytest_asyncio
 from packages.contracts.generated.python.multi_subject_contracts import (
     PolicyReceiptV2,
     RuntimeProfileSignedV2,
+    RuntimeProfileV2,
     SessionEvent,
 )
 from services.consent.evidence import (
@@ -132,11 +133,12 @@ def _signed_unknown_profile(
         "issued_at": issued_at.isoformat(),
         "expires_at": (issued_at + timedelta(minutes=5)).isoformat(),
     }
+    canonical = RuntimeProfileV2.model_validate(payload).model_dump(mode="json")
     return RuntimeProfileSignedV2.model_validate(
         {
-            **payload,
+            **canonical,
             "signature": sign_runtime_profile_payload(
-                payload,
+                canonical,
                 signing_key=_SIGNING_KEY,
             ),
         }
@@ -197,11 +199,12 @@ def _next_confirmed_profile(
             "expires_at": (issued_at + timedelta(minutes=5)).isoformat(),
         }
     )
+    canonical = RuntimeProfileV2.model_validate(payload).model_dump(mode="json")
     return RuntimeProfileSignedV2.model_validate(
         {
-            **payload,
+            **canonical,
             "signature": sign_runtime_profile_payload(
-                payload,
+                canonical,
                 signing_key=_SIGNING_KEY,
             ),
         }
@@ -836,8 +839,12 @@ async def postgres_runtime() -> AsyncIterator[
         action_dsn=action_dsn,
         bootstrap_dsn=bootstrap_dsn,
     )
+    # The Session schema owns creation of the cluster roles. Install it on the
+    # bootstrap connection before assigning per-test passwords; initialize()
+    # can then verify both the idempotent schema and the runtime logins.
     admin = await asyncpg.connect(bootstrap_dsn)
     try:
+        await admin.execute(SESSION_RUNTIME_SCHEMA_SQL)
         await admin.execute(
             f"ALTER ROLE memoria_session_api PASSWORD '{app_password}'"
         )
@@ -3447,3 +3454,530 @@ async def test_tool_effect_commit_replay_conflict_and_reconcile_are_durable(
         assert worker_read.value.sqlstate == "42501"
     finally:
         await worker.close()
+
+
+def _close_event(
+    *,
+    session_id: str,
+    profile: RuntimeProfileSignedV2,
+    context: SessionRuntimeContext,
+    reason_code: str,
+    now: datetime,
+) -> SessionEvent:
+    return SessionEvent.model_validate(
+        {
+            "event_id": f"event-close-{uuid.uuid4().hex[:12]}",
+            "event_type": "session_closed",
+            "session_id": session_id,
+            "session_epoch": context.session_epoch + 1,
+            "device_id": profile.device_id,
+            "binding_id": profile.binding_id,
+            "binding_version": profile.binding_version,
+            "generation_id": context.generation_id + 1,
+            "turn_id": context.turn_id + 1,
+            "tool_epoch": context.tool_epoch + 1,
+            "event_sequence": context.profile_revision + 1,
+            "active_subject_id": None,
+            "runtime_profile_id": profile.runtime_profile_id,
+            "actor_id": profile.actor_id,
+            "subject_revision": 0,
+            "occurred_at": now.isoformat(),
+            "payload": {
+                "reason_code": reason_code,
+                "invalidated_fences": [
+                    "session",
+                    "generation",
+                    "tool",
+                    "effect",
+                    "tts",
+                    "memory",
+                    "ui",
+                ],
+            },
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_postgres_close_session_applies_terminal_fence_and_outbox(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    store, bootstrap_dsn = postgres_runtime
+    now = datetime.now(UTC)
+    profile = _signed_unknown_profile(
+        session_id="session-close-a",
+        actor_id="actor-a",
+        device_id="device-a",
+        binding_id="binding-a",
+        profile_id="rp-session-close-a-1",
+        issued_at=now,
+    )
+    context = SessionRuntimeContext.from_profile(profile, profile_revision=1)
+    async with store.action_transaction(
+        actor_id="actor-a",
+        device_id="device-a",
+    ) as connection:
+        await store.persist_initial(
+            connection,
+            context=context,
+            profile=profile,
+            event=_profile_event(profile),
+            request_hash=hashlib.sha256(b"close-a-request").hexdigest(),
+            idempotency_key="start-session-close-a",
+        )
+
+    event = _close_event(
+        session_id="session-close-a",
+        profile=profile,
+        context=context,
+        reason_code="network",
+        now=now + timedelta(seconds=1),
+    )
+    async with store.action_transaction(
+        actor_id="actor-a",
+        device_id="device-a",
+    ) as connection:
+        status = await store.close_session(
+            connection,
+            expected=context,
+            event=event,
+        )
+    assert status == "closed"
+
+    async with store.read_transaction(actor_id="actor-a") as connection:
+        stored = await store.context_any_state(
+            connection,
+            session_id="session-close-a",
+        )
+    assert stored is not None
+    closed_context, state = stored
+    assert state == "closed"
+    assert closed_context.active_subject_id is None
+    assert closed_context.session_epoch == 2
+    assert closed_context.generation_id == 1
+    assert closed_context.turn_id == 1
+    assert closed_context.tool_epoch == 1
+
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        event_row = await admin.fetchrow(
+            "SELECT event_type, event_sequence, session_epoch, payload_json "
+            "FROM session_runtime_events WHERE session_id = $1 "
+            "ORDER BY event_sequence DESC LIMIT 1",
+            "session-close-a",
+        )
+        outbox_row = await admin.fetchrow(
+            "SELECT topic, status FROM session_runtime_outbox WHERE session_id = $1 "
+            "AND topic = 'agent.session.closed'",
+            "session-close-a",
+        )
+        event_count = await admin.fetchval(
+            "SELECT count(*) FROM session_runtime_events WHERE session_id = $1",
+            "session-close-a",
+        )
+        outbox_count = await admin.fetchval(
+            "SELECT count(*) FROM session_runtime_outbox WHERE session_id = $1",
+            "session-close-a",
+        )
+    finally:
+        await admin.close()
+    assert event_row is not None
+    assert event_row["event_type"] == "session_closed"
+    assert event_row["event_sequence"] == 2
+    assert event_row["session_epoch"] == 2
+    event_payload = event_row["payload_json"]
+    if isinstance(event_payload, str):
+        event_payload = json.loads(event_payload)
+    assert event_payload["payload"]["reason_code"] == "network"
+    assert outbox_row is not None
+    assert outbox_row["topic"] == "agent.session.closed"
+    assert outbox_row["status"] == "pending"
+    assert event_count == 2  # subject_resolved + session_closed
+    assert outbox_count == 2
+
+    # Idempotent replay with the observed terminal epoch returns
+    # already_closed and writes no second event or outbox row.
+    async with store.action_transaction(
+        actor_id="actor-a",
+        device_id="device-a",
+    ) as connection:
+        replayed = await store.close_session(
+            connection,
+            expected=closed_context,
+            event=_close_event(
+                session_id="session-close-a",
+                profile=profile,
+                context=closed_context,
+                reason_code="network",
+                now=now + timedelta(seconds=2),
+            ),
+        )
+    assert replayed == "already_closed"
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        event_count = await admin.fetchval(
+            "SELECT count(*) FROM session_runtime_events WHERE session_id = $1",
+            "session-close-a",
+        )
+        outbox_count = await admin.fetchval(
+            "SELECT count(*) FROM session_runtime_outbox WHERE session_id = $1",
+            "session-close-a",
+        )
+    finally:
+        await admin.close()
+    assert event_count == 2
+    assert outbox_count == 2
+
+
+@pytest.mark.asyncio
+async def test_postgres_close_session_conflicts_after_failure_and_missing(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    store, bootstrap_dsn = postgres_runtime
+    now = datetime.now(UTC)
+    profile = _signed_unknown_profile(
+        session_id="session-close-b",
+        actor_id="actor-a",
+        device_id="device-a",
+        binding_id="binding-a",
+        profile_id="rp-session-close-b-1",
+        issued_at=now,
+    )
+    context = SessionRuntimeContext.from_profile(profile, profile_revision=1)
+    async with store.action_transaction(
+        actor_id="actor-a",
+        device_id="device-a",
+    ) as connection:
+        await store.persist_initial(
+            connection,
+            context=context,
+            profile=profile,
+            event=_profile_event(profile),
+            request_hash=hashlib.sha256(b"close-b-request").hexdigest(),
+            idempotency_key="start-session-close-b",
+        )
+        failed_payload = _profile_event(profile).model_dump(mode="json")
+        failed_payload.update(
+            {
+                "event_id": f"event-fail-{uuid.uuid4().hex[:12]}",
+                "event_type": "session_failed",
+                "session_epoch": context.session_epoch + 1,
+                "generation_id": context.generation_id + 1,
+                "turn_id": context.turn_id + 1,
+                "tool_epoch": context.tool_epoch + 1,
+                "event_sequence": context.profile_revision + 1,
+            }
+        )
+        await store.fail_session(
+            connection,
+            expected=context,
+            event=SessionEvent.model_validate(failed_payload),
+        )
+    # A failed authority must never relabel to closed. Each rejected function
+    # call uses its own transaction because PostgreSQL intentionally aborts a
+    # transaction after a SECURITY DEFINER function raises.
+    with pytest.raises(SessionRuntimeConflict):
+        async with store.action_transaction(
+            actor_id="actor-a",
+            device_id="device-a",
+        ) as connection:
+            await store.close_session(
+                connection,
+                expected=context,
+                event=_close_event(
+                    session_id="session-close-b",
+                    profile=profile,
+                    context=context,
+                    reason_code="network",
+                    now=now + timedelta(seconds=1),
+                ),
+            )
+    # A stale expected profile/epoch (post-fail row) also conflicts.
+    stale = replace(context, session_epoch=2)
+    with pytest.raises(SessionRuntimeConflict):
+        async with store.action_transaction(
+            actor_id="actor-a",
+            device_id="device-a",
+        ) as connection:
+            await store.close_session(
+                connection,
+                expected=stale,
+                event=_close_event(
+                    session_id="session-close-b",
+                    profile=profile,
+                    context=stale,
+                    reason_code="network",
+                    now=now + timedelta(seconds=1),
+                ),
+            )
+    missing = replace(context, session_id="session-close-missing")
+    with pytest.raises(SessionRuntimeConflict):
+        async with store.action_transaction(
+            actor_id="actor-a",
+            device_id="device-a",
+        ) as connection:
+            await store.close_session(
+                connection,
+                expected=missing,
+                event=_close_event(
+                    session_id="session-close-missing",
+                    profile=profile,
+                    context=missing,
+                    reason_code="network",
+                    now=now + timedelta(seconds=1),
+                ),
+            )
+
+
+@pytest.mark.asyncio
+async def test_service_close_session_replays_idempotently_and_rejects_unknown(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    from services.session_runtime.service import (
+        PersistentSessionNotFound,
+        SessionCloseResult,
+        build_postgres_session_runtime_service,
+    )
+
+    store, _bootstrap_dsn = postgres_runtime
+    service = build_postgres_session_runtime_service(
+        store=store,
+        signing_key=_SIGNING_KEY,
+    )
+    now = datetime.now(UTC)
+    profile = _signed_unknown_profile(
+        session_id="session-close-c",
+        actor_id="actor-a",
+        device_id="device-a",
+        binding_id="binding-a",
+        profile_id="rp-session-close-c-1",
+        issued_at=now,
+    )
+    context = SessionRuntimeContext.from_profile(profile, profile_revision=1)
+    async with store.action_transaction(
+        actor_id="actor-a",
+        device_id="device-a",
+    ) as connection:
+        await store.persist_initial(
+            connection,
+            context=context,
+            profile=profile,
+            event=_profile_event(profile),
+            request_hash=hashlib.sha256(b"close-c-request").hexdigest(),
+            idempotency_key="start-session-close-c",
+        )
+
+    first = await service.close_session(
+        actor_id="actor-a",
+        session_id="session-close-c",
+        reason_code="superseded",
+        now=now + timedelta(seconds=1),
+    )
+    assert first == SessionCloseResult(applied=True, already_closed=False)
+
+    replayed = await service.close_session(
+        actor_id="actor-a",
+        session_id="session-close-c",
+        reason_code="superseded",
+        now=now + timedelta(seconds=2),
+    )
+    assert replayed == SessionCloseResult(applied=False, already_closed=True)
+
+    with pytest.raises(PersistentSessionNotFound):
+        await service.close_session(
+            actor_id="actor-a",
+            session_id="session-close-unknown",
+            reason_code="network",
+            now=now,
+        )
+
+
+@pytest.mark.asyncio
+async def test_service_start_profile_ttl_is_per_session_and_bounded(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    from services.session_runtime.service import (
+        StartPersistentSessionCommand,
+        build_postgres_session_runtime_service,
+    )
+
+    store, _bootstrap_dsn = postgres_runtime
+    service = build_postgres_session_runtime_service(
+        store=store,
+        signing_key=_SIGNING_KEY,
+    )
+    now = datetime.now(UTC)
+    profile = _signed_unknown_profile(
+        session_id="session-ttl-a",
+        actor_id="actor-a",
+        device_id="device-a",
+        binding_id="binding-a",
+        profile_id="rp-session-ttl-a-1",
+        issued_at=now,
+    )
+    context = SessionRuntimeContext.from_profile(profile, profile_revision=1)
+    async with store.action_transaction(
+        actor_id="actor-a",
+        device_id="device-a",
+    ) as connection:
+        await store.persist_initial(
+            connection,
+            context=context,
+            profile=profile,
+            event=_profile_event(profile),
+            request_hash=hashlib.sha256(b"ttl-a-request").hexdigest(),
+            idempotency_key="start-session-ttl-a",
+        )
+
+    direct = await service.close_session(
+        actor_id="actor-a",
+        session_id="session-ttl-a",
+        reason_code="device_close",
+        now=now + timedelta(seconds=1),
+    )
+    assert direct.applied is True
+
+    # Command-level bounds: the direct path may set a positive bounded TTL,
+    # everything else keeps the 5-minute service default.
+    with pytest.raises(ValueError, match="positive"):
+        StartPersistentSessionCommand(
+            session_id="s1",
+            actor_id="actor-a",
+            device_id="device-a",
+            expected_binding_version=1,
+            idempotency_key="k1",
+            now=now,
+            profile_ttl=timedelta(0),
+        )
+    with pytest.raises(ValueError, match="one-day bound"):
+        StartPersistentSessionCommand(
+            session_id="s1",
+            actor_id="actor-a",
+            device_id="device-a",
+            expected_binding_version=1,
+            idempotency_key="k1",
+            now=now,
+            profile_ttl=timedelta(days=2),
+        )
+    command = StartPersistentSessionCommand(
+        session_id="s1",
+        actor_id="actor-a",
+        device_id="device-a",
+        expected_binding_version=1,
+        idempotency_key="k1",
+        now=now,
+        profile_ttl=timedelta(seconds=3600),
+    )
+    assert command.profile_ttl == timedelta(seconds=3600)
+    default = StartPersistentSessionCommand(
+        session_id="s2",
+        actor_id="actor-a",
+        device_id="device-a",
+        expected_binding_version=1,
+        idempotency_key="k2",
+        now=now,
+    )
+    assert default.profile_ttl is None
+
+
+@pytest.mark.asyncio
+async def test_service_close_session_allows_expired_signed_profile(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    """Expiry denies use but must not strand an active Session authority."""
+
+    from services.session_runtime.service import build_postgres_session_runtime_service
+
+    store, _bootstrap_dsn = postgres_runtime
+    service = build_postgres_session_runtime_service(
+        store=store,
+        signing_key=_SIGNING_KEY,
+    )
+    issued_at = datetime.now(UTC)
+    profile = _signed_unknown_profile(
+        session_id="session-expired-close-a",
+        actor_id="actor-a",
+        device_id="device-a",
+        binding_id="binding-a",
+        profile_id="rp-session-expired-close-a-1",
+        issued_at=issued_at,
+    )
+    context = SessionRuntimeContext.from_profile(profile, profile_revision=1)
+    async with store.action_transaction(
+        actor_id="actor-a",
+        device_id="device-a",
+    ) as connection:
+        await store.persist_initial(
+            connection,
+            context=context,
+            profile=profile,
+            event=_profile_event(profile),
+            request_hash=hashlib.sha256(b"expired-close-request").hexdigest(),
+            idempotency_key="start-session-expired-close-a",
+        )
+
+    result = await service.close_session(
+        actor_id="actor-a",
+        session_id="session-expired-close-a",
+        reason_code="network",
+        now=issued_at + timedelta(minutes=10),
+    )
+    assert result.applied is True
+
+
+@pytest.mark.asyncio
+async def test_postgres_close_session_survives_binding_revocation(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+) -> None:
+    """Revocation must not strand the already-issued terminal authority."""
+
+    store, bootstrap_dsn = postgres_runtime
+    now = datetime.now(UTC)
+    profile = _signed_unknown_profile(
+        session_id="session-revoked-close-a",
+        actor_id="actor-a",
+        device_id="device-a",
+        binding_id="binding-a",
+        profile_id="rp-session-revoked-close-a-1",
+        issued_at=now,
+    )
+    context = SessionRuntimeContext.from_profile(profile, profile_revision=1)
+    async with store.action_transaction(
+        actor_id="actor-a",
+        device_id="device-a",
+    ) as connection:
+        await store.persist_initial(
+            connection,
+            context=context,
+            profile=profile,
+            event=_profile_event(profile),
+            request_hash=hashlib.sha256(b"revoked-close-request").hexdigest(),
+            idempotency_key="start-session-revoked-close-a",
+        )
+
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        await admin.execute(
+            "UPDATE identity_device_bindings SET status = 'revoked', "
+            "valid_until = $1 WHERE binding_id = 'binding-a'",
+            now + timedelta(milliseconds=1),
+        )
+    finally:
+        await admin.close()
+
+    async with store.action_transaction(
+        actor_id="actor-a",
+        device_id="device-a",
+    ) as connection:
+        status = await store.close_session(
+            connection,
+            expected=context,
+            event=_close_event(
+                session_id="session-revoked-close-a",
+                profile=profile,
+                context=context,
+                reason_code="device_close",
+                now=now + timedelta(seconds=1),
+            ),
+        )
+    assert status == "closed"

@@ -55,3 +55,22 @@ func TestOldSessionAuthorityDefaultsToPythonCompatibleUnspecified(t *testing.T) 
 		t.Fatalf("old hello selected a new authority: %v", hello.GetInteractionAuthority())
 	}
 }
+
+func TestDeviceSessionIdentityAuthorityFenceMatchesPythonWire(t *testing.T) {
+	identity := &mediav1.SessionIdentity{
+		SessionId: "s", AccountId: "a", DeviceId: "d", ClientType: "device",
+		StreamEpoch: 2, SubjectId: "subject", BindingId: "binding",
+		BindingVersion: 3, RuntimeProfileVersion: 27,
+	}
+	wire, err := proto.Marshal(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded mediav1.SessionIdentity
+	if err := proto.Unmarshal(wire, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(identity, &decoded) || decoded.GetRuntimeProfileVersion() != 27 {
+		t.Fatalf("device authority fence did not round trip: %s", decoded.String())
+	}
+}

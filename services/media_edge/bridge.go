@@ -8,25 +8,30 @@ package mediaedge
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	mediav1 "memoria/services/media_edge/gen/memoria/media/v1"
 
 	"google.golang.org/grpc"
+	grpcbackoff "google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
-	KWSHardStopMinConfidence      float32 = 0.8
-	maxRealtimeEffectPayloadBytes         = 4 * 1024
-	maxFloorEffectTTLMS           uint64  = 60_000
+	KWSHardStopMinConfidence      float32       = 0.8
+	maxRealtimeEffectPayloadBytes               = 4 * 1024
+	maxFloorEffectTTLMS           uint64        = 60_000
+	voiceCoreBridgeIdleTimeout    time.Duration = 0
 )
 
 var (
@@ -35,14 +40,41 @@ var (
 	errDropFloorEffect       = errors.New("drop floor effect")
 )
 
+func newTraceparent() (string, error) {
+	// W3C traceparent: version 00, a non-zero 16-byte trace ID, a non-zero
+	// 8-byte parent ID, and the sampled flag. A new media stream gets a new
+	// root span while the session/stream_epoch fence remains authoritative.
+	var value [24]byte
+	for {
+		if _, err := rand.Read(value[:]); err != nil {
+			return "", fmt.Errorf("generate media traceparent: %w", err)
+		}
+		var traceNonZero, parentNonZero bool
+		for _, octet := range value[:16] {
+			traceNonZero = traceNonZero || octet != 0
+		}
+		for _, octet := range value[16:] {
+			parentNonZero = parentNonZero || octet != 0
+		}
+		if traceNonZero && parentNonZero {
+			break
+		}
+	}
+	return "00-" + hex.EncodeToString(value[:16]) + "-" + hex.EncodeToString(value[16:]) + "-01", nil
+}
+
 // BridgeIdentity is the identity carried on every media-v1 message.
 type BridgeIdentity struct {
-	SessionID     string
-	AccountID     string
-	ParticipantID string
-	DeviceID      string
-	ClientType    string
-	StreamEpoch   uint64
+	SessionID             string
+	AccountID             string
+	ParticipantID         string
+	DeviceID              string
+	ClientType            string
+	StreamEpoch           uint64
+	SubjectID             string
+	BindingID             string
+	BindingVersion        uint64
+	RuntimeProfileVersion uint64
 }
 
 func (i BridgeIdentity) validate() error {
@@ -55,17 +87,29 @@ func (i BridgeIdentity) validate() error {
 	if i.StreamEpoch == 0 {
 		return fmt.Errorf("stream epoch must be positive")
 	}
+	if i.ClientType == "device" && (i.SubjectID == "" || i.BindingID == "" ||
+		i.BindingVersion == 0 || i.RuntimeProfileVersion == 0) {
+		return fmt.Errorf("device identity requires a complete runtime profile authority fence")
+	}
+	if i.ClientType != "device" && (i.SubjectID != "" || i.BindingID != "" ||
+		i.BindingVersion != 0 || i.RuntimeProfileVersion != 0) {
+		return fmt.Errorf("runtime profile authority fence is device-only")
+	}
 	return nil
 }
 
 func (i BridgeIdentity) proto() *mediav1.SessionIdentity {
 	return &mediav1.SessionIdentity{
-		SessionId:     i.SessionID,
-		AccountId:     i.AccountID,
-		ParticipantId: i.ParticipantID,
-		DeviceId:      i.DeviceID,
-		ClientType:    i.ClientType,
-		StreamEpoch:   i.StreamEpoch,
+		SessionId:             i.SessionID,
+		AccountId:             i.AccountID,
+		ParticipantId:         i.ParticipantID,
+		DeviceId:              i.DeviceID,
+		ClientType:            i.ClientType,
+		StreamEpoch:           i.StreamEpoch,
+		SubjectId:             i.SubjectID,
+		BindingId:             i.BindingID,
+		BindingVersion:        i.BindingVersion,
+		RuntimeProfileVersion: i.RuntimeProfileVersion,
 	}
 }
 
@@ -74,12 +118,16 @@ func identityFromProto(value *mediav1.SessionIdentity) BridgeIdentity {
 		return BridgeIdentity{}
 	}
 	return BridgeIdentity{
-		SessionID:     value.GetSessionId(),
-		AccountID:     value.GetAccountId(),
-		ParticipantID: value.GetParticipantId(),
-		DeviceID:      value.GetDeviceId(),
-		ClientType:    value.GetClientType(),
-		StreamEpoch:   value.GetStreamEpoch(),
+		SessionID:             value.GetSessionId(),
+		AccountID:             value.GetAccountId(),
+		ParticipantID:         value.GetParticipantId(),
+		DeviceID:              value.GetDeviceId(),
+		ClientType:            value.GetClientType(),
+		StreamEpoch:           value.GetStreamEpoch(),
+		SubjectID:             value.GetSubjectId(),
+		BindingID:             value.GetBindingId(),
+		BindingVersion:        value.GetBindingVersion(),
+		RuntimeProfileVersion: value.GetRuntimeProfileVersion(),
 	}
 }
 
@@ -212,6 +260,14 @@ func normalizeEffectiveInteractionAuthority(value mediav1.InteractionAuthority) 
 // DialVoiceCore opens the authenticated edge -> Voice Core channel.  Plain
 // gRPC is available only with an explicit development opt-in.
 func DialVoiceCore(ctx context.Context, config VoiceCoreBridgeConfig) (*VoiceCoreBridge, error) {
+	return dialVoiceCoreWithIdleTimeout(ctx, config, voiceCoreBridgeIdleTimeout)
+}
+
+func dialVoiceCoreWithIdleTimeout(
+	ctx context.Context,
+	config VoiceCoreBridgeConfig,
+	idleTimeout time.Duration,
+) (*VoiceCoreBridge, error) {
 	if config.Address == "" {
 		return nil, fmt.Errorf("voice-core bridge address is required")
 	}
@@ -227,6 +283,24 @@ func DialVoiceCore(ctx context.Context, config VoiceCoreBridgeConfig) (*VoiceCor
 	} else {
 		return nil, fmt.Errorf("voice-core bridge requires mTLS outside development")
 	}
+	// This is a process-level bridge, not a short-lived RPC client. The
+	// grpc-go NewClient default enters Idle after 30 minutes without an RPC;
+	// that makes Ready() report false even though the Voice Core endpoint is
+	// healthy and the next media stream could reconnect. Keep the channel
+	// out of idle so readiness remains an honest long-lived dependency gate.
+	opts = append(opts, grpc.WithIdleTimeout(idleTimeout))
+	// Keep each channel's own reconnect loop bounded. The process-level
+	// supervisor may replace the whole channel after sustained unavailability
+	// so a fresh grpc.NewClient also forces resolver state to be rebuilt.
+	opts = append(opts, grpc.WithConnectParams(grpc.ConnectParams{
+		Backoff: grpcbackoff.Config{
+			BaseDelay:  250 * time.Millisecond,
+			Multiplier: 1.6,
+			Jitter:     0.2,
+			MaxDelay:   3 * time.Second,
+		},
+		MinConnectTimeout: time.Second,
+	}))
 	// grpc.NewClient connects lazily; callers pass a bounded context so
 	// startup fails closed and predictably instead of announcing readiness
 	// and only discovering an unreachable Voice Core on the first session.
@@ -281,18 +355,47 @@ func (b *VoiceCoreBridge) Close() error {
 }
 
 func (b *VoiceCoreBridge) Ready() bool {
-	return b != nil && b.conn != nil && b.conn.GetState() == connectivity.Ready
+	return b.State() == connectivity.Ready
+}
+
+// State exposes only the transport state required by the process-level
+// supervisor and readiness metrics. Session/generation state remains owned by
+// each VoiceCoreSession and is never copied into a replacement channel.
+func (b *VoiceCoreBridge) State() connectivity.State {
+	if b == nil || b.conn == nil {
+		return connectivity.Shutdown
+	}
+	return b.conn.GetState()
 }
 
 // Connect starts one bidirectional media-v1 stream and consumes the accepted
-// event before returning.  There is no implicit retry: a reconnect must use a
-// strictly larger stream epoch supplied by the control plane.
+// event before returning. The supplied context owns both the handshake and
+// the accepted stream for callers that want the original single-context
+// contract. There is no implicit retry: a reconnect must use a strictly
+// larger stream epoch supplied by the control plane.
 func (b *VoiceCoreBridge) Connect(
 	ctx context.Context,
 	identity BridgeIdentity,
 	uplink BridgeAudioFormat,
 	downlink BridgeAudioFormat,
 ) (*VoiceCoreSession, error) {
+	return b.ConnectWithHandshakeContext(ctx, ctx, identity, uplink, downlink)
+}
+
+// ConnectWithHandshakeContext separates the lifetime of the accepted gRPC
+// stream from the bounded handshake. Cancelling handshakeCtx after acceptance
+// must not cancel the long-lived media stream; streamCtx remains authoritative
+// until the session is closed or its owning runtime is retired.
+func (b *VoiceCoreBridge) ConnectWithHandshakeContext(
+	streamCtx context.Context,
+	handshakeCtx context.Context,
+	identity BridgeIdentity,
+	uplink BridgeAudioFormat,
+	downlink BridgeAudioFormat,
+) (*VoiceCoreSession, error) {
+	if streamCtx == nil || handshakeCtx == nil {
+		return nil, fmt.Errorf("voice-core bridge contexts are required")
+	}
 	if err := identity.validate(); err != nil {
 		return nil, err
 	}
@@ -305,8 +408,12 @@ func (b *VoiceCoreBridge) Connect(
 	if uplink.SampleRate != 16_000 || downlink.SampleRate != 24_000 {
 		return nil, fmt.Errorf("voice-core bridge requires 16 kHz uplink and 24 kHz downlink")
 	}
-	streamCtx, cancel := context.WithCancel(ctx)
-	stream, err := b.client.Connect(streamCtx)
+	traceparent, err := newTraceparent()
+	if err != nil {
+		return nil, err
+	}
+	sessionCtx, cancel := context.WithCancel(streamCtx)
+	stream, err := b.client.Connect(sessionCtx)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("open Voice Core stream: %w", err)
@@ -317,6 +424,7 @@ func (b *VoiceCoreBridge) Connect(
 		cancel:             cancel,
 		current:            Fence{SessionID: identity.SessionID},
 		requireAudioOrigin: true,
+		traceparent:        traceparent,
 	}
 	if err := session.send(&mediav1.MediaToCore{Event: &mediav1.MediaToCore_Hello{
 		Hello: &mediav1.SessionHello{
@@ -325,12 +433,13 @@ func (b *VoiceCoreBridge) Connect(
 			DownlinkFormat:       downlink.proto(),
 			Capabilities:         map[string]string{"media_only": "true", "generation_gate": "true"},
 			InteractionAuthority: b.interactionAuthority,
+			Traceparent:          traceparent,
 		},
 	}}); err != nil {
 		_ = session.Close()
 		return nil, err
 	}
-	accepted, err := stream.Recv()
+	accepted, err := recvVoiceCoreHandshake(handshakeCtx, stream)
 	if err != nil {
 		_ = session.Close()
 		return nil, fmt.Errorf("receive Voice Core acceptance: %w", err)
@@ -347,27 +456,68 @@ func (b *VoiceCoreBridge) Connect(
 		return nil, err
 	}
 	session.interactionAuthority = effectiveAuthority
-	if accepted.GetAccepted().GetCurrentGenerationId() > 0 {
-		session.current.GenerationID = accepted.GetAccepted().GetCurrentGenerationId()
+	acceptedFence := Fence{
+		SessionID:    identity.SessionID,
+		TurnID:       accepted.GetAccepted().GetCurrentTurnId(),
+		GenerationID: accepted.GetAccepted().GetCurrentGenerationId(),
+		ToolEpoch:    accepted.GetAccepted().GetCurrentToolEpoch(),
+	}
+	if (acceptedFence.GenerationID == 0) != (acceptedFence.TurnID == 0 && acceptedFence.ToolEpoch == 0) {
+		_ = session.Close()
+		return nil, fmt.Errorf("voice-core bridge returned a partial reconnect fence")
+	}
+	if acceptedFence.GenerationID > 0 {
+		session.current = acceptedFence
 		// SessionAccepted predates the full fence fields.  A reconnect with a
 		// non-zero generation therefore carries one ordered GenerationControl
 		// resume event immediately after acceptance; consume it before exposing
 		// the session so callers cannot send a stop/playback fact against the
 		// generation-only placeholder fence.
-		resume, resumeErr := stream.Recv()
+		resume, resumeErr := recvVoiceCoreHandshake(handshakeCtx, stream)
 		if resumeErr != nil {
 			_ = session.Close()
 			return nil, fmt.Errorf("receive Voice Core reconnect fence: %w", resumeErr)
 		}
-		if resumeErr := session.validateCoreEvent(resume); resumeErr != nil || resume.GetGeneration() == nil {
+		generation := resume.GetGeneration()
+		if resumeErr := session.validateCoreEvent(resume); resumeErr != nil || generation == nil ||
+			(generation.GetAction() != mediav1.GenerationAction_GENERATION_ACTION_RESUME &&
+				generation.GetAction() != mediav1.GenerationAction_GENERATION_ACTION_CANCEL) ||
+			!session.CurrentFence().Equal(acceptedFence) {
 			_ = session.Close()
 			if resumeErr != nil {
 				return nil, fmt.Errorf("invalid Voice Core reconnect fence: %w", resumeErr)
 			}
 			return nil, fmt.Errorf("voice-core reconnect acceptance omitted full generation fence")
 		}
+		session.requireAudioOrigin =
+			generation.GetAction() != mediav1.GenerationAction_GENERATION_ACTION_RESUME
 	}
 	return session, nil
+}
+
+type voiceCoreHandshakeResult struct {
+	event *mediav1.CoreToMedia
+	err   error
+}
+
+func recvVoiceCoreHandshake(
+	ctx context.Context,
+	stream grpc.BidiStreamingClient[mediav1.MediaToCore, mediav1.CoreToMedia],
+) (*mediav1.CoreToMedia, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	received := make(chan voiceCoreHandshakeResult, 1)
+	go func() {
+		event, err := stream.Recv()
+		received <- voiceCoreHandshakeResult{event: event, err: err}
+	}()
+	select {
+	case result := <-received:
+		return result.event, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (f Fence) equal(other Fence) bool {
@@ -389,6 +539,7 @@ type VoiceCoreSession struct {
 	sendMu               sync.Mutex
 	stateMu              sync.Mutex
 	current              Fence
+	currentActive        bool
 	lastEventSequence    uint64
 	lastShadowSequence   uint64
 	lastFloorEpoch       uint64
@@ -398,6 +549,7 @@ type VoiceCoreSession struct {
 	hasFloorEpoch        bool
 	hasAudioSequence     bool
 	requireAudioOrigin   bool
+	traceparent          string
 	lastAudioEnd         uint64
 	nextClientSequence   uint64
 	interactionAuthority mediav1.InteractionAuthority

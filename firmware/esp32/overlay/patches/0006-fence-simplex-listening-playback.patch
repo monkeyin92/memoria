@@ -1,0 +1,56 @@
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -85,9 +85,9 @@ void Application::Initialize() {
+     callbacks.on_vad_change = [this](bool speaking) {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+-        const bool listening = GetDeviceState() == kDeviceStateListening;
+-        Schedule([this, speaking, listening]() {
++        Schedule([this, speaking]() {
+             auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+-            if (memoria_protocol != nullptr && listening) {
++            if (memoria_protocol != nullptr &&
++                (!speaking || GetDeviceState() == kDeviceStateListening)) {
+                 memoria_protocol->SendVadState(speaking);
+             }
+         });
+@@ -106,6 +106,16 @@ void Application::Initialize() {
+ 
+     // Add state change listeners
+     state_machine_.AddStateChangeListener([this](DeviceState old_state, DeviceState new_state) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++        if (old_state == kDeviceStateListening && new_state != kDeviceStateListening) {
++            Schedule([this]() {
++                auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++                if (memoria_protocol != nullptr) {
++                    memoria_protocol->SendVadState(false);
++                }
++            });
++        }
++#endif
+         xEventGroupSetBits(event_group_, MAIN_EVENT_STATE_CHANGED);
+     });
+ 
+@@ -1024,6 +1034,22 @@ void Application::StartListeningAudio() {
+         return;
+     }
+ 
++#if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++    // This simplex board has no playback-reference channel. Play the local
++    // listening cue before opening the microphone so it cannot create a
++    // device VAD epoch; the playback-drained event resumes this same seam.
++    if (play_popup_on_listening_) {
++        play_popup_on_listening_ = false;
++        pending_listening_start_ = true;
++        audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
++        if (audio_service_.IsPlaybackIdle()) {
++            pending_listening_start_ = false;
++            StartListeningAudio();
++        }
++        return;
++    }
++#endif
++
+     // Send the start listening command
+     protocol_->SendStartListening(listening_mode_);
+     audio_service_.EnableVoiceProcessing(true);

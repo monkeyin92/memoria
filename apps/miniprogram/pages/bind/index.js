@@ -473,9 +473,6 @@ Page({
     });
   },
 
-  openSpeakerEnrollment() {
-    wx.navigateTo({ url: "/pages/speaker-enrollment/index?from=device-onboarding" });
-  },
 
   goHome() {
     wx.switchTab({ url: "/pages/home/index" });

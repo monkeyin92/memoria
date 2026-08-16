@@ -730,7 +730,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             refusal_safe = (
                 policy.mode in {"self_preview", "legacy"}
                 and plan.instructions == _LOCAL_SAFE_REFUSAL_INSTRUCTIONS
-                and plan.direct_text in {_LOCAL_SAFE_REFUSAL_TEXT, CRISIS_SUPPORT_REPLY}
+                and (plan.direct_text in {_LOCAL_SAFE_REFUSAL_TEXT, CRISIS_SUPPORT_REPLY} or is_safe_realtime_reply(plan.direct_text))
                 and not plan.grounded_items
                 and not plan.provenance.source_refs
                 and plan.disclosures
@@ -924,7 +924,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             ),
         )
         live_now = current_local_time(os.getenv("MEMORIA_TIMEZONE", "Asia/Shanghai"))
-        if fixed_reply is None and companion:
+        if fixed_reply is None:
             fixed_reply = fixed_realtime_reply(query=query, now=live_now)
         references = dict(policy.references)
         relationship_version_raw = references.get("relationship_profile_version")
@@ -966,7 +966,7 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
             instructions=instructions,
             direct_text=(
                 fixed_reply
-                if companion or anonymous_public or fixed_reply == CRISIS_SUPPORT_REPLY
+                if companion or anonymous_public or fixed_reply == CRISIS_SUPPORT_REPLY or is_safe_realtime_reply(fixed_reply)
                 else _LOCAL_SAFE_REFUSAL_TEXT
             ),
             epistemic_status="not_applicable",
@@ -2836,6 +2836,7 @@ async def entrypoint(ctx: Any) -> None:
                 detail=detail,
             )
         )
+    runtime.set_keyword_spotter_finalizer(getattr(stt_plugin, "flush_speech_segment", lambda _: None))
     runtime.mark_audio_event("agent_runtime_created")
     emotion_sidecar: QwenEmotionSidecar | None = None
     pcm_observers: list[Any] = [runtime.feed_speaker_pcm]
@@ -2871,7 +2872,6 @@ async def entrypoint(ctx: Any) -> None:
         else:
             runtime.mark_audio_event("keyword_spotter_ready", status="error")
     if hasattr(stt_plugin, "set_pcm_observer"):
-
         def _fanout_pcm(pcm: bytes) -> None:
             for observer in pcm_observers:
                 with contextlib.suppress(Exception):

@@ -21,8 +21,9 @@ _LOOPBACK_CLIENT_HOST = "localhost"  # Keep mock traffic out of system proxies.
 class MockFunASRServer:
     host: str = "127.0.0.1"
     port: int = 0
-    scenario: str = "happy"  # happy|context_leak|interim_rewrite|duplicate_final|heartbeat|missing_ts|fail|disconnect_once
+    scenario: str = "happy"  # happy|task_reuse|task_reuse_late_event|heartbeat_stall|context_leak|interim_rewrite|duplicate_final|heartbeat|missing_ts|fail|disconnect_once
     connections_closed: int = 0
+    connections_started: int = 0
     tasks_started: list[str] = field(default_factory=list)
     pcm_by_connection: list[int] = field(default_factory=list)
     connection_closed: threading.Event = field(default_factory=threading.Event)
@@ -76,9 +77,18 @@ class MockFunASRServer:
 
     async def _handler(self, ws: ServerConnection) -> None:
         task_id = ""
+        self.connections_started += 1
         try:
             raw = await ws.recv()
             msg = json.loads(raw if isinstance(raw, str) else raw.decode())
+            if self.scenario in {
+                "task_reuse",
+                "task_reuse_late_event",
+                "heartbeat_stall",
+                "task_reuse_provider_finish",
+            }:
+                await self._handle_reused_tasks(ws, msg)
+                return
             task_id = str(msg.get("header", {}).get("task_id") or "")
             self.tasks_started.append(task_id)
             connection_index = len(self.tasks_started) - 1
@@ -217,6 +227,118 @@ class MockFunASRServer:
         finally:
             self.connections_closed += 1
             self.connection_closed.set()
+
+    async def _handle_reused_tasks(
+        self,
+        ws: ServerConnection,
+        run_message: dict[str, Any],
+    ) -> None:
+        """Exercise the documented finish-task -> run-task reuse sequence."""
+
+        current = run_message
+        task_number = 0
+        while True:
+            header = current.get("header") or {}
+            if header.get("action") != "run-task":
+                raise RuntimeError("task reuse mock expected run-task")
+            task_id = str(header.get("task_id") or "")
+            task_number += 1
+            self.tasks_started.append(task_id)
+            self.pcm_by_connection.append(0)
+            pcm_index = len(self.pcm_by_connection) - 1
+            await ws.send(
+                json.dumps(
+                    {"header": {"event": "task-started", "task_id": task_id}, "payload": {}}
+                )
+            )
+
+            if self.scenario == "task_reuse_provider_finish" and task_number == 1:
+                # Provider-initiated boundary: end the first task on our own
+                # after the first PCM chunk, before any finish-task arrives.
+                # A late client finish-task is a no-op; only the next run-task
+                # continues the reuse sequence.
+                while True:
+                    frame = await ws.recv()
+                    if isinstance(frame, bytes):
+                        self.pcm_by_connection[pcm_index] += len(frame)
+                        break
+                    message = json.loads(frame)
+                    action = (message.get("header") or {}).get("action")
+                    if action == "continue-task":
+                        continue
+                    raise RuntimeError("task_reuse_provider_finish mock expected PCM")
+                provider_text = "第1段识别。"
+                await ws.send(
+                    _result(
+                        task_id,
+                        provider_text,
+                        sentence_end=True,
+                        words=_chars(provider_text),
+                    )
+                )
+                await ws.send(
+                    json.dumps(
+                        {"header": {"event": "task-finished", "task_id": task_id}, "payload": {}}
+                    )
+                )
+                while True:
+                    frame = await ws.recv()
+                    if isinstance(frame, bytes):
+                        self.pcm_by_connection[pcm_index] += len(frame)
+                        continue
+                    message = json.loads(frame)
+                    action = (message.get("header") or {}).get("action")
+                    if action in ("continue-task", "finish-task"):
+                        continue
+                    if action == "run-task":
+                        current = message
+                        break
+                    raise RuntimeError(f"unexpected task action: {action}")
+                continue
+
+            while True:
+                frame = await ws.recv()
+                if isinstance(frame, bytes):
+                    self.pcm_by_connection[pcm_index] += len(frame)
+                    continue
+                message = json.loads(frame)
+                action = (message.get("header") or {}).get("action")
+                if action == "continue-task":
+                    continue
+                if action == "finish-task":
+                    break
+                raise RuntimeError(f"unexpected task action: {action}")
+
+            if self.scenario == "heartbeat_stall":
+                while True:
+                    await ws.send(
+                        _result(
+                            task_id,
+                            "",
+                            sentence_end=False,
+                            heartbeat=True,
+                            words=[],
+                            sentence_id=0,
+                        )
+                    )
+                    await asyncio.sleep(0.03)
+
+            text = f"第{task_number}段识别。"
+            await ws.send(_result(task_id, text[:-1], sentence_end=False, words=_chars(text[:-1])))
+            await ws.send(_result(task_id, text, sentence_end=True, words=_chars(text)))
+            await ws.send(
+                json.dumps(
+                    {"header": {"event": "task-finished", "task_id": task_id}, "payload": {}}
+                )
+            )
+            if self.scenario == "task_reuse_late_event" and task_number == 1:
+                late_text = "这个旧任务结果必须丢弃。"
+                await ws.send(
+                    _result(task_id, late_text, sentence_end=True, words=_chars(late_text))
+                )
+
+            raw = await ws.recv()
+            current = json.loads(raw if isinstance(raw, str) else raw.decode())
 
 
 def _chars(text: str) -> list[dict[str, Any]]:

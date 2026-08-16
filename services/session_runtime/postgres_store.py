@@ -63,6 +63,7 @@ _REQUIRED_FUNCTIONS = frozenset(
         "session_runtime_commit_initial",
         "session_runtime_commit_rotation",
         "session_runtime_fail_session",
+        "session_runtime_close_session",
         "session_runtime_prepare_initial",
         "session_runtime_prepare_rotation",
         "session_runtime_action_effect_context",
@@ -165,6 +166,7 @@ _ACTION_EXECUTOR_FUNCTION_SIGNATURES = frozenset(
         "session_runtime_commit_initial(jsonb, integer, jsonb, text)",
         "session_runtime_commit_rotation(jsonb, integer, jsonb)",
         "session_runtime_fail_session(text, text, integer, jsonb)",
+        "session_runtime_close_session(text, text, integer, jsonb)",
         "session_runtime_prepare_initial(jsonb, text, text)",
         "session_runtime_prepare_rotation(text, integer, integer, jsonb, integer, jsonb)",
         "session_runtime_action_effect_context(text, text, jsonb, jsonb)",
@@ -914,6 +916,58 @@ class PostgresSessionRuntimeStore:
             updated_at=cast(datetime, row["updated_at"]),
         )
 
+    async def context_any_state(
+        self,
+        connection: asyncpg.Connection,
+        *,
+        session_id: str,
+    ) -> tuple[SessionRuntimeContext, str] | None:
+        """Read the context row regardless of lifecycle state.
+
+        Returns ``(context, state)`` so callers can distinguish an idempotent
+        already-closed session from an unknown or failed one without exposing
+        the lifecycle state on the shared context dataclass.
+        """
+        _require_transaction(connection)
+        row = await connection.fetchrow(
+            """
+            SELECT session_id, actor_id, device_id, binding_id, binding_version,
+                   active_subject_id, subject_revision, session_epoch,
+                   profile_revision, current_runtime_profile_id,
+                   generation_id, turn_id, tool_epoch, created_at, updated_at,
+                   state
+            FROM session_runtime_contexts
+            WHERE session_id = $1
+            """,
+            session_id,
+        )
+        if row is None:
+            return None
+        return (
+            SessionRuntimeContext(
+                session_id=str(row["session_id"]),
+                actor_id=str(row["actor_id"]),
+                device_id=str(row["device_id"]),
+                binding_id=str(row["binding_id"]),
+                binding_version=int(row["binding_version"]),
+                active_subject_id=(
+                    str(row["active_subject_id"])
+                    if row["active_subject_id"] is not None
+                    else None
+                ),
+                subject_revision=int(row["subject_revision"]),
+                session_epoch=int(row["session_epoch"]),
+                profile_revision=int(row["profile_revision"]),
+                current_runtime_profile_id=str(row["current_runtime_profile_id"]),
+                generation_id=int(row["generation_id"]),
+                turn_id=int(row["turn_id"]),
+                tool_epoch=int(row["tool_epoch"]),
+                created_at=cast(datetime, row["created_at"]),
+                updated_at=cast(datetime, row["updated_at"]),
+            ),
+            str(row["state"]),
+        )
+
     async def lock_tool_effect_context(
         self,
         connection: asyncpg.Connection,
@@ -1093,6 +1147,37 @@ class PostgresSessionRuntimeStore:
             raise SessionRuntimeAuthorityUnavailable(
                 "Session failure transition was not applied"
             )
+
+    async def close_session(
+        self,
+        connection: asyncpg.Connection,
+        *,
+        expected: SessionRuntimeContext,
+        event: SessionEvent,
+    ) -> str:
+        """Apply or replay the terminal session_closed authority transition.
+
+        Returns closed when applied and already_closed on an idempotent
+        replay of the pre-close or observed terminal epoch; a failed session
+        stays failed and surfaces the CAS conflict instead of relabeling closed.
+        """
+        _require_transaction(connection)
+        try:
+            raw = await connection.fetchval(
+                "SELECT session_runtime_close_session($1, $2, $3, $4::jsonb)",
+                expected.session_id,
+                expected.current_runtime_profile_id,
+                expected.session_epoch,
+                _json_text(event.model_dump(mode="json")),
+            )
+        except asyncpg.PostgresError as exc:
+            self._raise_mapped(exc)
+        status = _json_object(raw, field="close result").get("status")
+        if status not in {"closed", "already_closed"}:
+            raise SessionRuntimeAuthorityUnavailable(
+                "Session close transition was not applied"
+            )
+        return str(status)
 
     async def lock_current(
         self,

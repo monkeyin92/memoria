@@ -111,6 +111,9 @@ async def run() -> None:
             "MEDIA_BRIDGE_GRPC_ENABLED=false; enable the bridge explicitly before starting it"
         )
     logging.basicConfig(level=settings.log_level)
+    output_generation_timeout_s = float(
+        getattr(settings, "media_output_generation_timeout_s", 45.0)
+    )
     prometheus_port = int(getattr(settings, "prometheus_port", 0))
     if prometheus_port > 0:
         try:
@@ -132,6 +135,7 @@ async def run() -> None:
             registry = MediaVoiceCoreRegistry(
                 bridge=server,
                 session_factory=session_factory,
+                output_generation_timeout_s=output_generation_timeout_s,
             )
             registry.install()
             logger.info("media bridge shared Agent session registry installed")
@@ -144,11 +148,13 @@ async def run() -> None:
                     bridge=server,
                     provider_factory=provider_factory,
                     runtime_factory=runtime_factory,
+                    output_generation_timeout_s=output_generation_timeout_s,
                 )
                 if runtime_factory is not None
                 else MediaVoiceCoreRegistry(
                     bridge=server,
                     provider_factory=provider_factory,
+                    output_generation_timeout_s=output_generation_timeout_s,
                 )
             )
             registry.install()

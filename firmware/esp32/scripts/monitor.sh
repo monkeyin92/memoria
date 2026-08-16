@@ -20,11 +20,16 @@ while (($# > 0)); do
 done
 
 "$SCRIPT_DIR/bootstrap.sh" --no-idf-install
+python_bin="$(select_python)"
+ca_file="$(python_certifi_ca "$python_bin")"
+configure_python_tls "$python_bin" "$ca_file"
+configure_idf_python_env "$python_bin"
 idf_path="$(find_idf_path || true)"
 [[ -n "$idf_path" ]] || die "ESP-IDF $MEMORIA_ESP_IDF_VERSION not found"
 export IDF_PATH="$idf_path"
 # shellcheck disable=SC1090
 source "$IDF_PATH/export.sh"
+configure_python_tls "$python_bin" "$ca_file"
 need_command idf.py
 [[ -f "$MEMORIA_UPSTREAM_DIR/CMakeLists.txt" ]] || \
     die "locked upstream project is missing CMakeLists.txt: $MEMORIA_UPSTREAM_DIR"

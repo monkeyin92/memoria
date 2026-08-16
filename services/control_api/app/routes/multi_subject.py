@@ -15,9 +15,15 @@ from packages.contracts.generated.python.multi_subject_contracts import (
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.consent.binding_snapshot import BINDING_OFFER_CATALOG
+from services.control_api.app.account_gate import require_capability_for_subject_category
+from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_binding_token import (
     DeviceBindingTokenError,
     verify_device_binding_token,
+)
+from services.control_api.app.device_control import (
+    RuntimeProfileLedger,
+    stable_profile_fingerprint,
 )
 from services.control_api.app.multi_subject_runtime import (
     MultiSubjectRuntimeControl,
@@ -66,6 +72,7 @@ _RELATIONSHIP_FOR_MODE: dict[DeviceDeclaredModeValue, PrimaryRelationship] = {
     "family_shared": "family_member_of",
 }
 
+
 class SubjectDraft(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -110,9 +117,7 @@ class CreateDeviceBindingRequest(BaseModel):
         if has_claim_id != has_session_id:
             raise ValueError("claim_id and onboarding_session_id must be provided together")
         if has_legacy_token == has_claim_id:
-            raise ValueError(
-                "provide either the onboarding claim pair or the offline legacy token"
-            )
+            raise ValueError("provide either the onboarding claim pair or the offline legacy token")
         if self.primary_subject.relationship != _RELATIONSHIP_FOR_MODE[self.declared_mode]:
             raise ValueError("primary subject relationship does not match declared_mode")
         # This is only an HTTP-shape adapter.  Identity passes the same command
@@ -512,8 +517,21 @@ async def get_device_runtime_profile(
     offline: bool = False,
     multiple_speakers: bool = False,
 ) -> dict[str, object]:
-    control = _runtime(request)
+    # Resolve only the authenticated actor's category from the canonical
+    # Identity authority, then apply the shared account capability table before
+    # reading the device binding/runtime. The legacy MemoryStore can lag this
+    # authority and therefore cannot be a second category decision point here.
     now = datetime.now(UTC)
+    try:
+        actor = await _account_person(request, user_id=user.user_id, now=now)
+    except IdentityAccessDeniedError as exc:
+        raise _binding_forbidden() from exc
+    require_capability_for_subject_category(
+        actor.subject_category,
+        "device_runtime_profile_sync",
+    )
+    store_value = getattr(request.app.state, "memory_store", None)
+    control = _runtime(request)
     try:
         profile = await control.ensure_profile(
             device_id=device_id,
@@ -543,8 +561,23 @@ async def get_device_runtime_profile(
             detail={"code": "session_runtime_authority_unavailable"},
         ) from exc
     if isinstance(control, PostgresMultiSubjectRuntimeControl):
-        return control.serialize_profile(profile)
-    return control.serialize_profile(cast(RuntimeProfile, profile))
+        payload = control.serialize_profile(profile)
+    else:
+        payload = control.serialize_profile(cast(RuntimeProfile, profile))
+    if not isinstance(store_value, MemoryStore):
+        return payload
+    RuntimeProfileLedger(store_value).observe(
+        device_id=device_id,
+        runtime_profile_id=str(payload["runtime_profile_id"]),
+        content_fingerprint=stable_profile_fingerprint(payload),
+        issued_at=datetime.fromisoformat(str(payload["issued_at"]).replace("Z", "+00:00")),
+        expires_at=datetime.fromisoformat(str(payload["expires_at"]).replace("Z", "+00:00")),
+        now=now,
+    )
+    # Never append device settings or a second version field to this payload:
+    # the signature covers the exact RuntimeProfile v2 shape. Device settings
+    # use /settings and /runtime-profile/changes as an explicit projection.
+    return payload
 
 
 @router.post("/v1/sessions/resolve-subject")

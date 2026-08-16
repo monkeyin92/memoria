@@ -429,10 +429,6 @@ class OnboardingController {
     this._activationTimer = null;
   }
 
-  skipSpeakerEnrollment() {
-    this._setState("activation", { force: true });
-    return this.refreshActivation();
-  }
 
   clearSensitiveInput() {
     this._wifiPassword.clear();
