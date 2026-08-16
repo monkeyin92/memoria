@@ -5,6 +5,7 @@ import json
 
 import grpc
 import pytest
+from grpc_health.v1 import health_pb2, health_pb2_grpc
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.delegation_coordinator import OutputIntentAdmission
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
@@ -23,6 +24,21 @@ async def _request_stream(
         if message is None:
             return
         yield message
+
+
+@pytest.mark.asyncio
+async def test_grpc_health_serves_voice_media_bridge() -> None:
+    bridge = MediaBridgeGrpcServer()
+    port = await bridge.start("127.0.0.1:0")
+    channel = grpc.aio.insecure_channel(f"127.0.0.1:{port}")
+    try:
+        response = await health_pb2_grpc.HealthStub(channel).Check(
+            health_pb2.HealthCheckRequest(service=MediaBridgeGrpcServer._SERVICE)
+        )
+        assert response.status == health_pb2.HealthCheckResponse.SERVING
+    finally:
+        await channel.close()
+        await bridge.stop()
 
 
 @pytest.mark.asyncio

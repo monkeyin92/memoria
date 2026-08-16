@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import grpc
+from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
@@ -389,6 +390,7 @@ class MediaBridgeGrpcServer:
         self._transport_sessions_seen: set[str] = set()
         self._closed_session_notifications: set[str] = set()
         self._server: grpc.aio.Server | None = None
+        self._health = health.aio.HealthServicer()
 
     async def start(self, address: str, *, tls: MediaBridgeTLS | None = None) -> int:
         if self._server is not None:
@@ -407,12 +409,17 @@ class MediaBridgeGrpcServer:
             },
         )
         server.add_generic_rpc_handlers((handler,))
+        health_pb2_grpc.add_HealthServicer_to_server(self._health, server)
         if tls is None:
             port = server.add_insecure_port(address)
         else:
             port = server.add_secure_port(address, tls.credentials())
         if port <= 0:
             raise RuntimeError(f"failed to bind media bridge address: {address}")
+        await self._health.set(
+            self._SERVICE,
+            health_pb2.HealthCheckResponse.SERVING,
+        )
         await server.start()
         self._server = server
         return cast(int, port)
@@ -420,6 +427,10 @@ class MediaBridgeGrpcServer:
     async def stop(self, grace_s: float = 1.0) -> None:
         server, self._server = self._server, None
         if server is not None:
+            await self._health.set(
+                self._SERVICE,
+                health_pb2.HealthCheckResponse.NOT_SERVING,
+            )
             await server.stop(grace_s)
         for connection in tuple(self._connections.values()):
             connection.closed = True

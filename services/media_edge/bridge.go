@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	grpc_health_v1 "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 const (
@@ -32,6 +33,7 @@ const (
 	maxRealtimeEffectPayloadBytes               = 4 * 1024
 	maxFloorEffectTTLMS           uint64        = 60_000
 	voiceCoreBridgeIdleTimeout    time.Duration = 0
+	voiceCoreBridgeHealthService                = "memoria.media.v1.VoiceMediaBridge"
 )
 
 var (
@@ -334,6 +336,7 @@ func waitForReady(ctx context.Context, conn *grpc.ClientConn) error {
 type VoiceCoreBridge struct {
 	conn                 *grpc.ClientConn
 	client               mediav1.VoiceMediaBridgeClient
+	health               grpc_health_v1.HealthClient
 	interactionAuthority mediav1.InteractionAuthority
 }
 
@@ -343,6 +346,7 @@ func NewVoiceCoreBridge(conn *grpc.ClientConn) *VoiceCoreBridge {
 	}
 	return &VoiceCoreBridge{
 		conn: conn, client: mediav1.NewVoiceMediaBridgeClient(conn),
+		health:               grpc_health_v1.NewHealthClient(conn),
 		interactionAuthority: mediav1.InteractionAuthority_INTERACTION_AUTHORITY_PYTHON_AUTHORITATIVE,
 	}
 }
@@ -366,6 +370,29 @@ func (b *VoiceCoreBridge) State() connectivity.State {
 		return connectivity.Shutdown
 	}
 	return b.conn.GetState()
+}
+
+// Probe verifies that the Python-owned Voice Core service itself is accepting
+// work. A transport READY state alone is not sufficient: an existing gRPC
+// connection can remain READY while the Bridge application has stopped or is
+// deliberately draining.
+func (b *VoiceCoreBridge) Probe(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("voice-core bridge probe context is required")
+	}
+	if b == nil || b.conn == nil || b.health == nil {
+		return errors.New("voice-core bridge health client is unavailable")
+	}
+	response, err := b.health.Check(ctx, &grpc_health_v1.HealthCheckRequest{
+		Service: voiceCoreBridgeHealthService,
+	})
+	if err != nil {
+		return fmt.Errorf("voice-core bridge health check: %w", err)
+	}
+	if response.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
+		return fmt.Errorf("voice-core bridge health status is %s", response.GetStatus())
+	}
+	return nil
 }
 
 // Connect starts one bidirectional media-v1 stream and consumes the accepted

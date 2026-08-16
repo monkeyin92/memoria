@@ -18,7 +18,7 @@ Hugging Face `speech-to-speech` 提供模块化实时语音流水线，将 VAD�
 Memoria 已有生产级业务与语音控制面：
 
 - H5 使用 LiveKit/WebRTC；
-- 小程序使用受控半双工 PCM/WSS 媒体适配器；
+- 小程序只承担控制面，ESP32 使用 Direct Device WSS 与 Go Media Edge；
 - ASR、LLM、TTS 使用远端 API；
 - `DuplexRuntime`、`UtteranceRouter`、`GenerationFence`、实际已听文本、权限、记忆与工具
   已贯穿现有链路。
@@ -40,8 +40,8 @@ LiveKit 也会重新承担信令、TURN、重连和浏览器设备兼容，而�
    final 关闭该修订流，避免 UI 最终稿与长期历史分叉。客户端拒绝迟到旧 revision，并兼容
    滚动发布期间的旧版无 revision 事件。
 4. 提供最小 OpenAI Realtime-style facade，只映射 `session.update`、文本
-   `conversation.item.create`、`response.cancel` 和既有 UI 事件；音频继续由 LiveKit 或
-   MiniProgramMediaGateway 承载，facade 不拥有第二套 transport 或 pipeline。
+   `conversation.item.create`、`response.cancel` 和既有 UI 事件；音频继续由 H5 LiveKit 或
+   ESP32 Direct Device WSS + Go Media Edge 承载，facade 不拥有第二套 transport 或 pipeline。
 
 明确不引入：
 
@@ -72,5 +72,4 @@ LiveKit 也会重新承担信令、TURN、重连和浏览器设备兼容，而�
 ## References
 
 - https://github.com/huggingface/speech-to-speech
-- [`0025-controlled-miniprogram-turns-and-h5-semantic-barge-in.md`](0025-controlled-miniprogram-turns-and-h5-semantic-barge-in.md)
 - [`0035-esp32-first-class-realtime-terminal.md`](0035-esp32-first-class-realtime-terminal.md)

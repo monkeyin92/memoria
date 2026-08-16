@@ -14,7 +14,8 @@ import (
 )
 
 const (
-	voiceCoreSupervisorProbeInterval      = 250 * time.Millisecond
+	voiceCoreSupervisorProbeInterval      = time.Second
+	voiceCoreSupervisorProbeTimeout       = 750 * time.Millisecond
 	voiceCoreSupervisorUnavailableGrace   = 2 * time.Second
 	voiceCoreSupervisorInitialBackoff     = 250 * time.Millisecond
 	voiceCoreSupervisorMaximumBackoff     = 5 * time.Second
@@ -40,12 +41,14 @@ type VoiceCoreBridgeConnector interface {
 type voiceCoreBridgeTransport interface {
 	VoiceCoreBridgeConnector
 	State() connectivity.State
+	Probe(context.Context) error
 }
 
 type voiceCoreBridgeDialer func(context.Context, VoiceCoreBridgeConfig) (voiceCoreBridgeTransport, error)
 
 type voiceCoreBridgeSupervisorSettings struct {
 	probeInterval    time.Duration
+	probeTimeout     time.Duration
 	unavailableGrace time.Duration
 	initialBackoff   time.Duration
 	maximumBackoff   time.Duration
@@ -55,6 +58,7 @@ type voiceCoreBridgeSupervisorSettings struct {
 func defaultVoiceCoreBridgeSupervisorSettings() voiceCoreBridgeSupervisorSettings {
 	return voiceCoreBridgeSupervisorSettings{
 		probeInterval:    voiceCoreSupervisorProbeInterval,
+		probeTimeout:     voiceCoreSupervisorProbeTimeout,
 		unavailableGrace: voiceCoreSupervisorUnavailableGrace,
 		initialBackoff:   voiceCoreSupervisorInitialBackoff,
 		maximumBackoff:   voiceCoreSupervisorMaximumBackoff,
@@ -83,17 +87,20 @@ type VoiceCoreBridgeSupervisor struct {
 	bridge           voiceCoreBridgeTransport
 	generation       uint64
 	lastState        connectivity.State
+	lastProbeHealthy bool
 	unavailableSince time.Time
 	nextAttempt      time.Time
 	backoff          time.Duration
 	closed           bool
 
-	redialAttempts  atomic.Uint64
-	redialSuccesses atomic.Uint64
-	redialFailures  atomic.Uint64
-	redialDiscarded atomic.Uint64
-	closeOnce       sync.Once
-	closeErr        error
+	redialAttempts         atomic.Uint64
+	redialSuccesses        atomic.Uint64
+	redialFailures         atomic.Uint64
+	redialDiscarded        atomic.Uint64
+	livenessProbeSuccesses atomic.Uint64
+	livenessProbeFailures  atomic.Uint64
+	closeOnce              sync.Once
+	closeErr               error
 }
 
 // NewVoiceCoreBridgeSupervisor dials the initial channel synchronously so
@@ -136,10 +143,21 @@ func newVoiceCoreBridgeSupervisor(
 		cancel()
 		return nil, errors.New("voice-core bridge supervisor initial channel is not ready")
 	}
+	probeCtx, probeCancel := context.WithTimeout(ctx, settings.probeTimeout)
+	probeErr := initial.Probe(probeCtx)
+	probeCancel()
+	if probeErr != nil || !initial.Ready() {
+		_ = initial.Close()
+		cancel()
+		if probeErr != nil {
+			return nil, fmt.Errorf("voice-core bridge supervisor initial liveness probe: %w", probeErr)
+		}
+		return nil, errors.New("voice-core bridge supervisor initial channel became unavailable after liveness probe")
+	}
 	supervisor := &VoiceCoreBridgeSupervisor{
 		ctx: ctx, cancel: cancel, config: config, connectTimeout: connectTimeout, settings: settings,
 		wake: make(chan struct{}, 1), done: make(chan struct{}), bridge: initial, generation: 1,
-		lastState: initial.State(), backoff: settings.initialBackoff,
+		lastState: initial.State(), lastProbeHealthy: true, backoff: settings.initialBackoff,
 	}
 	go supervisor.run()
 	return supervisor, nil
@@ -151,6 +169,9 @@ func normalizeVoiceCoreBridgeSupervisorSettings(
 	defaults := defaultVoiceCoreBridgeSupervisorSettings()
 	if settings.probeInterval <= 0 {
 		settings.probeInterval = defaults.probeInterval
+	}
+	if settings.probeTimeout <= 0 {
+		settings.probeTimeout = defaults.probeTimeout
 	}
 	if settings.unavailableGrace <= 0 {
 		settings.unavailableGrace = defaults.unavailableGrace
@@ -185,14 +206,26 @@ func (s *VoiceCoreBridgeSupervisor) run() {
 
 func (s *VoiceCoreBridgeSupervisor) reconcile(force bool) {
 	now := time.Now()
-	s.mu.Lock()
+	s.mu.RLock()
 	if s.closed || s.bridge == nil {
+		s.mu.RUnlock()
+		return
+	}
+	bridge := s.bridge
+	generation := s.generation
+	s.mu.RUnlock()
+
+	state, probeErr := s.probe(bridge)
+	healthy := probeErr == nil && state == connectivity.Ready
+
+	s.mu.Lock()
+	if s.closed || s.generation != generation {
 		s.mu.Unlock()
 		return
 	}
-	state := s.bridge.State()
 	s.lastState = state
-	if state == connectivity.Ready {
+	s.lastProbeHealthy = healthy
+	if healthy {
 		s.unavailableSince = time.Time{}
 		s.nextAttempt = time.Time{}
 		s.backoff = s.settings.initialBackoff
@@ -212,14 +245,13 @@ func (s *VoiceCoreBridgeSupervisor) reconcile(force bool) {
 		s.mu.Unlock()
 		return
 	}
-	generation := s.generation
 	unavailableFor := now.Sub(s.unavailableSince)
 	s.mu.Unlock()
 
 	attempt := s.redialAttempts.Add(1)
 	log.Printf(
-		"media edge Voice Core channel redial attempt=%d generation=%d state=%s unavailable_ms=%d",
-		attempt, generation, state, unavailableFor.Milliseconds(),
+		"media edge Voice Core channel redial attempt=%d generation=%d state=%s health_err=%v unavailable_ms=%d",
+		attempt, generation, state, probeErr, unavailableFor.Milliseconds(),
 	)
 	dialCtx, cancel := context.WithTimeout(s.ctx, s.connectTimeout)
 	candidate, err := s.settings.dialer(dialCtx, s.config)
@@ -243,6 +275,27 @@ func (s *VoiceCoreBridgeSupervisor) reconcile(force bool) {
 		s.recordRedialFailure(attempt, errors.New("replacement Voice Core channel is not ready"))
 		return
 	}
+	candidateState, candidateProbeErr := s.probe(candidate)
+	if candidateProbeErr != nil || candidateState != connectivity.Ready {
+		_ = candidate.Close()
+		if s.ctx.Err() != nil {
+			s.redialDiscarded.Add(1)
+			return
+		}
+		if candidateProbeErr != nil {
+			s.recordRedialFailure(attempt, fmt.Errorf("replacement Voice Core liveness probe: %w", candidateProbeErr))
+		} else {
+			s.recordRedialFailure(attempt, errors.New("replacement Voice Core channel became unavailable after liveness probe"))
+		}
+		return
+	}
+
+	// The existing connection may have recovered while a replacement was
+	// dialing. Verify the application-level Health RPC again instead of
+	// trusting its transport state, which can remain READY after the Bridge
+	// process has stopped serving media.
+	currentState, currentProbeErr := s.probe(bridge)
+	currentHealthy := currentProbeErr == nil && currentState == connectivity.Ready
 
 	s.mu.Lock()
 	if s.closed || s.generation != generation {
@@ -251,11 +304,11 @@ func (s *VoiceCoreBridgeSupervisor) reconcile(force bool) {
 		s.redialDiscarded.Add(1)
 		return
 	}
-	// The existing grpc.ClientConn may have recovered while the replacement
-	// was dialing. Preserve its live streams instead of swapping merely
-	// because an earlier probe observed a transient failure.
-	if s.bridge.State() == connectivity.Ready {
-		s.lastState = connectivity.Ready
+	// Preserve a recovered channel and its live streams only after the real
+	// Health RPC succeeds.
+	if currentHealthy {
+		s.lastState = currentState
+		s.lastProbeHealthy = true
 		s.unavailableSince = time.Time{}
 		s.nextAttempt = time.Time{}
 		s.backoff = s.settings.initialBackoff
@@ -272,7 +325,8 @@ func (s *VoiceCoreBridgeSupervisor) reconcile(force bool) {
 	s.bridge = candidate
 	s.generation++
 	newGeneration := s.generation
-	s.lastState = candidate.State()
+	s.lastState = candidateState
+	s.lastProbeHealthy = true
 	s.unavailableSince = time.Time{}
 	s.nextAttempt = time.Time{}
 	s.backoff = s.settings.initialBackoff
@@ -287,6 +341,19 @@ func (s *VoiceCoreBridgeSupervisor) reconcile(force bool) {
 		"media edge Voice Core channel redial succeeded attempt=%d generation=%d",
 		attempt, newGeneration,
 	)
+}
+
+func (s *VoiceCoreBridgeSupervisor) probe(bridge voiceCoreBridgeTransport) (connectivity.State, error) {
+	probeCtx, cancel := context.WithTimeout(s.ctx, s.settings.probeTimeout)
+	err := bridge.Probe(probeCtx)
+	cancel()
+	state := bridge.State()
+	if err != nil {
+		s.livenessProbeFailures.Add(1)
+		return state, err
+	}
+	s.livenessProbeSuccesses.Add(1)
+	return state, nil
 }
 
 func (s *VoiceCoreBridgeSupervisor) recordRedialFailure(attempt uint64, err error) {
@@ -316,9 +383,9 @@ func (s *VoiceCoreBridgeSupervisor) recordRedialFailure(attempt uint64, err erro
 
 func (s *VoiceCoreBridgeSupervisor) Ready() bool {
 	s.mu.RLock()
-	bridge, closed := s.bridge, s.closed
+	bridge, closed, healthy := s.bridge, s.closed, s.lastProbeHealthy
 	s.mu.RUnlock()
-	return !closed && bridge != nil && bridge.Ready()
+	return !closed && healthy && bridge != nil && bridge.Ready()
 }
 
 func (s *VoiceCoreBridgeSupervisor) ConnectWithHandshakeContext(
@@ -329,19 +396,19 @@ func (s *VoiceCoreBridgeSupervisor) ConnectWithHandshakeContext(
 	downlink BridgeAudioFormat,
 ) (*VoiceCoreSession, error) {
 	s.mu.RLock()
-	bridge, closed := s.bridge, s.closed
+	bridge, closed, healthy := s.bridge, s.closed, s.lastProbeHealthy
 	s.mu.RUnlock()
 	if closed || bridge == nil {
 		return nil, errors.New("voice-core bridge supervisor is closed")
 	}
-	if !bridge.Ready() {
+	if !healthy || !bridge.Ready() {
 		s.requestRedial()
 		return nil, fmt.Errorf("voice-core bridge channel is unavailable: %s", bridge.State())
 	}
 	session, err := bridge.ConnectWithHandshakeContext(
 		streamCtx, handshakeCtx, identity, uplink, downlink,
 	)
-	if err != nil && bridge.State() != connectivity.Ready {
+	if err != nil {
 		s.requestRedial()
 	}
 	return session, err
@@ -362,14 +429,16 @@ func (s *VoiceCoreBridgeSupervisor) WriteMetrics(w io.Writer) {
 	bridge := s.bridge
 	generation := s.generation
 	state := s.lastState
+	lastProbeHealthy := s.lastProbeHealthy
 	unavailableSince := s.unavailableSince
 	closed := s.closed
 	s.mu.RUnlock()
 	if bridge != nil && !closed {
 		state = bridge.State()
 	}
+	livenessHealthy := !closed && state == connectivity.Ready && lastProbeHealthy
 	unavailableSeconds := 0.0
-	if state != connectivity.Ready && !unavailableSince.IsZero() {
+	if !livenessHealthy && !unavailableSince.IsZero() {
 		unavailableSeconds = now.Sub(unavailableSince).Seconds()
 	}
 	_, _ = fmt.Fprintln(w, "# TYPE media_edge_voice_core_redial_attempts_total counter")
@@ -380,6 +449,12 @@ func (s *VoiceCoreBridgeSupervisor) WriteMetrics(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "media_edge_voice_core_redial_failures_total %d\n", s.redialFailures.Load())
 	_, _ = fmt.Fprintln(w, "# TYPE media_edge_voice_core_redial_discarded_total counter")
 	_, _ = fmt.Fprintf(w, "media_edge_voice_core_redial_discarded_total %d\n", s.redialDiscarded.Load())
+	_, _ = fmt.Fprintln(w, "# TYPE media_edge_voice_core_liveness_probe_successes_total counter")
+	_, _ = fmt.Fprintf(w, "media_edge_voice_core_liveness_probe_successes_total %d\n", s.livenessProbeSuccesses.Load())
+	_, _ = fmt.Fprintln(w, "# TYPE media_edge_voice_core_liveness_probe_failures_total counter")
+	_, _ = fmt.Fprintf(w, "media_edge_voice_core_liveness_probe_failures_total %d\n", s.livenessProbeFailures.Load())
+	_, _ = fmt.Fprintln(w, "# TYPE media_edge_voice_core_liveness_healthy gauge")
+	_, _ = fmt.Fprintf(w, "media_edge_voice_core_liveness_healthy %d\n", map[bool]int{true: 1, false: 0}[livenessHealthy])
 	_, _ = fmt.Fprintln(w, "# TYPE media_edge_voice_core_channel_generation gauge")
 	_, _ = fmt.Fprintf(w, "media_edge_voice_core_channel_generation %d\n", generation)
 	_, _ = fmt.Fprintln(w, "# TYPE media_edge_voice_core_channel_state gauge")
@@ -420,6 +495,7 @@ func (s *VoiceCoreBridgeSupervisor) Close() error {
 		bridge := s.bridge
 		s.bridge = nil
 		s.lastState = connectivity.Shutdown
+		s.lastProbeHealthy = false
 		s.unavailableSince = time.Time{}
 		s.nextAttempt = time.Time{}
 		s.mu.Unlock()

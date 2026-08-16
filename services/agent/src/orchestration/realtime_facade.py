@@ -150,7 +150,7 @@ class RealtimeFacade:
             )
         if event_type in {"input_audio_buffer.append", "input_audio_buffer.commit"}:
             raise RealtimeFacadeError(
-                "audio transport remains LiveKit or MiniProgramMediaGateway"
+                "audio transport remains externally owned by H5 LiveKit or the ESP32 Media Edge"
             )
         raise RealtimeFacadeError("unsupported realtime client event")
 

@@ -1,9 +1,16 @@
 ---
-status: accepted
+status: superseded
+superseded_by: 0035-esp32-first-class-realtime-terminal
+retained_for: historical release record
 date: 2026-07-27
 ---
 
 # 小程序采用受控话轮，H5 保持语意打断
+
+> **状态说明（2026-08-16）**：本 ADR 记录的是 2026-07 的小程序受控媒体策略，已被
+> [ADR-0035：ESP32 一等实时语音终端与小程序控制面](0035-esp32-first-class-realtime-terminal.md)
+> 取代。小程序不再录音、播放实时媒体或连接 Gateway；下文仅保留历史发布语境，不能作为
+> 当前产品、部署或新功能的依据。
 
 ## Context
 
@@ -67,4 +74,4 @@ H5 已使用 LiveKit/WebRTC，浏览器媒体层具备设备侧回声处理和�
 - [`0021-wechat-miniprogram-media-gateway.md`](0021-wechat-miniprogram-media-gateway.md)
 - [`0022-ambiguous-interrupt-semantic-evidence.md`](0022-ambiguous-interrupt-semantic-evidence.md)
 - [`0023-keyword-control-evidence-and-bounded-aec-capture.md`](0023-keyword-control-evidence-and-bounded-aec-capture.md)
-- [`../voice-architecture-progress.md`](../voice-architecture-progress.md)
+- [`0035-esp32-first-class-realtime-terminal.md`](0035-esp32-first-class-realtime-terminal.md)

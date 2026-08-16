@@ -1,5 +1,5 @@
 # 项目交接
-## 当前状态（2026-08-16，Edge Bridge supervisor 已 code + local verified，未部署）
+## 当前状态（2026-08-16，Edge Bridge Health + supervisor 已 code + local verified，未部署）
 
 - 当前未刷板固件候选已于 `2026-08-16T16:14:08Z` 从锁定 upstream
   `e8d8a4010788afd60f0c8aa3b2e3d0a7bb8f02e5` 完成 ESP-IDF 6.0.2 clean build 与 overlay
@@ -10,9 +10,14 @@
   `7d7b921a81500817fda6a8230cd5c5b5a97814855dd0a440188f3d75e2cee188`。`flasher_args.json`
   只含 `0x0/0x8000/0xd000/0x20000/0x800000`，不含 `0x10000` 身份区。该候选没有刷板：
   `flashed=false`、身份保持和 boot/activation 均未验证，Direct 真机与全双工仍为 false。
-- 本轮聚焦门禁：`services/media_edge` Go 全量测试、`-race`、`vet` 全部通过，新增 supervisor
-  热替换单测覆盖启动 fail-closed、grace、自动 swap、有界退避、自愈后保留现网、shutdown/redial
-  竞态与 attempts/success/failure/discarded/generation/state/unavailable 指标；T1–T14 本轮复跑仍为
+- Python `MediaBridgeGrpcServer` 已注册标准 gRPC Health；只有
+  `memoria.media.v1.VoiceMediaBridge=SERVING` 才可被 Edge 接受。Supervisor 的启动、
+  readiness 和 replacement candidate 都执行 Health RPC，因此旧 gRPC transport 即使仍为
+  `READY` 也会 fail closed；并新增 liveness 成功/失败/健康指标。
+- 本轮聚焦门禁：`services/media_edge` Go 全量测试、`go test -race -count=1 ./...`、`vet` 与
+  三次 supervisor 聚焦 race 全部通过；Python Ruff、strict MyPy 和 Bridge Health 定向 pytest
+  `21 passed` 通过。测试覆盖启动 fail-closed、READY 但 NOT_SERVING、grace、mTLS
+  replacement、有界退避、旧 channel 不重放、shutdown/redial 竞态及指标；T1–T14 本轮复跑仍为
   `0 pass / 14 blocked / 0 failed`，Exact DAC、AEC Reference、双讲、精确 Actual Heard、
   100/500 轮与 T14 微信独立性没有新增证据。
 - 生产 Direct 单 Edge 已配置并启用 Device State Redis URL 与 Redis mTLS 四件套，Media Edge

@@ -18,6 +18,7 @@ import (
 type fakeVoiceCoreBridgeTransport struct {
 	mu           sync.RWMutex
 	state        connectivity.State
+	probeErr     error
 	connectCalls atomic.Uint64
 	closeCalls   atomic.Uint64
 }
@@ -39,6 +40,23 @@ func (f *fakeVoiceCoreBridgeTransport) State() connectivity.State {
 func (f *fakeVoiceCoreBridgeTransport) setState(state connectivity.State) {
 	f.mu.Lock()
 	f.state = state
+	f.mu.Unlock()
+}
+
+func (f *fakeVoiceCoreBridgeTransport) Probe(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.probeErr
+}
+
+func (f *fakeVoiceCoreBridgeTransport) setProbeError(err error) {
+	f.mu.Lock()
+	f.probeErr = err
 	f.mu.Unlock()
 }
 
@@ -64,6 +82,7 @@ func testVoiceCoreSupervisorSettings(
 ) voiceCoreBridgeSupervisorSettings {
 	return voiceCoreBridgeSupervisorSettings{
 		probeInterval:    time.Millisecond,
+		probeTimeout:     10 * time.Millisecond,
 		unavailableGrace: time.Millisecond,
 		initialBackoff:   5 * time.Millisecond,
 		maximumBackoff:   10 * time.Millisecond,
@@ -105,6 +124,26 @@ func TestVoiceCoreBridgeSupervisorInitialChannelMustBeReady(t *testing.T) {
 	}
 	if got := initial.closeCalls.Load(); got != 1 {
 		t.Fatalf("non-ready initial channel close calls=%d, want 1", got)
+	}
+}
+
+func TestVoiceCoreBridgeSupervisorInitialChannelMustPassLivenessProbe(t *testing.T) {
+	initial := newFakeVoiceCoreBridgeTransport(connectivity.Ready)
+	initial.setProbeError(errors.New("Voice Core not serving"))
+	settings := testVoiceCoreSupervisorSettings(func(
+		context.Context, VoiceCoreBridgeConfig,
+	) (voiceCoreBridgeTransport, error) {
+		return initial, nil
+	})
+
+	supervisor, err := newVoiceCoreBridgeSupervisor(
+		context.Background(), VoiceCoreBridgeConfig{}, 50*time.Millisecond, settings,
+	)
+	if err == nil || !strings.Contains(err.Error(), "initial liveness probe") {
+		t.Fatalf("unexpected startup result: supervisor=%v err=%v", supervisor, err)
+	}
+	if got := initial.closeCalls.Load(); got != 1 {
+		t.Fatalf("unhealthy initial channel close calls=%d, want 1", got)
 	}
 }
 
@@ -155,6 +194,57 @@ func TestVoiceCoreBridgeSupervisorSwapsTransportWithoutReplayingSessions(t *test
 	}
 	if got := supervisor.redialDiscarded.Load(); got != 0 {
 		t.Fatalf("redial discarded=%d, want 0", got)
+	}
+}
+
+func TestVoiceCoreBridgeSupervisorReplacesReadyButUnhealthyTransport(t *testing.T) {
+	initial := newFakeVoiceCoreBridgeTransport(connectivity.Ready)
+	replacement := newFakeVoiceCoreBridgeTransport(connectivity.Ready)
+	var dialCalls atomic.Uint64
+	settings := testVoiceCoreSupervisorSettings(func(
+		context.Context, VoiceCoreBridgeConfig,
+	) (voiceCoreBridgeTransport, error) {
+		if dialCalls.Add(1) == 1 {
+			return initial, nil
+		}
+		return replacement, nil
+	})
+	settings.unavailableGrace = 50 * time.Millisecond
+	supervisor, err := newVoiceCoreBridgeSupervisor(
+		context.Background(), VoiceCoreBridgeConfig{}, 50*time.Millisecond, settings,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = supervisor.Close() })
+
+	initial.setProbeError(errors.New("Voice Core application stopped serving"))
+	if got := initial.State(); got != connectivity.Ready {
+		t.Fatalf("test setup transport state=%s, want READY", got)
+	}
+	waitForSupervisorCondition(t, func() bool { return supervisor.livenessProbeFailures.Load() > 0 })
+	if supervisor.Ready() {
+		t.Fatal("supervisor stayed ready after a failed application liveness probe")
+	}
+	if got := supervisorGeneration(supervisor); got != 1 {
+		t.Fatalf("generation=%d before grace elapsed, want 1", got)
+	}
+	waitForSupervisorCondition(t, func() bool { return supervisorGeneration(supervisor) == 2 })
+
+	if got := initial.closeCalls.Load(); got != 1 {
+		t.Fatalf("unhealthy READY channel close calls=%d, want 1", got)
+	}
+	if got := initial.connectCalls.Load(); got != 0 {
+		t.Fatalf("initial channel session opens=%d, want 0", got)
+	}
+	if got := replacement.connectCalls.Load(); got != 0 {
+		t.Fatalf("replacement channel replayed %d sessions", got)
+	}
+	if !supervisor.Ready() {
+		t.Fatal("supervisor did not become ready after a healthy replacement")
+	}
+	if got := supervisor.redialSuccesses.Load(); got != 1 {
+		t.Fatalf("redial successes=%d, want 1", got)
 	}
 }
 
@@ -437,6 +527,8 @@ func TestVoiceCoreBridgeSupervisorMetricsAreExposedByServer(t *testing.T) {
 	supervisor.redialSuccesses.Store(2)
 	supervisor.redialFailures.Store(3)
 	supervisor.redialDiscarded.Store(1)
+	supervisor.livenessProbeSuccesses.Store(8)
+	supervisor.livenessProbeFailures.Store(4)
 
 	server := NewServer(JWTVerifier{}, 4)
 	server.BridgeMetricsWriter = supervisor.WriteMetrics
@@ -448,6 +540,9 @@ func TestVoiceCoreBridgeSupervisorMetricsAreExposedByServer(t *testing.T) {
 		"media_edge_voice_core_redial_successes_total 2",
 		"media_edge_voice_core_redial_failures_total 3",
 		"media_edge_voice_core_redial_discarded_total 1",
+		"media_edge_voice_core_liveness_probe_successes_total 8",
+		"media_edge_voice_core_liveness_probe_failures_total 4",
+		"media_edge_voice_core_liveness_healthy 0",
 		"media_edge_voice_core_channel_generation 3",
 		"media_edge_voice_core_channel_state{state=\"TRANSIENT_FAILURE\"} 1",
 		"media_edge_voice_core_consecutive_unavailable_seconds",
