@@ -6,6 +6,10 @@ RUN apt-get update \
 WORKDIR /src
 COPY services/media_edge ./services/media_edge
 WORKDIR /src/services/media_edge
+ARG GOPROXY=https://proxy.golang.org,direct
+ARG GOSUMDB=sum.golang.org
+ENV GOPROXY=${GOPROXY} \
+    GOSUMDB=${GOSUMDB}
 RUN go build -trimpath -ldflags='-s -w' -o /out/memoria-media-edge ./cmd/mediaruntime \
     && cp "$(ldconfig -p | awk '/libopus.so.0/{print $NF; exit}')" /out/libopus.so.0
 
