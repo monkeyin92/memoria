@@ -197,7 +197,7 @@ hardware_realtime_voice:
         speaker_authority_403: 0
         closed_client: 0
         error: 0
-      public_domain_and_ip_probes: passed_expected_200_and_404
+      public_domain_and_ip_probes: 8443_domain_ip_passed_ip_443_no_sni_passed_domain_443_sni_pending_2026_08_17
     rollback:
       backup_dir: /var/backups/memoria/canary-20260817-135129
       snapshot_sha256: a5ca54dea7f50d51796f89a11a20d51caa14f70966e00d5258a14aba415dad42
@@ -362,7 +362,12 @@ stages:
   authority_migration: blocked_by_external_gates
 
 gates:
-  ci: pending_remote_run
+  ci: failed_preexisting_gates_run_32003128393_2026_08_17
+  ci_h5: passed_run_32003128393
+  ci_miniprogram: passed_run_32003128393
+  ci_python: failed_collection_import_file_mismatch_11_modules
+  ci_media_edge: failed_existing_golangci_lint
+  ci_media_edge_image: failed_trivy_9_high_0_critical
   local_strict_mypy: passed_399_source_files_2026_08_17
   local_proto_generation: passed
   local_python_tests: passed_agent_full_suite_1558_media_session_78_speech_timeline_5_2026_08_17
