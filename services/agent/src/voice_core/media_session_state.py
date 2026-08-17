@@ -6,12 +6,14 @@ import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
+from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.conversation_projection import ConversationProjection
 from services.agent.src.voice_core.asr_stream_supervisor import ASRStreamSupervisor
 from services.agent.src.voice_core.media_audio_ingress import MediaAudioIngressState
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.media_session_types import (
+    DelegationOutputClaim,
     MediaVoiceProvider,
     OutputOwnerLease,
     OutputWork,
@@ -46,7 +48,9 @@ class MediaVoiceSessionState:
     output_owner: OutputOwnerLease | None = None
     output_work: dict[str, OutputWork] = field(default_factory=dict)
     output_dispatch_task: asyncio.Task[bool] | None = None
-    delegation_owns_realtime_output: bool = False
+    delegation_output_claims: dict[GenerationFence, DelegationOutputClaim] = field(
+        default_factory=dict
+    )
     committed_asr_keys: OrderedDict[tuple[int, str, int, int], None] = field(
         default_factory=OrderedDict
     )

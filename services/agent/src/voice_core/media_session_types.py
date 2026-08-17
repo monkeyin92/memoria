@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Protocol
 
 from services.agent.src.contracts.ids import GenerationFence
@@ -96,6 +97,77 @@ class MediaSessionResources:
 
     runtime: DuplexRuntime
     provider: MediaVoiceProvider
+
+
+class DelegationOutputState(StrEnum):
+    """Per-generation ownership state for delegated realtime output."""
+
+    PENDING = "pending"
+    OWNED = "owned"
+    RELEASED = "released"
+    COMPLETED = "completed"
+
+
+@dataclass(slots=True)
+class DelegationOutputClaim:
+    """Fence-bound handoff between the normal reply and deep delegation."""
+
+    fence: GenerationFence
+    _state: DelegationOutputState = field(
+        default=DelegationOutputState.PENDING,
+        init=False,
+    )
+    _initial_decision: asyncio.Event = field(default_factory=asyncio.Event, init=False)
+    _normal_reply_observed: bool = field(default=False, init=False)
+    _local_reply_reserved: bool = field(default=False, init=False)
+
+    @property
+    def state(self) -> DelegationOutputState:
+        return self._state
+
+    @property
+    def normal_reply_observed(self) -> bool:
+        return self._normal_reply_observed
+
+    def observe_normal_reply(self) -> None:
+        self._normal_reply_observed = True
+
+    async def wait_initial_decision(self) -> DelegationOutputState:
+        await self._initial_decision.wait()
+        return self._state
+
+    def acquire(self) -> bool:
+        if self._state is not DelegationOutputState.PENDING:
+            return False
+        self._state = DelegationOutputState.OWNED
+        self._initial_decision.set()
+        return True
+
+    def release(self) -> bool:
+        if self._state not in {
+            DelegationOutputState.PENDING,
+            DelegationOutputState.OWNED,
+        }:
+            return False
+        self._state = DelegationOutputState.RELEASED
+        self._initial_decision.set()
+        return True
+
+    def complete(self) -> bool:
+        if self._state is not DelegationOutputState.OWNED:
+            return False
+        self._state = DelegationOutputState.COMPLETED
+        self._initial_decision.set()
+        return True
+
+    def reserve_local_reply(self) -> bool:
+        if (
+            self._state is not DelegationOutputState.RELEASED
+            or self._local_reply_reserved
+        ):
+            return False
+        self._local_reply_reserved = True
+        return True
 
 
 @dataclass(frozen=True, slots=True)

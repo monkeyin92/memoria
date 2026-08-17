@@ -16,6 +16,7 @@ from services.agent.src.orchestration.conversation_projection import (
     SpeakerEvidence,
 )
 from services.agent.src.orchestration.delegation_coordinator import (
+    DelegationEventKind,
     DelegationRequest,
     SideEffectPolicy,
 )
@@ -28,6 +29,7 @@ from services.agent.src.voice_core.grpc_bridge import (
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
+from services.agent.src.voice_core.media_session_types import DelegationOutputClaim
 from services.agent.src.voice_core.media_session_types import OutputWork as _OutputWork
 from services.agent.src.voice_core.speech_timeline import SpeechSegment
 
@@ -49,16 +51,60 @@ class MediaSessionProjectionMixin:
             self, context: _MediaVoiceSession, work: _OutputWork
         ) -> bool: ...
 
+        async def generate_reply(
+            self,
+            session_id: str,
+            user_text: str,
+            fence: GenerationFence,
+        ) -> bool: ...
+
+    async def _release_media_delegation_claim(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        text: str,
+        fence: GenerationFence,
+        claim: DelegationOutputClaim,
+        reason: str,
+    ) -> None:
+        """Release delegated ownership and start at most one local fallback."""
+
+        if not claim.release():
+            return
+        logger.info(
+            "media delegation released session=%s generation=%s reason=%s",
+            fence.session_id,
+            fence.generation_id,
+            reason,
+        )
+        if (
+            not claim.normal_reply_observed
+            or context.closed
+            or not context.runtime.fence.matches(fence)
+            or not context.runtime.output_floor_allows_assistant
+        ):
+            return
+        try:
+            await self.generate_reply(fence.session_id, text, fence)
+        except Exception:
+            logger.exception(
+                "media delegation local fallback failed session=%s generation=%s",
+                fence.session_id,
+                fence.generation_id,
+            )
+
     async def _run_media_delegation(
         self,
         context: _MediaVoiceSession,
         *,
         text: str,
         fence: GenerationFence,
+        claim: DelegationOutputClaim,
         output_intent_acceptor: Callable[[Any], Any],
     ) -> None:
         runtime = context.runtime
         if not runtime.fence.matches(fence):
+            claim.release()
             return
         coordinator = runtime.orchestrator.delegation
         try:
@@ -77,68 +123,150 @@ class MediaSessionProjectionMixin:
                     output_kind=media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT,
                 )
             )
-        except (KeyError, PermissionError, ValueError):
+        except asyncio.CancelledError:
+            claim.release()
+            raise
+        except Exception:
             logger.warning("media delegation rejected", exc_info=True)
-            return
-        if runtime.fence.matches(fence):
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(asyncio.shield(handle.record.task), timeout=0.02)
-            now_ms = int(time.time() * 1_000)
-            acknowledgement = coordinator.bridge_acknowledgement(
-                BRIDGE_PHRASES[1],
+            await self._release_media_delegation_claim(
+                context,
+                text=text,
                 fence=fence,
-                context_version=context_version,
-                expires_at_ms=now_ms + 5_000,
-                now_ms=now_ms,
+                claim=claim,
+                reason="delegate_rejected",
             )
-            coordinator.admit_output_intent(
-                acknowledgement,
-                current_fence=runtime.fence,
-                current_context_version=coordinator.current_context_version(fence.session_id),
-                floor_allows_output=runtime.output_floor_allows_assistant,
-                now_ms=now_ms,
+            return
+        if not claim.acquire():
+            with contextlib.suppress(Exception):
+                await coordinator.cancel(handle, "delegation_claim_released")
+            return
+        try:
+            task_done, _pending = await asyncio.wait(
+                {handle.record.task},
+                timeout=0.02,
             )
-            if coordinator.output_intent_is_active(
-                acknowledgement,
-                current_fence=runtime.fence,
-                current_context_version=coordinator.current_context_version(fence.session_id),
-                floor_allows_output=runtime.output_floor_allows_assistant,
-                now_ms=now_ms,
-            ):
-                await self._enqueue_output_work(context, _OutputWork(acknowledgement))
-        async for _event in coordinator.events(handle):
-            pass
-        intent = coordinator.output_intent(
-            handle,
-            current_fence=runtime.fence,
-            current_task_epoch=handle.request.task_epoch,
-            current_context_version=coordinator.current_context_version(fence.session_id),
-            relevant=runtime.fence.matches(fence),
-        )
-        if intent is None:
-            if runtime.fence.matches(fence):
-                await runtime.on_assistant_reply_aborted(
-                    fence,
-                    cause="media_delegation_no_result",
+            if not task_done and runtime.fence.matches(fence):
+                now_ms = int(time.time() * 1_000)
+                acknowledgement = coordinator.bridge_acknowledgement(
+                    BRIDGE_PHRASES[1],
+                    fence=fence,
+                    context_version=context_version,
+                    expires_at_ms=now_ms + 5_000,
+                    now_ms=now_ms,
                 )
-            return
-        coordinator.admit_output_intent(
-            intent,
-            current_fence=runtime.fence,
-            current_context_version=coordinator.current_context_version(fence.session_id),
-            floor_allows_output=runtime.output_floor_allows_assistant,
-        )
-        if not coordinator.output_intent_is_active(
-            intent,
-            current_fence=runtime.fence,
-            current_context_version=coordinator.current_context_version(fence.session_id),
-            floor_allows_output=runtime.output_floor_allows_assistant,
-        ):
-            return
-        accepted = output_intent_acceptor(intent)
-        if inspect.isawaitable(accepted):
-            await accepted
-        await self._enqueue_output_work(context, _OutputWork(intent))
+                coordinator.admit_output_intent(
+                    acknowledgement,
+                    current_fence=runtime.fence,
+                    current_context_version=coordinator.current_context_version(
+                        fence.session_id
+                    ),
+                    floor_allows_output=runtime.output_floor_allows_assistant,
+                    now_ms=now_ms,
+                )
+                if coordinator.output_intent_is_active(
+                    acknowledgement,
+                    current_fence=runtime.fence,
+                    current_context_version=coordinator.current_context_version(
+                        fence.session_id
+                    ),
+                    floor_allows_output=runtime.output_floor_allows_assistant,
+                    now_ms=now_ms,
+                ):
+                    await self._enqueue_output_work(
+                        context,
+                        _OutputWork(acknowledgement),
+                    )
+            terminal_kind: DelegationEventKind | None = None
+            async for event in coordinator.events(handle):
+                terminal_kind = event.kind
+            if (
+                terminal_kind is not DelegationEventKind.RESULT_CANDIDATE
+                or (
+                    isinstance(handle.record.result, dict)
+                    and "error" in handle.record.result
+                )
+            ):
+                await self._release_media_delegation_claim(
+                    context,
+                    text=text,
+                    fence=fence,
+                    claim=claim,
+                    reason=(terminal_kind.value if terminal_kind is not None else "no_event"),
+                )
+                return
+            intent = coordinator.output_intent(
+                handle,
+                current_fence=runtime.fence,
+                current_task_epoch=handle.request.task_epoch,
+                current_context_version=coordinator.current_context_version(
+                    fence.session_id
+                ),
+                relevant=runtime.fence.matches(fence),
+            )
+            if intent is None:
+                await self._release_media_delegation_claim(
+                    context,
+                    text=text,
+                    fence=fence,
+                    claim=claim,
+                    reason="no_result",
+                )
+                return
+            coordinator.admit_output_intent(
+                intent,
+                current_fence=runtime.fence,
+                current_context_version=coordinator.current_context_version(
+                    fence.session_id
+                ),
+                floor_allows_output=runtime.output_floor_allows_assistant,
+            )
+            if not coordinator.output_intent_is_active(
+                intent,
+                current_fence=runtime.fence,
+                current_context_version=coordinator.current_context_version(
+                    fence.session_id
+                ),
+                floor_allows_output=runtime.output_floor_allows_assistant,
+            ):
+                await self._release_media_delegation_claim(
+                    context,
+                    text=text,
+                    fence=fence,
+                    claim=claim,
+                    reason="output_intent_inactive",
+                )
+                return
+            accepted = output_intent_acceptor(intent)
+            if inspect.isawaitable(accepted):
+                await accepted
+            if not await self._enqueue_output_work(context, _OutputWork(intent)):
+                await self._release_media_delegation_claim(
+                    context,
+                    text=text,
+                    fence=fence,
+                    claim=claim,
+                    reason="output_enqueue_rejected",
+                )
+                return
+            claim.complete()
+        except asyncio.CancelledError:
+            claim.release()
+            with contextlib.suppress(Exception):
+                await coordinator.cancel(handle, "delegation_task_cancelled")
+            raise
+        except Exception:
+            logger.exception(
+                "media delegation failed session=%s generation=%s",
+                fence.session_id,
+                fence.generation_id,
+            )
+            await self._release_media_delegation_claim(
+                context,
+                text=text,
+                fence=fence,
+                claim=claim,
+                reason="delegation_exception",
+            )
 
     async def _publish_runtime_event(
         self,

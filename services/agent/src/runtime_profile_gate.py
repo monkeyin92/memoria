@@ -275,23 +275,45 @@ class RuntimeProfileGate:
         borrows ModePolicy-granted sensitivity.
         """
 
-        if fence.session_epoch != current_fence.session_epoch:
+        reason = self.permits_reason(
+            fence, current_fence=current_fence, capability=capability
+        )
+        if reason is not None:
+            self.metrics.inc_runtime_profile_capability_denied(reason)
             return False
+        return True
+
+    def permits_reason(
+        self,
+        fence: GenerationFence,
+        *,
+        current_fence: GenerationFence,
+        capability: str | None = None,
+    ) -> str | None:
+        """Return a bounded denial reason without changing permission semantics.
+
+        ``None`` means the same operation that :meth:`permits` evaluates is
+        allowed.  Callers that only need enforcement should keep using
+        :meth:`permits`; this seam exists for diagnostics and tests.
+        """
+
+        if fence.session_epoch != current_fence.session_epoch:
+            return "fence_epoch_mismatch"
         self._expire_if_needed()
         if fence.session_epoch in self._revoked_epochs:
-            return False
+            return "epoch_revoked"
         if self.expected_device_id is None:
             # Without a bound device the signed profile cannot be tied to this
             # session's device: sensitive effects stay fully denied (P1-9).
-            return False
+            return "device_not_bound"
         profile = self._profile
         if profile is None:
-            return False
+            return "profile_missing"
         if profile.profile.speaker_state != "confirmed":
-            return False
+            return "speaker_unconfirmed"
         if capability is not None and capability not in profile.profile.capabilities:
-            return False
-        return True
+            return "capability_not_in_runtime_profile"
+        return None
 
     def event_identity(
         self,

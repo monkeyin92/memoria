@@ -175,6 +175,7 @@ def route_target_speaker(
         "model_unavailable",
         "authority_timeout",
         "authority_unavailable",
+        "authority_policy_denied",
         "template_unavailable",
         "profile_revoked",
     }:

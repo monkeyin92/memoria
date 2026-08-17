@@ -88,6 +88,9 @@ def test_trust_metrics_are_bounded_low_cardinality_and_exported() -> None:
     metrics.inc_subject_resolution("unknown")
     metrics.inc_runtime_profile_expired_use_attempt("expired_at_use")
     metrics.inc_runtime_profile_expired_use_attempt("expired_at_parse")
+    metrics.inc_runtime_profile_capability_denied(
+        "capability_not_in_runtime_profile"
+    )
     metrics.inc_persona_identity_confusion_event("user_identity_confusion")
     metrics.inc_persona_identity_confusion_event("relative_impersonation")
 
@@ -95,6 +98,13 @@ def test_trust_metrics_are_bounded_low_cardinality_and_exported() -> None:
     assert metrics.get("subject_resolution_total", {"status": "unknown"}) == 2
     assert (
         metrics.get("runtime_profile_expired_use_attempts_total", {"reason": "expired_at_use"})
+        == 1
+    )
+    assert (
+        metrics.get(
+            "runtime_profile_capability_denied_total",
+            {"reason": "capability_not_in_runtime_profile"},
+        )
         == 1
     )
     assert (
@@ -109,6 +119,10 @@ def test_trust_metrics_are_bounded_low_cardinality_and_exported() -> None:
     assert 'subject_resolution_total{status="confirmed"} 1.0' in body
     assert 'subject_resolution_total{status="unknown"} 2.0' in body
     assert 'runtime_profile_expired_use_attempts_total{reason="expired_at_use"} 1.0' in body
+    assert (
+        'runtime_profile_capability_denied_total{'
+        'reason="capability_not_in_runtime_profile"} 1.0' in body
+    )
     assert 'persona_identity_confusion_events_total{reason="relative_impersonation"} 1.0' in body
     # Forbidden high-cardinality labels must never appear.
     assert "session_id" not in body
@@ -121,6 +135,7 @@ def test_trust_metrics_reject_unknown_label_values() -> None:
     for call in (
         lambda: metrics.inc_subject_resolution("maybe"),
         lambda: metrics.inc_runtime_profile_expired_use_attempt("later"),
+        lambda: metrics.inc_runtime_profile_capability_denied("unknown"),
         lambda: metrics.inc_persona_identity_confusion_event("any"),
     ):
         try:

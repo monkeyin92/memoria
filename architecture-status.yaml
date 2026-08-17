@@ -19,6 +19,27 @@ hardware_media_interaction_authority: python_authoritative
 student_track: p3_local_software_complete_external_release_gates_pending
 student_track_as_of: 2026-08-09_local_worktree
 
+local_worktree_candidate:
+  as_of_date: 2026-08-17
+  head_commit: aafc4c86eb37d520ecfdc4372b6d605ceb8f1bfb
+  dirty: true
+  code: complete
+  wired: local
+  enabled: not_claimed
+  verified: local
+  production_deployed: false
+  direct_real_device_verified: false
+  full_duplex_verified: false
+  regression_evidence:
+    speaker_authority_403_subject_matrix: passed_local_2026-08-17
+    generation_delegation_output_claim: passed_local_2026-08-17
+    media_turn_fences_and_retry: passed_local_2026-08-17
+    empty_audio_fail_closed_python_go_esp32: passed_local_2026-08-17
+    runtime_profile_low_cardinality_denials: passed_local_2026-08-17
+    go_async_metrics_stability: passed_20_consecutive_local_runs_2026-08-17
+    jsonschema_dev_dependency: synced_frozen_dev_4_26_0_2026-08-17
+    no_device_audio_or_flash_action: true
+
 hardware_realtime_voice:
   code: implemented_local_candidate
   wired: direct_production_canary_agent_bridge_edge_mtls
@@ -231,14 +252,22 @@ stages:
 
 gates:
   ci: pending_remote_run
-  local_strict_mypy: passed_399_source_files_2026_08_16
+  local_strict_mypy: passed_399_source_files_2026_08_17
   local_proto_generation: passed
-  local_python_tests: passed_agent_full_suite_media_session_78_speech_timeline_5_2026_08_16
+  local_python_tests: passed_agent_full_suite_1558_media_session_78_speech_timeline_5_2026_08_17
+  local_control_api_tests: passed_586_2026-08-17
+  local_speaker_router_runtime_profile_focus: passed_165_2026-08-17
+  local_voice_core_focus: passed_126_2026-08-17
+  local_control_speaker_api: passed_4_2026-08-17
+  local_firmware_device_contract_architecture_acceptance: passed_251_2026-08-17
+  local_ruff: passed_full_tree_2026-08-17
+  local_module_budget: passed_duplex_runtime_4717_agent_3410_2026-08-17
+  local_git_diff_check: passed_2026-08-17
   local_h5_tests: passed
   local_h5_test_count: passed_372_node_24_16_0
   local_h5_production_build: passed_node_24_16_0
   local_miniprogram_tests: passed_142_node_24_16_0_upload_dry_run
-  local_go_tests: passed
+  local_go_tests: passed_all_and_focus_20x_2026-08-17
   local_go_race: passed
   local_go_vet: passed
   local_go_opus_plc_fec: passed

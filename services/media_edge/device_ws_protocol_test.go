@@ -90,6 +90,18 @@ func TestMemoriaAudioFrameV1RejectsInvalidHeaders(t *testing.T) {
 	if err := decoded.UnmarshalBinary(append(wire, 0x00)); err == nil {
 		t.Fatal("payload length mismatch was accepted")
 	}
+	emptyPayload := valid
+	emptyPayload.Payload = nil
+	emptyWire, err := emptyPayload.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := decoded.UnmarshalBinary(emptyWire); err != nil {
+		t.Fatalf("empty payload frame did not reach validation: %v", err)
+	}
+	if err := decoded.Validate(7, DeviceDirectionUplink); err == nil {
+		t.Fatal("empty payload was accepted")
+	}
 	badEpoch := valid
 	badEpoch.StreamEpoch = 8
 	if err := badEpoch.Validate(7, DeviceDirectionUplink); err == nil {

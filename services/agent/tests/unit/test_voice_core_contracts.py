@@ -317,14 +317,24 @@ def test_media_v1_envelope_keeps_v1_compatibility_for_missing_and_future_version
     assert decoded.type == "client.trace"
 
 
-def test_audio_frame_rejects_pcm_length_mismatch() -> None:
-    with pytest.raises(ValueError, match="payload length"):
+@pytest.mark.parametrize(
+    ("frame_samples", "payload", "message"),
+    [
+        (0, b"\x00\x00", "frame_samples must be positive"),
+        (1, b"", "audio payload must not be empty"),
+        (160, b"\x00\x00", "payload length"),
+    ],
+)
+def test_audio_frame_rejects_invalid_pcm_shape(
+    frame_samples: int, payload: bytes, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
         AudioFrame(
             identity=SessionIdentity("bad-audio"),
             sequence=0,
             capture_start_sample=0,
-            frame_samples=160,
-            payload=b"\x00\x00",
+            frame_samples=frame_samples,
+            payload=payload,
         )
 
 

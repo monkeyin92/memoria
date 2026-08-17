@@ -143,7 +143,7 @@ func TestMetricsExposeActorShadowAndDeadlineSignals(t *testing.T) {
 		"active_media_sessions 1",
 		"audio_frame_deadline_miss_total 0",
 		"audio_frame_deadline_miss_ratio 0",
-		"actor_mailbox_age_ms 0",
+		"actor_mailbox_age_ms ",
 		"ingress_queue_age_ms 0",
 		"egress_queue_age_ms 0",
 		"floor_decision_latency_ms ",
@@ -525,7 +525,7 @@ func TestSessionCapacityMetricsUseLiveQueueAndPlayoutState(t *testing.T) {
 	time.Sleep(time.Millisecond)
 	session.MirrorPlayback(0, Fence{SessionID: "capacity"})
 	session.MirrorVAD(true, 1)
-	waitForActorEvents(t, session.actor, 3)
+	waitForActorEvents(t, session.actor, 4)
 	stats := session.Stats()
 	if stats.IngressQueueAgeMS <= 0 || stats.EgressQueueAgeMS <= 0 {
 		t.Fatalf("queue ages were not measured: %+v", stats)

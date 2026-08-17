@@ -1,4 +1,15 @@
 # 项目交接
+
+## 当前本地增量（2026-08-17，未提交、未推送、未部署）
+
+- 当前分支为 `main`，HEAD 为 `aafc4c86eb37d520ecfdc4372b6d605ceb8f1bfb`；工作树保留既有 dirty changes。本轮只修改代码、测试与 dev 依赖，未刷写 ESP32、未触发设备或电脑播放，也未改变系统音量。
+- Speaker Authority 已补齐 `minor_forbidden`、`subject_capability_forbidden`、`subject_category_unavailable` 的 403 主体能力矩阵；Agent 对稳定策略拒绝使用 `authority_policy_denied + uncertain`，未知 403/5xx/网络异常仍按 transport failure 处理。Control API 成人、未成年人、主体缺失矩阵与 Agent wiring 均有本地测试。
+- generation 委派输出已改为 generation-bound `PENDING / OWNED / RELEASED / COMPLETED` claim：委派拥有或完成时跳过普通回复；失败、空结果、异常、超时、取消和迟到 generation 只释放一次本地 fallback，不产生双重输出。
+- Media Turn 的 VAD endpoint/tail、缺失 ASR final、Provider prepare retry、重连 epoch、Playback/Projection fence，以及 Python/Go/ESP32 空帧 fail-closed 均有本地回归证据。Runtime Profile 拒绝指标使用固定低基数 reason，不改变授权语义。
+- 本地门禁结果：Agent `1558`、Control API `586`；Speaker/Router/Runtime Profile 聚焦 `165`；Voice Core 聚焦 `126`；Control Speaker API `4`；固件源码/Device v2 合同/架构状态/验收器 `251`；strict MyPy `399 source files`；Ruff、Go 全量、模块预算（`duplex_runtime.py 4717`、`agent.py 3410`）和 `git diff --check` 通过；Go 异步指标聚焦测试连续 20 次通过。
+- `jsonschema>=4.23,<5` 已加入 dev extra 并锁定，`uv sync --frozen --extra dev` 成功（当前为 `4.26.0`）。`uv sync --frozen --all-extras` 仍受既有 macOS ARM 无可用 `vosk==0.3.45` 包影响；这不是本轮代码回归。
+- 本轮只登记 `code + local wired + local verified`。生产 `enabled`、`direct_real_device_verified` 与 `full_duplex_verified` 不因本地门禁改变；T1–T14 继续为 `0 pass / 14 blocked / 0 failed`，Exact DAC、AEC Reference、双讲、精确 Actual Heard、100/500 轮和 T14 微信独立性仍无新增证据。
+
 ## 当前状态（2026-08-16，Edge Bridge Health + supervisor 已 production enabled + runtime/chaos verified）
 
 - 当前未刷板固件候选已于 `2026-08-16T16:14:08Z` 从锁定 upstream

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 
 import httpx
 import pytest
@@ -116,3 +117,113 @@ async def test_client_rejects_malformed_authority_response() -> None:
                 sample_rate=16000,
             )
         assert client.reject_non_owner_voice is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code",
+    [
+        "minor_forbidden",
+        "subject_capability_forbidden",
+        "subject_category_unavailable",
+    ],
+)
+async def test_client_maps_stable_policy_denials_to_unprivileged_uncertain_decision(
+    code: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(
+        logging.INFO,
+        logger="services.agent.src.speaker_authority_client",
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                403,
+                json={
+                    "detail": {
+                        "code": code,
+                        "capability": "speaker_enrollment",
+                    }
+                },
+            )
+        )
+    ) as http_client:
+        client = SpeakerAuthorityClient(
+            SpeakerAuthorityClientConfig(
+                endpoint="https://control.test/v1/speakers/classify",
+                internal_token="speaker-internal-token",
+            ),
+            client=http_client,
+        )
+        decision = await client.classify(
+            session_id="session-001",
+            pcm=b"\x00\x01",
+            sample_rate=16000,
+        )
+
+    assert decision.classification == "uncertain"
+    assert decision.reason_code == "authority_policy_denied"
+    assert decision.permissions.normal_conversation is True
+    assert decision.permissions.read_private_memory is False
+    assert decision.permissions.write_long_term_memory is False
+    assert decision.permissions.sensitive_actions is False
+    assert client.reject_non_owner_voice is True
+    assert f"speaker authority policy denied code={code}" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "payload"),
+    [
+        (403, {"detail": {"code": "unknown_policy_denial"}}),
+        (503, {"detail": {"code": "service_unavailable"}}),
+    ],
+)
+async def test_client_keeps_unknown_policy_and_server_errors_as_transport_failures(
+    status_code: int,
+    payload: dict[str, object],
+) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(status_code, json=payload)
+        )
+    ) as http_client:
+        client = SpeakerAuthorityClient(
+            SpeakerAuthorityClientConfig(
+                endpoint="https://control.test/v1/speakers/classify",
+                internal_token="speaker-internal-token",
+            ),
+            client=http_client,
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.classify(
+                session_id="session-001",
+                pcm=b"\x00\x01",
+                sample_rate=16000,
+            )
+
+    assert client.reject_non_owner_voice is True
+
+
+@pytest.mark.asyncio
+async def test_client_keeps_network_errors_as_transport_failures() -> None:
+    def fail(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("control unavailable", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(fail)) as http_client:
+        client = SpeakerAuthorityClient(
+            SpeakerAuthorityClientConfig(
+                endpoint="https://control.test/v1/speakers/classify",
+                internal_token="speaker-internal-token",
+            ),
+            client=http_client,
+        )
+        with pytest.raises(httpx.ConnectError):
+            await client.classify(
+                session_id="session-001",
+                pcm=b"\x00\x01",
+                sample_rate=16000,
+            )
+
+    assert client.reject_non_owner_voice is True

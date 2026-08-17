@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -12,6 +13,16 @@ from services.speaker.domain import (
     SpeakerClassification,
     SpeakerDecision,
     permissions_for_speaker,
+)
+
+logger = logging.getLogger(__name__)
+
+_POLICY_DENIAL_CODES = frozenset(
+    {
+        "minor_forbidden",
+        "subject_capability_forbidden",
+        "subject_category_unavailable",
+    }
 )
 
 
@@ -63,6 +74,14 @@ class SpeakerAuthorityClient:
                 },
                 timeout=self._config.timeout_s,
             )
+            policy_code = self._policy_denial_code(response)
+            if policy_code is not None:
+                logger.info(
+                    "speaker authority policy denied code=%s session_id=%s",
+                    policy_code,
+                    session_id,
+                )
+                return self._policy_denied_decision()
             response.raise_for_status()
             payload = response.json()
             if isinstance(payload, dict) and isinstance(
@@ -79,6 +98,35 @@ class SpeakerAuthorityClient:
         # validation. A malformed authority result must leave the policy strict.
         self.reject_non_owner_voice = requested_policy
         return decision
+
+    @staticmethod
+    def _policy_denial_code(response: httpx.Response) -> str | None:
+        if response.status_code != 403:
+            return None
+        try:
+            payload = response.json()
+        except ValueError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        detail = payload.get("detail")
+        if not isinstance(detail, dict):
+            return None
+        code = detail.get("code")
+        return code if isinstance(code, str) and code in _POLICY_DENIAL_CODES else None
+
+    @staticmethod
+    def _policy_denied_decision() -> SpeakerDecision:
+        return SpeakerDecision(
+            classification="uncertain",
+            score=None,
+            quality_score=0.0,
+            reason_code="authority_policy_denied",
+            model_version="unavailable",
+            template_version=None,
+            profile_id=None,
+            permissions=permissions_for_speaker("uncertain"),
+        )
 
     @staticmethod
     def _decision(payload: Any) -> SpeakerDecision:

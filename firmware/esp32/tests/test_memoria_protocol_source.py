@@ -246,6 +246,21 @@ def test_active_vad_is_closed_at_all_media_lifecycle_boundaries() -> None:
     assert "vad_started_sample_ = speaking ? uplink_sample_start_ : 0" in SOURCE
 
 
+def test_send_audio_rejects_null_or_empty_packets_before_encoding() -> None:
+    start = SOURCE.index("bool MemoriaProtocol::SendAudio")
+    end = SOURCE.index("void MemoriaProtocol::SendVadState", start)
+    send_audio = SOURCE[start:end]
+
+    assert "packet == nullptr" in send_audio
+    assert "packet->payload.empty()" in send_audio
+    assert send_audio.index("packet == nullptr") < send_audio.index(
+        "MemoriaAudioFrame::Encode"
+    )
+    assert send_audio.index("packet->payload.empty()") < send_audio.index(
+        "MemoriaAudioFrame::Encode"
+    )
+
+
 def test_json_integer_parsing_is_finite_and_fail_closed_at_uint64_bound() -> None:
     assert "#include <cmath>" in SOURCE
     assert "bool IsFiniteInteger(double value)" in SOURCE

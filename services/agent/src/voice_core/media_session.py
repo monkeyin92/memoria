@@ -93,6 +93,7 @@ class MediaVoiceCoreRegistry(
     turn_endpoint_max_grace_s: float = 1.1
     turn_endpoint_absolute_timeout_s: float = 2.5
     output_generation_timeout_s: float = 45.0
+    delegation_initial_decision_timeout_s: float = 0.5
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
     _cleanup_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
     _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]] = field(

@@ -524,6 +524,84 @@ def test_runtime_profile_gate_rejects_same_epoch_identity_replay() -> None:
     assert gate.current is None
 
 
+def test_runtime_profile_gate_reports_capability_denial_without_relaxing_gate() -> None:
+    gate = _runtime_profile_gate_for_test()
+    fence = _runtime_profile_fence()
+    current = parse_runtime_profile(canonical_wire_payload(), verify_key=TEST_VERIFY_KEY)
+    assert current is not None
+    assert gate.apply(current, fence) is not None
+
+    assert (
+        gate.permits_reason(
+            fence,
+            current_fence=fence,
+            capability="memory_recall_private",
+        )
+        == "capability_not_in_runtime_profile"
+    )
+    assert not gate.permits(
+        fence,
+        current_fence=fence,
+        capability="memory_recall_private",
+    )
+    assert (
+        gate.metrics.get(
+            "runtime_profile_capability_denied_total",
+            {"reason": "capability_not_in_runtime_profile"},
+        )
+        == 1
+    )
+
+
+def test_runtime_profile_gate_distinguishes_missing_profile_and_stale_fence() -> None:
+    gate = _runtime_profile_gate_for_test()
+    current_fence = _runtime_profile_fence()
+
+    assert (
+        gate.permits_reason(
+            current_fence,
+            current_fence=current_fence,
+            capability="memory_recall_private",
+        )
+        == "profile_missing"
+    )
+    assert (
+        gate.permits_reason(
+            _runtime_profile_fence(epoch=1),
+            current_fence=current_fence,
+            capability="memory_recall_private",
+        )
+        == "fence_epoch_mismatch"
+    )
+
+
+def test_runtime_profile_gate_reports_unconfirmed_speaker_reason() -> None:
+    fence = _runtime_profile_fence(epoch=1)
+    unknown_safe = parse_runtime_profile(
+        canonical_wire_payload(
+            active_subject_id=None,
+            subject_category="unknown",
+            age_band="unknown",
+            speaker_state="unconfirmed",
+            service_mode="unknown_safe",
+            session_epoch=1,
+            subject_revision=0,
+            capabilities=["chat"],
+            obligations=UNKNOWN_SAFE_OBLIGATIONS,
+        ),
+        verify_key=TEST_VERIFY_KEY,
+    )
+    assert unknown_safe is not None
+    gate = _runtime_profile_gate_for_test(
+        expected_active_subject_id=None, expected_subject_revision=0
+    )
+    assert gate.apply(unknown_safe, fence) is not None
+    assert (
+        gate.permits_reason(fence, current_fence=fence, capability="chat")
+        == "speaker_unconfirmed"
+    )
+
+
 def test_duplicate_or_zero_revision_contract_violations_fail_closed() -> None:
     """P0-2: duplicate lists and 0 binding/persona/epoch revisions reject."""
 

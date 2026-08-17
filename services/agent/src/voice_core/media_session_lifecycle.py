@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import inspect
 import math
+from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any
 
 from services.agent.src.contracts.ids import GenerationFence
@@ -41,6 +42,7 @@ from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
 from services.agent.src.voice_core.media_session_types import (
+    DelegationOutputClaim,
     MediaVoiceProvider,
     ProviderFactory,
     RuntimeFactory,
@@ -70,6 +72,7 @@ class MediaSessionLifecycleMixin:
         turn_endpoint_max_grace_s: float
         turn_endpoint_absolute_timeout_s: float
         output_generation_timeout_s: float
+        delegation_initial_decision_timeout_s: float
         _sessions: dict[str, _MediaVoiceSession]
         _cleanup_tasks: dict[str, asyncio.Task[None]]
         _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]]
@@ -170,6 +173,13 @@ class MediaSessionLifecycleMixin:
             raise ValueError("media endpoint grace and tail timeouts are invalid")
         if not math.isfinite(self.output_generation_timeout_s) or self.output_generation_timeout_s <= 0:
             raise ValueError("output_generation_timeout_s must be finite and positive")
+        if (
+            not math.isfinite(self.delegation_initial_decision_timeout_s)
+            or self.delegation_initial_decision_timeout_s <= 0
+        ):
+            raise ValueError(
+                "delegation_initial_decision_timeout_s must be finite and positive"
+            )
         self._creation_semaphore = asyncio.Semaphore(self.session_creation_limit)
         self._audio_ingress = MediaAudioIngress(self)
 
@@ -365,17 +375,35 @@ class MediaSessionLifecycleMixin:
                 )
 
 
-                async def _start_delegation(text: str, fence: GenerationFence) -> None:
-                    if not requires_realtime_lookup(text):
-                        return
-                    await self._run_media_delegation(
+                def _start_delegation(
+                    text: str,
+                    fence: GenerationFence,
+                ) -> Coroutine[Any, Any, None] | None:
+                    if (
+                        not requires_realtime_lookup(text)
+                        or not current.runtime.fence.matches(fence)
+                    ):
+                        return None
+                    existing = current.delegation_output_claims.get(fence)
+                    if existing is not None:
+                        return None
+                    for old_fence, old_claim in tuple(
+                        current.delegation_output_claims.items()
+                    ):
+                        if old_fence.matches(fence):
+                            continue
+                        old_claim.release()
+                        current.delegation_output_claims.pop(old_fence, None)
+                    claim = DelegationOutputClaim(fence)
+                    current.delegation_output_claims[fence] = claim
+                    return self._run_media_delegation(
                         current,
                         text=text,
                         fence=fence,
+                        claim=claim,
                         output_intent_acceptor=output_intent_acceptor,
                     )
 
-                current.delegation_owns_realtime_output = True
                 runtime.set_delegation_starter(_start_delegation)
 
             async def publish_runtime_event(event: dict[str, Any]) -> None:

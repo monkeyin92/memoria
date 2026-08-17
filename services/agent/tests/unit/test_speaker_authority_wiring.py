@@ -203,6 +203,52 @@ async def test_model_timeout_is_uncertain_and_cannot_late_promote_the_next_turn(
 
 
 @pytest.mark.asyncio
+async def test_policy_denied_authority_stays_uncertain_without_private_permissions() -> None:
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        return _decision("uncertain", reason_code="authority_policy_denied")
+
+    runtime = DuplexRuntime.create()
+    runtime.set_target_speaker_focus(True)
+    runtime.set_speaker_classifier(classify, sample_rate=16000)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x00\x01" * 12_800)
+    runtime.on_user_voice_stopped()
+
+    decision = await runtime.await_speaker_classification()
+    accepted, reason = runtime.accept_user_turn("你好")
+
+    assert decision.classification == "uncertain"
+    assert decision.reason_code == "authority_policy_denied"
+    assert accepted is True
+    assert reason is None
+    assert runtime.speaker_permissions.normal_conversation is True
+    assert runtime.speaker_permissions.read_private_memory is False
+    assert runtime.speaker_permissions.write_long_term_memory is False
+    assert runtime.speaker_permissions.sensitive_actions is False
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_speaker_authority_exception_stays_authority_unavailable() -> None:
+    async def classify(_pcm: bytes, _sample_rate: int) -> SpeakerDecision:
+        raise RuntimeError("authority transport failed")
+
+    runtime = DuplexRuntime.create()
+    runtime.set_speaker_classifier(classify, sample_rate=16000)
+    runtime.on_user_voice_started()
+    runtime.feed_speaker_pcm(b"\x00\x01" * 800)
+    runtime.on_user_voice_stopped()
+
+    decision = await runtime.await_speaker_classification()
+
+    assert decision.classification == "uncertain"
+    assert decision.reason_code == "authority_unavailable"
+    assert runtime.speaker_permissions.read_private_memory is False
+    assert runtime.speaker_permissions.write_long_term_memory is False
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_classification_and_user_final_use_the_same_speaker_class() -> None:
     evidence: list[dict[str, object]] = []
     voiced_pcm = b"\x00\x40" * 1600

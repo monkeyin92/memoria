@@ -589,6 +589,15 @@ def test_legacy_speaker_gate_routes_human_mismatch_as_guest(
         ),
         (
             "uncertain",
+            "authority_policy_denied",
+            None,
+            800,
+            "interrupt",
+            True,
+            "target_unavailable",
+        ),
+        (
+            "uncertain",
             "no_active_profile",
             None,
             800,

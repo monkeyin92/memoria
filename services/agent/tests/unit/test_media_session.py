@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from types import SimpleNamespace
 from typing import Any
 
@@ -41,6 +41,7 @@ from services.agent.src.voice_core.media_session import (
     MediaVoiceProvider,
     _OutputWork,
 )
+from services.agent.src.voice_core.media_session_types import DelegationOutputState
 from services.agent.src.voice_core.playback_ledger import PlaybackSpan
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
 from services.agent.src.voice_core.speech_timeline import (
@@ -3511,6 +3512,434 @@ async def test_media_provider_does_not_install_an_unavailable_delegation_seam() 
 
     assert context.runtime._delegation_starter is None
     await context.runtime.close()
+
+
+async def _wait_until(predicate: Callable[[], bool], *, timeout: float = 1.0) -> None:
+    """Poll until predicate() is truthy or the deadline passes."""
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() >= deadline:
+            raise AssertionError("condition not met before timeout")
+        await asyncio.sleep(0.005)
+
+
+class _DelegationProbeProvider(FakeMediaProvider):
+    """Records conversation replies, deep/ACK outputs and delegation starts."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reply_calls = 0
+        self.output_kinds: list[int] = []
+        self.delegations: list[tuple[str, GenerationFence]] = []
+
+    @staticmethod
+    def accept_output_intent(intent: Any) -> Any:
+        return intent
+
+    def generate_reply(
+        self,
+        identity: SessionIdentity,
+        user_text: str,
+        fence: GenerationFence,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        self.reply_calls += 1
+        return super().generate_reply(identity, user_text, fence)
+
+    def generate_output(
+        self,
+        _identity: SessionIdentity,
+        intent: Any,
+        _fence: GenerationFence,
+        *,
+        work_id: str,
+        source_start_sample: int,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        _ = work_id
+        self.output_kinds.append(int(intent.kind))
+
+        async def chunks() -> AsyncIterator[MediaReplyChunk]:
+            yield MediaReplyChunk(
+                pcm_s16le=b"\x02\x00\x03\x00",
+                source_start_sample=source_start_sample,
+                first=True,
+                final=True,
+            )
+
+        return chunks()
+
+
+@pytest.mark.asyncio
+async def test_media_registry_replaces_factory_legacy_delegation_starter() -> None:
+    legacy_calls: list[tuple[str, GenerationFence]] = []
+
+    class DirectProvider(_DelegationProbeProvider):
+        async def start_delegation(self, text: str, fence: GenerationFence) -> str:
+            self.delegations.append((text, fence))
+            return "南京今天多云。"
+
+    identity = SessionIdentity("factory-delegation-override")
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+
+    async def legacy_starter(text: str, fence: GenerationFence) -> None:
+        legacy_calls.append((text, fence))
+
+    runtime.set_delegation_starter(legacy_starter)
+    provider = DirectProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        session_factory=lambda _identity: MediaSessionResources(runtime, provider),
+    )
+    registry.install()
+    context = await registry._get_or_create(identity)
+
+    assert context.runtime._delegation_starter is not legacy_starter
+    query = "今天南京天气怎么样"
+    fence = await context.runtime.on_turn_committed(query)
+    context.playback.start(fence)
+    await _wait_until(
+        lambda: provider.output_kinds
+        == [media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT]
+    )
+
+    assert legacy_calls == []
+    assert provider.delegations == [(query, fence)]
+    assert context.delegation_output_claims[fence].state is DelegationOutputState.COMPLETED
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_media_delegation_claim_is_not_created_for_non_realtime_or_unstarted_turns() -> None:
+    class NonRealtimeProvider(_DelegationProbeProvider):
+        async def start_delegation(self, text: str, fence: GenerationFence) -> str:
+            self.delegations.append((text, fence))
+            return "不应委派。"
+
+    provider = NonRealtimeProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("non-realtime-claim")
+    context = await registry._get_or_create(identity)
+
+    # A realtime-shaped chat turn that resolves locally must never create a
+    # claim: the starter guard rejects it before any claim is registered.
+    fence = await context.runtime.on_turn_committed("现在几点开会")
+    assert context.delegation_output_claims == {}
+    assert provider.delegations == []
+    context.playback.start(fence)
+    # The provider audio path does not complete end-to-end in this harness;
+    # the claim contract is that exactly one local reply is produced.
+    await registry.generate_reply(identity.session_id, "现在几点开会", fence)
+    assert provider.reply_calls == 1
+
+    # A control utterance whose interaction decision never starts delegation
+    # must likewise leave no claim behind.
+    await context.runtime.on_turn_committed("停一下")
+    assert context.delegation_output_claims == {}
+    assert provider.delegations == []
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_media_delegation_provider_failure_falls_back_to_one_local_reply() -> None:
+    class FailingProvider(_DelegationProbeProvider):
+        async def start_delegation(self, _text: str, _fence: GenerationFence) -> str:
+            raise RuntimeError("deep provider exploded")
+
+    provider = FailingProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("delegation-provider-failure")
+    context = await registry._get_or_create(identity)
+    query = "今天南京天气怎么样"
+    fence = await context.runtime.on_turn_committed(query)
+    context.playback.start(fence)
+
+    assert await registry.generate_reply(identity.session_id, query, fence)
+    await _wait_until(lambda: provider.reply_calls == 1)
+
+    claim = context.delegation_output_claims[fence]
+    assert claim.state is DelegationOutputState.RELEASED
+    assert provider.reply_calls == 1
+    assert provider.output_kinds == []
+    await asyncio.sleep(0.02)
+    assert provider.reply_calls == 1
+    assert provider.output_kinds == []
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_media_delegation_coordinator_rejection_falls_back_to_one_local_reply() -> None:
+    class RejectedProvider(_DelegationProbeProvider):
+        async def start_delegation(self, text: str, fence: GenerationFence) -> str:
+            self.delegations.append((text, fence))
+            return "不应执行。"
+
+    provider = RejectedProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("delegation-coordinator-rejection")
+    context = await registry._get_or_create(identity)
+    # Remove the registered tool authority so ``coordinator.delegate`` itself
+    # rejects the request before any provider work is started.
+    context.runtime.orchestrator.task_manager.specs.pop("media_deep_response", None)
+    query = "今天南京天气怎么样"
+    fence = await context.runtime.on_turn_committed(query)
+    context.playback.start(fence)
+
+    assert await registry.generate_reply(identity.session_id, query, fence)
+    await _wait_until(lambda: provider.reply_calls == 1)
+
+    claim = context.delegation_output_claims[fence]
+    assert claim.state is DelegationOutputState.RELEASED
+    assert provider.delegations == []
+    assert provider.reply_calls == 1
+    assert provider.output_kinds == []
+    await asyncio.sleep(0.02)
+    assert provider.reply_calls == 1
+    assert provider.output_kinds == []
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_media_delegation_none_result_falls_back_to_one_local_reply() -> None:
+    class NoneResultProvider(_DelegationProbeProvider):
+        async def start_delegation(self, _text: str, _fence: GenerationFence) -> None:
+            return None
+
+    provider = NoneResultProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("delegation-none-result")
+    context = await registry._get_or_create(identity)
+    query = "今天南京天气怎么样"
+    fence = await context.runtime.on_turn_committed(query)
+    context.playback.start(fence)
+
+    assert await registry.generate_reply(identity.session_id, query, fence)
+    await _wait_until(lambda: provider.reply_calls == 1)
+
+    claim = context.delegation_output_claims[fence]
+    assert claim.state is DelegationOutputState.RELEASED
+    assert provider.reply_calls == 1
+    assert provider.output_kinds == []
+    await asyncio.sleep(0.02)
+    assert provider.reply_calls == 1
+    assert provider.output_kinds == []
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_media_delegation_error_result_falls_back_to_one_local_reply() -> None:
+    class ErrorResultProvider(_DelegationProbeProvider):
+        async def start_delegation(self, _text: str, _fence: GenerationFence) -> dict[str, str]:
+            return {"error": "search backend failed"}
+
+    provider = ErrorResultProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("delegation-error-result")
+    context = await registry._get_or_create(identity)
+    query = "今天南京天气怎么样"
+    fence = await context.runtime.on_turn_committed(query)
+    context.playback.start(fence)
+
+    assert await registry.generate_reply(identity.session_id, query, fence)
+    await _wait_until(lambda: provider.reply_calls == 1)
+
+    claim = context.delegation_output_claims[fence]
+    assert claim.state is DelegationOutputState.RELEASED
+    assert provider.reply_calls == 1
+    assert provider.output_kinds == []
+    await asyncio.sleep(0.02)
+    assert provider.reply_calls == 1
+    assert provider.output_kinds == []
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_media_delegation_initial_decision_timeout_replies_locally_and_cancels_late_delegation() -> None:
+    start_gate = asyncio.Event()
+    deep_gate = asyncio.Event()
+
+    class SlowStartProvider(_DelegationProbeProvider):
+        async def start_delegation(self, _text: str, _fence: GenerationFence) -> str:
+            await deep_gate.wait()
+            return "迟到的深度结果。"
+
+    provider = SlowStartProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: provider,
+        delegation_initial_decision_timeout_s=0.05,
+    )
+    registry.install()
+    identity = SessionIdentity("delegation-decision-timeout")
+    context = await registry._get_or_create(identity)
+    task_manager = context.runtime.orchestrator.task_manager
+    original_start = task_manager.start
+
+    async def slow_start(*args: Any, **kwargs: Any) -> Any:
+        await start_gate.wait()
+        return await original_start(*args, **kwargs)
+
+    task_manager.start = slow_start  # type: ignore[method-assign]
+    query = "今天南京天气怎么样"
+    try:
+        fence = await context.runtime.on_turn_committed(query)
+        context.playback.start(fence)
+        # The normal reply outlives the initial decision window: it must
+        # release the claim, speak locally, and later cancel the late
+        # delegation instead of accepting deep output.
+        await registry.generate_reply(identity.session_id, query, fence)
+        claim = context.delegation_output_claims[fence]
+        assert claim.state is DelegationOutputState.RELEASED
+        assert provider.reply_calls == 1
+        assert provider.output_kinds == []
+        assert provider.delegations == []
+
+        start_gate.set()
+        await _wait_until(
+            lambda: any(
+                rec.tool_name == "media_deep_response" and rec.cancelled
+                for rec in task_manager.tasks.values()
+            )
+        )
+        await asyncio.sleep(0.02)
+        assert claim.state is DelegationOutputState.RELEASED
+        assert provider.reply_calls == 1
+        assert provider.output_kinds == []
+    finally:
+        start_gate.set()
+        deep_gate.set()
+        await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_fast_media_delegation_success_skips_fast_acknowledgement() -> None:
+    class FastProvider(_DelegationProbeProvider):
+        async def start_delegation(self, _text: str, _fence: GenerationFence) -> str:
+            return "南京今天多云。"
+
+    provider = FastProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("fast-delegation-no-ack")
+    context = await registry._get_or_create(identity)
+    query = "今天南京天气怎么样"
+    fence = await context.runtime.on_turn_committed(query)
+    context.playback.start(fence)
+
+    await _wait_until(
+        lambda: provider.output_kinds
+        == [media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT],
+    )
+    claim = context.delegation_output_claims[fence]
+    assert claim.state is DelegationOutputState.COMPLETED
+    assert media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT not in provider.output_kinds
+    assert provider.reply_calls == 0
+    assert await registry.generate_reply(identity.session_id, query, fence)
+    assert provider.reply_calls == 0
+    assert provider.output_kinds == [media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT]
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_stale_generation_media_delegation_produces_no_output() -> None:
+    started = asyncio.Event()
+    deep_gate = asyncio.Event()
+
+    class StaleProvider(_DelegationProbeProvider):
+        async def start_delegation(self, text: str, fence: GenerationFence) -> str:
+            self.delegations.append((text, fence))
+            started.set()
+            await deep_gate.wait()
+            return "南京今天多云。"
+
+    provider = StaleProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("stale-delegation")
+    context = await registry._get_or_create(identity)
+    first_fence = await context.runtime.on_turn_committed("今天南京天气怎么样")
+    claim = context.delegation_output_claims[first_fence]
+
+    # Wait until the deep provider is actually working so the supersede
+    # happens mid-flight rather than before the delegation started.
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    # Supersede the generation while the provider is still working; the old
+    # delegation must never admit an ACK, a deep result or a local reply.
+    await context.runtime.on_turn_committed("你好")
+    await asyncio.sleep(0.05)
+    assert provider.output_kinds == []
+    assert provider.reply_calls == 0
+
+    deep_gate.set()
+    await _wait_until(lambda: claim.state is DelegationOutputState.RELEASED)
+    await asyncio.sleep(0.02)
+    assert provider.output_kinds == []
+    assert provider.reply_calls == 0
+    assert provider.delegations == [("今天南京天气怎么样", first_fence)]
+    await registry._finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_media_normal_replies_produce_only_one_local_output_after_delegation_failure() -> None:
+    class FailingProvider(_DelegationProbeProvider):
+        async def start_delegation(self, _text: str, _fence: GenerationFence) -> str:
+            raise RuntimeError("deep provider exploded")
+
+    provider = FailingProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("delegation-duplicate-guard")
+    context = await registry._get_or_create(identity)
+    query = "今天南京天气怎么样"
+    fence = await context.runtime.on_turn_committed(query)
+    context.playback.start(fence)
+
+    first = asyncio.create_task(
+        registry.generate_reply(identity.session_id, query, fence)
+    )
+    second = asyncio.create_task(
+        registry.generate_reply(identity.session_id, query, fence)
+    )
+    assert await asyncio.wait_for(first, timeout=1)
+    assert await asyncio.wait_for(second, timeout=1)
+    await _wait_until(lambda: provider.reply_calls == 1)
+
+    await asyncio.sleep(0.02)
+    claim = context.delegation_output_claims[fence]
+    assert claim.state is DelegationOutputState.RELEASED
+    assert provider.reply_calls == 1
+    assert provider.output_kinds == []
+    await registry._finalize_session(identity.session_id)
 
 
 @pytest.mark.asyncio

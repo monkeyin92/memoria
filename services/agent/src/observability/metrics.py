@@ -34,6 +34,16 @@ _RUNTIME_PROFILE_EXPIRED_REASONS = frozenset({"expired_at_parse", "expired_at_us
 _RUNTIME_PROFILE_REFRESH_FAILURE_REASONS = frozenset(
     {"timeout", "error", "invalid", "drain_error", "drain_timeout", "no_playback_seam"}
 )
+_RUNTIME_PROFILE_CAPABILITY_DENIED_REASONS = frozenset(
+    {
+        "fence_epoch_mismatch",
+        "epoch_revoked",
+        "device_not_bound",
+        "profile_missing",
+        "speaker_unconfirmed",
+        "capability_not_in_runtime_profile",
+    }
+)
 _IDENTITY_CONFUSION_REASONS = frozenset(
     {
         "user_identity_confusion",
@@ -188,6 +198,16 @@ class MetricsRegistry:
         if reason not in _RUNTIME_PROFILE_REFRESH_FAILURE_REASONS:
             raise ValueError(f"refresh-failure reason must be one of {sorted(_RUNTIME_PROFILE_REFRESH_FAILURE_REASONS)}")
         self._inc("runtime_profile_refresh_failures_total", {"reason": reason})
+
+    def inc_runtime_profile_capability_denied(self, reason: str) -> None:
+        """Count a fail-closed RuntimeProfile permission denial."""
+
+        if reason not in _RUNTIME_PROFILE_CAPABILITY_DENIED_REASONS:
+            raise ValueError(
+                "runtime-profile denial reason must be one of "
+                f"{sorted(_RUNTIME_PROFILE_CAPABILITY_DENIED_REASONS)}"
+            )
+        self._inc("runtime_profile_capability_denied_total", {"reason": reason})
 
     def inc_persona_identity_confusion_event(self, reason: str) -> None:
         """Count an identity-confusion/impersonation/dependency/fraud event

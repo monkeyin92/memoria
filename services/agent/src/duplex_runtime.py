@@ -338,7 +338,7 @@ class DuplexRuntime:
     _emotion_turn_observer: Callable[[int], None] | None = None
     _speech_segment_finalizers: list[Callable[..., None]] = field(default_factory=list)
     _fast_model_warmer: Callable[[], Awaitable[Any] | Any] | None = None
-    _delegation_starter: Callable[[str, GenerationFence], Awaitable[Any] | Any] | None = None
+    _delegation_starter: Callable[[str, GenerationFence], Coroutine[Any, Any, Any] | None] | None = None
     _interaction_prefetch_epoch: int | None = None
     _interaction_context_prefetch_key: tuple[int, str] | None = None
     _context_prefetch_text: str = ""
@@ -458,14 +458,14 @@ class DuplexRuntime:
             self._interaction_delegated_fences = {fence}
             starter = self._delegation_starter
             if starter is not None:
-
-                async def _await_delegation() -> None:
+                try:
                     started = starter(text, fence)
-                    if inspect.isawaitable(started):
-                        await started
-
-                self._spawn(_await_delegation(), name="interaction-delegation-start")
-            self.mark_audio_event("interaction_delegation_started", fence=fence)
+                except Exception:
+                    logger.exception("interaction delegation starter failed")
+                else:
+                    if started is not None:
+                        self._spawn(started, name="interaction-delegation-start")
+                        self.mark_audio_event("interaction_delegation_started", fence=fence)
 
     def playback_guarded_reason(self, text: str, *, duration_ms: int) -> str | None:
         return self.input_guard.guarded_reason(
@@ -1300,7 +1300,7 @@ class DuplexRuntime:
 
     def set_delegation_starter(
         self,
-        starter: Callable[[str, GenerationFence], Awaitable[Any] | Any] | None,
+        starter: Callable[[str, GenerationFence], Coroutine[Any, Any, Any] | None] | None,
     ) -> None:
         self._delegation_starter = starter
 

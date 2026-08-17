@@ -13,6 +13,7 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.state_machine import ConversationState, InteractionPhase
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.media_session_types import (
+    DelegationOutputState,
     MediaReplyChunk,
 )
 from services.agent.src.voice_core.media_session_types import (
@@ -21,7 +22,6 @@ from services.agent.src.voice_core.media_session_types import (
 from services.agent.src.voice_core.media_session_types import (
     OutputWork as _OutputWork,
 )
-from services.common.realtime_information import requires_realtime_lookup
 
 if TYPE_CHECKING:
     from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
@@ -49,6 +49,7 @@ class MediaOutputDispatchMixin:
         bridge: MediaBridgeGrpcServer
         _sessions: dict[str, _MediaVoiceSession]
         output_generation_timeout_s: float
+        delegation_initial_decision_timeout_s: float
 
         def _event_versions(
             self,
@@ -125,11 +126,34 @@ class MediaOutputDispatchMixin:
         context = self._sessions.get(session_id)
         if context is None or context.closed or not context.runtime.fence.matches(fence):
             return False
-        if (
-            context.delegation_owns_realtime_output
-            and requires_realtime_lookup(user_text)
-        ):
-            return True
+        claim = context.delegation_output_claims.get(fence)
+        if claim is not None:
+            claim.observe_normal_reply()
+            if claim.state is DelegationOutputState.PENDING:
+                try:
+                    await asyncio.wait_for(
+                        claim.wait_initial_decision(),
+                        timeout=self.delegation_initial_decision_timeout_s,
+                    )
+                except TimeoutError:
+                    if claim.release():
+                        logger.warning(
+                            "media delegation claim timed out session=%s generation=%s",
+                            fence.session_id,
+                            fence.generation_id,
+                        )
+            if context.closed or not context.runtime.fence.matches(fence):
+                return False
+            if claim.state in {
+                DelegationOutputState.OWNED,
+                DelegationOutputState.COMPLETED,
+            }:
+                return True
+            if (
+                claim.state is DelegationOutputState.RELEASED
+                and not claim.reserve_local_reply()
+            ):
+                return True
         coordinator = context.runtime.orchestrator.delegation
         now_ms = int(time.time() * 1_000)
         intent = coordinator.conversation_reply(

@@ -44,6 +44,7 @@ dev = [
   "pytest-asyncio>=0.25,<1",
   "pytest-cov>=6.0,<7",
   "grpcio-tools>=1.70,<2",
+  "jsonschema>=4.23,<5",
   "ruff>=0.9,<1",
   "mypy>=1.14,<2",
   "types-PyJWT",
