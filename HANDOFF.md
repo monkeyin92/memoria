@@ -1,14 +1,15 @@
 # 项目交接
 
-## 当前本地增量（2026-08-17，未提交、未推送、未部署）
+## 当前生产增量（2026-08-17，已提交、推送并完成 Agent/Bridge canary）
 
-- 当前分支为 `main`，HEAD 为 `aafc4c86eb37d520ecfdc4372b6d605ceb8f1bfb`；工作树保留既有 dirty changes。本轮只修改代码、测试与 dev 依赖，未刷写 ESP32、未触发设备或电脑播放，也未改变系统音量。
-- Speaker Authority 已补齐 `minor_forbidden`、`subject_capability_forbidden`、`subject_category_unavailable` 的 403 主体能力矩阵；Agent 对稳定策略拒绝使用 `authority_policy_denied + uncertain`，未知 403/5xx/网络异常仍按 transport failure 处理。Control API 成人、未成年人、主体缺失矩阵与 Agent wiring 均有本地测试。
-- generation 委派输出已改为 generation-bound `PENDING / OWNED / RELEASED / COMPLETED` claim：委派拥有或完成时跳过普通回复；失败、空结果、异常、超时、取消和迟到 generation 只释放一次本地 fallback，不产生双重输出。
-- Media Turn 的 VAD endpoint/tail、缺失 ASR final、Provider prepare retry、重连 epoch、Playback/Projection fence，以及 Python/Go/ESP32 空帧 fail-closed 均有本地回归证据。Runtime Profile 拒绝指标使用固定低基数 reason，不改变授权语义。
-- 本地门禁结果：Agent `1558`、Control API `586`；Speaker/Router/Runtime Profile 聚焦 `165`；Voice Core 聚焦 `126`；Control Speaker API `4`；固件源码/Device v2 合同/架构状态/验收器 `251`；strict MyPy `399 source files`；Ruff、Go 全量、模块预算（`duplex_runtime.py 4717`、`agent.py 3410`）和 `git diff --check` 通过；Go 异步指标聚焦测试连续 20 次通过。
-- `jsonschema>=4.23,<5` 已加入 dev extra 并锁定，`uv sync --frozen --extra dev` 成功（当前为 `4.26.0`）。`uv sync --frozen --all-extras` 仍受既有 macOS ARM 无可用 `vosk==0.3.45` 包影响；这不是本轮代码回归。
-- 本轮只登记 `code + local wired + local verified`。生产 `enabled`、`direct_real_device_verified` 与 `full_duplex_verified` 不因本地门禁改变；T1–T14 继续为 `0 pass / 14 blocked / 0 failed`，Exact DAC、AEC Reference、双讲、精确 Actual Heard、100/500 轮和 T14 微信独立性仍无新增证据。
+- 发布代码提交与 tag 均为 `91f179069055720795fadafc1839045c1cc61f31` / `20260817-135129`；代码提交已推送 `origin/main`，发布 tag 不再移动。固定 amd64 工件已上传并校验，实际只切换 `agent` 与 `voice-core-media-bridge`；Control API、Media Edge、Speaker Model、两个 Gateway、数据层、LiveKit、Nginx 与 H5 均未切换。
+- Agent 与 Bridge 当前均运行 `memoria-agent:20260817-135129`，image ID `sha256:163c4d534fa06a4b796a5217fcaead32ea97162a108bef1c4c6237f94238cb4e`，OCI revision 与发布提交一致。Agent 继续报告 Control 接受的 runtime tag `20260814-231749-direct-canary`；Bridge 保留 `20260816-bridge-liveness-83af813`，避免分层 canary 的 release fence 被破坏。
+- 第一次切流于 `2026-08-17T06:20:54Z` 因公网 readiness 的既有 `smokes:not_run` 返回 503 而自动回滚；候选容器健康、具名 gRPC Health、Edge redial 与 Provider smoke 当时均已通过，未定位到候选代码故障。该过程实际验证了冻结 Agent/Bridge rollback 镜像可恢复。补跑 LiveKit、Provider、`verify_env` 和 readiness mark 后，第二次切流自 `06:25:41Z` 成功，Edge 于 `06:26:12Z` 无重启自动重拨。
+- `2026-08-17T06:34:16Z` 延迟复核：Agent、Bridge、Edge 均 healthy 且 restart count 为 0；Bridge 具名 `memoria.media.v1.VoiceMediaBridge=SERVING`，Edge mTLS `/readyz` 为 ready。Edge redial attempts/successes 为 `3/3`、liveness healthy 为 `1`、channel generation 为 `4`；active device connections/media sessions 为 `0/0`。自 `06:26:12Z` 起三者的目标错误计数均为 0。
+- 公网域名与 IP 的根页、H5、SPA、API live/ready 和 WMS 均为 200，三个保护路由按预期为 404。域名证书有效至 `2026-10-18`；IP 证书有效至 `2026-08-21`，certbot renewal timer 当前 enabled/active。生产 runtime/H5 软链仍分别指向 `20260812-173008` 与 `20260808-171749`。
+- 回滚目录为 `/var/backups/memoria/canary-20260817-135129`；Agent rollback image ID 为 `sha256:467b431bc80c5d6de00ffa2c578e20f0843e523ad971808654ea77bdf7d26acd`，Bridge rollback image ID 为 `sha256:d0be30a1db2126840d2af886d99a038d2303bb5a705da14af420311d8e9a1bde`。服务器证据位于 `/opt/memoria/direct-canaries/20260817-135129/CUTOVER_RESULT.txt`，SHA-256 为 `afc6a8aacf3c7fa9c6e4c21fe53d65e98b12c22779903253ad1e71d7211fc04c`。当前磁盘约 19 GiB 可用；不要清理正在使用的分层 canary、即时回滚镜像及本次 incoming/runtime/证据目录。
+- Speaker Authority、generation 委派输出 claim、Media Turn fence/retry、空帧 fail-closed、Runtime Profile 低基数指标与 dev 依赖的本地门禁仍为：Agent `1558`、Control API `586`、聚焦 `165/126/4/251`、strict MyPy `399 source files`、Ruff、Go 全量、模块预算和 `git diff --check` 通过。Control、Go Edge 与 ESP32 未随本次 Agent/Bridge 切流更新，不能把跨语言本地通过写成这些组件已部署。
+- 当前层级严格为 `code=true`、`wired=true`、`enabled=true`（仅 Agent/Bridge 候选）、`production_runtime_verified=true`（零活跃会话服务器范围）；`direct_real_device_verified=false`、`full_duplex_verified=false`。T1–T14 继续为 `0 pass / 14 blocked / 0 failed`，Exact DAC、AEC Reference、双讲、精确 Actual Heard、100/500 轮和 T14 微信独立性没有新增证据。本轮没有刷写 ESP32，也没有触发设备或电脑播放。
 
 ## 当前状态（2026-08-16，Edge Bridge Health + supervisor 已 production enabled + runtime/chaos verified）
 

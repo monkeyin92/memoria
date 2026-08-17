@@ -1,11 +1,23 @@
 # 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
 # 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
 schema_version: 2
-as_of_commit: 83af81318083b1977521a1fbdca8d9bbe51927bd
+as_of_commit: 91f179069055720795fadafc1839045c1cc61f31
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 production_release_tag: 20260814-231749-direct-canary
 production_release_symlink: /opt/memoria/releases/20260812-173008
+production_code_release_tag: 20260817-135129
+production_code_commit: 91f179069055720795fadafc1839045c1cc61f31
+production_runtime_overlays:
+  agent:
+    image: memoria-agent:20260817-135129
+    runtime_release_tag: 20260814-231749-direct-canary
+  voice_core_media_bridge:
+    image: memoria-agent:20260817-135129
+    runtime_release_tag: 20260816-bridge-liveness-83af813
+  media_edge:
+    image: memoria-media-edge:20260816-bridge-liveness-83af813
+    recreated_for_20260817_release: false
 production_runtime_verified: true
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -21,13 +33,13 @@ student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
   as_of_date: 2026-08-17
-  head_commit: aafc4c86eb37d520ecfdc4372b6d605ceb8f1bfb
-  dirty: true
+  head_commit: 91f179069055720795fadafc1839045c1cc61f31
+  dirty: false
   code: complete
-  wired: local
-  enabled: not_claimed
-  verified: local
-  production_deployed: false
+  wired: production_agent_bridge_and_local_remaining_components
+  enabled: scoped_agent_bridge_canary
+  verified: local_plus_zero_session_production_runtime
+  production_deployed: scoped_agent_bridge_canary
   direct_real_device_verified: false
   full_duplex_verified: false
   regression_evidence:
@@ -41,7 +53,7 @@ local_worktree_candidate:
     no_device_audio_or_flash_action: true
 
 hardware_realtime_voice:
-  code: implemented_local_candidate
+  code: implemented_release_20260817
   wired: direct_production_canary_agent_bridge_edge_mtls
   enabled: true
   verified: false
@@ -101,6 +113,103 @@ hardware_realtime_voice:
   agent_vad_task_boundary_real_board_verified: true
   direct_v2_enabled: true
   direct_v2_verified: false
+  release_20260817_agent_bridge_canary:
+    code: complete
+    wired: production_agent_and_voice_core_media_bridge
+    enabled: true
+    verified: production_runtime_zero_active_session_scope
+    source_release_tag: 20260817-135129
+    source_commit: 91f179069055720795fadafc1839045c1cc61f31
+    candidate_image: memoria-agent:20260817-135129
+    candidate_image_id: sha256:163c4d534fa06a4b796a5217fcaead32ea97162a108bef1c4c6237f94238cb4e
+    candidate_oci_revision: 91f179069055720795fadafc1839045c1cc61f31
+    deployed_services:
+      - agent
+      - voice_core_media_bridge
+    preserved_services:
+      - control_api
+      - media_edge
+      - speaker_model
+      - device_media_gateway
+      - miniprogram_gateway
+      - postgresql
+      - data_redis
+      - device_state_redis
+      - minio
+      - livekit
+      - nginx
+      - h5
+    first_attempt:
+      started: "2026-08-17T06:20:54Z"
+      result: automatic_rollback
+      trigger: public_readiness_503_preexisting_smokes_not_run
+      candidate_agent_health: healthy
+      candidate_bridge_health: healthy
+      bridge_named_grpc_health: SERVING
+      edge_auto_redial: passed
+      provider_smoke: passed
+      candidate_defect_detected: false
+      rollback_path_exercised: true
+    second_attempt:
+      started: "2026-08-17T06:25:41Z"
+      edge_redial_succeeded: "2026-08-17T06:26:12Z"
+      result: success
+      livekit_smoke: passed
+      provider_smoke: passed_funasr_qwen_realtime_search_deepseek_doubao_interrupt_semantic
+      verify_env: passed
+      readiness_mark: passed
+      nginx: passed
+    runtime:
+      agent_container_id: 186b44afbde034f90ea4f4bff16ba1c6c69a535c54800d584c5f4425a470e2b8
+      agent_runtime_release_tag: 20260814-231749-direct-canary
+      agent_health: healthy
+      agent_restart_count: 0
+      bridge_container_id: 9f2484153ec32d409343a66b68f3c744f58ff409c8f1b70c7713bb238462239c
+      bridge_runtime_release_tag: 20260816-bridge-liveness-83af813
+      bridge_health: healthy
+      bridge_restart_count: 0
+      bridge_named_grpc_health: memoria_media_v1_VoiceMediaBridge_SERVING
+      edge_container_id: 5b989298321e80316219369251a9c0ab0f180b6361d511ad80b7f1250a9146e6
+      edge_image: memoria-media-edge:20260816-bridge-liveness-83af813
+      edge_recreated: false
+      edge_restarted: false
+      edge_health: healthy
+      control_container_id: c0e10cb2454f768b326d1cd443b9e9bc44762cd39a6fbdd73f7a20649be13b2b
+      control_recreated: false
+    delayed_verification:
+      checked_at: "2026-08-17T06:34:16Z"
+      edge_mtls_readyz: 200_ready
+      redial_attempts: 3
+      redial_successes: 3
+      liveness_probe_successes: 42102
+      liveness_probe_failures: 13
+      liveness_healthy: 1
+      channel_generation: 4
+      active_device_connections: 0
+      active_media_sessions: 0
+      fresh_log_boundary: "2026-08-17T06:26:12Z"
+      fresh_log_counts:
+        traceback: 0
+        stale_core_event_sequence: 0
+        asr_tail_timeout: 0
+        retry_exhausted: 0
+        output_timeout: 0
+        speaker_authority_403: 0
+        closed_client: 0
+        error: 0
+      public_domain_and_ip_probes: passed_expected_200_and_404
+    rollback:
+      backup_dir: /var/backups/memoria/canary-20260817-135129
+      snapshot_sha256: a5ca54dea7f50d51796f89a11a20d51caa14f70966e00d5258a14aba415dad42
+      agent_image: memoria-agent:rollback-20260817-135129-agent
+      agent_image_id: sha256:467b431bc80c5d6de00ffa2c578e20f0843e523ad971808654ea77bdf7d26acd
+      bridge_image: memoria-agent:rollback-20260817-135129-bridge
+      bridge_image_id: sha256:d0be30a1db2126840d2af886d99a038d2303bb5a705da14af420311d8e9a1bde
+    evidence_file: /opt/memoria/direct-canaries/20260817-135129/CUTOVER_RESULT.txt
+    evidence_sha256: afc6a8aacf3c7fa9c6e4c21fe53d65e98b12c22779903253ad1e71d7211fc04c
+    direct_real_device_verified: false
+    full_duplex_verified: false
+    t1_t14: 0_pass_14_blocked_0_failed
   media_turn_retry_canary:
     image: memoria-agent:20260816-214225-media-turn-retry-canary
     image_id: sha256:467b431bc80c5d6de00ffa2c578e20f0843e523ad971808654ea77bdf7d26acd
@@ -208,7 +317,7 @@ module_budgets:
   services/agent/src/agent.py: 3410
 
 stages:
-  python_voice_core: implemented_local
+  python_voice_core: production_20260817_agent_bridge_candidate_enabled_runtime_verified_zero_session
   go_media_edge: production_direct_enabled_runtime_verified_no_active_device
   h5_streamcore_transport: implemented_local
   h5_audio_worklet_playback_ack: implemented_local_software_graph
@@ -230,8 +339,10 @@ stages:
   device_same_session_recovery: implemented_local_bounded_attempt_fenced_pending_real_weak_network
   go_hardware_device_wss: implemented_local_auth_replay_epoch_backpressure
   direct_device_to_voice_core: production_enabled_runtime_verified_real_device_pending
-  media_turn_lifecycle_hardening: production_canary_enabled_runtime_verified_real_device_pending
-  media_bridge_hot_replacement_redial: production_enabled_runtime_and_zero_session_chaos_verified_direct_real_device_pending
+  media_turn_lifecycle_hardening: production_20260817_agent_bridge_canary_enabled_runtime_verified_real_device_pending
+  media_bridge_hot_replacement_redial: production_20260817_bridge_hot_replacement_auto_redial_verified_zero_session_direct_real_device_pending
+  generation_delegation_output_claim: production_20260817_agent_bridge_canary_enabled_runtime_verified_zero_session
+  speaker_authority_subject_policy_matrix: production_agent_handling_enabled_control_candidate_not_switched_real_policy_rejection_pending
   hardware_playback_actual_heard: prior_legacy_candidate_two_turn_user_confirmed_current_direct_candidate_unverified_watermark_still_approximate
   hardware_hard_stop: implemented_local_pending_real_audible_latency
   runtime_profile_device_ack: implemented_local_edge_observed
@@ -274,7 +385,7 @@ gates:
   local_h5_transport: passed
   weather_public_api_canary: passed
   redis_lua_single_node_canary: passed
-  real_provider: passed
+  real_provider: passed_production_2026_08_17
   student_capability_matrix: passed_local
   student_tutor_e2e: passed_local
   student_crisis_response_priority: passed_local
@@ -302,6 +413,7 @@ gates:
   direct_production_mtls_jwks_deploy: passed_current_single_device_production_canary
   media_turn_retry_canary: passed_production_runtime_delayed_check_real_device_pending
   media_bridge_hot_replacement_auto_redial: passed_production_mtls_health_zero_session_rollback_and_chaos_2026_08_16_alert_delivery_and_full_matrix_pending
+  release_20260817_agent_bridge_canary: passed_production_runtime_delayed_check_auto_rollback_exercised_real_device_pending
   direct_real_device_t4_t7: pending_fresh_same_generation_serial_server_and_actual_heard_evidence
   direct_multi_instance_replay_and_lease: production_single_edge_redis_mtls_runtime_verified_local_two_edge_real_redis_passed_production_multi_edge_ha_chaos_pending
   device_wss_server_ca_validation: pending_real_firmware_tls_evidence
@@ -315,14 +427,14 @@ gates:
   esp32_identity_preservation: prior_real_board_passed_2026_08_14_current_candidate_unflashed_unverified
   esp32_firmware_flash_readback: prior_real_board_passed_2026_08_14_current_candidate_unflashed
   esp32_boot_wifi_activation: prior_real_board_passed_2026_08_14_current_candidate_unflashed_unverified
-  hardware_acceptance_t1_t14: blocked_0_pass_14_blocked_0_failed_2026_08_16_exact_dac_aec_double_talk_actual_heard_t14_pending
+  hardware_acceptance_t1_t14: blocked_0_pass_14_blocked_0_failed_2026_08_17_exact_dac_aec_double_talk_actual_heard_t14_pending
   esp32_500_turn_stability: pending_real_hardware
   ota_power_loss_recovery: pending_real_hardware
   authorized_child_corpus_200: pending
   capacity_matrix: pending
   redis_session_ownership: production_single_edge_redis_mtls_runtime_verified_local_atomic_takeover_passed_production_multi_edge_ha_chaos_pending
   chaos_recovery: pending
-  canary_and_rollback: bridge_liveness_candidate_healthy_bidirectional_rollback_and_zero_session_chaos_exercised
+  canary_and_rollback: release_20260817_agent_bridge_healthy_automatic_rollback_exercised_second_cutover_passed_zero_session_only
 
 external_evidence_policy:
   fail_closed: true
