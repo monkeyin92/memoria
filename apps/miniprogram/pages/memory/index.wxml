@@ -26,7 +26,7 @@
       <text class="empty-spark">✧</text>
       <text class="empty-copy">还没有可回顾的内容。和伙伴聊一聊，之后再回来看看。</text>
     </view>
-    <view wx:else class="timeline">
+    <view wx:elif="{{days.length}}" class="timeline">
       <view wx:for="{{days}}" wx:key="date" class="timeline-item">
         <view class="timeline-rail">
           <view class="timeline-dot {{selectedDate === item.date ? 'timeline-dot-active' : ''}}"></view>
@@ -43,6 +43,59 @@
             <text wx:for="{{item.highlights}}" wx:key="*this" class="highlight">✦ {{item}}</text>
           </view>
           <text wx:if="{{item.suggestion}}" class="day-suggestion">{{item.suggestion}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 实际听到的回复（PR-19） -->
+    <view class="review-section">
+      <view class="section-heading">
+        <text class="section-title">实际听到的回复</text>
+        <text class="section-caveat">缺少精确声道证据时一律按近似播放记录展示。</text>
+      </view>
+      <view wx:if="{{!heardTurns.length}}" class="section-empty">还没有听到的回复记录。</view>
+      <view wx:for="{{heardTurns}}" wx:key="event_id" class="card heard-item">
+        <text class="heard-text">{{item.text}}</text>
+        <view class="heard-meta">
+          <text class="heard-badge {{item.approximate ? 'badge-approx' : 'badge-exact'}}">{{item.approximate ? '近似播放记录' : '精确播放记录'}}</text>
+          <text class="heard-time">{{item.occurred_at}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 待你确认的记忆（PR-19） -->
+    <view class="review-section">
+      <view class="section-heading">
+        <text class="section-title">待你确认的记忆</text>
+        <text class="section-caveat">确认后才会进入已确认的记忆。</text>
+      </view>
+      <view wx:if="{{!memoryCandidates.length}}" class="section-empty">没有待确认的记忆。</view>
+      <view wx:for="{{memoryCandidates}}" wx:key="claim_id" class="card candidate-item">
+        <text class="candidate-value">{{item.value}}</text>
+        <text wx:if="{{item.reason}}" class="candidate-reason">{{item.reason}}</text>
+        <view class="candidate-meta">
+          <text wx:if="{{item.domain_category}}" class="meta-chip">{{item.domain_category}}</text>
+          <text wx:if="{{item.memory_kind}}" class="meta-chip">{{item.memory_kind}}</text>
+          <text wx:if="{{item.conflict_state}}" class="meta-chip">{{item.conflict_state}}</text>
+        </view>
+        <button class="primary-button confirm-button" data-claim-id="{{item.claim_id}}" disabled="{{reviewingClaimId}}" bindtap="confirmCandidate">确认</button>
+      </view>
+    </view>
+
+    <!-- 已确认的记忆（PR-19） -->
+    <view class="review-section">
+      <view class="section-heading">
+        <text class="section-title">已确认的记忆</text>
+        <text class="section-caveat">只展示服务端确认可回顾的记忆。</text>
+      </view>
+      <view wx:if="{{!confirmedMemories.length}}" class="section-empty">还没有已确认的记忆。</view>
+      <view wx:for="{{confirmedMemories}}" wx:key="memory_id" class="card memory-item">
+        <text wx:if="{{item.title}}" class="memory-title">{{item.title}}</text>
+        <text wx:if="{{item.snippet}}" class="memory-snippet">{{item.snippet}}</text>
+        <view class="candidate-meta">
+          <text wx:if="{{item.domain_category}}" class="meta-chip">{{item.domain_category}}</text>
+          <text wx:if="{{item.memory_kind}}" class="meta-chip">{{item.memory_kind}}</text>
+          <text wx:if="{{item.occurred_at}}" class="memory-time">{{item.occurred_at}}</text>
         </view>
       </view>
     </view>

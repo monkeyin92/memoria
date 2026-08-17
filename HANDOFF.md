@@ -12,6 +12,19 @@
 - GitHub Actions run `32003128393` 未通过；H5/小程序通过，Python collection、Media Edge lint 与 Media Edge image Trivy 失败，且同一失败签名在此前提交持续存在。远端 CI 当前不是绿色门禁，不影响已完成的 Agent/Bridge 零会话 canary 事实。
 - 当前层级严格为 `code=true`、`wired=true`、`enabled=true`（仅 Agent/Bridge 候选）、`production_runtime_verified=true`（零活跃会话服务器范围）；`direct_real_device_verified=false`、`full_duplex_verified=false`。T1–T14 继续为 `0 pass / 14 blocked / 0 failed`，Exact DAC、AEC Reference、双讲、精确 Actual Heard、100/500 轮和 T14 微信独立性没有新增证据。本轮没有刷写 ESP32，也没有触发设备或电脑播放。
 
+## PR-16 本地回归收口（2026-08-17；不扩展生产验收范围）
+
+- Tool cancel 已达到 `code / wired / enabled / local verified`：真实 interrupt、媒体抢占和 identity epoch rotation 都沿旧 generation 调用 `TaskManager.cancel_cancellable`；迟到 tool 结果同时受 cancelled 状态、generation/task/context fence 和 one-shot output gate 约束，不能形成新代语音输出。证据为 `test_cancelled_late_tool_result_cannot_form_new_generation_output`。
+- heard text cutoff 已达到 `code / wired / enabled / local verified`：provider timed transcript 与 Playback Ledger 在中断时只保留已生成、已确认的时间范围；未播放尾部不会进入 Actual Heard 候选。证据为 `test_existing_provider_adapter_cuts_unplayed_timed_text_on_interrupt` 及 media-session interruption/playback-ledger 回归。
+- 以上是当前 Agent/Bridge canary 范围内的本地回归和接线证据，不是有活跃设备会话的生产行为证据。Exact DAC watermark、真实设备 Actual Heard、AEC Reference、Double-talk、自然 Barge-in 与 T1–T14 仍保持未通过；`direct_real_device_verified` 和 `full_duplex_verified` 继续为 `false`。
+
+## PR-19 对话回顾投影（2026-08-17；本地闭环，不扩展真机验收）
+
+- `GET /v1/archive/conversation-review` 已成为小程序回顾页的窄投影权威，返回 `actual_heard`、`memory_candidates`、`confirmed_memories` 三个互斥分区；Actual Heard 只接受带 session/turn/generation fence 且同时满足 history/owner eligibility 的 `assistant.playout_stopped`，未明确 `approximate=false` 的记录默认按近似展示。
+- `POST /v1/archive/memories/{claim_id}/review` 继续作为唯一候选确认写路径；conversation review capability 在 Archive/Catalog 读取或写入前执行，双账号以及 adult/minor/unknown/missing 主体矩阵已覆盖。
+- 小程序 MemoryRecallPrivate 门禁、authEpoch 晚到保护、游客清理和确认后服务端权威重拉已接线；聚焦 23/23、小程序全量 150/150、Control API archive 测试 2/2 通过，Ruff 通过。当前层级为 `code + wired + local verified`。
+- 这不是精确 DAC watermark、真实设备 Actual Heard、AEC、Double-talk 或 `full_duplex_verified` 证据；`direct_real_device_verified=false`、`full_duplex_verified=false`、T1–T14 仍保持原状态。
+
 ## 当前状态（2026-08-16，Edge Bridge Health + supervisor 已 production enabled + runtime/chaos verified）
 
 - 当前未刷板固件候选已于 `2026-08-16T16:14:08Z` 从锁定 upstream

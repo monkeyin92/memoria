@@ -181,3 +181,137 @@
   font-size: 25rpx;
   line-height: 1.6;
 }
+
+/* ——— Conversation Review（PR-19） ——— */
+.review-section {
+  margin-top: 36rpx;
+}
+
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20rpx;
+  margin: 0 8rpx 20rpx;
+}
+
+.section-title {
+  color: #f2f5ff;
+  font-size: 32rpx;
+  font-weight: 800;
+  letter-spacing: 1rpx;
+}
+
+.section-caveat {
+  flex: none;
+  color: #8d99c4;
+  font-size: 22rpx;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.section-empty {
+  padding: 34rpx 32rpx;
+  border: 1rpx dashed rgba(94, 234, 255, 0.18);
+  border-radius: 24rpx;
+  color: #7d8ab5;
+  background: rgba(11, 16, 38, 0.55);
+  font-size: 26rpx;
+  text-align: center;
+}
+
+.heard-item,
+.candidate-item,
+.memory-item {
+  margin-bottom: 20rpx;
+}
+
+.heard-text,
+.candidate-value,
+.memory-title,
+.memory-snippet {
+  display: block;
+}
+
+.heard-text {
+  color: #f2f5ff;
+  font-size: 28rpx;
+  line-height: 1.65;
+}
+
+.heard-meta,
+.candidate-meta,
+.memory-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-top: 14rpx;
+}
+
+.heard-badge {
+  padding: 6rpx 16rpx;
+  border-radius: 999rpx;
+  font-size: 21rpx;
+  font-weight: 700;
+  letter-spacing: 1rpx;
+}
+
+.badge-approx {
+  border: 1rpx solid rgba(255, 179, 92, 0.35);
+  color: #ffc38a;
+  background: rgba(255, 179, 92, 0.12);
+}
+
+.badge-exact {
+  border: 1rpx solid rgba(94, 234, 255, 0.4);
+  color: #7ceaff;
+  background: rgba(34, 229, 255, 0.1);
+}
+
+.heard-time,
+.memory-time {
+  color: #707da8;
+  font-size: 22rpx;
+}
+
+.candidate-value {
+  color: #f2f5ff;
+  font-size: 28rpx;
+  line-height: 1.65;
+}
+
+.candidate-reason {
+  display: block;
+  margin-top: 10rpx;
+  color: #9aa6cf;
+  font-size: 24rpx;
+  line-height: 1.55;
+}
+
+.meta-chip {
+  padding: 6rpx 16rpx;
+  border: 1rpx solid rgba(123, 92, 255, 0.35);
+  border-radius: 999rpx;
+  color: #cdb4ff;
+  background: rgba(123, 92, 255, 0.12);
+  font-size: 21rpx;
+  letter-spacing: 1rpx;
+}
+
+.confirm-button {
+  margin-top: 22rpx;
+}
+
+.memory-title {
+  color: #f2f5ff;
+  font-size: 29rpx;
+  font-weight: 700;
+}
+
+.memory-snippet {
+  margin-top: 10rpx;
+  color: #9aa6cf;
+  font-size: 25rpx;
+  line-height: 1.6;
+}

@@ -2389,6 +2389,100 @@ async def timeline(
     }
 
 
+def _actual_heard_item(event: EvidenceEvent) -> dict[str, Any] | None:
+    payload = event.payload
+    text = payload.get("text")
+    if not (
+        event.event_type == "assistant.playout_stopped"
+        and event.speaker_class == "assistant"
+        and payload.get("actual_heard") is True
+        and payload.get("history_eligible") is True
+        and payload.get("owner_projection_eligible") is True
+        and isinstance(text, str)
+        and text.strip()
+        and event.session_id is not None
+        and event.turn_id is not None
+        and event.generation_id is not None
+    ):
+        return None
+    return {
+        "event_id": event.event_id,
+        "occurred_at": event.occurred_at.isoformat(),
+        "session_id": event.session_id,
+        "turn_id": event.turn_id,
+        "generation_id": event.generation_id,
+        "text": text.strip(),
+        # Exact DAC evidence must opt in explicitly. Missing or malformed
+        # telemetry remains an approximate playback record.
+        "approximate": payload.get("approximate") is not False,
+    }
+
+
+@router.get("/conversation-review")
+async def conversation_review(
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+    actual_heard_limit: int = Query(default=20, ge=1, le=50),
+    memory_limit: int = Query(default=20, ge=1, le=50),
+) -> dict[str, Any]:
+    require_capability_for_subject(
+        user,
+        "conversation_review",
+        store=_store(request),
+    )
+    bundle = await _archive(request).context(
+        ContextQuery(
+            account_id=user.user_id,
+            speaker_class="owner",
+            limit=min(100, actual_heard_limit * 4),
+        )
+    )
+    actual_heard = [
+        item
+        for event in bundle.evidence
+        if (item := _actual_heard_item(event)) is not None
+    ][:actual_heard_limit]
+    catalog = _catalog(request)
+    candidates = await catalog.review_queue(account_id=user.user_id)
+    confirmed = await catalog.search(
+        MemorySearchQuery(
+            account_id=user.user_id,
+            speaker_class="owner",
+            kinds=("claim",),
+            include_candidates=False,
+            limit=memory_limit,
+        )
+    )
+    return {
+        "actual_heard": actual_heard,
+        "memory_candidates": [
+            {
+                "claim_id": item.item_id,
+                "value": item.value,
+                "status": item.status,
+                "reason": item.reason,
+                "domain_category": item.domain_category,
+                "memory_kind": item.memory_kind,
+                "conflict_state": item.conflict_state,
+            }
+            for item in candidates[:memory_limit]
+        ],
+        "confirmed_memories": [
+            {
+                "memory_id": item.item_id,
+                "kind": item.kind,
+                "title": item.title,
+                "snippet": item.snippet,
+                "status": item.status,
+                "domain_category": item.domain_category,
+                "memory_kind": item.memory_kind,
+                "occurred_at": item.occurred_at.isoformat(),
+            }
+            for item in confirmed.items
+        ],
+    }
+
+
 def _search_item(item: Any) -> dict[str, Any]:
     return {
         "item_id": item.item_id,
@@ -2557,6 +2651,11 @@ async def review_memory(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
+    require_capability_for_subject(
+        user,
+        "conversation_review",
+        store=_store(request),
+    )
     try:
         reviewed = await _catalog(request).review(
             MemoryClaimReview(

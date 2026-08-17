@@ -11,18 +11,21 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import asyncpg
 import pytest
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from services.archive.domain import (
+    ContextBundle,
     ContextQuery,
     EvidenceEvent,
     LifeArchivePort,
     RawVoiceRevocation,
     SpeakerClass,
 )
+from services.archive.memory_domain import MemorySearchResult, ReviewedClaim
 from services.archive.object_store import ObjectRef
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.common.companions import designed_voice_speaker_sha256
@@ -225,6 +228,36 @@ async def _register_verified_adult(
         subject_category="adult",
         birth_year_band="adult",
         age_evidence_status="verified",
+        now=datetime.now(UTC).isoformat(),
+    )
+    logged_in_response = await client.post(
+        "/v1/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert logged_in_response.status_code == 200
+    logged_in = logged_in_response.json()
+    assert logged_in["user_id"] == registered["user_id"]
+    return logged_in
+
+
+async def _register_minor(
+    client: AsyncClient,
+    app: Any,
+    *,
+    username: str,
+    password: str = "safe-password",
+) -> dict[str, object]:
+    registered_response = await client.post(
+        "/v1/auth/register",
+        json={"username": username, "password": password},
+    )
+    assert registered_response.status_code == 201
+    registered = registered_response.json()
+    app.state.memory_store.update_subject_profile(
+        user_id=registered["user_id"],
+        subject_category="minor",
+        birth_year_band="14_17",
+        age_evidence_status="unverified",
         now=datetime.now(UTC).isoformat(),
     )
     logged_in_response = await client.post(
@@ -2797,6 +2830,312 @@ async def test_account_can_search_review_and_trace_compiled_life_memory(
         "memory-api-0",
         "memory-api-1",
     }
+
+
+@pytest.mark.asyncio
+async def test_conversation_review_projects_actual_heard_and_separates_claim_states(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    internal = {"X-Memoria-Internal-Token": "test-internal-archive-token"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await _register_verified_adult(
+            client,
+            app,
+            username="conversation-review-first",
+        )
+        second = await _register_verified_adult(
+            client,
+            app,
+            username="conversation-review-second",
+        )
+        first_headers = {"Authorization": f"Bearer {first['access_token']}"}
+        second_headers = {"Authorization": f"Bearer {second['access_token']}"}
+        first_session = (
+            await client.post("/v1/sessions", headers=first_headers, json={})
+        ).json()
+        second_session = (
+            await client.post("/v1/sessions", headers=second_headers, json={})
+        ).json()
+
+        async def append_turn(
+            *,
+            event_id: str,
+            session_id: str,
+            text: str,
+            turn_id: int,
+            speaker_class: str = "owner",
+            assistant_text: str | None = None,
+            approximate: bool | None = None,
+        ) -> None:
+            occurred_at = datetime(2026, 8, 17, 8, turn_id, tzinfo=UTC)
+            parent = await client.post(
+                "/v1/archive/session-events",
+                headers=internal,
+                json={
+                    "event_id": event_id,
+                    "session_id": session_id,
+                    "event_type": "speech.utterance_finalized",
+                    "occurred_at": occurred_at.isoformat(),
+                    "speaker_class": speaker_class,
+                    "source": "test",
+                    "turn_id": turn_id,
+                    "generation_id": turn_id,
+                    "payload": {"text": text},
+                },
+            )
+            assert parent.status_code == 201
+            if assistant_text is None:
+                return
+            payload: dict[str, object] = {
+                "text": assistant_text,
+                "actual_heard": True,
+            }
+            if approximate is not None:
+                payload["approximate"] = approximate
+            assistant = await client.post(
+                "/v1/archive/session-events",
+                headers=internal,
+                json={
+                    "event_id": f"{event_id}-heard",
+                    "session_id": session_id,
+                    "event_type": "assistant.playout_stopped",
+                    "occurred_at": (occurred_at + timedelta(seconds=1)).isoformat(),
+                    "speaker_class": "assistant",
+                    "source": "generation_fence.actual_heard",
+                    "turn_id": turn_id,
+                    "generation_id": turn_id,
+                    "tool_epoch": 0,
+                    "payload": payload,
+                },
+            )
+            assert assistant.status_code == 201
+
+        await append_turn(
+            event_id="first-confirmed",
+            session_id=first_session["session_id"],
+            text="我们家的家训是答应别人的事一定做到。",
+            turn_id=1,
+            assistant_text="我会记住这条家训。",
+            approximate=False,
+        )
+        await append_turn(
+            event_id="first-candidate",
+            session_id=first_session["session_id"],
+            text="我在杭州读过书。",
+            turn_id=2,
+            assistant_text="你曾在杭州读书。",
+        )
+        await append_turn(
+            event_id="first-guest",
+            session_id=first_session["session_id"],
+            text="访客内容不能进入主人回顾。",
+            turn_id=3,
+            speaker_class="guest",
+            assistant_text="这条回复也不能进入主人回顾。",
+        )
+        await append_turn(
+            event_id="second-confirmed",
+            session_id=second_session["session_id"],
+            text="我最喜欢蓝色。",
+            turn_id=4,
+            assistant_text="第二个账号实际听到的内容。",
+        )
+        await append_turn(
+            event_id="second-candidate",
+            session_id=second_session["session_id"],
+            text="我曾在北京生活。",
+            turn_id=5,
+        )
+        await app.state.memory_catalog.compile_pending()
+
+        first_queue = (
+            await client.get("/v1/archive/review-queue", headers=first_headers)
+        ).json()["items"]
+        second_queue = (
+            await client.get("/v1/archive/review-queue", headers=second_headers)
+        ).json()["items"]
+        first_confirmed_claim = next(
+            item for item in first_queue if item["source_event_id"] == "first-confirmed"
+        )
+        second_confirmed_claim = next(
+            item for item in second_queue if item["source_event_id"] == "second-confirmed"
+        )
+        second_candidate_claim = next(
+            item for item in second_queue if item["source_event_id"] == "second-candidate"
+        )
+        for headers, claim in (
+            (first_headers, first_confirmed_claim),
+            (second_headers, second_confirmed_claim),
+        ):
+            response = await client.post(
+                f"/v1/archive/memories/{claim['item_id']}/review",
+                headers=headers,
+                json={"action": "confirm"},
+            )
+            assert response.status_code == 200
+
+        cross_account_review = await client.post(
+            f"/v1/archive/memories/{second_candidate_claim['item_id']}/review",
+            headers=first_headers,
+            json={"action": "confirm"},
+        )
+        projection = await client.get(
+            "/v1/archive/conversation-review",
+            headers=first_headers,
+        )
+        injected_account = await client.get(
+            "/v1/archive/conversation-review",
+            headers=first_headers,
+            params={"account_id": second["user_id"]},
+        )
+        second_projection = await client.get(
+            "/v1/archive/conversation-review",
+            headers=second_headers,
+        )
+
+    assert cross_account_review.status_code == 404
+    assert projection.status_code == 200
+    body = projection.json()
+    heard_by_text = {item["text"]: item for item in body["actual_heard"]}
+    assert set(heard_by_text) == {
+        "我会记住这条家训。",
+        "你曾在杭州读书。",
+    }
+    assert heard_by_text["我会记住这条家训。"]["approximate"] is False
+    assert heard_by_text["你曾在杭州读书。"]["approximate"] is True
+    assert all(item["status"] in {"candidate", "disputed"} for item in body["memory_candidates"])
+    assert {item["status"] for item in body["confirmed_memories"]} == {"confirmed"}
+    candidate_ids = {item["claim_id"] for item in body["memory_candidates"]}
+    confirmed_ids = {item["memory_id"] for item in body["confirmed_memories"]}
+    assert first_confirmed_claim["item_id"] in confirmed_ids
+    assert first_confirmed_claim["item_id"] not in candidate_ids
+    assert second_confirmed_claim["item_id"] not in confirmed_ids
+    assert second_candidate_claim["item_id"] not in candidate_ids
+    assert injected_account.json() == body
+    assert second_candidate_claim["item_id"] in {
+        item["claim_id"] for item in second_projection.json()["memory_candidates"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_conversation_review_subject_matrix_precedes_private_reads_and_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        adult = await _register_verified_adult(
+            client,
+            app,
+            username="conversation-review-adult",
+        )
+        minor = await _register_minor(
+            client,
+            app,
+            username="conversation-review-minor",
+        )
+        unknown = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "conversation-review-unknown", "password": "safe-password"},
+            )
+        ).json()
+        missing = (
+            await client.post(
+                "/v1/auth/register",
+                json={"username": "conversation-review-missing", "password": "safe-password"},
+            )
+        ).json()
+        headers = {
+            name: {"Authorization": f"Bearer {identity['access_token']}"}
+            for name, identity in (
+                ("adult", adult),
+                ("minor", minor),
+                ("unknown", unknown),
+                ("missing", missing),
+            )
+        }
+
+        archive_context = AsyncMock(return_value=ContextBundle())
+        review_queue = AsyncMock(return_value=())
+        search = AsyncMock(return_value=MemorySearchResult())
+        review = AsyncMock(
+            return_value=ReviewedClaim(
+                claim_id="claim-allowed",
+                status="confirmed",
+                value="允许确认",
+                review_event_id="review-allowed",
+            )
+        )
+        monkeypatch.setattr(app.state.life_archive, "context", archive_context)
+        monkeypatch.setattr(app.state.memory_catalog, "review_queue", review_queue)
+        monkeypatch.setattr(app.state.memory_catalog, "search", search)
+        monkeypatch.setattr(app.state.memory_catalog, "review", review)
+
+        for category in ("adult", "minor"):
+            response = await client.get(
+                "/v1/archive/conversation-review",
+                headers=headers[category],
+            )
+            assert response.status_code == 200
+            reviewed = await client.post(
+                "/v1/archive/memories/claim-allowed/review",
+                headers=headers[category],
+                json={"action": "confirm"},
+            )
+            assert reviewed.status_code == 200
+
+        assert archive_context.await_count == 2
+        assert review_queue.await_count == 2
+        assert search.await_count == 2
+        assert review.await_count == 2
+        for mock in (archive_context, review_queue, search, review):
+            mock.reset_mock()
+
+        original_get_subject_profile = app.state.memory_store.get_subject_profile
+
+        def get_subject_profile(*, user_id: str) -> dict[str, Any] | None:
+            if user_id == missing["user_id"]:
+                return None
+            return original_get_subject_profile(user_id=user_id)
+
+        monkeypatch.setattr(
+            app.state.memory_store,
+            "get_subject_profile",
+            get_subject_profile,
+        )
+        denied = {}
+        for category in ("unknown", "missing"):
+            denied[(category, "read")] = await client.get(
+                "/v1/archive/conversation-review",
+                headers=headers[category],
+            )
+            denied[(category, "write")] = await client.post(
+                "/v1/archive/memories/claim-denied/review",
+                headers=headers[category],
+                json={"action": "confirm"},
+            )
+
+    for operation in ("read", "write"):
+        assert denied[("unknown", operation)].status_code == 403
+        assert denied[("unknown", operation)].json()["detail"] == {
+            "code": "subject_capability_forbidden",
+            "capability": "conversation_review",
+        }
+        assert denied[("missing", operation)].status_code == 403
+        assert denied[("missing", operation)].json()["detail"] == {
+            "code": "subject_category_unavailable",
+            "capability": "conversation_review",
+        }
+    archive_context.assert_not_awaited()
+    review_queue.assert_not_awaited()
+    search.assert_not_awaited()
+    review.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -129,6 +129,53 @@ async def test_stale_deep_result_cannot_form_output_intent(stale_gate: str) -> N
 
 
 @pytest.mark.asyncio
+async def test_cancelled_late_tool_result_cannot_form_new_generation_output() -> None:
+    manager = TaskManager()
+
+    async def late_search(
+        _args: dict[str, object],
+        cancel_event: asyncio.Event,
+    ) -> dict[str, str]:
+        # Model a cooperative provider that finishes after the cancellation
+        # signal, which is still a late result and must not be spoken.
+        await cancel_event.wait()
+        return {"summary": "旧 generation 的迟到结果"}
+
+    manager.register(
+        ToolSpec(
+            "search",
+            "",
+            {},
+            True,
+            True,
+            1,
+            side_effect_policy=SideEffectPolicy.READ_ONLY.value,
+        ),
+        late_search,
+    )
+    coordinator = DelegationCoordinator(manager)
+    request = _request()
+    handle = await coordinator.delegate(request)
+
+    await manager.cancel_cancellable(request.fence)
+    await handle.record.task
+
+    assert handle.record.cancelled is True
+    assert handle.record.result == {"summary": "旧 generation 的迟到结果"}
+    assert (
+        coordinator.output_intent(
+            handle,
+            current_fence=request.fence.bump_generation(),
+            current_task_epoch=request.task_epoch,
+            current_context_version=request.context_version,
+            relevant=True,
+            now_ms=1_001,
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_tool_timeout_does_not_block_realtime_interaction_plane() -> None:
     manager = TaskManager()
 

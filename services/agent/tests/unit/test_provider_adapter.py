@@ -248,6 +248,14 @@ class TimedStreamingSpeech(FakeStreamingSpeech):
         return (SimpleNamespace(text="你好。", start_time=0.0, end_time=0.02),)
 
 
+class PrefixAndTailTimedStreamingSpeech(FakeStreamingSpeech):
+    def timed_transcript(self) -> tuple[SimpleNamespace, ...]:
+        return (
+            SimpleNamespace(text="已播放。", start_time=0.0, end_time=0.02),
+            SimpleNamespace(text="未播放。", start_time=0.02, end_time=0.04),
+        )
+
+
 class PendingTimedStreamingSpeech(FakeStreamingSpeech):
     def timed_transcript(self) -> tuple[SimpleNamespace, ...]:
         return (SimpleNamespace(text="你好", start_time=0.0, end_time=0.5),)
@@ -858,6 +866,33 @@ async def test_existing_provider_adapter_exposes_safe_timed_prefix_during_interr
 
     assert [(span.text, span.audio_start_sample, span.audio_end_sample) for span in spans] == [
         ("你好。", 0, 480)
+    ]
+    assert adapter.cancel_generation(fence)
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_cuts_unplayed_timed_text_on_interrupt() -> None:
+    speech = PrefixAndTailTimedStreamingSpeech(
+        # Two output frames: the first frame has been yielded, while the
+        # second remains buffered behind the provider's release gate.
+        (b"\x01\x00" * 960,),
+        release_after_first=asyncio.Event(),
+    )
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: FakeASR()),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, speech),
+    )
+    identity = SessionIdentity("interrupt-prefix-cutoff", stream_epoch=1)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+    stream = adapter.generate_reply(identity, "hi", fence)
+
+    assert (await anext(stream)).first
+    spans = await adapter.interrupted_timed_text_spans(fence)
+
+    assert [(span.text, span.audio_start_sample, span.audio_end_sample) for span in spans] == [
+        ("已播放。", 0, 480)
     ]
     assert adapter.cancel_generation(fence)
     await stream.aclose()

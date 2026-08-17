@@ -436,6 +436,37 @@ function summarizeDay(userId, date) {
   });
 }
 
+/*
+ * 私人回顾的权威投影（PR-19）。服务端按当前认证主体返回三个分区：
+ * actual_heard / memory_candidates / confirmed_memories，客户端只消费
+ * 窄字段，不透出完整 Archive payload。调用方必须先过 Runtime Profile 门禁。
+ */
+function getConversationReview() {
+  return rawRequest("/v1/archive/conversation-review");
+}
+
+/*
+ * 候选记忆确认（PR-19）。动作只允许服务端定义的 confirm；客户端确认
+ * 成功后必须重新拉取权威投影，绝不本地把 candidate 直接升级为已确认。
+ */
+function reviewMemoryClaim(claimId, action = "confirm") {
+  if (
+    typeof claimId !== "string" ||
+    !claimId ||
+    claimId.trim() !== claimId ||
+    claimId.length > 256
+  ) {
+    return Promise.reject(new TypeError("记忆确认参数无效"));
+  }
+  if (action !== "confirm") {
+    return Promise.reject(new TypeError("不支持的记忆确认动作"));
+  }
+  return rawRequest(`/v1/archive/memories/${encodeURIComponent(claimId)}/review`, {
+    method: "POST",
+    data: { action },
+  });
+}
+
 function getGrowthOverview() {
   return rawRequest("/v1/growth/overview");
 }
@@ -790,6 +821,8 @@ module.exports = {
   updateProfile,
   getMemoryDays,
   summarizeDay,
+  getConversationReview,
+  reviewMemoryClaim,
   getGrowthOverview,
   getPersonaStatus,
   getDigitalSelfVersions,

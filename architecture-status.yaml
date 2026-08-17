@@ -34,7 +34,7 @@ student_track_as_of: 2026-08-09_local_worktree
 local_worktree_candidate:
   as_of_date: 2026-08-17
   head_commit: 91f179069055720795fadafc1839045c1cc61f31
-  dirty: false
+  dirty: true
   code: complete
   wired: production_agent_bridge_and_local_remaining_components
   enabled: scoped_agent_bridge_canary
@@ -45,6 +45,9 @@ local_worktree_candidate:
   regression_evidence:
     speaker_authority_403_subject_matrix: passed_local_2026-08-17
     generation_delegation_output_claim: passed_local_2026-08-17
+    pr16_tool_cancel_late_result_fence: passed_local_2026-08-17
+    pr16_heard_text_cutoff_timed_spans: passed_local_2026-08-17
+    pr19_conversation_review_projection: passed_control_api_matrix_and_miniprogram_2026-08-17
     media_turn_fences_and_retry: passed_local_2026-08-17
     empty_audio_fail_closed_python_go_esp32: passed_local_2026-08-17
     runtime_profile_low_cardinality_denials: passed_local_2026-08-17
@@ -344,6 +347,8 @@ stages:
   generation_delegation_output_claim: production_20260817_agent_bridge_canary_enabled_runtime_verified_zero_session
   speaker_authority_subject_policy_matrix: production_agent_handling_enabled_control_candidate_not_switched_real_policy_rejection_pending
   hardware_playback_actual_heard: prior_legacy_candidate_two_turn_user_confirmed_current_direct_candidate_unverified_watermark_still_approximate
+  conversation_review_projection: code_wired_local_verified_subject_gated_2026-08-17
+  memory_candidate_confirmation_partition: code_wired_local_verified_confirmed_claim_only_2026-08-17
   hardware_hard_stop: implemented_local_pending_real_audible_latency
   runtime_profile_device_ack: implemented_local_edge_observed
   runtime_profile_settings_atomicity: implemented_local
@@ -371,6 +376,9 @@ gates:
   local_strict_mypy: passed_399_source_files_2026_08_17
   local_proto_generation: passed
   local_python_tests: passed_agent_full_suite_1558_media_session_78_speech_timeline_5_2026_08_17
+  local_pr16_tool_cancel: passed_test_cancelled_late_tool_result_2026-08-17
+  local_pr16_heard_text_cutoff: passed_provider_timed_spans_and_media_session_2026-08-17
+  local_pr19_conversation_review: passed_archive_api_2_and_miniprogram_150_2026-08-17
   local_control_api_tests: passed_586_2026-08-17
   local_speaker_router_runtime_profile_focus: passed_165_2026-08-17
   local_voice_core_focus: passed_126_2026-08-17
@@ -382,7 +390,7 @@ gates:
   local_h5_tests: passed
   local_h5_test_count: passed_372_node_24_16_0
   local_h5_production_build: passed_node_24_16_0
-  local_miniprogram_tests: passed_142_node_24_16_0_upload_dry_run
+  local_miniprogram_tests: passed_150_node_24_16_0_upload_dry_run
   local_go_tests: passed_all_and_focus_20x_2026-08-17
   local_go_race: passed
   local_go_vet: passed
