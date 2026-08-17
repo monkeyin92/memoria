@@ -1,14 +1,22 @@
 # 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
 # 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
 schema_version: 2
-as_of_commit: 91f179069055720795fadafc1839045c1cc61f31
+as_of_commit: 24784a90f3e6d3cfb6638d13b1d432edbc4f8d17
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 production_release_tag: 20260814-231749-direct-canary
 production_release_symlink: /opt/memoria/releases/20260812-173008
-production_code_release_tag: 20260817-135129
-production_code_commit: 91f179069055720795fadafc1839045c1cc61f31
+production_code_release_tag: 20260817-171013
+production_code_commit: 24784a90f3e6d3cfb6638d13b1d432edbc4f8d17
 production_runtime_overlays:
+  control_api:
+    image: memoria-control-api:20260817-171013
+    image_id: sha256:02d4d86a349c2dd255f44fe0229c93e5d1a82337bde6cb81a418e22f0bec40e2
+    runtime_release_tag: 20260814-231749-direct-canary
+    production_runtime_verified: true
+    delayed_recheck_at: "2026-08-17T10:03:45Z"
+    unauthenticated_read_write_routes: fail_closed_401
+    cutover_evidence_sha256: a64b8d8897db818d26abe07344fe3b2bba8a6ab679e13a4ec02d7f88bdca1399
   agent:
     image: memoria-agent:20260817-135129
     runtime_release_tag: 20260814-231749-direct-canary
@@ -33,13 +41,13 @@ student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
   as_of_date: 2026-08-17
-  head_commit: 91f179069055720795fadafc1839045c1cc61f31
-  dirty: true
+  head_commit: 24784a90f3e6d3cfb6638d13b1d432edbc4f8d17
+  dirty: false
   code: complete
-  wired: production_agent_bridge_and_local_remaining_components
-  enabled: scoped_agent_bridge_canary
-  verified: local_plus_zero_session_production_runtime
-  production_deployed: scoped_agent_bridge_canary
+  wired: production_agent_bridge_control_and_local_remaining_components
+  enabled: scoped_agent_bridge_control_canaries
+  verified: local_plus_scoped_zero_session_production_runtime
+  production_deployed: scoped_agent_bridge_control_canaries
   direct_real_device_verified: false
   full_duplex_verified: false
   regression_evidence:
@@ -47,7 +55,7 @@ local_worktree_candidate:
     generation_delegation_output_claim: passed_local_2026-08-17
     pr16_tool_cancel_late_result_fence: passed_local_2026-08-17
     pr16_heard_text_cutoff_timed_spans: passed_local_2026-08-17
-    pr19_conversation_review_projection: passed_control_api_matrix_and_miniprogram_2026-08-17
+    pr19_conversation_review_projection: passed_control_api_matrix_miniprogram_local_and_control_api_production_route_2026-08-17
     media_turn_fences_and_retry: passed_local_2026-08-17
     empty_audio_fail_closed_python_go_esp32: passed_local_2026-08-17
     runtime_profile_low_cardinality_denials: passed_local_2026-08-17
@@ -335,7 +343,7 @@ stages:
   student_tutor: implemented_local
   student_weekly_report_and_crisis_outbox: implemented_local
   student_offsite_backup_tooling: implemented_local_not_operated
-  miniprogram_control_plane_only: implemented_local_static_gate_passed
+  miniprogram_control_plane_only: implemented_local_static_gate_passed_unpublished
   esp32_device_protocol_v2: production_direct_canary_enabled_runtime_verified_real_device_pending
   esp32_legacy_v1_rolling_fallback: implemented_prior_real_board_two_turn_verified
   funasr_per_vad_task_rotation: implemented_agent_canary_prior_real_board_two_turn_verified_1493_tests_passed
@@ -345,10 +353,10 @@ stages:
   media_turn_lifecycle_hardening: production_20260817_agent_bridge_canary_enabled_runtime_verified_real_device_pending
   media_bridge_hot_replacement_redial: production_20260817_bridge_hot_replacement_auto_redial_verified_zero_session_direct_real_device_pending
   generation_delegation_output_claim: production_20260817_agent_bridge_canary_enabled_runtime_verified_zero_session
-  speaker_authority_subject_policy_matrix: production_agent_handling_enabled_control_candidate_not_switched_real_policy_rejection_pending
+  speaker_authority_subject_policy_matrix: production_agent_and_control_enabled_runtime_verified_zero_session_real_policy_rejection_pending
   hardware_playback_actual_heard: prior_legacy_candidate_two_turn_user_confirmed_current_direct_candidate_unverified_watermark_still_approximate
-  conversation_review_projection: code_wired_local_verified_subject_gated_2026-08-17
-  memory_candidate_confirmation_partition: code_wired_local_verified_confirmed_claim_only_2026-08-17
+  conversation_review_projection: code_wired_control_api_enabled_production_route_fail_closed_verified_miniprogram_unpublished_2026-08-17
+  memory_candidate_confirmation_partition: code_wired_control_api_enabled_local_matrix_verified_miniprogram_unpublished_2026-08-17
   hardware_hard_stop: implemented_local_pending_real_audible_latency
   runtime_profile_device_ack: implemented_local_edge_observed
   runtime_profile_settings_atomicity: implemented_local
@@ -427,6 +435,12 @@ gates:
   media_turn_retry_canary: passed_production_runtime_delayed_check_real_device_pending
   media_bridge_hot_replacement_auto_redial: passed_production_mtls_health_zero_session_rollback_and_chaos_2026_08_16_alert_delivery_and_full_matrix_pending
   release_20260817_agent_bridge_canary: passed_production_runtime_delayed_check_auto_rollback_exercised_real_device_pending
+  release_20260817_control_api_canary: passed_production_runtime_public_8443_and_route_fail_closed_2026_08_17
+  release_20260817_control_api_first_cutover: automatic_rollback_passed_after_single_readiness_503_body_not_captured
+  release_20260817_control_api_second_cutover: passed_after_3_readiness_probes_first_2_agent_missing_then_ready
+  release_20260817_control_api_evidence_sha256: a64b8d8897db818d26abe07344fe3b2bba8a6ab679e13a4ec02d7f88bdca1399
+  release_20260817_control_api_attempt1_evidence_sha256: 0b98695f2197411ac684159eaa4a778a4de06f2a8dd84e04c451ba9eaacabcfc
+  miniprogram_pr19_publish: pending_wechat_experience_release_and_real_device_acceptance
   direct_real_device_t4_t7: pending_fresh_same_generation_serial_server_and_actual_heard_evidence
   direct_multi_instance_replay_and_lease: production_single_edge_redis_mtls_runtime_verified_local_two_edge_real_redis_passed_production_multi_edge_ha_chaos_pending
   device_wss_server_ca_validation: pending_real_firmware_tls_evidence
@@ -447,7 +461,7 @@ gates:
   capacity_matrix: pending
   redis_session_ownership: production_single_edge_redis_mtls_runtime_verified_local_atomic_takeover_passed_production_multi_edge_ha_chaos_pending
   chaos_recovery: pending
-  canary_and_rollback: release_20260817_agent_bridge_healthy_automatic_rollback_exercised_second_cutover_passed_zero_session_only
+  canary_and_rollback: release_20260817_agent_bridge_and_control_api_healthy_automatic_rollbacks_exercised_second_cutovers_passed_zero_session_only
 
 external_evidence_policy:
   fail_closed: true

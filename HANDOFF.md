@@ -1,6 +1,16 @@
 # 项目交接
 
-## 当前生产增量（2026-08-17，已提交、推送并完成 Agent/Bridge canary）
+## 当前生产增量（2026-08-17，PR-19 Control API 已提交、推送并部署）
+
+- 发布代码提交 `24784a90f3e6d3cfb6638d13b1d432edbc4f8d17` 与 annotated tag `20260817-171013` 已推送 `origin/main`；tag 不再移动。发布仅切换 Control API。小程序代码虽已通过 150/150 本地测试，但未发布体验版；Agent、Bridge、Media Edge、H5、ESP32 固件、Nginx 与数据服务均未随本 release 切换。
+- 当前 Control API 运行 `memoria-control-api:20260817-171013`，image ID `sha256:02d4d86a349c2dd255f44fe0229c93e5d1a82337bde6cb81a418e22f0bec40e2`，容器 `1efe4040348cdf22d5e980c1daa15bbe2d8ad901236d3320ee4a2d85ed0e7eaf`，OCI revision/version/role/arch 为 `24784a90… / 20260817-171013 / control-api / amd64`。Docker health 为 healthy、restart count 为 0；`/data` 以 `/var/lib/memoria` 读写挂载，媒体 runtime 以 `/etc/memoria-media-runtime` 只读挂载，端口仍为 `127.0.0.1:8791`。
+- 为保持分层 canary fence，Control API 进程继续使用 `MEMORIA_RELEASE_TAG=20260814-231749-direct-canary`。第一次切换于 `2026-08-17T09:42:39Z` 启动，候选 healthy 后单次 readiness 返回 503，脚本于 `09:43:14Z` 自动恢复旧镜像 `sha256:2558c09f8d42b8a64e0bbdd8aab42328d90155e5cff20d8abfef9eda8647c976`，回滚后 healthy、restart count 0、readiness 200。第一次响应体未留存，因此不能仅凭该次记录断言原因。
+- 加固脚本后第二次切换于 `2026-08-17T09:51:03Z–09:51:28Z` 成功。前两次 readiness 明确为 `smokes=passed`、12 项 core 均 ready、`agent.status=missing`；第 3 次收到同代际 Agent heartbeat 后变为 200/ready。这证明启动窗口 503 是新进程等待下一次心跳，而不是 smoke/core 或候选代码故障。成功后的日志窗口 `Traceback / ERROR / 5xx = 0 / 0 / 0`。
+- 生产业务边界已验证：本机和公网 8443 的 live/ready 均通过，readiness 与 Agent heartbeat 都保持 `20260814-231749-direct-canary`；公网未认证 `GET /memoria-api/v1/archive/conversation-review` 与 `POST /memoria-api/v1/archive/memories/{claim_id}/review` 均返回 401，证明读写路由存在且 fail closed。公网根 H5、兼容 H5、SPA、WMS 均为 200，`/memoria-api/internal/` 仍为 404。`2026-08-17T10:03:45Z` 延迟复核时 Control API 仍为 healthy、restart count 0，成功切流后的 `Traceback / ERROR / 5xx` 仍为 `0 / 0 / 0`；11 个旁路容器 ID 全部未变且状态正常，runtime/H5 软链仍为 `20260812-173008` / `20260808-171749`。
+- 服务器证据为 `/opt/memoria/direct-canaries/20260817-171013/CUTOVER_RESULT.txt`，SHA-256 `a64b8d8897db818d26abe07344fe3b2bba8a6ab679e13a4ec02d7f88bdca1399`；第一次自动回滚证据 `CUTOVER_ATTEMPT1.txt` 的 SHA-256 为 `0b98695f2197411ac684159eaa4a778a4de06f2a8dd84e04c451ba9eaacabcfc`。当前根盘约 15 GiB 可用、88% 使用；保留当前 Control API 候选、即时可运行回滚镜像及两次切换证据，禁止 broad Docker prune。
+- 层级必须分别记录：Control API 为 `code / wired / enabled / production runtime verified`；小程序 PR-19 页面为 `code / wired / local verified`，尚未发布。没有新增真实 ESP32、Exact DAC、AEC Reference、Double-talk、精确 Actual Heard、100/500 轮或微信双端证据；`direct_real_device_verified=false`、`full_duplex_verified=false`，T1–T14 仍为 `0 pass / 14 blocked / 0 failed`。
+
+## 上一生产增量（2026-08-17，已提交、推送并完成 Agent/Bridge canary）
 
 - 发布代码提交与 tag 均为 `91f179069055720795fadafc1839045c1cc61f31` / `20260817-135129`；代码提交已推送 `origin/main`，发布 tag 不再移动。固定 amd64 工件已上传并校验，实际只切换 `agent` 与 `voice-core-media-bridge`；Control API、Media Edge、Speaker Model、两个 Gateway、数据层、LiveKit、Nginx 与 H5 均未切换。
 - Agent 与 Bridge 当前均运行 `memoria-agent:20260817-135129`，image ID `sha256:163c4d534fa06a4b796a5217fcaead32ea97162a108bef1c4c6237f94238cb4e`，OCI revision 与发布提交一致。Agent 继续报告 Control 接受的 runtime tag `20260814-231749-direct-canary`；Bridge 保留 `20260816-bridge-liveness-83af813`，避免分层 canary 的 release fence 被破坏。
