@@ -138,6 +138,81 @@ async def test_funasr_send_lag_uses_websocket_send_elapsed_time(
     await session.send_pcm(b"\x00\x00", capture_start_sample=0)
 
     assert metrics.get("asr_send_lag_ms") == pytest.approx(25.0)
+    assert session.task_audio_start_sample == 0
+    assert session.task_audio_end_sample == 1
+    assert session.task_audio_send_count == 1
+
+
+@pytest.mark.asyncio
+async def test_funasr_failed_send_without_replay_does_not_claim_provider_pcm() -> None:
+    class FailingWebSocket:
+        async def send(self, _payload: object) -> None:
+            raise RuntimeError("send failed")
+
+        async def close(self) -> None:
+            return None
+
+    class RecoveredWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[object] = []
+
+        async def send(self, payload: object) -> None:
+            self.sent.append(payload)
+
+        async def close(self) -> None:
+            return None
+
+    recovered = RecoveredWebSocket()
+    session = FunASRSession(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    session._ws = FailingWebSocket()  # type: ignore[assignment]
+    session._ready.set()
+
+    async def open_recovered() -> tuple[RecoveredWebSocket, str, tuple[object, ...]]:
+        return recovered, "task-recovered", ()
+
+    session._open_with_retry = open_recovered  # type: ignore[method-assign]
+
+    # A replayed frame is deliberately not in the bounded ring. Recovery has
+    # no bytes to replay, so the failed send must not become provider evidence.
+    await session.send_pcm(
+        b"\x01\x00" * 4,
+        replayed=True,
+        capture_start_sample=100,
+    )
+
+    assert recovered.sent == []
+    assert session.task_audio_start_sample is None
+    assert session.task_audio_end_sample is None
+    assert session.task_audio_send_count == 0
+
+
+@pytest.mark.asyncio
+async def test_funasr_replay_send_failure_clears_provider_pcm_evidence() -> None:
+    class FailingWebSocket:
+        async def send(self, _payload: object) -> None:
+            raise RuntimeError("send failed")
+
+        async def close(self) -> None:
+            return None
+
+    session = FunASRSession(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    session._task_sample_origin = 0
+    session._last_sent_sample = 4
+    session._push_ring(b"\x01\x00" * 4)
+    session._ws = FailingWebSocket()  # type: ignore[assignment]
+    session._ready.set()
+
+    async def open_recovered() -> tuple[FailingWebSocket, str, tuple[object, ...]]:
+        return FailingWebSocket(), "task-recovered", ()
+
+    session._open_with_retry = open_recovered  # type: ignore[method-assign]
+
+    with pytest.raises(APIConnectionError, match="reconnect failed"):
+        await session.send_pcm(b"\x02\x00", capture_start_sample=4)
+
+    assert session.task_audio_start_sample is None
+    assert session.task_audio_end_sample is None
+    assert session.task_audio_send_count == 0
 
 
 @pytest.mark.asyncio
@@ -153,6 +228,9 @@ async def test_funasr_first_frame_adopts_origin_and_backward_sample_is_rejected(
     await session.send_pcm(b"\x00\x00" * 2, capture_start_sample=320)
 
     assert session.task_sample_origin == 320
+    assert session.task_audio_start_sample == 320
+    assert session.task_audio_end_sample == 322
+    assert session.task_audio_send_count == 1
     with pytest.raises(ValueError, match="moved backwards"):
         await session.send_pcm(b"\x00\x00", capture_start_sample=321)
 

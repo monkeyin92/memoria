@@ -127,7 +127,13 @@ class MediaSessionInputMixin:
                 interruption = None
             await self._apply_projection_segment(context, segment)
             if segment.final:
-                if not await self._audio_ingress.finalize_speech_segment(context):
+                if not await self._audio_ingress.finalize_speech_segment(
+                    context,
+                    vad_start_sample=context.turn_start_sample,
+                    vad_event_sample=segment.capture_start_sample,
+                    voiced_end_sample=segment.voiced_end_sample,
+                    finalize_reason="vad_end",
+                ):
                     return
                 voiced_end_sample = (
                     segment.voiced_end_sample

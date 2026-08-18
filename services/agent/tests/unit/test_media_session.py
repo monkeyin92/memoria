@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from types import SimpleNamespace
@@ -41,7 +42,10 @@ from services.agent.src.voice_core.media_session import (
     MediaVoiceProvider,
     _OutputWork,
 )
-from services.agent.src.voice_core.media_session_types import DelegationOutputState
+from services.agent.src.voice_core.media_session_types import (
+    DelegationOutputState,
+    ProviderAudioTaskSnapshot,
+)
 from services.agent.src.voice_core.playback_ledger import PlaybackSpan
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
 from services.agent.src.voice_core.speech_timeline import (
@@ -1762,7 +1766,11 @@ async def test_audio_ingress_provider_failure_drains_backlog_and_recovers_next_f
 
 
 @pytest.mark.asyncio
-async def test_audio_ingress_serializes_duplicate_finalize_watermark() -> None:
+async def test_audio_ingress_serializes_duplicate_finalize_watermark(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="services.agent.src.voice_core.media_audio_ingress")
+
     class FinalizeProvider(FakeMediaProvider):
         def __init__(self) -> None:
             super().__init__()
@@ -1806,6 +1814,14 @@ async def test_audio_ingress_serializes_duplicate_finalize_watermark() -> None:
     assert await asyncio.gather(first, second) == [True, True]
     assert provider.finalize_calls == 1
     assert context.ingress.last_finalized_audio_watermark == 2
+    boundary_logs = [
+        json.loads(record.message.removeprefix("media_asr_boundary "))
+        for record in caplog.records
+        if record.message.startswith("media_asr_boundary ")
+    ]
+    assert [entry["result"] for entry in boundary_logs] == ["success", "duplicate"]
+    assert boundary_logs[1]["audio_admitted_watermark"] == 2
+    assert boundary_logs[1]["previous_finalized_watermark"] == 2
     await context.runtime.close()
 
 
@@ -1873,7 +1889,11 @@ async def test_audio_ingress_queues_new_audio_after_finalize_boundary() -> None:
 
 
 @pytest.mark.asyncio
-async def test_vad_finalize_failure_does_not_escape_media_callback() -> None:
+async def test_vad_finalize_failure_does_not_escape_media_callback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="services.agent.src.voice_core.media_audio_ingress")
+
     class FailingFinalizeProvider(FakeMediaProvider):
         async def ingest_audio(
             self,
@@ -1920,6 +1940,16 @@ async def test_vad_finalize_failure_does_not_escape_media_callback() -> None:
     assert context.ingress.discontinuity_pending is True
     assert context.turn_endpoint_sample is None
     assert registry.metrics.get("media_sessions_failed_total") >= 1
+    boundary_logs = [
+        json.loads(record.message.removeprefix("media_asr_boundary "))
+        for record in caplog.records
+        if record.message.startswith("media_asr_boundary ")
+    ]
+    assert len(boundary_logs) == 1
+    assert boundary_logs[0]["result"] == "failed"
+    assert boundary_logs[0]["audio_admitted_watermark"] == 2
+    assert boundary_logs[0]["previous_finalized_watermark"] == -1
+    assert boundary_logs[0]["provider_pcm_samples"] == 0
     await context.runtime.close()
 
 
@@ -4144,7 +4174,10 @@ async def test_media_vad_classifies_the_speaker_before_committing_the_turn() -> 
 
 
 @pytest.mark.asyncio
-async def test_vad_boundary_drains_audio_before_rotating_provider_task() -> None:
+async def test_vad_boundary_drains_audio_before_rotating_provider_task(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="services.agent.src.voice_core.media_audio_ingress")
     class BoundaryProvider(FakeMediaProvider):
         def __init__(self) -> None:
             super().__init__()
@@ -4157,6 +4190,16 @@ async def test_vad_boundary_drains_audio_before_rotating_provider_task() -> None
         @property
         def current_asr_task_epoch(self) -> int:
             return self.task_epoch
+
+        @property
+        def current_asr_audio_task_snapshot(self) -> ProviderAudioTaskSnapshot:
+            return ProviderAudioTaskSnapshot(
+                task_epoch=self.task_epoch,
+                task_sample_origin=0,
+                audio_start_sample=0,
+                audio_end_sample=320,
+                send_count=1,
+            )
 
         async def ingest_audio(
             self,
@@ -4245,9 +4288,119 @@ async def test_vad_boundary_drains_audio_before_rotating_provider_task() -> None
     assert context.turn_end_sample == 320
     assert context.asr.latest_authoritative_task_epoch == 2
     assert any(segment.text == "今天星期几" for segment in context.runtime.speech_timeline.pending)
+    boundary_logs = [
+        record.message.removeprefix("media_asr_boundary ")
+        for record in caplog.records
+        if record.message.startswith("media_asr_boundary ")
+    ]
+    assert len(boundary_logs) == 1
+    boundary = json.loads(boundary_logs[0])
+    assert boundary == {
+        "audio_admitted_watermark": 320,
+        "finalize_reason": "vad_end",
+        "previous_finalized_watermark": -1,
+        "provider_pcm_end_sample": 320,
+        "provider_pcm_samples": 320,
+        "provider_pcm_send_count": 1,
+        "provider_pcm_start_sample": 0,
+        "provider_task_epoch_after": 2,
+        "provider_task_epoch_before": 1,
+        "provider_task_origin_sample": 0,
+        "result": "success",
+        "rotation_observed": True,
+        "segment_samples": 320,
+        "session_id": identity.session_id,
+        "stream_epoch": 1,
+        "vad_event_sample": 320,
+        "vad_start_sample": 0,
+        "voiced_end_sample": 320,
+    }
     if context.turn_endpoint_task is not None:
         context.turn_endpoint_task.cancel()
         await asyncio.gather(context.turn_endpoint_task, return_exceptions=True)
+    await context.runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_late_provider_boundary_is_logged_and_rejected_after_stream_epoch_moves(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="services.agent.src.voice_core.media_audio_ingress")
+
+    class LateBoundaryProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.finalize_started = asyncio.Event()
+            self.release_finalize = asyncio.Event()
+            self.task_epoch = 1
+
+        @property
+        def current_asr_task_epoch(self) -> int:
+            return self.task_epoch
+
+        @property
+        def current_asr_audio_task_snapshot(self) -> ProviderAudioTaskSnapshot:
+            return ProviderAudioTaskSnapshot(
+                task_epoch=self.task_epoch,
+                task_sample_origin=0,
+                audio_start_sample=0,
+                audio_end_sample=2,
+                send_count=1,
+            )
+
+        async def ingest_audio(
+            self,
+            _identity: SessionIdentity,
+            frame: AudioFrame,
+        ) -> Sequence[ASRResult]:
+            self.audio_calls.append(frame.sequence)
+            return ()
+
+        async def finalize_speech_segment(
+            self,
+            _identity: SessionIdentity,
+        ) -> Sequence[ASRResult]:
+            self.finalize_started.set()
+            await self.release_finalize.wait()
+            self.task_epoch = 2
+            return ()
+
+    provider = LateBoundaryProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    identity = SessionIdentity("late-vad-boundary", stream_epoch=1)
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    await registry.on_audio_frame(session, AudioFrame(identity, 0, 0, 2, b"\x00\x00" * 2))
+
+    finalize = asyncio.create_task(
+        registry._audio_ingress.finalize_speech_segment(
+            context,
+            vad_start_sample=0,
+            vad_event_sample=2,
+            voiced_end_sample=2,
+            finalize_reason="vad_end",
+        )
+    )
+    await asyncio.wait_for(provider.finalize_started.wait(), timeout=1)
+    context.stream_epoch = 2
+    provider.release_finalize.set()
+
+    assert await asyncio.wait_for(finalize, timeout=1) is False
+    assert context.ingress.last_finalized_audio_watermark == -1
+    boundary_logs = [
+        json.loads(record.message.removeprefix("media_asr_boundary "))
+        for record in caplog.records
+        if record.message.startswith("media_asr_boundary ")
+    ]
+    assert len(boundary_logs) == 1
+    assert boundary_logs[0]["result"] == "stale"
+    assert boundary_logs[0]["provider_task_epoch_before"] == 1
+    assert boundary_logs[0]["provider_task_epoch_after"] == 2
+    assert boundary_logs[0]["provider_pcm_samples"] == 2
     await context.runtime.close()
 
 

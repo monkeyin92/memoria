@@ -87,6 +87,41 @@ class MediaVoiceProvider(Protocol):
     async def close(self, identity: SessionIdentity) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderAudioTaskSnapshot:
+    """PCM that the active ASR task actually accepted at its provider boundary."""
+
+    task_epoch: int
+    task_sample_origin: int
+    audio_start_sample: int | None
+    audio_end_sample: int | None
+    send_count: int
+
+    def __post_init__(self) -> None:
+        if self.task_epoch < 1:
+            raise ValueError("provider ASR task epoch must be positive")
+        if self.task_sample_origin < 0 or self.send_count < 0:
+            raise ValueError("provider ASR audio metadata must be non-negative")
+        if (self.audio_start_sample is None) != (self.audio_end_sample is None):
+            raise ValueError("provider ASR audio bounds must be provided together")
+        if self.audio_start_sample is None:
+            if self.send_count != 0:
+                raise ValueError("provider ASR send count requires an audio range")
+            return
+        if self.audio_start_sample < self.task_sample_origin:
+            raise ValueError("provider ASR audio cannot precede the task origin")
+        if self.audio_end_sample is None or self.audio_end_sample <= self.audio_start_sample:
+            raise ValueError("provider ASR audio range must be positive")
+        if self.send_count < 1:
+            raise ValueError("provider ASR audio range requires a send count")
+
+    @property
+    def audio_samples(self) -> int:
+        if self.audio_start_sample is None or self.audio_end_sample is None:
+            return 0
+        return self.audio_end_sample - self.audio_start_sample
+
+
 ProviderFactory = Callable[[SessionIdentity], MediaVoiceProvider]
 RuntimeFactory = Callable[[str], DuplexRuntime]
 

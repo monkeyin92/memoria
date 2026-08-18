@@ -33,6 +33,7 @@ from services.agent.src.providers.funasr_protocol import (
 )
 from services.agent.src.providers.funasr_stt import FunASRSession
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
+from services.agent.src.voice_core.media_session_types import ProviderAudioTaskSnapshot
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
 if TYPE_CHECKING:
@@ -157,6 +158,30 @@ class ExistingVoiceProviderAdapter:
         """Return the provider task that has successfully connected."""
 
         return self._global_asr_task_epoch(self._asr) if self._asr is not None else 0
+
+    @property
+    def current_asr_audio_task_snapshot(self) -> ProviderAudioTaskSnapshot | None:
+        """Expose provider-confirmed PCM without leaking the concrete ASR session."""
+
+        asr = self._asr
+        if asr is None:
+            return None
+        task_epoch = self._global_asr_task_epoch(asr)
+        task_sample_origin = int(asr.task_sample_origin)
+        audio_start = getattr(asr, "task_audio_start_sample", None)
+        audio_end = getattr(asr, "task_audio_end_sample", None)
+        send_count = int(getattr(asr, "task_audio_send_count", 0))
+        if audio_start is None or audio_end is None or send_count < 1:
+            audio_start = None
+            audio_end = None
+            send_count = 0
+        return ProviderAudioTaskSnapshot(
+            task_epoch=task_epoch,
+            task_sample_origin=task_sample_origin,
+            audio_start_sample=audio_start,
+            audio_end_sample=audio_end,
+            send_count=send_count,
+        )
 
     @property
     def supports_turn_preparation(self) -> bool:

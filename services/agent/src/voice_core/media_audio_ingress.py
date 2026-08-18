@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import json
 import logging
 import time
 from collections import deque
@@ -16,6 +17,7 @@ from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.voice_core.asr_stream_supervisor import ASRAcceptDecision
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import AudioFrame
+from services.agent.src.voice_core.media_session_types import ProviderAudioTaskSnapshot
 from services.agent.src.voice_core.speech_timeline import ASRResult, asr_result_to_segment
 
 if TYPE_CHECKING:
@@ -194,19 +196,69 @@ class MediaAudioIngress:
                     await result
             context.ingress.discontinuity_pending = False
 
-    async def finalize_speech_segment(self, context: _MediaVoiceSession) -> bool:
+    async def finalize_speech_segment(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        vad_start_sample: int | None = None,
+        vad_event_sample: int | None = None,
+        voiced_end_sample: int | None = None,
+        finalize_reason: str = "unspecified",
+    ) -> bool:
         """Rotate one provider task without letting a provider fault kill the bridge."""
 
         async with context.ingress.finalize_lock:
             callback_stream_epoch = context.stream_epoch
             await self._wait_until_idle(context)
-            if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
-                return False
             audio_watermark = context.asr.last_sent_sample
-            if audio_watermark <= context.ingress.last_finalized_audio_watermark:
+            previous_watermark = context.ingress.last_finalized_audio_watermark
+            task_epoch_before = self._provider_task_epoch(context)
+            provider_audio_before = self._provider_audio_snapshot(context)
+            if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
+                self._log_asr_boundary(
+                    context,
+                    result="stale",
+                    finalize_reason=finalize_reason,
+                    vad_start_sample=vad_start_sample,
+                    vad_event_sample=vad_event_sample,
+                    voiced_end_sample=voiced_end_sample,
+                    audio_watermark=audio_watermark,
+                    previous_watermark=previous_watermark,
+                    task_epoch_before=task_epoch_before,
+                    task_epoch_after=self._provider_task_epoch(context),
+                    provider_audio=provider_audio_before,
+                )
+                return False
+            if audio_watermark <= previous_watermark:
+                self._log_asr_boundary(
+                    context,
+                    result="duplicate",
+                    finalize_reason=finalize_reason,
+                    vad_start_sample=vad_start_sample,
+                    vad_event_sample=vad_event_sample,
+                    voiced_end_sample=voiced_end_sample,
+                    audio_watermark=audio_watermark,
+                    previous_watermark=previous_watermark,
+                    task_epoch_before=task_epoch_before,
+                    task_epoch_after=task_epoch_before,
+                    provider_audio=provider_audio_before,
+                )
                 return True
             finalize = getattr(context.provider, "finalize_speech_segment", None)
             if not callable(finalize):
+                self._log_asr_boundary(
+                    context,
+                    result="no-provider-finalize",
+                    finalize_reason=finalize_reason,
+                    vad_start_sample=vad_start_sample,
+                    vad_event_sample=vad_event_sample,
+                    voiced_end_sample=voiced_end_sample,
+                    audio_watermark=audio_watermark,
+                    previous_watermark=previous_watermark,
+                    task_epoch_before=task_epoch_before,
+                    task_epoch_after=task_epoch_before,
+                    provider_audio=provider_audio_before,
+                )
                 return True
             try:
                 results = finalize(context.identity)
@@ -231,8 +283,34 @@ class MediaAudioIngress:
                     context.stream_epoch,
                     audio_watermark,
                 )
+                self._log_asr_boundary(
+                    context,
+                    result="failed",
+                    finalize_reason=finalize_reason,
+                    vad_start_sample=vad_start_sample,
+                    vad_event_sample=vad_event_sample,
+                    voiced_end_sample=voiced_end_sample,
+                    audio_watermark=audio_watermark,
+                    previous_watermark=previous_watermark,
+                    task_epoch_before=task_epoch_before,
+                    task_epoch_after=self._provider_task_epoch(context),
+                    provider_audio=provider_audio_before,
+                )
                 return False
             if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
+                self._log_asr_boundary(
+                    context,
+                    result="stale",
+                    finalize_reason=finalize_reason,
+                    vad_start_sample=vad_start_sample,
+                    vad_event_sample=vad_event_sample,
+                    voiced_end_sample=voiced_end_sample,
+                    audio_watermark=audio_watermark,
+                    previous_watermark=previous_watermark,
+                    task_epoch_before=task_epoch_before,
+                    task_epoch_after=self._provider_task_epoch(context),
+                    provider_audio=provider_audio_before,
+                )
                 return False
             # The returned finals belong to the task that just ended. Accept them
             # before announcing the freshly started task epoch; doing it in the
@@ -244,7 +322,88 @@ class MediaAudioIngress:
                 observe_task_before_results=False,
             )
             context.ingress.last_finalized_audio_watermark = audio_watermark
+            self._log_asr_boundary(
+                context,
+                result="success",
+                finalize_reason=finalize_reason,
+                vad_start_sample=vad_start_sample,
+                vad_event_sample=vad_event_sample,
+                voiced_end_sample=voiced_end_sample,
+                audio_watermark=audio_watermark,
+                previous_watermark=previous_watermark,
+                task_epoch_before=task_epoch_before,
+                task_epoch_after=self._provider_task_epoch(context),
+                provider_audio=provider_audio_before,
+            )
             return True
+
+    @staticmethod
+    def _provider_task_epoch(context: _MediaVoiceSession) -> int:
+        value = getattr(context.provider, "current_asr_task_epoch", 0)
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+    @staticmethod
+    def _provider_audio_snapshot(
+        context: _MediaVoiceSession,
+    ) -> ProviderAudioTaskSnapshot | None:
+        value = getattr(context.provider, "current_asr_audio_task_snapshot", None)
+        return value if isinstance(value, ProviderAudioTaskSnapshot) else None
+
+    @staticmethod
+    def _log_asr_boundary(
+        context: _MediaVoiceSession,
+        *,
+        result: str,
+        finalize_reason: str,
+        vad_start_sample: int | None,
+        vad_event_sample: int | None,
+        voiced_end_sample: int | None,
+        audio_watermark: int,
+        previous_watermark: int,
+        task_epoch_before: int,
+        task_epoch_after: int,
+        provider_audio: ProviderAudioTaskSnapshot | None,
+    ) -> None:
+        segment_end = voiced_end_sample if voiced_end_sample is not None else vad_event_sample
+        segment_samples = (
+            max(0, segment_end - vad_start_sample)
+            if vad_start_sample is not None and segment_end is not None
+            else None
+        )
+        payload = {
+            "audio_admitted_watermark": audio_watermark,
+            "finalize_reason": finalize_reason,
+            "previous_finalized_watermark": previous_watermark,
+            "provider_pcm_end_sample": (
+                provider_audio.audio_end_sample if provider_audio is not None else None
+            ),
+            "provider_pcm_samples": (
+                provider_audio.audio_samples if provider_audio is not None else 0
+            ),
+            "provider_pcm_send_count": (
+                provider_audio.send_count if provider_audio is not None else 0
+            ),
+            "provider_pcm_start_sample": (
+                provider_audio.audio_start_sample if provider_audio is not None else None
+            ),
+            "provider_task_epoch_after": task_epoch_after,
+            "provider_task_epoch_before": task_epoch_before,
+            "provider_task_origin_sample": (
+                provider_audio.task_sample_origin if provider_audio is not None else None
+            ),
+            "result": result,
+            "rotation_observed": task_epoch_after > task_epoch_before > 0,
+            "segment_samples": segment_samples,
+            "session_id": context.identity.session_id,
+            "stream_epoch": context.stream_epoch,
+            "vad_event_sample": vad_event_sample,
+            "vad_start_sample": vad_start_sample,
+            "voiced_end_sample": voiced_end_sample,
+        }
+        logger.info(
+            "media_asr_boundary %s",
+            json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+        )
 
     async def _wait_until_idle(self, context: _MediaVoiceSession) -> None:
         state = context.ingress

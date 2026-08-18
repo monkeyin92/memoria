@@ -152,6 +152,9 @@ class FunASRSession:
         self._task_epoch = 0
         self._segment_epoch = 1
         self._task_sample_origin = 0
+        self._task_audio_start_sample: int | None = None
+        self._task_audio_end_sample: int | None = None
+        self._task_audio_send_count = 0
         self._last_sent_sample = 0
         self._last_rotation_sample = 0
         self._last_provider_acked_sample = 0
@@ -264,6 +267,18 @@ class FunASRSession:
         return self._task_sample_origin
 
     @property
+    def task_audio_start_sample(self) -> int | None:
+        return self._task_audio_start_sample
+
+    @property
+    def task_audio_end_sample(self) -> int | None:
+        return self._task_audio_end_sample
+
+    @property
+    def task_audio_send_count(self) -> int:
+        return self._task_audio_send_count
+
+    @property
     def last_sent_sample(self) -> int:
         return self._last_sent_sample
 
@@ -295,6 +310,21 @@ class FunASRSession:
             self._last_sent_sample - window,
         )
 
+    def _reset_task_audio_evidence(self) -> None:
+        self._task_audio_start_sample = None
+        self._task_audio_end_sample = None
+        self._task_audio_send_count = 0
+
+    def _record_task_audio_send(self, *, start_sample: int, end_sample: int) -> None:
+        if start_sample < self._task_sample_origin or end_sample <= start_sample:
+            raise ValueError("FunASR provider audio range is invalid")
+        if self._task_audio_start_sample is None:
+            self._task_audio_start_sample = start_sample
+        else:
+            self._task_audio_start_sample = min(self._task_audio_start_sample, start_sample)
+        self._task_audio_end_sample = max(self._task_audio_end_sample or 0, end_sample)
+        self._task_audio_send_count += 1
+
     def _build_run_task(self) -> dict[str, Any]:
         return build_run_task(
             model=self.config.model,
@@ -322,6 +352,7 @@ class FunASRSession:
         self.task_id = task_id
         self._task_epoch += 1
         self._task_sample_origin = 0
+        self._reset_task_audio_evidence()
         self._failed = False
         self._finishing = False
         self._terminal_finishing = False
@@ -523,6 +554,7 @@ class FunASRSession:
                 self.task_id = task_id
                 self._task_epoch += 1
                 self._task_sample_origin = replay_start
+                self._reset_task_audio_evidence()
                 self._failed = False
                 self._task_started_event.set()
                 self._task_finished_received.clear()
@@ -536,6 +568,10 @@ class FunASRSession:
                     replay = self._replay_pcm()
                     if replay:
                         await ws.send(replay)
+                        self._record_task_audio_send(
+                            start_sample=replay_start,
+                            end_sample=replay_start + len(replay) // 2,
+                        )
                 if self._finishing:
                     await ws.send(json.dumps(build_finish_task(task_id), ensure_ascii=False))
             except Exception:
@@ -603,6 +639,13 @@ class FunASRSession:
             self._last_sent_sample = start
             self._push_ring(pcm)
             self._last_sent_sample += len(pcm) // 2
+        else:
+            start = (
+                capture_start_sample
+                if capture_start_sample is not None
+                else max(self._task_sample_origin, self._last_sent_sample - len(pcm) // 2)
+            )
+        end = start + len(pcm) // 2
         await self._wait_until_ready("send PCM")
         ws = self._ws
         if ws is None:
@@ -610,6 +653,7 @@ class FunASRSession:
         started = monotonic()
         try:
             await ws.send(pcm)
+            self._record_task_audio_send(start_sample=start, end_sample=end)
         except Exception:
             if not await self._recover(ws):
                 if not self._failure_matches_current_task():
@@ -774,6 +818,7 @@ class FunASRSession:
         self._task_epoch += 1
         self._segment_epoch += 1
         self._task_sample_origin = next_origin
+        self._reset_task_audio_evidence()
         self._finishing = False
         self._terminal_finishing = False
         self._ready.clear()
