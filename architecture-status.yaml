@@ -6,8 +6,8 @@ production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 production_release_tag: 20260814-231749-direct-canary
 production_release_symlink: /opt/memoria/releases/20260812-173008
-production_code_release_tag: 20260818-103228
-production_code_commit: fb45fad59165ec819ac5b03148cba5c537b7eb6e
+production_code_release_tag: 20260818-152620-vad-asr-boundary
+production_code_commit: 3e16ee93b0628bfc02be527c3760ea53b943f53b
 production_runtime_overlays:
   control_api:
     image: memoria-control-api:20260818-103228
@@ -19,15 +19,17 @@ production_runtime_overlays:
     cutover_evidence_file: /opt/memoria/direct-canaries/20260818-103228/CUTOVER_RESULT.txt
     cutover_evidence_sha256: 37da7f571630c0585ab350464eb789196cd3075998758a3c43d611ab240b53848
   agent:
-    image: memoria-agent:20260818-103228
-    image_id: sha256:549f5f29176b6ad3361290726abecff748b804b5cb3473fd7ea6fc5e37784d65
+    image: memoria-agent:20260818-152620-vad-asr-boundary
+    image_id: sha256:2afb5420f7d90459d1d94f708e97a1ba98588f31b7a144bb1a722aac6bb4c769
     runtime_release_tag: 20260814-231749-direct-canary
     production_runtime_verified: true
+    oci_revision: 3e16ee93b0628bfc02be527c3760ea53b943f53b
   voice_core_media_bridge:
-    image: memoria-agent:20260818-103228
-    image_id: sha256:549f5f29176b6ad3361290726abecff748b804b5cb3473fd7ea6fc5e37784d65
+    image: memoria-agent:20260818-152620-vad-asr-boundary
+    image_id: sha256:2afb5420f7d90459d1d94f708e97a1ba98588f31b7a144bb1a722aac6bb4c769
     runtime_release_tag: 20260816-bridge-liveness-83af813
     production_runtime_verified: true
+    oci_revision: 3e16ee93b0628bfc02be527c3760ea53b943f53b
   media_edge:
     image: memoria-media-edge:20260818-103228
     image_id: sha256:d512fd348f9424cbeaccf091b9deeb50962dc83e5f3c598675dd2b5081697261
@@ -49,40 +51,38 @@ student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
   as_of_date: 2026-08-18
-  head_commit: fb45fad59165ec819ac5b03148cba5c537b7eb6e
+  head_commit: 3e16ee93b0628bfc02be527c3760ea53b943f53b
   dirty: false
   code: complete
-  wired: control_session_runtime_media_edge_agent
-  enabled: current_candidate_20260818-103228_target_scope
-  verified: production_runtime_zero_active_session_scope
-  production_deployed: current_candidate_target_scope_non_target_services_preserved
+  wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
+  enabled: current_candidate_20260818-152620-vad-asr-boundary_agent_bridge_scope
+  verified: production_runtime_and_sanitized_boundary_observation
+  production_deployed: current_agent_bridge_candidate_non_target_services_preserved
   direct_real_device_verified: false
   full_duplex_verified: false
   current_increment:
-    name: runtime_profile_subject_authority_and_reconnect_fence
-    candidate_release_tag: 20260818-103228
-    production_cutover_authorized_at: "2026-08-18T10:38:14+08:00"
-    production_cutover_scope: control_api_agent_voice_core_media_bridge_media_edge_only
+    name: vad_asr_boundary_observability
+    candidate_release_tag: 20260818-152620-vad-asr-boundary
+    production_cutover_scope: agent_and_voice_core_media_bridge_only
     code: complete
-    wired: control_session_runtime_media_edge_agent
+    wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
     enabled: true
-    verified: production_runtime_zero_active_session_scope
+    verified: production_runtime_and_sanitized_boundary_observation
     production_runtime_verified: true
-    production_cutover_completed_at: "2026-08-18T04:56:23Z"
-    binding_owner_field: subject_id_non_null
-    active_runtime_subject_field: active_subject_id_nullable
-    unknown_safe_subject_wire: explicit_empty_string
-    missing_or_null_subject_claim: fail_closed
-    reconnect_mutable_fields: stream_epoch_only
-    media_v1_subject_presence: proto3_string_no_presence
-    production_bridge_subject_source: go_edge_verified_explicit_jwt_claim
-    missing_grpc_subject_effect: unknown_safe_no_privilege_escalation
-    future_protocol_hardening: optional_subject_id_presence
+    production_observation_finalized_at: "2026-08-18T09:37:29Z"
+    candidate_image: memoria-agent:20260818-152620-vad-asr-boundary
+    candidate_image_id: sha256:2afb5420f7d90459d1d94f708e97a1ba98588f31b7a144bb1a722aac6bb4c769
+    oci_revision: 3e16ee93b0628bfc02be527c3760ea53b943f53b
+    media_asr_boundary_total: 645
+    media_asr_boundary_success: 638
+    media_asr_boundary_failed: 7
+    empty_audio_failures: 7
+    independent_provider_timeout_count: 1
+    active_device_connections: 1
+    active_media_sessions: 0
+    downlink_frames: 0
     firmware_built: false
     firmware_flushed: false
-    existing_production_real_board_diagnosis: completed_2026-08-18
-    existing_production_diagnosis_session: 287ec335-134b-4b65-8072-f02875d19814
-    existing_production_diagnosis_root_cause: incomplete_subject_category_age_authority
     candidate_serial_or_device_tested: false
     direct_real_device_verified: false
     full_duplex_verified: false
@@ -224,9 +224,13 @@ vad_asr_boundary_observability:
   tag_pushed: true
   code: complete
   wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
-  enabled: false
-  verified: local_tests_only
-  production_runtime_verified: false
+  enabled: true
+  verified: production_runtime_and_sanitized_boundary_observation
+  production_runtime_verified: true
+  candidate_image: memoria-agent:20260818-152620-vad-asr-boundary
+  candidate_image_id: sha256:2afb5420f7d90459d1d94f708e97a1ba98588f31b7a144bb1a722aac6bb4c769
+  oci_revision: 3e16ee93b0628bfc02be527c3760ea53b943f53b
+  observation_finalized_at: "2026-08-18T09:37:29Z"
   log_event: media_asr_boundary
   provider_pcm_recorded_only_after_successful_send: true
   provider_task_rotation_resets_evidence: true
@@ -245,6 +249,46 @@ vad_asr_boundary_observability:
     strict_mypy_source_files: 399
     module_budget: passed
   deployment_scope: agent_and_voice_core_media_bridge_only
+  production_observation:
+    media_asr_boundary_total: 645
+    media_asr_boundary_success: 638
+    media_asr_boundary_failed: 7
+    failed_by_reason:
+      EmptyAudio: 7
+    stream_epochs:
+      "893": 65
+      "894": 580
+    finalize_reasons:
+      vad_end: 645
+    rotation_observed:
+      true: 638
+      false: 7
+    independent_provider_timeout_count: 1
+    independent_provider_timeout: CLIENT_ERROR_request_timeout_after_23_seconds
+    active_device_connections: 1
+    active_media_sessions: 0
+    downlink_frames: 0
+    channel_generation: 2
+    liveness_healthy: 1
+    redial_attempts: 1
+    redial_successes: 1
+    redial_failures: 0
+  evidence:
+    evidence_directory: /opt/memoria/direct-canaries/20260818-152620-vad-asr-boundary
+    post_cutover_state_file: /opt/memoria/direct-canaries/20260818-152620-vad-asr-boundary/POST_CUTOVER_STATE.txt
+    post_cutover_state_sha256: ea9d953e969711f1d4043c6016b8202a3d8bba9f6ee06fe82207eccdce7578f5
+    cutover_evidence_file: /opt/memoria/direct-canaries/20260818-152620-vad-asr-boundary/CUTOVER_RESULT.txt
+    cutover_evidence_sha256: c41355fb662574863ec20c0d73cbb7f36b86885bc4b5e0e1b51783ecb58f916d
+    provider_smoke_result_file: /opt/memoria/direct-canaries/20260818-152620-vad-asr-boundary/PROVIDER_SMOKE_RESULT.txt
+    provider_smoke_result_sha256: 65f85c4d6a23188f679ea74418abbbffadaa41f578f45f610a4802ac504cc1fd
+    media_asr_boundary_result_file: /opt/memoria/direct-canaries/20260818-152620-vad-asr-boundary/MEDIA_ASR_BOUNDARY_RESULT.txt
+    media_asr_boundary_result_sha256: ea32078314c3f43bbd02e2776e156a5a22bef9eb1f3f8ca4f01beabe18dda7e6
+    cleanup_receipt_file: /opt/memoria/direct-canaries/20260818-152620-vad-asr-boundary/ASSET_CLEANUP_20260818T092715Z_OBSOLETE_CONTROL_SCRIPTS.txt
+    cleanup_receipt_sha256: 481c7fb40a1e00e221f7c478c744a34734fad45b329267744cd34e8bd19a7426
+    evidence_manifest_file: /opt/memoria/direct-canaries/20260818-152620-vad-asr-boundary/EVIDENCE_MANIFEST.sha256
+    evidence_manifest_sha256: 9ae753278568bd8496af1e4d87f123751df1c3113ef9ad151a32b4103231be07
+  obsolete_control_scripts_removed: true
+  obsolete_control_scripts_removed_at: "2026-08-18T09:27:15Z"
   direct_real_device_verified: false
   full_duplex_verified: false
   t1_t14: 0_pass_14_blocked_0_failed
