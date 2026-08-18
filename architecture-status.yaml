@@ -1,7 +1,7 @@
 # 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
 # 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
 schema_version: 2
-as_of_commit: fb45fad59165ec819ac5b03148cba5c537b7eb6e
+as_of_commit: 3e16ee93b0628bfc02be527c3760ea53b943f53b
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 production_release_tag: 20260814-231749-direct-canary
@@ -173,19 +173,81 @@ production_read_only_recheck:
   t1_t14: 0_pass_14_blocked_0_failed
   artifact_retention_warning: false
   artifact_cleanup_performed: true
-  cleanup_finished_utc: "2026-08-18T02:57:28Z"
+  cleanup_finished_utc: "2026-08-18T07:16:42Z"
+  cleanup_started_utc: "2026-08-18T05:55:13Z"
+  cleanup_receipt_file: /opt/memoria/direct-canaries/20260818-103228/ASSET_CLEANUP_20260818T060000Z.txt
+  cleanup_receipt_sha256: 68e0e72c4bedaf49a919bb1ede901f07eedc25453e29188a753568c6ff8582cf
+  cleanup_rounds: 3
   deleted_historical_directories: 55
-  deleted_old_memoria_image_tags: 90
+  deleted_followup_directories: 6
+  deleted_staging_paths: 2
+  deleted_exited_containers: 4
+  deleted_old_memoria_image_tags: 95
   cleanup_failures: 0
   docker_build_cache_after_cleanup: 0
-  docker_images_total: 34
-  docker_images_active: 13
-  docker_containers_total: 18
+  docker_images_total: 29
+  docker_images_active: 12
+  docker_containers_total: 14
   docker_containers_active: 14
   docker_local_volumes_total: 5
   docker_local_volumes_active: 4
   broad_docker_system_prune: false
   named_volumes_or_data_services_deleted: false
+  first_round_finished_utc: "2026-08-18T02:57:28Z"
+  first_round_deleted_historical_directories: 55
+  first_round_deleted_old_memoria_image_tags: 90
+  followup_deleted_exited_containers:
+    - eloquent_brattain
+    - focused_euler
+    - affectionate_bardeen
+    - memoria-data-minio-provision-1
+  followup_deleted_image_tags:
+    - memoria-control-api:20260814-231749-direct-canary
+    - memoria-media-edge:20260816-012138-media-edge-supervisor-canary
+    - memoria-device-media-gateway:20260812-163054
+    - memoria-miniprogram-gateway:20260812-163054
+    - memoria-speaker-model:20260812-163054
+  third_round_finished_utc: "2026-08-18T07:16:42Z"
+  third_round_receipt_file: /opt/memoria/direct-canaries/20260818-103228/ASSET_CLEANUP_20260818T071642Z_ROUND3.txt
+  third_round_receipt_sha256: 327061dd42e369cf2d93cb45b6174f89b122892231d1d82bcd8604fae144c9bc
+  third_round_deleted_path: /opt/memoria/direct-canaries/20260814-231749-direct-canary
+  third_round_deleted_bytes: 43723036
+  third_round_path_absent_after: true
+  third_round_docker_unique_image_ids_total: 22
+  third_round_root_disk_snapshot: 118G_total_45G_used_69G_available_40pct
+
+vad_asr_boundary_observability:
+  as_of_date: 2026-08-18
+  source_commit: 3e16ee93b0628bfc02be527c3760ea53b943f53b
+  candidate_release_tag: 20260818-152620-vad-asr-boundary
+  source_pushed: true
+  tag_pushed: true
+  code: complete
+  wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
+  enabled: false
+  verified: local_tests_only
+  production_runtime_verified: false
+  log_event: media_asr_boundary
+  provider_pcm_recorded_only_after_successful_send: true
+  provider_task_rotation_resets_evidence: true
+  result_classes:
+    - success
+    - failed
+    - duplicate
+    - stale
+    - no-provider-finalize
+  behavior_changed: false
+  vad_threshold_changed: false
+  local_gates:
+    focused_provider_adapter_media_session_tests: passed
+    agent_full_tests: passed
+    ruff: passed
+    strict_mypy_source_files: 399
+    module_budget: passed
+  deployment_scope: agent_and_voice_core_media_bridge_only
+  direct_real_device_verified: false
+  full_duplex_verified: false
+  t1_t14: 0_pass_14_blocked_0_failed
 
 release_20260818_runtime_profile_cutover:
   code: complete
@@ -239,13 +301,28 @@ release_20260818_runtime_profile_cutover:
   cutover_evidence_sha256: 37da7f571630c0585ab350464b789196cd3075998758a3c43d611ab240b53848
   artifact_cleanup:
     performed: true
-    finished_utc: "2026-08-18T02:57:28Z"
+    finished_utc: "2026-08-18T05:55:25Z"
+    started_utc: "2026-08-18T05:55:13Z"
+    receipt_file: /opt/memoria/direct-canaries/20260818-103228/ASSET_CLEANUP_20260818T060000Z.txt
+    receipt_sha256: 68e0e72c4bedaf49a919bb1ede901f07eedc25453e29188a753568c6ff8582cf
+    cleanup_rounds: 3
     deleted_historical_directories: 55
-    deleted_old_memoria_image_tags: 90
+    deleted_followup_directories: 6
+    deleted_staging_paths: 2
+    deleted_exited_containers: 4
+    deleted_old_memoria_image_tags: 95
     failures: 0
     build_cache_after_cleanup: 0
     broad_docker_system_prune: false
     named_volumes_or_data_services_deleted: false
+    root_disk_after_cleanup: 118G_total_44G_used_70G_available_39pct
+    third_round_finished_utc: "2026-08-18T07:16:42Z"
+    third_round_receipt_file: /opt/memoria/direct-canaries/20260818-103228/ASSET_CLEANUP_20260818T071642Z_ROUND3.txt
+    third_round_receipt_sha256: 327061dd42e369cf2d93cb45b6174f89b122892231d1d82bcd8604fae144c9bc
+    third_round_deleted_path: /opt/memoria/direct-canaries/20260814-231749-direct-canary
+    third_round_deleted_bytes: 43723036
+    third_round_unique_image_id_count: 22
+    third_round_root_disk_snapshot: 118G_total_45G_used_69G_available_40pct
   direct_real_device_verified: false
   full_duplex_verified: false
   t1_t14: 0_pass_14_blocked_0_failed

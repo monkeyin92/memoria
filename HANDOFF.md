@@ -1,5 +1,12 @@
 # 项目交接
 
+## 当前候选增量（2026-08-18，VAD → ASR Provider PCM 边界可观测性）
+
+- 代码提交 `3e16ee93b0628bfc02be527c3760ea53b943f53b` 与不可移动 annotated tag `20260818-152620-vad-asr-boundary` 已推送 `origin/main`。当前层级为 `code + wired + local verified`，尚未构建或部署。`FunASRSession` 只在 WebSocket `send()` 成功后记录当前 Provider task 实际接受的 PCM 起止 sample 与发送次数；task rotation 和重连 task 会清空旧 task 证据，失败发送不得冒充 Provider 已接收。
+- Direct Voice Core 在每次 VAD finalize 输出统一 `media_asr_boundary` JSON，包含 VAD start/event/voiced-end、transport watermark、Provider PCM 范围/send count、Provider task epoch 前后与 `success / failed / duplicate / stale / no-provider-finalize` 结果；不改变 VAD 阈值、短段策略、权限、主体或 fail-closed 行为。
+- 聚焦 Provider/Adapter/Media Session 测试、Agent 全量测试、Ruff、strict MyPy（399 个源码文件）和模块预算已通过。`enabled=false`、`production_runtime_verified=false`；必须先按服务器最新环境仅切 Agent 与 Voice Core Media Bridge，再以真实板卡新会话取得新鲜 `media_asr_boundary` 日志，才判断 VAD → Provider PCM 是否存在行为缺口。
+- 本增量不刷写 ESP32，不改变 `direct_real_device_verified=false`、`full_duplex_verified=false` 或 T1–T14 `0 pass / 14 blocked / 0 failed`。
+
 ## 当前生产增量（2026-08-18，Runtime Profile 生产切流与制品清理已完成）
 
 - 源代码提交 `fb45fad59165ec819ac5b03148cba5c537b7eb6e` 与 annotated tag `20260818-103228` 已推送 `origin/main`；tag 不再移动。授权切换范围仅为 Control API（含 Session Runtime）、Agent、Voice Core Media Bridge 与 Go Media Edge；ESP32 固件、Nginx、H5、小程序、PostgreSQL、Redis、MinIO、LiveKit、Speaker Model 与两个兼容 Gateway 均未切换。
@@ -7,7 +14,10 @@
 - 分层 runtime fence 保持：Control API/Agent 为 `20260814-231749-direct-canary`，Voice Core Media Bridge 为 `20260816-bridge-liveness-83af813`。公网 live/ready 均为 200；未认证回顾读与记忆确认写均为 401；Bridge 具名 gRPC Health 为 `memoria.media.v1.VoiceMediaBridge=SERVING`；Edge mTLS `/readyz` 为 200/ready。
 - 切流后 metrics 为 `active_device_connections=0`、`active_media_sessions=0`、channel generation=1、liveness healthy=1、probe successes=4060、failures=0、redial attempts/successes/failures=0/0/0。该证据范围是服务器零活跃会话，不是真机语音闭环。
 - 生产证据：`/opt/memoria/direct-canaries/20260818-103228/POST_CUTOVER_STATE.txt` SHA-256 为 `41060c9838f1c1db0b38e52c906292f9b14bd025e13df9539dc3bd6e9fa98bc8`；`CUTOVER_RESULT.txt` SHA-256 为 `37da7f571630c0585ab350464b789196cd3075998758a3c43d611ab240b53848`。即时 rollback 点与切流前快照均保留，annotated tag 不移动。
-- 制品清理于 `2026-08-18T02:57:28Z` 完成：删除历史目录 55 个、旧 `memoria-*` 镜像标签 90 个，失败 0，Docker build cache=0；清理后根盘 118G 总量 / 50G 已用 / 65G 可用 / 44%。未执行 broad `docker system prune`，未删除命名卷、数据库、Redis、MinIO、LiveKit 或合规备份。
+- 首轮制品清理于 `2026-08-18T02:57:28Z` 完成：删除历史目录 55 个、旧 `memoria-*` 镜像标签 90 个，失败 0，Docker build cache=0；该轮清理后根盘为 118G 总量 / 50G 已用 / 65G 可用 / 44%。
+- 后续资产清理于 `2026-08-18T05:55:13Z–05:55:25Z` 完成：删除已退出诊断/一次性 provision 容器 `eloquent_brattain`、`focused_euler`、`affectionate_bardeen`、`memoria-data-minio-provision-1`；旧 incoming `20260817-135129`、两个临时 staging、两个旧 Agent canary、一个旧 Media Edge canary；以及 5 个未被容器引用的旧镜像标签。root-only 回执为 `/opt/memoria/direct-canaries/20260818-103228/ASSET_CLEANUP_20260818T060000Z.txt`，SHA-256 `68e0e72c4bedaf49a919bb1ede901f07eedc25453e29188a753568c6ff8582cf`；删除后 Docker 为 29 images / 12 active、14 containers / 14 active、5 volumes / 4 active、build cache=0，根盘为 118G 总量 / 44G 已用 / 70G 可用 / 39%。未删除命名卷、数据库、Redis、MinIO、LiveKit、合规备份或当前/紧邻回滚链。
+- 第三轮定点清理于 `2026-08-18T07:16:42Z` 完成：确认无 Compose、容器、软链、systemd、cron、runtime manifest 或可运行回滚链引用后，删除旧源码检出 `/opt/memoria/direct-canaries/20260814-231749-direct-canary`，释放 `43,723,036` bytes。root-only 回执为 `/opt/memoria/direct-canaries/20260818-103228/ASSET_CLEANUP_20260818T071642Z_ROUND3.txt`，SHA-256 `327061dd42e369cf2d93cb45b6174f89b122892231d1d82bcd8604fae144c9bc`；删除后路径不存在，当前 runtime 与紧邻可运行 rollback 均保留，14/14 容器 active，根盘为 118G 总量 / 45G 已用 / 69G 可用 / 40%。回执中的 Docker images=22 按唯一 image ID 统计，与第二轮 29 个 tag/list 项口径不同。
+- 当前仍保留 `20260818-103228` 运行版本、`20260817-171013` 证据、正在运行的 legacy Gateway/Speaker Model 镜像、当前/回滚 incoming 与 Compose 证据。审计另发现 `20260817-171013/rollback-control-api.sh` 引用已在第二轮删除的旧镜像，脚本本身已失效；当前有效的紧邻回滚链仍为 `rollback-20260818-103228-pre-runtime-profile*`。PR-23 与 Direct T1–T14 不因制品清理而完成。
 - 层级严格记录为：本 release 目标范围 `code / wired / enabled / production runtime verified`；`direct_real_device_verified=false`、`full_duplex_verified=false`，T1–T14 仍为 `0 pass / 14 blocked / 0 failed`。没有当前候选固件刷写、候选设备音频会话、Exact DAC、AEC Reference、Double-talk、精确 Actual Heard、100/500 轮或微信 iOS/Android T14 证据。
 
 ## 上一生产增量（2026-08-17，已提交、推送并完成 Agent/Bridge canary）
@@ -428,9 +438,9 @@
 - 仍阻塞发布：PIA/法务/算法备案确认、危机话术专业评审、真实微信订阅消息、生产 guardian 升级、
   真实异地备份与独立恢复报告、iOS/Android 完整语音链、ESP32/AEC、200 条真实授权儿童语料。
 
-### 当前生产基线
+### 历史生产基线（已被 2026-08-18 Runtime Profile release supersede）
 
-- 生产 runtime 为 `20260812-163054`，源码 commit
+- 历史生产 runtime 为 `20260812-163054`，源码 commit
   `fef36f30556970e9244103f901a1c2ac03fb954a`；H5 有意保持 `20260808-171749`，本轮硬件修复不
   切 H5。直接 runtime 回滚目标为 `20260812-154923`。完整证据见
   `docs/releases/20260812-163054.md`；`20260812-173008` 为待切流候选。
