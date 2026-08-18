@@ -1,31 +1,39 @@
 # 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
 # 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
 schema_version: 2
-as_of_commit: 24784a90f3e6d3cfb6638d13b1d432edbc4f8d17
+as_of_commit: fb45fad59165ec819ac5b03148cba5c537b7eb6e
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 production_release_tag: 20260814-231749-direct-canary
 production_release_symlink: /opt/memoria/releases/20260812-173008
-production_code_release_tag: 20260817-171013
-production_code_commit: 24784a90f3e6d3cfb6638d13b1d432edbc4f8d17
+production_code_release_tag: 20260818-103228
+production_code_commit: fb45fad59165ec819ac5b03148cba5c537b7eb6e
 production_runtime_overlays:
   control_api:
-    image: memoria-control-api:20260817-171013
-    image_id: sha256:02d4d86a349c2dd255f44fe0229c93e5d1a82337bde6cb81a418e22f0bec40e2
+    image: memoria-control-api:20260818-103228
+    image_id: sha256:14916cf1d00e1c10a8a8f52b5aad64eb301949f5e2319a02125484d3ed11e891
     runtime_release_tag: 20260814-231749-direct-canary
     production_runtime_verified: true
-    delayed_recheck_at: "2026-08-17T10:03:45Z"
+    delayed_recheck_at: "2026-08-18T04:56:23Z"
     unauthenticated_read_write_routes: fail_closed_401
-    cutover_evidence_sha256: a64b8d8897db818d26abe07344fe3b2bba8a6ab679e13a4ec02d7f88bdca1399
+    cutover_evidence_file: /opt/memoria/direct-canaries/20260818-103228/CUTOVER_RESULT.txt
+    cutover_evidence_sha256: 37da7f571630c0585ab350464eb789196cd3075998758a3c43d611ab240b53848
   agent:
-    image: memoria-agent:20260817-135129
+    image: memoria-agent:20260818-103228
+    image_id: sha256:549f5f29176b6ad3361290726abecff748b804b5cb3473fd7ea6fc5e37784d65
     runtime_release_tag: 20260814-231749-direct-canary
+    production_runtime_verified: true
   voice_core_media_bridge:
-    image: memoria-agent:20260817-135129
+    image: memoria-agent:20260818-103228
+    image_id: sha256:549f5f29176b6ad3361290726abecff748b804b5cb3473fd7ea6fc5e37784d65
     runtime_release_tag: 20260816-bridge-liveness-83af813
+    production_runtime_verified: true
   media_edge:
-    image: memoria-media-edge:20260816-bridge-liveness-83af813
-    recreated_for_20260817_release: false
+    image: memoria-media-edge:20260818-103228
+    image_id: sha256:d512fd348f9424cbeaccf091b9deeb50962dc83e5f3c598675dd2b5081697261
+    runtime_release_tag: 20260816-bridge-liveness-83af813
+    recreated_for_20260818_release: true
+    production_runtime_verified: true
 production_runtime_verified: true
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -41,13 +49,13 @@ student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
   as_of_date: 2026-08-18
-  head_commit: f064fec880e0590fa7ac2ed71ffefbd1d77ca79a
-  dirty: true
+  head_commit: fb45fad59165ec819ac5b03148cba5c537b7eb6e
+  dirty: false
   code: complete
-  wired: local_runtime_subject_authority_plus_prior_production_overlays
-  enabled: prior_scoped_canaries_only_current_increment_not_deployed
-  verified: current_increment_local_only_plus_prior_scoped_zero_session_runtime
-  production_deployed: prior_scoped_canaries_only_current_increment_not_deployed
+  wired: control_session_runtime_media_edge_agent
+  enabled: current_candidate_20260818-103228_target_scope
+  verified: production_runtime_zero_active_session_scope
+  production_deployed: current_candidate_target_scope_non_target_services_preserved
   direct_real_device_verified: false
   full_duplex_verified: false
   current_increment:
@@ -56,9 +64,11 @@ local_worktree_candidate:
     production_cutover_authorized_at: "2026-08-18T10:38:14+08:00"
     production_cutover_scope: control_api_agent_voice_core_media_bridge_media_edge_only
     code: complete
-    wired: local_control_session_runtime_media_edge_agent
-    enabled: false
-    verified: local_only
+    wired: control_session_runtime_media_edge_agent
+    enabled: true
+    verified: production_runtime_zero_active_session_scope
+    production_runtime_verified: true
+    production_cutover_completed_at: "2026-08-18T04:56:23Z"
     binding_owner_field: subject_id_non_null
     active_runtime_subject_field: active_subject_id_nullable
     unknown_safe_subject_wire: explicit_empty_string
@@ -107,29 +117,36 @@ local_worktree_candidate:
     no_candidate_device_audio_session: true
 
 production_read_only_recheck:
-  as_of: "2026-08-18T10:38:14+08:00"
+  as_of: "2026-08-18T04:56:23Z"
   host: VM-0-17-ubuntu
-  root_disk_available_gib: 15
-  root_disk_used_percent: 88
+  pre_cutover_snapshot_at: "2026-08-18T10:38:14+08:00"
+  root_disk_total_gib: 118
+  root_disk_used_gib: 50
+  root_disk_available_gib: 65
+  root_disk_used_percent: 44
   target_services:
     control_api:
-      image: memoria-control-api:20260817-171013
-      image_id: sha256:02d4d86a349c2dd255f44fe0229c93e5d1a82337bde6cb81a418e22f0bec40e2
+      image: memoria-control-api:20260818-103228
+      image_id: sha256:14916cf1d00e1c10a8a8f52b5aad64eb301949f5e2319a02125484d3ed11e891
+      oci_revision: fb45fad59165ec819ac5b03148cba5c537b7eb6e
       healthy: true
       restart_count: 0
     agent:
-      image: memoria-agent:20260817-135129
-      image_id: sha256:163c4d534fa06a4b796a5217fcaead32ea97162a108bef1c4c6237f94238cb4e
+      image: memoria-agent:20260818-103228
+      image_id: sha256:549f5f29176b6ad3361290726abecff748b804b5cb3473fd7ea6fc5e37784d65
+      oci_revision: fb45fad59165ec819ac5b03148cba5c537b7eb6e
       healthy: true
       restart_count: 0
     voice_core_media_bridge:
-      image: memoria-agent:20260817-135129
-      image_id: sha256:163c4d534fa06a4b796a5217fcaead32ea97162a108bef1c4c6237f94238cb4e
+      image: memoria-agent:20260818-103228
+      image_id: sha256:549f5f29176b6ad3361290726abecff748b804b5cb3473fd7ea6fc5e37784d65
+      oci_revision: fb45fad59165ec819ac5b03148cba5c537b7eb6e
       healthy: true
       restart_count: 0
     media_edge:
-      image: memoria-media-edge:20260816-bridge-liveness-83af813
-      image_id: sha256:7111c7855a3ab100d06b0b3a83a37c6e615a5c81cbff9416e00675817295b3c6
+      image: memoria-media-edge:20260818-103228
+      image_id: sha256:d512fd348f9424cbeaccf091b9deeb50962dc83e5f3c598675dd2b5081697261
+      oci_revision: fb45fad59165ec819ac5b03148cba5c537b7eb6e
       healthy: true
       restart_count: 0
   board_diagnosis:
@@ -139,17 +156,103 @@ production_read_only_recheck:
     edge_error: eof
     voice_core_error: runtime_profile_version_mismatch_authority
     candidate_verified: false
+    scope: pre_cutover_existing_production_version_only
   cutover_pending_user_authorization: false
   cutover_authorized: true
+  cutover_completed: true
   candidate_release_tag: 20260818-103228
   rollback_receipt_sha256: 9b0d19a59ed60af951570eaad6648e1fb7db539fbe457a1a1aa1fa70a23b727c
   rollback_container_snapshot_sha256: 614f66de5fe8f7e0ffae12dc7c89b04a9e609a6a9297ac7fa3f02f444107192c
-  artifact_retention_warning: true
-  artifact_cleanup_performed: false
+  post_cutover_state_file: /opt/memoria/direct-canaries/20260818-103228/POST_CUTOVER_STATE.txt
+  post_cutover_state_sha256: 41060c9838f1c1db0b38e52c906292f9b14bd025e13df9539dc3bd6e9fa98bc8
+  cutover_evidence_file: /opt/memoria/direct-canaries/20260818-103228/CUTOVER_RESULT.txt
+  cutover_evidence_sha256: 37da7f571630c0585ab350464b789196cd3075998758a3c43d611ab240b53848
+  production_runtime_verified: true
+  direct_real_device_verified: false
+  full_duplex_verified: false
+  t1_t14: 0_pass_14_blocked_0_failed
+  artifact_retention_warning: false
+  artifact_cleanup_performed: true
+  cleanup_finished_utc: "2026-08-18T02:57:28Z"
+  deleted_historical_directories: 55
+  deleted_old_memoria_image_tags: 90
+  cleanup_failures: 0
+  docker_build_cache_after_cleanup: 0
+  docker_images_total: 34
+  docker_images_active: 13
+  docker_containers_total: 18
+  docker_containers_active: 14
+  docker_local_volumes_total: 5
+  docker_local_volumes_active: 4
+  broad_docker_system_prune: false
+  named_volumes_or_data_services_deleted: false
+
+release_20260818_runtime_profile_cutover:
+  code: complete
+  wired: control_session_runtime_agent_bridge_media_edge
+  enabled: true
+  verified: production_runtime_zero_active_session_scope
+  production_runtime_verified: true
+  source_release_tag: 20260818-103228
+  source_commit: fb45fad59165ec819ac5b03148cba5c537b7eb6e
+  observed_at: "2026-08-18T04:56:23Z"
+  deployed_services:
+    - control_api_session_runtime
+    - agent
+    - voice_core_media_bridge
+    - go_media_edge
+  preserved_services:
+    - esp32_firmware
+    - nginx
+    - h5
+    - miniprogram
+    - postgresql
+    - redis
+    - minio
+    - livekit
+    - speaker_model
+    - compatibility_gateways
+  runtime_fences:
+    control_api_and_agent: 20260814-231749-direct-canary
+    voice_core_media_bridge: 20260816-bridge-liveness-83af813
+  probes:
+    control_api_live: 200
+    control_api_ready: 200
+    unauthenticated_archive_read: 401
+    unauthenticated_archive_write: 401
+    voice_core_named_grpc_health: SERVING
+    media_edge_mtls_readyz: 200_ready
+  metrics:
+    active_device_connections: 0
+    active_media_sessions: 0
+    voice_core_channel_generation: 1
+    voice_core_liveness_healthy: 1
+    voice_core_liveness_probe_successes: 4060
+    voice_core_liveness_probe_failures: 0
+    redial_attempts: 0
+    redial_successes: 0
+    redial_failures: 0
+  rollback_points_preserved: true
+  post_cutover_state_file: /opt/memoria/direct-canaries/20260818-103228/POST_CUTOVER_STATE.txt
+  post_cutover_state_sha256: 41060c9838f1c1db0b38e52c906292f9b14bd025e13df9539dc3bd6e9fa98bc8
+  cutover_evidence_file: /opt/memoria/direct-canaries/20260818-103228/CUTOVER_RESULT.txt
+  cutover_evidence_sha256: 37da7f571630c0585ab350464b789196cd3075998758a3c43d611ab240b53848
+  artifact_cleanup:
+    performed: true
+    finished_utc: "2026-08-18T02:57:28Z"
+    deleted_historical_directories: 55
+    deleted_old_memoria_image_tags: 90
+    failures: 0
+    build_cache_after_cleanup: 0
+    broad_docker_system_prune: false
+    named_volumes_or_data_services_deleted: false
+  direct_real_device_verified: false
+  full_duplex_verified: false
+  t1_t14: 0_pass_14_blocked_0_failed
 
 hardware_realtime_voice:
-  code: implemented_release_20260817
-  wired: direct_production_canary_agent_bridge_edge_mtls
+  code: implemented_release_20260818
+  wired: direct_production_canary_control_agent_bridge_edge_mtls
   enabled: true
   verified: false
   production_runtime_verified: true
@@ -412,7 +515,7 @@ module_budgets:
   services/agent/src/agent.py: 3410
 
 stages:
-  python_voice_core: production_20260817_agent_bridge_candidate_enabled_runtime_verified_zero_session
+  python_voice_core: production_20260818_runtime_profile_candidate_enabled_runtime_verified_zero_session
   go_media_edge: production_direct_enabled_runtime_verified_no_active_device
   h5_streamcore_transport: implemented_local
   h5_audio_worklet_playback_ack: implemented_local_software_graph
@@ -545,7 +648,10 @@ gates:
   capacity_matrix: pending
   redis_session_ownership: production_single_edge_redis_mtls_runtime_verified_local_atomic_takeover_passed_production_multi_edge_ha_chaos_pending
   chaos_recovery: pending
-  canary_and_rollback: release_20260817_agent_bridge_and_control_api_healthy_automatic_rollbacks_exercised_second_cutovers_passed_zero_session_only
+  release_20260818_runtime_profile_cutover: passed_production_runtime_health_readiness_grpc_mtls_fail_closed_zero_session_2026_08_18
+  release_20260818_cutover_evidence_sha256: 37da7f571630c0585ab350464b789196cd3075998758a3c43d611ab240b53848
+  release_20260818_artifact_cleanup: passed_55_directories_90_image_tags_zero_failures_2026_08_18
+  canary_and_rollback: release_20260818_runtime_profile_plus_prior_canaries_healthy_rollback_points_preserved_zero_session_only
 
 external_evidence_policy:
   fail_closed: true
