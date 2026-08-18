@@ -622,6 +622,11 @@ class MediaBridgeGrpcServer:
         traceparent: str = "",
         interaction_authority: InteractionAuthority = InteractionAuthority.PYTHON_AUTHORITATIVE,
     ) -> _Connection:
+        session = self.bridge.get(identity.session_id)
+        if session is not None and not session.identity.has_same_reconnect_authority(
+            identity
+        ):
+            raise ValueError("media session reconnect authority changed")
         existing = self._connections.get(identity.session_id)
         if existing is not None:
             if identity.stream_epoch <= existing.session.identity.stream_epoch:
@@ -631,7 +636,6 @@ class MediaBridgeGrpcServer:
             # connection or provider context.
             self._terminate_outgoing(existing)
             self._connections.pop(identity.session_id, None)
-        session = self.bridge.get(identity.session_id)
         if session is None:
             session = self.bridge.open(
                 identity,

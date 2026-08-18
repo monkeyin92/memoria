@@ -242,6 +242,29 @@ func TestVoiceCoreSessionDropsStaleShadowWithoutPoisoningAuthoritativeEvents(t *
 	}
 }
 
+func TestVoiceCoreSessionEmptyRuntimeSubjectIsNotAWildcard(t *testing.T) {
+	identity := BridgeIdentity{
+		SessionID: "s", AccountID: "a", DeviceID: "d", ClientType: "device",
+		StreamEpoch: 2, BindingID: "binding", BindingVersion: 3, RuntimeProfileVersion: 27,
+	}
+	session := &VoiceCoreSession{identity: identity}
+	event := func(subject string) *mediav1.CoreToMedia {
+		candidate := identity.proto()
+		candidate.SubjectId = subject
+		return &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_Transcript{
+			Transcript: &mediav1.TranscriptEvent{Identity: candidate, Sequence: 1},
+		}}
+	}
+	// An empty subject must equal the expected empty subject.
+	if err := session.validateCoreEvent(event("")); err != nil {
+		t.Fatalf("matching empty subject was rejected: %v", err)
+	}
+	// A populated subject is not absorbed by an expected empty subject.
+	if err := session.validateCoreEvent(event("subject_1")); err == nil {
+		t.Fatal("empty runtime subject was treated as a wildcard")
+	}
+}
+
 func TestVoiceCoreSessionAdmitsOnlyCurrentPythonRealtimeEffects(t *testing.T) {
 	identity := BridgeIdentity{
 		SessionID: "s", AccountID: "a", DeviceID: "d", ClientType: "h5", StreamEpoch: 1,
@@ -311,6 +334,71 @@ func TestVoiceCoreBridgeFailsClosedForUnprovenGoAuthority(t *testing.T) {
 	defer cancel()
 	if _, err := bridge.Connect(ctx, bridgeIdentity(), bridgeFormat(16_000), bridgeFormat(24_000)); err == nil {
 		t.Fatal("bridge accepted unproven Go authority")
+	}
+}
+
+func TestBridgeIdentityRuntimeAuthorityFence(t *testing.T) {
+	device := BridgeIdentity{
+		SessionID: "s", AccountID: "a", DeviceID: "d", ClientType: "device",
+		StreamEpoch: 2, BindingID: "binding", BindingVersion: 3, RuntimeProfileVersion: 27,
+	}
+	cases := []struct {
+		name     string
+		mutate   func(*BridgeIdentity)
+		rejected bool
+	}{
+		{"device empty subject valid", func(identity *BridgeIdentity) {}, false},
+		{"device explicit subject valid", func(identity *BridgeIdentity) { identity.SubjectID = "subject_1" }, false},
+		{"device missing binding_id", func(identity *BridgeIdentity) { identity.BindingID = "" }, true},
+		{"device zero binding_version", func(identity *BridgeIdentity) { identity.BindingVersion = 0 }, true},
+		{"device zero runtime_profile_version", func(identity *BridgeIdentity) {
+			identity.RuntimeProfileVersion = 0
+		}, true},
+		{"device malformed subject", func(identity *BridgeIdentity) { identity.SubjectID = "bad subject" }, true},
+		{"h5 with fence rejected", func(identity *BridgeIdentity) {
+			identity.ClientType = "h5"
+			identity.SubjectID = "subject_1"
+		}, true},
+		{"h5 empty fence valid", func(identity *BridgeIdentity) {
+			identity.ClientType = "h5"
+			identity.SubjectID = ""
+			identity.BindingID = ""
+			identity.BindingVersion = 0
+			identity.RuntimeProfileVersion = 0
+		}, false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			identity := device
+			testCase.mutate(&identity)
+			err := identity.validate()
+			if testCase.rejected && err == nil {
+				t.Fatalf("identity was accepted: %+v", identity)
+			}
+			if !testCase.rejected && err != nil {
+				t.Fatalf("identity was rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestVoiceCoreBridgeAcceptsDeviceWithEmptyRuntimeSubject(t *testing.T) {
+	service := &fakeVoiceCore{received: make(chan *mediav1.MediaToCore, 1)}
+	bridge, cleanup := newBufconnBridge(t, service)
+	defer cleanup()
+	identity := BridgeIdentity{
+		SessionID: "s", AccountID: "a", DeviceID: "d", ClientType: "device",
+		StreamEpoch: 2, BindingID: "binding", BindingVersion: 3, RuntimeProfileVersion: 27,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	session, err := bridge.Connect(ctx, identity, bridgeFormat(16_000), bridgeFormat(24_000))
+	if err != nil {
+		t.Fatalf("device bridge with empty subject was rejected: %v", err)
+	}
+	defer session.Close()
+	if !session.identity.equal(identity.proto()) {
+		t.Fatalf("accepted stream does not own the empty-subject identity: %+v", session.identity)
 	}
 }
 

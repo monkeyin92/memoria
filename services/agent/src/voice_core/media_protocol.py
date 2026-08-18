@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -16,6 +17,7 @@ from typing import Any, cast
 
 MEDIA_PROTOCOL = "media-v1"
 MAX_ENVELOPE_BYTES = 256 * 1024
+_DEVICE_IDENTIFIER_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
 
 class AudioEncoding(StrEnum):
@@ -35,6 +37,14 @@ def _required_string(value: object, name: str) -> str:
     return value
 
 
+def _optional_device_identifier(value: object, name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    if value and _DEVICE_IDENTIFIER_PATTERN.fullmatch(value) is None:
+        raise ValueError(f"{name} contains an invalid character or is too long")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class SessionIdentity:
     session_id: str
@@ -50,6 +60,7 @@ class SessionIdentity:
 
     def __post_init__(self) -> None:
         _required_string(self.session_id, "session_id")
+        _optional_device_identifier(self.subject_id, "subject_id")
         _non_negative_int(self.stream_epoch, "stream_epoch")
         if self.stream_epoch < 1:
             raise ValueError("stream_epoch must be positive")
@@ -58,16 +69,37 @@ class SessionIdentity:
             (self.runtime_profile_version, "runtime_profile_version"),
         ):
             _non_negative_int(value, name)
-        authority_fence = (
-            bool(self.subject_id.strip()),
+        binding_fence = (
             bool(self.binding_id.strip()),
             self.binding_version > 0,
             self.runtime_profile_version > 0,
         )
-        if self.client_type == "device" and not all(authority_fence):
+        if self.client_type == "device" and not all(binding_fence):
             raise ValueError("device identity requires a complete runtime profile authority fence")
-        if self.client_type != "device" and any(authority_fence):
+        if self.client_type != "device" and (
+            bool(self.subject_id.strip()) or any(binding_fence)
+        ):
             raise ValueError("runtime profile authority fence is device-only")
+
+    def has_same_reconnect_authority(self, other: SessionIdentity) -> bool:
+        """Return whether only the transport epoch may differ.
+
+        A reconnect may resume the existing runtime and Generation, so every
+        owner and Runtime Profile field must remain immutable.  A real subject
+        or profile rotation must create a new media session/runtime boundary.
+        """
+
+        return (
+            self.session_id == other.session_id
+            and self.account_id == other.account_id
+            and self.participant_id == other.participant_id
+            and self.device_id == other.device_id
+            and self.client_type == other.client_type
+            and self.subject_id == other.subject_id
+            and self.binding_id == other.binding_id
+            and self.binding_version == other.binding_version
+            and self.runtime_profile_version == other.runtime_profile_version
+        )
 
 
 @dataclass(frozen=True, slots=True)

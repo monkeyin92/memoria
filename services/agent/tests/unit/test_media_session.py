@@ -2069,6 +2069,57 @@ async def test_reconnect_preserves_current_output_intent_owner() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconnect_rejects_runtime_authority_change_before_cleanup_cancel() -> None:
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: FakeMediaProvider(),
+    )
+    identity = SessionIdentity(
+        "registry-authority-reconnect",
+        account_id="account-a",
+        participant_id="participant-a",
+        device_id="device-a",
+        client_type="device",
+        stream_epoch=1,
+        subject_id="subject-a",
+        binding_id="binding-a",
+        binding_version=3,
+        runtime_profile_version=27,
+    )
+    context = await registry._get_or_create(identity)
+    cleanup = asyncio.create_task(asyncio.sleep(60))
+    registry._cleanup_tasks[identity.session_id] = cleanup  # noqa: SLF001
+
+    try:
+        with pytest.raises(ValueError, match="runtime authority fence changed"):
+            await registry._reuse_session(
+                context,
+                SessionIdentity(
+                    "registry-authority-reconnect",
+                    account_id="account-a",
+                    participant_id="participant-a",
+                    device_id="device-a",
+                    client_type="device",
+                    stream_epoch=2,
+                    subject_id="",
+                    binding_id="binding-a",
+                    binding_version=3,
+                    runtime_profile_version=28,
+                ),
+            )
+        assert registry._cleanup_tasks[identity.session_id] is cleanup  # noqa: SLF001
+        assert not cleanup.done()
+        assert context.identity == identity
+        assert context.stream_epoch == identity.stream_epoch
+    finally:
+        cleanup.cancel()
+        await asyncio.gather(cleanup, return_exceptions=True)
+        registry._cleanup_tasks.pop(identity.session_id, None)  # noqa: SLF001
+        await context.runtime.close()
+        await context.provider.close(context.identity)
+
+
+@pytest.mark.asyncio
 async def test_reconnect_provider_reset_failure_keeps_old_epoch_authoritative() -> None:
     class FailingResetProvider(FakeMediaProvider):
         def __init__(self) -> None:
@@ -2108,6 +2159,48 @@ async def test_reconnect_provider_reset_failure_keeps_old_epoch_authoritative() 
     assert context.runtime.speech_timeline.stream_epoch == before_runtime_epoch
     await context.runtime.close()
     await context.provider.close(context.identity)
+
+
+@pytest.mark.asyncio
+async def test_connected_reconnect_provider_reset_failure_retires_both_epochs() -> None:
+    identity = SessionIdentity("failed-connected-provider-reset", stream_epoch=1)
+    replacement = SessionIdentity(identity.session_id, stream_epoch=2)
+    runtime = DuplexRuntime.create(session_id=identity.session_id)
+    runtime_closed = asyncio.Event()
+    original_runtime_close = runtime.close
+
+    async def close_runtime() -> None:
+        runtime_closed.set()
+        await original_runtime_close()
+
+    runtime.close = close_runtime  # type: ignore[method-assign]
+
+    class FailingResetProvider(FakeMediaProvider):
+        async def reset_for_stream_epoch(self, _identity: SessionIdentity) -> None:
+            raise RuntimeError("provider epoch reset failed")
+
+    provider = FailingResetProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        session_factory=lambda _identity: MediaSessionResources(runtime, provider),
+    )
+    registry.install()
+    bridge_session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    assert bridge_session.reconnect(replacement)
+    callback = bridge.on_session_connected
+    assert callback is not None
+
+    with pytest.raises(RuntimeError, match="provider epoch reset failed"):
+        await callback(bridge_session)
+
+    assert registry.context(identity.session_id) is None
+    assert identity.session_id not in registry._sessions  # noqa: SLF001
+    assert context.closed is True
+    assert runtime_closed.is_set()
+    assert provider.closed is True
+    assert bridge.bridge.get(identity.session_id) is None
 
 
 @pytest.mark.asyncio

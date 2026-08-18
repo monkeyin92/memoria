@@ -231,6 +231,59 @@ func runtimeIdentity() *mediav1.SessionIdentity {
 	}
 }
 
+func TestSessionIdentityMatchesRuntimeAuthorityFence(t *testing.T) {
+	tests := []struct {
+		name           string
+		clientType     string
+		sessionSubject string
+		eventSubject   string
+		mutate         func(*mediav1.SessionIdentity)
+		want           bool
+	}{
+		{name: "device empty matches empty", clientType: "device", want: true},
+		{name: "device empty rejects concrete", clientType: "device", eventSubject: "subject_1"},
+		{name: "device concrete rejects empty", clientType: "device", sessionSubject: "subject_1"},
+		{name: "device concrete matches same concrete", clientType: "device", sessionSubject: "subject_1", eventSubject: "subject_1", want: true},
+		{name: "device rejects binding mismatch", clientType: "device", mutate: func(identity *mediav1.SessionIdentity) { identity.BindingId = "binding_2" }},
+		{name: "device rejects binding version mismatch", clientType: "device", mutate: func(identity *mediav1.SessionIdentity) { identity.BindingVersion++ }},
+		{name: "device rejects profile version mismatch", clientType: "device", mutate: func(identity *mediav1.SessionIdentity) { identity.RuntimeProfileVersion++ }},
+		{name: "h5 zero authority fence remains valid", clientType: "h5", want: true},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := OpenSessionRequest{
+				SessionID: "s", AccountID: "a", DeviceID: "d",
+				ClientType: testCase.clientType, StreamEpoch: 1,
+			}
+			identity := &mediav1.SessionIdentity{
+				SessionId: "s", AccountId: "a", DeviceId: "d",
+				ClientType: testCase.clientType, StreamEpoch: 1,
+			}
+			if testCase.clientType == "device" {
+				request.SubjectID = testCase.sessionSubject
+				request.BindingID = "binding_1"
+				request.BindingVersion = 3
+				request.RuntimeProfileVersion = 27
+				identity.SubjectId = testCase.eventSubject
+				identity.BindingId = request.BindingID
+				identity.BindingVersion = request.BindingVersion
+				identity.RuntimeProfileVersion = request.RuntimeProfileVersion
+			}
+			if testCase.mutate != nil {
+				testCase.mutate(identity)
+			}
+			session, err := NewSession(request, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer session.Stop()
+			if got := session.IdentityMatches(identity); got != testCase.want {
+				t.Fatalf("IdentityMatches()=%v want=%v identity=%+v", got, testCase.want, identity)
+			}
+		})
+	}
+}
+
 func TestVoiceCoreMediaRuntimeMirrorsAuthoritativeSpeechTimelineInGoShadow(t *testing.T) {
 	session := runtimeSession(t, 4)
 	defer session.Stop()

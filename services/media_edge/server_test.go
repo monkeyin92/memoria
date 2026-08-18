@@ -347,7 +347,9 @@ func TestReconnectUsesPerSessionLifecycleWithoutLeakingAReplacement(t *testing.T
 	defer func() { _ = server.Close() }()
 
 	slow, err := NewSession(OpenSessionRequest{
-		SessionID: "slow-reconnect", AccountID: "account", DeviceID: "device", StreamEpoch: 1,
+		SessionID: "slow-reconnect", AccountID: "account", DeviceID: "device",
+		ClientType: "device", StreamEpoch: 1, SubjectID: "",
+		BindingID: "binding-1", BindingVersion: 3, RuntimeProfileVersion: 27,
 	}, 4)
 	if err != nil {
 		t.Fatal(err)
@@ -365,7 +367,7 @@ func TestReconnectUsesPerSessionLifecycleWithoutLeakingAReplacement(t *testing.T
 		t.Fatal(err)
 	}
 
-	bridgeStarted := make(chan struct{})
+	bridgeStarted := make(chan OpenSessionRequest, 1)
 	releaseBridge := make(chan struct{})
 	server.BridgeFactory = func(
 		request OpenSessionRequest,
@@ -373,7 +375,7 @@ func TestReconnectUsesPerSessionLifecycleWithoutLeakingAReplacement(t *testing.T
 		_ DownlinkSender,
 	) (*VoiceCoreMediaRuntime, error) {
 		if request.SessionID == slow.ID && request.StreamEpoch == 2 {
-			close(bridgeStarted)
+			bridgeStarted <- request
 			<-releaseBridge
 		}
 		return NewVoiceCoreMediaRuntime(
@@ -393,7 +395,11 @@ func TestReconnectUsesPerSessionLifecycleWithoutLeakingAReplacement(t *testing.T
 		close(reconnectDone)
 	}()
 	select {
-	case <-bridgeStarted:
+	case reconnectRequest := <-bridgeStarted:
+		if reconnectRequest.SubjectID != "" || reconnectRequest.BindingID != "binding-1" ||
+			reconnectRequest.BindingVersion != 3 || reconnectRequest.RuntimeProfileVersion != 27 {
+			t.Fatalf("reconnect dropped the runtime authority fence: %+v", reconnectRequest)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("reconnect did not reach the slow bridge")
 	}

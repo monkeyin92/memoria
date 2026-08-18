@@ -2211,6 +2211,198 @@ async def test_real_create_session_route_persists_signed_v2_receipts_and_outbox(
 
 
 @pytest.mark.asyncio
+async def test_postgres_start_atomically_degrades_incomplete_subject_facts(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.session_runtime.service import (
+        StartPersistentSessionCommand,
+        build_postgres_session_runtime_service,
+    )
+    from services.session_runtime.subject_resolver import SubjectCandidate
+
+    store, bootstrap_dsn = postgres_runtime
+    actor_id = "actor-start-facts-unverified"
+    device_id = "device-start-facts-unverified"
+    binding_id = "binding-start-facts-unverified"
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        await _seed_binding(
+            admin,
+            actor_id=actor_id,
+            device_id=device_id,
+            binding_id=binding_id,
+        )
+        await admin.execute(
+            """
+            UPDATE identity_persons
+            SET subject_category = 'unknown', age_band = 'unknown',
+                age_evidence_status = 'unverified', updated_at = $2
+            WHERE person_id = $1
+            """,
+            actor_id,
+            datetime.now(UTC),
+        )
+    finally:
+        await admin.close()
+
+    observed_action_subjects: list[str | None] = []
+    set_action_subject = store.set_action_subject
+
+    async def capture_action_subject(
+        connection: asyncpg.Connection,
+        subject_id: str | None,
+    ) -> None:
+        observed_action_subjects.append(subject_id)
+        await set_action_subject(connection, subject_id)
+
+    monkeypatch.setattr(store, "set_action_subject", capture_action_subject)
+    service = build_postgres_session_runtime_service(
+        store=store,
+        signing_key=_SIGNING_KEY,
+    )
+    now = datetime.now(UTC)
+    profile = await service.start(
+        StartPersistentSessionCommand(
+            session_id="session-start-facts-unverified",
+            actor_id=actor_id,
+            device_id=device_id,
+            expected_binding_version=1,
+            idempotency_key="start-facts-unverified",
+            now=now,
+            requested_capabilities=("chat",),
+            candidates=(SubjectCandidate(subject_id=actor_id, confidence=0.99),),
+        )
+    )
+
+    assert observed_action_subjects == [None]
+    assert profile.active_subject_id is None
+    assert profile.subject_revision == 0
+    assert profile.subject_category.value == "unknown"
+    assert profile.age_band.value == "unknown"
+    assert profile.speaker_state.value == "unconfirmed"
+    assert profile.speaker_confidence is None
+    assert profile.service_mode.value == "unknown_safe"
+
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        event_row = await admin.fetchrow(
+            "SELECT event_type, payload_json FROM session_runtime_events "
+            "WHERE session_id = $1 ORDER BY event_sequence DESC LIMIT 1",
+            profile.session_id,
+        )
+    finally:
+        await admin.close()
+    assert event_row is not None
+    assert event_row["event_type"] == "subject_resolved"
+    event_payload = event_row["payload_json"]
+    if isinstance(event_payload, str):
+        event_payload = json.loads(event_payload)
+    assert event_payload["payload"]["reason_code"] == "subject_facts_unverified"
+
+
+@pytest.mark.asyncio
+async def test_postgres_switch_atomically_degrades_incomplete_subject_facts(
+    postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.session_runtime.service import (
+        StartPersistentSessionCommand,
+        SwitchPersistentSubjectCommand,
+        build_postgres_session_runtime_service,
+    )
+
+    store, bootstrap_dsn = postgres_runtime
+    actor_id = "actor-switch-facts-unverified"
+    device_id = "device-switch-facts-unverified"
+    binding_id = "binding-switch-facts-unverified"
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        await _seed_binding(
+            admin,
+            actor_id=actor_id,
+            device_id=device_id,
+            binding_id=binding_id,
+        )
+        await admin.execute(
+            """
+            UPDATE identity_persons
+            SET subject_category = 'unknown', age_band = 'unknown',
+                age_evidence_status = 'unverified', updated_at = $2
+            WHERE person_id = $1
+            """,
+            actor_id,
+            datetime.now(UTC),
+        )
+    finally:
+        await admin.close()
+
+    service = build_postgres_session_runtime_service(
+        store=store,
+        signing_key=_SIGNING_KEY,
+    )
+    now = datetime.now(UTC)
+    initial = await service.start(
+        StartPersistentSessionCommand(
+            session_id="session-switch-facts-unverified",
+            actor_id=actor_id,
+            device_id=device_id,
+            expected_binding_version=1,
+            idempotency_key="start-before-facts-switch",
+            now=now,
+            requested_capabilities=("chat",),
+        )
+    )
+
+    observed_action_subjects: list[str | None] = []
+    set_action_subject = store.set_action_subject
+
+    async def capture_action_subject(
+        connection: asyncpg.Connection,
+        subject_id: str | None,
+    ) -> None:
+        observed_action_subjects.append(subject_id)
+        await set_action_subject(connection, subject_id)
+
+    monkeypatch.setattr(store, "set_action_subject", capture_action_subject)
+    profile = await service.switch_subject(
+        SwitchPersistentSubjectCommand(
+            session_id=initial.session_id,
+            actor_id=actor_id,
+            subject_id=actor_id,
+            now=now + timedelta(seconds=1),
+            requested_capabilities=("chat",),
+        )
+    )
+
+    assert observed_action_subjects == [None]
+    assert profile.active_subject_id is None
+    assert profile.subject_revision == 0
+    assert profile.subject_category.value == "unknown"
+    assert profile.age_band.value == "unknown"
+    assert profile.speaker_state.value == "unconfirmed"
+    assert profile.speaker_confidence is None
+    assert profile.service_mode.value == "unknown_safe"
+    assert profile.session_epoch == initial.session_epoch + 1
+
+    admin = await asyncpg.connect(bootstrap_dsn)
+    try:
+        event_row = await admin.fetchrow(
+            "SELECT event_type, payload_json FROM session_runtime_events "
+            "WHERE session_id = $1 ORDER BY event_sequence DESC LIMIT 1",
+            profile.session_id,
+        )
+    finally:
+        await admin.close()
+    assert event_row is not None
+    assert event_row["event_type"] == "epoch_bumped"
+    event_payload = event_row["payload_json"]
+    if isinstance(event_payload, str):
+        event_payload = json.loads(event_payload)
+    assert event_payload["payload"]["reason_code"] == "subject_facts_unverified"
+
+
+@pytest.mark.asyncio
 async def test_parent_for_child_primary_snapshot_never_defaults_to_account_owner(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:

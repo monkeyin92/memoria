@@ -61,9 +61,18 @@ func (c DeviceMediaClaims) validate(issuer, audience string) error {
 	for field, value := range map[string]string{
 		"session_id": c.SessionID, "sub": c.Subject, "device_id": c.DeviceID,
 		"client_id": c.ClientID, "binding_id": c.BindingID,
-		"subject_id": c.SubjectID,
 	} {
 		if err := validateDeviceIdentifier(value, field); err != nil {
+			return fmt.Errorf("media token %w", err)
+		}
+	}
+	// subject_id is the runtime profile subject and may be empty for an
+	// unknown_safe session. An empty value is an explicit fence value, not a
+	// skip signal: it is carried into identity comparisons and must equal the
+	// runtime subject echoed by the Voice Core. A non-empty subject still has
+	// to be a well-formed identifier.
+	if c.SubjectID != "" {
+		if err := validateDeviceIdentifier(c.SubjectID, "subject_id"); err != nil {
 			return fmt.Errorf("media token %w", err)
 		}
 	}
@@ -219,6 +228,15 @@ func (v DeviceJWTVerifier) Verify(token, clientID string) (DeviceMediaClaims, er
 		}
 	default:
 		return DeviceMediaClaims{}, fmt.Errorf("unsupported device media token algorithm")
+	}
+	var requiredClaims struct {
+		SubjectID *string `json:"subject_id"`
+	}
+	if err := decode(parts[1], &requiredClaims); err != nil {
+		return DeviceMediaClaims{}, fmt.Errorf("invalid device media token claims")
+	}
+	if requiredClaims.SubjectID == nil {
+		return DeviceMediaClaims{}, fmt.Errorf("media token subject_id claim is required")
 	}
 	var claims DeviceMediaClaims
 	if err := decode(parts[1], &claims); err != nil {

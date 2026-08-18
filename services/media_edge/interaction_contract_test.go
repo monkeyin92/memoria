@@ -74,3 +74,26 @@ func TestDeviceSessionIdentityAuthorityFenceMatchesPythonWire(t *testing.T) {
 		t.Fatalf("device authority fence did not round trip: %s", decoded.String())
 	}
 }
+
+func TestDeviceSessionIdentityEmptyRuntimeSubjectRoundTrips(t *testing.T) {
+	identity := &mediav1.SessionIdentity{
+		SessionId: "s", AccountId: "a", DeviceId: "d", ClientType: "device",
+		StreamEpoch: 2, BindingId: "binding",
+		BindingVersion: 3, RuntimeProfileVersion: 27,
+	}
+	wire, err := proto.Marshal(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded mediav1.SessionIdentity
+	if err := proto.Unmarshal(wire, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(identity, &decoded) {
+		t.Fatalf("empty runtime subject did not round trip: %s", decoded.String())
+	}
+	if decoded.GetSubjectId() != "" || decoded.GetBindingId() != "binding" ||
+		decoded.GetRuntimeProfileVersion() != 27 {
+		t.Fatalf("empty subject identity lost the binding fence: %s", decoded.String())
+	}
+}

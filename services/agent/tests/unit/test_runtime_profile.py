@@ -435,6 +435,7 @@ def _runtime_profile_gate_for_test(**overrides: object) -> object:
         "expected_binding_id": "bind_01J_test",
         "expected_binding_version": 1,
         "expected_active_subject_id": "person_child",
+        "expected_subject_fence_enabled": True,
         "expected_subject_revision": 1,
         "verify_key": TEST_VERIFY_KEY,
     }
@@ -480,6 +481,83 @@ def test_runtime_profile_gate_requires_exact_subject_binding_fence(
     verified = parse_runtime_profile(canonical_wire_payload(), verify_key=TEST_VERIFY_KEY)
     assert verified is not None
     gate = _runtime_profile_gate_for_test(**expected)
+
+    assert gate.apply(verified, _runtime_profile_fence()) is None
+    assert gate.current is None
+
+
+@pytest.mark.parametrize(
+    ("expected_subject", "profile_subject", "subject_revision", "accepted"),
+    [
+        ("person_child", "person_child", 1, True),
+        ("person_child", None, 0, False),
+        ("", "person_child", 1, False),
+        ("", None, 0, True),
+    ],
+)
+def test_runtime_profile_gate_subject_fence_four_boundaries(
+    expected_subject: str | None,
+    profile_subject: str | None,
+    subject_revision: int,
+    accepted: bool,
+) -> None:
+    """P0-2: an enabled device subject fence compares named and empty
+    subjects strictly in all four combinations; the empty wire subject and a
+    None profile subject (unknown_safe) are the same fence value."""
+
+    if profile_subject is None:
+        payload = canonical_wire_payload(
+            active_subject_id=None,
+            subject_category="unknown",
+            age_band="unknown",
+            speaker_state="unconfirmed",
+            service_mode="unknown_safe",
+            session_epoch=1,
+            subject_revision=0,
+            capabilities=["chat"],
+            obligations=UNKNOWN_SAFE_OBLIGATIONS,
+        )
+        fence = _runtime_profile_fence(epoch=1)
+    else:
+        payload = canonical_wire_payload(active_subject_id=profile_subject)
+        fence = _runtime_profile_fence(epoch=2)
+    verified = parse_runtime_profile(payload, verify_key=TEST_VERIFY_KEY)
+    assert verified is not None
+    gate = _runtime_profile_gate_for_test(
+        expected_active_subject_id=expected_subject,
+        expected_subject_revision=subject_revision,
+    )
+    applied = gate.apply(verified, fence)
+    assert (applied is not None) is accepted
+    if not accepted:
+        assert gate.current is None
+
+
+def test_runtime_profile_gate_disabled_subject_fence_ignores_subject() -> None:
+    """H5/non-device sessions keep the historical behavior: no subject
+    fence means the signed profile subject is never compared."""
+
+    verified = parse_runtime_profile(
+        canonical_wire_payload(active_subject_id="person_parent"),
+        verify_key=TEST_VERIFY_KEY,
+    )
+    assert verified is not None
+    gate = _runtime_profile_gate_for_test(
+        expected_active_subject_id="person_child",
+        expected_subject_fence_enabled=False,
+    )
+    assert gate.apply(verified, _runtime_profile_fence()) is not None
+
+
+def test_runtime_profile_gate_does_not_trim_subject_fence_values() -> None:
+    verified = parse_runtime_profile(
+        canonical_wire_payload(active_subject_id="person_child"),
+        verify_key=TEST_VERIFY_KEY,
+    )
+    assert verified is not None
+    gate = _runtime_profile_gate_for_test(
+        expected_active_subject_id=" person_child",
+    )
 
     assert gate.apply(verified, _runtime_profile_fence()) is None
     assert gate.current is None

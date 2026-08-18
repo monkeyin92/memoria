@@ -182,12 +182,7 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if s.BridgeFactory != nil {
-			sessionID, accountID, deviceID, _ := session.IdentitySnapshot()
-			reconnectRequest := OpenSessionRequest{
-				SessionID: sessionID, AccountID: accountID, DeviceID: deviceID,
-				ClientType:  session.ClientTypeValue(),
-				StreamEpoch: epoch,
-			}
+			reconnectRequest := session.OpenRequestSnapshot()
 			runtime, bridgeErr := s.buildBridge(reconnectRequest, session)
 			if bridgeErr != nil {
 				writeStatus(w, http.StatusBadGateway, map[string]string{"error": "Voice Core bridge unavailable"})

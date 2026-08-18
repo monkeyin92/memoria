@@ -835,6 +835,40 @@ class PostgresSessionRuntimeService:
             repository=receipt_repository,
         )
 
+    @staticmethod
+    def _normalize_subject_resolution(
+        *,
+        binding: _LockedBinding,
+        resolution: SubjectResolution,
+    ) -> SubjectResolution:
+        """Return one legal subject shape before any subject-scoped DB work."""
+        active_subject_id = resolution.active_subject_id
+        if active_subject_id is None:
+            return resolution
+        subject = next(
+            (item for item in binding.subjects if item.person_id == active_subject_id),
+            None,
+        )
+        if subject is None:
+            raise PersistentSessionDenied("active subject is not a binding member")
+        facts_complete = (
+            subject.subject_category == "adult" and subject.age_band == "adult"
+        ) or (
+            subject.subject_category == "minor"
+            and subject.age_band in {"under_14", "14_17"}
+        )
+        if facts_complete:
+            return resolution
+        return replace(
+            resolution,
+            active_subject_id=None,
+            speaker_state="unconfirmed",
+            speaker_confidence=None,
+            service_mode="unknown_safe",
+            reason_code="subject_facts_unverified",
+            requires_confirmation=True,
+        )
+
     async def binding_snapshot(
         self,
         *,
@@ -944,6 +978,10 @@ class PostgresSessionRuntimeService:
                 offline=command.offline,
             ),
             binding=binding.snapshot,
+        )
+        resolution = self._normalize_subject_resolution(
+            binding=binding,
+            resolution=resolution,
         )
         await self._store.set_action_subject(
             connection,
@@ -1426,6 +1464,10 @@ class PostgresSessionRuntimeService:
                         reason_code="subject_change_requires_confirmation",
                         requires_confirmation=True,
                     )
+                resolution = self._normalize_subject_resolution(
+                    binding=binding,
+                    resolution=resolution,
+                )
                 await self._store.set_action_subject(
                     connection,
                     resolution.active_subject_id,
@@ -1455,7 +1497,9 @@ class PostgresSessionRuntimeService:
                     turn_id=current_context.turn_id + 1,
                     tool_epoch=current_context.tool_epoch + 1,
                     event_type=(
-                        "subject_switched" if command.subject_id is not None else "epoch_bumped"
+                        "subject_switched"
+                        if resolution.active_subject_id is not None
+                        else "epoch_bumped"
                     ),
                     profile_ttl=rotation_ttl,
                     event_payload={

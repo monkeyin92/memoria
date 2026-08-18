@@ -198,7 +198,7 @@ class DeviceGatewaySessionResponse(BaseModel):
     interaction_authority: Literal["python_authoritative"] = "python_authoritative"
     binding_id: str
     binding_version: int = Field(ge=1)
-    subject_id: str
+    subject_id: str | None
     runtime_profile_version: int = Field(ge=1, le=DEVICE_STREAM_EPOCH_MAX)
     uplink: DeviceOpusFormat
     downlink: DeviceOpusFormat
@@ -435,7 +435,7 @@ async def create_fleet_device_media_session(
     account_id = str(authenticated["actor_id"])
     binding_id = str(authenticated["binding_id"])
     binding_version = int(cast(int, authenticated["binding_version"]))
-    subject_id = str(authenticated["subject_id"])
+    binding_subject_id = str(authenticated["subject_id"])
     activation_profile_version = int(cast(int, authenticated["runtime_profile_version"]))
     firmware_version = str(authenticated["firmware_version"])
     board_profile = str(authenticated["board_profile"])
@@ -479,7 +479,7 @@ async def create_fleet_device_media_session(
                 client_id=body.client_id,
                 binding_id=binding_id,
                 binding_version=binding_version,
-                subject_id=subject_id,
+                binding_subject_id=binding_subject_id,
                 activation_profile_version=activation_profile_version,
                 firmware_version=firmware_version,
                 board_profile=board_profile,
@@ -513,7 +513,7 @@ async def create_fleet_device_media_session(
         client_id=body.client_id,
         binding_id=binding_id,
         binding_version=binding_version,
-        subject_id=subject_id,
+        subject_id=binding_subject_id,
         runtime_profile_version=activation_profile_version,
         room_name=room_name,
         identity=identity,
@@ -530,7 +530,7 @@ async def create_fleet_device_media_session(
         runtime="livekit_compat",
         binding_id=binding_id,
         binding_version=binding_version,
-        subject_id=subject_id,
+        subject_id=binding_subject_id,
         runtime_profile_version=activation_profile_version,
         uplink=DeviceOpusFormat(sample_rate=16000),
         downlink=DeviceOpusFormat(sample_rate=24000),
@@ -545,7 +545,7 @@ async def _create_direct_device_media_session(
     client_id: str,
     binding_id: str,
     binding_version: int,
-    subject_id: str,
+    binding_subject_id: str,
     activation_profile_version: int,
     firmware_version: str,
     board_profile: str,
@@ -601,7 +601,7 @@ async def _create_direct_device_media_session(
             client_id=client_id,
             binding_id=binding_id,
             binding_version=binding_version,
-            subject_id=subject_id,
+            binding_subject_id=binding_subject_id,
             firmware_version=firmware_version,
             board_profile=board_profile,
             websocket_url=websocket_url,
@@ -692,9 +692,9 @@ async def _create_direct_device_media_session(
         )
 
     # The subject candidate is not a client claim: authenticate_media_challenge
-    # already verified the binding primary subject, so the authority resolves
-    # that exact member (candidates=() would sign an unknown_safe profile and
-    # break the ticket subject fence below).
+    # already verified the binding primary subject, so the authority evaluates
+    # that exact member. Missing or incomplete category/age facts may still
+    # atomically degrade the resulting Runtime Profile to unknown_safe.
     try:
         runtime_profile = await runtime_service.start(
             StartPersistentSessionCommand(
@@ -705,7 +705,9 @@ async def _create_direct_device_media_session(
                 idempotency_key=f"device-media-{session_id}",
                 now=now,
                 requested_capabilities=tuple(requested_capabilities),
-                candidates=(SubjectCandidate(subject_id=subject_id, confidence=1.0),),
+                candidates=(
+                    SubjectCandidate(subject_id=binding_subject_id, confidence=1.0),
+                ),
                 profile_ttl=timedelta(seconds=settings.device_runtime_profile_ttl_s),
             ),
         )
@@ -734,16 +736,15 @@ async def _create_direct_device_media_session(
             detail={"code": "session_runtime_authority_unavailable"},
         ) from exc
 
-    # The ticket must carry exactly the authoritative profile facts; any
-    # mismatch (subject, binding identity/version) fails closed before a
-    # credential is minted.
+    # The ticket must carry exactly the authoritative session and binding
+    # facts. The active subject comes from that same Runtime Profile and may
+    # deliberately be null for unknown_safe.
     profile_facts = (
         ("session_id", runtime_profile.session_id, session_id),
         ("actor_id", runtime_profile.actor_id, account_id),
         ("device_id", runtime_profile.device_id, device_id),
         ("binding_id", runtime_profile.binding_id, binding_id),
         ("binding_version", runtime_profile.binding_version, binding_version),
-        ("subject_id", runtime_profile.active_subject_id, subject_id),
     )
     mismatches = [field for field, actual, expected in profile_facts if actual != expected]
     if mismatches:
@@ -761,11 +762,11 @@ async def _create_direct_device_media_session(
                 "fields": mismatches,
             },
         )
-    # The exact-fact comparison above proves this is a non-null authoritative
-    # subject; retain that proof as a concrete value for ticket/projection
-    # APIs instead of repeatedly widening back to RuntimeProfile's Optional.
+    # Binding/account ownership and the current natural-person subject are
+    # separate authorities. An unknown-safe Runtime Profile deliberately has
+    # no active subject, while the durable binding owner remains non-null for
+    # lifecycle cleanup and access control.
     authoritative_subject_id = runtime_profile.active_subject_id
-    assert authoritative_subject_id is not None
     # Device-visible profile projection version (plan 6.3): monotonic per
     # device, advanced only when the profile's stable fingerprint changes.
     # session_epoch stays the identity-switch fence and is never used as the
@@ -867,7 +868,8 @@ async def _create_direct_device_media_session(
             device_id=device_id,
             binding_id=runtime_profile.binding_id,
             binding_version=runtime_profile.binding_version,
-            subject_id=authoritative_subject_id,
+            subject_id=binding_subject_id,
+            active_subject_id=authoritative_subject_id,
             client_id=client_id,
             runtime="direct_voice_core",
             protocol_version=2,
@@ -939,7 +941,7 @@ async def _resume_direct_device_media_session(
     client_id: str,
     binding_id: str,
     binding_version: int,
-    subject_id: str,
+    binding_subject_id: str,
     firmware_version: str,
     board_profile: str,
     websocket_url: str,
@@ -1012,10 +1014,10 @@ async def _resume_direct_device_media_session(
         (runtime_profile.device_id, device_id),
         (runtime_profile.binding_id, binding_id),
         (runtime_profile.binding_version, binding_version),
-        (runtime_profile.active_subject_id, subject_id),
         (str(previous["binding_id"]), binding_id),
         (int(previous["binding_version"]), binding_version),
-        (str(previous["subject_id"]), subject_id),
+        (str(previous["subject_id"]), binding_subject_id),
+        (previous["active_subject_id"], runtime_profile.active_subject_id),
     )
     if any(actual != expected for actual, expected in authority_facts):
         raise HTTPException(
@@ -1108,7 +1110,7 @@ async def _resume_direct_device_media_session(
             client_id=client_id,
             binding_id=binding_id,
             binding_version=binding_version,
-            subject_id=subject_id,
+            subject_id=runtime_profile.active_subject_id,
             runtime_profile_version=ledger.profile_version,
             device_settings={
                 "settings_version": device_settings.settings_version,
@@ -1193,7 +1195,7 @@ async def _resume_direct_device_media_session(
         interaction_authority="python_authoritative",
         binding_id=binding_id,
         binding_version=binding_version,
-        subject_id=subject_id,
+        subject_id=runtime_profile.active_subject_id,
         runtime_profile_version=ledger.profile_version,
         uplink=DeviceOpusFormat(sample_rate=16000),
         downlink=DeviceOpusFormat(sample_rate=24000),

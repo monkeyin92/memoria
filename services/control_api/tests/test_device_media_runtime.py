@@ -155,6 +155,20 @@ def test_direct_ticket_is_eddsa_with_full_binding_claims() -> None:
     assert claims["iat"] == claims["nbf"]
 
 
+def test_direct_ticket_encodes_missing_runtime_subject_as_empty_claim() -> None:
+    private_key, ticket = mint(subject_id=None)
+
+    claims = jwt.decode(
+        ticket.token,
+        private_key.public_key(),
+        algorithms=["EdDSA"],
+        audience=DEVICE_MEDIA_AUDIENCE,
+        issuer="memoria-control-api",
+    )
+
+    assert claims["subject_id"] == ""
+
+
 def test_direct_ticket_never_falls_back_to_hs256() -> None:
     with pytest.raises(ValueError, match="Ed25519 private key"):
         mint_device_direct_media_ticket(

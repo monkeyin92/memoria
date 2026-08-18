@@ -24,12 +24,17 @@ func testDeviceKey(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
 
 func signDeviceToken(t *testing.T, privateKey ed25519.PrivateKey, claims DeviceMediaClaims, algorithm string) string {
 	t.Helper()
+	return signDeviceTokenPayload(t, privateKey, claims, algorithm)
+}
+
+func signDeviceTokenPayload(t *testing.T, privateKey ed25519.PrivateKey, payload any, algorithm string) string {
+	t.Helper()
 	header := map[string]any{"alg": algorithm, "typ": "JWT", "kid": "test-key"}
 	headerJSON, err := json.Marshal(header)
 	if err != nil {
 		t.Fatal(err)
 	}
-	payloadJSON, err := json.Marshal(claims)
+	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,12 +214,6 @@ func TestDeviceJWTVerifyRejectsMissingBinding(t *testing.T) {
 		t.Fatal("stream_epoch outside the device uint32 wire domain was accepted")
 	}
 	claims = validDeviceClaims()
-	claims.SubjectID = ""
-	token = signDeviceToken(t, privateKey, claims, "EdDSA")
-	if _, err := newDeviceVerifier(publicKey).Verify(token, "client_1"); err == nil {
-		t.Fatal("missing subject_id was accepted")
-	}
-	claims = validDeviceClaims()
 	claims.RuntimeProfileVersion = 0
 	token = signDeviceToken(t, privateKey, claims, "EdDSA")
 	if _, err := newDeviceVerifier(publicKey).Verify(token, "client_1"); err == nil {
@@ -231,6 +230,53 @@ func TestDeviceJWTVerifyRejectsMissingBinding(t *testing.T) {
 	token = signDeviceToken(t, privateKey, claims, "EdDSA")
 	if _, err := newDeviceVerifier(publicKey).Verify(token, "client_1"); err == nil {
 		t.Fatal("settings_version outside the device uint32 domain was accepted")
+	}
+}
+
+func TestDeviceJWTVerifyAllowsEmptyRuntimeSubject(t *testing.T) {
+	publicKey, privateKey := testDeviceKey(t)
+	claims := validDeviceClaims()
+	claims.SubjectID = ""
+	token := signDeviceToken(t, privateKey, claims, "EdDSA")
+	verified, err := newDeviceVerifier(publicKey).Verify(token, "client_1")
+	if err != nil {
+		t.Fatalf("unknown_safe token with empty subject_id was rejected: %v", err)
+	}
+	if verified.SubjectID != "" || verified.BindingID != "binding_1" ||
+		verified.BindingVersion != 3 || verified.RuntimeProfileVersion != 27 {
+		t.Fatalf("empty subject token lost the runtime profile authority fence: %+v", verified)
+	}
+}
+
+func TestDeviceJWTVerifyRequiresExplicitRuntimeSubjectClaim(t *testing.T) {
+	publicKey, privateKey := testDeviceKey(t)
+	payloadJSON, err := json.Marshal(validDeviceClaims())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+		t.Fatal(err)
+	}
+	delete(payload, "subject_id")
+	token := signDeviceTokenPayload(t, privateKey, payload, "EdDSA")
+	if _, err := newDeviceVerifier(publicKey).Verify(token, "client_1"); err == nil {
+		t.Fatal("token without an explicit subject_id claim was accepted")
+	}
+	payload["subject_id"] = nil
+	token = signDeviceTokenPayload(t, privateKey, payload, "EdDSA")
+	if _, err := newDeviceVerifier(publicKey).Verify(token, "client_1"); err == nil {
+		t.Fatal("token with a null subject_id claim was accepted")
+	}
+}
+
+func TestDeviceJWTVerifyRejectsMalformedRuntimeSubject(t *testing.T) {
+	publicKey, privateKey := testDeviceKey(t)
+	claims := validDeviceClaims()
+	claims.SubjectID = "subject with spaces"
+	token := signDeviceToken(t, privateKey, claims, "EdDSA")
+	if _, err := newDeviceVerifier(publicKey).Verify(token, "client_1"); err == nil {
+		t.Fatal("malformed subject_id was accepted")
 	}
 }
 

@@ -296,6 +296,66 @@ def test_media_v1_envelope_and_audio_metadata_round_trip() -> None:
     assert AudioFormat(AudioEncoding.PCM_S16LE, 16_000).frame_ms == 20
 
 
+def test_session_identity_device_authority_fence_allows_empty_subject() -> None:
+    """A device may carry an empty runtime subject (unknown_safe), while
+    binding, runtime profile version and stream epoch stay mandatory."""
+
+    identity = SessionIdentity(
+        "device-empty-subject",
+        device_id="dev-1",
+        client_type="device",
+        subject_id="",
+        binding_id="binding-1",
+        binding_version=1,
+        runtime_profile_version=19,
+        stream_epoch=143,
+    )
+    assert identity.subject_id == ""
+    assert identity.binding_id == "binding-1"
+    assert identity.runtime_profile_version == 19
+
+    with pytest.raises(ValueError, match="authority fence"):
+        SessionIdentity(
+            "device-missing-binding",
+            device_id="dev-1",
+            client_type="device",
+            runtime_profile_version=19,
+        )
+    with pytest.raises(ValueError, match="device-only"):
+        SessionIdentity(
+            "h5-with-fence",
+            client_type="h5",
+            binding_id="binding-1",
+            binding_version=1,
+            runtime_profile_version=19,
+        )
+    with pytest.raises(ValueError, match="device-only"):
+        SessionIdentity(
+            "h5-with-subject",
+            client_type="h5",
+            subject_id="person-a",
+        )
+
+
+@pytest.mark.parametrize(
+    "subject_id",
+    (" ", "subject with spaces", "/subject", "_subject", "s" * 129),
+)
+def test_session_identity_rejects_malformed_nonempty_device_subject(
+    subject_id: str,
+) -> None:
+    with pytest.raises(ValueError, match="subject_id"):
+        SessionIdentity(
+            "device-malformed-subject",
+            device_id="dev-1",
+            client_type="device",
+            subject_id=subject_id,
+            binding_id="binding-1",
+            binding_version=1,
+            runtime_profile_version=19,
+        )
+
+
 def test_media_v1_envelope_keeps_v1_compatibility_for_missing_and_future_versions() -> None:
     envelope = MediaEnvelope.create(
         type="client.trace",
@@ -872,6 +932,40 @@ def test_media_bridge_stop_idempotency_is_scoped_to_stream_epoch() -> None:
     )
     assert not server.accept_client_event(replay)
     assert bridge.fence.generation_id == 1
+
+
+def test_media_bridge_reconnect_rejects_runtime_authority_change() -> None:
+    server = MediaBridgeServer()
+    identity = SessionIdentity(
+        "authority-reconnect",
+        account_id="account-a",
+        participant_id="participant-a",
+        device_id="device-a",
+        client_type="device",
+        stream_epoch=1,
+        subject_id="subject-a",
+        binding_id="binding-a",
+        binding_version=1,
+        runtime_profile_version=7,
+    )
+    bridge = server.open(identity)
+
+    assert not bridge.reconnect(
+        SessionIdentity(
+            "authority-reconnect",
+            account_id="account-a",
+            participant_id="participant-a",
+            device_id="device-a",
+            client_type="device",
+            stream_epoch=2,
+            subject_id="subject-b",
+            binding_id="binding-a",
+            binding_version=1,
+            runtime_profile_version=7,
+        )
+    )
+    assert bridge.identity == identity
+    assert bridge.state == "connected"
 
 
 def test_media_bridge_rejects_audio_discontinuity_and_sample_gap() -> None:

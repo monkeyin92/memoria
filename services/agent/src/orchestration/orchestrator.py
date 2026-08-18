@@ -102,6 +102,7 @@ class Orchestrator:
     expected_binding_id: str | None = None
     expected_binding_version: int | None = None
     expected_active_subject_id: str | None = None
+    expected_subject_fence_enabled: bool = False
     metrics: MetricsRegistry = field(default_factory=MetricsRegistry)
     state_machine: DuplexStateMachine | None = None
     fence_gate: FenceGate | None = None
@@ -165,6 +166,7 @@ class Orchestrator:
             expected_binding_id=self.expected_binding_id,
             expected_binding_version=self.expected_binding_version,
             expected_active_subject_id=self.expected_active_subject_id,
+            expected_subject_fence_enabled=self.expected_subject_fence_enabled,
         )
 
     @property

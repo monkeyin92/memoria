@@ -89,9 +89,17 @@ func (i BridgeIdentity) validate() error {
 	if i.StreamEpoch == 0 {
 		return fmt.Errorf("stream epoch must be positive")
 	}
-	if i.ClientType == "device" && (i.SubjectID == "" || i.BindingID == "" ||
+	if i.ClientType == "device" && (i.BindingID == "" ||
 		i.BindingVersion == 0 || i.RuntimeProfileVersion == 0) {
-		return fmt.Errorf("device identity requires a complete runtime profile authority fence")
+		return fmt.Errorf("device identity requires binding_id, binding_version and runtime_profile_version")
+	}
+	if i.ClientType == "device" && i.SubjectID != "" {
+		// A populated runtime subject must still be a well-formed identifier.
+		// An empty subject is the explicit unknown_safe value: it is compared
+		// as-is on every event and never treated as a skip signal.
+		if err := validateDeviceIdentifier(i.SubjectID, "subject_id"); err != nil {
+			return err
+		}
 	}
 	if i.ClientType != "device" && (i.SubjectID != "" || i.BindingID != "" ||
 		i.BindingVersion != 0 || i.RuntimeProfileVersion != 0) {

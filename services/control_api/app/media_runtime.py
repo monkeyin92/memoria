@@ -223,7 +223,7 @@ def mint_device_direct_media_ticket(
     client_id: str,
     binding_id: str,
     binding_version: int,
-    subject_id: str,
+    subject_id: str | None,
     runtime_profile_version: int,
     device_settings: Mapping[str, object] | None = None,
     stream_epoch: int,
@@ -237,10 +237,17 @@ def mint_device_direct_media_ticket(
         ("device_id", device_id),
         ("client_id", client_id),
         ("binding_id", binding_id),
-        ("subject_id", subject_id),
     ):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"direct device media {label} must be a non-empty string")
+    if subject_id is None:
+        ticket_subject_id = ""
+    elif not isinstance(subject_id, str) or (subject_id and not subject_id.strip()):
+        raise ValueError(
+            "direct device media subject_id must be null, empty, or a non-empty string"
+        )
+    else:
+        ticket_subject_id = subject_id
     if isinstance(binding_version, bool) or binding_version < 1:
         raise ValueError("direct device media binding_version must be positive")
     if (
@@ -281,7 +288,11 @@ def mint_device_direct_media_ticket(
         "client_id": client_id,
         "binding_id": binding_id,
         "binding_version": binding_version,
-        "subject_id": subject_id,
+        # An unresolved Runtime Profile has no active natural-person subject.
+        # JWT keeps the claim present for a stable Go/Python wire shape and
+        # uses the one canonical empty representation instead of omitting the
+        # fence or falling back to the binding/account owner.
+        "subject_id": ticket_subject_id,
         "client_type": "device",
         "stream_epoch": stream_epoch,
         "runtime_profile_version": runtime_profile_version,

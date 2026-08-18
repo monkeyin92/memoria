@@ -832,6 +832,43 @@ async def test_outgoing_queue_overflow_cancels_generation_and_reconnect_sends_ca
     assert reconnected.session.generation_active is False
 
 
+def test_active_bridge_rejects_changed_runtime_authority_without_disconnect() -> None:
+    bridge = MediaBridgeGrpcServer()
+    identity = SessionIdentity(
+        "grpc-authority-reconnect",
+        account_id="account-a",
+        participant_id="participant-a",
+        device_id="device-a",
+        client_type="device",
+        stream_epoch=1,
+        subject_id="",
+        binding_id="binding-a",
+        binding_version=3,
+        runtime_profile_version=27,
+    )
+    first = bridge._open_connection(identity)  # noqa: SLF001 - transport seam
+
+    with pytest.raises(ValueError, match="reconnect authority changed"):
+        bridge._open_connection(  # noqa: SLF001 - transport seam
+            SessionIdentity(
+                "grpc-authority-reconnect",
+                account_id="account-a",
+                participant_id="participant-a",
+                device_id="device-a",
+                client_type="device",
+                stream_epoch=2,
+                subject_id="subject-a",
+                binding_id="binding-a",
+                binding_version=3,
+                runtime_profile_version=28,
+            )
+        )
+
+    assert bridge._connections[identity.session_id] is first  # noqa: SLF001
+    assert first.closed is False
+    assert first.session.identity == identity
+
+
 @pytest.mark.asyncio
 async def test_overflow_delivers_terminal_before_runtime_cancellation_finishes() -> None:
     cancellation_started = asyncio.Event()

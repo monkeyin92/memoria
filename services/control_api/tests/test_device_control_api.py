@@ -447,6 +447,7 @@ def _close_report_fixture(
         binding_id=str(manifest["binding_id"]),
         binding_version=int(manifest["binding_version"]),
         subject_id="person_a",
+        active_subject_id="person_a",
         client_id="esp-installation-1",
         runtime="direct_voice_core",
         protocol_version=2,

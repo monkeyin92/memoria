@@ -116,6 +116,8 @@ class MediaSessionLifecycleMixin:
 
         async def on_downlink_overflow(self, session: MediaBridgeSession) -> None: ...
 
+        async def _finalize_session(self, session_id: str) -> None: ...
+
         async def _emit_projection_patch(
             self, context: _MediaVoiceSession, patch: ProjectionPatch
         ) -> None: ...
@@ -197,9 +199,24 @@ class MediaSessionLifecycleMixin:
     async def on_session_connected(self, session: MediaBridgeSession) -> None:
         """Install a replacement epoch before resumed downlink can flow."""
 
-        current = self._sessions.get(session.identity.session_id)
+        session_id = session.identity.session_id
+        current = self._sessions.get(session_id)
         if current is not None:
-            await self._reuse_session(current, session.identity)
+            try:
+                await self._reuse_session(current, session.identity)
+            except Exception:
+                # The bridge has already accepted the replacement transport
+                # epoch before this callback runs.  If the provider cannot
+                # rotate with it, the old Registry context and new bridge
+                # session no longer share one authority fence.  Retire both
+                # sides instead of leaving an uncollectable split epoch.
+                with contextlib.suppress(Exception):
+                    await self._finalize_session(session_id)
+                # ``_finalize_session`` closes only the Registry-owned old
+                # epoch.  The bridge is already on the replacement epoch, so
+                # its guarded close intentionally cannot remove this session.
+                self.bridge.bridge.close(session_id)
+                raise
 
     def _stream_epoch_is_current(
         self,
@@ -228,9 +245,6 @@ class MediaSessionLifecycleMixin:
         current: _MediaVoiceSession,
         identity: SessionIdentity,
     ) -> _MediaVoiceSession:
-        cleanup = self._cleanup_tasks.pop(identity.session_id, None)
-        if cleanup is not None and not cleanup.done():
-            cleanup.cancel()
         if current.identity.account_id != identity.account_id:
             raise ValueError("media session account identity changed")
         if (
@@ -239,8 +253,13 @@ class MediaSessionLifecycleMixin:
             or current.identity.client_type != identity.client_type
         ):
             raise ValueError("media session device identity changed")
+        if not current.identity.has_same_reconnect_authority(identity):
+            raise ValueError("media session runtime authority fence changed")
         if identity.stream_epoch < current.stream_epoch:
             raise ValueError("media session stream epoch moved backwards")
+        cleanup = self._cleanup_tasks.pop(identity.session_id, None)
+        if cleanup is not None and not cleanup.done():
+            cleanup.cancel()
         discarded: ProjectionPatch | None = None
         reconnected = False
         if identity.stream_epoch > current.stream_epoch:
@@ -251,6 +270,8 @@ class MediaSessionLifecycleMixin:
                     # lookup waited. Re-check before mutating the session.
                     if identity.stream_epoch < current.stream_epoch:
                         raise ValueError("media session stream epoch moved backwards")
+                    if not current.identity.has_same_reconnect_authority(identity):
+                        raise ValueError("media session runtime authority fence changed")
                     if identity.stream_epoch == current.stream_epoch:
                         return current
                     reset_provider = getattr(current.provider, "reset_for_stream_epoch", None)

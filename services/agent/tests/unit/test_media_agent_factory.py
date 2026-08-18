@@ -347,3 +347,48 @@ async def test_production_media_factory_does_not_replay_archive_during_session_c
 
     assert resources.runtime is runtime
     assert not replay_started.is_set()
+
+
+@pytest.mark.asyncio
+async def test_device_factory_enables_explicit_subject_fence() -> None:
+    """Device identities always pin the runtime subject: the gate
+    compares the signed profile subject against the ticket subject, where an
+    empty ticket subject requires an unknown_safe (None) profile subject."""
+
+    from services.agent.src import media_agent_factory as factory_module
+
+    tts = SimpleNamespace(pool=object())
+    factory = factory_module.ProductionMediaSessionFactory(
+        settings=SimpleNamespace(
+            listener_cues_enabled=False,
+            use_paralinguistic_tags=False,
+            speaker_enroll_speech_ms=1_000,
+            speaker_enroll_timeout_ms=10_000,
+            speaker_accept_threshold=0.8,
+            speaker_min_verify_speech_ms=800,
+        ),
+        llm_factory=object(),
+    )
+    identity = SessionIdentity(
+        "device-fence-wiring",
+        account_id="account",
+        device_id="dev-1",
+        client_type="device",
+        subject_id="",
+        binding_id="binding-1",
+        binding_version=1,
+        runtime_profile_version=19,
+    )
+    runtime = factory._new_runtime(
+        identity.session_id,
+        tts,
+        device_id=identity.device_id,
+        identity=identity,
+    )
+    gate = runtime.orchestrator.runtime_profiles
+    assert gate.expected_active_subject_id == ""
+    assert gate.expected_subject_fence_enabled is True
+    assert gate.expected_binding_id == "binding-1"
+    assert gate.expected_binding_version == 1
+    assert gate.expected_device_profile_version == 19
+    await runtime.close()

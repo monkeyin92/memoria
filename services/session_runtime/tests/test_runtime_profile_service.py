@@ -304,6 +304,71 @@ def test_unresolved_session_gets_signed_short_lived_unknown_safe_profile() -> No
     assert service.verify(profile, now=now + timedelta(minutes=1))
 
 
+def test_confirmed_candidate_with_unverified_subject_facts_degrades_atomically() -> None:
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=UTC)
+    authority = InMemoryRuntimeAuthority(
+        bindings=(
+            BindingSnapshot(
+                binding_id="binding-unverified",
+                device_id="device-unverified",
+                binding_version=1,
+                declared_mode="self_use",
+                primary_subject_ids=("person-unverified",),
+                member_subject_ids=("person-unverified",),
+            ),
+        ),
+        subjects=(
+            SubjectFacts(
+                subject_id="person-unverified",
+                category="unknown",
+                age_band="unknown",
+                revision=7,
+            ),
+        ),
+        personas=(
+            PersonaAssignment(
+                assignment_id="persona-assignment-unverified",
+                persona_id="starlight",
+                persona_version=4,
+                relationship_stage="new",
+            ),
+        ),
+    )
+    service = RuntimeProfileService(
+        authority=authority,
+        policy=PolicyEngine(receipt_id_factory=lambda: "receipt-unverified"),
+        signing_key=b"test-runtime-profile-signing-key",
+        profile_id_factory=lambda: "runtime-profile-unverified",
+    )
+
+    profile = service.start(
+        StartSessionCommand(
+            session_id="session-unverified",
+            device_id="device-unverified",
+            actor_id="person-unverified",
+            candidates=(SubjectCandidate("person-unverified", 1.0),),
+            requested_capabilities=("chat", "memory_recall_private"),
+            now=now,
+        )
+    )
+
+    assert profile.active_subject_id is None
+    assert profile.subject_revision == 0
+    assert profile.subject_category == "unknown"
+    assert profile.age_band == "unknown"
+    assert profile.speaker_state == "unconfirmed"
+    assert profile.speaker_confidence is None
+    assert profile.service_mode == "unknown_safe"
+    assert profile.capabilities == ("chat",)
+    assert _obligation_codes(profile.obligations) >= {
+        "DO_NOT_PERSIST",
+        "DO_NOT_WRITE_LEARNING_PROGRESS",
+        "NO_MODEL_TRAINING",
+        "REQUIRE_SPEAKER_CONFIRMATION",
+    }
+    assert service.verify(profile, now=now + timedelta(minutes=1))
+
+
 def test_unresolved_session_allows_temporary_english_practice_only() -> None:
     """Remediation 4.3: unknown-safe grants chat + temporary English practice;
     tutor and learning-progress persistence stay rejected."""

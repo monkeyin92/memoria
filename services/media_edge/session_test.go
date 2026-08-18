@@ -26,6 +26,42 @@ func TestSessionRestoresActiveGenerationWithContinuedCoreClock(t *testing.T) {
 	}
 }
 
+func TestDeviceOpenSessionAllowsEmptyRuntimeSubjectButRequiresBindingFence(t *testing.T) {
+	base := OpenSessionRequest{
+		SessionID: "device-1", AccountID: "account-1", DeviceID: "device-1",
+		ClientType: "device", StreamEpoch: 18,
+		BindingID: "binding-1", BindingVersion: 3, RuntimeProfileVersion: 27,
+	}
+	// Empty runtime subject (unknown_safe) is an explicit, valid fence value.
+	if err := base.Validate(); err != nil {
+		t.Fatalf("device session with empty runtime subject was rejected: %v", err)
+	}
+	if _, err := NewSession(base, 4); err != nil {
+		t.Fatalf("NewSession with empty runtime subject failed: %v", err)
+	}
+	failures := []struct {
+		name   string
+		mutate func(*OpenSessionRequest)
+	}{
+		{"missing binding_id", func(request *OpenSessionRequest) { request.BindingID = "" }},
+		{"zero binding_version", func(request *OpenSessionRequest) { request.BindingVersion = 0 }},
+		{"zero runtime_profile_version", func(request *OpenSessionRequest) {
+			request.RuntimeProfileVersion = 0
+		}},
+		{"malformed subject", func(request *OpenSessionRequest) { request.SubjectID = "bad subject" }},
+		{"blank subject", func(request *OpenSessionRequest) { request.SubjectID = "   " }},
+	}
+	for _, testCase := range failures {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := base
+			testCase.mutate(&request)
+			if err := request.Validate(); err == nil {
+				t.Fatalf("device session was accepted without a complete binding fence: %+v", request)
+			}
+		})
+	}
+}
+
 func TestSessionRestoresCancelledGenerationAsInactive(t *testing.T) {
 	session, err := NewSession(OpenSessionRequest{
 		SessionID: "cancelled", AccountID: "a", DeviceID: "d", StreamEpoch: 2,

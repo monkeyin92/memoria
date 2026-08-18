@@ -110,10 +110,17 @@ func (r OpenSessionRequest) Validate() error {
 	if r.StreamEpoch == 0 {
 		return fmt.Errorf("stream_epoch must be positive")
 	}
-	if r.ClientType == "device" && (strings.TrimSpace(r.SubjectID) == "" ||
-		strings.TrimSpace(r.BindingID) == "" || r.BindingVersion == 0 ||
-		r.RuntimeProfileVersion == 0) {
+	if r.ClientType == "device" && (strings.TrimSpace(r.BindingID) == "" ||
+		r.BindingVersion == 0 || r.RuntimeProfileVersion == 0) {
 		return fmt.Errorf("device session requires a complete runtime profile authority fence")
+	}
+	// An empty runtime subject is a valid explicit value (unknown_safe) and is
+	// compared as-is against the Voice Core identity. A populated subject must
+	// still be a well-formed identifier.
+	if r.ClientType == "device" && r.SubjectID != "" {
+		if err := validateDeviceIdentifier(r.SubjectID, "subject_id"); err != nil {
+			return err
+		}
 	}
 	if r.ClientType != "device" && (r.SubjectID != "" || r.BindingID != "" ||
 		r.BindingVersion != 0 || r.RuntimeProfileVersion != 0) {

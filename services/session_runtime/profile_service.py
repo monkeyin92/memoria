@@ -171,6 +171,16 @@ class SubjectFacts:
     revision: int
 
 
+def _has_complete_subject_facts(subject: SubjectFacts | None) -> bool:
+    if subject is None:
+        return False
+    if subject.category == "adult":
+        return subject.age_band == "adult"
+    if subject.category == "minor":
+        return subject.age_band in {"under_14", "14_17"}
+    return False
+
+
 @dataclass(frozen=True, slots=True)
 class PersonaAssignment:
     assignment_id: str
@@ -387,6 +397,24 @@ class RuntimeProfileService:
             if resolution.active_subject_id is not None
             else None
         )
+        # A binding member and a high-confidence speaker candidate are not
+        # enough to establish a usable natural-person subject.  Category and
+        # age facts must form one complete canonical pair; otherwise carrying
+        # the resolved id forward would create the illegal mixed state
+        # ``confirmed + unknown``.  Degrade the whole subject resolution
+        # atomically so every downstream consumer sees the one legal
+        # anonymous shape instead of trying to infer which fields to trust.
+        if resolution.active_subject_id is not None and not _has_complete_subject_facts(subject):
+            resolution = replace(
+                resolution,
+                active_subject_id=None,
+                speaker_state="unconfirmed",
+                speaker_confidence=None,
+                service_mode="unknown_safe",
+                reason_code="subject_facts_unverified",
+                requires_confirmation=True,
+            )
+            subject = None
         category: SubjectCategoryValue = subject.category if subject else "unknown"
         age_band: AgeBandValue = subject.age_band if subject else "unknown"
         subject_revision = subject.revision if subject else 0

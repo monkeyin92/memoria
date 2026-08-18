@@ -338,6 +338,7 @@ CREATE TABLE IF NOT EXISTS device_media_sessions (
     binding_id TEXT NOT NULL,
     binding_version INTEGER NOT NULL CHECK (binding_version >= 1),
     subject_id TEXT NOT NULL,
+    active_subject_id TEXT,
     client_id TEXT NOT NULL,
     runtime TEXT NOT NULL CHECK (runtime IN ('livekit_compat', 'direct_voice_core')),
     protocol_version INTEGER NOT NULL CHECK (protocol_version IN (1, 2)),
@@ -471,6 +472,18 @@ class MemoryStore:
                     str(row[1])
                     for row in connection.execute("PRAGMA table_info(device_media_sessions)")
                 }
+                if "active_subject_id" not in media_columns:
+                    connection.execute(
+                        "ALTER TABLE device_media_sessions ADD COLUMN active_subject_id TEXT"
+                    )
+                    # Legacy rows used subject_id for both binding ownership
+                    # and the Runtime Profile subject. Backfill exactly once
+                    # during schema migration; future null values are an
+                    # intentional unknown-safe fence and must stay null.
+                    connection.execute(
+                        "UPDATE device_media_sessions "
+                        "SET active_subject_id = subject_id"
+                    )
                 for column, definition in {
                     "firmware_version": "TEXT NOT NULL DEFAULT ''",
                     "board_profile": "TEXT NOT NULL DEFAULT ''",
@@ -1577,6 +1590,7 @@ class MemoryStore:
         binding_id: str,
         binding_version: int,
         subject_id: str,
+        active_subject_id: str | None,
         client_id: str,
         runtime: str,
         protocol_version: int,
@@ -1602,12 +1616,12 @@ class MemoryStore:
                 """
                 INSERT INTO device_media_sessions (
                     session_id, device_id, binding_id, binding_version,
-                    subject_id, client_id, runtime, protocol_version,
+                    subject_id, active_subject_id, client_id, runtime, protocol_version,
                     stream_epoch, firmware_version, board_profile,
                     runtime_profile_version, settings_version,
                     audio_mode_requested, audio_mode_effective,
                     aec_profile_version, ticket_jti, created_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -1615,6 +1629,7 @@ class MemoryStore:
                     binding_id,
                     binding_version,
                     subject_id,
+                    active_subject_id,
                     client_id,
                     runtime,
                     protocol_version,

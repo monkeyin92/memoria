@@ -245,6 +245,10 @@ class ProductionMediaSessionFactory:
             gate.expected_binding_id = identity.binding_id
             gate.expected_binding_version = identity.binding_version
             gate.expected_active_subject_id = identity.subject_id
+            # Device authority always pins the runtime subject: an empty
+            # subject_id means the signed profile must carry no subject
+            # (unknown_safe), never that subject validation is skipped.
+            gate.expected_subject_fence_enabled = True
             gate.expected_device_profile_version = identity.runtime_profile_version
         return runtime
 

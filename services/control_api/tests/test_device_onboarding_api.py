@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -315,6 +316,7 @@ def test_device_media_stream_epoch_reservation_is_monotonic_and_migration_safe(
         binding_id="binding-1",
         binding_version=1,
         subject_id="person_a",
+        active_subject_id="person_a",
         client_id="client-1",
         runtime="direct_voice_core",
         protocol_version=2,
@@ -329,6 +331,103 @@ def test_device_media_stream_epoch_reservation_is_monotonic_and_migration_safe(
         expires_at="2026-08-13T00:02:00Z",
     )
     assert memory.next_device_media_stream_epoch(device_id="dev_historical") == 8
+
+
+def test_device_media_active_subject_migration_backfills_once_and_preserves_null(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "legacy-device-media.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE device_media_sessions (
+                session_id TEXT PRIMARY KEY,
+                device_id TEXT NOT NULL,
+                binding_id TEXT NOT NULL,
+                binding_version INTEGER NOT NULL CHECK (binding_version >= 1),
+                subject_id TEXT NOT NULL,
+                client_id TEXT NOT NULL,
+                runtime TEXT NOT NULL CHECK (runtime IN ('livekit_compat', 'direct_voice_core')),
+                protocol_version INTEGER NOT NULL CHECK (protocol_version IN (1, 2)),
+                stream_epoch INTEGER NOT NULL CHECK (stream_epoch >= 1),
+                firmware_version TEXT NOT NULL DEFAULT '',
+                board_profile TEXT NOT NULL DEFAULT '',
+                runtime_profile_version INTEGER NOT NULL DEFAULT 1
+                    CHECK (runtime_profile_version >= 1),
+                settings_version INTEGER NOT NULL DEFAULT 0
+                    CHECK (settings_version >= 0),
+                audio_mode_requested TEXT NOT NULL DEFAULT 'half_duplex_safe',
+                audio_mode_effective TEXT NOT NULL DEFAULT '',
+                aec_profile_version INTEGER,
+                ticket_jti TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                connected_at TEXT,
+                last_disconnected_at TEXT,
+                last_disconnect_reason TEXT NOT NULL DEFAULT '',
+                closed_at TEXT,
+                close_reason TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO device_media_sessions (
+                session_id, device_id, binding_id, binding_version, subject_id,
+                client_id, runtime, protocol_version, stream_epoch, ticket_jti,
+                created_at, expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-session",
+                "legacy-device",
+                "legacy-binding",
+                1,
+                "person_a",
+                "legacy-client",
+                "direct_voice_core",
+                2,
+                7,
+                "legacy-ticket",
+                "2026-08-16T00:00:00Z",
+                "2026-08-16T00:02:00Z",
+            ),
+        )
+
+    memory = MemoryStore(str(database_path))
+    memory.initialize()
+    legacy = memory.get_device_media_session(session_id="legacy-session")
+    assert legacy is not None
+    assert legacy["subject_id"] == "person_a"
+    assert legacy["active_subject_id"] == "person_a"
+
+    memory.create_device_media_session(
+        session_id="unknown-safe-session",
+        device_id="unknown-safe-device",
+        binding_id="unknown-safe-binding",
+        binding_version=1,
+        subject_id="person_a",
+        active_subject_id=None,
+        client_id="unknown-safe-client",
+        runtime="direct_voice_core",
+        protocol_version=2,
+        stream_epoch=1,
+        firmware_version="0.2.0",
+        board_profile="memoria-atk-dnesp32s3-v1",
+        runtime_profile_version=1,
+        settings_version=0,
+        audio_mode_requested="half_duplex_safe",
+        ticket_jti="unknown-safe-ticket",
+        created_at="2026-08-17T00:00:00Z",
+        expires_at="2026-08-17T00:02:00Z",
+    )
+
+    reopened = MemoryStore(str(database_path))
+    reopened.initialize()
+    unknown_safe = reopened.get_device_media_session(session_id="unknown-safe-session")
+    assert unknown_safe is not None
+    assert unknown_safe["subject_id"] == "person_a"
+    assert unknown_safe["active_subject_id"] is None
 
 
 def test_device_media_stream_epoch_reservation_fails_closed_at_uint32_limit(
@@ -845,6 +944,8 @@ async def test_direct_device_media_session_never_touches_livekit(
     assert record["firmware_version"] == "0.1.0"
     assert record["board_profile"] == "memoria-devkit"
     assert record["runtime_profile_version"] == claims["runtime_profile_version"]
+    assert record["subject_id"] == "person_a"
+    assert record["active_subject_id"] == "person_a"
     assert record["settings_version"] == 0
     assert record["audio_mode_requested"] == "half_duplex_safe"
     assert record["ticket_jti"] == claims["jti"]
@@ -1012,6 +1113,64 @@ async def test_direct_reconnect_reuses_session_and_advances_only_transport_epoch
 
 
 @pytest.mark.asyncio
+async def test_direct_unknown_safe_session_keeps_binding_owner_and_empty_runtime_subject(
+    tmp_path: Path,
+) -> None:
+    service, store, device_key, payload = _fixture()
+    manifest = _activate_device(service, store, device_key, payload)
+    settings_value, signing_key = _direct_media_settings()
+    memory = _direct_memory(tmp_path)
+    authority = _DirectSessionAuthority(
+        binding_id=str(manifest["binding_id"]),
+        binding_version=int(manifest["binding_version"]),
+        subject_id=None,
+        profile_overrides={
+            "subject_revision": 0,
+            "subject_category": "unknown",
+            "age_band": "unknown",
+            "speaker_state": "unconfirmed",
+            "speaker_confidence": None,
+            "service_mode": "unknown_safe",
+            "capabilities": ["chat"],
+        },
+    )
+    app = _direct_app(service, memory, authority, settings_value)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await _post_direct_media_session(client, service, device_key)
+        assert created.status_code == 200, created.text
+        created_body = created.json()
+        resumed = await _post_direct_media_session(
+            client,
+            service,
+            device_key,
+            resume_session_id=str(created_body["session_id"]),
+        )
+
+    assert resumed.status_code == 200, resumed.text
+    resumed_body = resumed.json()
+    assert created_body["subject_id"] is None
+    assert resumed_body["subject_id"] is None
+    assert resumed_body["stream_epoch"] == created_body["stream_epoch"] + 1
+    for body in (created_body, resumed_body):
+        claims = jwt.decode(
+            str(body["media_token"]),
+            signing_key.public_key(),
+            algorithms=["EdDSA"],
+            audience="memoria-media-edge",
+            issuer="memoria-control-api",
+        )
+        assert claims["sub"] == "person_a"
+        assert claims["subject_id"] == ""
+
+    record = memory.get_device_media_session(session_id=str(created_body["session_id"]))
+    assert record is not None
+    assert record["subject_id"] == "person_a"
+    assert record["active_subject_id"] is None
+    assert memory.delete_device_media_sessions(subject_id="person_a") == 1
+
+
+@pytest.mark.asyncio
 async def test_direct_device_media_session_creates_authority_before_ticket_and_policy_readable(
     tmp_path: Path,
 ) -> None:
@@ -1149,8 +1308,6 @@ async def test_direct_device_media_session_fails_closed_on_authority_errors(
 @pytest.mark.parametrize(
     ("profile_overrides", "expected_fields"),
     [
-        ({"active_subject_id": "person_b"}, ["subject_id"]),
-        ({"active_subject_id": None}, ["subject_id"]),
         ({"binding_id": "binding-other"}, ["binding_id"]),
         ({"binding_version": 99}, ["binding_version"]),
     ],

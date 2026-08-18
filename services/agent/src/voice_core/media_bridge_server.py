@@ -408,13 +408,8 @@ class MediaBridgeSession:
         return True
 
     def reconnect(self, identity: SessionIdentity) -> bool:
-        if self.state == "closed" or identity.session_id != self.identity.session_id:
-            return False
-        if (
-            identity.account_id != self.identity.account_id
-            or identity.participant_id != self.identity.participant_id
-            or identity.device_id != self.identity.device_id
-            or identity.client_type != self.identity.client_type
+        if self.state == "closed" or not self.identity.has_same_reconnect_authority(
+            identity
         ):
             return False
         if identity.stream_epoch <= self.identity.stream_epoch:

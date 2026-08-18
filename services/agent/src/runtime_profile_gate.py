@@ -47,6 +47,17 @@ from services.agent.src.runtime_profile import (
 )
 
 
+def _normalize_subject(value: str | None) -> str:
+    """Map a nullable runtime subject to a comparable form.
+
+    None (profile-side unknown-safe subject) and the empty string
+    (device-authority wire with no confirmed subject) are the same fence
+    value; every other value is compared verbatim (no trimming).
+    """
+
+    return "" if value is None else value
+
+
 @dataclass
 class RuntimeProfileGate:
     """Binds at most one signed RuntimeProfile to the current identity epoch."""
@@ -59,6 +70,11 @@ class RuntimeProfileGate:
     expected_binding_id: str | None = None
     expected_binding_version: int | None = None
     expected_active_subject_id: str | None = None
+    # Device authority always pins the runtime subject: enabled means the
+    # signed profile subject must strictly equal expected_active_subject_id
+    # where an empty expected value also matches a None profile subject
+    # (unknown_safe).  Disabled (H5/non-device) never compares the subject.
+    expected_subject_fence_enabled: bool = False
     expected_subject_revision: int | None = None
     # Device-visible monotonic config/profile projection. It is compared with
     # the Control policy envelope, never with signed identity session_epoch.
@@ -141,8 +157,9 @@ class RuntimeProfileGate:
                 and profile.binding_version != self.expected_binding_version
             )
             or (
-                self.expected_active_subject_id is not None
-                and profile.active_subject_id != self.expected_active_subject_id
+                self.expected_subject_fence_enabled
+                and _normalize_subject(profile.active_subject_id)
+                != _normalize_subject(self.expected_active_subject_id)
             )
             or (
                 self.expected_subject_revision is not None

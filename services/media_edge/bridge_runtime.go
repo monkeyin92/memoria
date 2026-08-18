@@ -364,10 +364,21 @@ func (s *Session) IdentityMatches(identity *mediav1.SessionIdentity) bool {
 	if identity == nil {
 		return false
 	}
-	sessionID, accountID, deviceID, streamEpoch := s.IdentitySnapshot()
+	expected := s.OpenRequestSnapshot()
 	clientType := identity.GetClientType()
 	if clientType == "" {
 		clientType = "h5"
 	}
-	return identity.GetSessionId() == sessionID && identity.GetStreamEpoch() == streamEpoch && identity.GetAccountId() == accountID && identity.GetDeviceId() == deviceID && clientType == s.ClientTypeValue()
+	if identity.GetSessionId() != expected.SessionID || identity.GetStreamEpoch() != expected.StreamEpoch ||
+		identity.GetAccountId() != expected.AccountID || identity.GetDeviceId() != expected.DeviceID ||
+		clientType != expected.ClientType {
+		return false
+	}
+	// The runtime profile authority fence participates as an explicit value.
+	// An empty subject_id on the device path is the unknown_safe fence value,
+	// not a wildcard: it must equal the subject echoed by the Voice Core or
+	// the event is rejected.
+	return identity.GetSubjectId() == expected.SubjectID && identity.GetBindingId() == expected.BindingID &&
+		identity.GetBindingVersion() == expected.BindingVersion &&
+		identity.GetRuntimeProfileVersion() == expected.RuntimeProfileVersion
 }

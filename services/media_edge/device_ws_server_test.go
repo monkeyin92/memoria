@@ -588,6 +588,52 @@ func TestDeviceWSSDownlinkAudioAndGenerationControls(t *testing.T) {
 	}
 }
 
+func TestDeviceWSSUnknownSafeSessionKeepsBindingFenceAndEmptySubject(t *testing.T) {
+	env := newDeviceTestEnv(t, nil)
+	connection, _ := env.dial(t, env.token(t, func(claims *DeviceMediaClaims) {
+		claims.SubjectID = ""
+	}), "client_1")
+	writeDeviceJSON(t, connection, deviceV2Hello())
+	accepted := deviceReadAccepted(t, connection)
+	if accepted.SessionID != "session_1" || accepted.StreamEpoch != 18 {
+		t.Fatalf("unknown_safe session did not accept the signed binding: %+v", accepted)
+	}
+	env.mu.Lock()
+	request := env.requests["session_1"]
+	env.mu.Unlock()
+	if request.SubjectID != "" || request.BindingID != "binding_1" ||
+		request.BindingVersion != 3 || request.RuntimeProfileVersion != 27 {
+		t.Fatalf("unknown_safe runtime subject or binding fence was not preserved: %+v", request)
+	}
+
+	// An empty runtime subject is an explicit fence value: core events that
+	// echo the empty subject are accepted, and the identity round trip keeps
+	// the empty subject on the wire.
+	identity := &mediav1.SessionIdentity{
+		SessionId: "session_1", AccountId: "account_1", DeviceId: "dev_1",
+		ClientType: "device", StreamEpoch: 18, BindingId: "binding_1",
+		BindingVersion: 3, RuntimeProfileVersion: 27,
+	}
+	env.mu.Lock()
+	core := env.cores["session_1"]
+	env.mu.Unlock()
+	core.inject(&mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_Generation{
+		Generation: &mediav1.GenerationControl{
+			Identity: identity, Sequence: 1, TurnId: 1, GenerationId: 1,
+			ToolEpoch: 0, Action: mediav1.GenerationAction_GENERATION_ACTION_START,
+			Reason: "test",
+		},
+	}})
+	messageType, payload, err := readDeviceMessage(connection, 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageType != websocket.TextMessage ||
+		!strings.Contains(string(payload), "generation.started") {
+		t.Fatalf("empty-subject identity did not pass the runtime fence: type=%d payload=%s", messageType, payload)
+	}
+}
+
 func TestDeviceWSSReconnectTakesOverAndEqualEpochRejected(t *testing.T) {
 	env := newDeviceTestEnv(t, nil)
 	first, _ := env.dial(t, env.token(t, nil), "client_1")

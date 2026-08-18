@@ -60,6 +60,10 @@ type Session struct {
 	DeviceID                   string
 	ClientType                 string
 	StreamEpoch                uint64
+	SubjectID                  string
+	BindingID                  string
+	BindingVersion             uint64
+	RuntimeProfileVersion      uint64
 	Generation                 Fence
 	generationActive           bool
 	floorState                 ShadowFloorState
@@ -109,6 +113,26 @@ func (s *Session) IdentitySnapshot() (sessionID, accountID, deviceID string, str
 	return s.ID, s.AccountID, s.DeviceID, s.StreamEpoch
 }
 
+// OpenRequestSnapshot returns every immutable identity/authority field plus
+// the current transport epoch under one lock. Reconnect and Core event gates
+// must not assemble these fields from separate snapshots or an old epoch can
+// be paired with the current authority fence.
+func (s *Session) OpenRequestSnapshot() OpenSessionRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return OpenSessionRequest{
+		SessionID:             s.ID,
+		AccountID:             s.AccountID,
+		DeviceID:              s.DeviceID,
+		ClientType:            s.ClientType,
+		StreamEpoch:           s.StreamEpoch,
+		SubjectID:             s.SubjectID,
+		BindingID:             s.BindingID,
+		BindingVersion:        s.BindingVersion,
+		RuntimeProfileVersion: s.RuntimeProfileVersion,
+	}
+}
+
 func (s *Session) ClientTypeValue() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -129,6 +153,10 @@ func NewSession(request OpenSessionRequest, maxPendingFrames int) (*Session, err
 		DeviceID:               request.DeviceID,
 		ClientType:             defaultClientType(request.ClientType),
 		StreamEpoch:            request.StreamEpoch,
+		SubjectID:              request.SubjectID,
+		BindingID:              request.BindingID,
+		BindingVersion:         request.BindingVersion,
+		RuntimeProfileVersion:  request.RuntimeProfileVersion,
 		Generation:             Fence{SessionID: request.SessionID},
 		generationActive:       true,
 		floorState:             ShadowFloorSilence,
