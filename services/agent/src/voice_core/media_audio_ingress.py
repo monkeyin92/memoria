@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Protocol
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.voice_core.asr_stream_supervisor import ASRAcceptDecision
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
+from services.agent.src.voice_core.media_pcm_tap import MediaPcmTap, maybe_create_tap
 from services.agent.src.voice_core.media_protocol import AudioFrame
 from services.agent.src.voice_core.media_session_types import ProviderAudioTaskSnapshot
 from services.agent.src.voice_core.speech_timeline import ASRResult, asr_result_to_segment
@@ -40,6 +41,8 @@ class MediaAudioIngressState:
     finalize_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     last_finalized_audio_watermark: int = -1
     loss_concealed_ranges: deque[tuple[int, int]] = field(default_factory=deque)
+    pcm_tap: MediaPcmTap | None = None
+    pcm_tap_initialized: bool = False
 
     @classmethod
     def create(cls, max_frames: int) -> MediaAudioIngressState:
@@ -88,6 +91,11 @@ class MediaAudioIngress:
                 await task
         state.pump_task = None
         self._drain(state.queue)
+        tap = state.pcm_tap
+        state.pcm_tap = None
+        state.pcm_tap_initialized = False
+        if tap is not None:
+            tap.close()
         self._host.metrics.set_media_metric("media_pcm_queue_depth", 0.0)
 
     async def accept(self, context: _MediaVoiceSession, frame: AudioFrame) -> None:
@@ -166,6 +174,13 @@ class MediaAudioIngress:
         context.ingress.discontinuity_pending = False
         context.ingress.provider_failed = False
         context.ingress.last_finalized_audio_watermark = -1
+        # A reconnect advances the stream epoch; start a fresh tap file so the
+        # capture file name matches the epoch it actually contains.
+        tap = context.ingress.pcm_tap
+        context.ingress.pcm_tap = None
+        context.ingress.pcm_tap_initialized = False
+        if tap is not None:
+            tap.close()
 
     async def _reset_discontinuity(
         self,
@@ -522,6 +537,7 @@ class MediaAudioIngress:
             return
         if frame.discontinuity or context.ingress.discontinuity_pending:
             await self._reset_discontinuity(context, frame)
+        self._tap_frame(context, frame)
         results = await context.provider.ingest_audio(context.identity, frame)
         if frame.loss_concealed:
             ranges = context.ingress.loss_concealed_ranges
@@ -543,6 +559,21 @@ class MediaAudioIngress:
             results,
             callback_stream_epoch=callback_stream_epoch,
         )
+
+    @staticmethod
+    def _tap_frame(context: _MediaVoiceSession, frame: AudioFrame) -> None:
+        # Diagnostics-only capture of exactly the PCM admitted toward the ASR
+        # provider.  The tap is env-gated and strictly fail-open.
+        state = context.ingress
+        if not state.pcm_tap_initialized:
+            state.pcm_tap_initialized = True
+            state.pcm_tap = maybe_create_tap(
+                context.identity.session_id,
+                context.stream_epoch,
+            )
+        tap = state.pcm_tap
+        if tap is not None:
+            tap.write(frame.payload)
 
     async def _pump(self, context: _MediaVoiceSession) -> None:
         state = context.ingress
