@@ -1,11 +1,17 @@
 # 项目交接
 
-## 当前待部署增量（2026-08-19，输出 fence + FunASR task boundary，已提交未切流）
+## 当前生产增量（2026-08-19，输出 fence + FunASR task boundary，已切流并完成首次 Direct 上行会话观测）
+
+- 源码提交 `3a3fcdc995efd86544480a5ee8c3beeb351ffd07` 与 annotated tag `20260819-151012-output-fence-funasr` 已推送 `origin/main`，tag 不再移动。已构建并仅切换 Agent 与 Voice Core Media Bridge，运行镜像 `memoria-agent:20260819-151012-output-fence-funasr`（image ID `sha256:589b6f4c993730be98517ffb4ef4481447106358d49f5207dce8bc217eff27ad`，OCI revision 与源提交一致）；Control API、Media Edge、固件、H5、小程序和数据服务保持 `20260818-103228` 及更早版本不变。
+- 当前层级为 `code + wired + enabled + production runtime verified`：Bridge 具名 gRPC Health `SERVING`、Edge mTLS readyz `ready`、公网 8443 未认证回顾读 401 fail closed；回滚点 `rollback-20260819-151012-output-fence-funasr-pre-agent/bridge`（`sha256:2afb5420…`）已冻结。证据目录 `/opt/memoria/direct-canaries/20260819-151012-output-fence-funasr/`：`CUTOVER_RESULT.txt` SHA-256 `97f6af5237026c783fa61b79b81561b87c1e4d3f6bae24094f06bd4ef1161e67`，`POST_CUTOVER_STATE.txt` `3447155124a7c3842bb81ae698aded4e85ff8d66caad6d2d501e216e191baf5f`，manifest `c544d0ddeb0d37fd6377fe21fb383d99f72e52bda05d3d49976efb0587a19cee`。
+- 首次 Direct 设备会话观测：会话 `8d2eeae4-96a7-4a5a-bb4a-183f14081fc4`（`stream_epoch=902`，`08:28:07Z–08:55:20Z` 约 27 分钟）上行音频到达 Provider，`media_asr_boundary` 共 223 条：143 success、80 failed（均为 `EmptyAudio` 短段低能量 fail-closed）；会话未产生 ASR final、话轮、generation、TTS 或下行播放，不满足 T4/T7，不计入 `direct_real_device_verified`。
+- Agent 单次自愈重启归因：`16:52–16:55 CST` 服务器为 family-h5 站点多次 reload nginx，导致 Agent 到 LiveKit 的 WSS 于 `08:55:22Z` 断开；worker 重试 16 次耗尽后优雅退出，compose restart 于 `08:57:33Z` 拉起并在 `08:59:14Z` 重新注册 worker，第二代无连接失败。属外部运维瞬态，非候选缺陷；同时终止了上述设备会话。后续 nginx/证书运维应避开活跃设备会话窗口，并可评估拉长 Agent 对 LiveKit WSS 的重试预算。
+- 本增量不改变 `direct_real_device_verified=false`、`full_duplex_verified=false` 或 T1–T14 `0 pass / 14 blocked / 0 failed`。下一步：用户本人对板卡说话，按顺序验收 T1/T2 → T4–T7。
+
+## 上一待部署增量（2026-08-19，已合并入上节；保留提交前本地门禁记录）
 
 - 源码提交 `3a3fcdc995efd86544480a5ee8c3beeb351ffd07` 与 annotated tag `20260819-151012-output-fence-funasr` 已推送 `origin/main`，tag 不再移动。内容：FunASR lazy task handoff、task/WebSocket/epoch fence、失败帧 fail-closed、Provider PCM 统计与失败恢复 backlog drain/discontinuity reset，以及 media session 输出 fence 与 output dispatch 收口。
-- 当前层级为 `code + wired + local verified`：Ruff、strict MyPy（399 个源码文件）、模块预算、固件 overlay gate、`firmware/esp32/tests` 与 FunASR/Provider adapter/Media session 聚焦套件全部通过。
-- 尚未构建或部署；生产 Agent/Bridge 仍运行 `memoria-agent:20260818-152620-vad-asr-boundary`。切流时只允许在服务器最新环境构建 Agent image 并只切换 Agent 与 Voice Core Media Bridge；Control API、Media Edge、固件、H5、小程序和数据服务保持不变。不得继承 `20260818-152620-vad-asr-boundary` 的 enabled/runtime 证据。
-- 本增量不改变 `direct_real_device_verified=false`、`full_duplex_verified=false` 或 T1–T14 `0 pass / 14 blocked / 0 failed`。
+- 切流前本地层级为 `code + wired + local verified`：Ruff、strict MyPy（399 个源码文件）、模块预算、固件 overlay gate、`firmware/esp32/tests` 与 FunASR/Provider adapter/Media session 聚焦套件全部通过。
 
 ## 当前候选 ESP32 实板状态（2026-08-19；非媒体启动已验证）
 
