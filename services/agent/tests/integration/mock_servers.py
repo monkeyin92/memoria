@@ -21,7 +21,7 @@ _LOOPBACK_CLIENT_HOST = "localhost"  # Keep mock traffic out of system proxies.
 class MockFunASRServer:
     host: str = "127.0.0.1"
     port: int = 0
-    scenario: str = "happy"  # happy|task_reuse|task_reuse_late_event|heartbeat_stall|context_leak|interim_rewrite|duplicate_final|heartbeat|missing_ts|fail|disconnect_once
+    scenario: str = "happy"  # happy|task_reuse|task_reuse_inverted_tail|task_reuse_late_event|heartbeat_stall|context_leak|interim_rewrite|duplicate_final|heartbeat|missing_ts|fail|disconnect_once
     connections_closed: int = 0
     connections_started: int = 0
     tasks_started: list[str] = field(default_factory=list)
@@ -83,6 +83,7 @@ class MockFunASRServer:
             msg = json.loads(raw if isinstance(raw, str) else raw.decode())
             if self.scenario in {
                 "task_reuse",
+                "task_reuse_inverted_tail",
                 "task_reuse_late_event",
                 "heartbeat_stall",
                 "task_reuse_provider_finish",
@@ -325,12 +326,16 @@ class MockFunASRServer:
 
             text = f"第{task_number}段识别。"
             await ws.send(_result(task_id, text[:-1], sentence_end=False, words=_chars(text[:-1])))
-            await ws.send(_result(task_id, text, sentence_end=True, words=_chars(text)))
+            if self.scenario != "task_reuse_inverted_tail":
+                await ws.send(_result(task_id, text, sentence_end=True, words=_chars(text)))
             await ws.send(
                 json.dumps(
                     {"header": {"event": "task-finished", "task_id": task_id}, "payload": {}}
                 )
             )
+            if self.scenario == "task_reuse_inverted_tail":
+                await asyncio.sleep(0.01)
+                await ws.send(_result(task_id, text, sentence_end=True, words=_chars(text)))
             if self.scenario == "task_reuse_late_event" and task_number == 1:
                 late_text = "这个旧任务结果必须丢弃。"
                 await ws.send(

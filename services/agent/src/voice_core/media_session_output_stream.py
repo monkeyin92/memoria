@@ -17,6 +17,8 @@ from services.agent.src.voice_core.media_protocol import PlaybackProgress
 from services.agent.src.voice_core.media_session_types import (
     MediaReplyChunk,
     MediaTextSpan,
+    OutputDispatchResult,
+    OutputDispatchStatus,
 )
 from services.agent.src.voice_core.media_session_types import (
     OutputOwnerLease as _OutputOwnerLease,
@@ -130,7 +132,7 @@ class MediaOutputStreamMixin:
         fence: GenerationFence,
         lease: _OutputOwnerLease,
         chunks: AsyncIterator[MediaReplyChunk],
-    ) -> bool:
+    ) -> OutputDispatchResult:
         """Send one selected source through the shared owner and PCM ledger."""
 
         emitted_audio = False
@@ -139,7 +141,12 @@ class MediaOutputStreamMixin:
                 if not self._output_owner_is_current(context, lease):
                     self.metrics.inc_media_stale_generation()
                     await self._cancel_reply_task(context, fence, reason="superseded")
-                    return False
+                    return OutputDispatchResult(
+                        fence,
+                        OutputDispatchStatus.ABORTED,
+                        "superseded",
+                        emitted_audio,
+                    )
                 announcement = (
                     chunk.text if chunk.assistant_text_delta is None else chunk.assistant_text_delta
                 )
@@ -156,7 +163,12 @@ class MediaOutputStreamMixin:
                     if not speaking_started or not self._output_owner_is_current(context, lease):
                         self.metrics.inc_media_stale_generation()
                         await self._cancel_reply_task(context, fence, reason="superseded")
-                        return False
+                        return OutputDispatchResult(
+                            fence,
+                            OutputDispatchStatus.ABORTED,
+                            "superseded",
+                            emitted_audio,
+                        )
                     # ``assistant_text_delta`` is incremental at the provider
                     # boundary, but transcript consumers replace one fenced
                     # turn by revision. Publish the cumulative text so a
@@ -174,7 +186,12 @@ class MediaOutputStreamMixin:
                 if gated is None:
                     self.metrics.inc_media_stale_generation()
                     await self._cancel_reply_task(context, fence, reason="stale_generation")
-                    return False
+                    return OutputDispatchResult(
+                        fence,
+                        OutputDispatchStatus.ABORTED,
+                        "stale_generation",
+                        emitted_audio,
+                    )
                 task_epoch, context_version = self._event_versions(context, fence)
                 frame = PCMFrame(
                     identity=context.identity,
@@ -197,7 +214,12 @@ class MediaOutputStreamMixin:
                 ):
                     self.metrics.inc_media_stale_generation()
                     await self._cancel_reply_task(context, fence, reason="transport_rejected")
-                    return False
+                    return OutputDispatchResult(
+                        fence,
+                        OutputDispatchStatus.ABORTED,
+                        "transport_rejected",
+                        emitted_audio,
+                    )
                 if not context.playback.register_audio(
                     fence,
                     frame.sequence,
@@ -206,7 +228,12 @@ class MediaOutputStreamMixin:
                 ):
                     self.metrics.inc_media_stale_generation()
                     await self._cancel_reply_task(context, fence, reason="playback_rejected")
-                    return False
+                    return OutputDispatchResult(
+                        fence,
+                        OutputDispatchStatus.ABORTED,
+                        "playback_rejected",
+                        emitted_audio,
+                    )
                 emitted_audio = True
                 if not context.first_audio_observed and context.turn_started_ns is not None:
                     self.metrics.observe_voice_latency(
@@ -281,7 +308,12 @@ class MediaOutputStreamMixin:
                     fence,
                     cause="provider_completed_without_audio",
                 )
-        return True
+        return OutputDispatchResult(
+            fence,
+            OutputDispatchStatus.COMPLETED,
+            "provider_stream_complete" if emitted_audio else "provider_completed_without_audio",
+            emitted_audio,
+        )
 
     async def _output_chunks(
         self,

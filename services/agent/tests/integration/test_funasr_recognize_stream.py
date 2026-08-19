@@ -7,8 +7,44 @@ import asyncio
 import pytest
 from livekit import rtc
 from livekit.agents import stt
-from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSTT
+from services.agent.src.providers.funasr_protocol import FunASRServerEvent
+from services.agent.src.providers.funasr_stt import (
+    FunASRConfig,
+    FunASRSession,
+    FunASRSTT,
+)
 from services.agent.tests.integration.mock_servers import MockFunASRServer
+
+
+@pytest.mark.asyncio
+async def test_funasr_recv_events_rejects_provider_finish_without_client_boundary() -> None:
+    config = FunASRConfig(
+        api_key="test",
+        ws_url="ws://unused",
+        result_timeout_s=0.05,
+    )
+    plugin = FunASRSTT(config)
+    stream = plugin.stream()
+    session = FunASRSession(config)
+    session.task_id = "task-1"
+    session._task_epoch = 1
+    session._ready.clear()
+    session.events.put_nowait(
+        FunASRServerEvent(event="task-finished", task_id="task-1")
+    )
+
+    try:
+        with pytest.raises(
+            Exception,
+            match="FunASR task finished without a client boundary",
+        ):
+            await stream._recv_events(session)
+    finally:
+        await plugin.aclose()
+
+    assert session.task_epoch == 1
+    assert session.rotation_pending is False
+    assert session.task_id == "task-1"
 
 
 @pytest.mark.asyncio
@@ -116,8 +152,8 @@ async def test_funasr_vad_flush_reuses_connection_and_finalizes_each_segment() -
         )
         stream.push_frame(first)
         plugin.flush_speech_segment()
-        await _wait_for_tasks(2)
         stream.push_frame(second)
+        await _wait_for_tasks(2)
         stream.end_input()
 
         events = await asyncio.wait_for(collector, timeout=10)
@@ -131,6 +167,76 @@ async def test_funasr_vad_flush_reuses_connection_and_finalizes_each_segment() -
         assert len(srv.tasks_started) == 2
         assert len(set(srv.tasks_started)) == 2
         assert all(byte_count > 0 for byte_count in srv.pcm_by_connection)
+    finally:
+        srv.stop()
+        await plugin.aclose()
+
+
+@pytest.mark.asyncio
+async def test_funasr_vad_flush_keeps_final_before_end_when_tail_is_inverted() -> None:
+    srv = MockFunASRServer(scenario="task_reuse_inverted_tail")
+    srv.start()
+    try:
+        plugin = FunASRSTT(
+            FunASRConfig(
+                api_key="test",
+                ws_url=srv.ws_url,
+                post_finish_tail_grace_s=0.1,
+            )
+        )
+        stream = plugin.stream()
+
+        async def _wait_for_tasks(count: int) -> None:
+            for _ in range(200):
+                if len(srv.tasks_started) >= count:
+                    return
+                await asyncio.sleep(0.01)
+            raise AssertionError(f"expected {count} FunASR tasks, got {len(srv.tasks_started)}")
+
+        async def _collect() -> list[stt.SpeechEvent]:
+            return [event async for event in stream]
+
+        collector = asyncio.create_task(_collect())
+        samples = 4000
+        stream.push_frame(
+            rtc.AudioFrame(
+                data=b"\x01\x00" * samples,
+                sample_rate=16000,
+                num_channels=1,
+                samples_per_channel=samples,
+            )
+        )
+        plugin.flush_speech_segment()
+        stream.push_frame(
+            rtc.AudioFrame(
+                data=b"\x02\x00" * samples,
+                sample_rate=16000,
+                num_channels=1,
+                samples_per_channel=samples,
+            )
+        )
+        await _wait_for_tasks(2)
+        stream.end_input()
+
+        events = await asyncio.wait_for(collector, timeout=10)
+        relevant = [
+            event.type
+            for event in events
+            if event.type
+            in {
+                stt.SpeechEventType.START_OF_SPEECH,
+                stt.SpeechEventType.FINAL_TRANSCRIPT,
+                stt.SpeechEventType.END_OF_SPEECH,
+            }
+        ]
+        assert relevant == [
+            stt.SpeechEventType.START_OF_SPEECH,
+            stt.SpeechEventType.FINAL_TRANSCRIPT,
+            stt.SpeechEventType.END_OF_SPEECH,
+            stt.SpeechEventType.START_OF_SPEECH,
+            stt.SpeechEventType.FINAL_TRANSCRIPT,
+            stt.SpeechEventType.END_OF_SPEECH,
+        ]
     finally:
         srv.stop()
         await plugin.aclose()
@@ -166,8 +272,8 @@ async def test_funasr_vad_flush_fences_late_result_from_finished_task() -> None:
         collector = asyncio.create_task(_collect())
         stream.push_frame(_frame(1))
         plugin.flush_speech_segment()
-        await _wait_for_second_task()
         stream.push_frame(_frame(2))
+        await _wait_for_second_task()
         stream.end_input()
 
         events = await asyncio.wait_for(collector, timeout=10)

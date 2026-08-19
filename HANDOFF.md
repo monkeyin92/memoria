@@ -1,5 +1,11 @@
 # 项目交接
 
+## 当前候选 ESP32 实板状态（2026-08-19；非媒体启动已验证）
+
+- 当前候选已由 `firmware/esp32/scripts/flash.sh` 写入真实板卡 `/dev/cu.usbmodem101`，退出码 `0`；bootloader、分区表、OTA data、应用和资源五段写入及写后校验通过并硬复位。写入地址仅为 `0x0/0x8000/0xd000/0x20000/0x800000`，未触碰 `0x10000..0x1ffff` 身份区。合并镜像 SHA-256 为 `7d7b921a81500817fda6a8230cd5c5b5a97814855dd0a440188f3d75e2cee188`（`13,577,086` bytes），应用镜像 SHA-256 为 `6fe8e936d481433f80fd0dcd5c076f2a5f47029132e2b9e21ccb1680fe3d798d`（`2,950,832` bytes），overlay SHA-256 为 `513e14ef346d49fc39e82b9bf96e2c56df0bf25bb1d2f081ee56e5707dd6a969`。
+- 刷前/刷后身份区证据目录为 `firmware/esp32/artifacts/backups/pre-current-candidate-20260819/`；两份身份区 SHA-256 均为 `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`，逐字节 `cmp` 一致；Wi-Fi NVS 与 OTA data 已备份。真实启动确认 ESP32-S3 rev `0.2`、`8 MB PSRAM`、SKU `memoria-atk-dnesp32s3-v1`、MAC `a4:cb:8f:d6:09:5c`，Wi-Fi 取得 IP，Activation Manifest v2 验签成功，状态为 `starting -> activating -> idle`，ES8388/I2S/AFE/单麦初始化成功。
+- 这只是 `code + wired + enabled + verified` 的固件写入及非媒体启动证据；没有电脑播放、音频文件、TTS、程序生成音频或真人语音注入。`direct_real_device_verified=false`、`full_duplex_verified=false`，T1–T14 仍为 `0 pass / 14 blocked / 0 failed`。下一步等待用户本人说话，再按既定顺序进入 T1/T2/T4–T7。
+
 ## 当前候选增量（2026-08-18，VAD → ASR Provider PCM 边界可观测性）
 
 - 代码提交 `3e16ee93b0628bfc02be527c3760ea53b943f53b` 与不可移动 annotated tag `20260818-152620-vad-asr-boundary` 已推送 `origin/main`。候选已按服务器最新环境仅部署 Agent 与 Voice Core Media Bridge：`memoria-agent:20260818-152620-vad-asr-boundary`，image ID `sha256:2afb5420f7d90459d1d94f708e97a1ba98588f31b7a144bb1a722aac6bb4c769`，OCI revision `3e16ee93b0628bfc02be527c3760ea53b943f53b`。当前层级为 `code + wired + enabled + production runtime verified`，但 verified 仅限服务器运行与脱敏边界观测。

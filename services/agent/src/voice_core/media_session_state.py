@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from typing import Any
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
@@ -15,6 +16,7 @@ from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.media_session_types import (
     DelegationOutputClaim,
     MediaVoiceProvider,
+    OutputDispatchResult,
     OutputOwnerLease,
     OutputWork,
 )
@@ -44,10 +46,11 @@ class MediaVoiceSessionState:
     output_complete_emitted: bool = False
     reply_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     turn_commit_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    reply_task: asyncio.Task[bool] | None = None
+    reply_task: asyncio.Task[Any] | None = None
     output_owner: OutputOwnerLease | None = None
     output_work: dict[str, OutputWork] = field(default_factory=dict)
-    output_dispatch_task: asyncio.Task[bool] | None = None
+    output_dispatch_task: asyncio.Task[OutputDispatchResult] | None = None
+    output_results: list[OutputDispatchResult] = field(default_factory=list)
     delegation_output_claims: dict[GenerationFence, DelegationOutputClaim] = field(
         default_factory=dict
     )

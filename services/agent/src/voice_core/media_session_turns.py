@@ -14,6 +14,10 @@ from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.conversation_projection import ProjectionPatch
 from services.agent.src.voice_core.asr_stream_supervisor import ASRAcceptDecision
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
+from services.agent.src.voice_core.media_session_types import (
+    OutputDispatchResult,
+    OutputDispatchStatus,
+)
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
 if TYPE_CHECKING:
@@ -95,6 +99,19 @@ class MediaTurnEndpointMixin:
             user_text: str,
             fence: GenerationFence,
         ) -> bool: ...
+
+        async def _dispatch_reply(
+            self,
+            session_id: str,
+            user_text: str,
+            fence: GenerationFence,
+        ) -> OutputDispatchResult: ...
+
+        def _record_output_dispatch_result(
+            self,
+            context: _MediaVoiceSession | None,
+            result: OutputDispatchResult,
+        ) -> None: ...
 
     def _observe_final_asr_result(
         self,
@@ -496,7 +513,7 @@ class MediaTurnEndpointMixin:
         # sees a locked session and silently drops a valid user turn.
         await self._cancel_reply_task(context, previous_fence)
         task = asyncio.create_task(
-            self.generate_reply(
+            self._dispatch_reply(
                 context.identity.session_id,
                 next(
                     (
@@ -511,17 +528,35 @@ class MediaTurnEndpointMixin:
             name=f"media-reply-{context.identity.session_id}-{fence.turn_id}",
         )
 
-        def _observe(done: asyncio.Task[bool]) -> None:
+        def _observe(done: asyncio.Task[OutputDispatchResult]) -> None:
             if done.cancelled():
+                self._record_output_dispatch_result(
+                    context,
+                    OutputDispatchResult(
+                        fence,
+                        OutputDispatchStatus.ABORTED,
+                        "reply_task_cancelled",
+                    ),
+                )
                 return
             try:
-                done.result()
+                result = done.result()
             except Exception:
+                self._record_output_dispatch_result(
+                    context,
+                    OutputDispatchResult(
+                        fence,
+                        OutputDispatchStatus.ABORTED,
+                        "reply_task_exception",
+                    ),
+                )
                 logger.exception(
                     "media reply failed session=%s fence=%s",
                     context.identity.session_id,
                     fence,
                 )
+                return
+            self._record_output_dispatch_result(context, result)
 
         task.add_done_callback(_observe)
         return reason

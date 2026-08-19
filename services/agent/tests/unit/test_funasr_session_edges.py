@@ -236,6 +236,152 @@ async def test_funasr_first_frame_adopts_origin_and_backward_sample_is_rejected(
 
 
 @pytest.mark.asyncio
+async def test_funasr_send_pcm_fails_closed_if_boundary_arrives_during_send() -> None:
+    send_started = asyncio.Event()
+    release_send = asyncio.Event()
+
+    class RacingWebSocket:
+        def __init__(self) -> None:
+            self.closed = False
+            self.sent: list[object] = []
+
+        async def send(self, payload: object) -> None:
+            self.sent.append(payload)
+            if payload == b"\x01\x00":
+                send_started.set()
+                await release_send.wait()
+                session._finished_task_id = session.task_id
+                session._ready.clear()
+
+        async def close(self) -> None:
+            self.closed = True
+
+    session = FunASRSession(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    websocket = RacingWebSocket()
+    session._ws = websocket  # type: ignore[assignment]
+    session.task_id = "task-1"
+    session._task_epoch = 1
+    session._ready.set()
+
+    sending = asyncio.create_task(
+        session.send_pcm(b"\x01\x00", capture_start_sample=0)
+    )
+    await asyncio.wait_for(send_started.wait(), timeout=1)
+    release_send.set()
+
+    with pytest.raises(APIConnectionError, match="task boundary race"):
+        await sending
+
+    assert session.failed is True
+    assert session._ready.is_set() is False
+    assert session.last_sent_sample == 0
+    assert session.task_audio_send_count == 0
+    assert session.task_pcm_sample_count == 0
+    assert session._pcm_ring_bytes == 0
+    assert websocket.closed is True
+
+
+@pytest.mark.asyncio
+async def test_funasr_send_pcm_fails_closed_if_boundary_arrives_during_ready_wait() -> None:
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[object] = []
+            self.closed = False
+
+        async def send(self, payload: object) -> None:
+            self.sent.append(payload)
+
+        async def close(self) -> None:
+            self.closed = True
+
+    session = FunASRSession(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    websocket = FakeWebSocket()
+    session._ws = websocket  # type: ignore[assignment]
+    session.task_id = "task-1"
+    session._task_epoch = 1
+    session._ready.set()
+
+    async def observe_boundary(_operation: str) -> None:
+        session._finished_task_id = session.task_id
+        session._ready.clear()
+
+    session._wait_until_ready = observe_boundary  # type: ignore[method-assign]
+
+    with pytest.raises(APIConnectionError, match="task boundary race"):
+        await session.send_pcm(b"\x01\x00", capture_start_sample=0)
+
+    assert websocket.sent == []
+    assert session.failed is True
+    assert session.last_sent_sample == 0
+    assert session._pcm_ring_bytes == 0
+
+
+@pytest.mark.asyncio
+async def test_funasr_lazy_task_start_failure_cannot_be_revived_by_late_task_started() -> None:
+    class SilentWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[object] = []
+            self.closed = False
+            self.messages: list[object] = []
+
+        def __aiter__(self) -> SilentWebSocket:
+            return self
+
+        async def __anext__(self) -> object:
+            if not self.messages:
+                raise StopAsyncIteration
+            return self.messages.pop(0)
+
+        async def send(self, payload: object) -> None:
+            self.sent.append(payload)
+
+        async def close(self) -> None:
+            self.closed = True
+
+    session = FunASRSession(
+        FunASRConfig(
+            api_key="test",
+            ws_url="ws://unused",
+            connect_timeout_s=0.01,
+        )
+    )
+    websocket = SilentWebSocket()
+    session._ws = websocket  # type: ignore[assignment]
+    session.task_id = "task-1"
+    session._task_epoch = 1
+    session._finished_task_id = "task-1"
+    session._rotation_pending = True
+    session._last_sent_sample = 320
+    session._ready.clear()
+
+    with pytest.raises(APIConnectionError, match="reused task failed to start"):
+        await session.send_pcm(b"\x02\x00", capture_start_sample=320)
+
+    assert session.failed is True
+    assert session._ready.is_set() is False
+    assert session._ws is None
+    assert session.last_sent_sample == 320
+    assert session._pcm_ring_bytes == 0
+
+    # A task-started packet from the failed handoff must not clear the failure
+    # fence or make the session ready again.
+    websocket.messages.append(
+        {
+            "header": {"event": "task-started", "task_id": "task-2"},
+            "payload": {},
+        }
+    )
+    session._ws = websocket  # type: ignore[assignment]
+    session.task_id = "task-2"
+    session._task_epoch = 2
+    session._task_failed_event.set()
+    await session._recv_loop()
+
+    assert session.failed is True
+    assert session._ready.is_set() is False
+
+
+@pytest.mark.asyncio
 async def test_funasr_task_rotation_is_idempotent_without_new_audio() -> None:
     class FakeWebSocket:
         async def send(self, _payload: object) -> None:
@@ -257,9 +403,11 @@ async def test_funasr_task_rotation_is_idempotent_without_new_audio() -> None:
         assert require_consumed is True
         calls.append("finished")
 
-    async def start_reused_task() -> None:
+    async def start_reused_task(*, next_origin: int | None = None) -> None:
+        assert next_origin == 320
         calls.append("start")
         session._finishing = False
+        session._rotation_pending = False
         session._ready.set()
 
     session.finish = finish  # type: ignore[method-assign]
@@ -269,8 +417,13 @@ async def test_funasr_task_rotation_is_idempotent_without_new_audio() -> None:
     await session.rotate_task()
     await session.rotate_task()
 
-    assert calls == ["finish", "finished", "start"]
+    assert calls == ["finish", "finished"]
     assert session._last_rotation_sample == 320
+    assert session.rotation_pending is True
+
+    await session.send_pcm(b"\x00\x00", capture_start_sample=320)
+
+    assert calls == ["finish", "finished", "start"]
 
 
 @pytest.mark.asyncio
@@ -356,7 +509,7 @@ async def test_funasr_finish_preserves_observed_boundary() -> None:
 
 
 @pytest.mark.asyncio
-async def test_funasr_rotate_task_reuses_task_when_boundary_already_observed() -> None:
+async def test_funasr_rotate_task_arms_lazy_reuse_when_boundary_already_observed() -> None:
     class FakeWebSocket:
         async def send(self, _payload: object) -> None:
             return None
@@ -371,17 +524,27 @@ async def test_funasr_rotate_task_reuses_task_when_boundary_already_observed() -
     session._last_sent_sample = 320
     calls: list[str] = []
 
-    async def start_reused_task() -> None:
+    async def start_reused_task(*, next_origin: int | None = None) -> None:
+        assert next_origin == 320
         calls.append("start")
+        session.task_id = "task-2"
+        session._task_epoch += 1
+        session._rotation_pending = False
         session._ready.set()
 
     session._start_reused_task = start_reused_task  # type: ignore[method-assign]
 
     await session.rotate_task(require_consumed=False)
 
-    assert calls == ["start"]
+    assert calls == []
     assert session._last_rotation_sample == 320
     assert session._finished_task_id == "task-1"
+    assert session.rotation_pending is True
+
+    await session.send_pcm(b"\x00\x00", capture_start_sample=320)
+
+    assert calls == ["start"]
+    assert session.task_id == "task-2"
 
 
 @pytest.mark.asyncio
@@ -401,11 +564,13 @@ async def test_funasr_legacy_rotation_does_not_advance_context_before_boundary_c
     session._last_sent_sample = 320
     calls: list[str] = []
 
-    async def start_reused_task() -> None:
+    async def start_reused_task(*, next_origin: int | None = None) -> None:
+        assert next_origin == 320
         calls.append("start")
         session.task_id = "task-2"
         session._task_epoch += 1
-        session._task_sample_origin = session._last_sent_sample
+        session._task_sample_origin = next_origin
+        session._rotation_pending = False
         session._ready.set()
 
     session._start_reused_task = start_reused_task  # type: ignore[method-assign]
@@ -421,6 +586,14 @@ async def test_funasr_legacy_rotation_does_not_advance_context_before_boundary_c
 
     session.acknowledge_task_finished("task-1")
     await rotation
+
+    assert calls == []
+    assert session.task_id == "task-1"
+    assert session.task_epoch == 0
+    assert session.task_sample_origin == 0
+    assert session.rotation_pending is True
+
+    await session.send_pcm(b"\x00\x00", capture_start_sample=320)
 
     assert calls == ["start"]
     assert session.task_id == "task-2"
@@ -467,6 +640,184 @@ async def test_funasr_recv_loop_survives_task_finished_without_rotation() -> Non
     while not session.events.empty():
         queued.append(session.events.get_nowait())
     assert any(event.event == "task-failed" for event in queued)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event_order",
+    (
+        ("result-generated", "task-finished"),
+        ("task-finished", "result-generated"),
+    ),
+)
+async def test_funasr_recv_loop_preserves_final_on_both_sides_of_task_finished(
+    event_order: tuple[str, str],
+) -> None:
+    def message(event: str) -> dict[str, object]:
+        if event == "task-finished":
+            return {
+                "header": {"event": event, "task_id": "task-1"},
+                "payload": {},
+            }
+        return {
+            "header": {"event": event, "task_id": "task-1"},
+            "payload": {
+                "output": {
+                    "sentence": {
+                        "sentence_id": 7,
+                        "text": "尾包完整",
+                        "begin_time": 0,
+                        "end_time": 20,
+                        "sentence_end": True,
+                        "heartbeat": False,
+                        "words": [],
+                    }
+                }
+            },
+        }
+
+    class EndingWebSocket:
+        def __init__(self) -> None:
+            self.messages = [message(event) for event in event_order]
+
+        def __aiter__(self) -> EndingWebSocket:
+            return self
+
+        async def __anext__(self) -> object:
+            if self.messages:
+                return self.messages.pop(0)
+            session._closed = True
+            raise StopAsyncIteration
+
+    session = FunASRSession(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    session._ws = EndingWebSocket()  # type: ignore[assignment]
+    session.task_id = "task-1"
+    session._task_epoch = 3
+    session._segment_epoch = 5
+    session._task_sample_origin = 320
+    session._task_audio_end_sample = 640
+    session._last_sent_sample = 640
+    session._ready.set()
+
+    await session._recv_loop()
+
+    queued = []
+    while not session.events.empty():
+        queued.append(session.events.get_nowait())
+    assert [event.event for event in queued] == list(event_order)
+    final = next(event for event in queued if event.event == "result-generated")
+    context = session.task_event_context(final.task_id)
+    assert context is not None
+    assert (context.task_epoch, context.segment_epoch, context.sample_origin) == (3, 5, 320)
+    assert context.boundary_observed is True
+    assert session.last_emitted_final_sample == 640
+
+
+@pytest.mark.asyncio
+async def test_funasr_recv_loop_keeps_old_final_after_new_task_starts() -> None:
+    old_final = {
+        "header": {"event": "result-generated", "task_id": "task-1"},
+        "payload": {
+            "output": {
+                "sentence": {
+                    "sentence_id": 8,
+                    "text": "旧段尾包",
+                    "begin_time": 0,
+                    "end_time": 20,
+                    "sentence_end": True,
+                    "heartbeat": False,
+                    "words": [],
+                }
+            }
+        },
+    }
+
+    class EndingWebSocket:
+        def __init__(self) -> None:
+            self.messages = [old_final]
+
+        def __aiter__(self) -> EndingWebSocket:
+            return self
+
+        async def __anext__(self) -> object:
+            if self.messages:
+                return self.messages.pop(0)
+            session._closed = True
+            raise StopAsyncIteration
+
+    session = FunASRSession(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    session.task_id = "task-1"
+    session._task_epoch = 1
+    session._segment_epoch = 1
+    session._task_sample_origin = 0
+    session._task_audio_end_sample = 320
+    session._finished_task_id = "task-1"
+    session._remember_current_task_event_context()
+    session.task_id = "task-2"
+    session._task_epoch = 2
+    session._segment_epoch = 2
+    session._task_sample_origin = 320
+    session._task_audio_end_sample = 640
+    session._finished_task_id = None
+    session._remember_current_task_event_context()
+    session._ws = EndingWebSocket()  # type: ignore[assignment]
+    session._ready.set()
+
+    await session._recv_loop()
+
+    event = session.events.get_nowait()
+    assert event.task_id == "task-1"
+    context = session.task_event_context(event.task_id)
+    assert context is not None
+    assert (context.task_epoch, context.segment_epoch, context.sample_origin) == (1, 1, 0)
+    assert session.last_emitted_final_sample == 320
+
+
+@pytest.mark.asyncio
+async def test_funasr_recv_loop_ignores_old_failure_after_new_task_starts() -> None:
+    class EndingWebSocket:
+        def __init__(self) -> None:
+            self.messages = [
+                {
+                    "header": {
+                        "event": "task-failed",
+                        "task_id": "task-1",
+                        "error_code": "CLIENT_ERROR",
+                        "error_message": "late timeout",
+                    },
+                    "payload": {},
+                }
+            ]
+
+        def __aiter__(self) -> EndingWebSocket:
+            return self
+
+        async def __anext__(self) -> object:
+            if self.messages:
+                return self.messages.pop(0)
+            session._closed = True
+            raise StopAsyncIteration
+
+    session = FunASRSession(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    session.task_id = "task-1"
+    session._task_epoch = 1
+    session._finished_task_id = "task-1"
+    session._remember_current_task_event_context()
+    session.task_id = "task-2"
+    session._task_epoch = 2
+    session._segment_epoch = 2
+    session._finished_task_id = None
+    session._remember_current_task_event_context()
+    session._ws = EndingWebSocket()  # type: ignore[assignment]
+    session._ready.set()
+
+    await session._recv_loop()
+
+    assert session.failed is False
+    assert session.last_task_failure is None
+    assert session._task_failed_event.is_set() is False
+    assert session._ready.is_set() is True
+    assert session.events.empty()
 
 
 @pytest.mark.asyncio

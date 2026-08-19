@@ -50,9 +50,9 @@ student_track: p3_local_software_complete_external_release_gates_pending
 student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
-  as_of_date: 2026-08-18
+  as_of_date: 2026-08-19
   head_commit: 3e16ee93b0628bfc02be527c3760ea53b943f53b
-  dirty: false
+  dirty: true
   code: complete
   wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
   enabled: current_candidate_20260818-152620-vad-asr-boundary_agent_bridge_scope
@@ -81,9 +81,39 @@ local_worktree_candidate:
     active_device_connections: 1
     active_media_sessions: 0
     downlink_frames: 0
-    firmware_built: false
-    firmware_flushed: false
-    candidate_serial_or_device_tested: false
+    firmware_built: true
+    firmware_flushed: true
+    candidate_serial_or_device_tested: true
+    candidate_boot_wifi_activation_verified: true
+    candidate_media_session_verified: false
+    direct_real_device_verified: false
+    full_duplex_verified: false
+    t1_t14: 0_pass_14_blocked_0_failed
+  current_candidate_board_evidence:
+    evidence_date: 2026-08-19
+    serial_port: /dev/cu.usbmodem101
+    flash_script_exit_code: 0
+    flash_write_offsets: "0x0,0x8000,0xd000,0x20000,0x800000"
+    identity_partition_touched: false
+    firmware_overlay_sha256: 513e14ef346d49fc39e82b9bf96e2c56df0bf25bb1d2f081ee56e5707dd6a969
+    firmware_merged_sha256: 7d7b921a81500817fda6a8230cd5c5b5a97814855dd0a440188f3d75e2cee188
+    firmware_merged_size_bytes: 13577086
+    firmware_app_sha256: 6fe8e936d481433f80fd0dcd5c076f2a5f47029132e2b9e21ccb1680fe3d798d
+    firmware_app_size_bytes: 2950832
+    identity_pre_sha256: b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846
+    identity_post_sha256: b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846
+    identity_bytewise_equal: true
+    wifi_nvs_backup: true
+    ota_data_backup: true
+    board_revision: esp32_s3_rev_0.2
+    board_sku: memoria-atk-dnesp32s3-v1
+    board_mac: "a4:cb:8f:d6:09:5c"
+    psram: 8mb
+    wifi_connected: true
+    activation_manifest_v2_verified: true
+    boot_state: starting_to_activating_to_idle
+    es8388_i2s_afe_single_mic_initialized: true
+    media_session_verified: false
     direct_real_device_verified: false
     full_duplex_verified: false
     t1_t14: 0_pass_14_blocked_0_failed
@@ -112,8 +142,9 @@ local_worktree_candidate:
     runtime_profile_low_cardinality_denials: passed_local_2026-08-17
     go_async_metrics_stability: passed_20_consecutive_local_runs_2026-08-17
     jsonschema_dev_dependency: synced_frozen_dev_4_26_0_2026-08-17
-    no_firmware_rebuild_or_flash: true
-    board_used_for_existing_production_diagnosis_only: true
+    no_firmware_rebuild_or_flash: false
+    current_candidate_firmware_flash: passed_real_board_2026-08-19
+    board_used_for_existing_production_diagnosis_only: false
     no_candidate_device_audio_session: true
 
 production_read_only_recheck:
@@ -758,10 +789,10 @@ gates:
   hardware_playback_watermark: pending_real_dac_evidence
   hardware_double_talk_matrix: pending_real_hardware
   miniprogram_independence_t14: pending_real_wechat_and_hardware
-  esp32_current_candidate_clean_build: passed_overlay_and_esp_idf_6_0_2_build_2026_08_16_unflashed
-  esp32_identity_preservation: prior_real_board_passed_2026_08_14_current_candidate_unflashed_unverified
-  esp32_firmware_flash_readback: prior_real_board_passed_2026_08_14_current_candidate_unflashed
-  esp32_boot_wifi_activation: prior_real_board_passed_2026_08_14_current_candidate_unflashed_unverified
+  esp32_current_candidate_clean_build: passed_overlay_and_esp_idf_6_0_2_build_2026_08_19
+  esp32_identity_preservation: passed_real_board_2026_08_19_sha256_b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846
+  esp32_firmware_flash_readback: passed_real_board_2026_08_19_offsets_0x0_0x8000_0xd000_0x20000_0x800000
+  esp32_boot_wifi_activation: passed_real_board_2026_08_19_non_media_starting_activating_idle
   hardware_acceptance_t1_t14: blocked_0_pass_14_blocked_0_failed_2026_08_17_exact_dac_aec_double_talk_actual_heard_t14_pending
   esp32_500_turn_stability: pending_real_hardware
   ota_power_loss_recovery: pending_real_hardware

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -96,17 +97,42 @@ class ProviderAudioTaskSnapshot:
     audio_start_sample: int | None
     audio_end_sample: int | None
     send_count: int
+    encoding: str = "pcm_s16le"
+    sample_rate_hz: int = 16_000
+    channels: int = 1
+    observed_sample_count: int = 0
+    peak_abs: int | None = None
+    rms: float | None = None
+    all_zero: bool | None = None
+    clipping_detected: bool | None = None
 
     def __post_init__(self) -> None:
         if self.task_epoch < 1:
             raise ValueError("provider ASR task epoch must be positive")
         if self.task_sample_origin < 0 or self.send_count < 0:
             raise ValueError("provider ASR audio metadata must be non-negative")
+        if self.encoding != "pcm_s16le":
+            raise ValueError("provider ASR audio encoding must be pcm_s16le")
+        if self.sample_rate_hz <= 0 or self.channels != 1:
+            raise ValueError("provider ASR audio must be positive-rate mono PCM")
+        if self.observed_sample_count < 0:
+            raise ValueError("provider ASR PCM statistics must be non-negative")
+        if self.peak_abs is not None and not 0 <= self.peak_abs <= 32_768:
+            raise ValueError("provider ASR PCM peak is invalid")
+        if self.rms is not None and (not math.isfinite(self.rms) or not 0 <= self.rms <= 32_768):
+            raise ValueError("provider ASR PCM RMS is invalid")
         if (self.audio_start_sample is None) != (self.audio_end_sample is None):
             raise ValueError("provider ASR audio bounds must be provided together")
         if self.audio_start_sample is None:
-            if self.send_count != 0:
-                raise ValueError("provider ASR send count requires an audio range")
+            if (
+                self.send_count != 0
+                or self.observed_sample_count != 0
+                or self.peak_abs is not None
+                or self.rms is not None
+                or self.all_zero is not None
+                or self.clipping_detected is not None
+            ):
+                raise ValueError("provider ASR audio evidence requires an audio range")
             return
         if self.audio_start_sample < self.task_sample_origin:
             raise ValueError("provider ASR audio cannot precede the task origin")
@@ -114,6 +140,13 @@ class ProviderAudioTaskSnapshot:
             raise ValueError("provider ASR audio range must be positive")
         if self.send_count < 1:
             raise ValueError("provider ASR audio range requires a send count")
+        if self.observed_sample_count == 0 and (
+            self.peak_abs is not None
+            or self.rms is not None
+            or self.all_zero is not None
+            or self.clipping_detected is not None
+        ):
+            raise ValueError("provider ASR PCM statistics require observed samples")
 
     @property
     def audio_samples(self) -> int:
@@ -141,6 +174,37 @@ class DelegationOutputState(StrEnum):
     OWNED = "owned"
     RELEASED = "released"
     COMPLETED = "completed"
+
+
+class OutputDispatchStatus(StrEnum):
+    """Bounded lifecycle states for one fenced output dispatch."""
+
+    STARTED = "started"
+    QUEUED = "queued"
+    SKIPPED = "skipped"
+    COMPLETED = "completed"
+    ABORTED = "aborted"
+
+
+@dataclass(frozen=True, slots=True)
+class OutputDispatchResult:
+    """Structured outcome retained even when no provider/PCM event follows."""
+
+    fence: GenerationFence
+    status: OutputDispatchStatus
+    reason: str
+    emitted_audio: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.reason or len(self.reason) > 64:
+            raise ValueError("output dispatch reason must be a short non-empty string")
+
+    def __bool__(self) -> bool:
+        return self.status in {
+            OutputDispatchStatus.STARTED,
+            OutputDispatchStatus.QUEUED,
+            OutputDispatchStatus.COMPLETED,
+        }
 
 
 @dataclass(slots=True)
@@ -217,21 +281,12 @@ class OutputWork:
     """One fenced source that the Registry may render through its sole owner."""
 
     intent: Any
+    fence: GenerationFence
     conversation_text: str | None = None
 
     @property
     def intent_id(self) -> str:
         return str(self.intent.intent_id)
-
-    @property
-    def fence(self) -> GenerationFence:
-        return GenerationFence(
-            session_id=str(self.intent.session_id),
-            turn_id=int(self.intent.turn_id),
-            generation_id=int(self.intent.generation_id),
-            tool_epoch=int(self.intent.tool_epoch),
-        )
-
 
 SessionFactory = Callable[
     [SessionIdentity],

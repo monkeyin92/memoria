@@ -50,6 +50,7 @@ MEDIA_METRIC_NAMES = frozenset(
         "voice_asr_final_latency_ms",
         "voice_turn_commit_latency_ms",
         "voice_turn_prepare_retry_total",
+        "voice_output_dispatch_total",
         "voice_llm_ttft_ms",
         "voice_tts_ttfb_ms",
         "voice_first_audio_ms",

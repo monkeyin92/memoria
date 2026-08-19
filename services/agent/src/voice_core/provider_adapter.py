@@ -160,6 +160,15 @@ class ExistingVoiceProviderAdapter:
         return self._global_asr_task_epoch(self._asr) if self._asr is not None else 0
 
     @property
+    def asr_rotation_pending(self) -> bool:
+        """Whether the next provider task is deliberately waiting for PCM."""
+
+        return bool(
+            self._asr is not None
+            and getattr(self._asr, "rotation_pending", False)
+        )
+
+    @property
     def current_asr_audio_task_snapshot(self) -> ProviderAudioTaskSnapshot | None:
         """Expose provider-confirmed PCM without leaking the concrete ASR session."""
 
@@ -181,6 +190,22 @@ class ExistingVoiceProviderAdapter:
             audio_start_sample=audio_start,
             audio_end_sample=audio_end,
             send_count=send_count,
+            encoding="pcm_s16le",
+            sample_rate_hz=self.config.sample_rate,
+            channels=1,
+            observed_sample_count=int(getattr(asr, "task_pcm_sample_count", 0)),
+            peak_abs=getattr(asr, "task_pcm_peak_abs", None),
+            rms=getattr(asr, "task_pcm_rms", None),
+            all_zero=(
+                getattr(asr, "task_pcm_peak_abs", None) == 0
+                if int(getattr(asr, "task_pcm_sample_count", 0)) > 0
+                else None
+            ),
+            clipping_detected=(
+                getattr(asr, "task_pcm_peak_abs", None) in (32_767, 32_768)
+                if int(getattr(asr, "task_pcm_sample_count", 0)) > 0
+                else None
+            ),
         )
 
     @property
@@ -344,7 +369,7 @@ class ExistingVoiceProviderAdapter:
         self,
         identity: SessionIdentity,
     ) -> tuple[ASRResult, ...]:
-        """Close one VAD-authoritative ASR task and start the next on the same WS."""
+        """Close one VAD task and arm the next task for its first PCM frame."""
 
         if self._asr is None or not self._audio_since_finalize:
             return ()
@@ -358,23 +383,44 @@ class ExistingVoiceProviderAdapter:
 
         results: list[ASRResult] = []
         boundary_seen = False
+        final_seen = False
+        tail_deadline: float | None = None
+        tail_grace_s = float(
+            getattr(getattr(asr, "config", None), "post_finish_tail_grace_s", 0.0)
+        )
         # Audio ingestion continuously drains provider events. The larger
         # history bound is a fail-closed ceiling for the small tail that can
         # remain between the final PCM frame and task-finished.
         for _ in range(self.config.max_asr_result_history):
-            try:
+            if asr.events.empty():
+                if not boundary_seen or final_seen:
+                    break
+                loop = asyncio.get_running_loop()
+                if tail_deadline is None:
+                    tail_deadline = loop.time() + tail_grace_s
+                remaining = tail_deadline - loop.time()
+                if remaining <= 0:
+                    break
+                try:
+                    event = await asyncio.wait_for(asr.events.get(), timeout=remaining)
+                except TimeoutError:
+                    break
+            else:
                 event = asr.events.get_nowait()
-            except asyncio.QueueEmpty:
-                break
             if event.event == "task-failed":
                 raise RuntimeError(event.error_message or "FunASR task failed")
             if event.event == "result-generated" and event.sentence is not None:
                 result = self._map_asr_event(asr, event, identity.stream_epoch)
                 if result is not None:
                     results.append(result)
+                    if event.task_id == previous_task_id and result.is_final:
+                        final_seen = True
             if event.event == "task-finished" and event.task_id == previous_task_id:
                 boundary_seen = True
-                break
+                tail_deadline = (
+                    asyncio.get_running_loop().time()
+                    + tail_grace_s
+                )
         if not boundary_seen:
             raise RuntimeError("FunASR task boundary event was not available to the media adapter")
         self._audio_since_finalize = False

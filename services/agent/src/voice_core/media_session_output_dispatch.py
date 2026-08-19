@@ -15,6 +15,8 @@ from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 a
 from services.agent.src.voice_core.media_session_types import (
     DelegationOutputState,
     MediaReplyChunk,
+    OutputDispatchResult,
+    OutputDispatchStatus,
 )
 from services.agent.src.voice_core.media_session_types import (
     OutputOwnerLease as _OutputOwnerLease,
@@ -24,6 +26,7 @@ from services.agent.src.voice_core.media_session_types import (
 )
 
 if TYPE_CHECKING:
+    from services.agent.src.observability.metrics import MetricsRegistry
     from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
     from services.agent.src.voice_core.media_session_state import (
         MediaVoiceSessionState as _MediaVoiceSession,
@@ -47,6 +50,7 @@ class MediaOutputDispatchMixin:
 
     if TYPE_CHECKING:
         bridge: MediaBridgeGrpcServer
+        metrics: MetricsRegistry
         _sessions: dict[str, _MediaVoiceSession]
         output_generation_timeout_s: float
         delegation_initial_decision_timeout_s: float
@@ -106,7 +110,7 @@ class MediaOutputDispatchMixin:
             fence: GenerationFence,
             lease: _OutputOwnerLease,
             chunks: Any,
-        ) -> bool: ...
+        ) -> OutputDispatchResult: ...
 
         def _output_chunks(
             self,
@@ -114,6 +118,38 @@ class MediaOutputDispatchMixin:
             work: _OutputWork,
             source_start_sample: int,
         ) -> AsyncIterator[MediaReplyChunk]: ...
+
+    def _record_output_dispatch_result(
+        self,
+        context: _MediaVoiceSession | None,
+        result: OutputDispatchResult,
+    ) -> None:
+        """Publish one bounded, text-free dispatch outcome for diagnosis."""
+
+        if context is not None:
+            context.output_results.append(result)
+            if len(context.output_results) > 32:
+                del context.output_results[: len(context.output_results) - 32]
+        self.metrics.inc_media_metric(
+            "voice_output_dispatch_total",
+            labels={
+                "status": result.status.value,
+                "reason": result.reason,
+            },
+        )
+        log = logger.warning if result.status is OutputDispatchStatus.ABORTED else logger.info
+        log(
+            "media output result session=%s turn=%s generation=%s tool_epoch=%s "
+            "session_epoch=%s status=%s reason=%s emitted_audio=%s",
+            result.fence.session_id,
+            result.fence.turn_id,
+            result.fence.generation_id,
+            result.fence.tool_epoch,
+            result.fence.session_epoch,
+            result.status.value,
+            result.reason,
+            result.emitted_audio,
+        )
 
     async def generate_reply(
         self,
@@ -123,9 +159,58 @@ class MediaOutputDispatchMixin:
     ) -> bool:
         """Submit the normal reply through the same owner as every source."""
 
+        try:
+            result = await self._dispatch_reply(session_id, user_text, fence)
+        except asyncio.CancelledError:
+            self._record_output_dispatch_result(
+                self._sessions.get(session_id),
+                OutputDispatchResult(
+                    fence,
+                    OutputDispatchStatus.ABORTED,
+                    "reply_task_cancelled",
+                ),
+            )
+            raise
+        except Exception:
+            self._record_output_dispatch_result(
+                self._sessions.get(session_id),
+                OutputDispatchResult(
+                    fence,
+                    OutputDispatchStatus.ABORTED,
+                    "reply_task_exception",
+                ),
+            )
+            raise
+        self._record_output_dispatch_result(self._sessions.get(session_id), result)
+        return bool(result)
+
+    async def _dispatch_reply(
+        self,
+        session_id: str,
+        user_text: str,
+        fence: GenerationFence,
+    ) -> OutputDispatchResult:
+        """Return the exact scheduling/terminal outcome behind the bool API."""
+
         context = self._sessions.get(session_id)
-        if context is None or context.closed or not context.runtime.fence.matches(fence):
-            return False
+        if context is None:
+            return OutputDispatchResult(
+                fence,
+                OutputDispatchStatus.SKIPPED,
+                "session_not_found",
+            )
+        if context.closed:
+            return OutputDispatchResult(
+                fence,
+                OutputDispatchStatus.SKIPPED,
+                "session_closed",
+            )
+        if not context.runtime.fence.matches(fence):
+            return OutputDispatchResult(
+                fence,
+                OutputDispatchStatus.SKIPPED,
+                "stale_fence",
+            )
         claim = context.delegation_output_claims.get(fence)
         if claim is not None:
             claim.observe_normal_reply()
@@ -143,17 +228,29 @@ class MediaOutputDispatchMixin:
                             fence.generation_id,
                         )
             if context.closed or not context.runtime.fence.matches(fence):
-                return False
+                return OutputDispatchResult(
+                    fence,
+                    OutputDispatchStatus.SKIPPED,
+                    "stale_fence",
+                )
             if claim.state in {
                 DelegationOutputState.OWNED,
                 DelegationOutputState.COMPLETED,
             }:
-                return True
+                return OutputDispatchResult(
+                    fence,
+                    OutputDispatchStatus.COMPLETED,
+                    "delegation_output_owned",
+                )
             if (
                 claim.state is DelegationOutputState.RELEASED
                 and not claim.reserve_local_reply()
             ):
-                return True
+                return OutputDispatchResult(
+                    fence,
+                    OutputDispatchStatus.COMPLETED,
+                    "local_reply_already_reserved",
+                )
         coordinator = context.runtime.orchestrator.delegation
         now_ms = int(time.time() * 1_000)
         intent = coordinator.conversation_reply(
@@ -169,7 +266,7 @@ class MediaOutputDispatchMixin:
             floor_allows_output=context.runtime.output_floor_allows_assistant,
             now_ms=now_ms,
         )
-        work = _OutputWork(intent, conversation_text=user_text)
+        work = _OutputWork(intent, fence, conversation_text=user_text)
         if not coordinator.output_intent_is_active(
             intent,
             current_fence=context.runtime.fence,
@@ -177,14 +274,35 @@ class MediaOutputDispatchMixin:
             floor_allows_output=context.runtime.output_floor_allows_assistant,
             now_ms=now_ms,
         ):
-            return False
+            return OutputDispatchResult(
+                fence,
+                OutputDispatchStatus.SKIPPED,
+                "output_intent_inactive",
+            )
         context.output_work[work.intent_id] = work
         if (
             context.output_owner is not None
             or context.reply_lock.locked()
             or context.runtime.orchestrator.state is ConversationState.LISTENING
         ):
-            return await self._enqueue_output_work(context, work)
+            if not await self._enqueue_output_work(context, work):
+                return OutputDispatchResult(
+                    fence,
+                    OutputDispatchStatus.SKIPPED,
+                    "output_enqueue_rejected",
+                )
+            dispatch = context.output_dispatch_task
+            if dispatch is not None and not dispatch.done():
+                return OutputDispatchResult(
+                    fence,
+                    OutputDispatchStatus.STARTED,
+                    "output_task_started",
+                )
+            return OutputDispatchResult(
+                fence,
+                OutputDispatchStatus.QUEUED,
+                "output_queued",
+            )
         return await self._run_output_work(context, work)
 
     async def _generate_reply(
@@ -270,10 +388,42 @@ class MediaOutputDispatchMixin:
                 name=f"media-output-{session_id}-{work.intent_id}",
             )
             context.output_dispatch_task = task
+            dispatch_fence = work.fence
 
-            def clear_dispatch(done: asyncio.Task[bool]) -> None:
+            def clear_dispatch(
+                done: asyncio.Task[OutputDispatchResult],
+                dispatch_fence: GenerationFence = dispatch_fence,
+            ) -> None:
                 if context.output_dispatch_task is done:
                     context.output_dispatch_task = None
+                if done.cancelled():
+                    self._record_output_dispatch_result(
+                        context,
+                        OutputDispatchResult(
+                            dispatch_fence,
+                            OutputDispatchStatus.ABORTED,
+                            "output_task_cancelled",
+                        ),
+                    )
+                    return
+                try:
+                    result = done.result()
+                except Exception:
+                    self._record_output_dispatch_result(
+                        context,
+                        OutputDispatchResult(
+                            dispatch_fence,
+                            OutputDispatchStatus.ABORTED,
+                            "output_task_exception",
+                        ),
+                    )
+                    logger.exception(
+                        "media output task failed session=%s fence=%s",
+                        dispatch_fence.session_id,
+                        dispatch_fence,
+                    )
+                    return
+                self._record_output_dispatch_result(context, result)
 
             task.add_done_callback(clear_dispatch)
             return True
@@ -401,14 +551,34 @@ class MediaOutputDispatchMixin:
         self,
         context: _MediaVoiceSession,
         work: _OutputWork,
-    ) -> bool:
+    ) -> OutputDispatchResult:
         fence = work.fence
         async with context.reply_lock:
-            if context.closed or not self._output_work_is_current(context, work):
-                return False
+            if context.closed:
+                return OutputDispatchResult(
+                    fence,
+                    OutputDispatchStatus.SKIPPED,
+                    "session_closed",
+                )
+            if not context.runtime.fence.matches(fence):
+                return OutputDispatchResult(
+                    fence,
+                    OutputDispatchStatus.SKIPPED,
+                    "stale_fence",
+                )
+            if not self._output_work_is_current(context, work):
+                return OutputDispatchResult(
+                    fence,
+                    OutputDispatchStatus.SKIPPED,
+                    "output_intent_not_selected",
+                )
             lease = self._acquire_output_owner(context, fence, work.intent)
             if lease is None:
-                return False
+                return OutputDispatchResult(
+                    fence,
+                    OutputDispatchStatus.SKIPPED,
+                    "output_owner_unavailable",
+                )
             context.output_complete_emitted = False
             task = asyncio.current_task()
             if task is not None:
@@ -432,7 +602,11 @@ class MediaOutputDispatchMixin:
                         # deadline and must not be reported as output_timeout.
                         raise
                     await self._abort_output_timeout(context, fence, chunks)
-                    return False
+                    return OutputDispatchResult(
+                        fence,
+                        OutputDispatchStatus.ABORTED,
+                        "output_timeout",
+                    )
             finally:
                 if context.reply_task is task:
                     context.reply_task = None

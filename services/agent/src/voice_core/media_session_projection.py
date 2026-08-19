@@ -174,7 +174,7 @@ class MediaSessionProjectionMixin:
                 ):
                     await self._enqueue_output_work(
                         context,
-                        _OutputWork(acknowledgement),
+                        _OutputWork(acknowledgement, fence),
                     )
             terminal_kind: DelegationEventKind | None = None
             async for event in coordinator.events(handle):
@@ -239,7 +239,7 @@ class MediaSessionProjectionMixin:
             accepted = output_intent_acceptor(intent)
             if inspect.isawaitable(accepted):
                 await accepted
-            if not await self._enqueue_output_work(context, _OutputWork(intent)):
+            if not await self._enqueue_output_work(context, _OutputWork(intent, fence)):
                 await self._release_media_delegation_claim(
                     context,
                     text=text,

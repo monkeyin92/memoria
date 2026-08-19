@@ -283,4 +283,4 @@ class MediaOutputOwnerMixin:
         rebound.tool_epoch = fence.tool_epoch
         rebound.created_at_ms = now_ms
         rebound.context_version = context_version
-        return _OutputWork(rebound, conversation_text=work.conversation_text)
+        return _OutputWork(rebound, fence, conversation_text=work.conversation_text)

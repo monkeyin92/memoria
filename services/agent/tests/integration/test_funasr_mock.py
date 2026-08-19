@@ -184,8 +184,10 @@ async def test_funasr_task_rotation_can_handoff_queued_tail_to_media_adapter() -
 
         await session.rotate_task(require_consumed=False)
 
-        assert session.task_id != first_task_id
-        assert session.task_epoch == 2
+        assert session.task_id == first_task_id
+        assert session.task_epoch == 1
+        assert session.rotation_pending is True
+        assert len(srv.tasks_started) == 1
         queued = []
         while not session.events.empty():
             queued.append(session.events.get_nowait())
@@ -195,6 +197,13 @@ async def test_funasr_task_rotation_can_handoff_queued_tail_to_media_adapter() -
         assert any(
             event.event == "task-finished" and event.task_id == first_task_id for event in queued
         )
+
+        await session.send_pcm(b"\x02\x00" * 2000)
+
+        assert session.task_id != first_task_id
+        assert session.task_epoch == 2
+        assert session.rotation_pending is False
+        assert len(srv.tasks_started) == 2
         await session.aclose()
     finally:
         srv.stop()
@@ -221,8 +230,9 @@ async def test_funasr_rotation_survives_provider_initiated_task_finish() -> None
 
         await session.rotate_task(require_consumed=False)
 
-        assert session.task_id != first_task_id
-        assert session.task_epoch == 2
+        assert session.task_id == first_task_id
+        assert session.task_epoch == 1
+        assert session.rotation_pending is True
         queued = []
         while not session.events.empty():
             queued.append(session.events.get_nowait())
@@ -233,10 +243,15 @@ async def test_funasr_rotation_survives_provider_initiated_task_finish() -> None
             event.event == "task-finished" and event.task_id == first_task_id for event in queued
         )
 
-        # The reused connection still serves a second normal rotation.
+        # The next PCM atomically starts a reused task.  A second normal
+        # rotation leaves the connection idle again instead of starting an
+        # empty provider task.
         await session.send_pcm(b"\x02\x00" * 2000)
+        assert session.task_id != first_task_id
+        assert session.task_epoch == 2
         await session.rotate_task(require_consumed=False)
-        assert session.task_epoch == 3
+        assert session.task_epoch == 2
+        assert session.rotation_pending is True
         await session.aclose()
     finally:
         srv.stop()

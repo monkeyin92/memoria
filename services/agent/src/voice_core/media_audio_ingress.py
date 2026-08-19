@@ -350,6 +350,11 @@ class MediaAudioIngress:
         return value if isinstance(value, ProviderAudioTaskSnapshot) else None
 
     @staticmethod
+    def _provider_rotation_pending(context: _MediaVoiceSession) -> bool:
+        value = getattr(context.provider, "asr_rotation_pending", False)
+        return value if isinstance(value, bool) else False
+
+    @staticmethod
     def _log_asr_boundary(
         context: _MediaVoiceSession,
         *,
@@ -377,8 +382,34 @@ class MediaAudioIngress:
             "provider_pcm_end_sample": (
                 provider_audio.audio_end_sample if provider_audio is not None else None
             ),
+            "provider_pcm_encoding": (
+                provider_audio.encoding if provider_audio is not None else None
+            ),
+            "provider_pcm_sample_rate_hz": (
+                provider_audio.sample_rate_hz if provider_audio is not None else None
+            ),
+            "provider_pcm_channels": (
+                provider_audio.channels if provider_audio is not None else None
+            ),
             "provider_pcm_samples": (
                 provider_audio.audio_samples if provider_audio is not None else 0
+            ),
+            "provider_pcm_observed_samples": (
+                provider_audio.observed_sample_count if provider_audio is not None else 0
+            ),
+            "provider_pcm_peak_abs": (
+                provider_audio.peak_abs if provider_audio is not None else None
+            ),
+            "provider_pcm_rms": (
+                round(provider_audio.rms, 3)
+                if provider_audio is not None and provider_audio.rms is not None
+                else None
+            ),
+            "provider_pcm_all_zero": (
+                provider_audio.all_zero if provider_audio is not None else None
+            ),
+            "provider_pcm_clipping_detected": (
+                provider_audio.clipping_detected if provider_audio is not None else None
             ),
             "provider_pcm_send_count": (
                 provider_audio.send_count if provider_audio is not None else 0
@@ -392,6 +423,7 @@ class MediaAudioIngress:
                 provider_audio.task_sample_origin if provider_audio is not None else None
             ),
             "result": result,
+            "next_task_pending": MediaAudioIngress._provider_rotation_pending(context),
             "rotation_observed": task_epoch_after > task_epoch_before > 0,
             "segment_samples": segment_samples,
             "session_id": context.identity.session_id,

@@ -673,6 +673,123 @@ async def test_existing_provider_adapter_rotates_funasr_at_vad_boundary() -> Non
 
 
 @pytest.mark.asyncio
+async def test_existing_provider_adapter_keeps_late_final_on_old_lazy_task_origin() -> None:
+    class LazyRotationASR(FakeASR):
+        def __init__(self) -> None:
+            super().__init__()
+            self.rotation_pending = False
+
+        async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+            self.sent.append((pcm, capture_start_sample))
+            if self.rotation_pending:
+                self.rotation_pending = False
+                self.task_id = "task-2"
+                self.task_epoch = 2
+                self.task_sample_origin = capture_start_sample
+                # This final was emitted by task-1 but arrived after the lazy
+                # handoff. The adapter must retain task-1's origin (0).
+                await self.events.put(
+                    FunASRServerEvent(
+                        event="result-generated",
+                        task_id="task-1",
+                        sentence=FunASRSentence(
+                            sentence_id=11,
+                            text="迟到旧任务",
+                            begin_ms=0,
+                            end_ms=20,
+                            sentence_end=True,
+                            heartbeat=False,
+                            words=(),
+                        ),
+                    )
+                )
+
+        async def rotate_task(self, *, require_consumed: bool = True) -> None:
+            assert require_consumed is False
+            previous_task_id = self.task_id
+            self.rotation_pending = True
+            await self.events.put(
+                FunASRServerEvent(event="task-finished", task_id=previous_task_id)
+            )
+
+    asr = LazyRotationASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("adapter-lazy-late-final", stream_epoch=1)
+
+    await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+    assert await adapter.finalize_speech_segment(identity) == ()
+    assert adapter.asr_rotation_pending is True
+
+    results = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 1, 320, 320, b"\x01\x00" * 320),
+    )
+
+    assert [(item.text, item.task_epoch, item.capture_start_sample, item.capture_end_sample)
+            for item in results] == [("迟到旧任务", 1, 0, 320)]
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_waits_for_final_after_task_finished() -> None:
+    class InvertedTailASR(FakeASR):
+        def __init__(self) -> None:
+            super().__init__()
+            self.config = SimpleNamespace(post_finish_tail_grace_s=0.1)
+
+        async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+            self.sent.append((pcm, capture_start_sample))
+
+        async def rotate_task(self, *, require_consumed: bool = True) -> None:
+            assert require_consumed is False
+            await self.events.put(
+                FunASRServerEvent(event="task-finished", task_id=self.task_id)
+            )
+
+            async def emit_late_final() -> None:
+                await asyncio.sleep(0.01)
+                await self.events.put(
+                    FunASRServerEvent(
+                        event="result-generated",
+                        task_id=self.task_id,
+                        sentence=FunASRSentence(
+                            sentence_id=12,
+                            text="边界后尾包",
+                            begin_ms=0,
+                            end_ms=20,
+                            sentence_end=True,
+                            heartbeat=False,
+                            words=(),
+                        ),
+                    )
+                )
+
+            asyncio.create_task(emit_late_final())
+
+    asr = InvertedTailASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("adapter-inverted-tail", stream_epoch=1)
+    await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+
+    results = await adapter.finalize_speech_segment(identity)
+
+    assert [(item.text, item.task_epoch) for item in results] == [("边界后尾包", 1)]
+
+
+@pytest.mark.asyncio
 async def test_existing_provider_adapter_records_partial_sample_age() -> None:
     class PartialASR(FakeASR):
         last_sent_sample = 640

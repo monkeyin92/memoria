@@ -67,6 +67,7 @@ class FunASRConfig:
     reconnect_audio_ms: int = 400
     connect_timeout_s: float = 5.0
     result_timeout_s: float = 8.0
+    post_finish_tail_grace_s: float = 0.25
     conversation_context_enabled: bool = False
     vocabulary_id: str | None = None
     speech_noise_threshold: float | None = None
@@ -75,6 +76,11 @@ class FunASRConfig:
         threshold = self.speech_noise_threshold
         if threshold is not None and (not math.isfinite(threshold) or not -1.0 <= threshold <= 1.0):
             raise ValueError("FunASR speech noise threshold must be between -1 and 1")
+        if (
+            not math.isfinite(self.post_finish_tail_grace_s)
+            or not 0.0 <= self.post_finish_tail_grace_s <= 2.0
+        ):
+            raise ValueError("FunASR post-finish tail grace must be between 0 and 2 seconds")
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> FunASRConfig:
@@ -96,6 +102,9 @@ class FunASRConfig:
             reconnect_audio_ms=int(e.get("FUNASR_RECONNECT_AUDIO_MS", "400")),
             connect_timeout_s=float(e.get("FUNASR_CONNECT_TIMEOUT_S", "5")),
             result_timeout_s=float(e.get("FUNASR_RESULT_TIMEOUT_S", "8")),
+            post_finish_tail_grace_s=float(
+                e.get("FUNASR_POST_FINISH_TAIL_GRACE_S", "0.25")
+            ),
             conversation_context_enabled=(
                 e.get("FUNASR_CONTEXT_ENABLED", "false").lower() == "true"
             ),
@@ -111,6 +120,17 @@ class FunASRTaskFailure:
     segment_epoch: int
     error_code: str | None
     error_message: str
+
+
+@dataclass(frozen=True, slots=True)
+class FunASRTaskEventContext:
+    """Immutable sample-clock context for one provider task."""
+
+    task_epoch: int
+    segment_epoch: int
+    sample_origin: int
+    audio_end_sample: int | None
+    boundary_observed: bool
 
 
 class FunASRSession:
@@ -141,6 +161,7 @@ class FunASRSession:
         self._task_started_event = asyncio.Event()
         self._task_finished_received = asyncio.Event()
         self._task_finished_consumed = asyncio.Event()
+        self._idle_terminal_event = asyncio.Event()
         self._finished_task_id: str | None = None
         self._task_failed_event = asyncio.Event()
         self._last_task_failure: FunASRTaskFailure | None = None
@@ -155,11 +176,16 @@ class FunASRSession:
         self._task_audio_start_sample: int | None = None
         self._task_audio_end_sample: int | None = None
         self._task_audio_send_count = 0
+        self._task_pcm_sample_count = 0
+        self._task_pcm_peak_abs = 0
+        self._task_pcm_square_sum = 0.0
         self._last_sent_sample = 0
         self._last_rotation_sample = 0
         self._last_provider_acked_sample = 0
         self._last_committed_sample = 0
         self._last_emitted_final_sample = 0
+        self._task_event_contexts: dict[str, FunASRTaskEventContext] = {}
+        self._task_event_order: deque[str] = deque()
         self._metrics_ws_active = False
 
     def _mark_ws_connected(self) -> None:
@@ -246,6 +272,99 @@ class FunASRSession:
     def _failure_exception(self, prefix: str) -> APIConnectionError:
         return APIConnectionError(self._failure_summary(prefix))
 
+    def _clear_pcm_ring(self) -> None:
+        self._pcm_ring.clear()
+        self._pcm_ring_ranges.clear()
+        self._pcm_ring_bytes = 0
+
+    def _remember_current_task_event_context(self) -> None:
+        task_id = self.task_id or ""
+        if not task_id:
+            return
+        if task_id not in self._task_event_contexts:
+            self._task_event_order.append(task_id)
+        self._task_event_contexts[task_id] = FunASRTaskEventContext(
+            task_epoch=max(1, self._task_epoch),
+            segment_epoch=max(1, self._segment_epoch),
+            sample_origin=self._task_sample_origin,
+            audio_end_sample=self._task_audio_end_sample,
+            boundary_observed=self._finished_task_id == task_id,
+        )
+        while len(self._task_event_order) > 8:
+            expired = self._task_event_order.popleft()
+            self._task_event_contexts.pop(expired, None)
+
+    def task_event_context(self, task_id: str) -> FunASRTaskEventContext | None:
+        """Return the preserved epoch/origin for a queued provider event."""
+
+        if task_id and task_id == self.task_id:
+            self._remember_current_task_event_context()
+        return self._task_event_contexts.get(task_id)
+
+    def _task_context_matches(
+        self,
+        *,
+        ws: ClientConnection,
+        task_id: str,
+        task_epoch: int,
+    ) -> bool:
+        """Return whether a PCM send still targets the same live task."""
+
+        return (
+            not self._closed
+            and not self._failed
+            and self._ws is ws
+            and (self.task_id == task_id or (not task_id and self.task_id is None))
+            and self._task_epoch == task_epoch
+            and (not task_id or self._finished_task_id != task_id)
+            and self._ready.is_set()
+        )
+
+    async def _fail_task_fence(
+        self,
+        *,
+        task_id: str | None = None,
+        task_epoch: int | None = None,
+        error_code: str = "task_fence",
+        error_message: str = "FunASR task state changed during PCM send",
+        failed_ws: ClientConnection | None = None,
+        enqueue_event: bool = True,
+    ) -> FunASRTaskFailure:
+        """Fail closed after an ambiguous provider/task transition.
+
+        Once a PCM frame may have crossed a provider boundary, the frame is not
+        replayed and the session cannot be made ready again by a late event.
+        """
+
+        failure = self._record_task_failure(
+            task_id=task_id,
+            task_epoch=task_epoch,
+            error_code=error_code,
+            error_message=error_message,
+        )
+        self._failed = True
+        self._ready.clear()
+        self._rotation_pending = False
+        self._task_failed_event.set()
+        self._task_started_event.set()
+        self._clear_pcm_ring()
+        ws = failed_ws if failed_ws is not None else self._ws
+        if ws is not None and self._ws is ws:
+            self._ws = None
+            self._mark_ws_disconnected()
+            with contextlib.suppress(Exception):
+                await ws.close()
+        if enqueue_event:
+            self.events.put_nowait(
+                FunASRServerEvent(
+                    event="task-failed",
+                    task_id=failure.task_id,
+                    error_code=failure.error_code,
+                    error_message=failure.error_message,
+                )
+            )
+        return failure
+
     @property
     def task_epoch(self) -> int:
         return self._task_epoch
@@ -262,6 +381,9 @@ class FunASRSession:
     def rotation_pending(self) -> bool:
         return self._rotation_pending
 
+    def _task_boundary_observed(self) -> bool:
+        return bool(self.task_id) and self._finished_task_id == self.task_id
+
     @property
     def task_sample_origin(self) -> int:
         return self._task_sample_origin
@@ -277,6 +399,20 @@ class FunASRSession:
     @property
     def task_audio_send_count(self) -> int:
         return self._task_audio_send_count
+
+    @property
+    def task_pcm_sample_count(self) -> int:
+        return self._task_pcm_sample_count
+
+    @property
+    def task_pcm_peak_abs(self) -> int | None:
+        return self._task_pcm_peak_abs if self._task_pcm_sample_count else None
+
+    @property
+    def task_pcm_rms(self) -> float | None:
+        if not self._task_pcm_sample_count:
+            return None
+        return math.sqrt(self._task_pcm_square_sum / self._task_pcm_sample_count)
 
     @property
     def last_sent_sample(self) -> int:
@@ -314,16 +450,34 @@ class FunASRSession:
         self._task_audio_start_sample = None
         self._task_audio_end_sample = None
         self._task_audio_send_count = 0
+        self._task_pcm_sample_count = 0
+        self._task_pcm_peak_abs = 0
+        self._task_pcm_square_sum = 0.0
 
-    def _record_task_audio_send(self, *, start_sample: int, end_sample: int) -> None:
+    def _record_task_audio_send(
+        self,
+        *,
+        pcm: bytes,
+        start_sample: int,
+        end_sample: int,
+    ) -> None:
         if start_sample < self._task_sample_origin or end_sample <= start_sample:
             raise ValueError("FunASR provider audio range is invalid")
+        sample_count = len(pcm) // 2
+        if not pcm or len(pcm) % 2 or end_sample - start_sample != sample_count:
+            raise ValueError("FunASR provider PCM evidence is invalid")
         if self._task_audio_start_sample is None:
             self._task_audio_start_sample = start_sample
         else:
             self._task_audio_start_sample = min(self._task_audio_start_sample, start_sample)
         self._task_audio_end_sample = max(self._task_audio_end_sample or 0, end_sample)
         self._task_audio_send_count += 1
+        chunk_peak = audioop.max(pcm, 2)
+        chunk_rms = audioop.rms(pcm, 2)
+        self._task_pcm_sample_count += sample_count
+        self._task_pcm_peak_abs = max(self._task_pcm_peak_abs, chunk_peak)
+        self._task_pcm_square_sum += float(chunk_rms * chunk_rms * sample_count)
+        self._remember_current_task_event_context()
 
     def _build_run_task(self) -> dict[str, Any]:
         return build_run_task(
@@ -360,10 +514,12 @@ class FunASRSession:
         self._task_started_event.set()
         self._task_finished_received.clear()
         self._task_finished_consumed.clear()
+        self._idle_terminal_event.clear()
         self._finished_task_id = None
         self._task_failed_event.clear()
         self._started.set()
         self._ready.set()
+        self._remember_current_task_event_context()
         self._mark_ws_connected()
         for ev in startup_events:
             await self.events.put(ev)
@@ -432,19 +588,62 @@ class FunASRSession:
                     if isinstance(message, bytes):
                         continue
                     ev = parse_server_message(message)
-                    if ev.task_id and ev.task_id == self._finished_task_id:
+                    task_context = self.task_event_context(ev.task_id)
+                    is_current_task = bool(ev.task_id) and ev.task_id == self.task_id
+                    if ev.task_id and task_context is None:
                         logger.info(
-                            "late FunASR event ignored after task boundary event=%s task_id=%s",
-                            ev.event,
-                            ev.task_id,
-                        )
-                        continue
-                    if ev.task_id and self.task_id and ev.task_id != self.task_id:
-                        logger.info(
-                            "stale FunASR task event ignored event=%s task_id=%s current_task_id=%s",
+                            "unknown FunASR task event ignored event=%s task_id=%s "
+                            "current_task_id=%s",
                             ev.event,
                             ev.task_id,
                             self.task_id,
+                        )
+                        continue
+                    if ev.event == "task-failed" and ev.task_id and not is_current_task:
+                        logger.info(
+                            "stale FunASR task failure ignored task_id=%s current_task_id=%s",
+                            ev.task_id,
+                            self.task_id,
+                        )
+                        continue
+                    if ev.event in ("task-started", "task-finished") and ev.task_id and not is_current_task:
+                        logger.info(
+                            "stale FunASR lifecycle event ignored event=%s task_id=%s "
+                            "current_task_id=%s",
+                            ev.event,
+                            ev.task_id,
+                            self.task_id,
+                        )
+                        continue
+                    if ev.event == "result-generated" and ev.task_id and not is_current_task:
+                        if (
+                            task_context is None
+                            or not task_context.boundary_observed
+                            or ev.sentence is None
+                            or not ev.sentence.sentence_end
+                        ):
+                            logger.info(
+                                "stale FunASR result ignored task_id=%s current_task_id=%s",
+                                ev.task_id,
+                                self.task_id,
+                            )
+                            continue
+                    if (
+                        ev.event == "result-generated"
+                        and task_context is not None
+                        and task_context.boundary_observed
+                        and (ev.sentence is None or not ev.sentence.sentence_end)
+                    ):
+                        logger.info(
+                            "non-final FunASR tail ignored after task boundary task_id=%s",
+                            ev.task_id,
+                        )
+                        continue
+                    if self._failed and ev.event != "task-failed":
+                        logger.info(
+                            "late FunASR event ignored after task failure event=%s task_id=%s",
+                            ev.event,
+                            ev.task_id,
                         )
                         continue
                     if ev.event == "task-failed":
@@ -455,46 +654,64 @@ class FunASRSession:
                             error_code=ev.error_code,
                             error_message=ev.error_message,
                         )
-                    await self.events.put(ev)
-                    if ev.event == "task-started" and ev.task_id == self.task_id:
+                        self._task_started_event.set()
+                        self._task_failed_event.set()
+                        self._mark_ws_disconnected()
+                        self._ready.clear()
+                    elif (
+                        ev.event == "task-started"
+                        and ev.task_id == self.task_id
+                        and not self._failed
+                        and not self._task_failed_event.is_set()
+                    ):
                         self._failed = False
                         self._ready.set()
                         self._task_started_event.set()
-                    if ev.event == "result-generated" and ev.sentence is not None:
+                        self._remember_current_task_event_context()
+                    elif ev.event == "result-generated" and ev.sentence is not None:
+                        result_context = task_context or self.task_event_context(ev.task_id)
+                        sample_origin = (
+                            result_context.sample_origin
+                            if result_context is not None
+                            else self._task_sample_origin
+                        )
+                        task_audio_end = (
+                            result_context.audio_end_sample
+                            if result_context is not None
+                            else self._task_audio_end_sample
+                        )
                         end_ms = ev.sentence.end_ms or ev.sentence.begin_ms
                         ack = max(
                             0,
-                            self._task_sample_origin
+                            sample_origin
                             + round(end_ms * self.config.sample_rate / 1000),
+                        )
+                        ack_ceiling = (
+                            task_audio_end
+                            if task_audio_end is not None
+                            else self._last_sent_sample
                         )
                         self._last_provider_acked_sample = max(
                             self._last_provider_acked_sample,
-                            min(ack, self._last_sent_sample),
+                            min(ack, ack_ceiling),
                         )
                         if ev.sentence.sentence_end:
                             self._last_emitted_final_sample = max(
                                 self._last_emitted_final_sample,
-                                min(ack, self._last_sent_sample),
+                                min(ack, ack_ceiling),
                             )
-                    if ev.event == "task-finished" and ev.task_id == self.task_id:
+                    elif ev.event == "task-finished" and ev.task_id == self.task_id:
                         self._finished_task_id = ev.task_id
                         self._ready.clear()
                         self._task_finished_received.set()
+                        self._remember_current_task_event_context()
                         logger.info(
                             "FunASR task boundary observed task_id=%s rotation_pending=%s",
                             ev.task_id,
                             self._rotation_pending,
                         )
-                        # The session stays usable across boundaries: a
-                        # provider-initiated finish without a pending rotation
-                        # must not kill the receive loop, or the next rotation
-                        # can never observe a task-finished again.
-                        continue
+                    await self.events.put(ev)
                     if ev.event == "task-failed":
-                        self._task_started_event.set()
-                        self._task_failed_event.set()
-                        self._mark_ws_disconnected()
-                        self._ready.clear()
                         with contextlib.suppress(Exception):
                             await ws.close()
                         self._failed = True
@@ -505,6 +722,8 @@ class FunASRSession:
             except asyncio.CancelledError:
                 raise
             except Exception:
+                if self._failed or self._task_failed_event.is_set():
+                    return
                 if not await self._recover(ws):
                     self._failed = True
                     self._task_failed_event.set()
@@ -531,7 +750,7 @@ class FunASRSession:
 
     async def _recover(self, failed_ws: ClientConnection) -> bool:
         async with self._reconnect_lock:
-            if self._closed:
+            if self._closed or self._failed or self._task_failed_event.is_set():
                 return False
             if self._ws is not failed_ws and self._ready.is_set():
                 return True
@@ -548,6 +767,13 @@ class FunASRSession:
                 ws, task_id, startup_events = await self._open_with_retry()
             except Exception:
                 self._breaker.record_failure()
+                self._failed = True
+                self._ready.clear()
+                self._task_failed_event.set()
+                self._clear_pcm_ring()
+                if self._ws is failed_ws:
+                    self._ws = None
+                self._mark_ws_disconnected()
                 return False
             try:
                 self._ws = ws
@@ -561,6 +787,7 @@ class FunASRSession:
                 self._task_finished_consumed.clear()
                 self._finished_task_id = None
                 self._task_failed_event.clear()
+                self._remember_current_task_event_context()
                 self._mark_ws_connected()
                 for ev in startup_events:
                     await self.events.put(ev)
@@ -569,6 +796,7 @@ class FunASRSession:
                     if replay:
                         await ws.send(replay)
                         self._record_task_audio_send(
+                            pcm=replay,
                             start_sample=replay_start,
                             end_sample=replay_start + len(replay) // 2,
                         )
@@ -577,17 +805,21 @@ class FunASRSession:
             except Exception:
                 self._failed = True
                 self._task_failed_event.set()
+                self._ready.clear()
+                self._clear_pcm_ring()
                 self._mark_ws_disconnected()
                 with contextlib.suppress(Exception):
                     await ws.close()
+                if self._ws is ws:
+                    self._ws = None
                 self._breaker.record_failure()
                 return False
             self._breaker.record_success()
             self._ready.set()
             return True
 
-    def _push_ring(self, pcm: bytes) -> None:
-        start = self._last_sent_sample
+    def _push_ring(self, pcm: bytes, *, start_sample: int | None = None) -> None:
+        start = self._last_sent_sample if start_sample is None else start_sample
         end = start + len(pcm) // 2
         self._pcm_ring.append(pcm)
         self._pcm_ring_ranges.append((start, end))
@@ -624,41 +856,99 @@ class FunASRSession:
             raise RuntimeError("FunASR session not connected")
         if not pcm or len(pcm) % 2:
             raise ValueError("FunASR PCM must be non-empty 16-bit samples")
-        if not replayed:
-            start = self._last_sent_sample if capture_start_sample is None else capture_start_sample
-            if start < self._last_sent_sample:
-                raise ValueError("capture sample position moved backwards")
-            if self._last_sent_sample == 0 and self._task_sample_origin == 0:
-                self._task_sample_origin = start
-            if start > self._last_sent_sample:
-                # A capture discontinuity must not make replay bytes appear to
-                # belong to the missing interval.
-                self._pcm_ring.clear()
-                self._pcm_ring_ranges.clear()
-                self._pcm_ring_bytes = 0
-            self._last_sent_sample = start
-            self._push_ring(pcm)
-            self._last_sent_sample += len(pcm) // 2
-        else:
-            start = (
-                capture_start_sample
-                if capture_start_sample is not None
-                else max(self._task_sample_origin, self._last_sent_sample - len(pcm) // 2)
-            )
-        end = start + len(pcm) // 2
-        await self._wait_until_ready("send PCM")
-        ws = self._ws
-        if ws is None:
-            raise RuntimeError("FunASR session not connected")
-        started = monotonic()
-        try:
-            await ws.send(pcm)
-            self._record_task_audio_send(start_sample=start, end_sample=end)
-        except Exception:
-            if not await self._recover(ws):
-                if not self._failure_matches_current_task():
-                    self._record_task_failure(error_message="FunASR reconnect failed")
-                raise self._failure_exception("FunASR reconnect failed") from None
+        async with self._task_rotation_lock:
+            # Re-check the absolute capture watermark while holding the same
+            # lock as task rotation.  A caller must never send a frame whose
+            # range was valid only before a boundary/recovery completed.
+            if not replayed:
+                start = (
+                    self._last_sent_sample
+                    if capture_start_sample is None
+                    else capture_start_sample
+                )
+                if start < self._last_sent_sample:
+                    raise ValueError("capture sample position moved backwards")
+            else:
+                start = (
+                    capture_start_sample
+                    if capture_start_sample is not None
+                    else max(
+                        self._task_sample_origin,
+                        self._last_sent_sample - len(pcm) // 2,
+                    )
+                )
+            end = start + len(pcm) // 2
+            await self._start_task_for_pcm_if_needed(next_origin=start)
+            await self._wait_until_ready("send PCM")
+            ws = self._ws
+            if ws is None:
+                raise RuntimeError("FunASR session not connected")
+            task_id = self.task_id or ""
+            task_epoch = self._task_epoch
+            if not self._task_context_matches(
+                ws=ws,
+                task_id=task_id,
+                task_epoch=task_epoch,
+            ):
+                await self._fail_task_fence(
+                    task_id=task_id,
+                    task_epoch=task_epoch,
+                    error_code="task_boundary_race",
+                    error_message="FunASR task changed before PCM send",
+                    failed_ws=ws,
+                )
+                raise self._failure_exception("FunASR task boundary race")
+            started = monotonic()
+            send_completed = False
+            try:
+                await ws.send(pcm)
+                send_completed = True
+                if not self._task_context_matches(
+                    ws=ws,
+                    task_id=task_id,
+                    task_epoch=task_epoch,
+                ):
+                    await self._fail_task_fence(
+                        task_id=task_id,
+                        task_epoch=task_epoch,
+                        error_code="task_boundary_race",
+                        error_message="FunASR task changed during PCM send",
+                        failed_ws=ws,
+                    )
+                    raise self._failure_exception("FunASR task boundary race")
+                if not replayed and self._last_sent_sample == 0 and self._task_sample_origin == 0:
+                    self._task_sample_origin = start
+                self._record_task_audio_send(
+                    pcm=pcm,
+                    start_sample=start,
+                    end_sample=end,
+                )
+                if not replayed:
+                    if start > self._last_sent_sample:
+                        # A capture discontinuity must not make replay bytes
+                        # appear to belong to the missing interval.  Commit the
+                        # clear only after the provider send is known to target
+                        # the captured task.
+                        self._clear_pcm_ring()
+                    self._push_ring(pcm, start_sample=start)
+                    self._last_sent_sample = end
+            except Exception as exc:
+                if self._failed or self._task_failed_event.is_set():
+                    raise
+                if send_completed:
+                    await self._fail_task_fence(
+                        task_id=task_id,
+                        task_epoch=task_epoch,
+                        error_code="pcm_evidence_invalid",
+                        error_message="FunASR PCM evidence could not be committed",
+                        failed_ws=ws,
+                    )
+                    raise self._failure_exception("FunASR PCM evidence failed") from exc
+                if not await self._recover(ws):
+                    if not self._failure_matches_current_task():
+                        self._record_task_failure(error_message="FunASR reconnect failed")
+                    self._clear_pcm_ring()
+                    raise self._failure_exception("FunASR reconnect failed") from None
         if self.metrics is not None:
             self.metrics.set_media_metric(
                 "asr_send_lag_ms",
@@ -669,14 +959,33 @@ class FunASRSession:
         self._context = context
         if self._ws is None or self.task_id is None:
             return
+        if self._rotation_pending or self._finished_task_id == self.task_id:
+            # The next run-task snapshots ``self._context``.  Do not send a
+            # continue-task to an already-finished provider task.
+            return
         await self._wait_until_ready("update context")
         msg = build_continue_task_context(self.task_id, list(context))
         await self._ws.send(json.dumps(msg, ensure_ascii=False))
 
     async def finish(self, *, terminal: bool = True) -> None:
-        if self._finishing or self._ws is None or self.task_id is None:
+        if self._ws is None or self.task_id is None:
             return
-        boundary_observed = self._finished_task_id == self.task_id
+        boundary_observed = self._task_boundary_observed()
+        if terminal and boundary_observed:
+            # A client VAD boundary deliberately leaves the WebSocket between
+            # tasks until the next PCM frame arrives.  Terminal shutdown must
+            # not start an empty provider task merely to finish it again.
+            self._finishing = True
+            self._terminal_finishing = True
+            self._rotation_pending = False
+            self._idle_terminal_event.set()
+            logger.info(
+                "FunASR terminal finish satisfied by idle task boundary task_id=%s",
+                self.task_id,
+            )
+            return
+        if self._finishing:
+            return
         self._finishing = True
         self._terminal_finishing = terminal
         if boundary_observed:
@@ -707,7 +1016,7 @@ class FunASRSession:
     async def wait_for_task_finished(self, *, require_consumed: bool = False) -> None:
         """Wait for one provider task boundary; heartbeat packets cannot extend it."""
 
-        boundary_observed = self._finished_task_id == self.task_id
+        boundary_observed = self._task_boundary_observed()
         if boundary_observed and (
             not require_consumed or self._task_finished_consumed.is_set()
         ):
@@ -765,7 +1074,7 @@ class FunASRSession:
             self._task_finished_consumed.set()
 
     async def rotate_task(self, *, require_consumed: bool = True) -> None:
-        """Finish one VAD segment and reuse the same WebSocket for the next task."""
+        """Finish one VAD segment and arm lazy reuse for the next PCM frame."""
 
         async with self._task_rotation_lock:
             if self._closed or self._ws is None or self.task_id is None:
@@ -778,7 +1087,7 @@ class FunASRSession:
                 raise self._failure_exception(
                     "FunASR task rotation requires a healthy session"
                 )
-            boundary_observed = self._finished_task_id == self.task_id
+            boundary_observed = self._task_boundary_observed()
             if boundary_observed:
                 logger.info(
                     "FunASR rotation reuses task without finish: boundary already observed task_id=%s",
@@ -794,37 +1103,61 @@ class FunASRSession:
                 # event has crossed the consumer barrier.  Direct adapters
                 # pass require_consumed=False and retain their task-id snapshots.
                 await self.wait_for_task_finished(require_consumed=require_consumed)
-                await self._start_reused_task()
                 self._last_rotation_sample = self._last_sent_sample
+                self._finishing = False
+                self._terminal_finishing = False
             except BaseException:
                 self._rotation_pending = False
                 self._failed = True
                 self._task_failed_event.set()
                 self._ready.clear()
+                self._clear_pcm_ring()
                 raise
 
-    async def _start_reused_task(self) -> None:
+    async def _start_task_for_pcm_if_needed(self, *, next_origin: int) -> None:
+        boundary_observed = self._task_boundary_observed()
+        if boundary_observed and not self._rotation_pending:
+            # The provider may close a task before the client VAD boundary.
+            # Treat the next PCM frame as the atomic handoff to a new task; the
+            # caller will still finalize that new task at the real VAD edge.
+            self._rotation_pending = True
+            self._last_rotation_sample = max(
+                self._last_rotation_sample,
+                self._last_sent_sample,
+            )
+            self._finishing = False
+            self._terminal_finishing = False
+        if not self._rotation_pending:
+            return
+        await self._start_reused_task(next_origin=next_origin)
+
+    async def _start_reused_task(self, *, next_origin: int | None = None) -> None:
         ws = self._ws
         if ws is None:
             raise APIConnectionError("FunASR WebSocket is unavailable for task reuse")
 
         run = self._build_run_task()
         task_id = str(run["header"]["task_id"])
-        next_origin = self._last_sent_sample
+        origin = self._last_sent_sample if next_origin is None else next_origin
+        if origin < self._last_sent_sample:
+            raise APIConnectionError("FunASR reused task origin moved backwards")
         self._task_started_event.clear()
         self._task_finished_received.clear()
         self._task_finished_consumed.clear()
+        self._task_failed_event.clear()
         self.task_id = task_id
         self._task_epoch += 1
         self._segment_epoch += 1
-        self._task_sample_origin = next_origin
+        self._task_sample_origin = origin
         self._reset_task_audio_evidence()
         self._finishing = False
         self._terminal_finishing = False
+        self._idle_terminal_event.clear()
         self._ready.clear()
         self._pcm_ring.clear()
         self._pcm_ring_ranges.clear()
         self._pcm_ring_bytes = 0
+        self._remember_current_task_event_context()
         try:
             await ws.send(json.dumps(run, ensure_ascii=False))
             await asyncio.wait_for(
@@ -834,11 +1167,25 @@ class FunASRSession:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            raise APIConnectionError(f"FunASR reused task failed to start: {exc}") from exc
+            await self._fail_task_fence(
+                task_id=task_id,
+                task_epoch=self._task_epoch,
+                error_code="task_start_failed",
+                error_message=f"FunASR reused task failed to start: {exc}",
+                failed_ws=ws,
+            )
+            raise self._failure_exception("FunASR reused task failed to start") from exc
         if self._failed or not self._ready.is_set():
             if self._failed or self._task_failed_event.is_set():
                 raise self._failure_exception("FunASR reused task was rejected")
-            raise APIConnectionError("FunASR reused task was rejected")
+            await self._fail_task_fence(
+                task_id=task_id,
+                task_epoch=self._task_epoch,
+                error_code="task_start_rejected",
+                error_message="FunASR reused task was rejected",
+                failed_ws=ws,
+            )
+            raise self._failure_exception("FunASR reused task was rejected")
         self._rotation_pending = False
 
     async def _wait_until_ready(self, operation: str) -> None:
@@ -863,6 +1210,7 @@ class FunASRSession:
         # Wake any waiter blocked on a task boundary; it must fail fast
         # instead of burning the full result timeout on a closed session.
         self._task_failed_event.set()
+        self._idle_terminal_event.set()
         if self._recv_task is not None:
             self._recv_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -949,6 +1297,7 @@ class FunASRRecognizeStream(stt.RecognizeStream):
         self._asr_results: deque[ASRResult] = deque(maxlen=64)
         self._stream_epoch = 1
         self._last_emitted_final_sample = 0
+        self._last_final_task_id = ""
 
     @property
     def asr_results(self) -> tuple[ASRResult, ...]:
@@ -1056,14 +1405,67 @@ class FunASRRecognizeStream(stt.RecognizeStream):
     async def _recv_events(self, session: FunASRSession) -> None:
         idle_timeouts = 0
         max_idle = 3
-        while True:
-            try:
-                ev = await asyncio.wait_for(
-                    session.events.get(),
-                    timeout=self._config.result_timeout_s,
+        pending_boundary_task_id = ""
+        pending_boundary_deadline: float | None = None
+        pending_terminal_return = False
+
+        def finish_pending_boundary() -> bool:
+            nonlocal pending_boundary_task_id
+            nonlocal pending_boundary_deadline
+            nonlocal pending_terminal_return
+            if self._speaking:
+                self._event_ch.send_nowait(
+                    stt.SpeechEvent(type=stt.SpeechEventType.END_OF_SPEECH)
                 )
+                self._speaking = False
+            should_return = pending_terminal_return
+            pending_boundary_task_id = ""
+            pending_boundary_deadline = None
+            pending_terminal_return = False
+            return should_return
+
+        while True:
+            loop = asyncio.get_running_loop()
+            if (
+                pending_boundary_deadline is not None
+                and loop.time() >= pending_boundary_deadline
+            ):
+                if finish_pending_boundary():
+                    return
+                continue
+            event_task = asyncio.create_task(session.events.get())
+            idle_terminal_task: asyncio.Task[bool] | None = None
+            waiters: set[asyncio.Task[Any]] = {event_task}
+            if pending_boundary_deadline is None:
+                idle_terminal_task = asyncio.create_task(
+                    session._idle_terminal_event.wait()
+                )
+                waiters.add(idle_terminal_task)
+            timeout_s = self._config.result_timeout_s
+            if pending_boundary_deadline is not None:
+                timeout_s = min(
+                    timeout_s,
+                    max(0.001, pending_boundary_deadline - loop.time()),
+                )
+            try:
+                done, _ = await asyncio.wait(
+                    waiters,
+                    timeout=timeout_s,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if event_task in done:
+                    ev = event_task.result()
+                elif idle_terminal_task is not None and idle_terminal_task in done:
+                    return
+                else:
+                    raise TimeoutError
                 idle_timeouts = 0
             except TimeoutError:
+                if pending_boundary_deadline is not None:
+                    if loop.time() >= pending_boundary_deadline:
+                        if finish_pending_boundary():
+                            return
+                    continue
                 if not session.finishing:
                     # A long-lived listening session is expected to be quiet.
                     # Only an explicit task boundary has a result deadline.
@@ -1078,31 +1480,70 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                         self._speaking = False
                     return
                 continue
+            finally:
+                for task in waiters:
+                    if not task.done():
+                        task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await task
             if ev.event == "task-failed":
                 raise session._failure_exception("FunASR task failed")
             if ev.event == "task-finished":
+                if (
+                    pending_boundary_task_id
+                    and ev.task_id != pending_boundary_task_id
+                    and finish_pending_boundary()
+                ):
+                    return
                 session.acknowledge_task_finished(ev.task_id)
-                if self._speaking:
-                    self._event_ch.send_nowait(
-                        stt.SpeechEvent(type=stt.SpeechEventType.END_OF_SPEECH)
+                terminal_return = not session.rotation_pending
+                if terminal_return and not session.finishing:
+                    raise APIConnectionError(
+                        "FunASR task finished without a client boundary"
                     )
-                    self._speaking = False
-                if session.rotation_pending:
+                if ev.task_id == self._last_final_task_id:
+                    pending_terminal_return = terminal_return
+                    if finish_pending_boundary():
+                        return
                     continue
-                if not session.finishing:
-                    raise APIConnectionError("FunASR task finished without a client boundary")
-                return
+                pending_boundary_task_id = ev.task_id
+                pending_boundary_deadline = (
+                    asyncio.get_running_loop().time()
+                    + self._config.post_finish_tail_grace_s
+                )
+                pending_terminal_return = terminal_return
+                continue
             if ev.event != "result-generated" or ev.sentence is None:
                 continue
+            if (
+                pending_boundary_task_id
+                and ev.task_id != pending_boundary_task_id
+                and finish_pending_boundary()
+            ):
+                return
             sent = ev.sentence
             if sent.heartbeat and not sent.text:
                 continue
+            event_context = session.task_event_context(ev.task_id)
             if ev.task_id and ev.task_id != self._provider_task_id:
                 self._provider_task_id = ev.task_id
                 self._provider_task_epoch += 1
-            task_epoch = max(1, session.task_epoch, self._provider_task_epoch)
+            task_epoch = max(
+                1,
+                event_context.task_epoch if event_context is not None else session.task_epoch,
+            )
+            segment_epoch = (
+                event_context.segment_epoch
+                if event_context is not None
+                else session.segment_epoch
+            )
+            sample_offset = (
+                event_context.sample_origin
+                if event_context is not None
+                else session.task_sample_origin
+            )
             sentence_id = str(sent.sentence_id)
-            sentence_key = (session.segment_epoch, sentence_id)
+            sentence_key = (segment_epoch, sentence_id)
             revision = self._sentence_revisions.get(sentence_key, 0) + 1
             self._sentence_revisions[sentence_key] = revision
             asr_result = sentence_to_asr_result(
@@ -1111,7 +1552,7 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                 sample_rate=self._config.sample_rate,
                 revision=revision,
                 stream_epoch=self._stream_epoch,
-                sample_offset=session.task_sample_origin,
+                sample_offset=sample_offset,
             )
             if asr_result.capture_end_sample <= session.last_committed_sample:
                 logger.info(
@@ -1136,7 +1577,7 @@ class FunASRRecognizeStream(stt.RecognizeStream):
             ):
                 logger.info(
                     "duplicate FunASR final ignored segment_epoch=%s sentence_id=%s",
-                    session.segment_epoch,
+                    segment_epoch,
                     sent.sentence_id,
                 )
                 continue
@@ -1153,7 +1594,7 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                 end_ms=sent.end_ms,
                 words=sent.words,
             )
-            request_id = session.task_id or ""
+            request_id = ev.task_id or session.task_id or ""
             if sent.sentence_end:
                 if sent.sentence_id > 0:
                     self._final_sentence_ids.add(sentence_key)
@@ -1168,11 +1609,15 @@ class FunASRRecognizeStream(stt.RecognizeStream):
                         alternatives=[sd],
                     )
                 )
+                self._last_final_task_id = request_id
                 self._stt_instance.trace_result(
                     sent,
                     task_epoch=max(1, self._provider_task_epoch),
                 )
                 self._prefix_tracker.on_final(sent.sentence_id)
+                if ev.task_id == pending_boundary_task_id:
+                    if finish_pending_boundary():
+                        return
             else:
                 self._event_ch.send_nowait(
                     stt.SpeechEvent(
