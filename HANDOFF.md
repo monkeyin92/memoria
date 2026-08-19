@@ -1,5 +1,12 @@
 # 项目交接
 
+## 当前待部署增量（2026-08-19，输出 fence + FunASR task boundary，已提交未切流）
+
+- 源码提交 `3a3fcdc995efd86544480a5ee8c3beeb351ffd07` 与 annotated tag `20260819-151012-output-fence-funasr` 已推送 `origin/main`，tag 不再移动。内容：FunASR lazy task handoff、task/WebSocket/epoch fence、失败帧 fail-closed、Provider PCM 统计与失败恢复 backlog drain/discontinuity reset，以及 media session 输出 fence 与 output dispatch 收口。
+- 当前层级为 `code + wired + local verified`：Ruff、strict MyPy（399 个源码文件）、模块预算、固件 overlay gate、`firmware/esp32/tests` 与 FunASR/Provider adapter/Media session 聚焦套件全部通过。
+- 尚未构建或部署；生产 Agent/Bridge 仍运行 `memoria-agent:20260818-152620-vad-asr-boundary`。切流时只允许在服务器最新环境构建 Agent image 并只切换 Agent 与 Voice Core Media Bridge；Control API、Media Edge、固件、H5、小程序和数据服务保持不变。不得继承 `20260818-152620-vad-asr-boundary` 的 enabled/runtime 证据。
+- 本增量不改变 `direct_real_device_verified=false`、`full_duplex_verified=false` 或 T1–T14 `0 pass / 14 blocked / 0 failed`。
+
 ## 当前候选 ESP32 实板状态（2026-08-19；非媒体启动已验证）
 
 - 当前候选已由 `firmware/esp32/scripts/flash.sh` 写入真实板卡 `/dev/cu.usbmodem101`，退出码 `0`；bootloader、分区表、OTA data、应用和资源五段写入及写后校验通过并硬复位。写入地址仅为 `0x0/0x8000/0xd000/0x20000/0x800000`，未触碰 `0x10000..0x1ffff` 身份区。合并镜像 SHA-256 为 `7d7b921a81500817fda6a8230cd5c5b5a97814855dd0a440188f3d75e2cee188`（`13,577,086` bytes），应用镜像 SHA-256 为 `6fe8e936d481433f80fd0dcd5c076f2a5f47029132e2b9e21ccb1680fe3d798d`（`2,950,832` bytes），overlay SHA-256 为 `513e14ef346d49fc39e82b9bf96e2c56df0bf25bb1d2f081ee56e5707dd6a969`。

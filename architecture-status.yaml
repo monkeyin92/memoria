@@ -51,8 +51,10 @@ student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
   as_of_date: 2026-08-19
-  head_commit: 3e16ee93b0628bfc02be527c3760ea53b943f53b
-  dirty: true
+  head_commit: 3a3fcdc995efd86544480a5ee8c3beeb351ffd07
+  dirty: false
+  pending_candidate_release_tag: 20260819-151012-output-fence-funasr
+  pending_increment: output_fence_and_funasr_task_boundaries_committed_pushed_deploy_pending
   code: complete
   wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
   enabled: current_candidate_20260818-152620-vad-asr-boundary_agent_bridge_scope
