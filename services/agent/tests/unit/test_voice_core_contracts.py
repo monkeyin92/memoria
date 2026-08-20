@@ -505,6 +505,45 @@ def test_media_bridge_downlink_rejection_logs_generation_gate_state(caplog) -> N
     assert "generation_active=False" in messages[0]
 
 
+def test_media_bridge_downlink_requires_complete_fence_session_epoch() -> None:
+    server = MediaBridgeServer()
+    identity = SessionIdentity("epoch-session", stream_epoch=1)
+    bridge = server.open(identity)
+    # Reproduce the production GENERATION_ACTION_START path: the controller
+    # advances with an authoritative complete fence under a non-zero session
+    # epoch, so downlink frames must carry the same epoch to match.
+    authoritative = GenerationFence(
+        session_id="epoch-session",
+        turn_id=1,
+        generation_id=1,
+        tool_epoch=0,
+        session_epoch=1,
+    )
+    bridge.generation.advance(authoritative)
+    assert bridge.reset_downlink_generation(authoritative)
+    bridge.generation_active = True
+
+    def _frame(session_epoch: int) -> PCMFrame:
+        return PCMFrame(
+            identity=identity,
+            turn_id=1,
+            generation_id=1,
+            tool_epoch=0,
+            session_epoch=session_epoch,
+            sequence=0,
+            source_start_sample=0,
+            frame_samples=2,
+            pcm_s16le=b"\x00\x00\x01\x00",
+        )
+
+    # A frame stamped with the previous epoch cannot cross the switch.
+    assert not bridge.accept_downlink(_frame(0))
+    assert bridge.stale_downlink_count == 1
+    # A frame carrying the authoritative complete fence is accepted.
+    assert bridge.accept_downlink(_frame(1))
+    assert bridge.last_downlink_sequence == 0
+
+
 def test_media_bridge_reconnect_cannot_change_device_identity() -> None:
     server = MediaBridgeServer()
     bridge = server.open(SessionIdentity("identity-session", device_id="doll-1"))

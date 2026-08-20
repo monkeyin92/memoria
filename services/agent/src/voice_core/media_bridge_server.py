@@ -43,6 +43,10 @@ class PCMFrame:
     final: bool = False
     task_epoch: int = 0
     context_version: int = 0
+    # The authoritative generation fence is complete: it also carries the
+    # identity/context session epoch.  Frames that omit it can never match a
+    # controller that advanced past epoch 0, so producers must stamp it.
+    session_epoch: int = 0
 
     def __post_init__(self) -> None:
         if min(
@@ -53,6 +57,7 @@ class PCMFrame:
             self.source_start_sample,
             self.task_epoch,
             self.context_version,
+            self.session_epoch,
         ) < 0:
             raise ValueError("PCM frame metadata must be non-negative")
         if (
@@ -333,8 +338,8 @@ class MediaBridgeSession:
         expected = self.generation.current
         logger.warning(
             "media downlink rejected session=%s reason=%s state=%s "
-            "generation_active=%s frame_fence=turn=%s/gen=%s/epoch=%s "
-            "session_fence=turn=%s/gen=%s/epoch=%s downlink_fence=%s "
+            "generation_active=%s frame_fence=turn=%s/gen=%s/tool_epoch=%s/session_epoch=%s "
+            "session_fence=turn=%s/gen=%s/tool_epoch=%s/session_epoch=%s downlink_fence=%s "
             "sequence=%s expected_sequence=%s source_start_sample=%s "
             "last_source_end_sample=%s queue_depth=%s/%s stale_count=%s",
             self.identity.session_id,
@@ -344,9 +349,11 @@ class MediaBridgeSession:
             frame.turn_id,
             frame.generation_id,
             frame.tool_epoch,
+            frame.session_epoch,
             expected.turn_id,
             expected.generation_id,
             expected.tool_epoch,
+            expected.session_epoch,
             self._downlink_fence,
             frame.sequence,
             self.last_downlink_sequence + 1,
@@ -368,6 +375,7 @@ class MediaBridgeSession:
             turn_id=frame.turn_id,
             generation_id=frame.generation_id,
             tool_epoch=frame.tool_epoch,
+            session_epoch=frame.session_epoch,
         )
         if (
             not self.generation_active

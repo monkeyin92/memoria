@@ -198,6 +198,7 @@ class MediaOutputStreamMixin:
                     turn_id=fence.turn_id,
                     generation_id=fence.generation_id,
                     tool_epoch=fence.tool_epoch,
+                    session_epoch=fence.session_epoch,
                     sequence=context.output_sequence,
                     source_start_sample=chunk.source_start_sample,
                     frame_samples=len(gated) // 2,
