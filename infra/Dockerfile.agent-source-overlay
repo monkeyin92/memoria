@@ -1,0 +1,20 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG MEMORIA_RELEASE_COMMIT
+ARG MEMORIA_RELEASE_TAG
+LABEL org.opencontainers.image.revision="${MEMORIA_RELEASE_COMMIT}" \
+      org.opencontainers.image.version="${MEMORIA_RELEASE_TAG}" \
+      com.memoria.release.role="agent" \
+      com.memoria.release.kind="agent-source-overlay"
+
+USER root
+WORKDIR /app
+
+# Replace the complete Agent package so deleted or renamed Python files cannot
+# survive from the dependency base image. The build context is a commit-bound
+# git archive containing only this runtime package.
+RUN rm -rf /app/services/agent
+COPY --chown=65532:65532 memoria/services/agent /app/services/agent
+
+USER 65532:65532

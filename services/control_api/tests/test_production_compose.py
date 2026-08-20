@@ -481,6 +481,29 @@ def test_runtime_images_include_voice_registries_needed_by_agent_and_legacy_prev
     assert delta_builder.count("--pull=false") == 4
 
 
+def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> None:
+    overlay = (ROOT / "infra" / "Dockerfile.agent-source-overlay").read_text(
+        encoding="utf-8"
+    )
+    deploy = (ROOT / "scripts" / "deploy_agent_component.sh").read_text(encoding="utf-8")
+
+    assert "FROM ${BASE_IMAGE}" in overlay
+    assert "RUN rm -rf /app/services/agent" in overlay
+    assert "COPY --chown=65532:65532 memoria/services/agent /app/services/agent" in overlay
+    assert "uv pip install" not in overlay
+    assert "apt-get" not in overlay
+
+    assert "scripts/verify_release_source.py" in deploy
+    assert "git get-tar-commit-id" in deploy
+    assert "services/agent/__init__.py services/agent/src" in deploy
+    assert "--network=none" in deploy
+    assert "docker save" not in deploy
+    assert "agent voice-core-media-bridge" in deploy
+    assert "--no-deps --no-build" in deploy
+    assert "trap rollback ERR" in deploy
+    assert "runtime changes escape the Agent component" in deploy
+
+
 def test_agent_image_installs_the_optional_keyword_spotter_runtime() -> None:
     agent_dockerfile = (ROOT / "infra" / "Dockerfile.agent").read_text(encoding="utf-8")
 

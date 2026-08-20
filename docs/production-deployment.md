@@ -381,9 +381,45 @@ POSTGRES_ENV_BACKUP=$PROTECTED_BACKUP_DIR/memoria-postgres.env-pre-$RELEASE_TAG
 ROLLBACK_RECEIPT=$PROTECTED_BACKUP_DIR/rollback-$RELEASE_TAG.env
 ```
 
-### 1. 本机构建、打包并增量上传固定工件
+### 0. Agent 高频代码改动：组件源码薄发布
 
-生产机只有约 3.6 GiB 内存，默认禁止在服务器执行完整 `compose build`。依赖未变化时，在本机从上一健康 amd64 镜像做增量构建；`pyproject.toml` 或 `uv.lock` 变化时，仍在本机执行固定依赖的完整 amd64 构建。
+仅修改 `services/agent/**` 且 `pyproject.toml`、`uv.lock`、`.dockerignore`、
+`infra/Dockerfile.agent` 均未变化时，不再打包或上传 2GB 级完整镜像。使用提交绑定的
+Agent 源码归档，在生产机基于固定依赖基座构建一层薄镜像；构建过程禁网且不安装依赖，
+切流只重建 `agent` 与消费同一代码的 `voice-core-media-bridge`。数据库、Redis、MinIO、
+Control API、网关、H5 和固件均不变化。
+
+脚本会拒绝共享 `services/*`、`packages/*`、运行脚本或依赖输入的越界改动；这些改动必须
+走完整或协调的多组件发布。薄镜像每次直接派生自固定依赖基座，不从上一张源码薄镜像继续
+叠层；失败时自动按切流前 Compose 配置恢复两个容器。正式切流前先执行 dry-run：
+
+```bash
+RELEASE_TAG=YYYYMMDD-HHMMSS-agent-change
+BASE_IMAGE=memoria-agent:上一健康依赖版本
+MEMORIA_RELEASE_COMMIT="$(git rev-parse HEAD)"
+
+bash scripts/deploy_agent_component.sh \
+  --remote memoria-prod \
+  --release-tag "$RELEASE_TAG" \
+  --base-image "$BASE_IMAGE" \
+  --expected-commit "$MEMORIA_RELEASE_COMMIT" \
+  --dry-run
+
+bash scripts/deploy_agent_component.sh \
+  --remote memoria-prod \
+  --release-tag "$RELEASE_TAG" \
+  --base-image "$BASE_IMAGE" \
+  --expected-commit "$MEMORIA_RELEASE_COMMIT" \
+  --cutover
+```
+
+生产工件位于 `/opt/memoria/component-releases/$RELEASE_TAG/`，包含源码归档、构建回执、
+切流回执和冻结回滚点。验收后仍只保留当前版、紧邻可运行回滚版和当前依赖基座；依赖基座
+不是普通候选包，不得在仍有薄镜像引用时删除。
+
+### 1. 多组件或依赖变更：本机构建、打包并增量上传固定工件
+
+生产机资源只允许执行不安装依赖的源码薄层构建，默认禁止在服务器执行完整 `compose build`。依赖未变化时，在本机从上一健康 amd64 镜像做增量构建；`pyproject.toml` 或 `uv.lock` 变化时，仍在本机执行固定依赖的完整 amd64 构建。
 
 ```bash
 RELEASE_TAG=YYYYMMDD-HHMMSS
