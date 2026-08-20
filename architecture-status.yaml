@@ -1,13 +1,13 @@
 # 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
 # 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
 schema_version: 2
-as_of_commit: 3e16ee93b0628bfc02be527c3760ea53b943f53b
+as_of_commit: c70577271aae3b59d74936d1753a0716549ec24c
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 production_release_tag: 20260814-231749-direct-canary
 production_release_symlink: /opt/memoria/releases/20260812-173008
-production_code_release_tag: 20260819-151012-output-fence-funasr
-production_code_commit: 3a3fcdc995efd86544480a5ee8c3beeb351ffd07
+production_code_release_tag: 20260820-112031-ingress-overflow-fix
+production_code_commit: c70577271aae3b59d74936d1753a0716549ec24c
 production_runtime_overlays:
   control_api:
     image: memoria-control-api:20260818-103228
@@ -19,22 +19,23 @@ production_runtime_overlays:
     cutover_evidence_file: /opt/memoria/direct-canaries/20260818-103228/CUTOVER_RESULT.txt
     cutover_evidence_sha256: 37da7f571630c0585ab350464eb789196cd3075998758a3c43d611ab240b53848
   agent:
-    image: memoria-agent:20260819-151012-output-fence-funasr
-    image_id: sha256:589b6f4c993730be98517ffb4ef4481447106358d49f5207dce8bc217eff27ad
+    image: memoria-agent:20260820-112031-ingress-overflow-fix
+    image_id: sha256:7d16a2cf07ebe0358770f05c9776532194441cb2a7a78414f76d59b605cdb4fa
     runtime_release_tag: 20260814-231749-direct-canary
     production_runtime_verified: true
-    oci_revision: 3a3fcdc995efd86544480a5ee8c3beeb351ffd07
+    oci_revision: c70577271aae3b59d74936d1753a0716549ec24c
   voice_core_media_bridge:
-    image: memoria-agent:20260819-151012-output-fence-funasr
-    image_id: sha256:589b6f4c993730be98517ffb4ef4481447106358d49f5207dce8bc217eff27ad
+    image: memoria-agent:20260820-112031-ingress-overflow-fix
+    image_id: sha256:7d16a2cf07ebe0358770f05c9776532194441cb2a7a78414f76d59b605cdb4fa
     runtime_release_tag: 20260816-bridge-liveness-83af813
     production_runtime_verified: true
-    oci_revision: 3a3fcdc995efd86544480a5ee8c3beeb351ffd07
+    oci_revision: c70577271aae3b59d74936d1753a0716549ec24c
+    diagnostics: media_pcm_tap_enabled_MEDIA_PCM_TAP_DIR_data_diagnostics_pcm-tap
   media_edge:
-    image: memoria-media-edge:20260818-103228
-    image_id: sha256:d512fd348f9424cbeaccf091b9deeb50962dc83e5f3c598675dd2b5081697261
+    image: memoria-media-edge:20260820-010500-livekit-stack-upgrade
+    image_id: sha256:9beee50dc6f51b2964c8fc87c0c7bffa3b07bb8835bf83eef9e501c5fb304d57
     runtime_release_tag: 20260816-bridge-liveness-83af813
-    recreated_for_20260818_release: true
+    oci_revision: 80489ed6da2a92d40b2ee71b922cc53fa25457c5
     production_runtime_verified: true
 production_runtime_verified: true
 direct_real_device_verified: false
@@ -50,52 +51,77 @@ student_track: p3_local_software_complete_external_release_gates_pending
 student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
-  as_of_date: 2026-08-19
-  head_commit: 3a3fcdc995efd86544480a5ee8c3beeb351ffd07
-  dirty: false
+  as_of_date: 2026-08-20
+  head_commit: c70577271aae3b59d74936d1753a0716549ec24c
+  dirty: true
+  dirty_scope: firmware_overlay_es8388_input_gain_12db_uncommitted
   code: complete
   wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
-  enabled: candidate_20260819-151012-output-fence-funasr_agent_bridge_scope
-  verified: production_runtime_and_first_direct_uplink_session_observed
+  enabled: candidate_20260820-112031-ingress-overflow-fix_agent_bridge_scope
+  verified: production_runtime_and_direct_uplink_turn_commits_observed
   production_deployed: current_agent_bridge_candidate_non_target_services_preserved
   direct_real_device_verified: false
   full_duplex_verified: false
+  firmware_candidate:
+    as_of_date: 2026-08-20
+    name: es8388_input_gain_24db_to_12db_noise_floor_fix
+    overlay_hash: b0d533344ad227f182743be4cfa8f5e65ea5bbb71ab395197ff9719a06c229d1
+    merged_binary_sha256: 92d48e14c80b636e868d4ea3c212f2e3feb36c8c88da75703f80097077e8eb68
+    app_binary_sha256: 5a4f32967b0734a162cfb7e7fff3d8c1fa06bb5420b28454f6f21b8c5cf4d74d
+    flashed_to: /dev/cu.usbmodem101
+    identity_preserved_sha256: b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846
+    acoustic_verification: >-
+      User spoke to the real board (session 1e44323b, epoch 908, 85.2s).
+      pcm-tap WAV sha256 9ed58e547f751b574d5aca03b072b015aecd6db39a404ad270fbcef044bac23b:
+      noise-floor median RMS dropped 100-150 to 24 (77/85 windows <40),
+      speech peak RMS 158; 8/8 media_asr_boundary success, VAD closes,
+      zero superseded. Blocker 1 (noise floor keeping provider VAD open)
+      eliminated. New blocker 3: replies abort on first TTS frame with
+      transport_rejected (accept_downlink gate, no interrupt/cancel
+      events; local media-session tests pass, production state
+      divergence). Source uncommitted pending downlink instrumentation.
+    source_committed: false
   current_increment:
-    name: output_fence_and_funasr_task_boundaries
-    candidate_release_tag: 20260819-151012-output-fence-funasr
+    name: media_ingress_overflow_fix_and_pcm_tap_diagnosis
+    candidate_release_tag: 20260820-112031-ingress-overflow-fix
     production_cutover_scope: agent_and_voice_core_media_bridge_only
     code: complete
     wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
     enabled: true
-    verified: production_runtime_and_first_direct_uplink_session_observed
+    verified: production_runtime_and_direct_uplink_turn_commits_observed
+    diagnosis_evidence_2026-08-20: >-
+      PCM tap WAV (session 73805bf2, epoch 907, 327.7s) proved uplink speech
+      content is intact (voiced rms 200-470, normal speech spectrum); the
+      earlier zero-final symptom was bridge ingress silently dropping ~97%
+      of admitted frames while the pump waited on FunASR. After the fix
+      (256-frame drop-oldest queue, rate-limited overflow warnings) zero
+      overflow events were logged, provider_pcm_samples equals
+      send_count*320 on every media_asr_boundary, finalize succeeds and
+      user turns commit (turns 1-4). Remaining blockers: continuous
+      broadband uplink noise floor rms~100-150 keeps provider VAD open so
+      every reply is superseded before TTS output
+      (emitted_audio=False), and speaker authority returns
+      subject_capability_forbidden for this device subject.
     production_runtime_verified: true
     cutover_result: PASS
-    candidate_image: memoria-agent:20260819-151012-output-fence-funasr
-    candidate_image_id: sha256:589b6f4c993730be98517ffb4ef4481447106358d49f5207dce8bc217eff27ad
-    oci_revision: 3a3fcdc995efd86544480a5ee8c3beeb351ffd07
-    cutover_evidence_file: /opt/memoria/direct-canaries/20260819-151012-output-fence-funasr/CUTOVER_RESULT.txt
-    cutover_evidence_sha256: 97f6af5237026c783fa61b79b81561b87c1e4d3f6bae24094f06bd4ef1161e67
-    post_cutover_state_sha256: 3447155124a7c3842bb81ae698aded4e85ff8d66caad6d2d501e216e191baf5f
-    evidence_manifest_sha256: c544d0ddeb0d37fd6377fe21fb383d99f72e52bda05d3d49976efb0587a19cee
-    first_direct_device_session:
-      session_id: 8d2eeae4-96a7-4a5a-bb4a-183f14081fc4
-      stream_epoch: 902
-      window_utc: "2026-08-19T08:28:07Z..2026-08-19T08:55:20Z"
-      media_asr_boundary_total: 223
-      media_asr_boundary_success: 143
-      media_asr_boundary_failed: 80
-      failed_by_reason:
-        EmptyAudio: 80
-      asr_final_text: false
-      turn_committed: false
-      generation_started: false
-      tts_or_downlink: false
+    candidate_image: memoria-agent:20260820-112031-ingress-overflow-fix
+    candidate_image_id: sha256:7d16a2cf07ebe0358770f05c9776532194441cb2a7a78414f76d59b605cdb4fa
+    oci_revision: c70577271aae3b59d74936d1753a0716549ec24c
+    cutover_evidence_file: /opt/memoria/direct-canaries/20260820-112031-ingress-overflow-fix/CUTOVER_RESULT.txt
+    cutover_evidence_sha256: 47d9e4f10aaf76393b0f3ef19c275fe6801d570009c83356588ad694bc84eff3
+    post_cutover_state_sha256: 39be6d9ce7e4ee1509d771c84267445898d75b5e5943631e3691a55b1c0b1d2c
+    first_direct_uplink_with_turn_commits:
+      session_id: 73805bf2-f1f3-4b9f-9bd8-994930bf7283
+      stream_epoch: 907
+      observed_utc: "2026-08-20T11:25:00Z..2026-08-20T11:33:00Z"
+      overflow_or_pump_stall_events: 0
+      provider_pcm_samples_matches_send_count: true
+      asr_finalize: success
+      turns_committed: 4
+      projection_rejections_observed: 3
+      reply_audio_emitted: false
+      reply_superseded_reason: continuous_user_speech_and_noise_floor
       counts_toward_direct_real_device_verified: false
-    agent_single_self_heal_restart:
-      cause: external_nginx_reload_during_family_h5_site_change_disrupted_livekit_wss
-      worker_exit_utc: "2026-08-19T08:57:33Z"
-      worker_reregistered_utc: "2026-08-19T08:59:14Z"
-      candidate_defect: false
     direct_real_device_verified: false
     full_duplex_verified: false
     t1_t14: 0_pass_14_blocked_0_failed

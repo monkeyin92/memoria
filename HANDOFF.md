@@ -1,6 +1,24 @@
 # 项目交接
 
-## 当前生产增量（2026-08-20，LiveKit 全栈升级：livekit-agents 1.6.10 + LiveKit Server v1.13.5 + livekit-client 2.22.0 + pion 补丁，已切流并验收）
+## 当前固件增量（2026-08-20，ES8388 mic gain 24dB→12dB 底噪整改，真机声学验证通过；新阻塞：下行 transport_rejected）
+
+- 范围：仅固件 overlay（`firmware/esp32/overlay/files/main/boards/memoria/atk-dnesp32s3-v1/memoria_atk_dnesp32s3_v1.cc` 的 `GetAudioCodec()` 在 ES8388 构造后调用 `SetInputGain(12.0f)`），无服务端切流；overlay hash `b0d53334…`。源码尚未提交（待下行阻塞定位后随候选一起提交+tag）。
+- 本地门禁：ESP-IDF 构建 EXIT=0（merged.bin SHA-256 `92d48e14c80b636e868d4ea3c212f2e3feb36c8c88da75703f80097077e8eb68`、app.bin `5a4f32967b0734a162cfb7e7fff3d8c1fa06bb5420b28454f6f21b8c5cf4d74d`）；`check-overlay.sh` 通过；`firmware/esp32/tests` 78 个全过。
+- 刷写与身份保护：`flash.sh` 写 `/dev/cu.usbmodem101` EXIT=0，五段写后 Hash verified；刷前/刷后身份区逐字节一致（SHA-256 `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`），备份目录 `firmware/esp32/artifacts/backups/pre-current-candidate-20260820/`。串口启动日志确认 `AudioCodec: Set input gain to 12.0`、Wi-Fi 连接成功、无重启循环。
+- 声学验证（用户本人对板卡说话，会话 `1e44323b-bf19-46ae-9368-a58812ef4b3b`，stream_epoch 908，85.2s）：pcm-tap WAV SHA-256 `9ed58e547f751b574d5aca03b072b015aecd6db39a404ad270fbcef044bac23b`；1s 窗口底噪中位 RMS 由修复前 100–150 降至 24（77/85 窗口 <40，最低 19.3），语音段 RMS 峰值 158；`media_asr_boundary` 8 条全部 success，VAD 正常闭合，零 `superseded`——阻塞①（底噪导致 VAD 永不关闭、回复永远被抢占）已消除。
+- 新阻塞③（举一反三）：turn 1–3 回复均在第一帧 TTS PCM 即 `status=aborted reason=transport_rejected emitted_audio=False`。`accept_downlink` 门禁拒绝但无打断/取消事件；本地 `test_media_session.py`（94 用例）通过，属生产状态分歧。怀疑方向：turn 提交时 `GENERATION_ACTION_START` 未被消费/generation gate 未激活、或 session fence 与帧 fence 不一致；`media_session_commit.py` 对 START 的返回值未检查。下一步：为 `accept_downlink` 拒绝分支加限频诊断日志做埋点候选。
+- 阻塞②（speaker authority `subject_capability_forbidden`）维持原判：生产所有账号 `subject_category='unknown'`，`speaker_enrollment` 规则表只允许 `adult`，需产品流程或规则表评审，不擅自改数据。
+- 本增量达到固件侧 `code + wired + enabled + verified（声学）`；`direct_real_device_verified=false`、`full_duplex_verified=false`、T1–T14 保持 `0 pass / 14 blocked / 0 failed`（仍无 TTS 出声）。
+
+## 上一生产增量（2026-08-20，Media ingress 静默丢帧修复 + PCM 诊断 tap，已切流并完成首次 Direct 话轮提交观测）
+
+- 源码提交 `c70577271aae3b59d74936d1753a0716549ec24c` 与 annotated tag `20260820-112031-ingress-overflow-fix` 已推送 `origin/main`，tag 不再移动。内容：Media ingress 队列由 20 帧扩到 256 帧（约 5.1s），溢出改为丢最旧帧保最新语音，overflow/pump-stall 打限频 WARNING；保留 env 门控 PCM 诊断 tap（`MEDIA_PCM_TAP_DIR`，生产 bridge 启用指向 `/data/diagnostics/pcm-tap`）。不改变话轮路由、权限、主体、fence 或 fail-closed 行为。
+- 诊断结论（本轮核心）：8-19 的“能量健康但 FunASR 零结果”根因不在固件——tap 抓回的 WAV（会话 `73805bf2`，epoch 907，327.7s）人声能量 RMS 200–470、频谱正常；真正断裂点是 bridge ingress 泵送被 FunASR 阻塞时队列静默丢帧（修复前实收仅准入量的约 3%）。修复后生产零 overflow/pump-stall 日志，每条 `media_asr_boundary` 的 `provider_pcm_samples == send_count×320`，ASR finalize 成功，会话 `73805bf2`（stream_epoch 907）提交话轮 1–4。
+- 生产切换：Agent 与 Voice Core Media Bridge 运行 `memoria-agent:20260820-112031-ingress-overflow-fix`（image ID `sha256:7d16a2cf07eb…`，OCI revision 与源提交一致），均 amd64、healthy。回滚点 `rollback-20260820-112031-ingress-overflow-fix-pre-agent/-pre-bridge` 已冻结（指向 `20260820-010500-livekit-stack-upgrade`）。证据目录 `/opt/memoria/direct-canaries/20260820-112031-ingress-overflow-fix/`：`CUTOVER_RESULT.txt` `47d9e4f10aaf76393b0f3ef19c275fe6801d570009c83356588ad694bc84eff3`、`POST_CUTOVER_STATE.txt` `39be6d9ce7e4ee1509d771c84267445898d75b5e5943631e3691a55b1c0b1d2c`。
+- 端到端仍不通，两个新阻塞点已定位：① 设备上行存在不间断宽带底噪（328s 全程 RMS≈100–150，1–8kHz 均匀分布、无周期性，疑似环境噪声/AFE 残留叠加 24dB mic gain），Provider VAD 几乎永不关闭，每个回复 generation 都在 TTS 出声前被下一个 `vad_start` 抢占（`status=aborted reason=superseded emitted_audio=False`）；② speaker authority 对该设备主体返回 `subject_capability_forbidden`（account gate fail-closed），说话人无法确认为 owner，回复走 `no_verified_runtime_profile` 兜底。另观察到 3 次 projection range/text mismatch 拒提交与 2 次 ASR tail timeout 丢弃，待底噪解决后复评。
+- 本增量达到 `code / wired / enabled / production runtime verified`（传输与会话层）；不改变 `direct_real_device_verified=false`、`full_duplex_verified=false` 与 T1–T14 `0 pass / 14 blocked / 0 failed`。下一步：固件声学链降噪/增益整改 + 设备主体账号能力修复，之后重做真机会话验收。
+
+## 上一生产增量（2026-08-20，LiveKit 全栈升级：livekit-agents 1.6.10 + LiveKit Server v1.13.5 + livekit-client 2.22.0 + pion 补丁，已切流并验收）
 
 - 源码提交 `59fbf9969987bd9df13709a1cc1a0051aafc6aa6`（release 文档另随后续提交入库）与 annotated tag `20260820-010500-livekit-stack-upgrade` 已推送 `origin/main`，tag 不再移动。升级内容：Python `livekit-agents/plugins-openai/plugins-silero 1.6.5 -> 1.6.10`（含 rtc 1.1.14、protocol 1.1.22、openai 2.54.0 传递升级）；自建 LiveKit Server `v1.13.3 -> v1.13.5`；H5 `livekit-client 2.20.1 -> 2.22.0`；Go media edge `pion/ice v4.4.1`、`pion/turn v5.0.13`、`pion/transport v4.1.0`。不改变话轮路由、权限、主体、fence 或 fail-closed 行为。
 - 生产切换：Agent 与 Voice Core Media Bridge 运行 `memoria-agent:20260820-010500-livekit-stack-upgrade`（image ID `sha256:1798c3ab6f93…`），Media Edge 运行 `memoria-media-edge:20260820-010500-livekit-stack-upgrade`（image ID `sha256:9beee50dc6f5…`），均 amd64、OCI version/role 正确；三容器 healthy、restart count=0。心跳代际保持：agent=`20260814-231749-direct-canary`、bridge=`20260816-bridge-liveness-83af813`；Agent 在新 LiveKit Server 重新注册 worker `AW_2p7oFEKqQmE7`，心跳 `ready`。回滚点 `rollback-20260820-010500-livekit-stack-upgrade-pre-agent/-bridge/-edge` 已冻结（分别指向 `20260819-185500-ingress-pcm-tap` 与 `20260818-103228` 同 image ID）。

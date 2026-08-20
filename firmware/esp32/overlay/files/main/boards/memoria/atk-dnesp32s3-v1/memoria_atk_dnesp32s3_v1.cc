@@ -192,6 +192,17 @@ public:
             AUDIO_I2S_GPIO_MCLK, AUDIO_I2S_GPIO_BCLK, AUDIO_I2S_GPIO_WS,
             AUDIO_I2S_GPIO_DOUT, AUDIO_I2S_GPIO_DIN, GPIO_NUM_NC,
             AUDIO_CODEC_ES8388_ADDR);
+        // Upstream defaults the ES8388 mic gain to 24 dB.  PCM tap evidence
+        // (2026-08-20, session 73805bf2) showed a continuous broadband noise
+        // floor at RMS 100-150 while user speech peaked at RMS 200-470, which
+        // keeps the ASR provider VAD permanently open and every reply is
+        // superseded before TTS output.  Halve the gain twice (12 dB) so the
+        // floor drops ~4x while close-range speech stays recognizable.
+        static bool input_gain_configured = false;
+        if (!input_gain_configured) {
+            audio_codec.SetInputGain(12.0f);
+            input_gain_configured = true;
+        }
         return &audio_codec;
     }
 
