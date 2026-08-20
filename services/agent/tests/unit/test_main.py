@@ -10,8 +10,8 @@ from services.agent.src import heartbeat as heartbeat_module
 from services.agent.src import main as main_module
 
 
-def test_livekit_1_6_5_registration_probe_tracks_reconnect_state() -> None:
-    assert version("livekit-agents") == "1.6.5"
+def test_livekit_1_6_10_registration_probe_tracks_reconnect_state() -> None:
+    assert version("livekit-agents") == "1.6.10"
     server = agents.AgentServer()
     assert server._id == "unregistered"
     assert server._closed is True

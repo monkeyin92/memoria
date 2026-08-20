@@ -7,9 +7,9 @@ from importlib.metadata import PackageNotFoundError, version
 
 def test_livekit_and_openai_versions() -> None:
     expected = {
-        "livekit-agents": "1.6.5",
-        "livekit-plugins-openai": "1.6.5",
-        "livekit-plugins-silero": "1.6.5",
+        "livekit-agents": "1.6.10",
+        "livekit-plugins-openai": "1.6.10",
+        "livekit-plugins-silero": "1.6.10",
     }
     for package, exp in expected.items():
         try:

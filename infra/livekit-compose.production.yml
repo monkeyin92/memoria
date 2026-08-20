@@ -2,7 +2,7 @@ name: memoria-livekit
 
 services:
   livekit:
-    image: livekit/livekit-server:v1.13.3
+    image: livekit/livekit-server:v1.13.5
     command: ["--config", "/etc/livekit.yaml"]
     ports:
       - "127.0.0.1:7880:7880/tcp"

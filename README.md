@@ -5,7 +5,7 @@
 运行时权威边界见 [`ADR-0029`](./docs/adr/0029-continuous-interaction-authority-and-shadow-migration.md)
 与 [`ADR-0035`](./docs/adr/0035-esp32-first-class-realtime-terminal.md)。
 
-**代码默认选型**：自建 LiveKit Server `1.13.3` · LiveKit Agents `1.6.5` · FunASR Realtime · 百炼 `deepseek-v4-flash` · 豆包 Seed-TTS 2.0 双向流式 · Python 3.12。当前线上 release 与候选发布状态以 `HANDOFF.md` 为准；默认发布复用百炼凭据，不依赖单独的 DeepSeek key。
+**代码默认选型**：自建 LiveKit Server `1.13.5` · LiveKit Agents `1.6.10` · FunASR Realtime · 百炼 `deepseek-v4-flash` · 豆包 Seed-TTS 2.0 双向流式 · Python 3.12。当前线上 release 与候选发布状态以 `HANDOFF.md` 为准；默认发布复用百炼凭据，不依赖单独的 DeepSeek key。
 
 ## 生产交付
 
@@ -164,7 +164,7 @@ H5 生产 Compose、自建 LiveKit、TLS、Nginx 路由、Provider 门禁、备�
 ## 实现偏差
 
 1. **工作区布局**：规范示例为 `voice-agent/` 根目录；本仓库以 monorepo 根目录直接承载同等树结构（`apps/`、`services/`、`packages/`、`infra/`、`scripts/`）。
-2. **LiveKit STT/TTS 基类**：FunASR/豆包提供完整协议会话与连接池，并在 `agent.py` 中挂入 `AgentSession`；若固定版本 `livekit-agents==1.6.5` 的 `stt.STT`/`tts.TTS` 抽象字段与骨架略有差异，以该版本公开 API 为准，协议语义保持规范第 12/15 章。
+2. **LiveKit STT/TTS 基类**：FunASR/豆包提供完整协议会话与连接池，并在 `agent.py` 中挂入 `AgentSession`；若固定版本 `livekit-agents==1.6.10` 的 `stt.STT`/`tts.TTS` 抽象字段与骨架略有差异，以该版本公开 API 为准，协议语义保持规范第 12/15 章。
 3. **规模化设备门槛**：LiveKit、FunASR、Qwen 与豆包仍须以每次 release 的生产实网 smoke 为准。200 条真实设备录音、AEC 矩阵和第 21 章 SLO 属于后续规模化门禁，不作为当前 H5 成品交付的阻塞项。
 4. **预生成桥接 PCM 缓存**：桥接语文本在 `prompts.BRIDGE_PHRASES`；二进制 PCM 缓存可在生产预热任务中填充，离线路径使用 mock TTS。
 

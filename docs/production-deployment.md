@@ -10,7 +10,7 @@
 - 正式 H5 release：发布前以
   `basename "$(readlink -f /var/www/memoria-h5)"` 为准
 - Control API 上游：`127.0.0.1:8791`
-- LiveKit：自建 `livekit/livekit-server:v1.13.3`，位于 `/opt/livekit`，Compose project 为 `memoria-livekit`
+- LiveKit：自建 `livekit/livekit-server:v1.13.5`，位于 `/opt/livekit`，Compose project 为 `memoria-livekit`
 - LiveKit 信令：`wss://122.51.108.140:8443`，经 Nginx `/rtc`、`/agent` 转发到 `127.0.0.1:7880`
 - LiveKit Twirp API：`https://122.51.108.140:8443/twirp/`，转发到 `127.0.0.1:7880`
 - LiveKit 媒体：服务器保留 `7882/UDP` 监听，但当前未开放对应云安全组；公网统一回退到与 HTTPS 复用的 `8443/TCP`，Agent 通过 `memoria_default` 内部网络走 UDP
@@ -295,7 +295,7 @@ P0～P6 发布后，Control API `/health/ready` 还必须同时返回以下 10 �
 
 Compose 的 Control API 容器健康检查固定使用 `/health/live`：Agent 必须先等 Control 的进程可接收心跳，不能拿依赖 Agent 心跳的 `/health/ready` 做启动门禁。相对地，Agent 容器健康检查调用 `python -m services.agent.src.heartbeat --check-health`，它同时验证 LiveKit SDK 本机 `8081` 返回 2xx，以及 `/tmp/memoria-agent-heartbeat.json` 中同一 release 的最近一次已被 Control 接受的 ready 心跳（30 秒内）。POST、鉴权、响应失败或 LiveKit 正在重连都不会刷新该无 secret 的原子状态文件；配合 10 秒检查间隔、3 秒超时和 2 次重试，最迟在最后一次 ready 心跳后的 60 秒内把 Agent 容器标为 unhealthy。Control `/health/ready` 的心跳 freshness 仍为 45 秒，两者分工不变。
 
-Agent 的注册探针绑定当前固定版本 `livekit-agents==1.6.5` 的私有状态：仅当 `_id` 非空且不为 `unregistered`，并且 `_closed / _connecting / _connection_failed` 均表示已连接时才算注册。SDK 的 `8081` 在重连阶段仍可能返回 200，不能单独作为注册证据。升级 LiveKit Agents 前必须重新核对这些字段及重连路径，并同步更新探针契约测试。
+Agent 的注册探针绑定当前固定版本 `livekit-agents==1.6.10` 的私有状态：仅当 `_id` 非空且不为 `unregistered`，并且 `_closed / _connecting / _connection_failed` 均表示已连接时才算注册。SDK 的 `8081` 在重连阶段仍可能返回 200，不能单独作为注册证据。升级 LiveKit Agents 前必须重新核对这些字段及重连路径，并同步更新探针契约测试。
 
 生产 Control API 必须以 `uvicorn --no-access-log` 启动，由 Nginx 记录常规访问；签名声音样本路由同时 `access_log off`。这样 query 中的短期样本 token 不会进入 Nginx 或 Uvicorn access log，应用日志也不得自行记录完整 URL。
 

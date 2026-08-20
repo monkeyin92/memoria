@@ -2,7 +2,7 @@
 
 | 规范要求 | 实现文件 | 测试文件 | 状态 |
 |---|---|---|---|
-| 代码默认选型 FunASR/百炼 DeepSeek-v4-flash/豆包 Seed-TTS 2.0 双向流式/LiveKit 1.6.5 | `pyproject.toml`, `config.py`, `providers/*`, `agent.py` | `test_versions.py`, `test_config.py`, `test_agent_production_wiring.py` | PASS-LOCAL |
+| 代码默认选型 FunASR/百炼 DeepSeek-v4-flash/豆包 Seed-TTS 2.0 双向流式/LiveKit 1.6.10 | `pyproject.toml`, `config.py`, `providers/*`, `agent.py` | `test_versions.py`, `test_config.py`, `test_agent_production_wiring.py` | PASS-LOCAL |
 | GenerationFence 全字段比对；旧结果丢弃 | `contracts/ids.py`, `orchestration/generation_fence.py` | `test_generation_fence.py`, `test_interrupt_isolation.py` | PASS |
 | 旧 generation 音频不得播放 | `orchestrator.py`, `doubao_tts.py` | `test_interrupt_isolation.py`, `test_doubao_mock.py` | PASS-LOCAL |
 | 旧 tool_epoch 结果不得播报 | `task_manager.py`, `orchestrator.py` | `test_tool_epoch_isolation.py` | PASS |
