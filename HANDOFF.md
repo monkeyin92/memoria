@@ -1,12 +1,19 @@
 # 项目交接
 
-## 当前生产增量（2026-08-20，下行拒绝路径限频诊断埋点，已切流待真机会话取证）
+## 当前生产增量（2026-08-20，下行 PCM fence 补携 session_epoch 修复 transport_rejected，已切流待真机 TTS 出声验证）
+
+- 源码提交 `2fdc1e721daee6c750aa3852e7235ef8f5380fac` 与 annotated tag `20260820-125356-downlink-fence-session-epoch` 已推送 `origin/main`。根因（埋点候选取证）：生产日志四个 turn 全部命中 `fence_mismatch_or_generation_rejected`，权威 generation controller 的 fence 为 `session_epoch=1`，但 `PCMFrame` 根本没有 session_epoch 字段，`accept_downlink` 重建 fence 恒为 epoch=0，完整 fence 比对必败——会话 epoch 超过 0 后每帧 TTS 都被拒（本地测试全 epoch=0 所以全过）。修复：`PCMFrame` 新增 `session_epoch` 字段（默认 0），输出流构造时以运行时权威 fence 盖戳，状态门禁按完整 fence 比对；诊断日志同时打印双侧 tool_epoch/session_epoch。保留“换 subject/profile 后旧帧不得越界”的 fail-closed 语义；门禁在 gRPC 序列化前，无需改 proto/Go media edge。
+- 本地门禁：聚焦单测（contracts/grpc_bridge/media_session 共 160 例，含新增 epoch=1 放行/epoch=0 拒绝回归用例）、ruff、strict mypy、模块预算全部通过。
+- 生产切换：Agent 与 Voice Core Media Bridge 运行 `memoria-agent:20260820-125356-downlink-fence-session-epoch`（load 后 image ID `sha256:237d3ca72337…`，OCI revision 与源提交一致），均 amd64、healthy；容器内 grep 确认两处修复在位；回滚点 `rollback-20260820-125356-downlink-fence-session-epoch-pre-agent/-pre-bridge` 已冻结（指向诊断埋点镜像）。证据目录 `/opt/memoria/direct-canaries/20260820-125356-downlink-fence-session-epoch/`：`CUTOVER_RESULT.txt` `2938ca406a859d6552b197dc95523873dc6e05744a7cb71e69460937f1a5ce2e`、`POST_CUTOVER_STATE.txt` `9189fddad8847603442204a952462d136e51e9a0127d732e1932e3f27bd150c6`。
+- 当前层级 `code + wired + enabled + production runtime verified`；下一步：用户本人对板卡说话验证 TTS 首次出声（预期零 `transport_rejected`、`emitted_audio=True`），若出声则推进 T1–T14 验收；若仍拒，新日志已能直接读出双侧 session_epoch。
+- 不改变 `direct_real_device_verified=false`、`full_duplex_verified=false` 与 T1–T14 `0 pass / 14 blocked / 0 failed`（待真机出声后重计）。
+
+## 上一生产增量（2026-08-20，下行拒绝路径限频诊断埋点，已切流并完成取证）
 
 - 源码提交 `bc383a030b0fa27c3605e545ef4a837e69381582` 与 annotated tag `20260820-122047-downlink-reject-diagnostics` 已推送 `origin/main`。内容：`media_bridge_server.py` 的 `accept_downlink` 全部七个拒绝分支（identity/generation_active/fence/sequence/source-sample/queue-full）打 5s 限频 WARNING，含 generation gate 与 fence/sequence 状态快照；`grpc_bridge.py` 的 `emit_generation` 四个失败分支打 `media generation control rejected` 日志；`media_session_commit.py` 开始检查 `GENERATION_ACTION_START` 返回值，未接受时打 `media generation START not accepted`。不改变任何门禁判定、fence、权限或 fail-closed 行为。
 - 本地门禁：聚焦单测（含 2 个新增限频/门禁状态日志用例）、ruff、strict mypy、模块预算全部通过。
 - 生产切换：Agent 与 Voice Core Media Bridge 运行 `memoria-agent:20260820-122047-downlink-reject-diagnostics`（load 后 image ID `sha256:79003b31ab50…`，manifest config SHA-256 `a94adfe063e4…` 与本地候选一致，OCI revision 与源提交一致），均 amd64、healthy；其余服务不变。回滚点 `rollback-20260820-122047-downlink-reject-diagnostics-pre-agent/-pre-bridge` 已冻结（指向 ingress-overflow-fix 镜像 `sha256:7d16a2cf07eb…`）。证据目录 `/opt/memoria/direct-canaries/20260820-122047-downlink-reject-diagnostics/`：`CUTOVER_RESULT.txt` `8d6d902c575cfcff8be444c1a6ebbb6a602ce3984adb75c01490e9f33bc9d7a9`、`POST_CUTOVER_STATE.txt` `1a2e8a971fb207dbd80a7f1893d511f1ac2a3c04a1bc723d00da4003b5daccc6`；容器内 grep 确认三处埋点均在位。
-- 当前层级 `code + wired + enabled + production runtime verified`；下一步：用户本人对板卡再说一次话，拉 bridge/agent 日志按 `media downlink rejected` / `media generation control rejected` / `media generation START not accepted` 精确定位 `transport_rejected` 的拒绝分支，再实施修复。
-- 不改变 `direct_real_device_verified=false`、`full_duplex_verified=false` 与 T1–T14 `0 pass / 14 blocked / 0 failed`。
+- 取证结果（用户真机说话后）：四个 turn 全部 `reason=fence_mismatch_or_generation_rejected`，turn/gen/tool_epoch 与 sequence/队列均正常，唯一分歧是 controller fence `session_epoch=1` vs 帧重建 epoch=0——直接定位新阻塞③根因，修复见顶部增量节。
 
 ## 上一固件增量（2026-08-20，ES8388 mic gain 24dB→12dB 底噪整改，真机声学验证通过；新阻塞：下行 transport_rejected）
 

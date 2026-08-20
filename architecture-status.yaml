@@ -52,12 +52,12 @@ student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
   as_of_date: 2026-08-20
-  head_commit: bc383a030b0fa27c3605e545ef4a837e69381582
+  head_commit: 2fdc1e721daee6c750aa3852e7235ef8f5380fac
   dirty: false
-  dirty_scope: downlink_rejection_diagnostics_committed_bc383a0
+  dirty_scope: downlink_fence_session_epoch_fix_committed_2fdc1e7
   code: complete
   wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
-  enabled: candidate_20260820-122047-downlink-reject-diagnostics_agent_bridge_scope
+  enabled: candidate_20260820-125356-downlink-fence-session-epoch_agent_bridge_scope
   verified: production_runtime_and_direct_uplink_turn_commits_observed
   production_deployed: current_agent_bridge_candidate_non_target_services_preserved
   direct_real_device_verified: false
@@ -99,6 +99,31 @@ local_worktree_candidate:
     cutover_evidence_file: /opt/memoria/direct-canaries/20260820-122047-downlink-reject-diagnostics/CUTOVER_RESULT.txt
     cutover_evidence_sha256: 8d6d902c575cfcff8be444c1a6ebbb6a602ce3984adb75c01490e9f33bc9d7a9
     post_cutover_state_sha256: 1a2e8a971fb207dbd80a7f1893d511f1ac2a3c04a1bc723d00da4003b5daccc6
+  downlink_fence_session_epoch_fix_increment:
+    name: downlink_pcm_fence_session_epoch_carry_fix
+    candidate_release_tag: 20260820-125356-downlink-fence-session-epoch
+    production_cutover_scope: agent_and_voice_core_media_bridge_only
+    code: complete
+    wired: pcm_frame_carries_session_epoch_output_stream_stamps_accept_downlink_compares_complete_fence
+    enabled: true
+    verified: pending_direct_real_device_tts_playback_dt6
+    production_runtime_verified: true
+    cutover_result: PASS
+    source_committed: 2fdc1e721daee6c750aa3852e7235ef8f5380fac
+    root_cause: >-
+      Diagnostics cutover proved every TTS frame was rejected with
+      fence_mismatch_or_generation_rejected: PCMFrame carried no
+      session_epoch so accept_downlink rebuilt the fence with epoch=0
+      while the authoritative controller fence sat at session_epoch=1;
+      complete-fence comparison therefore failed on every frame once a
+      session advanced past epoch 0 (local tests all epoch 0, hence
+      production divergence).
+    candidate_image: memoria-agent:20260820-125356-downlink-fence-session-epoch
+    candidate_image_id: sha256:237d3ca7233741a2870e73f77492c9cda31f838a02c12f0c1f95947c18d9ba25
+    oci_revision: 2fdc1e721daee6c750aa3852e7235ef8f5380fac
+    cutover_evidence_file: /opt/memoria/direct-canaries/20260820-125356-downlink-fence-session-epoch/CUTOVER_RESULT.txt
+    cutover_evidence_sha256: 2938ca406a859d6552b197dc95523873dc6e05744a7cb71e69460937f1a5ce2e
+    post_cutover_state_sha256: 9189fddad8847603442204a952462d136e51e9a0127d732e1932e3f27bd150c6
   current_increment:
     name: media_ingress_overflow_fix_and_pcm_tap_diagnosis
     candidate_release_tag: 20260820-112031-ingress-overflow-fix
