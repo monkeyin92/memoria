@@ -52,13 +52,13 @@ student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
   as_of_date: 2026-08-20
-  head_commit: 2fdc1e721daee6c750aa3852e7235ef8f5380fac
+  head_commit: 65507bede7f6842db3e659b280774db9fdfcda2b
   dirty: false
-  dirty_scope: downlink_fence_session_epoch_fix_committed_2fdc1e7
+  dirty_scope: asr_ws_trace_diagnostics_committed_65507be
   code: complete
   wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
-  enabled: candidate_20260820-125356-downlink-fence-session-epoch_agent_bridge_scope
-  verified: production_runtime_and_direct_uplink_turn_commits_observed
+  enabled: candidate_20260820-144144-asr-ws-trace-diagnostics_agent_bridge_scope
+  verified: pending_direct_real_device_speech_evidence_collection
   production_deployed: current_agent_bridge_candidate_non_target_services_preserved
   direct_real_device_verified: false
   full_duplex_verified: false
@@ -124,6 +124,34 @@ local_worktree_candidate:
     cutover_evidence_file: /opt/memoria/direct-canaries/20260820-125356-downlink-fence-session-epoch/CUTOVER_RESULT.txt
     cutover_evidence_sha256: 2938ca406a859d6552b197dc95523873dc6e05744a7cb71e69460937f1a5ce2e
     post_cutover_state_sha256: 9189fddad8847603442204a952462d136e51e9a0127d732e1932e3f27bd150c6
+  asr_ws_trace_diagnostics_increment:
+    name: funasr_ws_trace_and_silent_asr_drop_visibility
+    candidate_release_tag: 20260820-144144-asr-ws-trace-diagnostics
+    production_cutover_scope: agent_and_voice_core_media_bridge_only
+    code: complete
+    wired: funasr_ws_trace_env_gate_asr_rejection_logging_ingress_and_adapter_drop_visibility
+    enabled: true
+    verified: pending_direct_real_device_speech_evidence_collection
+    production_runtime_verified: true
+    cutover_result: PASS
+    source_committed: 65507bede7f6842db3e659b280774db9fdfcda2b
+    motivation: >-
+      After the downlink fence fix the device still produced no TTS audio.
+      Epoch 911 tap audio was healthy (speech RMS 160-184, 11/11 boundaries
+      success, finalize closed) yet FunASR emitted zero result-generated and
+      zero partials. Four in-container probes (realtime replay, burst,
+      adapter layer, 150x rotation churn) all recognized the same audio with
+      the same boundaries, exonerating provider, pacing, adapter mapping and
+      throttling accumulation; the only unobserved stage is the production
+      WebSocket path itself.
+    candidate_image: memoria-agent:20260820-144144-asr-ws-trace-diagnostics
+    candidate_image_id: sha256:e6d5876aa3798d4b24352eccdf9b6761e78980b10a9e04afd80a2fb36b581e4b
+    candidate_manifest_config_sha256: bf7abcf3cb0ca5a2921b4b2dbf36c8f2cf9484f618d3f09f8ed9bbbe166ad4f9
+    oci_revision: 65507bede7f6842db3e659b280774db9fdfcda2b
+    bridge_env: FUNASR_WS_TRACE=true
+    cutover_evidence_file: /opt/memoria/direct-canaries/20260820-144144-asr-ws-trace-diagnostics/CUTOVER_RESULT.txt
+    cutover_evidence_sha256: bf458d3d403b068839cf7ebb3bd207b171726981fa05ba341aa8be2cc98f7043
+    post_cutover_state_sha256: 30c789317543f8e9779b8c01a0bc5485491523d44364c71f25fad6a2007681a7
   current_increment:
     name: media_ingress_overflow_fix_and_pcm_tap_diagnosis
     candidate_release_tag: 20260820-112031-ingress-overflow-fix

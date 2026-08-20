@@ -1,6 +1,14 @@
 # 项目交接
 
-## 当前生产增量（2026-08-20，下行 PCM fence 补携 session_epoch 修复 transport_rejected，已切流待真机 TTS 出声验证）
+## 当前生产增量（2026-08-20，FunASR wire trace 诊断埋点 + ASR 静默丢弃可见性，已切流待真机说话取证）
+
+- 源码提交 `65507bede7f6842db3e659b280774db9fdfcda2b` 与 annotated tag `20260820-144144-asr-ws-trace-diagnostics` 已推送 `origin/main`。背景：下行 fence 修复后 TTS 仍无声，新会话（epoch 911）pcm-tap 音频能量健康（语音段 RMS 160–184）、`media_asr_boundary` 11 条全 success、finalize 正常闭环，但 FunASR 零 `result-generated`、零 partial、尾超时丢弃。四层容器内探针（实时回放 / burst / adapter 层 / 150 次高频轮转）同容器同代码同音频同边界全部识别成功，排除 provider、帧节奏、adapter 映射与限流累积——唯一未观测环节是生产 WS 链路本身。内容：`FUNASR_WS_TRACE=true` 开启 provider WebSocket 全量控制消息/服务端事件限频 trace（每 1 秒窗口最多 20 条，超出计数汇总输出）；ASR 决策拒绝（preview/timeline/accept 三阶段）落日志（final 为 WARNING）；ingress stale stream-epoch 丢弃与 adapter 驱逐上下文丢弃不再静默；ASR 尾超时丢弃日志补 partial 在场证据。纯观测，不改门禁/判定/fail-closed 行为。
+- 本地门禁：聚焦单测（provider_config/funasr_session_edges/media_session 全过，含 ws trace 限频、env 解析、stale final 拒绝日志新用例）、ruff、strict mypy、模块预算全部通过。
+- 生产切换：Agent 与 Voice Core Media Bridge 运行 `memoria-agent:20260820-144144-asr-ws-trace-diagnostics`（load 后 image ID `sha256:e6d5876aa379…`，manifest config SHA-256 `bf7abcf3cb0c…` 与本地候选一致，OCI revision 与源提交一致），均 amd64、healthy；bridge 容器 env `FUNASR_WS_TRACE=true` 生效、pcm-tap 保持；容器内 grep 确认埋点在位。回滚点 `rollback-20260820-144144-asr-ws-trace-diagnostics-pre-agent/-pre-bridge` 已冻结（指向 downlink-fence-session-epoch 镜像 `sha256:237d3ca72337…`）。证据目录 `/opt/memoria/direct-canaries/20260820-144144-asr-ws-trace-diagnostics/`：`CUTOVER_RESULT.txt` `bf458d3d403b068839cf7ebb3bd207b171726981fa05ba341aa8be2cc98f7043`、`POST_CUTOVER_STATE.txt` `30c789317543f8e9779b8c01a0bc5485491523d44364c71f25fad6a2007681a7`。制品两版本策略已执行：服务器清理 20260812-173008 至 20260820-122047 的旧镜像与旧回滚 tag，回收 2.9GB（磁盘 41%→33%），仅保留当前版本与紧邻回滚点。
+- 下一步：用户本人对板卡说话，随后分析 bridge 日志 `funasr_ws_trace rx/tx` 与 `media ASR result rejected`，定位服务端零回复还是本地静默丢弃，然后实施真正修复。
+- 不改变 `direct_real_device_verified=false`、`full_duplex_verified=false` 与 T1–T14 `0 pass / 14 blocked / 0 failed`。
+
+## 上一生产增量（2026-08-20，下行 PCM fence 补携 session_epoch 修复 transport_rejected，已切流待真机 TTS 出声验证）
 
 - 源码提交 `2fdc1e721daee6c750aa3852e7235ef8f5380fac` 与 annotated tag `20260820-125356-downlink-fence-session-epoch` 已推送 `origin/main`。根因（埋点候选取证）：生产日志四个 turn 全部命中 `fence_mismatch_or_generation_rejected`，权威 generation controller 的 fence 为 `session_epoch=1`，但 `PCMFrame` 根本没有 session_epoch 字段，`accept_downlink` 重建 fence 恒为 epoch=0，完整 fence 比对必败——会话 epoch 超过 0 后每帧 TTS 都被拒（本地测试全 epoch=0 所以全过）。修复：`PCMFrame` 新增 `session_epoch` 字段（默认 0），输出流构造时以运行时权威 fence 盖戳，状态门禁按完整 fence 比对；诊断日志同时打印双侧 tool_epoch/session_epoch。保留“换 subject/profile 后旧帧不得越界”的 fail-closed 语义；门禁在 gRPC 序列化前，无需改 proto/Go media edge。
 - 本地门禁：聚焦单测（contracts/grpc_bridge/media_session 共 160 例，含新增 epoch=1 放行/epoch=0 拒绝回归用例）、ruff、strict mypy、模块预算全部通过。
