@@ -83,7 +83,10 @@ class MediaVoiceCoreRegistry(
     interruption_policy: InterruptionPolicy = field(default_factory=InterruptionPolicy)
     max_sessions: int = 256
     session_creation_limit: int = 32
-    audio_ingress_max_frames: int = 20
+    # ~5.1s of 20 ms frames: a provider task rotation or a slow ASR send must
+    # not destroy admitted speech while the pump is briefly blocked.  Overflow
+    # beyond this window drops only the oldest frame and logs a warning.
+    audio_ingress_max_frames: int = 256
     reconnect_grace_s: float = 30.0
     # Child speech commonly contains 500-800 ms within-turn pauses.  The VAD
     # edge is therefore only a candidate endpoint until this quiescence

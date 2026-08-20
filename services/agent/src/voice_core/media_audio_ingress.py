@@ -28,6 +28,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Overflow and pump-stall diagnostics are rate limited per session so a
+# multi-second provider stall produces a bounded number of log lines.
+_OVERFLOW_LOG_INTERVAL_S = 5.0
+_PUMP_STALL_THRESHOLD_S = 2.0
+_PUMP_STALL_LOG_INTERVAL_S = 5.0
+
 
 @dataclass(slots=True)
 class MediaAudioIngressState:
@@ -43,6 +49,10 @@ class MediaAudioIngressState:
     loss_concealed_ranges: deque[tuple[int, int]] = field(default_factory=deque)
     pcm_tap: MediaPcmTap | None = None
     pcm_tap_initialized: bool = False
+    overflow_dropped_frames: int = 0
+    overflow_dropped_samples: int = 0
+    last_overflow_log: float = 0.0
+    last_pump_stall_log: float = 0.0
 
     @classmethod
     def create(cls, max_frames: int) -> MediaAudioIngressState:
@@ -153,7 +163,7 @@ class MediaAudioIngress:
         if frame.discontinuity or state.queue.full():
             if state.queue.full():
                 self._host.metrics.inc_media_metric("media_pcm_overflow_total")
-                self._drain(state.queue)
+                self._drop_oldest_frame(context)
             self._host.metrics.inc_media_metric("media_discontinuity_total")
             state.discontinuity_pending = True
             frame = replace(frame, discontinuity=True)
@@ -539,6 +549,22 @@ class MediaAudioIngress:
             await self._reset_discontinuity(context, frame)
         self._tap_frame(context, frame)
         results = await context.provider.ingest_audio(context.identity, frame)
+        stall_s = time.monotonic() - enqueued_at
+        if (
+            stall_s > _PUMP_STALL_THRESHOLD_S
+            and time.monotonic() - context.ingress.last_pump_stall_log
+            > _PUMP_STALL_LOG_INTERVAL_S
+        ):
+            context.ingress.last_pump_stall_log = time.monotonic()
+            logger.warning(
+                "media ingress pump stalled session=%s stream_epoch=%s lag_s=%.2f "
+                "queue_depth=%s dropped_frames=%s",
+                context.identity.session_id,
+                context.stream_epoch,
+                stall_s,
+                context.ingress.queue.qsize(),
+                context.ingress.overflow_dropped_frames,
+            )
         if frame.loss_concealed:
             ranges = context.ingress.loss_concealed_ranges
             ranges.append(
@@ -559,6 +585,28 @@ class MediaAudioIngress:
             results,
             callback_stream_epoch=callback_stream_epoch,
         )
+
+    def _drop_oldest_frame(self, context: _MediaVoiceSession) -> None:
+        # A slow provider must not silently destroy admitted speech.  Drop only
+        # the oldest buffered frame so the newest audio still reaches ASR, and
+        # make the loss loud (rate limited) instead of metric-only.
+        state = context.ingress
+        with contextlib.suppress(asyncio.QueueEmpty):
+            dropped, _ = state.queue.get_nowait()
+            state.overflow_dropped_frames += 1
+            state.overflow_dropped_samples += dropped.frame_samples
+        now = time.monotonic()
+        if now - state.last_overflow_log > _OVERFLOW_LOG_INTERVAL_S:
+            state.last_overflow_log = now
+            logger.warning(
+                "media ingress queue overflow session=%s stream_epoch=%s "
+                "dropped_frames=%s dropped_samples=%s queue_capacity=%s",
+                context.identity.session_id,
+                context.stream_epoch,
+                state.overflow_dropped_frames,
+                state.overflow_dropped_samples,
+                state.queue.maxsize,
+            )
 
     @staticmethod
     def _tap_frame(context: _MediaVoiceSession, frame: AudioFrame) -> None:

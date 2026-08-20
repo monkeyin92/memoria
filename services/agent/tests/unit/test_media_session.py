@@ -1629,7 +1629,7 @@ async def test_different_new_sessions_build_in_parallel_with_per_session_singlef
 
 
 @pytest.mark.asyncio
-async def test_audio_ingress_pump_drops_stale_backlog_and_marks_discontinuity() -> None:
+async def test_audio_ingress_overflow_drops_oldest_and_marks_discontinuity() -> None:
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -1684,12 +1684,14 @@ async def test_audio_ingress_pump_drops_stale_backlog_and_marks_discontinuity() 
     await asyncio.wait_for(started.wait(), timeout=1)
     release.set()
     for _ in range(20):
-        if provider.audio_calls == [0, 3]:
+        if provider.audio_calls == [0, 2, 3]:
             break
         await asyncio.sleep(0)
 
-    assert provider.audio_calls == [0, 3]
-    assert provider.reset_samples == [6]
+    # Overflow drops only the oldest buffered frame (sequence 1) so the newest
+    # speech still reaches the provider; both gap boundaries reset the task.
+    assert provider.audio_calls == [0, 2, 3]
+    assert provider.reset_samples == [4, 6]
     assert registry.metrics.get("media_pcm_overflow_total") >= 1
     assert registry.metrics.get("media_discontinuity_total") >= 1
     session.close()
