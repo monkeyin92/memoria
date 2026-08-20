@@ -1,6 +1,15 @@
 # 项目交接
 
-## 当前生产增量（2026-08-20，FunASR wire trace 诊断埋点 + ASR 静默丢弃可见性，已切流待真机说话取证）
+## 当前生产增量（2026-08-20，Agent 组件级源码薄发布已投产）
+
+- 发布提交 `eaee0bcfcd9d1b3a211486cab47426ff7b6efcf3` 与 tag `20260820-210548-agent-source-overlay-v6` 已推送 `origin/main`。新增 Agent 组件快车道：依赖不变时只从固定健康 Agent 基座叠加 `services/agent` 源码，服务器使用 `--network=none` 离线构建；依赖锁、共享服务或其他运行时越界改动会 fail closed，仍走完整/协调发布。CI 新增 Agent 独立门禁，run `32372208215` 用时 59 秒并通过，Python/H5/Media Edge/小程序按未修改范围跳过。
+- 本次源码归档仅 `2,037,760` bytes（SHA-256 `990dfc1e41f2f9ecaa6fe3dc82068d010800ebf0de91e9aae03ca1f277b37444`），Docker build context `2.033MB`；不再上传约 2.37GB 的完整 Agent 镜像。生产 Agent 与 Voice Core Media Bridge 均运行 `memoria-agent:20260820-210548-agent-source-overlay-v6`，image ID `sha256:f9a45a4dfa87fcc502cd0b445c8858033dad3a3c6d66127943c5961fb281b565`，OCI revision/version/role/kind 与提交、tag、`agent`、`agent-source-overlay` 一致；两个容器 healthy、restart count=0，Bridge gRPC socket 通过。
+- 组件镜像版本与 runtime authority tag 已解耦：Agent 保持 `20260814-231749-direct-canary`，Bridge 保持 `20260816-bridge-liveness-83af813`；Control API `/health/ready` 返回 200/ready，Agent worker ready、LiveKit ready，切流后零 heartbeat failure。PostgreSQL 与 Redis 容器 ID 在切流前后不变。
+- 真实 Provider smoke 通过：QwenRealtimeSearch 强制公网检索、Doubao 五音色/字时间戳/取消、FunASR 六轮 interim+final、DeepSeek 流式和 InterruptSemantic 五类样本全部 PASS。运行容器内 `agent.py`、`open_meteo_weather.py`、`qwen_realtime_search.py` SHA-256 与发布提交逐字节一致。
+- 回滚点 `rollback-20260820-210548-agent-source-overlay-v6-pre-agent/-pre-bridge` 均指向上一健康镜像 `sha256:e6d5876aa379…`。证据目录 `/opt/memoria/component-releases/20260820-210548-agent-source-overlay-v6/`：`CUTOVER_RESULT.txt` SHA-256 `2d95bf1dc54a973efd0e8fcdccaea76df5b809e7f4c58d862aaa82dcc58dc39d`、`PROVIDER_SMOKE_RESULT.txt` `5b118c89b4d7171b71577768e8b8a01c6b00bdb9b158c805dea32c3e4640252d`、`POST_CUTOVER_STATE.txt` `f206fdd78d9e79a0fa2ce3e14573476a7884b95eb1a604188bdd7b0e8c843dbe`，校验均通过。失败候选与更早普通回滚制品已删除；服务器仅保留当前 v6、上一健康基座及 v6 回滚 tag，根盘 40%。
+- 当前层级为 `code + wired + enabled + production runtime verified`（组件发布、零真机会话范围）。不改变 `direct_real_device_verified=false`、`full_duplex_verified=false` 与 T1–T14 `0 pass / 14 blocked / 0 failed`；真机说话、Actual Heard、双讲/打断仍需单独验收。
+
+## 上一生产增量（2026-08-20，FunASR wire trace 诊断埋点 + ASR 静默丢弃可见性，已切流待真机说话取证）
 
 - 源码提交 `65507bede7f6842db3e659b280774db9fdfcda2b` 与 annotated tag `20260820-144144-asr-ws-trace-diagnostics` 已推送 `origin/main`。背景：下行 fence 修复后 TTS 仍无声，新会话（epoch 911）pcm-tap 音频能量健康（语音段 RMS 160–184）、`media_asr_boundary` 11 条全 success、finalize 正常闭环，但 FunASR 零 `result-generated`、零 partial、尾超时丢弃。四层容器内探针（实时回放 / burst / adapter 层 / 150 次高频轮转）同容器同代码同音频同边界全部识别成功，排除 provider、帧节奏、adapter 映射与限流累积——唯一未观测环节是生产 WS 链路本身。内容：`FUNASR_WS_TRACE=true` 开启 provider WebSocket 全量控制消息/服务端事件限频 trace（每 1 秒窗口最多 20 条，超出计数汇总输出）；ASR 决策拒绝（preview/timeline/accept 三阶段）落日志（final 为 WARNING）；ingress stale stream-epoch 丢弃与 adapter 驱逐上下文丢弃不再静默；ASR 尾超时丢弃日志补 partial 在场证据。纯观测，不改门禁/判定/fail-closed 行为。
 - 本地门禁：聚焦单测（provider_config/funasr_session_edges/media_session 全过，含 ws trace 限频、env 解析、stale final 拒绝日志新用例）、ruff、strict mypy、模块预算全部通过。

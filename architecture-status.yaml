@@ -1,13 +1,13 @@
 # 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
 # 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
 schema_version: 2
-as_of_commit: c70577271aae3b59d74936d1753a0716549ec24c
+as_of_commit: eaee0bcfcd9d1b3a211486cab47426ff7b6efcf3
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 production_release_tag: 20260814-231749-direct-canary
 production_release_symlink: /opt/memoria/releases/20260812-173008
-production_code_release_tag: 20260820-112031-ingress-overflow-fix
-production_code_commit: c70577271aae3b59d74936d1753a0716549ec24c
+production_code_release_tag: 20260820-210548-agent-source-overlay-v6
+production_code_commit: eaee0bcfcd9d1b3a211486cab47426ff7b6efcf3
 production_runtime_overlays:
   control_api:
     image: memoria-control-api:20260818-103228
@@ -19,18 +19,25 @@ production_runtime_overlays:
     cutover_evidence_file: /opt/memoria/direct-canaries/20260818-103228/CUTOVER_RESULT.txt
     cutover_evidence_sha256: 37da7f571630c0585ab350464eb789196cd3075998758a3c43d611ab240b53848
   agent:
-    image: memoria-agent:20260820-112031-ingress-overflow-fix
-    image_id: sha256:7d16a2cf07ebe0358770f05c9776532194441cb2a7a78414f76d59b605cdb4fa
+    image: memoria-agent:20260820-210548-agent-source-overlay-v6
+    image_id: sha256:f9a45a4dfa87fcc502cd0b445c8858033dad3a3c6d66127943c5961fb281b565
     runtime_release_tag: 20260814-231749-direct-canary
     production_runtime_verified: true
-    oci_revision: c70577271aae3b59d74936d1753a0716549ec24c
+    oci_revision: eaee0bcfcd9d1b3a211486cab47426ff7b6efcf3
+    release_kind: agent_source_overlay
+    cutover_evidence_file: /opt/memoria/component-releases/20260820-210548-agent-source-overlay-v6/CUTOVER_RESULT.txt
+    cutover_evidence_sha256: 2d95bf1dc54a973efd0e8fcdccaea76df5b809e7f4c58d862aaa82dcc58dc39d
+    provider_smoke_evidence_sha256: 5b118c89b4d7171b71577768e8b8a01c6b00bdb9b158c805dea32c3e4640252d
   voice_core_media_bridge:
-    image: memoria-agent:20260820-112031-ingress-overflow-fix
-    image_id: sha256:7d16a2cf07ebe0358770f05c9776532194441cb2a7a78414f76d59b605cdb4fa
+    image: memoria-agent:20260820-210548-agent-source-overlay-v6
+    image_id: sha256:f9a45a4dfa87fcc502cd0b445c8858033dad3a3c6d66127943c5961fb281b565
     runtime_release_tag: 20260816-bridge-liveness-83af813
     production_runtime_verified: true
-    oci_revision: c70577271aae3b59d74936d1753a0716549ec24c
-    diagnostics: media_pcm_tap_enabled_MEDIA_PCM_TAP_DIR_data_diagnostics_pcm-tap
+    oci_revision: eaee0bcfcd9d1b3a211486cab47426ff7b6efcf3
+    release_kind: agent_source_overlay
+    cutover_evidence_file: /opt/memoria/component-releases/20260820-210548-agent-source-overlay-v6/CUTOVER_RESULT.txt
+    cutover_evidence_sha256: 2d95bf1dc54a973efd0e8fcdccaea76df5b809e7f4c58d862aaa82dcc58dc39d
+    diagnostics: media_pcm_tap_enabled_MEDIA_PCM_TAP_DIR_data_diagnostics_pcm-tap_and_FUNASR_WS_TRACE_true
   media_edge:
     image: memoria-media-edge:20260820-010500-livekit-stack-upgrade
     image_id: sha256:9beee50dc6f51b2964c8fc87c0c7bffa3b07bb8835bf83eef9e501c5fb304d57
@@ -52,14 +59,14 @@ student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
   as_of_date: 2026-08-20
-  head_commit: 65507bede7f6842db3e659b280774db9fdfcda2b
+  head_commit: eaee0bcfcd9d1b3a211486cab47426ff7b6efcf3
   dirty: false
-  dirty_scope: asr_ws_trace_diagnostics_committed_65507be
+  dirty_scope: agent_source_overlay_release_committed_eaee0bc
   code: complete
   wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
-  enabled: candidate_20260820-144144-asr-ws-trace-diagnostics_agent_bridge_scope
+  enabled: agent_source_overlay_v6_agent_bridge_scope_runtime_authority_tags_preserved
   verified: pending_direct_real_device_speech_evidence_collection
-  production_deployed: current_agent_bridge_candidate_non_target_services_preserved
+  production_deployed: agent_bridge_v6_healthy_provider_smoke_ready_non_target_services_preserved
   direct_real_device_verified: false
   full_duplex_verified: false
   firmware_candidate:
