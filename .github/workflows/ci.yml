@@ -6,7 +6,49 @@ on:
   pull_request:
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      h5: ${{ steps.filter.outputs.h5 }}
+      media_edge: ${{ steps.filter.outputs.media_edge }}
+      miniprogram: ${{ steps.filter.outputs.miniprogram }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - '.github/workflows/ci.yml'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'architecture-status.yaml'
+              - 'docker-compose*.yml'
+              - 'packages/**'
+              - 'services/**/*.py'
+              - 'scripts/**/*.py'
+              - 'scripts/**/*.sh'
+              - 'infra/Dockerfile.agent*'
+              - 'infra/Dockerfile.control-api'
+              - 'infra/Dockerfile.miniprogram-gateway'
+              - 'infra/Dockerfile.speaker-model'
+            h5:
+              - 'apps/h5/**'
+            media_edge:
+              - 'packages/proto/**'
+              - 'services/media_edge/**'
+              - 'scripts/generate_media_go_proto.sh'
+              - 'infra/Dockerfile.media-edge'
+            miniprogram:
+              - 'apps/miniprogram/**'
+
   python:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -64,7 +106,7 @@ jobs:
       - name: Media replay, chaos and load contract
         run: uv run python scripts/media_runtime_replay.py
       - name: Pytest
-        run: uv run pytest --cov=services --cov-report=term-missing
+        run: uv run pytest --import-mode=importlib --cov=services --cov-report=term-missing
         env:
           MEMORIA_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
       - name: Coverage gates
@@ -80,6 +122,8 @@ jobs:
           OFFLINE_MOCK: "true"
 
   h5:
+    needs: changes
+    if: needs.changes.outputs.h5 == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -99,6 +143,8 @@ jobs:
         run: npm run build
 
   media-edge:
+    needs: changes
+    if: needs.changes.outputs.media_edge == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -138,6 +184,8 @@ jobs:
         run: go test -race ./...
 
   media-edge-image:
+    needs: changes
+    if: needs.changes.outputs.media_edge == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -153,6 +201,8 @@ jobs:
           severity: CRITICAL,HIGH
 
   miniprogram:
+    needs: changes
+    if: needs.changes.outputs.miniprogram == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

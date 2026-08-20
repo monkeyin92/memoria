@@ -391,7 +391,9 @@ Control API、网关、H5 和固件均不变化。
 
 脚本会拒绝共享 `services/*`、`packages/*`、运行脚本或依赖输入的越界改动；这些改动必须
 走完整或协调的多组件发布。薄镜像每次直接派生自固定依赖基座，不从上一张源码薄镜像继续
-叠层；失败时自动按切流前 Compose 配置恢复两个容器。正式切流前先执行 dry-run：
+叠层；失败时自动按切流前 Compose 配置恢复两个容器。CI 同样按 Python、H5、Media Edge、
+小程序变更范围选择门禁；Agent 薄发布必须等待 Python job 成功，未修改组件的失败不得混入
+Agent 发布判定。正式切流前先执行 dry-run：
 
 ```bash
 RELEASE_TAG=YYYYMMDD-HHMMSS-agent-change

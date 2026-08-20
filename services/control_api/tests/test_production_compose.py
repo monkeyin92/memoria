@@ -504,6 +504,17 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert "runtime changes escape the Agent component" in deploy
 
 
+def test_ci_selects_component_gates_and_uses_collision_safe_pytest_imports() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "uses: dorny/paths-filter@v3" in workflow
+    assert "if: needs.changes.outputs.python == 'true'" in workflow
+    assert workflow.count("if: needs.changes.outputs.media_edge == 'true'") == 2
+    assert "if: needs.changes.outputs.h5 == 'true'" in workflow
+    assert "if: needs.changes.outputs.miniprogram == 'true'" in workflow
+    assert "pytest --import-mode=importlib --cov=services" in workflow
+
+
 def test_agent_image_installs_the_optional_keyword_spotter_runtime() -> None:
     agent_dockerfile = (ROOT / "infra" / "Dockerfile.agent").read_text(encoding="utf-8")
 
