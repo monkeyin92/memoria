@@ -1902,6 +1902,53 @@ async def test_audio_ingress_serializes_duplicate_finalize_watermark(
 
 
 @pytest.mark.asyncio
+async def test_stale_asr_final_rejection_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(
+        logging.INFO, logger="services.agent.src.voice_core.media_session_commit"
+    )
+
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    identity = SessionIdentity("stale-final-rejection-log", stream_epoch=2)
+    session = bridge.bridge.open(identity)
+    await registry._get_or_create(identity)
+
+    accepted = await registry.accept_asr_result(
+        identity.session_id,
+        ASRResult(
+            task_epoch=1,
+            sentence_id="stale-stream-epoch-final",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=600,
+            text="旧纪元文本",
+            is_final=True,
+            stream_epoch=1,
+        ),
+    )
+
+    assert not accepted
+    rejected = [
+        record
+        for record in caplog.records
+        if record.message.startswith("media ASR result rejected")
+    ]
+    assert len(rejected) == 1
+    assert rejected[0].levelno == logging.WARNING
+    assert "stage=preview" in rejected[0].message
+    assert "reason=stale_stream_epoch" in rejected[0].message
+    assert "is_final=True" in rejected[0].message
+    session.close()
+    await registry.on_session_closed(session)
+
+
+@pytest.mark.asyncio
 async def test_audio_ingress_queues_new_audio_after_finalize_boundary() -> None:
     class BlockingFinalizeProvider(FakeMediaProvider):
         def __init__(self) -> None:

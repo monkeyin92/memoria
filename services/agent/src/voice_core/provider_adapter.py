@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import inspect
+import logging
 import os
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
@@ -40,6 +41,8 @@ if TYPE_CHECKING:
     from services.agent.src.config import AgentSettings
     from services.agent.src.observability.metrics import MetricsRegistry
     from services.agent.src.voice_core.media_session import MediaReplyChunk
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -468,6 +471,14 @@ class ExistingVoiceProviderAdapter:
             if event.task_id and event.task_id != current_task_id:
                 # Its task context was safely evicted. Never re-associate a
                 # very late result with the newest provider task.
+                logger.warning(
+                    "media ASR event dropped: task context evicted task_id=%s "
+                    "current_task_id=%s stream_epoch=%s sentence_end=%s",
+                    event.task_id,
+                    current_task_id,
+                    stream_epoch,
+                    sentence.sentence_end,
+                )
                 return None
             self._remember_asr_task(asr, stream_epoch)
             task_context = (

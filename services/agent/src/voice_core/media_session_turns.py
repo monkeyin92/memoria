@@ -376,10 +376,14 @@ class MediaTurnEndpointMixin:
         if discarded is not None:
             await self._emit_projection_patch(context, discarded)
         logger.warning(
-            "media turn discarded after ASR tail timeout session=%s stream_epoch=%s endpoint=%s",
+            "media turn discarded after ASR tail timeout session=%s stream_epoch=%s endpoint=%s "
+            "partial_present=%s partial_text_len=%s partial_end_sample=%s",
             session_id,
             stream_epoch,
             endpoint_sample,
+            partial is not None,
+            len(partial.text.strip()) if partial is not None else 0,
+            partial.capture_end_sample if partial is not None else None,
         )
 
     def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None:

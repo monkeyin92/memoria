@@ -108,6 +108,7 @@ class MediaSessionCommitMixin:
         if candidate is None:
             if result.is_final:
                 self.metrics.inc_media_stale_asr_final()
+            self._log_asr_rejection(session_id, result, preview.reason, stage="preview")
             return preview
         candidate_segment = asr_result_to_segment(candidate, session_id=session_id)
         if not context.runtime.speech_timeline.can_add(candidate_segment):
@@ -116,12 +117,16 @@ class MediaSessionCommitMixin:
             )
             if runtime_task_epoch > 0:
                 context.asr.observe_task(runtime_task_epoch)
+            self._log_asr_rejection(
+                session_id, result, ASRDecisionReason.INTERVAL_CONFLICT, stage="timeline"
+            )
             return ASRAcceptDecision(None, ASRDecisionReason.INTERVAL_CONFLICT)
         decision = context.asr.accept_result(result, session_id=session_id)
         accepted = decision.accepted
         if accepted is None:
             if result.is_final:
                 self.metrics.inc_media_stale_asr_final()
+            self._log_asr_rejection(session_id, result, decision.reason, stage="accept")
             return decision
         # The provider result is never forwarded after supervisor policy has
         # normalized it (e.g. a committed-watermark tail).
@@ -141,6 +146,33 @@ class MediaSessionCommitMixin:
         else:
             self._observe_partial_asr_result(context, accepted)
         return decision
+
+    def _log_asr_rejection(
+        self,
+        session_id: str,
+        result: ASRResult,
+        reason: ASRDecisionReason,
+        *,
+        stage: str,
+    ) -> None:
+        # Diagnostics: a dropped provider result is otherwise metric-only.  A
+        # final rejection is loud; partial revisions stay at INFO because they
+        # are expected churn on a healthy stream.
+        level = logging.WARNING if result.is_final else logging.INFO
+        logger.log(
+            level,
+            "media ASR result rejected session=%s stage=%s reason=%s is_final=%s "
+            "text_len=%s task_epoch=%s stream_epoch=%s samples=%s-%s",
+            session_id,
+            stage,
+            reason.value,
+            result.is_final,
+            len(result.text),
+            result.task_epoch,
+            result.stream_epoch,
+            result.capture_start_sample,
+            result.capture_end_sample,
+        )
 
     async def commit_user_turn(
         self,

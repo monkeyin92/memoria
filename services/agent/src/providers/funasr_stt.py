@@ -52,6 +52,8 @@ from services.agent.src.voice_core.speech_timeline import ASRResult
 
 logger = logging.getLogger(__name__)
 
+_WS_TRACE_MAX_PER_WINDOW = 20
+
 
 @dataclass
 class FunASRConfig:
@@ -71,6 +73,7 @@ class FunASRConfig:
     conversation_context_enabled: bool = False
     vocabulary_id: str | None = None
     speech_noise_threshold: float | None = None
+    ws_trace: bool = False
 
     def __post_init__(self) -> None:
         threshold = self.speech_noise_threshold
@@ -110,6 +113,7 @@ class FunASRConfig:
             ),
             vocabulary_id=vocabulary_id,
             speech_noise_threshold=(float(threshold_raw) if threshold_raw else None),
+            ws_trace=e.get("FUNASR_WS_TRACE", "false").lower() == "true",
         )
 
 
@@ -187,6 +191,32 @@ class FunASRSession:
         self._task_event_contexts: dict[str, FunASRTaskEventContext] = {}
         self._task_event_order: deque[str] = deque()
         self._metrics_ws_active = False
+        # Env-gated diagnostics: rate-limited visibility into every control
+        # message crossing the provider WebSocket.  Strictly observational.
+        self._ws_trace_enabled = bool(config.ws_trace)
+        self._trace_window_start = 0.0
+        self._trace_window_count = 0
+        self._trace_suppressed_total = 0
+
+    def _trace_ws(self, message: str) -> None:
+        if not self._ws_trace_enabled:
+            return
+        now = monotonic()
+        if now - self._trace_window_start >= 1.0:
+            if self._trace_suppressed_total:
+                logger.info(
+                    "funasr_ws_trace suppressed_total=%s task_id=%s",
+                    self._trace_suppressed_total,
+                    self.task_id or "unknown",
+                )
+                self._trace_suppressed_total = 0
+            self._trace_window_start = now
+            self._trace_window_count = 0
+        if self._trace_window_count >= _WS_TRACE_MAX_PER_WINDOW:
+            self._trace_suppressed_total += 1
+            return
+        self._trace_window_count += 1
+        logger.info("funasr_ws_trace %s", message)
 
     def _mark_ws_connected(self) -> None:
         if self.metrics is not None and not self._metrics_ws_active:
@@ -540,6 +570,7 @@ class FunASRSession:
             run = self._build_run_task()
             task_id = str(run["header"]["task_id"])
             await ws.send(json.dumps(run, ensure_ascii=False))
+            self._trace_ws(f"tx run-task task_id={task_id} origin=connect")
             while True:
                 message = await asyncio.wait_for(ws.recv(), timeout=self.config.connect_timeout_s)
                 if isinstance(message, bytes):
@@ -588,6 +619,19 @@ class FunASRSession:
                     if isinstance(message, bytes):
                         continue
                     ev = parse_server_message(message)
+                    self._trace_ws(
+                        f"rx event={ev.event} task_id={ev.task_id or 'unknown'}"
+                        + (
+                            f" sentence_id={ev.sentence.sentence_id}"
+                            f" sentence_end={ev.sentence.sentence_end}"
+                            f" heartbeat={ev.sentence.heartbeat}"
+                            f" text_len={len(ev.sentence.text)}"
+                            f" begin_ms={ev.sentence.begin_ms} end_ms={ev.sentence.end_ms}"
+                            if ev.sentence is not None
+                            else ""
+                        )
+                        + (f" error_code={ev.error_code}" if ev.error_code else "")
+                    )
                     task_context = self.task_event_context(ev.task_id)
                     is_current_task = bool(ev.task_id) and ev.task_id == self.task_id
                     if ev.task_id and task_context is None:
@@ -1005,6 +1049,9 @@ class FunASRSession:
         assert ws is not None
         try:
             await ws.send(json.dumps(build_finish_task(self.task_id), ensure_ascii=False))
+            self._trace_ws(
+                f"tx finish-task task_id={self.task_id} terminal={terminal}"
+            )
         except Exception:
             if not await self._recover(ws):
                 if not self._failure_matches_current_task():
@@ -1160,6 +1207,9 @@ class FunASRSession:
         self._remember_current_task_event_context()
         try:
             await ws.send(json.dumps(run, ensure_ascii=False))
+            self._trace_ws(
+                f"tx run-task task_id={task_id} epoch={self._task_epoch} origin={origin}"
+            )
             await asyncio.wait_for(
                 self._task_started_event.wait(),
                 timeout=self.config.connect_timeout_s,
@@ -1205,6 +1255,12 @@ class FunASRSession:
 
     async def aclose(self) -> None:
         self._closed = True
+        if self._ws_trace_enabled and self._trace_suppressed_total:
+            logger.info(
+                "funasr_ws_trace closing suppressed_total=%s task_id=%s",
+                self._trace_suppressed_total,
+                self.task_id or "unknown",
+            )
         self._mark_ws_disconnected()
         self._ready.clear()
         # Wake any waiter blocked on a task boundary; it must fail fast

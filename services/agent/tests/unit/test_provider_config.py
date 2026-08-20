@@ -27,6 +27,7 @@ def test_funasr_config_from_env() -> None:
             "FUNASR_RESULT_TIMEOUT_S": "4",
             "FUNASR_VOCABULARY_ID": "vocab-control-commands",
             "FUNASR_SPEECH_NOISE_THRESHOLD": "-0.1",
+            "FUNASR_WS_TRACE": "true",
         }
     )
     assert cfg.sample_rate == 8000
@@ -36,6 +37,7 @@ def test_funasr_config_from_env() -> None:
     assert cfg.reconnect_audio_ms == 1200
     assert cfg.vocabulary_id == "vocab-control-commands"
     assert cfg.speech_noise_threshold == -0.1
+    assert cfg.ws_trace
 
 
 def test_funasr_default_sentence_silence_matches_turn_endpointing() -> None:
@@ -43,6 +45,7 @@ def test_funasr_default_sentence_silence_matches_turn_endpointing() -> None:
     assert cfg.max_sentence_silence_ms == 550
     assert cfg.vocabulary_id is None
     assert cfg.speech_noise_threshold is None
+    assert not cfg.ws_trace
 
 
 @pytest.mark.parametrize("value", ["-1.1", "1.1", "nan"])

@@ -6,7 +6,9 @@ import logging
 import pytest
 from livekit.agents import APIConnectionError
 from services.agent.src.observability.metrics import MetricsRegistry
+from services.agent.src.providers import funasr_stt
 from services.agent.src.providers.funasr_stt import (
+    _WS_TRACE_MAX_PER_WINDOW,
     FunASRConfig,
     FunASRSession,
     FunASRSTT,
@@ -874,3 +876,52 @@ async def test_funasr_task_failure_records_safe_context_and_logs_all_fences(
 
     with pytest.raises(APIConnectionError, match="error_code=InvalidParameter"):
         await session.wait_for_task_finished()
+
+
+def test_ws_trace_disabled_emits_nothing(caplog: pytest.LogCaptureFixture) -> None:
+    session = FunASRSession(
+        FunASRConfig(api_key="test", ws_url="ws://unused", ws_trace=False)
+    )
+    caplog.set_level(logging.INFO, logger="services.agent.src.providers.funasr_stt")
+
+    session._trace_ws("tx run-task task_id=t1 origin=connect")
+
+    assert "funasr_ws_trace" not in caplog.text
+
+
+def test_ws_trace_rate_limits_and_flushes_suppression_counter(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session = FunASRSession(
+        FunASRConfig(api_key="test", ws_url="ws://unused", ws_trace=True)
+    )
+    caplog.set_level(logging.INFO, logger="services.agent.src.providers.funasr_stt")
+    now = [100.0]
+    monkeypatch.setattr(funasr_stt, "monotonic", lambda: now[0])
+
+    for index in range(_WS_TRACE_MAX_PER_WINDOW + 5):
+        session._trace_ws(f"msg-{index}")
+
+    traced = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("funasr_ws_trace ")
+    ]
+    assert len(traced) == _WS_TRACE_MAX_PER_WINDOW
+    assert traced[0] == "funasr_ws_trace msg-0"
+    assert traced[-1] == f"funasr_ws_trace msg-{_WS_TRACE_MAX_PER_WINDOW - 1}"
+    assert session._trace_suppressed_total == 5
+
+    caplog.clear()
+    now[0] += 1.0
+    session._trace_ws(f"msg-{_WS_TRACE_MAX_PER_WINDOW + 5}")
+
+    flushed = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("funasr_ws_trace")
+    ]
+    assert flushed[0] == "funasr_ws_trace suppressed_total=5 task_id=unknown"
+    assert flushed[-1] == f"funasr_ws_trace msg-{_WS_TRACE_MAX_PER_WINDOW + 5}"
+    assert session._trace_suppressed_total == 0

@@ -501,10 +501,19 @@ class MediaAudioIngress:
     ) -> None:
         if observe_task_before_results:
             await self._observe_provider_task(context)
+        results = tuple(results)
         for result in results:
             if not isinstance(result, ASRResult):
                 raise RuntimeError("media provider returned an invalid ASR result")
             if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
+                logger.warning(
+                    "media ASR results dropped after stream epoch change session=%s "
+                    "callback_stream_epoch=%s current_stream_epoch=%s dropped=%s",
+                    context.identity.session_id,
+                    callback_stream_epoch,
+                    context.stream_epoch,
+                    len(results),
+                )
                 return
             if (
                 any(
@@ -522,6 +531,13 @@ class MediaAudioIngress:
                 result,
             )
             if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
+                logger.warning(
+                    "media ASR result handling aborted after stream epoch change "
+                    "session=%s callback_stream_epoch=%s current_stream_epoch=%s",
+                    context.identity.session_id,
+                    callback_stream_epoch,
+                    context.stream_epoch,
+                )
                 return
             shadow_result = decision.accepted or result
             await self._host.bridge.emit_speech_segment_decision(
