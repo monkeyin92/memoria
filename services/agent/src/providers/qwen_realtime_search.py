@@ -101,7 +101,6 @@ class QwenRealtimeSearch:
             response.raise_for_status()
             content = self._content(response.json())
             elapsed_ms = round((time.monotonic() - started_at) * 1000)
-            
             if elapsed_ms > 5000:
                 logger.warning(
                     "slow qwen search detected model=%s response_chars=%s elapsed_ms=%s",
@@ -109,7 +108,6 @@ class QwenRealtimeSearch:
                     len(content or ""),
                     elapsed_ms,
                 )
-            
             logger.info(
                 "qwen realtime search completed model=%s response_chars=%s elapsed_ms=%s",
                 self._config.model,

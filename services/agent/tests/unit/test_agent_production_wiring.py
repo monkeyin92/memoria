@@ -1366,6 +1366,63 @@ async def test_realtime_request_without_a_verified_search_resolver_fails_closed(
 
 
 @pytest.mark.asyncio
+async def test_realtime_provider_exception_emits_fallback_only_for_current_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-provider-error")
+    await runtime.on_turn_committed("今天南京天气怎么样")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="南京天气必须先联网查询，查询失败不得猜测。",
+        speaker_class="uncertain",
+    )
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="今天南京天气怎么样")
+
+    async def failed_search(*, query: str) -> AsyncIterator[str]:
+        assert query == "今天南京天气怎么样"
+        raise RuntimeError("provider unavailable")
+        yield ""  # pragma: no cover
+
+    monkeypatch.setattr(agent, "_forced_realtime_search_stream", failed_search)
+
+    output = [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+
+    assert "".join(output).endswith(REALTIME_UNAVAILABLE_REPLY)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_realtime_provider_exception_cannot_cross_the_generation_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="realtime-provider-error-stale")
+    await runtime.on_turn_committed("今天南京天气怎么样")
+    agent = DuplexVoiceAgent(instructions="test", runtime=runtime)
+    runtime.set_delegation_starter(None)
+    agent._response_plan_by_fence[agent._response_plan_key(runtime.fence)] = _plan_for_fence(
+        runtime.fence,
+        instructions="南京天气必须先联网查询，查询失败不得猜测。",
+        speaker_class="uncertain",
+    )
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="今天南京天气怎么样")
+
+    async def stale_failed_search(*, query: str) -> AsyncIterator[str]:
+        assert query == "今天南京天气怎么样"
+        await runtime.on_turn_committed("换一个问题")
+        raise RuntimeError("late provider failure")
+        yield ""  # pragma: no cover
+
+    monkeypatch.setattr(agent, "_forced_realtime_search_stream", stale_failed_search)
+
+    with pytest.raises(RuntimeError, match="late provider failure"):
+        [item async for item in agent.llm_node(chat_ctx, [], None) if isinstance(item, str)]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_realtime_buffered_reply_stops_at_a_new_tool_epoch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
