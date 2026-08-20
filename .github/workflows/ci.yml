@@ -12,6 +12,7 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
+      agent: ${{ steps.filter.outputs.agent }}
       python: ${{ steps.filter.outputs.python }}
       h5: ${{ steps.filter.outputs.h5 }}
       media_edge: ${{ steps.filter.outputs.media_edge }}
@@ -22,17 +23,24 @@ jobs:
         id: filter
         with:
           filters: |
+            agent:
+              - 'services/agent/**'
+              - 'services/control_api/tests/test_production_compose.py'
+              - 'infra/Dockerfile.agent-source-overlay'
+              - 'scripts/deploy_agent_component.sh'
             python:
-              - '.github/workflows/ci.yml'
               - 'pyproject.toml'
               - 'uv.lock'
-              - 'architecture-status.yaml'
               - 'docker-compose*.yml'
               - 'packages/**'
               - 'services/**/*.py'
+              - '!services/agent/**'
+              - '!services/control_api/tests/test_production_compose.py'
               - 'scripts/**/*.py'
               - 'scripts/**/*.sh'
+              - '!scripts/deploy_agent_component.sh'
               - 'infra/Dockerfile.agent*'
+              - '!infra/Dockerfile.agent-source-overlay'
               - 'infra/Dockerfile.control-api'
               - 'infra/Dockerfile.miniprogram-gateway'
               - 'infra/Dockerfile.speaker-model'
@@ -45,6 +53,33 @@ jobs:
               - 'infra/Dockerfile.media-edge'
             miniprogram:
               - 'apps/miniprogram/**'
+
+  agent:
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv sync --frozen --all-extras
+      - name: Ruff
+        run: >-
+          uv run ruff check services/agent
+          services/control_api/tests/test_production_compose.py
+      - name: Module line budgets
+        run: uv run python scripts/check_module_budget.py check
+      - name: Mypy
+        run: uv run mypy services/agent --strict
+      - name: Agent unit and deployment contract tests
+        run: >-
+          uv run pytest --import-mode=importlib --no-cov
+          services/agent/tests/unit
+          services/control_api/tests/test_production_compose.py
+      - name: Agent source-overlay script syntax
+        run: bash -n scripts/deploy_agent_component.sh
 
   python:
     needs: changes

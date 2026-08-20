@@ -508,10 +508,14 @@ def test_ci_selects_component_gates_and_uses_collision_safe_pytest_imports() -> 
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
     assert "uses: dorny/paths-filter@v3" in workflow
+    assert "if: needs.changes.outputs.agent == 'true'" in workflow
     assert "if: needs.changes.outputs.python == 'true'" in workflow
     assert workflow.count("if: needs.changes.outputs.media_edge == 'true'") == 2
     assert "if: needs.changes.outputs.h5 == 'true'" in workflow
     assert "if: needs.changes.outputs.miniprogram == 'true'" in workflow
+    assert "services/agent/tests/unit" in workflow
+    assert "pytest --import-mode=importlib --no-cov" in workflow
+    assert "!services/agent/**" in workflow
     assert "pytest --import-mode=importlib --cov=services" in workflow
 
 
