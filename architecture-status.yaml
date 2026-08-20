@@ -52,12 +52,12 @@ student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
   as_of_date: 2026-08-20
-  head_commit: c70577271aae3b59d74936d1753a0716549ec24c
-  dirty: true
-  dirty_scope: downlink_rejection_diagnostics_uncommitted
+  head_commit: bc383a030b0fa27c3605e545ef4a837e69381582
+  dirty: false
+  dirty_scope: downlink_rejection_diagnostics_committed_bc383a0
   code: complete
   wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
-  enabled: candidate_20260820-112031-ingress-overflow-fix_agent_bridge_scope
+  enabled: candidate_20260820-122047-downlink-reject-diagnostics_agent_bridge_scope
   verified: production_runtime_and_direct_uplink_turn_commits_observed
   production_deployed: current_agent_bridge_candidate_non_target_services_preserved
   direct_real_device_verified: false
@@ -81,6 +81,24 @@ local_worktree_candidate:
       events; local media-session tests pass, production state
       divergence). Source uncommitted pending downlink instrumentation.
     source_committed: ee04810_firmware_gain_fix_with_ledger_writeback
+  downlink_rejection_diagnostics_increment:
+    name: downlink_rejection_diagnostics_rate_limited_logging
+    candidate_release_tag: 20260820-122047-downlink-reject-diagnostics
+    production_cutover_scope: agent_and_voice_core_media_bridge_only
+    code: complete
+    wired: accept_downlink_all_reject_branches_emit_generation_failures_generation_start_check
+    enabled: true
+    verified: pending_direct_real_device_session_dt4
+    production_runtime_verified: true
+    cutover_result: PASS
+    source_committed: bc383a030b0fa27c3605e545ef4a837e69381582
+    candidate_image: memoria-agent:20260820-122047-downlink-reject-diagnostics
+    candidate_image_id: sha256:79003b31ab501a0e472193ebeb390e4822014a2d1611881177e91d266d6e503c
+    candidate_manifest_config_sha256: a94adfe063e492e685f986eb673680a801816492a8d4f34fb665be18634fe295
+    oci_revision: bc383a030b0fa27c3605e545ef4a837e69381582
+    cutover_evidence_file: /opt/memoria/direct-canaries/20260820-122047-downlink-reject-diagnostics/CUTOVER_RESULT.txt
+    cutover_evidence_sha256: 8d6d902c575cfcff8be444c1a6ebbb6a602ce3984adb75c01490e9f33bc9d7a9
+    post_cutover_state_sha256: 1a2e8a971fb207dbd80a7f1893d511f1ac2a3c04a1bc723d00da4003b5daccc6
   current_increment:
     name: media_ingress_overflow_fix_and_pcm_tap_diagnosis
     candidate_release_tag: 20260820-112031-ingress-overflow-fix

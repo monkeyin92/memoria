@@ -1,12 +1,20 @@
 # 项目交接
 
-## 当前固件增量（2026-08-20，ES8388 mic gain 24dB→12dB 底噪整改，真机声学验证通过；新阻塞：下行 transport_rejected）
+## 当前生产增量（2026-08-20，下行拒绝路径限频诊断埋点，已切流待真机会话取证）
 
-- 范围：仅固件 overlay（`firmware/esp32/overlay/files/main/boards/memoria/atk-dnesp32s3-v1/memoria_atk_dnesp32s3_v1.cc` 的 `GetAudioCodec()` 在 ES8388 构造后调用 `SetInputGain(12.0f)`），无服务端切流；overlay hash `b0d53334…`。源码尚未提交（待下行阻塞定位后随候选一起提交+tag）。
+- 源码提交 `bc383a030b0fa27c3605e545ef4a837e69381582` 与 annotated tag `20260820-122047-downlink-reject-diagnostics` 已推送 `origin/main`。内容：`media_bridge_server.py` 的 `accept_downlink` 全部七个拒绝分支（identity/generation_active/fence/sequence/source-sample/queue-full）打 5s 限频 WARNING，含 generation gate 与 fence/sequence 状态快照；`grpc_bridge.py` 的 `emit_generation` 四个失败分支打 `media generation control rejected` 日志；`media_session_commit.py` 开始检查 `GENERATION_ACTION_START` 返回值，未接受时打 `media generation START not accepted`。不改变任何门禁判定、fence、权限或 fail-closed 行为。
+- 本地门禁：聚焦单测（含 2 个新增限频/门禁状态日志用例）、ruff、strict mypy、模块预算全部通过。
+- 生产切换：Agent 与 Voice Core Media Bridge 运行 `memoria-agent:20260820-122047-downlink-reject-diagnostics`（load 后 image ID `sha256:79003b31ab50…`，manifest config SHA-256 `a94adfe063e4…` 与本地候选一致，OCI revision 与源提交一致），均 amd64、healthy；其余服务不变。回滚点 `rollback-20260820-122047-downlink-reject-diagnostics-pre-agent/-pre-bridge` 已冻结（指向 ingress-overflow-fix 镜像 `sha256:7d16a2cf07eb…`）。证据目录 `/opt/memoria/direct-canaries/20260820-122047-downlink-reject-diagnostics/`：`CUTOVER_RESULT.txt` `8d6d902c575cfcff8be444c1a6ebbb6a602ce3984adb75c01490e9f33bc9d7a9`、`POST_CUTOVER_STATE.txt` `1a2e8a971fb207dbd80a7f1893d511f1ac2a3c04a1bc723d00da4003b5daccc6`；容器内 grep 确认三处埋点均在位。
+- 当前层级 `code + wired + enabled + production runtime verified`；下一步：用户本人对板卡再说一次话，拉 bridge/agent 日志按 `media downlink rejected` / `media generation control rejected` / `media generation START not accepted` 精确定位 `transport_rejected` 的拒绝分支，再实施修复。
+- 不改变 `direct_real_device_verified=false`、`full_duplex_verified=false` 与 T1–T14 `0 pass / 14 blocked / 0 failed`。
+
+## 上一固件增量（2026-08-20，ES8388 mic gain 24dB→12dB 底噪整改，真机声学验证通过；新阻塞：下行 transport_rejected）
+
+- 范围：仅固件 overlay（`firmware/esp32/overlay/files/main/boards/memoria/atk-dnesp32s3-v1/memoria_atk_dnesp32s3_v1.cc` 的 `GetAudioCodec()` 在 ES8388 构造后调用 `SetInputGain(12.0f)`），无服务端切流；overlay hash `b0d53334…`。源码已随提交 `ee04810` 入库。
 - 本地门禁：ESP-IDF 构建 EXIT=0（merged.bin SHA-256 `92d48e14c80b636e868d4ea3c212f2e3feb36c8c88da75703f80097077e8eb68`、app.bin `5a4f32967b0734a162cfb7e7fff3d8c1fa06bb5420b28454f6f21b8c5cf4d74d`）；`check-overlay.sh` 通过；`firmware/esp32/tests` 78 个全过。
 - 刷写与身份保护：`flash.sh` 写 `/dev/cu.usbmodem101` EXIT=0，五段写后 Hash verified；刷前/刷后身份区逐字节一致（SHA-256 `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`），备份目录 `firmware/esp32/artifacts/backups/pre-current-candidate-20260820/`。串口启动日志确认 `AudioCodec: Set input gain to 12.0`、Wi-Fi 连接成功、无重启循环。
 - 声学验证（用户本人对板卡说话，会话 `1e44323b-bf19-46ae-9368-a58812ef4b3b`，stream_epoch 908，85.2s）：pcm-tap WAV SHA-256 `9ed58e547f751b574d5aca03b072b015aecd6db39a404ad270fbcef044bac23b`；1s 窗口底噪中位 RMS 由修复前 100–150 降至 24（77/85 窗口 <40，最低 19.3），语音段 RMS 峰值 158；`media_asr_boundary` 8 条全部 success，VAD 正常闭合，零 `superseded`——阻塞①（底噪导致 VAD 永不关闭、回复永远被抢占）已消除。
-- 新阻塞③（举一反三）：turn 1–3 回复均在第一帧 TTS PCM 即 `status=aborted reason=transport_rejected emitted_audio=False`。`accept_downlink` 门禁拒绝但无打断/取消事件；本地 `test_media_session.py`（94 用例）通过，属生产状态分歧。怀疑方向：turn 提交时 `GENERATION_ACTION_START` 未被消费/generation gate 未激活、或 session fence 与帧 fence 不一致；`media_session_commit.py` 对 START 的返回值未检查。下一步：为 `accept_downlink` 拒绝分支加限频诊断日志做埋点候选。
+- 新阻塞③（举一反三）：turn 1–3 回复均在第一帧 TTS PCM 即 `status=aborted reason=transport_rejected emitted_audio=False`。`accept_downlink` 门禁拒绝但无打断/取消事件；本地 `test_media_session.py`（94 用例）通过，属生产状态分歧。怀疑方向：turn 提交时 `GENERATION_ACTION_START` 未被消费/generation gate 未激活、或 session fence 与帧 fence 不一致；`media_session_commit.py` 对 START 的返回值未检查。已实施：为 `accept_downlink` 拒绝分支加限频诊断日志埋点候选并切流（见顶部增量节）。
 - 阻塞②（speaker authority `subject_capability_forbidden`）维持原判：生产所有账号 `subject_category='unknown'`，`speaker_enrollment` 规则表只允许 `adult`，需产品流程或规则表评审，不擅自改数据。
 - 本增量达到固件侧 `code + wired + enabled + verified（声学）`；`direct_real_device_verified=false`、`full_duplex_verified=false`、T1–T14 保持 `0 pass / 14 blocked / 0 failed`（仍无 TTS 出声）。
 
