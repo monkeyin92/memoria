@@ -374,12 +374,8 @@ cat >"$override" <<EOF
 services:
   agent:
     image: "$target_image"
-    environment:
-      MEMORIA_RELEASE_TAG: "$release_tag"
   voice-core-media-bridge:
     image: "$target_image"
-    environment:
-      MEMORIA_RELEASE_TAG: "$release_tag"
 EOF
 chmod 0600 "$override"
 
