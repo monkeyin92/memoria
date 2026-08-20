@@ -2366,8 +2366,12 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                         break
                     yield accepted_segment
         except Exception:
-            if realtime_request is None or not cancellation.is_current(self._runtime.fence):
+            # Always emit fallback even if fence changed to avoid silent failure.
+            # This is critical for user experience when bridge ack was sent but
+            # tool execution failed or timeout occurred (e.g., weather query).
+            if realtime_request is None:
                 raise
+            
             logger.warning(
                 "realtime request failed session_id=%s turn_id=%s generation_id=%s",
                 fence.session_id,
@@ -2376,11 +2380,29 @@ class DuplexVoiceAgent(Agent if _HAS_LIVEKIT else object):  # type: ignore[misc]
                 exc_info=True,
             )
             self._llm_text_buf = REALTIME_UNAVAILABLE_REPLY
+            
+            # Force emit fallback message regardless of current fence state
+            # to ensure user never left hanging after bridge acknowledgement
+            force_emit = False
+            try:
+                force_emit = not cancellation.is_current(self._runtime.fence)
+                if force_emit:
+                    logger.info(
+                        "forcing realtime fallback emission due to fence mismatch",
+                        session_id=fence.session_id,
+                        current_fence=self._runtime.fence,
+                        original_fence=fence,
+                    )
+            except Exception:
+                # If we can't check, still try to emit
+                pass
+            
             for segment in segmenter.push_token(REALTIME_UNAVAILABLE_REPLY):
                 accepted_segment = _ready_segment(segment.text)
                 if accepted_segment is None:
                     break
                 yield accepted_segment
+            
             if cancellation.is_current(self._runtime.fence) and not reply_budget_exhausted:
                 for segment in segmenter.flush(end_of_stream=True):
                     accepted_segment = _ready_segment(segment.text)

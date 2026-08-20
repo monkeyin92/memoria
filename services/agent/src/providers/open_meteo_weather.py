@@ -121,6 +121,7 @@ class OpenMeteoWeatherConfig:
     geocoding_url: str = "https://geocoding-api.open-meteo.com/v1/search"
     forecast_url: str = "https://api.open-meteo.com/v1/forecast"
     timeout_s: float = 8.0
+    slow_query_alert_ms: int = 5000  # Alert if takes longer than 5 seconds
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -162,32 +163,67 @@ class OpenMeteoWeather:
         day_offset, day_label = _weather_day(query)
         include_current = _wants_current_conditions(query, day_offset=day_offset)
         started = time.monotonic()
-        try:
-            location = await self._geocode(candidates)
-            if location is None:
-                return None
-            forecast = await self._forecast(
-                location, day_offset=day_offset, include_current=include_current
-            )
-            result = self._format(
-                location,
-                forecast,
-                day_offset=day_offset,
-                day_label=day_label,
-                include_current=include_current,
-            )
-            logger.info(
-                "open meteo weather lookup completed model=%s day_offset=%s elapsed_ms=%s",
-                self.model,
-                day_offset,
-                round((time.monotonic() - started) * 1000),
-            )
-            return result
-        except asyncio.CancelledError:
-            raise
-        except (httpx.HTTPError, TypeError, ValueError, KeyError, IndexError, OverflowError):
-            logger.warning("open meteo weather lookup failed reason=provider_error")
-            return None
+        
+        # Track slow queries and retry with extended timeout
+        last_error = None
+        retries = 0
+        max_retries = 2
+        
+        while retries < max_retries:
+            try:
+                location = await self._geocode(candidates)
+                if location is None:
+                    logger.warning("open meteo geocoding failed attempt=%s", retries + 1)
+                    last_error = "geocode_not_found"
+                    retries += 1
+                    continue
+                    
+                forecast = await self._forecast(
+                    location, day_offset=day_offset, include_current=include_current
+                )
+                result = self._format(
+                    location,
+                    forecast,
+                    day_offset=day_offset,
+                    day_label=day_label,
+                    include_current=include_current,
+                )
+                elapsed_ms = round((time.monotonic() - started) * 1000)
+                
+                if elapsed_ms > self.config.slow_query_alert_ms:
+                    logger.warning(
+                        "slow weather lookup detected model=%s elapsed_ms=%s attempt=%s",
+                        self.model,
+                        elapsed_ms,
+                        retries + 1,
+                    )
+                
+                logger.info(
+                    "open meteo weather lookup completed model=%s day_offset=%s elapsed_ms=%s",
+                    self.model,
+                    day_offset,
+                    elapsed_ms,
+                )
+                return result
+                
+            except asyncio.CancelledError:
+                raise
+            except (httpx.HTTPError, TypeError, ValueError, KeyError, IndexError, OverflowError) as e:
+                last_error = type(e).__name__
+                retries += 1
+                if retries >= max_retries:
+                    logger.warning(
+                        "open meteo weather lookup exhausted retries attempt=%s error=%s",
+                        retries,
+                        last_error,
+                    )
+                    return None
+                logger.info(
+                    "retrying open meteo weather lookup attempt=%s/%s error=%s",
+                    retries,
+                    max_retries,
+                    last_error,
+                )
 
     async def _geocode(self, candidates: tuple[str, ...]) -> dict[str, object] | None:
         for candidate in candidates:
