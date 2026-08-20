@@ -312,12 +312,14 @@ if [[ "$cutover" != true ]]; then
 fi
 
 ssh "$remote" sudo -n bash -s -- \
-  "$remote_dir" "$target_image" "$release_tag" "$compose_sha" <<'REMOTE_CUTOVER'
+  "$remote_dir" "$target_image" "$release_tag" "$compose_sha" \
+  "$expected_commit" <<'REMOTE_CUTOVER'
 set -Eeuo pipefail
 remote_dir="$1"
 target_image="$2"
 release_tag="$3"
 expected_compose_sha="$4"
+release_commit="$5"
 agent_container="memoria-agent-1"
 bridge_container="memoria-voice-core-media-bridge-1"
 
@@ -390,19 +392,31 @@ printf '%s\n' "${previous_files[@]}" >"$remote_dir/PRE_CUTOVER_CONFIG_FILES.txt"
 } >"$remote_dir/ROLLBACK_POINT.txt"
 
 rollback() {
+  exit_code=$?
+  trap - ERR
+  set +e
   echo "component cutover failed; restoring previous Compose configuration" >&2
   (
     cd "$working_dir"
-    env MEMORIA_RELEASE_TAG="$release_tag" docker compose --project-name "$project_name" \
+    env MEMORIA_RELEASE_TAG="$release_tag" MEMORIA_RELEASE_COMMIT="$release_commit" \
+      docker compose --project-name "$project_name" \
       "${previous_args[@]}" \
       --profile media-runtime up -d --no-deps --no-build \
       agent voice-core-media-bridge
   )
+  rollback_status=$?
+  if ((rollback_status == 0)); then
+    echo "component rollback=PASS" >&2
+  else
+    echo "component rollback=FAILED status=$rollback_status" >&2
+  fi
+  exit "$exit_code"
 }
 trap rollback ERR
 
 cd "$working_dir"
-env MEMORIA_RELEASE_TAG="$release_tag" docker compose --project-name "$project_name" \
+env MEMORIA_RELEASE_TAG="$release_tag" MEMORIA_RELEASE_COMMIT="$release_commit" \
+  docker compose --project-name "$project_name" \
   "${previous_args[@]}" --file "$override" \
   --profile media-runtime up -d --no-deps --no-build \
   agent voice-core-media-bridge
