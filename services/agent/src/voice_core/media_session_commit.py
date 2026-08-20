@@ -529,7 +529,7 @@ class MediaSessionCommitMixin:
         context.turn_started_ns = time.monotonic_ns()
         context.first_audio_observed = False
         task_epoch, context_version = self._event_versions(context, fence)
-        await self.bridge.emit_generation(
+        generation_started = await self.bridge.emit_generation(
             session_id,
             fence,
             action=media_pb2.GENERATION_ACTION_START,
@@ -537,4 +537,17 @@ class MediaSessionCommitMixin:
             task_epoch=task_epoch,
             context_version=context_version,
         )
+        if not generation_started:
+            # Without an accepted START the transport generation gate stays
+            # closed and every reply PCM frame is rejected downstream.  Make
+            # that failure loud instead of surfacing only as transport_rejected.
+            logger.warning(
+                "media generation START not accepted session=%s turn=%s generation=%s "
+                "tool_epoch=%s stream_epoch=%s",
+                session_id,
+                fence.turn_id,
+                fence.generation_id,
+                fence.tool_epoch,
+                context.stream_epoch,
+            )
         return fence, None

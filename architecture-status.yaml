@@ -54,7 +54,7 @@ local_worktree_candidate:
   as_of_date: 2026-08-20
   head_commit: c70577271aae3b59d74936d1753a0716549ec24c
   dirty: true
-  dirty_scope: firmware_overlay_es8388_input_gain_12db_uncommitted
+  dirty_scope: downlink_rejection_diagnostics_uncommitted
   code: complete
   wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
   enabled: candidate_20260820-112031-ingress-overflow-fix_agent_bridge_scope
@@ -80,7 +80,7 @@ local_worktree_candidate:
       transport_rejected (accept_downlink gate, no interrupt/cancel
       events; local media-session tests pass, production state
       divergence). Source uncommitted pending downlink instrumentation.
-    source_committed: false
+    source_committed: ee04810_firmware_gain_fix_with_ledger_writeback
   current_increment:
     name: media_ingress_overflow_fix_and_pcm_tap_diagnosis
     candidate_release_tag: 20260820-112031-ingress-overflow-fix

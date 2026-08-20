@@ -1108,6 +1108,16 @@ class MediaBridgeGrpcServer:
     ) -> bool:
         connection = self._connections.get(session_id)
         if connection is None:
+            logger.warning(
+                "media generation control rejected session=%s action=%s reason=%s "
+                "cause=connection_missing fence=turn=%s/gen=%s/epoch=%s",
+                session_id,
+                action,
+                reason,
+                fence.turn_id,
+                fence.generation_id,
+                fence.tool_epoch,
+            )
             return False
         task_epoch, context_version = connection.session.observe_versions(
             task_epoch,
@@ -1115,12 +1125,35 @@ class MediaBridgeGrpcServer:
         )
         try:
             connection.session.generation.advance(fence)
-        except ValueError:
+        except ValueError as exc:
+            logger.warning(
+                "media generation control rejected session=%s action=%s reason=%s "
+                "cause=fence_advance_error error=%s fence=turn=%s/gen=%s/epoch=%s "
+                "current_fence=%s",
+                session_id,
+                action,
+                reason,
+                exc,
+                fence.turn_id,
+                fence.generation_id,
+                fence.tool_epoch,
+                connection.session.generation.current,
+            )
             return False
         if not connection.session.reset_downlink_generation(fence):
+            logger.warning(
+                "media generation control rejected session=%s action=%s reason=%s "
+                "cause=downlink_reset_rejected fence=turn=%s/gen=%s/epoch=%s",
+                session_id,
+                action,
+                reason,
+                fence.turn_id,
+                fence.generation_id,
+                fence.tool_epoch,
+            )
             return False
         connection.session.generation_active = action != media_pb2.GENERATION_ACTION_CANCEL
-        return await self._enqueue(
+        enqueued = await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
                 generation=media_pb2.GenerationControl(
@@ -1135,6 +1168,19 @@ class MediaBridgeGrpcServer:
                 )
             ),
         )
+        if not enqueued:
+            logger.warning(
+                "media generation control rejected session=%s action=%s reason=%s "
+                "cause=enqueue_rejected connection_closed=%s fence=turn=%s/gen=%s/epoch=%s",
+                session_id,
+                action,
+                reason,
+                connection.closed,
+                fence.turn_id,
+                fence.generation_id,
+                fence.tool_epoch,
+            )
+        return enqueued
 
     async def emit_realtime_effect(
         self,

@@ -8,6 +8,8 @@ replay tests exercise the same invariants without opening a socket.
 
 from __future__ import annotations
 
+import logging
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Literal
@@ -18,7 +20,13 @@ from services.agent.src.voice_core.interaction_authority import InteractionAutho
 from services.agent.src.voice_core.media_protocol import AudioFrame, MediaEnvelope, SessionIdentity
 from services.agent.src.voice_core.speech_timeline import SpeechTimeline
 
+logger = logging.getLogger(__name__)
+
 BridgeState = Literal["connected", "reconnecting", "closed"]
+
+# Downlink rejections repeat at audio-frame rate while a generation is
+# aborted, so diagnostics are rate limited per session.
+_DOWNLINK_REJECT_LOG_INTERVAL_S = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +96,7 @@ class MediaBridgeSession:
     _last_client_progress_fingerprint: tuple[object, ...] | None = None
     _stop_keys: deque[str] = field(default_factory=lambda: deque(maxlen=64))
     _stop_fences: dict[str, GenerationFence] = field(default_factory=dict)
+    last_downlink_reject_log: float = 0.0
 
     def __post_init__(self) -> None:
         if self.max_pending_audio_frames <= 0:
@@ -316,9 +325,42 @@ class MediaBridgeSession:
     def last_capture_end_sample(self) -> int:
         return self._last_capture_end_sample
 
+    def _log_downlink_reject(self, reason: str, frame: PCMFrame) -> None:
+        now = time.monotonic()
+        if now - self.last_downlink_reject_log < _DOWNLINK_REJECT_LOG_INTERVAL_S:
+            return
+        self.last_downlink_reject_log = now
+        expected = self.generation.current
+        logger.warning(
+            "media downlink rejected session=%s reason=%s state=%s "
+            "generation_active=%s frame_fence=turn=%s/gen=%s/epoch=%s "
+            "session_fence=turn=%s/gen=%s/epoch=%s downlink_fence=%s "
+            "sequence=%s expected_sequence=%s source_start_sample=%s "
+            "last_source_end_sample=%s queue_depth=%s/%s stale_count=%s",
+            self.identity.session_id,
+            reason,
+            self.state,
+            self.generation_active,
+            frame.turn_id,
+            frame.generation_id,
+            frame.tool_epoch,
+            expected.turn_id,
+            expected.generation_id,
+            expected.tool_epoch,
+            self._downlink_fence,
+            frame.sequence,
+            self.last_downlink_sequence + 1,
+            frame.source_start_sample,
+            self._last_downlink_source_end_sample,
+            len(self.downlink),
+            self.max_pending_audio_frames,
+            self.stale_downlink_count,
+        )
+
     def accept_downlink(self, frame: PCMFrame) -> bool:
         if self.state == "closed" or frame.identity != self.identity:
             self.stale_downlink_count += 1
+            self._log_downlink_reject("closed_or_identity_mismatch", frame)
             return False
         expected = self.fence
         actual = GenerationFence(
@@ -338,9 +380,11 @@ class MediaBridgeSession:
             self.generation_active = True
         if not self.generation_active:
             self.stale_downlink_count += 1
+            self._log_downlink_reject("generation_not_active", frame)
             return False
         if actual != expected or not self.generation.accept(actual):
             self.stale_downlink_count += 1
+            self._log_downlink_reject("fence_mismatch_or_generation_rejected", frame)
             return False
 
         # Output sequence and source samples are local to a response
@@ -354,21 +398,25 @@ class MediaBridgeSession:
 
         if frame.sequence != self.last_downlink_sequence + 1:
             self.stale_downlink_count += 1
+            self._log_downlink_reject("sequence_gap", frame)
             return False
         if self.last_downlink_sequence < 0 and frame.source_start_sample != 0:
             self.stale_downlink_count += 1
+            self._log_downlink_reject("first_frame_source_offset", frame)
             return False
         if (
             self.last_downlink_sequence >= 0
             and frame.source_start_sample != self._last_downlink_source_end_sample
         ):
             self.stale_downlink_count += 1
+            self._log_downlink_reject("source_sample_gap", frame)
             return False
         if len(self.downlink) >= self.max_pending_audio_frames:
             # Prefer stale-generation rejection to unbounded buffering.  A
             # current frame is rejected explicitly so the caller can apply
             # backpressure or rebuild the media epoch.
             self.overflow_count += 1
+            self._log_downlink_reject("downlink_queue_full", frame)
             return False
         self.last_downlink_sequence = frame.sequence
         self._last_downlink_source_end_sample = (

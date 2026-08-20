@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
+import time
 
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
@@ -446,6 +448,61 @@ def test_media_bridge_does_not_advance_generation_from_unannounced_audio() -> No
     )
     assert not bridge.accept_downlink(future)
     assert bridge.fence == GenerationFence("future-audio", 0, 0, 0)
+
+
+def test_media_bridge_downlink_rejection_diagnostics_are_rate_limited(caplog) -> None:
+    server = MediaBridgeServer()
+    identity = SessionIdentity("reject-log", stream_epoch=1)
+    bridge = server.open(identity)
+    stale = PCMFrame(
+        identity=identity,
+        turn_id=1,
+        generation_id=9,
+        tool_epoch=0,
+        sequence=0,
+        source_start_sample=0,
+        frame_samples=2,
+        pcm_s16le=b"\x00\x00\x01\x00",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.voice_core.media_bridge_server"):
+        assert not bridge.accept_downlink(stale)
+        assert not bridge.accept_downlink(stale)
+    assert bridge.stale_downlink_count == 2
+    rejection_logs = [r for r in caplog.records if "media downlink rejected" in r.getMessage()]
+    assert len(rejection_logs) == 1
+    assert "reason=fence_mismatch_or_generation_rejected" in rejection_logs[0].getMessage()
+
+    # After the rate-limit window passes the next rejection logs again.
+    bridge.last_downlink_reject_log = time.monotonic() - 10.0
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.voice_core.media_bridge_server"):
+        assert not bridge.accept_downlink(stale)
+    rejection_logs = [r for r in caplog.records if "media downlink rejected" in r.getMessage()]
+    assert len(rejection_logs) == 2
+
+
+def test_media_bridge_downlink_rejection_logs_generation_gate_state(caplog) -> None:
+    server = MediaBridgeServer()
+    identity = SessionIdentity("reject-gate", stream_epoch=1)
+    bridge = server.open(identity)
+    bridge.generation_active = False
+    frame = PCMFrame(
+        identity=identity,
+        turn_id=5,
+        generation_id=5,
+        tool_epoch=0,
+        sequence=0,
+        source_start_sample=0,
+        frame_samples=2,
+        pcm_s16le=b"\x00\x00\x01\x00",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="services.agent.src.voice_core.media_bridge_server"):
+        assert not bridge.accept_downlink(frame)
+    messages = [r.getMessage() for r in caplog.records if "media downlink rejected" in r.getMessage()]
+    assert len(messages) == 1
+    assert "reason=generation_not_active" in messages[0]
+    assert "generation_active=False" in messages[0]
 
 
 def test_media_bridge_reconnect_cannot_change_device_identity() -> None:
