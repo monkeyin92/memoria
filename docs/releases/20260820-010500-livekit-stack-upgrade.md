@@ -27,7 +27,13 @@
 
 ## 生产切流与证据
 
-- 待切流后回填：容器状态、注册探针、LiveKit smoke、证据目录与 SHA-256。
+- 执行顺序：先升级 `/opt/livekit` LiveKit Server `v1.13.3 -> v1.13.5`（compose/livekit.yaml 已备份至 `/var/backups/memoria/*pre-20260820-livekit-v1.13.5`，`logging.level: warn` 保持），再切流 `agent / voice-core-media-bridge / media-edge`，最后发布 H5。传输工件 `images.tar.gz` SHA-256 `916c06fd0359c9e8e42e60ff1b4420f79436329202d5b82591c9ee4fae1ea108`，服务器校验一致后 `docker load`。
+- 切流后三个目标容器均 healthy、restart count=0；Agent 在新 LiveKit Server 上重新注册 worker `AW_2p7oFEKqQmE7`；心跳代际保持 `MEMORIA_RELEASE_TAG` agent=`20260814-231749-direct-canary`、bridge=`20260816-bridge-liveness-83af813`，Control API 心跳 `status=ready`、`worker_ready=true`、`livekit_ready=true`。
+- 候选 Agent 容器内 Provider smoke 全通过（Qwen realtime-search、Doubao、FunASR×6、DeepSeek、InterruptSemantic，exit_code=0）；LiveKit smoke `PASS: authenticated room-service access`。
+- H5：候选目录 `/var/www/memoria-releases/20260820-010500-livekit-stack-upgrade`，immutable union 262 个资源、无 collision；回滚目录 `rollback-20260820-010500-livekit-stack-upgrade`（旧入口 `20260808-171749` + 候选 union）manifest SHA-256 `2921c4ff7bd0ada7db658fab3aa437dc41e9de7d841d706b7148488ce3fa5311`；软链原子切换后 `/memoria-h5/`、SPA 路由、live、ready 均 200。
+- readiness 说明：切流前 smokes 已 expired，根因是既有 canary tag 漂移（`/opt/memoria/current/.env` 为 `20260812-173008`，Control API 实际运行 tag `20260814-231749-direct-canary`），`refresh_readiness.sh` 持续以旧 tag 标记被 409 拒绝；本次以运行 tag 覆盖在 Control API 容器内重新标记，ready 恢复 200。该漂移为既有运维问题，不属于本次升级引入。
+- 证据目录 `/opt/memoria/direct-canaries/20260820-010500-livekit-stack-upgrade/`：`CUTOVER_RESULT.txt` `9afe0bdd7ad769854d25e3b8f82b8e4ccc673ecbe74d198e68cf2c4557181a71`、`POST_CUTOVER_STATE.txt` `67b92f7f450024ab31014fb7c2bf9b9f4268047bda466fcbd7ecacc161934e3f`、`PROVIDER_SMOKE_RESULT.txt` `c192007ccbaca74af3e84c014123c6a9a832db47b0332b006ef0ce2b1e3a0c54`、`LIVEKIT_UPGRADE_RESULT.txt` `2307e1d82c29b4e703b65b3b07b3d90b1d5b0f83ce9b7d535dc9cace250546e0`、`H5_DEPLOY_RESULT.txt` `99fcff0302c36a2091c5257c9819ede9e5be89f1f039ffdd2e33e467b75c7a30`；`EVIDENCE_MANIFEST.sha256` `55f888d100bc154d63001ed2f546754634cf91afe35133ff2a188fd31c51c5c7`，14/14 条目校验通过。回滚镜像 tag `rollback-20260820-010500-livekit-stack-upgrade-pre-agent/-bridge/-edge` 已冻结。
+- 制品清理：删除三个已取代的 incoming 上传包（约 4.3 GB）、16 个旧 agent 镜像 tag、2 个旧 media-edge tag 与 1 个旧 control-api tag；仅保留当前运行版本与紧邻可运行回滚版本（agent `20260820` + rollback 指向 `20260819-185500` 同 ID，media-edge `20260820` + rollback 指向 `20260818-103228` 同 ID，livekit `v1.13.5` + `v1.13.3` 回滚点）；H5 release 目录按 immutable 追加式保留策略不清理。根盘由 47% 降至 38%。
 
 ## 验收边界
 
