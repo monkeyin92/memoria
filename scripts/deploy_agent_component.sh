@@ -169,9 +169,11 @@ archive_commit="$(git get-tar-commit-id <"$artifact")"
 if command -v sha256sum >/dev/null 2>&1; then
   source_sha="$(sha256sum "$artifact" | cut -d ' ' -f1)"
   dockerfile_sha="$(sha256sum "$dockerfile" | cut -d ' ' -f1)"
+  compose_sha="$(git -C "$ROOT" show "$expected_commit:docker-compose.production.yml" | sha256sum | cut -d ' ' -f1)"
 else
   source_sha="$(shasum -a 256 "$artifact" | cut -d ' ' -f1)"
   dockerfile_sha="$(shasum -a 256 "$dockerfile" | cut -d ' ' -f1)"
+  compose_sha="$(git -C "$ROOT" show "$expected_commit:docker-compose.production.yml" | shasum -a 256 | cut -d ' ' -f1)"
 fi
 if command -v sha256sum >/dev/null 2>&1; then
   lock_sha="$(git -C "$ROOT" show "$base_commit:uv.lock" | sha256sum | cut -c1-16)"
@@ -193,6 +195,7 @@ runtime_base=$runtime_base
 target_image=$target_image
 source_sha256=$source_sha
 dockerfile_sha256=$dockerfile_sha
+compose_sha256=$compose_sha
 EOF
 
 artifact_bytes="$(wc -c <"$artifact" | tr -d ' ')"
@@ -309,11 +312,12 @@ if [[ "$cutover" != true ]]; then
 fi
 
 ssh "$remote" sudo -n bash -s -- \
-  "$remote_dir" "$target_image" "$release_tag" <<'REMOTE_CUTOVER'
+  "$remote_dir" "$target_image" "$release_tag" "$compose_sha" <<'REMOTE_CUTOVER'
 set -Eeuo pipefail
 remote_dir="$1"
 target_image="$2"
 release_tag="$3"
+expected_compose_sha="$4"
 agent_container="memoria-agent-1"
 bridge_container="memoria-voice-core-media-bridge-1"
 
@@ -328,12 +332,33 @@ bridge_config_files="$(docker inspect "$bridge_container" --format '{{index .Con
 working_dir="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')"
 project_name="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.docker.compose.project"}}')"
 [[ -n "$config_files" && "$config_files" == "$bridge_config_files" ]]
-[[ -d "$working_dir" && "$project_name" == memoria ]]
+[[ "$project_name" == memoria ]]
+
+fallback_working_dir="/opt/memoria/releases"
+fallback_config="$fallback_working_dir/docker-compose.production.yml"
+if [[ ! -d "$working_dir" ]]; then
+  echo "Compose working directory was pruned; using the verified current release root" >&2
+  working_dir="$fallback_working_dir"
+fi
+[[ -d "$working_dir" ]]
 
 IFS=',' read -r -a previous_files <<<"$config_files"
 previous_args=()
 for file in "${previous_files[@]}"; do
-  [[ -f "$file" && ! -L "$file" ]]
+  if [[ ! -f "$file" && "${file##*/}" == docker-compose.production.yml ]]; then
+    echo "Compose base snapshot was pruned; using the verified current production file" >&2
+    file="$fallback_config"
+  fi
+  [[ -f "$file" && ! -L "$file" ]] || {
+    echo "required Compose file is unavailable or unsafe: $file" >&2
+    exit 1
+  }
+  if [[ "${file##*/}" == docker-compose.production.yml ]]; then
+    [[ "$(sha256sum "$file" | cut -d ' ' -f1)" == "$expected_compose_sha" ]] || {
+      echo "production Compose file does not match the tagged release" >&2
+      exit 1
+    }
+  fi
   previous_args+=(--file "$file")
 done
 
@@ -368,7 +393,7 @@ rollback() {
   echo "component cutover failed; restoring previous Compose configuration" >&2
   (
     cd "$working_dir"
-    docker compose --project-name "$project_name" \
+    env MEMORIA_RELEASE_TAG="$release_tag" docker compose --project-name "$project_name" \
       "${previous_args[@]}" \
       --profile media-runtime up -d --no-deps --no-build \
       agent voice-core-media-bridge
@@ -377,7 +402,7 @@ rollback() {
 trap rollback ERR
 
 cd "$working_dir"
-docker compose --project-name "$project_name" \
+env MEMORIA_RELEASE_TAG="$release_tag" docker compose --project-name "$project_name" \
   "${previous_args[@]}" --file "$override" \
   --profile media-runtime up -d --no-deps --no-build \
   agent voice-core-media-bridge

@@ -502,6 +502,10 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert "--no-deps --no-build" in deploy
     assert "trap rollback ERR" in deploy
     assert "runtime changes escape the Agent component" in deploy
+    assert "compose_sha256=$compose_sha" in deploy
+    assert "Compose base snapshot was pruned" in deploy
+    assert "production Compose file does not match the tagged release" in deploy
+    assert 'env MEMORIA_RELEASE_TAG="$release_tag" docker compose' in deploy
 
 
 def test_ci_selects_component_gates_and_uses_collision_safe_pytest_imports() -> None:
