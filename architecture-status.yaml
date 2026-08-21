@@ -1,13 +1,13 @@
 # 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
 # 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
 schema_version: 2
-as_of_commit: a63ead136e92e4d00b82ddd51a8721c67d2e2f2c
+as_of_commit: 711eb0cbb4743d28224ffc4f21e3d3a03b985bee
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 production_release_tag: 20260814-231749-direct-canary
 production_release_symlink: /opt/memoria/releases/20260812-173008
-production_code_release_tag: 20260821-135408-pcm-pacing-asr-tail
-production_code_commit: 714196f31b3a6edc793c2d07f877eb4b47085829
+production_code_release_tag: 20260821-153249-playback-terminal
+production_code_commit: 711eb0cbb4743d28224ffc4f21e3d3a03b985bee
 production_runtime_overlays:
   control_api:
     image: memoria-control-api:20260821-121418-reply-delivery-projection
@@ -18,25 +18,25 @@ production_runtime_overlays:
     unauthenticated_read_write_routes: fail_closed_401
     cutover_evidence_file: /opt/memoria/direct-canaries/20260821-121418-reply-delivery-projection/CUTOVER_RESULT.txt
   agent:
-    image: memoria-agent:20260821-135408-pcm-pacing-asr-tail
+    image: memoria-agent:20260821-153249-playback-terminal
     runtime_release_tag: 20260814-231749-direct-canary
     production_runtime_verified: true
-    oci_revision: 714196f31b3a6edc793c2d07f877eb4b47085829
+    oci_revision: 711eb0cbb4743d28224ffc4f21e3d3a03b985bee
     release_kind: agent_source_overlay
-    cutover_evidence_file: /opt/memoria/direct-canaries/20260821-135408-pcm-pacing-asr-tail/CUTOVER_RESULT.txt
+    cutover_evidence_file: /opt/memoria/direct-canaries/20260821-153249-playback-terminal/CUTOVER_RESULT.txt
   voice_core_media_bridge:
-    image: memoria-agent:20260821-135408-pcm-pacing-asr-tail
+    image: memoria-agent:20260821-153249-playback-terminal
     runtime_release_tag: 20260816-bridge-liveness-83af813
     production_runtime_verified: true
-    oci_revision: 714196f31b3a6edc793c2d07f877eb4b47085829
+    oci_revision: 711eb0cbb4743d28224ffc4f21e3d3a03b985bee
     release_kind: agent_source_overlay
-    cutover_evidence_file: /opt/memoria/direct-canaries/20260821-135408-pcm-pacing-asr-tail/CUTOVER_RESULT.txt
+    cutover_evidence_file: /opt/memoria/direct-canaries/20260821-153249-playback-terminal/CUTOVER_RESULT.txt
     diagnostics: media_pcm_tap_enabled_MEDIA_PCM_TAP_DIR_data_diagnostics_pcm-tap_and_FUNASR_WS_TRACE_true
   media_edge:
-    image: memoria-media-edge:20260820-010500-livekit-stack-upgrade
-    image_id: sha256:9beee50dc6f51b2964c8fc87c0c7bffa3b07bb8835bf83eef9e501c5fb304d57
+    image: memoria-media-edge:20260821-153249-playback-terminal
+    image_id: sha256:c612f31728804575fc27ff767684705e67351c76ca9939a472899c32b5dde860
     runtime_release_tag: 20260816-bridge-liveness-83af813
-    oci_revision: 80489ed6da2a92d40b2ee71b922cc53fa25457c5
+    oci_revision: 711eb0cbb4743d28224ffc4f21e3d3a03b985bee
     production_runtime_verified: true
 production_runtime_verified: true
 direct_real_device_verified: false
@@ -53,14 +53,14 @@ student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
   as_of_date: 2026-08-21
-  head_commit: a63ead136e92e4d00b82ddd51a8721c67d2e2f2c
+  head_commit: 711eb0cbb4743d28224ffc4f21e3d3a03b985bee
   dirty: true
-  dirty_scope: playback_terminal_i2s_tx_eof_and_button_hard_stop_candidate_plus_preserved_user_untracked_files
+  dirty_scope: preserved_user_untracked_files_only
   code: complete
   wired: esp32_to_media_edge_to_media_v1_to_voice_core_playback_terminal
-  enabled: false
-  verified: local_cross_language_and_clean_firmware_build_only
-  production_deployed: false
+  enabled: agent_bridge_media_edge_candidate_production_zero_session
+  verified: production_runtime_zero_session_plus_local_cross_language_and_clean_firmware_build
+  production_deployed: coordinated_cutover_pass_2026_08_21
   direct_real_device_verified: false
   full_duplex_verified: false
   playback_terminal_candidate:
@@ -70,11 +70,13 @@ local_worktree_candidate:
       signed ESP32 started/progress/ended/error receipt through Go Media Edge
       and media-v1 PlaybackEventType into Python PlaybackLedger/ReplyDelivery;
       button.stop is emitted for any active generation before or after first PCM
-    enabled: false
+    enabled: server_agent_bridge_media_edge_true_firmware_pending
     verified: >-
       Python focused playback tests, Go test ./..., firmware source tests,
       ESP-IDF 6.0.2 clean build, merge-bin, overlay gate and diff check passed
-      on 2026-08-21; no server cutover, flash, serial, DAC or acoustic proof
+      on 2026-08-21; coordinated server cutover and zero-session readiness,
+      Provider smoke and non-target container identity checks passed; no flash,
+      serial, DAC or acoustic proof
     root_causes_closed_in_code:
       - device_event_type_was_collapsed_to_untyped_playback_watermark
       - playback_receipt_fence_omitted_nonzero_session_epoch
@@ -91,7 +93,14 @@ local_worktree_candidate:
     firmware_app_size_bytes: 2951088
     firmware_partition_free_percent: 29
     board_connected: false
-    next_gate: coordinated_agent_bridge_media_edge_release_then_identity_safe_flash_and_t5_t8
+    next_gate: identity_safe_flash_then_t5_t8_real_device_acceptance
+    production_release_tag: 20260821-153249-playback-terminal
+    production_cutover_evidence_file: /opt/memoria/direct-canaries/20260821-153249-playback-terminal/CUTOVER_RESULT.txt
+    production_cutover_evidence_sha256: ec8289118520604013295b538526057307f3fa216fd7c5d00eff506245469832
+    production_post_cutover_evidence_file: /opt/memoria/direct-canaries/20260821-153249-playback-terminal/POST_CUTOVER_STATE.txt
+    production_post_cutover_evidence_sha256: 5de51be0a997d136e91ed93d976582a5b16edeb2361baa7afbeb6251c45b31b6
+    provider_smoke_evidence_file: /opt/memoria/direct-canaries/20260821-153249-playback-terminal/PROVIDER_SMOKE_RESULT.txt
+    provider_smoke_evidence_sha256: b820915c7b05573311bf1fdd1089b3264a7055b1d7db7a08d3591bc013efdf7e
   firmware_candidate:
     as_of_date: 2026-08-20
     name: es8388_input_gain_24db_to_12db_noise_floor_fix
