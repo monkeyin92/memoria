@@ -2013,6 +2013,90 @@ async def test_audio_ingress_queues_new_audio_after_finalize_boundary() -> None:
 
 
 @pytest.mark.asyncio
+async def test_finalize_publishes_watermark_before_rechecking_pending_endpoint() -> None:
+    class FinalizeFinalProvider(FakeMediaProvider):
+        async def ingest_audio(
+            self,
+            _identity: SessionIdentity,
+            _frame: AudioFrame,
+        ) -> Sequence[ASRResult]:
+            return ()
+
+        async def finalize_speech_segment(
+            self,
+            _identity: SessionIdentity,
+        ) -> Sequence[ASRResult]:
+            return (
+                ASRResult(
+                    task_epoch=1,
+                    sentence_id="finalize-final",
+                    revision=1,
+                    capture_start_sample=0,
+                    capture_end_sample=320,
+                    text="终稿覆盖",
+                    is_final=True,
+                    stream_epoch=1,
+                ),
+            )
+
+    provider = FinalizeFinalProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0,
+        turn_endpoint_min_grace_s=0,
+        turn_endpoint_max_grace_s=0,
+        turn_endpoint_absolute_timeout_s=0.03,
+    )
+    registry.install()
+    identity = SessionIdentity("finalize-watermark-recheck")
+    session = bridge.bridge.open(identity)
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="finalize-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+        ),
+    )
+    context = await registry._get_or_create(identity)
+    vad_end = SpeechSegment(
+        session_id=identity.session_id,
+        stream_epoch=1,
+        provider_task_epoch=0,
+        segment_id="finalize-end",
+        revision=1,
+        kind=SegmentKind.VAD,
+        capture_start_sample=640,
+        capture_end_sample=641,
+        final=True,
+        voiced_end_sample=640,
+    )
+    assert context.runtime.ingest_media_speech_segment(vad_end)
+    await registry._apply_projection_segment(context, vad_end)
+    context.asr.last_sent_sample = 640
+    context.turn_start_sample = 0
+    context.turn_endpoint_sample = 640
+    context.turn_retire_sample = 640
+
+    assert await registry._audio_ingress.finalize_speech_segment(context)
+    await asyncio.sleep(0.05)
+
+    assert context.ingress.last_finalized_audio_watermark == 640
+    assert [
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["终稿覆盖"]
+    assert context.asr.last_committed_sample == 640
+    await context.runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_vad_finalize_failure_does_not_escape_media_callback(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

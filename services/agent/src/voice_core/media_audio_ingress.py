@@ -85,6 +85,8 @@ class MediaAudioIngressHost(Protocol):
 
     def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
+    def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None: ...
+
 
 class MediaAudioIngress:
     """Serialize bounded PCM ingress without blocking the bridge reader."""
@@ -347,6 +349,13 @@ class MediaAudioIngress:
                 observe_task_before_results=False,
             )
             context.ingress.last_finalized_audio_watermark = audio_watermark
+            # Final ASR results returned by provider finalization are observed
+            # before this watermark is published. Re-arm the endpoint check
+            # after publishing the watermark, otherwise a zero/short grace
+            # task can fail closed once and the valid final is later discarded
+            # by the absolute tail timeout.
+            if context.turn_endpoint_sample is not None:
+                self._host._schedule_turn_commit(context)
             self._log_asr_boundary(
                 context,
                 result="success",
