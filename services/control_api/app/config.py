@@ -80,6 +80,9 @@ class ControlSettings(BaseSettings):
         default=120, ge=30, le=900, alias="MEDIA_SLO_SNAPSHOT_TTL_S"
     )
     media_slo_report_token: SecretStr = Field(default=SecretStr(""), alias="MEDIA_SLO_REPORT_TOKEN")
+    media_reply_delivery_token: SecretStr = Field(
+        default=SecretStr(""), alias="MEDIA_REPLY_DELIVERY_TOKEN"
+    )
     streamcore_whip_url: str = Field(default="", alias="STREAMCORE_WHIP_URL")
     media_edge_control_url: str = Field(default="", alias="MEDIA_EDGE_CONTROL_URL")
     media_edge_control_timeout_s: float = Field(

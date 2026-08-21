@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast
@@ -364,6 +364,40 @@ CREATE TABLE IF NOT EXISTS device_media_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_device_media_sessions_device
 ON device_media_sessions(device_id, created_at);
+
+CREATE TABLE IF NOT EXISTS media_reply_delivery_events (
+    event_id TEXT PRIMARY KEY CHECK (length(event_id) = 64),
+    schema_version TEXT NOT NULL CHECK (schema_version = 'reply-delivery-v1'),
+    delivery_id TEXT NOT NULL CHECK (length(delivery_id) BETWEEN 1 AND 512),
+    session_id TEXT NOT NULL CHECK (length(session_id) BETWEEN 1 AND 128),
+    session_epoch INTEGER NOT NULL CHECK (session_epoch >= 0),
+    turn_id INTEGER NOT NULL CHECK (turn_id >= 0),
+    generation_id INTEGER NOT NULL CHECK (generation_id >= 0),
+    tool_epoch INTEGER NOT NULL CHECK (tool_epoch >= 0),
+    event_type TEXT NOT NULL CHECK (event_type IN (
+        'first_frame_sent', 'provider_completed', 'actual_heard',
+        'playback_ended', 'preempted', 'transport_rejected', 'error',
+        'skipped', 'no_audio'
+    )),
+    terminal_event TEXT CHECK (terminal_event IS NULL OR terminal_event IN (
+        'playback_ended', 'preempted', 'transport_rejected', 'error',
+        'skipped', 'no_audio'
+    )),
+    terminal_reason TEXT CHECK (
+        terminal_reason IS NULL OR length(terminal_reason) BETWEEN 1 AND 64
+    ),
+    first_frame_sent INTEGER NOT NULL CHECK (first_frame_sent IN (0, 1)),
+    provider_completed INTEGER NOT NULL CHECK (provider_completed IN (0, 1)),
+    actual_heard INTEGER NOT NULL CHECK (actual_heard IN (0, 1)),
+    playback_ended INTEGER NOT NULL CHECK (playback_ended IN (0, 1)),
+    reason TEXT CHECK (reason IS NULL OR length(reason) BETWEEN 1 AND 64),
+    occurred_at TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    UNIQUE (delivery_id, event_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_reply_delivery_events_received
+ON media_reply_delivery_events(received_at);
 """
 
 _PROFILE_BOOLEAN_COLUMNS = {
@@ -2783,6 +2817,19 @@ class MemoryStore:
                         "SELECT COUNT(*) FROM voice_sessions WHERE user_id = ?", (user_id,)
                     ).fetchone()[0]
                 ),
+                "media_reply_delivery_events": int(
+                    connection.execute(
+                        """
+                        SELECT COUNT(*) FROM media_reply_delivery_events
+                        WHERE session_id IN (
+                            SELECT session_id FROM voice_sessions
+                            WHERE user_id = ? OR resource_owner_account_id = ?
+                               OR legacy_grantee_account_id = ?
+                        )
+                        """,
+                        (user_id, user_id, user_id),
+                    ).fetchone()[0]
+                ),
                 "auth_sessions": int(
                     connection.execute(
                         "SELECT COUNT(*) FROM auth_sessions WHERE user_id = ?", (user_id,)
@@ -2827,6 +2874,17 @@ class MemoryStore:
             )
             connection.execute(
                 "DELETE FROM device_control_intents WHERE requested_by = ?", (user_id,)
+            )
+            connection.execute(
+                """
+                DELETE FROM media_reply_delivery_events
+                WHERE session_id IN (
+                    SELECT session_id FROM voice_sessions
+                    WHERE user_id = ? OR resource_owner_account_id = ?
+                       OR legacy_grantee_account_id = ?
+                )
+                """,
+                (user_id, user_id, user_id),
             )
             connection.execute("DELETE FROM device_media_sessions WHERE subject_id = ?", (user_id,))
             connection.execute("DELETE FROM profiles WHERE user_id = ?", (user_id,))
@@ -3194,6 +3252,17 @@ class MemoryStore:
 
     def delete_voice_sessions(self, *, user_id: str) -> int:
         with self._connection() as connection:
+            connection.execute(
+                """
+                DELETE FROM media_reply_delivery_events
+                WHERE session_id IN (
+                    SELECT session_id FROM voice_sessions
+                    WHERE user_id = ? OR resource_owner_account_id = ?
+                       OR legacy_grantee_account_id = ?
+                )
+                """,
+                (user_id, user_id, user_id),
+            )
             cursor = connection.execute(
                 """
                 DELETE FROM voice_sessions
@@ -3462,3 +3531,109 @@ class MemoryStore:
         if row is None:  # pragma: no cover
             raise RuntimeError("profile update failed")
         return dict(row)
+
+    def record_media_reply_delivery_event(
+        self,
+        *,
+        event_id: str,
+        schema_version: str,
+        delivery_id: str,
+        session_id: str,
+        session_epoch: int,
+        turn_id: int,
+        generation_id: int,
+        tool_epoch: int,
+        event_type: str,
+        terminal_event: str | None,
+        terminal_reason: str | None,
+        first_frame_sent: bool,
+        provider_completed: bool,
+        actual_heard: bool,
+        playback_ended: bool,
+        reason: str | None,
+        occurred_at: str,
+        received_at: str,
+        retention_days: int = 7,
+    ) -> bool:
+        """Insert one idempotent media delivery observation outside archive history."""
+
+        if retention_days <= 0:
+            raise ValueError("media reply delivery retention must be positive")
+        with self._connection() as connection:
+            existing = connection.execute(
+                "SELECT event_id FROM media_reply_delivery_events "
+                "WHERE delivery_id = ? AND event_type = ?",
+                (delivery_id, event_type),
+            ).fetchone()
+            if existing is not None:
+                if str(existing["event_id"]) != event_id:
+                    raise ValueError("media reply delivery event conflicts with existing event")
+                return False
+            connection.execute(
+                """
+                INSERT INTO media_reply_delivery_events (
+                    event_id, schema_version, delivery_id, session_id,
+                    session_epoch, turn_id, generation_id, tool_epoch,
+                    event_type, terminal_event, terminal_reason,
+                    first_frame_sent, provider_completed, actual_heard,
+                    playback_ended, reason, occurred_at, received_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    schema_version,
+                    delivery_id,
+                    session_id,
+                    session_epoch,
+                    turn_id,
+                    generation_id,
+                    tool_epoch,
+                    event_type,
+                    terminal_event,
+                    terminal_reason,
+                    int(first_frame_sent),
+                    int(provider_completed),
+                    int(actual_heard),
+                    int(playback_ended),
+                    reason,
+                    occurred_at,
+                    received_at,
+                ),
+            )
+            cutoff = (
+                datetime.now(UTC) - timedelta(days=retention_days)
+            ).isoformat().replace("+00:00", "Z")
+            stale = connection.execute(
+                "SELECT event_id FROM media_reply_delivery_events "
+                "WHERE received_at < ? ORDER BY received_at LIMIT 256",
+                (cutoff,),
+            ).fetchall()
+            if stale:
+                connection.executemany(
+                    "DELETE FROM media_reply_delivery_events WHERE event_id = ?",
+                    [(str(row["event_id"]),) for row in stale],
+                )
+        return True
+
+    def media_reply_delivery_events(
+        self,
+        *,
+        delivery_id: str,
+    ) -> tuple[dict[str, Any], ...]:
+        """Read only the exact fence-bound delivery projection."""
+
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT event_id, schema_version, delivery_id, session_id,
+                       session_epoch, turn_id, generation_id, tool_epoch,
+                       event_type, terminal_event, terminal_reason,
+                       first_frame_sent, provider_completed, actual_heard,
+                       playback_ended, reason, occurred_at, received_at
+                FROM media_reply_delivery_events
+                WHERE delivery_id = ?
+                ORDER BY occurred_at, event_id
+                """,
+                (delivery_id,),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)

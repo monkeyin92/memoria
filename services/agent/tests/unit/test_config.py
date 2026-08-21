@@ -82,6 +82,26 @@ def test_production_media_slo_reporter_requires_scoped_token(
         AgentSettings()
 
 
+def test_production_reply_delivery_reporter_requires_scoped_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("LIVEKIT_URL", "wss://test.livekit.cloud")
+    monkeypatch.setenv("MEMORIA_ARCHIVE_SINK_ENABLED", "false")
+    monkeypatch.setenv("MEDIA_REPLY_DELIVERY_ENABLED", "true")
+    monkeypatch.setenv(
+        "MEDIA_REPLY_DELIVERY_URL",
+        "http://control-api:8000/v1/internal/media-runtime/reply-delivery",
+    )
+    monkeypatch.setenv("MEDIA_REPLY_DELIVERY_TOKEN", "too-short")
+
+    with pytest.raises(
+        ValidationError,
+        match="reply delivery reporter requires MEDIA_REPLY_DELIVERY_TOKEN",
+    ):
+        AgentSettings()
+
+
 def test_media_bridge_limits_and_tls_paths_are_loaded(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

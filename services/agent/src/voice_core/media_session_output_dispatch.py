@@ -24,7 +24,10 @@ from services.agent.src.voice_core.media_session_types import (
 from services.agent.src.voice_core.media_session_types import (
     OutputWork as _OutputWork,
 )
-from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
+from services.agent.src.voice_core.reply_delivery import (
+    ReplyDeliveryEvent,
+    reply_delivery_projection_payload,
+)
 
 if TYPE_CHECKING:
     from services.agent.src.observability.metrics import MetricsRegistry
@@ -245,6 +248,24 @@ class MediaOutputDispatchMixin:
             snapshot.playback_ended,
             snapshot.actual_heard,
         )
+        publisher = getattr(self, "reply_delivery_publisher", None)
+        if publisher is not None:
+            try:
+                publisher(
+                    reply_delivery_projection_payload(
+                        snapshot,
+                        event,
+                        reason=reason,
+                    )
+                )
+            except Exception:
+                # Projection is diagnostic only and must never rewrite the
+                # in-process delivery authority or block the audio path.
+                logger.exception(
+                    "reply delivery projection admission failed session=%s event=%s",
+                    fence.session_id,
+                    event.value,
+                )
 
     async def generate_reply(
         self,

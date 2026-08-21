@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -97,6 +98,7 @@ class MediaVoiceCoreRegistry(
     turn_endpoint_absolute_timeout_s: float = 2.5
     output_generation_timeout_s: float = 45.0
     delegation_initial_decision_timeout_s: float = 0.5
+    reply_delivery_publisher: Callable[[dict[str, Any]], bool] | None = None
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
     _cleanup_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
     _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]] = field(

@@ -8,9 +8,12 @@ outcome.  It deliberately stores no transcript or audio payload.
 
 from __future__ import annotations
 
+import hashlib
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 from services.agent.src.contracts.ids import GenerationFence
 
@@ -174,9 +177,49 @@ class ReplyDeliveryLedger:
             self._records.popitem(last=False)
 
 
+def reply_delivery_projection_payload(
+    snapshot: ReplyDelivery,
+    event: ReplyDeliveryEvent,
+    *,
+    reason: str = "",
+    occurred_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Build the cross-process, text-free projection for one changed event."""
+
+    fence = snapshot.key.fence
+    event_id = hashlib.sha256(
+        f"{snapshot.delivery_id}\0{event.value}".encode()
+    ).hexdigest()
+    observed = occurred_at or datetime.now(UTC)
+    if observed.tzinfo is None or observed.utcoffset() is None:
+        raise ValueError("reply delivery occurred_at must be timezone-aware")
+    return {
+        "schema_version": "reply-delivery-v1",
+        "event_id": event_id,
+        "delivery_id": snapshot.delivery_id,
+        "session_id": fence.session_id,
+        "session_epoch": fence.session_epoch,
+        "turn_id": fence.turn_id,
+        "generation_id": fence.generation_id,
+        "tool_epoch": fence.tool_epoch,
+        "event_type": event.value,
+        "terminal_event": (
+            snapshot.terminal_event.value if snapshot.terminal_event is not None else None
+        ),
+        "terminal_reason": snapshot.terminal_reason,
+        "first_frame_sent": snapshot.first_frame_sent,
+        "provider_completed": snapshot.provider_completed,
+        "actual_heard": snapshot.actual_heard,
+        "playback_ended": snapshot.playback_ended,
+        "reason": reason or None,
+        "occurred_at": observed.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+    }
+
+
 __all__ = [
     "ReplyDelivery",
     "ReplyDeliveryEvent",
     "ReplyDeliveryKey",
     "ReplyDeliveryLedger",
+    "reply_delivery_projection_payload",
 ]

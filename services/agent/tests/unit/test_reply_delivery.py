@@ -5,6 +5,7 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.voice_core.reply_delivery import (
     ReplyDeliveryEvent,
     ReplyDeliveryLedger,
+    reply_delivery_projection_payload,
 )
 
 
@@ -83,3 +84,23 @@ def test_actual_heard_requires_first_frame_boundary() -> None:
 
     with pytest.raises(ValueError, match="first_frame_sent"):
         ledger.record(fence, ReplyDeliveryEvent.ACTUAL_HEARD)
+
+
+def test_projection_payload_is_fenced_and_text_free() -> None:
+    ledger = ReplyDeliveryLedger()
+    fence = GenerationFence("session", 7, 11, 2, session_epoch=3)
+    snapshot, changed = ledger.record(fence, ReplyDeliveryEvent.FIRST_FRAME_SENT)
+    assert changed
+
+    payload = reply_delivery_projection_payload(
+        snapshot,
+        ReplyDeliveryEvent.FIRST_FRAME_SENT,
+        reason="downlink_frame_accepted",
+    )
+
+    assert payload["delivery_id"] == snapshot.delivery_id
+    assert payload["event_id"]
+    assert payload["session_epoch"] == 3
+    assert payload["first_frame_sent"] is True
+    assert "text" not in payload
+    assert "pcm_s16le" not in payload

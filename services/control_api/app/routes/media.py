@@ -7,14 +7,15 @@ reads long-term memory or accepts a client-selected runtime.
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal, Self, cast
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from packages.contracts.generated.python.multi_subject_contracts import CapabilityValue
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from services.agent.src.voice_core.device_security import SignedChallenge
 from services.common.companions import DEFAULT_COMPANION_ID, companion_definition
@@ -109,6 +110,52 @@ class MediaSLOReportRequest(BaseModel):
     source: str = Field(min_length=1, max_length=64)
     metrics: dict[str, float]
     ttl_s: int | None = Field(default=None, ge=30, le=900)
+
+
+class MediaReplyDeliveryEventRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: Literal["reply-delivery-v1"]
+    event_id: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    delivery_id: str = Field(min_length=1, max_length=512)
+    session_id: str = Field(min_length=1, max_length=128)
+    session_epoch: int = Field(ge=0)
+    turn_id: int = Field(ge=0)
+    generation_id: int = Field(ge=0)
+    tool_epoch: int = Field(ge=0)
+    event_type: Literal[
+        "first_frame_sent",
+        "provider_completed",
+        "actual_heard",
+        "playback_ended",
+        "preempted",
+        "transport_rejected",
+        "error",
+        "skipped",
+        "no_audio",
+    ]
+    terminal_event: Literal[
+        "playback_ended",
+        "preempted",
+        "transport_rejected",
+        "error",
+        "skipped",
+        "no_audio",
+    ] | None = None
+    terminal_reason: str | None = Field(default=None, min_length=1, max_length=64)
+    first_frame_sent: bool
+    provider_completed: bool
+    actual_heard: bool
+    playback_ended: bool
+    reason: str | None = Field(default=None, min_length=1, max_length=64)
+    occurred_at: datetime
+
+    @field_validator("occurred_at")
+    @classmethod
+    def _occurred_at_must_be_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("occurred_at must be timezone-aware")
+        return value.astimezone(UTC)
 
 
 class CreateMediaSessionRequest(BaseModel):
@@ -1354,12 +1401,101 @@ async def report_media_slo(
     }
 
 
+def _require_reply_delivery_token(request: Request, provided: str) -> None:
+    expected = request.app.state.settings.media_reply_delivery_token.get_secret_value().strip()
+    if not expected or not hmac.compare_digest(provided.strip(), expected):
+        raise HTTPException(status_code=401, detail="media reply delivery token is invalid")
+
+
+@internal_router.post("/reply-delivery")
+async def record_media_reply_delivery(
+    body: MediaReplyDeliveryEventRequest,
+    request: Request,
+    x_media_reply_delivery_token: Annotated[str, Header(alias="X-Media-Reply-Delivery-Token")],
+) -> dict[str, Any]:
+    """Persist one idempotent, text-free delivery observation."""
+
+    _require_reply_delivery_token(request, x_media_reply_delivery_token)
+    expected_delivery_id = (
+        f"{body.session_id}/epoch-{body.session_epoch}"
+        f"/turn-{body.turn_id}/generation-{body.generation_id}/tool-{body.tool_epoch}"
+    )
+    expected_event_id = hashlib.sha256(
+        f"{expected_delivery_id}\0{body.event_type}".encode()
+    ).hexdigest()
+    if not hmac.compare_digest(body.delivery_id, expected_delivery_id) or not hmac.compare_digest(
+        body.event_id, expected_event_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "media_reply_delivery_fence_mismatch"},
+        )
+    occurred_at = body.occurred_at.isoformat().replace("+00:00", "Z")
+    received_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    try:
+        inserted = request.app.state.memory_store.record_media_reply_delivery_event(
+            event_id=body.event_id,
+            schema_version=body.schema_version,
+            delivery_id=body.delivery_id,
+            session_id=body.session_id,
+            session_epoch=body.session_epoch,
+            turn_id=body.turn_id,
+            generation_id=body.generation_id,
+            tool_epoch=body.tool_epoch,
+            event_type=body.event_type,
+            terminal_event=body.terminal_event,
+            terminal_reason=body.terminal_reason,
+            first_frame_sent=body.first_frame_sent,
+            provider_completed=body.provider_completed,
+            actual_heard=body.actual_heard,
+            playback_ended=body.playback_ended,
+            reason=body.reason,
+            occurred_at=occurred_at,
+            received_at=received_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "media_reply_delivery_conflict", "message": str(exc)},
+        ) from exc
+    return {"event_id": body.event_id, "delivery_id": body.delivery_id, "inserted": inserted}
+
+
+@internal_router.get("/reply-delivery")
+async def read_media_reply_delivery(
+    request: Request,
+    delivery_id: str = Query(min_length=1, max_length=512),
+    x_media_reply_delivery_token: Annotated[str, Header(alias="X-Media-Reply-Delivery-Token")]
+    = "",
+) -> dict[str, Any]:
+    """Read one exact delivery projection for diagnostics or SLO consumers."""
+
+    _require_reply_delivery_token(request, x_media_reply_delivery_token)
+    events = request.app.state.memory_store.media_reply_delivery_events(
+        delivery_id=delivery_id,
+    )
+    return {
+        "delivery_id": delivery_id,
+        "events": [
+            {
+                **event,
+                "first_frame_sent": bool(event["first_frame_sent"]),
+                "provider_completed": bool(event["provider_completed"]),
+                "actual_heard": bool(event["actual_heard"]),
+                "playback_ended": bool(event["playback_ended"]),
+            }
+            for event in events
+        ],
+    }
+
+
 __all__ = [
     "CreateMediaSessionRequest",
     "DeviceProof",
     "MediaSessionResponse",
     "RegisterDeviceIdentityRequest",
     "MediaSLOReportRequest",
+    "MediaReplyDeliveryEventRequest",
     "device_router",
     "internal_router",
     "router",

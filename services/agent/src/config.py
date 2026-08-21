@@ -191,6 +191,29 @@ class AgentSettings(BaseSettings):
     media_slo_report_timeout_s: float = Field(
         default=2.0, ge=0.1, le=30.0, alias="MEDIA_SLO_REPORT_TIMEOUT_S"
     )
+    media_reply_delivery_enabled: bool = Field(
+        default=False, alias="MEDIA_REPLY_DELIVERY_ENABLED"
+    )
+    media_reply_delivery_url: str = Field(
+        default="http://control-api:8000/v1/internal/media-runtime/reply-delivery",
+        alias="MEDIA_REPLY_DELIVERY_URL",
+    )
+    media_reply_delivery_token: SecretStr = Field(
+        default=SecretStr(""), alias="MEDIA_REPLY_DELIVERY_TOKEN"
+    )
+    media_reply_delivery_spool_key: SecretStr = Field(
+        default=SecretStr(""), alias="MEDIA_REPLY_DELIVERY_SPOOL_KEY"
+    )
+    media_reply_delivery_spool_path: str = Field(
+        default="data/media-reply-delivery.spool",
+        alias="MEDIA_REPLY_DELIVERY_SPOOL_PATH",
+    )
+    media_reply_delivery_spool_max_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        ge=4096,
+        le=1024 * 1024 * 1024,
+        alias="MEDIA_REPLY_DELIVERY_SPOOL_MAX_BYTES",
+    )
     media_stream_epoch_enabled: bool = Field(
         default=True, alias="MEDIA_STREAM_EPOCH_ENABLED"
     )
@@ -637,6 +660,24 @@ class AgentSettings(BaseSettings):
                     raise ValueError("production media SLO reporter requires an internal metrics URL")
                 if len(self.media_slo_report_token.get_secret_value()) < 32:
                     raise ValueError("production media SLO reporter requires MEDIA_SLO_REPORT_TOKEN")
+            if self.media_reply_delivery_enabled:
+                if not _secure_internal_url(self.media_reply_delivery_url):
+                    raise ValueError(
+                        "production reply delivery reporter requires a secure URL"
+                    )
+                if len(self.media_reply_delivery_token.get_secret_value()) < 32:
+                    raise ValueError(
+                        "production reply delivery reporter requires MEDIA_REPLY_DELIVERY_TOKEN"
+                    )
+                spool_key = self.media_reply_delivery_spool_key.get_secret_value()
+                try:
+                    from cryptography.fernet import Fernet
+
+                    Fernet(spool_key.encode("ascii"))
+                except (ValueError, UnicodeEncodeError) as exc:
+                    raise ValueError(
+                        "production reply delivery reporter requires a valid Fernet spool key"
+                    ) from exc
             if self.media_bridge_grpc_enabled:
                 if not self.media_bridge_mtls:
                     raise ValueError("production media bridge requires MEDIA_BRIDGE_MTLS=true")
@@ -656,6 +697,8 @@ class AgentSettings(BaseSettings):
             if len(heartbeat_token) < 32:
                 raise ValueError("production agent heartbeat requires a scoped token")
             capability_tokens: list[str] = [heartbeat_token]
+            if self.media_reply_delivery_enabled:
+                capability_tokens.append(self.media_reply_delivery_token.get_secret_value())
             if self.archive_sink_enabled:
                 token = self.internal_token("archive_write")
                 spool_key = self.archive_spool_key.get_secret_value()

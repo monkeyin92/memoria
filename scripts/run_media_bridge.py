@@ -15,6 +15,7 @@ import os
 import signal
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, cast
 
 from services.agent.src.config import load_settings
@@ -23,6 +24,10 @@ from services.agent.src.observability.metrics import GLOBAL_METRICS
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer, MediaBridgeTLS
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
+from services.agent.src.voice_core.reply_delivery_reporter import (
+    ReplyDeliveryReporter,
+    ReplyDeliveryReporterConfig,
+)
 
 logger = logging.getLogger("memoria.media_bridge")
 
@@ -129,13 +134,34 @@ async def run() -> None:
         allow_go_shadow=settings.media_bridge_go_shadow_enabled,
     )
     session_factory = _load_session_factory(settings)
+    reply_delivery_reporter: ReplyDeliveryReporter | None = None
+    if bool(getattr(settings, "media_reply_delivery_enabled", False)):
+        token = settings.media_reply_delivery_token.get_secret_value()
+        reply_delivery_reporter = ReplyDeliveryReporter(
+            ReplyDeliveryReporterConfig(
+                endpoint=settings.media_reply_delivery_url,
+                token=token,
+                spool_path=Path(settings.media_reply_delivery_spool_path),
+                spool_key=settings.media_reply_delivery_spool_key.get_secret_value(),
+                spool_max_bytes=settings.media_reply_delivery_spool_max_bytes,
+            )
+        )
     try:
+        if reply_delivery_reporter is not None:
+            replayed = await reply_delivery_reporter.replay()
+            if replayed:
+                logger.info("reply delivery projection spool replayed events=%s", replayed)
         registry: MediaVoiceCoreRegistry | None = None
         if session_factory is not None:
             registry = MediaVoiceCoreRegistry(
                 bridge=server,
                 session_factory=session_factory,
                 output_generation_timeout_s=output_generation_timeout_s,
+                reply_delivery_publisher=(
+                    reply_delivery_reporter.submit
+                    if reply_delivery_reporter is not None
+                    else None
+                ),
             )
             registry.install()
             logger.info("media bridge shared Agent session registry installed")
@@ -149,12 +175,22 @@ async def run() -> None:
                     provider_factory=provider_factory,
                     runtime_factory=runtime_factory,
                     output_generation_timeout_s=output_generation_timeout_s,
+                    reply_delivery_publisher=(
+                        reply_delivery_reporter.submit
+                        if reply_delivery_reporter is not None
+                        else None
+                    ),
                 )
                 if runtime_factory is not None
                 else MediaVoiceCoreRegistry(
                     bridge=server,
                     provider_factory=provider_factory,
                     output_generation_timeout_s=output_generation_timeout_s,
+                    reply_delivery_publisher=(
+                        reply_delivery_reporter.submit
+                        if reply_delivery_reporter is not None
+                        else None
+                    ),
                 )
             )
             registry.install()
@@ -196,6 +232,13 @@ async def run() -> None:
             except BaseException as exc:
                 close_error = exc
                 logger.error("media bridge session factory shutdown failed", exc_info=True)
+        if reply_delivery_reporter is not None:
+            try:
+                await reply_delivery_reporter.close()
+            except BaseException as exc:
+                if close_error is None:
+                    close_error = exc
+                logger.error("reply delivery reporter shutdown failed", exc_info=True)
         if primary_error is None:
             if stop_error is not None:
                 raise stop_error
