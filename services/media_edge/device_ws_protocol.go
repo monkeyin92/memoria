@@ -153,7 +153,9 @@ func (f deviceFence) isZero() bool {
 
 func (f deviceFence) valid() bool {
 	return f.TurnID > 0 && f.GenerationID > 0 &&
-		f.TurnID <= 1<<32-1 && f.GenerationID <= 1<<32-1 && f.ToolEpoch <= 1<<32-1
+		f.SessionEpoch > 0 &&
+		f.TurnID <= 1<<32-1 && f.GenerationID <= 1<<32-1 &&
+		f.ToolEpoch <= 1<<32-1 && f.SessionEpoch <= 1<<32-1
 }
 
 func (f deviceFence) toFence(sessionID string) Fence {

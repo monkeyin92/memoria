@@ -48,7 +48,7 @@ func TestDeviceWSSBargeInIngressRequiresSignedSources(t *testing.T) {
 	core := env.cores["session_1"]
 	env.mu.Unlock()
 	core.mu.Lock()
-	core.current = Fence{SessionID: "session_1", TurnID: 1, GenerationID: 1}
+	core.current = Fence{SessionID: "session_1", TurnID: 1, GenerationID: 1, SessionEpoch: 1}
 	core.mu.Unlock()
 	core.inject(deviceGenerationEvent(
 		"session_1", 18, 1, 1, 1,
@@ -73,7 +73,7 @@ func TestDeviceWSSBargeInIngressRequiresSignedSources(t *testing.T) {
 			VADProbability: 0.9, NearEndRMS: 0.1, FarEndRMS: 0.01,
 			SpeakerClass: "owner",
 		},
-		ExpectedFence: deviceFence{GenerationID: 1, TurnID: 1, ToolEpoch: 0},
+		ExpectedFence: deviceFence{GenerationID: 1, TurnID: 1, ToolEpoch: 0, SessionEpoch: 1},
 	})
 	waitUntil(t, 3*time.Second, func() bool {
 		core.mu.Lock()
@@ -91,7 +91,7 @@ func TestDeviceWSSBargeInIngressRequiresSignedSources(t *testing.T) {
 	coreB := env.cores["session_1"]
 	env.mu.Unlock()
 	coreB.mu.Lock()
-	coreB.current = Fence{SessionID: "session_1", TurnID: 1, GenerationID: 1}
+	coreB.current = Fence{SessionID: "session_1", TurnID: 1, GenerationID: 1, SessionEpoch: 1}
 	coreB.mu.Unlock()
 	coreB.inject(deviceGenerationEvent(
 		"session_1", 19, 1, 1, 1,
@@ -106,7 +106,7 @@ func TestDeviceWSSBargeInIngressRequiresSignedSources(t *testing.T) {
 			Type: "button.stop", Version: 2, StreamEpoch: 19,
 			ControlSequence: 2, DeviceMonotonicMS: 2,
 		},
-		ExpectedFence: deviceFence{GenerationID: 1, TurnID: 1, ToolEpoch: 0},
+		ExpectedFence: deviceFence{GenerationID: 1, TurnID: 1, ToolEpoch: 0, SessionEpoch: 1},
 	})
 	waitUntil(t, 3*time.Second, func() bool {
 		coreB.mu.Lock()
@@ -165,7 +165,7 @@ func TestDeviceWSSPlaybackVADRequiresVoiceSourceAndTracksReceipts(t *testing.T) 
 	}
 	sendPlayback := func(messageType string, sequence, generationID uint64) {
 		serverConn.ledger.recordSent(
-			deviceFence{GenerationID: generationID, TurnID: generationID, ToolEpoch: 0},
+			deviceFence{GenerationID: generationID, TurnID: generationID, ToolEpoch: 0, SessionEpoch: 1},
 			sequence,
 			4800*sequence,
 		)
@@ -174,7 +174,7 @@ func TestDeviceWSSPlaybackVADRequiresVoiceSourceAndTracksReceipts(t *testing.T) 
 				Type: messageType, Version: 2, StreamEpoch: 18,
 				ControlSequence: sequence, DeviceMonotonicMS: sequence,
 			},
-			Fence:             deviceFence{GenerationID: generationID, TurnID: generationID, ToolEpoch: 0},
+			Fence:             deviceFence{GenerationID: generationID, TurnID: generationID, ToolEpoch: 0, SessionEpoch: 1},
 			ReceivedSequence:  sequence,
 			RenderedSampleEnd: 4800 * sequence,
 		})
@@ -248,7 +248,7 @@ func TestDeviceWSSApproximateWatermarkCannotClaimExactReceipt(t *testing.T) {
 			Type: "playback.progress", Version: 2, StreamEpoch: 18,
 			ControlSequence: 1, DeviceMonotonicMS: 1,
 		},
-		Fence:             deviceFence{GenerationID: 1, TurnID: 1},
+		Fence:             deviceFence{GenerationID: 1, TurnID: 1, SessionEpoch: 1},
 		ReceivedSequence:  0,
 		RenderedSampleEnd: 320,
 		Approximate:       false,

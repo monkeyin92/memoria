@@ -18,7 +18,7 @@ func TestDevicePlaybackLedgerUsesServerSendClockAndKeepsFencesIndependent(
 	})
 	ledger.now = func() time.Time { return now }
 	firstFence := deviceFence{TurnID: 1, GenerationID: 1, SessionEpoch: 7}
-	secondFence := deviceFence{TurnID: 2, GenerationID: 2}
+	secondFence := deviceFence{TurnID: 2, GenerationID: 2, SessionEpoch: 7}
 	ledger.startTransportFence(firstFence, false)
 	ledger.recordSent(firstFence, 7, 320)
 	now = base.Add(45 * time.Millisecond)

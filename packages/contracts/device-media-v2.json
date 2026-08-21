@@ -154,7 +154,8 @@
       "required": [
         "turn_id",
         "generation_id",
-        "tool_epoch"
+        "tool_epoch",
+        "session_epoch"
       ],
       "properties": {
         "turn_id": {
@@ -165,6 +166,9 @@
         },
         "tool_epoch": {
           "$ref": "#/$defs/uint32"
+        },
+        "session_epoch": {
+          "$ref": "#/$defs/positive_uint32"
         }
       }
     },

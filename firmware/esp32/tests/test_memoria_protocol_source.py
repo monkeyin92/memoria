@@ -763,6 +763,16 @@ def test_local_hard_stop_flushes_before_button_stop_and_never_resumes() -> None:
 
 
 def test_playback_receipts_v2_carry_full_fence_and_source_precision() -> None:
+    generation_fence = CONTRACT["$defs"]["generation_fence"]
+    assert generation_fence["required"] == [
+        "turn_id",
+        "generation_id",
+        "tool_epoch",
+        "session_epoch",
+    ]
+    assert 'GetPositiveUint32(object, "session_epoch"' in SOURCE
+    assert 'cJSON_AddNumberToObject(fence_json, "session_epoch"' in SOURCE
+
     receipt = SOURCE[SOURCE.index("void MemoriaProtocol::SendPlaybackReceipt") :]
     required = CONTRACT["$defs"]["playback_receipt_v2"]["required"]
     for key in required:

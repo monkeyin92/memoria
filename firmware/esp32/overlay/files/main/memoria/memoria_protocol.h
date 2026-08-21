@@ -120,8 +120,9 @@ private:
         uint32_t turn_id = 0;
         uint32_t generation_id = 0;
         uint32_t tool_epoch = 0;
+        uint32_t session_epoch = 0;
 
-        bool valid() const { return generation_id != 0; }
+        bool valid() const { return generation_id != 0 && session_epoch != 0; }
     };
 
     enum class ProfileApplyMode {

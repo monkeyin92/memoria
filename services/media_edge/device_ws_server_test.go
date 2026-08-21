@@ -307,7 +307,8 @@ func deviceGenerationEvent(sessionID string, epoch uint64, sequence uint64, turn
 		Generation: &mediav1.GenerationControl{
 			Identity: deviceCoreIdentity(sessionID, epoch), Sequence: sequence,
 			TurnId: turnID, GenerationId: generationID, ToolEpoch: 0,
-			Action: action, Reason: "test",
+			SessionEpoch: 1,
+			Action:       action, Reason: "test",
 		},
 	}}
 }
@@ -319,6 +320,7 @@ func deviceAudioEvent(sessionID string, epoch uint64, sequence uint64, sourceSta
 			Identity: deviceCoreIdentity(sessionID, epoch), Sequence: sequence,
 			SourceStartSample: sourceStart, FrameSamples: uint32(len(samples)),
 			PcmS16Le: payload, TurnId: turnID, GenerationId: generationID, ToolEpoch: 0,
+			SessionEpoch: 1,
 		},
 	}}
 }
@@ -810,7 +812,7 @@ func TestDeviceWSSVADKeywordButtonPlaybackMapped(t *testing.T) {
 	core := env.cores["session_1"]
 	env.mu.Unlock()
 	core.mu.Lock()
-	core.current = Fence{SessionID: "session_1", TurnID: 1, GenerationID: 1}
+	core.current = Fence{SessionID: "session_1", TurnID: 1, GenerationID: 1, SessionEpoch: 1}
 	core.mu.Unlock()
 	core.inject(deviceGenerationEvent(
 		"session_1", 18, 1, 1, 1,
@@ -846,19 +848,19 @@ func TestDeviceWSSVADKeywordButtonPlaybackMapped(t *testing.T) {
 			AECVerified: false, VADProbability: 0.9, NearEndRMS: 600,
 			FarEndRMS: 1200, SpeakerClass: "owner",
 		},
-		ExpectedFence: deviceFence{TurnID: 1, GenerationID: 1},
+		ExpectedFence: deviceFence{TurnID: 1, GenerationID: 1, SessionEpoch: 1},
 	})
 	serverConn := env.server.connectionBySession("session_1")
 	if serverConn == nil || serverConn.ledger == nil {
 		t.Fatal("server playback ledger is unavailable")
 	}
-	serverConn.ledger.recordSent(deviceFence{TurnID: 1, GenerationID: 1}, 0, 320)
+	serverConn.ledger.recordSent(deviceFence{TurnID: 1, GenerationID: 1, SessionEpoch: 1}, 0, 320)
 	writeDeviceJSON(t, connection, devicePlaybackReceipt{
 		deviceEventBase: deviceEventBase{
 			Type: "playback.started", Version: 2, StreamEpoch: 18,
 			ControlSequence: 4, DeviceMonotonicMS: 600,
 		},
-		Fence:            deviceFence{TurnID: 1, GenerationID: 1},
+		Fence:            deviceFence{TurnID: 1, GenerationID: 1, SessionEpoch: 1},
 		ReceivedSequence: 0, RenderedSampleEnd: 320, Approximate: false,
 	})
 	writeDeviceJSON(t, connection, deviceButtonStop{
@@ -866,7 +868,7 @@ func TestDeviceWSSVADKeywordButtonPlaybackMapped(t *testing.T) {
 			Type: "button.stop", Version: 2, StreamEpoch: 18,
 			ControlSequence: 5, DeviceMonotonicMS: 700,
 		},
-		ExpectedFence:       deviceFence{TurnID: 1, GenerationID: 1},
+		ExpectedFence:       deviceFence{TurnID: 1, GenerationID: 1, SessionEpoch: 1},
 		LocalFlushSampleEnd: 10_000,
 	})
 
@@ -1045,7 +1047,7 @@ func TestDeviceWSSControlPriorityIntegration(t *testing.T) {
 			SessionId: "session_1", StreamEpoch: 18,
 			EffectId: "flush-1", EffectKind: mediav1.RealtimeEffectKind_REALTIME_EFFECT_KIND_CANCEL_GENERATION,
 			SourceEventId: "test-cancel", Payload: []byte(`{"reason":"test"}`),
-			TurnId: 1, GenerationId: 2, ToolEpoch: 0,
+			TurnId: 1, GenerationId: 2, ToolEpoch: 0, SessionEpoch: 1,
 		},
 	}})
 	deadline := time.Now().Add(3 * time.Second)

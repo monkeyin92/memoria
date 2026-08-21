@@ -1056,7 +1056,8 @@ bool MemoriaProtocol::ParseGenerationFence(const cJSON* object, GenerationFence*
     GenerationFence parsed{};
     if (!GetPositiveUint32(object, "turn_id", &parsed.turn_id) ||
         !GetPositiveUint32(object, "generation_id", &parsed.generation_id) ||
-        !GetUint32(object, "tool_epoch", &parsed.tool_epoch)) {
+        !GetUint32(object, "tool_epoch", &parsed.tool_epoch) ||
+        !GetPositiveUint32(object, "session_epoch", &parsed.session_epoch)) {
         return false;
     }
     if (fence != nullptr) {
@@ -1171,13 +1172,18 @@ bool MemoriaProtocol::HandleGenerationStarted(const cJSON* root, const Generatio
     // reactivation, reordered control) would reset the clock mid-generation
     // and is a wire violation (fail closed).
     if (fence_.valid() &&
-        (fence.turn_id < fence_.turn_id ||
-         (fence.turn_id == fence_.turn_id && fence.generation_id < fence_.generation_id) ||
-         (fence.turn_id == fence_.turn_id && fence.generation_id == fence_.generation_id &&
+        (fence.session_epoch < fence_.session_epoch ||
+         (fence.session_epoch == fence_.session_epoch && fence.turn_id < fence_.turn_id) ||
+         (fence.session_epoch == fence_.session_epoch && fence.turn_id == fence_.turn_id &&
+          fence.generation_id < fence_.generation_id) ||
+         (fence.session_epoch == fence_.session_epoch && fence.turn_id == fence_.turn_id &&
+          fence.generation_id == fence_.generation_id &&
           fence.tool_epoch <= fence_.tool_epoch))) {
         ++protocol_violations_;
         ESP_LOGE(kTag, "generation.started fence does not strictly advance "
-                       "(turn=%u/%u gen=%u/%u tool=%u/%u)",
+                       "(session=%u/%u turn=%u/%u gen=%u/%u tool=%u/%u)",
+                 static_cast<unsigned int>(fence.session_epoch),
+                 static_cast<unsigned int>(fence_.session_epoch),
                  static_cast<unsigned int>(fence.turn_id),
                  static_cast<unsigned int>(fence_.turn_id),
                  static_cast<unsigned int>(fence.generation_id),
@@ -1220,7 +1226,8 @@ bool MemoriaProtocol::HandleGenerationPauseResume(const cJSON* root,
                                                   const GenerationFence& fence,
                                                   bool pause) {
     (void)root;
-    if (!fence.valid() || fence.generation_id != fence_.generation_id) {
+    if (!fence.valid() || fence.session_epoch != fence_.session_epoch ||
+        fence.generation_id != fence_.generation_id) {
         return false;
     }
     if (pause) {
@@ -1251,7 +1258,8 @@ bool MemoriaProtocol::HandleGenerationTerminal(const cJSON* root,
     // A terminal for a generation that is no longer current (superseded by a
     // later generation.started) is a stale barrier: ignore it, receipts must
     // only ever refer to the current fence.
-    if (fence.generation_id != fence_.generation_id) {
+    if (fence.session_epoch != fence_.session_epoch ||
+        fence.generation_id != fence_.generation_id) {
         ESP_LOGW(kTag, "Ignoring terminal %s for stale generation=%u (current=%u)",
                  cancelled ? "generation.cancelled" : "generation.completed",
                  static_cast<unsigned int>(fence.generation_id),
@@ -1368,6 +1376,7 @@ bool MemoriaProtocol::HandlePlaybackFlushV2(const cJSON* root) {
     // AudioService generation gate and clear the old queue tail.
     fence_.turn_id = flush_fence.turn_id;
     fence_.tool_epoch = flush_fence.tool_epoch;
+    fence_.session_epoch = flush_fence.session_epoch;
     fence_.generation_id = replacement_generation_id;
     playback_active_ = true;
     playback_audio_ready_ = false;
@@ -1526,6 +1535,7 @@ void MemoriaProtocol::SendButtonStop(const GenerationFence& fence, uint64_t loca
     cJSON_AddNumberToObject(expected_fence, "turn_id", fence.turn_id);
     cJSON_AddNumberToObject(expected_fence, "generation_id", fence.generation_id);
     cJSON_AddNumberToObject(expected_fence, "tool_epoch", fence.tool_epoch);
+    cJSON_AddNumberToObject(expected_fence, "session_epoch", fence.session_epoch);
     cJSON_AddItemToObject(root.value, "expected_fence", expected_fence);
     cJSON_AddNumberToObject(root.value, "local_flush_sample_end",
                             static_cast<double>(local_flush_sample_end));
@@ -1554,6 +1564,7 @@ void MemoriaProtocol::SendPlaybackReceipt(const char* type,
     cJSON_AddNumberToObject(fence_json, "turn_id", fence.turn_id);
     cJSON_AddNumberToObject(fence_json, "generation_id", fence.generation_id);
     cJSON_AddNumberToObject(fence_json, "tool_epoch", fence.tool_epoch);
+    cJSON_AddNumberToObject(fence_json, "session_epoch", fence.session_epoch);
     cJSON_AddItemToObject(root.value, "fence", fence_json);
     cJSON_AddNumberToObject(root.value, "received_sequence", received_sequence);
     cJSON_AddNumberToObject(root.value, "rendered_sample_end",
