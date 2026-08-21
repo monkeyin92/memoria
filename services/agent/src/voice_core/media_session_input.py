@@ -86,6 +86,35 @@ class MediaSessionInputMixin:
         context = await self._get_or_create(session.identity)
         if not context.runtime.ingest_media_speech_segment(segment):
             return
+
+        # 🆕 Integrate with ListeningStateManager for state transitions
+        # This connects VAD events to the listening state lifecycle
+        if segment.kind is SegmentKind.VAD:
+            try:
+                session_id = segment.session_id
+                if segment.final:
+                    # VAD speech_end event
+                    await self._audio_ingress._state_manager.on_speech_ended(session_id)
+                    logger.debug(
+                        "VAD speech_end: triggered listening state transition session=%s",
+                        session_id,
+                    )
+                else:
+                    # VAD speech_start event
+                    await self._audio_ingress._state_manager.on_speech_detected(session_id)
+                    logger.debug(
+                        "VAD speech_start: updated listening state session=%s",
+                        session_id,
+                    )
+            except Exception as e:
+                # Don't break VAD processing if state management fails
+                logger.warning(
+                    "Failed to update listening state from VAD segment session=%s: %s",
+                    session_id,
+                    e,
+                    exc_info=True,
+                )
+
         if segment.kind is SegmentKind.VAD and not segment.final:
             # Only an accepted range-stamped VAD may supersede a retrying turn.
             # A replayed/stale start is observational noise and must not discard

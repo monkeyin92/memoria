@@ -432,6 +432,27 @@ class MediaAudioIngress:
                 task_epoch_after=self._provider_task_epoch(context),
                 provider_audio=provider_audio_before,
             )
+
+            # 🆕 Transition to PROCESSING state after speech finalization
+            # This ensures we stop accepting new audio after the turn is committed
+            if finalize_reason in ("vad_end", "turn_commit", "explicit"):
+                try:
+                    session_id = context.identity.session_id
+                    await self._state_manager.transition_to_processing(session_id)
+                    logger.debug(
+                        "ASR finalized: transitioned to PROCESSING state session=%s reason=%s",
+                        session_id,
+                        finalize_reason,
+                    )
+                except Exception as e:
+                    # Don't break finalization if state management fails
+                    logger.warning(
+                        "Failed to transition to PROCESSING state session=%s: %s",
+                        context.identity.session_id,
+                        e,
+                        exc_info=True,
+                    )
+
             return True
 
     @staticmethod
