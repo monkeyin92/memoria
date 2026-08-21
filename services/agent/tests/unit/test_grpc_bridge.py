@@ -88,7 +88,7 @@ async def test_go_shadow_bridge_emits_atomic_sanitized_speech_observation() -> N
     assert client_payload["task_epoch"] == 3
     assert client_payload["context_version"] == 7
 
-    fence = GenerationFence("shadow-timeline", 1, 1, 2)
+    fence = GenerationFence("shadow-timeline", 1, 1, 2, 7)
     assert await bridge.emit_generation(
         "shadow-timeline",
         fence,
@@ -99,6 +99,7 @@ async def test_go_shadow_bridge_emits_atomic_sanitized_speech_observation() -> N
     generation = await call.read()
     assert generation.generation.task_epoch == 3
     assert generation.generation.context_version == 7
+    assert generation.generation.session_epoch == 7
     assert await bridge.emit_pcm(
         "shadow-timeline",
         PCMFrame(
@@ -106,6 +107,7 @@ async def test_go_shadow_bridge_emits_atomic_sanitized_speech_observation() -> N
             turn_id=1,
             generation_id=1,
             tool_epoch=2,
+            session_epoch=7,
             sequence=0,
             source_start_sample=0,
             frame_samples=1,
@@ -117,6 +119,7 @@ async def test_go_shadow_bridge_emits_atomic_sanitized_speech_observation() -> N
     audio = await call.read()
     assert audio.audio.task_epoch == 3
     assert audio.audio.context_version == 7
+    assert audio.audio.session_epoch == 7
 
     timeline = SpeechTimeline()
     timeline.add(

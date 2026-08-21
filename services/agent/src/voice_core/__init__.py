@@ -78,6 +78,12 @@ from .replay_harness import (
     SyntheticFixture,
     estimate_load,
 )
+from .reply_delivery import (
+    ReplyDelivery,
+    ReplyDeliveryEvent,
+    ReplyDeliveryKey,
+    ReplyDeliveryLedger,
+)
 from .slo import MediaSLO, SLOReport, evaluate_slo
 from .slo_reporter import MediaSLOReporter, MediaSLOReporterConfig
 from .speech_timeline import (
@@ -158,6 +164,10 @@ __all__ = [
     "PlaybackLedger",
     "PlaybackProgress",
     "PlaybackSpan",
+    "ReplyDelivery",
+    "ReplyDeliveryEvent",
+    "ReplyDeliveryKey",
+    "ReplyDeliveryLedger",
     "ResponseLease",
     "ProvisionedDevice",
     "ReplayResult",

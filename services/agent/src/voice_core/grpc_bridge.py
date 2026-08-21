@@ -168,8 +168,7 @@ class _PriorityOutgoing:
             if isinstance(payload, dict):
                 payload["sequence"] = sequence
                 payload["event_id"] = (
-                    f"{event.identity.session_id}:"
-                    f"{event.identity.stream_epoch}:{sequence}"
+                    f"{event.identity.session_id}:{event.identity.stream_epoch}:{sequence}"
                 )
                 event.json_payload = json.dumps(
                     payload,
@@ -213,9 +212,7 @@ class _PriorityOutgoing:
             key = self._coalescing_key(message)
             if key is not None:
                 self._coalescing = deque(
-                    queued
-                    for queued in self._coalescing
-                    if self._coalescing_key(queued) != key
+                    queued for queued in self._coalescing if self._coalescing_key(queued) != key
                 )
         if self.qsize() >= self.maxsize:
             raise asyncio.QueueFull
@@ -482,11 +479,16 @@ class MediaBridgeGrpcServer:
                     ),
                     current_turn_id=fence.turn_id,
                     current_tool_epoch=fence.tool_epoch,
+                    current_session_epoch=fence.session_epoch,
                     task_epoch=connection.session.task_epoch,
                     context_version=connection.session.context_version,
                 )
             )
-            if connection.session.fence.turn_id or connection.session.fence.generation_id or connection.session.fence.tool_epoch:
+            if (
+                connection.session.fence.turn_id
+                or connection.session.fence.generation_id
+                or connection.session.fence.tool_epoch
+            ):
                 action = (
                     media_pb2.GENERATION_ACTION_RESUME
                     if connection.session.generation_active
@@ -498,6 +500,7 @@ class MediaBridgeGrpcServer:
                         turn_id=connection.session.fence.turn_id,
                         generation_id=connection.session.fence.generation_id,
                         tool_epoch=connection.session.fence.tool_epoch,
+                        session_epoch=connection.session.fence.session_epoch,
                         action=action,
                         reason="stream_reconnected",
                     )
@@ -623,9 +626,7 @@ class MediaBridgeGrpcServer:
         interaction_authority: InteractionAuthority = InteractionAuthority.PYTHON_AUTHORITATIVE,
     ) -> _Connection:
         session = self.bridge.get(identity.session_id)
-        if session is not None and not session.identity.has_same_reconnect_authority(
-            identity
-        ):
+        if session is not None and not session.identity.has_same_reconnect_authority(identity):
             raise ValueError("media session reconnect authority changed")
         existing = self._connections.get(identity.session_id)
         if existing is not None:
@@ -766,7 +767,11 @@ class MediaBridgeGrpcServer:
                 voiced_end_sample=voiced_end_sample,
             )
             accepted = connection.session.timeline.add(segment)
-            if accepted and segment.hard_stop and (segment.confidence or 0.0) >= KWS_HARD_STOP_MIN_CONFIDENCE:
+            if (
+                accepted
+                and segment.hard_stop
+                and (segment.confidence or 0.0) >= KWS_HARD_STOP_MIN_CONFIDENCE
+            ):
                 connection.session.apply_local_keyword_stop(
                     confidence=float(segment.confidence or 0.0),
                     min_confidence=KWS_HARD_STOP_MIN_CONFIDENCE,
@@ -778,9 +783,7 @@ class MediaBridgeGrpcServer:
             event = request.keyword
             self._require_identity(connection, event.identity)
             detected_monotonic_ms = (
-                int(event.detected_monotonic_ms)
-                if event.HasField("detected_monotonic_ms")
-                else 0
+                int(event.detected_monotonic_ms) if event.HasField("detected_monotonic_ms") else 0
             )
             segment = SpeechSegment(
                 session_id=connection.session.identity.session_id,
@@ -797,7 +800,11 @@ class MediaBridgeGrpcServer:
                 hard_stop=bool(event.hard_stop),
             )
             accepted = connection.session.timeline.add(segment)
-            if accepted and segment.hard_stop and (segment.confidence or 0.0) >= KWS_HARD_STOP_MIN_CONFIDENCE:
+            if (
+                accepted
+                and segment.hard_stop
+                and (segment.confidence or 0.0) >= KWS_HARD_STOP_MIN_CONFIDENCE
+            ):
                 connection.session.apply_local_keyword_stop(
                     confidence=float(segment.confidence or 0.0),
                     min_confidence=KWS_HARD_STOP_MIN_CONFIDENCE,
@@ -850,6 +857,13 @@ class MediaBridgeGrpcServer:
                     approximate = payload.get("approximate", True)
                     if not isinstance(approximate, bool):
                         raise ValueError("approximate must be boolean")
+                    session_epoch = payload.get("session_epoch", 0)
+                    if (
+                        isinstance(session_epoch, bool)
+                        or not isinstance(session_epoch, int)
+                        or session_epoch < 0
+                    ):
+                        raise ValueError("session_epoch must be a non-negative integer")
                     progress = PlaybackProgress(
                         identity=connection.session.identity,
                         generation_id=payload_int("generation_id"),
@@ -859,12 +873,15 @@ class MediaBridgeGrpcServer:
                         approximate=approximate,
                         turn_id=payload_int("turn_id"),
                         tool_epoch=payload_int("tool_epoch"),
+                        session_epoch=int(session_epoch),
                     )
                 except (TypeError, ValueError) as exc:
                     await self._error(connection, "invalid_playback_progress", str(exc))
                     return
                 if not connection.session.accept_client_progress(envelope):
-                    await self._error(connection, "stale_playback_progress", "playback progress rejected")
+                    await self._error(
+                        connection, "stale_playback_progress", "playback progress rejected"
+                    )
                     return
                 if self.on_playback_progress is not None:
                     await self.on_playback_progress(connection.session, progress)
@@ -886,6 +903,7 @@ class MediaBridgeGrpcServer:
                         approximate=bool(event.approximate),
                         turn_id=int(event.turn_id),
                         tool_epoch=int(event.tool_epoch),
+                        session_epoch=int(event.session_epoch),
                     ),
                 )
             return
@@ -1008,6 +1026,7 @@ class MediaBridgeGrpcServer:
                 turn_id=next_fence.turn_id,
                 generation_id=next_fence.generation_id,
                 tool_epoch=next_fence.tool_epoch,
+                session_epoch=next_fence.session_epoch,
                 action=media_pb2.GENERATION_ACTION_CANCEL,
                 reason="downlink_queue_full",
                 task_epoch=connection.session.task_epoch,
@@ -1031,6 +1050,7 @@ class MediaBridgeGrpcServer:
                     turn_id=frame.turn_id,
                     generation_id=frame.generation_id,
                     tool_epoch=frame.tool_epoch,
+                    session_epoch=frame.session_epoch,
                     sequence=frame.sequence,
                     source_start_sample=frame.source_start_sample,
                     frame_samples=frame.frame_samples,
@@ -1161,6 +1181,7 @@ class MediaBridgeGrpcServer:
                     turn_id=fence.turn_id,
                     generation_id=fence.generation_id,
                     tool_epoch=fence.tool_epoch,
+                    session_epoch=fence.session_epoch,
                     action=action,
                     reason=reason[:256],
                     task_epoch=task_epoch,
@@ -1234,9 +1255,8 @@ class MediaBridgeGrpcServer:
             if not connection.session.reset_downlink_generation(fence):
                 return False
             connection.session.generation_active = False
-        elif (
-            not connection.session.generation_active
-            or not connection.session.generation.accept(fence)
+        elif not connection.session.generation_active or not connection.session.generation.accept(
+            fence
         ):
             return False
 
@@ -1255,6 +1275,7 @@ class MediaBridgeGrpcServer:
                     turn_id=fence.turn_id,
                     generation_id=fence.generation_id,
                     tool_epoch=fence.tool_epoch,
+                    session_epoch=fence.session_epoch,
                     task_epoch=task_epoch,
                     context_version=context_version,
                     candidate_only=False,
@@ -1316,6 +1337,7 @@ class MediaBridgeGrpcServer:
                     turn_id=fence.turn_id,
                     generation_id=fence.generation_id,
                     tool_epoch=fence.tool_epoch,
+                    session_epoch=fence.session_epoch,
                     task_epoch=task_epoch,
                     context_version=context_version,
                     candidate_only=False,
@@ -1343,6 +1365,13 @@ class MediaBridgeGrpcServer:
             task_epoch,
             context_version,
         )
+        current_fence = connection.session.fence
+        session_epoch = (
+            current_fence.session_epoch
+            if (turn_id, generation_id, tool_epoch)
+            == (current_fence.turn_id, current_fence.generation_id, current_fence.tool_epoch)
+            else 0
+        )
         enqueued = await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
@@ -1360,6 +1389,7 @@ class MediaBridgeGrpcServer:
                             "turn_id": turn_id,
                             "generation_id": generation_id,
                             "tool_epoch": tool_epoch,
+                            "session_epoch": session_epoch,
                             "task_epoch": task_epoch,
                             "context_version": context_version,
                             "server_monotonic_ms": max(0, time.monotonic_ns() // 1_000_000),
@@ -1394,7 +1424,10 @@ class MediaBridgeGrpcServer:
         generation_id: int,
         tool_epoch: int,
     ) -> bool:
-        if connection.closed or connection.session.interaction_authority is not InteractionAuthority.GO_SHADOW:
+        if (
+            connection.closed
+            or connection.session.interaction_authority is not InteractionAuthority.GO_SHADOW
+        ):
             return False
         phase = str(payload.get("phase") or payload.get("state") or "")
         mapping = {
@@ -1491,7 +1524,10 @@ class MediaBridgeGrpcServer:
         if connection is None:
             return False
         fence = connection.session.fence
-        if segment.session_id != session_id or segment.stream_epoch != connection.session.identity.stream_epoch:
+        if (
+            segment.session_id != session_id
+            or segment.stream_epoch != connection.session.identity.stream_epoch
+        ):
             return False
         task_epoch, context_version = connection.session.observe_versions(
             task_epoch,
@@ -1626,6 +1662,7 @@ class MediaBridgeGrpcServer:
                 floor_requirement=int(candidate.floor_requirement),
                 context_version=int(candidate.context_version),
             )
+
         observation.output_intent.CopyFrom(shadow_intent(intent))
         candidate = getattr(admission, "authoritative_candidate", None)
         arbiter = media_pb2.ShadowOutputArbiterState(

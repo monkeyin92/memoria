@@ -108,7 +108,9 @@ class LinuxMediaDeviceClient:
         self.on_generation = on_generation
         self.on_command = on_command
         self.on_error = on_error
-        self.pipeline = LinuxAudioPipeline(config=config.audio, stream_epoch=config.identity.stream_epoch)
+        self.pipeline = LinuxAudioPipeline(
+            config=config.audio, stream_epoch=config.identity.stream_epoch
+        )
         self.identity = config.identity
         self.muted = False
         self._channel: grpc.aio.Channel | None = None
@@ -122,6 +124,7 @@ class LinuxMediaDeviceClient:
         self._current_turn_id = 0
         self._current_generation_id = 0
         self._current_tool_epoch = 0
+        self._current_session_epoch = 0
 
     @property
     def connected(self) -> bool:
@@ -130,7 +133,10 @@ class LinuxMediaDeviceClient:
     async def connect(self) -> None:
         if self.connected:
             return
-        if os.getenv("ENVIRONMENT", "development").strip().lower() == "production" and self.tls is None:
+        if (
+            os.getenv("ENVIRONMENT", "development").strip().lower() == "production"
+            and self.tls is None
+        ):
             raise RuntimeError("production device media bridge requires mTLS")
         self._closed = False
         self._channel = (
@@ -169,6 +175,7 @@ class LinuxMediaDeviceClient:
             await self.close()
             raise RuntimeError("device media bridge did not accept hello")
         self._current_generation_id = int(accepted.accepted.current_generation_id)
+        self._current_session_epoch = int(accepted.accepted.current_session_epoch)
         self._receiver = asyncio.create_task(self._receive_loop(), name="media-device-receiver")
 
     async def _receive_loop(self) -> None:
@@ -207,7 +214,9 @@ class LinuxMediaDeviceClient:
                 if isinstance(result, int) and not isinstance(result, bool):
                     rendered_sample_end = result
                 elif result is not None:
-                    self._report_error("device playback callback returned an invalid sample position")
+                    self._report_error(
+                        "device playback callback returned an invalid sample position"
+                    )
             if rendered_sample_end is not None:
                 frame_start = int(audio.source_start_sample)
                 frame_end = frame_start + int(audio.frame_samples)
@@ -220,11 +229,13 @@ class LinuxMediaDeviceClient:
                     rendered_sample_end=rendered_sample_end,
                     turn_id=int(audio.turn_id),
                     tool_epoch=int(audio.tool_epoch),
+                    session_epoch=int(audio.session_epoch),
                 )
         elif kind == "generation":
             self._current_turn_id = int(event.generation.turn_id)
             self._current_generation_id = int(event.generation.generation_id)
             self._current_tool_epoch = int(event.generation.tool_epoch)
+            self._current_session_epoch = int(event.generation.session_epoch)
             if self.on_generation is not None:
                 result = self.on_generation(
                     int(event.generation.turn_id),
@@ -312,6 +323,7 @@ class LinuxMediaDeviceClient:
             turn_id=self._current_turn_id,
             generation_id=self._current_generation_id,
             tool_epoch=self._current_tool_epoch,
+            session_epoch=self._current_session_epoch,
             payload=json.loads(ack.to_json()),
         )
         self._event_sequence += 1
@@ -354,6 +366,7 @@ class LinuxMediaDeviceClient:
             turn_id=self._current_turn_id,
             generation_id=self._current_generation_id,
             tool_epoch=self._current_tool_epoch,
+            session_epoch=self._current_session_epoch,
             payload=json.loads(event.to_json()),
         )
         self._event_sequence += 1
@@ -407,6 +420,7 @@ class LinuxMediaDeviceClient:
         rendered_sample_end: int,
         turn_id: int = 0,
         tool_epoch: int = 0,
+        session_epoch: int = 0,
     ) -> bool:
         if self._closed:
             return False
@@ -420,6 +434,7 @@ class LinuxMediaDeviceClient:
                 approximate=False,
                 turn_id=turn_id,
                 tool_epoch=tool_epoch,
+                session_epoch=session_epoch,
             )
         )
         try:
@@ -438,6 +453,7 @@ class LinuxMediaDeviceClient:
         self._current_turn_id = 0
         self._current_generation_id = 0
         self._current_tool_epoch = 0
+        self._current_session_epoch = 0
         self._requests = asyncio.Queue(maxsize=self.config.max_pending_frames)
         await self.connect()
 

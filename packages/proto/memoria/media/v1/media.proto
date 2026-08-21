@@ -123,6 +123,9 @@ message RealtimeEffect {
   // Full stream identity is required on the executable Core -> Media path.
   // The legacy session_id/stream_epoch fields remain for additive compatibility.
   SessionIdentity identity = 14;
+  // Identity/context epoch; zero is the legacy epoch and must not be
+  // substituted for a non-zero active generation by receivers.
+  uint64 session_epoch = 15;
 }
 
 // Python-authoritative Floor state for the executable media path. Unlike the
@@ -143,6 +146,7 @@ message FloorEffect {
   bool candidate_only = 12;
   // Reject delayed control updates before they can revive an obsolete floor.
   uint64 expires_at_ms = 13;
+  uint64 session_epoch = 14;
 }
 
 message OutputIntent {
@@ -303,6 +307,9 @@ message PlaybackProgress {
   bool approximate = 6;
   uint64 turn_id = 7;
   uint64 tool_epoch = 8;
+  // Complete generation fence dimension. Legacy clients omit this and are
+  // rejected when the active generation has a non-zero session epoch.
+  uint64 session_epoch = 9;
 }
 
 message DeviceEvent {
@@ -345,6 +352,7 @@ message SessionAccepted {
   uint64 current_tool_epoch = 6;
   uint64 task_epoch = 7;
   uint64 context_version = 8;
+  uint64 current_session_epoch = 9;
 }
 
 message AssistantAudioFrame {
@@ -360,6 +368,7 @@ message AssistantAudioFrame {
   bool final_frame = 10;
   uint64 task_epoch = 11;
   uint64 context_version = 12;
+  uint64 session_epoch = 13;
 }
 
 message GenerationControl {
@@ -372,6 +381,7 @@ message GenerationControl {
   uint64 sequence = 7;
   uint64 task_epoch = 8;
   uint64 context_version = 9;
+  uint64 session_epoch = 10;
 }
 
 message TranscriptEvent {

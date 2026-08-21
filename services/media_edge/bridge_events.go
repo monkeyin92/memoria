@@ -46,7 +46,7 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 		}
 		s.stateMu.Lock()
 		defer s.stateMu.Unlock()
-		actual := Fence{SessionID: s.identity.SessionID, TurnID: audio.GetTurnId(), GenerationID: audio.GetGenerationId(), ToolEpoch: audio.GetToolEpoch()}
+		actual := Fence{SessionID: s.identity.SessionID, TurnID: audio.GetTurnId(), GenerationID: audio.GetGenerationId(), ToolEpoch: audio.GetToolEpoch(), SessionEpoch: audio.GetSessionEpoch()}
 		if !s.current.equal(actual) {
 			return fmt.Errorf("stale audio generation")
 		}
@@ -81,7 +81,7 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 		}
 		s.stateMu.Lock()
 		defer s.stateMu.Unlock()
-		actual := Fence{SessionID: s.identity.SessionID, TurnID: generation.GetTurnId(), GenerationID: generation.GetGenerationId(), ToolEpoch: generation.GetToolEpoch()}
+		actual := Fence{SessionID: s.identity.SessionID, TurnID: generation.GetTurnId(), GenerationID: generation.GetGenerationId(), ToolEpoch: generation.GetToolEpoch(), SessionEpoch: generation.GetSessionEpoch()}
 		if !s.current.monotonic(actual) {
 			return fmt.Errorf("generation moved backwards")
 		}
@@ -246,6 +246,7 @@ func validateRealtimeEffect(effect *mediav1.RealtimeEffect) (Fence, error) {
 	return Fence{
 		SessionID: effect.GetSessionId(), TurnID: effect.GetTurnId(),
 		GenerationID: effect.GetGenerationId(), ToolEpoch: effect.GetToolEpoch(),
+		SessionEpoch: effect.GetSessionEpoch(),
 	}, nil
 }
 
@@ -271,6 +272,7 @@ func validateFloorEffect(effect *mediav1.FloorEffect) (Fence, error) {
 	return Fence{
 		SessionID: effect.GetIdentity().GetSessionId(), TurnID: effect.GetTurnId(),
 		GenerationID: effect.GetGenerationId(), ToolEpoch: effect.GetToolEpoch(),
+		SessionEpoch: effect.GetSessionEpoch(),
 	}, nil
 }
 

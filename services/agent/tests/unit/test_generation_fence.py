@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from services.agent.src.contracts.ids import CancellationContext, GenerationFence
 from services.agent.src.orchestration.generation_fence import FenceGate, StaleFenceError
+from services.agent.src.voice_core.generation_controller import GenerationController
 
 
 def _fence(g: int = 1, e: int = 0) -> GenerationFence:
@@ -47,3 +48,13 @@ def test_require_raises() -> None:
     gate = FenceGate(current=_fence(3))
     with pytest.raises(StaleFenceError):
         gate.require(_fence(1), source="llm")
+
+
+def test_generation_controller_orders_session_epoch_before_turn() -> None:
+    controller = GenerationController(session_id="s")
+    controller.advance(GenerationFence("s", 1, 1, 0, 3))
+
+    with pytest.raises(ValueError, match="monotonically"):
+        controller.advance(GenerationFence("s", 99, 99, 0, 2))
+
+    assert controller.current == GenerationFence("s", 1, 1, 0, 3)

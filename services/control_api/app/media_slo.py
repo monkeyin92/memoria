@@ -127,6 +127,7 @@ class MediaSLOGate:
 def _clean_metrics(metrics: Mapping[str, float]) -> dict[str, float]:
     allowed = {
         "first_audio_p95_ms",
+        "tts_first_frame_p95_ms",
         "interrupt_stop_p95_ms",
         "session_failure_rate",
         "stale_generation_total",

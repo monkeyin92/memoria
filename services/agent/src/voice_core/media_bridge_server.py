@@ -49,16 +49,19 @@ class PCMFrame:
     session_epoch: int = 0
 
     def __post_init__(self) -> None:
-        if min(
-            self.turn_id,
-            self.generation_id,
-            self.tool_epoch,
-            self.sequence,
-            self.source_start_sample,
-            self.task_epoch,
-            self.context_version,
-            self.session_epoch,
-        ) < 0:
+        if (
+            min(
+                self.turn_id,
+                self.generation_id,
+                self.tool_epoch,
+                self.sequence,
+                self.source_start_sample,
+                self.task_epoch,
+                self.context_version,
+                self.session_epoch,
+            )
+            < 0
+        ):
             raise ValueError("PCM frame metadata must be non-negative")
         if (
             self.frame_samples <= 0
@@ -137,7 +140,10 @@ class MediaBridgeSession:
             return False
         if frame.capture_start_sample < self.last_capture_end_sample:
             return False
-        if self.last_uplink_sequence >= 0 and frame.capture_start_sample > self.last_capture_end_sample:
+        if (
+            self.last_uplink_sequence >= 0
+            and frame.capture_start_sample > self.last_capture_end_sample
+        ):
             return False
         if len(self.uplink) >= self.max_pending_audio_frames:
             self.overflow_count += 1
@@ -205,7 +211,10 @@ class MediaBridgeSession:
 
         if self.state == "closed" or event.session_id != self.identity.session_id:
             return False
-        if event.stream_epoch != self.identity.stream_epoch or event.type != "client.stop_assistant":
+        if (
+            event.stream_epoch != self.identity.stream_epoch
+            or event.type != "client.stop_assistant"
+        ):
             return False
         key = event.payload.get("idempotency_key")
         if not isinstance(key, str) or not key.strip():
@@ -223,6 +232,7 @@ class MediaBridgeSession:
                 turn_id=event.turn_id,
                 generation_id=event.generation_id,
                 tool_epoch=event.tool_epoch,
+                session_epoch=event.session_epoch,
             ):
                 return False
             self._last_client_event_sequence = max(self._last_client_event_sequence, event.sequence)
@@ -235,6 +245,7 @@ class MediaBridgeSession:
             turn_id=event.turn_id,
             generation_id=event.generation_id,
             tool_epoch=event.tool_epoch,
+            session_epoch=event.session_epoch,
         )
         if not self.generation.accept(expected):
             return False
@@ -275,6 +286,7 @@ class MediaBridgeSession:
                 turn_id=event.turn_id,
                 generation_id=event.generation_id,
                 tool_epoch=event.tool_epoch,
+                session_epoch=event.session_epoch,
             )
         ):
             return False
@@ -313,11 +325,7 @@ class MediaBridgeSession:
     ) -> GenerationFence | None:
         """Close the Edge generation gate before forwarding a hard-stop KWS hit."""
 
-        if (
-            self.state == "closed"
-            or self.generation_active is False
-            or confidence < min_confidence
-        ):
+        if self.state == "closed" or self.generation_active is False or confidence < min_confidence:
             return None
         next_fence = self.generation.cancel(self.generation.current)
         if next_fence is None:
@@ -427,9 +435,7 @@ class MediaBridgeSession:
             self._log_downlink_reject("downlink_queue_full", frame)
             return False
         self.last_downlink_sequence = frame.sequence
-        self._last_downlink_source_end_sample = (
-            frame.source_start_sample + frame.frame_samples
-        )
+        self._last_downlink_source_end_sample = frame.source_start_sample + frame.frame_samples
         self.downlink.append(frame)
         return True
 
@@ -464,9 +470,7 @@ class MediaBridgeSession:
         return True
 
     def reconnect(self, identity: SessionIdentity) -> bool:
-        if self.state == "closed" or not self.identity.has_same_reconnect_authority(
-            identity
-        ):
+        if self.state == "closed" or not self.identity.has_same_reconnect_authority(identity):
             return False
         if identity.stream_epoch <= self.identity.stream_epoch:
             return False

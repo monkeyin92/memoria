@@ -21,6 +21,7 @@ from services.agent.src.voice_core.media_session_types import (
     OutputWork,
 )
 from services.agent.src.voice_core.playback_ledger import PlaybackLedger
+from services.agent.src.voice_core.reply_delivery import ReplyDeliveryLedger
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
 
@@ -35,12 +36,14 @@ class MediaVoiceSessionState:
     projection: ConversationProjection
     ingress: MediaAudioIngressState
     playback: PlaybackLedger = field(default_factory=PlaybackLedger)
+    reply_delivery: ReplyDeliveryLedger = field(default_factory=ReplyDeliveryLedger)
     output_sequence: int = 0
     output_text_offset: int = 0
     assistant_text: str = ""
     stream_epoch: int = 0
     floor_epoch: int = 0
     turn_started_ns: int | None = None
+    tts_started_ns: int | None = None
     first_audio_observed: bool = False
     provider_complete: bool = False
     output_complete_emitted: bool = False

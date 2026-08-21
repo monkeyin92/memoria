@@ -288,6 +288,7 @@ def test_media_v1_envelope_and_audio_metadata_round_trip() -> None:
         sequence=audio.sequence,
         task_epoch=5,
         context_version=7,
+        session_epoch=9,
         payload=audio.to_payload(),
     )
     decoded = MediaEnvelope.decode(envelope.encode())
@@ -295,6 +296,7 @@ def test_media_v1_envelope_and_audio_metadata_round_trip() -> None:
     assert decoded.payload["payload_b64"] == base64.b64encode(audio.payload).decode("ascii")
     assert decoded.task_epoch == 5
     assert decoded.context_version == 7
+    assert decoded.session_epoch == 9
     assert AudioFormat(AudioEncoding.PCM_S16LE, 16_000).frame_ms == 20
 
 

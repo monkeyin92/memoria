@@ -12,9 +12,10 @@ func (s *Session) AdvanceGeneration(fence Fence) error {
 	if s.State == SessionStopped {
 		return fmt.Errorf("session is stopped")
 	}
-	if fence.SessionID != s.ID || fence.TurnID < s.Generation.TurnID ||
-		(fence.TurnID == s.Generation.TurnID && fence.GenerationID < s.Generation.GenerationID) ||
-		(fence.TurnID == s.Generation.TurnID && fence.GenerationID == s.Generation.GenerationID && fence.ToolEpoch < s.Generation.ToolEpoch) {
+	if fence.SessionID != s.ID || fence.SessionEpoch < s.Generation.SessionEpoch ||
+		(fence.SessionEpoch == s.Generation.SessionEpoch && fence.TurnID < s.Generation.TurnID) ||
+		(fence.SessionEpoch == s.Generation.SessionEpoch && fence.TurnID == s.Generation.TurnID && fence.GenerationID < s.Generation.GenerationID) ||
+		(fence.SessionEpoch == s.Generation.SessionEpoch && fence.TurnID == s.Generation.TurnID && fence.GenerationID == s.Generation.GenerationID && fence.ToolEpoch < s.Generation.ToolEpoch) {
 		return fmt.Errorf("generation must advance monotonically")
 	}
 	if fence.Equal(s.Generation) {
@@ -237,7 +238,7 @@ func (s *Session) discardStaleDownlinkLocked() {
 	for range pending {
 		entry, _ := s.downlink.Pop()
 		frame := entry.frame
-		actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch}
+		actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch, SessionEpoch: frame.SessionEpoch}
 		if s.generationActive && actual.Equal(s.Generation) {
 			_ = s.downlink.Push(frame, entry.queuedAt)
 		} else {

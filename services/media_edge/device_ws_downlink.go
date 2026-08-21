@@ -118,7 +118,8 @@ func (c *DeviceConnection) downlinkSender(ctx context.Context, frame AudioFrame)
 	}
 	fence := deviceFence{
 		TurnID: frame.TurnID, GenerationID: frame.GenerationID,
-		ToolEpoch: frame.ToolEpoch,
+		ToolEpoch:    frame.ToolEpoch,
+		SessionEpoch: frame.SessionEpoch,
 	}
 	wireSequence, wireSourceSampleStart, ok := c.projectDownlinkClock(
 		fence, frame.Sequence, frame.CaptureStartSample,
@@ -251,6 +252,7 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 			TurnID:       generation.GetTurnId(),
 			GenerationID: generation.GetGenerationId(),
 			ToolEpoch:    generation.GetToolEpoch(),
+			SessionEpoch: generation.GetSessionEpoch(),
 		}
 		messageType := "generation.started"
 		switch generation.GetAction() {

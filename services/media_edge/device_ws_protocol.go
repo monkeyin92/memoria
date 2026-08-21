@@ -144,10 +144,11 @@ type deviceFence struct {
 	TurnID       uint64 `json:"turn_id"`
 	GenerationID uint64 `json:"generation_id"`
 	ToolEpoch    uint64 `json:"tool_epoch"`
+	SessionEpoch uint64 `json:"session_epoch"`
 }
 
 func (f deviceFence) isZero() bool {
-	return f.TurnID == 0 && f.GenerationID == 0 && f.ToolEpoch == 0
+	return f.TurnID == 0 && f.GenerationID == 0 && f.ToolEpoch == 0 && f.SessionEpoch == 0
 }
 
 func (f deviceFence) valid() bool {
@@ -156,11 +157,11 @@ func (f deviceFence) valid() bool {
 }
 
 func (f deviceFence) toFence(sessionID string) Fence {
-	return Fence{SessionID: sessionID, TurnID: f.TurnID, GenerationID: f.GenerationID, ToolEpoch: f.ToolEpoch}
+	return Fence{SessionID: sessionID, TurnID: f.TurnID, GenerationID: f.GenerationID, ToolEpoch: f.ToolEpoch, SessionEpoch: f.SessionEpoch}
 }
 
 func fenceToDevice(fence Fence) deviceFence {
-	return deviceFence{TurnID: fence.TurnID, GenerationID: fence.GenerationID, ToolEpoch: fence.ToolEpoch}
+	return deviceFence{TurnID: fence.TurnID, GenerationID: fence.GenerationID, ToolEpoch: fence.ToolEpoch, SessionEpoch: fence.SessionEpoch}
 }
 
 func validateDeviceIdentifier(value, field string) error {

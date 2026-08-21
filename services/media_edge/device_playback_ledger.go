@@ -171,6 +171,7 @@ func (l *devicePlaybackLedger) record(
 		TurnID:            receipt.Fence.TurnID,
 		GenerationID:      receipt.Fence.GenerationID,
 		ToolEpoch:         receipt.Fence.ToolEpoch,
+		SessionEpoch:      receipt.Fence.SessionEpoch,
 		ReceivedSequence:  sourceSequence,
 		RenderedSampleEnd: renderedSourceEnd,
 		ClientMonotonicMS: monotonicMS,

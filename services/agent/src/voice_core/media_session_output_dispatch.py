@@ -24,6 +24,7 @@ from services.agent.src.voice_core.media_session_types import (
 from services.agent.src.voice_core.media_session_types import (
     OutputWork as _OutputWork,
 )
+from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
 
 if TYPE_CHECKING:
     from services.agent.src.observability.metrics import MetricsRegistry
@@ -43,6 +44,26 @@ _STREAMCORE_EXECUTABLE_OUTPUT_KINDS = frozenset(
         int(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT),
     }
 )
+
+
+def _output_work_uses_tts(work: _OutputWork) -> bool:
+    if work.conversation_text is not None:
+        return True
+    return getattr(work.intent, "WhichOneof", lambda _name: None)("source") == "tts_source"
+
+
+def _reply_delivery_terminal_for_abort(reason: str) -> ReplyDeliveryEvent:
+    if reason in {
+        "superseded",
+        "stale_generation",
+        "cancelled",
+        "reply_task_cancelled",
+        "output_task_cancelled",
+    }:
+        return ReplyDeliveryEvent.PREEMPTED
+    if reason in {"transport_rejected", "playback_rejected"}:
+        return ReplyDeliveryEvent.TRANSPORT_REJECTED
+    return ReplyDeliveryEvent.ERROR
 
 
 class MediaOutputDispatchMixin:
@@ -110,6 +131,8 @@ class MediaOutputDispatchMixin:
             fence: GenerationFence,
             lease: _OutputOwnerLease,
             chunks: Any,
+            *,
+            measure_tts_first_frame: bool,
         ) -> OutputDispatchResult: ...
 
         def _output_chunks(
@@ -126,6 +149,7 @@ class MediaOutputDispatchMixin:
     ) -> None:
         """Publish one bounded, text-free dispatch outcome for diagnosis."""
 
+        self._record_reply_delivery_dispatch(context, result)
         if context is not None:
             context.output_results.append(result)
             if len(context.output_results) > 32:
@@ -149,6 +173,77 @@ class MediaOutputDispatchMixin:
             result.status.value,
             result.reason,
             result.emitted_audio,
+        )
+
+    def _record_reply_delivery_dispatch(
+        self,
+        context: _MediaVoiceSession | None,
+        result: OutputDispatchResult,
+    ) -> None:
+        """Project dispatch lifecycle results into the single delivery ledger."""
+
+        if context is None:
+            return
+        if result.status in {
+            OutputDispatchStatus.STARTED,
+            OutputDispatchStatus.QUEUED,
+        }:
+            context.reply_delivery.ensure(result.fence)
+            return
+
+        event: ReplyDeliveryEvent | None
+        if result.status is OutputDispatchStatus.SKIPPED:
+            event = ReplyDeliveryEvent.SKIPPED
+        elif result.status is OutputDispatchStatus.COMPLETED:
+            if result.reason == "provider_stream_complete" and result.emitted_audio:
+                event = ReplyDeliveryEvent.PROVIDER_COMPLETED
+            elif result.reason == "provider_completed_without_audio":
+                event = ReplyDeliveryEvent.NO_AUDIO
+            else:
+                # Delegation ownership and a reserved local reply are
+                # dispatch handoffs, not terminal delivery outcomes.  The
+                # eventual output owner records the real terminal event.
+                event = None
+        else:
+            event = _reply_delivery_terminal_for_abort(result.reason)
+
+        if event is None:
+            context.reply_delivery.ensure(result.fence)
+            return
+        self._record_reply_delivery_event(context, result.fence, event, result.reason)
+
+    def _record_reply_delivery_event(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+        event: ReplyDeliveryEvent,
+        reason: str = "",
+    ) -> None:
+        snapshot, changed = context.reply_delivery.record(fence, event, reason=reason)
+        if not changed:
+            return
+        labels = {"status": event.value}
+        if reason:
+            labels["reason"] = reason
+        self.metrics.inc_media_metric(
+            "voice_reply_delivery_event_total",
+            labels=labels,
+        )
+        if event is ReplyDeliveryEvent.PREEMPTED and not snapshot.first_frame_sent:
+            self.metrics.inc_media_metric("voice_first_frame_preempted_total")
+        logger.info(
+            "media reply delivery session=%s delivery_id=%s event=%s "
+            "terminal=%s terminal_reason=%s first_frame_sent=%s "
+            "provider_completed=%s playback_ended=%s actual_heard=%s",
+            fence.session_id,
+            snapshot.delivery_id,
+            event.value,
+            snapshot.terminal_event.value if snapshot.terminal_event else "",
+            snapshot.terminal_reason or "",
+            snapshot.first_frame_sent,
+            snapshot.provider_completed,
+            snapshot.playback_ended,
+            snapshot.actual_heard,
         )
 
     async def generate_reply(
@@ -594,6 +689,7 @@ class MediaOutputDispatchMixin:
                             fence,
                             lease,
                             chunks,
+                            measure_tts_first_frame=_output_work_uses_tts(work),
                         )
                 except TimeoutError:
                     if not deadline.expired():

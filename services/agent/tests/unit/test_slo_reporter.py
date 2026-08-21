@@ -57,11 +57,13 @@ def test_media_slo_snapshot_omits_uninstrumented_latency() -> None:
     assert "session_failure_rate" not in snapshot
 
     metrics.set_voice_latency("first_audio", "p95", 0.8)
+    metrics.observe_voice_latency("tts_first_frame", 0.12)
     metrics.set_voice_latency("interrupt_stop", "p95", 0.18)
     metrics._inc("media_sessions_total", amount=100)
     metrics._inc("media_sessions_failed_total", amount=1)
     snapshot = metrics.media_slo_snapshot()
     assert snapshot["first_audio_p95_ms"] == 800
+    assert snapshot["tts_first_frame_p95_ms"] == 120
     assert snapshot["interrupt_stop_p95_ms"] == 180
     assert snapshot["session_failure_rate"] == pytest.approx(0.01)
 
@@ -73,6 +75,7 @@ def test_prometheus_snapshot_parser_is_allowlisted_and_derives_failure_rate() ->
                 'stale_result_dropped_total{source="media_generation"} 0',
                 'stale_result_dropped_total{source="asr_final"} 1',
                 'voice_latency_seconds{quantile="p95",stage="first_audio"} 0.8',
+                'voice_latency_seconds{quantile="p95",stage="tts_first_frame"} 0.12',
                 'media_sessions_total 10',
                 'media_sessions_failed_total 1',
                 'unrelated_secret_metric{token="nope"} 42',
@@ -83,5 +86,6 @@ def test_prometheus_snapshot_parser_is_allowlisted_and_derives_failure_rate() ->
         "stale_generation_total": 0.0,
         "stale_asr_final_total": 1.0,
         "first_audio_p95_ms": 800.0,
+        "tts_first_frame_p95_ms": 120.0,
         "session_failure_rate": 0.1,
     }

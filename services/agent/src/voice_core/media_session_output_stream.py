@@ -27,6 +27,7 @@ from services.agent.src.voice_core.media_session_types import (
     OutputWork as _OutputWork,
 )
 from services.agent.src.voice_core.playback_ledger import PlaybackSpan
+from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
 
 if TYPE_CHECKING:
     from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
@@ -77,6 +78,14 @@ class MediaOutputStreamMixin:
 
         async def _start_selected_output(self, context: _MediaVoiceSession) -> bool: ...
 
+        def _record_reply_delivery_event(
+            self,
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+            event: ReplyDeliveryEvent,
+            reason: str = "",
+        ) -> None: ...
+
     async def on_playback_progress(
         self,
         session: MediaBridgeSession,
@@ -102,6 +111,27 @@ class MediaOutputStreamMixin:
         # publishing only the newly acknowledged span would make clients
         # replace a complete answer with its last phrase.
         heard = context.playback.actual_heard_text(fence)
+        delivery = context.reply_delivery.get(fence)
+        if (
+            context.playback.received_sequence(fence) >= 0
+            and (delivery is None or not delivery.first_frame_sent)
+        ):
+            # Keep direct playback-ledger fixtures and legacy callers honest:
+            # an accepted playback range is the same transport boundary as a
+            # first frame sent event when the stream path was not involved.
+            self._record_reply_delivery_event(
+                context,
+                fence,
+                ReplyDeliveryEvent.FIRST_FRAME_SENT,
+                "playback_ledger_backfill",
+            )
+        if context.playback.is_fully_acknowledged(fence):
+            self._record_reply_delivery_event(
+                context,
+                fence,
+                ReplyDeliveryEvent.ACTUAL_HEARD,
+                "exact_playback_ack",
+            )
         if (
             context.provider_complete
             and context.playback.is_playback_complete(fence)
@@ -132,10 +162,16 @@ class MediaOutputStreamMixin:
         fence: GenerationFence,
         lease: _OutputOwnerLease,
         chunks: AsyncIterator[MediaReplyChunk],
+        *,
+        measure_tts_first_frame: bool,
     ) -> OutputDispatchResult:
         """Send one selected source through the shared owner and PCM ledger."""
 
         emitted_audio = False
+        # This clock starts when the selected provider/output iterator is first
+        # consumed.  It deliberately ends at the Edge-accepted PCM boundary;
+        # device DAC/Actual Heard remain separate playback evidence.
+        context.tts_started_ns = time.monotonic_ns() if measure_tts_first_frame else None
         try:
             async for chunk in chunks:
                 if not self._output_owner_is_current(context, lease):
@@ -235,6 +271,22 @@ class MediaOutputStreamMixin:
                         "playback_rejected",
                         emitted_audio,
                     )
+                delivery_before = context.reply_delivery.get(fence)
+                self._record_reply_delivery_event(
+                    context,
+                    fence,
+                    ReplyDeliveryEvent.FIRST_FRAME_SENT,
+                    "downlink_frame_accepted",
+                )
+                if (
+                    (delivery_before is None or not delivery_before.first_frame_sent)
+                    and context.tts_started_ns is not None
+                ):
+                    self.metrics.observe_voice_latency(
+                        "tts_first_frame",
+                        (time.monotonic_ns() - context.tts_started_ns) / 1_000_000_000,
+                    )
+                    context.tts_started_ns = None
                 emitted_audio = True
                 if not context.first_audio_observed and context.turn_started_ns is not None:
                     self.metrics.observe_voice_latency(
@@ -288,6 +340,12 @@ class MediaOutputStreamMixin:
             # Provider completion is not playback completion. Keep the runtime
             # speaking until the client watermark covers all emitted audio.
             context.provider_complete = True
+            self._record_reply_delivery_event(
+                context,
+                fence,
+                ReplyDeliveryEvent.PROVIDER_COMPLETED,
+                "provider_stream_complete",
+            )
             if not context.output_complete_emitted:
                 task_epoch, context_version = self._event_versions(context, fence)
                 context.output_complete_emitted = await self.bridge.emit_generation(
@@ -406,6 +464,12 @@ class MediaOutputStreamMixin:
         if owner is not None and not owner.fence.matches(fence):
             return
         context.provider_complete = False
+        self._record_reply_delivery_event(
+            context,
+            fence,
+            ReplyDeliveryEvent.PLAYBACK_ENDED,
+            "playback_completed",
+        )
         if owner is not None:
             self._release_output_owner(context, fence, reason="playback_completed")
         if await self._start_selected_output(context):

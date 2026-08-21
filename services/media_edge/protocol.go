@@ -19,6 +19,7 @@ type Fence struct {
 	TurnID       uint64 `json:"turn_id"`
 	GenerationID uint64 `json:"generation_id"`
 	ToolEpoch    uint64 `json:"tool_epoch"`
+	SessionEpoch uint64 `json:"session_epoch"`
 }
 
 func (f Fence) Validate() error {
@@ -30,7 +31,8 @@ func (f Fence) Validate() error {
 
 func (f Fence) Equal(other Fence) bool {
 	return f.SessionID == other.SessionID && f.TurnID == other.TurnID &&
-		f.GenerationID == other.GenerationID && f.ToolEpoch == other.ToolEpoch
+		f.GenerationID == other.GenerationID && f.ToolEpoch == other.ToolEpoch &&
+		f.SessionEpoch == other.SessionEpoch
 }
 
 // AudioFrame carries a bounded 16-bit PCM payload and absolute capture range.
@@ -45,6 +47,7 @@ type AudioFrame struct {
 	TurnID             uint64 `json:"turn_id"`
 	GenerationID       uint64 `json:"generation_id"`
 	ToolEpoch          uint64 `json:"tool_epoch"`
+	SessionEpoch       uint64 `json:"session_epoch,omitempty"`
 	PayloadB64         string `json:"payload_b64"`
 	Discontinuity      bool   `json:"discontinuity,omitempty"`
 	LossConcealed      bool   `json:"loss_concealed,omitempty"`

@@ -86,13 +86,16 @@ class GenerationController:
             raise ValueError("generation fence belongs to another session")
         current = self._current
         if (
-            fence.turn_id < current.turn_id
+            fence.session_epoch < current.session_epoch
+            or (fence.session_epoch == current.session_epoch and fence.turn_id < current.turn_id)
             or (
-                fence.turn_id == current.turn_id
+                fence.session_epoch == current.session_epoch
+                and fence.turn_id == current.turn_id
                 and fence.generation_id < current.generation_id
             )
             or (
-                fence.turn_id == current.turn_id
+                fence.session_epoch == current.session_epoch
+                and fence.turn_id == current.turn_id
                 and fence.generation_id == current.generation_id
                 and fence.tool_epoch < current.tool_epoch
             )

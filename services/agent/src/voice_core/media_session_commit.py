@@ -559,6 +559,7 @@ class MediaSessionCommitMixin:
         context.provider_complete = False
         context.output_complete_emitted = False
         context.turn_started_ns = time.monotonic_ns()
+        context.tts_started_ns = None
         context.first_audio_observed = False
         task_epoch, context_version = self._event_versions(context, fence)
         generation_started = await self.bridge.emit_generation(

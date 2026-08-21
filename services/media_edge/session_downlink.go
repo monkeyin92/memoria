@@ -37,7 +37,7 @@ func (s *Session) acceptDownlinkLocked(frame AudioFrame) error {
 		s.staleFrames++
 		return fmt.Errorf("downlink sample range has a gap")
 	}
-	actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch}
+	actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch, SessionEpoch: frame.SessionEpoch}
 	if !s.generationActive || !actual.Equal(s.Generation) {
 		s.staleFrames++
 		return ErrStaleDownlinkGeneration
@@ -100,7 +100,7 @@ func (s *Session) DeliverDownlink(frame AudioFrame, sender DownlinkSender) error
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch}
+	actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch, SessionEpoch: frame.SessionEpoch}
 	if deliveryCtx.Err() != nil || !s.generationActive || !actual.Equal(s.Generation) {
 		return ErrStaleDownlinkGeneration
 	}
@@ -130,7 +130,7 @@ func (s *Session) PopDownlink() (AudioFrame, bool) {
 	for s.downlink.Len() > 0 {
 		entry, _ := s.downlink.Pop()
 		frame := entry.frame
-		actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch}
+		actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch, SessionEpoch: frame.SessionEpoch}
 		if s.generationActive && actual.Equal(s.Generation) {
 			return frame, true
 		}

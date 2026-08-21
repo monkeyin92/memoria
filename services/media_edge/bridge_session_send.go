@@ -157,7 +157,7 @@ func (s *VoiceCoreSession) SendPlaybackProgress(progress PlaybackProgress) error
 	s.stateMu.Lock()
 	current := s.current
 	s.stateMu.Unlock()
-	if !current.Equal(Fence{SessionID: s.identity.SessionID, TurnID: progress.TurnID, GenerationID: progress.GenerationID, ToolEpoch: progress.ToolEpoch}) {
+	if !current.Equal(Fence{SessionID: s.identity.SessionID, TurnID: progress.TurnID, GenerationID: progress.GenerationID, ToolEpoch: progress.ToolEpoch, SessionEpoch: progress.SessionEpoch}) {
 		return fmt.Errorf("playback progress belongs to a stale generation")
 	}
 	return s.send(&mediav1.MediaToCore{Event: &mediav1.MediaToCore_Playback{
@@ -170,6 +170,7 @@ func (s *VoiceCoreSession) SendPlaybackProgress(progress PlaybackProgress) error
 			Approximate:       progress.Approximate,
 			TurnId:            progress.TurnID,
 			ToolEpoch:         progress.ToolEpoch,
+			SessionEpoch:      progress.SessionEpoch,
 		},
 	}})
 }
@@ -271,4 +272,5 @@ type PlaybackProgress struct {
 	Approximate       bool
 	TurnID            uint64
 	ToolEpoch         uint64
+	SessionEpoch      uint64
 }

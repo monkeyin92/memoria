@@ -322,6 +322,7 @@ class MetricsRegistry:
         }
         for stage, key in (
             ("first_audio", "first_audio_p95_ms"),
+            ("tts_first_frame", "tts_first_frame_p95_ms"),
             ("interrupt_stop", "interrupt_stop_p95_ms"),
         ):
             with self._lock:

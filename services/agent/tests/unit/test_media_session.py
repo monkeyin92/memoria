@@ -50,6 +50,7 @@ from services.agent.src.voice_core.media_session_types import (
 )
 from services.agent.src.voice_core.playback_ledger import PlaybackSpan
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
+from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
 from services.agent.src.voice_core.speech_timeline import (
     ASRResult,
     ASRWordTiming,
@@ -2479,6 +2480,10 @@ async def test_main_reply_holds_output_owner_until_playback_ack() -> None:
     assert bridge.output_admissions[-1].consumed is True
     assert bridge.output_admissions[-1].reason == "playback_completed"
     assert bridge.output_admissions[-1].authoritative_candidates == ()
+    delivery = context.reply_delivery.get(fence)
+    assert delivery is not None
+    assert delivery.terminal_event is ReplyDeliveryEvent.PLAYBACK_ENDED
+    assert delivery.actual_heard is True
     await registry._finalize_session(identity.session_id)
 
 
@@ -2543,6 +2548,16 @@ async def test_nonzero_session_epoch_reply_reaches_provider_and_first_pcm() -> N
     assert bridge.output_admissions[0].selected is True
     assert provider.reply_fences == [fence]
     assert len(bridge.frames) == 1
+    delivery = context.reply_delivery.get(fence)
+    assert delivery is not None
+    assert delivery.delivery_id == (
+        "nonzero-session-epoch-output/epoch-7/turn-1/generation-1/tool-0"
+    )
+    assert delivery.events == (
+        ReplyDeliveryEvent.FIRST_FRAME_SENT,
+        ReplyDeliveryEvent.PROVIDER_COMPLETED,
+    )
+    assert delivery.terminal is False
     assert context.output_results == [
         OutputDispatchResult(
             fence,
@@ -2555,6 +2570,9 @@ async def test_nonzero_session_epoch_reply_reaches_provider_and_first_pcm() -> N
         "voice_output_dispatch_total",
         {"status": "completed", "reason": "provider_stream_complete"},
     ) == 1
+    assert metrics.latency_samples["tts_first_frame"]
+    assert metrics.latency_samples["tts_first_frame"][-1] >= 0
+    assert metrics.get("voice_first_frame_preempted_total") == 0
     await registry._finalize_session(identity.session_id)
 
 
@@ -2854,9 +2872,11 @@ async def test_higher_priority_intent_supersedes_main_reply_before_pcm() -> None
 
     provider = BlockingProvider()
     bridge = CapturingBridge()
+    metrics = MetricsRegistry()
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
+        metrics=metrics,
     )
     registry.install()
     identity = SessionIdentity("superseded-output-owner")
@@ -2892,6 +2912,11 @@ async def test_higher_priority_intent_supersedes_main_reply_before_pcm() -> None
     assert bridge.frames == []
     assert provider.cancelled == [fence]
     assert context.output_owner is None
+    delivery = context.reply_delivery.get(fence)
+    assert delivery is not None
+    assert delivery.terminal_event is ReplyDeliveryEvent.PREEMPTED
+    assert delivery.first_frame_sent is False
+    assert metrics.get("voice_first_frame_preempted_total") == 1
     coordinator.complete_output_intent(
         acknowledgement,
         current_fence=fence,
@@ -6057,6 +6082,10 @@ async def test_approximate_device_progress_completes_without_actual_heard() -> N
     assert context.playback.actual_heard_text(fence) == ""
     assert context.runtime.orchestrator.state is ConversationState.LISTENING
     assert all(turn.content != "你好" for turn in context.runtime.orchestrator.context.turns)
+    delivery = context.reply_delivery.get(fence)
+    assert delivery is not None
+    assert delivery.terminal_event is ReplyDeliveryEvent.PLAYBACK_ENDED
+    assert delivery.actual_heard is False
 
 
 @pytest.mark.asyncio

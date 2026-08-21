@@ -496,6 +496,7 @@ func (b *VoiceCoreBridge) ConnectWithHandshakeContext(
 		TurnID:       accepted.GetAccepted().GetCurrentTurnId(),
 		GenerationID: accepted.GetAccepted().GetCurrentGenerationId(),
 		ToolEpoch:    accepted.GetAccepted().GetCurrentToolEpoch(),
+		SessionEpoch: accepted.GetAccepted().GetCurrentSessionEpoch(),
 	}
 	if (acceptedFence.GenerationID == 0) != (acceptedFence.TurnID == 0 && acceptedFence.ToolEpoch == 0) {
 		_ = session.Close()
@@ -560,9 +561,10 @@ func (f Fence) equal(other Fence) bool {
 }
 
 func (f Fence) monotonic(other Fence) bool {
-	return other.TurnID > f.TurnID ||
-		(other.TurnID == f.TurnID && other.GenerationID > f.GenerationID) ||
-		(other.TurnID == f.TurnID && other.GenerationID == f.GenerationID && other.ToolEpoch >= f.ToolEpoch)
+	return other.SessionEpoch > f.SessionEpoch ||
+		(other.SessionEpoch == f.SessionEpoch && other.TurnID > f.TurnID) ||
+		(other.SessionEpoch == f.SessionEpoch && other.TurnID == f.TurnID && other.GenerationID > f.GenerationID) ||
+		(other.SessionEpoch == f.SessionEpoch && other.TurnID == f.TurnID && other.GenerationID == f.GenerationID && other.ToolEpoch >= f.ToolEpoch)
 }
 
 // VoiceCoreSession serializes client sends and validates the dual-end

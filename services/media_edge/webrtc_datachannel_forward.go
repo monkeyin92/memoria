@@ -52,6 +52,7 @@ func (p *webRTCPeer) forwardCoreEvent(event *mediav1.CoreToMedia) {
 			p.sendPlaybackFlush(Fence{
 				SessionID: p.request.SessionID, TurnID: turnID,
 				GenerationID: generationID, ToolEpoch: toolEpoch,
+				SessionEpoch: generation.GetSessionEpoch(),
 			}, generation.GetReason())
 			return
 		}
@@ -71,6 +72,7 @@ func (p *webRTCPeer) forwardCoreEvent(event *mediav1.CoreToMedia) {
 			p.sendPlaybackFlush(Fence{
 				SessionID: p.request.SessionID, TurnID: turnID,
 				GenerationID: generationID, ToolEpoch: toolEpoch,
+				SessionEpoch: effect.GetSessionEpoch(),
 			}, effect.GetSourceEventId())
 			return
 		default:
@@ -243,6 +245,11 @@ func (p *webRTCPeer) sendEnvelope(
 	turnID, generationID, toolEpoch, taskEpoch, contextVersion uint64,
 	payload map[string]any,
 ) {
+	current := p.currentFence()
+	sessionEpoch := uint64(0)
+	if current.TurnID == turnID && current.GenerationID == generationID && current.ToolEpoch == toolEpoch {
+		sessionEpoch = current.SessionEpoch
+	}
 	p.channelMu.Lock()
 	lane := dataChannelLaneForEvent(typeValue)
 	sequence := p.eventSeq
@@ -252,7 +259,8 @@ func (p *webRTCPeer) sendEnvelope(
 		"event_id":   fmt.Sprintf("%s:%d:%d", p.request.SessionID, p.request.StreamEpoch, sequence),
 		"session_id": p.request.SessionID, "stream_epoch": p.request.StreamEpoch,
 		"sequence": sequence, "turn_id": turnID, "generation_id": generationID,
-		"tool_epoch": toolEpoch, "task_epoch": taskEpoch, "context_version": contextVersion,
+		"tool_epoch": toolEpoch, "session_epoch": sessionEpoch,
+		"task_epoch": taskEpoch, "context_version": contextVersion,
 		"server_monotonic_ms": uint64(time.Since(mediaProcessStartedAt) / time.Millisecond),
 		"payload":             payload,
 	}

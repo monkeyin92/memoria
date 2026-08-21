@@ -133,6 +133,7 @@ async def test_media_slo_gate_ttl_and_report_are_authoritative() -> None:
     snapshot = await gate.publish(
         {
             "first_audio_p95_ms": 700,
+            "tts_first_frame_p95_ms": 120,
             "interrupt_stop_p95_ms": 100,
             "session_failure_rate": 0.01,
             "stale_generation_total": 0,

@@ -126,6 +126,7 @@ func (r *VoiceCoreMediaRuntime) handleEvent(event *mediav1.CoreToMedia) error {
 			TurnID:       generation.GetTurnId(),
 			GenerationID: generation.GetGenerationId(),
 			ToolEpoch:    generation.GetToolEpoch(),
+			SessionEpoch: generation.GetSessionEpoch(),
 		}
 		if generation.GetAction() == mediav1.GenerationAction_GENERATION_ACTION_CANCEL {
 			if err := r.session.ApplyCancelledGeneration(fence); err != nil {
@@ -149,6 +150,7 @@ func (r *VoiceCoreMediaRuntime) handleEvent(event *mediav1.CoreToMedia) error {
 			TurnID:             audio.GetTurnId(),
 			GenerationID:       audio.GetGenerationId(),
 			ToolEpoch:          audio.GetToolEpoch(),
+			SessionEpoch:       audio.GetSessionEpoch(),
 			PayloadB64:         base64.StdEncoding.EncodeToString(audio.GetPcmS16Le()),
 			Final:              audio.GetFinalFrame(),
 		}

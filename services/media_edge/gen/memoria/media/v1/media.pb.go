@@ -977,7 +977,10 @@ type RealtimeEffect struct {
 	Payload        []byte                 `protobuf:"bytes,13,opt,name=payload,proto3" json:"payload,omitempty"`
 	// Full stream identity is required on the executable Core -> Media path.
 	// The legacy session_id/stream_epoch fields remain for additive compatibility.
-	Identity      *SessionIdentity `protobuf:"bytes,14,opt,name=identity,proto3" json:"identity,omitempty"`
+	Identity *SessionIdentity `protobuf:"bytes,14,opt,name=identity,proto3" json:"identity,omitempty"`
+	// Identity/context epoch; zero is the legacy epoch and must not be
+	// substituted for a non-zero active generation by receivers.
+	SessionEpoch  uint64 `protobuf:"varint,15,opt,name=session_epoch,json=sessionEpoch,proto3" json:"session_epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1110,6 +1113,13 @@ func (x *RealtimeEffect) GetIdentity() *SessionIdentity {
 	return nil
 }
 
+func (x *RealtimeEffect) GetSessionEpoch() uint64 {
+	if x != nil {
+		return x.SessionEpoch
+	}
+	return 0
+}
+
 // Python-authoritative Floor state for the executable media path. Unlike the
 // candidate-only ShadowFloorDecision, this has a per-stream monotonic epoch,
 // a full generation fence and no untyped payload.
@@ -1129,6 +1139,7 @@ type FloorEffect struct {
 	CandidateOnly  bool                   `protobuf:"varint,12,opt,name=candidate_only,json=candidateOnly,proto3" json:"candidate_only,omitempty"`
 	// Reject delayed control updates before they can revive an obsolete floor.
 	ExpiresAtMs   uint64 `protobuf:"varint,13,opt,name=expires_at_ms,json=expiresAtMs,proto3" json:"expires_at_ms,omitempty"`
+	SessionEpoch  uint64 `protobuf:"varint,14,opt,name=session_epoch,json=sessionEpoch,proto3" json:"session_epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1250,6 +1261,13 @@ func (x *FloorEffect) GetCandidateOnly() bool {
 func (x *FloorEffect) GetExpiresAtMs() uint64 {
 	if x != nil {
 		return x.ExpiresAtMs
+	}
+	return 0
+}
+
+func (x *FloorEffect) GetSessionEpoch() uint64 {
+	if x != nil {
+		return x.SessionEpoch
 	}
 	return 0
 }
@@ -2171,8 +2189,11 @@ type PlaybackProgress struct {
 	Approximate       bool                   `protobuf:"varint,6,opt,name=approximate,proto3" json:"approximate,omitempty"`
 	TurnId            uint64                 `protobuf:"varint,7,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
 	ToolEpoch         uint64                 `protobuf:"varint,8,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Complete generation fence dimension. Legacy clients omit this and are
+	// rejected when the active generation has a non-zero session epoch.
+	SessionEpoch  uint64 `protobuf:"varint,9,opt,name=session_epoch,json=sessionEpoch,proto3" json:"session_epoch,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PlaybackProgress) Reset() {
@@ -2257,6 +2278,13 @@ func (x *PlaybackProgress) GetTurnId() uint64 {
 func (x *PlaybackProgress) GetToolEpoch() uint64 {
 	if x != nil {
 		return x.ToolEpoch
+	}
+	return 0
+}
+
+func (x *PlaybackProgress) GetSessionEpoch() uint64 {
+	if x != nil {
+		return x.SessionEpoch
 	}
 	return 0
 }
@@ -2595,6 +2623,7 @@ type SessionAccepted struct {
 	CurrentToolEpoch     uint64               `protobuf:"varint,6,opt,name=current_tool_epoch,json=currentToolEpoch,proto3" json:"current_tool_epoch,omitempty"`
 	TaskEpoch            uint64               `protobuf:"varint,7,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
 	ContextVersion       uint64               `protobuf:"varint,8,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	CurrentSessionEpoch  uint64               `protobuf:"varint,9,opt,name=current_session_epoch,json=currentSessionEpoch,proto3" json:"current_session_epoch,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -2685,6 +2714,13 @@ func (x *SessionAccepted) GetContextVersion() uint64 {
 	return 0
 }
 
+func (x *SessionAccepted) GetCurrentSessionEpoch() uint64 {
+	if x != nil {
+		return x.CurrentSessionEpoch
+	}
+	return 0
+}
+
 type AssistantAudioFrame struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	Identity          *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
@@ -2699,6 +2735,7 @@ type AssistantAudioFrame struct {
 	FinalFrame        bool                   `protobuf:"varint,10,opt,name=final_frame,json=finalFrame,proto3" json:"final_frame,omitempty"`
 	TaskEpoch         uint64                 `protobuf:"varint,11,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
 	ContextVersion    uint64                 `protobuf:"varint,12,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	SessionEpoch      uint64                 `protobuf:"varint,13,opt,name=session_epoch,json=sessionEpoch,proto3" json:"session_epoch,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -2817,6 +2854,13 @@ func (x *AssistantAudioFrame) GetContextVersion() uint64 {
 	return 0
 }
 
+func (x *AssistantAudioFrame) GetSessionEpoch() uint64 {
+	if x != nil {
+		return x.SessionEpoch
+	}
+	return 0
+}
+
 type GenerationControl struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Identity       *SessionIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
@@ -2828,6 +2872,7 @@ type GenerationControl struct {
 	Sequence       uint64                 `protobuf:"varint,7,opt,name=sequence,proto3" json:"sequence,omitempty"`
 	TaskEpoch      uint64                 `protobuf:"varint,8,opt,name=task_epoch,json=taskEpoch,proto3" json:"task_epoch,omitempty"`
 	ContextVersion uint64                 `protobuf:"varint,9,opt,name=context_version,json=contextVersion,proto3" json:"context_version,omitempty"`
+	SessionEpoch   uint64                 `protobuf:"varint,10,opt,name=session_epoch,json=sessionEpoch,proto3" json:"session_epoch,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2921,6 +2966,13 @@ func (x *GenerationControl) GetTaskEpoch() uint64 {
 func (x *GenerationControl) GetContextVersion() uint64 {
 	if x != nil {
 		return x.ContextVersion
+	}
+	return 0
+}
+
+func (x *GenerationControl) GetSessionEpoch() uint64 {
+	if x != nil {
+		return x.SessionEpoch
 	}
 	return 0
 }
@@ -4451,7 +4503,7 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"task_epoch\x18\f \x01(\x04R\ttaskEpoch\x12'\n" +
 	"\x0fcontext_version\x18\r \x01(\x04R\x0econtextVersion\x12L\n" +
 	"\x10speaker_evidence\x18\x0e \x01(\v2!.memoria.media.v1.SpeakerEvidenceR\x0fspeakerEvidence\x12\x18\n" +
-	"\apayload\x18\x0f \x01(\fR\apayload\"\x9f\x04\n" +
+	"\apayload\x18\x0f \x01(\fR\apayload\"\xc4\x04\n" +
 	"\x0eRealtimeEffect\x12\x1b\n" +
 	"\teffect_id\x18\x01 \x01(\tR\beffectId\x12\x1d\n" +
 	"\n" +
@@ -4471,7 +4523,8 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\x0fcontext_version\x18\v \x01(\x04R\x0econtextVersion\x12%\n" +
 	"\x0ecandidate_only\x18\f \x01(\bR\rcandidateOnly\x12\x18\n" +
 	"\apayload\x18\r \x01(\fR\apayload\x12=\n" +
-	"\bidentity\x18\x0e \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\"\xfd\x03\n" +
+	"\bidentity\x18\x0e \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12#\n" +
+	"\rsession_epoch\x18\x0f \x01(\x04R\fsessionEpoch\"\xa2\x04\n" +
 	"\vFloorEffect\x12\x1b\n" +
 	"\teffect_id\x18\x01 \x01(\tR\beffectId\x12=\n" +
 	"\bidentity\x18\x02 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x1a\n" +
@@ -4490,7 +4543,8 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	" \x01(\x04R\ttaskEpoch\x12'\n" +
 	"\x0fcontext_version\x18\v \x01(\x04R\x0econtextVersion\x12%\n" +
 	"\x0ecandidate_only\x18\f \x01(\bR\rcandidateOnly\x12\"\n" +
-	"\rexpires_at_ms\x18\r \x01(\x04R\vexpiresAtMs\"\x87\x04\n" +
+	"\rexpires_at_ms\x18\r \x01(\x04R\vexpiresAtMs\x12#\n" +
+	"\rsession_epoch\x18\x0e \x01(\x04R\fsessionEpoch\"\x87\x04\n" +
 	"\fOutputIntent\x12\x1b\n" +
 	"\tintent_id\x18\x01 \x01(\tR\bintentId\x12\x1d\n" +
 	"\n" +
@@ -4597,7 +4651,7 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"end_sample\x18\x05 \x01(\x04R\tendSample\x12\x1b\n" +
 	"\thard_stop\x18\x06 \x01(\bR\bhardStop\x127\n" +
 	"\x15detected_monotonic_ms\x18\a \x01(\x04H\x00R\x13detectedMonotonicMs\x88\x01\x01B\x18\n" +
-	"\x16_detected_monotonic_ms\"\xdd\x02\n" +
+	"\x16_detected_monotonic_ms\"\x82\x03\n" +
 	"\x10PlaybackProgress\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12#\n" +
 	"\rgeneration_id\x18\x02 \x01(\x04R\fgenerationId\x12+\n" +
@@ -4607,7 +4661,8 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\vapproximate\x18\x06 \x01(\bR\vapproximate\x12\x17\n" +
 	"\aturn_id\x18\a \x01(\x04R\x06turnId\x12\x1d\n" +
 	"\n" +
-	"tool_epoch\x18\b \x01(\x04R\ttoolEpoch\"\xb1\x01\n" +
+	"tool_epoch\x18\b \x01(\x04R\ttoolEpoch\x12#\n" +
+	"\rsession_epoch\x18\t \x01(\x04R\fsessionEpoch\"\xb1\x01\n" +
 	"\vDeviceEvent\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x1d\n" +
 	"\n" +
@@ -4634,7 +4689,7 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\bplayback\x18\x05 \x01(\v2\".memoria.media.v1.PlaybackProgressH\x00R\bplayback\x127\n" +
 	"\x06device\x18\x06 \x01(\v2\x1d.memoria.media.v1.DeviceEventH\x00R\x06device\x127\n" +
 	"\x06metric\x18\a \x01(\v2\x1d.memoria.media.v1.MediaMetricH\x00R\x06metricB\a\n" +
-	"\x05event\"\xba\x03\n" +
+	"\x05event\"\xee\x03\n" +
 	"\x0fSessionAccepted\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x129\n" +
 	"\x05state\x18\x02 \x01(\x0e2#.memoria.media.v1.ConversationStateR\x05state\x122\n" +
@@ -4644,7 +4699,8 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\x12current_tool_epoch\x18\x06 \x01(\x04R\x10currentToolEpoch\x12\x1d\n" +
 	"\n" +
 	"task_epoch\x18\a \x01(\x04R\ttaskEpoch\x12'\n" +
-	"\x0fcontext_version\x18\b \x01(\x04R\x0econtextVersion\"\xc9\x03\n" +
+	"\x0fcontext_version\x18\b \x01(\x04R\x0econtextVersion\x122\n" +
+	"\x15current_session_epoch\x18\t \x01(\x04R\x13currentSessionEpoch\"\xee\x03\n" +
 	"\x13AssistantAudioFrame\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x17\n" +
 	"\aturn_id\x18\x02 \x01(\x04R\x06turnId\x12#\n" +
@@ -4662,7 +4718,8 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"finalFrame\x12\x1d\n" +
 	"\n" +
 	"task_epoch\x18\v \x01(\x04R\ttaskEpoch\x12'\n" +
-	"\x0fcontext_version\x18\f \x01(\x04R\x0econtextVersion\"\xe7\x02\n" +
+	"\x0fcontext_version\x18\f \x01(\x04R\x0econtextVersion\x12#\n" +
+	"\rsession_epoch\x18\r \x01(\x04R\fsessionEpoch\"\x8c\x03\n" +
 	"\x11GenerationControl\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x17\n" +
 	"\aturn_id\x18\x02 \x01(\x04R\x06turnId\x12#\n" +
@@ -4674,7 +4731,9 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\bsequence\x18\a \x01(\x04R\bsequence\x12\x1d\n" +
 	"\n" +
 	"task_epoch\x18\b \x01(\x04R\ttaskEpoch\x12'\n" +
-	"\x0fcontext_version\x18\t \x01(\x04R\x0econtextVersion\"\xa3\x04\n" +
+	"\x0fcontext_version\x18\t \x01(\x04R\x0econtextVersion\x12#\n" +
+	"\rsession_epoch\x18\n" +
+	" \x01(\x04R\fsessionEpoch\"\xa3\x04\n" +
 	"\x0fTranscriptEvent\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x17\n" +
 	"\aturn_id\x18\x02 \x01(\x04R\x06turnId\x12\x1a\n" +

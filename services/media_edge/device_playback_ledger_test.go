@@ -15,7 +15,7 @@ func TestDevicePlaybackLedgerUsesServerSendClockAndKeepsFencesIndependent(
 		observedLag = lag
 	})
 	ledger.now = func() time.Time { return now }
-	firstFence := deviceFence{TurnID: 1, GenerationID: 1}
+	firstFence := deviceFence{TurnID: 1, GenerationID: 1, SessionEpoch: 7}
 	secondFence := deviceFence{TurnID: 2, GenerationID: 2}
 	ledger.startTransportFence(firstFence, false)
 	ledger.recordSent(firstFence, 7, 320)
@@ -28,6 +28,9 @@ func TestDevicePlaybackLedgerUsesServerSendClockAndKeepsFencesIndependent(
 	}
 	if progress.RenderedSampleEnd != 480 || progress.ClientMonotonicMS != 9_999_999_999 {
 		t.Fatalf("playback projection mismatch: %+v", progress)
+	}
+	if progress.SessionEpoch != 7 {
+		t.Fatalf("playback session epoch = %d, want 7", progress.SessionEpoch)
 	}
 	// Sequence/sample clocks may restart on a replacement fence.
 	ledger.startTransportFence(secondFence, false)

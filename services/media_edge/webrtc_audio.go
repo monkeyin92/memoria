@@ -31,7 +31,7 @@ func (p *webRTCPeer) sendDownlink(ctx context.Context, frame AudioFrame) error {
 	for index := range samples {
 		samples[index] = int16(binary.LittleEndian.Uint16(payload[index*2:]))
 	}
-	fence := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch}
+	fence := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch, SessionEpoch: frame.SessionEpoch}
 	p.encoderMu.Lock()
 	defer p.encoderMu.Unlock()
 	if p.closed.Load() {

@@ -149,6 +149,7 @@ type mediaDataEnvelope struct {
 	TurnID            uint64          `json:"turn_id"`
 	GenerationID      uint64          `json:"generation_id"`
 	ToolEpoch         uint64          `json:"tool_epoch"`
+	SessionEpoch      uint64          `json:"session_epoch"`
 	TaskEpoch         uint64          `json:"task_epoch"`
 	ContextVersion    uint64          `json:"context_version"`
 	ServerMonotonicMS *uint64         `json:"server_monotonic_ms,omitempty"`
@@ -164,6 +165,7 @@ type playbackProgressPayload struct {
 	TurnID            uint64 `json:"turn_id"`
 	GenerationID      uint64 `json:"generation_id"`
 	ToolEpoch         uint64 `json:"tool_epoch"`
+	SessionEpoch      uint64 `json:"session_epoch"`
 }
 
 func NewWebRTCTerminator(
@@ -378,6 +380,7 @@ func (p *webRTCPeer) handleClientEvent(raw []byte) {
 	fence := Fence{
 		SessionID: envelope.SessionID, TurnID: envelope.TurnID,
 		GenerationID: envelope.GenerationID, ToolEpoch: envelope.ToolEpoch,
+		SessionEpoch: envelope.SessionEpoch,
 	}
 	switch envelope.Type {
 	case "client.stop_assistant":
@@ -397,14 +400,15 @@ func (p *webRTCPeer) handleClientEvent(raw []byte) {
 		var payload playbackProgressPayload
 		if decodeErr := json.Unmarshal(envelope.Payload, &payload); decodeErr != nil ||
 			payload.TurnID != envelope.TurnID || payload.GenerationID != envelope.GenerationID ||
-			payload.ToolEpoch != envelope.ToolEpoch {
+			payload.ToolEpoch != envelope.ToolEpoch || payload.SessionEpoch != envelope.SessionEpoch {
 			err = fmt.Errorf("invalid playback progress")
 			break
 		}
 		err = runtime.SendPlaybackProgress(PlaybackProgress{
 			SessionID: envelope.SessionID, StreamEpoch: envelope.StreamEpoch,
 			TurnID: envelope.TurnID, GenerationID: envelope.GenerationID,
-			ToolEpoch: envelope.ToolEpoch, ReceivedSequence: payload.ReceivedSequence,
+			ToolEpoch: envelope.ToolEpoch, SessionEpoch: payload.SessionEpoch,
+			ReceivedSequence:  payload.ReceivedSequence,
 			RenderedSampleEnd: payload.RenderedSampleEnd,
 			ClientMonotonicMS: payload.ClientMonotonicMS, Approximate: payload.Approximate,
 		})

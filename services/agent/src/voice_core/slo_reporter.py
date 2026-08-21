@@ -112,6 +112,7 @@ class MediaSLOReporter:
 def _clean_metrics(metrics: Mapping[str, float]) -> dict[str, float]:
     allowed = {
         "first_audio_p95_ms",
+        "tts_first_frame_p95_ms",
         "interrupt_stop_p95_ms",
         "session_failure_rate",
         "stale_generation_total",
@@ -159,6 +160,8 @@ def parse_prometheus_slo_snapshot(payload: str) -> dict[str, float]:
             stage = labels.get("stage")
             if stage == "first_audio":
                 values["first_audio_p95_ms"] = value * 1000.0
+            elif stage == "tts_first_frame":
+                values["tts_first_frame_p95_ms"] = value * 1000.0
             elif stage == "interrupt_stop":
                 values["interrupt_stop_p95_ms"] = value * 1000.0
         elif name == "media_sessions_total":

@@ -76,9 +76,7 @@ class SessionIdentity:
         )
         if self.client_type == "device" and not all(binding_fence):
             raise ValueError("device identity requires a complete runtime profile authority fence")
-        if self.client_type != "device" and (
-            bool(self.subject_id.strip()) or any(binding_fence)
-        ):
+        if self.client_type != "device" and (bool(self.subject_id.strip()) or any(binding_fence)):
             raise ValueError("runtime profile authority fence is device-only")
 
     def has_same_reconnect_authority(self, other: SessionIdentity) -> bool:
@@ -163,6 +161,7 @@ class PlaybackProgress:
     approximate: bool = True
     turn_id: int = 0
     tool_epoch: int = 0
+    session_epoch: int = 0
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -172,6 +171,7 @@ class PlaybackProgress:
             (self.client_monotonic_ms, "client_monotonic_ms"),
             (self.turn_id, "turn_id"),
             (self.tool_epoch, "tool_epoch"),
+            (self.session_epoch, "session_epoch"),
         ):
             _non_negative_int(value, name)
 
@@ -184,6 +184,7 @@ class PlaybackProgress:
             "approximate": self.approximate,
             "turn_id": self.turn_id,
             "tool_epoch": self.tool_epoch,
+            "session_epoch": self.session_epoch,
         }
 
 
@@ -199,6 +200,7 @@ class MediaEnvelope:
     turn_id: int = 0
     generation_id: int = 0
     tool_epoch: int = 0
+    session_epoch: int = 0
     task_epoch: int = 0
     context_version: int = 0
     server_monotonic_ms: int = 0
@@ -217,6 +219,7 @@ class MediaEnvelope:
             (self.turn_id, "turn_id"),
             (self.generation_id, "generation_id"),
             (self.tool_epoch, "tool_epoch"),
+            (self.session_epoch, "session_epoch"),
             (self.task_epoch, "task_epoch"),
             (self.context_version, "context_version"),
             (self.server_monotonic_ms, "server_monotonic_ms"),
@@ -239,6 +242,7 @@ class MediaEnvelope:
         turn_id: int = 0,
         generation_id: int = 0,
         tool_epoch: int = 0,
+        session_epoch: int = 0,
         task_epoch: int = 0,
         context_version: int = 0,
         server_monotonic_ms: int = 0,
@@ -253,6 +257,7 @@ class MediaEnvelope:
             turn_id=turn_id,
             generation_id=generation_id,
             tool_epoch=tool_epoch,
+            session_epoch=session_epoch,
             task_epoch=task_epoch,
             context_version=context_version,
             server_monotonic_ms=server_monotonic_ms,
@@ -271,6 +276,7 @@ class MediaEnvelope:
             "turn_id": self.turn_id,
             "generation_id": self.generation_id,
             "tool_epoch": self.tool_epoch,
+            "session_epoch": self.session_epoch,
             "task_epoch": self.task_epoch,
             "context_version": self.context_version,
             "server_monotonic_ms": self.server_monotonic_ms,
@@ -331,6 +337,10 @@ class MediaEnvelope:
             turn_id=_non_negative_int(decoded.get("turn_id", 0), "turn_id"),
             generation_id=_non_negative_int(decoded.get("generation_id", 0), "generation_id"),
             tool_epoch=_non_negative_int(decoded.get("tool_epoch", 0), "tool_epoch"),
+            session_epoch=_non_negative_int(
+                decoded.get("session_epoch", 0),
+                "session_epoch",
+            ),
             task_epoch=_non_negative_int(decoded.get("task_epoch", 0), "task_epoch"),
             context_version=_non_negative_int(
                 decoded.get("context_version", 0),

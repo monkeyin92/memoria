@@ -181,6 +181,7 @@ func (r *VoiceCoreMediaRuntime) SendPlaybackProgress(progress PlaybackProgress) 
 			TurnID:       progress.TurnID,
 			GenerationID: progress.GenerationID,
 			ToolEpoch:    progress.ToolEpoch,
+			SessionEpoch: progress.SessionEpoch,
 		},
 	)
 	return nil
