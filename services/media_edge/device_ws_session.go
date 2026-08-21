@@ -9,6 +9,7 @@ package mediaedge
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -174,6 +175,7 @@ func (c *DeviceConnection) run() {
 	_ = c.ws.SetReadDeadline(time.Now().Add(c.server.HelloTimeout))
 	messageType, data, err := c.ws.ReadMessage()
 	if err != nil {
+		c.logSocketError("hello_read", err)
 		c.server.metrics.helloRejected.Add(1)
 		c.server.rejectedReasons.add("hello_timeout_or_connection_failure")
 		return
@@ -207,21 +209,37 @@ func (c *DeviceConnection) run() {
 	for {
 		messageType, data, err := c.ws.ReadMessage()
 		if err != nil {
+			c.logSocketError("read", err)
 			return
 		}
 		switch messageType {
 		case websocket.TextMessage:
 			if !c.handleControl(data) {
+				log.Printf("media edge device WSS handler rejected session=%s device=%s epoch=%d kind=text", c.sessionID, c.deviceID, c.epoch)
 				return
 			}
 		case websocket.BinaryMessage:
 			if !c.handleAudio(data) {
+				log.Printf("media edge device WSS handler rejected session=%s device=%s epoch=%d kind=binary", c.sessionID, c.deviceID, c.epoch)
 				return
 			}
 		default:
+			log.Printf("media edge device WSS unsupported message type session=%s device=%s epoch=%d type=%d", c.sessionID, c.deviceID, c.epoch, messageType)
 			return
 		}
 	}
+}
+
+// logSocketError keeps the accepted device transport's close boundary visible.
+// The close report intentionally remains a bounded product projection; this
+// diagnostic preserves the underlying WebSocket code/error for incident work.
+func (c *DeviceConnection) logSocketError(phase string, err error) {
+	var closeErr *websocket.CloseError
+	if errors.As(err, &closeErr) {
+		log.Printf("media edge device WSS socket error session=%s device=%s epoch=%d phase=%s close_code=%d close_text=%q", c.sessionID, c.deviceID, c.epoch, phase, closeErr.Code, closeErr.Text)
+		return
+	}
+	log.Printf("media edge device WSS socket error session=%s device=%s epoch=%d phase=%s err=%v", c.sessionID, c.deviceID, c.epoch, phase, err)
 }
 
 // leaseWatchLoop is the Pub/Sub-loss backstop for cross-host takeovers. A

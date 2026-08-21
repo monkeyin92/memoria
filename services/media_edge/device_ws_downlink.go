@@ -10,6 +10,7 @@ package mediaedge
 import (
 	"context"
 	"errors"
+	"log"
 	"math"
 	"time"
 
@@ -184,6 +185,7 @@ func (c *DeviceConnection) writeLoop() {
 				nil,
 				time.Now().Add(deviceWriteTimeout),
 			); err != nil {
+				c.logSocketError("ping_write", err)
 				return
 			}
 		case <-c.lane.notify:
@@ -223,6 +225,7 @@ func (c *DeviceConnection) writeLaneItem(item deviceLaneItem) bool {
 	}
 	_ = c.ws.SetWriteDeadline(time.Now().Add(deviceWriteTimeout))
 	if err := c.ws.WriteMessage(messageType, item.payload); err != nil {
+		log.Printf("media edge device WSS socket error session=%s device=%s epoch=%d phase=message_write kind=%s generation=%d sequence=%d err=%v", c.sessionID, c.deviceID, c.epoch, item.kind, item.generation, item.sequence, err)
 		return false
 	}
 	if item.kind == "audio" {
@@ -374,11 +377,12 @@ func (s *DeviceWSServer) ForwardCoreEventForSession(request OpenSessionRequest, 
 // HandleBridgeError closes only the exact device transport whose Voice Core
 // stream failed. A late EOF/error from an old epoch is harmless after a
 // reconnect and must not close the new connection that shares the Session id.
-func (s *DeviceWSServer) HandleBridgeError(request OpenSessionRequest, _ error) {
+func (s *DeviceWSServer) HandleBridgeError(request OpenSessionRequest, bridgeErr error) {
 	connection := s.connectionForRequest(request)
 	if connection == nil {
 		return
 	}
+	log.Printf("media edge device Voice Core stream closing session=%s device=%s epoch=%d err=%v", connection.sessionID, connection.deviceID, connection.epoch, bridgeErr)
 	connection.sendSessionError("voice_core_unavailable", true)
 	connection.closeWithCode(1011, "voice core stream failed")
 	connection.close()

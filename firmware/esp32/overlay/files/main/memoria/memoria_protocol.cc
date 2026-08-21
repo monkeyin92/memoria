@@ -560,7 +560,9 @@ bool MemoriaProtocol::OpenAudioChannel() {
     websocket->OnPong([this, websocket_attempt](const char*, size_t) {
         MarkTransportAlive(websocket_attempt);
     });
-    websocket->OnDisconnected([this, websocket_attempt]() {
+    websocket->OnDisconnected([this, websocket, websocket_attempt]() {
+        ESP_LOGW(kTag, "Device WebSocket disconnected attempt=%u tcp_error=%d",
+                 static_cast<unsigned int>(websocket_attempt), websocket->GetLastError());
         RetireTransportAttempt(websocket_attempt);
     });
     websocket->OnError([this, websocket_attempt](int error) {
