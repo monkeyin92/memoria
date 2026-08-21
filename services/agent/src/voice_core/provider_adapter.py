@@ -92,6 +92,12 @@ class ExistingVoiceProviderAdapter:
     _stream_epoch: int = field(default=0, init=False)
     _asr_task_epoch_offset: int = field(default=0, init=False)
     _asr_task_epoch_floor: int = field(default=0, init=False)
+    # The provider session is intentionally replaceable on transport failure.
+    # Keep the last exported global task epoch separately from the live ASR
+    # object: recovery can briefly clear ``_asr`` before the replacement task
+    # is connected, and the next task must still be newer than the Voice Core
+    # supervisor's already-observed epoch.
+    _last_global_asr_task_epoch: int = field(default=0, init=False)
     _audio_since_finalize: bool = field(default=False, init=False)
     _asr_task_contexts: dict[str, tuple[int, int, int]] = field(
         default_factory=dict,
@@ -246,7 +252,24 @@ class ExistingVoiceProviderAdapter:
         return fence
 
     def _global_asr_task_epoch(self, asr: FunASRSession) -> int:
-        return self._asr_task_epoch_offset + max(1, int(asr.task_epoch))
+        value = self._asr_task_epoch_offset + max(1, int(asr.task_epoch))
+        self._last_global_asr_task_epoch = max(self._last_global_asr_task_epoch, value)
+        return value
+
+    def set_asr_task_epoch_floor(self, task_epoch: int) -> None:
+        """Align a replacement provider with the Voice Core task fence."""
+
+        if isinstance(task_epoch, bool) or task_epoch < 0:
+            raise ValueError("ASR task epoch floor must be a non-negative integer")
+        self._asr_task_epoch_floor = max(
+            self._asr_task_epoch_floor,
+            task_epoch,
+            self._last_global_asr_task_epoch,
+        )
+        self._asr_task_epoch_offset = max(
+            self._asr_task_epoch_offset,
+            self._asr_task_epoch_floor,
+        )
 
     def _clear_asr_event_context(self) -> None:
         self._asr_task_contexts.clear()
@@ -272,6 +295,10 @@ class ExistingVoiceProviderAdapter:
                     await result
         self._asr = None
         self._stream_epoch = stream_epoch
+        self._asr_task_epoch_floor = max(
+            self._asr_task_epoch_floor,
+            self._last_global_asr_task_epoch,
+        )
         self._asr_task_epoch_offset = self._asr_task_epoch_floor
         self._audio_since_finalize = False
         self._clear_asr_event_context()

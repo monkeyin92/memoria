@@ -581,6 +581,41 @@ async def test_existing_provider_adapter_rebuilds_funasr_for_new_stream_epoch() 
 
 
 @pytest.mark.asyncio
+async def test_existing_provider_adapter_aligns_replacement_task_to_external_floor() -> None:
+    sessions: list[FakeASR] = []
+
+    def build_asr() -> FakeASR:
+        session = FakeASR()
+        sessions.append(session)
+        return session
+
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, build_asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    first_identity = SessionIdentity("adapter-task-floor", stream_epoch=1)
+    first = await adapter.ingest_audio(
+        first_identity,
+        AudioFrame(first_identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+    await adapter.reset_for_stream_epoch(
+        SessionIdentity(first_identity.session_id, stream_epoch=2),
+    )
+
+    adapter.set_asr_task_epoch_floor(8)
+    second_identity = SessionIdentity(first_identity.session_id, stream_epoch=2)
+    second = await adapter.ingest_audio(
+        second_identity,
+        AudioFrame(second_identity, 0, 0, 320, b"\x01\x00" * 320),
+    )
+
+    assert first[0].task_epoch == 1
+    assert second[0].task_epoch == 9
+    assert adapter.current_asr_task_epoch == 9
+
+
+@pytest.mark.asyncio
 async def test_existing_provider_adapter_recovers_failed_session_at_absolute_sample() -> None:
     sessions: list[FakeASR] = []
 
