@@ -5275,7 +5275,9 @@ async def test_vad_endpoint_accepts_final_within_bounded_clock_skew() -> None:
     registry._observe_final_asr_result(context, final)
     # A bounded skew is only safe after the provider task-finished boundary;
     # otherwise a later sentence from the same task may still arrive.
-    context.ingress.last_finalized_audio_watermark = 31_000
+    # Production epoch 921 observed an 18,240-sample (1.14 s) gap between
+    # FunASR's final word and the firmware-adjusted voiced end.
+    context.ingress.last_finalized_audio_watermark = 34_240
     await registry.on_speech_segment(
         session,
         SpeechSegment(
@@ -5285,10 +5287,10 @@ async def test_vad_endpoint_accepts_final_within_bounded_clock_skew() -> None:
             segment_id="bounded-skew-end",
             revision=1,
             kind=SegmentKind.VAD,
-            capture_start_sample=31_000,
-            capture_end_sample=31_001,
+            capture_start_sample=34_240,
+            capture_end_sample=34_241,
             final=True,
-            voiced_end_sample=31_000,
+            voiced_end_sample=34_240,
         ),
     )
 
@@ -5297,7 +5299,7 @@ async def test_vad_endpoint_accepts_final_within_bounded_clock_skew() -> None:
     assert [
         turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
     ] == ["今天星期几"]
-    assert context.asr.last_committed_sample == 31_000
+    assert context.asr.last_committed_sample == 34_240
     await context.runtime.close()
 
 
@@ -5342,7 +5344,7 @@ async def test_vad_endpoint_rejects_final_beyond_bounded_clock_skew() -> None:
     )
     assert await registry.accept_asr_result(identity.session_id, final)
     registry._observe_final_asr_result(context, final)
-    context.ingress.last_finalized_audio_watermark = 32_001
+    context.ingress.last_finalized_audio_watermark = 40_001
     await registry.on_speech_segment(
         session,
         SpeechSegment(
@@ -5352,10 +5354,10 @@ async def test_vad_endpoint_rejects_final_beyond_bounded_clock_skew() -> None:
             segment_id="excessive-skew-end",
             revision=1,
             kind=SegmentKind.VAD,
-            capture_start_sample=32_001,
-            capture_end_sample=32_002,
+            capture_start_sample=40_001,
+            capture_end_sample=40_002,
             final=True,
-            voiced_end_sample=32_001,
+            voiced_end_sample=40_001,
         ),
     )
 
@@ -5365,7 +5367,7 @@ async def test_vad_endpoint_rejects_final_beyond_bounded_clock_skew() -> None:
         turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
     ] == []
     assert context.turn_endpoint_sample is None
-    assert context.asr.last_committed_sample == 32_001
+    assert context.asr.last_committed_sample == 40_001
     await context.runtime.close()
 
 

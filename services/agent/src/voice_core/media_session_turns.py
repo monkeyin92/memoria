@@ -32,10 +32,12 @@ _PREPARE_RETRY_EXHAUSTED_REASON = "provider_prepare_retries_exhausted"
 _PREPARE_RETRY_SUPERSEDED_REASON = "provider_prepare_retry_superseded_by_new_vad"
 # Device VAD and provider word timestamps are independent clocks around the
 # same 16 kHz capture. After the provider task-finished boundary proves no
-# later sentence can arrive, permit at most one second of tail skew after
-# firmware removes its known 900 ms AFE hangover. Larger gaps still fail
-# closed instead of letting an earlier provider sentence commit a later turn.
-_ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 16_000
+# later sentence can arrive, permit at most 1.5 seconds of tail skew after
+# firmware removes its known 900 ms AFE hangover. Real-device evidence still
+# showed 1.14 seconds between FunASR's last word and the device voiced end;
+# larger gaps remain fail-closed so an earlier provider sentence cannot commit
+# a later turn.
+_ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 24_000
 
 
 class MediaTurnEndpointMixin:

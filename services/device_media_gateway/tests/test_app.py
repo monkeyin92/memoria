@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from services.common.miniprogram_gateway_ticket import issue_device_gateway_ticket
-from services.device_media_gateway.app import MEDIA_PATH, create_app
+from services.device_media_gateway.app import MEDIA_PATH, _next_downlink_send_slot, create_app
 from services.device_media_gateway.config import DeviceMediaGatewaySettings
 from services.device_media_gateway.protocol import (
     DOWNLINK_FRAME_SAMPLES,
@@ -184,6 +184,20 @@ def _headers(
         "Device-Id": device_id,
         "Client-Id": client_id,
     }
+
+
+def test_downlink_pacer_spaces_frames_and_does_not_burst_after_a_stall() -> None:
+    delay, next_send_at = _next_downlink_send_slot(now=10.0, next_send_at=10.0)
+    assert delay == 0
+    assert next_send_at == pytest.approx(10.02)
+
+    delay, next_send_at = _next_downlink_send_slot(now=10.005, next_send_at=next_send_at)
+    assert delay == pytest.approx(0.015)
+    assert next_send_at == pytest.approx(10.04)
+
+    delay, next_send_at = _next_downlink_send_slot(now=11.0, next_send_at=next_send_at)
+    assert delay == 0
+    assert next_send_at == pytest.approx(11.02)
 
 
 def test_device_wss_requires_client_id_bound_to_ticket_and_accepts_strict_hello() -> None:
