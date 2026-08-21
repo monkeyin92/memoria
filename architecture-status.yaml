@@ -99,7 +99,26 @@ local_worktree_candidate:
     firmware_flash_evidence_dir: firmware/esp32/artifacts/backups/pre-playback-terminal-20260821
     firmware_identity_preserved_sha256: b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846
     firmware_boot_activation_verified: true
-    next_gate: real_device_media_t5_t8_acceptance
+    next_gate: controlled_real_device_media_retry_without_button_then_t5_t8_acceptance
+    latest_real_device_media_attempt:
+      as_of_date: 2026-08-21
+      session_id: 84780027-1f5b-4b83-9583-4cc6eb49e76a
+      stream_epoch: 933
+      turn_id: 1
+      generation_id: 1
+      server_evidence: >-
+        media_asr_boundary success with non-zero provider PCM, then
+        first_frame_sent=true but provider_completed=false,
+        playback_ended=false and actual_heard=false; terminal output_timeout
+        aborted the media output.
+      board_evidence: >-
+        first playable downlink frame arrived, then the board entered
+        speaking -> recovering and repeated WSS recovery attempts before idle;
+        no confirmed button.stop or playback.ended was captured.
+      verified: false
+      blocker: >-
+        transport/recovery failure is not yet separated from the user button
+        action; repeat once without the second button press before changing code.
     production_release_tag: 20260821-153249-playback-terminal
     production_cutover_evidence_file: /opt/memoria/direct-canaries/20260821-153249-playback-terminal/CUTOVER_RESULT.txt
     production_cutover_evidence_sha256: ec8289118520604013295b538526057307f3fa216fd7c5d00eff506245469832
