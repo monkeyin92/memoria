@@ -1,13 +1,13 @@
 # 项目交接
 
-## 当前候选（2026-08-21，服务器已切流；播放终态 + I2S TX EOF 数字水位 + 首帧前按钮硬停止待刷板）
+## 当前候选（2026-08-21，服务器已切流并刷板；播放终态 + I2S TX EOF 数字水位 + 首帧前按钮硬停止待媒体验收）
 
 - 当前生产基线已经前移到 Agent/Voice Core Media Bridge `memoria-agent:20260821-153249-playback-terminal`（revision `711eb0c`）、Control API `20260821-121418-reply-delivery-projection`（revision `caf7027`）和 Media Edge `20260821-153249-playback-terminal`（revision `711eb0c`），均为本轮切流后 healthy、restart count=0。此前真实板会话 `a9ea0f30-5a37-4c75-baa7-65a03e19b76f`、epoch 922 已有三代连续可播放回复，用户确认“AI 能说了”；该证据只覆盖窄主流程，不覆盖本候选的完整播放终态、Actual Heard 或打断。
 - 根因已收敛：固件签名回执带 `playback.started/progress/ended/error`，但 Go Edge 转入 media-v1 时压扁成无类型 `PlaybackProgress`；Python 因而可能把覆盖全量水位的 progress 提前当作完成，也可能把 error 当成功终态。另有 Python 回执 fence 漏带 `session_epoch`，会拒绝非零 epoch 的合法回执。Control SQLite 因此只看到 generation 1/2/3 的 `first_frame_sent / provider_completed`，没有 `playback_ended / actual_heard`，即使 Edge 指标已经观测到 playback receipt。
 - 本地候选已完成 `code + wired + local verified`，并已完成服务器 `enabled + production runtime verified（零真机会话）`：media-v1 新增显式 `PlaybackEventType` 并贯通 Go/Python；typed progress 必须等合法 `ENDED`，`ERROR` 进入 ReplyDelivery `error` 并取消输出；回执完整携带 `session_epoch`，越界序列/水位和伪造终态 fail closed。物理按钮只要存在 active generation 就立即本地 flush/静音并上报 signed `button.stop`，不再等待首个音频帧。切流 tag `20260821-153249-playback-terminal`，Agent/Bridge image `sha256:90f1f51e…a22535`，Media Edge image `sha256:c612f317e…de860`；Control ready、Bridge mTLS Health、Edge mTLS readyz、Provider smoke 全通过，非目标容器 ID 未变。证据：`/opt/memoria/direct-canaries/20260821-153249-playback-terminal/`。
-- ESP32 patch `0017-i2s-tx-eof-exact-playback-watermark.patch` 使用 ES8388 I2S TX EOF，在最后写入后等待完整 DMA descriptor ring 轮转才发送 `approximate=false` 最终水位；流式 progress 仍标 approximate。ESP-IDF 6.0.2 clean build 与 overlay gate 通过：app `2,951,088` bytes、分区余 29%、SHA-256 `135a714b…bcf`；merged `13,577,086` bytes、SHA-256 `7cd6578c…192`。该边界证明 I2S 数字数据已移出，不证明 DAC、功放、扬声器或用户声学 Actual Heard。
-- 当前层级：服务器 `code=complete / wired=complete / enabled=true / verified=production runtime zero-session`；固件 `code=complete / wired=complete / enabled=false / verified=clean build + overlay gate only`。当前无 `/dev/cu.usbmodem*`，固件尚未刷板，不能执行身份区备份/比对、串口或声学验收。保持 `direct_real_device_verified=false`、`full_duplex_verified=false`、T1–T14 `0 pass / 14 blocked / 0 failed`。
-- 下一步：板卡重连后按“备份身份区 → 烧录 → 身份区逐字节比对 → 固定 TTS `playback.ended` → Actual Heard 投影 → 随机按键停止 p95 与迟到 PCM 拒绝”顺序执行 T5–T8。自然语音打断仍需后续本地停止词、AEC Reference、双讲与 Router 验收，不能由物理按钮结果外推。
+- ESP32 patch `0017-i2s-tx-eof-exact-playback-watermark.patch` 使用 ES8388 I2S TX EOF，在最后写入后等待完整 DMA descriptor ring 轮转才发送 `approximate=false` 最终水位；流式 progress 仍标 approximate。ESP-IDF 6.0.2 clean build、overlay gate、目标板刷写与启动通过：app `2,951,088` bytes、分区余 29%、SHA-256 `135a714b…bcf`；merged `13,577,086` bytes、SHA-256 `7cd6578c…192`。刷前/刷后身份区逐字节一致，SHA-256 `b7a717fa…4846`，备份目录 `firmware/esp32/artifacts/backups/pre-playback-terminal-20260821/`。该边界证明 I2S 数字数据移出设计边界，不证明 DAC、功放、扬声器或用户声学 Actual Heard。
+- 当前层级：服务器 `code=complete / wired=complete / enabled=true / verified=production runtime zero-session`；固件 `code=complete / wired=complete / enabled=true / verified=flash + boot/activation`。串口确认目标 SKU、ES8388/I2S、Wi‑Fi、Activation Manifest v2、`starting → activating → idle`，无重启循环；仍保持 `direct_real_device_verified=false`、`full_duplex_verified=false`、T1–T14 `0 pass / 14 blocked / 0 failed`。
+- 下一步：保持串口监视，完成固定 TTS/完整单轮与播放中随机按钮的同代取证，覆盖 `playback.started/progress/ended/error`、Actual Heard 投影、按钮停止 p95 与迟到 PCM 拒绝。自然语音打断仍需后续本地停止词、AEC Reference、双讲与 Router 验收，不能由物理按钮结果外推。
 
 ## 当前生产增量（2026-08-21，ReplyDelivery 跨进程投影已启用，待真机话轮取证）
 
