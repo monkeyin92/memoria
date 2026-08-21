@@ -39,6 +39,7 @@ from services.agent.src.voice_core.media_bridge_server import (
 from services.agent.src.voice_core.media_protocol import (
     AudioFrame,
     MediaEnvelope,
+    PlaybackEventType,
     PlaybackProgress,
     SessionIdentity,
 )
@@ -48,6 +49,20 @@ media_pb2: Any = _media_pb2
 KWS_HARD_STOP_MIN_CONFIDENCE = 0.8
 FLOOR_EFFECT_TTL_MS = 10_000
 logger = logging.getLogger(__name__)
+
+
+def _playback_event_type_from_proto(value: int) -> PlaybackEventType:
+    mapping = {
+        int(media_pb2.PLAYBACK_EVENT_TYPE_UNSPECIFIED): PlaybackEventType.WATERMARK,
+        int(media_pb2.PLAYBACK_EVENT_TYPE_STARTED): PlaybackEventType.STARTED,
+        int(media_pb2.PLAYBACK_EVENT_TYPE_PROGRESS): PlaybackEventType.PROGRESS,
+        int(media_pb2.PLAYBACK_EVENT_TYPE_ENDED): PlaybackEventType.ENDED,
+        int(media_pb2.PLAYBACK_EVENT_TYPE_ERROR): PlaybackEventType.ERROR,
+    }
+    try:
+        return mapping[value]
+    except KeyError as exc:
+        raise ValueError("unsupported playback event type") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -874,6 +889,9 @@ class MediaBridgeGrpcServer:
                         turn_id=payload_int("turn_id"),
                         tool_epoch=payload_int("tool_epoch"),
                         session_epoch=int(session_epoch),
+                        event_type=PlaybackEventType(
+                            payload.get("event_type", PlaybackEventType.WATERMARK.value)
+                        ),
                     )
                 except (TypeError, ValueError) as exc:
                     await self._error(connection, "invalid_playback_progress", str(exc))
@@ -904,6 +922,7 @@ class MediaBridgeGrpcServer:
                         turn_id=int(event.turn_id),
                         tool_epoch=int(event.tool_epoch),
                         session_epoch=int(event.session_epoch),
+                        event_type=_playback_event_type_from_proto(int(event.event_type)),
                     ),
                 )
             return

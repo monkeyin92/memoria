@@ -132,8 +132,8 @@ frame_header="$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_audio_frame.h"
 [[ -f "$protocol_header" ]] || die "protocol v2 header missing"
 
 # Device protocol v2 must declare only honest simplex capabilities: no AEC
-# reference, no simultaneous capture/playback, no local stop keyword/duck,
-# approximate playback watermark only.
+# reference, no simultaneous capture/playback and no local stop keyword/duck.
+# Playback precision is independently backed by the GDMA completion barrier.
 rg -q 'cJSON_AddBoolToObject\(capabilities, "simultaneous_capture_playback", false\)' \
     "$protocol_source" || die "hello v2 must declare no simultaneous capture/playback"
 rg -q 'cJSON_AddStringToObject\(capabilities, "aec_mode", "none"\)' \
@@ -146,13 +146,10 @@ rg -q 'cJSON_AddBoolToObject\(capabilities, "local_stop_keyword", false\)' \
     "$protocol_source" || die "hello v2 must declare no local stop keyword"
 rg -q 'cJSON_AddBoolToObject\(capabilities, "local_duck", false\)' \
     "$protocol_source" || die "hello v2 must declare no local duck"
-rg -q 'cJSON_AddStringToObject\(capabilities, "playback_watermark", "approximate"\)' \
-    "$protocol_source" || die "hello v2 must declare an approximate playback watermark"
+rg -q 'cJSON_AddStringToObject\(capabilities, "playback_watermark", "exact"\)' \
+    "$protocol_source" || die "hello v2 must declare the exact digital playback watermark"
 rg -q 'cJSON_AddNumberToObject\(capabilities, "barge_in_level", 0\)' \
     "$protocol_source" || die "hello v2 must declare barge_in_level 0"
-if rg -n 'playback_watermark' "$protocol_source" | rg -q '"exact"'; then
-    die "hello v2 must never claim an exact playback watermark"
-fi
 rg -q '"downlink_sample_rates"' "$protocol_source" || die "hello v2 must negotiate downlink rates"
 rg -q 'kDownlinkSampleRate16k' "$protocol_source" || die "hello v2 must declare the playable 16 kHz rate"
 rg -q 'kDownlinkSampleRate24k' "$protocol_source" || die "hello v2 must declare the playable 24 kHz rate"
@@ -186,8 +183,8 @@ rg -q '"local_flush_sample_end"' "$protocol_source" || \
     die "button.stop v2 local flush watermark is missing"
 rg -q '"rendered_sample_end"' "$protocol_source" || \
     die "playback receipts v2 watermark is missing"
-rg -q 'cJSON_AddBoolToObject\(root.value, "approximate", true\)' "$protocol_source" || \
-    die "playback receipts v2 must be explicitly approximate"
+rg -q 'cJSON_AddBoolToObject\(root.value, "approximate", approximate\)' "$protocol_source" || \
+    die "playback receipts v2 must preserve source precision"
 rg -q 'kDownlinkFrameSamples16k = 320' "$frame_header" || \
     die "audio frame layer must accept the negotiated 16 kHz downlink"
 rg -q 'kDownlinkFrameSamples24k = 480' "$frame_header" || \
@@ -231,6 +228,22 @@ rg -q 'NotifyPlaybackOutput' "$protocol_source" || die "output-commit playback r
 rg -q 'on_playback_output' "$overlay_patch_0008" || die "patch 0008 must wire output-commit watermark callbacks"
 rg -q 'SetIsPlaybackIdleCallback' "$overlay_patch_0008" || die "patch 0008 must inject the AudioService idle probe"
 rg -q 'not a network-received position' "$protocol_source" || die "v2 started/progress must not be emitted from the receive path"
+
+# The ES8388 completion boundary is hardware-backed by I2S GDMA TX EOF. Live
+# write-acceptance receipts stay approximate; only a full DMA-ring cycle may
+# release the drain barrier and advertise an exact terminal watermark.
+overlay_patch_0017="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0017-i2s-tx-eof-exact-playback-watermark.patch"
+[[ -f "$overlay_patch_0017" ]] || die "overlay patch 0017 is missing"
+rg -q 'i2s_channel_register_event_callback' "$overlay_patch_0017" || \
+    die "ES8388 TX EOF callback is not registered"
+rg -Fq 'OutputCompletionCounter() >= exact_output_target_' "$overlay_patch_0017" || \
+    die "exact playback boundary is not gated by TX EOF"
+rg -q '!exact_output_pending_' "$overlay_patch_0017" || \
+    die "playback drain does not wait for exact output completion"
+rg -q 'playback_watermark", "exact"' "$protocol_source" || \
+    die "device hello does not advertise the exact digital playback watermark"
+rg -q '"approximate", approximate' "$protocol_source" || \
+    die "playback receipts do not preserve source precision"
 
 overlay_patch_0009="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0009-preserve-session-on-network-reconnect.patch"
 [[ -f "$overlay_patch_0009" ]] || die "overlay patch 0009 is missing"

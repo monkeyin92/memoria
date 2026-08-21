@@ -25,6 +25,16 @@ class AudioEncoding(StrEnum):
     OPUS = "opus"
 
 
+class PlaybackEventType(StrEnum):
+    """Authority carried by one playback watermark."""
+
+    WATERMARK = "watermark"
+    STARTED = "started"
+    PROGRESS = "progress"
+    ENDED = "ended"
+    ERROR = "error"
+
+
 def _non_negative_int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{name} must be a non-negative integer")
@@ -162,6 +172,7 @@ class PlaybackProgress:
     turn_id: int = 0
     tool_epoch: int = 0
     session_epoch: int = 0
+    event_type: PlaybackEventType = PlaybackEventType.WATERMARK
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -174,6 +185,8 @@ class PlaybackProgress:
             (self.session_epoch, "session_epoch"),
         ):
             _non_negative_int(value, name)
+        if not isinstance(self.event_type, PlaybackEventType):
+            raise ValueError("event_type must be a PlaybackEventType")
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -185,6 +198,7 @@ class PlaybackProgress:
             "turn_id": self.turn_id,
             "tool_epoch": self.tool_epoch,
             "session_epoch": self.session_epoch,
+            "event_type": self.event_type.value,
         }
 
 
@@ -363,5 +377,6 @@ __all__ = [
     "AudioFrame",
     "MediaEnvelope",
     "PlaybackProgress",
+    "PlaybackEventType",
     "SessionIdentity",
 ]

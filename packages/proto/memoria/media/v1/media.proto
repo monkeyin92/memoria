@@ -77,6 +77,17 @@ enum ProjectionEventKind {
   PROJECTION_EVENT_KIND_TURN_COMMITTED = 4;
 }
 
+// Device playback receipts are terminal facts, not just watermarks. Sources
+// that only expose a monotonic software playout watermark use UNSPECIFIED;
+// hardware device paths must preserve the signed receipt type end to end.
+enum PlaybackEventType {
+  PLAYBACK_EVENT_TYPE_UNSPECIFIED = 0;
+  PLAYBACK_EVENT_TYPE_STARTED = 1;
+  PLAYBACK_EVENT_TYPE_PROGRESS = 2;
+  PLAYBACK_EVENT_TYPE_ENDED = 3;
+  PLAYBACK_EVENT_TYPE_ERROR = 4;
+}
+
 message SpeakerEvidence {
   string speaker_class = 1;
   float confidence = 2;
@@ -310,6 +321,7 @@ message PlaybackProgress {
   // Complete generation fence dimension. Legacy clients omit this and are
   // rejected when the active generation has a non-zero session epoch.
   uint64 session_epoch = 9;
+  PlaybackEventType event_type = 10;
 }
 
 message DeviceEvent {

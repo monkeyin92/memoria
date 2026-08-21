@@ -13,7 +13,7 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession, PCMFrame
-from services.agent.src.voice_core.media_protocol import PlaybackProgress
+from services.agent.src.voice_core.media_protocol import PlaybackEventType, PlaybackProgress
 from services.agent.src.voice_core.media_session_types import (
     MediaReplyChunk,
     MediaTextSpan,
@@ -117,14 +117,23 @@ class MediaOutputStreamMixin:
             turn_id=progress.turn_id,
             generation_id=progress.generation_id,
             tool_epoch=progress.tool_epoch,
+            session_epoch=progress.session_epoch,
         )
+        stale_ack_count = context.playback.stale_ack_count
         acknowledged = context.playback.acknowledge(
             fence,
             progress.rendered_sample_end,
             received_sequence=progress.received_sequence,
             approximate=progress.approximate,
             heard_eligible=not (session.identity.client_type == "device" and progress.approximate),
+            terminal=(
+                None
+                if progress.event_type is PlaybackEventType.WATERMARK
+                else progress.event_type is PlaybackEventType.ENDED
+            ),
         )
+        if context.playback.stale_ack_count != stale_ack_count:
+            return
         # Publish the cumulative acknowledged prefix under one turn/revision;
         # publishing only the newly acknowledged span would make clients
         # replace a complete answer with its last phrase.
@@ -150,6 +159,29 @@ class MediaOutputStreamMixin:
                 ReplyDeliveryEvent.ACTUAL_HEARD,
                 "exact_playback_ack",
             )
+        if progress.event_type is PlaybackEventType.ERROR:
+            if acknowledged and heard and context.runtime.fence.matches(fence):
+                context.runtime.publish_transcript(
+                    speaker="assistant",
+                    text=heard,
+                    final=True,
+                    heard=True,
+                    text_delivered=True,
+                    fence=fence,
+                )
+            await self._fail_playback_output(context, fence, reason="device_playback_error")
+            return
+        if (
+            progress.event_type is PlaybackEventType.ENDED
+            and context.provider_complete
+            and not context.playback.is_transport_watermarked(fence)
+        ):
+            await self._fail_playback_output(
+                context,
+                fence,
+                reason="playback_terminal_incomplete",
+            )
+            return
         if (
             context.provider_complete
             and context.playback.is_playback_complete(fence)
@@ -401,6 +433,12 @@ class MediaOutputStreamMixin:
             # provider iterator yields completion.
             if context.playback.is_playback_complete(fence):
                 await self._finish_completed_output(context, fence)
+            elif context.playback.terminal_received(fence):
+                await self._fail_playback_output(
+                    context,
+                    fence,
+                    reason="playback_terminal_incomplete",
+                )
         else:
             self._release_output_owner(context, fence, reason="provider_completed_without_audio")
             if not await self._start_selected_output(context):
@@ -529,3 +567,35 @@ class MediaOutputStreamMixin:
             fence,
             context.playback.actual_heard_text(fence),
         )
+
+    async def _fail_playback_output(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+        *,
+        reason: str,
+    ) -> None:
+        if not context.runtime.fence.matches(fence):
+            return
+        self._record_reply_delivery_event(
+            context,
+            fence,
+            ReplyDeliveryEvent.ERROR,
+            reason,
+        )
+        await self._cancel_reply_task(context, fence, reason=reason)
+        context.playback.discard(fence)
+        context.assistant_text = ""
+        context.output_text_offset = 0
+        context.provider_complete = False
+        context.output_complete_emitted = False
+        task_epoch, context_version = self._event_versions(context, fence)
+        await self.bridge.emit_generation(
+            fence.session_id,
+            fence,
+            action=media_pb2.GENERATION_ACTION_CANCEL,
+            reason=reason,
+            task_epoch=task_epoch,
+            context_version=context_version,
+        )
+        await context.runtime.on_assistant_reply_aborted(fence, cause=reason)

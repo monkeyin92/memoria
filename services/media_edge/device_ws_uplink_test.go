@@ -200,8 +200,16 @@ func TestDeviceWSSPlaybackVADRequiresVoiceSourceAndTracksReceipts(t *testing.T) 
 	// playback.ended closes the window again.
 	sendPlayback("playback.ended", 3, 1)
 	waitUntil(t, 3*time.Second, func() bool {
-		return !playbackState()
+		core.mu.Lock()
+		defer core.mu.Unlock()
+		return !playbackState() && len(core.playback) == 2
 	})
+	core.mu.Lock()
+	terminalEvent := core.playback[1].EventType
+	core.mu.Unlock()
+	if terminalEvent != mediav1.PlaybackEventType_PLAYBACK_EVENT_TYPE_ENDED {
+		t.Fatalf("terminal event type = %s, want ENDED", terminalEvent)
+	}
 
 	// Only a new authoritative fence may reopen the window after ended.
 	core.inject(deviceGenerationEvent(

@@ -9,6 +9,8 @@ package mediaedge
 import (
 	"sync"
 	"time"
+
+	mediav1 "memoria/services/media_edge/gen/memoria/media/v1"
 )
 
 type devicePlaybackState struct {
@@ -141,6 +143,17 @@ func (l *devicePlaybackLedger) record(
 	}
 	renderedSourceEnd += transport.sampleBase
 	sourceSequence := receipt.ReceivedSequence + transport.sequenceBase
+	eventType := mediav1.PlaybackEventType_PLAYBACK_EVENT_TYPE_UNSPECIFIED
+	switch receipt.Type {
+	case "playback.started":
+		eventType = mediav1.PlaybackEventType_PLAYBACK_EVENT_TYPE_STARTED
+	case "playback.progress":
+		eventType = mediav1.PlaybackEventType_PLAYBACK_EVENT_TYPE_PROGRESS
+	case "playback.ended":
+		eventType = mediav1.PlaybackEventType_PLAYBACK_EVENT_TYPE_ENDED
+	case "playback.error":
+		eventType = mediav1.PlaybackEventType_PLAYBACK_EVENT_TYPE_ERROR
+	}
 	state.lastReceivedSeq = receipt.ReceivedSequence
 	state.lastRenderedEnd = receipt.RenderedSampleEnd
 	state.lastApproximate = receipt.Approximate || transport.conservative
@@ -176,6 +189,7 @@ func (l *devicePlaybackLedger) record(
 		RenderedSampleEnd: renderedSourceEnd,
 		ClientMonotonicMS: monotonicMS,
 		Approximate:       receipt.Approximate || transport.conservative,
+		EventType:         eventType,
 	}, true
 }
 

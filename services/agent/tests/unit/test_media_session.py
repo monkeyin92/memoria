@@ -31,6 +31,7 @@ from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
     AudioFrame,
     MediaEnvelope,
+    PlaybackEventType,
     PlaybackProgress,
     SessionIdentity,
 )
@@ -6326,6 +6327,7 @@ async def test_approximate_device_progress_completes_without_actual_heard() -> N
             approximate=True,
             turn_id=fence.turn_id,
             tool_epoch=fence.tool_epoch,
+            event_type=PlaybackEventType.ENDED,
         ),
     )
 
@@ -6336,6 +6338,143 @@ async def test_approximate_device_progress_completes_without_actual_heard() -> N
     assert delivery is not None
     assert delivery.terminal_event is ReplyDeliveryEvent.PLAYBACK_ENDED
     assert delivery.actual_heard is False
+
+
+@pytest.mark.asyncio
+async def test_typed_device_progress_waits_for_ended_before_completion() -> None:
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = SessionIdentity(
+        "device-typed-playback",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="subject",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    fence = GenerationFence(identity.session_id, 1, 1, 0, session_epoch=7)
+    assert await context.runtime.accept_media_generation(fence, cause="test")
+    await context.runtime.on_assistant_speaking("你好")
+    context.runtime.orchestrator.state_machine.state = ConversationState.SPEAKING
+    context.playback.start(fence)
+    assert context.playback.register_audio(fence, 0, 0, 320)
+    assert context.playback.add_span(
+        PlaybackSpan(
+            fence=fence,
+            text_start=0,
+            text_end=2,
+            audio_start_sample=0,
+            audio_end_sample=320,
+            text="你好",
+            sequence=0,
+        )
+    )
+    context.provider_complete = True
+
+    await registry.on_playback_progress(
+        session,
+        PlaybackProgress(
+            identity=identity,
+            generation_id=fence.generation_id,
+            received_sequence=0,
+            rendered_sample_end=320,
+            client_monotonic_ms=1,
+            approximate=False,
+            turn_id=fence.turn_id,
+            tool_epoch=fence.tool_epoch,
+            session_epoch=fence.session_epoch,
+            event_type=PlaybackEventType.PROGRESS,
+        ),
+    )
+
+    assert context.runtime.orchestrator.state is ConversationState.SPEAKING
+    delivery = context.reply_delivery.get(fence)
+    assert delivery is not None
+    assert delivery.actual_heard is True
+    assert delivery.terminal_event is None
+
+    await registry.on_playback_progress(
+        session,
+        PlaybackProgress(
+            identity=identity,
+            generation_id=fence.generation_id,
+            received_sequence=0,
+            rendered_sample_end=320,
+            client_monotonic_ms=2,
+            approximate=False,
+            turn_id=fence.turn_id,
+            tool_epoch=fence.tool_epoch,
+            session_epoch=fence.session_epoch,
+            event_type=PlaybackEventType.ENDED,
+        ),
+    )
+
+    assert context.runtime.orchestrator.state is ConversationState.LISTENING
+    delivery = context.reply_delivery.get(fence)
+    assert delivery is not None
+    assert delivery.terminal_event is ReplyDeliveryEvent.PLAYBACK_ENDED
+
+
+@pytest.mark.asyncio
+async def test_typed_device_playback_error_is_not_successful_completion() -> None:
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.01,
+    )
+    registry.install()
+    identity = SessionIdentity(
+        "device-playback-error",
+        account_id="account",
+        device_id="device",
+        client_type="device",
+        subject_id="subject",
+        binding_id="binding",
+        binding_version=1,
+        runtime_profile_version=1,
+    )
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+    assert await context.runtime.accept_media_generation(fence, cause="test")
+    await context.runtime.on_assistant_speaking("你好")
+    context.runtime.orchestrator.state_machine.state = ConversationState.SPEAKING
+    context.playback.start(fence)
+    assert context.playback.register_audio(fence, 0, 0, 320)
+    context.provider_complete = True
+
+    await registry.on_playback_progress(
+        session,
+        PlaybackProgress(
+            identity=identity,
+            generation_id=fence.generation_id,
+            received_sequence=0,
+            rendered_sample_end=0,
+            client_monotonic_ms=1,
+            approximate=True,
+            turn_id=fence.turn_id,
+            tool_epoch=fence.tool_epoch,
+            event_type=PlaybackEventType.ERROR,
+        ),
+    )
+
+    delivery = context.reply_delivery.get(fence)
+    assert delivery is not None
+    assert delivery.terminal_event is ReplyDeliveryEvent.ERROR
+    assert delivery.playback_ended is False
+    assert context.runtime.orchestrator.state is ConversationState.LISTENING
 
 
 @pytest.mark.asyncio

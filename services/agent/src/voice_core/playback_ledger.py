@@ -49,6 +49,8 @@ class PlaybackLedger:
         default_factory=dict
     )
     _client_sequence: dict[GenerationFence, int] = field(default_factory=dict)
+    _explicit_terminal_required: set[GenerationFence] = field(default_factory=set)
+    _terminal_received: set[GenerationFence] = field(default_factory=set)
     _current_fence: GenerationFence | None = None
     _stale_ack_count: int = 0
     _fence_order: deque[GenerationFence] = field(default_factory=deque)
@@ -90,6 +92,8 @@ class PlaybackLedger:
             self._received_sample_end.pop(evicted, None)
             self._received_ranges.pop(evicted, None)
             self._client_sequence.pop(evicted, None)
+            self._explicit_terminal_required.discard(evicted)
+            self._terminal_received.discard(evicted)
 
     def register_audio(
         self,
@@ -178,6 +182,7 @@ class PlaybackLedger:
         received_sequence: int | None = None,
         approximate: bool = False,
         heard_eligible: bool = True,
+        terminal: bool | None = None,
     ) -> tuple[PlaybackSpan, ...]:
         """Advance playback, promoting text only from an eligible watermark.
 
@@ -216,6 +221,13 @@ class PlaybackLedger:
         if rendered_sample_end > renderable_sample_end:
             self._stale_ack_count += 1
             return ()
+        # Only an admitted receipt may change terminal semantics.  Otherwise
+        # a stale/forged END can make an incomplete generation look complete
+        # even though its sequence or sample watermark was rejected above.
+        if terminal is not None:
+            self._explicit_terminal_required.add(fence)
+            if terminal:
+                self._terminal_received.add(fence)
         completion_watermark = max(
             self._completion_sample_end.get(fence, 0),
             rendered_sample_end,
@@ -297,8 +309,24 @@ class PlaybackLedger:
         state without asserting that buffered tail audio was heard.
         """
 
+        if not self.is_transport_watermarked(fence):
+            return False
+        return (
+            fence not in self._explicit_terminal_required
+            or fence in self._terminal_received
+        )
+
+    def is_transport_watermarked(self, fence: GenerationFence) -> bool:
+        """Return true when the watermark covers all registered audio."""
+
         received_end = self._received_sample_end.get(fence, 0)
-        return received_end > 0 and self._completion_sample_end.get(fence, 0) >= received_end
+        return (
+            received_end > 0
+            and self._completion_sample_end.get(fence, 0) >= received_end
+        )
+
+    def terminal_received(self, fence: GenerationFence) -> bool:
+        return fence in self._terminal_received
 
     def actual_heard_text(self, fence: GenerationFence) -> str:
         """Return only text whose complete mapped span was actually rendered."""
@@ -320,6 +348,8 @@ class PlaybackLedger:
         self._received_sample_end.pop(fence, None)
         self._received_ranges.pop(fence, None)
         self._client_sequence.pop(fence, None)
+        self._explicit_terminal_required.discard(fence)
+        self._terminal_received.discard(fence)
         try:
             self._fence_order.remove(fence)
         except ValueError:

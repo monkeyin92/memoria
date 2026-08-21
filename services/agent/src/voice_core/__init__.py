@@ -61,6 +61,7 @@ from .media_protocol import (
     AudioFormat,
     AudioFrame,
     MediaEnvelope,
+    PlaybackEventType,
     PlaybackProgress,
     SessionIdentity,
 )
@@ -162,6 +163,7 @@ __all__ = [
     "OtaUpdateManager",
     "PCMFrame",
     "PlaybackLedger",
+    "PlaybackEventType",
     "PlaybackProgress",
     "PlaybackSpan",
     "ReplyDelivery",

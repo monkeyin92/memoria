@@ -65,12 +65,11 @@ public:
     // pipeline drained. This is the authority for playback.ended receipts.
     void NotifyPlaybackDrained();
 
-    // Called by Application after AudioService committed a decoded frame to
-    // the codec output (OutputData). Receipt watermarks move to this
-    // output-commit point: a real bound of what the speaker pipeline
-    // consumed, never a network-received position.
+    // Called by Application when AudioService advances a playback boundary.
+    // The Memoria ES8388 path reports a GDMA TX-EOF-confirmed boundary;
+    // other codecs must keep approximate=true.
     void NotifyPlaybackOutput(uint32_t generation_id, uint64_t rendered_sample_end,
-                              uint32_t received_sequence);
+                              uint32_t received_sequence, bool approximate);
 
     // Application-injected queue-idle probe: true when AudioService has no
     // decode/playback work in flight. Lets a generation.completed that
@@ -204,6 +203,7 @@ private:
     uint64_t playback_output_end_ = 0;          // last output-commit sample end
     uint32_t playback_output_sequence_ = 0;     // last output-commit received sequence
     uint32_t playback_output_frames_ = 0;       // frames committed to the codec output
+    bool playback_output_approximate_ = true;   // precision of the latest output boundary
     uint64_t active_generation_received_end_ = 0;
     uint32_t active_generation_received_sequence_ = 0;
     uint64_t playback_receipted_end_ = 0;       // v1 legacy ended watermark
@@ -252,7 +252,8 @@ private:
     bool QueueTransportAction(TransportActionKind kind, std::string text = {});
     void SendButtonStop(const GenerationFence& fence, uint64_t local_flush_sample_end);
     void SendPlaybackReceipt(const char* type, const GenerationFence& fence,
-                             uint32_t received_sequence, uint64_t rendered_sample_end);
+                             uint32_t received_sequence, uint64_t rendered_sample_end,
+                             bool approximate);
     std::string DeviceHello() const;
     std::string DeviceHelloV1() const;
     std::string DeviceHelloV2() const;

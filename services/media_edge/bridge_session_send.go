@@ -171,6 +171,7 @@ func (s *VoiceCoreSession) SendPlaybackProgress(progress PlaybackProgress) error
 			TurnId:            progress.TurnID,
 			ToolEpoch:         progress.ToolEpoch,
 			SessionEpoch:      progress.SessionEpoch,
+			EventType:         progress.EventType,
 		},
 	}})
 }
@@ -273,4 +274,5 @@ type PlaybackProgress struct {
 	TurnID            uint64
 	ToolEpoch         uint64
 	SessionEpoch      uint64
+	EventType         mediav1.PlaybackEventType
 }

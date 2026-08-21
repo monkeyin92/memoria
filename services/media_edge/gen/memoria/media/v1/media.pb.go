@@ -445,6 +445,64 @@ func (ProjectionEventKind) EnumDescriptor() ([]byte, []int) {
 	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{6}
 }
 
+// Device playback receipts are terminal facts, not just watermarks. Sources
+// that only expose a monotonic software playout watermark use UNSPECIFIED;
+// hardware device paths must preserve the signed receipt type end to end.
+type PlaybackEventType int32
+
+const (
+	PlaybackEventType_PLAYBACK_EVENT_TYPE_UNSPECIFIED PlaybackEventType = 0
+	PlaybackEventType_PLAYBACK_EVENT_TYPE_STARTED     PlaybackEventType = 1
+	PlaybackEventType_PLAYBACK_EVENT_TYPE_PROGRESS    PlaybackEventType = 2
+	PlaybackEventType_PLAYBACK_EVENT_TYPE_ENDED       PlaybackEventType = 3
+	PlaybackEventType_PLAYBACK_EVENT_TYPE_ERROR       PlaybackEventType = 4
+)
+
+// Enum value maps for PlaybackEventType.
+var (
+	PlaybackEventType_name = map[int32]string{
+		0: "PLAYBACK_EVENT_TYPE_UNSPECIFIED",
+		1: "PLAYBACK_EVENT_TYPE_STARTED",
+		2: "PLAYBACK_EVENT_TYPE_PROGRESS",
+		3: "PLAYBACK_EVENT_TYPE_ENDED",
+		4: "PLAYBACK_EVENT_TYPE_ERROR",
+	}
+	PlaybackEventType_value = map[string]int32{
+		"PLAYBACK_EVENT_TYPE_UNSPECIFIED": 0,
+		"PLAYBACK_EVENT_TYPE_STARTED":     1,
+		"PLAYBACK_EVENT_TYPE_PROGRESS":    2,
+		"PLAYBACK_EVENT_TYPE_ENDED":       3,
+		"PLAYBACK_EVENT_TYPE_ERROR":       4,
+	}
+)
+
+func (x PlaybackEventType) Enum() *PlaybackEventType {
+	p := new(PlaybackEventType)
+	*p = x
+	return p
+}
+
+func (x PlaybackEventType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PlaybackEventType) Descriptor() protoreflect.EnumDescriptor {
+	return file_memoria_media_v1_media_proto_enumTypes[7].Descriptor()
+}
+
+func (PlaybackEventType) Type() protoreflect.EnumType {
+	return &file_memoria_media_v1_media_proto_enumTypes[7]
+}
+
+func (x PlaybackEventType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PlaybackEventType.Descriptor instead.
+func (PlaybackEventType) EnumDescriptor() ([]byte, []int) {
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{7}
+}
+
 type AudioEncoding int32
 
 const (
@@ -478,11 +536,11 @@ func (x AudioEncoding) String() string {
 }
 
 func (AudioEncoding) Descriptor() protoreflect.EnumDescriptor {
-	return file_memoria_media_v1_media_proto_enumTypes[7].Descriptor()
+	return file_memoria_media_v1_media_proto_enumTypes[8].Descriptor()
 }
 
 func (AudioEncoding) Type() protoreflect.EnumType {
-	return &file_memoria_media_v1_media_proto_enumTypes[7]
+	return &file_memoria_media_v1_media_proto_enumTypes[8]
 }
 
 func (x AudioEncoding) Number() protoreflect.EnumNumber {
@@ -491,7 +549,7 @@ func (x AudioEncoding) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AudioEncoding.Descriptor instead.
 func (AudioEncoding) EnumDescriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{7}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{8}
 }
 
 type ConversationState int32
@@ -548,11 +606,11 @@ func (x ConversationState) String() string {
 }
 
 func (ConversationState) Descriptor() protoreflect.EnumDescriptor {
-	return file_memoria_media_v1_media_proto_enumTypes[8].Descriptor()
+	return file_memoria_media_v1_media_proto_enumTypes[9].Descriptor()
 }
 
 func (ConversationState) Type() protoreflect.EnumType {
-	return &file_memoria_media_v1_media_proto_enumTypes[8]
+	return &file_memoria_media_v1_media_proto_enumTypes[9]
 }
 
 func (x ConversationState) Number() protoreflect.EnumNumber {
@@ -561,7 +619,7 @@ func (x ConversationState) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ConversationState.Descriptor instead.
 func (ConversationState) EnumDescriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{8}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{9}
 }
 
 type VadEventType int32
@@ -597,11 +655,11 @@ func (x VadEventType) String() string {
 }
 
 func (VadEventType) Descriptor() protoreflect.EnumDescriptor {
-	return file_memoria_media_v1_media_proto_enumTypes[9].Descriptor()
+	return file_memoria_media_v1_media_proto_enumTypes[10].Descriptor()
 }
 
 func (VadEventType) Type() protoreflect.EnumType {
-	return &file_memoria_media_v1_media_proto_enumTypes[9]
+	return &file_memoria_media_v1_media_proto_enumTypes[10]
 }
 
 func (x VadEventType) Number() protoreflect.EnumNumber {
@@ -610,7 +668,7 @@ func (x VadEventType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use VadEventType.Descriptor instead.
 func (VadEventType) EnumDescriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{9}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{10}
 }
 
 type GenerationAction int32
@@ -655,11 +713,11 @@ func (x GenerationAction) String() string {
 }
 
 func (GenerationAction) Descriptor() protoreflect.EnumDescriptor {
-	return file_memoria_media_v1_media_proto_enumTypes[10].Descriptor()
+	return file_memoria_media_v1_media_proto_enumTypes[11].Descriptor()
 }
 
 func (GenerationAction) Type() protoreflect.EnumType {
-	return &file_memoria_media_v1_media_proto_enumTypes[10]
+	return &file_memoria_media_v1_media_proto_enumTypes[11]
 }
 
 func (x GenerationAction) Number() protoreflect.EnumNumber {
@@ -668,7 +726,7 @@ func (x GenerationAction) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use GenerationAction.Descriptor instead.
 func (GenerationAction) EnumDescriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{10}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{11}
 }
 
 type ShadowObservationKind int32
@@ -716,11 +774,11 @@ func (x ShadowObservationKind) String() string {
 }
 
 func (ShadowObservationKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_memoria_media_v1_media_proto_enumTypes[11].Descriptor()
+	return file_memoria_media_v1_media_proto_enumTypes[12].Descriptor()
 }
 
 func (ShadowObservationKind) Type() protoreflect.EnumType {
-	return &file_memoria_media_v1_media_proto_enumTypes[11]
+	return &file_memoria_media_v1_media_proto_enumTypes[12]
 }
 
 func (x ShadowObservationKind) Number() protoreflect.EnumNumber {
@@ -729,7 +787,7 @@ func (x ShadowObservationKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ShadowObservationKind.Descriptor instead.
 func (ShadowObservationKind) EnumDescriptor() ([]byte, []int) {
-	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{11}
+	return file_memoria_media_v1_media_proto_rawDescGZIP(), []int{12}
 }
 
 type SpeakerEvidence struct {
@@ -2191,7 +2249,8 @@ type PlaybackProgress struct {
 	ToolEpoch         uint64                 `protobuf:"varint,8,opt,name=tool_epoch,json=toolEpoch,proto3" json:"tool_epoch,omitempty"`
 	// Complete generation fence dimension. Legacy clients omit this and are
 	// rejected when the active generation has a non-zero session epoch.
-	SessionEpoch  uint64 `protobuf:"varint,9,opt,name=session_epoch,json=sessionEpoch,proto3" json:"session_epoch,omitempty"`
+	SessionEpoch  uint64            `protobuf:"varint,9,opt,name=session_epoch,json=sessionEpoch,proto3" json:"session_epoch,omitempty"`
+	EventType     PlaybackEventType `protobuf:"varint,10,opt,name=event_type,json=eventType,proto3,enum=memoria.media.v1.PlaybackEventType" json:"event_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2287,6 +2346,13 @@ func (x *PlaybackProgress) GetSessionEpoch() uint64 {
 		return x.SessionEpoch
 	}
 	return 0
+}
+
+func (x *PlaybackProgress) GetEventType() PlaybackEventType {
+	if x != nil {
+		return x.EventType
+	}
+	return PlaybackEventType_PLAYBACK_EVENT_TYPE_UNSPECIFIED
 }
 
 type DeviceEvent struct {
@@ -4651,7 +4717,7 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"end_sample\x18\x05 \x01(\x04R\tendSample\x12\x1b\n" +
 	"\thard_stop\x18\x06 \x01(\bR\bhardStop\x127\n" +
 	"\x15detected_monotonic_ms\x18\a \x01(\x04H\x00R\x13detectedMonotonicMs\x88\x01\x01B\x18\n" +
-	"\x16_detected_monotonic_ms\"\x82\x03\n" +
+	"\x16_detected_monotonic_ms\"\xc6\x03\n" +
 	"\x10PlaybackProgress\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12#\n" +
 	"\rgeneration_id\x18\x02 \x01(\x04R\fgenerationId\x12+\n" +
@@ -4662,7 +4728,10 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	"\aturn_id\x18\a \x01(\x04R\x06turnId\x12\x1d\n" +
 	"\n" +
 	"tool_epoch\x18\b \x01(\x04R\ttoolEpoch\x12#\n" +
-	"\rsession_epoch\x18\t \x01(\x04R\fsessionEpoch\"\xb1\x01\n" +
+	"\rsession_epoch\x18\t \x01(\x04R\fsessionEpoch\x12B\n" +
+	"\n" +
+	"event_type\x18\n" +
+	" \x01(\x0e2#.memoria.media.v1.PlaybackEventTypeR\teventType\"\xb1\x01\n" +
 	"\vDeviceEvent\x12=\n" +
 	"\bidentity\x18\x01 \x01(\v2!.memoria.media.v1.SessionIdentityR\bidentity\x12\x1d\n" +
 	"\n" +
@@ -4934,7 +5003,13 @@ const file_memoria_media_v1_media_proto_rawDesc = "" +
 	")PROJECTION_EVENT_KIND_PROVISIONAL_STARTED\x10\x01\x12+\n" +
 	"'PROJECTION_EVENT_KIND_PROVISIONAL_PATCH\x10\x02\x12/\n" +
 	"+PROJECTION_EVENT_KIND_PROVISIONAL_DISCARDED\x10\x03\x12(\n" +
-	"$PROJECTION_EVENT_KIND_TURN_COMMITTED\x10\x04*f\n" +
+	"$PROJECTION_EVENT_KIND_TURN_COMMITTED\x10\x04*\xb9\x01\n" +
+	"\x11PlaybackEventType\x12#\n" +
+	"\x1fPLAYBACK_EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x1f\n" +
+	"\x1bPLAYBACK_EVENT_TYPE_STARTED\x10\x01\x12 \n" +
+	"\x1cPLAYBACK_EVENT_TYPE_PROGRESS\x10\x02\x12\x1d\n" +
+	"\x19PLAYBACK_EVENT_TYPE_ENDED\x10\x03\x12\x1d\n" +
+	"\x19PLAYBACK_EVENT_TYPE_ERROR\x10\x04*f\n" +
 	"\rAudioEncoding\x12\x1e\n" +
 	"\x1aAUDIO_ENCODING_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18AUDIO_ENCODING_PCM_S16LE\x10\x01\x12\x17\n" +
@@ -4984,7 +5059,7 @@ func file_memoria_media_v1_media_proto_rawDescGZIP() []byte {
 	return file_memoria_media_v1_media_proto_rawDescData
 }
 
-var file_memoria_media_v1_media_proto_enumTypes = make([]protoimpl.EnumInfo, 12)
+var file_memoria_media_v1_media_proto_enumTypes = make([]protoimpl.EnumInfo, 13)
 var file_memoria_media_v1_media_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_memoria_media_v1_media_proto_goTypes = []any{
 	(InteractionAuthority)(0),          // 0: memoria.media.v1.InteractionAuthority
@@ -4994,125 +5069,127 @@ var file_memoria_media_v1_media_proto_goTypes = []any{
 	(OutputIntentKind)(0),              // 4: memoria.media.v1.OutputIntentKind
 	(FloorRequirement)(0),              // 5: memoria.media.v1.FloorRequirement
 	(ProjectionEventKind)(0),           // 6: memoria.media.v1.ProjectionEventKind
-	(AudioEncoding)(0),                 // 7: memoria.media.v1.AudioEncoding
-	(ConversationState)(0),             // 8: memoria.media.v1.ConversationState
-	(VadEventType)(0),                  // 9: memoria.media.v1.VadEventType
-	(GenerationAction)(0),              // 10: memoria.media.v1.GenerationAction
-	(ShadowObservationKind)(0),         // 11: memoria.media.v1.ShadowObservationKind
-	(*SpeakerEvidence)(nil),            // 12: memoria.media.v1.SpeakerEvidence
-	(*ContinuousInteractionEvent)(nil), // 13: memoria.media.v1.ContinuousInteractionEvent
-	(*RealtimeEffect)(nil),             // 14: memoria.media.v1.RealtimeEffect
-	(*FloorEffect)(nil),                // 15: memoria.media.v1.FloorEffect
-	(*OutputIntent)(nil),               // 16: memoria.media.v1.OutputIntent
-	(*ProjectionEvent)(nil),            // 17: memoria.media.v1.ProjectionEvent
-	(*SessionIdentity)(nil),            // 18: memoria.media.v1.SessionIdentity
-	(*AudioFormat)(nil),                // 19: memoria.media.v1.AudioFormat
-	(*SessionHello)(nil),               // 20: memoria.media.v1.SessionHello
-	(*AudioFrame)(nil),                 // 21: memoria.media.v1.AudioFrame
-	(*VadEvent)(nil),                   // 22: memoria.media.v1.VadEvent
-	(*KeywordEvent)(nil),               // 23: memoria.media.v1.KeywordEvent
-	(*PlaybackProgress)(nil),           // 24: memoria.media.v1.PlaybackProgress
-	(*DeviceEvent)(nil),                // 25: memoria.media.v1.DeviceEvent
-	(*MediaMetric)(nil),                // 26: memoria.media.v1.MediaMetric
-	(*MediaToCore)(nil),                // 27: memoria.media.v1.MediaToCore
-	(*SessionAccepted)(nil),            // 28: memoria.media.v1.SessionAccepted
-	(*AssistantAudioFrame)(nil),        // 29: memoria.media.v1.AssistantAudioFrame
-	(*GenerationControl)(nil),          // 30: memoria.media.v1.GenerationControl
-	(*TranscriptEvent)(nil),            // 31: memoria.media.v1.TranscriptEvent
-	(*ShadowSpeechSegment)(nil),        // 32: memoria.media.v1.ShadowSpeechSegment
-	(*ShadowSpeechTaskStarted)(nil),    // 33: memoria.media.v1.ShadowSpeechTaskStarted
-	(*ShadowSpeechCommit)(nil),         // 34: memoria.media.v1.ShadowSpeechCommit
-	(*ShadowContextActivated)(nil),     // 35: memoria.media.v1.ShadowContextActivated
-	(*ShadowOutputIntent)(nil),         // 36: memoria.media.v1.ShadowOutputIntent
-	(*ShadowSpeechTimelineState)(nil),  // 37: memoria.media.v1.ShadowSpeechTimelineState
-	(*ShadowFloorDecision)(nil),        // 38: memoria.media.v1.ShadowFloorDecision
-	(*ShadowOutputArbiterState)(nil),   // 39: memoria.media.v1.ShadowOutputArbiterState
-	(*ShadowObservation)(nil),          // 40: memoria.media.v1.ShadowObservation
-	(*StateEvent)(nil),                 // 41: memoria.media.v1.StateEvent
-	(*ClientEvent)(nil),                // 42: memoria.media.v1.ClientEvent
-	(*CoreError)(nil),                  // 43: memoria.media.v1.CoreError
-	(*CoreToMedia)(nil),                // 44: memoria.media.v1.CoreToMedia
-	nil,                                // 45: memoria.media.v1.SessionHello.CapabilitiesEntry
-	nil,                                // 46: memoria.media.v1.MediaMetric.LabelsEntry
+	(PlaybackEventType)(0),             // 7: memoria.media.v1.PlaybackEventType
+	(AudioEncoding)(0),                 // 8: memoria.media.v1.AudioEncoding
+	(ConversationState)(0),             // 9: memoria.media.v1.ConversationState
+	(VadEventType)(0),                  // 10: memoria.media.v1.VadEventType
+	(GenerationAction)(0),              // 11: memoria.media.v1.GenerationAction
+	(ShadowObservationKind)(0),         // 12: memoria.media.v1.ShadowObservationKind
+	(*SpeakerEvidence)(nil),            // 13: memoria.media.v1.SpeakerEvidence
+	(*ContinuousInteractionEvent)(nil), // 14: memoria.media.v1.ContinuousInteractionEvent
+	(*RealtimeEffect)(nil),             // 15: memoria.media.v1.RealtimeEffect
+	(*FloorEffect)(nil),                // 16: memoria.media.v1.FloorEffect
+	(*OutputIntent)(nil),               // 17: memoria.media.v1.OutputIntent
+	(*ProjectionEvent)(nil),            // 18: memoria.media.v1.ProjectionEvent
+	(*SessionIdentity)(nil),            // 19: memoria.media.v1.SessionIdentity
+	(*AudioFormat)(nil),                // 20: memoria.media.v1.AudioFormat
+	(*SessionHello)(nil),               // 21: memoria.media.v1.SessionHello
+	(*AudioFrame)(nil),                 // 22: memoria.media.v1.AudioFrame
+	(*VadEvent)(nil),                   // 23: memoria.media.v1.VadEvent
+	(*KeywordEvent)(nil),               // 24: memoria.media.v1.KeywordEvent
+	(*PlaybackProgress)(nil),           // 25: memoria.media.v1.PlaybackProgress
+	(*DeviceEvent)(nil),                // 26: memoria.media.v1.DeviceEvent
+	(*MediaMetric)(nil),                // 27: memoria.media.v1.MediaMetric
+	(*MediaToCore)(nil),                // 28: memoria.media.v1.MediaToCore
+	(*SessionAccepted)(nil),            // 29: memoria.media.v1.SessionAccepted
+	(*AssistantAudioFrame)(nil),        // 30: memoria.media.v1.AssistantAudioFrame
+	(*GenerationControl)(nil),          // 31: memoria.media.v1.GenerationControl
+	(*TranscriptEvent)(nil),            // 32: memoria.media.v1.TranscriptEvent
+	(*ShadowSpeechSegment)(nil),        // 33: memoria.media.v1.ShadowSpeechSegment
+	(*ShadowSpeechTaskStarted)(nil),    // 34: memoria.media.v1.ShadowSpeechTaskStarted
+	(*ShadowSpeechCommit)(nil),         // 35: memoria.media.v1.ShadowSpeechCommit
+	(*ShadowContextActivated)(nil),     // 36: memoria.media.v1.ShadowContextActivated
+	(*ShadowOutputIntent)(nil),         // 37: memoria.media.v1.ShadowOutputIntent
+	(*ShadowSpeechTimelineState)(nil),  // 38: memoria.media.v1.ShadowSpeechTimelineState
+	(*ShadowFloorDecision)(nil),        // 39: memoria.media.v1.ShadowFloorDecision
+	(*ShadowOutputArbiterState)(nil),   // 40: memoria.media.v1.ShadowOutputArbiterState
+	(*ShadowObservation)(nil),          // 41: memoria.media.v1.ShadowObservation
+	(*StateEvent)(nil),                 // 42: memoria.media.v1.StateEvent
+	(*ClientEvent)(nil),                // 43: memoria.media.v1.ClientEvent
+	(*CoreError)(nil),                  // 44: memoria.media.v1.CoreError
+	(*CoreToMedia)(nil),                // 45: memoria.media.v1.CoreToMedia
+	nil,                                // 46: memoria.media.v1.SessionHello.CapabilitiesEntry
+	nil,                                // 47: memoria.media.v1.MediaMetric.LabelsEntry
 }
 var file_memoria_media_v1_media_proto_depIdxs = []int32{
 	1,  // 0: memoria.media.v1.ContinuousInteractionEvent.event_kind:type_name -> memoria.media.v1.ContinuousEventKind
-	12, // 1: memoria.media.v1.ContinuousInteractionEvent.speaker_evidence:type_name -> memoria.media.v1.SpeakerEvidence
+	13, // 1: memoria.media.v1.ContinuousInteractionEvent.speaker_evidence:type_name -> memoria.media.v1.SpeakerEvidence
 	3,  // 2: memoria.media.v1.RealtimeEffect.effect_kind:type_name -> memoria.media.v1.RealtimeEffectKind
-	18, // 3: memoria.media.v1.RealtimeEffect.identity:type_name -> memoria.media.v1.SessionIdentity
-	18, // 4: memoria.media.v1.FloorEffect.identity:type_name -> memoria.media.v1.SessionIdentity
+	19, // 3: memoria.media.v1.RealtimeEffect.identity:type_name -> memoria.media.v1.SessionIdentity
+	19, // 4: memoria.media.v1.FloorEffect.identity:type_name -> memoria.media.v1.SessionIdentity
 	2,  // 5: memoria.media.v1.FloorEffect.floor_state:type_name -> memoria.media.v1.FloorState
 	4,  // 6: memoria.media.v1.OutputIntent.kind:type_name -> memoria.media.v1.OutputIntentKind
 	5,  // 7: memoria.media.v1.OutputIntent.floor_requirement:type_name -> memoria.media.v1.FloorRequirement
 	6,  // 8: memoria.media.v1.ProjectionEvent.event_kind:type_name -> memoria.media.v1.ProjectionEventKind
 	2,  // 9: memoria.media.v1.ProjectionEvent.floor_state:type_name -> memoria.media.v1.FloorState
-	12, // 10: memoria.media.v1.ProjectionEvent.speaker_evidence:type_name -> memoria.media.v1.SpeakerEvidence
-	7,  // 11: memoria.media.v1.AudioFormat.encoding:type_name -> memoria.media.v1.AudioEncoding
-	18, // 12: memoria.media.v1.SessionHello.identity:type_name -> memoria.media.v1.SessionIdentity
-	19, // 13: memoria.media.v1.SessionHello.uplink_format:type_name -> memoria.media.v1.AudioFormat
-	19, // 14: memoria.media.v1.SessionHello.downlink_format:type_name -> memoria.media.v1.AudioFormat
-	45, // 15: memoria.media.v1.SessionHello.capabilities:type_name -> memoria.media.v1.SessionHello.CapabilitiesEntry
+	13, // 10: memoria.media.v1.ProjectionEvent.speaker_evidence:type_name -> memoria.media.v1.SpeakerEvidence
+	8,  // 11: memoria.media.v1.AudioFormat.encoding:type_name -> memoria.media.v1.AudioEncoding
+	19, // 12: memoria.media.v1.SessionHello.identity:type_name -> memoria.media.v1.SessionIdentity
+	20, // 13: memoria.media.v1.SessionHello.uplink_format:type_name -> memoria.media.v1.AudioFormat
+	20, // 14: memoria.media.v1.SessionHello.downlink_format:type_name -> memoria.media.v1.AudioFormat
+	46, // 15: memoria.media.v1.SessionHello.capabilities:type_name -> memoria.media.v1.SessionHello.CapabilitiesEntry
 	0,  // 16: memoria.media.v1.SessionHello.interaction_authority:type_name -> memoria.media.v1.InteractionAuthority
-	18, // 17: memoria.media.v1.AudioFrame.identity:type_name -> memoria.media.v1.SessionIdentity
-	18, // 18: memoria.media.v1.VadEvent.identity:type_name -> memoria.media.v1.SessionIdentity
-	9,  // 19: memoria.media.v1.VadEvent.type:type_name -> memoria.media.v1.VadEventType
-	18, // 20: memoria.media.v1.KeywordEvent.identity:type_name -> memoria.media.v1.SessionIdentity
-	18, // 21: memoria.media.v1.PlaybackProgress.identity:type_name -> memoria.media.v1.SessionIdentity
-	18, // 22: memoria.media.v1.DeviceEvent.identity:type_name -> memoria.media.v1.SessionIdentity
-	18, // 23: memoria.media.v1.MediaMetric.identity:type_name -> memoria.media.v1.SessionIdentity
-	46, // 24: memoria.media.v1.MediaMetric.labels:type_name -> memoria.media.v1.MediaMetric.LabelsEntry
-	20, // 25: memoria.media.v1.MediaToCore.hello:type_name -> memoria.media.v1.SessionHello
-	21, // 26: memoria.media.v1.MediaToCore.audio:type_name -> memoria.media.v1.AudioFrame
-	22, // 27: memoria.media.v1.MediaToCore.vad:type_name -> memoria.media.v1.VadEvent
-	23, // 28: memoria.media.v1.MediaToCore.keyword:type_name -> memoria.media.v1.KeywordEvent
-	24, // 29: memoria.media.v1.MediaToCore.playback:type_name -> memoria.media.v1.PlaybackProgress
-	25, // 30: memoria.media.v1.MediaToCore.device:type_name -> memoria.media.v1.DeviceEvent
-	26, // 31: memoria.media.v1.MediaToCore.metric:type_name -> memoria.media.v1.MediaMetric
-	18, // 32: memoria.media.v1.SessionAccepted.identity:type_name -> memoria.media.v1.SessionIdentity
-	8,  // 33: memoria.media.v1.SessionAccepted.state:type_name -> memoria.media.v1.ConversationState
-	0,  // 34: memoria.media.v1.SessionAccepted.interaction_authority:type_name -> memoria.media.v1.InteractionAuthority
-	18, // 35: memoria.media.v1.AssistantAudioFrame.identity:type_name -> memoria.media.v1.SessionIdentity
-	18, // 36: memoria.media.v1.GenerationControl.identity:type_name -> memoria.media.v1.SessionIdentity
-	10, // 37: memoria.media.v1.GenerationControl.action:type_name -> memoria.media.v1.GenerationAction
-	18, // 38: memoria.media.v1.TranscriptEvent.identity:type_name -> memoria.media.v1.SessionIdentity
-	4,  // 39: memoria.media.v1.ShadowOutputIntent.kind:type_name -> memoria.media.v1.OutputIntentKind
-	5,  // 40: memoria.media.v1.ShadowOutputIntent.floor_requirement:type_name -> memoria.media.v1.FloorRequirement
-	32, // 41: memoria.media.v1.ShadowSpeechTimelineState.segments:type_name -> memoria.media.v1.ShadowSpeechSegment
-	2,  // 42: memoria.media.v1.ShadowFloorDecision.floor_state:type_name -> memoria.media.v1.FloorState
-	3,  // 43: memoria.media.v1.ShadowFloorDecision.effect_kind:type_name -> memoria.media.v1.RealtimeEffectKind
-	36, // 44: memoria.media.v1.ShadowOutputArbiterState.candidate:type_name -> memoria.media.v1.ShadowOutputIntent
-	36, // 45: memoria.media.v1.ShadowOutputArbiterState.active_candidates:type_name -> memoria.media.v1.ShadowOutputIntent
-	18, // 46: memoria.media.v1.ShadowObservation.identity:type_name -> memoria.media.v1.SessionIdentity
-	11, // 47: memoria.media.v1.ShadowObservation.kind:type_name -> memoria.media.v1.ShadowObservationKind
-	33, // 48: memoria.media.v1.ShadowObservation.speech_task_started:type_name -> memoria.media.v1.ShadowSpeechTaskStarted
-	32, // 49: memoria.media.v1.ShadowObservation.speech_segment:type_name -> memoria.media.v1.ShadowSpeechSegment
-	34, // 50: memoria.media.v1.ShadowObservation.speech_commit:type_name -> memoria.media.v1.ShadowSpeechCommit
-	35, // 51: memoria.media.v1.ShadowObservation.context_activated:type_name -> memoria.media.v1.ShadowContextActivated
-	36, // 52: memoria.media.v1.ShadowObservation.output_intent:type_name -> memoria.media.v1.ShadowOutputIntent
-	38, // 53: memoria.media.v1.ShadowObservation.floor_decision:type_name -> memoria.media.v1.ShadowFloorDecision
-	37, // 54: memoria.media.v1.ShadowObservation.authoritative_timeline:type_name -> memoria.media.v1.ShadowSpeechTimelineState
-	39, // 55: memoria.media.v1.ShadowObservation.authoritative_output_arbiter:type_name -> memoria.media.v1.ShadowOutputArbiterState
-	18, // 56: memoria.media.v1.StateEvent.identity:type_name -> memoria.media.v1.SessionIdentity
-	8,  // 57: memoria.media.v1.StateEvent.state:type_name -> memoria.media.v1.ConversationState
-	18, // 58: memoria.media.v1.ClientEvent.identity:type_name -> memoria.media.v1.SessionIdentity
-	18, // 59: memoria.media.v1.CoreError.identity:type_name -> memoria.media.v1.SessionIdentity
-	28, // 60: memoria.media.v1.CoreToMedia.accepted:type_name -> memoria.media.v1.SessionAccepted
-	29, // 61: memoria.media.v1.CoreToMedia.audio:type_name -> memoria.media.v1.AssistantAudioFrame
-	30, // 62: memoria.media.v1.CoreToMedia.generation:type_name -> memoria.media.v1.GenerationControl
-	31, // 63: memoria.media.v1.CoreToMedia.transcript:type_name -> memoria.media.v1.TranscriptEvent
-	41, // 64: memoria.media.v1.CoreToMedia.state:type_name -> memoria.media.v1.StateEvent
-	42, // 65: memoria.media.v1.CoreToMedia.client:type_name -> memoria.media.v1.ClientEvent
-	43, // 66: memoria.media.v1.CoreToMedia.error:type_name -> memoria.media.v1.CoreError
-	40, // 67: memoria.media.v1.CoreToMedia.shadow_observation:type_name -> memoria.media.v1.ShadowObservation
-	14, // 68: memoria.media.v1.CoreToMedia.realtime_effect:type_name -> memoria.media.v1.RealtimeEffect
-	15, // 69: memoria.media.v1.CoreToMedia.floor_effect:type_name -> memoria.media.v1.FloorEffect
-	27, // 70: memoria.media.v1.VoiceMediaBridge.Connect:input_type -> memoria.media.v1.MediaToCore
-	44, // 71: memoria.media.v1.VoiceMediaBridge.Connect:output_type -> memoria.media.v1.CoreToMedia
-	71, // [71:72] is the sub-list for method output_type
-	70, // [70:71] is the sub-list for method input_type
-	70, // [70:70] is the sub-list for extension type_name
-	70, // [70:70] is the sub-list for extension extendee
-	0,  // [0:70] is the sub-list for field type_name
+	19, // 17: memoria.media.v1.AudioFrame.identity:type_name -> memoria.media.v1.SessionIdentity
+	19, // 18: memoria.media.v1.VadEvent.identity:type_name -> memoria.media.v1.SessionIdentity
+	10, // 19: memoria.media.v1.VadEvent.type:type_name -> memoria.media.v1.VadEventType
+	19, // 20: memoria.media.v1.KeywordEvent.identity:type_name -> memoria.media.v1.SessionIdentity
+	19, // 21: memoria.media.v1.PlaybackProgress.identity:type_name -> memoria.media.v1.SessionIdentity
+	7,  // 22: memoria.media.v1.PlaybackProgress.event_type:type_name -> memoria.media.v1.PlaybackEventType
+	19, // 23: memoria.media.v1.DeviceEvent.identity:type_name -> memoria.media.v1.SessionIdentity
+	19, // 24: memoria.media.v1.MediaMetric.identity:type_name -> memoria.media.v1.SessionIdentity
+	47, // 25: memoria.media.v1.MediaMetric.labels:type_name -> memoria.media.v1.MediaMetric.LabelsEntry
+	21, // 26: memoria.media.v1.MediaToCore.hello:type_name -> memoria.media.v1.SessionHello
+	22, // 27: memoria.media.v1.MediaToCore.audio:type_name -> memoria.media.v1.AudioFrame
+	23, // 28: memoria.media.v1.MediaToCore.vad:type_name -> memoria.media.v1.VadEvent
+	24, // 29: memoria.media.v1.MediaToCore.keyword:type_name -> memoria.media.v1.KeywordEvent
+	25, // 30: memoria.media.v1.MediaToCore.playback:type_name -> memoria.media.v1.PlaybackProgress
+	26, // 31: memoria.media.v1.MediaToCore.device:type_name -> memoria.media.v1.DeviceEvent
+	27, // 32: memoria.media.v1.MediaToCore.metric:type_name -> memoria.media.v1.MediaMetric
+	19, // 33: memoria.media.v1.SessionAccepted.identity:type_name -> memoria.media.v1.SessionIdentity
+	9,  // 34: memoria.media.v1.SessionAccepted.state:type_name -> memoria.media.v1.ConversationState
+	0,  // 35: memoria.media.v1.SessionAccepted.interaction_authority:type_name -> memoria.media.v1.InteractionAuthority
+	19, // 36: memoria.media.v1.AssistantAudioFrame.identity:type_name -> memoria.media.v1.SessionIdentity
+	19, // 37: memoria.media.v1.GenerationControl.identity:type_name -> memoria.media.v1.SessionIdentity
+	11, // 38: memoria.media.v1.GenerationControl.action:type_name -> memoria.media.v1.GenerationAction
+	19, // 39: memoria.media.v1.TranscriptEvent.identity:type_name -> memoria.media.v1.SessionIdentity
+	4,  // 40: memoria.media.v1.ShadowOutputIntent.kind:type_name -> memoria.media.v1.OutputIntentKind
+	5,  // 41: memoria.media.v1.ShadowOutputIntent.floor_requirement:type_name -> memoria.media.v1.FloorRequirement
+	33, // 42: memoria.media.v1.ShadowSpeechTimelineState.segments:type_name -> memoria.media.v1.ShadowSpeechSegment
+	2,  // 43: memoria.media.v1.ShadowFloorDecision.floor_state:type_name -> memoria.media.v1.FloorState
+	3,  // 44: memoria.media.v1.ShadowFloorDecision.effect_kind:type_name -> memoria.media.v1.RealtimeEffectKind
+	37, // 45: memoria.media.v1.ShadowOutputArbiterState.candidate:type_name -> memoria.media.v1.ShadowOutputIntent
+	37, // 46: memoria.media.v1.ShadowOutputArbiterState.active_candidates:type_name -> memoria.media.v1.ShadowOutputIntent
+	19, // 47: memoria.media.v1.ShadowObservation.identity:type_name -> memoria.media.v1.SessionIdentity
+	12, // 48: memoria.media.v1.ShadowObservation.kind:type_name -> memoria.media.v1.ShadowObservationKind
+	34, // 49: memoria.media.v1.ShadowObservation.speech_task_started:type_name -> memoria.media.v1.ShadowSpeechTaskStarted
+	33, // 50: memoria.media.v1.ShadowObservation.speech_segment:type_name -> memoria.media.v1.ShadowSpeechSegment
+	35, // 51: memoria.media.v1.ShadowObservation.speech_commit:type_name -> memoria.media.v1.ShadowSpeechCommit
+	36, // 52: memoria.media.v1.ShadowObservation.context_activated:type_name -> memoria.media.v1.ShadowContextActivated
+	37, // 53: memoria.media.v1.ShadowObservation.output_intent:type_name -> memoria.media.v1.ShadowOutputIntent
+	39, // 54: memoria.media.v1.ShadowObservation.floor_decision:type_name -> memoria.media.v1.ShadowFloorDecision
+	38, // 55: memoria.media.v1.ShadowObservation.authoritative_timeline:type_name -> memoria.media.v1.ShadowSpeechTimelineState
+	40, // 56: memoria.media.v1.ShadowObservation.authoritative_output_arbiter:type_name -> memoria.media.v1.ShadowOutputArbiterState
+	19, // 57: memoria.media.v1.StateEvent.identity:type_name -> memoria.media.v1.SessionIdentity
+	9,  // 58: memoria.media.v1.StateEvent.state:type_name -> memoria.media.v1.ConversationState
+	19, // 59: memoria.media.v1.ClientEvent.identity:type_name -> memoria.media.v1.SessionIdentity
+	19, // 60: memoria.media.v1.CoreError.identity:type_name -> memoria.media.v1.SessionIdentity
+	29, // 61: memoria.media.v1.CoreToMedia.accepted:type_name -> memoria.media.v1.SessionAccepted
+	30, // 62: memoria.media.v1.CoreToMedia.audio:type_name -> memoria.media.v1.AssistantAudioFrame
+	31, // 63: memoria.media.v1.CoreToMedia.generation:type_name -> memoria.media.v1.GenerationControl
+	32, // 64: memoria.media.v1.CoreToMedia.transcript:type_name -> memoria.media.v1.TranscriptEvent
+	42, // 65: memoria.media.v1.CoreToMedia.state:type_name -> memoria.media.v1.StateEvent
+	43, // 66: memoria.media.v1.CoreToMedia.client:type_name -> memoria.media.v1.ClientEvent
+	44, // 67: memoria.media.v1.CoreToMedia.error:type_name -> memoria.media.v1.CoreError
+	41, // 68: memoria.media.v1.CoreToMedia.shadow_observation:type_name -> memoria.media.v1.ShadowObservation
+	15, // 69: memoria.media.v1.CoreToMedia.realtime_effect:type_name -> memoria.media.v1.RealtimeEffect
+	16, // 70: memoria.media.v1.CoreToMedia.floor_effect:type_name -> memoria.media.v1.FloorEffect
+	28, // 71: memoria.media.v1.VoiceMediaBridge.Connect:input_type -> memoria.media.v1.MediaToCore
+	45, // 72: memoria.media.v1.VoiceMediaBridge.Connect:output_type -> memoria.media.v1.CoreToMedia
+	72, // [72:73] is the sub-list for method output_type
+	71, // [71:72] is the sub-list for method input_type
+	71, // [71:71] is the sub-list for extension type_name
+	71, // [71:71] is the sub-list for extension extendee
+	0,  // [0:71] is the sub-list for field type_name
 }
 
 func init() { file_memoria_media_v1_media_proto_init() }
@@ -5160,7 +5237,7 @@ func file_memoria_media_v1_media_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_memoria_media_v1_media_proto_rawDesc), len(file_memoria_media_v1_media_proto_rawDesc)),
-			NumEnums:      12,
+			NumEnums:      13,
 			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   1,

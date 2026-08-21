@@ -3,6 +3,8 @@ package mediaedge
 import (
 	"testing"
 	"time"
+
+	mediav1 "memoria/services/media_edge/gen/memoria/media/v1"
 )
 
 func TestDevicePlaybackLedgerUsesServerSendClockAndKeepsFencesIndependent(
@@ -94,13 +96,17 @@ func TestDevicePlaybackLedgerRejectsProgressAfterTerminalReceipt(t *testing.T) {
 	fence := deviceFence{TurnID: 4, GenerationID: 7}
 	ledger.startTransportFence(fence, false)
 	ledger.recordSent(fence, 0, 480)
-	if _, ok := ledger.record(devicePlaybackReceipt{
+	progress, ok := ledger.record(devicePlaybackReceipt{
 		deviceEventBase:   deviceEventBase{Type: "playback.ended"},
 		Fence:             fence,
 		ReceivedSequence:  0,
 		RenderedSampleEnd: 480,
-	}, 1); !ok {
+	}, 1)
+	if !ok {
 		t.Fatal("terminal playback receipt was rejected")
+	}
+	if progress.EventType != mediav1.PlaybackEventType_PLAYBACK_EVENT_TYPE_ENDED {
+		t.Fatalf("terminal event type = %s, want ENDED", progress.EventType)
 	}
 	ledger.recordSent(fence, 1, 960)
 	if _, ok := ledger.record(devicePlaybackReceipt{

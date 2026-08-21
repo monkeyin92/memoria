@@ -161,6 +161,31 @@ def test_playback_ledger_rejects_progress_beyond_received_audio() -> None:
     assert ledger.actual_heard_text(fence) == "你好"
 
 
+def test_playback_ledger_rejects_forged_terminal_receipt() -> None:
+    fence = _fence()
+    ledger = PlaybackLedger()
+    ledger.start(fence)
+    assert ledger.register_audio(fence, 0, 0, 320)
+
+    assert ledger.acknowledge(
+        fence,
+        321,
+        received_sequence=0,
+        terminal=True,
+    ) == ()
+    assert not ledger.terminal_received(fence)
+    assert not ledger.is_playback_complete(fence)
+
+    assert ledger.acknowledge(
+        fence,
+        320,
+        received_sequence=0,
+        terminal=True,
+    ) == ()
+    assert ledger.terminal_received(fence)
+    assert ledger.is_playback_complete(fence)
+
+
 def test_playback_ledger_applies_existing_ack_to_late_provider_alignment() -> None:
     fence = _fence()
     ledger = PlaybackLedger()

@@ -1,5 +1,14 @@
 # 项目交接
 
+## 当前候选（2026-08-21，播放终态 + I2S TX EOF 数字水位 + 首帧前按钮硬停止）
+
+- 当前生产基线已经前移到 Agent/Voice Core Media Bridge `memoria-agent:20260821-135408-pcm-pacing-asr-tail`（revision `714196f`）、Control API `20260821-121418-reply-delivery-projection`（revision `caf7027`）和 Media Edge `20260820-010500-livekit-stack-upgrade`（revision `80489ed`），均为本轮只读复核时 healthy、restart count=0。真实板会话 `a9ea0f30-5a37-4c75-baa7-65a03e19b76f`、epoch 922 已有三代连续可播放回复，用户确认“AI 能说了”；该证据只覆盖窄主流程，不覆盖完整播放终态、Actual Heard 或打断。
+- 根因已收敛：固件签名回执带 `playback.started/progress/ended/error`，但 Go Edge 转入 media-v1 时压扁成无类型 `PlaybackProgress`；Python 因而可能把覆盖全量水位的 progress 提前当作完成，也可能把 error 当成功终态。另有 Python 回执 fence 漏带 `session_epoch`，会拒绝非零 epoch 的合法回执。Control SQLite 因此只看到 generation 1/2/3 的 `first_frame_sent / provider_completed`，没有 `playback_ended / actual_heard`，即使 Edge 指标已经观测到 playback receipt。
+- 本地候选已完成 `code + wired + local verified`：media-v1 新增显式 `PlaybackEventType` 并贯通 Go/Python；typed progress 必须等合法 `ENDED`，`ERROR` 进入 ReplyDelivery `error` 并取消输出；回执完整携带 `session_epoch`，越界序列/水位和伪造终态 fail closed。物理按钮只要存在 active generation 就立即本地 flush/静音并上报 signed `button.stop`，不再等待首个音频帧。
+- ESP32 patch `0017-i2s-tx-eof-exact-playback-watermark.patch` 使用 ES8388 I2S TX EOF，在最后写入后等待完整 DMA descriptor ring 轮转才发送 `approximate=false` 最终水位；流式 progress 仍标 approximate。ESP-IDF 6.0.2 clean build 与 overlay gate 通过：app `2,951,088` bytes、分区余 29%、SHA-256 `135a714b…bcf`；merged `13,577,086` bytes、SHA-256 `7cd6578c…192`。该边界证明 I2S 数字数据已移出，不证明 DAC、功放、扬声器或用户声学 Actual Heard。
+- 当前层级：`code=complete / wired=complete / enabled=false / verified=local build and tests only`。Agent/Bridge、Media Edge 尚未发布本候选；当前无 `/dev/cu.usbmodem*`，固件尚未刷板，不能执行身份区备份/比对、串口或声学验收。保持 `direct_real_device_verified=false`、`full_duplex_verified=false`、T1–T14 `0 pass / 14 blocked / 0 failed`。
+- 下一步：提交并协调发布 Agent/Bridge + Media Edge，完成服务器运行门禁；板卡重连后按“备份身份区 → 烧录 → 身份区逐字节比对 → 固定 TTS `playback.ended` → Actual Heard 投影 → 随机按键停止 p95 与迟到 PCM 拒绝”顺序执行 T5–T8。自然语音打断仍需后续本地停止词、AEC Reference、双讲与 Router 验收，不能由物理按钮结果外推。
+
 ## 当前生产增量（2026-08-21，ReplyDelivery 跨进程投影已启用，待真机话轮取证）
 
 - 源提交/tag `caf70271222c43047c5d661052f3b717348cc209` / `20260821-121418-reply-delivery-projection` 已推送并冻结。Control API、Agent、Voice Core Media Bridge 已协调切流；运行 image ID 分别为 `sha256:4c0d8966a885…` 与 `sha256:9b6260e5fc22…`，均 amd64、OCI provenance 正确、healthy、restart count=0。Media Edge、LiveKit、Gateway、H5、小程序、数据服务与固件未切换；runtime authority tag 保持 Control/Agent=`20260814-231749-direct-canary`、Bridge=`20260816-bridge-liveness-83af813`。

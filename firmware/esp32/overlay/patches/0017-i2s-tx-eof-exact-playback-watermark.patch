@@ -1,0 +1,215 @@
+diff --git a/main/audio/audio_codec.h b/main/audio/audio_codec.h
+--- a/main/audio/audio_codec.h
++++ b/main/audio/audio_codec.h
+@@ -35,6 +35,10 @@ public:
+     virtual void EnableOutput(bool enable);
+ 
+     virtual void OutputData(std::vector<int16_t>& data);
++    // Monotonic TX-DMA completion events. Codecs without a hardware-backed
++    // completion source keep the default unavailable implementation.
++    virtual bool HasExactOutputCompletion() const { return false; }
++    virtual uint64_t OutputCompletionCounter() const { return 0; }
+     virtual bool InputData(std::vector<int16_t>& data);
+     virtual void Start();
+ 
+diff --git a/main/audio/codecs/es8388_audio_codec.h b/main/audio/codecs/es8388_audio_codec.h
+--- a/main/audio/codecs/es8388_audio_codec.h
++++ b/main/audio/codecs/es8388_audio_codec.h
+@@ -6,6 +6,7 @@
+ #include <driver/i2c_master.h>
+ #include <esp_codec_dev.h>
+ #include <esp_codec_dev_defaults.h>
++#include <atomic>
+ #include <mutex>
+ 
+ 
+@@ -21,6 +22,11 @@ private:
+     bool output_device_opened_ = false;
+     gpio_num_t pa_pin_ = GPIO_NUM_NC;
+     std::mutex data_if_mutex_;
++    std::atomic<uint32_t> output_completion_counter_{0};
++
++    static bool IRAM_ATTR OnOutputSent(i2s_chan_handle_t handle,
++                                       i2s_event_data_t* event,
++                                       void* user_ctx);
+ 
+     void CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din);
+ 
+@@ -36,6 +42,10 @@ public:
+     virtual void SetOutputVolume(int volume) override;
+     virtual void EnableInput(bool enable) override;
+     virtual void EnableOutput(bool enable) override;
++    virtual bool HasExactOutputCompletion() const override { return true; }
++    virtual uint64_t OutputCompletionCounter() const override {
++        return output_completion_counter_.load(std::memory_order_acquire);
++    }
+ };
+ 
+ #endif // _ES8388_AUDIO_CODEC_H
+diff --git a/main/audio/codecs/es8388_audio_codec.cc b/main/audio/codecs/es8388_audio_codec.cc
+--- a/main/audio/codecs/es8388_audio_codec.cc
++++ b/main/audio/codecs/es8388_audio_codec.cc
+@@ -1,9 +1,22 @@
+ #include "es8388_audio_codec.h"
+ 
+ #include <esp_log.h>
++#include <esp_attr.h>
+ 
+ #define TAG "Es8388AudioCodec"
+ 
++bool IRAM_ATTR Es8388AudioCodec::OnOutputSent(i2s_chan_handle_t handle,
++                                              i2s_event_data_t* event,
++                                              void* user_ctx) {
++    (void)handle;
++    (void)event;
++    auto* codec = static_cast<Es8388AudioCodec*>(user_ctx);
++    if (codec != nullptr) {
++        codec->output_completion_counter_.fetch_add(1, std::memory_order_release);
++    }
++    return false;
++}
++
+ Es8388AudioCodec::Es8388AudioCodec(void* i2c_master_handle, i2c_port_t i2c_port, int input_sample_rate, int output_sample_rate,
+     gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
+     gpio_num_t pa_pin, uint8_t es8388_addr, bool input_reference) {
+@@ -131,6 +144,13 @@ void Es8388AudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gp
+ 
+     ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle_, &std_cfg));
+     ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_handle_, &std_cfg));
++    const i2s_event_callbacks_t callbacks = {
++        .on_recv = nullptr,
++        .on_recv_q_ovf = nullptr,
++        .on_sent = OnOutputSent,
++        .on_send_q_ovf = nullptr,
++    };
++    ESP_ERROR_CHECK(i2s_channel_register_event_callback(tx_handle_, &callbacks, this));
+     ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));
+     ESP_ERROR_CHECK(i2s_channel_enable(rx_handle_));
+     ESP_LOGI(TAG, "Duplex channels created");
+diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -94,7 +94,7 @@ struct AudioServiceCallbacks {
+     // end and the server-side received sequence so playback receipts can
+     // report an output-commit watermark instead of a network-received bound.
+     std::function<void(uint32_t generation_id, uint64_t rendered_sample_end,
+-                       uint32_t received_sequence)> on_playback_output;
++                       uint32_t received_sequence, bool approximate)> on_playback_output;
+ };
+ 
+ 
+@@ -203,6 +203,11 @@ private:
+     bool decode_in_flight_ = false;
+     bool output_in_flight_ = false;
+     bool playback_drained_notified_ = true;
++    bool exact_output_pending_ = false;
++    uint64_t exact_output_target_ = 0;
++    uint32_t exact_output_generation_ = 0;
++    uint64_t exact_output_sample_end_ = 0;
++    uint32_t exact_output_sequence_ = 0;
+     uint32_t playback_generation_ = 0;
+     uint32_t accepted_server_generation_ = 0;
+     // For server AEC
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -316,9 +316,34 @@ void AudioService::AudioInputTask() {
+ void AudioService::AudioOutputTask() {
+     while (true) {
+         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+-        audio_queue_cv_.wait(lock, [this]() {
+-            return !audio_playback_queue_.empty() || service_stopped_.load();
+-        });
++        while (audio_playback_queue_.empty() && !service_stopped_.load()) {
++            if (exact_output_pending_ &&
++                codec_->OutputCompletionCounter() >= exact_output_target_) {
++                const uint32_t generation_id = exact_output_generation_;
++                const uint64_t sample_end = exact_output_sample_end_;
++                const uint32_t received_sequence = exact_output_sequence_;
++                exact_output_pending_ = false;
++                const bool notify_drained = MarkPlaybackDrainedLocked();
++                audio_queue_cv_.notify_all();
++                lock.unlock();
++                if (callbacks_.on_playback_output) {
++                    callbacks_.on_playback_output(generation_id, sample_end,
++                                                  received_sequence, false);
++                }
++                if (notify_drained && callbacks_.on_playback_drained) {
++                    callbacks_.on_playback_drained();
++                }
++                lock.lock();
++                continue;
++            }
++            if (exact_output_pending_) {
++                audio_queue_cv_.wait_for(lock, std::chrono::milliseconds(5));
++            } else {
++                audio_queue_cv_.wait(lock, [this]() {
++                    return !audio_playback_queue_.empty() || service_stopped_.load();
++                });
++            }
++        }
+         if (service_stopped_.load()) {
+             break;
+         }
+@@ -350,7 +375,15 @@ void AudioService::AudioOutputTask() {
+         }
+ #endif
+         output_in_flight_ = false;
+-        notify_drained = MarkPlaybackDrainedLocked();
++        if (codec_->HasExactOutputCompletion()) {
++            exact_output_pending_ = true;
++            exact_output_target_ = codec_->OutputCompletionCounter() + AUDIO_CODEC_DMA_DESC_NUM;
++            exact_output_generation_ = task->generation_id;
++            exact_output_sample_end_ = task->sample_end;
++            exact_output_sequence_ = task->received_sequence;
++        } else {
++            notify_drained = MarkPlaybackDrainedLocked();
++        }
+         audio_queue_cv_.notify_all();
+         lock.unlock();
+ 
+@@ -359,7 +392,7 @@ void AudioService::AudioOutputTask() {
+         // codec output actually consumed.
+         if (callbacks_.on_playback_output) {
+             callbacks_.on_playback_output(task->generation_id, task->sample_end,
+-                                          task->received_sequence);
++                                          task->received_sequence, true);
+         }
+         if (notify_drained && callbacks_.on_playback_drained) {
+             callbacks_.on_playback_drained();
+@@ -799,6 +832,7 @@ bool AudioService::ResetDecoderLocked(uint32_t accepted_server_generation) {
+     audio_decode_queue_.clear();
+     audio_playback_queue_.clear();
+     audio_testing_queue_.clear();
++    exact_output_pending_ = false;
+     const bool notify_drained = MarkPlaybackDrainedLocked();
+     audio_queue_cv_.notify_all();
+     return notify_drained;
+@@ -828,7 +862,7 @@ void AudioService::ResetDecoderForServerGeneration(uint32_t generation_id) {
+ 
+ bool AudioService::IsPlaybackDrainedLocked() const {
+     return audio_decode_queue_.empty() && audio_playback_queue_.empty() &&
+-        !decode_in_flight_ && !output_in_flight_;
++        !decode_in_flight_ && !output_in_flight_ && !exact_output_pending_;
+ }
+ 
+ bool AudioService::MarkPlaybackDrainedLocked() {
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -113,12 +113,13 @@ void Application::Initialize() {
+     };
+     callbacks.on_playback_output = [this](uint32_t generation_id,
+                                           uint64_t rendered_sample_end,
+-                                          uint32_t received_sequence) {
++                                          uint32_t received_sequence,
++                                          bool approximate) {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
+         auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+         if (memoria_protocol != nullptr) {
+             memoria_protocol->NotifyPlaybackOutput(generation_id, rendered_sample_end,
+-                                                   received_sequence);
++                                                   received_sequence, approximate);
+         }
+ #endif
+     };

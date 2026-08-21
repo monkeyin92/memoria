@@ -94,6 +94,12 @@ PATCH_0016 = (
     / "patches"
     / "0016-order-device-playback-barrier.patch"
 ).read_text(encoding="utf-8")
+PATCH_0017 = (
+    Path(__file__).parents[1]
+    / "overlay"
+    / "patches"
+    / "0017-i2s-tx-eof-exact-playback-watermark.patch"
+).read_text(encoding="utf-8")
 CONTRACT = json.loads(
     (Path(__file__).parents[3] / "packages" / "contracts" / "device-media-v2.json").read_text(
         encoding="utf-8"
@@ -302,7 +308,7 @@ def test_hello_v2_declares_only_honest_simplex_capabilities() -> None:
     assert 'cJSON_AddBoolToObject(capabilities, "local_stop_keyword", false)' in hello_v2
     assert 'cJSON_AddBoolToObject(capabilities, "local_duck", false)' in hello_v2
     assert 'cJSON_AddNumberToObject(capabilities, "barge_in_level", 0)' in hello_v2
-    assert 'cJSON_AddStringToObject(capabilities, "playback_watermark", "approximate")' in hello_v2
+    assert 'cJSON_AddStringToObject(capabilities, "playback_watermark", "exact")' in hello_v2
     assert '"local_vad"' in hello_v2
     assert '"physical_stop_button"' in hello_v2
 
@@ -312,7 +318,6 @@ def test_hello_v2_declares_only_honest_simplex_capabilities() -> None:
         '"fd_high_quality"',
         '"software_post_gain_pre_i2s"',
         '"hardware_loopback"',
-        '"exact"',
         '"keyword.detected"',
         '"full_duplex_verified"',
     ):
@@ -404,12 +409,15 @@ def test_v2_playback_speaking_requires_a_real_downlink_frame() -> None:
     assert "playback_active_ && playback_audio_ready_ && !playback_paused_" in active
 
 
-def test_local_flush_reports_button_stop_only_after_audio_arrived() -> None:
+def test_local_flush_reports_button_stop_for_any_active_generation() -> None:
     flush = SOURCE[SOURCE.index("void MemoriaProtocol::NotifyLocalFlush") :]
     flush = flush[: flush.index("void MemoriaProtocol::NotifyPlaybackDrained")]
     assert "const bool had_active_generation = playback_active_ && fence.valid()" in flush
-    assert "const bool had_active_audio = had_active_generation && playback_audio_ready_" in flush
-    assert flush.index("had_active_audio") < flush.index("SendButtonStop(fence, local_flush_sample_end)")
+    assert "had_active_audio" not in flush
+    assert flush.index("had_active_generation") < flush.index(
+        "SendButtonStop(fence, local_flush_sample_end)"
+    )
+    assert "if (had_active_generation)" in flush
     assert "playback_audio_ready_ = false" in flush
 
 
@@ -754,7 +762,7 @@ def test_local_hard_stop_flushes_before_button_stop_and_never_resumes() -> None:
     assert '"button", "primary"' in flush
 
 
-def test_playback_receipts_v2_carry_full_fence_and_approximate_watermark() -> None:
+def test_playback_receipts_v2_carry_full_fence_and_source_precision() -> None:
     receipt = SOURCE[SOURCE.index("void MemoriaProtocol::SendPlaybackReceipt") :]
     required = CONTRACT["$defs"]["playback_receipt_v2"]["required"]
     for key in required:
@@ -763,10 +771,11 @@ def test_playback_receipts_v2_carry_full_fence_and_approximate_watermark() -> No
     assert '"rendered_sample_end"' in receipt
     assert '"received_sequence"' in receipt
     assert '"fence"' in receipt
-    assert 'cJSON_AddBoolToObject(root.value, "approximate", true)' in receipt
-    # The watermark is the last frame delivered into the playback pipeline and
-    # must never be claimed exact (no DAC sample counter on this board).
-    assert "exact render position" in receipt
+    assert 'cJSON_AddBoolToObject(root.value, "approximate", approximate)' in receipt
+    # Exact receipts are GDMA TX-EOF-confirmed digital boundaries. The source
+    # explicitly keeps this separate from acoustic speaker proof.
+    assert "precise digital playout boundary" in receipt
+    assert "not acoustic proof" in receipt
     for event in ("playback.started", "playback.progress", "playback.ended", "playback.error"):
         assert event in SOURCE
     assert "kProgressReceiptIntervalFrames" in SOURCE
@@ -785,6 +794,20 @@ def test_decode_error_and_flush_are_wired_through_audio_service_and_application(
     audio_service = PATCH_0007[PATCH_0007.index("main/audio/audio_service.cc") :]
     assert "notify_decode_error" in audio_service
     assert "callbacks_.on_playback_decode_error" in audio_service
+
+
+def test_es8388_tx_eof_gates_exact_terminal_playback_boundary() -> None:
+    assert "i2s_channel_register_event_callback" in PATCH_0017
+    assert ".on_sent = OnOutputSent" in PATCH_0017
+    assert "output_completion_counter_.fetch_add" in PATCH_0017
+    assert "AUDIO_CODEC_DMA_DESC_NUM" in PATCH_0017
+    assert "exact_output_pending_" in PATCH_0017
+    assert "OutputCompletionCounter() >= exact_output_target_" in PATCH_0017
+    assert "received_sequence, false" in PATCH_0017
+    assert "!exact_output_pending_" in PATCH_0017
+    # OutputData still emits an explicitly approximate live watermark; only
+    # the full DMA-ring completion barrier is promoted to exact.
+    assert "task->received_sequence, true" in PATCH_0017
     # Server-initiated P0 controls atomically replace the queue gate on the
     # receive path.
     assert "SetLocalFlushCallback" in PATCH_0007
@@ -1153,10 +1176,10 @@ def test_session_accepted_is_a_bootstrap_not_an_ordered_control() -> None:
     assert 'ValidateServerBase(root, "session.error"' in SOURCE
 
 
-def test_terminal_ended_watermarks_are_output_commit_only() -> None:
-    # cancel/flush/finalize ended receipts must report the output-commit
-    # watermark and honestly report 0 when nothing was committed; the
-    # received/queued position is never a fallback for played watermarks.
+def test_terminal_ended_watermarks_use_only_confirmed_output_boundaries() -> None:
+    # cancel/flush/finalize ended receipts must report the latest confirmed
+    # output boundary and honestly report 0 when none exists; the received or
+    # queued position is never a fallback for played watermarks.
     cancel = SOURCE[SOURCE.index("bool MemoriaProtocol::HandleGenerationTerminal") :]
     cancel = cancel[: cancel.index("bool MemoriaProtocol::HandlePlaybackFlushV2")]
     cancel_branch = cancel[
@@ -1165,7 +1188,7 @@ def test_terminal_ended_watermarks_are_output_commit_only() -> None:
     assert "playback_output_frames_ > 0 ? playback_output_end_ : 0" in cancel_branch
     assert "playback_output_frames_ > 0 ? playback_output_sequence_ : 0" in cancel_branch
     assert (
-        'SendPlaybackReceipt("playback.ended", stopped_fence, stopped_sequence, stopped_end)'
+        'SendPlaybackReceipt("playback.ended", stopped_fence, stopped_sequence, stopped_end,'
         in cancel_branch
     )
     # The had-audio gate still uses the receive bound, but the reported
@@ -1178,7 +1201,7 @@ def test_terminal_ended_watermarks_are_output_commit_only() -> None:
     assert "playback_output_frames_ > 0 ? playback_output_end_ : 0" in flush
     assert "playback_output_frames_ > 0 ? playback_output_sequence_ : 0" in flush
     assert (
-        'SendPlaybackReceipt("playback.ended", flushed_fence, flush_sequence, flush_end)'
+        'SendPlaybackReceipt("playback.ended", flushed_fence, flush_sequence, flush_end,'
         in flush
     )
 

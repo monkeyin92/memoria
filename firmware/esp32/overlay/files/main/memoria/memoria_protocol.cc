@@ -955,6 +955,7 @@ bool MemoriaProtocol::HandleDownlink(const uint8_t* data, size_t size) {
         playback_output_end_ = 0;
         playback_output_sequence_ = 0;
         playback_output_frames_ = 0;
+        playback_output_approximate_ = true;
         if (protocol_version_ == kProtocolVersionV1 &&
             on_local_flush_requested_ != nullptr) {
             on_local_flush_requested_(metadata.generation_id);
@@ -1201,6 +1202,7 @@ bool MemoriaProtocol::HandleGenerationStarted(const cJSON* root, const Generatio
     playback_output_end_ = 0;
     playback_output_sequence_ = 0;
     playback_output_frames_ = 0;
+    playback_output_approximate_ = true;
     downlink_started_ = false;
     // Authoritative generation.started: the downlink sequence/sample clock
     // resets to 0 for the new generation (contract downlink_clock).
@@ -1268,6 +1270,8 @@ bool MemoriaProtocol::HandleGenerationTerminal(const cJSON* root,
             playback_output_frames_ > 0 ? playback_output_sequence_ : 0;
         const uint64_t stopped_end =
             playback_output_frames_ > 0 ? playback_output_end_ : 0;
+        const bool stopped_approximate =
+            playback_output_frames_ > 0 && playback_output_approximate_;
         const bool had_audio = receipt_generation_id_ != 0 && !playback_terminal_receipted_ &&
                                playback_audio_ready_ && active_generation_received_end_ > 0;
         playback_completion_pending_ = false;
@@ -1284,12 +1288,14 @@ bool MemoriaProtocol::HandleGenerationTerminal(const cJSON* root,
         playback_output_end_ = 0;
         playback_output_sequence_ = 0;
         playback_output_frames_ = 0;
+        playback_output_approximate_ = true;
         downlink_started_ = false;
         if (on_local_flush_requested_ != nullptr) {
             on_local_flush_requested_(0);
         }
         if (had_audio) {
-            SendPlaybackReceipt("playback.ended", stopped_fence, stopped_sequence, stopped_end);
+            SendPlaybackReceipt("playback.ended", stopped_fence, stopped_sequence, stopped_end,
+                                stopped_approximate);
         }
         EmitLegacyTts("stop");
         return true;
@@ -1353,6 +1359,8 @@ bool MemoriaProtocol::HandlePlaybackFlushV2(const cJSON* root) {
     const uint32_t flush_sequence =
         playback_output_frames_ > 0 ? playback_output_sequence_ : 0;
     const uint64_t flush_end = playback_output_frames_ > 0 ? playback_output_end_ : 0;
+    const bool flush_approximate =
+        playback_output_frames_ > 0 && playback_output_approximate_;
     playback_completion_pending_ = false;
     // P0: install the replacement authority, then atomically replace the
     // AudioService generation gate and clear the old queue tail.
@@ -1371,6 +1379,7 @@ bool MemoriaProtocol::HandlePlaybackFlushV2(const cJSON* root) {
     playback_output_end_ = 0;
     playback_output_sequence_ = 0;
     playback_output_frames_ = 0;
+    playback_output_approximate_ = true;
     downlink_started_ = false;
     // playback.flush replacement: the downlink sequence/sample clock resets
     // to 0 for the replacement generation (contract downlink_clock).
@@ -1382,7 +1391,8 @@ bool MemoriaProtocol::HandlePlaybackFlushV2(const cJSON* root) {
     if (had_audio) {
         // Receipt may arrive after the replacement starts; its saved fence
         // keeps the old generation terminal and cannot move the new ledger.
-        SendPlaybackReceipt("playback.ended", flushed_fence, flush_sequence, flush_end);
+        SendPlaybackReceipt("playback.ended", flushed_fence, flush_sequence, flush_end,
+                            flush_approximate);
     }
     return true;
 }
@@ -1523,7 +1533,8 @@ void MemoriaProtocol::SendButtonStop(const GenerationFence& fence, uint64_t loca
 void MemoriaProtocol::SendPlaybackReceipt(const char* type,
                                           const GenerationFence& fence,
                                           uint32_t received_sequence,
-                                          uint64_t rendered_sample_end) {
+                                          uint64_t rendered_sample_end,
+                                          bool approximate) {
     if (protocol_version_ != kProtocolVersionV2 || !fence.valid()) {
         return;
     }
@@ -1545,10 +1556,10 @@ void MemoriaProtocol::SendPlaybackReceipt(const char* type,
     cJSON_AddNumberToObject(root.value, "received_sequence", received_sequence);
     cJSON_AddNumberToObject(root.value, "rendered_sample_end",
                             static_cast<double>(rendered_sample_end));
-    // The device has no DAC sample counter: the watermark is the sample end of
-    // the last frame delivered into the playback pipeline. It is a bound, not
-    // an exact render position, so it must never be treated as exact.
-    cJSON_AddBoolToObject(root.value, "approximate", true);
+    // exact means the whole reported frame was shifted out by I2S GDMA TX EOF.
+    // It is a precise digital playout boundary, not acoustic proof that the
+    // amplifier and speaker were audible.
+    cJSON_AddBoolToObject(root.value, "approximate", approximate);
     QueueTransportText(RenderJson(root.value));
 }
 
@@ -1836,7 +1847,8 @@ std::string MemoriaProtocol::DeviceHelloV2() const {
     cJSON_AddBoolToObject(capabilities, "speaker", true);
     // Honest capability declaration for this simplex board: no AEC reference,
     // no simultaneous capture and playback, no local stop keyword, no local
-    // duck, and only an approximate playback watermark. The server must not
+    // duck. Playback watermarks are confirmed by I2S GDMA TX EOF; this is an
+    // exact digital boundary but still not acoustic DAC/speaker proof. The server must not
     // open full duplex on top of these capabilities.
     cJSON_AddBoolToObject(capabilities, "simultaneous_capture_playback", false);
     cJSON_AddStringToObject(capabilities, "aec_mode", "none");
@@ -1845,7 +1857,7 @@ std::string MemoriaProtocol::DeviceHelloV2() const {
     cJSON_AddBoolToObject(capabilities, "local_vad", true);
     cJSON_AddBoolToObject(capabilities, "local_stop_keyword", false);
     cJSON_AddBoolToObject(capabilities, "physical_stop_button", true);
-    cJSON_AddStringToObject(capabilities, "playback_watermark", "approximate");
+    cJSON_AddStringToObject(capabilities, "playback_watermark", "exact");
     cJSON_AddBoolToObject(capabilities, "local_duck", false);
     cJSON_AddNumberToObject(capabilities, "barge_in_level", 0);
     cJSON_AddItemToObject(root.value, "capabilities", capabilities);
@@ -2118,7 +2130,6 @@ void MemoriaProtocol::NotifyLocalFlush() {
         const uint64_t local_flush_sample_end =
             playback_output_frames_ > 0 ? playback_output_end_ : 0;
         const bool had_active_generation = playback_active_ && fence.valid();
-        const bool had_active_audio = had_active_generation && playback_audio_ready_;
         // The button stop reports the terminal state itself; a pending
         // completion must not re-report ended through a later drain.
         playback_completion_pending_ = false;
@@ -2136,7 +2147,7 @@ void MemoriaProtocol::NotifyLocalFlush() {
             // Edge only after the queue gate is closed and tails are flushed.
             on_local_flush_requested_(0);
         }
-        if (had_active_audio) {
+        if (had_active_generation) {
             // The button stop is itself the terminal receipt for this
             // generation: mark it receipted so the authoritative
             // generation.cancelled that follows cannot re-report a duplicate
@@ -2206,7 +2217,8 @@ void MemoriaProtocol::NotifyPlaybackDrained() {
 
 void MemoriaProtocol::NotifyPlaybackOutput(uint32_t generation_id,
                                            uint64_t rendered_sample_end,
-                                           uint32_t received_sequence) {
+                                           uint32_t received_sequence,
+                                           bool approximate) {
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
     if (protocol_version_ != kProtocolVersionV2 || !IsAudioChannelOpened()) {
         return;
@@ -2218,12 +2230,15 @@ void MemoriaProtocol::NotifyPlaybackOutput(uint32_t generation_id,
     }
     playback_output_end_ = rendered_sample_end;
     playback_output_sequence_ = received_sequence;
+    playback_output_approximate_ = approximate;
     ++playback_output_frames_;
     if (!playback_started_receipted_) {
         playback_started_receipted_ = true;
-        SendPlaybackReceipt("playback.started", fence_, received_sequence, rendered_sample_end);
+        SendPlaybackReceipt("playback.started", fence_, received_sequence,
+                            rendered_sample_end, approximate);
     } else if (playback_output_frames_ % kProgressReceiptIntervalFrames == 0) {
-        SendPlaybackReceipt("playback.progress", fence_, received_sequence, rendered_sample_end);
+        SendPlaybackReceipt("playback.progress", fence_, received_sequence,
+                            rendered_sample_end, approximate);
     }
 }
 
@@ -2240,12 +2255,12 @@ void MemoriaProtocol::FinalizePlaybackEnded() {
         playback_output_frames_ > 0 ? playback_output_end_ : 0;
     const uint32_t ended_sequence =
         playback_output_frames_ > 0 ? playback_output_sequence_ : 0;
+    const bool ended_approximate =
+        playback_output_frames_ > 0 && playback_output_approximate_;
     if (send_ended) {
-        // The ended watermark is the last frame the codec output actually
-        // consumed (output-commit bound). With no committed output the
-        // receipt honestly reports 0: a received-but-queued frame was never
-        // played and must not masquerade as one. Both stay explicitly
-        // approximate: there is no DAC sample counter on this board.
+        // The ended watermark is the last full frame confirmed by the codec's
+        // output-completion source. With no confirmed output the receipt
+        // honestly reports 0: queued audio must never masquerade as played.
         playback_terminal_receipted_ = true;
     }
     playback_completion_pending_ = false;
@@ -2258,6 +2273,7 @@ void MemoriaProtocol::FinalizePlaybackEnded() {
     playback_output_end_ = 0;
     playback_output_sequence_ = 0;
     playback_output_frames_ = 0;
+    playback_output_approximate_ = true;
     playback_active_ = false;
     playback_audio_ready_ = false;
     playback_paused_ = false;
@@ -2266,7 +2282,8 @@ void MemoriaProtocol::FinalizePlaybackEnded() {
         on_local_flush_requested_(0);
     }
     if (send_ended) {
-        SendPlaybackReceipt("playback.ended", ended_fence, ended_sequence, ended_end);
+        SendPlaybackReceipt("playback.ended", ended_fence, ended_sequence, ended_end,
+                            ended_approximate);
     }
     EmitLegacyTts("stop");
 }
@@ -2294,7 +2311,8 @@ void MemoriaProtocol::NotifyPlaybackDecodeError() {
     if (on_local_flush_requested_ != nullptr) {
         on_local_flush_requested_(0);
     }
-    SendPlaybackReceipt("playback.error", error_fence, error_sequence, error_end);
+    SendPlaybackReceipt("playback.error", error_fence, error_sequence, error_end,
+                        playback_output_frames_ > 0 && playback_output_approximate_);
 }
 
 void MemoriaProtocol::SetLocalFlushCallback(std::function<void(uint32_t)> callback) {
@@ -2420,6 +2438,7 @@ void MemoriaProtocol::ResetSessionState() {
     playback_output_end_ = 0;
     playback_output_sequence_ = 0;
     playback_output_frames_ = 0;
+    playback_output_approximate_ = true;
     playback_receipted_end_ = 0;
     dropped_frames_ = DroppedFrameCounters{};
     protocol_violations_ = 0;

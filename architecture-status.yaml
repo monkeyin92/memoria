@@ -1,42 +1,36 @@
 # 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
 # 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
 schema_version: 2
-as_of_commit: eaee0bcfcd9d1b3a211486cab47426ff7b6efcf3
+as_of_commit: a63ead136e92e4d00b82ddd51a8721c67d2e2f2c
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 production_release_tag: 20260814-231749-direct-canary
 production_release_symlink: /opt/memoria/releases/20260812-173008
-production_code_release_tag: 20260820-210548-agent-source-overlay-v6
-production_code_commit: eaee0bcfcd9d1b3a211486cab47426ff7b6efcf3
+production_code_release_tag: 20260821-135408-pcm-pacing-asr-tail
+production_code_commit: 714196f31b3a6edc793c2d07f877eb4b47085829
 production_runtime_overlays:
   control_api:
-    image: memoria-control-api:20260818-103228
-    image_id: sha256:14916cf1d00e1c10a8a8f52b5aad64eb301949f5e2319a02125484d3ed11e891
+    image: memoria-control-api:20260821-121418-reply-delivery-projection
+    oci_revision: caf70271222c43047c5d661052f3b717348cc209
     runtime_release_tag: 20260814-231749-direct-canary
     production_runtime_verified: true
-    delayed_recheck_at: "2026-08-18T04:56:23Z"
+    delayed_recheck_at: "2026-08-21"
     unauthenticated_read_write_routes: fail_closed_401
-    cutover_evidence_file: /opt/memoria/direct-canaries/20260818-103228/CUTOVER_RESULT.txt
-    cutover_evidence_sha256: 37da7f571630c0585ab350464eb789196cd3075998758a3c43d611ab240b53848
+    cutover_evidence_file: /opt/memoria/direct-canaries/20260821-121418-reply-delivery-projection/CUTOVER_RESULT.txt
   agent:
-    image: memoria-agent:20260820-210548-agent-source-overlay-v6
-    image_id: sha256:f9a45a4dfa87fcc502cd0b445c8858033dad3a3c6d66127943c5961fb281b565
+    image: memoria-agent:20260821-135408-pcm-pacing-asr-tail
     runtime_release_tag: 20260814-231749-direct-canary
     production_runtime_verified: true
-    oci_revision: eaee0bcfcd9d1b3a211486cab47426ff7b6efcf3
+    oci_revision: 714196f31b3a6edc793c2d07f877eb4b47085829
     release_kind: agent_source_overlay
-    cutover_evidence_file: /opt/memoria/component-releases/20260820-210548-agent-source-overlay-v6/CUTOVER_RESULT.txt
-    cutover_evidence_sha256: 2d95bf1dc54a973efd0e8fcdccaea76df5b809e7f4c58d862aaa82dcc58dc39d
-    provider_smoke_evidence_sha256: 5b118c89b4d7171b71577768e8b8a01c6b00bdb9b158c805dea32c3e4640252d
+    cutover_evidence_file: /opt/memoria/direct-canaries/20260821-135408-pcm-pacing-asr-tail/CUTOVER_RESULT.txt
   voice_core_media_bridge:
-    image: memoria-agent:20260820-210548-agent-source-overlay-v6
-    image_id: sha256:f9a45a4dfa87fcc502cd0b445c8858033dad3a3c6d66127943c5961fb281b565
+    image: memoria-agent:20260821-135408-pcm-pacing-asr-tail
     runtime_release_tag: 20260816-bridge-liveness-83af813
     production_runtime_verified: true
-    oci_revision: eaee0bcfcd9d1b3a211486cab47426ff7b6efcf3
+    oci_revision: 714196f31b3a6edc793c2d07f877eb4b47085829
     release_kind: agent_source_overlay
-    cutover_evidence_file: /opt/memoria/component-releases/20260820-210548-agent-source-overlay-v6/CUTOVER_RESULT.txt
-    cutover_evidence_sha256: 2d95bf1dc54a973efd0e8fcdccaea76df5b809e7f4c58d862aaa82dcc58dc39d
+    cutover_evidence_file: /opt/memoria/direct-canaries/20260821-135408-pcm-pacing-asr-tail/CUTOVER_RESULT.txt
     diagnostics: media_pcm_tap_enabled_MEDIA_PCM_TAP_DIR_data_diagnostics_pcm-tap_and_FUNASR_WS_TRACE_true
   media_edge:
     image: memoria-media-edge:20260820-010500-livekit-stack-upgrade
@@ -58,17 +52,46 @@ student_track: p3_local_software_complete_external_release_gates_pending
 student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
-  as_of_date: 2026-08-20
-  head_commit: eaee0bcfcd9d1b3a211486cab47426ff7b6efcf3
-  dirty: false
-  dirty_scope: agent_source_overlay_release_committed_eaee0bc
+  as_of_date: 2026-08-21
+  head_commit: a63ead136e92e4d00b82ddd51a8721c67d2e2f2c
+  dirty: true
+  dirty_scope: playback_terminal_i2s_tx_eof_and_button_hard_stop_candidate_plus_preserved_user_untracked_files
   code: complete
-  wired: funasr_provider_adapter_media_audio_ingress_vad_finalize
-  enabled: agent_source_overlay_v6_agent_bridge_scope_runtime_authority_tags_preserved
-  verified: pending_direct_real_device_speech_evidence_collection
-  production_deployed: agent_bridge_v6_healthy_provider_smoke_ready_non_target_services_preserved
+  wired: esp32_to_media_edge_to_media_v1_to_voice_core_playback_terminal
+  enabled: false
+  verified: local_cross_language_and_clean_firmware_build_only
+  production_deployed: false
   direct_real_device_verified: false
   full_duplex_verified: false
+  playback_terminal_candidate:
+    name: explicit_playback_terminal_i2s_tx_eof_and_button_hard_stop
+    code: complete
+    wired: >-
+      signed ESP32 started/progress/ended/error receipt through Go Media Edge
+      and media-v1 PlaybackEventType into Python PlaybackLedger/ReplyDelivery;
+      button.stop is emitted for any active generation before or after first PCM
+    enabled: false
+    verified: >-
+      Python focused playback tests, Go test ./..., firmware source tests,
+      ESP-IDF 6.0.2 clean build, merge-bin, overlay gate and diff check passed
+      on 2026-08-21; no server cutover, flash, serial, DAC or acoustic proof
+    root_causes_closed_in_code:
+      - device_event_type_was_collapsed_to_untyped_playback_watermark
+      - playback_receipt_fence_omitted_nonzero_session_epoch
+      - progress_could_complete_before_an_explicit_terminal
+      - playback_error_could_be_interpreted_as_successful_completion
+      - button_stop_was_not_reported_before_playback_audio_ready
+    watermark_precision: exact_i2s_tx_eof_after_full_dma_descriptor_ring
+    dac_verified: false
+    acoustic_actual_heard_verified: false
+    firmware_overlay_sha256: 396ab83a041bda759700a1d2046451ad4acdb4d554739dd0408b8cce16294db0
+    firmware_merged_sha256: 7cd6578c85f30e81f919c5a1eece213db2c1905da39201cf28e60670b8125192
+    firmware_merged_size_bytes: 13577086
+    firmware_app_sha256: 135a714b71ef1d2b02008eee9394910ba0424c9d62623e25a27c0e9cd97b6bcf
+    firmware_app_size_bytes: 2951088
+    firmware_partition_free_percent: 29
+    board_connected: false
+    next_gate: coordinated_agent_bridge_media_edge_release_then_identity_safe_flash_and_t5_t8
   firmware_candidate:
     as_of_date: 2026-08-20
     name: es8388_input_gain_24db_to_12db_noise_floor_fix
