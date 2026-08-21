@@ -1,13 +1,14 @@
 # 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
 # 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
 schema_version: 2
-as_of_commit: 711eb0cbb4743d28224ffc4f21e3d3a03b985bee
+as_of_commit: d2898c14ebf6d5e45e0b756fb617f34977d4e69b
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 production_release_tag: 20260814-231749-direct-canary
 production_release_symlink: /opt/memoria/releases/20260812-173008
-production_code_release_tag: 20260821-153249-playback-terminal
-production_code_commit: 711eb0cbb4743d28224ffc4f21e3d3a03b985bee
+production_code_release_tag: 20260821-192100-asr-task-fence-agent-component
+production_code_commit: eca4346a4abadbcbc449e2488a88eb52bbf8400c
+production_source_commit: d2898c14ebf6d5e45e0b756fb617f34977d4e69b
 production_runtime_overlays:
   control_api:
     image: memoria-control-api:20260821-121418-reply-delivery-projection
@@ -18,25 +19,25 @@ production_runtime_overlays:
     unauthenticated_read_write_routes: fail_closed_401
     cutover_evidence_file: /opt/memoria/direct-canaries/20260821-121418-reply-delivery-projection/CUTOVER_RESULT.txt
   agent:
-    image: memoria-agent:20260821-153249-playback-terminal
+    image: memoria-agent:20260821-192100-asr-task-fence-agent-component
     runtime_release_tag: 20260814-231749-direct-canary
     production_runtime_verified: true
-    oci_revision: 711eb0cbb4743d28224ffc4f21e3d3a03b985bee
+    oci_revision: eca4346a4abadbcbc449e2488a88eb52bbf8400c
     release_kind: agent_source_overlay
-    cutover_evidence_file: /opt/memoria/direct-canaries/20260821-153249-playback-terminal/CUTOVER_RESULT.txt
+    cutover_evidence_file: /opt/memoria/component-releases/20260821-192100-asr-task-fence-agent-component/CUTOVER_RESULT.txt
   voice_core_media_bridge:
-    image: memoria-agent:20260821-153249-playback-terminal
+    image: memoria-agent:20260821-192100-asr-task-fence-agent-component
     runtime_release_tag: 20260816-bridge-liveness-83af813
     production_runtime_verified: true
-    oci_revision: 711eb0cbb4743d28224ffc4f21e3d3a03b985bee
+    oci_revision: eca4346a4abadbcbc449e2488a88eb52bbf8400c
     release_kind: agent_source_overlay
-    cutover_evidence_file: /opt/memoria/direct-canaries/20260821-153249-playback-terminal/CUTOVER_RESULT.txt
+    cutover_evidence_file: /opt/memoria/component-releases/20260821-192100-asr-task-fence-agent-component/CUTOVER_RESULT.txt
     diagnostics: media_pcm_tap_enabled_MEDIA_PCM_TAP_DIR_data_diagnostics_pcm-tap_and_FUNASR_WS_TRACE_true
   media_edge:
-    image: memoria-media-edge:20260821-153249-playback-terminal
-    image_id: sha256:c612f31728804575fc27ff767684705e67351c76ca9939a472899c32b5dde860
+    image: memoria-media-edge:20260821-171500-device-wss-diagnostics
+    image_id: sha256:229ea4975ced4b5d2c48a36984fec039562241acf701394ebb403b37d0da6e0b
     runtime_release_tag: 20260816-bridge-liveness-83af813
-    oci_revision: 711eb0cbb4743d28224ffc4f21e3d3a03b985bee
+    oci_revision: da89ff1
     production_runtime_verified: true
 production_runtime_verified: true
 direct_real_device_verified: false
@@ -53,7 +54,7 @@ student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
   as_of_date: 2026-08-21
-  head_commit: 711eb0cbb4743d28224ffc4f21e3d3a03b985bee
+  head_commit: d2898c14ebf6d5e45e0b756fb617f34977d4e69b
   dirty: true
   dirty_scope: preserved_user_untracked_files_plus_ignored_board_flash_evidence
   code: complete
@@ -63,6 +64,19 @@ local_worktree_candidate:
   production_deployed: coordinated_cutover_pass_2026_08_21
   direct_real_device_verified: false
   full_duplex_verified: false
+  asr_task_epoch_fence_increment:
+    name: preserve_asr_task_fence_across_transport_reconnect
+    code: complete
+    wired: voice_core_reconnect_floor_to_provider_global_task_epoch
+    enabled: agent_bridge_production_true
+    verified: production_runtime_zero_session
+    production_release_tag: 20260821-192100-asr-task-fence-agent-component
+    source_commit: d2898c14ebf6d5e45e0b756fb617f34977d4e69b
+    component_release_commit: eca4346a4abadbcbc449e2488a88eb52bbf8400c
+    cutover_evidence_file: /opt/memoria/component-releases/20260821-192100-asr-task-fence-agent-component/CUTOVER_RESULT.txt
+    verified_at: "2026-08-21"
+    direct_real_device_verified: false
+    full_duplex_verified: false
   playback_terminal_candidate:
     name: explicit_playback_terminal_i2s_tx_eof_and_button_hard_stop
     code: complete

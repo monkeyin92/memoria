@@ -1,6 +1,15 @@
 # 项目交接
 
-## 当前候选（2026-08-21，服务器已切流并刷板；首帧到板但播放终态验收阻塞）
+## 当前生产增量（2026-08-21，ASR 重连 task fence 修复已切流；待真机复验）
+
+- 根因修复提交为主线 `d2898c14ebf6d5e45e0b756fb617f34977d4e69b`；生产 Agent 组件投影提交/tag 为 `eca4346a4abadbcbc449e2488a88eb52bbf8400c` / `20260821-192100-asr-task-fence-agent-component`。投影提交只包含 Agent 侧 4 个变更文件，文件内容与主线提交逐字一致；主线中已上线的 Media Edge 诊断历史不被重复带入 Agent overlay。
+- Agent 与 Voice Core Media Bridge 当前运行 `memoria-agent:20260821-192100-asr-task-fence-agent-component`，image ID `sha256:038aa6cd2d93ac25c7bef5f64e143dccb4edc6860f45bc624611cefd47147e54`，两个容器 healthy、restart count=0，Bridge gRPC socket PASS。Media Edge 保持 `memoria-media-edge:20260821-171500-device-wss-diagnostics`，Control API 保持 `20260821-121418-reply-delivery-projection`；其余服务、固件、数据库未切换。
+- 修复内容：transport epoch 变更后由 Voice Core 把最新 ASR task floor 传给 provider；provider 在 live ASR 被清空的恢复窗口保留最后导出的全局 task epoch，新的 FunASR task 不再从 1 倒退，避免 `media provider ASR task epoch moved backwards` 反复打崩 ingress pump。新增两组 reconnect/floor 回归测试；Agent 两个单测文件全过、Ruff、strict MyPy、git diff check 全过。
+- 发布证据：服务器 `/opt/memoria/component-releases/20260821-192100-asr-task-fence-agent-component/`；source archive SHA-256 `ff3c0ef56a9898f376bec3c8863dd7605511d87384717927781166d9bf9a7bac`，`CUTOVER_RESULT.txt` SHA-256 `6f1f48f99f01e93d2f1d507d789ecf4d4398916d6c8a790934d40cf93124f106`，`BUILD_RESULT.txt` SHA-256 `790523e2796c5dc51270434af31c471e7f41e8e4366a3357e0f563ee3a7a3590`。回滚点为 `rollback-20260821-192100-asr-task-fence-agent-component-pre-agent/-pre-bridge`。
+- 生产 readiness 复核为 `ready`，Agent/Bridge/Edge/Control 均 healthy，目标日志最近 3 分钟无 `traceback/error/failed/epoch moved backwards`。这仍只是服务器运行证据；`direct_real_device_verified=false`、`full_duplex_verified=false`、T1–T14 仍为 `0 pass / 14 blocked / 0 failed`。
+- 下一步：保持串口监视，让用户对板说一轮且不在播放中再次按键；随后按同一 session/generation 检查 `funasr_ws_trace`、`media_asr_boundary`、`first_frame_sent`、WSS close cause、`playback.started/progress/ended/error` 和 Actual Heard。若仍是首帧后 recovering，再依据新的 Edge `close_code/phase` 证据处理下行生命周期；不把本次服务端修复外推为真机播放通过。
+
+## 上一候选（2026-08-21，服务器已切流并刷板；首帧到板但播放终态验收阻塞）
 
 - 当前生产基线已经前移到 Agent/Voice Core Media Bridge `memoria-agent:20260821-153249-playback-terminal`（revision `711eb0c`）、Control API `20260821-121418-reply-delivery-projection`（revision `caf7027`）和 Media Edge `20260821-153249-playback-terminal`（revision `711eb0c`），均为本轮切流后 healthy、restart count=0。此前真实板会话 `a9ea0f30-5a37-4c75-baa7-65a03e19b76f`、epoch 922 已有三代连续可播放回复，用户确认“AI 能说了”；该证据只覆盖窄主流程，不覆盖本候选的完整播放终态、Actual Heard 或打断。
 - 根因已收敛：固件签名回执带 `playback.started/progress/ended/error`，但 Go Edge 转入 media-v1 时压扁成无类型 `PlaybackProgress`；Python 因而可能把覆盖全量水位的 progress 提前当作完成，也可能把 error 当成功终态。另有 Python 回执 fence 漏带 `session_epoch`，会拒绝非零 epoch 的合法回执。Control SQLite 因此只看到 generation 1/2/3 的 `first_frame_sent / provider_completed`，没有 `playback_ended / actual_heard`，即使 Edge 指标已经观测到 playback receipt。
