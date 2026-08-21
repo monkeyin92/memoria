@@ -85,7 +85,17 @@ MEMORIA_INTERACTION_POLICY_TOKEN
 MEMORIA_RESPONSE_PLAN_TOKEN
 MEMORIA_EVOLUTION_CONTROL_TOKEN
 MEMORIA_EVOLUTION_VALIDATOR_TOKEN
+MEDIA_REPLY_DELIVERY_TOKEN
 ```
+
+`MEDIA_REPLY_DELIVERY_TOKEN` 只进入 Control API 与 Agent env，用于无文本、无 PCM 的回复投影；
+不得复用任一内部能力 token。Agent 还必须配置独立 Fernet
+`MEDIA_REPLY_DELIVERY_SPOOL_KEY`，只用于加密 `/var/lib/memoria-agent` 下的失败重放队列，不能进入
+Control API、日志、发布清单或源码。生产启用时显式设置
+`MEDIA_REPLY_DELIVERY_ENABLED=true`、内部地址
+`http://control-api:8000/v1/internal/media-runtime/reply-delivery` 与
+`MEDIA_REPLY_DELIVERY_SPOOL_PATH=/data/media-reply-delivery.spool`；两份 env 仍须保持
+`root:root 0600`。
 
 `MEMORIA_EVOLUTION_DATABASE_URL` 必须使用独立的 `memoria_evolution` PostgreSQL 角色，不能回退到
 `MEMORIA_ARCHIVE_DATABASE_URL`。候选控制与独立验证分别使用上述两个 token；验证器不得与业务 Agent
