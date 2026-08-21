@@ -1,14 +1,14 @@
 # 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
 # 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
 schema_version: 2
-as_of_commit: d2898c14ebf6d5e45e0b756fb617f34977d4e69b
+as_of_commit: da08f5b7061a6e44d45db1e516b904a8a79e057a
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
 production_release_tag: 20260814-231749-direct-canary
 production_release_symlink: /opt/memoria/releases/20260812-173008
-production_code_release_tag: 20260821-192100-asr-task-fence-agent-component
-production_code_commit: eca4346a4abadbcbc449e2488a88eb52bbf8400c
-production_source_commit: d2898c14ebf6d5e45e0b756fb617f34977d4e69b
+production_code_release_tag: 20260821-194700-device-playback-fence-contract
+production_code_commit: da08f5b7061a6e44d45db1e516b904a8a79e057a
+production_source_commit: da08f5b7061a6e44d45db1e516b904a8a79e057a
 production_runtime_overlays:
   control_api:
     image: memoria-control-api:20260821-121418-reply-delivery-projection
@@ -34,11 +34,12 @@ production_runtime_overlays:
     cutover_evidence_file: /opt/memoria/component-releases/20260821-192100-asr-task-fence-agent-component/CUTOVER_RESULT.txt
     diagnostics: media_pcm_tap_enabled_MEDIA_PCM_TAP_DIR_data_diagnostics_pcm-tap_and_FUNASR_WS_TRACE_true
   media_edge:
-    image: memoria-media-edge:20260821-171500-device-wss-diagnostics
-    image_id: sha256:229ea4975ced4b5d2c48a36984fec039562241acf701394ebb403b37d0da6e0b
+    image: memoria-media-edge:20260821-194700-device-playback-fence-contract
+    image_id: sha256:5721272a35feffc7c472635da551c1a5156152cdd1513d17f3b1d2e044174d42
     runtime_release_tag: 20260816-bridge-liveness-83af813
-    oci_revision: da89ff1
+    oci_revision: da08f5b7061a6e44d45db1e516b904a8a79e057a
     production_runtime_verified: true
+    cutover_evidence_file: /opt/memoria/direct-canaries/20260821-194700-device-playback-fence-contract/CUTOVER_RESULT.txt
 production_runtime_verified: true
 direct_real_device_verified: false
 full_duplex_verified: false
@@ -54,7 +55,7 @@ student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
   as_of_date: 2026-08-21
-  head_commit: d2898c14ebf6d5e45e0b756fb617f34977d4e69b
+  head_commit: da08f5b7061a6e44d45db1e516b904a8a79e057a
   dirty: true
   dirty_scope: preserved_user_untracked_files_plus_ignored_board_flash_evidence
   code: complete
@@ -77,6 +78,32 @@ local_worktree_candidate:
     verified_at: "2026-08-21"
     direct_real_device_verified: false
     full_duplex_verified: false
+  playback_fence_contract_increment:
+    name: carry_session_epoch_through_device_playback_receipts
+    code: complete
+    wired: json_contract_to_go_media_edge_to_esp32_playback_and_button_receipts
+    enabled: media_edge_production_and_firmware_board_true
+    verified: >-
+      Go test ./..., targeted firmware source regression, ESP-IDF 6.0.2 clean build,
+      merge-bin, overlay gate, git diff check, Media Edge healthy/readiness and
+      identity-safe flash with boot/activation passed on 2026-08-21; real-device
+      playback terminal and Actual Heard remain unverified
+    source_commit: da08f5b7061a6e44d45db1e516b904a8a79e057a
+    production_release_tag: 20260821-194700-device-playback-fence-contract
+    media_edge_image_id: sha256:5721272a35feffc7c472635da551c1a5156152cdd1513d17f3b1d2e044174d42
+    cutover_evidence_file: /opt/memoria/direct-canaries/20260821-194700-device-playback-fence-contract/CUTOVER_RESULT.txt
+    post_cutover_evidence_file: /opt/memoria/direct-canaries/20260821-194700-device-playback-fence-contract/POST_CUTOVER_STATE.txt
+    control_ready_evidence_file: /opt/memoria/direct-canaries/20260821-194700-device-playback-fence-contract/CONTROL_READY.json
+    firmware_overlay_sha256: 263c6b799cc9c4ccb703a74727cdd697c8fc0a827c3444871d0716e69bba45b7
+    firmware_merged_sha256: ff68c6296be971a909eed5db5b5e3d9a5bceb03269a18db1df5384fa0b45665c
+    firmware_app_sha256: dffa4a21df4c72c3a642c85d977fb762af6a2da2582ca84a1efcfca494019f56
+    firmware_flashed: true
+    board_port: /dev/cu.usbmodem1101
+    firmware_identity_preserved_sha256: b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846
+    firmware_boot_activation_verified: true
+    direct_real_device_verified: false
+    full_duplex_verified: false
+    next_gate: user_controlled_real_device_playback_receipt_and_actual_heard_retry
   playback_terminal_candidate:
     name: explicit_playback_terminal_i2s_tx_eof_and_button_hard_stop
     code: complete

@@ -35,4 +35,9 @@
 
 ## 当前状态
 
-- `code + wired + local verified`（2026-08-21）；生产 Edge 切流与固件刷写待执行。
+- `code + wired + enabled + production runtime + board boot verified`（2026-08-21）：Media Edge
+  `sha256:5721272a35feffc7c472635da551c1a5156152cdd1513d17f3b1d2e044174d42` 已切流并 healthy，
+  Control readiness=200；固件已刷入 `/dev/cu.usbmodem1101`，身份区回读与刷前备份逐字节一致，
+  SHA-256 `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`，boot/activation 通过。
+- 切流后、刷板前的旧固件会话仍出现 `handler rejected kind=text` 与 `1006 unexpected EOF`；这保留了
+  原始阻塞的对照证据。修复后真机 `playback.started/progress/ended/error`、Actual Heard 和双讲证据仍待采集。

@@ -1,5 +1,35 @@
 # 项目交接
 
+## 当前生产增量（2026-08-21，播放回执完整 fence 已切流并刷板；待修复后真机复验）
+
+- 根因已收敛并修复：ESP32 `playback.*` / `button.stop` 回执此前遗漏 `session_epoch`，而 Go Media Edge
+  已按非零完整 generation fence 校验；因此回执进入 Voice Core 前会被判为旧代，表现为首帧后
+  `speaking → recovering`、`output_timeout` 和 WSS 断开。公共 JSON 契约、Go Edge、ESP32 解析/发送和回归测试
+  已统一到 `session_epoch + turn_id + generation_id + tool_epoch`。
+- 源提交/tag 为 `da08f5b7061a6e44d45db1e516b904a8a79e057a` /
+  `20260821-194700-device-playback-fence-contract`；Media Edge 只切换该组件，运行镜像
+  `memoria-media-edge:20260821-194700-device-playback-fence-contract`，image ID
+  `sha256:5721272a35feffc7c472635da551c1a5156152cdd1513d17f3b1d2e044174d42`，amd64、OCI revision/tag/role
+  正确，healthy、restart count=0。Agent、Voice Core Media Bridge、Control API 容器未重建；Control readiness=200。
+- 本地/固件门禁：Go `go test ./...`、针对性固件源码回归、ESP-IDF 6.0.2 clean build、merge-bin、overlay
+  gate、`git diff --check` 均通过。固件 overlay SHA-256 `263c6b79…a7b7`，merged SHA-256
+  `ff68c629…665c`，app SHA-256 `dffa4a21…9f56`；已刷入 `/dev/cu.usbmodem1101`。身份区回读
+  `b7a717fa399ec1390391ca381b9b86c3202035c71695a95e417a4e0f1d084846`，与刷前备份逐字节一致；串口确认
+  目标 SKU、ES8388/I2S、Wi‑Fi、Activation Manifest v2、`starting → activating → idle`，无重启循环。
+- 对照证据：Edge 切流后、刷板前旧固件仍产生 `handler rejected kind=text` 与 `1006 unexpected EOF`；这与缺失
+  `session_epoch` 的旧回执一致。该对照不代表新固件已完成真机验收。
+- 证据目录 `/opt/memoria/direct-canaries/20260821-194700-device-playback-fence-contract/`：
+  `CUTOVER_RESULT.txt` SHA-256 `9500e06cfa10d643050b855cc23ca5520fca0df1394375c0b06083cc46b017b9`，
+  `POST_CUTOVER_STATE.txt` `ad133a2b351ecf376293e0ba9cff667003c41a061421f8baf07b4f0cdbbce09e`，
+  `CONTROL_READY.json` `bb5f116ff3c3d686e71a83cf9d44791be3b8e3859471b09ad6c1c3ca983d801f`；回滚 override
+  保留旧 Edge `memoria-media-edge:20260821-171500-device-wss-diagnostics`。
+- 当前层级：服务端和固件为 `code=complete / wired=complete / enabled=true / verified=production runtime
+  + board boot/identity`；仍不是 `real-device media verified`。`direct_real_device_verified=false`、
+  `full_duplex_verified=false`、T1–T14 仍为 `0 pass / 14 blocked / 0 failed`。
+- 下一步：串口已保持监视，用户只说一句简单话且播放期间不再按键；按同一 session/generation 检查
+  `media_asr_boundary`、`first_frame_sent`、`playback.started/progress/ended/error`、Actual Heard 和
+  WSS close cause。只有形成完整回执闭环后，才推进 T5–T8；不把启动级证据外推为全双工。
+
 ## 当前生产增量（2026-08-21，ASR 重连 task fence 修复已切流；待真机复验）
 
 - 根因修复提交为主线 `d2898c14ebf6d5e45e0b756fb617f34977d4e69b`；生产 Agent 组件投影提交/tag 为 `eca4346a4abadbcbc449e2488a88eb52bbf8400c` / `20260821-192100-asr-task-fence-agent-component`。投影提交只包含 Agent 侧 4 个变更文件，文件内容与主线提交逐字一致；主线中已上线的 Media Edge 诊断历史不被重复带入 Agent overlay。
