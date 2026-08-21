@@ -1,6 +1,14 @@
 # 项目交接
 
-## 当前生产增量（2026-08-20，Agent 组件级源码薄发布已投产）
+## 当前生产增量（2026-08-21，ReplyDelivery 跨进程投影已启用，待真机话轮取证）
+
+- 源提交/tag `caf70271222c43047c5d661052f3b717348cc209` / `20260821-121418-reply-delivery-projection` 已推送并冻结。Control API、Agent、Voice Core Media Bridge 已协调切流；运行 image ID 分别为 `sha256:4c0d8966a885…` 与 `sha256:9b6260e5fc22…`，均 amd64、OCI provenance 正确、healthy、restart count=0。Media Edge、LiveKit、Gateway、H5、小程序、数据服务与固件未切换；runtime authority tag 保持 Control/Agent=`20260814-231749-direct-canary`、Bridge=`20260816-bridge-liveness-83af813`。
+- `reply-delivery-v1` 使用完整 `session_epoch + turn_id + generation_id + tool_epoch` fence，从 Python Voice Core 非阻塞投影到 Control API 幂等 SQLite；不含用户/助手文本、PCM 或账号 ID，也不进入历史/记忆。生产已配置独立 `MEDIA_REPLY_DELIVERY_TOKEN` 与 Agent-only Fernet spool key，env 均 `root:root 0600`；SQLite 与旧 env 已做 root-only 冻结备份。
+- 生产门禁通过：内部端点错误 token=401、首次写入=200/inserted、重复=200/not inserted、精确读取=200，合成事件已删除；LiveKit、QwenRealtimeSearch、Doubao、FunASR×6、DeepSeek、InterruptSemantic 与 readiness 全部 PASS。复核时 `media_reply_delivery_events=0`、spool 不存在、Control/Bridge 相关错误计数 0，表示尚无候选真机会话。
+- 回滚点 `rollback-20260821-121418-reply-delivery-projection-pre-control/-pre-agent/-pre-bridge` 分别冻结上一健康 Control `sha256:14916cf1…` 与 Agent/Bridge `sha256:f9a45a4d…`。证据目录 `/opt/memoria/direct-canaries/20260821-121418-reply-delivery-projection/`：`CUTOVER_RESULT.txt` `c68692b2…`、`POST_CUTOVER_STATE.json` `97f26552…`、`CONTROL_ENDPOINT_SMOKE.json` `d356ff59…`、`PROVIDER_SMOKE_RESULT.txt` `b820915c…`、`ASSET_CLEANUP.txt` `29c85bfb…`，manifest `4f9bb228…` 校验通过。旧普通镜像标签与 build cache 已定点清理，根盘 43%→40%，未删除数据卷、数据库或备份。
+- 当前层级为 `code + wired + enabled + production runtime verified`（零真机会话范围）。下一步由用户本人对板说话，取同一 delivery 的 ASR final、TTS 首帧、设备 Playback/Actual Heard 与终态证据；此前保持 `direct_real_device_verified=false`、`full_duplex_verified=false`、T1–T14 `0 pass / 14 blocked / 0 failed`。
+
+## 上一生产增量（2026-08-20，Agent 组件级源码薄发布已投产）
 
 - 发布提交 `eaee0bcfcd9d1b3a211486cab47426ff7b6efcf3` 与 tag `20260820-210548-agent-source-overlay-v6` 已推送 `origin/main`。新增 Agent 组件快车道：依赖不变时只从固定健康 Agent 基座叠加 `services/agent` 源码，服务器使用 `--network=none` 离线构建；依赖锁、共享服务或其他运行时越界改动会 fail closed，仍走完整/协调发布。CI 新增 Agent 独立门禁，run `32372208215` 用时 59 秒并通过，Python/H5/Media Edge/小程序按未修改范围跳过。
 - 本次源码归档仅 `2,037,760` bytes（SHA-256 `990dfc1e41f2f9ecaa6fe3dc82068d010800ebf0de91e9aae03ca1f277b37444`），Docker build context `2.033MB`；不再上传约 2.37GB 的完整 Agent 镜像。生产 Agent 与 Voice Core Media Bridge 均运行 `memoria-agent:20260820-210548-agent-source-overlay-v6`，image ID `sha256:f9a45a4dfa87fcc502cd0b445c8858033dad3a3c6d66127943c5961fb281b565`，OCI revision/version/role/kind 与提交、tag、`agent`、`agent-source-overlay` 一致；两个容器 healthy、restart count=0，Bridge gRPC socket 通过。
