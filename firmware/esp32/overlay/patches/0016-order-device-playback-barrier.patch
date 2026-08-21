@@ -1,0 +1,34 @@
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -809,18 +809,19 @@ bool Application::InitializeProtocol() {
+ 
+     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1
++        // HandleDownlink invokes this callback in WSS wire order. Keep the
++        // thread-safe AudioService enqueue in that order so a following
++        // generation.completed barrier cannot observe an empty queue and
++        // retire the generation before scheduled audio reaches it. The
++        // AudioService generation gate, not asynchronous UI state, owns
++        // admission.
+         auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+-        const uint32_t audio_transport_attempt =
+-            memoria_protocol != nullptr ? memoria_protocol->TransportAttemptId() : 0;
+-        auto pending_packet = std::make_shared<std::unique_ptr<AudioStreamPacket>>(std::move(packet));
+-        Schedule([this, pending_packet, audio_transport_attempt]() mutable {
+-            auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+-            if (memoria_protocol != nullptr &&
+-                memoria_protocol->TransportAttemptId() == audio_transport_attempt &&
+-                memoria_protocol->HasActivePlaybackGeneration()) {
+-                audio_service_.PushServerPacketToDecodeQueue(std::move(*pending_packet));
+-            }
+-        });
++        if (memoria_protocol != nullptr &&
++            !audio_service_.PushServerPacketToDecodeQueue(std::move(packet))) {
++            // Queue overflow/stopped service is a terminal playback failure;
++            // never turn it into a partial reply with no receipt.
++            memoria_protocol->NotifyPlaybackDecodeError();
++        }
+ #else
+         if (GetDeviceState() == kDeviceStateSpeaking) {
+             audio_service_.PushPacketToDecodeQueue(std::move(packet));

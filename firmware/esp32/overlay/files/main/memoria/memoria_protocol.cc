@@ -30,6 +30,12 @@ constexpr uint32_t kUplinkSampleRate = 16000;
 constexpr uint32_t kDownlinkSampleRate24k = 24000;
 constexpr uint32_t kDownlinkSampleRate16k = 16000;
 constexpr uint32_t kFrameMs = 20;
+// The Memoria AFE configuration keeps 900 ms of quiet audio before emitting
+// VAD end. Report the estimated last voiced sample instead of the callback
+// time; otherwise Voice Core waits for ASR text to cover silence that cannot
+// contain words and eventually discards a valid final.
+constexpr uint64_t kAfeVadHangoverSamples =
+    static_cast<uint64_t>(kUplinkSampleRate) * 900 / 1000;
 // AFE is the normal endpoint authority. This absolute sample-clock fence only
 // prevents one bad/noisy capture from holding a signed media session open
 // indefinitely; ordinary turns must still end through the AFE VAD callback.
@@ -2038,8 +2044,14 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
             cJSON_AddNumberToObject(root.value, "sample_position",
                                     static_cast<double>(uplink_sample_start_));
             if (!speaking) {
+                const uint64_t hangover_start =
+                    uplink_sample_start_ > kAfeVadHangoverSamples
+                        ? uplink_sample_start_ - kAfeVadHangoverSamples
+                        : 0;
+                const uint64_t voiced_end_sample =
+                    std::max(vad_started_sample_, hangover_start);
                 cJSON_AddNumberToObject(root.value, "voiced_end_sample",
-                                        static_cast<double>(uplink_sample_start_));
+                                        static_cast<double>(voiced_end_sample));
             }
             // The AFE exposes a binary VAD state, not a model confidence; the
             // probability is that state mapped to the unit interval.

@@ -5149,6 +5149,143 @@ async def test_absolute_endpoint_tail_commits_stable_partial_with_missing_final_
 
 
 @pytest.mark.asyncio
+async def test_vad_endpoint_accepts_final_within_bounded_clock_skew() -> None:
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.001,
+        turn_endpoint_min_grace_s=0,
+        turn_endpoint_max_grace_s=0.01,
+        turn_endpoint_absolute_timeout_s=0.03,
+    )
+    registry.install()
+    identity = SessionIdentity("bounded-endpoint-clock-skew")
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="bounded-skew-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+        ),
+    )
+    final = ASRResult(
+        task_epoch=1,
+        sentence_id="bounded-skew-final",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=16_000,
+        text="今天星期几",
+        is_final=True,
+        stream_epoch=1,
+    )
+    assert await registry.accept_asr_result(identity.session_id, final)
+    registry._observe_final_asr_result(context, final)
+    # A bounded skew is only safe after the provider task-finished boundary;
+    # otherwise a later sentence from the same task may still arrive.
+    context.ingress.last_finalized_audio_watermark = 31_000
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="bounded-skew-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=31_000,
+            capture_end_sample=31_001,
+            final=True,
+            voiced_end_sample=31_000,
+        ),
+    )
+
+    await asyncio.sleep(0.02)
+
+    assert [
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["今天星期几"]
+    assert context.asr.last_committed_sample == 31_000
+    await context.runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_vad_endpoint_rejects_final_beyond_bounded_clock_skew() -> None:
+    provider = FakeMediaProvider()
+    bridge = MediaBridgeGrpcServer()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+        turn_endpoint_grace_s=0.001,
+        turn_endpoint_min_grace_s=0,
+        turn_endpoint_max_grace_s=0.01,
+        turn_endpoint_absolute_timeout_s=0.03,
+    )
+    registry.install()
+    identity = SessionIdentity("excessive-endpoint-clock-skew")
+    session = bridge.bridge.open(identity)
+    context = await registry._get_or_create(identity)
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="excessive-skew-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+        ),
+    )
+    final = ASRResult(
+        task_epoch=1,
+        sentence_id="excessive-skew-final",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=16_000,
+        text="过早终稿",
+        is_final=True,
+        stream_epoch=1,
+    )
+    assert await registry.accept_asr_result(identity.session_id, final)
+    registry._observe_final_asr_result(context, final)
+    context.ingress.last_finalized_audio_watermark = 32_001
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="excessive-skew-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=32_001,
+            capture_end_sample=32_002,
+            final=True,
+            voiced_end_sample=32_001,
+        ),
+    )
+
+    await asyncio.sleep(0.05)
+
+    assert [
+        turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == []
+    assert context.turn_endpoint_sample is None
+    assert context.asr.last_committed_sample == 32_001
+    await context.runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_vad_tail_silence_tolerance_does_not_leave_turn_pending() -> None:
     provider = FakeMediaProvider()
     bridge = MediaBridgeGrpcServer()

@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 _PREPARE_RETRY_DELAYS_S = (0.05, 0.15)
 _PREPARE_RETRY_EXHAUSTED_REASON = "provider_prepare_retries_exhausted"
 _PREPARE_RETRY_SUPERSEDED_REASON = "provider_prepare_retry_superseded_by_new_vad"
+# Device VAD and provider word timestamps are independent clocks around the
+# same 16 kHz capture. After the provider task-finished boundary proves no
+# later sentence can arrive, permit at most one second of tail skew after
+# firmware removes its known 900 ms AFE hangover. Larger gaps still fail
+# closed instead of letting an earlier provider sentence commit a later turn.
+_ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 16_000
 
 
 class MediaTurnEndpointMixin:
@@ -160,6 +166,23 @@ class MediaTurnEndpointMixin:
         previous = context.pending_partial
         if previous is None or result.logical_version >= previous.logical_version:
             context.pending_partial = result
+
+    @staticmethod
+    def _asr_covers_endpoint(
+        context: _MediaVoiceSession,
+        result_end_sample: int | None,
+        endpoint_sample: int,
+    ) -> bool:
+        if result_end_sample is None:
+            return False
+        return (
+            result_end_sample >= endpoint_sample
+            or (
+                context.ingress.last_finalized_audio_watermark >= endpoint_sample
+                and endpoint_sample - result_end_sample
+                <= _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES
+            )
+        )
 
     def _adaptive_endpoint_grace(self, context: _MediaVoiceSession) -> float:
         configured = float(self.turn_endpoint_grace_s)
@@ -320,7 +343,7 @@ class MediaTurnEndpointMixin:
         if (
             partial is not None
             and partial.text.strip()
-            and partial.capture_end_sample >= endpoint_sample
+            and self._asr_covers_endpoint(context, partial.capture_end_sample, endpoint_sample)
         ):
             # A stable partial is safer than silently dropping a complete user
             # utterance when the provider's final marker is lost.  Re-submit it
@@ -431,12 +454,16 @@ class MediaTurnEndpointMixin:
             if not current_endpoint or context is None:
                 return
             if (
-                context.turn_end_sample is None
+                not self._asr_covers_endpoint(
+                    context,
+                    context.turn_end_sample,
+                    endpoint_sample,
+                )
                 # A provider final is evidence, not an endpoint.  If ASR has
-                # not covered the VAD end yet, leave the buffered turn open;
+                # not covered the VAD end within bounded clock skew, leave
+                # the buffered turn open;
                 # the late final will re-arm this same commit in
                 # ``_observe_final_asr_result``.
-                or context.turn_end_sample < endpoint_sample
             ):
                 if context.runtime.assistant_speaking:
                     context.runtime.publish_assistant_audio("restore", gain=1.0)

@@ -88,6 +88,12 @@ PATCH_0014 = (
     / "patches"
     / "0014-load-memoria-assets-before-audio.patch"
 ).read_text(encoding="utf-8")
+PATCH_0016 = (
+    Path(__file__).parents[1]
+    / "overlay"
+    / "patches"
+    / "0016-order-device-playback-barrier.patch"
+).read_text(encoding="utf-8")
 CONTRACT = json.loads(
     (Path(__file__).parents[3] / "packages" / "contracts" / "device-media-v2.json").read_text(
         encoding="utf-8"
@@ -587,6 +593,24 @@ def test_session_ready_cannot_mutate_the_negotiated_wire_protocol() -> None:
     assert '"session_id"' in legacy
     assert "protocol_version_ = kProtocolVersionV1" not in legacy
     assert "Downgrading v2 session" not in handler
+
+
+def test_device_playback_barrier_cannot_overtake_audio_admission() -> None:
+    callback = PATCH_0016[PATCH_0016.index("protocol_->OnIncomingAudio") :]
+    callback = callback[: callback.index("#else")]
+    additions = "\n".join(line[1:] for line in callback.splitlines() if line.startswith("+"))
+    assert "PushServerPacketToDecodeQueue(std::move(packet))" in additions
+    assert "Schedule(" not in additions
+    assert "GetDeviceState()" not in additions
+    assert "NotifyPlaybackDecodeError()" in additions
+
+    vad = SOURCE[SOURCE.index("void MemoriaProtocol::SendVadState") :]
+    vad = vad[: vad.index("void MemoriaProtocol::SendAbortSpeaking")]
+    assert "kAfeVadHangoverSamples" in SOURCE
+    assert "static_cast<uint64_t>(kUplinkSampleRate) * 900 / 1000" in SOURCE
+    assert "std::max(vad_started_sample_, hangover_start)" in vad
+    assert "static_cast<double>(voiced_end_sample)" in vad
+    assert "afe_config->vad_min_noise_ms = 900" in AFE_PATCH
 
 
 def test_generation_zero_has_no_valid_playback() -> None:
