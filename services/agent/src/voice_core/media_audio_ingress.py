@@ -20,6 +20,12 @@ from services.agent.src.voice_core.media_pcm_tap import MediaPcmTap, maybe_creat
 from services.agent.src.voice_core.media_protocol import AudioFrame
 from services.agent.src.voice_core.media_session_types import ProviderAudioTaskSnapshot
 from services.agent.src.voice_core.speech_timeline import ASRResult, asr_result_to_segment
+from src.voice_core.two_stage_denoiser import TwoStageDenoiser, TwoStageDenoisingConfig
+from src.voice_core.listening_state_manager import (
+    ListeningStateManager,
+    ListeningStateConfig,
+    ListeningState,
+)
 
 if TYPE_CHECKING:
     from services.agent.src.voice_core.media_session_state import (
@@ -94,6 +100,32 @@ class MediaAudioIngress:
     def __init__(self, host: MediaAudioIngressHost) -> None:
         self._host = host
 
+        # Initialize two-stage denoising pipeline
+        self._denoiser = TwoStageDenoiser(TwoStageDenoisingConfig(
+            stage1_enabled=True,    # RNNoise lightweight denoising
+            stage2_enabled=True,    # DTLN deep denoising
+            skip_stage2_on_silence=True,  # Skip stage 2 on silence for performance
+            vad_threshold=0.3,      # Threshold for determining silence
+        ))
+
+        # Initialize listening state manager
+        self._state_manager = ListeningStateManager(ListeningStateConfig(
+            idle_timeout=5.0,       # Auto-exit listening after 5s of no speech
+            silence_timeout=1.5,    # Consider speech ended after 1.5s silence
+            auto_transition=True,   # Automatically transition states
+            allow_interruption=True,  # Allow interruption during speaking
+        ))
+
+        # Statistics
+        self._denoising_log_interval = 100  # Log stats every N frames
+
+        logger.info(
+            "MediaAudioIngress initialized with denoising and state management: "
+            "denoiser_stage1=%s denoiser_stage2=%s",
+            self._denoiser._stage1._rnnoise_available,
+            self._denoiser._stage2._model_available,
+        )
+
     async def cancel(self, context: _MediaVoiceSession) -> None:
         state = context.ingress
         task = state.pump_task
@@ -109,6 +141,37 @@ class MediaAudioIngress:
         if tap is not None:
             tap.close()
         self._host.metrics.set_media_metric("media_pcm_queue_depth", 0.0)
+
+        # Clean up listening state for this session
+        self._state_manager.cleanup_session(context.identity.session_id)
+
+    async def start_listening(self, session_id: str) -> bool:
+        """Transition session to LISTENING state (triggered by button/wake word).
+
+        Returns:
+            True if transition succeeded, False if already listening
+        """
+        return await self._state_manager.transition_to_listening(session_id)
+
+    async def stop_listening(self, session_id: str, reason: str = "manual") -> None:
+        """Transition session to IDLE state (stop listening)."""
+        await self._state_manager.transition_to_idle(session_id, reason)
+
+    def get_listening_state(self, session_id: str) -> ListeningState:
+        """Get current listening state for a session."""
+        return self._state_manager.get_state(session_id)
+
+    async def initialize_session_listening(self, session_id: str) -> None:
+        """Initialize listening state for a new session.
+
+        Temporary: Auto-enters LISTENING state on connection.
+        TODO: Replace with wake word or button trigger.
+        """
+        logger.info(
+            "Initializing session listening: session=%s auto_enter_listening=True",
+            session_id,
+        )
+        await self._state_manager.transition_to_listening(session_id)
 
     async def accept(self, context: _MediaVoiceSession, frame: AudioFrame) -> None:
         # ``finalize_speech_segment`` rotates the provider task under this same
@@ -570,8 +633,40 @@ class MediaAudioIngress:
         callback_stream_epoch = frame.identity.stream_epoch
         if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
             return
+
+        session_id = context.identity.session_id
+
+        # Check if we should accept audio based on listening state
+        if not self._state_manager.should_accept_audio(session_id):
+            current_state = self._state_manager.get_state(session_id)
+            logger.debug(
+                "Dropping audio frame in state=%s session=%s",
+                current_state.value,
+                session_id,
+            )
+            return
+
         if frame.discontinuity or context.ingress.discontinuity_pending:
             await self._reset_discontinuity(context, frame)
+
+        # Apply two-stage denoising before ASR
+        denoised_payload, vad_prob, denoising_stats = self._denoiser.process(frame.payload)
+
+        # Replace frame payload with denoised audio
+        frame = replace(frame, payload=denoised_payload)
+
+        # Log denoising statistics periodically
+        if denoising_stats["total_frames"] % self._denoising_log_interval == 0:
+            logger.info(
+                "Denoising stats session=%s: stage2_skip_rate=%.1f%% vad_prob=%.2f "
+                "stage1_available=%s stage2_available=%s",
+                session_id,
+                denoising_stats["stage2_skip_rate"] * 100,
+                vad_prob,
+                denoising_stats["stage1_available"],
+                denoising_stats["stage2_available"],
+            )
+
         self._tap_frame(context, frame)
         results = await context.provider.ingest_audio(context.identity, frame)
         stall_s = time.monotonic() - enqueued_at
