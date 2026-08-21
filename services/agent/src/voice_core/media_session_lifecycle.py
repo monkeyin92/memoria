@@ -295,6 +295,15 @@ class MediaSessionLifecycleMixin:
                     # would cancel the very reply the new epoch is resuming.
                     if not current.asr.reconnect(stream_epoch=identity.stream_epoch):
                         raise ValueError("ASR stream epoch did not advance")
+                    align_provider_task_epoch = getattr(
+                        current.provider,
+                        "set_asr_task_epoch_floor",
+                        None,
+                    )
+                    if callable(align_provider_task_epoch):
+                        align_provider_task_epoch(
+                            current.asr.latest_authoritative_task_epoch,
+                        )
                     endpoint_task = current.turn_endpoint_task
                     if endpoint_task is not None and not endpoint_task.done():
                         endpoint_task.cancel()

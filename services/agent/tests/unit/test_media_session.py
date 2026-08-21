@@ -2428,6 +2428,34 @@ async def test_reconnect_provider_reset_failure_keeps_old_epoch_authoritative() 
 
 
 @pytest.mark.asyncio
+async def test_reconnect_aligns_provider_task_epoch_floor_after_transport_epoch_advance() -> None:
+    identity = SessionIdentity("provider-task-floor-reconnect", stream_epoch=1)
+    replacement = SessionIdentity(identity.session_id, stream_epoch=2)
+
+    class FloorCapturingProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.floors: list[int] = []
+
+        def set_asr_task_epoch_floor(self, task_epoch: int) -> None:
+            self.floors.append(task_epoch)
+
+    provider = FloorCapturingProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: provider,
+    )
+    context = await registry._get_or_create(identity)
+
+    await registry._reuse_session(context, replacement)
+
+    assert provider.floors == [1]
+    assert context.asr.latest_authoritative_task_epoch == 1
+    await context.runtime.close()
+    await context.provider.close(context.identity)
+
+
+@pytest.mark.asyncio
 async def test_connected_reconnect_provider_reset_failure_retires_both_epochs() -> None:
     identity = SessionIdentity("failed-connected-provider-reset", stream_epoch=1)
     replacement = SessionIdentity(identity.session_id, stream_epoch=2)
