@@ -42,6 +42,7 @@ from services.agent.src.voice_core.media_session import (
     MediaVoiceProvider,
     _OutputWork,
 )
+from services.agent.src.voice_core.media_session_output_stream import _next_pcm_send_slot
 from services.agent.src.voice_core.media_session_types import (
     DelegationOutputState,
     OutputDispatchResult,
@@ -114,6 +115,32 @@ class FakeMediaProvider(MediaVoiceProvider):
 
     async def close(self, _identity: SessionIdentity) -> None:
         self.closed = True
+
+
+def test_pcm_output_pacer_spaces_frames_and_does_not_burst_after_a_stall() -> None:
+    delay, next_send_at = _next_pcm_send_slot(
+        now=10.0,
+        next_send_at=10.0,
+        frame_samples=480,
+    )
+    assert delay == 0
+    assert next_send_at == pytest.approx(10.02)
+
+    delay, next_send_at = _next_pcm_send_slot(
+        now=10.005,
+        next_send_at=next_send_at,
+        frame_samples=480,
+    )
+    assert delay == pytest.approx(0.015)
+    assert next_send_at == pytest.approx(10.04)
+
+    delay, next_send_at = _next_pcm_send_slot(
+        now=11.0,
+        next_send_at=next_send_at,
+        frame_samples=480,
+    )
+    assert delay == 0
+    assert next_send_at == pytest.approx(11.02)
 
 
 class _CapturingMediaBridge(MediaBridgeGrpcServer):

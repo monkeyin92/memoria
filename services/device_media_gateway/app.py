@@ -36,7 +36,6 @@ HEADER_DEVICE_ID = "device-id"
 HEADER_CLIENT_ID = "client-id"
 HEADER_AUTHORIZATION = "authorization"
 BridgeFactory = Callable[[DeviceMediaGatewaySettings, DeviceGatewayTicketClaims], DeviceBridge]
-_DOWNLINK_FRAME_INTERVAL_S = 0.020
 
 
 def _default_bridge_factory(
@@ -199,37 +198,15 @@ async def _receive_media(websocket: WebSocket, session: DeviceMediaSession) -> N
 
 
 async def _send_outbound(websocket: WebSocket, session: DeviceMediaSession) -> None:
-    loop = asyncio.get_running_loop()
-    next_audio_send_at = loop.time()
     while True:
         message = await session.next_outbound()
         if message.binary is not None:
-            delay_s, next_audio_send_at = _next_downlink_send_slot(
-                now=loop.time(),
-                next_send_at=next_audio_send_at,
-            )
-            if delay_s > 0:
-                await asyncio.sleep(delay_s)
             await websocket.send_bytes(message.binary)
         elif message.event is not None:
             await websocket.send_json(message.event)
         else:
             raise ProtocolError("empty device outbound message")
         session.outbound_sent(message)
-
-
-def _next_downlink_send_slot(*, now: float, next_send_at: float) -> tuple[float, float]:
-    """Pace 20 ms device frames without accumulating sender overhead.
-
-    TTS providers commonly produce faster than real time. Sending that burst
-    directly to the ESP32 exhausts its bounded jitter buffer and turns a full
-    reply into a short audible prefix. Controls remain unpaced, and a stalled
-    sender resets to the current clock instead of trying to catch up in a new
-    burst.
-    """
-
-    send_at = max(now, next_send_at)
-    return max(0.0, next_send_at - now), send_at + _DOWNLINK_FRAME_INTERVAL_S
 
 
 def _header_string(websocket: WebSocket, name: str) -> str:

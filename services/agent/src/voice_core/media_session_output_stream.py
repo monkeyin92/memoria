@@ -36,6 +36,24 @@ if TYPE_CHECKING:
     )
 
 media_pb2: Any = _media_pb2
+_DOWNLINK_PCM_SAMPLE_RATE = 24_000
+
+
+def _next_pcm_send_slot(
+    *,
+    now: float,
+    next_send_at: float,
+    frame_samples: int,
+) -> tuple[float, float]:
+    """Return bounded real-time pacing for one provider PCM frame."""
+
+    if frame_samples <= 0:
+        raise ValueError("PCM frame must contain at least one sample")
+    send_at = max(now, next_send_at)
+    return (
+        max(0.0, next_send_at - now),
+        send_at + frame_samples / _DOWNLINK_PCM_SAMPLE_RATE,
+    )
 
 
 class MediaOutputStreamMixin:
@@ -168,6 +186,8 @@ class MediaOutputStreamMixin:
         """Send one selected source through the shared owner and PCM ledger."""
 
         emitted_audio = False
+        loop = asyncio.get_running_loop()
+        next_pcm_send_at = loop.time()
         # This clock starts when the selected provider/output iterator is first
         # consumed.  It deliberately ends at the Edge-accepted PCM boundary;
         # device DAC/Actual Heard remain separate playback evidence.
@@ -183,6 +203,27 @@ class MediaOutputStreamMixin:
                         "superseded",
                         emitted_audio,
                     )
+                # Provider TTS can produce much faster than wall clock. Pace at
+                # the generation owner before the gRPC/Edge jitter buffers so
+                # Direct Edge's intentional 80-200 ms queue never turns a
+                # normal reply burst into discontinuity drops. Cancelling this
+                # reply task interrupts the sleep immediately.
+                delay_s, next_pcm_send_at = _next_pcm_send_slot(
+                    now=loop.time(),
+                    next_send_at=next_pcm_send_at,
+                    frame_samples=len(chunk.pcm_s16le) // 2,
+                )
+                if delay_s > 0:
+                    await asyncio.sleep(delay_s)
+                    if not self._output_owner_is_current(context, lease):
+                        self.metrics.inc_media_stale_generation()
+                        await self._cancel_reply_task(context, fence, reason="superseded")
+                        return OutputDispatchResult(
+                            fence,
+                            OutputDispatchStatus.ABORTED,
+                            "superseded",
+                            emitted_audio,
+                        )
                 announcement = (
                     chunk.text if chunk.assistant_text_delta is None else chunk.assistant_text_delta
                 )
