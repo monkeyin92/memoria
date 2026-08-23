@@ -104,14 +104,14 @@ class MediaAudioIngress:
         self._denoiser = TwoStageDenoiser(TwoStageDenoisingConfig(
             stage1_enabled=True,    # RNNoise lightweight denoising
             stage2_enabled=True,    # DTLN deep denoising
-            skip_stage2_on_silence=True,  # Skip stage 2 on silence for performance
-            vad_threshold=0.3,      # Threshold for determining silence
+            skip_stage2_on_silence=False,  # Always apply stage 2 to avoid missing soft speech
+            vad_threshold=0.5,      # Threshold for determining silence (increased to reduce false triggers)
         ))
 
         # Initialize listening state manager
         self._state_manager = ListeningStateManager(ListeningStateConfig(
             idle_timeout=5.0,       # Auto-exit listening after 5s of no speech
-            silence_timeout=1.5,    # Consider speech ended after 1.5s silence
+            silence_timeout=2.0,    # Consider speech ended after 2.0s silence (increased to avoid premature cutoff)
             auto_transition=True,   # Automatically transition states
             allow_interruption=True,  # Allow interruption during speaking
         ))
@@ -153,6 +153,15 @@ class MediaAudioIngress:
         """
         return await self._state_manager.transition_to_listening(session_id)
 
+    async def start_speaking(self, session_id: str) -> bool:
+        """Transition session to SPEAKING state (AI is generating response).
+
+        Returns:
+            True if transition succeeded
+        """
+        await self._state_manager.transition_to_speaking(session_id)
+        return True
+
     async def stop_listening(self, session_id: str, reason: str = "manual") -> None:
         """Transition session to IDLE state (stop listening)."""
         await self._state_manager.transition_to_idle(session_id, reason)
@@ -164,14 +173,16 @@ class MediaAudioIngress:
     async def initialize_session_listening(self, session_id: str) -> None:
         """Initialize listening state for a new session.
 
-        Temporary: Auto-enters LISTENING state on connection.
+        Session starts in IDLE state. Use start_listening() to enter LISTENING state.
         TODO: Replace with wake word or button trigger.
         """
         logger.info(
-            "Initializing session listening: session=%s auto_enter_listening=True",
+            "Initializing session listening: session=%s auto_enter_listening=False",
             session_id,
         )
-        await self._state_manager.transition_to_listening(session_id)
+        # Don't auto-enter LISTENING state; wait for explicit trigger (button/wake word)
+        # The state will automatically initialize as IDLE
+        # await self._state_manager.transition_to_listening(session_id)  # Removed
 
     async def accept(self, context: _MediaVoiceSession, frame: AudioFrame) -> None:
         # ``finalize_speech_segment`` rotates the provider task under this same

@@ -169,6 +169,8 @@ class MediaOutputStreamMixin:
                     text_delivered=True,
                     fence=fence,
                 )
+            # Transition back to IDLE on playback error
+            await self._audio_ingress.stop_speaking(session.identity.session_id)
             await self._fail_playback_output(context, fence, reason="device_playback_error")
             return
         if (
@@ -187,6 +189,8 @@ class MediaOutputStreamMixin:
             and context.playback.is_playback_complete(fence)
             and context.runtime.fence.matches(fence)
         ):
+            # Transition back to IDLE when playback completes
+            await self._audio_ingress.stop_speaking(session.identity.session_id)
             await self._finish_completed_output(context, fence)
         # An empty acknowledged tuple only means no new publishable text span;
         # it must not skip the playback-completion check above. Transcript
@@ -351,6 +355,9 @@ class MediaOutputStreamMixin:
                     ReplyDeliveryEvent.FIRST_FRAME_SENT,
                     "downlink_frame_accepted",
                 )
+                # Transition to SPEAKING state on first audio frame
+                if delivery_before is None or not delivery_before.first_frame_sent:
+                    await self._audio_ingress.start_speaking(session_id)
                 if (
                     (delivery_before is None or not delivery_before.first_frame_sent)
                     and context.tts_started_ns is not None
