@@ -334,6 +334,8 @@ container_env_value() {
 
 agent_image_id="$(docker inspect "$agent_container" --format '{{.Image}}')"
 bridge_image_id="$(docker inspect "$bridge_container" --format '{{.Image}}')"
+agent_image="$(docker inspect "$agent_container" --format '{{.Config.Image}}')"
+bridge_image="$(docker inspect "$bridge_container" --format '{{.Config.Image}}')"
 agent_release_commit="$(docker inspect "$agent_container" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
 bridge_release_commit="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
 agent_release_tag="$(docker inspect "$agent_container" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
@@ -343,6 +345,13 @@ bridge_release_tag="$(docker inspect "$bridge_container" --format '{{index .Conf
   && -n "$agent_release_tag" \
   && "$agent_release_tag" == "$bridge_release_tag" ]] || {
   echo "Agent and bridge do not share one current release authority" >&2
+  exit 1
+}
+[[ "$agent_image_id" == "$bridge_image_id" \
+  && "$agent_image" == "$bridge_image" \
+  && "$agent_image" =~ ^memoria-agent:[A-Za-z0-9][A-Za-z0-9._-]*$ \
+  && "$(docker image inspect "$agent_image" --format '{{.Id}}')" == "$agent_image_id" ]] || {
+  echo "Agent and bridge do not share one current runnable image" >&2
   exit 1
 }
 agent_stack_release_tag="$(container_env_value "$agent_container" MEMORIA_RELEASE_TAG)"
@@ -376,6 +385,7 @@ bridge_project_name="$(docker inspect "$bridge_container" --format '{{index .Con
 
 fallback_working_dir="/opt/memoria/releases"
 fallback_config="$fallback_working_dir/docker-compose.production.yml"
+component_root="${remote_dir%/*}"
 IFS=',' read -r -a previous_files <<<"$config_files"
 IFS=',' read -r -a bridge_previous_files <<<"$bridge_config_files"
 [[ "${#previous_files[@]}" -eq "${#bridge_previous_files[@]}" ]] || {
@@ -383,32 +393,127 @@ IFS=',' read -r -a bridge_previous_files <<<"$bridge_config_files"
   exit 1
 }
 
-# Compose records the path used for each container, so separately recreated
-# services can legitimately point at different release directories. Treat them
-# as one authority only when every corresponding file is byte-identical.
+# Compose labels retain every historical override path. Component releases only
+# write image-only overrides, so preserving that chain makes a healthy service
+# undeployable after ordinary artifact pruning. Verify every surviving override
+# is one of ours and image-only, tolerate a missing component override only when
+# both services reference the same path, then collapse the chain below to the
+# production Compose file plus a snapshot of the verified live image.
+validate_component_override() {
+  local file="$1"
+  local parent
+  parent="$(dirname "$file")"
+  [[ "${parent%/*}" == "$component_root" ]] || return 1
+  case "${file##*/}" in
+    agent-component.override.yml|agent-component.rollback.override.yml|pre-cutover-live.override.yml)
+      ;;
+    *) return 1 ;;
+  esac
+  python3 - "$file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.fullmatch(
+    r'services:\n'
+    r'  agent:\n'
+    r'    image: "(memoria-agent:[A-Za-z0-9][A-Za-z0-9._-]*)"\n'
+    r'  voice-core-media-bridge:\n'
+    r'    image: "(memoria-agent:[A-Za-z0-9][A-Za-z0-9._-]*)"\n',
+    text,
+)
+if match is None:
+    raise SystemExit("component override is not image-only")
+PY
+}
+
+base_file=""
 for index in "${!previous_files[@]}"; do
   agent_file="${previous_files[$index]}"
   bridge_file="${bridge_previous_files[$index]}"
-  if [[ ! -f "$agent_file" && "${agent_file##*/}" == docker-compose.production.yml ]]; then
-    echo "Agent Compose base snapshot was pruned; using the verified current production file" >&2
-    agent_file="$fallback_config"
+  agent_name="${agent_file##*/}"
+  bridge_name="${bridge_file##*/}"
+  if [[ "$agent_name" == docker-compose.production.yml \
+    || "$bridge_name" == docker-compose.production.yml ]]; then
+    [[ "$agent_name" == docker-compose.production.yml \
+      && "$bridge_name" == docker-compose.production.yml \
+      && -z "$base_file" ]] || {
+      echo "Agent and bridge Compose stacks have an ambiguous base" >&2
+      exit 1
+    }
+    if [[ ! -f "$agent_file" ]]; then
+      echo "Agent Compose base snapshot was pruned; using the verified current production file" >&2
+      agent_file="$fallback_config"
+    fi
+    if [[ ! -f "$bridge_file" ]]; then
+      echo "Bridge Compose base snapshot was pruned; using the verified current production file" >&2
+      bridge_file="$fallback_config"
+    fi
+    for file in "$agent_file" "$bridge_file"; do
+      [[ -f "$file" && ! -L "$file" ]] || {
+        echo "required Compose base is unavailable or unsafe: $file" >&2
+        exit 1
+      }
+    done
+    [[ "$(sha256sum "$agent_file" | cut -d ' ' -f1)" == "$(sha256sum "$bridge_file" | cut -d ' ' -f1)" ]] || {
+      echo "Agent and bridge Compose bases do not describe one current authority" >&2
+      exit 1
+    }
+    base_file="$agent_file"
+    continue
   fi
-  if [[ ! -f "$bridge_file" && "${bridge_file##*/}" == docker-compose.production.yml ]]; then
-    echo "Bridge Compose base snapshot was pruned; using the verified current production file" >&2
-    bridge_file="$fallback_config"
+
+  for file in "$agent_file" "$bridge_file"; do
+    parent="$(dirname "$file")"
+    [[ "${parent%/*}" == "$component_root" ]] || {
+      echo "unrecognized Compose override authority: $file" >&2
+      exit 1
+    }
+    case "${file##*/}" in
+      agent-component.override.yml|agent-component.rollback.override.yml|pre-cutover-live.override.yml)
+        ;;
+      *)
+        echo "unrecognized Compose override authority: $file" >&2
+        exit 1
+        ;;
+    esac
+  done
+  if [[ ! -f "$agent_file" || ! -f "$bridge_file" ]]; then
+    [[ "$agent_file" == "$bridge_file" ]] || {
+      echo "Agent and bridge are missing different Compose overrides" >&2
+      exit 1
+    }
+    echo "historical component override was pruned; replacing it with a verified live-image snapshot: $agent_file" >&2
+    continue
   fi
   for file in "$agent_file" "$bridge_file"; do
-    [[ -f "$file" && ! -L "$file" ]] || {
-      echo "required Compose file is unavailable or unsafe: $file" >&2
+    [[ ! -L "$file" ]] && validate_component_override "$file" || {
+      echo "component Compose override is unavailable, unsafe, or not image-only: $file" >&2
       exit 1
     }
   done
   [[ "$(sha256sum "$agent_file" | cut -d ' ' -f1)" == "$(sha256sum "$bridge_file" | cut -d ' ' -f1)" ]] || {
-    echo "Agent and bridge Compose stacks do not describe one current authority" >&2
+    echo "Agent and bridge component overrides do not describe one current authority" >&2
     exit 1
   }
-  previous_files[$index]="$agent_file"
 done
+[[ -n "$base_file" ]] || {
+  echo "Compose stack is missing its production base" >&2
+  exit 1
+}
+
+live_override="$remote_dir/pre-cutover-live.override.yml"
+cat >"$live_override" <<EOF
+services:
+  agent:
+    image: "$agent_image"
+  voice-core-media-bridge:
+    image: "$bridge_image"
+EOF
+chmod 0600 "$live_override"
+validate_component_override "$live_override"
+previous_files=("$base_file" "$live_override")
 
 if [[ ! -d "$working_dir" ]]; then
   echo "Compose working directory was pruned; using the verified current release root" >&2
