@@ -34,16 +34,18 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 ## 当前生产
 
-当前 Agent/Bridge 发布提交为 `f047e89d437eafef9d7129290f0de1e20bcb5d9e`，主线功能修复提交为 `2f026b1513f2200bdd2621735759287ffcd10c93`：
+当前 Agent/Bridge 发布提交为 `3e529be8b6d167da5ce471a33d6a5e914788a755`，主线功能修复提交为 `0de0e1d6393efbbf870515fa58d858ce636e0da1`：
 
-- Agent 与 Voice Core Media Bridge：`memoria-agent:20260824-1843-multisegment-fence-agent-component-v2`，image `sha256:a76000fab76397efbc812596819e9bb301e6cf4469f2e0c8c7614f873e7b3789`。
+- Agent 与 Voice Core Media Bridge：`memoria-agent:20260824-1912-normal-distance-asr-agent-component`，image `sha256:def0066531c932523e8ecdebe490c1dea73dcfc29ce6ef8e702bb9447f021be8`。
 - Media Edge：`memoria-media-edge:20260824-1318-playback-fence-recovery`，image `sha256:de28a74efc95efaa65f3cb794434aed39344426ed11981fb0a55e7424ba9e930`。
 - 三个目标容器 healthy；Agent/Bridge 切流后 restart count 为 0，目标错误日志为 0。Control API、数据层、LiveKit、Nginx、Edge 和客户端没有随该组件切片重建。
-- 2026-08-24 18:45 CST，Qwen Realtime Search、Doubao、FunASR、DeepSeek、Interrupt Semantic 与媒体 fence 生产 smoke 通过。
-- 普通 Agent component 目录已收敛为当前 `1843` 与紧邻回滚 `1320`；当前回滚标签均解析到 `sha256:5771074693cf326804a0ce1ed18b1b23d5708e618385752fc58c65ac72f064b0`。
-- Agent/Bridge 内 DTLN 均完成 ONNX checksum/contract 初始化和 640-byte PCM 实推，输出长度 640。
+- 2026-08-24 19:16 CST，Qwen Realtime Search、Doubao、FunASR、DeepSeek、Interrupt Semantic 与媒体 fence 生产 smoke 通过。
+- 普通 Agent component 目录已收敛为当前 `1912` 与紧邻回滚 `1843`；当前回滚标签均解析到 `sha256:a76000fab76397efbc812596819e9bb301e6cf4469f2e0c8c7614f873e7b3789`。
+- Agent/Bridge 内 DTLN 完成 ONNX checksum/contract 初始化和 7,680-byte PCM 实推，输出非零；后级固定补偿为 `2.0x`，PCM 转换保持饱和防削波。
 
-本轮真实板卡复现：天气的首段介绍正常播放，同一回答的后续工具结果却在首段 `playback.ended` 后继续复用已关闭 generation，Edge 按硬件账本拒绝后续音频，表现为“说着说着停了”。Agent 现会先完成当前播放生命周期，再选择排队输出；后续片段必须使用同一 turn 的 successor generation，并从 sequence/sample `0/0` 开始。无文本的 PCM-only 后续输出也会进入 SPEAKING，不再卡在 THINKING。BOOT 终止事件由用户主动按键触发，属于正常结束，不计为故障。
+本轮真实板卡复现中，天气回答的 generation 1 与 successor generation 2 均取得 `Actual Heard + playback.ended`，此前“说着说着停了”的分段续播问题已在真机关闭；用户随后问“今天星期几”时，多段降噪后 PCM 只有约 `RMS 8–296`，FunASR 没有产生 partial/final，因此没有形成 turn 2。BOOT 终止事件由用户主动按键触发，属于正常结束，不计为故障。
+
+正常距离识别修复状态：`code=complete`，DTLN 后增加受限 6 dB 补偿，FunASR 明确失败的旧任务会在下一帧前重建并重放有界 PCM，内部边界竞态仍 fail closed；`wired=Agent+Bridge current image`；`enabled=production true`；`verified=2026-08-24 local Agent regression + production provider/media smoke + exact 23-second FunASR idle-timeout recovery`。补偿后的正常距离真实板卡两轮验收仍是 pending，不能据此更新 `direct_real_device_verified`。
 
 Agent-only 发布现在把历史 Compose override 收口为“生产主 Compose + 已验证在线镜像快照 + 当前 override”。旧 component override 被普通制品清理后不再阻塞后续发布；收口前会验证 Agent/Bridge 共享同一 runnable image，且所有仍存在的 component override 只能包含这两个服务的 image 字段。
 
