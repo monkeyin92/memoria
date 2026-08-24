@@ -34,15 +34,18 @@ T1_T14: 0_pass_14_blocked_0_failed
 
 ## 当前生产
 
-当前服务端修复源提交为 `fadda434c9ea081ba1331ec81bc029fc74516bf6`：
+当前 Agent/Bridge 发布提交为 `f047e89d437eafef9d7129290f0de1e20bcb5d9e`，主线功能修复提交为 `2f026b1513f2200bdd2621735759287ffcd10c93`：
 
-- Agent 与 Voice Core Media Bridge：`memoria-agent:20260824-1320-playback-fence-agent-component`，image `sha256:5771074693cf326804a0ce1ed18b1b23d5708e618385752fc58c65ac72f064b0`。
+- Agent 与 Voice Core Media Bridge：`memoria-agent:20260824-1843-multisegment-fence-agent-component-v2`，image `sha256:a76000fab76397efbc812596819e9bb301e6cf4469f2e0c8c7614f873e7b3789`。
 - Media Edge：`memoria-media-edge:20260824-1318-playback-fence-recovery`，image `sha256:de28a74efc95efaa65f3cb794434aed39344426ed11981fb0a55e7424ba9e930`。
-- 三个目标容器 healthy，Edge failing streak 为 0；切流后目标错误日志为 0。Control API、数据层、LiveKit、Nginx 和客户端没有随该组件切片重建。
-- Qwen Realtime Search、Doubao、FunASR、DeepSeek、Interrupt Semantic 生产 smoke 通过。
+- 三个目标容器 healthy；Agent/Bridge 切流后 restart count 为 0，目标错误日志为 0。Control API、数据层、LiveKit、Nginx、Edge 和客户端没有随该组件切片重建。
+- 2026-08-24 18:45 CST，Qwen Realtime Search、Doubao、FunASR、DeepSeek、Interrupt Semantic 与媒体 fence 生产 smoke 通过。
+- 普通 Agent component 目录已收敛为当前 `1843` 与紧邻回滚 `1320`；当前回滚标签均解析到 `sha256:5771074693cf326804a0ce1ed18b1b23d5708e618385752fc58c65ac72f064b0`。
 - Agent/Bridge 内 DTLN 均完成 ONNX checksum/contract 初始化和 640-byte PCM 实推，输出长度 640。
 
-本轮关闭两个级联根因：Simplex 板播放期间自身 TTS 不再获得 KWS 停止权；Go Edge 完整转发 stop epoch、只接受同 epoch successor cancel，并在序列连续性前丢弃迟到旧代帧。Agent 在播放错误/超时后先推进权威 successor generation 再发 CANCEL。
+本轮真实板卡复现：天气的首段介绍正常播放，同一回答的后续工具结果却在首段 `playback.ended` 后继续复用已关闭 generation，Edge 按硬件账本拒绝后续音频，表现为“说着说着停了”。Agent 现会先完成当前播放生命周期，再选择排队输出；后续片段必须使用同一 turn 的 successor generation，并从 sequence/sample `0/0` 开始。无文本的 PCM-only 后续输出也会进入 SPEAKING，不再卡在 THINKING。BOOT 终止事件由用户主动按键触发，属于正常结束，不计为故障。
+
+Agent-only 发布现在把历史 Compose override 收口为“生产主 Compose + 已验证在线镜像快照 + 当前 override”。旧 component override 被普通制品清理后不再阻塞后续发布；收口前会验证 Agent/Bridge 共享同一 runnable image，且所有仍存在的 component override 只能包含这两个服务的 image 字段。
 
 服务器普通制品只保留当前运行版本和一个已确认可运行的紧邻回滚。执行任何回滚前必须现场读取容器 image ID、Compose override 和证据目录，不从本文猜测标签；数据库、WAL、MinIO、安全与合规备份不属于该两版本清理策略。
 
@@ -100,7 +103,7 @@ include /etc/nginx/snippets/memoria-miniprogram-media.conf;
 4. 现场记录当前容器 ID/image ID、软链、env 摘要、数据快照和一个可运行回滚点。
 5. 先 dry-run，再上传/验证，再切流。任何 manifest、readiness、provider、数据、回滚或非目标容器门禁失败都 REJECT。
 
-Agent-only 快速路径只允许 `services/agent/**` 源码变化；依赖锁、Dockerfile、共享包、服务或运行脚本变化必须走完整镜像发布：
+Agent-only 快速路径的运行时切片只允许 `services/agent/**`；发布脚本与对应门禁测试可以随发布机制修复，但依赖锁、运行时 Dockerfile、共享包或其他服务变化必须走完整镜像发布：
 
 ```bash
 scripts/deploy_agent_component.sh \
