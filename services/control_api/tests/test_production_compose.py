@@ -505,7 +505,10 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert "compose_sha256=$compose_sha" in deploy
     assert "Compose base snapshot was pruned" in deploy
     assert "production Compose file does not match the tagged release" in deploy
-    assert 'MEMORIA_RELEASE_COMMIT="$release_commit"' in deploy
+    assert 'MEMORIA_RELEASE_COMMIT="$stack_release_commit"' in deploy
+    assert '"$agent_stack_release_tag" == "$control_release_tag"' in deploy
+    assert "do not share one runtime stack authority" in deploy
+    assert 'runtime_stack_release_tag=%s\\n' in deploy
     assert "trap - ERR" in deploy
     assert "component rollback=PASS" in deploy
     assert "component rollback=FAILED" in deploy
@@ -519,8 +522,9 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert "docker commit --pause=true" not in deploy
     assert 'agent-component.rollback.override.yml' in deploy
     assert '"${previous_args[@]}" --file "$rollback_override"' in deploy
-    assert 'MEMORIA_RELEASE_TAG="$agent_release_tag"' in deploy
-    assert 'MEMORIA_RELEASE_COMMIT="$agent_release_commit"' in deploy
+    assert 'MEMORIA_RELEASE_TAG="$stack_release_tag"' in deploy
+    assert 'env MEMORIA_RELEASE_TAG="$release_tag"' not in deploy
+    assert 'MEMORIA_RELEASE_COMMIT="$agent_release_commit"' not in deploy
     assert '      MEMORIA_RELEASE_TAG: "$release_tag"' not in deploy
 
 

@@ -322,6 +322,15 @@ expected_compose_sha="$4"
 release_commit="$5"
 agent_container="memoria-agent-1"
 bridge_container="memoria-voice-core-media-bridge-1"
+control_container="memoria-control-api-1"
+
+container_env_value() {
+  local container="$1"
+  local key="$2"
+  docker inspect "$container" --format '{{range .Config.Env}}{{println .}}{{end}}' \
+    | sed -n "s/^${key}=//p" \
+    | head -n 1
+}
 
 agent_image_id="$(docker inspect "$agent_container" --format '{{.Image}}')"
 bridge_image_id="$(docker inspect "$bridge_container" --format '{{.Image}}')"
@@ -336,6 +345,21 @@ bridge_release_tag="$(docker inspect "$bridge_container" --format '{{index .Conf
   echo "Agent and bridge do not share one current release authority" >&2
   exit 1
 }
+agent_stack_release_tag="$(container_env_value "$agent_container" MEMORIA_RELEASE_TAG)"
+bridge_stack_release_tag="$(container_env_value "$bridge_container" MEMORIA_RELEASE_TAG)"
+control_stack_release_tag="$(container_env_value "$control_container" MEMORIA_RELEASE_TAG)"
+control_release_commit="$(docker inspect "$control_container" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+control_release_tag="$(docker inspect "$control_container" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+[[ -n "$agent_stack_release_tag" \
+  && "$agent_stack_release_tag" == "$bridge_stack_release_tag" \
+  && "$agent_stack_release_tag" == "$control_stack_release_tag" \
+  && "$agent_stack_release_tag" == "$control_release_tag" \
+  && "$control_release_commit" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "Agent, bridge, and Control do not share one runtime stack authority" >&2
+  exit 1
+}
+stack_release_tag="$agent_stack_release_tag"
+stack_release_commit="$control_release_commit"
 config_files="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')"
 bridge_config_files="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')"
 working_dir="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')"
@@ -498,6 +522,8 @@ printf '%s\n' "${previous_files[@]}" >"$remote_dir/PRE_CUTOVER_CONFIG_FILES.txt"
   printf 'bridge_image_id=%s\n' "$bridge_image_id"
   printf 'release_commit=%s\n' "$agent_release_commit"
   printf 'release_tag=%s\n' "$agent_release_tag"
+  printf 'stack_release_commit=%s\n' "$stack_release_commit"
+  printf 'stack_release_tag=%s\n' "$stack_release_tag"
   printf 'rollback_agent=%s\n' "$rollback_agent"
   printf 'rollback_bridge=%s\n' "$rollback_bridge"
 } >"$remote_dir/ROLLBACK_POINT.txt"
@@ -509,8 +535,8 @@ rollback() {
   echo "component cutover failed; restoring previous Compose configuration" >&2
   (
     cd "$working_dir"
-    env MEMORIA_RELEASE_TAG="$agent_release_tag" \
-      MEMORIA_RELEASE_COMMIT="$agent_release_commit" \
+    env MEMORIA_RELEASE_TAG="$stack_release_tag" \
+      MEMORIA_RELEASE_COMMIT="$stack_release_commit" \
       docker compose --project-name "$project_name" \
       "${previous_args[@]}" --file "$rollback_override" \
       --profile media-runtime up -d --no-deps --no-build \
@@ -527,7 +553,7 @@ rollback() {
 trap rollback ERR
 
 cd "$working_dir"
-env MEMORIA_RELEASE_TAG="$release_tag" MEMORIA_RELEASE_COMMIT="$release_commit" \
+env MEMORIA_RELEASE_TAG="$stack_release_tag" MEMORIA_RELEASE_COMMIT="$stack_release_commit" \
   docker compose --project-name "$project_name" \
   "${previous_args[@]}" --file "$override" \
   --profile media-runtime up -d --no-deps --no-build \
@@ -553,6 +579,7 @@ trap - ERR
   printf 'cutover_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   docker inspect "$agent_container" --format 'agent_image={{.Config.Image}} agent_image_id={{.Image}} agent_health={{.State.Health.Status}}'
   docker inspect "$bridge_container" --format 'bridge_image={{.Config.Image}} bridge_image_id={{.Image}} bridge_health={{.State.Health.Status}}'
+  printf 'runtime_stack_release_tag=%s\n' "$stack_release_tag"
   printf 'rollback_agent=%s\nrollback_bridge=%s\n' "$rollback_agent" "$rollback_bridge"
 } | tee "$remote_dir/CUTOVER_RESULT.txt"
 (cd "$remote_dir" && sha256sum CUTOVER_RESULT.txt >CUTOVER_RESULT.txt.sha256)
