@@ -410,18 +410,67 @@ freeze_container_image() {
   local container="$1"
   local image_id="$2"
   local rollback_tag="$3"
+  local recovery_base="$4"
   if docker image inspect "$image_id" >/dev/null 2>&1; then
     docker tag "$image_id" "$rollback_tag"
   else
-    # A running container can outlive a pruned image record. Freeze its exact
-    # filesystem and config before cutover so rollback remains executable.
-    docker commit --pause=true "$container" "$rollback_tag" >/dev/null
+    # A running container can outlive a pruned parent image. Docker cannot
+    # commit that container because its content digest is gone, so rebuild its
+    # exact Agent source tree over the surviving peer image from the same
+    # release authority and verify the result byte-for-byte before cutover.
+    recovery_commit="$(docker image inspect "$recovery_base" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+    recovery_release="$(docker image inspect "$recovery_base" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+    recovery_role="$(docker image inspect "$recovery_base" --format '{{index .Config.Labels "com.memoria.release.role"}}')"
+    [[ "$recovery_commit" == "$agent_release_commit" \
+      && "$recovery_release" == "$agent_release_tag" \
+      && "$recovery_role" == agent ]] || {
+      echo "surviving peer image cannot authorize rollback recovery" >&2
+      exit 1
+    }
+    recovery_dir="$(mktemp -d "$remote_dir/rollback-source.XXXXXX")"
+    mkdir -p "$recovery_dir/memoria/services"
+    docker cp "$container:/app/services/agent" "$recovery_dir/memoria/services/agent"
+    cat >"$recovery_dir/Dockerfile" <<'ROLLBACK_DOCKERFILE'
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG MEMORIA_RELEASE_COMMIT
+ARG MEMORIA_RELEASE_TAG
+LABEL org.opencontainers.image.revision="${MEMORIA_RELEASE_COMMIT}" \
+      org.opencontainers.image.version="${MEMORIA_RELEASE_TAG}" \
+      com.memoria.release.role="agent" \
+      com.memoria.release.kind="agent-running-source-recovery"
+USER root
+WORKDIR /app
+RUN rm -rf /app/services/agent
+COPY --chown=65532:65532 memoria/services/agent /app/services/agent
+USER 65532:65532
+ROLLBACK_DOCKERFILE
+    docker build --pull=false --network=none \
+      --build-arg "BASE_IMAGE=$recovery_base" \
+      --build-arg "MEMORIA_RELEASE_COMMIT=$agent_release_commit" \
+      --build-arg "MEMORIA_RELEASE_TAG=$agent_release_tag" \
+      --tag "$rollback_tag" \
+      --file "$recovery_dir/Dockerfile" \
+      "$recovery_dir"
+    live_source_digest="$(
+      docker exec --user 0 "$container" sh -c \
+        'cd /app && find services/agent -type f -not -path "*/__pycache__/*" -print0 | sort -z | xargs -0 sha256sum | sha256sum'
+    )"
+    rollback_source_digest="$(
+      docker run --rm --user 0 --entrypoint sh "$rollback_tag" -c \
+        'cd /app && find services/agent -type f -not -path "*/__pycache__/*" -print0 | sort -z | xargs -0 sha256sum | sha256sum'
+    )"
+    [[ "$live_source_digest" == "$rollback_source_digest" ]] || {
+      echo "recovered rollback image does not match the running Agent source" >&2
+      exit 1
+    }
+    rm -rf "$recovery_dir"
   fi
   docker image inspect "$rollback_tag" >/dev/null
 }
 
-freeze_container_image "$agent_container" "$agent_image_id" "$rollback_agent"
-freeze_container_image "$bridge_container" "$bridge_image_id" "$rollback_bridge"
+freeze_container_image "$agent_container" "$agent_image_id" "$rollback_agent" "$bridge_image_id"
+freeze_container_image "$bridge_container" "$bridge_image_id" "$rollback_bridge" "$agent_image_id"
 
 override="$remote_dir/agent-component.override.yml"
 cat >"$override" <<EOF
