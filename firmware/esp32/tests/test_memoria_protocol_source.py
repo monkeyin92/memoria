@@ -111,7 +111,7 @@ CONTRACT = json.loads(
         encoding="utf-8"
     )
 )
-FIRMWARE_README = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+FIRMWARE_README = (Path(__file__).parents[3] / "README.md").read_text(encoding="utf-8")
 BUILD_SCRIPT = (Path(__file__).parents[1] / "scripts" / "build.sh").read_text(
     encoding="utf-8"
 )
@@ -137,9 +137,7 @@ BOARD_SOURCE = (
     / "atk-dnesp32s3-v1"
     / "memoria_atk_dnesp32s3_v1.cc"
 ).read_text(encoding="utf-8")
-CONTRACTS_README = (Path(__file__).parents[3] / "packages" / "contracts" / "README.md").read_text(
-    encoding="utf-8"
-)
+CONTRACTS_README = FIRMWARE_README
 
 
 def test_product_build_has_a_real_idle_session_entry() -> None:

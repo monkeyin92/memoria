@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """T1-T14 hardware realtime acceptance orchestrator (fail-closed).
 
-Sources of truth:
-- 整改方案 2026-08-13 §16 (T1-T14), §17 (SLO 门槛与 REJECT), §20 (DoD)
-- architecture-status.yaml (code/wired/enabled/verified, external_evidence_policy)
-- docs/media-runtime-acceptance-runbook.md (仓库门禁与真实证据边界)
+Source of truth: HANDOFF.md (T1-T14, SLO/REJECT, code/wired/enabled/verified,
+external evidence policy and real-device evidence boundaries).
 
 Semantics
 ---------
@@ -49,7 +47,7 @@ from pathlib import Path
 from typing import Any, cast
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_EVIDENCE_ROOT = REPO_ROOT / "docs" / "acceptance"
+DEFAULT_EVIDENCE_ROOT = REPO_ROOT / "outputs" / "acceptance"
 
 SCHEMA_VERSION = "1.0"
 RECEIPT_TYPE = "memoria_hardware_realtime_acceptance"
@@ -2038,7 +2036,10 @@ def _parser_verify() -> argparse.ArgumentParser:
     parser.add_argument("--now", type=_now_type, help="reference time (ISO-8601; default: current UTC)")
     parser.add_argument("--max-age-hours", type=int, help="override the TTL for all receipts")
     parser.add_argument("--max-future-minutes", type=int, default=DEFAULT_MAX_FUTURE_MINUTES, help="allowed clock skew for collected_at (default 60)")
-    parser.add_argument("--evidence-root", help="root directory for evidence paths (default docs/acceptance)")
+    parser.add_argument(
+        "--evidence-root",
+        help="root directory for evidence paths (default outputs/acceptance)",
+    )
     parser.add_argument("--max-evidence-bytes", type=int, default=DEFAULT_EVIDENCE_MAX_BYTES, help="max evidence file size in bytes (default 5MB)")
     parser.add_argument("--coverage", action="store_true", help="require AEC matrix / T13 rounds / T14 platform coverage across passing receipts")
     parser.add_argument("--json", action="store_true", help="emit JSON only")

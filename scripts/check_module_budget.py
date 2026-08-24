@@ -2,8 +2,8 @@
 """Enforce downward-only line budgets for high-risk modules.
 
 ``check`` is read-only and requires every measured line count to match the
-budget in ``architecture-status.yaml``. ``update`` only records lower counts;
-it never turns an over-budget module into the new baseline.
+budget in ``pyproject.toml``. ``update`` only records lower counts; it never
+turns an over-budget module into the new baseline.
 """
 
 from __future__ import annotations
@@ -15,9 +15,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-_HEADER_RE = re.compile(r"^module_budgets:\s*(?:#.*)?$")
+_HEADER_RE = re.compile(r"^\[tool\.memoria\.module-budgets\]\s*(?:#.*)?$")
 _ENTRY_RE = re.compile(
-    r"^(?P<indent> +)(?P<module>[^:#][^:]*?):(?P<spacing>\s*)"
+    r'^"(?P<module>[^"\\]+)"(?P<spacing>\s*=\s*)'
     r"(?P<budget>[0-9]+)(?P<suffix>\s*(?:#.*)?)$"
 )
 
@@ -52,13 +52,15 @@ def _load_budget_document(path: Path) -> _BudgetDocument:
     try:
         lines = tuple(path.read_text(encoding="utf-8").splitlines(keepends=True))
     except (OSError, UnicodeError) as exc:
-        raise ModuleBudgetError(f"cannot read architecture status: {path}") from exc
+        raise ModuleBudgetError(f"cannot read module budget config: {path}") from exc
 
     header_indices = [
         index for index, line in enumerate(lines) if _HEADER_RE.fullmatch(line.rstrip("\r\n"))
     ]
     if len(header_indices) != 1:
-        raise ModuleBudgetError("architecture status must contain one module_budgets mapping")
+        raise ModuleBudgetError(
+            "pyproject.toml must contain one [tool.memoria.module-budgets] table"
+        )
 
     entries: list[_BudgetEntry] = []
     seen: set[str] = set()
@@ -67,7 +69,7 @@ def _load_budget_document(path: Path) -> _BudgetDocument:
         stripped = raw.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if not raw.startswith(" "):
+        if stripped.startswith("["):
             break
         match = _ENTRY_RE.fullmatch(raw)
         if match is None:
@@ -129,10 +131,10 @@ def _measure(root: Path, document: _BudgetDocument) -> tuple[ModuleBudget, ...]:
     )
 
 
-def check_module_budgets(*, root: Path, status_path: Path) -> tuple[ModuleBudget, ...]:
+def check_module_budgets(*, root: Path, config_path: Path) -> tuple[ModuleBudget, ...]:
     """Return exact measurements or reject growth and unrecorded reductions."""
     root = root.expanduser().resolve()
-    document = _load_budget_document(status_path.expanduser().resolve())
+    document = _load_budget_document(config_path.expanduser().resolve())
     measurements = _measure(root, document)
     violations: list[str] = []
     for item in measurements:
@@ -148,11 +150,11 @@ def check_module_budgets(*, root: Path, status_path: Path) -> tuple[ModuleBudget
     return measurements
 
 
-def update_module_budgets(*, root: Path, status_path: Path) -> tuple[ModuleBudget, ...]:
+def update_module_budgets(*, root: Path, config_path: Path) -> tuple[ModuleBudget, ...]:
     """Persist lower measured counts while refusing to raise any budget."""
     root = root.expanduser().resolve()
-    status_path = status_path.expanduser().resolve()
-    document = _load_budget_document(status_path)
+    config_path = config_path.expanduser().resolve()
+    document = _load_budget_document(config_path)
     measurements = _measure(root, document)
     over_budget = [item for item in measurements if item.actual > item.budget]
     if over_budget:
@@ -178,16 +180,16 @@ def update_module_budgets(*, root: Path, status_path: Path) -> tuple[ModuleBudge
         changed = True
     if changed:
         try:
-            status_path.write_text("".join(lines), encoding="utf-8")
+            config_path.write_text("".join(lines), encoding="utf-8")
         except OSError as exc:
-            raise ModuleBudgetError(f"cannot update architecture status: {status_path}") from exc
-        document = _load_budget_document(status_path)
+            raise ModuleBudgetError(f"cannot update module budget config: {config_path}") from exc
+        document = _load_budget_document(config_path)
         measurements = _measure(root, document)
     return measurements
 
 
-def _resolve_status_path(root: Path, status_path: Path) -> Path:
-    return status_path if status_path.is_absolute() else root / status_path
+def _resolve_config_path(root: Path, config_path: Path) -> Path:
+    return config_path if config_path.is_absolute() else root / config_path
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -195,19 +197,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("mode", choices=("check", "update"))
     parser.add_argument("--root", type=Path, default=Path(__file__).parents[1])
     parser.add_argument(
-        "--status-file",
+        "--config-file",
         type=Path,
-        default=Path("architecture-status.yaml"),
+        default=Path("pyproject.toml"),
         help="absolute path or path relative to --root",
     )
     args = parser.parse_args(argv)
     root = args.root.expanduser().resolve()
-    status_path = _resolve_status_path(root, args.status_file)
+    config_path = _resolve_config_path(root, args.config_file)
     try:
         if args.mode == "check":
-            measurements = check_module_budgets(root=root, status_path=status_path)
+            measurements = check_module_budgets(root=root, config_path=config_path)
         else:
-            measurements = update_module_budgets(root=root, status_path=status_path)
+            measurements = update_module_budgets(root=root, config_path=config_path)
     except ModuleBudgetError as exc:
         print(str(exc), file=sys.stderr)
         return 1

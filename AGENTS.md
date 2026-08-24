@@ -1,47 +1,99 @@
-# Agent Working Agreements
+# Memoria Working Agreements
 
-Durable instructions for anyone (human or AI) working on Memoria. Update this file when the product owner gives lasting process or design preferences.
+本文件只保存长期有效的工程与产品规则。当前运行状态写入 `HANDOFF.md`；产品、架构和开发入口写入 `README.md`。
 
-## 举一反三（必守）
+## 工作方式
 
-**触发**：任何 bug、线上异常、产品体验问题，或需要「新思路」的优化。
+- 先检查 `git status`。保留用户已有改动，只暂存本任务范围；禁止 broad reset、blanket commit 和覆盖未确认的脏文件。
+- 主 agent 负责拆解、风险判断、审查和验收。边界独立的搜索、机械修改和耗时测试可以委派；生产变更、删除和发布由主 agent 亲自复核。
+- 变更请求默认做到实现、接线、门禁和可安全执行的发布/验收，不停在建议或本地绿色。只读审查不得擅自修改。
+- 编辑后独立读回，运行 `git diff --check`，按风险执行定向测试和完整门禁。外部命令成功不等于文件内容或运行态正确。
+- 生产事实必须查真实有效配置、挂载、容器环境、日志、数据库和设备证据；不要从默认值、目录名或 HTTP 200 推断成功。
 
-**要求**：
+## 文档纪律
 
-1. **不要只做点修**。先修当前症状，但同一轮必须多想一层：同类控制路径是否会再次相撞？缺的是阈值、补丁，还是控制面抽象？
-2. **主动提出架构级改进**，不要等用户点名。例：用户一路修 enroll / 打断 / 停一下 / 噪声 / 继续 / 纯打断词进 chat，本质是「用户话轮意图」没有统一入口——应主动提出 `UtteranceRouter`（或等价控制平面），而不是等对方问「是不是应该做路由」。
-3. **举一反三清单**（修完一个点后快速过一遍）：
-   - 同文件、同状态机、同 fence/gate 上是否还有对称分支会踩坑？
-   - 成功路径修好后，失败 / 超时 / 空音频 / 误识别 / 迟到事件是否仍坏？
-   - 级联与 Omni 两条链路是否同类问题？
-   - 是配置/阈值可调，还是规则表 / 状态机 / 单一决策点才能防复发？
-   - 磁盘、日志、发布、测试门禁等运维面是否同类隐患？
-4. **有更好思路就先说清楚再动手**。用户要的是可讨论的方案深度，不是默默堆 if-else。
+仓库长期文档严格只有 `README.md`、`AGENTS.md`、`HANDOFF.md` 三份。禁止新增 session 记录、平行计划、组件 README、ADR、release note 或一次性排障文档。
 
-**反例（本次会话教训）**：连续修「停一下→我继续」「等等→怎么了」等打断语义时，一直在 `duplex_runtime` / `interruption_guard` 上补丁；用户主动问路由后才收敛到统一话轮路由。以后类似控制路径碰撞，应主动抬升到统一决策层。
+- 规则与稳定边界归入 `AGENTS.md`。
+- 产品、架构、开发和协议入口归入 `README.md`。
+- 当前状态、当前/回滚版本、运维步骤和下一验收归入 `HANDOFF.md`。
+- 机器事实优先放 schema、proto、JSON、TOML、锁文件和测试，不用 prose 重复。
+- 过时内容确认无代码/运维引用后直接删除，不保留兼容文档或“归档”目录。
+- 临时证据写入被忽略的 `outputs/` 或服务器证据目录，不提交到 Git。
 
-## 控制面：UtteranceRouter
+CI 的 `tests/test_documentation_budget.py` 必须保持绿色。
 
-- 实现：`services/agent/src/orchestration/utterance_router.py`
-- 单测：`services/agent/tests/unit/test_utterance_router.py`
-- 接线：`DuplexRuntime.accept_user_turn` 与 `on_real_interrupt` 共用 `route_utterance`（enroll / pure interrupt / interrupt+chat / chat）。
-- 用户资料中的 `reject_non_owner_voice` 是 TargetSpeakerFocus 的实验性产品策略开关，默认开启；开启时只拒绝 formal `guest/owner_mismatch` 与明确的 `shadow_guest_candidate`。shadow/formal ambiguous 为避免误静音主人仍可普通对话，但保持 non-owner/uncertain，不能进入主人历史、私人记忆、工具或敏感权限；关闭后访客可以对话，但不得因此升级 `owner` 权限。
-- H5 长期历史只能消费 Agent 权威终稿中的 `history_eligible=true`；访客、ambiguous、无档案或 authority 不可用的话轮及其对应 AI 回复不得落入主人的回顾/自动摘要。资格必须按 generation fence 绑定，不能读取“当前最新说话人”代替原话轮归属。
-- **修打断/门禁类 bug 时，优先改 Router 规则表 + 单测**，不要在 `duplex_runtime` 再开平行 if。
-- 播放期歧义 final 只允许小模型提供
-  `CONTROL_ONLY / HAS_USER_CONTENT / UNSURE` 证据；确定性规则优先，模型不得直接执行
-  stop/chat/ack/clear。调用仅限当前 speech epoch 的 sticky `interrupt_then_chat`，输入只含
-  final、首个 sticky 文本和冻结助手文本；超时、非法输出或迟到结果 fail closed，并受
-  playback/generation fence 约束。详见 ADR-0022。
-- 播放期 noise / backchannel / echo 仍由 `PlaybackInputGuard` 处理；若与 Router 意图冲突，再考虑并入（举一反三）。
+## 实现原则
 
-## 其他
+- 删除优先于兼容：废弃代码和路径确认无引用后直接删除，不增加 migration、fallback 或平行实现。
+- 选择满足当前需求的最简单实现，不做预防性抽象或多余配置层。
+- 多层系统先打通最小端到端路径，再纵向扩展；不要拆掉已经可运行的权威链。
+- 组件单一职责、边界清晰。新增依赖前先盘点现有库，优先成熟且维护中的实现。
+- 架构按长期方向决策；采用成熟模式，不以“先这样以后再换”制造返工。
 
-- 生产服务器上的同类上传包、构建归档、候选镜像和回滚镜像最多只保留最近两个可用版本：当前运行版本与紧邻的可运行回滚版本。新版本完成部署和回滚点核验后，必须删除更早版本并检查磁盘占用；不得因长期堆积制品挤满服务器磁盘。数据库、安全与合规备份按各自保留策略处理，不得把不可替代的数据备份当作普通构建制品误删。
-- 执行 `Memoria_ESP32一等语音终端与小程序控制面全双工整改方案_2026-08-13.md` 时，任何完成事项都必须在该文件中同步勾选或标注，并写清 `code / wired / enabled / verified` 层级及证据日期；未回写方案的事项不得口头记为完成。
-- 学生线账号能力以 `services/control_api/app/account_gate.py` 的规则表为单一决策点。新增或修改账号能力路由时，评审必须逐个列出端点，在任何读取私有资源或写副作用前调用 `require_capability_for_subject`（代操作场景用 `require_capability_for_account_id`），并为 adult、minor、类别缺失三种情况补矩阵测试；规则表没有声明的能力按拒绝处理。只有端点清单与矩阵测试一一对应，评审才算完成。
-- 称呼只在首次注册 UI 中设置：H5 使用“怎么称呼你？”（示例：朋友、主人、小明），小程序在首次微信手机号授权时要求填写；“我的/个人信息”不再提供称呼或“想让伙伴怎样陪你”的编辑入口。兼容 API/数据库字段可以保留，但不能重新把它们作为常规资料编辑项暴露。
-- 吉祥物的用户情绪仍只消费权威 `emotion_observation`。助手实际说话期间，Agent 以当前 `session_id + turn_id + generation_id + tool_epoch` 发布单个 `assistant_expression`（`neutral / happy / curious / caring`）；H5 和小程序只能在匹配的 speaking fence 内展示，回答结束、断线或中断时清除。客户端不得从助手字幕自行猜词切换表情。
-- H5 原型视觉约定见 `apps/h5/AGENTS.md`。
-- 发布、回滚、线上状态见 `HANDOFF.md` 与 `docs/releases/`。
-- ESP32 一等语音终端目标架构与执行状态见 `Memoria_ESP32一等语音终端与小程序控制面全双工整改方案_2026-08-13.md`、`architecture-status.yaml`、ADR-0029 与 ADR-0035。
+## Bug 必须举一反三
+
+修复线上异常或体验问题时，不能只修表面症状。同一轮至少检查：
+
+1. 同文件、同状态机、同 fence/gate 是否有对称分支会再次碰撞。
+2. 成功之外的失败、超时、空音频、误识别和迟到事件。
+3. 级联、Omni、H5、ESP32 Direct 与 legacy 回滚链的同类路径。
+4. 问题应由阈值解决，还是需要规则表、状态机或单一决策点。
+5. 日志、磁盘、发布、回滚和测试门禁是否存在同类隐患。
+
+有架构级改进时先向用户说明方案与取舍，再实施。连续出现 enroll、打断、停一下、继续、噪声或纯控制词进入 chat，通常说明话轮意图缺少统一入口，不应继续在各处堆 if/else。
+
+## 语音控制面
+
+`services/agent/src/orchestration/utterance_router.py` 是用户话轮意图的单一入口；`DuplexRuntime.accept_user_turn` 与 `on_real_interrupt` 共用 `route_utterance`，分类为 enroll、pure interrupt、interrupt+chat 或 chat。修打断/门禁问题时优先修改 Router 规则与 `services/agent/tests/unit/test_utterance_router.py`，不得在 runtime 新建平行控制面。
+
+播放期歧义 final 的小模型只能给 `CONTROL_ONLY / HAS_USER_CONTENT / UNSURE` 证据：确定性规则优先，模型不得直接执行 stop/chat/ack/clear。请求只能绑定当前 speech epoch、sticky 首文本、冻结助手文本与完整 generation fence；超时、非法输出和迟到结果 fail closed。
+
+播放期 noise、backchannel 和 echo 由 `PlaybackInputGuard` 处理。Simplex ESP32 在 speaking 期间关闭 KWS；BOOT 物理按钮仍是本地停止权威。任何 stop、cancel、PCM 或 playback 回执都必须带 `session_epoch + turn_id + generation_id + tool_epoch`，旧代先于连续性检查丢弃。
+
+## 身份、历史与权限
+
+- `reject_non_owner_voice` 默认开启，只拒绝 formal `guest/owner_mismatch` 和明确 `shadow_guest_candidate`。
+- shadow/formal ambiguous 可以普通对话，但保持 non-owner/uncertain，不能进入主人历史、私人记忆、工具或敏感权限。关闭过滤也不能把访客升级为 owner。
+- H5 长期历史只消费 Agent 权威终稿 `history_eligible=true`。资格按原话轮 generation fence 绑定；不得读取“当前最新说话人”替代归属。
+- 学生线账号能力以 `services/control_api/app/account_gate.py` 为唯一决策表。每个端点在私有读取或副作用前调用 `require_capability_for_subject`；代操作使用 `require_capability_for_account_id`。adult、minor、类别缺失都要有矩阵测试；未声明能力拒绝。
+- 账号登录、说话人判定、目标说话人聚焦和敏感动作授权是四个不同结论，不得互相升级。
+
+## 客户端与视觉
+
+- H5 做实质视觉修改前，先以当前运行页面、明确设计源或用户选定 mock 为权威；自己启动预览并做真实移动视口检查。
+- 吉祥物采用 3D 位图机身、内联 SVG 表情和克制 CSS 动效；不为简单表情引入 Rive、Live2D 或路径 morph，完整尊重 `prefers-reduced-motion`。
+- 用户情绪只消费权威 `emotion_observation`；助手说话表情只消费当前 speaking fence 的 `assistant_expression`，回答结束、断线或中断立即清除。客户端禁止从字幕猜词切换表情。
+- 新用户先选星澜、桃喜、绵绵、阿序或玄墨；选角支持 scroll-snap、可见箭头、分页点和键盘操作，并展示性格、四种表情和设计音色试听。
+- 声纹登记按自然、轻声、带笑、认真顺序解锁，各段独立参与匹配。授权必须明确、可撤销；shadow 档案不得宣传为主人认证或声音克隆。
+- 称呼只在注册 UI 设置，文案“怎么称呼你？”；H5“我的”和小程序个人信息不再暴露称呼或陪伴方式编辑。
+- 供应商 `voice_id` 只能由 Agent 批准 registry 解析；客户端只传稳定目录键，试听文件路径包含供应商和版本。
+- 微信小程序是控制面：不申请 `scope.record`，不创建 RecorderManager，不播放实时 TTS，不建立媒体 WSS，不加入 LiveKit。
+
+## 固件与硬件安全
+
+- 固件只维护固定 upstream + overlay。overlay 变化后从锁定 commit 重放并执行 clean build、patch/依赖锁门禁。
+- `0x10000..0x1ffff` 身份区不得被普通固件更新覆盖。刷写前后都回读并逐字节比较；优先 app-only `0x20000`。
+- “编译通过”“刷写成功”“启动/激活”“真实媒体”“Actual Heard”“打断/双讲”是独立证据层，禁止相互外推。
+- 真实设备验收必须绑定候选 commit、固件摘要、板卡身份摘要、session/stream/generation fence 和用户听感确认。
+- 没有 Exact DAC/AEC Reference/Double-talk/T1–T14 证据时，`direct_real_device_verified` 与 `full_duplex_verified` 保持 false，产品不得宣传全双工。
+
+## 发布、回滚与保留
+
+- 发布按组件最小切片，先冻结 source/image/manifest 摘要和回滚点，再切流、冒烟、延迟复核。
+- `code / wired / enabled / verified` 必须分开记录，并附证据日期。零会话 readiness、首帧或容器 healthy 不是真实设备完整会话。
+- 生产普通制品只保留当前运行版本和一个已验证可运行的紧邻回滚。新版本与回滚点核验后删除更早上传包、构建归档、候选/回滚镜像并检查磁盘。
+- 数据库、WAL、MinIO、安全和合规备份不属于普通制品，按独立策略保留，禁止误删。
+- 数据恢复必须从不可变证据重建投影；不得把缓存、派生索引或同机备份描述为异地灾备。
+- 生产环境、密钥、WMS/Nginx 既有路由和非目标容器不因局部发布而改变。任何超出用户授权的生产操作先停下确认。
+
+## 验收用语
+
+交付结论要明确区分：
+
+- `code`：实现存在且静态/单测通过。
+- `wired`：真实主链调用了实现。
+- `enabled`：候选运行配置已开启。
+- `verified`：指定环境和场景有可复核证据。
+
+Actual Heard 只能由设备播放终端证据和用户听感共同确认。若证据不足，直接写 pending/unknown，不从旧 release 或其他板卡继承。

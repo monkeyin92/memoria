@@ -428,7 +428,7 @@ def test_manifest_creation_rejects_a_stale_h5_even_if_its_digest_is_recomputed(
 
 
 def test_production_runbook_verifies_manifest_and_portable_sidecars() -> None:
-    runbook = (ROOT / "docs" / "production-deployment.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "HANDOFF.md").read_text(encoding="utf-8")
 
     assert "scripts/package_release_verifier.py" in runbook
     assert 'python3 "$UPLOAD_DIR/release-verifier.pyz"' in runbook

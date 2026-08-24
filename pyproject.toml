@@ -113,3 +113,7 @@ branch = true
 [tool.coverage.report]
 fail_under = 85
 show_missing = true
+
+[tool.memoria.module-budgets]
+"services/agent/src/duplex_runtime.py" = 4717
+"services/agent/src/agent.py" = 3410

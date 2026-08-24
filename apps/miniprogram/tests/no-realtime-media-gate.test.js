@@ -15,7 +15,7 @@ const PRODUCTION_ROOTS = [
   path.join(root, "utils"),
 ];
 
-const EXCLUDED = new Set(["node_modules", "design-preview", "tests", "generated"]);
+const EXCLUDED = new Set(["node_modules", "tests", "generated"]);
 
 function productionSources() {
   const files = [];
@@ -64,7 +64,7 @@ test("production package contains no realtime voice surface at all", () => {
   matches(files, /bindtap="(startVoice|startText|stopVoice|retryVoice|sendText)"/, "实时会话入口");
 });
 
-test("preview-only sources are explicitly excluded from the WeChat package", () => {
+test("test sources are explicitly excluded from the WeChat package", () => {
   const privateConfig = path.join(root, "project.config.json");
   const projectConfig = fs.existsSync(privateConfig)
     ? privateConfig
@@ -78,10 +78,6 @@ test("preview-only sources are explicitly excluded from the WeChat package", () 
       .map((entry) => entry.value),
   );
   assert.ok(ignoredFolders.has("tests"), "tests 必须排除出微信生产包");
-  assert.ok(
-    ignoredFolders.has("design-preview"),
-    "design-preview 必须排除出微信生产包",
-  );
 });
 
 test("cold start, home, memory and device surfaces never create a RecorderManager", () => {

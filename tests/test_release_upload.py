@@ -207,7 +207,7 @@ def test_release_upload_rejects_an_invalid_remote_seed_mode(tmp_path: Path) -> N
 
 
 def test_production_runbook_uses_the_seeded_uploader_before_server_verification() -> None:
-    runbook = (ROOT / "docs" / "production-deployment.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "HANDOFF.md").read_text(encoding="utf-8")
 
     upload = runbook.index("scripts/upload_release_artifacts.sh")
     verify = runbook.index('python3 "$UPLOAD_DIR/release-verifier.pyz"')

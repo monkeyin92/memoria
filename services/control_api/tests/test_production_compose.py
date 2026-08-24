@@ -148,7 +148,7 @@ def test_miniprogram_media_route_is_explicitly_legacy_rollback_only() -> None:
     https = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
     smoke = (ROOT / "scripts" / "smoke_server_deployment.sh").read_text(encoding="utf-8")
     example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
-    runbook = (ROOT / "docs" / "production-deployment.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "HANDOFF.md").read_text(encoding="utf-8")
 
     assert media.count("location = /memoria-mini-media/v1/mini-program/media {") == 1
     assert "proxy_pass http://127.0.0.1:8792/v1/mini-program/media;" in media
@@ -345,7 +345,7 @@ def test_offsite_backup_profile_covers_base_backup_wal_and_critical_objects() ->
 
 
 def test_production_runbook_pins_data_compose_path_and_network_bootstrap_order() -> None:
-    runbook = (ROOT / "docs" / "production-deployment.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "HANDOFF.md").read_text(encoding="utf-8")
 
     assert "DATA_COMPOSE_DIR=/opt/memoria/current/infra" in runbook
     network_create = "docker compose -f docker-compose.production.yml create --no-build"
@@ -415,10 +415,8 @@ def test_readiness_refresh_passes_required_provider_gate_into_run_container() ->
 
 
 def test_memory_projection_rebuild_uses_the_control_api_module_entrypoint() -> None:
-    archive_runbook = (ROOT / "docs" / "archive-backup-restore-runbook.md").read_text(
-        encoding="utf-8"
-    )
-    production_runbook = (ROOT / "docs" / "production-deployment.md").read_text(encoding="utf-8")
+    archive_runbook = (ROOT / "HANDOFF.md").read_text(encoding="utf-8")
+    production_runbook = archive_runbook
     module_entrypoint = "-m scripts.rebuild_memory_projections --confirm-rebuild"
 
     assert module_entrypoint in archive_runbook
@@ -929,7 +927,7 @@ def test_media_edge_direct_device_ingress_uses_new_loopback_port_and_exact_path(
     https_conf = (ROOT / "infra" / "nginx-memoria-https.conf").read_text(encoding="utf-8")
     legacy = (ROOT / "infra" / "nginx-memoria-device-media.conf").read_text(encoding="utf-8")
     example = (ROOT / "infra" / "memoria.env.production.example").read_text(encoding="utf-8")
-    runbook = (ROOT / "docs" / "production-deployment.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "HANDOFF.md").read_text(encoding="utf-8")
 
     # Direct device WSS is published loopback-only to a NEW media-edge port and
     # never reuses the legacy gateway port 8793.
