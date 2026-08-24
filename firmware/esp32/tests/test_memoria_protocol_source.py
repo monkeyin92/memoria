@@ -100,6 +100,12 @@ PATCH_0017 = (
     / "patches"
     / "0017-i2s-tx-eof-exact-playback-watermark.patch"
 ).read_text(encoding="utf-8")
+PATCH_0018 = (
+    Path(__file__).parents[1]
+    / "overlay"
+    / "patches"
+    / "0018-disable-simplex-playback-wake-word.patch"
+).read_text(encoding="utf-8")
 CONTRACT = json.loads(
     (Path(__file__).parents[3] / "packages" / "contracts" / "device-media-v2.json").read_text(
         encoding="utf-8"
@@ -156,6 +162,16 @@ def test_board_mic_gain_keeps_normal_distance_speech_above_denoiser_floor() -> N
     assert "SetInputGain(12.0f)" not in BOARD_SOURCE
     assert "SetInputGain(24.0f)" not in BOARD_SOURCE
     assert "Keep the strict local AFE VAD" in BOARD_SOURCE
+
+
+def test_simplex_playback_cannot_grant_wake_word_local_stop_authority() -> None:
+    assert PATCH_0018.count("CONFIG_BOARD_TYPE_MEMORIA_ATK_DNESP32S3_V1") == 2
+    assert "audio_service_.EnableWakeWordDetection(false);" in PATCH_0018
+    assert "Ignoring wake word detected during simplex playback" in PATCH_0018
+    late_event_guard = PATCH_0018[PATCH_0018.index("state == kDeviceStateSpeaking") :]
+    late_event_guard = late_event_guard[: late_event_guard.index("#endif")]
+    assert "AbortSpeaking" not in late_event_guard
+    assert "physical button as the playback stop authority" in PATCH_0018
 
 
 def test_memoria_activation_applies_assets_before_audio_engine_can_load_models() -> None:
