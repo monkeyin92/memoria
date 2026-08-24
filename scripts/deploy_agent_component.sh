@@ -340,28 +340,60 @@ config_files="$(docker inspect "$agent_container" --format '{{index .Config.Labe
 bridge_config_files="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')"
 working_dir="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')"
 project_name="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.docker.compose.project"}}')"
-[[ -n "$config_files" && "$config_files" == "$bridge_config_files" ]]
-[[ "$project_name" == memoria ]]
+bridge_project_name="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "com.docker.compose.project"}}')"
+[[ -n "$config_files" && -n "$bridge_config_files" ]] || {
+  echo "Agent or bridge is missing Compose configuration authority" >&2
+  exit 1
+}
+[[ "$project_name" == memoria && "$bridge_project_name" == "$project_name" ]] || {
+  echo "Agent and bridge do not share one Compose project authority" >&2
+  exit 1
+}
 
 fallback_working_dir="/opt/memoria/releases"
 fallback_config="$fallback_working_dir/docker-compose.production.yml"
+IFS=',' read -r -a previous_files <<<"$config_files"
+IFS=',' read -r -a bridge_previous_files <<<"$bridge_config_files"
+[[ "${#previous_files[@]}" -eq "${#bridge_previous_files[@]}" ]] || {
+  echo "Agent and bridge Compose stacks have different depths" >&2
+  exit 1
+}
+
+# Compose records the path used for each container, so separately recreated
+# services can legitimately point at different release directories. Treat them
+# as one authority only when every corresponding file is byte-identical.
+for index in "${!previous_files[@]}"; do
+  agent_file="${previous_files[$index]}"
+  bridge_file="${bridge_previous_files[$index]}"
+  if [[ ! -f "$agent_file" && "${agent_file##*/}" == docker-compose.production.yml ]]; then
+    echo "Agent Compose base snapshot was pruned; using the verified current production file" >&2
+    agent_file="$fallback_config"
+  fi
+  if [[ ! -f "$bridge_file" && "${bridge_file##*/}" == docker-compose.production.yml ]]; then
+    echo "Bridge Compose base snapshot was pruned; using the verified current production file" >&2
+    bridge_file="$fallback_config"
+  fi
+  for file in "$agent_file" "$bridge_file"; do
+    [[ -f "$file" && ! -L "$file" ]] || {
+      echo "required Compose file is unavailable or unsafe: $file" >&2
+      exit 1
+    }
+  done
+  [[ "$(sha256sum "$agent_file" | cut -d ' ' -f1)" == "$(sha256sum "$bridge_file" | cut -d ' ' -f1)" ]] || {
+    echo "Agent and bridge Compose stacks do not describe one current authority" >&2
+    exit 1
+  }
+  previous_files[$index]="$agent_file"
+done
+
 if [[ ! -d "$working_dir" ]]; then
   echo "Compose working directory was pruned; using the verified current release root" >&2
   working_dir="$fallback_working_dir"
 fi
 [[ -d "$working_dir" ]]
 
-IFS=',' read -r -a previous_files <<<"$config_files"
 previous_args=()
 for file in "${previous_files[@]}"; do
-  if [[ ! -f "$file" && "${file##*/}" == docker-compose.production.yml ]]; then
-    echo "Compose base snapshot was pruned; using the verified current production file" >&2
-    file="$fallback_config"
-  fi
-  [[ -f "$file" && ! -L "$file" ]] || {
-    echo "required Compose file is unavailable or unsafe: $file" >&2
-    exit 1
-  }
   if [[ "${file##*/}" == docker-compose.production.yml ]]; then
     [[ "$(sha256sum "$file" | cut -d ' ' -f1)" == "$expected_compose_sha" ]] || {
       echo "production Compose file does not match the tagged release" >&2

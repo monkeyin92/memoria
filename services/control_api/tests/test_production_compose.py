@@ -511,6 +511,8 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert "component rollback=FAILED" in deploy
     assert "do not share one current dependency image" not in deploy
     assert "do not share one current release authority" in deploy
+    assert "Compose stacks do not describe one current authority" in deploy
+    assert '"${#previous_files[@]}" -eq "${#bridge_previous_files[@]}"' in deploy
     assert 'docker commit --pause=true "$container" "$rollback_tag"' in deploy
     assert 'agent-component.rollback.override.yml' in deploy
     assert '"${previous_args[@]}" --file "$rollback_override"' in deploy
