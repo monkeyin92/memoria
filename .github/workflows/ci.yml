@@ -30,12 +30,12 @@ jobs:
               - 'infra/Dockerfile.agent-source-overlay'
               - 'scripts/deploy_agent_component.sh'
             python:
+              - '.github/workflows/ci.yml'
               - 'pyproject.toml'
               - 'uv.lock'
               - 'docker-compose*.yml'
               - 'packages/**'
               - 'services/**/*.py'
-              - '!services/agent/**'
               - '!services/control_api/tests/test_production_compose.py'
               - 'scripts/**/*.py'
               - 'scripts/**/*.sh'
