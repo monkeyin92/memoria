@@ -2613,6 +2613,7 @@ async def test_main_reply_holds_output_owner_until_playback_ack() -> None:
             client_monotonic_ms=1,
             turn_id=fence.turn_id,
             tool_epoch=fence.tool_epoch,
+            event_type=PlaybackEventType.ENDED,
         ),
     )
 
@@ -2847,27 +2848,34 @@ async def test_queued_pcm_output_starts_after_current_owner_ack() -> None:
             client_monotonic_ms=1,
             turn_id=fence.turn_id,
             tool_epoch=fence.tool_epoch,
+            event_type=PlaybackEventType.ENDED,
         ),
     )
     await asyncio.sleep(0)
 
     assert len(bridge.frames) == 2
     second = bridge.frames[1]
-    assert second.generation_id == fence.generation_id
-    assert second.sequence == 1
-    assert second.source_start_sample == 2
+    assert second.generation_id == fence.generation_id + 1
+    assert second.sequence == 0
+    assert second.source_start_sample == 0
     assert context.output_owner is not None
+    second_fence = context.output_owner.fence
+    assert (
+        media_pb2.GENERATION_ACTION_START,
+        second_fence,
+    ) in bridge.generations
 
     await registry.on_playback_progress(
         session,
         PlaybackProgress(
             identity=identity,
-            generation_id=fence.generation_id,
-            received_sequence=1,
-            rendered_sample_end=482,
+            generation_id=second_fence.generation_id,
+            received_sequence=0,
+            rendered_sample_end=480,
             client_monotonic_ms=2,
-            turn_id=fence.turn_id,
-            tool_epoch=fence.tool_epoch,
+            turn_id=second_fence.turn_id,
+            tool_epoch=second_fence.tool_epoch,
+            event_type=PlaybackEventType.ENDED,
         ),
     )
     assert context.output_owner is None
@@ -3930,6 +3938,7 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
                 yield MediaReplyChunk(
                     pcm_s16le=b"\x02\x00\x03\x00",
                     source_start_sample=source_start_sample,
+                    text=str(intent.tts_source),
                     first=True,
                     final=True,
                 )
@@ -3996,6 +4005,7 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
                 client_monotonic_ms=1,
                 turn_id=ack_fence.turn_id,
                 tool_epoch=ack_fence.tool_epoch,
+                event_type=PlaybackEventType.ENDED,
             ),
         )
         await asyncio.wait_for(deep_started.wait(), timeout=1)
@@ -4008,6 +4018,10 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
         deep_frame = bridge.frames[-1]
         deep_owner = context.output_owner
         assert deep_owner is not None
+        assert deep_owner.fence.turn_id == ack_fence.turn_id
+        assert deep_owner.fence.generation_id == ack_fence.generation_id + 1
+        assert deep_frame.sequence == 0
+        assert deep_frame.source_start_sample == 0
         await registry.on_playback_progress(
             session,
             PlaybackProgress(
@@ -4018,6 +4032,7 @@ async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> 
                 client_monotonic_ms=2,
                 turn_id=deep_owner.fence.turn_id,
                 tool_epoch=deep_owner.fence.tool_epoch,
+                event_type=PlaybackEventType.ENDED,
             ),
         )
         assert context.output_owner is None
