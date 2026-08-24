@@ -210,8 +210,14 @@ def test_realtime_facade_converts_snapshots_to_append_only_deltas() -> None:
     second = facade.map_ui_event(
         {**base, "text": "你好", "turn_revision": 2}
     )
+    duplicate = facade.map_ui_event(
+        {**base, "text": "你好", "turn_revision": 2}
+    )
     corrected = facade.map_ui_event(
         {**base, "text": "您好", "turn_revision": 3}
+    )
+    blocked = facade.map_ui_event(
+        {**base, "text": "您好啊", "turn_revision": 4}
     )
     final = facade.map_ui_event(
         {
@@ -232,9 +238,62 @@ def test_realtime_facade_converts_snapshots_to_append_only_deltas() -> None:
         "delta": "好",
         "turn_revision": 2,
     }
+    assert duplicate is None
     assert corrected is None
+    assert blocked is None
     assert final == {
         "type": "response.audio_transcript.done",
         "transcript": "您好",
         "turn_revision": 4,
     }
+
+
+def test_realtime_facade_maps_user_transcripts_and_assistant_states() -> None:
+    facade = RealtimeFacade()
+    user = facade.map_ui_event(
+        {
+            "type": "transcript_delta",
+            "speaker": "user",
+            "final": True,
+            "text": "你好",
+            "turn_id": 2,
+            "turn_revision": 3,
+        }
+    )
+    created = facade.map_ui_event(
+        {
+            "type": "assistant_state",
+            "state": "speaking",
+            "session_id": "session",
+            "turn_id": 2,
+            "generation_id": 3,
+        }
+    )
+    done = facade.map_ui_event(
+        {
+            "type": "assistant_state",
+            "state": "listening",
+            "session_id": "session",
+            "turn_id": 2,
+            "generation_id": 3,
+        }
+    )
+
+    assert user == {
+        "type": "conversation.item.input_audio_transcription.completed",
+        "item_id": "user-2",
+        "transcript": "你好",
+        "turn_revision": 3,
+    }
+    assert created is not None and created["type"] == "response.created"
+    assert created["response"]["status"] == "in_progress"
+    assert done is not None and done["type"] == "response.done"
+    assert done["response"]["status"] == "completed"
+    assert facade.map_ui_event(
+        {"type": "transcript_delta", "speaker": "assistant"}
+    ) is None
+    assert facade.map_ui_event(
+        {"type": "transcript_delta", "speaker": "system"}
+    ) is None
+    assert facade.map_ui_event({"type": "assistant_state", "state": "unknown"}) is None
+    assert facade.map_ui_event({"type": "unknown"}) is None
