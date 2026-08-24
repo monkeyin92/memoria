@@ -26,7 +26,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VAD_MIN_SILENCE_DURATION_S", "0.30")
     monkeypatch.setenv("DEPLOYMENT_PROFILE", "livekit_cloud")
     monkeypatch.setenv("LIVEKIT_ADAPTIVE_INTERRUPTION", "true")
-    s = AgentSettings()
+    s = AgentSettings(_env_file=None)
     assert s.funasr_sample_rate == 16000
     assert s.funasr_context_enabled is False
     assert s.funasr_vocabulary_id == ""

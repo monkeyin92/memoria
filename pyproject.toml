@@ -104,7 +104,7 @@ asyncio_default_fixture_loop_scope = "function"
 testpaths = ["services", "tests"]
 pythonpath = ["."]
 filterwarnings = ["ignore::DeprecationWarning"]
-addopts = "-q --tb=short"
+addopts = "-q --tb=short --import-mode=importlib"
 
 [tool.coverage.run]
 source = ["services"]

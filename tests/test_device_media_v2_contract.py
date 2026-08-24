@@ -168,6 +168,7 @@ def test_active_reconnect_requires_a_complete_current_fence() -> None:
         "turn_id": 7,
         "generation_id": 9,
         "tool_epoch": 1,
+        "session_epoch": 1,
     }
     _validate(accepted)
 
@@ -179,7 +180,12 @@ def test_hard_stop_and_playback_receipts_require_complete_generation_fence() -> 
         "stream_epoch": 18,
         "control_sequence": 9,
         "device_monotonic_ms": 42_000,
-        "expected_fence": {"turn_id": 4, "generation_id": 7, "tool_epoch": 2},
+        "expected_fence": {
+            "turn_id": 4,
+            "generation_id": 7,
+            "tool_epoch": 2,
+            "session_epoch": 1,
+        },
         "local_flush_sample_end": 12_480,
     }
     _validate(stop)
@@ -194,7 +200,12 @@ def test_hard_stop_and_playback_receipts_require_complete_generation_fence() -> 
         "stream_epoch": 18,
         "control_sequence": 10,
         "device_monotonic_ms": 42_100,
-        "fence": {"turn_id": 4, "generation_id": 7, "tool_epoch": 2},
+        "fence": {
+            "turn_id": 4,
+            "generation_id": 7,
+            "tool_epoch": 2,
+            "session_epoch": 1,
+        },
         "received_sequence": 25,
         "rendered_sample_end": 12_480,
         "approximate": False,

@@ -74,13 +74,17 @@ class TestPlaybackEndedChain:
 
         # Gen 1 terminal should be rejected (stale)
         result = ledger.acknowledge(fence1, rendered_sample_end=480, terminal=True)
-        assert result == ()  # Empty tuple means rejected
+        assert result == ()
         assert not ledger.terminal_received(fence1)
+        stale_ack_count = ledger.stale_ack_count
 
         # Gen 2 terminal should be accepted
         result = ledger.acknowledge(fence2, rendered_sample_end=480, terminal=True)
-        assert result != ()
+        # No text spans were registered, so an accepted terminal ACK still
+        # returns an empty tuple. Acceptance is reflected in ledger state.
+        assert result == ()
         assert ledger.terminal_received(fence2)
+        assert ledger.stale_ack_count == stale_ack_count
 
     def test_playback_progress_event_type_mapping(self):
         """Verify PlaybackEventType.ENDED maps to terminal=True."""
@@ -123,19 +127,26 @@ class TestPlaybackEndedChain:
         )
 
         # Record first frame sent
-        delivery = ledger.record(fence, ReplyDeliveryEvent.FIRST_FRAME_SENT)
+        delivery, changed = ledger.record(fence, ReplyDeliveryEvent.FIRST_FRAME_SENT)
+        assert changed
         assert delivery.first_frame_sent
         assert not delivery.playback_ended
         assert not delivery.terminal
 
         # Record provider completed
-        delivery = ledger.record(fence, ReplyDeliveryEvent.PROVIDER_COMPLETED)
+        delivery, changed = ledger.record(fence, ReplyDeliveryEvent.PROVIDER_COMPLETED)
+        assert changed
         assert delivery.provider_completed
         assert not delivery.playback_ended
         assert not delivery.terminal
 
         # Record playback ended
-        delivery = ledger.record(fence, ReplyDeliveryEvent.PLAYBACK_ENDED, reason="playback_completed")
+        delivery, changed = ledger.record(
+            fence,
+            ReplyDeliveryEvent.PLAYBACK_ENDED,
+            reason="playback_completed",
+        )
+        assert changed
         assert delivery.playback_ended
         assert delivery.terminal
         assert delivery.terminal_event == ReplyDeliveryEvent.PLAYBACK_ENDED
@@ -247,6 +258,9 @@ class TestPlaybackEndedChain:
             device_id="dev456",
             client_type="device",
             stream_epoch=1,
+            binding_id="binding-test",
+            binding_version=1,
+            runtime_profile_version=1,
         )
 
         # Construct progress with ENDED event type
