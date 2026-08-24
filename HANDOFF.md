@@ -1,6 +1,6 @@
 # 项目交接
 
-## 当前生产增量（2026-08-24，天气停播/失联双端修复已切流；最终固件待刷）
+## 当前生产增量（2026-08-24，天气停播/失联双端修复已切流并刷板；待两轮复验）
 
 - 真实会话 `1c56c70a-4115-4254-8b21-2f968d0290d4` 第一代天气回复已完成 Actual Heard；第二代播放时，
   无 AEC/reference 的 Memoria simplex 板把自身 TTS 识别成唤醒词并 `Abort speaking`。随后 Go Edge stop 漏
@@ -22,11 +22,13 @@
   SHA-256 同为 `b7a717fa…084846`；真实上行峰值/RMS 已到 `2373 / 141.227`。最终固件进一步在 Memoria
   speaking 期间关闭 KWS、忽略迟到的 speaking-state wake event，idle 恢复 KWS，BOOT 仍是本地硬停止。
   app SHA-256 `416af6d2…e59d`、merged `09058a6a…4d69`、overlay `b7edb277…eba2`，clean build 通过。
+- 最终固件已在板卡重新枚举为 `/dev/cu.usbmodem1101` 后 app-only 写入 0x20000；刷前身份区与安全备份
+  逐字节一致，刷后仍为 `b7a717fa…084846`。串口确认 app 2.4.2、18 dB、Wi-Fi、Activation Manifest v2、
+  idle、1MIC/0 playback AFE 与 KWS 初始化，无 brownout 或重启循环。
 - 当前层级：服务端 `code=complete / wired=complete / enabled=true / verified=production runtime`；最终固件
-  `code=complete / wired=complete / enabled=false / verified=local build only`。板卡触发 brownout 后 macOS 尚无
-  `/dev/cu.usbmodem*`，所以未刷最终 app，也未做“天气自然结束 + 第二轮仍响应”真机验收。
-  `direct_real_device_verified=false`、`full_duplex_verified=false`、T1–T14 不重计；恢复稳定供电后必须先保护
-  0x10000 身份区，只写 0x20000 应用分区，Actual Heard 由用户确认。
+  `code=complete / wired=complete / enabled=true / verified=identity-safe flash + board boot/activation`。尚未做
+  “天气自然结束 + 第二轮仍响应”真机媒体验收，所以 `direct_real_device_verified=false`、
+  `full_duplex_verified=false`、T1–T14 不重计；Actual Heard 必须由用户确认。
 
 ## 当前生产增量（2026-08-24，BOOT 服务链与官方 DTLN 已投产；待板卡重新枚举）
 
