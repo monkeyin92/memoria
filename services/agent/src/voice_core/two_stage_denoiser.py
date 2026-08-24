@@ -114,6 +114,8 @@ class TwoStageDenoiser:
         stats = {
             "stage1_applied": self.config.stage1_enabled,
             "stage2_applied": run_stage2,
+            "stage1_available": self._stage1._rnnoise_available,
+            "stage2_available": self._stage2._model_available,
             "vad_prob": vad_prob,
             "total_frames": self._total_frames,
             "stage2_processed": self._stage2_processed,

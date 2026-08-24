@@ -68,6 +68,8 @@ class TestTwoStageDenoiser:
         assert len(denoised) == len(audio)
         assert 0.0 <= vad_prob <= 1.0
         assert stats["total_frames"] == 1
+        assert stats["stage1_available"] is denoiser._stage1._rnnoise_available
+        assert stats["stage2_available"] is denoiser._stage2._model_available
 
     def test_stage2_skipping_on_silence(self):
         """Test that stage 2 is skipped on silence."""
