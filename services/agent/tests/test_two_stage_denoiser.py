@@ -1,7 +1,5 @@
 """Tests for two-stage denoising pipeline."""
 
-import asyncio
-import pytest
 import math
 import struct
 
@@ -34,7 +32,10 @@ def add_audio(audio1: bytes, audio2: bytes) -> bytes:
     """Add two audio signals together."""
     samples1 = struct.unpack(f"<{len(audio1) // 2}h", audio1)
     samples2 = struct.unpack(f"<{len(audio2) // 2}h", audio2)
-    mixed = [min(32767, max(-32768, s1 + s2)) for s1, s2 in zip(samples1, samples2)]
+    mixed = [
+        min(32767, max(-32768, s1 + s2))
+        for s1, s2 in zip(samples1, samples2, strict=True)
+    ]
     return struct.pack(f"<{len(mixed)}h", *mixed)
 
 
@@ -200,21 +201,21 @@ if __name__ == "__main__":
 
     # Test 1: Basic initialization
     denoiser = TwoStageDenoiser()
-    print(f"✓ Denoiser initialized")
+    print("✓ Denoiser initialized")
     print(f"  Stage 1 (RNNoise): {'available' if denoiser._stage1._rnnoise_available else 'fallback'}")
     print(f"  Stage 2 (DTLN): {'available' if denoiser._stage2._model_available else 'not available'}")
 
     # Test 2: Process clean signal
     clean = generate_sine_wave(440, 100)
     denoised, vad, stats = denoiser.process(clean)
-    print(f"\n✓ Processed clean signal")
+    print("\n✓ Processed clean signal")
     print(f"  Input: {len(clean)} bytes")
     print(f"  Output: {len(denoised)} bytes")
     print(f"  VAD: {vad:.2f}")
     print(f"  Stage 2 applied: {stats['stage2_applied']}")
 
     # Test 3: Process multiple frames
-    print(f"\n✓ Processing 100 frames...")
+    print("\n✓ Processing 100 frames...")
     for i in range(100):
         audio = generate_sine_wave(300 + i * 2, 20)
         denoised, vad, stats = denoiser.process(audio)
@@ -226,7 +227,7 @@ if __name__ == "__main__":
     print(f"  Skip rate: {final_stats['stage2_skip_rate']:.1%}")
 
     # Test 4: Process noisy signal
-    print(f"\n✓ Processing noisy signal...")
+    print("\n✓ Processing noisy signal...")
     speech = generate_sine_wave(440, 100)
     noise = generate_noise(100, amplitude=500)
     noisy = add_audio(speech, noise)

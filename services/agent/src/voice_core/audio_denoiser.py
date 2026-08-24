@@ -40,9 +40,12 @@ class AudioDenoiser:
         self._noise_profile: list[float] | None = None
         self._frame_count = 0
         self._adaptation_frames = 10  # Adapt noise profile for first N frames
+        self._rnnoise_available = False
+
+        if not self.config.enabled:
+            return
 
         # Try to import rnnoise if available
-        self._rnnoise_available = False
         try:
             import rnnoise  # type: ignore
             self._rnnoise_state = rnnoise.RNNoise()
@@ -119,7 +122,11 @@ class AudioDenoiser:
                 alpha = 0.3
                 self._noise_profile = [
                     (1 - alpha) * n + alpha * s
-                    for n, s in zip(self._noise_profile, samples[:len(self._noise_profile)])
+                    for n, s in zip(
+                        self._noise_profile,
+                        samples[: len(self._noise_profile)],
+                        strict=True,
+                    )
                 ]
             self._frame_count += 1
 
@@ -151,7 +158,7 @@ class AudioDenoiser:
         self._noise_profile = None
         self._frame_count = 0
         if self._rnnoise_available:
-            import rnnoise  # type: ignore
+            import rnnoise
             self._rnnoise_state = rnnoise.RNNoise()
 
 

@@ -191,6 +191,7 @@ class ModelIdentityFilter:
             rewritten,
             flags=re.IGNORECASE,
         )
+        rewritten = re.sub(r"\s*V\d+\s*模型?", "", rewritten, flags=re.IGNORECASE)
 
         return rewritten
 

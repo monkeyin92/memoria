@@ -1,9 +1,7 @@
 """Tests for output content filter (model identity disclosure prevention)."""
 
-import pytest
 
 from services.agent.src.output_content_filter import (
-    FilterResult,
     ModelIdentityFilter,
     create_default_filter,
 )
@@ -178,7 +176,7 @@ class TestModelIdentityFilter:
         # Talking about models (not self-identification) - current implementation blocks
         # This may need refinement based on actual use cases
         result = filter.check("DeepSeek模型在推理能力上表现很好")
-        # Currently blocked - may want to allow third-person references
+        assert not result.passed
 
     def test_mixed_content(self):
         """Content with model mention mixed in should be caught."""

@@ -16,6 +16,8 @@ from services.agent.src.voice_core.deep_denoiser import DeepDenoiser, DeepDenois
 
 logger = logging.getLogger(__name__)
 
+DenoisingStats = dict[str, bool | int | float]
+
 
 @dataclass(frozen=True, slots=True)
 class TwoStageDenoisingConfig:
@@ -62,7 +64,6 @@ class TwoStageDenoiser:
         # Initialize stage 2: deep denoiser
         stage2_config = self.config.stage2_config or DeepDenoiserConfig(
             enabled=self.config.stage2_enabled,
-            model_type="dtln",
             sample_rate=16_000,
             use_gpu=False,  # Set to True if GPU available
         )
@@ -79,7 +80,7 @@ class TwoStageDenoiser:
             f"Stage2={'enabled' if self.config.stage2_enabled else 'disabled'}"
         )
 
-    def process(self, audio_bytes: bytes) -> tuple[bytes, float, dict]:
+    def process(self, audio_bytes: bytes) -> tuple[bytes, float, DenoisingStats]:
         """Process audio through two-stage denoising pipeline.
 
         Args:
@@ -130,7 +131,7 @@ class TwoStageDenoiser:
         self._stage2_skipped = 0
         self._stage2_processed = 0
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> DenoisingStats:
         """Get pipeline statistics."""
         return {
             "total_frames": self._total_frames,

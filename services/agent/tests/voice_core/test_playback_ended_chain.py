@@ -5,9 +5,12 @@ from device → Edge → Bridge → PlaybackLedger → ReplyDeliveryLedger.
 """
 
 import pytest
-
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.voice_core.media_protocol import PlaybackEventType, PlaybackProgress, SessionIdentity
+from services.agent.src.voice_core.media_protocol import (
+    PlaybackEventType,
+    PlaybackProgress,
+    SessionIdentity,
+)
 from services.agent.src.voice_core.playback_ledger import PlaybackLedger
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent, ReplyDeliveryLedger
 

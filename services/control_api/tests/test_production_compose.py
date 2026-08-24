@@ -495,7 +495,7 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
 
     assert "scripts/verify_release_source.py" in deploy
     assert "git get-tar-commit-id" in deploy
-    assert "services/agent/__init__.py services/agent/src" in deploy
+    assert "services/agent/__init__.py services/agent/src services/agent/models" in deploy
     assert "--network=none" in deploy
     assert "docker save" not in deploy
     assert "agent voice-core-media-bridge" in deploy
@@ -509,6 +509,13 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert "trap - ERR" in deploy
     assert "component rollback=PASS" in deploy
     assert "component rollback=FAILED" in deploy
+    assert "do not share one current dependency image" not in deploy
+    assert "do not share one current release authority" in deploy
+    assert 'docker commit --pause=true "$container" "$rollback_tag"' in deploy
+    assert 'agent-component.rollback.override.yml' in deploy
+    assert '"${previous_args[@]}" --file "$rollback_override"' in deploy
+    assert 'MEMORIA_RELEASE_TAG="$agent_release_tag"' in deploy
+    assert 'MEMORIA_RELEASE_COMMIT="$agent_release_commit"' in deploy
     assert '      MEMORIA_RELEASE_TAG: "$release_tag"' not in deploy
 
 

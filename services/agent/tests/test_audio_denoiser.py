@@ -1,9 +1,9 @@
 """Tests for audio denoiser module."""
 
-import struct
-import pytest
 import math
+import struct
 
+import pytest
 from services.agent.src.voice_core.audio_denoiser import AudioDenoiser, DenoiserConfig
 
 
@@ -30,7 +30,10 @@ def add_audio(audio1: bytes, audio2: bytes) -> bytes:
     """Add two audio signals together."""
     samples1 = struct.unpack(f"<{len(audio1) // 2}h", audio1)
     samples2 = struct.unpack(f"<{len(audio2) // 2}h", audio2)
-    mixed = [min(32767, max(-32768, s1 + s2)) for s1, s2 in zip(samples1, samples2)]
+    mixed = [
+        min(32767, max(-32768, s1 + s2))
+        for s1, s2 in zip(samples1, samples2, strict=True)
+    ]
     return struct.pack(f"<{len(mixed)}h", *mixed)
 
 
@@ -201,7 +204,9 @@ class TestAudioDenoiser:
         # For denoised, approximate "noise" as difference from clean
         denoised_samples = struct.unpack(f"<{len(denoised) // 2}h", denoised)
         clean_samples = struct.unpack(f"<{len(clean_signal) // 2}h", clean_signal)
-        residual = [d - c for d, c in zip(denoised_samples, clean_samples)]
+        residual = [
+            d - c for d, c in zip(denoised_samples, clean_samples, strict=True)
+        ]
         residual_bytes = struct.pack(f"<{len(residual)}h", *residual)
 
         output_snr = calculate_snr(denoised, residual_bytes)
@@ -226,7 +231,7 @@ if __name__ == "__main__":
 
     # Test with noise
     noise = generate_noise(100, amplitude=500)
-    for i in range(15):
+    for _ in range(15):
         denoised, vad = denoiser.process(noise)
     print(f"After noise adaptation: VAD={vad:.2f}")
 

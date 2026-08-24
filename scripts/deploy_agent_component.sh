@@ -154,7 +154,7 @@ git -C "$ROOT" archive \
   --format=tar \
   --prefix=memoria/ \
   "$expected_commit" \
-  services/agent/__init__.py services/agent/src \
+  services/agent/__init__.py services/agent/src services/agent/models \
   >"$artifact"
 git -C "$ROOT" show \
   "$expected_commit:infra/Dockerfile.agent-source-overlay" \
@@ -325,8 +325,15 @@ bridge_container="memoria-voice-core-media-bridge-1"
 
 agent_image_id="$(docker inspect "$agent_container" --format '{{.Image}}')"
 bridge_image_id="$(docker inspect "$bridge_container" --format '{{.Image}}')"
-[[ "$agent_image_id" == "$bridge_image_id" ]] || {
-  echo "Agent and bridge do not share one current dependency image" >&2
+agent_release_commit="$(docker inspect "$agent_container" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+bridge_release_commit="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+agent_release_tag="$(docker inspect "$agent_container" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+bridge_release_tag="$(docker inspect "$bridge_container" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+[[ "$agent_release_commit" =~ ^[0-9a-f]{40}$ \
+  && "$agent_release_commit" == "$bridge_release_commit" \
+  && -n "$agent_release_tag" \
+  && "$agent_release_tag" == "$bridge_release_tag" ]] || {
+  echo "Agent and bridge do not share one current release authority" >&2
   exit 1
 }
 config_files="$(docker inspect "$agent_container" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}')"
@@ -366,8 +373,23 @@ done
 
 rollback_agent="memoria-agent:rollback-${release_tag}-pre-agent"
 rollback_bridge="memoria-agent:rollback-${release_tag}-pre-bridge"
-docker tag "$agent_image_id" "$rollback_agent"
-docker tag "$bridge_image_id" "$rollback_bridge"
+
+freeze_container_image() {
+  local container="$1"
+  local image_id="$2"
+  local rollback_tag="$3"
+  if docker image inspect "$image_id" >/dev/null 2>&1; then
+    docker tag "$image_id" "$rollback_tag"
+  else
+    # A running container can outlive a pruned image record. Freeze its exact
+    # filesystem and config before cutover so rollback remains executable.
+    docker commit --pause=true "$container" "$rollback_tag" >/dev/null
+  fi
+  docker image inspect "$rollback_tag" >/dev/null
+}
+
+freeze_container_image "$agent_container" "$agent_image_id" "$rollback_agent"
+freeze_container_image "$bridge_container" "$bridge_image_id" "$rollback_bridge"
 
 override="$remote_dir/agent-component.override.yml"
 cat >"$override" <<EOF
@@ -379,10 +401,22 @@ services:
 EOF
 chmod 0600 "$override"
 
+rollback_override="$remote_dir/agent-component.rollback.override.yml"
+cat >"$rollback_override" <<EOF
+services:
+  agent:
+    image: "$rollback_agent"
+  voice-core-media-bridge:
+    image: "$rollback_bridge"
+EOF
+chmod 0600 "$rollback_override"
+
 printf '%s\n' "${previous_files[@]}" >"$remote_dir/PRE_CUTOVER_CONFIG_FILES.txt"
 {
   printf 'agent_image_id=%s\n' "$agent_image_id"
   printf 'bridge_image_id=%s\n' "$bridge_image_id"
+  printf 'release_commit=%s\n' "$agent_release_commit"
+  printf 'release_tag=%s\n' "$agent_release_tag"
   printf 'rollback_agent=%s\n' "$rollback_agent"
   printf 'rollback_bridge=%s\n' "$rollback_bridge"
 } >"$remote_dir/ROLLBACK_POINT.txt"
@@ -394,9 +428,10 @@ rollback() {
   echo "component cutover failed; restoring previous Compose configuration" >&2
   (
     cd "$working_dir"
-    env MEMORIA_RELEASE_TAG="$release_tag" MEMORIA_RELEASE_COMMIT="$release_commit" \
+    env MEMORIA_RELEASE_TAG="$agent_release_tag" \
+      MEMORIA_RELEASE_COMMIT="$agent_release_commit" \
       docker compose --project-name "$project_name" \
-      "${previous_args[@]}" \
+      "${previous_args[@]}" --file "$rollback_override" \
       --profile media-runtime up -d --no-deps --no-build \
       agent voice-core-media-bridge
   )
