@@ -1,5 +1,32 @@
 # 项目交接
 
+## 当前生产增量（2026-08-24，BOOT 服务链与官方 DTLN 已投产；待板卡重新枚举）
+
+- 板端连接失败的连续根因已收口：恢复原始身份分区后，Activation Manifest v2 签名验证通过；Control API
+  会话目录从不可解析的普通 Redis 改为共享 mTLS `device-state-redis:6379/1`，真实 challenge/session 从 503
+  恢复；Bridge 首个 VAD 的 `logger` NameError 进一步追到平行 `ListeningStateManager` 控制面。该平行门禁、
+  ASR 水位后的 PCM 丢弃及不存在的 `stop_speaking()` 调用已删除。
+- 官方 DTLN 上游固定在 `breizhn/DTLN` commit `1de1f15…f7fbc`，成对模型摘要为
+  `22b91cae…d4ae3` / `e20c92f9…2e639`。每个 media session 独立持有 recurrent/overlap state，只共享只读
+  ONNX sessions；仅 ASR 消费降噪 PCM，声纹仍消费原始 PCM。生产对 2 秒 16 kHz PCM 实跑约 0.127 秒
+  （RTF 0.064），长度保持、reset 确定性和模型 contract 均通过。未安装的 RNNoise/频谱回退已关闭。
+- 热修前首个真实 BOOT session `3f4e8213…ced4` 已完成 session policy 并在生产日志中确认 DTLN 初始化；
+  第 100 帧统计日志随后读取 `process()` 返回值中不存在的 `stage2_available`，导致 ingress pump `KeyError`。
+  最终提交/tag `9a71e446a7df1943044a81fe841427a5648633d5` /
+  `20260824-120459-dtln-stats-contract-fix` 已补齐统计契约和回归断言，CI run `32688703120` 通过。Agent 与
+  Voice Core Bridge 运行 `memoria-agent:20260824-120459-dtln-stats-contract-fix`，image ID
+  `sha256:9e9a7b7e…8f9ecf`，均 healthy、
+  restart=0；Bridge gRPC、Control readiness 和模型实推通过。整栈 runtime authority 保持
+  `20260823-210222-voice-fix`。生产容器 100 帧 ingress probe 已跨过原失败边界，`stage2_available=true`。
+- 发布器现按内容而非历史路径核验 Compose 权威；旧父镜像已 prune 时，从运行容器重建 Agent 源码回滚镜像
+  并做全树哈希比对。前两次切流分别在 Compose 路径、缺失父镜像和 heartbeat 栈版本门禁处 fail closed，
+  其中一次已自动回滚成功；最终回滚点为 `rollback-20260824-120459-dtln-stats-contract-fix-pre-agent/-pre-bridge`。
+  同日失败候选和旧回滚标签已清理，仅保留当前版与可运行回滚 `20260824-115603-dtln-boot-chain-fix`。
+- 当前层级为 `code=complete / wired=complete / enabled=true / verified=production runtime + pre-hotfix real-session
+  DTLN initialization`。热修后 macOS 当前无 `/dev/cu.usbmodem*` 且 USB 树不再枚举 Espressif，故尚未重做
+  本候选的稳定 BOOT/WSS/ASR/播放验收。`direct_real_device_verified=false`、`full_duplex_verified=false`、T1–T14 仍为
+  `0 pass / 14 blocked / 0 failed`；待重新插线/RESET 后继续，Actual Heard 必须由用户本人确认。
+
 ## 当前生产增量（2026-08-21，播放回执完整 fence 已切流并刷板；待修复后真机复验）
 
 - 根因已收敛并修复：ESP32 `playback.*` / `button.stop` 回执此前遗漏 `session_epoch`，而 Go Media Edge

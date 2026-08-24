@@ -1,43 +1,45 @@
 # 唯一架构状态基线；code/wired/enabled/verified 必须分别记录。
 # 真实外部 Gate 未通过前不得启用 go_authoritative 或 full_duplex_verified。
 schema_version: 2
-as_of_commit: da08f5b7061a6e44d45db1e516b904a8a79e057a
+as_of_commit: 9a71e446a7df1943044a81fe841427a5648633d5
 production_runtime: python_authoritative
 production_media: go_media_edge_direct_voice_core_with_livekit_compat
-production_release_tag: 20260814-231749-direct-canary
+production_release_tag: 20260823-210222-voice-fix
 production_release_symlink: /opt/memoria/releases/20260812-173008
-production_code_release_tag: 20260821-194700-device-playback-fence-contract
-production_code_commit: da08f5b7061a6e44d45db1e516b904a8a79e057a
-production_source_commit: da08f5b7061a6e44d45db1e516b904a8a79e057a
+production_code_release_tag: 20260824-120459-dtln-stats-contract-fix
+production_code_commit: 9a71e446a7df1943044a81fe841427a5648633d5
+production_source_commit: 9a71e446a7df1943044a81fe841427a5648633d5
 production_runtime_overlays:
   control_api:
-    image: memoria-control-api:20260821-121418-reply-delivery-projection
-    oci_revision: caf70271222c43047c5d661052f3b717348cc209
-    runtime_release_tag: 20260814-231749-direct-canary
+    image: memoria-control-api:20260823-210222-voice-fix
+    oci_revision: 355413a7340ab6f40e377e289197e9391a044bed
+    runtime_release_tag: 20260823-210222-voice-fix
     production_runtime_verified: true
     delayed_recheck_at: "2026-08-21"
     unauthenticated_read_write_routes: fail_closed_401
     cutover_evidence_file: /opt/memoria/direct-canaries/20260821-121418-reply-delivery-projection/CUTOVER_RESULT.txt
   agent:
-    image: memoria-agent:20260821-192100-asr-task-fence-agent-component
-    runtime_release_tag: 20260814-231749-direct-canary
+    image: memoria-agent:20260824-120459-dtln-stats-contract-fix
+    image_id: sha256:9e9a7b7e3adc93e2b53f12c43e43fdc228e88cf7ec37116e134c3a5b1c8f9ecf
+    runtime_release_tag: 20260823-210222-voice-fix
     production_runtime_verified: true
-    oci_revision: eca4346a4abadbcbc449e2488a88eb52bbf8400c
+    oci_revision: 9a71e446a7df1943044a81fe841427a5648633d5
     release_kind: agent_source_overlay
-    cutover_evidence_file: /opt/memoria/component-releases/20260821-192100-asr-task-fence-agent-component/CUTOVER_RESULT.txt
+    cutover_evidence_file: /opt/memoria/component-releases/20260824-120459-dtln-stats-contract-fix/CUTOVER_RESULT.txt
   voice_core_media_bridge:
-    image: memoria-agent:20260821-192100-asr-task-fence-agent-component
-    runtime_release_tag: 20260816-bridge-liveness-83af813
+    image: memoria-agent:20260824-120459-dtln-stats-contract-fix
+    image_id: sha256:9e9a7b7e3adc93e2b53f12c43e43fdc228e88cf7ec37116e134c3a5b1c8f9ecf
+    runtime_release_tag: 20260823-210222-voice-fix
     production_runtime_verified: true
-    oci_revision: eca4346a4abadbcbc449e2488a88eb52bbf8400c
+    oci_revision: 9a71e446a7df1943044a81fe841427a5648633d5
     release_kind: agent_source_overlay
-    cutover_evidence_file: /opt/memoria/component-releases/20260821-192100-asr-task-fence-agent-component/CUTOVER_RESULT.txt
+    cutover_evidence_file: /opt/memoria/component-releases/20260824-120459-dtln-stats-contract-fix/CUTOVER_RESULT.txt
     diagnostics: media_pcm_tap_enabled_MEDIA_PCM_TAP_DIR_data_diagnostics_pcm-tap_and_FUNASR_WS_TRACE_true
   media_edge:
-    image: memoria-media-edge:20260821-194700-device-playback-fence-contract
-    image_id: sha256:5721272a35feffc7c472635da551c1a5156152cdd1513d17f3b1d2e044174d42
-    runtime_release_tag: 20260816-bridge-liveness-83af813
-    oci_revision: da08f5b7061a6e44d45db1e516b904a8a79e057a
+    image: memoria-media-edge:20260823-210222-voice-fix
+    image_id: sha256:934555b4fd9866e7714578cdf741fac7773cbb3fc093589c55a716e1785015e4
+    runtime_release_tag: 20260823-210222-voice-fix
+    oci_revision: 355413a7340ab6f40e377e289197e9391a044bed
     production_runtime_verified: true
     cutover_evidence_file: /opt/memoria/direct-canaries/20260821-194700-device-playback-fence-contract/CUTOVER_RESULT.txt
 production_runtime_verified: true
@@ -54,17 +56,34 @@ student_track: p3_local_software_complete_external_release_gates_pending
 student_track_as_of: 2026-08-09_local_worktree
 
 local_worktree_candidate:
-  as_of_date: 2026-08-21
-  head_commit: da08f5b7061a6e44d45db1e516b904a8a79e057a
-  dirty: true
-  dirty_scope: preserved_user_untracked_files_plus_ignored_board_flash_evidence
+  as_of_date: 2026-08-24
+  head_commit: 9a71e446a7df1943044a81fe841427a5648633d5
+  dirty: false
+  dirty_scope: none_in_release_worktree
   code: complete
-  wired: esp32_to_media_edge_to_media_v1_to_voice_core_playback_terminal
-  enabled: agent_bridge_media_edge_candidate_firmware_production_zero_session
-  verified: production_runtime_zero_session_plus_local_cross_language_clean_firmware_build_and_board_boot_activation
-  production_deployed: coordinated_cutover_pass_2026_08_21
+  wired: esp32_to_media_edge_to_media_v1_to_voice_core_with_dtln_asr_ingress
+  enabled: agent_bridge_dtln_production_true
+  verified: production_runtime_zero_session_plus_dtln_model_runtime_board_reenumeration_pending
+  production_deployed: agent_bridge_component_cutover_pass_2026_08_24
   direct_real_device_verified: false
   full_duplex_verified: false
+  dtln_boot_chain_increment:
+    name: restore_boot_media_path_and_install_official_dtln
+    code: complete
+    wired: media_edge_to_single_media_audio_ingress_dtln_to_asr_raw_pcm_to_speaker_identity
+    enabled: agent_bridge_production_true
+    verified: production_runtime_zero_session_and_model_inference
+    production_release_tag: 20260824-120459-dtln-stats-contract-fix
+    production_release_commit: 9a71e446a7df1943044a81fe841427a5648633d5
+    image_id: sha256:9e9a7b7e3adc93e2b53f12c43e43fdc228e88cf7ec37116e134c3a5b1c8f9ecf
+    runtime_stack_release_tag: 20260823-210222-voice-fix
+    model_source_commit: 1de1f15a8b5b7e1c44905618ff2ef70ca8277fbc
+    model_1_sha256: 22b91cae3855e5a0620e66a917ca6c82c58db0e842c770f58d86751c5e8d4ae3
+    model_2_sha256: e20c92f9233fccf29cddf86970d0d0161a03aebccc26d6f4d5639c4d5ec2e639
+    cutover_evidence_file: /opt/memoria/component-releases/20260824-120459-dtln-stats-contract-fix/CUTOVER_RESULT.txt
+    direct_real_device_verified: false
+    full_duplex_verified: false
+    next_gate: board_usb_reenumeration_then_boot_wss_asr_playback_actual_heard
   asr_task_epoch_fence_increment:
     name: preserve_asr_task_fence_across_transport_reconnect
     code: complete
