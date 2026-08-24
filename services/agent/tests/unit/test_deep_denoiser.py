@@ -6,6 +6,7 @@ import math
 import struct
 from pathlib import Path
 
+import numpy as np
 import pytest
 from services.agent.src.voice_core.deep_denoiser import (
     _MODEL_SHA256,
@@ -68,6 +69,23 @@ def test_dtln_stream_preserves_pcm_length_and_reset_is_session_local() -> None:
 
     first.reset()
     assert b"".join(first.process(frame) for frame in frames) == first_output
+
+
+def test_dtln_applies_bounded_six_db_output_makeup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    denoiser = DeepDenoiser.__new__(DeepDenoiser)
+    denoiser.config = DeepDenoiserConfig()
+    denoiser._model_available = True
+    denoiser._pending_input = np.empty(0, dtype=np.float32)
+    denoiser._ready_output = np.empty(0, dtype=np.float32)
+    monkeypatch.setattr(denoiser, "_process_shift", lambda shift: shift)
+    samples = np.zeros(128, dtype="<i2")
+    samples[:4] = (1000, -1000, 20_000, -20_000)
+
+    output = np.frombuffer(denoiser.process(samples.tobytes()), dtype="<i2")
+
+    assert output[:4].tolist() == [2000, -2000, 32767, -32768]
 
 
 def test_required_dtln_fails_closed_when_models_are_missing(tmp_path: Path) -> None:

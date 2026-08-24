@@ -120,6 +120,14 @@ class MediaOutputDispatchMixin:
         ) -> None: ...
 
         @staticmethod
+        async def _advance_failed_output_generation(
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+            *,
+            reason: str,
+        ) -> GenerationFence | None: ...
+
+        @staticmethod
         def _rebind_output_work(
             work: _OutputWork,
             fence: GenerationFence,

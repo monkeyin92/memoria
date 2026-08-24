@@ -146,6 +146,87 @@ async def test_funasr_send_lag_uses_websocket_send_elapsed_time(
 
 
 @pytest.mark.asyncio
+async def test_funasr_first_pcm_replaces_failed_provider_task_with_bounded_replay() -> None:
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[object] = []
+            self.closed = False
+
+        async def send(self, payload: object) -> None:
+            self.sent.append(payload)
+
+        async def close(self) -> None:
+            self.closed = True
+
+    old_websocket = FakeWebSocket()
+    replacement = FakeWebSocket()
+    session = FunASRSession(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    session._ws = old_websocket  # type: ignore[assignment]
+    session.task_id = "task-idle"
+    session._task_epoch = 1
+    session._task_sample_origin = 320
+    session._last_sent_sample = 324
+    preroll = b"\x02\x00" * 4
+    session._push_ring(preroll, start_sample=320)
+    session._record_task_audio_send(pcm=preroll, start_sample=320, end_sample=324)
+    session._failed = True
+    session._replaceable_provider_failure = True
+    session._task_failed_event.set()
+    session.events.put_nowait(
+        funasr_stt.FunASRServerEvent(
+            event="task-failed",
+            task_id="task-idle",
+            error_code="CLIENT_ERROR",
+            error_message="request timeout after 23 seconds",
+        )
+    )
+
+    async def open_replacement() -> tuple[FakeWebSocket, str, tuple[object, ...]]:
+        return replacement, "task-replacement", ()
+
+    async def receive_until_closed() -> None:
+        await session._idle_terminal_event.wait()
+
+    session._open_with_retry = open_replacement  # type: ignore[method-assign]
+    session._recv_loop = receive_until_closed  # type: ignore[method-assign]
+
+    await session.send_pcm(b"\x01\x00" * 4, capture_start_sample=324)
+
+    assert old_websocket.closed is True
+    assert replacement.sent == [preroll, b"\x01\x00" * 4]
+    assert session.task_id == "task-replacement"
+    assert session.task_epoch == 2
+    assert session.task_sample_origin == 320
+    assert session.last_sent_sample == 328
+    assert session.task_audio_send_count == 2
+    assert session.failed is False
+    assert session._replaceable_provider_failure is False
+    assert session._task_failed_event.is_set() is False
+    assert session.events.empty()
+    await session.aclose()
+
+
+@pytest.mark.asyncio
+async def test_funasr_does_not_replace_internal_failed_task_fence() -> None:
+    class FakeWebSocket:
+        async def send(self, _payload: object) -> None:
+            return None
+
+    session = FunASRSession(FunASRConfig(api_key="test", ws_url="ws://unused"))
+    session._ws = FakeWebSocket()  # type: ignore[assignment]
+    session.task_id = "task-with-audio"
+    session._task_epoch = 1
+    session._failed = True
+    session._task_failed_event.set()
+
+    with pytest.raises(APIConnectionError, match="FunASR cannot send PCM"):
+        await session.send_pcm(b"\x01\x00", capture_start_sample=320)
+
+    assert session.task_id == "task-with-audio"
+    assert session.last_sent_sample == 0
+
+
+@pytest.mark.asyncio
 async def test_funasr_failed_send_without_replay_does_not_claim_provider_pcm() -> None:
     class FailingWebSocket:
         async def send(self, _payload: object) -> None:
