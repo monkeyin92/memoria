@@ -22,6 +22,10 @@ _MODEL_SHA256 = {
 _BLOCK_LEN = 512
 _BLOCK_SHIFT = 128
 _INITIAL_OUTPUT_DELAY = _BLOCK_SHIFT - 1
+# The board microphone is pinned at 18 dB to keep its raw noise floor below
+# the DTLN input. Restore the remaining 6 dB after suppression, with the PCM
+# conversion below providing a hard saturation fence.
+_OUTPUT_MAKEUP_GAIN = 2.0
 
 FloatArray = NDArray[np.float32]
 
@@ -159,7 +163,11 @@ class DeepDenoiser:
             raise RuntimeError("DTLN output buffer lost its fixed latency invariant")
         output = self._ready_output[:requested]
         self._ready_output = self._ready_output[requested:]
-        pcm = np.clip(output * 32768.0, -32768, 32767).astype("<i2")
+        pcm = np.clip(
+            output * (32768.0 * _OUTPUT_MAKEUP_GAIN),
+            -32768,
+            32767,
+        ).astype("<i2")
         return bytes(pcm.tobytes())
 
     def _process_shift(self, shift: FloatArray) -> FloatArray:

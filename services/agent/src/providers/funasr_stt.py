@@ -168,6 +168,7 @@ class FunASRSession:
         self._idle_terminal_event = asyncio.Event()
         self._finished_task_id: str | None = None
         self._task_failed_event = asyncio.Event()
+        self._replaceable_provider_failure = False
         self._last_task_failure: FunASRTaskFailure | None = None
         self._pcm_ring: collections.deque[bytes] = collections.deque()
         self._pcm_ring_ranges: collections.deque[tuple[int, int]] = collections.deque()
@@ -373,6 +374,7 @@ class FunASRSession:
             error_message=error_message,
         )
         self._failed = True
+        self._replaceable_provider_failure = False
         self._ready.clear()
         self._rotation_pending = False
         self._task_failed_event.set()
@@ -538,6 +540,7 @@ class FunASRSession:
         self._task_sample_origin = 0
         self._reset_task_audio_evidence()
         self._failed = False
+        self._replaceable_provider_failure = False
         self._finishing = False
         self._terminal_finishing = False
         self._rotation_pending = False
@@ -692,6 +695,7 @@ class FunASRSession:
                         continue
                     if ev.event == "task-failed":
                         self._failed = True
+                        self._replaceable_provider_failure = True
                         self._breaker.record_failure()
                         self._record_task_failure(
                             task_id=ev.task_id,
@@ -826,6 +830,7 @@ class FunASRSession:
                 self._task_sample_origin = replay_start
                 self._reset_task_audio_evidence()
                 self._failed = False
+                self._replaceable_provider_failure = False
                 self._task_started_event.set()
                 self._task_finished_received.clear()
                 self._task_finished_consumed.clear()
@@ -896,7 +901,13 @@ class FunASRSession:
         replayed: bool = False,
         capture_start_sample: int | None = None,
     ) -> None:
-        if self._closed or self._ws is None:
+        if self._closed:
+            raise RuntimeError("FunASR session not connected")
+        replaceable_provider_failure = (
+            (self._failed or self._task_failed_event.is_set())
+            and self._replaceable_provider_failure
+        )
+        if self._ws is None and not replaceable_provider_failure:
             raise RuntimeError("FunASR session not connected")
         if not pcm or len(pcm) % 2:
             raise ValueError("FunASR PCM must be non-empty 16-bit samples")
@@ -922,6 +933,7 @@ class FunASRSession:
                     )
                 )
             end = start + len(pcm) // 2
+            await self._replace_failed_provider_task_if_needed(next_origin=start)
             await self._start_task_for_pcm_if_needed(next_origin=start)
             await self._wait_until_ready("send PCM")
             ws = self._ws
@@ -998,6 +1010,109 @@ class FunASRSession:
                 "asr_send_lag_ms",
                 (monotonic() - started) * 1000.0,
             )
+
+    async def _replace_failed_provider_task_if_needed(self, *, next_origin: int) -> None:
+        """Replace an explicit provider failure before sending the next PCM frame."""
+
+        if not (self._failed or self._task_failed_event.is_set()):
+            return
+        if not self._replaceable_provider_failure:
+            raise self._failure_exception("FunASR cannot send PCM")
+
+        failed_task_id = self.task_id or ""
+        replay_start = self.replay_start_sample()
+        replay = self._replay_pcm()
+        failed_ws = self._ws
+        recv_task = self._recv_task
+        self._recv_task = None
+        if recv_task is not None and recv_task is not asyncio.current_task():
+            recv_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await recv_task
+        self._mark_ws_disconnected()
+        if failed_ws is not None:
+            with contextlib.suppress(Exception):
+                await failed_ws.close()
+
+        try:
+            self._breaker.before_request()
+            if self.metrics is not None:
+                self.metrics.inc_provider_ws_reconnect("asr")
+            ws, task_id, startup_events = await self._open_with_retry()
+        except Exception as exc:
+            self._breaker.record_failure()
+            self._failed = True
+            self._ready.clear()
+            self._task_failed_event.set()
+            self._ws = None
+            raise APIConnectionError(
+                f"FunASR provider task replacement failed: {exc}"
+            ) from exc
+
+        self._ws = ws
+        self.task_id = task_id
+        self._task_epoch += 1
+        self._task_sample_origin = replay_start if replay else next_origin
+        self._reset_task_audio_evidence()
+        self._failed = False
+        self._replaceable_provider_failure = False
+        self._finishing = False
+        self._terminal_finishing = False
+        self._rotation_pending = False
+        self._task_started_event.set()
+        self._task_finished_received.clear()
+        self._task_finished_consumed.clear()
+        self._idle_terminal_event.clear()
+        self._finished_task_id = None
+        self._task_failed_event.clear()
+        self._ready.set()
+        self._remember_current_task_event_context()
+        self._mark_ws_connected()
+        try:
+            for event in startup_events:
+                await self.events.put(event)
+            if replay:
+                await ws.send(replay)
+                self._record_task_audio_send(
+                    pcm=replay,
+                    start_sample=replay_start,
+                    end_sample=replay_start + len(replay) // 2,
+                )
+        except Exception as exc:
+            await self._fail_task_fence(
+                task_id=task_id,
+                task_epoch=self._task_epoch,
+                error_code="provider_failure_replay_failed",
+                error_message="FunASR provider-failure replay was ambiguous",
+                failed_ws=ws,
+            )
+            raise self._failure_exception("FunASR provider-failure replay failed") from exc
+        self._discard_queued_task_failure(failed_task_id)
+        self._breaker.record_success()
+        self._recv_task = asyncio.create_task(self._recv_loop(), name="funasr-recv-loop")
+        logger.info(
+            "FunASR replaced failed provider task task_id=%s task_epoch=%s "
+            "origin=%s replay_samples=%s",
+            task_id,
+            self._task_epoch,
+            self._task_sample_origin,
+            len(replay) // 2,
+        )
+
+    def _discard_queued_task_failure(self, task_id: str) -> None:
+        preserved: list[FunASRServerEvent] = []
+        while True:
+            try:
+                event = self.events.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if event.event == "task-failed" and (
+                not event.task_id or event.task_id == task_id
+            ):
+                continue
+            preserved.append(event)
+        for event in preserved:
+            self.events.put_nowait(event)
 
     async def update_context(self, context: tuple[dict[str, object], ...]) -> None:
         self._context = context
@@ -1192,6 +1307,7 @@ class FunASRSession:
         self._task_finished_received.clear()
         self._task_finished_consumed.clear()
         self._task_failed_event.clear()
+        self._replaceable_provider_failure = False
         self.task_id = task_id
         self._task_epoch += 1
         self._segment_epoch += 1
