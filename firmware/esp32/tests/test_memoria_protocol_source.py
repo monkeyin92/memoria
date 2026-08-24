@@ -121,6 +121,16 @@ BOARD_CONFIG = json.loads(
         / "config.json"
     ).read_text(encoding="utf-8")
 )
+BOARD_SOURCE = (
+    Path(__file__).parents[1]
+    / "overlay"
+    / "files"
+    / "main"
+    / "boards"
+    / "memoria"
+    / "atk-dnesp32s3-v1"
+    / "memoria_atk_dnesp32s3_v1.cc"
+).read_text(encoding="utf-8")
 CONTRACTS_README = (Path(__file__).parents[3] / "packages" / "contracts" / "README.md").read_text(
     encoding="utf-8"
 )
@@ -138,6 +148,14 @@ def test_product_build_has_a_real_idle_session_entry() -> None:
     assert "CONFIG_SR_MN_CN_MULTINET6_QUANT=y" in sdkconfig
     assert "默认启用本地唤醒词“梅莫里亚”" in FIRMWARE_README
     assert "普通“你好你好”不是唤醒词" in FIRMWARE_README
+
+
+def test_board_mic_gain_keeps_normal_distance_speech_above_denoiser_floor() -> None:
+    assert "constexpr float kMicInputGainDb = 18.0f;" in BOARD_SOURCE
+    assert "audio_codec.SetInputGain(kMicInputGainDb);" in BOARD_SOURCE
+    assert "SetInputGain(12.0f)" not in BOARD_SOURCE
+    assert "SetInputGain(24.0f)" not in BOARD_SOURCE
+    assert "Keep the strict local AFE VAD" in BOARD_SOURCE
 
 
 def test_memoria_activation_applies_assets_before_audio_engine_can_load_models() -> None:

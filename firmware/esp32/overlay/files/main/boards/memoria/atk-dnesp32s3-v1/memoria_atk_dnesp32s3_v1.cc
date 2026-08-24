@@ -14,6 +14,14 @@
 
 #define TAG "memoria-atk-dnesp32s3-v1"
 
+namespace {
+
+// Board-level acoustic calibration authority. ES8388 exposes 3 dB PGA steps;
+// keep this explicit so noise/VAD tuning cannot silently override sensitivity.
+constexpr float kMicInputGainDb = 18.0f;
+
+}  // namespace
+
 class XL9555 : public I2cDevice {
 public:
     XL9555(i2c_master_bus_handle_t i2c_bus, uint8_t addr) : I2cDevice(i2c_bus, addr) {
@@ -192,15 +200,14 @@ public:
             AUDIO_I2S_GPIO_MCLK, AUDIO_I2S_GPIO_BCLK, AUDIO_I2S_GPIO_WS,
             AUDIO_I2S_GPIO_DOUT, AUDIO_I2S_GPIO_DIN, GPIO_NUM_NC,
             AUDIO_CODEC_ES8388_ADDR);
-        // Upstream defaults the ES8388 mic gain to 24 dB.  PCM tap evidence
-        // (2026-08-20, session 73805bf2) showed a continuous broadband noise
-        // floor at RMS 100-150 while user speech peaked at RMS 200-470, which
-        // keeps the ASR provider VAD permanently open and every reply is
-        // superseded before TTS output.  Halve the gain twice (12 dB) so the
-        // floor drops ~4x while close-range speech stays recognizable.
+        // Upstream's 24 dB kept the old ASR VAD open on the board's broadband
+        // noise floor. The first correction to 12 dB over-attenuated ordinary
+        // speaking distance after DTLN. Keep the strict local AFE VAD and use
+        // the ES8388's midpoint 18 dB PGA step: 6 dB more speech headroom than
+        // 12 dB while retaining 6 dB noise reduction from upstream.
         static bool input_gain_configured = false;
         if (!input_gain_configured) {
-            audio_codec.SetInputGain(12.0f);
+            audio_codec.SetInputGain(kMicInputGainDb);
             input_gain_configured = true;
         }
         return &audio_codec;
