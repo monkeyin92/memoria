@@ -96,6 +96,14 @@ class MediaOutputStreamMixin:
 
         async def _start_selected_output(self, context: _MediaVoiceSession) -> bool: ...
 
+        @staticmethod
+        async def _advance_failed_output_generation(
+            context: _MediaVoiceSession,
+            fence: GenerationFence,
+            *,
+            reason: str,
+        ) -> GenerationFence | None: ...
+
         def _record_reply_delivery_event(
             self,
             context: _MediaVoiceSession,
@@ -261,6 +269,12 @@ class MediaOutputStreamMixin:
                 )
                 if announcement:
                     context.assistant_text += announcement
+                # PCM-only intents still own the audible lifecycle even when
+                # they have no transcript metadata.  This is especially
+                # important after a completed segment is promoted to a fresh
+                # generation: without entering SPEAKING on its first frame the
+                # terminal ACK would leave the runtime stranded in THINKING.
+                if announcement or not emitted_audio:
                     # Keep the runtime's heard-text tracker aligned with the
                     # complete provider text, while the ledger still decides
                     # whether that text was actually rendered.
@@ -284,13 +298,14 @@ class MediaOutputStreamMixin:
                     # second phrase cannot make the UI/history seam regress
                     # to only that phrase. This remains non-final until the
                     # playback ledger supplies an actual-heard watermark.
-                    context.runtime.publish_transcript(
-                        speaker="assistant",
-                        text=context.assistant_text,
-                        final=False,
-                        text_delivered=True,
-                        fence=fence,
-                    )
+                    if announcement:
+                        context.runtime.publish_transcript(
+                            speaker="assistant",
+                            text=context.assistant_text,
+                            final=False,
+                            text_delivered=True,
+                            fence=fence,
+                        )
                 gated = context.runtime.gate_tts_audio(fence, chunk.pcm_s16le)
                 if gated is None:
                     self.metrics.inc_media_stale_generation()
@@ -551,8 +566,6 @@ class MediaOutputStreamMixin:
         )
         if owner is not None:
             self._release_output_owner(context, fence, reason="playback_completed")
-        if await self._start_selected_output(context):
-            return
         if not context.output_complete_emitted:
             task_epoch, context_version = self._event_versions(context, fence)
             context.output_complete_emitted = await self.bridge.emit_generation(
@@ -567,6 +580,14 @@ class MediaOutputStreamMixin:
             fence,
             context.playback.actual_heard_text(fence),
         )
+        # A playback terminal permanently closes this generation on the
+        # hardware and Edge ledgers.  Finish the runtime lifecycle before
+        # selecting a queued acknowledgement/deep/tool result so the existing
+        # auxiliary-output path rebinds it to a successor generation.  Starting
+        # queued work above this boundary made its behavior depend on a small
+        # race between playback.ended and delegation completion, and could send
+        # new PCM into a fence the device had already terminally closed.
+        await self._start_selected_output(context)
 
     async def _fail_playback_output(
         self,
