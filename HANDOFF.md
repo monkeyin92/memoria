@@ -1,5 +1,33 @@
 # 项目交接
 
+## 当前生产增量（2026-08-24，天气停播/失联双端修复已切流；最终固件待刷）
+
+- 真实会话 `1c56c70a-4115-4254-8b21-2f968d0290d4` 第一代天气回复已完成 Actual Heard；第二代播放时，
+  无 AEC/reference 的 Memoria simplex 板把自身 TTS 识别成唤醒词并 `Abort speaking`。随后 Go Edge stop 漏
+  `session_epoch`、Agent 用旧代发失败 CANCEL、迟到旧代音频先撞新代序列连续性，形成
+  `stale_client_event`、cancel fence mismatch 与 first-frame 0/0 错误，解释了“说到一半停，之后再说无响应”。
+- 主线提交/tag `fadda434c9ea081ba1331ec81bc029fc74516bf6` /
+  `20260824-1318-playback-fence-recovery` 已推送。Agent/Bridge 组件投影 tag
+  `20260824-1320-playback-fence-agent-component` 运行镜像 `sha256:5771074693cf…64b0`；Media Edge 运行
+  `memoria-media-edge:20260824-1318-playback-fence-recovery`，镜像 `sha256:de28a74efc95…e930`。三容器均
+  healthy，Edge health failing streak=0，切流后目标错误日志为 0。
+- Go Edge 现在完整转发 stop epoch、只接受同 epoch successor cancel，并在序列连续性前先按完整 fence 丢弃
+  迟到旧代帧；Agent 播放错误/超时先推进权威 successor generation 再发 CANCEL。Agent Media Session 全量、
+  Ruff、Go 全量/针对性回归通过；QwenRealtimeSearch、Doubao、FunASR、DeepSeek 与 InterruptSemantic 生产
+  smoke 全部 PASS。
+- 官方 DTLN 未被薄发布覆盖：当前 Agent 与 Bridge 均完成 ONNX checksum/contract 初始化和 640 字节 PCM
+  实推，输出 `DTLN_SMOKE True 640`。服务器普通制品已按当前+一个可运行回滚收敛，根盘 59%→54%；未删除
+  数据卷、数据库、安全或合规备份。
+- 板端已把 ES8388 输入增益从 12 dB 调到 18 dB，上一候选曾 app-only 安全刷写并确认身份区刷前/刷后
+  SHA-256 同为 `b7a717fa…084846`；真实上行峰值/RMS 已到 `2373 / 141.227`。最终固件进一步在 Memoria
+  speaking 期间关闭 KWS、忽略迟到的 speaking-state wake event，idle 恢复 KWS，BOOT 仍是本地硬停止。
+  app SHA-256 `416af6d2…e59d`、merged `09058a6a…4d69`、overlay `b7edb277…eba2`，clean build 通过。
+- 当前层级：服务端 `code=complete / wired=complete / enabled=true / verified=production runtime`；最终固件
+  `code=complete / wired=complete / enabled=false / verified=local build only`。板卡触发 brownout 后 macOS 尚无
+  `/dev/cu.usbmodem*`，所以未刷最终 app，也未做“天气自然结束 + 第二轮仍响应”真机验收。
+  `direct_real_device_verified=false`、`full_duplex_verified=false`、T1–T14 不重计；恢复稳定供电后必须先保护
+  0x10000 身份区，只写 0x20000 应用分区，Actual Heard 由用户确认。
+
 ## 当前生产增量（2026-08-24，BOOT 服务链与官方 DTLN 已投产；待板卡重新枚举）
 
 - 板端连接失败的连续根因已收口：恢复原始身份分区后，Activation Manifest v2 签名验证通过；Control API
