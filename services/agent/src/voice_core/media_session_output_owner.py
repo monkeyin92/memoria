@@ -67,6 +67,30 @@ class MediaOutputOwnerMixin:
                 )
 
     @staticmethod
+    async def _advance_failed_output_generation(
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+        *,
+        reason: str,
+    ) -> GenerationFence | None:
+        """Install one successor fence before publishing a terminal cancel."""
+
+        if not context.runtime.fence.matches(fence):
+            return None
+        heard = context.playback.actual_heard_text(fence)
+        cancelled = await context.runtime.preempt_media_output(
+            cause=reason,
+            synchronized_transcript=heard,
+        )
+        if cancelled.matches(fence):
+            return None
+        await context.runtime.on_media_playback_interrupted(
+            interrupted_from=fence,
+            synchronized_transcript=heard,
+        )
+        return cancelled
+
+    @staticmethod
     def _release_output_owner(
         context: _MediaVoiceSession,
         fence: GenerationFence,

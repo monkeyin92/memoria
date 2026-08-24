@@ -584,18 +584,26 @@ class MediaOutputStreamMixin:
             reason,
         )
         await self._cancel_reply_task(context, fence, reason=reason)
+        cancelled = await self._advance_failed_output_generation(
+            context,
+            fence,
+            reason=reason,
+        )
         context.playback.discard(fence)
         context.assistant_text = ""
+        context.output_sequence = 0
         context.output_text_offset = 0
         context.provider_complete = False
         context.output_complete_emitted = False
-        task_epoch, context_version = self._event_versions(context, fence)
+        if cancelled is None:
+            await context.runtime.on_assistant_reply_aborted(fence, cause=reason)
+            return
+        task_epoch, context_version = self._event_versions(context, cancelled)
         await self.bridge.emit_generation(
-            fence.session_id,
-            fence,
+            cancelled.session_id,
+            cancelled,
             action=media_pb2.GENERATION_ACTION_CANCEL,
             reason=reason,
             task_epoch=task_epoch,
             context_version=context_version,
         )
-        await context.runtime.on_assistant_reply_aborted(fence, cause=reason)
