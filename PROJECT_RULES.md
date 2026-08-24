@@ -12,9 +12,9 @@
 
 ## 文档纪律
 
-仓库长期文档严格只有 `README.md`、`AGENTS.md`、`HANDOFF.md` 三份。禁止新增 session 记录、平行计划、组件 README、ADR、release note 或一次性排障文档。
+仓库长期文档严格只有 `README.md`、`PROJECT_RULES.md`、`HANDOFF.md` 三份。禁止新增 session 记录、平行计划、组件 README、ADR、release note 或一次性排障文档。
 
-- 规则与稳定边界归入 `AGENTS.md`。
+- 规则与稳定边界归入 `PROJECT_RULES.md`。
 - 产品、架构、开发和协议入口归入 `README.md`。
 - 当前状态、当前/回滚版本、运维步骤和下一验收归入 `HANDOFF.md`。
 - 机器事实优先放 schema、proto、JSON、TOML、锁文件和测试，不用 prose 重复。

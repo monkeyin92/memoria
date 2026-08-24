@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
-ALLOWED_DOCUMENTS = {"README.md", "AGENTS.md", "HANDOFF.md"}
+ALLOWED_DOCUMENTS = {"README.md", "PROJECT_RULES.md", "HANDOFF.md"}
 DOCUMENT_SUFFIXES = {".md", ".markdown", ".mdown", ".rst", ".adoc", ".asciidoc"}
 
 
