@@ -599,7 +599,10 @@ func TestVoiceCoreBridgeStopSequenceIsMonotonic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fence := Fence{SessionID: "s"}
+	fence := Fence{SessionID: "s", SessionEpoch: 7, TurnID: 11, GenerationID: 13, ToolEpoch: 17}
+	session.stateMu.Lock()
+	session.current = fence
+	session.stateMu.Unlock()
 	if err := session.SendStop("stop-1", "first", fence, 1234); err != nil {
 		t.Fatal(err)
 	}
@@ -620,6 +623,9 @@ func TestVoiceCoreBridgeStopSequenceIsMonotonic(t *testing.T) {
 	}
 	if firstEnvelope["protocol"] != "media-v1" || secondEnvelope["protocol"] != "media-v1" {
 		t.Fatalf("stop envelope protocol missing: first=%v second=%v", firstEnvelope["protocol"], secondEnvelope["protocol"])
+	}
+	if firstEnvelope["session_epoch"] != float64(fence.SessionEpoch) || secondEnvelope["session_epoch"] != float64(fence.SessionEpoch) {
+		t.Fatalf("stop envelope lost session epoch: first=%v second=%v", firstEnvelope["session_epoch"], secondEnvelope["session_epoch"])
 	}
 }
 

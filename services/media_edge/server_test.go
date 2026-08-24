@@ -773,6 +773,39 @@ func TestSessionCancelGenerationKeepsSessionUsableAndFencesQueuedAudio(t *testin
 	}
 }
 
+func TestSessionApplyCancelledGenerationRejectsAnotherSessionEpoch(t *testing.T) {
+	session, err := NewSession(OpenSessionRequest{SessionID: "s", AccountID: "a", DeviceID: "d", StreamEpoch: 1}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := Fence{SessionID: "s", SessionEpoch: 7, TurnID: 1, GenerationID: 1}
+	if err := session.AdvanceGeneration(current); err != nil {
+		t.Fatal(err)
+	}
+
+	crossEpoch := current
+	crossEpoch.SessionEpoch++
+	crossEpoch.GenerationID++
+	if err := session.ApplyCancelledGeneration(crossEpoch); err == nil {
+		t.Fatal("cancel from another session epoch was accepted")
+	}
+	if fence, active := session.GenerationSnapshot(); !active || !fence.Equal(current) {
+		t.Fatalf("rejected cancel changed generation: fence=%+v active=%v", fence, active)
+	}
+
+	cancelled := current
+	cancelled.GenerationID++
+	if err := session.ApplyCancelledGeneration(cancelled); err != nil {
+		t.Fatalf("authoritative successor cancel rejected: %v", err)
+	}
+	if fence, active := session.GenerationSnapshot(); active || !fence.Equal(cancelled) {
+		t.Fatalf("successor cancel not installed: fence=%+v active=%v", fence, active)
+	}
+	if err := session.ApplyCancelledGeneration(cancelled); err != nil {
+		t.Fatalf("idempotent successor cancel rejected: %v", err)
+	}
+}
+
 func TestSessionCancelIdempotencyIsScopedToReconnectEpoch(t *testing.T) {
 	session, err := NewSession(OpenSessionRequest{SessionID: "s", AccountID: "a", DeviceID: "d", StreamEpoch: 1}, 2)
 	if err != nil {

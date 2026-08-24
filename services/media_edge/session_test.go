@@ -129,6 +129,15 @@ func TestSessionDownlinkStrictContinuityBeforeLane(t *testing.T) {
 	if err := session.AdvanceGeneration(secondFence); err != nil {
 		t.Fatal(err)
 	}
+	// A late old-generation frame can still be in the gRPC receive queue after
+	// the generation control. Drop it by complete fence before applying the
+	// new generation's zero-origin continuity rule; it must not tear down the
+	// Voice Core stream with a misleading first-frame error.
+	lateOld := testFrame("continuity", 1, 5, firstFence.GenerationID)
+	lateOld.TurnID = firstFence.TurnID
+	if err := session.AcceptDownlink(lateOld); err != ErrStaleDownlinkGeneration {
+		t.Fatalf("late old-generation frame error=%v, want stale generation", err)
+	}
 	fresh := testFrame("continuity", 1, 0, secondFence.GenerationID)
 	fresh.TurnID = secondFence.TurnID
 	if err := session.AcceptDownlink(fresh); err != nil {

@@ -762,8 +762,14 @@ class MediaOutputDispatchMixin:
             reason="output_timeout",
             cancel_timeout_s=min(5.0, max(0.1, self.output_generation_timeout_s)),
         )
+        cancelled = await self._advance_failed_output_generation(
+            context,
+            fence,
+            reason="output_timeout",
+        )
         context.playback.discard(fence)
         context.assistant_text = ""
+        context.output_sequence = 0
         context.output_text_offset = 0
         context.provider_complete = False
         context.output_complete_emitted = False
@@ -774,19 +780,19 @@ class MediaOutputDispatchMixin:
             fence.session_id
         )
 
-        if not context.runtime.fence.matches(fence):
+        if cancelled is None:
+            await context.runtime.on_assistant_reply_aborted(
+                fence,
+                cause="output_timeout",
+            )
             return
-        task_epoch, context_version = self._event_versions(context, fence)
+        task_epoch, context_version = self._event_versions(context, cancelled)
         await self.bridge.emit_realtime_effect(
-            fence.session_id,
+            cancelled.session_id,
             media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
-            fence,
+            cancelled,
             source_event_id="output_timeout",
             payload={"reason": "output_timeout"},
             task_epoch=task_epoch,
             context_version=context_version,
-        )
-        await context.runtime.on_assistant_reply_aborted(
-            fence,
-            cause="output_timeout",
         )

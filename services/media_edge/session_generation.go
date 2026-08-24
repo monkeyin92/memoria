@@ -124,6 +124,7 @@ func (s *Session) ApplyCancelledGeneration(cancelled Fence) error {
 		return nil
 	}
 	if !s.generationActive || cancelled.SessionID != s.ID ||
+		cancelled.SessionEpoch != s.Generation.SessionEpoch ||
 		cancelled.TurnID != s.Generation.TurnID ||
 		cancelled.ToolEpoch != s.Generation.ToolEpoch ||
 		s.Generation.GenerationID == ^uint64(0) ||

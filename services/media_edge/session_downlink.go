@@ -20,6 +20,11 @@ func (s *Session) acceptDownlinkLocked(frame AudioFrame) error {
 		s.staleFrames++
 		return err
 	}
+	actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch, SessionEpoch: frame.SessionEpoch}
+	if !s.generationActive || !actual.Equal(s.Generation) {
+		s.staleFrames++
+		return ErrStaleDownlinkGeneration
+	}
 	if s.hasDownlinkSeq && frame.Sequence <= s.lastDownlinkSeq {
 		s.staleFrames++
 		return fmt.Errorf("downlink sequence is stale")
@@ -36,11 +41,6 @@ func (s *Session) acceptDownlinkLocked(frame AudioFrame) error {
 	if s.hasDownlinkSeq && frame.CaptureStartSample != s.lastDownlinkSourceEnd {
 		s.staleFrames++
 		return fmt.Errorf("downlink sample range has a gap")
-	}
-	actual := Fence{SessionID: frame.SessionID, TurnID: frame.TurnID, GenerationID: frame.GenerationID, ToolEpoch: frame.ToolEpoch, SessionEpoch: frame.SessionEpoch}
-	if !s.generationActive || !actual.Equal(s.Generation) {
-		s.staleFrames++
-		return ErrStaleDownlinkGeneration
 	}
 	if s.downlink.Len() >= s.MaxPendingFrames {
 		s.overflowFrames++

@@ -237,7 +237,8 @@ func (s *VoiceCoreSession) SendStop(eventID, reason string, fence Fence, detecte
 	envelope := map[string]any{
 		"v": 1, "protocol": "media-v1", "type": "client.stop_assistant", "event_id": eventID,
 		"session_id": s.identity.SessionID, "stream_epoch": s.identity.StreamEpoch,
-		"sequence": clientSequence, "turn_id": fence.TurnID, "generation_id": fence.GenerationID,
+		"sequence": clientSequence, "session_epoch": fence.SessionEpoch,
+		"turn_id": fence.TurnID, "generation_id": fence.GenerationID,
 		"tool_epoch": fence.ToolEpoch, "server_monotonic_ms": 0,
 		"payload": map[string]any{"idempotency_key": eventID, "reason": reason},
 	}

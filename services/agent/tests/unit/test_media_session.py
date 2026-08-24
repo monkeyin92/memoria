@@ -3501,10 +3501,17 @@ async def test_stalled_output_generation_times_out_and_discards_partial_playback
     assert context.playback.current_fence is None
     assert context.playback.actual_heard_text(fence) == ""
     assert context.runtime.orchestrator.state is ConversationState.LISTENING
-    assert bridge.effects == [
+    cancelled = context.runtime.fence
+    assert cancelled.generation_id == fence.generation_id + 1
+    cancel_effects = [
+        effect
+        for effect in bridge.effects
+        if effect[0] == media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION
+    ]
+    assert cancel_effects == [
         (
             media_pb2.REALTIME_EFFECT_KIND_CANCEL_GENERATION,
-            fence,
+            cancelled,
             {"reason": "output_timeout"},
         )
     ]
@@ -6455,8 +6462,25 @@ async def test_typed_device_progress_waits_for_ended_before_completion() -> None
 
 @pytest.mark.asyncio
 async def test_typed_device_playback_error_is_not_successful_completion() -> None:
+    class CapturingBridge(MediaBridgeGrpcServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.controls: list[tuple[int, GenerationFence, str]] = []
+
+        async def emit_generation(
+            self,
+            _session_id: str,
+            fence: GenerationFence,
+            *,
+            action: int,
+            reason: str = "",
+            **_kwargs: object,
+        ) -> bool:
+            self.controls.append((action, fence, reason))
+            return True
+
     provider = FakeMediaProvider()
-    bridge = MediaBridgeGrpcServer()
+    bridge = CapturingBridge()
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
         provider_factory=lambda _identity: provider,
@@ -6503,6 +6527,14 @@ async def test_typed_device_playback_error_is_not_successful_completion() -> Non
     assert delivery.terminal_event is ReplyDeliveryEvent.ERROR
     assert delivery.playback_ended is False
     assert context.runtime.orchestrator.state is ConversationState.LISTENING
+    assert context.runtime.fence.generation_id == fence.generation_id + 1
+    assert bridge.controls == [
+        (
+            media_pb2.GENERATION_ACTION_CANCEL,
+            context.runtime.fence,
+            "device_playback_error",
+        )
+    ]
 
 
 @pytest.mark.asyncio
