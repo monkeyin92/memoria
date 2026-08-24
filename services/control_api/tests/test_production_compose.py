@@ -543,7 +543,8 @@ def test_ci_selects_component_gates_and_uses_collision_safe_pytest_imports() -> 
     assert "if: needs.changes.outputs.miniprogram == 'true'" in workflow
     assert "services/agent/tests/unit" in workflow
     assert "pytest --import-mode=importlib --no-cov" in workflow
-    assert "!services/agent/**" in workflow
+    assert "!services/agent/**" not in workflow
+    assert "'.github/workflows/ci.yml'" in workflow
     assert "pytest --import-mode=importlib --cov=services" in workflow
 
 
