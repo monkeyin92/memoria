@@ -138,6 +138,10 @@ func TestDeviceWSSClosedConversationEntersStandbyAndRejectsLateAudio(t *testing.
 		!strings.Contains(string(payload), `"reason":"owner_silence_timeout"`) {
 		t.Fatalf("unexpected standby control: type=%d payload=%s", messageType, payload)
 	}
+	core.inject(deviceClosedStateEvent("session_1", 18, 3, "owner_silence_timeout"))
+	if _, _, err := readDeviceMessage(connection, 300*time.Millisecond); err == nil {
+		t.Fatal("duplicate session.close reached the device")
+	}
 
 	core.inject(deviceAudioEvent(
 		"session_1", 18, 0, 0, downlinkTestSamples(), 1, 1,

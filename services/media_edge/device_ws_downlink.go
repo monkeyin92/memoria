@@ -354,12 +354,20 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 		// Voice Core is the interaction authority. A terminal CLOSED state
 		// revokes the device generation before the P0 close is queued, so
 		// concurrent/late PCM cannot slip behind the standby transition.
-		c.setCurrentFence(deviceFence{})
+		c.stateMu.Lock()
+		if c.sessionCloseQueued {
+			c.stateMu.Unlock()
+			return
+		}
+		c.sessionCloseQueued = true
+		c.currentFence = deviceFence{}
+		c.serverControlSeq++
+		controlSequence := c.serverControlSeq
+		c.stateMu.Unlock()
 		reason := state.GetReason()
 		if reason == "" {
 			reason = "conversation_closed"
 		}
-		controlSequence := c.nextServerSequence()
 		payload, err := marshalDeviceControl(deviceServerSessionClose{
 			Type: "session.close", Version: 2,
 			SessionID: c.sessionID, StreamEpoch: uint64(c.epoch),
@@ -368,6 +376,9 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 			Reason:            reason,
 		})
 		if err != nil {
+			c.stateMu.Lock()
+			c.sessionCloseQueued = false
+			c.stateMu.Unlock()
 			return
 		}
 		log.Printf("media edge projected conversation close session=%s device=%s epoch=%d reason=%s control_sequence=%d", c.sessionID, c.deviceID, c.epoch, reason, controlSequence)
