@@ -76,15 +76,15 @@ Agent-only 发布现在把历史 Compose override 收口为“生产主 Compose 
 
 ```yaml
 candidate: cpu_only_turn_phase
-as_of_date: 2026-08-24
+as_of_date: 2026-08-25
 code: complete
-wired: conversation_projection_and_media_session_shadow
+wired: conversation_projection_media_session_and_playback_shadow
 enabled: false
-verified: unit_and_deterministic_replay_only
+verified: unit_deterministic_replay_and_cpu_memory_budget
 side_effects: none
 ```
 
-`TurnPhase` 目前只作为 `ConversationProjection` 内部证据和低基数 telemetry 产出，不改变 endpoint/interrupt/commit 决策。阶段 C 单一策略切换前不得宣称误聆听、打断或全双工改善。
+`TurnPhase` 目前只作为 `ConversationProjection` 内部证据和低基数 telemetry 产出，不改变 endpoint/interrupt/commit 决策。固定 80 ms sample 窗口、late ASR endpoint fence、phase/floor 原子更新和权威 playback ACK 接线已通过单元、确定性 replay 与 CPU/内存预算；阶段 C 单一策略切换前仍不得宣称误聆听、打断或全双工改善。
 
 ## 生产拓扑
 

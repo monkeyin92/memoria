@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import gc
 import hashlib
+import time
+import tracemalloc
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from services.agent.src.observability.media_otel import configure_otel
-from services.agent.src.orchestration.speech_timeline import SegmentKind, SpeechSegment
+from services.agent.src.orchestration.conversation_projection import ConversationProjection
+from services.agent.src.orchestration.speech_timeline import (
+    SegmentKind,
+    SpeechSegment,
+    SpeechTimeline,
+)
 from services.agent.src.voice_core.device_protocol import DeviceCommand, DeviceCommandAck
 from services.agent.src.voice_core.device_runtime import (
     AudioDeviceConfig,
@@ -174,6 +182,62 @@ def test_turn_phase_replay_is_deterministic_for_child_pause() -> None:
         "end_candidate",
         "semantic_speaking",
     )
+    # Only the ASR fact covers one complete 80ms bucket. The far-ahead 20ms VAD
+    # resume jumps the cursor without backfilling nonexistent historical frames.
+    assert first.frame_count == 1
+
+
+def test_turn_phase_projection_meets_cpu_and_memory_budget() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    projection = ConversationProjection("resource-budget", timeline)
+    vad = SpeechSegment(
+        session_id="resource-budget",
+        stream_epoch=1,
+        provider_task_epoch=0,
+        segment_id="vad",
+        revision=1,
+        kind=SegmentKind.VAD,
+        capture_start_sample=0,
+        capture_end_sample=320,
+    )
+    assert timeline.add(vad)
+    projection.apply_continuous_event(vad, turn_id_hint=1)
+    revisions = tuple(
+        SpeechSegment(
+            session_id="resource-budget",
+            stream_epoch=1,
+            provider_task_epoch=1,
+            segment_id="asr",
+            revision=revision,
+            kind=SegmentKind.ASR_PARTIAL,
+            capture_start_sample=0,
+            capture_end_sample=1_280 + revision * 32,
+            text="性能预算测试内容",
+        )
+        for revision in range(1, 501)
+    )
+
+    latencies_ns: list[int] = []
+    tracemalloc.start()
+    gc.collect()
+    baseline_bytes = tracemalloc.get_traced_memory()[0]
+    try:
+        for segment in revisions:
+            assert timeline.add(segment)
+            started_ns = time.perf_counter_ns()
+            projection.apply_continuous_event(segment, turn_id_hint=1)
+            latencies_ns.append(time.perf_counter_ns() - started_ns)
+        gc.collect()
+        current_bytes, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    latencies_ns.sort()
+    p95_ns = latencies_ns[int(len(latencies_ns) * 0.95) - 1]
+    assert p95_ns < 2_000_000
+    assert current_bytes - baseline_bytes < 65_536
+    assert peak_bytes - baseline_bytes < 65_536
 
 
 def test_telemetry_redacts_labels_and_bounds_timeline() -> None:

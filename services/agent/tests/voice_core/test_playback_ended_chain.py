@@ -11,6 +11,7 @@ from services.agent.src.voice_core.media_protocol import (
     PlaybackProgress,
     SessionIdentity,
 )
+from services.agent.src.voice_core.media_session_output_stream import _playback_terminal
 from services.agent.src.voice_core.playback_ledger import PlaybackLedger
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent, ReplyDeliveryLedger
 
@@ -87,33 +88,32 @@ class TestPlaybackEndedChain:
         assert ledger.stale_ack_count == stale_ack_count
 
     def test_playback_progress_event_type_mapping(self):
-        """Verify PlaybackEventType.ENDED maps to terminal=True."""
-        # This tests the logic from media_session_output_stream.py:129-133
+        """Verify the production playback event-to-terminal mapping."""
 
         # WATERMARK → terminal=None
         event_type = PlaybackEventType.WATERMARK
-        terminal = None if event_type is PlaybackEventType.WATERMARK else event_type is PlaybackEventType.ENDED
+        terminal = _playback_terminal(event_type)
         assert terminal is None
 
         # STARTED → terminal=False
         event_type = PlaybackEventType.STARTED
-        terminal = None if event_type is PlaybackEventType.WATERMARK else event_type is PlaybackEventType.ENDED
+        terminal = _playback_terminal(event_type)
         assert terminal is False
 
         # PROGRESS → terminal=False
         event_type = PlaybackEventType.PROGRESS
-        terminal = None if event_type is PlaybackEventType.WATERMARK else event_type is PlaybackEventType.ENDED
+        terminal = _playback_terminal(event_type)
         assert terminal is False
 
         # ENDED → terminal=True
         event_type = PlaybackEventType.ENDED
-        terminal = None if event_type is PlaybackEventType.WATERMARK else event_type is PlaybackEventType.ENDED
+        terminal = _playback_terminal(event_type)
         assert terminal is True
 
-        # ERROR → terminal=False
+        # ERROR → terminal=True
         event_type = PlaybackEventType.ERROR
-        terminal = None if event_type is PlaybackEventType.WATERMARK else event_type is PlaybackEventType.ENDED
-        assert terminal is False
+        terminal = _playback_terminal(event_type)
+        assert terminal is True
 
     def test_reply_delivery_ledger_playback_ended_event(self):
         """ReplyDeliveryLedger should record PLAYBACK_ENDED event."""

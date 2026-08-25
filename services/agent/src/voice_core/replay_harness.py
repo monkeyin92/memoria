@@ -112,7 +112,6 @@ def replay_turn_phases(
     projection = ConversationProjection(session_id, timeline)
     phases: list[str] = [projection.phase.value]
     reasons: list[str] = [projection.phase_reason.value]
-    frames = 0
     for segment in segments:
         if timeline.stream_epoch != segment.stream_epoch:
             if not timeline.start_stream_epoch(segment.stream_epoch):
@@ -126,7 +125,6 @@ def replay_turn_phases(
             playback_active=playback_active,
             fence=fence,
         )
-        frames += 1
         if projection.phase is not previous or phases[-1] != projection.phase.value:
             phases.append(projection.phase.value)
             reasons.append(projection.phase_reason.value)
@@ -134,7 +132,7 @@ def replay_turn_phases(
         fixture_id=fixture_id,
         phases=tuple(phases),
         reasons=tuple(reasons),
-        frame_count=frames,
+        frame_count=projection.emitted_frame_count,
     )
 
 

@@ -185,6 +185,12 @@ def test_playback_ledger_rejects_forged_terminal_receipt() -> None:
     assert ledger.terminal_received(fence)
     assert ledger.is_playback_complete(fence)
 
+    stale_before = ledger.stale_ack_count
+    assert ledger.acknowledge(fence, 320, received_sequence=0, terminal=False) == ()
+    assert ledger.acknowledge(fence, 320, received_sequence=0) == ()
+    assert ledger.stale_ack_count == stale_before + 2
+    assert ledger.terminal_received(fence)
+
 
 def test_playback_ledger_applies_existing_ack_to_late_provider_alignment() -> None:
     fence = _fence()

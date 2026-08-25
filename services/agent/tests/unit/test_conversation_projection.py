@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.conversation_projection import (
+    PROJECTION_FRAME_SAMPLES,
     CommitEvidence,
     CommittedTurn,
     ConversationProjection,
     FloorState,
     PhaseReason,
     ProjectionEventKind,
+    ProjectionPatch,
     ProjectionRejectReason,
     SpeakerEvidence,
     TurnEvidence,
@@ -68,9 +70,9 @@ def _apply(
     fence: GenerationFence | None = None,
     aec_verified: bool | None = None,
     discontinuity: bool = False,
-) -> None:
+) -> ProjectionPatch | None:
     assert projection.timeline.add(segment)
-    projection.apply_continuous_event(
+    return projection.apply_continuous_event(
         segment,
         turn_id_hint=1,
         playback_active=playback_active,
@@ -337,8 +339,8 @@ def test_phase_follows_idle_acoustic_semantic_end_candidate_commit() -> None:
     _apply(projection, _segment("vad-start", start=0, end=320, kind=SegmentKind.VAD))
     assert projection.phase is TurnPhase.ACOUSTIC_ONLY
     assert projection.floor_state is FloorState.USER_HOLDS_FLOOR
-    assert projection.current_frame is not None
-    assert not projection.current_frame.allows_generation_cancel()
+    assert projection.current_frame is None
+    assert projection.emitted_frame_count == 0
     _apply(
         projection,
         _segment("asr", start=0, end=1600, text="今天天气怎么样"),
@@ -401,9 +403,8 @@ def test_playback_acoustic_only_does_not_allow_cancel() -> None:
         fence=GenerationFence("session", 1, 2, 0),
     )
     assert projection.phase is TurnPhase.ACOUSTIC_ONLY
-    assert projection.current_frame is not None
-    assert not projection.current_frame.allows_generation_cancel()
-    assert projection.current_frame.must_hold() is False
+    assert projection.current_frame is None
+    assert projection.emitted_frame_count == 0
     _apply(
         projection,
         _segment("嗯", start=0, end=480, text="嗯"),
@@ -537,12 +538,18 @@ def test_phase_and_floor_update_atomically_and_frames_stay_bounded() -> None:
         start = index * 1_280
         _apply(
             projection,
-            _segment(f"vad-{index}", start=start, end=start + 320, kind=SegmentKind.VAD),
+            _segment(
+                f"vad-{index}",
+                start=start,
+                end=start + PROJECTION_FRAME_SAMPLES,
+                kind=SegmentKind.VAD,
+            ),
         )
     assert projection.phase is TurnPhase.ACOUSTIC_ONLY
     assert projection.current_frame is not None
     assert projection.current_frame.frame_index == 7
-    assert projection.consecutive_phase_frames <= 32
+    assert projection.current_frame.capture_end_sample == 10_240
+    assert projection.consecutive_phase_frames == 8
     patch = projection.apply_continuous_event(
         projection.timeline.pending[-1],
         turn_id_hint=1,
@@ -600,3 +607,308 @@ def test_uncertain_recovers_to_end_candidate_when_asr_covers() -> None:
     )
     assert projection.phase is TurnPhase.END_CANDIDATE
     assert projection.phase_reason is PhaseReason.EVIDENCE_RECOVERED
+
+
+def test_late_asr_revision_of_ended_range_keeps_end_candidate() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    projection = ConversationProjection("session", timeline)
+    _apply(projection, _segment("vad-start", start=0, end=320, kind=SegmentKind.VAD))
+    _apply(projection, _segment("asr", start=0, end=1600, text="我想"))
+    _apply(
+        projection,
+        _segment("vad-end", start=1600, end=1601, kind=SegmentKind.VAD, final=True),
+    )
+    endpoint = 1600
+    assert projection.phase is TurnPhase.END_CANDIDATE
+    assert projection.voiced_end_sample == endpoint
+
+    same_range = _segment("asr", start=0, end=endpoint, text="我想想", revision=2)
+    assert timeline.add(same_range)
+    assert projection.apply_continuous_event(same_range, turn_id_hint=1) is not None
+    assert projection.phase is TurnPhase.END_CANDIDATE
+
+    tail = _segment(
+        "asr-final",
+        start=endpoint,
+        end=1700,
+        text="我想想 嗯",
+        kind=SegmentKind.ASR_FINAL,
+        final=True,
+        revision=3,
+    )
+    assert timeline.add(tail)
+    assert projection.apply_continuous_event(tail, turn_id_hint=1) is not None
+    assert projection.phase is TurnPhase.END_CANDIDATE
+    assert projection.voiced_end_sample == endpoint
+
+    continuation = _segment(
+        "asr",
+        start=0,
+        end=3200,
+        text="再问一句",
+        revision=3,
+    )
+    assert timeline.add(continuation)
+    assert projection.apply_continuous_event(continuation, turn_id_hint=1) is not None
+    assert projection.phase is TurnPhase.SEMANTIC_SPEAKING
+    assert projection.phase_reason is PhaseReason.PENDING_ENDPOINT_RETRACTED
+    assert projection._asr_final is False
+    assert projection.current_frame is not None
+    assert projection.current_frame.asr_final is False
+
+
+def test_playback_floor_is_atomic_across_patch_provisional_and_frame() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    projection = ConversationProjection("session", timeline)
+    _apply(
+        projection,
+        _segment("vad-start", start=0, end=320, kind=SegmentKind.VAD),
+        playback_active=True,
+        fence=GenerationFence("session", 1, 2, 0),
+    )
+    _apply(
+        projection,
+        _segment("backchannel", start=0, end=480, text="嗯"),
+        playback_active=True,
+    )
+    assert projection.phase is TurnPhase.BACKCHANNEL
+
+    content = _segment("content", start=0, end=2400, text="不要再说了", revision=2)
+    assert timeline.add(content)
+    patch = projection.apply_continuous_event(content, turn_id_hint=1)
+
+    assert patch is not None
+    expected_floor = FloorState.OVERLAP
+    assert patch.turn.floor_state is expected_floor
+    assert projection.provisional.floor_state is expected_floor
+    assert projection.floor_state is expected_floor
+    assert projection.current_frame is not None
+    assert projection.current_frame.floor_state is expected_floor
+
+
+def test_frames_are_complete_aligned_buckets_and_partial_clock_waits() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    projection = ConversationProjection("session", timeline)
+    _apply(projection, _segment("vad-start", start=0, end=320, kind=SegmentKind.VAD))
+    before = projection.emitted_frame_count
+    _apply(
+        projection,
+        _segment("long-asr", start=0, end=16_000, text="一段很长的语音内容"),
+    )
+
+    # The range covers twelve complete windows. Each is emitted once; the
+    # trailing partial window waits for later evidence.
+    assert projection.emitted_frame_count - before == 12
+    latest = projection.current_frame
+    assert latest is not None
+    assert latest.frame_index == 11
+    assert latest.capture_end_sample - latest.capture_start_sample == PROJECTION_FRAME_SAMPLES
+    assert latest.capture_start_sample % PROJECTION_FRAME_SAMPLES == 0
+    assert latest.capture_end_sample % PROJECTION_FRAME_SAMPLES == 0
+    assert projection.consecutive_phase_frames == 12
+
+    watermark = _segment("long-asr", start=0, end=16_640, text="一段很长的语音内容", revision=2)
+    assert timeline.add(watermark)
+    before = projection.emitted_frame_count
+    assert projection.apply_continuous_event(watermark, turn_id_hint=1) is not None
+    assert projection.emitted_frame_count - before == 1
+    latest = projection.current_frame
+    assert latest is not None
+    assert latest.frame_index == 12
+    assert latest.capture_start_sample == 15_360
+    assert latest.capture_end_sample == 16_640
+    assert projection.consecutive_phase_frames == 13
+
+    # A far-ahead partial fact cannot backfill its uncovered historical gap.
+    before = projection.emitted_frame_count
+    _apply(
+        projection,
+        _segment("sparse-gap", start=80_000, end=80_320, kind=SegmentKind.VAD),
+    )
+    assert projection.emitted_frame_count == before
+    assert projection.current_frame is not None
+    assert projection.current_frame.frame_index == 12
+    assert projection.consecutive_phase_frames == 0
+
+    # A fact that emitted no future frame must not prevent a late accepted ASR
+    # range from filling the still-unpublished windows before that gap.
+    late_fill = _segment(
+        "late-fill",
+        start=16_640,
+        end=79_360,
+        text="迟到但合法的连续范围",
+    )
+    assert timeline.add(late_fill)
+    assert projection.apply_continuous_event(late_fill, turn_id_hint=1) is not None
+    assert projection.emitted_frame_count == 62
+    assert projection.current_frame is not None
+    assert projection.current_frame.frame_index == 61
+    assert projection.consecutive_phase_frames == 32
+
+    # Replay cadence remains session-scoped across phase/epoch resets.
+    projection.reset_phase(stream_epoch=2)
+    assert projection.emitted_frame_count == 62
+
+
+def test_playback_without_stream_epoch_never_fakes_a_frame_clock() -> None:
+    timeline = SpeechTimeline()
+    projection = ConversationProjection("session", timeline)
+    result = projection.apply_playback_evidence(
+        playback_active=True,
+        fence=GenerationFence("session", 1, 1, 0),
+        capture_sample=640,
+    )
+
+    assert result is None
+    assert projection.current_frame is None
+    assert projection.emitted_frame_count == 0
+    assert projection._stream_epoch is None
+    assert projection._playback_active is True
+
+
+def test_projection_reuses_timeline_per_segment_revision_authority() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    projection = ConversationProjection("session", timeline)
+    _apply(projection, _segment("vad", start=0, end=320, kind=SegmentKind.VAD))
+    _apply(
+        projection,
+        _segment("new-asr", start=0, end=800, text="新版", task_epoch=1, revision=2),
+    )
+    stale = _segment("new-asr", start=0, end=900, text="旧版", task_epoch=1, revision=1)
+    frames_before = projection.emitted_frame_count
+    watermark_before = projection.latest_capture_sample
+
+    assert timeline.add(stale) is False
+    assert projection.apply_continuous_event(stale, turn_id_hint=1) is None
+
+    assert projection.phase is TurnPhase.SEMANTIC_SPEAKING
+    assert projection._asr_task_epoch == 1
+    assert projection._asr_revision == 2
+    assert projection.emitted_frame_count == frames_before
+    assert projection.latest_capture_sample == watermark_before
+
+
+def test_new_sentence_revision_one_is_not_stale_after_prior_revision_two() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    projection = ConversationProjection("session", timeline)
+    _apply(projection, _segment("vad", start=0, end=320, kind=SegmentKind.VAD))
+    _apply(projection, _segment("sentence-a", start=0, end=800, text="第一句", revision=2))
+    second = _segment("sentence-b", start=800, end=2400, text="第二句", revision=1)
+
+    assert timeline.add(second)
+    assert projection.apply_continuous_event(second, turn_id_hint=1) is not None
+    assert projection.phase is TurnPhase.SEMANTIC_SPEAKING
+    assert projection._asr_revision == 1
+    assert projection.latest_capture_sample == 2400
+
+
+def test_playback_only_update_refreshes_all_visible_floor_snapshots() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    projection = ConversationProjection("session", timeline)
+    _apply(
+        projection,
+        _segment("vad", start=0, end=1280, kind=SegmentKind.VAD),
+    )
+    _apply(projection, _segment("asr", start=0, end=2560, text="不要再说了"))
+    assert projection.phase is TurnPhase.SEMANTIC_SPEAKING
+    assert projection.floor_state is FloorState.USER_HOLDS_FLOOR
+    assert projection.current_frame is not None
+    frame_index = projection.current_frame.frame_index
+
+    result = projection.apply_playback_evidence(
+        playback_active=True,
+        fence=GenerationFence("session", 1, 2, 0),
+    )
+
+    assert result is projection.current_frame
+    assert projection.emitted_frame_count == 2
+    assert projection.floor_state is FloorState.OVERLAP
+    assert projection.provisional is not None
+    assert projection.provisional.floor_state is FloorState.OVERLAP
+    assert projection.current_frame is not None
+    assert projection.current_frame.frame_index == frame_index
+    # Published sample windows are immutable; playback context is captured by
+    # the next complete window instead of rewriting the previous one.
+    assert projection.current_frame.floor_state is FloorState.USER_HOLDS_FLOOR
+
+
+def test_same_stream_reset_preserves_clock_watermark_and_new_epoch_resets_it() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    projection = ConversationProjection("session", timeline)
+    _apply(projection, _segment("asr", start=0, end=2560, text="第一段"))
+    assert projection.latest_capture_sample == 2560
+
+    projection.reset_phase(stream_epoch=1)
+    assert projection.latest_capture_sample == 2560
+    _apply(projection, _segment("next", start=2560, end=3840, text="第二段"))
+    assert projection.current_frame is not None
+    assert projection.current_frame.frame_index == 2
+
+    projection.reset_phase(stream_epoch=2)
+    assert projection.latest_capture_sample == 0
+
+
+def test_stale_fence_is_rejected_before_provisional_mutation() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    projection = ConversationProjection("session", timeline)
+    live = GenerationFence("session", 1, 2, 0)
+    _apply(projection, _segment("live", start=0, end=1280, text="当前"), fence=live)
+    current = projection.provisional
+    assert current is not None
+    stale = _segment("stale", start=1280, end=2560, text="污染")
+    assert timeline.add(stale)
+
+    assert projection.apply_continuous_event(
+        stale,
+        turn_id_hint=1,
+        fence=GenerationFence("session", 1, 1, 0),
+    ) is None
+    assert projection.provisional is current
+    assert projection.provisional.text == "当前"
+
+
+def test_new_stream_epoch_drops_old_provisional_identity_before_patch() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    projection = ConversationProjection("session", timeline)
+    _apply(projection, _segment("old", start=0, end=1280, text="旧流"))
+    old = projection.provisional
+    assert old is not None
+    assert timeline.start_stream_epoch(2)
+    fresh = _segment("fresh", start=0, end=1280, text="新流", stream_epoch=2)
+
+    assert timeline.add(fresh)
+    patch = projection.apply_continuous_event(fresh, turn_id_hint=2)
+
+    assert patch is not None
+    assert patch.kind is ProjectionEventKind.PROVISIONAL_STARTED
+    assert patch.turn.stream_epoch == 2
+    assert patch.turn.provisional_id != old.provisional_id
+    assert patch.turn.text == "新流"
+
+
+def test_non_contiguous_partial_after_endpoint_fails_closed() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    projection = ConversationProjection("session", timeline)
+    _apply(projection, _segment("vad", start=0, end=320, kind=SegmentKind.VAD))
+    _apply(projection, _segment("asr", start=0, end=1600, text="我想"))
+    _apply(
+        projection,
+        _segment("end", start=1600, end=1601, kind=SegmentKind.VAD, final=True),
+    )
+    assert projection.phase is TurnPhase.END_CANDIDATE
+    gap = _segment("next", start=1800, end=3200, text="继续")
+
+    assert timeline.add(gap)
+    assert projection.apply_continuous_event(gap, turn_id_hint=1) is not None
+    assert projection.phase is TurnPhase.UNCERTAIN
+    assert projection.phase_reason is PhaseReason.CLOCK_GAP

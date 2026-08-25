@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
+from services.agent.src.orchestration.conversation_projection import TurnPhase
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession, PCMFrame
 from services.agent.src.voice_core.media_protocol import PlaybackEventType, PlaybackProgress
@@ -37,6 +38,12 @@ if TYPE_CHECKING:
 
 media_pb2: Any = _media_pb2
 _DOWNLINK_PCM_SAMPLE_RATE = 24_000
+
+
+def _playback_terminal(event_type: PlaybackEventType) -> bool | None:
+    if event_type is PlaybackEventType.WATERMARK:
+        return None
+    return event_type in {PlaybackEventType.ENDED, PlaybackEventType.ERROR}
 
 
 def _next_pcm_send_slot(
@@ -112,6 +119,12 @@ class MediaOutputStreamMixin:
             reason: str = "",
         ) -> None: ...
 
+        def _observe_turn_phase(
+            self,
+            context: _MediaVoiceSession,
+            previous_phase: TurnPhase,
+        ) -> None: ...
+
     async def on_playback_progress(
         self,
         session: MediaBridgeSession,
@@ -134,14 +147,11 @@ class MediaOutputStreamMixin:
             received_sequence=progress.received_sequence,
             approximate=progress.approximate,
             heard_eligible=not (session.identity.client_type == "device" and progress.approximate),
-            terminal=(
-                None
-                if progress.event_type is PlaybackEventType.WATERMARK
-                else progress.event_type is PlaybackEventType.ENDED
-            ),
+            terminal=_playback_terminal(progress.event_type),
         )
         if context.playback.stale_ack_count != stale_ack_count:
             return
+        self._observe_projection_playback_evidence(context, fence, progress.event_type)
         # Publish the cumulative acknowledged prefix under one turn/revision;
         # publishing only the newly acknowledged span would make clients
         # replace a complete answer with its last phrase.
@@ -212,6 +222,36 @@ class MediaOutputStreamMixin:
                 text_delivered=True,
                 fence=fence,
             )
+
+    def _observe_projection_playback_evidence(
+        self,
+        context: _MediaVoiceSession,
+        fence: GenerationFence,
+        event_type: PlaybackEventType,
+    ) -> None:
+        """Mirror accepted playback ACKs into the shadow TurnPhase."""
+
+        if event_type not in (
+            PlaybackEventType.STARTED,
+            PlaybackEventType.WATERMARK,
+            PlaybackEventType.PROGRESS,
+            PlaybackEventType.ENDED,
+            PlaybackEventType.ERROR,
+        ):
+            return
+        previous_phase = context.projection.phase
+        active = event_type in {
+            PlaybackEventType.STARTED,
+            PlaybackEventType.WATERMARK,
+            PlaybackEventType.PROGRESS,
+        }
+        # apply_playback_evidence owns stale-fence rejection and the uplink
+        # capture watermark.  This seam only mirrors already-admitted ACKs.
+        context.projection.apply_playback_evidence(
+            playback_active=active,
+            fence=fence,
+        )
+        self._observe_turn_phase(context, previous_phase)
 
     async def _stream_output(
         self,

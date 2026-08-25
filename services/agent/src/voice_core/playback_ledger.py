@@ -197,6 +197,11 @@ class PlaybackLedger:
         if self._current_fence is None or not fence.matches(self._current_fence):
             self._stale_ack_count += 1
             return ()
+        if fence in self._terminal_received and terminal is not True:
+            # A terminal generation cannot be resurrected by reordered
+            # STARTED/WATERMARK/ERROR progress for the same fence.
+            self._stale_ack_count += 1
+            return ()
         if received_sequence is not None:
             if received_sequence < 0:
                 raise ValueError("received_sequence must be non-negative")

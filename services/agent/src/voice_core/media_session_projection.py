@@ -451,11 +451,11 @@ class MediaSessionProjectionMixin:
                 "voice_turn_end_candidate_retracted_total",
                 labels={"reason": reason},
             )
-        frame = context.projection.current_frame
-        if current is TurnPhase.END_CANDIDATE and frame is not None:
+        if current is TurnPhase.END_CANDIDATE:
             voiced = context.projection.voiced_end_sample
-            if voiced is not None and frame.capture_end_sample >= voiced:
+            latest = context.projection.latest_capture_sample
+            if voiced is not None and latest >= voiced:
                 self.metrics.observe_media_metric(
                     "voice_turn_end_candidate_latency_ms",
-                    (frame.capture_end_sample - voiced) * 1_000 / 16_000,
+                    (latest - voiced) * 1_000 / 16_000,
                 )

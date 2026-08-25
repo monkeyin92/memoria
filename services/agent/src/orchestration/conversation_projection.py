@@ -86,6 +86,8 @@ class PhaseReason(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class TurnEvidence:
+    # Derived by ConversationProjection from sample-clock endpoint coverage.
+    covers_pending_endpoint: bool = False
     vad_start: bool = False
     vad_end: bool = False
     vad_ended: bool = False
@@ -262,7 +264,9 @@ def transition_turn_phase(
         return None
 
     if current is TurnPhase.END_CANDIDATE:
-        if evidence.vad_start or (evidence.semantic_text_present and not evidence.vad_end):
+        # ConversationProjection marks only a continuous, non-final ASR range
+        # extension as endpoint coverage. Late finals remain ended evidence.
+        if evidence.covers_pending_endpoint or evidence.vad_start:
             return TurnPhase.SEMANTIC_SPEAKING, PhaseReason.PENDING_ENDPOINT_RETRACTED
         return None
 
@@ -403,7 +407,7 @@ class ConversationProjection:
     _floor_state: FloorState = field(default=FloorState.SILENCE, init=False)
     _current_frame: ProjectionFrame | None = field(default=None, init=False)
     _stream_epoch: int | None = field(default=None, init=False)
-    _open_frame_index: int | None = field(default=None, init=False)
+    _next_frame_index: int = field(default=0, init=False)
     _consecutive_phase_frames: int = field(default=0, init=False)
     _asr_task_epoch: int = field(default=0, init=False)
     _asr_revision: int = field(default=0, init=False)
@@ -415,6 +419,7 @@ class ConversationProjection:
     _playback_active: bool = field(default=False, init=False)
     _captured_fence: GenerationFence | None = field(default=None, init=False)
     _latest_capture_sample: int = field(default=0, init=False)
+    _emitted_frame_count: int = field(default=0, init=False)
     _speaker_class: SpeakerClass = field(default="uncertain", init=False)
     _aec_verified: bool | None = field(default=None, init=False)
     _residual_echo_score: float | None = field(default=None, init=False)
@@ -437,8 +442,8 @@ class ConversationProjection:
 
     @property
     def floor_state(self) -> FloorState:
-        current = self._provisional
-        return current.floor_state if current is not None else self._floor_state
+        """Return the phase-authoritative floor."""
+        return self._floor_state
 
     @property
     def current_frame(self) -> ProjectionFrame | None:
@@ -449,8 +454,19 @@ class ConversationProjection:
         return self._consecutive_phase_frames
 
     @property
+    def emitted_frame_count(self) -> int:
+        """Return session-lifetime emitted ProjectionFrames."""
+        return self._emitted_frame_count
+
+    @property
     def voiced_end_sample(self) -> int | None:
         return self._voiced_end_sample
+
+    @property
+    def latest_capture_sample(self) -> int:
+        """Latest accepted uplink sample watermark for shadow telemetry."""
+
+        return self._latest_capture_sample
 
     @property
     def pending_endpoint(self) -> bool:
@@ -477,6 +493,12 @@ class ConversationProjection:
             return None
         if segment not in self.timeline.pending:
             return None
+        if fence is not None and self._fence_is_stale(fence):
+            return None
+        if self._stream_epoch is not None and segment.stream_epoch < self._stream_epoch:
+            return None
+        if self._stream_epoch is not None and segment.stream_epoch > self._stream_epoch:
+            self.reset_phase(stream_epoch=segment.stream_epoch)
         current = self._provisional
         started = current is None
         start_sample = min(
@@ -558,7 +580,7 @@ class ConversationProjection:
             aec_verified=aec_verified,
             discontinuity=discontinuity,
         )
-        return patch
+        return self._sync_patch_floor(patch)
 
     @staticmethod
     def _floor_after(
@@ -711,6 +733,15 @@ class ConversationProjection:
 
         if fence is not None and self._fence_is_stale(fence):
             return None
+        stream_epoch = self._stream_epoch
+        if stream_epoch is None:
+            # Playback is context, not a clock source.  Do not synthesize an
+            # epoch or frame before real speech evidence establishes one.
+            self._playback_active = playback_active
+            if fence is not None:
+                self._captured_fence = fence
+            self._sync_visible_state()
+            return None
         previous = self._phase
         self._playback_active = playback_active
         if fence is not None:
@@ -722,14 +753,15 @@ class ConversationProjection:
             self._enter_phase(
                 TurnPhase.IDLE,
                 PhaseReason.BACKCHANNEL_IDLE,
-                stream_epoch=self._stream_epoch or 1,
+                stream_epoch=stream_epoch,
                 capture_start_sample=max(0, sample - 1),
                 capture_end_sample=sample,
                 fence=fence,
             )
         else:
+            self._sync_visible_state()
             self._publish_frame(
-                stream_epoch=self._stream_epoch or 1,
+                stream_epoch=stream_epoch,
                 capture_start_sample=max(0, sample - 1),
                 capture_end_sample=sample,
             )
@@ -738,12 +770,17 @@ class ConversationProjection:
     def reset_phase(self, *, stream_epoch: int | None = None) -> None:
         """Atomically clear phase, frame counters and pending endpoint."""
 
+        previous_stream_epoch = self._stream_epoch
+        target_stream_epoch = previous_stream_epoch if stream_epoch is None else stream_epoch
         self._phase = TurnPhase.IDLE
         self._phase_reason = PhaseReason.DISCARDED
         self._floor_state = FloorState.SILENCE
         self._current_frame = None
-        self._stream_epoch = stream_epoch
-        self._open_frame_index = None
+        self._stream_epoch = target_stream_epoch
+        stream_changed = target_stream_epoch != previous_stream_epoch
+        if stream_changed:
+            self._next_frame_index = 0
+            self._provisional = None
         self._consecutive_phase_frames = 0
         self._asr_task_epoch = 0
         self._asr_revision = 0
@@ -754,7 +791,8 @@ class ConversationProjection:
         self._voiced_end_sample = None
         self._playback_active = False
         self._captured_fence = None
-        self._latest_capture_sample = 0
+        if stream_changed:
+            self._latest_capture_sample = 0
         self._speaker_class = "uncertain"
         self._aec_verified = None
         self._residual_echo_score = None
@@ -787,37 +825,15 @@ class ConversationProjection:
             self._playback_active = playback_active
 
         asr_kind = segment.kind in {SegmentKind.ASR_PARTIAL, SegmentKind.ASR_FINAL}
-        stale_asr = False
+        previous_asr_end = self._asr_end_sample
         if asr_kind:
-            if self._asr_task_epoch > 0 and segment.provider_task_epoch < self._asr_task_epoch:
-                stale_asr = True
-            else:
-                self._asr_task_epoch = max(self._asr_task_epoch, segment.provider_task_epoch)
-                self._asr_revision = max(self._asr_revision, segment.revision)
-                self._asr_final = (
-                    self._asr_final or segment.final or (segment.kind is SegmentKind.ASR_FINAL)
-                )
-
-        frame_index = segment.capture_start_sample // PROJECTION_FRAME_SAMPLES
-        if self._open_frame_index is not None and frame_index < self._open_frame_index:
-            frame_index = self._open_frame_index
-        if (
-            self._open_frame_index is not None
-            and frame_index > self._open_frame_index
-            and self._phase is not TurnPhase.IDLE
-        ):
-            self._consecutive_phase_frames = min(
-                _MAX_CONSECUTIVE_FRAMES,
-                self._consecutive_phase_frames + (frame_index - self._open_frame_index),
-            )
-        self._open_frame_index = (
-            frame_index
-            if self._open_frame_index is None
-            else max(self._open_frame_index, frame_index)
-        )
+            # Timeline owns per-segment task/revision ordering.
+            self._asr_task_epoch = segment.provider_task_epoch
+            self._asr_revision = segment.revision
+            self._asr_final = segment.final or segment.kind is SegmentKind.ASR_FINAL
         self._latest_capture_sample = max(self._latest_capture_sample, segment.capture_end_sample)
 
-        if asr_kind and not stale_asr:
+        if asr_kind:
             self._asr_end_sample = max(self._asr_end_sample or 0, segment.capture_end_sample)
         if segment.kind is SegmentKind.VAD:
             self._vad_active = not segment.final
@@ -866,8 +882,28 @@ class ConversationProjection:
         self._speaker_class = speaker_class
         self._loss_concealed = segment.loss_concealed
         self._discontinuity = discontinuity
+        # Delayed finals do not prove resumed speech.
+        extends_endpoint = bool(
+            segment.kind is SegmentKind.ASR_PARTIAL
+            and not segment.final
+            and self._phase is TurnPhase.END_CANDIDATE
+            and self._voiced_end_sample is not None
+            and previous_asr_end is not None
+            and segment.capture_end_sample > max(previous_asr_end, self._voiced_end_sample)
+        )
+        covers_endpoint = bool(
+            extends_endpoint
+            and previous_asr_end is not None
+            and segment.capture_start_sample <= previous_asr_end
+        )
+        asr_clock_gap = bool(
+            extends_endpoint
+            and previous_asr_end is not None
+            and segment.capture_start_sample > previous_asr_end
+        )
 
         evidence = TurnEvidence(
+            covers_pending_endpoint=covers_endpoint,
             vad_start=segment.kind is SegmentKind.VAD and not segment.final,
             vad_end=segment.kind is SegmentKind.VAD and segment.final,
             vad_ended=self._voiced_end_sample is not None,
@@ -883,10 +919,10 @@ class ConversationProjection:
             playback_active=self._playback_active,
             loss_concealed=segment.loss_concealed,
             discontinuity=discontinuity,
-            clock_gap=False,
+            clock_gap=asr_clock_gap,
             stale_stream=False,
             stale_fence=False,
-            stale_asr_revision=stale_asr,
+            stale_asr_revision=False,
         )
         transition = transition_turn_phase(self._phase, evidence)
         if transition is None:
@@ -951,8 +987,9 @@ class ConversationProjection:
         ):
             self._voiced_end_sample = None
         self._floor_state = self._floor_for_phase(phase, self._playback_active)
+        self._sync_visible_state()
         if changed:
-            self._consecutive_phase_frames = 1
+            self._consecutive_phase_frames = 0
         self._publish_frame(
             stream_epoch=stream_epoch,
             capture_start_sample=capture_start_sample,
@@ -966,40 +1003,64 @@ class ConversationProjection:
         capture_start_sample: int,
         capture_end_sample: int,
     ) -> None:
-        start = capture_start_sample
-        end = capture_end_sample
-        if end <= start:
-            end = start + 1
-        frame_index = start // PROJECTION_FRAME_SAMPLES
-        if self._open_frame_index is not None:
-            frame_index = max(frame_index, self._open_frame_index)
-            start = max(start, frame_index * PROJECTION_FRAME_SAMPLES)
-            if end <= start:
-                end = start + 1
-        self._open_frame_index = frame_index
-        self._current_frame = ProjectionFrame(
-            session_id=self.session_id,
-            stream_epoch=stream_epoch,
-            frame_index=frame_index,
-            capture_start_sample=start,
-            capture_end_sample=end,
-            state=self._phase,
-            reason=self._phase_reason,
-            floor_state=self.floor_state,
-            vad_active=self._vad_active,
-            vad_probability=self._vad_probability,
-            asr_task_epoch=self._asr_task_epoch or None,
-            asr_revision=self._asr_revision or None,
-            asr_coverage=self._asr_coverage,
-            semantic_text_present=self._semantic_text_present,
-            asr_final=self._asr_final,
-            speaker_class=self._speaker_class,
-            aec_verified=self._aec_verified,
-            residual_echo_score=self._residual_echo_score,
-            captured_fence=self._captured_fence,
-            loss_concealed=self._loss_concealed,
-            discontinuity=self._discontinuity,
+        """Publish complete aligned windows covered by this fact only."""
+        first_index = (capture_start_sample + PROJECTION_FRAME_SAMPLES - 1) // (
+            PROJECTION_FRAME_SAMPLES
         )
+        last_index = capture_end_sample // PROJECTION_FRAME_SAMPLES - 1
+        start_index = max(self._next_frame_index, first_index)
+        if first_index > self._next_frame_index:
+            self._consecutive_phase_frames = 0
+        if last_index < start_index:
+            return
+        # Skip uncovered gaps; never replay an emitted frame index.
+        for frame_index in range(start_index, last_index + 1):
+            self._current_frame = ProjectionFrame(
+                session_id=self.session_id,
+                stream_epoch=stream_epoch,
+                frame_index=frame_index,
+                capture_start_sample=frame_index * PROJECTION_FRAME_SAMPLES,
+                capture_end_sample=(frame_index + 1) * PROJECTION_FRAME_SAMPLES,
+                state=self._phase,
+                reason=self._phase_reason,
+                floor_state=self._floor_state,
+                vad_active=self._vad_active,
+                vad_probability=self._vad_probability,
+                asr_task_epoch=self._asr_task_epoch or None,
+                asr_revision=self._asr_revision or None,
+                asr_coverage=self._asr_coverage,
+                semantic_text_present=self._semantic_text_present,
+                asr_final=self._asr_final,
+                speaker_class=self._speaker_class,
+                aec_verified=self._aec_verified,
+                residual_echo_score=self._residual_echo_score,
+                captured_fence=self._captured_fence,
+                loss_concealed=self._loss_concealed,
+                discontinuity=self._discontinuity,
+            )
+            self._emitted_frame_count += 1
+        self._next_frame_index = last_index + 1
+        self._consecutive_phase_frames = min(
+            _MAX_CONSECUTIVE_FRAMES,
+            self._consecutive_phase_frames + last_index - start_index + 1,
+        )
+
+    def _sync_visible_state(self) -> None:
+        """Keep all externally visible phase/floor snapshots atomic."""
+        self._floor_state = self._floor_for_phase(self._phase, self._playback_active)
+        current = self._provisional
+        if current is not None and current.floor_state is not self._floor_state:
+            self._provisional = replace(current, floor_state=self._floor_state)
+
+    def _sync_patch_floor(self, patch: ProjectionPatch | None) -> ProjectionPatch | None:
+        """Refresh a returned provisional snapshot after phase-owned floor sync."""
+        current = self._provisional
+        if patch is None or current is None or patch.turn.revision != current.revision:
+            return patch
+        if patch.turn.floor_state is current.floor_state:
+            return patch
+        refreshed = replace(patch.turn, floor_state=current.floor_state)
+        return replace(patch, turn=refreshed)
 
     def _fence_is_stale(self, fence: GenerationFence) -> bool:
         if fence.session_id != self.session_id:
