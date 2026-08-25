@@ -5,6 +5,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -414,9 +415,7 @@ async def test_direct_playback_stop_seam_revokes_output_and_cancels_next_generat
     await asyncio.wait_for(reply_started.wait(), timeout=1)
     assert context.output_owner is not None
     assert context.playback.register_audio(fence, 0, 0, 2)
-    assert context.playback.add_span(
-        PlaybackSpan(fence, 0, 1, 0, 2, text="你", sequence=0)
-    )
+    assert context.playback.add_span(PlaybackSpan(fence, 0, 1, 0, 2, text="你", sequence=0))
     assert context.playback.acknowledge(fence, 2, received_sequence=0)
     stale_before = context.playback.stale_ack_count
     runtime_before = runtime.fence
@@ -618,9 +617,9 @@ async def test_commit_accepts_asr_subrange_of_leading_vad_projection() -> None:
     assert fence is not None
     assert reason is None
     assert context.projection.provisional is None
-    assert [
-        turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"
-    ] == ["梅莫里亚你好"]
+    assert [turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"] == [
+        "梅莫里亚你好"
+    ]
     await runtime.close()
     await provider.close(identity)
 
@@ -756,13 +755,11 @@ async def test_endpoint_timeout_waits_for_inflight_turn_prepare() -> None:
     await asyncio.wait_for(committing, timeout=1)
     await asyncio.wait_for(expiring, timeout=1)
 
+    assert [turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"] == [
+        "提交期间不能被超时删除"
+    ]
     assert [
-        turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"
-    ] == ["提交期间不能被超时删除"]
-    assert [
-        payload["text"]
-        for event_type, payload in bridge.events
-        if event_type == "turn.committed"
+        payload["text"] for event_type, payload in bridge.events if event_type == "turn.committed"
     ] == ["提交期间不能被超时删除"]
     assert not [
         payload
@@ -832,9 +829,9 @@ async def test_audio_discontinuity_waits_for_inflight_turn_prepare() -> None:
     await asyncio.wait_for(committing, timeout=1)
     await asyncio.wait_for(resetting, timeout=1)
 
-    assert [
-        turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"
-    ] == ["断流不能抢先删除话轮"]
+    assert [turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"] == [
+        "断流不能抢先删除话轮"
+    ]
     assert context.projection.provisional is None
     await registry._finalize_session(identity.session_id)
 
@@ -900,9 +897,9 @@ async def test_finalize_failure_waits_for_inflight_turn_prepare() -> None:
     await asyncio.wait_for(committing, timeout=1)
     assert await asyncio.wait_for(finalizing, timeout=1) is False
 
-    assert [
-        turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"
-    ] == ["终结失败不能抢先删除话轮"]
+    assert [turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"] == [
+        "终结失败不能抢先删除话轮"
+    ]
     assert context.projection.provisional is None
     assert context.ingress.provider_failed is True
     await registry._finalize_session(identity.session_id)
@@ -1033,9 +1030,9 @@ async def test_prepare_failure_automatically_retries_and_commits_once() -> None:
 
     assert provider.prepare_calls == 2
     assert provider.reply_calls == 1
-    assert [
-        turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"
-    ] == ["自动重试后只提交一次"]
+    assert [turn.content for turn in runtime.orchestrator.context.turns if turn.role == "user"] == [
+        "自动重试后只提交一次"
+    ]
     assert context.projection.provisional is None
     assert context.runtime.speech_timeline.committed_sample == 640
     assert context.asr.last_committed_sample == 640
@@ -1043,18 +1040,10 @@ async def test_prepare_failure_automatically_retries_and_commits_once() -> None:
     assert context.turn_commit_retry_attempt == 0
     assert context.turn_commit_retry_stream_epoch is None
     assert context.turn_commit_retry_endpoint_sample is None
-    assert registry.metrics.get(
-        "voice_turn_prepare_retry_total", {"status": "scheduled"}
-    ) == 1
-    assert registry.metrics.get(
-        "voice_turn_prepare_retry_total", {"status": "attempt"}
-    ) == 1
-    assert registry.metrics.get(
-        "voice_turn_prepare_retry_total", {"status": "succeeded"}
-    ) == 1
-    assert registry.metrics.get(
-        "voice_turn_prepare_retry_total", {"status": "exhausted"}
-    ) == 0
+    assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "scheduled"}) == 1
+    assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "attempt"}) == 1
+    assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "succeeded"}) == 1
+    assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "exhausted"}) == 0
     await registry._finalize_session(identity.session_id)
 
 
@@ -1120,9 +1109,7 @@ async def test_endpoint_tail_waits_for_matching_prepare_retry() -> None:
         if event_type == "turn.provisional.discarded"
         and payload.get("reason") == "provider_final_missing"
     ]
-    assert registry.metrics.get(
-        "voice_turn_prepare_retry_total", {"status": "succeeded"}
-    ) == 1
+    assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "succeeded"}) == 1
     await registry._finalize_session(identity.session_id)
 
 
@@ -1160,9 +1147,7 @@ async def test_new_vad_supersedes_retry_without_merging_turns() -> None:
 
     assert await registry._commit_pending_turn(context) == "provider_prepare_failed"
     first_started = [
-        payload
-        for event_type, payload in bridge.events
-        if event_type == "turn.provisional.started"
+        payload for event_type, payload in bridge.events if event_type == "turn.provisional.started"
     ]
     assert len(first_started) == 1
 
@@ -1181,9 +1166,7 @@ async def test_new_vad_supersedes_retry_without_merging_turns() -> None:
     )
 
     started = [
-        payload
-        for event_type, payload in bridge.events
-        if event_type == "turn.provisional.started"
+        payload for event_type, payload in bridge.events if event_type == "turn.provisional.started"
     ]
     discarded = [
         payload
@@ -1207,12 +1190,8 @@ async def test_new_vad_supersedes_retry_without_merging_turns() -> None:
     assert context.turn_commit_retry_stream_epoch is None
     assert context.turn_commit_retry_endpoint_sample is None
     assert provider.prepare_calls == 1
-    assert registry.metrics.get(
-        "voice_turn_prepare_retry_total", {"status": "superseded"}
-    ) == 1
-    assert registry.metrics.get(
-        "voice_turn_prepare_retry_total", {"status": "attempt"}
-    ) == 0
+    assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "superseded"}) == 1
+    assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "attempt"}) == 0
     assert not await registry.accept_asr_result(
         identity.session_id,
         ASRResult(
@@ -1298,21 +1277,11 @@ async def test_prepare_retry_exhaustion_discards_once_at_transport_retire_sample
     assert context.turn_commit_retry_attempt == 0
     assert context.turn_commit_retry_stream_epoch is None
     assert context.turn_commit_retry_endpoint_sample is None
-    assert [
-        turn for turn in runtime.orchestrator.context.turns if turn.role == "user"
-    ] == []
-    assert registry.metrics.get(
-        "voice_turn_prepare_retry_total", {"status": "scheduled"}
-    ) == 1
-    assert registry.metrics.get(
-        "voice_turn_prepare_retry_total", {"status": "attempt"}
-    ) == 2
-    assert registry.metrics.get(
-        "voice_turn_prepare_retry_total", {"status": "exhausted"}
-    ) == 1
-    assert registry.metrics.get(
-        "voice_turn_prepare_retry_total", {"status": "succeeded"}
-    ) == 0
+    assert [turn for turn in runtime.orchestrator.context.turns if turn.role == "user"] == []
+    assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "scheduled"}) == 1
+    assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "attempt"}) == 2
+    assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "exhausted"}) == 1
+    assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "succeeded"}) == 0
     assert not await registry.accept_asr_result(
         identity.session_id,
         ASRResult(
@@ -1402,9 +1371,7 @@ async def test_stale_or_duplicate_vad_does_not_supersede_matching_prepare_retry(
         for event_type, payload in bridge.events
         if event_type == "turn.provisional.discarded"
     ]
-    assert registry.metrics.get(
-        "voice_turn_prepare_retry_total", {"status": "superseded"}
-    ) == 0
+    assert registry.metrics.get("voice_turn_prepare_retry_total", {"status": "superseded"}) == 0
 
     await asyncio.wait_for(retry_task, timeout=1)
     assert provider.prepare_calls == 2
@@ -1799,7 +1766,9 @@ async def test_audio_ingress_provider_failure_drains_backlog_and_recovers_next_f
 
 
 @pytest.mark.asyncio
-async def test_audio_ingress_lazy_task_start_failure_drains_backlog_and_resets_at_recovery_frame() -> None:
+async def test_audio_ingress_lazy_task_start_failure_drains_backlog_and_resets_at_recovery_frame() -> (
+    None
+):
     class LazyStartFailureProvider(FakeMediaProvider):
         def __init__(self) -> None:
             super().__init__()
@@ -1934,9 +1903,7 @@ async def test_audio_ingress_serializes_duplicate_finalize_watermark(
 async def test_stale_asr_final_rejection_is_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(
-        logging.INFO, logger="services.agent.src.voice_core.media_session_commit"
-    )
+    caplog.set_level(logging.INFO, logger="services.agent.src.voice_core.media_session_commit")
 
     provider = FakeMediaProvider()
     bridge = MediaBridgeGrpcServer()
@@ -2707,10 +2674,13 @@ async def test_nonzero_session_epoch_reply_reaches_provider_and_first_pcm() -> N
             emitted_audio=True,
         )
     ]
-    assert metrics.get(
-        "voice_output_dispatch_total",
-        {"status": "completed", "reason": "provider_stream_complete"},
-    ) == 1
+    assert (
+        metrics.get(
+            "voice_output_dispatch_total",
+            {"status": "completed", "reason": "provider_stream_complete"},
+        )
+        == 1
+    )
     assert metrics.latency_samples["tts_first_frame"]
     assert metrics.latency_samples["tts_first_frame"][-1] >= 0
     assert metrics.get("voice_first_frame_preempted_total") == 0
@@ -2753,10 +2723,13 @@ async def test_pending_turn_records_skipped_reply_dispatch_reason() -> None:
     assert terminal.status is OutputDispatchStatus.SKIPPED
     assert terminal.reason == "output_intent_inactive"
     assert terminal.emitted_audio is False
-    assert metrics.get(
-        "voice_output_dispatch_total",
-        {"status": "skipped", "reason": "output_intent_inactive"},
-    ) == 1
+    assert (
+        metrics.get(
+            "voice_output_dispatch_total",
+            {"status": "skipped", "reason": "output_intent_inactive"},
+        )
+        == 1
+    )
     await registry._finalize_session(identity.session_id)
 
 
@@ -4150,10 +4123,7 @@ async def test_media_registry_replaces_factory_legacy_delegation_starter() -> No
     query = "今天南京天气怎么样"
     fence = await context.runtime.on_turn_committed(query)
     context.playback.start(fence)
-    await _wait_until(
-        lambda: provider.output_kinds
-        == [media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT]
-    )
+    await _wait_until(lambda: provider.output_kinds == [media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT])
 
     assert legacy_calls == []
     assert provider.delegations == [(query, fence)]
@@ -4326,7 +4296,9 @@ async def test_media_delegation_error_result_falls_back_to_one_local_reply() -> 
 
 
 @pytest.mark.asyncio
-async def test_media_delegation_initial_decision_timeout_replies_locally_and_cancels_late_delegation() -> None:
+async def test_media_delegation_initial_decision_timeout_replies_locally_and_cancels_late_delegation() -> (
+    None
+):
     start_gate = asyncio.Event()
     deep_gate = asyncio.Event()
 
@@ -4402,8 +4374,7 @@ async def test_fast_media_delegation_success_skips_fast_acknowledgement() -> Non
     context.playback.start(fence)
 
     await _wait_until(
-        lambda: provider.output_kinds
-        == [media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT],
+        lambda: provider.output_kinds == [media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT],
     )
     claim = context.delegation_output_claims[fence]
     assert claim.state is DelegationOutputState.COMPLETED
@@ -4459,7 +4430,9 @@ async def test_stale_generation_media_delegation_produces_no_output() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_media_normal_replies_produce_only_one_local_output_after_delegation_failure() -> None:
+async def test_concurrent_media_normal_replies_produce_only_one_local_output_after_delegation_failure() -> (
+    None
+):
     class FailingProvider(_DelegationProbeProvider):
         async def start_delegation(self, _text: str, _fence: GenerationFence) -> str:
             raise RuntimeError("deep provider exploded")
@@ -4476,12 +4449,8 @@ async def test_concurrent_media_normal_replies_produce_only_one_local_output_aft
     fence = await context.runtime.on_turn_committed(query)
     context.playback.start(fence)
 
-    first = asyncio.create_task(
-        registry.generate_reply(identity.session_id, query, fence)
-    )
-    second = asyncio.create_task(
-        registry.generate_reply(identity.session_id, query, fence)
-    )
+    first = asyncio.create_task(registry.generate_reply(identity.session_id, query, fence))
+    second = asyncio.create_task(registry.generate_reply(identity.session_id, query, fence))
     assert await asyncio.wait_for(first, timeout=1)
     assert await asyncio.wait_for(second, timeout=1)
     await _wait_until(lambda: provider.reply_calls == 1)
@@ -4607,6 +4576,7 @@ async def test_vad_boundary_drains_audio_before_rotating_provider_task(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.INFO, logger="services.agent.src.voice_core.media_audio_ingress")
+
     class BoundaryProvider(FakeMediaProvider):
         def __init__(self) -> None:
             super().__init__()
@@ -5160,9 +5130,7 @@ async def test_tail_timeout_fences_late_final_and_rotates_projection_identity() 
     timeout_handle.cancel()
     context.turn_endpoint_timeout_handle = None
     first_started = [
-        payload
-        for event_type, payload in bridge.events
-        if event_type == "turn.provisional.started"
+        payload for event_type, payload in bridge.events if event_type == "turn.provisional.started"
     ]
     assert len(first_started) == 1
 
@@ -5213,15 +5181,11 @@ async def test_tail_timeout_fences_late_final_and_rotates_projection_identity() 
         ),
     )
     started = [
-        payload
-        for event_type, payload in bridge.events
-        if event_type == "turn.provisional.started"
+        payload for event_type, payload in bridge.events if event_type == "turn.provisional.started"
     ]
     assert len(started) == 2
     assert started[1]["provisional_id"] != started[0]["provisional_id"]
-    assert int(started[1]["projection_revision"]) > int(
-        discarded[0]["projection_revision"]
-    )
+    assert int(started[1]["projection_revision"]) > int(discarded[0]["projection_revision"])
     await context.runtime.close()
     await provider.close(identity)
 
@@ -5308,6 +5272,99 @@ async def test_absolute_endpoint_tail_commits_stable_partial_with_missing_final_
     ]
     assert committed and committed[-1]["provider_final_missing"] is True
     assert context.pending_partial is None
+
+
+@pytest.mark.asyncio
+async def test_endpoint_tail_keeps_farther_partial_when_final_timing_shrinks() -> None:
+    class CapturingBridge(MediaBridgeGrpcServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.client_events: list[tuple[str, dict[str, Any]]] = []
+
+        async def emit_event(
+            self,
+            _session_id: str,
+            event_type: str,
+            payload: dict[str, Any],
+            **_kwargs: Any,
+        ) -> bool:
+            self.client_events.append((event_type, payload))
+            return True
+
+    bridge = CapturingBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: FakeMediaProvider(),
+        turn_endpoint_grace_s=0.001,
+        turn_endpoint_min_grace_s=0,
+        turn_endpoint_max_grace_s=0.01,
+        turn_endpoint_absolute_timeout_s=0.02,
+    )
+    identity = SessionIdentity("shrinking-final-timing")
+    session = bridge.bridge.open(identity)
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="shrinking-final-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+        ),
+    )
+    partial = ASRResult(
+        task_epoch=1,
+        sentence_id="shrinking-final-sentence",
+        revision=1,
+        capture_start_sample=0,
+        capture_end_sample=40_000,
+        text="今天星期几",
+        is_final=False,
+        confidence=0.9,
+        stream_epoch=1,
+    )
+    final = replace(
+        partial,
+        revision=2,
+        capture_end_sample=10_000,
+        is_final=True,
+    )
+    assert await registry.accept_asr_result(identity.session_id, partial)
+    assert await registry.accept_asr_result(identity.session_id, final)
+    context = registry._sessions[identity.session_id]
+    assert context.pending_partial is not None
+    assert context.pending_partial.capture_end_sample == 40_000
+    assert context.pending_partial.revision == 2
+
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="shrinking-final-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=40_000,
+            capture_end_sample=40_001,
+            final=True,
+            voiced_end_sample=40_000,
+        ),
+    )
+    await asyncio.sleep(0.04)
+
+    assert [
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["今天星期几"]
+    committed = [
+        payload for event_type, payload in bridge.client_events if event_type == "turn.committed"
+    ]
+    assert committed and committed[-1]["provider_final_missing"] is True
+    assert context.pending_partial is None
+    await context.runtime.close()
 
 
 @pytest.mark.asyncio
