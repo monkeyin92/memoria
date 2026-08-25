@@ -39,6 +39,8 @@ services:
       OFFLINE_MOCK: "${OFFLINE_MOCK:-false}"
     ports:
       - "8000:8000"
+    volumes:
+      - ./data/control-api:/app/data
     depends_on:
       - postgres
       - redis
@@ -62,6 +64,21 @@ services:
       - "8010:8010"
     depends_on:
       - control-api
+
+  media-edge:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.media-edge
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    depends_on:
+      - redis
+    environment:
+      MEDIA_EDGE_HTTP_ADDR: "0.0.0.0:8080"
+      MEDIA_EDGE_INTERNAL_HTTP_ADDR: "0.0.0.0:8081"
 
 volumes:
   postgres-data:
