@@ -156,7 +156,16 @@ func (s *VoiceCoreSession) validateCoreEvent(event *mediav1.CoreToMedia) error {
 		s.stateMu.Lock()
 		defer s.stateMu.Unlock()
 		if !s.current.Equal(fence) {
-			return fmt.Errorf("floor effect fence is stale")
+			// A floor projection from an older generation is already dominated
+			// by the current fence. Drop it without advancing the shared event
+			// sequence; failing the whole stream here can discard a following
+			// typed CLOSED state and strand the device in listening mode.
+			return fmt.Errorf(
+				"%w: floor effect fence is stale: got=%+v current=%+v",
+				errDropFloorEffect,
+				fence,
+				s.current,
+			)
 		}
 		if s.hasFloorEpoch && effect.GetFloorEpoch() <= s.lastFloorEpoch {
 			// The current floor projection already dominates this duplicate or

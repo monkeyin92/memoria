@@ -347,7 +347,12 @@ func TestVoiceCoreSessionDropsStaleFloorEpochWithoutLosingConversationClose(t *t
 	if err := session.validateCoreEvent(floor(1, 2)); err != nil {
 		t.Fatalf("current floor effect rejected: %v", err)
 	}
-	if err := session.validateCoreEvent(floor(2, 2)); !errors.Is(err, errDropFloorEffect) {
+	staleFence := floor(2, 3)
+	staleFence.GetFloorEffect().GenerationId = fence.GenerationID - 1
+	if err := session.validateCoreEvent(staleFence); !errors.Is(err, errDropFloorEffect) {
+		t.Fatalf("stale floor fence error=%v, want lossy drop", err)
+	}
+	if err := session.validateCoreEvent(floor(3, 2)); !errors.Is(err, errDropFloorEffect) {
 		t.Fatalf("duplicate floor epoch error=%v, want lossy drop", err)
 	}
 	if session.lastEventSequence != 1 {
